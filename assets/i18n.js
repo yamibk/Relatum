@@ -559,7 +559,7 @@
     '宽度': 'Width', '高度': 'Height', '字号': 'Font size', '旋转角度': 'Rotation',
     '双线': 'Double', '边框粗细': 'Border weight', '填充颜色': 'Fill color',
     '文字颜色': 'Text color', '预设颜色': 'Preset colors', '填充': 'Fill',
-    '淡': 'Tint', '实': 'Solid', '重置默认颜色': 'Reset colors',
+    '淡': 'Tint', '实': 'Solid', '重置默认填充颜色': 'Reset default fill color',
     '标题文字语义': 'Title contrast', '浅色': 'Light', '深色': 'Dark',
     '浅色字适合较深的标题底色；深色字适合柠檬黄等明亮标题底色。': 'Light text suits dark title fills; dark text suits bright fills such as lemon yellow.',
     '滑条进度': 'Slider progress', '透明度': 'Opacity', '显示图层': 'Layer',
