@@ -937,7 +937,7 @@
       if (!node || typeof node !== 'object' || !RichText) return false;
       let changed = false;
       ['text', 'body'].forEach(function (field) {
-        if (field === 'body' && node.kind === 'code') {
+        if (field === 'body' && (node.kind === 'code' || node.kind === 'table')) {
           if (node.bodyMarks) { delete node.bodyMarks; changed = true; }
           return;
         }
@@ -960,6 +960,83 @@
       });
       return changed;
     }
+    function normalizedTableScale(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return 1;
+      return Math.round(Math.max(0.72, Math.min(1.8, number)) * 100) / 100;
+    }
+    function normalizedTableAppearance(value) {
+      return value === 'matrix' ? 'matrix' : 'standard';
+    }
+    function normalizedTableBracket(value) {
+      return value === 'square' || value === 'determinant' ? value : 'round';
+    }
+    function applyTableViewData(el, node) {
+      if (!el) return;
+      if (!node || node.kind !== 'table') {
+        el.removeAttribute('data-table-appearance');
+        el.removeAttribute('data-table-bracket');
+        el.removeAttribute('data-table-chrome');
+        return;
+      }
+      el.dataset.tableAppearance = normalizedTableAppearance(node.tableAppearance);
+      el.dataset.tableBracket = normalizedTableBracket(node.tableBracket);
+      el.dataset.tableChrome = node.tableChrome === 'hidden' ? 'hidden' : 'visible';
+    }
+    function normalizeTableNodeLayout(node) {
+      if (!node || node.kind !== 'table') return false;
+      let changed = false;
+      // 第一版把表格外框宽度单独保存为 width。现在四边统一等比缩放，
+      // 旧宽度只在尚无 tableScale 时折算一次，随后删除，避免两套尺寸真源互相打架。
+      if (Object.prototype.hasOwnProperty.call(node, 'width')) {
+        if (!Object.prototype.hasOwnProperty.call(node, 'tableScale') && Number(node.width) > 0) {
+          const legacyScale = normalizedTableScale(Number(node.width) / 620);
+          if (legacyScale !== 1) node.tableScale = legacyScale;
+        }
+        delete node.width;
+        changed = true;
+      }
+      // 早期独立表格用固定 bodyHeight 撑出编辑区，容易制造大片空白。
+      // 画布紧凑态现在始终按真实行数自适应；纵向拖拽只保存内容缩放比例。
+      if (Object.prototype.hasOwnProperty.call(node, 'bodyHeight')) {
+        delete node.bodyHeight;
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(node, 'tableScale')) {
+        const scale = normalizedTableScale(node.tableScale);
+        if (scale === 1) {
+          delete node.tableScale;
+          changed = true;
+        } else if (scale !== node.tableScale) {
+          node.tableScale = scale;
+          changed = true;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(node, 'tableChrome') && node.tableChrome !== 'hidden') {
+        delete node.tableChrome;
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(node, 'tableAppearance') && node.tableAppearance !== 'matrix') {
+        delete node.tableAppearance;
+        changed = true;
+      }
+      if (node.tableAppearance === 'matrix') {
+        const bracket = normalizedTableBracket(node.tableBracket);
+        if (bracket === 'round') {
+          if (Object.prototype.hasOwnProperty.call(node, 'tableBracket')) {
+            delete node.tableBracket;
+            changed = true;
+          }
+        } else if (bracket !== node.tableBracket) {
+          node.tableBracket = bracket;
+          changed = true;
+        }
+      } else if (Object.prototype.hasOwnProperty.call(node, 'tableBracket')) {
+        delete node.tableBracket;
+        changed = true;
+      }
+      return changed;
+    }
     function richSource(node, field, text, marks) {
       const raw = String(text == null ? (node && node[field]) || '' : text);
       if (!RichText) return raw;
@@ -972,6 +1049,7 @@
     data.nodes.forEach(function (node) {
       if (node && node.kind === 'text') node.kind = 'index';
       if (normalizeNodeRichText(node)) richMigrationChanged = true;
+      if (normalizeTableNodeLayout(node)) richMigrationChanged = true;
     });
     if (data.version !== 2) { data.version = 2; richMigrationChanged = true; }
     data.ink = cloneInk(data.ink);
@@ -990,6 +1068,7 @@
     function indexNodeData(node) {
       if (node && node.id) {
         if (normalizeNodeRichText(node)) richMigrationChanged = true;
+        if (normalizeTableNodeLayout(node)) richMigrationChanged = true;
         nodeById.set(node.id, node);
       }
     }
@@ -1326,6 +1405,13 @@
           button.classList.toggle('active', button.dataset.canvasTool === drawTool);
         });
       }
+      const tableCreateActive = drawTool === 'table';
+      document.querySelectorAll('[data-action="create-table"]').forEach(function (button) {
+        button.classList.toggle('active', tableCreateActive);
+        button.setAttribute('aria-pressed', tableCreateActive ? 'true' : 'false');
+      });
+      if (tableCreateActive) document.body.dataset.tableCreateActive = '1';
+      else delete document.body.dataset.tableCreateActive;
       viewport.classList.toggle('draw-tool-active', drawTool !== 'select');
       refreshEdgeAnchorVisibility();
       updateEraserCursor();
@@ -1348,16 +1434,30 @@
 
     let toolResetPress = null;
     let suppressToolClickUntil = 0;
+    let noteSourceGesture = null;
+    let noteSourceDragPreview = null;
+    let suppressNoteSourceClickUntil = 0;
     const TOOL_RESET_HOLD_MS = 720;
 
     if (drawToolbar) {
       drawToolbar.addEventListener('mousedown', (event) => event.stopPropagation());
+      drawToolbar.addEventListener('pointerdown', beginNoteSourceGesture);
       drawToolbar.addEventListener('pointerdown', beginToolResetPress);
       drawToolbar.addEventListener('pointermove', onToolResetPointerMove);
       drawToolbar.addEventListener('pointercancel', cancelToolResetPress);
       drawToolbar.addEventListener('pointerleave', cancelToolResetPress);
+      document.addEventListener('pointermove', moveNoteSourceGesture, true);
+      document.addEventListener('pointerup', finishNoteSourceGesture, true);
+      document.addEventListener('pointercancel', cancelNoteSourceGesture, true);
       document.addEventListener('pointerup', finishToolResetPress, true);
       drawToolbar.addEventListener('click', (event) => {
+        const noteSourceButton = event.target.closest('[data-note-source]');
+        if (noteSourceButton) {
+          event.preventDefault();
+          if (performance.now() < suppressNoteSourceClickUntil) return;
+          toggleEmphasisNoteConfig(noteSourceButton);
+          return;
+        }
         const historyButton = event.target.closest('[data-canvas-history]');
         if (historyButton) {
           event.preventDefault();
@@ -1554,10 +1654,117 @@
       }
     }
 
+    function setNoteSourceDragState(active) {
+      document.dispatchEvent(new CustomEvent('editor:toolbox-drag-state', {
+        detail: { active: !!active },
+      }));
+    }
+
+    function beginNoteSourceGesture(event) {
+      const button = event.target.closest && event.target.closest('[data-note-source]');
+      if (!button || !drawToolbar.contains(button)) return;
+      if (event.button != null && event.button !== 0) return;
+      if (event.isPrimary === false) return;
+      cancelNoteSourceGesture();
+      noteSourceGesture = {
+        button: button,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        dragging: false,
+      };
+      button.classList.add('note-source-pressed');
+      setNoteSourceDragState(true);
+      try { button.setPointerCapture(event.pointerId); } catch (e) {}
+    }
+
+    function createNoteSourceDragPreview(clientX, clientY) {
+      const defaults = decorTextPresetDefaults('emphasis-card');
+      const preview = document.createElement('div');
+      preview.className = 'note-source-drag-preview';
+      preview.setAttribute('aria-hidden', 'true');
+      preview.style.setProperty('--decor-fill', defaults.fillColor);
+      preview.style.setProperty('--decor-border', defaults.borderColor);
+      preview.style.setProperty('--decor-color', defaults.color);
+      preview.style.setProperty('--decor-border-width', defaults.borderWidth + 'px');
+      preview.style.setProperty('--decor-border-style', defaults.borderStyle);
+      preview.style.setProperty('--note-drag-scale', String(curScale));
+      preview.innerHTML = '<div class="emphasis-note-visual">'
+        + '<div class="emphasis-note-sheet"></div><div class="emphasis-note-fold"></div></div>'
+        + '<span>' + canvasUiText('写下重点') + '</span>';
+      (viewport || document.body).appendChild(preview);
+      noteSourceDragPreview = preview;
+      moveNoteSourceDragPreview(clientX, clientY);
+    }
+
+    function moveNoteSourceDragPreview(clientX, clientY) {
+      if (!noteSourceDragPreview) return;
+      const host = noteSourceDragPreview.offsetParent || viewport;
+      const rect = host.getBoundingClientRect();
+      noteSourceDragPreview.style.left = (clientX - rect.left) + 'px';
+      noteSourceDragPreview.style.top = (clientY - rect.top) + 'px';
+    }
+
+    function moveNoteSourceGesture(event) {
+      if (!noteSourceGesture || event.pointerId !== noteSourceGesture.pointerId) return;
+      const distance = Math.hypot(
+        event.clientX - noteSourceGesture.startX,
+        event.clientY - noteSourceGesture.startY
+      );
+      if (!noteSourceGesture.dragging && distance >= 8) {
+        noteSourceGesture.dragging = true;
+        noteSourceGesture.button.classList.add('note-source-dragging');
+        closeToolConfig();
+        createNoteSourceDragPreview(event.clientX, event.clientY);
+      }
+      if (!noteSourceGesture.dragging) return;
+      event.preventDefault();
+      moveNoteSourceDragPreview(event.clientX, event.clientY);
+    }
+
+    function clearNoteSourceGesture() {
+      if (noteSourceDragPreview) {
+        noteSourceDragPreview.remove();
+        noteSourceDragPreview = null;
+      }
+      if (noteSourceGesture && noteSourceGesture.button) {
+        noteSourceGesture.button.classList.remove('note-source-pressed', 'note-source-dragging');
+        try { noteSourceGesture.button.releasePointerCapture(noteSourceGesture.pointerId); } catch (e) {}
+      }
+      noteSourceGesture = null;
+      setNoteSourceDragState(false);
+    }
+
+    function finishNoteSourceGesture(event) {
+      if (!noteSourceGesture || event.pointerId !== noteSourceGesture.pointerId) return;
+      const wasDragging = noteSourceGesture.dragging;
+      if (wasDragging) {
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNoteSourceClickUntil = performance.now() + 420;
+        const rect = viewport.getBoundingClientRect();
+        const inside = event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom;
+        if (inside) createEmphasisNoteAtClientPoint(event.clientX, event.clientY);
+      }
+      clearNoteSourceGesture();
+    }
+
+    function cancelNoteSourceGesture(event) {
+      if (!noteSourceGesture) return;
+      if (event && event.pointerId != null && event.pointerId !== noteSourceGesture.pointerId) return;
+      if (noteSourceGesture.dragging) suppressNoteSourceClickUntil = performance.now() + 420;
+      clearNoteSourceGesture();
+    }
+
     let toolConfigPop = null;
     let toolConfigFor = null;
     function closeToolConfig() {
       if (toolConfigPop) { toolConfigPop.remove(); toolConfigPop = null; toolConfigFor = null; }
+      if (drawToolbar) {
+        const noteButton = drawToolbar.querySelector('[data-note-source]');
+        if (noteButton) noteButton.setAttribute('aria-expanded', 'false');
+      }
     }
     document.addEventListener('editor:toolbox-hidden', closeToolConfig);
     function toggleToolConfig(tool, btn) {
@@ -1795,6 +2002,105 @@
       positionToolConfig(pop, btn);
     }
 
+    function emphasisNoteStyleIsActive(preset, defaults) {
+      return preset.fillColor === defaults.fillColor
+        && preset.borderColor === defaults.borderColor
+        && preset.color === defaults.color
+        && Math.abs(preset.borderWidth - defaults.borderWidth) < 0.01
+        && preset.borderStyle === defaults.borderStyle;
+    }
+
+    function emphasisNoteConfigMarkup() {
+      const presets = DECOR_TEXT_STYLE_PRESETS['emphasis-card'] || [];
+      const defaults = decorTextPresetDefaults('emphasis-card');
+      const presetButtons = presets.map((preset) => {
+        const active = emphasisNoteStyleIsActive(preset, defaults);
+        return '<button type="button" class="note-config-preset' + (active ? ' active' : '') + '"'
+          + ' data-note-style="' + escAttr(preset.id) + '"'
+          + ' title="' + escAttr(canvasUiText(preset.name)) + '"'
+          + ' aria-label="' + escAttr(canvasUiText(preset.name)) + '"'
+          + ' aria-pressed="' + (active ? 'true' : 'false') + '"'
+          + ' style="--note-swatch-fill:' + escAttr(preset.fillColor)
+          + ';--note-swatch-border:' + escAttr(preset.borderColor) + '">'
+          + '<span class="note-config-swatch" aria-hidden="true"></span>'
+          + '<span>' + canvasUiText(preset.name) + '</span></button>';
+      }).join('');
+      return '<div class="tc-title">' + canvasUiText('重点便签') + '</div>'
+        + '<p class="note-config-hint">' + canvasUiText('拖到画布创建固定大小便签') + '</p>'
+        + '<div class="note-config-preview" aria-hidden="true"'
+        + ' style="--decor-fill:' + escAttr(defaults.fillColor)
+        + ';--decor-border:' + escAttr(defaults.borderColor)
+        + ';--decor-color:' + escAttr(defaults.color)
+        + ';--decor-border-width:' + defaults.borderWidth + 'px'
+        + ';--decor-border-style:' + escAttr(defaults.borderStyle) + '">'
+        + '<div class="emphasis-note-visual"><div class="emphasis-note-sheet"></div>'
+        + '<div class="emphasis-note-fold"></div></div>'
+        + '<span>' + canvasUiText('写下重点') + '</span></div>'
+        + '<div class="note-config-presets">' + presetButtons + '</div>'
+        + '<button type="button" class="note-config-reset" data-note-reset>'
+        + canvasUiText('恢复暖金纸默认') + '</button>';
+    }
+
+    function applyEmphasisNoteStylePreset(preset) {
+      if (!preset) return;
+      rememberDecorTextPresetDefaults('emphasis-card', {
+        fillColor: preset.fillColor,
+        borderColor: preset.borderColor,
+        color: preset.color,
+        borderWidth: preset.borderWidth,
+        borderStyle: preset.borderStyle,
+      });
+      refreshDecorPanel();
+    }
+
+    function wireEmphasisNoteConfig(pop, button) {
+      const presets = DECOR_TEXT_STYLE_PRESETS['emphasis-card'] || [];
+      pop.querySelectorAll('[data-note-style]').forEach((presetButton) => {
+        presetButton.addEventListener('click', () => {
+          const preset = presets.find((item) => item.id === presetButton.dataset.noteStyle);
+          if (!preset) return;
+          applyEmphasisNoteStylePreset(preset);
+          rebuildEmphasisNoteConfig(button);
+        });
+      });
+      const reset = pop.querySelector('[data-note-reset]');
+      if (reset) {
+        reset.addEventListener('click', () => {
+          applyEmphasisNoteStylePreset(presets[0]);
+          rebuildEmphasisNoteConfig(button);
+        });
+      }
+    }
+
+    function rebuildEmphasisNoteConfig(button) {
+      if (!toolConfigPop || toolConfigFor !== 'emphasis-note') return;
+      toolConfigPop.innerHTML = emphasisNoteConfigMarkup();
+      wireEmphasisNoteConfig(toolConfigPop, button);
+      positionToolConfig(toolConfigPop, button);
+    }
+
+    function openEmphasisNoteConfig(button) {
+      closeToolConfig();
+      const pop = document.createElement('div');
+      pop.className = 'tool-config-pop note-tool-config';
+      pop.addEventListener('mousedown', (event) => event.stopPropagation());
+      pop.innerHTML = emphasisNoteConfigMarkup();
+      (viewport || document.body).appendChild(pop);
+      toolConfigPop = pop;
+      toolConfigFor = 'emphasis-note';
+      button.setAttribute('aria-expanded', 'true');
+      wireEmphasisNoteConfig(pop, button);
+      positionToolConfig(pop, button);
+    }
+
+    function toggleEmphasisNoteConfig(button) {
+      if (toolConfigFor === 'emphasis-note') {
+        closeToolConfig();
+        return;
+      }
+      openEmphasisNoteConfig(button);
+    }
+
     // 装饰对象的同层顺序是持久数据；历史首帧也必须包含归一化后的顺序。
     normalizeDecorationZOrders();
 
@@ -1912,9 +2218,249 @@
     // 正文节点的主体内容渲染入口：代码=纯代码着色（不解析 Markdown）；
     // 便签=正文 Markdown/公式（与卡片正文同一套渲染）；其余=标题 Markdown。
     function renderBodyNodeContent(textEl, node) {
-      if (isCodeNode(node)) renderCodeNodeText(textEl, node.body || '', node.language);
+      textEl.classList.toggle('table-node-shell', isTableNode(node));
+      if (isTableNode(node)) renderTableNodeContent(textEl, node);
+      else if (isCodeNode(node)) renderCodeNodeText(textEl, node.body || '', node.language);
       else if (isStickyNode(node)) renderNodeText(textEl, node.body || '', richMarks(node, 'body'));
       else renderNodeText(textEl, node.text || '', richMarks(node, 'text'));
+    }
+
+    let tableStudioSession = null;
+
+    function refreshTableNodeGeometry(node, rerender) {
+      const el = nodeMap.get(node.id);
+      if (el) applyTableViewData(el, node);
+      if (el && rerender) {
+        const textEl = el.querySelector(':scope > .node-text');
+        if (textEl) renderTableNodeContent(textEl, node);
+      }
+      nodeSizeCache.delete(node.id);
+      edgesIncidentTo(new Set([node.id])).forEach(updateEdgePath);
+      redrawMinimap();
+    }
+
+    function commitTableNodeMarkdown(node, markdown, rerender) {
+      const source = String(markdown || '');
+      if (!node || !isTableNode(node) || source === String(node.body || '')) return false;
+      node.body = source;
+      delete node.bodyMarks;
+      refreshTableNodeGeometry(node, !!rerender);
+      pushHistory();
+      notify();
+      return true;
+    }
+
+    function commitTableNodeTitle(node, value, rerender) {
+      if (!node || !isTableNode(node)) return false;
+      const title = String(value || '').trim();
+      if (title === String(node.text || '')) return false;
+      if (title) node.text = title;
+      else delete node.text;
+      delete node.textMarks;
+      refreshTableNodeGeometry(node, !!rerender);
+      pushHistory();
+      notify();
+      return true;
+    }
+
+    function commitTableNodeView(node, view) {
+      if (!node || !isTableNode(node)) return false;
+      const next = view || {};
+      const chrome = next.chromeHidden ? 'hidden' : '';
+      const appearance = normalizedTableAppearance(next.appearance);
+      const bracket = normalizedTableBracket(next.bracket);
+      const before = [
+        node.tableChrome || '',
+        node.tableAppearance || '',
+        node.tableBracket || '',
+      ].join('|');
+      if (chrome) node.tableChrome = chrome;
+      else delete node.tableChrome;
+      if (appearance === 'matrix') {
+        node.tableAppearance = 'matrix';
+        if (bracket === 'round') delete node.tableBracket;
+        else node.tableBracket = bracket;
+      } else {
+        delete node.tableAppearance;
+        delete node.tableBracket;
+      }
+      const after = [
+        node.tableChrome || '',
+        node.tableAppearance || '',
+        node.tableBracket || '',
+      ].join('|');
+      if (before === after) return false;
+      refreshTableNodeGeometry(node, true);
+      pushHistory();
+      notify();
+      return true;
+    }
+
+    function closeActiveTableStudio() {
+      if (tableStudioSession && typeof tableStudioSession.close === 'function') {
+        const current = tableStudioSession;
+        tableStudioSession = null;
+        current.close();
+      }
+    }
+
+    function openTableStudio(node) {
+      const grid = global.RelatumTableGrid;
+      if (!node || !isTableNode(node) || !grid || typeof grid.openStudio !== 'function') return false;
+      closeActiveTableStudio();
+      externalOverlayOpen = true;
+      let session = null;
+      session = grid.openStudio({
+        markdown: node.body || '',
+        title: node.text || '',
+        titleEditable: true,
+        viewOptionsEditable: true,
+        chromeHidden: node.tableChrome === 'hidden',
+        appearance: normalizedTableAppearance(node.tableAppearance),
+        bracket: normalizedTableBracket(node.tableBracket),
+        onCommit: function (markdown) {
+          commitTableNodeMarkdown(node, markdown, true);
+        },
+        onTitleCommit: function (title) {
+          commitTableNodeTitle(node, title, true);
+        },
+        onViewCommit: function (view) {
+          commitTableNodeView(node, view);
+        },
+        onUndo: function () {
+          closeActiveTableStudio();
+          undo();
+        },
+        onRedo: function () {
+          closeActiveTableStudio();
+          redo();
+        },
+        onClose: function () {
+          if (tableStudioSession === session) tableStudioSession = null;
+          externalOverlayOpen = false;
+          const compact = nodeMap.get(node.id);
+          if (compact) {
+            const textEl = compact.querySelector(':scope > .node-text');
+            if (textEl) renderTableNodeContent(textEl, node);
+          }
+        },
+      });
+      tableStudioSession = session;
+      return true;
+    }
+
+    function renderTableNodeContent(textEl, node) {
+      const grid = global.RelatumTableGrid;
+      if (!grid || typeof grid.mount !== 'function') {
+        renderNodeText(textEl, node.body || '');
+        return;
+      }
+      grid.mount(textEl, {
+        markdown: node.body || '',
+        title: node.text || '',
+        compact: true,
+        chromeHidden: node.tableChrome === 'hidden',
+        appearance: normalizedTableAppearance(node.tableAppearance),
+        bracket: normalizedTableBracket(node.tableBracket),
+        onSelect: function () {
+          if (!selectedNodeIds.has(node.id) || selectedNodeIds.size !== 1 || selectedEdgeIds.size) {
+            selectNodes([node.id], false);
+          }
+        },
+        onCommit: function (markdown) {
+          commitTableNodeMarkdown(node, markdown, false);
+        },
+        onTitleCommit: function (title) {
+          commitTableNodeTitle(node, title, false);
+        },
+        onOpenStudio: function () {
+          openTableStudio(node);
+        },
+      });
+    }
+
+    function applyInlineTableSource(node, state, replacement, options) {
+      if (!node || !state || !state.ref) return false;
+      options = options || {};
+      const source = state.source;
+      const next = source.slice(0, state.ref.startOffset) + replacement + source.slice(state.ref.endOffset);
+      if (next === source) return false;
+      state.source = next;
+      state.ref.endOffset = state.ref.startOffset + replacement.length;
+      if (RichText) {
+        const parsed = RichText.parseLegacy(next);
+        node.body = parsed.text;
+        storeRichMarks(node, 'body', parsed.marks);
+      } else {
+        node.body = next;
+        delete node.bodyMarks;
+      }
+      const el = nodeMap.get(node.id);
+      if (el) {
+        const textEl = el.querySelector(':scope > .node-text');
+        if (isStickyNode(node) && textEl) renderBodyNodeContent(textEl, node);
+        renderTextNodeMeta(el, node);
+      }
+      nodeSizeCache.delete(node.id);
+      edgesIncidentTo(new Set([node.id])).forEach(updateEdgePath);
+      if (options.history !== false) pushHistory();
+      if (options.notify !== false) notify();
+      return true;
+    }
+
+    function openInlineTableStudio(node, sourceLine) {
+      const syntax = global.MarkdownTable;
+      const grid = global.RelatumTableGrid;
+      if (!node || !isBodyNode(node) || !syntax || !grid) return false;
+      const source = richSource(node, 'body');
+      const ref = syntax.findTables(source).find(function (table) {
+        return table.startLine === Number(sourceLine);
+      });
+      if (!ref) return false;
+      closeActiveTableStudio();
+      externalOverlayOpen = true;
+      const state = { source: source, ref: ref };
+      let session = null;
+      session = grid.openStudio({
+        markdown: ref.markdown,
+        title: (node.text || canvasUiText('表格')) + ' · ' + canvasUiText('表格'),
+        titleEditable: false,
+        onCommit: function (markdown) {
+          applyInlineTableSource(node, state, markdown);
+        },
+        onExtract: function (markdown) {
+          applyInlineTableSource(node, state, '', { history: false, notify: false });
+          const rect = nodeRect(node);
+          const table = createTableNode(node.x + rect.w + 44, node.y, {
+            markdown: markdown,
+            title: node.text ? node.text + ' · ' + canvasUiText('表格') : '',
+            history: false,
+            notify: false,
+            select: true,
+          });
+          if (table) {
+            pushHistory();
+            notify();
+          }
+          const active = tableStudioSession;
+          tableStudioSession = null;
+          if (active && typeof active.close === 'function') active.close();
+        },
+        onUndo: function () {
+          closeActiveTableStudio();
+          undo();
+        },
+        onRedo: function () {
+          closeActiveTableStudio();
+          redo();
+        },
+        onClose: function () {
+          if (tableStudioSession === session) tableStudioSession = null;
+          externalOverlayOpen = false;
+        },
+      });
+      tableStudioSession = session;
+      return true;
     }
 
     const CODE_LANGUAGES = {
@@ -2060,6 +2606,26 @@
       ensureMathJaxForCanvas();
       if (typeof callback === 'function') whenMathJaxReady(callback);
     };
+    // 独立表格等非 .node-text Markdown DOM 也必须复用同一条 MathJax 串行队列，
+    // 不能自行 typeset 或恢复全页面观察器。
+    global.CanvasModule.scheduleMarkdownMath = function (element, source) {
+      if (!element) return Promise.resolve();
+      if (element.dataset.hasMath === '1') clearMath(element);
+      if (!hasMathSource(source || '')) return Promise.resolve();
+      element.dataset.hasMath = '1';
+      ensureMathJaxForCanvas();
+      if (global.MathJax && typeof global.MathJax.typesetPromise === 'function') {
+        return typesetMath(element);
+      }
+      return new Promise(function (resolve) {
+        whenMathJaxReady(function () {
+          Promise.resolve(typesetMath(element)).then(resolve).catch(resolve);
+        });
+      });
+    };
+    global.CanvasModule.clearMarkdownMath = function (element) {
+      if (element && element.dataset.hasMath === '1') clearMath(element);
+    };
 
     function findNode(id) {
       return nodeById.get(id) || null;
@@ -2079,6 +2645,9 @@
     function isStickyNode(node) {
       return !!node && node.kind === 'sticky';
     }
+    function isTableNode(node) {
+      return !!node && node.kind === 'table';
+    }
     function isTextBoxNode(node) {
       return !!node && node.kind === 'textBox';
     }
@@ -2091,7 +2660,7 @@
       return isPreviewNode(node) || isCardNode(node) || isCodeNode(node) || isStickyNode(node);
     }
     function isBodyHeightResizable(node) {
-      return isPreviewNode(node) || isCardNode(node) || isCodeNode(node) || isStickyNode(node);
+      return isPreviewNode(node) || isCardNode(node) || isCodeNode(node) || isStickyNode(node) || isTableNode(node);
     }
     function isReadableNode(node) {
       return isIndexNode(node) || isBodyNode(node);
@@ -3876,10 +4445,13 @@
       }
       const resizeHandles = el.querySelector('.decor-resize-handles');
       if (resizeHandles) resizeHandles.remove();
-      // 正文节点支持手动尺寸：width 钉住外框宽度；bodyHeight 控制正文可见高度。
+      // 普通正文节点用 width/bodyHeight；独立表格由内容决定外框，
+      // 四边手柄只写 tableScale，避免固定视窗与内部滚动条。
       const staleBodyHandles = el.querySelector('.body-resize-handles');
       if (staleBodyHandles && !isWidthResizableNode(node)) staleBodyHandles.remove();
-      if ((isBodyNode(node) || isIndexNode(node) || isMindmapWidthNode(node)) && Number(node.width) > 0) {
+      if (!isTableNode(node)
+          && (isBodyNode(node) || isIndexNode(node) || isMindmapWidthNode(node))
+          && Number(node.width) > 0) {
         const w = Math.max(bodyMinWidth(node), Math.min(BODY_MAX_W, Math.round(Number(node.width))));
         el.style.width = w + 'px';
         el.style.minWidth = w + 'px';
@@ -3889,11 +4461,18 @@
         el.style.removeProperty('min-width');
         el.style.removeProperty('max-width');
       }
-      if (isBodyHeightResizable(node) && Number(node.bodyHeight) > 0) {
+      if (!isTableNode(node) && isBodyHeightResizable(node) && Number(node.bodyHeight) > 0) {
         const h = Math.max(BODY_MIN_H, Math.min(BODY_MAX_H, Math.round(Number(node.bodyHeight))));
         el.style.setProperty('--node-body-height', h + 'px');
       } else {
         el.style.removeProperty('--node-body-height');
+      }
+      if (isTableNode(node)) {
+        el.style.setProperty('--table-scale', normalizedTableScale(node.tableScale));
+        applyTableViewData(el, node);
+      } else {
+        el.style.removeProperty('--table-scale');
+        applyTableViewData(el, null);
       }
       el.classList.toggle('node-chrome-hidden', !!node.hideChrome);
       el.classList.toggle('mindmap-inverse-text', mindmapNodeNeedsInverseText(node));
@@ -3902,6 +4481,7 @@
       else if (isCardNode(node)) el.dataset.kind = 'card';
       else if (isCodeNode(node)) el.dataset.kind = 'code';
       else if (isStickyNode(node)) el.dataset.kind = 'sticky';
+      else if (isTableNode(node)) el.dataset.kind = 'table';
       else el.removeAttribute('data-kind');
       if (node.shape && node.shape !== 'rect') el.dataset.shape = node.shape;
       else el.removeAttribute('data-shape');
@@ -4483,17 +5063,20 @@
       if (type === 'edge-anchor') return '<circle class="edge-anchor-ring" cx="50" cy="50" r="27"/>'
         + '<path class="edge-anchor-cross" d="M50 6 V24 M50 76 V94 M6 50 H24 M76 50 H94"/>'
         + '<circle class="edge-anchor-dot" cx="50" cy="50" r="7"/>';
+      if (type === 'rounded-rect') return '<rect class="decor-fill" x="2" y="2" width="96" height="96" rx="14"/>';
       if (type === 'rect') return '<rect class="decor-fill" x="2" y="2" width="96" height="96"/>';
       if (type === 'ellipse') return '<ellipse class="decor-fill" cx="50" cy="50" rx="47" ry="38"/>';
       if (type === 'circle') return '<circle class="decor-fill" cx="50" cy="50" r="47"/>';
       if (type === 'triangle') return '<polygon class="decor-fill" points="50,3 97,96 3,96"/>';
       if (type === 'diamond') return '<polygon class="decor-fill" points="50,3 97,50 50,97 3,50"/>';
+      if (type === 'parallelogram') return '<polygon class="decor-fill" points="19,4 98,4 81,96 2,96"/>';
       if (type === 'sketch-rounded-rect') return '<path class="decor-sketch-fill" d="M18.5 7.5 C35 5.4 67.5 5.2 81.8 7.6 C91.7 9.2 95.2 15.2 94.3 28.7 C93.6 43.4 94.9 58.7 93.3 73.4 C91.6 87.4 84.1 93.5 70.7 93.2 C53.5 92.9 36.2 95.2 20.1 92.4 C10.8 90.7 6.5 83.6 6.7 70.4 C7.1 56.8 5.9 41.8 6.7 28.4 C7.5 15.7 10.5 8.7 18.5 7.5 Z"/>'
         + '<path class="decor-sketch-line" d="M18.5 7.5 C35 5.4 67.5 5.2 81.8 7.6 C91.7 9.2 95.2 15.2 94.3 28.7 C93.6 43.4 94.9 58.7 93.3 73.4 C91.6 87.4 84.1 93.5 70.7 93.2 C53.5 92.9 36.2 95.2 20.1 92.4 C10.8 90.7 6.5 83.6 6.7 70.4 C7.1 56.8 5.9 41.8 6.7 28.4 C7.5 15.7 10.5 8.7 18.5 7.5 Z"/>';
       if (type === 'sketch-diamond') return '<path class="decor-sketch-fill" d="M50.8 4.8 C61.9 17.8 77.3 35.6 95.3 49.4 C78.2 64.5 63.8 80.9 49.9 95.6 C36.6 79.8 20.7 65.7 4.9 50.1 C20.8 35.1 35.5 18.5 50.8 4.8 Z"/>'
         + '<path class="decor-sketch-line" d="M50.8 4.8 C61.9 17.8 77.3 35.6 95.3 49.4 C78.2 64.5 63.8 80.9 49.9 95.6 C36.6 79.8 20.7 65.7 4.9 50.1 C20.8 35.1 35.5 18.5 50.8 4.8 Z"/>';
       if (type === 'sketch-ellipse') return '<path class="decor-sketch-fill" d="M5.3 51.8 C4.6 24.5 24.3 8.2 50.8 8 C77.2 7.8 96.5 24.2 95.6 49.2 C94.8 75.3 75 91.2 48.7 91.9 C23.1 92.5 6.1 76.7 5.3 51.8 Z"/>'
         + '<path class="decor-sketch-line" d="M5.3 51.8 C4.6 24.5 24.3 8.2 50.8 8 C77.2 7.8 96.5 24.2 95.6 49.2 C94.8 75.3 75 91.2 48.7 91.9 C23.1 92.5 6.1 76.7 5.3 51.8 Z"/>';
+      if (type === 'sketch-arrow') return '<path class="decor-sketch-line" d="M6 73 C26 72 42 62 57 52 C70 43 79 35 92 26 M75 20 C82 21 87 23 92 26 C89 34 86 41 81 48"/>';
       if (type === 'arrow') return '<path class="decor-fill" d="M3 37 H61 V17 L97 50 L61 83 V63 H3 Z"/>';
       if (type === 'divider') return '<path class="decor-stroke" d="M3 50 H97"/>';
       if (type === 'dashed-box') return '<rect class="decor-dashed-box" x="4" y="7" width="92" height="86" rx="10"/>';
@@ -4504,12 +5087,43 @@
           + '" width="' + svgNum(100 - x * 2) + '" height="' + svgNum(100 - y * 2) + '" rx="2"/>';
       }
       if (type === 'color-block') return '<rect class="decor-color-block" x="2" y="2" width="96" height="96" rx="8"/>';
-      if (type === 'pill') return '<rect class="decor-pill" x="5" y="22" width="90" height="56" rx="28"/>'
-        + '<circle class="decor-pill-dot" cx="26" cy="50" r="6"/>';
+      if (type === 'pill') return '<rect class="decor-pill" x="4" y="20" width="92" height="60" rx="30"/>';
       if (type === 'corner-frame') return '<path class="decor-corner-frame" d="M7 34 V7 H34 M66 7 H93 V34 M93 66 V93 H66 M34 93 H7 V66"/>';
       if (type === 'bracket') return '<path class="decor-bracket" d="M30 7 H10 V93 H30 M70 7 H90 V93 H70"/>';
+      if (type === 'curly-brace') return '<path class="decor-stroke" d="M78 4 C57 4 55 17 55 30 C55 43 49 49 35 50 C49 51 55 57 55 70 C55 83 57 96 78 96"/>';
       if (type === 'question') return '<circle class="decor-question-bg" cx="50" cy="50" r="43"/>'
         + '<text class="decor-question-mark" x="50" y="57" text-anchor="middle">?</text>';
+      if (type === 'symbol-info') return '<circle class="decor-symbol-fill" cx="50" cy="50" r="42"/>'
+        + '<path class="decor-symbol-stroke" d="M50 43 V73"/><circle class="decor-symbol-dot" cx="50" cy="29" r="4"/>';
+      if (type === 'symbol-idea') return '<path class="decor-symbol-fill" d="M50 8 C30 8 18 22 18 39 C18 52 25 59 33 67 C37 71 38 76 38 80 H62 C62 76 63 71 67 67 C75 59 82 52 82 39 C82 22 70 8 50 8 Z"/>'
+        + '<path class="decor-symbol-stroke" d="M39 88 H61 M43 96 H57 M50 2 V8 M16 13 L9 6 M84 13 L91 6 M8 40 H2 M92 40 H98"/>';
+      if (type === 'symbol-check') return '<circle class="decor-symbol-fill" cx="50" cy="50" r="42"/>'
+        + '<path class="decor-symbol-stroke" d="M28 50 L43 65 L73 33"/>';
+      if (type === 'symbol-cross') return '<circle class="decor-symbol-fill" cx="50" cy="50" r="42"/>'
+        + '<path class="decor-symbol-stroke" d="M33 33 L67 67 M67 33 L33 67"/>';
+      if (type === 'symbol-flag') return '<path class="decor-symbol-stroke" d="M27 91 V10"/>'
+        + '<path class="decor-symbol-fill" d="M29 13 H78 L68 31 L78 49 H29 Z"/>';
+      if (type === 'symbol-warning') return '<path class="decor-symbol-fill" d="M50 7 L94 88 H6 Z"/>'
+        + '<path class="decor-symbol-stroke" d="M50 32 V61"/><circle class="decor-symbol-dot" cx="50" cy="75" r="4"/>';
+      if (type === 'symbol-clock') return '<circle class="decor-symbol-fill" cx="50" cy="50" r="42"/>'
+        + '<path class="decor-symbol-stroke" d="M50 25 V51 L68 62"/>';
+      if (type === 'symbol-flask') return '<path class="decor-symbol-stroke" d="M37 8 H63 M42 8 V36 L18 80 C15 86 19 92 26 92 H74 C81 92 85 86 82 80 L58 36 V8"/>'
+        + '<path class="decor-symbol-fill" d="M25 72 C37 65 47 77 58 70 C67 64 74 70 78 80 C80 84 77 88 72 88 H28 C23 88 20 84 22 80 Z"/>'
+        + '<circle class="decor-symbol-dot" cx="38" cy="57" r="3"/><circle class="decor-symbol-dot" cx="60" cy="52" r="2.6"/>';
+      if (type === 'symbol-reference') return '<path class="decor-symbol-fill" d="M22 7 H62 L78 23 V93 H22 Z"/>'
+        + '<path class="decor-symbol-stroke" d="M62 7 V23 H78 M34 43 H66 M34 57 H66 M34 71 H58"/>';
+      if (type === 'symbol-quote') return '<path class="decor-symbol-fill" d="M9 18 H43 V52 C43 70 34 82 18 90 L10 76 C20 70 25 63 26 54 H9 Z"/>'
+        + '<path class="decor-symbol-fill" d="M57 18 H91 V52 C91 70 82 82 66 90 L58 76 C68 70 73 63 74 54 H57 Z"/>';
+      if (type === 'symbol-observation') return '<circle class="decor-symbol-fill" cx="41" cy="41" r="29"/>'
+        + '<path class="decor-symbol-stroke" d="M62 62 L89 89 M30 41 H52 M41 30 V52"/>';
+      if (type === 'symbol-interface') return '<rect class="decor-symbol-fill" x="8" y="25" width="29" height="50" rx="7"/>'
+        + '<rect class="decor-symbol-fill" x="63" y="25" width="29" height="50" rx="7"/>'
+        + '<path class="decor-symbol-stroke" d="M37 50 H63 M22 39 V61 M78 39 V61"/>';
+      if (type === 'symbol-database') return '<path class="decor-symbol-fill" d="M18 20 C18 9 82 9 82 20 V80 C82 91 18 91 18 80 Z"/>'
+        + '<path class="decor-symbol-stroke" d="M18 20 C18 31 82 31 82 20 M18 40 C18 51 82 51 82 40 M18 60 C18 71 82 71 82 60"/>';
+      if (type === 'symbol-dataset') return '<rect class="decor-symbol-fill" x="12" y="12" width="76" height="76" rx="5"/>'
+        + '<path class="decor-symbol-stroke" d="M12 34 H88 M12 61 H88 M37 34 V88 M63 34 V88"/>';
+      if (type === 'symbol-filter') return '<path class="decor-symbol-fill" d="M10 14 H90 L60 51 V84 L40 94 V51 Z"/>';
       if (type === 'slider') {
         const progress = Math.max(0, Math.min(100, node.progress == null ? 50 : Number(node.progress)));
         const fillHeight = progress * 0.92;
@@ -5071,13 +5685,14 @@
     const BODY_RESET_MS = 240;
     const bodyResetJobs = new Map();
     function isMindmapWidthNode(node) {
-      return !!node && !isDecorationNode(node)
+      return !!node && !isDecorationNode(node) && !isTableNode(node)
         && (!!node.mindmapStylePreset || !!node.mindmapRoot || currentMode() === 'mindmap');
     }
     function isWidthResizableNode(node) {
-      return isBodyNode(node) || isMindmapWidthNode(node);
+      return isBodyNode(node) || isTableNode(node) || isMindmapWidthNode(node);
     }
     function bodyMinWidth(node) {
+      if (isTableNode(node)) return 320;
       return isMindmapWidthNode(node) ? 72 : BODY_MIN_W;
     }
     function defaultBodyHeight(node) {
@@ -5087,6 +5702,8 @@
       if (!isWidthResizableNode(node)) return;
       let wrap = el.querySelector('.body-resize-handles');
       let dirs = isBodyHeightResizable(node) ? ['n', 's', 'e', 'w'] : ['e', 'w'];
+      // 表格左侧让给整块拖动检测带；缩放仍可从上、右、下三边完成。
+      if (isTableNode(node)) dirs = ['n', 's', 'e'];
       if (isMindmapWidthNode(node)) dirs = dirs.concat(['ne', 'nw', 'se', 'sw']);
       const signature = dirs.join('');
       if (!wrap || wrap.dataset.dirs !== signature) {
@@ -5111,6 +5728,7 @@
 
     function bodyResizeContentEl(el, node) {
       if (!el || !isBodyHeightResizable(node)) return null;
+      if (isTableNode(node)) return el.querySelector('.table-grid-scroll');
       if (isPreviewNode(node)) return el.querySelector('.preview-node-body');
       if (isCardNode(node)) {
         return el.querySelector('.preview-node-body') || el.querySelector(':scope > .node-text:first-child');
@@ -5144,6 +5762,7 @@
         return;
       }
       const nodeScale = Math.max(0.1, Number(node.scale) || 1);
+      const startTableScale = isTableNode(node) ? normalizedTableScale(node.tableScale) : 1;
       const startBodyH = Number(node.bodyHeight) > 0
         ? Math.max(BODY_MIN_H, Number(node.bodyHeight))
         : (isPreviewNode(node)
@@ -5167,6 +5786,9 @@
         startVisibleBodyH: Math.min(startBodyH * nodeScale,
           content ? content.scrollHeight : startBodyH * nodeScale),
         startStoredBodyH: node.bodyHeight,
+        startStoredTableScale: node.tableScale,
+        startTableScale: startTableScale,
+        startOuterW: el ? el.offsetWidth : startW,
         startOuterH: el ? el.offsetHeight : 40,
         startStoredMindmapMinHeight: node.mindmapMinHeight,
         startMindmapSizeMode: node.mindmapSizeMode,
@@ -5202,6 +5824,36 @@
         el.style.maxWidth = nextW + 'px';
         el.style.minHeight = nextH + 'px';
         applyTransform(el, node.x, node.y);
+      } else if (isTableNode(node)) {
+        const horizontalTable = drag.dir === 'e' || drag.dir === 'w';
+        const leadingEdge = drag.dir === 'w' || drag.dir === 'n';
+        const signedDelta = horizontalTable
+          ? (drag.dir === 'w' ? -dx : dx)
+          : (drag.dir === 'n' ? -dy : dy);
+        const startExtent = horizontalTable ? drag.startOuterW : drag.startOuterH;
+        const minExtent = horizontalTable ? 260 : 72;
+        // 四条边都只改变一个比例真源。按当前真实宽/高换算，短表与长表的手柄
+        // 都会跟随指针，不再出现“外框变了、字体和按钮没变”的割裂。
+        const targetExtent = Math.max(minExtent, startExtent + signedDelta);
+        const nextScale = normalizedTableScale(
+          drag.startTableScale * targetExtent / Math.max(minExtent, startExtent)
+        );
+        if (nextScale === 1) delete node.tableScale;
+        else node.tableScale = nextScale;
+        delete node.width;
+        delete node.bodyHeight;
+        if (!el) return;
+        el.style.removeProperty('width');
+        el.style.removeProperty('min-width');
+        el.style.removeProperty('max-width');
+        el.style.removeProperty('--node-body-height');
+        el.style.setProperty('--table-scale', nextScale);
+        if (leadingEdge) {
+          if (drag.dir === 'w') node.x = Math.round(drag.startX + drag.startOuterW - el.offsetWidth);
+          else node.y = Math.round(drag.startY + drag.startOuterH - el.offsetHeight);
+          applyTransform(el, node.x, node.y);
+        }
+        nodeSizeCache.delete(node.id);
       } else if (drag.dir === 'e' || drag.dir === 'w') {
         let nextW = east ? drag.startW + dx : drag.startW - dx;
         nextW = Math.max(bodyMinWidth(node), Math.min(BODY_MAX_W, Math.round(nextW)));
@@ -5234,9 +5886,35 @@
       e.stopPropagation();
       if (!isWidthResizableNode(node) || bodyResetJobs.has(node.id)) return;
       const horizontal = dir === 'e' || dir === 'w';
-      if (horizontal ? !(Number(node.width) > 0) : !(Number(node.bodyHeight) > 0)) return;
       const el = nodeMap.get(node.id);
       if (!el) return;
+      if (isTableNode(node)) {
+        const startScale = normalizedTableScale(node.tableScale);
+        if (startScale === 1
+            && !Object.prototype.hasOwnProperty.call(node, 'width')
+            && !Object.prototype.hasOwnProperty.call(node, 'bodyHeight')) return;
+        selectNodes([node.id], false);
+        const startX = Number(node.x) || 0;
+        const startY = Number(node.y) || 0;
+        const startOuterW = el.offsetWidth;
+        const startOuterH = el.offsetHeight;
+        delete node.tableScale;
+        delete node.width;
+        delete node.bodyHeight;
+        applyNodeStyle(el, node);
+        if (dir === 'w') node.x = Math.round(startX + startOuterW - el.offsetWidth);
+        if (dir === 'n') node.y = Math.round(startY + startOuterH - el.offsetHeight);
+        if (dir === 'w' || dir === 'n') {
+          applyTransform(el, node.x, node.y);
+        }
+        nodeSizeCache.delete(node.id);
+        edgesIncidentTo(new Set([node.id])).forEach(updateEdgePath);
+        redrawMinimap();
+        pushHistory();
+        notify();
+        return;
+      }
+      if (horizontal ? !(Number(node.width) > 0) : !(Number(node.bodyHeight) > 0)) return;
       selectNodes([node.id], false);
       if (!horizontal) el.classList.add('body-height-active', 'body-resize-resetting');
       const startX = Number(node.x) || 0;
@@ -5475,6 +6153,14 @@
       let previewBody = el.querySelector('.preview-node-body');
       let codeLabel = el.querySelector('.code-node-language');
       let copyBtn = el.querySelector('.code-copy-btn');
+      if (isTableNode(node)) {
+        if (meta) meta.remove();
+        if (previewBody) previewBody.remove();
+        if (codeLabel) codeLabel.remove();
+        if (copyBtn) copyBtn.remove();
+        el.classList.remove('node-card-filled');
+        return;
+      }
       if (!isReadableNode(node)) {
         if (meta) meta.remove();
         if (previewBody) previewBody.remove();
@@ -5779,8 +6465,8 @@
         });
         el.appendChild(removeBtn);
 
-        renderNodeChecklist(el, node);   // 悬停左侧任务清单
-        ensureMindmapFoldControl(el, node);
+        if (!isTableNode(node)) renderNodeChecklist(el, node);   // 悬停左侧任务清单
+        if (!isTableNode(node)) ensureMindmapFoldControl(el, node);
         ensureBodyResizeHandles(el, node);   // 卡片/代码/便签/预览：拖左右边缘改宽
       }
       if (hiddenMindmapNodeIds.has(node.id)) el.classList.add('mindmap-fold-hidden');
@@ -5996,7 +6682,7 @@
       const out = [];
       selectedNodeIds.forEach((id) => {
         const n = findNode(id);
-        if (n && !isDecorationNode(n)) out.push(n);
+        if (n && !isDecorationNode(n) && !isTableNode(n)) out.push(n);
       });
       return out;
     }
@@ -7407,9 +8093,11 @@
       circle: { width: 150, height: 150 },
       triangle: { width: 170, height: 150 },
       diamond: { width: 170, height: 150 },
+      parallelogram: { width: 210, height: 125 },
       'sketch-rounded-rect': { width: 220, height: 150 },
       'sketch-diamond': { width: 170, height: 170 },
       'sketch-ellipse': { width: 240, height: 140 },
+      'sketch-arrow': { width: 230, height: 100 },
       arrow: { width: 230, height: 100 },
       divider: { width: 280, height: 30 },
       slider: { width: 34, height: 260 },
@@ -7419,7 +8107,51 @@
       pill: { width: 220, height: 90 },
       'corner-frame': { width: 220, height: 160 },
       bracket: { width: 180, height: 220 },
+      'curly-brace': { width: 80, height: 240 },
       question: { width: 110, height: 110 },
+      'symbol-info': { width: 110, height: 110 },
+      'symbol-idea': { width: 110, height: 110 },
+      'symbol-check': { width: 110, height: 110 },
+      'symbol-cross': { width: 110, height: 110 },
+      'symbol-flag': { width: 120, height: 110 },
+      'symbol-warning': { width: 110, height: 110 },
+      'symbol-clock': { width: 110, height: 110 },
+      'symbol-flask': { width: 110, height: 125 },
+      'symbol-reference': { width: 100, height: 120 },
+      'symbol-quote': { width: 120, height: 100 },
+      'symbol-observation': { width: 115, height: 115 },
+      'symbol-interface': { width: 150, height: 110 },
+      'symbol-database': { width: 120, height: 110 },
+      'symbol-dataset': { width: 120, height: 110 },
+      'symbol-filter': { width: 110, height: 125 },
+    };
+    // 这些图案依靠稳定轮廓传达语义：只在新建拖拽期间按设计比例辅助，
+    // 对象落地后不保存锁定状态，宽高滑条和八向手柄仍可完全自由调整。
+    const DECOR_CREATION_ASPECT_RATIOS = {
+      diamond: 1,
+      'sketch-diamond': 1,
+      'sketch-arrow': 120 / 52,
+      arrow: 110 / 48,
+      pill: 110 / 50,
+      parallelogram: 104 / 64,
+      bracket: 110 / 140,
+      'curly-brace': 44 / 120,
+      question: 1,
+      'symbol-info': 1,
+      'symbol-idea': 1,
+      'symbol-check': 1,
+      'symbol-cross': 1,
+      'symbol-flag': 82 / 74,
+      'symbol-warning': 1,
+      'symbol-clock': 1,
+      'symbol-flask': 72 / 82,
+      'symbol-reference': 66 / 78,
+      'symbol-quote': 82 / 68,
+      'symbol-observation': 1,
+      'symbol-interface': 4 / 3,
+      'symbol-database': 82 / 72,
+      'symbol-dataset': 82 / 72,
+      'symbol-filter': 72 / 82,
     };
     const DECOR_TEXT_PRESETS = {
       'emphasis-card': {
@@ -7449,12 +8181,220 @@
         layer: 'front',
       },
     };
-    let dpEmpty, dpSelection, dpKindLabel, dpWidth, dpWidthVal, dpHeight, dpHeightVal;
+    function freezeStructurePreset(value) {
+      if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+      Object.keys(value).forEach((key) => freezeStructurePreset(value[key]));
+      return Object.freeze(value);
+    }
+    const STRUCTURE_PRESETS = freezeStructurePreset([
+      {
+        id: 'research-chain',
+        title: { zh: '研究链', en: 'Research Chain' },
+        description: { zh: '从假设推进到方法与结果', en: 'Move from a hypothesis to method and result' },
+        w: 610,
+        h: 94,
+        nodes: [
+          { id: 'hypothesis', kind: 'card', x: 0, y: 18, width: 170, textLabel: { zh: '假设', en: 'Hypothesis' }, bgColor: '#e6eff4', borderColor: '#718da3', radius: 12, fontWeight: 650, textAlign: 'center' },
+          { id: 'method', kind: 'card', x: 220, y: 18, width: 170, textLabel: { zh: '方法', en: 'Method' }, bgColor: '#e6eff4', borderColor: '#718da3', radius: 12, fontWeight: 650, textAlign: 'center' },
+          { id: 'result', kind: 'card', x: 440, y: 18, width: 170, textLabel: { zh: '结果', en: 'Result' }, bgColor: '#e6eff4', borderColor: '#718da3', radius: 12, fontWeight: 650, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'hypothesis-method', from: 'hypothesis', to: 'method', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#64736d', width: 1.8, lineStyle: 'solid' },
+          { id: 'method-result', from: 'method', to: 'result', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#64736d', width: 1.8, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'system-boundary',
+        title: { zh: '系统边界', en: 'System Boundary' },
+        description: { zh: '明确输入、系统范围与输出', en: 'Clarify inputs, system scope, and outputs' },
+        w: 650,
+        h: 168,
+        nodes: [
+          { id: 'boundary', kind: 'shape', shapeType: 'group-box', x: 205, y: 0, width: 240, height: 168, titleLabel: { zh: '系统边界', en: 'System Boundary' }, fillMode: 'none', fillColor: '#edf2e8', borderColor: '#73866f', titleColor: '#ffffff', borderWidth: 2, borderStyle: 'dashed', opacity: 0.9, layer: 'back' },
+          { id: 'input', kind: 'card', x: 0, y: 60, width: 160, textLabel: { zh: '输入', en: 'Input' }, bgColor: '#e8f0e5', borderColor: '#73866f', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'system', kind: 'card', x: 240, y: 60, width: 170, textLabel: { zh: '系统 / 模型', en: 'System / Model' }, bgColor: '#e8f0e5', borderColor: '#73866f', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'output', kind: 'card', x: 490, y: 60, width: 160, textLabel: { zh: '输出', en: 'Output' }, bgColor: '#e8f0e5', borderColor: '#73866f', radius: 10, fontWeight: 650, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'input-system', from: 'input', to: 'system', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#657268', width: 1.8, lineStyle: 'solid' },
+          { id: 'system-output', from: 'system', to: 'output', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#657268', width: 1.8, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'controlled-experiment',
+        title: { zh: '对照实验', en: 'Controlled Experiment' },
+        description: { zh: '并列比较实验组与对照组', en: 'Compare experimental and control groups' },
+        w: 500,
+        h: 190,
+        nodes: [
+          { id: 'experimental', kind: 'card', x: 0, y: 0, width: 180, textLabel: { zh: '实验组', en: 'Experimental Group' }, bgColor: '#f6f0df', borderColor: '#9e835e', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'control', kind: 'card', x: 0, y: 120, width: 180, textLabel: { zh: '对照组', en: 'Control Group' }, bgColor: '#f6f0df', borderColor: '#9e835e', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'comparison', kind: 'card', x: 320, y: 60, width: 180, textLabel: { zh: '比较结论', en: 'Comparison' }, bgColor: '#f6f0df', borderColor: '#9e835e', radius: 10, fontWeight: 650, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'experimental-comparison', from: 'experimental', to: 'comparison', text: '', arrow: 'end', arrowSize: 11, curve: 'branch', color: '#756d60', width: 1.8, lineStyle: 'solid' },
+          { id: 'control-comparison', from: 'control', to: 'comparison', text: '', arrow: 'end', arrowSize: 11, curve: 'branch', color: '#756d60', width: 1.8, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'argument-frame',
+        title: { zh: '论证框架', en: 'Argument Frame' },
+        description: { zh: '让观点同时接受证据与局限检验', en: 'Test a claim against evidence and limitations' },
+        w: 500,
+        h: 190,
+        nodes: [
+          { id: 'claim', kind: 'card', x: 0, y: 60, width: 180, textLabel: { zh: '观点', en: 'Claim' }, bgColor: '#ece7f3', borderColor: '#88789e', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'evidence', kind: 'card', x: 320, y: 0, width: 180, textLabel: { zh: '证据', en: 'Evidence' }, bgColor: '#ece7f3', borderColor: '#88789e', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'limits', kind: 'card', x: 320, y: 120, width: 180, textLabel: { zh: '局限', en: 'Limitations' }, bgColor: '#ece7f3', borderColor: '#88789e', radius: 10, fontWeight: 650, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'claim-evidence', from: 'claim', to: 'evidence', text: '', arrow: 'end', arrowSize: 11, curve: 'branch', color: '#706a78', width: 1.8, lineStyle: 'solid' },
+          { id: 'claim-limits', from: 'claim', to: 'limits', text: '', arrow: 'end', arrowSize: 11, curve: 'branch', color: '#706a78', width: 1.8, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'validation-loop',
+        title: { zh: '验证闭环', en: 'Validation Loop' },
+        description: { zh: '让模型、预测、实验与修正持续迭代', en: 'Iterate model, prediction, experiment, and revision' },
+        w: 600,
+        h: 270,
+        nodes: [
+          { id: 'model', kind: 'card', x: 0, y: 18, width: 180, textLabel: { zh: '模型', en: 'Model' }, bgColor: '#e4eeea', borderColor: '#66877a', radius: 12, fontWeight: 650, textAlign: 'center' },
+          { id: 'prediction', kind: 'card', x: 420, y: 18, width: 180, textLabel: { zh: '预测', en: 'Prediction' }, bgColor: '#e4eeea', borderColor: '#66877a', radius: 12, fontWeight: 650, textAlign: 'center' },
+          { id: 'experiment', kind: 'card', x: 420, y: 196, width: 180, textLabel: { zh: '实验', en: 'Experiment' }, bgColor: '#e4eeea', borderColor: '#66877a', radius: 12, fontWeight: 650, textAlign: 'center' },
+          { id: 'revision', kind: 'card', x: 0, y: 196, width: 180, textLabel: { zh: '修正', en: 'Revision' }, bgColor: '#e4eeea', borderColor: '#66877a', radius: 12, fontWeight: 650, textAlign: 'center' },
+          { id: 'verified', kind: 'shape', shapeType: 'symbol-check', x: 272, y: 107, width: 56, height: 56, fillMode: 'solid', fillColor: '#d6e7dd', borderColor: '#527762', opacity: 0.92, layer: 'back' },
+        ],
+        edges: [
+          { id: 'model-prediction', from: 'model', to: 'prediction', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#61756d', width: 1.8, lineStyle: 'solid' },
+          { id: 'prediction-experiment', from: 'prediction', to: 'experiment', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#61756d', width: 1.8, lineStyle: 'solid' },
+          { id: 'experiment-revision', from: 'experiment', to: 'revision', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#61756d', width: 1.8, lineStyle: 'solid' },
+          { id: 'revision-model', from: 'revision', to: 'model', text: '', arrow: 'end', arrowSize: 11, curve: 'straight', color: '#61756d', width: 1.8, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'fault-tree',
+        title: { zh: '故障树', en: 'Fault Tree' },
+        description: { zh: '从顶层故障逐层拆解直接原因与防护缺口', en: 'Decompose a top event into causes and safeguard gaps' },
+        w: 680,
+        h: 310,
+        nodes: [
+          { id: 'warning', kind: 'shape', shapeType: 'symbol-warning', x: 183, y: 7, width: 58, height: 58, fillMode: 'solid', fillColor: '#f1dfbd', borderColor: '#956f34', opacity: 0.94, layer: 'back' },
+          { id: 'top-event', kind: 'card', x: 250, y: 10, width: 180, textLabel: { zh: '顶层故障', en: 'Top Event' }, bgColor: '#f2e2dc', borderColor: '#966d61', radius: 10, fontWeight: 680, textAlign: 'center' },
+          { id: 'direct-cause', kind: 'card', x: 0, y: 125, width: 180, textLabel: { zh: '直接原因', en: 'Direct Cause' }, bgColor: '#f5ebe6', borderColor: '#9b7468', radius: 10, fontWeight: 630, textAlign: 'center' },
+          { id: 'trigger', kind: 'card', x: 250, y: 125, width: 180, textLabel: { zh: '诱发条件', en: 'Trigger' }, bgColor: '#f5ebe6', borderColor: '#9b7468', radius: 10, fontWeight: 630, textAlign: 'center' },
+          { id: 'safeguard', kind: 'card', x: 500, y: 125, width: 180, textLabel: { zh: '防护失效', en: 'Safeguard Failure' }, bgColor: '#f5ebe6', borderColor: '#9b7468', radius: 10, fontWeight: 630, textAlign: 'center' },
+          { id: 'hardware', kind: 'card', x: 20, y: 245, width: 170, textLabel: { zh: '硬件因素', en: 'Hardware Factor' }, bgColor: '#f8f0ec', borderColor: '#a18478', radius: 10, fontWeight: 600, textAlign: 'center' },
+          { id: 'software', kind: 'card', x: 210, y: 245, width: 170, textLabel: { zh: '软件因素', en: 'Software Factor' }, bgColor: '#f8f0ec', borderColor: '#a18478', radius: 10, fontWeight: 600, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'top-direct', from: 'top-event', to: 'direct-cause', text: '', arrow: 'none', curve: 'branch', color: '#786b66', width: 1.8, lineStyle: 'solid' },
+          { id: 'top-trigger', from: 'top-event', to: 'trigger', text: '', arrow: 'none', curve: 'straight', color: '#786b66', width: 1.8, lineStyle: 'solid' },
+          { id: 'top-safeguard', from: 'top-event', to: 'safeguard', text: '', arrow: 'none', curve: 'branch', color: '#786b66', width: 1.8, lineStyle: 'solid' },
+          { id: 'direct-hardware', from: 'direct-cause', to: 'hardware', text: '', arrow: 'none', curve: 'branch', color: '#887771', width: 1.6, lineStyle: 'solid' },
+          { id: 'direct-software', from: 'direct-cause', to: 'software', text: '', arrow: 'none', curve: 'branch', color: '#887771', width: 1.6, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'research-question-canvas',
+        title: { zh: '研究问题画布', en: 'Research Question Canvas' },
+        description: { zh: '围绕核心问题组织理论、数据、方法与约束', en: 'Organize theory, data, method, and constraints around a question' },
+        w: 660,
+        h: 300,
+        nodes: [
+          { id: 'focus-frame', kind: 'shape', shapeType: 'corner-frame', x: 218, y: 91, width: 224, height: 118, fillMode: 'none', fillColor: '#e5eaf0', borderColor: '#708092', opacity: 0.82, layer: 'back' },
+          { id: 'question', kind: 'card', x: 240, y: 122, width: 180, textLabel: { zh: '研究问题', en: 'Research Question' }, bgColor: '#e3e9f0', borderColor: '#6e7f92', radius: 12, fontWeight: 700, textAlign: 'center' },
+          { id: 'theory', kind: 'card', x: 0, y: 12, width: 180, textLabel: { zh: '理论依据', en: 'Theory' }, bgColor: '#edf0f4', borderColor: '#7b8795', radius: 10, fontWeight: 620, textAlign: 'center' },
+          { id: 'data', kind: 'card', x: 480, y: 12, width: 180, textLabel: { zh: '数据来源', en: 'Data Sources' }, bgColor: '#edf0f4', borderColor: '#7b8795', radius: 10, fontWeight: 620, textAlign: 'center' },
+          { id: 'method', kind: 'card', x: 0, y: 232, width: 180, textLabel: { zh: '研究方法', en: 'Method' }, bgColor: '#edf0f4', borderColor: '#7b8795', radius: 10, fontWeight: 620, textAlign: 'center' },
+          { id: 'constraints', kind: 'card', x: 480, y: 232, width: 180, textLabel: { zh: '边界 / 约束', en: 'Scope / Constraints' }, bgColor: '#edf0f4', borderColor: '#7b8795', radius: 10, fontWeight: 620, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'question-theory', from: 'question', to: 'theory', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#68737e', width: 1.7, lineStyle: 'solid' },
+          { id: 'question-data', from: 'question', to: 'data', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#68737e', width: 1.7, lineStyle: 'solid' },
+          { id: 'question-method', from: 'question', to: 'method', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#68737e', width: 1.7, lineStyle: 'solid' },
+          { id: 'question-constraints', from: 'question', to: 'constraints', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#68737e', width: 1.7, lineStyle: 'solid' },
+        ],
+      },
+      {
+        id: 'v-model',
+        title: { zh: 'V 型验证', en: 'V-Model Verification' },
+        description: { zh: '让设计分解与测试验证逐层对应', en: 'Pair design decomposition with verification activities' },
+        w: 720,
+        h: 330,
+        nodes: [
+          { id: 'decompose-label', kind: 'textBox', x: 5, y: 0, width: 170, height: 34, textLabel: { zh: '分解 ↓', en: 'Decompose ↓' }, fontSize: 17, color: '#566a75', fontWeight: 650, textAlign: 'center', opacity: 0.9, rotation: 0, layer: 'front' },
+          { id: 'verify-label', kind: 'textBox', x: 545, y: 0, width: 170, height: 34, textLabel: { zh: '集成与验证 ↑', en: 'Integrate & verify ↑' }, fontSize: 17, color: '#566a75', fontWeight: 650, textAlign: 'center', opacity: 0.9, rotation: 0, layer: 'front' },
+          { id: 'requirements', kind: 'card', x: 0, y: 55, width: 180, textLabel: { zh: '需求', en: 'Requirements' }, bgColor: '#e6edf1', borderColor: '#6e8490', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'design', kind: 'card', x: 120, y: 150, width: 180, textLabel: { zh: '设计', en: 'Design' }, bgColor: '#e6edf1', borderColor: '#6e8490', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'implementation', kind: 'card', x: 270, y: 255, width: 180, textLabel: { zh: '实现', en: 'Implementation' }, bgColor: '#dce8ec', borderColor: '#607c86', radius: 12, fontWeight: 700, textAlign: 'center' },
+          { id: 'verification', kind: 'card', x: 420, y: 150, width: 180, textLabel: { zh: '验证', en: 'Verification' }, bgColor: '#e6edf1', borderColor: '#6e8490', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'validation', kind: 'card', x: 540, y: 55, width: 180, textLabel: { zh: '确认', en: 'Validation' }, bgColor: '#e6edf1', borderColor: '#6e8490', radius: 10, fontWeight: 650, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'requirements-design', from: 'requirements', to: 'design', text: '', arrow: 'end', arrowSize: 10, curve: 'straight', color: '#60717a', width: 1.8, lineStyle: 'solid' },
+          { id: 'design-implementation', from: 'design', to: 'implementation', text: '', arrow: 'end', arrowSize: 10, curve: 'straight', color: '#60717a', width: 1.8, lineStyle: 'solid' },
+          { id: 'implementation-verification', from: 'implementation', to: 'verification', text: '', arrow: 'end', arrowSize: 10, curve: 'straight', color: '#60717a', width: 1.8, lineStyle: 'solid' },
+          { id: 'verification-validation', from: 'verification', to: 'validation', text: '', arrow: 'end', arrowSize: 10, curve: 'straight', color: '#60717a', width: 1.8, lineStyle: 'solid' },
+          { id: 'requirements-validation', from: 'requirements', to: 'validation', text: '', arrow: 'none', curve: 'straight', color: '#87959c', width: 1.4, lineStyle: 'dashed' },
+          { id: 'design-verification', from: 'design', to: 'verification', text: '', arrow: 'none', curve: 'straight', color: '#87959c', width: 1.4, lineStyle: 'dashed' },
+        ],
+      },
+      {
+        id: 'risk-quadrants',
+        title: { zh: '风险四象限', en: 'Risk Quadrants' },
+        description: { zh: '按发生概率与影响安排风险响应优先级', en: 'Prioritize responses by likelihood and impact' },
+        w: 650,
+        h: 370,
+        nodes: [
+          { id: 'mitigate-bg', kind: 'shape', shapeType: 'color-block', x: 100, y: 0, width: 240, height: 140, fillMode: 'solid', fillColor: '#e9dfca', borderColor: '#e9dfca', opacity: 0.48, layer: 'back' },
+          { id: 'priority-bg', kind: 'shape', shapeType: 'color-block', x: 350, y: 0, width: 240, height: 140, fillMode: 'solid', fillColor: '#ead9d7', borderColor: '#ead9d7', opacity: 0.48, layer: 'back' },
+          { id: 'monitor-bg', kind: 'shape', shapeType: 'color-block', x: 100, y: 160, width: 240, height: 140, fillMode: 'solid', fillColor: '#e3e7e3', borderColor: '#e3e7e3', opacity: 0.5, layer: 'back' },
+          { id: 'contingency-bg', kind: 'shape', shapeType: 'color-block', x: 350, y: 160, width: 240, height: 140, fillMode: 'solid', fillColor: '#dfe7ed', borderColor: '#dfe7ed', opacity: 0.5, layer: 'back' },
+          { id: 'likelihood-label', kind: 'textBox', x: 3, y: 126, width: 90, height: 34, textLabel: { zh: '发生概率 ↑', en: 'Likelihood ↑' }, fontSize: 16, color: '#606762', fontWeight: 650, textAlign: 'center', opacity: 0.92, rotation: -90, layer: 'front' },
+          { id: 'impact-label', kind: 'textBox', x: 315, y: 326, width: 160, height: 34, textLabel: { zh: '影响程度 →', en: 'Impact →' }, fontSize: 16, color: '#606762', fontWeight: 650, textAlign: 'center', opacity: 0.92, rotation: 0, layer: 'front' },
+          { id: 'mitigate', kind: 'card', x: 130, y: 43, width: 180, textLabel: { zh: '缓解', en: 'Mitigate' }, bgColor: '#f4edde', borderColor: '#99835e', radius: 10, fontWeight: 650, textAlign: 'center' },
+          { id: 'priority', kind: 'card', x: 380, y: 43, width: 180, textLabel: { zh: '优先处理', en: 'Prioritize' }, bgColor: '#f3e6e4', borderColor: '#98706c', radius: 10, fontWeight: 680, textAlign: 'center' },
+          { id: 'monitor', kind: 'card', x: 130, y: 203, width: 180, textLabel: { zh: '监测', en: 'Monitor' }, bgColor: '#eef0ed', borderColor: '#7d857f', radius: 10, fontWeight: 620, textAlign: 'center' },
+          { id: 'contingency', kind: 'card', x: 380, y: 203, width: 180, textLabel: { zh: '预案', en: 'Contingency' }, bgColor: '#eaf0f4', borderColor: '#718696', radius: 10, fontWeight: 650, textAlign: 'center' },
+        ],
+        edges: [],
+      },
+      {
+        id: 'decision-tree',
+        title: { zh: '决策树', en: 'Decision Tree' },
+        description: { zh: '从决策问题展开备选路径与对应结果', en: 'Branch a decision into options and their outcomes' },
+        w: 700,
+        h: 356,
+        nodes: [
+          { id: 'decision', kind: 'card', x: 0, y: 150, width: 160, textLabel: { zh: '决策问题', en: 'Decision' }, bgColor: '#dfe8ec', borderColor: '#647d89', radius: 12, fontWeight: 700, textAlign: 'center' },
+          { id: 'option-a', kind: 'card', x: 260, y: 70, width: 160, textLabel: { zh: '选项 A', en: 'Option A' }, bgColor: '#e6edef', borderColor: '#6e838c', radius: 11, fontWeight: 650, textAlign: 'center' },
+          { id: 'option-b', kind: 'card', x: 260, y: 230, width: 160, textLabel: { zh: '选项 B', en: 'Option B' }, bgColor: '#e6edef', borderColor: '#6e838c', radius: 11, fontWeight: 650, textAlign: 'center' },
+          { id: 'outcome-a1', kind: 'card', x: 540, y: 0, width: 160, textLabel: { zh: '结果 A1', en: 'Outcome A1' }, bgColor: '#edf1f2', borderColor: '#788a91', radius: 10, fontWeight: 610, textAlign: 'center' },
+          { id: 'outcome-a2', kind: 'card', x: 540, y: 100, width: 160, textLabel: { zh: '结果 A2', en: 'Outcome A2' }, bgColor: '#edf1f2', borderColor: '#788a91', radius: 10, fontWeight: 610, textAlign: 'center' },
+          { id: 'outcome-b1', kind: 'card', x: 540, y: 200, width: 160, textLabel: { zh: '结果 B1', en: 'Outcome B1' }, bgColor: '#edf1f2', borderColor: '#788a91', radius: 10, fontWeight: 610, textAlign: 'center' },
+          { id: 'outcome-b2', kind: 'card', x: 540, y: 300, width: 160, textLabel: { zh: '结果 B2', en: 'Outcome B2' }, bgColor: '#edf1f2', borderColor: '#788a91', radius: 10, fontWeight: 610, textAlign: 'center' },
+        ],
+        edges: [
+          { id: 'decision-option-a', from: 'decision', to: 'option-a', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#64747a', width: 1.8, lineStyle: 'solid' },
+          { id: 'decision-option-b', from: 'decision', to: 'option-b', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#64747a', width: 1.8, lineStyle: 'solid' },
+          { id: 'option-a-outcome-a1', from: 'option-a', to: 'outcome-a1', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#6d797d', width: 1.7, lineStyle: 'solid' },
+          { id: 'option-a-outcome-a2', from: 'option-a', to: 'outcome-a2', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#6d797d', width: 1.7, lineStyle: 'solid' },
+          { id: 'option-b-outcome-b1', from: 'option-b', to: 'outcome-b1', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#6d797d', width: 1.7, lineStyle: 'solid' },
+          { id: 'option-b-outcome-b2', from: 'option-b', to: 'outcome-b2', text: '', arrow: 'end', arrowSize: 10, curve: 'branch', color: '#6d797d', width: 1.7, lineStyle: 'solid' },
+        ],
+      },
+    ]);
+    let dpEmpty, dpSelection, dpCreationLibrary, dpCategorySelect, dpCategoryEmpty, dpPanelBody;
+    let decorCategorySections = [];
+    let dpStructurePresets;
+    let decorPanelContextSignature = '';
+    let dpKindLabel, dpWidth, dpWidthVal, dpHeight, dpHeightVal;
     let dpFontSize, dpFontSizeVal, dpFontSizeWrap, dpRotation, dpRotationVal, dpOpacity, dpOpacityVal;
     let dpShapeColors, dpBorder, dpBorderState, dpFill, dpFillState, dpTextColor, dpTextColorState, dpTextColorWrap;
     let dpBorderWidth, dpBorderWidthVal, dpBorderWidthWrap, dpBorderStyleWrap, dpBorderStyleBtns, dpBorderStyleState;
     let dpBorderWrap, dpFillWrap, dpFillLabel, dpFillModeWrap, dpFillModeBtns, dpColorPresets;
-    let dpFillModeState, dpColorPresetsWrap, dpColorPresetsLabel, dpGroupPresets, dpGroupPresetMode, dpGroupPresetHint;
+    let dpFillModeState, dpColorPresetsWrap, dpColorPresetsLabel, dpGroupPresetHead, dpGroupPresets, dpGroupPresetMode, dpGroupPresetHint;
     let dpTitleToneWrap, dpTitleToneBtns, dpTitleToneState;
     let dpProgressWrap, dpProgress, dpProgressVal, dpLayerBtns, dpLayerState, dpStackWrap, dpStackBtns, dpStackHint;
     let dpAddImage, dpAddAttachment, dpResetFill, dpResetDefaults;
@@ -7512,10 +8452,44 @@
       else if (shapeType === 'question') defaultBorder = '#1f1f1f';
       else if (shapeType === 'group-box') defaultBorder = '#d6b96a';
       else if (shapeType === 'color-block') defaultBorder = '#d9b7ad';
-      else if (shapeType === 'corner-frame' || shapeType === 'bracket') defaultBorder = '#1f1f1f';
+      else if (shapeType === 'corner-frame' || shapeType === 'bracket' || shapeType === 'curly-brace') defaultBorder = '#1f1f1f';
+      else if (shapeType === 'pill') defaultBorder = '#677b89';
+      else if (shapeType === 'parallelogram') defaultBorder = '#71866f';
+      else if (shapeType === 'symbol-info') defaultBorder = '#55758a';
+      else if (shapeType === 'symbol-idea') defaultBorder = '#987423';
+      else if (shapeType === 'symbol-check') defaultBorder = '#4f8061';
+      else if (shapeType === 'symbol-cross') defaultBorder = '#a55f63';
+      else if (shapeType === 'symbol-flag') defaultBorder = '#a65c59';
+      else if (shapeType === 'symbol-warning') defaultBorder = '#9a6c1f';
+      else if (shapeType === 'symbol-clock') defaultBorder = '#547689';
+      else if (shapeType === 'symbol-flask') defaultBorder = '#4f858b';
+      else if (shapeType === 'symbol-reference') defaultBorder = '#4e7769';
+      else if (shapeType === 'symbol-quote') defaultBorder = '#775e78';
+      else if (shapeType === 'symbol-observation') defaultBorder = '#5b7669';
+      else if (shapeType === 'symbol-interface') defaultBorder = '#596f78';
+      else if (shapeType === 'symbol-database') defaultBorder = '#526f83';
+      else if (shapeType === 'symbol-dataset') defaultBorder = '#526f83';
+      else if (shapeType === 'symbol-filter') defaultBorder = '#8a7048';
       let defaultFill = DECOR_DEFAULT_FILL;
       if (shapeType === 'group-box') defaultFill = '#fffdf3';
       else if (shapeType === 'color-block') defaultFill = '#d9b7ad';
+      else if (shapeType === 'pill') defaultFill = '#e5ecef';
+      else if (shapeType === 'parallelogram') defaultFill = '#e6ede4';
+      else if (shapeType === 'symbol-info') defaultFill = '#dfe9ee';
+      else if (shapeType === 'symbol-idea') defaultFill = '#f5e7a7';
+      else if (shapeType === 'symbol-check') defaultFill = '#dfeee3';
+      else if (shapeType === 'symbol-cross') defaultFill = '#f2dfe1';
+      else if (shapeType === 'symbol-flag') defaultFill = '#efd9d7';
+      else if (shapeType === 'symbol-warning') defaultFill = '#f4e2ad';
+      else if (shapeType === 'symbol-clock') defaultFill = '#dce8ed';
+      else if (shapeType === 'symbol-flask') defaultFill = '#dcebea';
+      else if (shapeType === 'symbol-reference') defaultFill = '#dfeae4';
+      else if (shapeType === 'symbol-quote') defaultFill = '#e8dfe9';
+      else if (shapeType === 'symbol-observation') defaultFill = '#e3ece5';
+      else if (shapeType === 'symbol-interface') defaultFill = '#e1eaec';
+      else if (shapeType === 'symbol-database') defaultFill = '#dce7ee';
+      else if (shapeType === 'symbol-dataset') defaultFill = '#dce7ee';
+      else if (shapeType === 'symbol-filter') defaultFill = '#efe6d3';
       return {
         width: size.width,
         height: size.height,
@@ -7551,7 +8525,8 @@
     }
 
     function isLineOnlyDecorShapeType(shapeType) {
-      return shapeType === 'divider' || shapeType === 'corner-frame' || shapeType === 'bracket';
+      return shapeType === 'divider' || shapeType === 'corner-frame' || shapeType === 'bracket'
+        || shapeType === 'curly-brace' || shapeType === 'sketch-arrow';
     }
 
     function defaultDecorFillMode(shapeType) {
@@ -7922,9 +8897,459 @@
       if (decorNodeTargets().length) pushHistory();
     }
 
+    function refreshDecorCategories() {
+      if (!dpCategorySelect) return;
+      const category = dpCategorySelect.value || 'all';
+      let visibleSections = 0;
+      decorCategorySections.forEach((section) => {
+        const visible = category === 'all' || section.dataset.decorCategorySection === category;
+        section.hidden = !visible;
+        section.classList.toggle('first-visible', visible && visibleSections === 0);
+        if (visible) visibleSections += 1;
+      });
+      if (dpCategoryEmpty) dpCategoryEmpty.hidden = visibleSections > 0;
+    }
+
+    function structurePresetEnglish() {
+      return document.body.dataset.toolbarLanguage === 'en';
+    }
+
+    function structurePresetText(value) {
+      if (!value || typeof value !== 'object') return String(value || '');
+      return structurePresetEnglish() ? String(value.en || value.zh || '') : String(value.zh || value.en || '');
+    }
+
+    function localizedStructureTemplate(preset) {
+      return {
+        id: preset.id,
+        name: structurePresetText(preset.title),
+        w: preset.w,
+        h: preset.h,
+        nodes: preset.nodes.map((raw) => {
+          const node = JSON.parse(JSON.stringify(raw));
+          if (node.textLabel) {
+            node.text = structurePresetText(node.textLabel);
+            delete node.textLabel;
+          }
+          if (node.titleLabel) {
+            node.title = structurePresetText(node.titleLabel);
+            delete node.titleLabel;
+          }
+          return node;
+        }),
+        edges: preset.edges.map((edge) => JSON.parse(JSON.stringify(edge))),
+      };
+    }
+
+    function structurePreviewRect(node) {
+      const explicitHeight = Number(node.height);
+      return {
+        x: Number(node.x) || 0,
+        y: Number(node.y) || 0,
+        w: Math.max(20, Number(node.width) || 160),
+        h: node.kind === 'shape' || node.kind === 'textBox'
+          ? Math.max(8, explicitHeight || (node.kind === 'textBox' ? 40 : 100))
+          : 56,
+      };
+    }
+
+    function structurePreviewEdgePoint(fromRect, toRect) {
+      const fx = fromRect.x + fromRect.w / 2;
+      const fy = fromRect.y + fromRect.h / 2;
+      const tx = toRect.x + toRect.w / 2;
+      const ty = toRect.y + toRect.h / 2;
+      const dx = tx - fx;
+      const dy = ty - fy;
+      if (!dx && !dy) return { x: fx, y: fy };
+      const scaleX = Math.abs(dx) > 0.001 ? (fromRect.w / 2) / Math.abs(dx) : Infinity;
+      const scaleY = Math.abs(dy) > 0.001 ? (fromRect.h / 2) / Math.abs(dy) : Infinity;
+      const scale = Math.min(scaleX, scaleY);
+      return { x: fx + dx * scale, y: fy + dy * scale };
+    }
+
+    function structureSvgElement(name, attrs) {
+      const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+      Object.keys(attrs || {}).forEach((key) => element.setAttribute(key, attrs[key]));
+      return element;
+    }
+
+    function appendStructurePreviewShape(svg, node) {
+      const rect = structurePreviewRect(node);
+      const cx = rect.x + rect.w / 2;
+      const cy = rect.y + rect.h / 2;
+      const group = structureSvgElement('g', {
+        opacity: node.opacity == null ? 1 : node.opacity,
+        transform: Number(node.rotation) ? ('rotate(' + Number(node.rotation) + ' ' + cx + ' ' + cy + ')') : '',
+      });
+      const fill = node.fillMode === 'none' ? 'transparent' : (node.fillColor || '#ffffff');
+      const stroke = node.borderColor || '#73866f';
+      const strokeWidth = node.borderWidth || 2;
+      if (node.shapeType === 'divider') {
+        group.appendChild(structureSvgElement('path', {
+          d: 'M' + rect.x + ' ' + cy + ' H' + (rect.x + rect.w),
+          fill: 'none',
+          stroke: stroke,
+          'stroke-width': strokeWidth,
+          class: 'decor-structure-boundary',
+        }));
+      } else if (node.shapeType === 'corner-frame') {
+        const x1 = rect.x;
+        const x2 = rect.x + rect.w;
+        const y1 = rect.y;
+        const y2 = rect.y + rect.h;
+        const sx = Math.min(rect.w * 0.28, 42);
+        const sy = Math.min(rect.h * 0.3, 34);
+        group.appendChild(structureSvgElement('path', {
+          d: 'M' + x1 + ' ' + (y1 + sy) + ' V' + y1 + ' H' + (x1 + sx)
+            + ' M' + (x2 - sx) + ' ' + y1 + ' H' + x2 + ' V' + (y1 + sy)
+            + ' M' + x2 + ' ' + (y2 - sy) + ' V' + y2 + ' H' + (x2 - sx)
+            + ' M' + (x1 + sx) + ' ' + y2 + ' H' + x1 + ' V' + (y2 - sy),
+          fill: 'none',
+          stroke: stroke,
+          'stroke-width': strokeWidth,
+          class: 'decor-structure-boundary',
+        }));
+      } else if (node.shapeType === 'symbol-warning') {
+        group.appendChild(structureSvgElement('path', {
+          d: 'M' + cx + ' ' + (rect.y + 2)
+            + ' L' + (rect.x + rect.w - 3) + ' ' + (rect.y + rect.h - 3)
+            + ' H' + (rect.x + 3) + ' Z',
+          fill: fill,
+          stroke: stroke,
+          'stroke-width': strokeWidth,
+          class: 'decor-structure-boundary',
+        }));
+        group.appendChild(structureSvgElement('path', {
+          d: 'M' + cx + ' ' + (rect.y + rect.h * 0.34)
+            + ' V' + (rect.y + rect.h * 0.65)
+            + ' M' + cx + ' ' + (rect.y + rect.h * 0.78)
+            + ' h0.01',
+          fill: 'none',
+          stroke: stroke,
+          'stroke-width': Math.max(3, strokeWidth * 1.7),
+          'stroke-linecap': 'round',
+          class: 'decor-structure-boundary',
+        }));
+      } else if (node.shapeType === 'symbol-check') {
+        group.appendChild(structureSvgElement('ellipse', {
+          cx: cx,
+          cy: cy,
+          rx: rect.w * 0.46,
+          ry: rect.h * 0.46,
+          fill: fill,
+          stroke: stroke,
+          'stroke-width': strokeWidth,
+          class: 'decor-structure-boundary',
+        }));
+        group.appendChild(structureSvgElement('path', {
+          d: 'M' + (rect.x + rect.w * 0.27) + ' ' + (rect.y + rect.h * 0.52)
+            + ' L' + (rect.x + rect.w * 0.43) + ' ' + (rect.y + rect.h * 0.68)
+            + ' L' + (rect.x + rect.w * 0.74) + ' ' + (rect.y + rect.h * 0.34),
+          fill: 'none',
+          stroke: stroke,
+          'stroke-width': Math.max(2.4, strokeWidth * 1.45),
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          class: 'decor-structure-boundary',
+        }));
+      } else {
+        group.appendChild(structureSvgElement('rect', {
+          x: rect.x,
+          y: rect.y,
+          width: rect.w,
+          height: rect.h,
+          rx: node.shapeType === 'color-block' ? '12' : '10',
+          fill: fill,
+          stroke: stroke,
+          'stroke-width': strokeWidth,
+          'stroke-dasharray': node.borderStyle === 'dashed'
+            ? '10 8' : (node.borderStyle === 'dotted' ? '2 7' : 'none'),
+          class: 'decor-structure-boundary',
+        }));
+      }
+      if (node.title) {
+        const title = structureSvgElement('text', {
+          x: rect.x + 13,
+          y: rect.y + 23,
+          class: 'decor-structure-boundary-title',
+        });
+        title.textContent = node.title;
+        group.appendChild(title);
+      }
+      svg.appendChild(group);
+    }
+
+    function appendStructurePreviewTextBox(svg, node) {
+      const rect = structurePreviewRect(node);
+      const cx = rect.x + rect.w / 2;
+      const cy = rect.y + rect.h / 2;
+      const group = structureSvgElement('g', {
+        opacity: node.opacity == null ? 1 : node.opacity,
+        transform: Number(node.rotation) ? ('rotate(' + Number(node.rotation) + ' ' + cx + ' ' + cy + ')') : '',
+      });
+      if (node.boxStyle) {
+        group.appendChild(structureSvgElement('rect', {
+          x: rect.x,
+          y: rect.y,
+          width: rect.w,
+          height: rect.h,
+          rx: '10',
+          fill: node.fillColor || '#fbfaf6',
+          stroke: node.borderColor || '#4f5b55',
+          'stroke-width': node.borderWidth || 1.5,
+          'stroke-dasharray': node.borderStyle === 'dashed'
+            ? '9 7' : (node.borderStyle === 'dotted' ? '2 6' : 'none'),
+          class: 'decor-structure-boundary',
+        }));
+      }
+      const text = structureSvgElement('text', {
+        x: cx,
+        y: cy,
+        dy: '0.34em',
+        'text-anchor': 'middle',
+        fill: node.color || '#4f5953',
+        'font-size': Math.max(13, Math.min(20, Number(node.fontSize) || 16)),
+        'font-weight': node.fontWeight || 600,
+        class: 'decor-structure-text-label',
+      });
+      text.textContent = node.text || '';
+      group.appendChild(text);
+      svg.appendChild(group);
+    }
+
+    function buildStructurePreview(preset, template) {
+      const svg = structureSvgElement('svg', {
+        class: 'decor-structure-preview',
+        viewBox: '0 0 ' + preset.w + ' ' + preset.h,
+        role: 'img',
+        'aria-hidden': 'true',
+        preserveAspectRatio: 'xMidYMid meet',
+      });
+      const markerId = 'structure-arrow-' + preset.id;
+      const defs = structureSvgElement('defs');
+      const marker = structureSvgElement('marker', {
+        id: markerId,
+        viewBox: '0 0 8 8',
+        refX: '7',
+        refY: '4',
+        markerWidth: '6',
+        markerHeight: '6',
+        orient: 'auto-start-reverse',
+      });
+      marker.appendChild(structureSvgElement('path', { d: 'M0 0 8 4 0 8Z', class: 'decor-structure-arrow' }));
+      defs.appendChild(marker);
+      svg.appendChild(defs);
+
+      const byId = new Map(template.nodes.map((node) => [node.id, node]));
+      template.nodes.filter((node) => node.kind === 'shape').forEach((node) => {
+        appendStructurePreviewShape(svg, node);
+      });
+
+      template.edges.forEach((edge) => {
+        const from = byId.get(edge.from);
+        const to = byId.get(edge.to);
+        if (!from || !to) return;
+        const fromRect = structurePreviewRect(from);
+        const toRect = structurePreviewRect(to);
+        const start = structurePreviewEdgePoint(fromRect, toRect);
+        const end = structurePreviewEdgePoint(toRect, fromRect);
+        let d = 'M' + start.x + ' ' + start.y + ' L' + end.x + ' ' + end.y;
+        if (edge.curve === 'branch' && Math.abs(end.y - start.y) > 1) {
+          const midX = (start.x + end.x) / 2;
+          d = 'M' + start.x + ' ' + start.y
+            + ' C' + midX + ' ' + start.y + ' ' + midX + ' ' + end.y + ' ' + end.x + ' ' + end.y;
+        }
+        svg.appendChild(structureSvgElement('path', {
+          d: d,
+          fill: 'none',
+          stroke: edge.color || '#66716c',
+          'stroke-width': edge.width || 1.8,
+          'stroke-dasharray': edge.lineStyle === 'dashed'
+            ? '10 7' : (edge.lineStyle === 'dotted' ? '2 7' : 'none'),
+          'marker-start': edge.arrow === 'both' ? 'url(#' + markerId + ')' : '',
+          'marker-end': edge.arrow === 'end' || edge.arrow === 'both' ? 'url(#' + markerId + ')' : '',
+          class: 'decor-structure-edge',
+        }));
+      });
+
+      template.nodes.filter((node) => node.kind !== 'shape' && node.kind !== 'textBox').forEach((node) => {
+        const rect = structurePreviewRect(node);
+        svg.appendChild(structureSvgElement('rect', {
+          x: rect.x,
+          y: rect.y,
+          width: rect.w,
+          height: rect.h,
+          rx: Math.max(4, Number(node.radius) || 10),
+          fill: node.bgColor || '#ffffff',
+          stroke: node.borderColor || '#626965',
+          'stroke-width': '2',
+          class: 'decor-structure-node',
+        }));
+        const text = structureSvgElement('text', {
+          x: rect.x + rect.w / 2,
+          y: rect.y + rect.h / 2,
+          dy: '0.34em',
+          'text-anchor': 'middle',
+          class: 'decor-structure-node-label',
+        });
+        text.textContent = node.text || '';
+        svg.appendChild(text);
+      });
+      template.nodes.filter((node) => node.kind === 'textBox').forEach((node) => {
+        appendStructurePreviewTextBox(svg, node);
+      });
+      return svg;
+    }
+
+    function structurePresetCenterPoint() {
+      const rect = viewport.getBoundingClientRect();
+      const panelRect = decorPanel ? decorPanel.getBoundingClientRect() : null;
+      const visibleRight = panelRect && panelRect.left > rect.left && panelRect.left < rect.right
+        ? panelRect.left : rect.right;
+      return {
+        x: rect.left + Math.max(0, visibleRight - rect.left) / 2,
+        y: rect.top + rect.height / 2,
+      };
+    }
+
+    function insertStructurePreset(preset, clientPoint) {
+      if (!global.CanvasModule || typeof global.CanvasModule.instantiateTemplate !== 'function') return;
+      clearActiveDecorTool();
+      const template = localizedStructureTemplate(preset);
+      const result = global.CanvasModule.instantiateTemplate(template, clientPoint || structurePresetCenterPoint());
+      if (!result || !result.ok) return;
+      // 图案模式刻意不开放正文节点交互。组合落地后进入用户原先的画布子模式，
+      // 再恢复本批节点的混合选择；模式切换本身会清掉含装饰框的旧选择。
+      if (global.EditorShell && typeof global.EditorShell.setMode === 'function') {
+        global.EditorShell.setMode('normal');
+      }
+      if (Array.isArray(result.nodeIds) && result.nodeIds.length) {
+        selectNodes(result.nodeIds.filter((id) => !!findNode(id)), false);
+      }
+      const name = structurePresetText(preset.title);
+      showCanvasToast(structurePresetEnglish()
+        ? ('Inserted “' + name + '” and switched to Canvas · move the selection or double-click a card to edit')
+        : ('已插入「' + name + '」并进入《画布》· 可整体移动或双击卡片填写'));
+    }
+
+    function attachStructurePresetDrag(card, preset) {
+      let suppressClickUntil = 0;
+      card.addEventListener('click', (event) => {
+        if (Date.now() < suppressClickUntil) {
+          event.preventDefault();
+          return;
+        }
+        insertStructurePreset(preset, null);
+      });
+      card.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        let dragging = false;
+        let ghost = null;
+        const onMove = (moveEvent) => {
+          if (!dragging && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 6) return;
+          if (!dragging) {
+            dragging = true;
+            card.classList.add('dragging');
+            ghost = document.createElement('div');
+            ghost.className = 'decor-structure-drag-ghost';
+            ghost.textContent = structurePresetText(preset.title);
+            document.body.appendChild(ghost);
+          }
+          ghost.style.left = moveEvent.clientX + 'px';
+          ghost.style.top = moveEvent.clientY + 'px';
+        };
+        const onUp = (upEvent) => {
+          document.removeEventListener('mousemove', onMove, true);
+          document.removeEventListener('mouseup', onUp, true);
+          card.classList.remove('dragging');
+          if (ghost) ghost.remove();
+          if (!dragging) return;
+          suppressClickUntil = Date.now() + 400;
+          const rect = viewport.getBoundingClientRect();
+          const hit = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+          const inCanvas = upEvent.clientX >= rect.left && upEvent.clientX <= rect.right
+            && upEvent.clientY >= rect.top && upEvent.clientY <= rect.bottom
+            && !!hit && (hit === viewport || viewport.contains(hit));
+          if (inCanvas) insertStructurePreset(preset, { x: upEvent.clientX, y: upEvent.clientY });
+        };
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+      });
+    }
+
+    function renderStructurePresets() {
+      if (!dpStructurePresets) return;
+      const fragment = document.createDocumentFragment();
+      STRUCTURE_PRESETS.forEach((preset) => {
+        const template = localizedStructureTemplate(preset);
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'decor-structure-preset';
+        card.dataset.structurePreset = preset.id;
+        const title = structurePresetText(preset.title);
+        const instruction = structurePresetEnglish()
+          ? 'Click to insert in the visible canvas center, or drag to place'
+          : '单击插入可见画布中心，或拖到指定位置';
+        card.title = instruction;
+        card.setAttribute('aria-label', title + (structurePresetEnglish() ? '. ' : '。') + instruction);
+        const previewWrap = document.createElement('span');
+        previewWrap.className = 'decor-structure-preview-wrap';
+        previewWrap.appendChild(buildStructurePreview(preset, template));
+        const copy = document.createElement('span');
+        copy.className = 'decor-structure-copy';
+        const name = document.createElement('strong');
+        name.textContent = title;
+        const description = document.createElement('span');
+        description.textContent = structurePresetText(preset.description);
+        copy.appendChild(name);
+        copy.appendChild(description);
+        card.appendChild(previewWrap);
+        card.appendChild(copy);
+        attachStructurePresetDrag(card, preset);
+        fragment.appendChild(card);
+      });
+      dpStructurePresets.replaceChildren(fragment);
+    }
+
+    function syncDecorPanelContextOrder(targets) {
+      if (!dpPanelBody || !dpSelection || !dpCreationLibrary) return;
+      const hasObjectSelection = targets.length > 0;
+      const hasExplicitPreset = !hasObjectSelection && hasActiveDecorTool();
+      decorPanel.classList.toggle('has-object-selection', hasObjectSelection);
+      decorPanel.classList.toggle('has-active-preset', hasExplicitPreset);
+      if (hasObjectSelection) {
+        if (dpSelection.nextElementSibling !== dpCreationLibrary) {
+          dpPanelBody.insertBefore(dpSelection, dpCreationLibrary);
+        }
+      } else if (hasExplicitPreset && dpGroupPresetHead) {
+        if (dpSelection.parentElement !== dpCreationLibrary
+            || dpSelection.nextElementSibling !== dpGroupPresetHead) {
+          dpCreationLibrary.insertBefore(dpSelection, dpGroupPresetHead);
+        }
+      } else if (dpEmpty && dpSelection.previousElementSibling !== dpEmpty) {
+        dpPanelBody.insertBefore(dpSelection, dpEmpty.nextSibling);
+      }
+      const signature = hasObjectSelection
+        ? 'object:' + targets.map((item) => item.id).sort().join('|')
+        : (hasExplicitPreset
+          ? 'preset:' + (activeDecorShapeType || activeDecorTextPreset)
+          : '');
+      if (signature !== decorPanelContextSignature) {
+        // 真实对象的属性区会被移到右栏顶部，因此切换对象时同步回到顶部。
+        // 预设属性仍放在素材库下方；切换预设时保留用户正在浏览的分类位置，
+        // 避免在“全部”分类中每点一个图案就跳回面板开头。
+        if (hasObjectSelection) dpPanelBody.scrollTop = 0;
+        decorPanelContextSignature = signature;
+      }
+    }
+
     function refreshDecorPanel() {
       if (!decorPanel) return;
       const targets = decorNodeTargets();
+      syncDecorPanelContextOrder(targets);
       const multi = targets.length > 1;
       const editingDefaults = decorPanelEditingDefaults();
       const node = decorPanelNode();
@@ -7939,39 +9364,75 @@
       const englishUi = document.documentElement.dataset.uiLanguage === 'en'
         || document.body.dataset.toolbarLanguage === 'en';
       const shapeNames = englishUi ? {
-        'rounded-rect': 'Rounded Rectangle',
+        'rounded-rect': 'Module Box',
         rect: 'Rectangle',
         ellipse: 'Ellipse',
         circle: 'Circle',
         triangle: 'Triangle',
-        diamond: 'Diamond',
-        arrow: 'Arrow',
+        diamond: 'Decision Node',
+        parallelogram: 'Input / Output',
+        arrow: 'Direction Arrow',
         divider: 'Divider',
         slider: 'Slider',
         'dashed-box': 'Dashed Box',
         'group-box': 'Box',
         'color-block': 'Color Block',
-        pill: 'Pill Label',
+        pill: 'Start / End',
         'corner-frame': 'Corner Frame',
         bracket: 'Bracket',
+        'curly-brace': 'Curly Brace',
         question: 'Question',
+        'symbol-info': 'Information',
+        'symbol-idea': 'Idea',
+        'symbol-check': 'Done',
+        'symbol-cross': 'Incorrect',
+        'symbol-flag': 'Flag',
+        'symbol-warning': 'Warning',
+        'symbol-clock': 'Time',
+        'symbol-flask': 'Experiment',
+        'symbol-reference': 'Reference',
+        'symbol-quote': 'Quote',
+        'symbol-observation': 'Observation',
+        'symbol-interface': 'Interface',
+        'symbol-database': 'Database',
+        'symbol-dataset': 'Dataset',
+        'symbol-filter': 'Filter',
+        'sketch-arrow': 'Sketch Arrow',
       } : {
-        'rounded-rect': '圆角矩形',
+        'rounded-rect': '模块框',
         rect: '矩形',
         ellipse: '椭圆',
         circle: '圆形',
         triangle: '正三角形',
-        diamond: '菱形',
-        arrow: '箭头图案',
+        diamond: '判断节点',
+        parallelogram: '输入 / 输出',
+        arrow: '方向箭头',
         divider: '分隔线',
         slider: '滑条',
         'dashed-box': '虚线框',
         'group-box': '盒子',
         'color-block': '纯色色块',
-        pill: '胶囊标签',
+        pill: '起止节点',
         'corner-frame': '角标框',
         bracket: '括号标记',
+        'curly-brace': '大括号',
         question: '问号',
+        'symbol-info': '信息',
+        'symbol-idea': '灵感',
+        'symbol-check': '完成',
+        'symbol-cross': '错误',
+        'symbol-flag': '旗标',
+        'symbol-warning': '警告',
+        'symbol-clock': '时间',
+        'symbol-flask': '实验',
+        'symbol-reference': '文献',
+        'symbol-quote': '引用',
+        'symbol-observation': '观察',
+        'symbol-interface': '接口',
+        'symbol-database': '数据库',
+        'symbol-dataset': '数据集',
+        'symbol-filter': '筛选',
+        'sketch-arrow': '手绘箭头',
       };
       const textPresetNames = englishUi ? {
         'emphasis-card': 'Emphasis Note',
@@ -8472,6 +9933,22 @@
       return node;
     }
 
+    function createEmphasisNoteAtClientPoint(clientX, clientY) {
+      const preset = 'emphasis-card';
+      const base = decorTextPresetBase(preset);
+      const node = createDecorTextPresetNode(preset);
+      const point = clientToSurface(clientX, clientY);
+      node.width = base.width;
+      node.height = base.height;
+      setDrawTool('select');
+      addDecorationNode(node, point, true);
+      const el = nodeMap.get(node.id);
+      if (el && nodeSizeObserver) nodeSizeObserver.observe(el);
+      refreshDecorPanel();
+      redrawMinimap();
+      enterTextBoxEdit(node, true);
+    }
+
     function startDecorTextPresetCreate(e, preset) {
       const p = clientToSurface(e.clientX, e.clientY);
       const node = createDecorTextPresetNode(preset);
@@ -8642,18 +10119,21 @@
       const p = clientToSurface(clientX, clientY);
       const minW = 24;
       const minH = 20;
-      let x = Math.min(drag.startX, p.x);
-      let y = Math.min(drag.startY, p.y);
       let width = Math.abs(p.x - drag.startX);
       let height = Math.abs(p.y - drag.startY);
-      if (width < minW) {
-        if (p.x < drag.startX) x = drag.startX - minW;
-        width = minW;
+      const aspectRatio = DECOR_CREATION_ASPECT_RATIOS[node.shapeType];
+      if (Number.isFinite(aspectRatio) && aspectRatio > 0) {
+        // 以两个方向中需求更大的缩放为准，保证图案覆盖用户拖出的范围，
+        // 同时保持轮廓比例；起点继续作为当前象限的固定角。
+        const fittedHeight = Math.max(height, width / aspectRatio, minH, minW / aspectRatio);
+        height = fittedHeight;
+        width = fittedHeight * aspectRatio;
+      } else {
+        width = Math.max(minW, width);
+        height = Math.max(minH, height);
       }
-      if (height < minH) {
-        if (p.y < drag.startY) y = drag.startY - minH;
-        height = minH;
-      }
+      const x = p.x < drag.startX ? drag.startX - width : drag.startX;
+      const y = p.y < drag.startY ? drag.startY - height : drag.startY;
       node.x = Math.round(x);
       node.y = Math.round(y);
       node.width = Math.round(width);
@@ -8669,12 +10149,32 @@
     function decorClickSize(shapeType) {
       if (shapeType === 'sketch-diamond') return { width: 52, height: 52 };
       if (shapeType === 'sketch-ellipse') return { width: 64, height: 44 };
+      if (shapeType === 'sketch-arrow') return { width: 120, height: 52 };
+      if (shapeType === 'rounded-rect') return { width: 120, height: 72 };
+      if (shapeType === 'arrow') return { width: 110, height: 48 };
+      if (shapeType === 'diamond') return { width: 72, height: 72 };
+      if (shapeType === 'pill') return { width: 110, height: 50 };
+      if (shapeType === 'parallelogram') return { width: 104, height: 64 };
       if (shapeType === 'dashed-box') return { width: 150, height: 96 };
       if (shapeType === 'color-block') return { width: 110, height: 72 };
       if (shapeType === 'corner-frame') return { width: 130, height: 96 };
       if (shapeType === 'bracket') return { width: 110, height: 140 };
+      if (shapeType === 'curly-brace') return { width: 44, height: 120 };
       if (shapeType === 'divider') return { width: 180, height: 22 };
       if (shapeType === 'question') return { width: 72, height: 72 };
+      if (shapeType === 'symbol-info' || shapeType === 'symbol-observation') return { width: 72, height: 72 };
+      if (shapeType === 'symbol-idea' || shapeType === 'symbol-check' || shapeType === 'symbol-cross'
+          || shapeType === 'symbol-warning' || shapeType === 'symbol-clock') {
+        return { width: 72, height: 72 };
+      }
+      if (shapeType === 'symbol-flag') return { width: 82, height: 74 };
+      if (shapeType === 'symbol-flask') return { width: 72, height: 82 };
+      if (shapeType === 'symbol-reference') return { width: 66, height: 78 };
+      if (shapeType === 'symbol-quote') return { width: 82, height: 68 };
+      if (shapeType === 'symbol-interface') return { width: 96, height: 72 };
+      if (shapeType === 'symbol-database') return { width: 82, height: 72 };
+      if (shapeType === 'symbol-dataset') return { width: 82, height: 72 };
+      if (shapeType === 'symbol-filter') return { width: 72, height: 82 };
       return { width: 60, height: 44 };   // sketch-rounded-rect 等
     }
     function finishSketchShapeClick() {
@@ -9504,6 +11004,12 @@
       if (!decorPanel) return;
       const q = (selector) => decorPanel.querySelector(selector);
       const qa = (selector) => decorPanel.querySelectorAll(selector);
+      dpPanelBody = q('.side-panel-body');
+      dpCreationLibrary = q('[data-role="decor-creation-library"]');
+      dpCategorySelect = q('[data-role="decor-category"]');
+      dpCategoryEmpty = q('[data-role="decor-category-empty"]');
+      decorCategorySections = [...qa('[data-decor-category-section]')];
+      dpStructurePresets = q('[data-role="decor-structure-presets"]');
       dpEmpty = q('[data-role="decor-selection-empty"]');
       dpSelection = q('[data-role="decor-selection"]');
       dpKindLabel = q('[data-role="decor-kind-label"]');
@@ -9545,6 +11051,7 @@
       dpColorPresets = q('[data-role="decor-color-presets"]');
       dpColorPresetsWrap = q('[data-role="decor-color-presets-wrap"]');
       dpColorPresetsLabel = q('[data-role="decor-color-presets-label"]');
+      dpGroupPresetHead = q('.decor-group-preset-head');
       dpGroupPresets = q('[data-role="decor-group-presets"]');
       dpGroupPresetMode = q('[data-role="decor-group-preset-mode"]');
       dpGroupPresetHint = q('[data-role="decor-group-preset-hint"]');
@@ -9579,6 +11086,22 @@
           else setActiveDecorShapeTool(next);
         });
       });
+      if (dpCategorySelect) {
+        dpCategorySelect.addEventListener('change', () => {
+          refreshDecorCategories();
+          if (!hasActiveDecorTool()) return;
+          const activeButton = decorPaletteButtons.find((button) => button.classList.contains('active'));
+          const activeSection = activeButton && activeButton.closest('[data-decor-category-section]');
+          const category = dpCategorySelect.value || 'all';
+          if (category !== 'all' && (!activeSection || activeSection.dataset.decorCategorySection !== category)) {
+            clearActiveDecorTool();
+          }
+        });
+        refreshDecorCategories();
+      }
+      renderStructurePresets();
+      document.addEventListener('editor:languagechange', renderStructurePresets);
+      document.addEventListener('relatum:languagechange', renderStructurePresets);
       setupDecorColorPresets();
       setupGroupStylePresets();
       if (dpAddImage) dpAddImage.addEventListener('click', importImageDecoration);
@@ -10111,7 +11634,11 @@
       renderEdgeHandles();   // 5-3：编辑模式下随选中变化刷新拐点手柄
       refreshEditPanel();    // 5-4：随选中变化刷新编辑抽屉
       refreshDecorPanel();   // 图案模式：随选中变化刷新装饰属性面板
-      const contentNodeCount = [...selectedNodeIds].filter((id) => !isDecorationNode(findNode(id))).length;
+      const tableNodeCount = [...selectedNodeIds].filter((id) => isTableNode(findNode(id))).length;
+      const contentNodeCount = [...selectedNodeIds].filter((id) => {
+        const node = findNode(id);
+        return node && !isDecorationNode(node) && !isTableNode(node);
+      }).length;
       const anchorNodeCount = [...selectedNodeIds].filter((id) => isEdgeAnchorNode(findNode(id))).length;
       const decorNodeCount = [...selectedNodeIds].filter((id) => {
         const node = findNode(id);
@@ -10119,8 +11646,9 @@
       }).length;
       document.dispatchEvent(new CustomEvent('editor:selectionchange', {
         detail: {
-          nodes: contentNodeCount + decorNodeCount,
+          nodes: contentNodeCount + tableNodeCount + decorNodeCount,
           contentNodes: contentNodeCount,
+          tableNodes: tableNodeCount,
           decorNodes: decorNodeCount,
           anchorNodes: anchorNodeCount,
           edges: selectedEdgeIds.size,
@@ -10223,6 +11751,36 @@
           e.stopPropagation();
           if (!selectedNodeIds.has(node.id) || selectedNodeIds.size !== 1) selectNodes([node.id], false);
         };
+        if (isTableNode(node)) {
+          e.stopPropagation();
+          if (isSelectionToggleEvent(e)) {
+            e.preventDefault();
+            suppressNextSelectionToggleClick(el);
+            toggleNodeSelection(node.id);
+            return;
+          }
+          if (e.altKey) {
+            e.preventDefault();
+            if (canCreate()) startEdgeCreate(node, e);
+            return;
+          }
+          const onDragStrip = e.target && e.target.closest && e.target.closest('.table-drag-strip');
+          const titleInput = e.target && e.target.closest && e.target.closest('.table-node-title');
+          const onTitleDrag = e.target && e.target.closest
+            && e.target.closest('.table-object-head')
+            && !(titleInput && !titleInput.readOnly)
+            && !e.target.closest('button');
+          if (onDragStrip || onTitleDrag || e.target === el) {
+            startNodeDrag(node, e);
+            return;
+          }
+          selectOnlyCurrentNode();
+          const gridRoot = el.querySelector('.table-grid-root');
+          if (gridRoot && !/^(INPUT|TEXTAREA|BUTTON)$/.test((e.target && e.target.tagName) || '')) {
+            gridRoot.focus({ preventScroll: true });
+          }
+          return;
+        }
         if (isPreviewNode(node) && editingNodeId !== node.id) {
           const previewScrollHost = e.target && e.target.closest && e.target.closest('.preview-node-body');
           if (previewScrollHost && el.contains(previewScrollHost)
@@ -10339,6 +11897,23 @@
           e.preventDefault();
           e.stopPropagation();
           return;
+        }
+        if (isTableNode(node)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!(e.target && e.target.closest && e.target.closest('[data-table-cell], input, textarea, button'))) {
+            openTableStudio(node);
+          }
+          return;
+        }
+        const inlineTable = e.target && e.target.closest ? e.target.closest('.md-table') : null;
+        if (inlineTable && isBodyNode(node)) {
+          const wrap = inlineTable.closest('[data-md-table-ln]');
+          if (wrap && openInlineTableStudio(node, Number(wrap.dataset.mdTableLn))) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
         }
         if (isPdfNode(node)) {        // 双击 PDF 附件 → 打开放大阅读 + 批注浮层
           e.stopPropagation();
@@ -12234,6 +13809,7 @@
       if (drawTool === 'select') return false;
       if (drawTool === 'lasso') return false;   // 套索当成选择类工具：不起笔、不抢指针，交给框选链路
       if (drawTool === 'edge-anchor') return false; // 锚点工具保留空白左键框选；创建统一由双击入口处理
+      if (drawTool === 'table') return false;   // 表格与普通节点一致：双击空白创建
       if (e.button !== 0) return false;
       if (drawToolbar && (e.target === drawToolbar || drawToolbar.contains(e.target))) return false;
       if (e.target.closest && e.target.closest('.tool-config-pop, .search-bar, .viewport-hud-bl, .help-fab, .settings-fab, .settings-pop')) {
@@ -12504,7 +14080,7 @@
     }
 
     // ── 套索 → 保存到模板 ──────────────────────────────────────────────
-    // 纯结构模板：正文/文字框 + 三类基础装饰可复用；图片/PDF/MD 和其他历史图案不收取。
+    // 纯结构模板：正文/文字框 + 当前内置装饰可复用；图片/PDF/MD 和其他历史图案不收取。
     function isTemplateEligibleNode(n) {
       if (!n) return false;
       if (!isShapeNode(n)) {
@@ -12513,13 +14089,35 @@
       return n.shapeType === 'group-box'
         || n.shapeType === 'color-block'
         || n.shapeType === 'dashed-box'
+        || n.shapeType === 'rounded-rect'
+        || n.shapeType === 'arrow'
+        || n.shapeType === 'diamond'
+        || n.shapeType === 'pill'
+        || n.shapeType === 'parallelogram'
         || n.shapeType === 'corner-frame'
         || n.shapeType === 'bracket'
+        || n.shapeType === 'curly-brace'
         || n.shapeType === 'divider'
         || n.shapeType === 'question'
+        || n.shapeType === 'symbol-info'
+        || n.shapeType === 'symbol-idea'
+        || n.shapeType === 'symbol-check'
+        || n.shapeType === 'symbol-cross'
+        || n.shapeType === 'symbol-flag'
+        || n.shapeType === 'symbol-warning'
+        || n.shapeType === 'symbol-clock'
+        || n.shapeType === 'symbol-flask'
+        || n.shapeType === 'symbol-reference'
+        || n.shapeType === 'symbol-quote'
+        || n.shapeType === 'symbol-observation'
+        || n.shapeType === 'symbol-interface'
+        || n.shapeType === 'symbol-database'
+        || n.shapeType === 'symbol-dataset'
+        || n.shapeType === 'symbol-filter'
         || n.shapeType === 'sketch-rounded-rect'
         || n.shapeType === 'sketch-diamond'
-        || n.shapeType === 'sketch-ellipse';
+        || n.shapeType === 'sketch-ellipse'
+        || n.shapeType === 'sketch-arrow';
     }
     function templateEligibleSelectionIds() {
       const out = [];
@@ -12654,6 +14252,10 @@
         c.y = Math.round((Number(n.y) || 0) - minY);
         delete c.assetPath;   // 纯结构模板：不带任何素材引用
         if (isTextBoxNode(c) && c.textBindTarget && !pickedIds.has(c.textBindTarget)) clearTextBinding(c);
+        if (Array.isArray(c.groupMemberIds)) {
+          c.groupMemberIds = c.groupMemberIds.filter(function (id) { return pickedIds.has(id); });
+          if (!c.groupMemberIds.length) delete c.groupMemberIds;
+        }
         return c;
       });
       const edges = [];
@@ -13222,7 +14824,7 @@
 
     // ── 节点文字编辑 ───────────────────────
     function enterNodeEdit(node, isNew, caretPoint) {
-      if (isDecorationNode(node)) return;
+      if (isDecorationNode(node) || isTableNode(node)) return;
       // 已在编辑同一个节点时，双击只移动光标，绝不能用尚未提交的模型值
       // 重建 DOM；否则多行输入会在一次双击中被旧内容覆盖，且不进入历史栈。
       if (editingNodeId === node.id) {
@@ -13277,7 +14879,7 @@
     // Figma 风格：选中节点时按字母键 → 进编辑 + 用首字符替换原内容（X 轮）
     // 原内容若有损失，Ctrl+Z 能恢复（commitNodeEdit 时会 pushHistory）
     function enterNodeEditWithChar(node, ch) {
-      if (isDecorationNode(node)) return;
+      if (isDecorationNode(node) || isTableNode(node)) return;
       if (editingNodeId !== null && editingNodeId !== node.id) commitNodeEdit();
       if (editingEdgeId !== null) commitEdgeEdit();
 
@@ -18308,7 +19910,7 @@
       } else {
         searchMatches = data.nodes
           .filter(function (n) {
-            return ((n.text || '') + '\n' + (isBodyNode(n) ? (n.body || '') : ''))
+            return ((n.text || '') + '\n' + ((isBodyNode(n) || isTableNode(n)) ? (n.body || '') : ''))
               .toLowerCase().indexOf(q) !== -1;
           })
           .map(function (n) { return n.id; });
@@ -18693,6 +20295,67 @@
       return node;
     }
 
+    function defaultTableMarkdown() {
+      const syntax = global.MarkdownTable;
+      if (!syntax) return '|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |';
+      return syntax.serialize(syntax.createDefault(3, 3, ''));
+    }
+
+    function createTableNode(x, y, options) {
+      options = options || {};
+      if (!canCreate()) return null;
+      const node = {
+        id: newNodeId(),
+        kind: 'table',
+        x: Math.round(Number(x) || 0),
+        y: Math.round(Number(y) || 0),
+        body: String(options.markdown || defaultTableMarkdown()),
+      };
+      const tableScale = normalizedTableScale(options.tableScale);
+      if (tableScale !== 1) node.tableScale = tableScale;
+      const title = String(options.title || '').trim();
+      if (title) node.text = title;
+      data.nodes.push(node);
+      indexNodeData(node);
+      const el = createNodeEl(node);
+      surface.appendChild(el);
+      nodeMap.set(node.id, el);
+      spawnNodeEl(el);
+      nodeSizeCache.delete(node.id);
+      updateEmptyHint();
+      lastCreatedNodeId = node.id;
+      hideOnboardingHint();
+      if (options.select !== false) selectNodes([node.id], false);
+      if (options.history !== false) pushHistory();
+      if (options.notify !== false) notify();
+      return node;
+    }
+
+    function createTableAtViewportCenter() {
+      if (!canCreate()) return null;
+      if (editingNodeId !== null) commitNodeEdit();
+      if (editingEdgeId !== null) commitEdgeEdit();
+      if (editingTextBoxId !== null) commitTextBoxEdit();
+      const center = viewportCenterInSurface();
+      return createTableNode(center.x - 310, center.y - 90, {});
+    }
+
+    function setupTableCreateButtons() {
+      document.querySelectorAll('[data-action="create-table"]').forEach(function (button) {
+        if (button.dataset.tableCreateReady === '1') return;
+        button.dataset.tableCreateReady = '1';
+        button.setAttribute('aria-pressed', 'false');
+        button.addEventListener('click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          setDrawTool('table');
+        });
+      });
+      document.addEventListener('editor:default-kind-change', function () {
+        if (drawTool === 'table') setDrawTool('select');
+      });
+    }
+
     // 返回节点的直系孩子。Tab 创建的脑图连线约定为 parent → child；
     // 这里沿用既有 edge，不引入额外字段，旧画布也能直接受益。
     function buildMindmapChildrenIndex() {
@@ -18701,7 +20364,7 @@
       data.edges.forEach(function (edge) {
         if (edge.from === edge.to) return;
         const child = findNode(edge.to);
-        if (!child || isDecorationNode(child)) return;
+        if (!child || isDecorationNode(child) || isTableNode(child)) return;
         let seen = seenByParent.get(edge.from);
         if (!seen) { seen = new Set(); seenByParent.set(edge.from, seen); }
         if (seen.has(child.id)) return;
@@ -18728,7 +20391,8 @@
         if (edge.from === edge.to) return;
         const from = findNode(edge.from);
         const to = findNode(edge.to);
-        if (!from || !to || isDecorationNode(from) || isDecorationNode(to)) return;
+        if (!from || !to || isDecorationNode(from) || isDecorationNode(to)
+            || isTableNode(from) || isTableNode(to)) return;
         push(from.id, to.id);
         push(to.id, from.id);
       });
@@ -18741,7 +20405,7 @@
       data.edges.forEach(function (edge) {
         if (edge.from !== node.id || edge.to === node.id || seen.has(edge.to)) return;
         const child = findNode(edge.to);
-        if (!child || isDecorationNode(child)) return;
+        if (!child || isDecorationNode(child) || isTableNode(child)) return;
         seen.add(child.id);
         children.push(child);
       });
@@ -19241,6 +20905,16 @@
         createEdgeAnchorAt(e);
         return;
       }
+      if (drawTool === 'table') {
+        if (currentMode() !== 'normal' || !canCreate()) return;
+        e.preventDefault();
+        if (editingNodeId !== null) commitNodeEdit();
+        if (editingEdgeId !== null) commitEdgeEdit();
+        if (editingTextBoxId !== null) commitTextBoxEdit();
+        const p = clientToSurface(e.clientX, e.clientY);
+        createTableNode(p.x - 310, p.y - 78, {});
+        return;
+      }
       if (!canCreate()) return;             // 图案模式不新建内容节点
       // Z 轮：用 clientToSurface 而不是直接减 surfRect——缩放下也得对
       const p = clientToSurface(e.clientX, e.clientY);
@@ -19328,7 +21002,8 @@
       lastPointerType = e.pointerType || 'mouse';
       freezeViewportForInteraction();
       if (e.target.closest && e.target.closest('.decor-box-title, .decor-resize-handle')) return;
-      if (drawTool === 'select' || drawTool === 'lasso') return;   // 选择/套索不走指针绘图链路
+      if (drawTool === 'select' || drawTool === 'lasso' || drawTool === 'table') return;
+      // 选择、套索和表格不走指针绘图链路；表格统一由双击空白创建。
       if (e.button !== 0) return;
       if (drag && drag.viaPointer) { e.preventDefault(); return; }  // 已有笔画进行中，忽略额外指针（防手掌误触）
       const handled = handleDrawToolMouseDown(e);   // e.type==='pointerdown' → 真正起笔
@@ -19435,6 +21110,12 @@
 
     function onKeyDown(e) {
       if (externalOverlayOpen) return;
+      if (e.target && e.target.closest && e.target.closest('.table-grid-root')) {
+        const tableGlobalShortcut = (e.ctrlKey || e.metaKey)
+          && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y'
+            || e.key === 'f' || e.key === 'F');
+        if (!tableGlobalShortcut) return;
+      }
 
       if (mindmapColorBrushState && e.key === 'Escape') {
         e.preventDefault();
@@ -19754,6 +21435,8 @@
               else node.width = drag.startStoredW;
               if (drag.startStoredBodyH == null) delete node.bodyHeight;
               else node.bodyHeight = drag.startStoredBodyH;
+              if (drag.startStoredTableScale == null) delete node.tableScale;
+              else node.tableScale = drag.startStoredTableScale;
               if (drag.startStoredMindmapMinHeight == null) delete node.mindmapMinHeight;
               else node.mindmapMinHeight = drag.startStoredMindmapMinHeight;
               if (drag.startMindmapSizeMode == null) delete node.mindmapSizeMode;
@@ -19948,6 +21631,13 @@
         }
       }
 
+      // 独立表格按 F 进入专用网格工作台，不复用正文阅读器。
+      if (selNode && isTableNode(selNode) && (e.key === 'f' || e.key === 'F') && !anyMod) {
+        e.preventDefault();
+        openTableStudio(selNode);
+        return;
+      }
+
       // 索引 / 预览 / 卡片节点：单选后按 F 打开阅读浮层，不走"打字覆盖标题"。
       // 索引自动生成目录；预览/卡片/便签/代码提供统一的专注阅读 / 编辑入口。
       if (selNode && isReadableNode(selNode) && (e.key === 'f' || e.key === 'F') && !anyMod) {
@@ -19971,19 +21661,19 @@
       }
 
       // F2（单选节点）→ 进编辑（光标在末尾）
-      if (selNode && e.key === 'F2' && !anyMod) {
+      if (selNode && !isTableNode(selNode) && e.key === 'F2' && !anyMod) {
         e.preventDefault();
         enterNodeEdit(selNode, false);
         return;
       }
 
       // Tab（单选节点）→ 右侧建子节点 + 自动连线（思维导图）
-      if (selNode && e.key === 'Tab' && !anyMod && e.shiftKey) {
+      if (selNode && !isTableNode(selNode) && e.key === 'Tab' && !anyMod && e.shiftKey) {
         e.preventDefault();
         if (canCreate()) promoteMindmapNode(selNode);
         return;
       }
-      if (selNode && e.key === 'Tab' && !anyMod && !e.shiftKey) {
+      if (selNode && !isTableNode(selNode) && e.key === 'Tab' && !anyMod && !e.shiftKey) {
         e.preventDefault();
         if (canCreate()) createChildOf(selNode);
         return;
@@ -19999,12 +21689,12 @@
       }
 
       // Enter（单选节点）→ 下方建兄弟节点
-      if (selNode && e.key === 'Enter' && !anyMod && e.shiftKey) {
+      if (selNode && !isTableNode(selNode) && e.key === 'Enter' && !anyMod && e.shiftKey) {
         e.preventDefault();
         if (canCreate()) createSiblingAboveOf(selNode);
         return;
       }
-      if (selNode && e.key === 'Enter' && !anyMod && !e.shiftKey) {
+      if (selNode && !isTableNode(selNode) && e.key === 'Enter' && !anyMod && !e.shiftKey) {
         e.preventDefault();
         if (canCreate()) createSiblingOf(selNode);
         return;
@@ -20012,7 +21702,8 @@
 
       // Figma 风格：单选节点时按任意可打印单字符 → 进编辑 + 替换为该字符
       // 排除空格（留给未来"空格+拖动平移画布"）
-      if (selNode && !isDecorationNode(selNode) && !anyMod && e.key.length === 1 && e.key !== ' ') {
+      if (selNode && !isDecorationNode(selNode) && !isTableNode(selNode)
+          && !anyMod && e.key.length === 1 && e.key !== ' ') {
         e.preventDefault();
         enterNodeEditWithChar(selNode, e.key);
         return;
@@ -20550,6 +22241,7 @@
     // 5-4：编辑抽屉控件接线（一次）
     setupEditPanel();
     setupDecorPanel();
+    setupTableCreateButtons();
 
     // ── 初始渲染 + 视口适配 ──────────────────
     reconcileAll();
@@ -20567,6 +22259,7 @@
       if (mode !== 'mindmap') cancelMindmapColorBrush(false);
       clearTransientMovableDecor();
       if (mode === 'decor' && drawTool === 'edge-anchor') setDrawTool('select');
+      if (mode !== 'normal' && drawTool === 'table') setDrawTool('select');
       syncEdgeAnchorToolAvailability(mode);
       if (mode === 'decor') {
         const hasContentSelection = selectedEdgeIds.size > 0
@@ -20595,6 +22288,14 @@
     };
     // 导出前收束正在输入的节点/连线正文，保证导出的是用户眼前这一刻的内容。
     global.CanvasModule.commitPendingEdits = function () {
+      const activeElement = document.activeElement;
+      if (activeElement && activeElement.matches
+          && activeElement.matches('.table-node-title, .table-studio-title')) {
+        activeElement.blur();
+      }
+      if (global.RelatumTableGrid && typeof global.RelatumTableGrid.commitAll === 'function') {
+        global.RelatumTableGrid.commitAll();
+      }
       if (editingNodeId !== null) commitNodeEdit();
       if (editingEdgeId !== null) commitEdgeEdit();
       if (editingTextBoxId !== null) commitTextBoxEdit();
@@ -20606,7 +22307,11 @@
       return editingNodeId !== null
         || editingEdgeId !== null
         || editingTextBoxId !== null
-        || textReaderEditing;
+        || textReaderEditing
+        || !!(document.activeElement && document.activeElement.matches
+          && document.activeElement.matches('.table-node-title, .table-studio-title'))
+        || !!(global.RelatumTableGrid && typeof global.RelatumTableGrid.isEditing === 'function'
+          && global.RelatumTableGrid.isEditing());
     };
     global.CanvasModule.getSelectedCardIds = function () {
       const ids = [];
@@ -20748,6 +22453,7 @@
 
       const idMap = {};
       const newIds = [];
+      const preparedNodes = [];
       tpl.nodes.forEach(function (raw) {
         if (!raw || typeof raw !== 'object') return;
         if (!isTemplateEligibleNode(raw)) return;   // 防御：落地范围与模板套索白名单保持一致
@@ -20758,6 +22464,19 @@
         node.x = Math.round((Number(raw.x) || 0) + offX);
         node.y = Math.round((Number(raw.y) || 0) + offY);
         delete node.assetPath;
+        preparedNodes.push(node);
+      });
+      preparedNodes.forEach(function (node) {
+        if (isTextBoxNode(node) && node.textBindTarget) {
+          if (idMap[node.textBindTarget]) node.textBindTarget = idMap[node.textBindTarget];
+          else clearTextBinding(node);
+        }
+        if (Array.isArray(node.groupMemberIds)) {
+          node.groupMemberIds = node.groupMemberIds.map(function (id) { return idMap[id]; }).filter(Boolean);
+          if (!node.groupMemberIds.length) delete node.groupMemberIds;
+        }
+      });
+      preparedNodes.forEach(function (node) {
         prepareNewDecorationNode(node);
         data.nodes.push(node);
         indexNodeData(node);
@@ -20766,12 +22485,6 @@
         nodeMap.set(node.id, el);
         spawnNodeEl(el);
         newIds.push(node.id);
-      });
-      newIds.forEach(function (id) {
-        const node = findNode(id);
-        if (!isTextBoxNode(node) || !node.textBindTarget) return;
-        if (idMap[node.textBindTarget]) node.textBindTarget = idMap[node.textBindTarget];
-        else clearTextBinding(node);
       });
 
       if (Array.isArray(tpl.edges)) {
@@ -20804,7 +22517,7 @@
       hideOnboardingHint();
       pushHistory();
       notify();
-      return { ok: true, count: newIds.length };
+      return { ok: true, count: newIds.length, nodeIds: newIds.slice() };
     };
 
     // ── 阶段 3：把当前画布内容打包给 AI（"基于这张图补充 / 美化"用）──────
@@ -20821,13 +22534,13 @@
       if (selectedOnly) {
         selectedNodeIds.forEach(function (id) {
           const n = findNode(id);
-          if (isReadableNode(n)) selectedReadable.push(n);
+          if (isReadableNode(n) || isTableNode(n)) selectedReadable.push(n);
         });
       }
       const sourceNodes = selectedOnly ? selectedReadable : data.nodes;
       for (let i = 0; i < sourceNodes.length && outNodes.length < maxNodes; i++) {
         const n = sourceNodes[i];
-        if (!isReadableNode(n)) continue;
+        if (!isReadableNode(n) && !isTableNode(n)) continue;
         let body = String(n.body || '').trim();
         if (body.length > excerptLen) body = body.slice(0, excerptLen) + '…';
         outNodes.push({ id: n.id, kind: n.kind || 'card', title: String(n.text || '').trim(), excerpt: body });
@@ -20919,7 +22632,9 @@
       clone.querySelectorAll('[data-attach-kind="pdf"]').forEach(function (e) { e.remove(); });
       clone.querySelectorAll('.node[data-shape-type="edge-anchor"]').forEach(function (e) { e.remove(); });
       clone.querySelectorAll(
-        '.canvas-empty-hint, .decor-resize-handle, .edge-handle, .canvas-edge-hit, .frame-rect, .node-mindmap-fold'
+        '.canvas-empty-hint, .decor-resize-handle, .edge-handle, .canvas-edge-hit, .frame-rect, .node-mindmap-fold, '
+        + '.table-node-grip, .table-drag-strip, .table-node-actions, .table-grid-toolbar, .table-edge-add, '
+        + '.table-grid-corner, .table-column-head, .table-row-head'
       ).forEach(function (e) { e.remove(); });
       clone.querySelectorAll('.selected, .is-selected, .editing, .dragging').forEach(function (e) {
         e.classList.remove('selected', 'is-selected', 'editing', 'dragging');
@@ -21130,7 +22845,9 @@
       return best;
     }
     function buildMindmapTree() {
-      const sel = [...selectedNodeIds].map(findNode).filter(function (n) { return n && !isDecorationNode(n); });
+      const sel = [...selectedNodeIds].map(findNode).filter(function (n) {
+        return n && !isDecorationNode(n) && !isTableNode(n);
+      });
       if (sel.length === 0) return null;
       const neighborIndex = buildMindmapNeighborIndex();
       let nodeSet, center;
@@ -21186,7 +22903,9 @@
     // 连续录入脑图时使用：以当前单选节点为根，只沿 parent → child 方向整理后代。
     // 自由连线和祖先分支不会被卷进来，适合随手把某一枝重新排整齐。
     function buildMindmapBranchTree() {
-      const sel = [...selectedNodeIds].map(findNode).filter(function (n) { return n && !isDecorationNode(n); });
+      const sel = [...selectedNodeIds].map(findNode).filter(function (n) {
+        return n && !isDecorationNode(n) && !isTableNode(n);
+      });
       if (sel.length !== 1) return null;
       const center = sel[0];
       const childrenIndex = buildMindmapChildrenIndex();
@@ -22074,7 +23793,7 @@
 
     function selectedMindmapOperationTree() {
       const selected = [...selectedNodeIds].map(findNode).filter(function (node) {
-        return node && !isDecorationNode(node);
+        return node && !isDecorationNode(node) && !isTableNode(node);
       });
       if (!selected.length) return null;
       if (selected.length === 1) {
@@ -22369,10 +24088,12 @@
     global.CanvasModule.isBodyNode = isBodyNode;
     global.CanvasModule.isCodeNode = isCodeNode;
     global.CanvasModule.isStickyNode = isStickyNode;
+    global.CanvasModule.isTableNode = isTableNode;
     global.CanvasModule.isCardNode = isCardNode;
     global.CanvasModule.isPreviewNode = isPreviewNode;
     global.CanvasModule.isReadableNode = isReadableNode;
     global.CanvasModule.isDecorationNode = isDecorationNode;
+    global.CanvasModule.createTableAtViewportCenter = createTableAtViewportCenter;
     global.CanvasModule.applySelectedStickyColor = function (color, random) {
       if (!selectedNodesAllSticky()) return false;
       setNodeColor(color, { random: !!random });

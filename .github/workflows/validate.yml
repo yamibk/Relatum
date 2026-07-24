@@ -43,3 +43,9 @@ jobs:
       - name: Run rich-text regression tests
         shell: pwsh
         run: node tests/richtext-regression.js
+
+      - name: Run table regression tests
+        shell: pwsh
+        run: |
+          node tests/markdown-table-regression.js
+          node tests/table-compact-contract.js

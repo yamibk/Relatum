@@ -142,14 +142,26 @@
       canvasNewStyles: '画布 · 新建样式', nodes: '节点', typeAndOutline: '文字与轮廓',
       lines: '线条', inspectorPanel: '属性检查器', patternsMode: '图案模式', graphRelax: '舒展',
       insertShapes: '插入图案', mindMapMode: '思维导图模式', presets: '预设',
+      decorCategory: '分类', decorCategoryAll: '全部', decorCategoryDefault: '默认',
+      decorCategoryHanddrawn: '手绘', decorCategorySymbol: '符号', decorCategoryAcademic: '学术',
+      decorCategoryEngineering: '工程', decorCategoryFlow: '流程', decorCategoryData: '数据',
+      decorCategoryDecorative: '装饰', decorCategoryStructure: '组合', decorCategoryEmptyTitle: '暂时留空',
+      decorCategoryEmptyHint: '这个分类已经预留，后续再逐步补充克制、实用的图案。',
       colors: '配色', layout: '排版', nodeSize: '节点尺寸', card: '卡片',
-      sticky: '便签', style: '样式', quietStyle: '简洁样式', newDefaults: '新建默认',
+      sticky: '便签', table: '表格', newTable: '独立表格',
+      style: '样式', quietStyle: '简洁样式', newDefaults: '新建默认',
       editingSelection: '编辑所选', cleanResetDefaults: '恢复简洁默认', nodeFallback: '节点',
       cleanNoteEditingBefore: '正在编辑「', cleanNoteEditingAfter: '」；连线区仍设置新建默认，清空选择后节点区也回到默认。',
       dashedBox: '虚线框', colorBlock: '纯色色块', emphasisNote: '重点便签',
       noteBubble: '旁注框', bracket: '括号标记', divider: '分隔线', cornerFrame: '角标框',
       question: '问号', sketchRect: '手绘圆角矩形', sketchDiamond: '手绘菱形',
-      sketchEllipse: '手绘椭圆', insertImage: '插入本地图片',
+      sketchEllipse: '手绘椭圆', sketchArrow: '手绘箭头', insertImage: '插入本地图片',
+      symbolIdea: '灵感', symbolCheck: '完成', symbolCross: '错误', symbolFlag: '旗标',
+      symbolWarning: '警告', symbolClock: '时间', symbolFlask: '实验',
+      symbolReference: '文献', symbolQuote: '引用', symbolInfo: '信息', symbolObservation: '观察',
+      moduleBox: '模块框', symbolInterface: '接口', directionArrow: '方向箭头',
+      decisionNode: '判断节点', startEndNode: '起止节点', inputOutputNode: '输入 / 输出',
+      symbolDatabase: '数据库', symbolDataset: '数据集', symbolFilter: '筛选', curlyBrace: '大括号',
       insertAttachment: '插入 PDF / Markdown 附件', groupPresets: '盒子 / 分组预设',
       globalDefault: '全局默认', classicBranches: '经典枝桠', academicCurves: '学术曲线',
       focusedCenter: '中心聚焦', roundedBranches: '圆角树枝',
@@ -264,14 +276,26 @@
       canvasNewStyles: 'Canvas · New Styles', nodes: 'Nodes', typeAndOutline: 'Type & Outline',
       lines: 'Lines', inspectorPanel: 'Inspector', patternsMode: 'Shapes Mode', graphRelax: 'Relax',
       insertShapes: 'Insert Shapes', mindMapMode: 'Mind Map Mode', presets: 'Presets',
+      decorCategory: 'Category', decorCategoryAll: 'All', decorCategoryDefault: 'Default',
+      decorCategoryHanddrawn: 'Hand-drawn', decorCategorySymbol: 'Symbols', decorCategoryAcademic: 'Academic',
+      decorCategoryEngineering: 'Engineering', decorCategoryFlow: 'Flow', decorCategoryData: 'Data',
+      decorCategoryDecorative: 'Decorative', decorCategoryStructure: 'Structures', decorCategoryEmptyTitle: 'Reserved for later',
+      decorCategoryEmptyHint: 'This category is ready for restrained, practical shapes to be added later.',
       colors: 'Colors', layout: 'Layout', nodeSize: 'Node Size', card: 'Card',
-      sticky: 'Sticky', style: 'Style', quietStyle: 'Quiet Style', newDefaults: 'New Defaults',
+      sticky: 'Sticky', table: 'Table', newTable: 'Standalone Table',
+      style: 'Style', quietStyle: 'Quiet Style', newDefaults: 'New Defaults',
       editingSelection: 'Edit Selection', cleanResetDefaults: 'Reset Minimal Defaults', nodeFallback: 'Node',
       cleanNoteEditingBefore: 'Editing "', cleanNoteEditingAfter: '"; line controls still set new defaults. Clear selection to return node controls to defaults.',
       dashedBox: 'Dashed Box', colorBlock: 'Color Block', emphasisNote: 'Emphasis Note',
       noteBubble: 'Side Note', bracket: 'Bracket', divider: 'Divider', cornerFrame: 'Corner Frame',
       question: 'Question', sketchRect: 'Sketch Rectangle', sketchDiamond: 'Sketch Diamond',
-      sketchEllipse: 'Sketch Ellipse', insertImage: 'Insert Local Image',
+      sketchEllipse: 'Sketch Ellipse', sketchArrow: 'Sketch Arrow', insertImage: 'Insert Local Image',
+      symbolIdea: 'Idea', symbolCheck: 'Done', symbolCross: 'Incorrect', symbolFlag: 'Flag',
+      symbolWarning: 'Warning', symbolClock: 'Time', symbolFlask: 'Experiment',
+      symbolReference: 'Reference', symbolQuote: 'Quote', symbolInfo: 'Information', symbolObservation: 'Observation',
+      moduleBox: 'Module Box', symbolInterface: 'Interface', directionArrow: 'Direction Arrow',
+      decisionNode: 'Decision Node', startEndNode: 'Start / End', inputOutputNode: 'Input / Output',
+      symbolDatabase: 'Database', symbolDataset: 'Dataset', symbolFilter: 'Filter', curlyBrace: 'Curly Brace',
       insertAttachment: 'Insert PDF / Markdown', groupPresets: 'Box / Group Presets',
       globalDefault: 'Global Default', classicBranches: 'Classic Branches', academicCurves: 'Academic Curves',
       focusedCenter: 'Focused Center', roundedBranches: 'Rounded Branches',
@@ -956,15 +980,24 @@
     }
     const REVEAL_PX = 84;          // 离左缘多近就浮现（覆盖工具栏静止时占的宽度）
     let over = false;              // 鼠标是否正悬停在工具栏本体上
+    function isPinned() {
+      return toolbox.classList.contains('drag-source-active');
+    }
     function update(nearLeft) {
-      setRevealed(nearLeft || over);
+      setRevealed(nearLeft || over || isPinned());
     }
     viewport.addEventListener('mousemove', (e) => {
       update(isNearLeft(e) || isToolConfigTarget(e.target));
     });
-    viewport.addEventListener('mouseleave', () => { if (!over) setRevealed(false); });
+    viewport.addEventListener('mouseleave', () => { if (!over && !isPinned()) setRevealed(false); });
     toolbox.addEventListener('mouseenter', () => { over = true; setRevealed(true); });
     toolbox.addEventListener('mouseleave', (e) => { over = false; update(isNearLeft(e)); });
+    document.addEventListener('editor:toolbox-drag-state', (event) => {
+      const active = !!(event.detail && event.detail.active);
+      toolbox.classList.toggle('drag-source-active', active);
+      if (active) setRevealed(true);
+      else update(false);
+    });
   })();
 
   // ── 右下角设置齿轮：收纳平移 / 缩放速度滑条（滑条本身仍由 CanvasModule 按 data-role 接管）──
@@ -2873,7 +2906,8 @@
     const EFF = 'canvas:normalNodeKind';
     const CLEAN_NKEY = 'canvas:cleanNodeDefaults';
     const ALLOWED = ['index', 'preview', 'card', 'sticky', 'code'];
-    const btns = panel.querySelectorAll('.nkf-btn');
+    // 表格按钮由 canvas.js 管理为独立创建工具，不参与普通节点 kind 偏好。
+    const btns = panel.querySelectorAll('.nkf-btn[data-kind]');
     let pref = 'card';
     let effective = 'card';
     try {

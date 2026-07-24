@@ -284,6 +284,16 @@
             <path d="M7 16 H13"/>
           </svg>
         </button>
+        <button type="button" class="canvas-tool-btn canvas-note-source-btn" data-note-source
+                title="重点便签 · 拖到画布创建，点击设置"
+                aria-label="重点便签 · 拖到画布创建，点击设置"
+                aria-haspopup="dialog" aria-expanded="false">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M4 3.5 H16 V12.2 L11.8 16.5 H4 Z"/>
+            <path d="M11.8 16.5 V12.2 H16"/>
+            <path d="M6.4 7 H12.8 M6.4 9.8 H10.8"/>
+          </svg>
+        </button>
         <button type="button" class="canvas-tool-btn" data-canvas-tool="edge-anchor"
                 title="连接锚点：双击空白放置，拖动空白框选，拖动锚点移动，按住 Alt 拖出连线" aria-label="连接锚点">
           <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -613,6 +623,9 @@
           <button type="button" data-kind="code">代码</button>
         </div>
       </div>
+      <button type="button" class="sp-reset sp-reset-compact table-create-button"
+              data-action="create-table" data-editor-i18n="newTable"
+              title="选择表格工具；双击画布空白处创建">独立表格</button>
       <div class="sp-field">
         <label>形状</label>
         <div class="sp-shape-switch" data-role="pro-shape">
@@ -1001,34 +1014,220 @@
       </button>
     </div>
     <div class="side-panel-body">
-      <div class="sp-subhead" data-editor-i18n="insertShapes">插入图案</div>
-      <div class="decor-palette" data-role="decor-palette">
-        <button type="button" data-shape-type="dashed-box" data-editor-i18n="dashedBox">虚线框</button>
-        <button type="button" data-shape-type="color-block" data-editor-i18n="colorBlock">纯色色块</button>
-        <button type="button" data-text-preset="emphasis-card" data-editor-i18n="emphasisNote">重点便签</button>
-        <button type="button" data-text-preset="note-bubble" data-editor-i18n="noteBubble">旁注框</button>
-        <button type="button" data-shape-type="bracket" data-editor-i18n="bracket">括号标记</button>
-        <button type="button" data-shape-type="divider" data-editor-i18n="divider">分隔线</button>
-        <button type="button" data-shape-type="corner-frame" data-editor-i18n="cornerFrame">角标框</button>
-        <button type="button" data-shape-type="question" data-editor-i18n="question">问号</button>
-        <button type="button" data-shape-type="sketch-rounded-rect" data-editor-i18n="sketchRect">手绘圆角矩形</button>
-        <button type="button" data-shape-type="sketch-diamond" data-editor-i18n="sketchDiamond">手绘菱形</button>
-        <button type="button" data-shape-type="sketch-ellipse" data-editor-i18n="sketchEllipse">手绘椭圆</button>
-      </div>
-      <button type="button" class="sp-reset decor-image-add" data-role="decor-add-image">
-        <span data-editor-i18n="insertImage">插入本地图片</span>
-      </button>
-      <button type="button" class="sp-reset decor-image-add" data-role="decor-add-attachment">
-        <span data-editor-i18n="insertAttachment">插入 PDF / Markdown 附件</span>
-      </button>
-      <div class="sp-hint">也可以直接把本地图片 / PDF / Markdown 文件拖进画布；图片存到 &lt;画布名&gt;.assets/images/，附件存到 .assets/attachments/（同一文档按内容去重只存一份）。附件可任意模式拖动（拖标题栏）、正文区滚动，图案模式可调大小。</div>
+      <div class="decor-creation-library" data-role="decor-creation-library">
+        <div class="sp-subhead" data-editor-i18n="insertShapes">插入图案</div>
+        <label class="decor-category-picker">
+          <span data-editor-i18n="decorCategory">分类</span>
+          <select data-role="decor-category" data-editor-i18n-aria="decorCategory" aria-label="分类">
+            <option value="all" data-editor-i18n="decorCategoryAll">全部</option>
+            <option value="default" data-editor-i18n="decorCategoryDefault" selected>默认</option>
+            <option value="structure" data-editor-i18n="decorCategoryStructure">组合</option>
+            <option value="symbol" data-editor-i18n="decorCategorySymbol">符号</option>
+            <option value="academic" data-editor-i18n="decorCategoryAcademic">学术</option>
+            <option value="engineering" data-editor-i18n="decorCategoryEngineering">工程</option>
+            <option value="flow" data-editor-i18n="decorCategoryFlow">流程</option>
+            <option value="data" data-editor-i18n="decorCategoryData">数据</option>
+            <option value="decorative" data-editor-i18n="decorCategoryDecorative">装饰</option>
+            <option value="handdrawn" data-editor-i18n="decorCategoryHanddrawn">手绘</option>
+          </select>
+        </label>
+        <div class="decor-palette" data-role="decor-palette">
+          <section class="decor-category-section" data-decor-category-section="default">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryDefault">默认</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="dashed-box">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="6" width="24" height="20" rx="4" stroke-dasharray="3 3"/></svg>
+                <span data-editor-i18n="dashedBox">虚线框</span>
+              </button>
+              <button type="button" data-shape-type="color-block">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="filled" x="4" y="6" width="24" height="20" rx="4"/></svg>
+                <span data-editor-i18n="colorBlock">纯色色块</span>
+              </button>
+              <button type="button" data-text-preset="emphasis-card">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M5 4h22v17l-7 7H5Z"/><path d="M20 28v-7h7"/></svg>
+                <span data-editor-i18n="emphasisNote">重点便签</span>
+              </button>
+              <button type="button" data-text-preset="note-bubble">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M5 5h22v16H15l-6 6v-6H5Z"/></svg>
+                <span data-editor-i18n="noteBubble">旁注框</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section decor-structure-section" data-decor-category-section="structure">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryStructure">组合</div>
+            <div class="decor-structure-presets" data-role="decor-structure-presets"></div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="symbol">
+            <div class="decor-category-title" data-editor-i18n="decorCategorySymbol">符号</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="question">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><circle class="filled" cx="16" cy="16" r="12"/><path d="M12.7 12.3c.5-2.4 2-3.6 4.3-3.6 2.4 0 4.1 1.5 4.1 3.7 0 1.7-.8 2.6-2.6 3.8-1.5 1-2.1 1.9-2.1 3.3M16.4 23.8h.1"/></svg>
+                <span data-editor-i18n="question">问号</span>
+              </button>
+              <button type="button" data-shape-type="symbol-info">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><circle class="filled" cx="16" cy="16" r="12"/><path d="M16 14v9M16 9.5h.1"/></svg>
+                <span data-editor-i18n="symbolInfo">信息</span>
+              </button>
+              <button type="button" data-shape-type="symbol-idea">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M9 13.5a7 7 0 1 1 14 0c0 3-1.7 4.5-3.4 6.1-.8.8-1.1 1.6-1.1 2.4h-5c0-.8-.3-1.6-1.1-2.4C10.7 18 9 16.5 9 13.5Z"/><path d="M13.5 25h5M14.5 28h3"/></svg>
+                <span data-editor-i18n="symbolIdea">灵感</span>
+              </button>
+              <button type="button" data-shape-type="symbol-check">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><circle class="filled" cx="16" cy="16" r="12"/><path d="m10 16 4 4 8-9"/></svg>
+                <span data-editor-i18n="symbolCheck">完成</span>
+              </button>
+              <button type="button" data-shape-type="symbol-cross">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><circle class="filled" cx="16" cy="16" r="12"/><path d="m11.5 11.5 9 9m0-9-9 9"/></svg>
+                <span data-editor-i18n="symbolCross">错误</span>
+              </button>
+              <button type="button" data-shape-type="symbol-flag">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 28V4"/><path class="filled" d="M10 5h14l-3.5 5L24 15H10Z"/></svg>
+                <span data-editor-i18n="symbolFlag">旗标</span>
+              </button>
+              <button type="button" data-shape-type="symbol-warning">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M16 4 29 27H3Z"/><path d="M16 11v8M16 23h.1"/></svg>
+                <span data-editor-i18n="symbolWarning">警告</span>
+              </button>
+              <button type="button" data-shape-type="symbol-clock">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><circle class="filled" cx="16" cy="16" r="12"/><path d="M16 9v7l5 3"/></svg>
+                <span data-editor-i18n="symbolClock">时间</span>
+              </button>
+              <button type="button" data-shape-type="bracket">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M11 4H6v24h5M21 4h5v24h-5"/></svg>
+                <span data-editor-i18n="bracket">括号标记</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="academic">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryAcademic">学术</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="symbol-flask">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M12 4h8M14 4v8L7 25c-.6 1.2.3 2.5 1.7 2.5h14.6c1.4 0 2.3-1.3 1.7-2.5l-7-13V4"/><path class="filled" d="M10.5 21h11l3 5.5h-17Z"/><circle class="dot" cx="13" cy="18" r="1"/><circle class="dot" cx="19" cy="16" r="1"/></svg>
+                <span data-editor-i18n="symbolFlask">实验</span>
+              </button>
+              <button type="button" data-shape-type="symbol-reference">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M7 4h13l5 5v19H7Z"/><path d="M20 4v6h5M11 15h10M11 19h10M11 23h7"/></svg>
+                <span data-editor-i18n="symbolReference">文献</span>
+              </button>
+              <button type="button" data-shape-type="symbol-quote">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M5 8h9v9c0 5-2.5 8-7 10l-2-4c2.5-1.2 3.8-2.8 4-5H5ZM18 8h9v9c0 5-2.5 8-7 10l-2-4c2.5-1.2 3.8-2.8 4-5h-4Z"/></svg>
+                <span data-editor-i18n="symbolQuote">引用</span>
+              </button>
+              <button type="button" data-shape-type="symbol-observation">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><circle class="filled" cx="13.5" cy="13.5" r="8.5"/><path d="m20 20 7 7M10 13.5h7M13.5 10v7"/></svg>
+                <span data-editor-i18n="symbolObservation">观察</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="engineering">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryEngineering">工程</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="rounded-rect">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="filled" x="4" y="7" width="24" height="18" rx="3"/></svg>
+                <span data-editor-i18n="moduleBox">模块框</span>
+              </button>
+              <button type="button" data-shape-type="symbol-interface">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="filled" x="3.5" y="8" width="9" height="16" rx="2"/><rect class="filled" x="19.5" y="8" width="9" height="16" rx="2"/><path d="M12.5 16h7M8 13v6M24 13v6"/></svg>
+                <span data-editor-i18n="symbolInterface">接口</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="flow">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryFlow">流程</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="arrow">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M3 12h16V6l10 10-10 10v-6H3Z"/></svg>
+                <span data-editor-i18n="directionArrow">方向箭头</span>
+              </button>
+              <button type="button" data-shape-type="diamond">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="m16 3 13 13-13 13L3 16Z"/></svg>
+                <span data-editor-i18n="decisionNode">判断节点</span>
+              </button>
+              <button type="button" data-shape-type="pill">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="filled" x="3" y="9" width="26" height="14" rx="7"/></svg>
+                <span data-editor-i18n="startEndNode">起止节点</span>
+              </button>
+              <button type="button" data-shape-type="parallelogram">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M9 5h21l-7 22H2Z"/></svg>
+                <span data-editor-i18n="inputOutputNode">输入 / 输出</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="data">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryData">数据</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="symbol-database">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M5 7c0-3 22-3 22 0v18c0 3-22 3-22 0Z"/><path d="M5 7c0 3 22 3 22 0M5 13c0 3 22 3 22 0M5 19c0 3 22 3 22 0"/></svg>
+                <span data-editor-i18n="symbolDatabase">数据库</span>
+              </button>
+              <button type="button" data-shape-type="symbol-dataset">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="filled" x="4" y="5" width="24" height="22" rx="2"/><path d="M4 12h24M12 12v15M20 12v15M4 19h24"/></svg>
+                <span data-editor-i18n="symbolDataset">数据集</span>
+              </button>
+              <button type="button" data-shape-type="symbol-filter">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path class="filled" d="M4 5h24L19 16v8l-6 3V16Z"/></svg>
+                <span data-editor-i18n="symbolFilter">筛选</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="decorative">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryDecorative">装饰</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="divider">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 16h24"/></svg>
+                <span data-editor-i18n="divider">分隔线</span>
+              </button>
+              <button type="button" data-shape-type="corner-frame">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 12V4h8M20 4h8v8M28 20v8h-8M12 28H4v-8"/></svg>
+                <span data-editor-i18n="cornerFrame">角标框</span>
+              </button>
+              <button type="button" data-shape-type="curly-brace">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M24 3c-7 0-7 5-7 9 0 3-2 4-6 4 4 0 6 1 6 4 0 4 0 9 7 9"/></svg>
+                <span data-editor-i18n="curlyBrace">大括号</span>
+              </button>
+            </div>
+          </section>
+          <section class="decor-category-section" data-decor-category-section="handdrawn">
+            <div class="decor-category-title" data-editor-i18n="decorCategoryHanddrawn">手绘</div>
+            <div class="decor-category-grid">
+              <button type="button" data-shape-type="sketch-rounded-rect">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 5.5c5-1 13-.7 18 .2 2 .4 2.8 2 2.6 5.2-.3 4.2.4 9-.5 13-.6 2.7-2.7 3.4-6.2 3.2-5-.2-10.6.7-14.6-.7-2-.7-2.2-3.2-2-6.7.2-4-.4-8.1.1-11 .4-2.2 1.1-3 2.6-3.2Z"/></svg>
+                <span data-editor-i18n="sketchRect">手绘圆角矩形</span>
+              </button>
+              <button type="button" data-shape-type="sketch-diamond">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 13-13 13L3 16Z"/></svg>
+                <span data-editor-i18n="sketchDiamond">手绘菱形</span>
+              </button>
+              <button type="button" data-shape-type="sketch-ellipse">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3.5 16.5C3 8.4 8.7 4 16.2 4.2 24.3 4.4 29 9 28.6 16.1 28.2 23.6 22.8 28 15.4 27.8 8 27.6 3.8 23.1 3.5 16.5Z"/></svg>
+                <span data-editor-i18n="sketchEllipse">手绘椭圆</span>
+              </button>
+              <button type="button" data-shape-type="sketch-arrow">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 24c8 0 13-3 18-8l7-7M21 7c3 0 5 1 7 2-1 3-2 5-4 7"/></svg>
+                <span data-editor-i18n="sketchArrow">手绘箭头</span>
+              </button>
+            </div>
+          </section>
+        </div>
+        <div class="decor-category-empty" data-role="decor-category-empty" hidden>
+          <strong data-editor-i18n="decorCategoryEmptyTitle">暂时留空</strong>
+          <span data-editor-i18n="decorCategoryEmptyHint">这个分类已经预留，后续再逐步补充克制、实用的图案。</span>
+        </div>
+        <button type="button" class="sp-reset decor-image-add" data-role="decor-add-image">
+          <span data-editor-i18n="insertImage">插入本地图片</span>
+        </button>
+        <button type="button" class="sp-reset decor-image-add" data-role="decor-add-attachment">
+          <span data-editor-i18n="insertAttachment">插入 PDF / Markdown 附件</span>
+        </button>
+        <div class="sp-hint">也可以直接把本地图片 / PDF / Markdown 文件拖进画布；图片存到 &lt;画布名&gt;.assets/images/，附件存到 .assets/attachments/（同一文档按内容去重只存一份）。附件可任意模式拖动（拖标题栏）、正文区滚动，图案模式可调大小。</div>
 
-      <div class="sp-subhead decor-group-preset-head">
-        <span data-editor-i18n="groupPresets">盒子 / 分组预设</span>
-        <span class="decor-global-badge" data-role="decor-group-preset-mode">新建预设</span>
+        <div class="sp-subhead decor-group-preset-head">
+          <span data-editor-i18n="groupPresets">盒子 / 分组预设</span>
+          <span class="decor-global-badge" data-role="decor-group-preset-mode">新建预设</span>
+        </div>
+        <div class="decor-group-presets" data-role="decor-group-presets" aria-label="盒子与分组预设"></div>
+        <div class="sp-hint" data-role="decor-group-preset-hint">没有选中盒子或分组时，点击只修改之后新建的默认样式。</div>
       </div>
-      <div class="decor-group-presets" data-role="decor-group-presets" aria-label="盒子与分组预设"></div>
-      <div class="sp-hint" data-role="decor-group-preset-hint">没有选中盒子或分组时，点击只修改之后新建的默认样式。</div>
 
       <div class="decor-selection-empty" data-role="decor-selection-empty">
         选中一个图案或图片后，可调整外观、尺寸与图层。
@@ -1384,13 +1583,15 @@
     <div class="side-panel-note">单选会整理与该节点相连的整张结构；多选只整理所选节点。“仅对齐层级”不会改变上下顺序。</div>
   </aside>
 
-  <!-- 5-5：「简洁画布模式」专属 · 常用新建类型小浮窗（卡片 / 便签）。
+  <!-- 5-5：「简洁画布模式」专属 · 常用新建类型小浮窗（卡片 / 便签 / 表格）。
        完整类型和外观放在独立“样式”面板中，不显示大型画布模式面板。
        且仅 body[data-mode="normal"][data-mode-submode="clean"] 时显示。
        两枚按钮、无任何文字说明；切换"接下来新建是卡片还是便签"（便签默认仅本模式生效）。 -->
   <aside class="normal-kind-fab" data-role="normal-kind" role="group" aria-label="新建节点类型">
     <button type="button" class="nkf-btn active" data-kind="card" title="新建卡片节点" data-editor-i18n="card">卡片</button>
     <button type="button" class="nkf-btn" data-kind="sticky" title="新建便签节点" data-editor-i18n="sticky">便签</button>
+    <button type="button" class="nkf-btn nkf-table-btn" data-action="create-table"
+            title="选择表格工具；双击画布空白处创建" data-editor-i18n="table">表格</button>
     <button type="button" class="nkf-style-btn" data-action="open-clean-style"
             aria-expanded="false" aria-controls="clean-style-panel"
             title="设置简洁模式中新建节点与连线的默认样式" data-editor-i18n="style">样式</button>
@@ -2089,6 +2290,16 @@
           </dl>
         </section>
         <section class="shortcuts-group">
+          <h3>独立表格</h3>
+          <dl>
+            <div><dt><kbd>右键表格单元格</kbd></dt><dd>打开“删除所选行 / 删除所选列”菜单</dd></div>
+            <div><dt>表格内 <kbd>Ctrl</kbd>+<kbd>-</kbd></dt><dd>用键盘打开同一删除菜单</dd></div>
+            <div><dt>表格内 <kbd>Delete</kbd> / <kbd>Backspace</kbd></dt><dd>只清空所选内容，不删除行列</dd></div>
+            <div><dt>表格内 <kbd>Shift</kbd>+<kbd>方向键</kbd></dt><dd>扩展单元格选择范围</dd></div>
+            <div><dt>选中表格 + <kbd>F</kbd></dt><dd>打开表格工作室，集中编辑与设置外观</dd></div>
+          </dl>
+        </section>
+        <section class="shortcuts-group">
           <h3>思维导图</h3>
           <dl>
             <div><dt>单选节点 + <kbd>应用预设并整理</kbd></dt><dd>整理整条相连结构</dd></div>
@@ -2426,7 +2637,9 @@
   <script src="desktop-shell.js" defer></script>
   <script src="mermaid-renderer.js" defer></script>
   <script src="richtext.js" defer></script>
+  <script src="markdown-table.js" defer></script>
   <script src="markdown.js" defer></script>
+  <script src="table-editor.js" defer></script>
   <script src="canvas.js" defer></script>
   <script src="graph-gl.js" defer></script>
   <script src="graph-engine.js" defer></script>

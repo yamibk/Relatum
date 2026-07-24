@@ -2545,21 +2545,41 @@ _TEMPLATE_ALLOWED_SHAPE_TYPES = {
     "group-box",
     "color-block",
     "dashed-box",
-    "soft-card",
-    "speech",
+    "rounded-rect",
+    "arrow",
+    "diamond",
+    "pill",
+    "parallelogram",
     "corner-frame",
     "bracket",
+    "curly-brace",
     "divider",
+    "question",
+    "symbol-info",
+    "symbol-idea",
+    "symbol-check",
+    "symbol-cross",
+    "symbol-flag",
+    "symbol-warning",
+    "symbol-clock",
+    "symbol-flask",
+    "symbol-reference",
+    "symbol-quote",
+    "symbol-observation",
+    "symbol-interface",
+    "symbol-database",
+    "symbol-dataset",
+    "symbol-filter",
     "sketch-rounded-rect",
     "sketch-diamond",
     "sketch-ellipse",
-    "question",
+    "sketch-arrow",
 }
 
 
 def _build_templates_payload(templates) -> dict:
     """清洗模板库：保证 {version, templates[]} 结构。每个模板只留可移植的纯结构元素
-    （正文/文字框/盒子/色块/三种手绘预设）+ 两端都在模板内的连线。前端已按此规则裁剪，这里再兜
+    （正文/文字框/当前内置图案）+ 两端都在模板内的连线。前端已按此规则裁剪，这里再兜
     一层底，确保 templates.json 永不写入带画布专属素材引用的节点（删除即闭环、无孤儿）。"""
     out = []
     if not isinstance(templates, list):
@@ -2587,6 +2607,21 @@ def _build_templates_payload(templates) -> dict:
             nodes.append(node)
         if not nodes:
             continue                      # 空模板不存
+        for node in nodes:
+            raw_members = node.get("groupMemberIds")
+            if not isinstance(raw_members, list):
+                continue
+            members = []
+            seen_members = set()
+            for raw_member in raw_members:
+                member_id = str(raw_member or "")
+                if member_id in node_ids and member_id not in seen_members:
+                    seen_members.add(member_id)
+                    members.append(member_id)
+            if members:
+                node["groupMemberIds"] = members
+            else:
+                node.pop("groupMemberIds", None)
         edges = []
         raw_edges = item.get("edges")
         if isinstance(raw_edges, list):
@@ -4407,7 +4442,7 @@ def export_markdown_bundle(canvas_path: Path, payload: dict, destination: Path) 
             links = [f"[[{node_files[other]}]]" for other in sorted(
                 neighbors[node_id], key=lambda other: node_files[other].casefold()
             )]
-            if node.get("kind") in {"index", "text", "preview", "card", "sticky"}:
+            if node.get("kind") in {"index", "text", "preview", "card", "sticky", "table"}:
                 body = _serialize_rich_text(node.get("body"), node.get("bodyMarks"))
             elif node.get("kind") == "code":
                 language = str(node.get("language") or "c").lower()
