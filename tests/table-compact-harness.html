@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN" data-ui-language="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relatum table compact harness</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      color: #202321;
+      background: #f3f2ef;
+    }
+    body.dark-semantic-ui {
+      color: #f4f0e6;
+      background: #16201d;
+    }
+    #table-test-node.node {
+      position: relative;
+      inset: auto;
+      transform: none;
+      --node-bg: #fff;
+      --node-border: #3b3d3b;
+      --table-scale: 1;
+    }
+    #scale-test {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+    }
+    #delete-row-test {
+      position: fixed;
+      left: 16px;
+      top: 52px;
+    }
+    #studio-test {
+      position: fixed;
+      left: 16px;
+      top: 88px;
+    }
+  </style>
+</head>
+<body>
+  <button id="scale-test" type="button">放大到 150%</button>
+  <button id="delete-row-test" type="button">删除已选行</button>
+  <button id="studio-test" type="button">打开 F 工作室</button>
+  <article id="table-test-node" class="node selected" data-kind="table">
+    <div id="table-test-host" class="node-text table-node-shell"></div>
+  </article>
+  <script src="../assets/markdown.js"></script>
+  <script src="../assets/markdown-table.js"></script>
+  <script src="../assets/table-editor.js"></script>
+  <script>
+    var harnessParams = new URLSearchParams(location.search);
+    var harnessAppearance = harnessParams.get('appearance') === 'matrix' ? 'matrix' : 'standard';
+    var harnessBracket = ['square', 'determinant'].includes(harnessParams.get('bracket'))
+      ? harnessParams.get('bracket') : 'round';
+    var harnessChromeHidden = harnessParams.get('chrome') === 'hidden';
+    if (harnessParams.get('tone') === 'dark') {
+      document.body.dataset.backgroundTone = 'dark';
+      document.body.classList.add('dark-semantic-ui');
+    }
+    var harnessNode = document.getElementById('table-test-node');
+    harnessNode.dataset.tableAppearance = harnessAppearance;
+    harnessNode.dataset.tableBracket = harnessBracket;
+    harnessNode.dataset.tableChrome = harnessChromeHidden ? 'hidden' : 'visible';
+    window.tableHarness = RelatumTableGrid.mount(document.getElementById('table-test-host'), {
+      compact: true,
+      title: '',
+      chromeHidden: harnessChromeHidden,
+      appearance: harnessAppearance,
+      bracket: harnessBracket,
+      markdown: MarkdownTable.serialize(MarkdownTable.createDefault(3, 3, '')),
+      onCommit: function () {},
+      onTitleCommit: function (value) {
+        document.body.dataset.titleCommit = value;
+      },
+      onOpenStudio: function () {
+        document.body.dataset.openRequested = '1';
+      },
+    });
+    document.getElementById('scale-test').addEventListener('click', function () {
+      document.getElementById('table-test-node').style.setProperty('--table-scale', '1.5');
+    });
+    document.getElementById('delete-row-test').addEventListener('click', function () {
+      window.tableHarness.deleteRows();
+    });
+    document.getElementById('studio-test').addEventListener('click', function () {
+      RelatumTableGrid.openStudio({
+        title: '',
+        titleEditable: true,
+        viewOptionsEditable: true,
+        chromeHidden: harnessChromeHidden,
+        appearance: harnessAppearance,
+        bracket: harnessBracket,
+        markdown: MarkdownTable.serialize(MarkdownTable.createDefault(3, 3, '')),
+        onCommit: function () {},
+        onViewCommit: function (view) {
+          harnessChromeHidden = view.chromeHidden;
+          harnessAppearance = view.appearance;
+          harnessBracket = view.bracket;
+          document.body.dataset.viewCommit = JSON.stringify(view);
+        },
+      });
+    });
+    if (harnessParams.get('studio') === '1') {
+      document.getElementById('studio-test').click();
+    }
+  </script>
+</body>
+</html>

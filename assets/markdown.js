@@ -295,12 +295,18 @@
 
   // ── 表格 ───────────────────────────────
   function splitTableRow(line) {
+    if (global.MarkdownTable && typeof global.MarkdownTable.splitRow === 'function') {
+      return global.MarkdownTable.splitRow(line);
+    }
     let t = line.trim();
     if (t.charAt(0) === '|') t = t.slice(1);
     if (t.charAt(t.length - 1) === '|') t = t.slice(0, -1);
     return t.split('|').map(function (c) { return c.trim(); });
   }
   function isTableSep(line) {
+    if (global.MarkdownTable && typeof global.MarkdownTable.isSeparatorLine === 'function') {
+      return global.MarkdownTable.isSeparatorLine(line);
+    }
     return /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line);
   }
   function tableAlign(cell) {
@@ -371,17 +377,30 @@
 
       // 表格：当前行含 | 且下一行是分隔行
       if (line.indexOf('|') >= 0 && i + 1 < lines.length && isTableSep(lines[i + 1])) {
-        const header = splitTableRow(lines[i]);
-        const aligns = splitTableRow(lines[i + 1]).map(tableAlign);
-        i += 2;
-        const bodyRows = [];
-        while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') >= 0
-               && !/^\x00(CODE|DMATH)\d+\x00$/.test(lines[i].trim())) {
-          bodyRows.push(splitTableRow(lines[i]));
-          i++;
+        const tableStartLine = i;
+        const parsed = global.MarkdownTable && typeof global.MarkdownTable.parseLines === 'function'
+          ? global.MarkdownTable.parseLines(lines, i, { ensureBodyRow: false })
+          : null;
+        const header = parsed && parsed.ok ? parsed.model.header : splitTableRow(lines[i]);
+        const aligns = parsed && parsed.ok
+          ? parsed.model.align
+          : splitTableRow(lines[i + 1]).map(tableAlign);
+        let bodyRows;
+        if (parsed && parsed.ok) {
+          bodyRows = parsed.model.rows;
+          i = parsed.endLine;
+        } else {
+          i += 2;
+          bodyRows = [];
+          while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') >= 0
+                 && !/^\x00(CODE|DMATH)\d+\x00$/.test(lines[i].trim())) {
+            bodyRows.push(splitTableRow(lines[i]));
+            i++;
+          }
         }
         const cellStyle = function (idx) { return aligns[idx] ? ' style="text-align:' + aligns[idx] + '"' : ''; };
-        let html = '<div class="md-scroll-x"><table class="md-table"><thead><tr>';
+        let html = '<div class="md-scroll-x" data-md-table-ln="' + tableStartLine
+          + '"><table class="md-table"><thead><tr>';
         header.forEach(function (c, idx) { html += '<th' + cellStyle(idx) + '>' + renderInline(escapeHtml(c)) + '</th>'; });
         html += '</tr></thead><tbody>';
         bodyRows.forEach(function (row) {

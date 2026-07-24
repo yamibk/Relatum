@@ -17,7 +17,7 @@
   };
   const KIND_COLORS = {
     index: '#2f3437', text: '#2f3437', preview: '#bc913c',
-    card: '#4f9571', pdf: '#b07a4f', md: '#5b8c7e', normal: '#35383b',
+    card: '#4f9571', table: '#477f78', pdf: '#b07a4f', md: '#5b8c7e', normal: '#35383b',
   };
 
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
@@ -52,12 +52,22 @@
     if (node.kind === 'index' || node.kind === 'text') return '索引节点';
     if (node.kind === 'preview') return '预览节点';
     if (node.kind === 'card') return '卡片节点';
+    if (node.kind === 'table') return '表格对象';
     if (node.kind === 'pdf') return 'PDF 附件';
     if (node.kind === 'md') return 'Markdown 附件';
     return '普通节点';
   }
   function graphNodeLabel(node) {
     if (node.kind === 'pdf' || node.kind === 'md') return cleanLabel(node.name);
+    if (node.kind === 'table' && !String(node.text || '').trim()) {
+      const syntax = global.MarkdownTable;
+      const parsed = syntax && syntax.parse(node.body || '', { ensureBodyRow: false });
+      if (parsed && parsed.ok) {
+        const headers = parsed.model.header.filter(function (cell) { return String(cell || '').trim(); });
+        if (headers.length) return cleanLabel(headers.slice(0, 2).join(' · '));
+      }
+      return '未命名表格';
+    }
     return cleanLabel(node.text);
   }
   function nodeColor(node) {
