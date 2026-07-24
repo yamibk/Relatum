@@ -8389,6 +8389,7 @@
     let decorCategorySections = [];
     let dpStructurePresets;
     let decorPanelContextSignature = '';
+    let decorPanelLibraryReturnScrollTop = null;
     let dpKindLabel, dpWidth, dpWidthVal, dpHeight, dpHeightVal;
     let dpFontSize, dpFontSizeVal, dpFontSizeWrap, dpRotation, dpRotationVal, dpOpacity, dpOpacityVal;
     let dpShapeColors, dpBorder, dpBorderState, dpFill, dpFillState, dpTextColor, dpTextColorState, dpTextColorWrap;
@@ -9338,10 +9339,25 @@
           ? 'preset:' + (activeDecorShapeType || activeDecorTextPreset)
           : '');
       if (signature !== decorPanelContextSignature) {
+        const previousWasObject = decorPanelContextSignature.indexOf('object:') === 0;
+        const previousWasPreset = decorPanelContextSignature.indexOf('preset:') === 0;
+        const browsingAll = !!dpCategorySelect && (dpCategorySelect.value || 'all') === 'all';
         // 真实对象的属性区会被移到右栏顶部，因此切换对象时同步回到顶部。
-        // 预设属性仍放在素材库下方；切换预设时保留用户正在浏览的分类位置，
-        // 避免在“全部”分类中每点一个图案就跳回面板开头。
-        if (hasObjectSelection) dpPanelBody.scrollTop = 0;
+        // 从“全部”的预设浏览进入对象属性前，额外记住素材库位置；清选并回到仍激活的
+        // 预设后恢复该位置。其他分类内容很短，继续沿用原有的自然滚动行为。
+        if (hasObjectSelection) {
+          if (!previousWasObject) {
+            decorPanelLibraryReturnScrollTop = previousWasPreset && browsingAll
+              ? dpPanelBody.scrollTop
+              : null;
+          }
+          dpPanelBody.scrollTop = 0;
+        } else if (previousWasObject) {
+          if (hasExplicitPreset && browsingAll && decorPanelLibraryReturnScrollTop !== null) {
+            dpPanelBody.scrollTop = decorPanelLibraryReturnScrollTop;
+          }
+          decorPanelLibraryReturnScrollTop = null;
+        }
         decorPanelContextSignature = signature;
       }
     }
