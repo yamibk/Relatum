@@ -9534,7 +9534,7 @@
       if (dpResetFill) {
         dpResetFill.hidden = false;
         dpResetFill.textContent = editingDefaults
-          ? (englishUi ? 'Reset default colors' : '重置默认颜色')
+          ? (englishUi ? 'Reset default fill color' : '重置默认填充颜色')
           : (englishUi ? 'Apply preset colors' : '应用预设颜色');
       }
       if (dpDelete) dpDelete.hidden = editingDefaults;
