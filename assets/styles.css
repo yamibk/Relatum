@@ -47,6 +47,12 @@ html[data-ui-language="en"] {
   --font-interface-en: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 html[data-ui-language="en"] body { font-family: var(--font-interface-en); }
+html[data-ui-language="en"] .cadence-starmap h3 {
+  font-family: var(--font-display-en);
+  font-weight: 500;
+  letter-spacing: -.045em;
+  line-height: .96;
+}
 html[data-ui-language="en"] .study-eyebrow,
 html[data-ui-language="en"] .desktop-settings-eyebrow {
   font-size: 10px;
