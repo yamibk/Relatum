@@ -3,6 +3,12 @@
 
   const STORAGE_KEY = 'canvas:toolbarLanguage';
   const EN = {
+    '\u5728\u6240\u9009\u4f4d\u7f6e\u63d2\u5165\u6216\u5220\u9664\u884c\u5217': 'Insert or delete rows and columns at the selection',
+    '\u7528\u952e\u76d8\u6253\u5f00\u540c\u4e00\u884c\u5217\u83dc\u5355': 'Open the same row and column menu from the keyboard',
+    '\u5de5\u4f5c\u5ba4\u201c\u5c3a\u5bf8\u201d': 'Table Studio “Size”',
+    '\u5c55\u5f00\u7701\u7565\u5185\u5bb9\u3001\u5168\u90e8\u9002\u5bbd\u3001\u5217\u7b49\u5bbd\u6216\u6062\u590d\u9ed8\u8ba4\u5c3a\u5bf8': 'Expand truncated content, fit all columns, equalize columns, or reset sizes',
+    '\u77e9\u9635\u5de5\u4f5c\u5ba4\u201c\u8f6c\u7f6e\u201d': 'Matrix Studio “Transpose”',
+    '\u4ea4\u6362\u6574\u5f20\u77e9\u9635\u7684\u884c\u4e0e\u5217\uff0c\u5e76\u6062\u590d\u5408\u9002\u7684\u9ed8\u8ba4\u5c3a\u5bf8': 'Swap matrix rows and columns, then restore suitable default sizes',
     '起步页': 'Home', '最近': 'Recent', '收藏': 'Favorite', '分组': 'Groups',
     '复习': 'Review', '日历': 'Calendar', '速记': 'Notes', '活跃': 'Activity',
     '复': 'Review', '学': 'Study', '专': 'Focus',
@@ -446,6 +452,10 @@
     '表格内': 'Inside a table', '用键盘打开同一删除菜单': 'Open the same delete menu from the keyboard',
     '只清空所选内容，不删除行列': 'Clear selected content without deleting rows or columns',
     '方向键': 'Arrow key', '扩展单元格选择范围': 'Extend the cell selection',
+    '选中表格后拖动内部竖线': 'Drag an inner vertical divider on a selected table',
+    '调整这一列宽度；双击按内容自动适宽': 'Resize that column; double-click to fit its content',
+    '选中表格后拖动内部横线': 'Drag an inner horizontal divider on a selected table',
+    '调整这一行高度；双击恢复默认行高': 'Resize that row; double-click to restore its default height',
     '选中表格 +': 'Selected table +', '打开表格工作室，集中编辑与设置外观': 'Open Table Studio to edit the grid and appearance',
     '思维导图': 'Mind Map', '单选节点 +': 'One selected node +', '整理整条相连结构': 'Arrange the entire connected structure',
     '多选节点 +': 'Multiple selected nodes +', '只整理所选节点': 'Arrange selected nodes only',

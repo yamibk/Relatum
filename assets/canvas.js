@@ -347,6 +347,15 @@
     if (Array.isArray(n.groupMemberIds)) c.groupMemberIds = n.groupMemberIds.slice();
     if (Array.isArray(n.textMarks)) c.textMarks = n.textMarks.map((mark) => ({ ...mark }));
     if (Array.isArray(n.bodyMarks)) c.bodyMarks = n.bodyMarks.map((mark) => ({ ...mark }));
+    if (n.tableLayout && typeof n.tableLayout === 'object') {
+      c.tableLayout = {};
+      if (Array.isArray(n.tableLayout.columnWidths)) {
+        c.tableLayout.columnWidths = n.tableLayout.columnWidths.slice();
+      }
+      if (Array.isArray(n.tableLayout.rowHeights)) {
+        c.tableLayout.rowHeights = n.tableLayout.rowHeights.slice();
+      }
+    }
     return c;
   }
 
@@ -971,17 +980,24 @@
     function normalizedTableBracket(value) {
       return value === 'square' || value === 'determinant' ? value : 'round';
     }
+    function normalizedTableLayout(value, markdown) {
+      const tableGrid = global.RelatumTableGrid;
+      if (!tableGrid || typeof tableGrid.normalizeLayout !== 'function') return null;
+      return tableGrid.normalizeLayout(value, markdown);
+    }
     function applyTableViewData(el, node) {
       if (!el) return;
       if (!node || node.kind !== 'table') {
         el.removeAttribute('data-table-appearance');
         el.removeAttribute('data-table-bracket');
         el.removeAttribute('data-table-chrome');
+        el.removeAttribute('data-table-header');
         return;
       }
       el.dataset.tableAppearance = normalizedTableAppearance(node.tableAppearance);
       el.dataset.tableBracket = normalizedTableBracket(node.tableBracket);
       el.dataset.tableChrome = node.tableChrome === 'hidden' ? 'hidden' : 'visible';
+      el.dataset.tableHeader = node.tableHeader === 'emphasized' ? 'emphasized' : 'plain';
     }
     function normalizeTableNodeLayout(node) {
       if (!node || node.kind !== 'table') return false;
@@ -1012,12 +1028,26 @@
           changed = true;
         }
       }
+      if (Object.prototype.hasOwnProperty.call(node, 'tableLayout')) {
+        const layout = normalizedTableLayout(node.tableLayout, node.body || '');
+        if (!layout) {
+          delete node.tableLayout;
+          changed = true;
+        } else if (JSON.stringify(layout) !== JSON.stringify(node.tableLayout)) {
+          node.tableLayout = layout;
+          changed = true;
+        }
+      }
       if (Object.prototype.hasOwnProperty.call(node, 'tableChrome') && node.tableChrome !== 'hidden') {
         delete node.tableChrome;
         changed = true;
       }
       if (Object.prototype.hasOwnProperty.call(node, 'tableAppearance') && node.tableAppearance !== 'matrix') {
         delete node.tableAppearance;
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(node, 'tableHeader') && node.tableHeader !== 'emphasized') {
+        delete node.tableHeader;
         changed = true;
       }
       if (node.tableAppearance === 'matrix') {
@@ -2239,11 +2269,20 @@
       redrawMinimap();
     }
 
-    function commitTableNodeMarkdown(node, markdown, rerender) {
+    function commitTableNodeMarkdown(node, markdown, rerender, layout) {
       const source = String(markdown || '');
-      if (!node || !isTableNode(node) || source === String(node.body || '')) return false;
-      node.body = source;
-      delete node.bodyMarks;
+      if (!node || !isTableNode(node)) return false;
+      const nextLayout = normalizedTableLayout(
+        layout === undefined ? node.tableLayout : layout, source);
+      const bodyChanged = source !== String(node.body || '');
+      const layoutChanged = JSON.stringify(nextLayout) !== JSON.stringify(node.tableLayout || null);
+      if (!bodyChanged && !layoutChanged) return false;
+      if (bodyChanged) {
+        node.body = source;
+        delete node.bodyMarks;
+      }
+      if (nextLayout) node.tableLayout = nextLayout;
+      else delete node.tableLayout;
       refreshTableNodeGeometry(node, !!rerender);
       pushHistory();
       notify();
@@ -2269,10 +2308,12 @@
       const chrome = next.chromeHidden ? 'hidden' : '';
       const appearance = normalizedTableAppearance(next.appearance);
       const bracket = normalizedTableBracket(next.bracket);
+      const header = next.headerEmphasized ? 'emphasized' : '';
       const before = [
         node.tableChrome || '',
         node.tableAppearance || '',
         node.tableBracket || '',
+        node.tableHeader || '',
       ].join('|');
       if (chrome) node.tableChrome = chrome;
       else delete node.tableChrome;
@@ -2284,10 +2325,13 @@
         delete node.tableAppearance;
         delete node.tableBracket;
       }
+      if (header) node.tableHeader = header;
+      else delete node.tableHeader;
       const after = [
         node.tableChrome || '',
         node.tableAppearance || '',
         node.tableBracket || '',
+        node.tableHeader || '',
       ].join('|');
       if (before === after) return false;
       refreshTableNodeGeometry(node, true);
@@ -2316,10 +2360,12 @@
         titleEditable: true,
         viewOptionsEditable: true,
         chromeHidden: node.tableChrome === 'hidden',
+        headerEmphasized: node.tableHeader === 'emphasized',
         appearance: normalizedTableAppearance(node.tableAppearance),
         bracket: normalizedTableBracket(node.tableBracket),
-        onCommit: function (markdown) {
-          commitTableNodeMarkdown(node, markdown, true);
+        layout: node.tableLayout,
+        onCommit: function (markdown, detail) {
+          commitTableNodeMarkdown(node, markdown, true, detail && detail.layout);
         },
         onTitleCommit: function (title) {
           commitTableNodeTitle(node, title, true);
@@ -2360,21 +2406,26 @@
         title: node.text || '',
         compact: true,
         chromeHidden: node.tableChrome === 'hidden',
+        headerEmphasized: node.tableHeader === 'emphasized',
         appearance: normalizedTableAppearance(node.tableAppearance),
         bracket: normalizedTableBracket(node.tableBracket),
+        layout: node.tableLayout,
         onSelect: function () {
           if (!selectedNodeIds.has(node.id) || selectedNodeIds.size !== 1 || selectedEdgeIds.size) {
             selectNodes([node.id], false);
           }
         },
-        onCommit: function (markdown) {
-          commitTableNodeMarkdown(node, markdown, false);
+        onCommit: function (markdown, detail) {
+          commitTableNodeMarkdown(node, markdown, false, detail && detail.layout);
         },
         onTitleCommit: function (title) {
           commitTableNodeTitle(node, title, false);
         },
         onOpenStudio: function () {
           openTableStudio(node);
+        },
+        onGeometryChange: function () {
+          refreshTableNodeGeometry(node, false);
         },
       });
     }
@@ -20327,6 +20378,8 @@
         y: Math.round(Number(y) || 0),
         body: String(options.markdown || defaultTableMarkdown()),
       };
+      if (options.chromeHidden !== false) node.tableChrome = 'hidden';
+      if (options.headerEmphasized) node.tableHeader = 'emphasized';
       const tableScale = normalizedTableScale(options.tableScale);
       if (tableScale !== 1) node.tableScale = tableScale;
       const title = String(options.title || '').trim();
@@ -20353,7 +20406,8 @@
       if (editingEdgeId !== null) commitEdgeEdit();
       if (editingTextBoxId !== null) commitTextBoxEdit();
       const center = viewportCenterInSurface();
-      return createTableNode(center.x - 310, center.y - 90, {});
+      // 默认 3 列各 96px；按紧凑表格的真实宽度居中，不再沿用旧 620px 视窗偏移。
+      return createTableNode(center.x - 144, center.y - 63, {});
     }
 
     function setupTableCreateButtons() {
@@ -20928,7 +20982,7 @@
         if (editingEdgeId !== null) commitEdgeEdit();
         if (editingTextBoxId !== null) commitTextBoxEdit();
         const p = clientToSurface(e.clientX, e.clientY);
-        createTableNode(p.x - 310, p.y - 78, {});
+        createTableNode(p.x - 144, p.y - 63, {});
         return;
       }
       if (!canCreate()) return;             // 图案模式不新建内容节点

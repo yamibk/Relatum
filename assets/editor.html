@@ -621,11 +621,10 @@
           <button type="button" data-kind="index">索引</button>
           <button type="button" data-kind="preview">预览</button>
           <button type="button" data-kind="code">代码</button>
+          <button type="button" data-action="create-table" data-editor-i18n="table"
+                  title="选择表格工具；双击画布空白处创建">表格</button>
         </div>
       </div>
-      <button type="button" class="sp-reset sp-reset-compact table-create-button"
-              data-action="create-table" data-editor-i18n="newTable"
-              title="选择表格工具；双击画布空白处创建">独立表格</button>
       <div class="sp-field">
         <label>形状</label>
         <div class="sp-shape-switch" data-role="pro-shape">
@@ -2292,10 +2291,14 @@
         <section class="shortcuts-group">
           <h3>独立表格</h3>
           <dl>
-            <div><dt><kbd>右键表格单元格</kbd></dt><dd>打开“删除所选行 / 删除所选列”菜单</dd></div>
-            <div><dt>表格内 <kbd>Ctrl</kbd>+<kbd>-</kbd></dt><dd>用键盘打开同一删除菜单</dd></div>
+            <div><dt><kbd>右键表格单元格</kbd></dt><dd>在所选位置插入或删除行列</dd></div>
+            <div><dt>表格内 <kbd>Ctrl</kbd>+<kbd>-</kbd></dt><dd>用键盘打开同一行列菜单</dd></div>
             <div><dt>表格内 <kbd>Delete</kbd> / <kbd>Backspace</kbd></dt><dd>只清空所选内容，不删除行列</dd></div>
             <div><dt>表格内 <kbd>Shift</kbd>+<kbd>方向键</kbd></dt><dd>扩展单元格选择范围</dd></div>
+            <div><dt>选中表格后拖动内部竖线</dt><dd>调整这一列宽度；双击按内容自动适宽</dd></div>
+            <div><dt>选中表格后拖动内部横线</dt><dd>调整这一行高度；双击恢复默认行高</dd></div>
+            <div><dt>工作室“尺寸”</dt><dd>展开省略内容、全部适宽、列等宽或恢复默认尺寸</dd></div>
+            <div><dt>矩阵工作室“转置”</dt><dd>交换整张矩阵的行与列，并恢复合适的默认尺寸</dd></div>
             <div><dt>选中表格 + <kbd>F</kbd></dt><dd>打开表格工作室，集中编辑与设置外观</dd></div>
           </dl>
         </section>
