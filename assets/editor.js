@@ -2110,7 +2110,7 @@
     }
 
     // 节点控件
-    const kindBtns = panel.querySelectorAll('[data-role="pro-kind"] button');
+    const kindBtns = panel.querySelectorAll('[data-role="pro-kind"] button[data-kind]');
     const shapeBtns = panel.querySelectorAll('[data-role="pro-shape"] button');
     const borderInput = panel.querySelector('[data-role="pro-border"]');
     const bgInput = panel.querySelector('[data-role="pro-bg"]');

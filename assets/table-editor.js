@@ -6,6 +6,13 @@
   const controllers = new Set();
   let dragController = null;
   let contextMenuController = null;
+  const DEFAULT_COLUMN_WIDTH = 96;
+  const SINGLE_COLUMN_WIDTH = 144;
+  const MIN_COLUMN_WIDTH = 72;
+  const MAX_COLUMN_WIDTH = 480;
+  const DEFAULT_ROW_HEIGHT = 42;
+  const MIN_ROW_HEIGHT = 42;
+  const MAX_ROW_HEIGHT = 240;
 
   function language() {
     return document.documentElement.dataset.uiLanguage === 'en' ? 'en' : 'zh-CN';
@@ -20,6 +27,7 @@
       extract: '提取为独立表格', close: '完成', invalid: '源码不是有效的 Markdown 表格',
       editCell: '双击编辑单元格', row: '行', column: '列',
       canvasDisplay: '画布显示', showTitleBar: '显示标题栏', appearance: '外观',
+      emphasizeHeader: '突出表头',
       standard: '默认表格', matrix: '矩阵', matrixBracket: '矩阵边框',
       roundBracket: '圆括号', squareBracket: '方括号', determinantBracket: '行列式',
       titleDragHint: '拖动表格；双击编辑标题',
@@ -34,6 +42,7 @@
       extract: 'Extract as standalone table', close: 'Done', invalid: 'This is not a valid Markdown table',
       editCell: 'Double-click to edit cell', row: 'Row', column: 'Column',
       canvasDisplay: 'Canvas display', showTitleBar: 'Show title bar', appearance: 'Appearance',
+      emphasizeHeader: 'Emphasize header',
       standard: 'Standard', matrix: 'Matrix', matrixBracket: 'Matrix brackets',
       roundBracket: 'Parentheses', squareBracket: 'Square brackets', determinantBracket: 'Determinant',
       titleDragHint: 'Drag table; double-click to edit title',
@@ -42,9 +51,132 @@
     },
   };
 
+  Object.assign(COPY['zh-CN'], {
+    size: '\u5c3a\u5bf8',
+    expandClipped: '\u5c55\u5f00\u7701\u7565\u5185\u5bb9',
+    fitAll: '\u5168\u90e8\u9002\u5e94\u5185\u5bb9',
+    equalColumns: '\u6240\u6709\u5217\u7b49\u5bbd',
+    resetSizes: '\u6062\u590d\u9ed8\u8ba4\u5c3a\u5bf8',
+    transpose: '\u8f6c\u7f6e',
+    insertRowAbove: '\u5728\u4e0a\u65b9\u63d2\u5165\u884c',
+    insertRowBelow: '\u5728\u4e0b\u65b9\u63d2\u5165\u884c',
+    insertColumnLeft: '\u5728\u5de6\u4fa7\u63d2\u5165\u5217',
+    insertColumnRight: '\u5728\u53f3\u4fa7\u63d2\u5165\u5217',
+    tableMenu: '\u8868\u683c\u884c\u5217\u64cd\u4f5c',
+    adjustedColumns: '\u5df2\u8c03\u6574 {count} \u5217',
+    noClipped: '\u6ca1\u6709\u53d1\u73b0\u7701\u7565\u5185\u5bb9',
+    resetDone: '\u5df2\u6062\u590d\u9ed8\u8ba4\u5c3a\u5bf8',
+    transposed: '\u5df2\u8f6c\u7f6e\u8868\u683c',
+  });
+  Object.assign(COPY.en, {
+    size: 'Size',
+    expandClipped: 'Expand truncated content',
+    fitAll: 'Fit all content',
+    equalColumns: 'Make columns equal',
+    resetSizes: 'Reset sizes',
+    transpose: 'Transpose',
+    insertRowAbove: 'Insert row above',
+    insertRowBelow: 'Insert row below',
+    insertColumnLeft: 'Insert column left',
+    insertColumnRight: 'Insert column right',
+    tableMenu: 'Table row and column actions',
+    adjustedColumns: 'Adjusted {count} column(s)',
+    noClipped: 'No truncated content found',
+    resetDone: 'Default sizes restored',
+    transposed: 'Table transposed',
+  });
+
   function t(key) {
     const lang = language();
     return (COPY[lang] && COPY[lang][key]) || COPY['zh-CN'][key] || key;
+  }
+
+  function formatT(key, values) {
+    let output = t(key);
+    Object.keys(values || {}).forEach(function (name) {
+      output = output.replace('{' + name + '}', String(values[name]));
+    });
+    return output;
+  }
+
+  function clampDimension(value, min, max, fallback) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.round(Math.max(min, Math.min(max, number)));
+  }
+
+  function defaultColumnWidth(columnCount) {
+    return columnCount === 1 ? SINGLE_COLUMN_WIDTH : DEFAULT_COLUMN_WIDTH;
+  }
+
+  function resolveLayout(raw, columnCount, rowCount) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const sourceColumns = Array.isArray(source.columnWidths) ? source.columnWidths : [];
+    const sourceRows = Array.isArray(source.rowHeights) ? source.rowHeights : [];
+    const columnDefault = defaultColumnWidth(columnCount);
+    return {
+      columnWidths: new Array(columnCount).fill(0).map(function (_, index) {
+        return clampDimension(sourceColumns[index], MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, columnDefault);
+      }),
+      rowHeights: new Array(rowCount).fill(0).map(function (_, index) {
+        return clampDimension(sourceRows[index], MIN_ROW_HEIGHT, MAX_ROW_HEIGHT, DEFAULT_ROW_HEIGHT);
+      }),
+    };
+  }
+
+  function compactDimensionList(values, fallback) {
+    const output = [];
+    values.forEach(function (value, index) {
+      if (value !== fallback) output[index] = value;
+    });
+    while (output.length && output[output.length - 1] == null) output.pop();
+    return output;
+  }
+
+  function exportLayout(layout, columnCount, rowCount) {
+    const resolved = resolveLayout(layout, columnCount, rowCount);
+    const columnWidths = compactDimensionList(resolved.columnWidths, defaultColumnWidth(columnCount));
+    const rowHeights = compactDimensionList(resolved.rowHeights, DEFAULT_ROW_HEIGHT);
+    if (!columnWidths.length && !rowHeights.length) return null;
+    const output = {};
+    if (columnWidths.length) output.columnWidths = columnWidths;
+    if (rowHeights.length) output.rowHeights = rowHeights;
+    return output;
+  }
+
+  function dimensionsForMarkdown(markdown) {
+    const syntax = global.MarkdownTable;
+    const parsed = syntax && syntax.parse(String(markdown || ''), { ensureBodyRow: false });
+    const model = parsed && parsed.ok ? parsed.model : null;
+    return {
+      columns: model ? Math.max(1, model.header.length) : 3,
+      rows: model ? Math.max(1, model.rows.length + 1) : 3,
+    };
+  }
+
+  function normalizeLayoutForMarkdown(raw, markdown) {
+    const dimensions = dimensionsForMarkdown(markdown);
+    return exportLayout(resolveLayout(raw, dimensions.columns, dimensions.rows),
+      dimensions.columns, dimensions.rows);
+  }
+
+  function transposeTableModel(model) {
+    const header = model && Array.isArray(model.header) ? model.header : [''];
+    const body = model && Array.isArray(model.rows) ? model.rows : [];
+    const rows = [header].concat(body);
+    const columnCount = Math.max(1, rows.reduce(function (max, row) {
+      return Math.max(max, Array.isArray(row) ? row.length : 0);
+    }, 0));
+    const transposed = new Array(columnCount).fill(0).map(function (_, col) {
+      return rows.map(function (row) {
+        return row && row[col] != null ? String(row[col]) : '';
+      });
+    });
+    return {
+      header: transposed[0] || [''],
+      rows: transposed.slice(1),
+      align: new Array(rows.length).fill(''),
+    };
   }
 
   function cellName(index) {
@@ -137,12 +269,17 @@
       ? parsed.model
       : (syntax ? syntax.createDefault(3, 3, '')
         : { header: ['', '', ''], rows: [['', '', ''], ['', '', '']], align: ['', '', ''] });
+    this.layout = resolveLayout(this.options.layout, this.colCount(), this.rowCount());
     this.selection = { r1: 0, c1: 0, r2: 0, c2: 0 };
     this.anchor = { row: 0, col: 0 };
     this.editing = null;
     this.destroyed = false;
     this.lastCommitted = syntax ? syntax.serialize(this.model) : String(this.options.markdown || '');
+    this.lastCommittedLayout = JSON.stringify(exportLayout(this.layout, this.colCount(), this.rowCount()));
     this.sourceMode = false;
+    this.dimensionDrag = null;
+    this.geometryFrame = 0;
+    this.statusTimer = 0;
     controllers.add(this);
     this.render();
   }
@@ -157,6 +294,14 @@
 
   TableGrid.prototype.colCount = function () {
     return Math.max(1, this.model.header.length);
+  };
+
+  TableGrid.prototype.reconcileLayout = function () {
+    this.layout = resolveLayout(this.layout, this.colCount(), this.rowCount());
+  };
+
+  TableGrid.prototype.layoutSnapshot = function () {
+    return exportLayout(this.layout, this.colCount(), this.rowCount());
   };
 
   TableGrid.prototype.cell = function (row, col) {
@@ -324,11 +469,24 @@
     const syntax = global.MarkdownTable;
     if (!syntax) return;
     const markdown = syntax.serialize(this.model);
-    if (markdown === this.lastCommitted) return;
+    const layout = this.layoutSnapshot();
+    const layoutKey = JSON.stringify(layout);
+    const markdownChanged = markdown !== this.lastCommitted;
+    const layoutChanged = layoutKey !== this.lastCommittedLayout;
+    if (!markdownChanged && !layoutChanged) return;
     const previous = this.lastCommitted;
+    const previousLayout = JSON.parse(this.lastCommittedLayout || 'null');
     this.lastCommitted = markdown;
+    this.lastCommittedLayout = layoutKey;
     if (typeof this.options.onCommit === 'function') {
-      this.options.onCommit(markdown, { reason: reason || 'edit', previous: previous });
+      this.options.onCommit(markdown, {
+        reason: reason || 'edit',
+        previous: previous,
+        previousLayout: previousLayout,
+        layout: layout,
+        markdownChanged: markdownChanged,
+        layoutChanged: layoutChanged,
+      });
     }
   };
 
@@ -337,6 +495,7 @@
     const bounds = this.bounds();
     const at = afterSelection === false ? this.model.rows.length : Math.max(0, bounds.r2);
     this.model.rows.splice(at, 0, new Array(this.colCount()).fill(''));
+    this.layout.rowHeights.splice(at + 1, 0, DEFAULT_ROW_HEIGHT);
     this.selection = { r1: at + 1, c1: bounds.c1, r2: at + 1, c2: bounds.c1 };
     this.anchor = { row: at + 1, col: bounds.c1 };
     this.render();
@@ -346,14 +505,54 @@
   TableGrid.prototype.addColumn = function (atEnd) {
     this.finishCellEdit('structure');
     const bounds = this.bounds();
+    const storedLayout = this.layoutSnapshot();
+    const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
     const at = atEnd ? this.colCount() : Math.min(this.colCount(), bounds.c2 + 1);
     this.model.header.splice(at, 0, '');
     this.model.rows.forEach(function (row) { row.splice(at, 0, ''); });
     this.model.align.splice(at, 0, '');
+    if (hasCustomColumns) {
+      this.layout.columnWidths.splice(at, 0, defaultColumnWidth(this.colCount()));
+    } else {
+      this.layout.columnWidths = new Array(this.colCount()).fill(defaultColumnWidth(this.colCount()));
+    }
     this.selection = { r1: bounds.r1, c1: at, r2: bounds.r1, c2: at };
     this.anchor = { row: bounds.r1, col: at };
     this.render();
     this.commit('add-column');
+  };
+
+  TableGrid.prototype.insertRow = function (side) {
+    this.finishCellEdit('structure');
+    const bounds = this.bounds();
+    if (side === 'above' && bounds.r1 === 0) return;
+    const row = side === 'above' ? bounds.r1 : bounds.r2 + 1;
+    this.model.rows.splice(row - 1, 0, new Array(this.colCount()).fill(''));
+    this.layout.rowHeights.splice(row, 0, DEFAULT_ROW_HEIGHT);
+    this.selection = { r1: row, c1: bounds.c1, r2: row, c2: bounds.c1 };
+    this.anchor = { row: row, col: bounds.c1 };
+    this.render();
+    this.commit(side === 'above' ? 'insert-row-above' : 'insert-row-below');
+  };
+
+  TableGrid.prototype.insertColumn = function (side) {
+    this.finishCellEdit('structure');
+    const bounds = this.bounds();
+    const storedLayout = this.layoutSnapshot();
+    const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
+    const col = side === 'left' ? bounds.c1 : bounds.c2 + 1;
+    this.model.header.splice(col, 0, '');
+    this.model.rows.forEach(function (row) { row.splice(col, 0, ''); });
+    this.model.align.splice(col, 0, '');
+    if (hasCustomColumns) {
+      this.layout.columnWidths.splice(col, 0, defaultColumnWidth(this.colCount()));
+    } else {
+      this.layout.columnWidths = new Array(this.colCount()).fill(defaultColumnWidth(this.colCount()));
+    }
+    this.selection = { r1: bounds.r1, c1: col, r2: bounds.r1, c2: col };
+    this.anchor = { row: bounds.r1, col: col };
+    this.render();
+    this.commit(side === 'left' ? 'insert-column-left' : 'insert-column-right');
   };
 
   TableGrid.prototype.deleteRows = function () {
@@ -363,6 +562,7 @@
     const last = Math.max(first, bounds.r2);
     if (bounds.r2 < 1) return;
     this.model.rows.splice(first - 1, last - first + 1);
+    this.layout.rowHeights.splice(first, last - first + 1);
     const row = Math.min(first, this.rowCount() - 1);
     this.selection = { r1: row, c1: bounds.c1, r2: row, c2: bounds.c1 };
     this.anchor = { row: row, col: bounds.c1 };
@@ -374,10 +574,18 @@
     this.finishCellEdit('structure');
     if (this.colCount() <= 1) return;
     const bounds = this.bounds();
+    const storedLayout = this.layoutSnapshot();
+    const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
     const count = Math.min(this.colCount() - 1, bounds.c2 - bounds.c1 + 1);
     this.model.header.splice(bounds.c1, count);
     this.model.rows.forEach(function (row) { row.splice(bounds.c1, count); });
     this.model.align.splice(bounds.c1, count);
+    if (hasCustomColumns) {
+      this.layout.columnWidths.splice(bounds.c1, count);
+      this.reconcileLayout();
+    } else {
+      this.layout.columnWidths = new Array(this.colCount()).fill(defaultColumnWidth(this.colCount()));
+    }
     const col = Math.min(bounds.c1, this.colCount() - 1);
     this.selection = { r1: bounds.r1, c1: col, r2: bounds.r1, c2: col };
     this.anchor = { row: bounds.r1, col: col };
@@ -424,12 +632,22 @@
     const bounds = this.bounds();
     const neededRows = bounds.r1 + rows.length;
     const neededCols = bounds.c1 + (rows.reduce(function (max, row) { return Math.max(max, row.length); }, 0));
-    while (this.rowCount() < neededRows) this.model.rows.push(new Array(this.colCount()).fill(''));
+    const storedLayout = this.layoutSnapshot();
+    const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
+    while (this.rowCount() < neededRows) {
+      this.model.rows.push(new Array(this.colCount()).fill(''));
+      this.layout.rowHeights.push(DEFAULT_ROW_HEIGHT);
+    }
     while (this.colCount() < neededCols) {
       this.model.header.push('');
       this.model.rows.forEach(function (row) { row.push(''); });
       this.model.align.push('');
+      this.layout.columnWidths.push(defaultColumnWidth(neededCols));
     }
+    if (!hasCustomColumns) {
+      this.layout.columnWidths = new Array(this.colCount()).fill(defaultColumnWidth(this.colCount()));
+    }
+    this.reconcileLayout();
     rows.forEach(function (row, rowIndex) {
       row.forEach(function (cell, colIndex) {
         this.setCell(bounds.r1 + rowIndex, bounds.c1 + colIndex, cell);
@@ -471,9 +689,30 @@
     menu.className = 'table-grid-context-menu';
     menu.tabIndex = -1;
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', t('deleteMenu'));
+    menu.setAttribute('aria-label', t('tableMenu'));
 
     const actions = [
+      {
+        label: t('insertRowAbove'),
+        disabled: bounds.r1 === 0,
+        run: this.insertRow.bind(this, 'above'),
+      },
+      {
+        label: t('insertRowBelow'),
+        disabled: false,
+        run: this.insertRow.bind(this, 'below'),
+      },
+      {
+        label: t('insertColumnLeft'),
+        disabled: false,
+        run: this.insertColumn.bind(this, 'left'),
+      },
+      {
+        label: t('insertColumnRight'),
+        disabled: false,
+        run: this.insertColumn.bind(this, 'right'),
+      },
+      { separator: true },
       {
         label: t('deleteSelectedRows'),
         disabled: bounds.r2 < 1,
@@ -486,6 +725,13 @@
       },
     ];
     actions.forEach(function (action) {
+      if (action.separator) {
+        const separator = document.createElement('span');
+        separator.className = 'table-grid-context-separator';
+        separator.setAttribute('role', 'separator');
+        menu.appendChild(separator);
+        return;
+      }
       const button = document.createElement('button');
       button.type = 'button';
       button.setAttribute('role', 'menuitem');
@@ -640,6 +886,62 @@
       toolbar.appendChild(button);
     });
     if (this.options.studio) {
+      if (this.options.layoutEditable) {
+        const sizeMenu = document.createElement('details');
+        sizeMenu.className = 'table-toolbar-menu';
+        const sizeSummary = document.createElement('summary');
+        sizeSummary.textContent = t('size');
+        sizeSummary.setAttribute('aria-label', t('size'));
+        sizeMenu.appendChild(sizeSummary);
+        const sizePopup = document.createElement('div');
+        sizePopup.className = 'table-toolbar-popup';
+        [
+          ['expand-clipped', t('expandClipped'), this.fitColumns.bind(this, 'expand')],
+          ['fit-all', t('fitAll'), this.fitColumns.bind(this, 'all')],
+          ['equal-columns', t('equalColumns'), this.fitColumns.bind(this, 'equal')],
+          ['reset-sizes', t('resetSizes'), this.fitColumns.bind(this, 'reset')],
+        ].forEach(function (entry) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.dataset.tableAction = entry[0];
+          button.textContent = entry[1];
+          button.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            sizeMenu.open = false;
+            entry[2]();
+          });
+          sizePopup.appendChild(button);
+        });
+        sizeMenu.appendChild(sizePopup);
+        sizeMenu.addEventListener('keydown', function (event) {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          event.stopPropagation();
+          sizeMenu.open = false;
+          sizeSummary.focus({ preventScroll: true });
+        });
+        sizeMenu.addEventListener('focusout', function () {
+          requestAnimationFrame(function () {
+            if (!sizeMenu.contains(document.activeElement)) sizeMenu.open = false;
+          });
+        });
+        toolbar.appendChild(sizeMenu);
+
+        const transpose = document.createElement('button');
+        transpose.type = 'button';
+        transpose.dataset.tableAction = 'transpose';
+        transpose.textContent = t('transpose');
+        transpose.hidden = this.options.appearance !== 'matrix';
+        transpose.addEventListener('click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.transpose();
+        }.bind(this));
+        toolbar.appendChild(transpose);
+        this.transposeButton = transpose;
+      }
+
       const source = document.createElement('button');
       source.type = 'button';
       source.dataset.tableAction = 'source';
@@ -675,7 +977,307 @@
         toolbar.appendChild(extract);
       }
     }
+    const status = document.createElement('span');
+    status.className = 'table-toolbar-status';
+    status.setAttribute('aria-live', 'polite');
+    toolbar.appendChild(status);
+    this.toolbarStatus = status;
     root.appendChild(toolbar);
+  };
+
+  TableGrid.prototype.dimensionCssValue = function (value) {
+    const pixels = Math.round(Number(value) || 0);
+    return this.options.compact
+      ? 'calc(' + pixels + 'px * var(--table-scale, 1))'
+      : pixels + 'px';
+  };
+
+  TableGrid.prototype.applyLayoutStyles = function () {
+    this.reconcileLayout();
+    if (!this.tableEl) return;
+    const columnWidths = this.layout.columnWidths;
+    const rowHeights = this.layout.rowHeights;
+    (this.columnElements || []).forEach(function (column, index) {
+      column.style.width = this.dimensionCssValue(columnWidths[index]);
+    }, this);
+    (this.rowElements || []).forEach(function (row, index) {
+      row.style.setProperty('--table-row-height', this.dimensionCssValue(rowHeights[index]));
+    }, this);
+    if (this.options.compact) {
+      const totalWidth = columnWidths.reduce(function (sum, width) { return sum + width; }, 0);
+      this.tableEl.style.width = this.dimensionCssValue(totalWidth);
+      this.tableEl.style.minWidth = this.dimensionCssValue(totalWidth);
+    } else {
+      this.tableEl.style.removeProperty('width');
+      this.tableEl.style.removeProperty('min-width');
+    }
+    let offset = 0;
+    (this.columnResizeHandles || []).forEach(function (handle, index) {
+      offset += columnWidths[index];
+      handle.style.left = this.dimensionCssValue(offset);
+    }, this);
+    offset = 0;
+    (this.rowResizeHandles || []).forEach(function (handle, index) {
+      offset += rowHeights[index];
+      handle.style.top = this.dimensionCssValue(offset);
+    }, this);
+  };
+
+  TableGrid.prototype.scheduleGeometryChange = function () {
+    if (this.geometryFrame || typeof this.options.onGeometryChange !== 'function') return;
+    this.geometryFrame = requestAnimationFrame(function () {
+      this.geometryFrame = 0;
+      if (!this.destroyed && typeof this.options.onGeometryChange === 'function') {
+        this.options.onGeometryChange();
+      }
+    }.bind(this));
+  };
+
+  TableGrid.prototype.showToolbarStatus = function (message) {
+    if (this.statusTimer) clearTimeout(this.statusTimer);
+    if (!this.toolbarStatus) return;
+    this.toolbarStatus.textContent = String(message || '');
+    this.toolbarStatus.classList.toggle('visible', !!message);
+    this.statusTimer = setTimeout(function () {
+      this.statusTimer = 0;
+      if (!this.toolbarStatus) return;
+      this.toolbarStatus.textContent = '';
+      this.toolbarStatus.classList.remove('visible');
+    }.bind(this), 1800);
+  };
+
+  TableGrid.prototype.measureColumnContentWidth = function (index) {
+    const measureRoot = document.createElement('div');
+    measureRoot.className = 'table-grid-root compact table-chrome-hidden table-autofit-measure-root';
+    measureRoot.dataset.tableAppearance = this.options.appearance === 'matrix' ? 'matrix' : 'standard';
+    measureRoot.dataset.tableBracket = 'round';
+    measureRoot.style.setProperty('--table-scale', '1');
+    const table = document.createElement('table');
+    table.className = 'table-grid';
+    measureRoot.appendChild(table);
+    const sourceCells = this.root ? Array.from(this.root.querySelectorAll(
+      '[data-table-cell][data-col="' + index + '"]')) : [];
+    const values = this.rows().map(function (row) { return row[index] || ''; });
+    const probes = [];
+    values.forEach(function (value, row) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      const display = document.createElement('div');
+      display.className = 'table-cell-value';
+      const probe = document.createElement('span');
+      probe.className = 'table-cell-autofit-probe';
+      const rendered = sourceCells[row] && sourceCells[row].querySelector('.table-cell-value');
+      probe.innerHTML = rendered ? rendered.innerHTML : (renderInline(value) || '&nbsp;');
+      display.appendChild(probe);
+      td.appendChild(display);
+      tr.appendChild(td);
+      table.appendChild(tr);
+      probes.push({ display: display, probe: probe });
+    });
+    document.body.appendChild(measureRoot);
+    // “按内容适宽”不再把短内容列压得比新建表格的紧凑基准更窄。
+    // 因此新建、双击适宽与“恢复默认尺寸”使用同一套宽度语义。
+    let needed = defaultColumnWidth(this.colCount());
+    probes.forEach(function (entry) {
+      const style = getComputedStyle(entry.display);
+      const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      needed = Math.max(needed, entry.probe.getBoundingClientRect().width + padding + 2);
+    });
+    measureRoot.remove();
+    return Math.ceil(needed);
+  };
+
+  TableGrid.prototype.fitColumns = function (mode) {
+    if (this.sourceMode) return;
+    this.finishCellEdit('fit-columns');
+    let changed = 0;
+    if (mode === 'reset') {
+      const previous = JSON.stringify(this.layoutSnapshot());
+      this.layout = resolveLayout(null, this.colCount(), this.rowCount());
+      changed = previous === JSON.stringify(this.layoutSnapshot()) ? 0 : this.colCount();
+    } else if (mode === 'equal') {
+      const total = this.layout.columnWidths.reduce(function (sum, width) { return sum + width; }, 0);
+      const equal = clampDimension(total / this.colCount(), MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH,
+        defaultColumnWidth(this.colCount()));
+      this.layout.columnWidths = this.layout.columnWidths.map(function (width) {
+        if (width !== equal) changed += 1;
+        return equal;
+      });
+    } else {
+      this.layout.columnWidths = this.layout.columnWidths.map(function (width, index) {
+        const measured = this.measureColumnContentWidth(index);
+        if (mode === 'expand' && measured <= width + 1) return width;
+        const next = clampDimension(measured, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH,
+          defaultColumnWidth(this.colCount()));
+        if (next !== width) changed += 1;
+        return next;
+      }, this);
+    }
+    this.applyLayoutStyles();
+    this.scheduleGeometryChange();
+    this.commit(mode === 'expand' ? 'expand-clipped-columns'
+      : mode === 'all' ? 'fit-all-columns'
+        : mode === 'equal' ? 'equal-columns' : 'reset-table-sizes');
+    if (mode === 'expand' && !changed) this.showToolbarStatus(t('noClipped'));
+    else if (mode === 'reset') this.showToolbarStatus(t('resetDone'));
+    else this.showToolbarStatus(formatT('adjustedColumns', { count: changed }));
+  };
+
+  TableGrid.prototype.transpose = function () {
+    if (this.sourceMode || this.options.appearance !== 'matrix') return;
+    this.finishCellEdit('transpose');
+    this.model = transposeTableModel(this.model);
+    this.layout = resolveLayout(null, this.colCount(), this.rowCount());
+    this.selection = { r1: 0, c1: 0, r2: 0, c2: 0 };
+    this.anchor = { row: 0, col: 0 };
+    this.render();
+    this.commit('transpose');
+    this.showToolbarStatus(t('transposed'));
+  };
+
+  TableGrid.prototype.setAppearance = function (appearance) {
+    this.options.appearance = appearance === 'matrix' ? 'matrix' : 'standard';
+    if (this.transposeButton) this.transposeButton.hidden = this.options.appearance !== 'matrix';
+  };
+
+  TableGrid.prototype.setDimension = function (axis, index, value) {
+    if (axis === 'column') {
+      this.layout.columnWidths[index] = clampDimension(
+        value, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, defaultColumnWidth(this.colCount()));
+    } else {
+      this.layout.rowHeights[index] = clampDimension(
+        value, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT, DEFAULT_ROW_HEIGHT);
+    }
+    this.applyLayoutStyles();
+    this.scheduleGeometryChange();
+  };
+
+  TableGrid.prototype.startDimensionResize = function (axis, index, event) {
+    if (!this.options.compact || this.destroyed || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.detail > 1) return;
+    this.finishCellEdit('dimension');
+    this.closeContextMenu(false);
+    if (typeof this.options.onSelect === 'function') this.options.onSelect();
+    const handle = event.currentTarget;
+    const current = axis === 'column'
+      ? this.layout.columnWidths[index]
+      : this.layout.rowHeights[index];
+    const reference = this.root.querySelector(axis === 'column'
+      ? '[data-table-cell][data-row="0"][data-col="' + index + '"]'
+      : '[data-table-cell][data-row="' + index + '"][data-col="0"]');
+    const rect = reference && reference.getBoundingClientRect();
+    const visualExtent = rect ? (axis === 'column' ? rect.width : rect.height) : current;
+    const visualPerUnit = Math.max(0.01, visualExtent / Math.max(1, current));
+    const startClient = axis === 'column' ? event.clientX : event.clientY;
+    const pointerId = event.pointerId;
+    const state = {
+      axis: axis,
+      index: index,
+      startValue: current,
+      startClient: startClient,
+      visualPerUnit: visualPerUnit,
+      moved: false,
+    };
+    this.dimensionDrag = state;
+    this.root.classList.add(axis === 'column' ? 'resizing-column' : 'resizing-row');
+    dragController = null;
+
+    const move = function (moveEvent) {
+      if (!this.dimensionDrag || moveEvent.pointerId !== pointerId) return;
+      moveEvent.preventDefault();
+      moveEvent.stopPropagation();
+      const client = axis === 'column' ? moveEvent.clientX : moveEvent.clientY;
+      const delta = (client - startClient) / visualPerUnit;
+      const next = current + delta;
+      const nextValue = axis === 'column'
+        ? clampDimension(next, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, defaultColumnWidth(this.colCount()))
+        : clampDimension(next, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT, DEFAULT_ROW_HEIGHT);
+      if (nextValue !== state.startValue) state.moved = true;
+      this.setDimension(axis, index, nextValue);
+    }.bind(this);
+    const finish = function (finishEvent) {
+      if (!this.dimensionDrag || finishEvent.pointerId !== pointerId) return;
+      finishEvent.preventDefault();
+      finishEvent.stopPropagation();
+      cleanup();
+      if (state.moved) this.commit(axis === 'column' ? 'resize-column' : 'resize-row');
+      this.scheduleGeometryChange();
+    }.bind(this);
+    const cancel = function (cancelEvent) {
+      if (!this.dimensionDrag || cancelEvent.pointerId !== pointerId) return;
+      cancelEvent.preventDefault();
+      cancelEvent.stopPropagation();
+      this.setDimension(axis, index, state.startValue);
+      cleanup();
+    }.bind(this);
+    const cleanup = function () {
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', finish, true);
+      window.removeEventListener('pointercancel', cancel, true);
+      try {
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+      } catch (e) {}
+      this.dimensionDrag = null;
+      if (this.root) this.root.classList.remove('resizing-column', 'resizing-row');
+    }.bind(this);
+    state.abort = function () {
+      if (!this.dimensionDrag) return;
+      this.setDimension(axis, index, state.startValue);
+      cleanup();
+    }.bind(this);
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', finish, true);
+    window.addEventListener('pointercancel', cancel, true);
+    try { handle.setPointerCapture(pointerId); } catch (e) {}
+  };
+
+  TableGrid.prototype.autoFitColumn = function (index, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    this.finishCellEdit('auto-fit-column');
+    const needed = this.measureColumnContentWidth(index);
+    this.setDimension('column', index, needed);
+    this.commit('auto-fit-column');
+  };
+
+  TableGrid.prototype.resetRowHeight = function (index, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    this.finishCellEdit('reset-row-height');
+    this.setDimension('row', index, DEFAULT_ROW_HEIGHT);
+    this.commit('reset-row-height');
+  };
+
+  TableGrid.prototype.renderDimensionHandles = function (scroll) {
+    this.columnResizeHandles = [];
+    this.rowResizeHandles = [];
+    if (!this.options.compact) return;
+    for (let col = 0; col < this.colCount(); col++) {
+      const handle = document.createElement('span');
+      handle.className = 'table-dimension-handle table-column-resize-handle';
+      handle.dataset.tableResizeColumn = col;
+      handle.setAttribute('aria-hidden', 'true');
+      handle.addEventListener('pointerdown', this.startDimensionResize.bind(this, 'column', col));
+      handle.addEventListener('dblclick', this.autoFitColumn.bind(this, col));
+      scroll.appendChild(handle);
+      this.columnResizeHandles.push(handle);
+    }
+    for (let row = 0; row < this.rowCount(); row++) {
+      const handle = document.createElement('span');
+      handle.className = 'table-dimension-handle table-row-resize-handle';
+      handle.dataset.tableResizeRow = row;
+      handle.setAttribute('aria-hidden', 'true');
+      handle.addEventListener('pointerdown', this.startDimensionResize.bind(this, 'row', row));
+      handle.addEventListener('dblclick', this.resetRowHeight.bind(this, row));
+      scroll.appendChild(handle);
+      this.rowResizeHandles.push(handle);
+    }
   };
 
   TableGrid.prototype.render = function () {
@@ -686,6 +1288,7 @@
     host.innerHTML = '';
     const root = document.createElement('div');
     root.className = 'table-grid-root' + (this.options.compact ? ' compact' : ' studio');
+    root.classList.toggle('table-header-emphasized', !!this.options.headerEmphasized);
     if (this.options.compact) {
       const appearance = this.options.appearance === 'matrix' ? 'matrix' : 'standard';
       const bracket = this.options.bracket === 'square' || this.options.bracket === 'determinant'
@@ -822,6 +1425,22 @@
     table.className = 'table-grid';
     table.setAttribute('role', 'grid');
     scroll.appendChild(table);
+    this.tableEl = table;
+    const colgroup = document.createElement('colgroup');
+    if (!this.options.compact) {
+      const axisColumn = document.createElement('col');
+      axisColumn.className = 'table-axis-column';
+      axisColumn.style.width = '32px';
+      colgroup.appendChild(axisColumn);
+    }
+    this.columnElements = [];
+    for (let col = 0; col < this.colCount(); col++) {
+      const column = document.createElement('col');
+      column.className = 'table-data-column';
+      colgroup.appendChild(column);
+      this.columnElements.push(column);
+    }
+    table.appendChild(colgroup);
 
     const headRow = document.createElement('tr');
     const corner = document.createElement('th');
@@ -844,9 +1463,11 @@
     table.appendChild(headRow);
 
     const rows = this.rows();
+    this.rowElements = [];
     rows.forEach(function (row, rowIndex) {
       const tr = document.createElement('tr');
       if (rowIndex === 0) tr.className = 'table-header-row';
+      this.rowElements.push(tr);
       const rowHead = document.createElement('th');
       rowHead.className = 'table-row-head';
       rowHead.dataset.tableRowHead = rowIndex;
@@ -891,6 +1512,8 @@
       }
       table.appendChild(tr);
     }, this);
+    this.renderDimensionHandles(scroll);
+    this.applyLayoutStyles();
 
     const addColumn = document.createElement('button');
     addColumn.type = 'button';
@@ -956,7 +1579,13 @@
       }
       return;
     }
+    const storedLayout = this.layoutSnapshot();
+    const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
     this.model = parsed.model;
+    this.reconcileLayout();
+    if (!hasCustomColumns) {
+      this.layout.columnWidths = new Array(this.colCount()).fill(defaultColumnWidth(this.colCount()));
+    }
     this.sourceMode = false;
     this.render();
     this.commit('source');
@@ -964,15 +1593,34 @@
 
   TableGrid.prototype.destroy = function (commit) {
     if (this.destroyed) return;
+    if (this.dimensionDrag && typeof this.dimensionDrag.abort === 'function') {
+      this.dimensionDrag.abort();
+    }
     if (commit !== false) {
       if (this.sourceMode && this.sourceEditor) {
         const parsed = global.MarkdownTable.parse(this.sourceEditor.value, { ensureBodyRow: false });
-        if (parsed.ok) this.model = parsed.model;
+        if (parsed.ok) {
+          const storedLayout = this.layoutSnapshot();
+          const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
+          this.model = parsed.model;
+          this.reconcileLayout();
+          if (!hasCustomColumns) {
+            this.layout.columnWidths = new Array(this.colCount()).fill(defaultColumnWidth(this.colCount()));
+          }
+        }
       }
       this.finishCellEdit('close');
       this.commit('close');
     }
     this.closeContextMenu(false);
+    if (this.geometryFrame) {
+      cancelAnimationFrame(this.geometryFrame);
+      this.geometryFrame = 0;
+    }
+    if (this.statusTimer) {
+      clearTimeout(this.statusTimer);
+      this.statusTimer = 0;
+    }
     clearHostMath(this.host);
     this.destroyed = true;
     controllers.delete(this);
@@ -1014,9 +1662,12 @@
     head.appendChild(close);
     card.appendChild(head);
 
+    let controller = null;
+    let viewState = null;
     if (options.viewOptionsEditable) {
-      const viewState = {
+      viewState = {
         chromeHidden: !!options.chromeHidden,
+        headerEmphasized: !!options.headerEmphasized,
         appearance: options.appearance === 'matrix' ? 'matrix' : 'standard',
         bracket: options.bracket === 'square' || options.bracket === 'determinant'
           ? options.bracket : 'round',
@@ -1036,6 +1687,17 @@
       chromeLabel.appendChild(chromeText);
       controls.appendChild(chromeLabel);
 
+      const headerLabel = document.createElement('label');
+      headerLabel.className = 'table-studio-chrome-toggle';
+      const headerCheckbox = document.createElement('input');
+      headerCheckbox.type = 'checkbox';
+      headerCheckbox.checked = viewState.headerEmphasized;
+      const headerText = document.createElement('span');
+      headerText.textContent = t('emphasizeHeader');
+      headerLabel.appendChild(headerCheckbox);
+      headerLabel.appendChild(headerText);
+      controls.appendChild(headerLabel);
+
       function makeChoice(value, label, group) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -1048,9 +1710,11 @@
             chromeCheckbox.checked = false;
           }
           syncChoices();
+          if (controller) controller.setAppearance(viewState.appearance);
           if (typeof options.onViewCommit === 'function') {
             options.onViewCommit({
               chromeHidden: viewState.chromeHidden,
+              headerEmphasized: viewState.headerEmphasized,
               appearance: viewState.appearance,
               bracket: viewState.bracket,
             });
@@ -1110,6 +1774,22 @@
         if (typeof options.onViewCommit === 'function') {
           options.onViewCommit({
             chromeHidden: viewState.chromeHidden,
+            headerEmphasized: viewState.headerEmphasized,
+            appearance: viewState.appearance,
+            bracket: viewState.bracket,
+          });
+        }
+      });
+      headerCheckbox.addEventListener('change', function () {
+        viewState.headerEmphasized = headerCheckbox.checked;
+        if (controller && controller.root) {
+          controller.options.headerEmphasized = viewState.headerEmphasized;
+          controller.root.classList.toggle('table-header-emphasized', viewState.headerEmphasized);
+        }
+        if (typeof options.onViewCommit === 'function') {
+          options.onViewCommit({
+            chromeHidden: viewState.chromeHidden,
+            headerEmphasized: viewState.headerEmphasized,
             appearance: viewState.appearance,
             bracket: viewState.bracket,
           });
@@ -1126,9 +1806,13 @@
     document.body.appendChild(overlay);
 
     let closed = false;
-    const controller = mount(host, {
+    controller = mount(host, {
       markdown: options.markdown,
+      layout: options.layout,
       studio: true,
+      layoutEditable: !!options.viewOptionsEditable,
+      appearance: viewState ? viewState.appearance : options.appearance,
+      headerEmphasized: !!options.headerEmphasized,
       onCommit: options.onCommit,
       onExtract: options.onExtract,
       onUndo: options.onUndo,
@@ -1173,12 +1857,23 @@
   global.RelatumTableGrid = {
     mount: mount,
     openStudio: openStudio,
+    normalizeLayout: normalizeLayoutForMarkdown,
+    transposeModel: transposeTableModel,
     commitAll: function () {
       pruneControllers();
       controllers.forEach(function (controller) {
         if (controller.sourceMode && controller.sourceEditor) {
           const parsed = global.MarkdownTable.parse(controller.sourceEditor.value, { ensureBodyRow: false });
-          if (parsed.ok) controller.model = parsed.model;
+          if (parsed.ok) {
+            const storedLayout = controller.layoutSnapshot();
+            const hasCustomColumns = !!(storedLayout && storedLayout.columnWidths);
+            controller.model = parsed.model;
+            controller.reconcileLayout();
+            if (!hasCustomColumns) {
+              controller.layout.columnWidths = new Array(controller.colCount())
+                .fill(defaultColumnWidth(controller.colCount()));
+            }
+          }
         }
         controller.finishCellEdit('save');
         controller.commit('save');
