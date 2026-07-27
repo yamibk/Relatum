@@ -296,6 +296,11 @@
       + Math.random().toString(36).slice(2, 5);
   }
 
+  function newTimerId() {
+    return 'timer_' + Date.now().toString(36) + '_'
+      + Math.random().toString(36).slice(2, 6);
+  }
+
   function clonePoint(p) {
     if (Array.isArray(p)) return { x: Number(p[0]) || 0, y: Number(p[1]) || 0 };
     const out = { x: Number(p && p.x) || 0, y: Number(p && p.y) || 0 };
@@ -359,11 +364,31 @@
     return c;
   }
 
-  function cloneState(nodes, edges, ink) {
+  function cloneRuler(ruler) {
+    if (global.RelatumRuler && typeof global.RelatumRuler.clone === 'function') {
+      return global.RelatumRuler.clone(ruler);
+    }
+    if (!ruler || typeof ruler !== 'object') return null;
+    const cx = Number(ruler.cx), cy = Number(ruler.cy), angle = Number(ruler.angle);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+    return { cx: cx, cy: cy, angle: Number.isFinite(angle) ? angle : 0 };
+  }
+
+  function cloneTimers(timers) {
+    const api = global.RelatumCanvasTimer;
+    if (api && typeof api.normalizeList === 'function') {
+      return api.normalizeList(timers).map(function (timer) { return api.clone(timer); });
+    }
+    return [];
+  }
+
+  function cloneState(nodes, edges, ink, ruler, timers) {
     return {
       nodes: nodes.map(cloneNode),
       edges: edges.map(cloneEdge),
       ink: cloneInk(ink),
+      ruler: cloneRuler(ruler),
+      timers: cloneTimers(timers),
     };
   }
 
@@ -825,6 +850,11 @@
     const helpBtn = opts.helpBtn || null;
     const onboardingHint = opts.onboardingHint || null;
     const onboardingReset = opts.onboardingReset || null;
+    const rulerMenu = opts.rulerMenu || null;
+    const rulerAngleInput = rulerMenu && rulerMenu.querySelector('[data-role="ruler-angle-input"]');
+    const rulerAngleCurrent = rulerMenu && rulerMenu.querySelector('[data-role="ruler-angle-current"]');
+    const rulerAngleError = rulerMenu && rulerMenu.querySelector('[data-role="ruler-angle-error"]');
+    const rulerAngleApply = rulerMenu && rulerMenu.querySelector('[data-action="apply-ruler-angle"]');
     // 节点右键菜单（C1 轮：颜色 + 复制 + 删除）
     const nodeMenu = opts.nodeMenu || null;
     const edgeMenu = opts.edgeMenu || null;   // 连线右键菜单（编辑文字 / 删除）
@@ -853,9 +883,14 @@
     const minimapViewbox = opts.minimapViewbox || null;
     let filePath = opts.filePath || '';
     const initialViewport = opts.initialViewport || null;
+    const embeddedEditor = !!opts.embed;
     // 当前 .canvas 文件所在目录（去掉最后一段文件名）
     const baseDir = filePath.replace(/[\\/][^\\/]*$/, '');
     const data = opts.data;
+    const Ruler = global.RelatumRuler || null;
+    const Timer = global.RelatumCanvasTimer || null;
+    const CanvasImport = global.RelatumCanvasImport || null;
+    let canvasImportBusy = false;
     const onViewportChange = opts.onViewportChange || function () {};
     const ONBOARDING_ACTIVE_KEY = 'canvas:onboardingActive';
     const ONBOARDING_STAGES = ['empty', 'connect', 'outline', 'box', 'pdf', 'pdf-tools'];
@@ -1083,10 +1118,38 @@
     });
     if (data.version !== 2) { data.version = 2; richMigrationChanged = true; }
     data.ink = cloneInk(data.ink);
+    if (Object.prototype.hasOwnProperty.call(data, 'ruler')) {
+      const normalizedRuler = Ruler && typeof Ruler.normalize === 'function'
+        ? Ruler.normalize(data.ruler)
+        : cloneRuler(data.ruler);
+      if (!normalizedRuler) {
+        delete data.ruler;
+        richMigrationChanged = true;
+      } else {
+        if (normalizedRuler.cx !== data.ruler.cx
+            || normalizedRuler.cy !== data.ruler.cy
+            || normalizedRuler.angle !== data.ruler.angle) richMigrationChanged = true;
+        data.ruler = normalizedRuler;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'timers')) {
+      const normalizedTimers = Timer && typeof Timer.normalizeList === 'function'
+        ? Timer.normalizeList(data.timers)
+        : [];
+      if (!normalizedTimers.length) {
+        delete data.timers;
+        richMigrationChanged = true;
+      } else {
+        if (JSON.stringify(normalizedTimers) !== JSON.stringify(data.timers)) richMigrationChanged = true;
+        data.timers = normalizedTimers;
+      }
+    }
 
     // ── 内部状态 ──────────────────────────────
     const nodeMap = new Map();           // id → element
     const edgeMap = new Map();           // id → { path, hit, labelEl }
+    const timerMap = new Map();           // id → element
+    const timerRuntime = new Map();       // id → { running, startedAt }，仅当前会话
     // 节点 id 索引：连线绘制与拖拽每帧都会大量查端点，不能反复线性扫描 data.nodes。
     const nodeById = new Map();
     function rebuildNodeIndex() {
@@ -1158,6 +1221,7 @@
     let lastCullPanX = NaN, lastCullPanY = NaN, lastCullScale = NaN;
     const selectedNodeIds = new Set();
     const selectedEdgeIds = new Set();
+    const selectedTimerIds = new Set();
     let editingNodeId = null;
     let editingEdgeId = null;
     let editingOriginalText = '';
@@ -1195,6 +1259,9 @@
     let textSnapEnabled = false;         // 齿轮开关：文本框拖动时是否显示参考线并自动对齐（默认关）
     let textSnapGuideX = null;
     let textSnapGuideY = null;
+    let rulerEl = null;
+    let rulerSelected = false;
+    let rulerContactTimer = null;
     let suppressDecorTitleClick = false;
     let decorTitleLongPressTimer = null;
     let decorTitleLongPressTriggered = false;
@@ -1443,6 +1510,7 @@
       if (tableCreateActive) document.body.dataset.tableCreateActive = '1';
       else delete document.body.dataset.tableCreateActive;
       viewport.classList.toggle('draw-tool-active', drawTool !== 'select');
+      if (rulerEl) rulerEl.classList.toggle('pen-pass-through', drawTool === 'pen');
       refreshEdgeAnchorVisibility();
       updateEraserCursor();
       scheduleTextDock();
@@ -2134,15 +2202,34 @@
     // 装饰对象的同层顺序是持久数据；历史首帧也必须包含归一化后的顺序。
     normalizeDecorationZOrders();
 
+    function snapshotTimers(now) {
+      if (!Timer) return [];
+      const timestamp = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+      return (Array.isArray(data.timers) ? data.timers : []).map(function (timer) {
+        const copy = Timer.clone(timer);
+        copy.elapsedMs = Math.round(Timer.effectiveElapsed(timer, timerRuntime.get(timer.id), timestamp));
+        return copy;
+      });
+    }
+
+    function snapshotCanvasState() {
+      return cloneState(data.nodes, data.edges, data.ink, data.ruler, snapshotTimers());
+    }
+
     // 历史栈：栈顶 = 当前状态
-    const history = [cloneState(data.nodes, data.edges, data.ink)];
+    const history = [snapshotCanvasState()];
     const redoStack = [];
 
     function pushHistory() {
-      history.push(cloneState(data.nodes, data.edges, data.ink));
+      history.push(snapshotCanvasState());
       if (history.length > HISTORY_LIMIT) history.shift();
       redoStack.length = 0;
       refreshHistoryButtons();
+    }
+
+    function refreshHistoryTimerHead() {
+      if (!history.length) return;
+      history[history.length - 1].timers = snapshotTimers();
     }
 
     function refreshHistoryButtons() {
@@ -2171,7 +2258,8 @@
       if (emptyHint) emptyHint.hidden = hasVisibleNode
         || data.edges.length > 0
         || ink.strokes.length > 0
-        || ink.arrows.length > 0;
+        || ink.arrows.length > 0
+        || timerList().length > 0;
     }
 
     // ── 工具 ──────────────────────────────────
@@ -3134,7 +3222,10 @@
       const out = [];
       let prev = dragState.lastInkPoint, acc = 0;
       for (let i = 0; i < evs.length && out.length < 6; i++) {
-        const sp = clientToSurface(evs[i].clientX, evs[i].clientY);
+        let sp = clientToSurface(evs[i].clientX, evs[i].clientY);
+        if (dragState.rulerEdgeSign && rulerAvailable()) {
+          sp = Ruler.projectPointToEdge(sp, data.ruler, dragState.rulerEdgeSign);
+        }
         if (!Number.isFinite(sp.x) || !Number.isFinite(sp.y)) continue;
         acc += Math.hypot(sp.x - prev.x, sp.y - prev.y);
         if (acc > maxAhead) break;
@@ -3144,20 +3235,62 @@
       return out.length ? out : null;
     }
 
+    function applyInkSampleAttributes(point, e, dragState, fallback) {
+      if (dragState.stroke.pressure) {
+        point.p = inkPointPressure(e, point, dragState, fallback);
+        dragState.lastInkPressure = point.p;
+      }
+      if (dragState.stroke.calligraphy) {
+        const tilt = inkPointTilt(e);
+        if (tilt > 0) point.tilt = tilt;
+      }
+      return point;
+    }
+
     function appendInkPointFromEvent(e, fallback) {
       if (!drag || drag.mode !== 'ink-stroke') return false;
       const stroke = drag.stroke;
-      const raw = clientToSurface(e.clientX, e.clientY);
-      let p = stabilizedInkPoint(raw, drag.lastInkPoint, drag.stabilizer || 0);
+      const confirmedRaw = clientToSurface(e.clientX, e.clientY);
+      let changed = false;
       const ts = (e && Number.isFinite(e.timeStamp)) ? e.timeStamp : performance.now();
-      if (stroke.pressure) {
-        p.p = inkPointPressure(e, p, drag, fallback);
-        drag.lastInkPressure = p.p;
+
+      if (!drag.rulerEdgeSign && rulerAvailable()
+          && Ruler && typeof Ruler.captureEdgeAlongSegment === 'function') {
+        const previousRaw = drag.lastInkRawPoint || confirmedRaw;
+        const captured = Ruler.captureEdgeAlongSegment(
+          previousRaw,
+          confirmedRaw,
+          data.ruler,
+          { scale: curScale },
+        );
+        if (captured) {
+          drag.rulerEdgeSign = captured.edgeSign;
+          const contact = applyInkSampleAttributes(
+            { x: captured.point.x, y: captured.point.y },
+            e,
+            drag,
+            fallback,
+          );
+          const contactLast = stroke.points[stroke.points.length - 1];
+          if (!contactLast || Math.hypot(contact.x - contactLast.x, contact.y - contactLast.y) >= 0.000001) {
+            stroke.points.push(contact);
+            changed = true;
+          }
+          // The exact contact point is the new stabilizer anchor. Otherwise a
+          // high stabilizer value would pull the first locked sample off-edge.
+          drag.lastInkPoint = contact;
+          drag.lastInkTime = ts;
+          showRulerContact();
+        }
       }
-      if (stroke.calligraphy) {
-        const t = inkPointTilt(e);
-        if (t > 0) p.tilt = t;
+      drag.lastInkRawPoint = { x: confirmedRaw.x, y: confirmedRaw.y };
+
+      let raw = confirmedRaw;
+      if (drag.rulerEdgeSign && rulerAvailable()) {
+        raw = Ruler.projectPointToEdge(raw, data.ruler, drag.rulerEdgeSign);
       }
+      let p = stabilizedInkPoint(raw, drag.lastInkPoint, drag.stabilizer || 0);
+      p = applyInkSampleAttributes(p, e, drag, fallback);
       const pts = stroke.points;
       const last = pts[pts.length - 1];
       const minDist = Math.max(0.45, 1.35 - (clampNum(stroke.smoothing, 0, 100, 0) * 0.008));
@@ -3165,11 +3298,11 @@
         pts.push(p);
         drag.lastInkPoint = p;
         drag.lastInkTime = ts;
-        return true;
+        changed = true;
       }
       drag.lastInkPoint = p;
       drag.lastInkTime = ts;
-      return false;
+      return changed;
     }
 
     function appendInkPointsFromPointerEvent(e) {
@@ -3901,6 +4034,7 @@
       maybeUpdateCulling();      // 阶段 2：节点多时按视口移动阈值重算屏外裁剪集
       renderEdgesCanvas();       // 阶段①：连线 canvas 层按新相机重描（开关关时是空操作）
       if (selToolbar && !selToolbar.hidden) scheduleSelToolbar();  // 缩放/平移时工具栏跟随选区
+      if (timerToolbar && !timerToolbar.hidden) scheduleTimerToolbar();
     }
 
     document.addEventListener('canvas:guide-visual-refresh', function () {
@@ -5727,7 +5861,10 @@
     }
 
     // 正文节点：左右拖宽；卡片/代码/便签还可上下调整正文可见高度。
-    const BODY_MIN_W = 120;
+    // 显式拖宽后的硬下限必须与新建普通节点的 80px 基础下限一致。
+    // 短标题另在手势开始时测量自然紧凑宽度，避免缩到 80px 后把 Untitled 折行。
+    const BODY_MIN_W = 80;
+    const BODY_COMPACT_MIN_CAP = 120;
     const BODY_MAX_W = 1180;
     const BODY_MIN_H = 72;
     const BODY_MAX_H = 2400;
@@ -5745,6 +5882,23 @@
     function bodyMinWidth(node) {
       if (isTableNode(node)) return 320;
       return isMindmapWidthNode(node) ? 72 : BODY_MIN_W;
+    }
+    function bodyDragMinWidth(node, el) {
+      const hardMin = bodyMinWidth(node);
+      if (!el || isTableNode(node) || isMindmapWidthNode(node)) return hardMin;
+      const previous = {
+        width: el.style.width,
+        minWidth: el.style.minWidth,
+        maxWidth: el.style.maxWidth,
+      };
+      el.style.removeProperty('width');
+      el.style.removeProperty('min-width');
+      el.style.removeProperty('max-width');
+      const compactWidth = el.offsetWidth;
+      el.style.width = previous.width;
+      el.style.minWidth = previous.minWidth;
+      el.style.maxWidth = previous.maxWidth;
+      return Math.max(hardMin, Math.min(BODY_COMPACT_MIN_CAP, Math.round(compactWidth)));
     }
     function defaultBodyHeight(node) {
       return isPreviewNode(node) ? PREVIEW_BODY_DEFAULT_H : BODY_DEFAULT_H;
@@ -5800,6 +5954,7 @@
       const startW = Number(node.width) > 0
         ? Math.max(bodyMinWidth(node), Number(node.width))
         : (el ? el.offsetWidth : 240);
+      const minW = bodyDragMinWidth(node, el);
       const corner = dir.length === 2 && isMindmapWidthNode(node);
       const vertical = dir === 'n' || dir === 's';
       if (el) {
@@ -5831,6 +5986,7 @@
         startX: Number(node.x) || 0,
         startY: Number(node.y) || 0,
         startW: startW,
+        minW: minW,
         startStoredW: node.width,
         startBodyH: startBodyH,
         bodyScrollH: content ? content.scrollHeight : startBodyH * nodeScale,
@@ -5863,7 +6019,7 @@
         const northCorner = drag.dir.indexOf('n') >= 0;
         let nextW = eastCorner ? drag.startW + dx : drag.startW - dx;
         let nextH = northCorner ? drag.startOuterH - dy : drag.startOuterH + dy;
-        nextW = Math.max(bodyMinWidth(node), Math.min(BODY_MAX_W, Math.round(nextW)));
+        nextW = Math.max(drag.minW, Math.min(BODY_MAX_W, Math.round(nextW)));
         nextH = Math.max(28, Math.min(600, Math.round(nextH)));
         node.width = nextW;
         node.mindmapMinHeight = nextH;
@@ -5907,7 +6063,7 @@
         nodeSizeCache.delete(node.id);
       } else if (drag.dir === 'e' || drag.dir === 'w') {
         let nextW = east ? drag.startW + dx : drag.startW - dx;
-        nextW = Math.max(bodyMinWidth(node), Math.min(BODY_MAX_W, Math.round(nextW)));
+        nextW = Math.max(drag.minW, Math.min(BODY_MAX_W, Math.round(nextW)));
         node.width = nextW;
         if (!east) node.x = Math.round(drag.startX + (drag.startW - nextW));
         if (!el) return;
@@ -6064,6 +6220,814 @@
     function currentMode() {
       try { return localStorage.getItem('canvas:mode') || 'normal'; } catch (e) { return 'normal'; }
     }
+
+    // ── 工具 · 倒计时 / 正计时 ──────────────────────────────────
+    // 计时器是独立画布实体：不进入节点索引、连线、图谱、小地图、导入导出或内容边界。
+    let timerLayer = null;
+    let timerToolbar = null;
+    let timerTickHandle = null;
+    let timerToolbarRaf = null;
+
+    function timerCopy(zh, en) {
+      return document.body.dataset.toolbarLanguage === 'en' ? en : zh;
+    }
+
+    function timerVisible() {
+      return !!(Timer && !embeddedEditor && currentMode() === 'normal');
+    }
+
+    function timerList() {
+      return Array.isArray(data.timers) ? data.timers : [];
+    }
+
+    function findTimer(id) {
+      return timerList().find(function (timer) { return timer.id === id; }) || null;
+    }
+
+    function ensureTimerLayer() {
+      if (timerLayer) return timerLayer;
+      timerLayer = document.createElement('div');
+      timerLayer.className = 'canvas-timer-layer';
+      timerLayer.dataset.canvasTimerLayer = '1';
+      timerLayer.setAttribute('aria-label', timerCopy('画布计时器', 'Canvas timers'));
+      surface.appendChild(timerLayer);
+      return timerLayer;
+    }
+
+    function timerEffective(timer, now) {
+      return Timer.effectiveElapsed(timer, timerRuntime.get(timer.id), now == null ? Date.now() : now);
+    }
+
+    function timerDefaultLabel(timer) {
+      return timer.mode === 'countup'
+        ? timerCopy('正计时', 'Stopwatch')
+        : timerCopy('倒计时', 'Countdown');
+    }
+
+    function timerStateLabel(timer, elapsed) {
+      if (Timer.isComplete(timer, elapsed)) return timerCopy('完成', 'Complete');
+      if (timerRuntime.has(timer.id)) return timerCopy('运行中', 'Running');
+      return timerCopy('已停止', 'Stopped');
+    }
+
+    function updateTimerElement(timer, now) {
+      const el = timerMap.get(timer.id);
+      if (!el) return;
+      const elapsed = timerEffective(timer, now);
+      const running = timerRuntime.has(timer.id);
+      const complete = Timer.isComplete(timer, elapsed);
+      const label = el.querySelector('[data-timer-label]');
+      const status = el.querySelector('[data-timer-status]');
+      const display = el.querySelector('[data-timer-display]');
+      if (label) label.textContent = timer.label || timerDefaultLabel(timer);
+      if (status) status.textContent = timerStateLabel(timer, elapsed);
+      if (display) display.textContent = Timer.format(timer, elapsed);
+      el.classList.toggle('is-running', running);
+      el.classList.toggle('is-complete', complete);
+      el.dataset.timerMode = timer.mode;
+      el.setAttribute('aria-label',
+        (timer.label || timerDefaultLabel(timer)) + '，' + timerStateLabel(timer, elapsed)
+        + '，' + Timer.format(timer, elapsed));
+      el.style.transform = 'translate(' + timer.x + 'px, ' + timer.y + 'px)';
+    }
+
+    function createTimerElement(timer) {
+      const el = document.createElement('article');
+      el.className = 'canvas-timer';
+      el.dataset.timerId = timer.id;
+      el.tabIndex = 0;
+      el.innerHTML = '<div class="canvas-timer-head">'
+        + '<span class="canvas-timer-label" data-timer-label></span>'
+        + '<span class="canvas-timer-status" data-timer-status></span>'
+        + '</div>'
+        + '<div class="canvas-timer-display" data-timer-display>00:00:00</div>';
+      el.addEventListener('mousedown', function (event) {
+        if (event.button !== 0 || !timerVisible() || drawTool !== 'select') return;
+        event.preventDefault();
+        event.stopPropagation();
+        try { el.focus({ preventScroll: true }); } catch (_) { el.focus(); }
+        if (isSelectionToggleEvent(event)) {
+          selectTimers([timer.id], true, true);
+          return;
+        }
+        if (!selectedTimerIds.has(timer.id)) selectTimers([timer.id], false, false);
+        startTimerDrag(timer.id, event);
+      });
+      el.addEventListener('dblclick', function (event) {
+        if (!timerVisible()) return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectTimers([timer.id], false, false);
+        requestTimerEdit(timer.id);
+      });
+      el.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          selectTimers([timer.id], false, false);
+          requestTimerEdit(timer.id);
+        }
+      });
+      return el;
+    }
+
+    function renderTimers() {
+      if (!Timer) return;
+      const layer = ensureTimerLayer();
+      layer.hidden = !timerVisible();
+      layer.setAttribute('aria-label', timerCopy('画布计时器', 'Canvas timers'));
+      const seen = new Set();
+      timerList().forEach(function (timer) {
+        seen.add(timer.id);
+        let el = timerMap.get(timer.id);
+        if (!el) {
+          el = createTimerElement(timer);
+          timerMap.set(timer.id, el);
+          layer.appendChild(el);
+        }
+        updateTimerElement(timer);
+      });
+      timerMap.forEach(function (el, id) {
+        if (seen.has(id)) return;
+        el.remove();
+        timerMap.delete(id);
+        timerRuntime.delete(id);
+        selectedTimerIds.delete(id);
+      });
+      surface.appendChild(layer);
+      applyTimerSelection();
+      scheduleTimerTick();
+    }
+
+    function ensureTimerToolbar() {
+      if (timerToolbar) return timerToolbar;
+      timerToolbar = document.createElement('div');
+      timerToolbar.className = 'canvas-timer-toolbar';
+      timerToolbar.hidden = true;
+      timerToolbar.setAttribute('role', 'toolbar');
+      timerToolbar.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      timerToolbar.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-timer-action]');
+        if (!button) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const action = button.dataset.timerAction;
+        if (action === 'toggle') toggleSelectedTimers();
+        else if (action === 'reset') resetSelectedTimers();
+        else if (action === 'edit' && selectedTimerIds.size === 1) {
+          requestTimerEdit(Array.from(selectedTimerIds)[0]);
+        } else if (action === 'delete') {
+          deleteSelectedTimers();
+        }
+      });
+      document.body.appendChild(timerToolbar);
+      return timerToolbar;
+    }
+
+    function timerToolbarButton(action, label, destructive) {
+      return '<button type="button" data-timer-action="' + action + '"'
+        + (destructive ? ' class="danger"' : '') + '>' + label + '</button>';
+    }
+
+    function positionTimerToolbar() {
+      if (!timerToolbar || timerToolbar.hidden || !selectedTimerIds.size) return;
+      const rects = Array.from(selectedTimerIds).map(function (id) {
+        const el = timerMap.get(id);
+        return el && !el.hidden ? el.getBoundingClientRect() : null;
+      }).filter(Boolean);
+      if (!rects.length) {
+        timerToolbar.hidden = true;
+        return;
+      }
+      const left = Math.min.apply(null, rects.map(function (rect) { return rect.left; }));
+      const right = Math.max.apply(null, rects.map(function (rect) { return rect.right; }));
+      const top = Math.min.apply(null, rects.map(function (rect) { return rect.top; }));
+      const bottom = Math.max.apply(null, rects.map(function (rect) { return rect.bottom; }));
+      const width = timerToolbar.offsetWidth || 260;
+      const height = timerToolbar.offsetHeight || 42;
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+      let x = (left + right - width) / 2;
+      let y = top - height - 12;
+      if (y < 10) y = bottom + 12;
+      x = Math.max(10, Math.min(viewportWidth - width - 10, x));
+      y = Math.max(10, Math.min(viewportHeight - height - 10, y));
+      timerToolbar.style.left = Math.round(x) + 'px';
+      timerToolbar.style.top = Math.round(y) + 'px';
+    }
+
+    function scheduleTimerToolbar() {
+      if (timerToolbarRaf != null) return;
+      timerToolbarRaf = requestAnimationFrame(function () {
+        timerToolbarRaf = null;
+        positionTimerToolbar();
+      });
+    }
+
+    function updateTimerToolbar() {
+      const toolbar = ensureTimerToolbar();
+      const count = selectedTimerIds.size;
+      if (!count || !timerVisible()) {
+        toolbar.hidden = true;
+        return;
+      }
+      toolbar.setAttribute('aria-label', count === 1
+        ? timerCopy('计时器操作', 'Timer actions')
+        : timerCopy('多个计时器操作', 'Multiple timer actions'));
+      if (count === 1) {
+        const timer = findTimer(Array.from(selectedTimerIds)[0]);
+        const running = timer && timerRuntime.has(timer.id);
+        toolbar.innerHTML = timerToolbarButton('toggle',
+          running ? timerCopy('暂停', 'Pause') : timerCopy('开始', 'Start'))
+          + timerToolbarButton('reset', timerCopy('复位', 'Reset'))
+          + timerToolbarButton('edit', timerCopy('编辑', 'Edit'))
+          + timerToolbarButton('delete', timerCopy('删除', 'Delete'), true);
+      } else {
+        toolbar.innerHTML = timerToolbarButton('toggle', timerCopy('切换状态', 'Toggle states'))
+          + timerToolbarButton('reset', timerCopy('全部复位', 'Reset all'))
+          + timerToolbarButton('delete', timerCopy('全部删除', 'Delete all'), true);
+      }
+      toolbar.hidden = false;
+      scheduleTimerToolbar();
+    }
+
+    function applyTimerSelection() {
+      timerMap.forEach(function (el, id) {
+        const selected = selectedTimerIds.has(id);
+        el.classList.toggle('selected', selected);
+        el.setAttribute('aria-selected', selected ? 'true' : 'false');
+      });
+      updateTimerToolbar();
+    }
+
+    function clearTimerSelection(silent) {
+      const had = selectedTimerIds.size > 0;
+      selectedTimerIds.clear();
+      if (had && !silent) applyTimerSelection();
+    }
+
+    function selectTimers(ids, additive, toggle) {
+      if (!timerVisible()) return;
+      if (rulerSelected) setRulerSelected(false);
+      clearArrowSelection();
+      selectedNodeIds.clear();
+      selectedEdgeIds.clear();
+      if (!additive) selectedTimerIds.clear();
+      ids.forEach(function (id) {
+        if (!findTimer(id)) return;
+        if (toggle && selectedTimerIds.has(id)) selectedTimerIds.delete(id);
+        else selectedTimerIds.add(id);
+      });
+      applySelection();
+    }
+
+    function requestTimerEdit(id) {
+      const timer = findTimer(id);
+      if (!timer) return;
+      document.dispatchEvent(new CustomEvent('editor:edit-canvas-timer', {
+        detail: { timer: Timer.clone(timer) },
+      }));
+    }
+
+    function settleTimer(timer, now) {
+      const runtime = timerRuntime.get(timer.id);
+      if (!runtime) return false;
+      timer.elapsedMs = Math.round(Timer.effectiveElapsed(timer, runtime, now));
+      timerRuntime.delete(timer.id);
+      return true;
+    }
+
+    function checkpointCanvasTimers() {
+      if (!Timer) return false;
+      const now = Date.now();
+      let changed = false;
+      timerList().forEach(function (timer) {
+        const runtime = timerRuntime.get(timer.id);
+        if (!runtime) return;
+        const elapsed = Math.round(Timer.effectiveElapsed(timer, runtime, now));
+        if (elapsed !== timer.elapsedMs) {
+          timer.elapsedMs = elapsed;
+          changed = true;
+        }
+        if (Timer.isComplete(timer, elapsed)) timerRuntime.delete(timer.id);
+        else runtime.startedAt = now;
+      });
+      if (changed) renderTimers();
+      return changed;
+    }
+
+    function scheduleTimerTick() {
+      if (timerTickHandle != null) {
+        clearTimeout(timerTickHandle);
+        timerTickHandle = null;
+      }
+      if (!timerRuntime.size) return;
+      const now = Date.now();
+      timerTickHandle = setTimeout(timerTick, Math.max(80, 1020 - (now % 1000)));
+    }
+
+    function timerTick() {
+      timerTickHandle = null;
+      const now = Date.now();
+      let completed = false;
+      timerList().forEach(function (timer) {
+        if (!timerRuntime.has(timer.id)) return;
+        const elapsed = timerEffective(timer, now);
+        if (Timer.isComplete(timer, elapsed)) {
+          timer.elapsedMs = timer.durationMs;
+          timerRuntime.delete(timer.id);
+          completed = true;
+        }
+        updateTimerElement(timer, now);
+      });
+      if (completed) {
+        updateTimerToolbar();
+        notify();
+      }
+      scheduleTimerTick();
+    }
+
+    function toggleSelectedTimers() {
+      if (!Timer || !selectedTimerIds.size) return false;
+      const now = Date.now();
+      const entries = Array.from(selectedTimerIds).map(function (id) {
+        return { timer: findTimer(id), runtime: timerRuntime.get(id) };
+      });
+      const results = typeof Timer.toggleBatch === 'function'
+        ? Timer.toggleBatch(entries, now)
+        : entries.map(function (entry) {
+          return Timer.toggle(entry.timer, entry.runtime, now);
+        }).filter(Boolean);
+      results.forEach(function (result) {
+        const timer = findTimer(result.id || (result.timer && result.timer.id));
+        if (!timer || !result.timer) return;
+        const index = data.timers.indexOf(timer);
+        data.timers[index] = result.timer;
+        if (result.runtime) timerRuntime.set(timer.id, result.runtime);
+        else timerRuntime.delete(timer.id);
+      });
+      if (!results.length) return false;
+      renderTimers();
+      notify();
+      return true;
+    }
+
+    function resetSelectedTimers() {
+      if (!Timer || !selectedTimerIds.size) return false;
+      let changed = false;
+      selectedTimerIds.forEach(function (id) {
+        const timer = findTimer(id);
+        if (!timer) return;
+        if (timer.elapsedMs !== 0 || timerRuntime.has(id)) changed = true;
+        timer.elapsedMs = 0;
+        timerRuntime.delete(id);
+      });
+      if (!changed) return false;
+      renderTimers();
+      notify();
+      return true;
+    }
+
+    function deleteSelectedTimers() {
+      if (!selectedTimerIds.size) return false;
+      refreshHistoryTimerHead();
+      const ids = new Set(selectedTimerIds);
+      data.timers = timerList().filter(function (timer) { return !ids.has(timer.id); });
+      ids.forEach(function (id) { timerRuntime.delete(id); });
+      if (!data.timers.length) delete data.timers;
+      selectedTimerIds.clear();
+      renderTimers();
+      pushHistory();
+      notify();
+      return true;
+    }
+
+    function createCanvasTimer(config) {
+      if (!Timer || embeddedEditor) return { ok: false, reason: 'unavailable' };
+      const mode = Timer.normalizeMode(config && config.mode);
+      const viewportRect = viewport.getBoundingClientRect();
+      const center = clientToSurface(
+        viewportRect.left + viewportRect.width / 2,
+        viewportRect.top + viewportRect.height / 2,
+      );
+      const raw = {
+        id: newTimerId(),
+        x: Math.round(center.x - Timer.WIDTH / 2),
+        y: Math.round(center.y - Timer.HEIGHT / 2),
+        mode: mode,
+        label: config && config.label,
+        elapsedMs: 0,
+      };
+      if (mode === 'countdown') raw.durationMs = Timer.normalizeDuration(config && config.durationMs);
+      const timer = Timer.normalize(raw);
+      if (!timer) return { ok: false, reason: 'invalid' };
+      if (!Array.isArray(data.timers)) data.timers = [];
+      data.timers.push(timer);
+      selectedNodeIds.clear();
+      selectedEdgeIds.clear();
+      selectedTimerIds.clear();
+      selectedTimerIds.add(timer.id);
+      renderTimers();
+      applySelection();
+      pushHistory();
+      notify();
+      return { ok: true, id: timer.id };
+    }
+
+    function updateCanvasTimer(id, config) {
+      if (!Timer) return { ok: false, reason: 'unavailable' };
+      const timer = findTimer(id);
+      if (!timer) return { ok: false, reason: 'missing' };
+      const nextMode = Timer.normalizeMode(config && config.mode);
+      const nextLabel = String(config && config.label || '').trim().slice(0, Timer.MAX_LABEL_LENGTH);
+      const nextDuration = nextMode === 'countdown'
+        ? Timer.normalizeDuration(config && config.durationMs)
+        : null;
+      const structural = timer.mode !== nextMode
+        || (nextMode === 'countdown' && timer.durationMs !== nextDuration);
+      if (!structural && timer.label === nextLabel) return { ok: true, unchanged: true, id: id };
+      refreshHistoryTimerHead();
+      if (!structural) {
+        timer.label = nextLabel;
+        renderTimers();
+        pushHistory();
+        notify();
+        return { ok: true, id: id, reset: false };
+      }
+      const replacement = Timer.normalize({
+        id: newTimerId(),
+        x: timer.x,
+        y: timer.y,
+        mode: nextMode,
+        label: nextLabel,
+        durationMs: nextDuration,
+        elapsedMs: 0,
+      });
+      const index = data.timers.indexOf(timer);
+      data.timers[index] = replacement;
+      timerRuntime.delete(id);
+      selectedTimerIds.clear();
+      selectedTimerIds.add(replacement.id);
+      renderTimers();
+      applySelection();
+      pushHistory();
+      notify();
+      return { ok: true, id: replacement.id, reset: true };
+    }
+
+    function startTimerDrag(id, event) {
+      const timer = findTimer(id);
+      if (!timer) return;
+      const starts = new Map();
+      selectedTimerIds.forEach(function (timerId) {
+        const selected = findTimer(timerId);
+        if (selected) starts.set(timerId, { x: selected.x, y: selected.y });
+      });
+      drag = {
+        mode: 'timer',
+        anchorId: id,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        starts: starts,
+        moved: false,
+      };
+      starts.forEach(function (_, timerId) {
+        const el = timerMap.get(timerId);
+        if (el) el.classList.add('dragging');
+      });
+    }
+
+    function timerIdsInFrame(rect) {
+      if (!timerVisible()) return [];
+      return timerList().filter(function (timer) {
+        return timer.x < rect.x + rect.w
+          && timer.x + Timer.WIDTH > rect.x
+          && timer.y < rect.y + rect.h
+          && timer.y + Timer.HEIGHT > rect.y;
+      }).map(function (timer) { return timer.id; });
+    }
+
+    // ── 工具 · 尺子 ─────────────────────────────────────────────
+    // 尺子是可保存的编辑辅助物，不是节点：不进图谱、模板、小地图、Markdown 或内容边界。
+    function rulerCopy(zh, en) {
+      return document.body.dataset.toolbarLanguage === 'en' ? en : zh;
+    }
+    function rulerAvailable() {
+      return !!(Ruler && data.ruler && !embeddedEditor && currentMode() === 'normal');
+    }
+    function dispatchRulerChange() {
+      document.dispatchEvent(new CustomEvent('canvas:rulerchange', {
+        detail: { exists: !!data.ruler, selected: !!rulerSelected },
+      }));
+    }
+    function setRulerSelected(selected) {
+      rulerSelected = !!selected && !!data.ruler && !embeddedEditor && currentMode() === 'normal';
+      if (rulerSelected) clearSelection();
+      if (rulerEl) {
+        rulerEl.classList.toggle('selected', rulerSelected);
+        rulerEl.setAttribute('aria-selected', rulerSelected ? 'true' : 'false');
+      }
+      dispatchRulerChange();
+    }
+    function roundedRulerAngle() {
+      if (!Ruler || !data.ruler) return 0;
+      return Math.round(Ruler.normalizeAngle(data.ruler.angle)) % 360;
+    }
+    function setRulerAngleMenuInvalid(invalid) {
+      if (!rulerMenu) return;
+      rulerMenu.classList.toggle('invalid', !!invalid);
+      if (rulerAngleInput) rulerAngleInput.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+      if (rulerAngleError) rulerAngleError.hidden = !invalid;
+    }
+    function syncRulerAngleMenu() {
+      if (!rulerMenu || !data.ruler) return;
+      const current = roundedRulerAngle();
+      if (rulerAngleCurrent) rulerAngleCurrent.textContent = current + '°';
+      if (rulerAngleInput) rulerAngleInput.value = String(current);
+      rulerMenu.querySelectorAll('[data-ruler-angle-preset]').forEach(function (button) {
+        const active = Number(button.dataset.rulerAnglePreset) === current;
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      setRulerAngleMenuInvalid(false);
+    }
+    function hideRulerAngleMenu() {
+      if (!rulerMenu) return;
+      rulerMenu.hidden = true;
+      setRulerAngleMenuInvalid(false);
+    }
+    function showRulerAngleMenu(clientX, clientY) {
+      if (!rulerMenu || !rulerAvailable()) return false;
+      syncRulerAngleMenu();
+      rulerMenu.hidden = false;
+      const rect = rulerMenu.getBoundingClientRect();
+      let x = Number(clientX) || 0;
+      let y = Number(clientY) || 0;
+      if (x + rect.width > window.innerWidth - 8) x = window.innerWidth - rect.width - 8;
+      if (y + rect.height > window.innerHeight - 8) y = window.innerHeight - rect.height - 8;
+      rulerMenu.style.left = Math.max(8, x) + 'px';
+      rulerMenu.style.top = Math.max(8, y) + 'px';
+      window.requestAnimationFrame(function () {
+        if (!rulerMenu.hidden && rulerAngleInput) {
+          rulerAngleInput.focus({ preventScroll: true });
+          rulerAngleInput.select();
+        }
+      });
+      return true;
+    }
+    function applyRulerAngle(rawValue) {
+      if (!Ruler || !data.ruler) {
+        hideRulerAngleMenu();
+        return false;
+      }
+      const text = String(rawValue == null ? '' : rawValue).trim();
+      const number = text === '' ? NaN : Number(text);
+      if (!Number.isFinite(number) || !Number.isInteger(number)) {
+        setRulerAngleMenuInvalid(true);
+        if (rulerAngleInput) {
+          rulerAngleInput.focus({ preventScroll: true });
+          rulerAngleInput.select();
+        }
+        return false;
+      }
+      const angle = Ruler.normalizeAngle(number);
+      const before = Ruler.normalizeAngle(data.ruler.angle);
+      hideRulerAngleMenu();
+      if (Math.abs(before - angle) < 1e-9) return false;
+      data.ruler.angle = angle;
+      renderRuler();
+      pushHistory();
+      notify();
+      return true;
+    }
+    function rulerHitAtClient(clientX, clientY) {
+      if (!rulerAvailable() || !Ruler || typeof Ruler.containsPoint !== 'function') return false;
+      return Ruler.containsPoint(clientToSurface(clientX, clientY), data.ruler, {
+        scale: curScale,
+        paddingPx: 4,
+      });
+    }
+    function renderRuler() {
+      if (!Ruler || !data.ruler) {
+        hideRulerAngleMenu();
+        if (rulerEl) rulerEl.remove();
+        rulerEl = null;
+        rulerSelected = false;
+        dispatchRulerChange();
+        return;
+      }
+      if (!rulerEl) {
+        rulerEl = document.createElement('div');
+        rulerEl.className = 'canvas-ruler';
+        rulerEl.dataset.role = 'canvas-ruler';
+        rulerEl.setAttribute('role', 'group');
+        rulerEl.setAttribute('aria-selected', 'false');
+        rulerEl.innerHTML = '<span class="canvas-ruler-ticks" aria-hidden="true"></span>'
+          + '<button type="button" class="canvas-ruler-angle" data-ruler-action="rotate">'
+          + '<span data-ruler-angle-value>0°</span></button>'
+          + '<button type="button" class="canvas-ruler-remove" data-ruler-action="remove">×</button>';
+        rulerEl.addEventListener('pointerdown', function (event) {
+          if (!rulerAvailable() || drawTool === 'pen') return;
+          if (event.button !== 0) return;
+          const remove = event.target.closest('[data-ruler-action="remove"]');
+          if (remove) {
+            event.preventDefault();
+            event.stopPropagation();
+            removeRuler(true);
+            return;
+          }
+          const rotating = !!event.target.closest('[data-ruler-action="rotate"]');
+          startRulerGesture(rotating ? 'rotate' : 'move', event);
+        });
+        // Pointer Events 会接管真实手势；吞掉兼容 mouse 事件，避免落到空白框选链路。
+        rulerEl.addEventListener('mousedown', function (event) {
+          if (drawTool !== 'pen') event.stopPropagation();
+        });
+        rulerEl.addEventListener('click', function (event) {
+          if (drawTool === 'pen') return;
+          event.stopPropagation();
+          setRulerSelected(true);
+        });
+        surface.appendChild(rulerEl);
+      }
+      const ruler = Ruler.normalize(data.ruler);
+      if (!ruler) {
+        delete data.ruler;
+        renderRuler();
+        return;
+      }
+      data.ruler = ruler;
+      rulerEl.hidden = !rulerAvailable();
+      if (rulerEl.hidden) hideRulerAngleMenu();
+      rulerEl.style.left = ruler.cx + 'px';
+      rulerEl.style.top = ruler.cy + 'px';
+      rulerEl.style.width = Ruler.LENGTH + 'px';
+      rulerEl.style.height = Ruler.WIDTH + 'px';
+      rulerEl.style.transform = 'translate(-50%, -50%) rotate(' + ruler.angle + 'deg)';
+      rulerEl.classList.toggle('selected', rulerSelected && !rulerEl.hidden);
+      rulerEl.classList.toggle('pen-pass-through', drawTool === 'pen');
+      const angleValue = rulerEl.querySelector('[data-ruler-angle-value]');
+      if (angleValue) angleValue.textContent = (Math.round(ruler.angle) % 360) + '°';
+      const angleButton = rulerEl.querySelector('[data-ruler-action="rotate"]');
+      const removeButton = rulerEl.querySelector('[data-ruler-action="remove"]');
+      const label = rulerCopy(
+        '画布尺子：拖动尺身移动，拖动角度环旋转，右键精确设置角度',
+        'Canvas ruler: drag the body to move, drag the angle ring to rotate, or right-click to set an exact angle.',
+      );
+      rulerEl.setAttribute('aria-label', label);
+      rulerEl.dataset.tooltip = label;
+      if (angleButton) {
+        angleButton.style.transform = 'translate(-50%, -50%) rotate(' + (-ruler.angle) + 'deg)';
+        const angleLabel = rulerCopy('旋转尺子，按住 Shift 吸附到 15 度', 'Rotate ruler; hold Shift to snap by 15 degrees');
+        angleButton.setAttribute('aria-label', angleLabel);
+        angleButton.dataset.tooltip = angleLabel;
+      }
+      if (removeButton) {
+        removeButton.style.transform = 'rotate(' + (-ruler.angle) + 'deg)';
+        const removeLabel = rulerCopy('移除尺子', 'Remove ruler');
+        removeButton.setAttribute('aria-label', removeLabel);
+        removeButton.dataset.tooltip = removeLabel;
+      }
+    }
+    function startRulerGesture(kind, event) {
+      if (!rulerAvailable() || !data.ruler || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      hideRulerAngleMenu();
+      freezeViewportForInteraction();
+      setDrawTool('select');
+      setRulerSelected(true);
+      const point = clientToSurface(event.clientX, event.clientY);
+      const start = Ruler.clone(data.ruler);
+      drag = {
+        mode: kind === 'rotate' ? 'ruler-rotate' : 'ruler-move',
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startPoint: point,
+        startRuler: start,
+        startPointerAngle: Math.atan2(point.y - start.cy, point.x - start.cx),
+        moved: false,
+      };
+      rulerEl.classList.add(kind === 'rotate' ? 'rotating' : 'moving');
+      try { rulerEl.setPointerCapture(event.pointerId); } catch (_) {}
+      // 旋转后尺身会从指针下移开；窗口捕获层负责兜住抬手，即使 WebView 的
+      // setPointerCapture 偶发失效也不会留下半截手势。
+      window.addEventListener('pointermove', onRulerPointerMove, true);
+      window.addEventListener('pointerup', onRulerPointerUp, true);
+      window.addEventListener('pointercancel', onRulerPointerCancel, true);
+    }
+    function onRulerPointerMove(event) {
+      if (!drag || (drag.mode !== 'ruler-move' && drag.mode !== 'ruler-rotate')
+          || event.pointerId !== drag.pointerId || !data.ruler) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const point = clientToSurface(event.clientX, event.clientY);
+      if (!drag.moved && Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) > 2) {
+        drag.moved = true;
+      }
+      if (drag.mode === 'ruler-move') {
+        data.ruler.cx = drag.startRuler.cx + point.x - drag.startPoint.x;
+        data.ruler.cy = drag.startRuler.cy + point.y - drag.startPoint.y;
+      } else {
+        const pointerAngle = Math.atan2(point.y - drag.startRuler.cy, point.x - drag.startRuler.cx);
+        let delta = (pointerAngle - drag.startPointerAngle) * 180 / Math.PI;
+        delta = Math.atan2(Math.sin(delta * Math.PI / 180), Math.cos(delta * Math.PI / 180)) * 180 / Math.PI;
+        let angle = Ruler.normalizeAngle(drag.startRuler.angle + delta);
+        if (event.shiftKey) angle = Ruler.normalizeAngle(Math.round(angle / 15) * 15);
+        data.ruler.angle = angle;
+      }
+      renderRuler();
+    }
+    function detachRulerPointerListeners() {
+      if (!rulerEl) return;
+      window.removeEventListener('pointermove', onRulerPointerMove, true);
+      window.removeEventListener('pointerup', onRulerPointerUp, true);
+      window.removeEventListener('pointercancel', onRulerPointerCancel, true);
+      rulerEl.classList.remove('moving', 'rotating');
+    }
+    function finishRulerGesture(commit) {
+      if (!drag || (drag.mode !== 'ruler-move' && drag.mode !== 'ruler-rotate')) return false;
+      const state = drag;
+      detachRulerPointerListeners();
+      if (!commit || !state.moved) data.ruler = Ruler.clone(state.startRuler);
+      drag = null;
+      renderRuler();
+      if (commit && state.moved) {
+        pushHistory();
+        notify();
+      }
+      return true;
+    }
+    function onRulerPointerUp(event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      finishRulerGesture(true);
+    }
+    function onRulerPointerCancel(event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      finishRulerGesture(false);
+    }
+    function showRulerContact() {
+      if (!rulerEl || rulerEl.hidden) return;
+      rulerEl.classList.remove('contact');
+      // 重启一次有限反馈，不运行常驻动画。
+      void rulerEl.offsetWidth;
+      rulerEl.classList.add('contact');
+      if (rulerContactTimer) clearTimeout(rulerContactTimer);
+      rulerContactTimer = setTimeout(function () {
+        rulerContactTimer = null;
+        if (rulerEl) rulerEl.classList.remove('contact');
+      }, 360);
+    }
+    function ensureRuler() {
+      if (!Ruler || embeddedEditor) return false;
+      if (currentMode() !== 'normal' && global.EditorShell && typeof global.EditorShell.setMode === 'function') {
+        global.EditorShell.setMode('normal');
+      }
+      if (data.ruler) {
+        focusRuler();
+        return false;
+      }
+      const center = viewportCenterInSurface();
+      data.ruler = { cx: center.x, cy: center.y, angle: 90 };
+      rulerSelected = true;
+      renderRuler();
+      pushHistory();
+      notify();
+      dispatchRulerChange();
+      showCanvasToast(rulerCopy('已放置尺子', 'Ruler placed'));
+      return true;
+    }
+    function focusRuler() {
+      if (!data.ruler || embeddedEditor) return false;
+      if (currentMode() !== 'normal' && global.EditorShell && typeof global.EditorShell.setMode === 'function') {
+        global.EditorShell.setMode('normal');
+      }
+      renderRuler();
+      setRulerSelected(true);
+      centerViewportOnSurface(data.ruler.cx, data.ruler.cy, false);
+      return true;
+    }
+    function removeRuler(recordHistory) {
+      if (!data.ruler) return false;
+      if (drag && (drag.mode === 'ruler-move' || drag.mode === 'ruler-rotate')) finishRulerGesture(false);
+      delete data.ruler;
+      rulerSelected = false;
+      renderRuler();
+      if (recordHistory !== false) {
+        pushHistory();
+        notify();
+        showCanvasToast(rulerCopy('已移除尺子', 'Ruler removed'));
+      }
+      dispatchRulerChange();
+      return true;
+    }
+    function hasRuler() {
+      return !!data.ruler;
+    }
     function clearTransientMovableDecor() {
       if (!transientMovableDecorId) return;
       const el = nodeMap.get(transientMovableDecorId);
@@ -6078,17 +7042,32 @@
     function normalDefaultsKey(fullKey, cleanKey) {
       return document.body.dataset.modeSubmode === 'clean' ? cleanKey : fullKey;
     }
-    function readNodeDefaults() {
-      const key = normalDefaultsKey('canvas:proNodeDefaults', 'canvas:cleanNodeDefaults');
+    function readNodeDefaults(submodeOverride) {
+      const key = submodeOverride === 'clean'
+        ? 'canvas:cleanNodeDefaults'
+        : (submodeOverride === 'full'
+          ? 'canvas:proNodeDefaults'
+          : normalDefaultsKey('canvas:proNodeDefaults', 'canvas:cleanNodeDefaults'));
       try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; }
       catch (e) { return {}; }
     }
-    function applyProDefaults(node) {
-      if (currentMode() !== 'normal') return;
-      const d = readNodeDefaults();
+    function applyProDefaults(node, kindOverride) {
+      const explicitKind = kindOverride === 'card' || kindOverride === 'sticky'
+        || kindOverride === 'index' || kindOverride === 'preview' || kindOverride === 'code';
+      const mode = currentMode();
+      if (mode !== 'normal' && !explicitKind) return;
+      let normalSubmode = null;
+      if (mode !== 'normal') {
+        try {
+          normalSubmode = localStorage.getItem('canvas:normalSubmode') === 'full' ? 'full' : 'clean';
+        }
+        catch (e) { normalSubmode = 'clean'; }
+      }
+      const d = readNodeDefaults(normalSubmode);
       let normalKind = '';
       try { normalKind = localStorage.getItem('canvas:normalNodeKind') || ''; } catch (e) {}
-      if (normalKind === 'sticky') node.kind = 'sticky';
+      if (explicitKind) node.kind = kindOverride;
+      else if (normalKind === 'sticky') node.kind = 'sticky';
       else if (normalKind === 'index' || normalKind === 'preview'
           || normalKind === 'card' || normalKind === 'code') node.kind = normalKind;
       else if (d.kind === 'index' || d.kind === 'text') node.kind = 'index';
@@ -6098,7 +7077,8 @@
       else node.kind = 'card';
       if (d.shape && d.shape !== 'rect') node.shape = d.shape;
       if (d.borderColor && d.borderColor.toLowerCase() !== '#000000') node.borderColor = d.borderColor;
-      const fullStickyDefaults = document.body.dataset.modeSubmode !== 'clean' && isStickyNode(node);
+      const fullStickyDefaults = (normalSubmode || document.body.dataset.modeSubmode) !== 'clean'
+        && isStickyNode(node);
       if (fullStickyDefaults) {
         const stickyBg = normalizeHexColor(d.stickyBgColor);
         if (d.stickyColorMode === 'fixed' && stickyBg) node.bgColor = stickyBg;
@@ -10445,15 +11425,6 @@
       });
     }
 
-    function fileToText(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
-        reader.readAsText(file, 'utf-8');
-      });
-    }
-
     function imageDisplaySize(file) {
       return new Promise((resolve) => {
         if (!file || !/^image\//.test(file.type || '') || typeof URL === 'undefined') {
@@ -10853,133 +11824,329 @@
       return isLikelyPdfFile(file) || isLikelyMdFile(file);
     }
 
-    function canvasFileFromDataTransfer(data) {
-      if (!data) return null;
-      let file = [...(data.files || [])].find(isLikelyCanvasFile);
-      if (!file && data.items) {
-        for (const item of [...data.items]) {
-          if (item.kind !== 'file') continue;
-          const f = item.getAsFile();
-          if (isLikelyCanvasFile(f)) { file = f; break; }
-        }
+    function canvasFilesFromDataTransfer(data) {
+      if (!data) return [];
+      const direct = [...(data.files || [])].filter(isLikelyCanvasFile);
+      if (direct.length || !data.items) return direct;
+      const files = [];
+      for (const item of [...data.items]) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (isLikelyCanvasFile(file)) files.push(file);
       }
-      return file || null;
+      return files;
     }
 
-    function importedCanvasNodeKey(raw, index) {
-      return raw && raw.id != null ? String(raw.id) : '__node_' + index;
+    function canvasImportError(code, message, details) {
+      const error = new Error(message);
+      error.code = code;
+      error.details = details || {};
+      return error;
     }
 
-    function importableCanvasNode(raw) {
-      return !!raw && typeof raw === 'object' && !Array.isArray(raw) && !raw.assetPath;
+    function canvasImportText(zh, en) {
+      return document.body.dataset.toolbarLanguage === 'en' ? en : zh;
     }
 
-    function importedCanvasNodeSize(raw) {
-      const w = Number(raw && raw.width);
-      const h = Number(raw && raw.height);
-      return {
-        w: Number.isFinite(w) && w > 0 ? w : NODE_DEFAULT_HALF_W * 2,
-        h: Number.isFinite(h) && h > 0 ? h : NODE_DEFAULT_HALF_H * 2,
+    function canvasImportDisplayMessage(error) {
+      const details = error && error.details ? error.details : {};
+      let message = '';
+      if (error && error.code === 'MULTIPLE_FILES') {
+        message = canvasImportText(
+          '一次只能导入一个 .canvas 文件。',
+          'Import one .canvas file at a time.',
+        );
+      } else if (error && error.code === 'FILE_TOO_LARGE') {
+        message = canvasImportText(
+          '这个 .canvas 文件超过 160 MiB，未导入。',
+          'This .canvas file is larger than 160 MiB and was not imported.',
+        );
+      } else if (error && error.code === 'ASSETS_UNSUPPORTED') {
+        const count = Number(details.assetCount) || 0;
+        message = canvasImportText(
+          '源画布含 ' + count + ' 个图片或附件节点；当前版本不会复制 .assets 资源，已取消导入。',
+          'The source contains ' + count + ' image or attachment node'
+            + (count === 1 ? '' : 's')
+            + '; this version does not copy .assets resources, so nothing was imported.',
+        );
+      } else if (error && error.code === 'IMPORT_BUSY') {
+        message = canvasImportText(
+          '上一张画布仍在导入，请稍候。',
+          'Another canvas is still being imported.',
+        );
+      } else if (error && error.code === 'EMPTY_IMPORT') {
+        message = canvasImportText(
+          '这张画布没有可导入的自包含内容。',
+          'This canvas has no self-contained content to import.',
+        );
+      } else if (error && error.code === 'MISSING_NODE_ID') {
+        message = canvasImportText(
+          '源画布存在缺少 ID 的节点，未导入。',
+          'The source canvas contains a node without an ID.',
+        );
+      } else if (error && error.code === 'DUPLICATE_NODE_ID') {
+        message = canvasImportText(
+          '源画布存在重复的节点 ID，未导入。',
+          'The source canvas contains duplicate node IDs.',
+        );
+      } else if (error && error.code === 'SOURCE_CHANGED') {
+        message = canvasImportText(
+          '来源画布刚刚发生了变化，请重新选择后再导入。',
+          'The source canvas changed. Select it again before importing.',
+        );
+      } else if (error && error.code === 'SOURCE_TOO_LARGE') {
+        message = canvasImportText(
+          '来源画布超过 160 MiB，无法导入。',
+          'The source canvas is larger than 160 MiB and cannot be imported.',
+        );
+      } else if (error && ['SOURCE_NOT_MANAGED', 'SOURCE_UNAVAILABLE'].indexOf(error.code) >= 0) {
+        message = canvasImportText(
+          '来源画布已不在 Relatum 画布库中。',
+          'The source canvas is no longer available in the Relatum library.',
+        );
+      } else if (error && error.code === 'ASSET_MISSING') {
+        message = canvasImportText(
+          '来源画布引用的图片或附件已经丢失，未导入任何内容。',
+          'A referenced image or attachment is missing. Nothing was imported.',
+        );
+      } else if (error && error.code === 'ASSET_COPY_FAILED') {
+        message = canvasImportText(
+          '复制图片或附件失败，未导入任何内容。',
+          'Images or attachments could not be copied. Nothing was imported.',
+        );
+      } else if (error && error.code === 'TARGET_UNAUTHORIZED') {
+        message = canvasImportText(
+          '当前画布已不可写入，请重新打开后再试。',
+          'The current canvas is no longer writable. Reopen it and try again.',
+        );
+      } else if (error && error.code === 'INCOMPLETE_ASSET_MAPPING') {
+        message = canvasImportText(
+          '素材复制结果不完整，未导入任何内容。',
+          'The asset copy result was incomplete. Nothing was imported.',
+        );
+      } else if (error && [
+        'INVALID_PAYLOAD',
+        'MISSING_NODES',
+        'INVALID_NODE',
+        'INVALID_EDGES',
+        'INVALID_EDGE',
+        'INVALID_INK',
+        'INVALID_SOURCE',
+        'INVALID_JSON',
+        'INVALID_ASSET_PATH',
+      ].indexOf(error.code) >= 0) {
+        message = canvasImportText(
+          '源画布的数据结构无效，未导入。',
+          'The source canvas has an invalid data structure.',
+        );
+      } else {
+        const detail = error && error.message
+          ? error.message
+          : canvasImportText('未知错误。', 'Unknown error.');
+        message = canvasImportText('导入画布失败：', 'Canvas import failed: ') + detail;
+      }
+      return message;
+    }
+
+    function showCanvasImportError(error) {
+      const message = canvasImportDisplayMessage(error);
+      if (error && !error.displayMessage) error.displayMessage = message;
+      showCanvasToast(message);
+    }
+
+    function showCanvasImportSuccess(meta) {
+      const inkCount = (Number(meta.strokeCount) || 0) + (Number(meta.arrowCount) || 0);
+      showCanvasToast(canvasImportText(
+        '已导入 ' + meta.nodeCount + ' 个节点、' + meta.edgeCount + ' 条连线、' + inkCount + ' 个笔迹。',
+        'Imported ' + meta.nodeCount + ' node' + (meta.nodeCount === 1 ? '' : 's')
+          + ', ' + meta.edgeCount + ' connection' + (meta.edgeCount === 1 ? '' : 's')
+          + ', and ' + inkCount + ' ink item' + (inkCount === 1 ? '' : 's') + '.',
+      ));
+    }
+
+    function normalizeImportedCanvasNodes(nodes) {
+      nodes.forEach(function (node) {
+        if (node.kind === 'text') node.kind = 'index';
+        if (!node.kind) node.kind = 'card';
+        if (node.text != null) node.text = String(node.text);
+        if (node.body != null) node.body = String(node.body);
+        normalizeNodeRichText(node);
+        normalizeTableNodeLayout(node);
+      });
+    }
+
+    function commitCanvasImportPlan(plan) {
+      normalizeImportedCanvasNodes(plan.nodes);
+      const mergedInk = cloneInk(data.ink);
+      mergedInk.strokes = mergedInk.strokes.concat(plan.ink.strokes);
+      mergedInk.arrows = mergedInk.arrows.concat(plan.ink.arrows);
+      const before = {
+        nodeLength: data.nodes.length,
+        edgeLength: data.edges.length,
+        ink: cloneInk(data.ink),
+        lastCreatedNodeId: lastCreatedNodeId,
+        nodeSelection: [...selectedNodeIds],
+        edgeSelection: [...selectedEdgeIds],
+        timerSelection: [...selectedTimerIds],
+        arrowSelection: selectedArrowId,
+        rulerSelection: rulerSelected,
       };
-    }
+      const importedNodeIds = plan.nodes.map(function (node) { return node.id; });
 
-    function cloneJsonObject(raw) {
-      return JSON.parse(JSON.stringify(raw || {}));
-    }
+      try {
+        plan.nodes.forEach(function (node) {
+          prepareNewDecorationNode(node);
+          data.nodes.push(node);
+        });
+        plan.edges.forEach(function (edge) { data.edges.push(edge); });
+        data.ink = mergedInk;
+        rebuildNodeIndex();
 
-    function importCanvasPayloadIntoCurrent(parsed, point, sourceName) {
-      const sourceNodes = Array.isArray(parsed && parsed.nodes) ? parsed.nodes : [];
-      const sourceEdges = Array.isArray(parsed && parsed.edges) ? parsed.edges : [];
-      const importNodes = sourceNodes.filter(importableCanvasNode);
-      const skippedAssets = sourceNodes.length - importNodes.length;
-      if (!importNodes.length) {
-        throw new Error(skippedAssets
-          ? '这张画布里只有图片 / PDF / Markdown 附件节点；拖入 .canvas 时不会复制外部资源。'
-          : '这张画布没有可复制的节点。');
+        selectedNodeIds.clear();
+        selectedEdgeIds.clear();
+        selectedTimerIds.clear();
+        importedNodeIds.forEach(function (id) { selectedNodeIds.add(id); });
+        selectedArrowId = null;
+        if (rulerSelected) setRulerSelected(false);
+        reconcileAll();
+
+        plan.nodes.forEach(function (node) { spawnNodeEl(nodeMap.get(node.id)); });
+        plan.edges.forEach(function (edge) { spawnEdgeEls(edgeMap.get(edge.id)); });
+        lastCreatedNodeId = importedNodeIds[importedNodeIds.length - 1] || null;
+      } catch (error) {
+        data.nodes.length = before.nodeLength;
+        data.edges.length = before.edgeLength;
+        data.ink = before.ink;
+        lastCreatedNodeId = before.lastCreatedNodeId;
+        selectedNodeIds.clear();
+        before.nodeSelection.forEach(function (id) { selectedNodeIds.add(id); });
+        selectedEdgeIds.clear();
+        before.edgeSelection.forEach(function (id) { selectedEdgeIds.add(id); });
+        selectedTimerIds.clear();
+        before.timerSelection.forEach(function (id) { selectedTimerIds.add(id); });
+        selectedArrowId = before.arrowSelection;
+        rulerSelected = before.rulerSelection;
+        rebuildNodeIndex();
+        reconcileAll();
+        renderRuler();
+        throw error;
       }
 
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      importNodes.forEach((raw) => {
-        const x = Number(raw.x) || 0;
-        const y = Number(raw.y) || 0;
-        const s = importedCanvasNodeSize(raw);
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + s.w);
-        maxY = Math.max(maxY, y + s.h);
-      });
-      const drop = point || viewportCenterInSurface();
-      const offX = drop.x - (minX + maxX) / 2;
-      const offY = drop.y - (minY + maxY) / 2;
-
-      const idMap = new Map();
-      const newIds = [];
-      importNodes.forEach((raw, index) => {
-        const nid = newNodeId();
-        idMap.set(importedCanvasNodeKey(raw, sourceNodes.indexOf(raw)), nid);
-        const copy = cloneJsonObject(raw);
-        copy.id = nid;
-        copy.kind = copy.kind || 'card';
-        copy.x = Math.round((Number(raw.x) || 0) + offX);
-        copy.y = Math.round((Number(raw.y) || 0) + offY);
-        if (copy.text != null) copy.text = String(copy.text);
-        if (copy.body != null) copy.body = String(copy.body);
-        prepareNewDecorationNode(copy);
-        data.nodes.push(copy);
-        indexNodeData(copy);
-        const el = createNodeEl(copy);
-        surface.appendChild(el);
-        nodeMap.set(nid, el);
-        if (nodeSizeObserver) nodeSizeObserver.observe(el);
-        spawnNodeEl(el);
-        newIds.push(nid);
-      });
-
-      const newEdgeIds = [];
-      sourceEdges.forEach((raw) => {
-        if (!raw || typeof raw !== 'object') return;
-        const from = idMap.get(String(raw.from));
-        const to = idMap.get(String(raw.to));
-        if (!from || !to || from === to) return;
-        const edge = cloneEdge(raw);
-        edge.id = newEdgeId();
-        edge.from = from;
-        edge.to = to;
-        if (Array.isArray(edge.waypoints)) {
-          edge.waypoints = edge.waypoints.map((w) => ({
-            x: (Number(w && w.x) || 0) + offX,
-            y: (Number(w && w.y) || 0) + offY,
-          }));
-        }
-        data.edges.push(edge);
-        const refs = createEdgeEls(edge);
-        edgeMap.set(edge.id, refs);
-        updateEdgePath(edge);
-        spawnEdgeEls(refs);
-        newEdgeIds.push(edge.id);
-      });
-
-      lastCreatedNodeId = newIds[newIds.length - 1] || null;
-      selectNodes(newIds, false);
       pushHistory();
       notify();
-      if (skippedAssets) {
-        console.warn('[画布] 拖入 .canvas 时跳过外部资源节点：', skippedAssets, sourceName || '');
-      }
-      return { nodes: newIds.length, edges: newEdgeIds.length, skippedAssets: skippedAssets };
+      return plan.meta;
     }
 
-    async function addCanvasFromFile(file, point) {
-      if (!isLikelyCanvasFile(file)) return false;
-      const raw = await fileToText(file);
-      let parsed;
+    async function canvasImportRequest(url, options) {
+      let response;
       try {
-        parsed = JSON.parse(raw);
-      } catch (err) {
-        throw new Error('这不是有效的 .canvas 文件。');
+        response = await fetch(url, options);
+      } catch (error) {
+        throw canvasImportError('NETWORK_ERROR', error && error.message ? error.message : '');
       }
-      importCanvasPayloadIntoCurrent(parsed, point, file.name || '');
-      return true;
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (error) {
+        if (!response.ok) {
+          throw canvasImportError('REQUEST_FAILED', response.status + ' ' + response.statusText);
+        }
+        throw canvasImportError('INVALID_RESPONSE', canvasImportText(
+          '导入接口返回了无效数据。',
+          'The import service returned invalid data.',
+        ));
+      }
+      if (!response.ok) {
+        throw canvasImportError(
+          String(payload.code || 'REQUEST_FAILED'),
+          String(payload.error || response.statusText || ''),
+        );
+      }
+      return payload;
+    }
+
+    function prepareManagedCanvasImport(payload) {
+      if (!CanvasImport || typeof CanvasImport.prepare !== 'function') {
+        throw canvasImportError('IMPORT_UNAVAILABLE', canvasImportText(
+          '导入组件没有正确加载。',
+          'The canvas importer did not load correctly.',
+        ));
+      }
+      const currentInk = cloneInk(data.ink);
+      return CanvasImport.prepare(payload, {
+        assetPolicy: 'include',
+        dropPoint: viewportCenterInSurface(),
+        newNodeId: newNodeId,
+        newEdgeId: newEdgeId,
+        newInkId: newInkId,
+        reservedNodeIds: new Set(data.nodes.map(function (node) { return String(node.id); })),
+        reservedEdgeIds: new Set(data.edges.map(function (edge) { return String(edge.id); })),
+        reservedInkIds: new Set(
+          currentInk.strokes.concat(currentInk.arrows)
+            .map(function (item) { return String(item.id); }),
+        ),
+      });
+    }
+
+    async function importManagedCanvas(sourceId) {
+      if (embeddedEditor) {
+        throw canvasImportError('IMPORT_UNAVAILABLE', canvasImportText(
+          '内嵌编辑器不支持导入画布。',
+          'Canvas import is unavailable in the embedded editor.',
+        ));
+      }
+      if (canvasImportBusy) throw canvasImportError('IMPORT_BUSY', '');
+      const id = String(sourceId || '').trim();
+      if (!id) throw canvasImportError('MISSING_SOURCE_ID', '');
+      canvasImportBusy = true;
+      try {
+        const source = await canvasImportRequest(
+          '/api/canvas-import-source?id=' + encodeURIComponent(id),
+          { cache: 'no-store' },
+        );
+        const plan = prepareManagedCanvasImport(source.data);
+        const assetPaths = [...new Set(plan.nodes
+          .filter(function (node) {
+            return Object.prototype.hasOwnProperty.call(node, 'assetPath');
+          })
+          .map(function (node) { return String(node.assetPath || ''); })
+          .filter(Boolean))];
+        let copiedAssets = 0;
+        if (assetPaths.length) {
+          const copied = await canvasImportRequest('/api/canvas-import-assets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourceId: id,
+              revision: source.revision,
+              targetPath: filePath,
+              assets: assetPaths,
+            }),
+          });
+          const mapping = copied && copied.mapping && typeof copied.mapping === 'object'
+            ? copied.mapping
+            : {};
+          plan.nodes.forEach(function (node) {
+            if (!Object.prototype.hasOwnProperty.call(node, 'assetPath')) return;
+            const mapped = mapping[String(node.assetPath || '')];
+            if (!mapped) throw canvasImportError('INCOMPLETE_ASSET_MAPPING', '');
+            node.assetPath = mapped;
+          });
+          copiedAssets = Number(copied.assetCount) || 0;
+        }
+        plan.meta.copiedAssets = copiedAssets;
+        const meta = commitCanvasImportPlan(plan);
+        showCanvasImportSuccess(meta);
+        return meta;
+      } catch (error) {
+        const normalized = error && error.code
+          ? error
+          : canvasImportError('REQUEST_FAILED', error && error.message ? error.message : '');
+        normalized.displayMessage = canvasImportDisplayMessage(normalized);
+        throw normalized;
+      } finally {
+        canvasImportBusy = false;
+      }
     }
 
     function attachmentFileFromDataTransfer(data) {
@@ -11019,25 +12186,26 @@
       if (!hasFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
-      viewport.classList.add('image-drag-over');
+      viewport.classList.add('file-drag-over');
     }
 
     function onViewportDragLeave(e) {
       if (viewport.contains(e.relatedTarget)) return;
-      viewport.classList.remove('image-drag-over');
+      viewport.classList.remove('file-drag-over');
     }
 
     function onViewportDrop(e) {
       if (!hasFileDrag(e.dataTransfer)) return;
       e.preventDefault();
-      viewport.classList.remove('image-drag-over');
+      viewport.classList.remove('file-drag-over');
       freezeViewportForInteraction();
       const point = clientToSurface(e.clientX, e.clientY);
-      const canvasFile = canvasFileFromDataTransfer(e.dataTransfer);
-      if (canvasFile) {
-        addCanvasFromFile(canvasFile, point).catch((err) => {
-          window.alert('拖入画布失败：' + err.message);
-        });
+      const canvasFiles = canvasFilesFromDataTransfer(e.dataTransfer);
+      if (canvasFiles.length) {
+        showCanvasToast(canvasImportText(
+          '请从“工具 → 导入画布”的画布库中选择来源。',
+          'Use Tools → Import Canvas and choose a source from the canvas library.',
+        ));
         return;
       }
       const attach = attachmentFileFromDataTransfer(e.dataTransfer);
@@ -11064,7 +12232,15 @@
       if (!hasFileDrag(e.dataTransfer)) return;
       // 防止浏览器把拖入的本地文件打开成新标签页；画布内 drop 会继续冒泡给 onViewportDrop 处理。
       e.preventDefault();
-      if (!viewport.contains(e.target)) viewport.classList.remove('image-drag-over');
+      if (!viewport.contains(e.target)) {
+        viewport.classList.remove('file-drag-over');
+        if (canvasFilesFromDataTransfer(e.dataTransfer).length) {
+          showCanvasToast(canvasImportText(
+            '请从“工具 → 导入画布”的画布库中选择来源。',
+            'Use Tools → Import Canvas and choose a source from the canvas library.',
+          ));
+        }
+      }
     }
 
     function setupDecorPanel() {
@@ -11589,6 +12765,7 @@
       renderInk();
       reconcileNodes();
       reconcileEdges();
+      renderTimers();
       refreshGroupContainers();
       refreshMindmapFolding();
       applySelection();
@@ -11696,6 +12873,7 @@
         refs.path.classList.toggle('selected', sel);
         refs.labelEl.classList.toggle('selected', sel);
       });
+      applyTimerSelection();
       requestEdgesCanvasRender();
       refreshEdgeAnchorVisibility();
       renderEdgeHandles();   // 5-3：编辑模式下随选中变化刷新拐点手柄
@@ -11719,7 +12897,8 @@
           decorNodes: decorNodeCount,
           anchorNodes: anchorNodeCount,
           edges: selectedEdgeIds.size,
-          arrow: !!selectedArrowId
+          arrow: !!selectedArrowId,
+          timers: selectedTimerIds.size
         }
       }));
       if (global.EditorShell && typeof global.EditorShell.openInspector === 'function') {
@@ -11743,6 +12922,8 @@
 
     // ── 选中（统一入口）──────────────────────
     function selectNodes(ids, additive) {
+      if (rulerSelected) setRulerSelected(false);
+      clearTimerSelection(true);
       if (!additive) {
         selectedNodeIds.clear();
         selectedEdgeIds.clear();
@@ -11751,6 +12932,8 @@
       applySelection();
     }
     function selectEdges(ids, additive) {
+      if (rulerSelected) setRulerSelected(false);
+      clearTimerSelection(true);
       if (!additive) {
         selectedNodeIds.clear();
         selectedEdgeIds.clear();
@@ -11776,19 +12959,24 @@
       return false;
     }
     function toggleNodeSelection(id) {
+      if (rulerSelected) setRulerSelected(false);
+      clearTimerSelection(true);
       if (selectedNodeIds.has(id)) selectedNodeIds.delete(id);
       else selectedNodeIds.add(id);
       applySelection();
     }
     function toggleEdgeSelection(id) {
+      if (rulerSelected) setRulerSelected(false);
+      clearTimerSelection(true);
       if (selectedEdgeIds.has(id)) selectedEdgeIds.delete(id);
       else selectedEdgeIds.add(id);
       applySelection();
     }
     function clearSelection() {
-      const had = selectedNodeIds.size > 0 || selectedEdgeIds.size > 0;
+      const had = selectedNodeIds.size > 0 || selectedEdgeIds.size > 0 || selectedTimerIds.size > 0;
       selectedNodeIds.clear();
       selectedEdgeIds.clear();
+      selectedTimerIds.clear();
       if (had) applySelection();
       clearArrowSelection();   // 折线箭头选中也一并清除
     }
@@ -12486,14 +13674,34 @@
       mindmapReparentBadgeEl.hidden = false;
     }
 
-    function nodeDragLiveCoords(state, clientX, clientY) {
+    function nodeDragLiveCoords(state, clientX, clientY, altKey) {
       const scale = state.startScale || curScale;
-      const dx = (clientX - state.startClientX) / scale;
-      const dy = (clientY - state.startClientY) / scale;
+      let dx = (clientX - state.startClientX) / scale;
+      let dy = (clientY - state.startClientY) / scale;
+      if (state.rulerConstraintReady && !state.rulerBypassed) {
+        if (altKey) {
+          state.rulerBypassed = true;
+          state.rulerCollided = false;
+          if (rulerEl) rulerEl.classList.add('bypassed');
+        } else {
+          const constrained = Ruler.constrainTranslation(
+            state.rulerRects,
+            data.ruler,
+            dx,
+            dy,
+            { scale: scale },
+          );
+          dx = constrained.dx;
+          dy = constrained.dy;
+          if (constrained.collided && !state.rulerCollided) showRulerContact();
+          state.rulerCollided = constrained.collided;
+        }
+      }
       const liveCoords = new Map();
       state.starts.forEach(function (start, id) {
         liveCoords.set(id, { x: start.x + dx, y: start.y + dy });
       });
+      state.rulerLiveCoords = liveCoords;
       return liveCoords;
     }
 
@@ -13209,6 +14417,26 @@
         if (isTextBoxNode(candidate) && candidate.textBindTarget && dragNodeIds.has(candidate.textBindTarget)
             && !dragNodeIds.has(candidate.id)) followingTextBoxIds.add(candidate.id);
       });
+      let rulerRects = null;
+      let rulerConstraintReady = false;
+      if (!mindmapDrag && rulerAvailable() && selectedEdgeIds.size === 0) {
+        const candidateRects = [];
+        let allEligible = starts.size > 0;
+        starts.forEach(function (start, id) {
+          const candidate = findNode(id);
+          if (!isReadableNode(candidate)) {
+            allEligible = false;
+            return;
+          }
+          const size = cachedNodeSize(nodeMap.get(id), id);
+          candidateRects.push({ x: start.x, y: start.y, w: size.w, h: size.h });
+        });
+        if (allEligible && candidateRects.length === starts.size
+            && Ruler.canConstrainSelection(candidateRects, data.ruler, { scale: curScale })) {
+          rulerRects = candidateRects;
+          rulerConstraintReady = true;
+        }
+      }
 
       drag = {
         mode: 'node',
@@ -13226,6 +14454,11 @@
         collapseOnMouseUp: collapseOnMouseUp,
         mindmap: mindmapDrag,
         followingTextBoxIds: followingTextBoxIds,
+        rulerRects: rulerRects,
+        rulerConstraintReady: rulerConstraintReady,
+        rulerBypassed: false,
+        rulerCollided: false,
+        rulerLiveCoords: null,
       };
 
       setEdgesSvgLive(true);
@@ -13371,6 +14604,7 @@
         additive: isSelectionToggleEvent(e),
         baselineNodes: new Set(selectedNodeIds),
         baselineEdges: new Set(selectedEdgeIds),
+        baselineTimers: new Set(selectedTimerIds),
         nodeSizes: null,                   // 首次框选计算时拍一次尺寸快照，后续帧复用
       };
       // 框选矩形元素在第一次真实移动时才创建，避免单击残影
@@ -13393,7 +14627,12 @@
 
     function startInkStroke(e) {
       if (!inkLayer) return;
-      const p = clientToSurface(e.clientX, e.clientY);
+      const rawStart = clientToSurface(e.clientX, e.clientY);
+      let p = rawStart;
+      const rulerEdge = rulerAvailable()
+        ? Ruler.nearestEdge(p, data.ruler, { scale: curScale })
+        : null;
+      if (rulerEdge) p = rulerEdge.point;
       const d = readToolDefaults('pen');
       const pointerType = inkPointerType(e);
       // 压感只看「是不是真手写设备」（笔/触摸），不再用落笔第一个点的压力值一票否决。
@@ -13443,6 +14682,8 @@
         lastInkPoint: p,
         lastInkTime: Number.isFinite(e.timeStamp) ? e.timeStamp : performance.now(),
         lastInkPressure: p.p,
+        lastInkRawPoint: { x: rawStart.x, y: rawStart.y },
+        rulerEdgeSign: rulerEdge ? rulerEdge.edgeSign : 0,
       };
     }
 
@@ -13700,9 +14941,10 @@
       }));
     }
     function selectPolyArrow(id) {
-      if (selectedNodeIds.size || selectedEdgeIds.size) {
+      if (selectedNodeIds.size || selectedEdgeIds.size || selectedTimerIds.size) {
         selectedNodeIds.clear();
         selectedEdgeIds.clear();
+        selectedTimerIds.clear();
         applySelection();
       }
       selectedArrowId = id;
@@ -14420,6 +15662,21 @@
       return out;
     }
 
+    function frameTouchesOtherObject(rect, nodeSizes) {
+      return data.nodes.some(function (node) {
+        if (!node || isEdgeAnchorNode(node)) return false;
+        const el = nodeMap.get(node.id);
+        if (!el || el.hidden || el.offsetParent === null) return false;
+        const size = nodeSizes && nodeSizes.get(node.id);
+        const width = size ? size.w : (el.offsetWidth || 160);
+        const height = size ? size.h : (el.offsetHeight || 36);
+        return node.x < rect.x + rect.w
+          && node.x + width > rect.x
+          && node.y < rect.y + rect.h
+          && node.y + height > rect.y;
+      });
+    }
+
     // ── 全局 mousemove / mouseup ─────────────
     function onWindowMouseMove(e) {
       // X 轮 fix：始终更新最后鼠标位置（N 键建节点用）
@@ -14441,7 +15698,19 @@
         }
       }
 
-      if (drag.mode === 'ink-stroke') {
+      if (drag.mode === 'timer') {
+        if (!drag.moved) return;
+        const offsetX = dx / curScale;
+        const offsetY = dy / curScale;
+        drag.starts.forEach(function (start, id) {
+          const timer = findTimer(id);
+          if (!timer) return;
+          timer.x = Math.round((start.x + offsetX) * 100) / 100;
+          timer.y = Math.round((start.y + offsetY) * 100) / 100;
+          updateTimerElement(timer);
+        });
+        scheduleTimerToolbar();
+      } else if (drag.mode === 'ink-stroke') {
         appendInkPointsFromPointerEvent(e);
       } else if (drag.mode === 'ink-erase') {
         eraseAtCurrent(e.clientX, e.clientY);
@@ -14488,12 +15757,18 @@
       } else if (drag.mode === 'node') {
         drag.latestClientX = e.clientX;
         drag.latestClientY = e.clientY;
+        drag.latestAltKey = !!e.altKey;
         if (!drag.moved) return;
         if (dragRaf == null) {
           dragRaf = requestAnimationFrame(() => {
             dragRaf = null;
             if (!drag || drag.mode !== 'node') return;
-            const liveCoords = nodeDragLiveCoords(drag, drag.latestClientX, drag.latestClientY);
+            const liveCoords = nodeDragLiveCoords(
+              drag,
+              drag.latestClientX,
+              drag.latestClientY,
+              drag.latestAltKey,
+            );
             applyTextBoxSoftSnap(drag, liveCoords);
             syncBoundTextBoxes(new Set(liveCoords.keys()), liveCoords);
             liveCoords.forEach((pos, id) => {
@@ -14613,13 +15888,26 @@
               forTemplate: drag.forTemplate,
               nodeSizes: drag.nodeSizes,
             });
+            const timerInFrame = drag.forTemplate ? [] : timerIdsInFrame(rect);
+            const ordinarySelectionPresent = frameTouchesOtherObject(rect, drag.nodeSizes)
+              || (drag.additive && (drag.baselineNodes.size > 0 || drag.baselineEdges.size > 0));
             selectedNodeIds.clear();
             selectedEdgeIds.clear();
-            if (drag.additive) {
+            selectedTimerIds.clear();
+            if (ordinarySelectionPresent) {
+              if (drag.additive) {
+                drag.baselineNodes.forEach((id) => selectedNodeIds.add(id));
+                drag.baselineEdges.forEach((id) => selectedEdgeIds.add(id));
+              }
+              inFrame.forEach((id) => selectedNodeIds.add(id));
+            } else {
+              if (drag.additive) drag.baselineTimers.forEach((id) => selectedTimerIds.add(id));
+              timerInFrame.forEach((id) => selectedTimerIds.add(id));
+            }
+            if (drag.forTemplate && drag.additive) {
               drag.baselineNodes.forEach((id) => selectedNodeIds.add(id));
               drag.baselineEdges.forEach((id) => selectedEdgeIds.add(id));
             }
-            inFrame.forEach((id) => selectedNodeIds.add(id));
             applySelection();
           });
         }
@@ -14648,7 +15936,17 @@
         dragRaf = null;
       }
 
-      if (drag.mode === 'ink-stroke') {
+      if (drag.mode === 'timer') {
+        drag.starts.forEach(function (_, id) {
+          const el = timerMap.get(id);
+          if (el) el.classList.remove('dragging');
+        });
+        if (drag.moved) {
+          pushHistory();
+          notify();
+        }
+        scheduleTimerToolbar();
+      } else if (drag.mode === 'ink-stroke') {
         appendInkPointsFromPointerEvent(e);
         const pts = drag.stroke.points || [];
         if (pts.length >= 2 && drag.moved) {
@@ -14715,18 +16013,16 @@
         if (drag.mindmap) {
           finishMindmapStructureDrag(drag, e);
         } else if (drag.moved) {
-          // Z 轮：client delta → surface delta 除以 scale
-          const scale = drag.startScale || curScale;
-          const mdx = (e.clientX - drag.startClientX) / scale;
-          const mdy = (e.clientY - drag.startClientY) / scale;
-          const effDX = mdx;   // 四向无界：不再夹到 ≥0
-          const effDY = mdy;
+          // 实时与提交共用同一份受约束坐标，避免松手后节点、连线或小地图跳回鼠标位置。
+          const finalCoords = nodeDragLiveCoords(drag, e.clientX, e.clientY, e.altKey);
+          applyTextBoxSoftSnap(drag, finalCoords);
           drag.starts.forEach((start, id) => {
             const n = findNode(id);
             if (!n) return;
             const snapped = drag.textSnapResult && drag.textSnapResult.nodeId === id ? drag.textSnapResult : null;
-            n.x = snapped ? snapped.x : start.x + effDX;
-            n.y = snapped ? snapped.y : start.y + effDY;
+            const pos = finalCoords.get(id) || start;
+            n.x = snapped ? snapped.x : pos.x;
+            n.y = snapped ? snapped.y : pos.y;
             const elN = nodeMap.get(id);
             if (elN) applyTransform(elN, n.x, n.y);
           });
@@ -14751,6 +16047,7 @@
           const elN = nodeMap.get(id);
           if (elN) elN.classList.remove('dragging');
         });
+        if (rulerEl) rulerEl.classList.remove('bypassed');
         hideTextSnapGuides();
       } else if (drag.mode === 'decor-resize') {
         const node = findNode(drag.nodeId);
@@ -14851,7 +16148,8 @@
           const frameCanBecomeGroupBox = drag.moved
             && rect.w >= GROUP_BOX_MIN_WIDTH && rect.h >= GROUP_BOX_MIN_HEIGHT;
           const emptyFrame = frameCanBecomeGroupBox
-            && selectedNodeIds.size === 0 && selectedEdgeIds.size === 0;
+            && selectedNodeIds.size === 0 && selectedEdgeIds.size === 0
+            && selectedTimerIds.size === 0;
           // 没拖动 且 没按 shift → 视为空白点击，清选
           if (!drag.moved && !drag.additive) {
             clearSelection();
@@ -15374,6 +16672,10 @@
     }
 
     function deleteSelected() {
+      if (selectedTimerIds.size) {
+        deleteSelectedTimers();
+        return;
+      }
       if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return;
       // 与被删节点相关的边也一并删
       const nodesToDelete = new Set(selectedNodeIds);
@@ -15642,6 +16944,18 @@
       menuEdgeId = null;
     }
     function onContextMenu(e) {
+      // 尺子在画笔状态会 pointer-events:none，因此不能只依赖 event.target；
+      // 统一用画布坐标做有限旋转矩形命中，并优先于“右键空白切回选择工具”。
+      if (rulerHitAtClient(e.clientX, e.clientY)) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideNodeMenu();
+        hideEdgeMenu();
+        setRulerSelected(true);
+        showRulerAngleMenu(e.clientX, e.clientY);
+        return;
+      }
+      hideRulerAngleMenu();
       if (mindmapColorBrushState) {
         e.preventDefault();
         e.stopPropagation();
@@ -19916,6 +21230,7 @@
 
     // Ctrl+A：全选所有节点 + 连线
     function selectAll() {
+      clearTimerSelection(true);
       selectedNodeIds.clear();
       selectedEdgeIds.clear();
       data.nodes.forEach((n) => selectedNodeIds.add(n.id));
@@ -20360,6 +21675,157 @@
         enterNodeEdit(node, /* isNew */ true);
       }
       return node;
+    }
+
+    function matrixNodeMinWidth(kind) {
+      if (kind === 'preview') return 168;
+      if (kind === 'sticky') return 150;
+      if (kind === 'code') return 248;
+      return BODY_MIN_W;
+    }
+
+    function createMatrixNodeData(kind, text) {
+      const node = {
+        id: newNodeId(),
+        x: 0,
+        y: 0,
+        text: '',
+      };
+      applyProDefaults(node, kind);
+      const value = String(text == null ? '' : text);
+      if (kind === 'sticky') {
+        node.body = value;
+        syncStickyTitleFromBody(node, value);
+        if (!node.bgColor) node.bgColor = randomStickyColor();
+      } else if (kind === 'code') {
+        node.language = readDefaultCodeLanguage();
+        node.body = value;
+        node.text = codeTitleFromBody(value, node.language);
+      } else {
+        node.text = value;
+      }
+      return node;
+    }
+
+    function createNodeMatrix(rawConfig) {
+      const Matrix = global.RelatumNodeMatrix;
+      if (!Matrix || typeof Matrix.buildCells !== 'function') {
+        const error = new Error('节点矩阵模块尚未加载。');
+        error.code = 'MATRIX_UNAVAILABLE';
+        throw error;
+      }
+      if (embeddedEditor) {
+        const error = new Error('节点矩阵只能在主编辑器中生成。');
+        error.code = 'MATRIX_UNAVAILABLE';
+        throw error;
+      }
+      if (editingNodeId !== null) commitNodeEdit();
+      if (editingEdgeId !== null) commitEdgeEdit();
+      if (editingTextBoxId !== null) commitTextBoxEdit();
+      if (textReaderEditing) finishTextReaderEdit();
+
+      const built = Matrix.buildCells(rawConfig);
+      const config = built.config;
+      const before = {
+        nodeLength: data.nodes.length,
+        lastCreatedNodeId: lastCreatedNodeId,
+        nodeSelection: [...selectedNodeIds],
+        edgeSelection: [...selectedEdgeIds],
+        timerSelection: [...selectedTimerIds],
+        arrowSelection: selectedArrowId,
+        rulerSelection: rulerSelected,
+      };
+      const nodes = [];
+      const elements = [];
+
+      try {
+        const fragment = document.createDocumentFragment();
+        built.cells.forEach(function (cell) {
+          const node = createMatrixNodeData(config.kind, cell.text);
+          data.nodes.push(node);
+          indexNodeData(node);
+          const el = createNodeEl(node);
+          el.classList.add('matrix-node-measuring');
+          el.setAttribute('aria-hidden', 'true');
+          nodeMap.set(node.id, el);
+          fragment.appendChild(el);
+          nodes.push(node);
+          elements.push(el);
+        });
+        surface.appendChild(fragment);
+
+        const naturalWidths = elements.map(function (el) {
+          const computed = global.getComputedStyle ? global.getComputedStyle(el) : null;
+          const width = computed ? parseFloat(computed.width) : NaN;
+          return Number.isFinite(width) && width > 0 ? width : el.offsetWidth;
+        });
+        const uniformWidth = Matrix.resolveUniformWidth(naturalWidths, config, {
+          min: matrixNodeMinWidth(config.kind),
+          max: BODY_MAX_W,
+        });
+        nodes.forEach(function (node, index) {
+          node.width = uniformWidth;
+          applyNodeStyle(elements[index], node);
+        });
+
+        const sizes = elements.map(function (el) {
+          return { width: el.offsetWidth, height: el.offsetHeight };
+        });
+        const placed = Matrix.layout(sizes, config, viewportCenterInSurface());
+        nodes.forEach(function (node, index) {
+          const position = placed.items[index];
+          node.x = Math.round(position.x);
+          node.y = Math.round(position.y);
+          applyTransform(elements[index], node.x, node.y);
+          elements[index].classList.remove('matrix-node-measuring');
+          elements[index].removeAttribute('aria-hidden');
+          nodeSizeCache.delete(node.id);
+          if (nodeSizeObserver) nodeSizeObserver.observe(elements[index]);
+          spawnNodeEl(elements[index]);
+        });
+
+        selectedNodeIds.clear();
+        selectedEdgeIds.clear();
+        selectedTimerIds.clear();
+        nodes.forEach(function (node) { selectedNodeIds.add(node.id); });
+        selectedArrowId = null;
+        if (rulerSelected) setRulerSelected(false);
+        applySelection();
+        lastCreatedNodeId = nodes[nodes.length - 1].id;
+        hideOnboardingHint();
+      } catch (error) {
+        elements.forEach(function (el) {
+          if (nodeSizeObserver) nodeSizeObserver.unobserve(el);
+          el.remove();
+        });
+        data.nodes.length = before.nodeLength;
+        lastCreatedNodeId = before.lastCreatedNodeId;
+        selectedNodeIds.clear();
+        before.nodeSelection.forEach(function (id) { selectedNodeIds.add(id); });
+        selectedEdgeIds.clear();
+        before.edgeSelection.forEach(function (id) { selectedEdgeIds.add(id); });
+        selectedTimerIds.clear();
+        before.timerSelection.forEach(function (id) { selectedTimerIds.add(id); });
+        selectedArrowId = before.arrowSelection;
+        rulerSelected = before.rulerSelection;
+        rebuildNodeIndex();
+        reconcileAll();
+        applySelection();
+        renderRuler();
+        throw error;
+      }
+
+      pushHistory();
+      notify();
+      showCanvasToast(canvasImportText(
+        '已生成 ' + nodes.length + ' 个节点。',
+        'Created ' + nodes.length + ' node' + (nodes.length === 1 ? '.' : 's.'),
+      ));
+      return {
+        ok: true,
+        count: nodes.length,
+        nodeIds: nodes.map(function (node) { return node.id; }),
+      };
     }
 
     function defaultTableMarkdown() {
@@ -21000,6 +22466,14 @@
         return;
       }
       if (e.button === 2) {
+        // 画笔激活时尺子会穿透指针事件，右键首先落到 surface。
+        // 必须在 mouseup 前拦下，否则会误启动“右键拖色块”，并在未拖动时把画笔切回选择工具。
+        // contextmenu 随后仍由统一分派器做几何命中并打开角度面板。
+        if (rulerHitAtClient(e.clientX, e.clientY)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         if (currentMode() === 'decor' && hasActiveDecorTool()) {
           e.preventDefault();
           e.stopPropagation();
@@ -21027,6 +22501,7 @@
       if (handleDrawToolMouseDown(e)) return;
       if (editingNodeId !== null) commitNodeEdit();
       if (editingEdgeId !== null) commitEdgeEdit();
+      if (!isSelectionToggleEvent(e)) setRulerSelected(false);
       startFrameSelect(e);
     }
 
@@ -21096,10 +22571,42 @@
 
     // ── 撤销 / 重做 ────────────────────────
     function applySnapshot(snap) {
+      const now = Date.now();
+      const liveTimers = new Map();
+      timerList().forEach(function (timer) {
+        if (!Timer) return;
+        const copy = Timer.clone(timer);
+        copy.elapsedMs = Math.round(Timer.effectiveElapsed(timer, timerRuntime.get(timer.id), now));
+        liveTimers.set(timer.id, {
+          timer: copy,
+          runtime: timerRuntime.has(timer.id) ? { running: true, startedAt: now } : null,
+        });
+      });
       data.nodes = snap.nodes.map(cloneNode);
       rebuildNodeIndex();
       data.edges = snap.edges.map(cloneEdge);   // 5-3：深拷 waypoints，避免与快照共享
       data.ink = cloneInk(snap.ink);
+      const snapshotRuler = cloneRuler(snap.ruler);
+      if (snapshotRuler) data.ruler = snapshotRuler;
+      else delete data.ruler;
+      const restoredTimers = cloneTimers(snap.timers);
+      const restoredRuntime = new Map();
+      restoredTimers.forEach(function (timer) {
+        const live = liveTimers.get(timer.id);
+        if (!live) return;
+        const sameClock = live.timer.mode === timer.mode
+          && (timer.mode !== 'countdown' || live.timer.durationMs === timer.durationMs);
+        if (!sameClock) return;
+        timer.elapsedMs = live.timer.elapsedMs;
+        if (live.runtime && !Timer.isComplete(timer, timer.elapsedMs)) {
+          restoredRuntime.set(timer.id, live.runtime);
+        }
+      });
+      timerRuntime.clear();
+      restoredRuntime.forEach(function (runtime, id) { timerRuntime.set(id, runtime); });
+      if (restoredTimers.length) data.timers = restoredTimers;
+      else delete data.timers;
+      rulerSelected = false;
       // 撤销/重做重建 DOM 前先推导隐藏集合，避免折叠分支先闪现一帧再隐藏。
       hiddenMindmapNodeIds = computeHiddenMindmapNodeIds();
       hiddenGroupNodeIds = computeHiddenGroupNodeIds();
@@ -21121,8 +22628,10 @@
       edgeCanvasLiveCoords = null;
       selectedNodeIds.clear();
       selectedEdgeIds.clear();
+      selectedTimerIds.clear();
       renderInk();
       reconcileAll();
+      renderRuler();
       // 阶段 4：DOM 推倒重建后高亮 class 没了，搜索开着就重算（撤销/重做）
       if (searchOpen) runSearch(searchInput ? searchInput.value : '', false);
       redrawMinimap();   // 阶段 4：撤销/重做后刷新小地图
@@ -21131,6 +22640,7 @@
 
     function undo() {
       if (history.length <= 1) return;
+      refreshHistoryTimerHead();
       const current = history.pop();
       redoStack.push(current);
       applySnapshot(history[history.length - 1]);
@@ -21139,6 +22649,7 @@
 
     function redo() {
       if (redoStack.length === 0) return;
+      refreshHistoryTimerHead();
       const next = redoStack.pop();
       history.push(next);
       applySnapshot(next);
@@ -21195,6 +22706,13 @@
 
       // 任务清单输入框打字时：所有键交给输入框本身，画布快捷键一律让位
       if (e.target && e.target.classList && e.target.classList.contains('checklist-edit')) return;
+
+      // 尺子角度浮窗打开时，Esc 先关闭；输入框中的 Enter 由浮窗自身提交。
+      if (rulerMenu && !rulerMenu.hidden && e.key === 'Escape') {
+        e.preventDefault();
+        hideRulerAngleMenu();
+        return;
+      }
 
       // 工具配置浮层打开时，Esc 先关它
       if (toolConfigPop && e.key === 'Escape') {
@@ -21432,6 +22950,16 @@
       }
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && !inEditable) {
+        if (selectedTimerIds.size) {
+          e.preventDefault();
+          deleteSelectedTimers();
+          return;
+        }
+        if (rulerSelected && data.ruler) {
+          e.preventDefault();
+          removeRuler(true);
+          return;
+        }
         if (selectedArrowId) {
           e.preventDefault();
           deleteSelectedArrow();
@@ -21454,6 +22982,11 @@
       if (e.key === 'Escape') {
         // 取消正在进行的拖动 / 拉线 / 框选
         if (drag) {
+          if (drag.mode === 'ruler-move' || drag.mode === 'ruler-rotate') {
+            e.preventDefault();
+            finishRulerGesture(false);
+            return;
+          }
           if (drag.mode === 'node' && drag.moved) {
             // 节点回到起点
             drag.starts.forEach((start, id) => {
@@ -21477,6 +23010,20 @@
             edgeCanvasLiveCoords = null;
             renderEdgesCanvas();
             setEdgesSvgLive(false);
+            if (rulerEl) rulerEl.classList.remove('bypassed');
+          }
+          if (drag.mode === 'timer') {
+            drag.starts.forEach(function (start, id) {
+              const timer = findTimer(id);
+              const el = timerMap.get(id);
+              if (timer) {
+                timer.x = start.x;
+                timer.y = start.y;
+                updateTimerElement(timer);
+              }
+              if (el) el.classList.remove('dragging');
+            });
+            scheduleTimerToolbar();
           }
           if (drag.mode === 'decor-resize') {
             const node = findNode(drag.nodeId);
@@ -21535,6 +23082,7 @@
           drag = null;
         } else {
           if (drawTool !== 'select') setDrawTool('select');
+          else if (rulerSelected) setRulerSelected(false);
           else clearSelection();
         }
         return;
@@ -21818,6 +23366,23 @@
     }
     // 窗口失焦时一并清理空格态 + 方向键态——否则 Alt-Tab 切走会卡住
     function onWindowBlur() {
+      if (drag && (drag.mode === 'ruler-move' || drag.mode === 'ruler-rotate')) {
+        finishRulerGesture(false);
+      }
+      if (drag && drag.mode === 'timer') {
+        drag.starts.forEach(function (start, id) {
+          const timer = findTimer(id);
+          const el = timerMap.get(id);
+          if (timer) {
+            timer.x = start.x;
+            timer.y = start.y;
+            updateTimerElement(timer);
+          }
+          if (el) el.classList.remove('dragging');
+        });
+        drag = null;
+        scheduleTimerToolbar();
+      }
       if (spaceHeld) {
         spaceHeld = false;
         viewport.classList.remove('space-held');
@@ -21899,6 +23464,8 @@
     surface.addEventListener('compositionstart', onCompositionStart);
     surface.addEventListener('compositionend', onCompositionEnd);
     document.addEventListener('focusout', onFocusOut);
+    document.addEventListener('editor:languagechange', renderRuler);
+    document.addEventListener('editor:languagechange', renderTimers);
     // Z 轮：点击左下角缩放指示器 → 回到 100% 原点
     if (zoomIndicator) {
       zoomIndicator.addEventListener('click', function (e) {
@@ -22187,6 +23754,39 @@
         });
       }
     }
+    if (rulerMenu) {
+      rulerMenu.addEventListener('click', function (e) {
+        const preset = e.target.closest('[data-ruler-angle-preset]');
+        if (preset) {
+          applyRulerAngle(preset.dataset.rulerAnglePreset);
+          return;
+        }
+        if (e.target.closest('[data-action="apply-ruler-angle"]')) {
+          applyRulerAngle(rulerAngleInput ? rulerAngleInput.value : '');
+        }
+      });
+      rulerMenu.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+    if (rulerAngleInput) {
+      rulerAngleInput.addEventListener('input', function () {
+        setRulerAngleMenuInvalid(false);
+      });
+      rulerAngleInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        e.stopPropagation();
+        applyRulerAngle(rulerAngleInput.value);
+      });
+    }
+    if (rulerAngleApply) {
+      rulerAngleApply.addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+      });
+    }
+
     // C1 轮：节点右键菜单
     surface.addEventListener('contextmenu', onContextMenu);
     viewport.addEventListener('contextmenu', onContextMenu);
@@ -22234,6 +23834,9 @@
     // 点菜单以外的任何地方（含节点——它的 mousedown 会 stopPropagation，所以这里用 capture）
     // → 关菜单。capture + contains 判断：点菜单内不关，点外面才关。
     window.addEventListener('mousedown', function (e) {
+      if (rulerMenu && !rulerMenu.hidden && !rulerMenu.contains(e.target)) {
+        hideRulerAngleMenu();
+      }
       if (nodeMenu && !nodeMenu.hidden && !nodeMenu.contains(e.target)) {
         hideNodeMenu();
       }
@@ -22315,6 +23918,7 @@
 
     // ── 初始渲染 + 视口适配 ──────────────────
     reconcileAll();
+    renderRuler();
     if (opts.fresh) window.setTimeout(showRelevantOnboardingHint, 360);
     // 有保存的观看位置时优先恢复；首次打开才自动适配内容。
     if (!restoreViewport()) fitToContent(/* immediate */ true);
@@ -22326,6 +23930,9 @@
       // 模式切换是明确边界：先把尚未完成的脑图滑行动画结算到数据终点，
       // 避免切回普通后第一次拖动节点/分组时从动画中间位置突然跳走。
       finishMindmapGlide();
+      hideRulerAngleMenu();
+      if (mode !== 'normal') setRulerSelected(false);
+      if (mode !== 'normal') clearTimerSelection();
       if (mode !== 'mindmap') cancelMindmapColorBrush(false);
       clearTransientMovableDecor();
       if (mode === 'decor' && drawTool === 'edge-anchor') setDrawTool('select');
@@ -22348,7 +23955,19 @@
       refreshEditPanel();
       refreshDecorPanel();
       refreshDecorToolButtons();
+      renderRuler();
+      renderTimers();
     };
+    global.CanvasModule.ensureRuler = ensureRuler;
+    global.CanvasModule.focusRuler = focusRuler;
+    global.CanvasModule.removeRuler = function () { return removeRuler(true); };
+    global.CanvasModule.hasRuler = hasRuler;
+    global.CanvasModule.importManagedCanvas = importManagedCanvas;
+    global.CanvasModule.createCanvasTimer = createCanvasTimer;
+    global.CanvasModule.updateCanvasTimer = updateCanvasTimer;
+    global.CanvasModule.toggleSelectedTimers = toggleSelectedTimers;
+    global.CanvasModule.resetSelectedTimers = resetSelectedTimers;
+    global.CanvasModule.checkpointCanvasTimers = checkpointCanvasTimers;
     global.CanvasModule.setFilePath = function (nextPath) {
       filePath = nextPath || filePath;
       data.nodes.filter(isImageNode).forEach(function (node) {
@@ -22370,7 +23989,9 @@
       if (editingEdgeId !== null) commitEdgeEdit();
       if (editingTextBoxId !== null) commitTextBoxEdit();
       if (textReaderEditing) finishTextReaderEdit();
+      if (checkpointCanvasTimers()) notify();
     };
+    global.CanvasModule.createNodeMatrix = createNodeMatrix;
     // 是否有正在进行的就地编辑（与 commitPendingEdits 会 commit 的集合一一对应）。
     // 自动保存据此礼让：commit 会退出编辑态、关掉 contentEditable，在用户打字途中触发会吞掉后续输入。
     global.CanvasModule.isEditing = function () {
@@ -22700,6 +24321,8 @@
       clone.style.transition = 'none';
       clone.style.animation = 'none';
       clone.querySelectorAll('[data-attach-kind="pdf"]').forEach(function (e) { e.remove(); });
+      clone.querySelectorAll('.canvas-ruler').forEach(function (e) { e.remove(); });
+      clone.querySelectorAll('[data-canvas-timer-layer]').forEach(function (e) { e.remove(); });
       clone.querySelectorAll('.node[data-shape-type="edge-anchor"]').forEach(function (e) { e.remove(); });
       clone.querySelectorAll(
         '.canvas-empty-hint, .decor-resize-handle, .edge-handle, .canvas-edge-hit, .frame-rect, .node-mindmap-fold, '

@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-07-25。
+> 最后按源码校准：2026-07-27。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -70,6 +70,10 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/i18n.js` | 起始页与编辑器共用的界面语言层；保存语言偏好、翻译静态/动态 UI，并保护用户内容区。 |
 | `assets/tooltip.js` | 全局自定义说明框层；接管静态与动态 `title`，同步中英文文案，并处理悬停/键盘焦点与视口避让。 |
 | `assets/canvas.js` | 核心画布引擎，节点/边/手写/附件/批注/选择/历史/脑图/独立表格/AI 注入。 |
+| `assets/ruler.js` | 画布尺子的无 DOM 几何层；负责数据归一化、坐标旋转、有限长边投影、笔迹线段捕获与节点扫掠碰撞。 |
+| `assets/canvas-import.js` | `.canvas` 内容合并的无 DOM 数据层；负责结构校验、深拷贝、ID/引用重映射、附件策略与节点/墨迹联合边界偏移。 |
+| `assets/node-matrix.js` | “节点矩阵”的无 DOM 数据层；负责行列与数量校验、连续编号、Tab/换行二维粘贴、统一宽度解析和居中网格布局。 |
+| `assets/canvas-timer.js` | 画布倒计时/正计时的无 DOM 数据层；负责数据规范化、真实时间差、格式化、完成判定、复位与状态取反。 |
 | `assets/ai.js` | 右侧 AI 面板、聊天、上下文模式、生成预览、确认后注入。 |
 | `assets/richtext.js` | 画布文字的结构化局部格式层；管理 `textMarks` / `bodyMarks`、旧内联语法迁移、编辑 DOM 与导出序列化。 |
 | `assets/markdown-table.js` | Markdown 表格的无 DOM 数据层；负责解析、规范化、序列化、CSV/TSV 粘贴与正文内表格定位。 |
@@ -134,6 +138,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ### `.canvas` 和 `.assets`
 
 - `.canvas` 是 JSON，当前新建数据为 `version: 2`，核心字段是 `createdAt`、`updatedAt`、`nodes`、`edges`，手写数据也随画布保存。节点与文本框的局部字号/字色/高光/粗体使用 `textMarks` / `bodyMarks` 区间数组保存，文字本身始终是纯文字；代码节点不使用 `bodyMarks`。独立表格使用 `kind:"table"`，可选标题保存在 `text`，规范 Markdown 表格保存在 `body`，可选 `tableScale` 保存画布紧凑态 72%–180% 的整体缩放；可选 `tableLayout.columnWidths` / `tableLayout.rowHeights` 只保存用户调整过的列宽和行高，数组中的 `null` 表示该位置使用缺省尺寸，末尾缺省项会裁掉，全部缺省时删除整个 `tableLayout`。`tableChrome:"hidden"` 隐藏画布上的完整标题栏，`tableHeader:"emphasized"` 启用表头加粗与底色，`tableAppearance:"matrix"` 使用透明矩阵外观，矩阵括号缺省为圆括号，可选 `tableBracket:"square"` / `"determinant"`。表头缺省为普通样式，其余缺省显示状态不落冗余字段。表格不保存 `width` / `bodyHeight`，运行时网格内容模型也不落盘，不使用 `textMarks` / `bodyMarks`；`tableLayout` 是展示元数据，不得复制单元格内容。早期表格的 `width` 会在加载时折算为 `tableScale` 后删除。
+- 每张画布可选保存一把尺子为顶层 `ruler:{cx,cy,angle}`：中心使用画布坐标，角度归一化到 `[0,360)`；固定的 720×52 画布单位尺寸不写盘。删除尺子即删除整个字段，不提升 `.canvas` 版本。
+- 每张画布可选保存多个独立计时器为顶层 `timers[]`：保存 `id/x/y/mode/label/elapsedMs`，倒计时另存 `durationMs`；运行状态和起始时间只存在当前编辑会话，重开画布一律停止。无计时器时删除整个字段，不提升 `.canvas` 版本。
 - 每个画布的资源目录是同名 `<stem>.assets/`。移动、重命名、删除画布时必须同步处理这个目录。
 - 图片和背景资源按后端上传接口管理。画布附件位于 `.assets/attachments/`。
 - Markdown 附件批注保存在附件旁的 `<asset>.annot.json`。文本区/阅读器手写批注保存在 `.assets/node-annotations.json`。
@@ -144,7 +150,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 很多 UI 偏好存在 `localStorage` / `sessionStorage`，不进 `.canvas`：
 
 - 起步页：当前分组、主题、背景风格（`canvas:startBackgroundStyle`，unset 时默认“简洁”）、翻页速度、速记惯性、日历倒数日开关、隐藏特殊页开关（`canvas:hideSpecialPages`，**默认关闭**：只有显式存为 `'1'` 才隐藏，unset 或其他值都正常显示全部页面；开启后书脊只留最近/收藏/分组，滚轮翻页与点击都不进 6 张前置页）、帮助看过状态。
-- 编辑器：顶栏“画布 / 导图 / 图案”（内部 `canvas:mode` 仍只支持 `normal` / `mindmap` / `decor`；旧 `pro` / `edit` 读取时迁移为 `normal`）、全应用中英语言偏好 `canvas:toolbarLanguage`（由 `i18n.js` 在起始页、学习、活跃、日历、复习、专注与编辑器间共用；只翻译界面，不翻译文件名、任务名、便签、日记和画布内容）、首次语言确认 `canvas:initialLanguageChosen:v1`（只在全新用户第一次打开新画布且既无语言偏好也无引导状态时写入 `zh-CN` / `en`）、新手引导状态 `canvas:editorOnboarding:v2`（`in-progress` / `completed` / `skipped`）、三种模式各自的 `canvas:normalSubmode` / `canvas:mindmapSubmode` / `canvas:decorSubmode` 双模式偏好、右侧面板最后一次 Tab 收放选择 `canvas:sidePanelsCollapsed`（主编辑器全局共用，内嵌编辑器不读取也不改写）、底部文字属性带的全局收起偏好 `canvas:textToolbarCollapsed`（未设置时默认收起；显式 `'0'` 展开、`'1'` 收起）、普通画布属性检查器开关 `canvas:inspectorEnabled`、导图属性检查器开关 `canvas:mindmapInspectorEnabled`、图案属性检查器开关 `canvas:decorInspectorEnabled`（三个独立偏好；画布与图案默认开启，导图默认关闭）、文本框拖动自动对齐开关 `canvas:textSnapEnabled`（默认关闭，仅显式 `'1'` 开启）、完整画布模式的 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults` 与简洁画布模式独立的 `canvas:cleanNodeDefaults` / `canvas:cleanEdgeDefaults` 新建默认、文本框新建默认 `canvas:textDefaults` 以及共享柔和色栏镜像保存的高光/字色 `canvas:textHighlightColor` / `canvas:textInlineColor`、自动保存、暗色连线优化、平移/缩放/读者透明度、索引/脑图悬停延迟等。
+- 编辑器：顶栏“画布 / 导图 / 图案”（内部 `canvas:mode` 仍只支持 `normal` / `mindmap` / `decor`；旧 `pro` / `edit` 读取时迁移为 `normal`）以及不持久化为模式的临时“工具”入口、节点矩阵上次成功使用的结构设置 `canvas:nodeMatrixDefaults:v1`（行列、类型、内容模式、编号、间距和宽度，不保存粘贴正文）、全应用中英语言偏好 `canvas:toolbarLanguage`（由 `i18n.js` 在起始页、学习、活跃、日历、复习、专注与编辑器间共用；只翻译界面，不翻译文件名、任务名、便签、日记和画布内容）、首次语言确认 `canvas:initialLanguageChosen:v1`（只在全新用户第一次打开新画布且既无语言偏好也无引导状态时写入 `zh-CN` / `en`）、新手引导状态 `canvas:editorOnboarding:v2`（`in-progress` / `completed` / `skipped`）、三种模式各自的 `canvas:normalSubmode` / `canvas:mindmapSubmode` / `canvas:decorSubmode` 双模式偏好、右侧面板最后一次 Tab 收放选择 `canvas:sidePanelsCollapsed`（主编辑器全局共用，内嵌编辑器不读取也不改写）、底部文字属性带的全局收起偏好 `canvas:textToolbarCollapsed`（未设置时默认收起；显式 `'0'` 展开、`'1'` 收起）、普通画布属性检查器开关 `canvas:inspectorEnabled`、导图属性检查器开关 `canvas:mindmapInspectorEnabled`、图案属性检查器开关 `canvas:decorInspectorEnabled`（三个独立偏好；画布与图案默认开启，导图默认关闭）、文本框拖动自动对齐开关 `canvas:textSnapEnabled`（默认关闭，仅显式 `'1'` 开启）、完整画布模式的 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults` 与简洁画布模式独立的 `canvas:cleanNodeDefaults` / `canvas:cleanEdgeDefaults` 新建默认、文本框新建默认 `canvas:textDefaults` 以及共享柔和色栏镜像保存的高光/字色 `canvas:textHighlightColor` / `canvas:textInlineColor`、自动保存、暗色连线优化、平移/缩放/读者透明度、索引/脑图悬停延迟等。
 - 空白框选创建盒子与框选节点创建分组分别由 `canvas:boxCreateEnabled` / `canvas:groupCreateEnabled` 控制，两个开关默认开启且彼此独立；`canvas:genIndexEnabled` 也必须独立判断，不能因关闭盒子或分组而隐藏框选生成索引入口。
 - 速记、学习、复习、专注各自有视图偏好和临时运行状态；复习方式使用 `canvas:reviewMode:v1` 记住 `scheduled` / `free`，只影响界面路径，不复制卡片数据或调度状态。
 - `sessionStorage` 的 `canvas:route-from-start` 用于从起步页进入编辑器后的返回/过渡体验。
@@ -163,6 +169,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 日历与倒数日：`/api/calendar`、`/api/countdown`
 - 模板：`/api/templates`
 - 画布和资源读取：`/api/load`、`/api/background-image`、`/api/canvas-asset`、`/api/canvas-annotation`、`/api/node-annotations`、`/api/background-preference`
+- 内部画布内容导入：`/api/canvas-import-library` 只列出最近索引中有效的顶层 `canvases/*.canvas`，`/api/canvas-import-source` 通过不透明文件 ID 读取并预检来源；两者都不接受客户端来源路径，也不刷新来源最近时间或视口
 
 ### POST
 
@@ -170,7 +177,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 分组/收藏/排序与可见文件统计：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`
 - 回收站：`/api/trash`、`/api/trash-list`、`/api/trash-empty`、`/api/restore`
 - 文件系统交互：`/api/reveal`、`/api/open-external`、`/api/open-attachment`
-- 导入导出：`/api/export-markdown`、`/api/export-png`、`/api/import-markdown`、`/api/import-canvas`
+- 导入导出：`/api/export-markdown`、`/api/export-png`、`/api/import-markdown`、`/api/import-canvas`（起步页外部画布导入为新文件）、`/api/canvas-import-assets`（编辑器内部内容导入的受管素材复制）
 - 背景/图片/附件：`/api/pick-background-image`、`/api/upload-background-image`、`/api/import-canvas-image`、`/api/upload-canvas-image`、`/api/upload-canvas-attachment`
 - 批注与视口：`/api/save-canvas-annotation`、`/api/save-node-annotations`、`/api/background-preference`、`/api/viewport`
 - 学习任务：`/api/study-task-create`、`/api/study-task-update`、`/api/study-task-trash`、`/api/study-task-restore`、`/api/study-task-delete`、`/api/study-trash-empty`、`/api/study-archive-done`、`/api/study-task-create-canvas`、`/api/study-reorder`
@@ -207,7 +214,13 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 改动缩放、平移、定位、脑图、框选、拖拽、附件放置时，优先复用已有坐标工具函数。
 - 空格平移的光标是全局瞬时状态：按住空格但尚未拖动时，画布及其节点/连线统一显示开放抓手 `grab`；拖动期间显示闭合抓手 `grabbing`。它必须覆盖当前绘图工具的十字光标和对象自身光标，松开、鼠标抬起或窗口失焦后必须恢复，不能残留平移态。
 - 连线名称与选中锚点必须共用 SVG 真实路径的半程点，不能拿控制折线中点代替；选中锚点使用菱形，可拖拐点使用圆形。修改路径、节点拖动、导出或 Canvas/SVG 双渲染时要保持两者坐标一致。
+- 普通内容节点的新建基础最小宽度与左右尺寸手柄的硬下限统一为 `80px`；每次横向手势开始时会在不改数据的前提下测量节点的自动宽度，并在最多 `120px` 范围内把短标题的自然宽度作为本次拖拽下限，所以空卡片写入显式 `width` 后仍能缩回刚创建时的紧凑单行尺寸，长标题仍可继续压窄换行。脑图继续使用自己的 `72px` 下限与预设尺寸，双击尺寸手柄继续恢复自动宽度。
 - 顶栏模式目前显示为“画布 / 导图 / 图案”（英文偏好下为 “Canvas / Mind Map / Shapes”，内部值仍是 `normal` / `mindmap` / `decor`）。编辑器右下角齿轮与起始页客户端设置都可切换中英语言，偏好键是 `canvas:toolbarLanguage`；`i18n.js` 负责起始页各功能页与编辑器的共用界面文案，文件名、任务名、便签、日记和画布内容保持原文。右下角 `fx`、齿轮和 `?` 三个入口始终固定在画布角落，不随右侧面板展开向左避让；右栏层级更高，展开时允许直接覆盖这些入口。三个模式按钮都可在当前模式下重复点击，在各自独立记忆的 `full` / `clean` 子模式间切换；切到其他模式时恢复该模式上次子模式。缺少偏好数据时，画布与导图默认 `clean`，图案默认 `full`；已有 `canvas:*Submode` 偏好始终优先。移动胶囊与下沿短线在浅色界面统一纯黑、深色沉浸界面统一纯白，不再用三档灰色区分模式；`full` 常驻短线，`clean` 离开按钮组时隐藏短线，鼠标悬停或键盘聚焦任一模式时短线必须出现并跟随预览位置，离开后恢复当前模式与子模式对应的显示规则。`full` 允许属性检查器随选择出现，`clean` 隐藏顶栏动作区且禁止属性检查器，但导图/图案自身的模式面板仍保留；内嵌编辑器例外，强制完整画布模式以保留编辑能力。完整画布模式常驻大型“新建样式”面板，支持类型、形状、配色、透明度、整体缩放、圆角、字重、文字比例/对齐以及完整线条默认；选中对象时自动切为属性检查器，清选后自动回到新建样式，两者不再提供重复的手动页签。简洁画布模式显示卡片/便签高频入口与独立“样式”面板；该面板不切换 `full`，支持索引、预览、卡片、便签、代码五种节点类型、三种形状、节点外观和连线默认，使用独立 clean 默认键。无单选时，简洁“样式”面板编辑之后的新建默认；单选一个内容节点时，同一组节点控件改为读取并直接编辑所选节点，类型按钮执行内容安全迁移，清除或形成非单选后立即回到默认值；连线区始终编辑 clean 新建默认。面板保持打开以便用户在选择与默认语义间切换，不因此进入 `full` 或启用属性检查器。画布全局快捷键中，`1` 始终回到选择工具，主键区 `Shift+1` 进入文本框工具，`2` 在画笔与橡皮间切换；长按产生的重复事件不再次切换。简洁与完整画布统一使用 `3/4/5/6/7` 切换接下来新建的卡片/便签/索引/预览/代码默认类型，即使已有单选也不转换现有节点。画布按下期间的选择变化要等本次 click/drag 完成后再移动检查器，禁止侧栏在 `mousedown` 与 `mouseup` 之间抢走指针。未激活面板使用 `transform` / `opacity` / 延迟 `visibility` 完成退场，期间容器和子控件都必须禁止命中；不能用 `display:none` 截断过渡动画。属性检查器出现时优先占用当前右栏并让导图排版面板退场，清除选择后导图面板自动恢复；Tab 仍控制当前唯一右栏的收起/展开，模式切换、延迟打开检查器和 Tab 折叠状态必须同步闭环。导图模式复用 `applyMindmap` 排版和滑行动画，提供 10 套按结构效果命名的预设，并允许覆盖线型/线条样式。单选时作用于与该节点相连的整张结构，多选时只作用于所选节点；保持既有左右分支和按层级区分节点大小均为自动行为，不再暴露开关。`applyMindmap` 支持跟随分支、稳定均衡左右布局、层距/分支距/放射半径参数；`alignMindmapLevels` 只修正层级轴并保留用户手排的同层顺序。导图模式下 Tab 新建会沿当前分支方向继续向外生长，并继承当前预设的节点尺寸、颜色、线型和线条样式。
+- 顶栏“工具 / Tools”与三个模式按钮共用同一个分段控件外壳和按钮基础样式，但仍是临时入口：不写 `canvas:mode`，没有 `data-mode`，也没有简洁/完整子模式。工具菜单当前提供尺子、“导入画布”、“节点矩阵”和“倒计时 / 正计时”。尺子每张画布最多一把，点击会在可见区域中心以 `90°` 放置新尺子，或定位已有尺子并回到该画布上次子模式；`90°` 时删除按钮位于屏幕右上角。拖尺身移动、拖中央角度环旋转，`Shift` 按 15° 吸附；右键尺身会打开角度浮窗，可选 `0/30/45/60/90/120/135/150°` 或输入任意整数，提交后归一化到 `[0,360)`。画笔激活时右键尺身仍能打开浮窗且不切换画笔；`×` / `Delete` / 工具面板均可移除，放置、移动、旋转、精确设角与删除都进入画布历史。
+- 尺子只在主编辑器的画布模式显示并生效，导图、图案与内嵌学习编辑器隐藏。节点障碍只接入 `card/index/preview/sticky/code` 的直接拖动；全部成员均合格且起点未与尺子物理重叠的多选才受约束，其他对象和布局链路绕过。扫掠碰撞阻止快速穿透并保留沿长边滑动；拖动开始后按 `Alt` 可让本次手势余下阶段穿过。画笔在任一长边 14 屏幕像素内起笔会立即沿边绘制；从远处自由起笔后，真实采样线段首次接触有限长边吸附带时会保留前半段、插入精确接触点，并把本次抬笔前的后续确认点与预测尾段锁到同一条尺边。预测点本身不能触发吸附；橡皮、箭头和手绘图形不受影响，画笔激活时尺子不接管指针。
+- “导入画布”只从 Relatum 管理的内部画布库选择来源，不创建文件、不切换工作模式，也不接触起步页 `/api/import-canvas`。居中纸面选择器复用最近、收藏、未分组和自定义分组语义，当前画布不列出；来源必须同时登记在 `recent.json`、物理位于顶层 `canvases/*.canvas` 且仍存在。纯导入层校验并深拷贝普通节点、表格、文字框、图案、语义分组、连线、手写笔画和自由箭头，重建全部 ID 与引用，再按节点和墨迹联合边界移动到当前视口中心。图片、PDF 与 Markdown 原文件按来源修订指纹复制到目标 `.assets` 并重写 `assetPath`，但不复制 `<asset>.annot.json`、`node-annotations.json`、尺子、背景、视口或其他画布级状态；任一素材失败时回滚本次文件复制且不提交可见内容。成功后选中全部新节点，只写一条历史并触发一次保存；撤销保留素材供重做和现有孤儿清理使用。编辑器不再读取资源管理器拖入的外部 `.canvas`，只提示从工具中的画布库导入；图片/PDF/Markdown 拖入与起步页外部导入为新画布保持原行为。
+- “节点矩阵”是一次性普通节点生成器，不写新的 `.canvas` 字段或持久矩阵关系。面板支持 1–20 行、1–20 列且单批最多 100 个节点，类型限定为 `card/sticky/index/preview/code`；内容可为空、按行/按列连续编号，或按 Tab/换行粘贴二维文本并自动同步行列。间距可选紧凑 `24×20`、标准 `48×36`、宽松 `80×60` 画布单位或自定义，节点默认按真实内容测量后统一宽度，也可手工指定。确认前不切模式；成功时进入用户上次的画布子模式，把联合边界居中到当前视口并整体选中新节点，不建立连线或语义分组，只写一条历史和一次保存。
+- “倒计时 / 正计时”在同一画布可保存多个固定尺寸实体，只在主编辑器画布模式显示；导图、图案和内嵌编辑器隐藏但当前会话继续计时。计时器拥有独立选择域，不能与节点、边或尺子混选；框选只命中计时器时可多选，但框内一旦接触任何可见普通对象就完全忽略计时器并沿用节点框选。多选“切换状态”对每个实体逐个取反，运行中的暂停、停止中的启动；创建、移动、编辑和删除进入历史，开始/暂停/复位/完成不进历史。保存前结算有效读数但不打断运行，重开后全部停止；计时器不进入 Markdown、PNG、模板、内容导入、AI、图谱、小地图或适配内容边界。
 - 脑图预设只是外观，不可用颜色/尺寸反推节点是否属于脑图。完整套用脑图样式或排版时，中心节点写入可选字段 `mindmapRoot: true`，树边统一为 `parent → child`；同一连通结构只保留一个中心标记。脑图节点的持久外观由节点上的 `mindmap*` 字段决定，切到普通模式或打开属性检查器后仍保持圆角、尺寸、字重和文字排版。思维导图模式下拖动非中心节点会移动整棵子树：插槽用于同级排序，节点高亮与加号用于把整枝改挂为该节点的子节点；一级分支可跨中心换边，中心节点拖动整图，无效落点回原位。拖动收尾必须在无 `transform` 过渡的状态下同步提交节点终点与连线，再恢复普通过渡，避免线先到而节点随后漂移；任何顶栏模式切换也必须先结算尚未完成的脑图滑行动画。改挂会复用原父子连线、清除旧拐点，并在节点仍匹配内置预设尺寸时自动切换分支/叶级尺寸；手工改过的尺寸保留。循环、多父级、交叉连接和跨两张独立脑图不会自动改挂，普通模式仍保持自由拖动。
 - 脑图改挂默认只重排旧父分支和目标分支，其他一级分支保持原位；局部结果与其他分支碰撞时才回退为整图排版。预设节点用 `mindmapStylePreset`、`mindmapColorMode`、`mindmapBranchColor` 和 `mindmapStyleRole` 记录配色来源：`auto` 节点改挂后跟随新分支，并同步恢复新层级预设的 `hideChrome`；`custom` 节点保留用户颜色和背景显隐。实心脑图节点会按填充色与透明度自动选择墨色或暖白前景，`hideChrome` 节点仍跟随画布文字语义。配色刷只复制节点填充、边框和透明度，不修改尺寸、背景显隐或连线；“匹配父分支”把所选非中心节点恢复为自动配色与该层级的背景显隐。
 - 脑图“圆角折线”仍使用 `curve:"rounded-elbow"`；路径先正交路由，再用二次曲线圆滑转角。连线可选字段 `cornerRadius` 限制在 2–48px，缺省为 18px；脑图预设的 `branch` / `leaf` 可指定该值，Tab 新建、改挂和恢复连线样式都要继承它。
@@ -416,7 +429,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - Markdown 导出会生成一组互相双链的 `.md` 文件。独立 `table` 节点按可选标题 + `body` 中的规范表格源码导出；装饰、图片、PDF、MD 附件不导出，连到这些被跳过对象的边也会被邻接过滤。
 - Markdown 导入只接受文件夹第一层 `.md` 文件；开头连续的 `[[标题]]` 行表示双链。单文件最多 4MiB、总计最多 64MiB、一次最多 2000 个文件；单个连通簇超过 240 个节点时改用确定性网格，避免 O(n²) 力导向长时间占满 CPU。
-- PNG 导出由前端 `CanvasModule.exportImage` 生成，尽量包含节点、边、手写、图片、形状和基础背景；编辑辅助底纹不导出，PDF 节点不完整导出，公式可能降级。
+- PNG 导出由前端 `CanvasModule.exportImage` 生成，尽量包含节点、边、手写、图片、形状和基础背景；编辑辅助底纹与尺子不导出，PDF 节点不完整导出，公式可能降级。
 - 编辑器顶栏“归档”只移走当前画布中已划删除线的正文节点及其相邻连线，画布本身保留，并在 `data/画布归档/` 留轻量记录。
 - “导出画布到任务”会按画布节点生成学习任务；修改时要同时检查学习任务字段和画布读取逻辑。
 
@@ -451,6 +464,10 @@ python -m py_compile .\app.py .\desktop.py .\packaging\make_icon.py .\packaging\
 node --check .\assets\canvas.js
 node --check .\assets\editor.js
 node --check .\assets\i18n.js
+node --check .\assets\ruler.js
+node --check .\assets\canvas-import.js
+node --check .\assets\node-matrix.js
+node --check .\assets\canvas-timer.js
 node --check .\assets\start.js
 node --check .\assets\start-sticky-notes.js
 node --check .\assets\countdown.js
@@ -463,6 +480,41 @@ node --check .\assets\review.js
 ```powershell
 node .\tests\markdown-table-regression.js
 node .\tests\table-compact-contract.js
+```
+
+改动尺子几何、交互或导出隔离时，还要运行：
+
+```powershell
+node .\tests\ruler-regression.js
+node .\tests\ruler-contract.js
+```
+
+改动 `.canvas` 内容合并或编辑器文件拖入时，还要运行：
+
+```powershell
+node .\tests\canvas-import-regression.js
+node .\tests\canvas-import-contract.js
+python -m unittest .\tests\test_canvas_import_library.py
+```
+
+改动“工具 → 节点矩阵”、批量节点创建或矩阵布局时，还要运行：
+
+```powershell
+node .\tests\node-matrix-regression.js
+node .\tests\node-matrix-contract.js
+```
+
+改动“工具 → 倒计时 / 正计时”、计时器选择或计时运行时，还要运行：
+
+```powershell
+node .\tests\canvas-timer-regression.js
+node .\tests\canvas-timer-contract.js
+```
+
+改动普通节点宽度或左右尺寸手柄时，还要运行：
+
+```powershell
+node .\tests\node-resize-contract.js
 ```
 
 本地服务冒烟：

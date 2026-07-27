@@ -136,6 +136,65 @@
                 data-toolbar-i18n="mindmap">导图</button>
         <button type="button" class="editor-mode-btn" data-mode="decor"
                 data-toolbar-i18n="patterns">图案</button>
+        <button type="button" class="editor-mode-btn editor-tools-btn" data-action="tools"
+                data-toolbar-i18n="tools" aria-haspopup="true" aria-expanded="false"
+                aria-controls="editor-tools-pop">工具</button>
+      </div>
+      <div class="editor-tools-pop" id="editor-tools-pop" data-role="tools-pop"
+           role="dialog" aria-label="画布工具" hidden>
+        <div class="editor-tool-group">
+          <button type="button" class="editor-tool-card" data-action="use-ruler">
+            <span class="editor-tool-ruler-icon" aria-hidden="true"></span>
+            <span>
+              <strong data-toolbar-i18n="ruler">尺子</strong>
+              <small data-toolbar-i18n="rulerHint">阻挡简单节点；画笔靠近长边即吸附直线</small>
+            </span>
+          </button>
+          <button type="button" class="editor-tool-remove" data-action="remove-ruler" hidden
+                  data-toolbar-i18n="removeRuler">移除尺子</button>
+        </div>
+        <button type="button" class="editor-tool-card editor-tool-import-card"
+                data-action="import-canvas" data-editor-i18n-title="importCanvasHint"
+                data-editor-i18n-aria="importCanvas">
+          <span class="editor-tool-import-icon" aria-hidden="true">
+            <svg viewBox="0 0 52 30" focusable="false">
+              <path class="editor-tool-import-page" d="M7.5 3.5h20l7 7v16H7.5z"/>
+              <path class="editor-tool-import-fold" d="M27.5 3.5v7h7"/>
+              <path class="editor-tool-import-arrow" d="M45 15H23m0 0 5-5m-5 5 5 5"/>
+            </svg>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="importCanvas">导入画布</strong>
+            <small data-toolbar-i18n="importCanvasHint">从画布库复制内容到这里</small>
+          </span>
+        </button>
+        <button type="button" class="editor-tool-card editor-tool-matrix-card"
+                data-action="node-matrix" data-editor-i18n-title="nodeMatrixHint"
+                data-editor-i18n-aria="nodeMatrix">
+          <span class="editor-tool-matrix-icon" aria-hidden="true">
+            <i></i><i></i><i></i>
+            <i></i><i></i><i></i>
+            <i></i><i></i><i></i>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="nodeMatrix">节点矩阵</strong>
+            <small data-toolbar-i18n="nodeMatrixHint">批量生成规则排列的节点</small>
+          </span>
+        </button>
+        <button type="button" class="editor-tool-card editor-tool-timer-card"
+                data-action="canvas-timer" data-editor-i18n-title="canvasTimerHint"
+                data-editor-i18n-aria="canvasTimer">
+          <span class="editor-tool-timer-icon" aria-hidden="true">
+            <svg viewBox="0 0 36 36" focusable="false">
+              <circle cx="18" cy="19" r="12"></circle>
+              <path d="M14 4h8M18 7v3M18 19l5-4"></path>
+            </svg>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="canvasTimer">倒计时 / 正计时</strong>
+            <small data-toolbar-i18n="canvasTimerHint">在画布上放置独立计时器</small>
+          </span>
+        </button>
       </div>
     </div>
 
@@ -1925,6 +1984,286 @@
     <div class="side-panel-note">设置对所有画布生效；图片只记录本地绝对路径，移动文件后会回退为默认背景。</div>
   </aside>
 
+  <div class="canvas-import-library-overlay" data-role="canvas-import-library" hidden>
+    <section class="canvas-import-library-card" role="dialog" aria-modal="true"
+             aria-labelledby="canvas-import-library-title">
+      <header class="canvas-import-library-head">
+        <div>
+          <span class="canvas-import-library-kicker" data-toolbar-i18n="canvasLibraryKicker">画布工具</span>
+          <h2 id="canvas-import-library-title" data-toolbar-i18n="canvasLibraryTitle">从画布库导入</h2>
+        </div>
+        <button type="button" class="canvas-import-library-close"
+                data-action="close-canvas-import-library"
+                data-editor-i18n-aria="canvasLibraryClose" aria-label="关闭">×</button>
+      </header>
+      <label class="canvas-import-library-search">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="8.5" cy="8.5" r="5.2"></circle>
+          <path d="m12.5 12.5 4 4"></path>
+        </svg>
+        <input type="search" data-role="canvas-import-search"
+               data-editor-i18n-aria="canvasLibrarySearch"
+               placeholder="搜索画布标题" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="canvas-import-library-main">
+        <nav class="canvas-import-library-groups" data-role="canvas-import-groups"
+             aria-label="画布分组"></nav>
+        <div class="canvas-import-library-results">
+          <div class="canvas-import-library-list" data-role="canvas-import-files"
+               role="listbox" aria-label="可导入的画布"></div>
+          <div class="canvas-import-library-empty" data-role="canvas-import-empty" hidden>
+            <strong data-toolbar-i18n="canvasLibraryEmpty">这里没有可导入的画布</strong>
+            <span data-toolbar-i18n="canvasLibraryEmptyHint">当前画布不会出现在来源列表中。</span>
+          </div>
+          <div class="canvas-import-library-loading" data-role="canvas-import-loading">
+            <span class="canvas-import-library-spinner" aria-hidden="true"></span>
+            <span data-toolbar-i18n="canvasLibraryLoading">正在读取画布库…</span>
+          </div>
+        </div>
+      </div>
+      <p class="canvas-import-library-error" data-role="canvas-import-error"
+         role="alert" aria-live="polite" hidden></p>
+      <footer class="canvas-import-library-actions">
+        <span class="canvas-import-library-selection" data-role="canvas-import-selection"
+              data-toolbar-i18n="canvasLibraryNothingSelected">尚未选择画布</span>
+        <div>
+          <button type="button" class="canvas-import-library-secondary"
+                  data-action="cancel-canvas-import"
+                  data-toolbar-i18n="canvasLibraryCancel">取消</button>
+          <button type="button" class="canvas-import-library-primary"
+                  data-action="confirm-canvas-import" disabled
+                  data-toolbar-i18n="canvasLibraryConfirm">导入到当前画布</button>
+        </div>
+      </footer>
+    </section>
+  </div>
+
+  <div class="node-matrix-overlay" data-role="node-matrix-dialog" hidden>
+    <form class="node-matrix-card" data-role="node-matrix-form" role="dialog" aria-modal="true"
+          aria-labelledby="node-matrix-title">
+      <header class="node-matrix-head">
+        <div>
+          <span class="node-matrix-kicker" data-toolbar-i18n="nodeMatrixKicker">画布工具</span>
+          <h2 id="node-matrix-title" data-toolbar-i18n="nodeMatrixTitle">创建节点矩阵</h2>
+        </div>
+        <button type="button" class="node-matrix-close" data-action="close-node-matrix"
+                data-editor-i18n-aria="nodeMatrixClose" aria-label="关闭节点矩阵">×</button>
+      </header>
+
+      <div class="node-matrix-main">
+        <div class="node-matrix-controls">
+          <fieldset class="node-matrix-section">
+            <legend data-toolbar-i18n="nodeMatrixDimensions">矩阵尺寸</legend>
+            <div class="node-matrix-number-row">
+              <label>
+                <span data-toolbar-i18n="nodeMatrixRows">行数</span>
+                <input type="number" data-role="node-matrix-rows" min="1" max="20" step="1"
+                       value="3" inputmode="numeric">
+              </label>
+              <span aria-hidden="true">×</span>
+              <label>
+                <span data-toolbar-i18n="nodeMatrixColumns">列数</span>
+                <input type="number" data-role="node-matrix-columns" min="1" max="20" step="1"
+                       value="3" inputmode="numeric">
+              </label>
+              <output data-role="node-matrix-count">9</output>
+            </div>
+          </fieldset>
+
+          <fieldset class="node-matrix-section">
+            <legend data-toolbar-i18n="nodeMatrixKind">节点类型</legend>
+            <div class="node-matrix-choice-grid node-matrix-kind-grid">
+              <label><input type="radio" name="node-matrix-kind" value="card" checked>
+                <span data-toolbar-i18n="matrixKindCard">卡片</span></label>
+              <label><input type="radio" name="node-matrix-kind" value="sticky">
+                <span data-toolbar-i18n="matrixKindSticky">便签</span></label>
+              <label><input type="radio" name="node-matrix-kind" value="index">
+                <span data-toolbar-i18n="matrixKindIndex">索引</span></label>
+              <label><input type="radio" name="node-matrix-kind" value="preview">
+                <span data-toolbar-i18n="matrixKindPreview">预览</span></label>
+              <label><input type="radio" name="node-matrix-kind" value="code">
+                <span data-toolbar-i18n="matrixKindCode">代码</span></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="node-matrix-section">
+            <legend data-toolbar-i18n="nodeMatrixContent">节点内容</legend>
+            <div class="node-matrix-choice-grid node-matrix-content-modes">
+              <label><input type="radio" name="node-matrix-content" value="blank">
+                <span data-toolbar-i18n="nodeMatrixBlank">空白</span></label>
+              <label><input type="radio" name="node-matrix-content" value="sequence" checked>
+                <span data-toolbar-i18n="nodeMatrixSequence">连续编号</span></label>
+              <label><input type="radio" name="node-matrix-content" value="paste">
+                <span data-toolbar-i18n="nodeMatrixPaste">粘贴内容</span></label>
+            </div>
+
+            <div class="node-matrix-content-panel" data-role="node-matrix-sequence-panel">
+              <div class="node-matrix-inline-fields">
+                <label><span data-toolbar-i18n="nodeMatrixStart">起始</span>
+                  <input type="number" data-role="node-matrix-start" step="1" value="1"
+                         inputmode="numeric"></label>
+                <label><span data-toolbar-i18n="nodeMatrixPrefix">前缀</span>
+                  <input type="text" data-role="node-matrix-prefix" maxlength="40"></label>
+                <label><span data-toolbar-i18n="nodeMatrixSuffix">后缀</span>
+                  <input type="text" data-role="node-matrix-suffix" maxlength="40" value="."></label>
+              </div>
+              <div class="node-matrix-order">
+                <span data-toolbar-i18n="nodeMatrixOrder">编号顺序</span>
+                <div class="node-matrix-choice-grid">
+                  <label><input type="radio" name="node-matrix-order" value="row" checked>
+                    <span data-toolbar-i18n="nodeMatrixRowFirst">按行</span></label>
+                  <label><input type="radio" name="node-matrix-order" value="column">
+                    <span data-toolbar-i18n="nodeMatrixColumnFirst">按列</span></label>
+                </div>
+              </div>
+            </div>
+
+            <div class="node-matrix-content-panel" data-role="node-matrix-paste-panel" hidden>
+              <label class="node-matrix-paste-label">
+                <span data-toolbar-i18n="nodeMatrixPasteLabel">二维文本</span>
+                <textarea data-role="node-matrix-paste-text" rows="5" spellcheck="false"
+                          data-editor-i18n-aria="nodeMatrixPasteAria"
+                          aria-label="粘贴二维文本"></textarea>
+              </label>
+              <small data-toolbar-i18n="nodeMatrixPasteHint">可直接粘贴 Excel 或表格区域；自动按列和行拆分。</small>
+            </div>
+          </fieldset>
+
+          <fieldset class="node-matrix-section">
+            <legend data-toolbar-i18n="nodeMatrixLayout">排列</legend>
+            <div class="node-matrix-subhead" data-toolbar-i18n="nodeMatrixSpacing">节点间距</div>
+            <div class="node-matrix-choice-grid node-matrix-gap-presets">
+              <label><input type="radio" name="node-matrix-gap" value="compact">
+                <span data-toolbar-i18n="nodeMatrixCompact">紧凑</span></label>
+              <label><input type="radio" name="node-matrix-gap" value="standard" checked>
+                <span data-toolbar-i18n="nodeMatrixStandard">标准</span></label>
+              <label><input type="radio" name="node-matrix-gap" value="loose">
+                <span data-toolbar-i18n="nodeMatrixLoose">宽松</span></label>
+              <label><input type="radio" name="node-matrix-gap" value="custom">
+                <span data-toolbar-i18n="nodeMatrixCustom">自定义</span></label>
+            </div>
+            <div class="node-matrix-inline-fields node-matrix-custom-gap"
+                 data-role="node-matrix-custom-gap" hidden>
+              <label><span data-toolbar-i18n="nodeMatrixGapX">水平</span>
+                <input type="number" data-role="node-matrix-gap-x" min="0" max="400"
+                       step="1" value="48" inputmode="numeric"></label>
+              <label><span data-toolbar-i18n="nodeMatrixGapY">垂直</span>
+                <input type="number" data-role="node-matrix-gap-y" min="0" max="400"
+                       step="1" value="36" inputmode="numeric"></label>
+            </div>
+
+            <div class="node-matrix-subhead" data-toolbar-i18n="nodeMatrixWidth">统一宽度</div>
+            <div class="node-matrix-width-row">
+              <div class="node-matrix-choice-grid">
+                <label><input type="radio" name="node-matrix-width-mode" value="auto" checked>
+                  <span data-toolbar-i18n="nodeMatrixWidthAuto">自动</span></label>
+                <label><input type="radio" name="node-matrix-width-mode" value="custom">
+                  <span data-toolbar-i18n="nodeMatrixWidthCustom">手动</span></label>
+              </div>
+              <label class="node-matrix-width-input" data-role="node-matrix-width-wrap" hidden>
+                <input type="number" data-role="node-matrix-width-value" min="80" max="1180"
+                       step="1" value="160" inputmode="numeric"
+                       data-editor-i18n-aria="nodeMatrixWidthAria"
+                       aria-label="节点宽度">
+                <span>px</span>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <aside class="node-matrix-preview" aria-live="polite">
+          <div class="node-matrix-preview-head">
+            <strong data-toolbar-i18n="nodeMatrixPreview">布局预览</strong>
+            <span data-role="node-matrix-preview-summary">3 × 3 · 9 个节点</span>
+          </div>
+          <div class="node-matrix-preview-stage">
+            <div class="node-matrix-preview-grid" data-role="node-matrix-preview-grid"></div>
+          </div>
+          <p data-toolbar-i18n="nodeMatrixStyleHint">颜色、形状和文字样式继承当前画布的新建样式。</p>
+        </aside>
+      </div>
+
+      <p class="node-matrix-error" data-role="node-matrix-error"
+         role="alert" aria-live="polite" hidden></p>
+      <footer class="node-matrix-actions">
+        <span data-role="node-matrix-footer-count">将生成 9 个节点</span>
+        <div>
+          <button type="button" class="node-matrix-secondary" data-action="cancel-node-matrix"
+                  data-toolbar-i18n="nodeMatrixCancel">取消</button>
+          <button type="submit" class="node-matrix-primary" data-action="create-node-matrix"
+                  data-toolbar-i18n="nodeMatrixCreate">生成到画布</button>
+        </div>
+      </footer>
+    </form>
+  </div>
+
+  <div class="canvas-timer-dialog-overlay" data-role="canvas-timer-dialog" hidden>
+    <form class="canvas-timer-dialog-card" data-role="canvas-timer-form" role="dialog"
+          aria-modal="true" aria-labelledby="canvas-timer-dialog-title">
+      <header class="canvas-timer-dialog-head">
+        <div>
+          <span data-toolbar-i18n="canvasTimerKicker">画布工具</span>
+          <h2 id="canvas-timer-dialog-title" data-role="canvas-timer-dialog-title"
+              data-toolbar-i18n="canvasTimerCreateTitle">创建计时器</h2>
+        </div>
+        <button type="button" data-action="close-canvas-timer"
+                data-editor-i18n-aria="canvasTimerClose" aria-label="关闭计时器面板">×</button>
+      </header>
+
+      <fieldset class="canvas-timer-dialog-section">
+        <legend data-toolbar-i18n="canvasTimerType">计时方式</legend>
+        <div class="canvas-timer-dialog-choices">
+          <label>
+            <input type="radio" name="canvas-timer-mode" value="countdown" checked>
+            <span data-toolbar-i18n="canvasTimerCountdown">倒计时</span>
+          </label>
+          <label>
+            <input type="radio" name="canvas-timer-mode" value="countup">
+            <span data-toolbar-i18n="canvasTimerCountup">正计时</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <label class="canvas-timer-dialog-label">
+        <span data-toolbar-i18n="canvasTimerName">名称（可选）</span>
+        <input type="text" data-role="canvas-timer-label" maxlength="60"
+               data-editor-i18n-placeholder="canvasTimerNamePlaceholder"
+               placeholder="例如：阅读">
+      </label>
+
+      <fieldset class="canvas-timer-dialog-section" data-role="canvas-timer-duration-section">
+        <legend data-toolbar-i18n="canvasTimerDuration">倒计时时长</legend>
+        <div class="canvas-timer-duration-presets" role="group"
+             data-editor-i18n-aria="canvasTimerDuration" aria-label="倒计时时长">
+          <button type="button" data-timer-minutes="5">5 min</button>
+          <button type="button" data-timer-minutes="15">15 min</button>
+          <button type="button" data-timer-minutes="25" class="active">25 min</button>
+          <button type="button" data-timer-minutes="45">45 min</button>
+        </div>
+        <div class="canvas-timer-duration-inputs">
+          <label><input type="number" data-role="canvas-timer-hours" min="0" max="99"
+                        value="0" inputmode="numeric">
+            <span data-toolbar-i18n="canvasTimerHours">时</span></label>
+          <label><input type="number" data-role="canvas-timer-minutes" min="0" max="59"
+                        value="25" inputmode="numeric">
+            <span data-toolbar-i18n="canvasTimerMinutes">分</span></label>
+          <label><input type="number" data-role="canvas-timer-seconds" min="0" max="59"
+                        value="0" inputmode="numeric">
+            <span data-toolbar-i18n="canvasTimerSeconds">秒</span></label>
+        </div>
+      </fieldset>
+
+      <p class="canvas-timer-dialog-error" data-role="canvas-timer-error"
+         role="alert" aria-live="polite" hidden></p>
+      <footer class="canvas-timer-dialog-actions">
+        <button type="button" data-action="cancel-canvas-timer"
+                data-toolbar-i18n="canvasTimerCancel">取消</button>
+        <button type="submit" class="primary" data-role="canvas-timer-submit"
+                data-toolbar-i18n="canvasTimerCreate">创建到画布</button>
+      </footer>
+    </form>
+  </div>
+
   <!-- 当前画布关系图谱：从博客图谱本土化而来，只读浏览并可点击定位原节点 -->
   <div class="graph-overlay" id="graph-overlay" data-role="graph-overlay" hidden>
     <section class="graph-window" data-role="graph-window" role="dialog" aria-modal="true"
@@ -2354,6 +2693,13 @@
             <div><dt>长按<kbd>画笔 / 箭头</kbd></dt><dd>恢复该工具默认设置；按钮轻弹表示已生效</dd></div>
             <div><dt>左侧手绘图形<kbd>点按</kbd></dt><dd>放小图标；拖动则按框定尺寸</dd></div>
             <div><dt>重复点击当前<kbd>画布 / 导图 / 图案</kbd></dt><dd>切换该模式自己的「简洁 / 完整」状态</dd></div>
+            <div><dt>顶栏<kbd>工具 → 尺子</kbd></dt><dd>临时放置一把可移动、旋转的尺子；它不属于第四种工作模式</dd></div>
+            <div><dt>顶栏<kbd>工具 → 导入画布</kbd></dt><dd>从 Relatum 画布库选择来源，把内容与原始素材复制到当前可见区域中心</dd></div>
+            <div><dt>顶栏<kbd>工具 → 节点矩阵</kbd></dt><dd>按行列批量生成独立节点；支持编号、二维粘贴、间距与统一宽度</dd></div>
+            <div><dt>顶栏<kbd>工具 → 倒计时 / 正计时</kbd></dt><dd>创建独立计时器；框选多个后可切换状态、全部复位或删除</dd></div>
+            <div><dt>拖动简单节点碰到尺边</dt><dd>节点会停止穿越并可沿边滑动；拖动途中按 <kbd>Alt</kbd> 可在本次手势中穿过</dd></div>
+            <div><dt>画笔起笔或书写中靠近尺子长边</dt><dd>接触后沿最近尺边绘制到抬笔；拖中央角度环旋转，按 <kbd>Shift</kbd> 以 15° 吸附</dd></div>
+            <div><dt><kbd>右键尺身</kbd></dt><dd>选择常用预设，或输入任意整数角度</dd></div>
             <div><dt>导图 / 图案或画布·简洁中，无选中时 <kbd>Tab</kbd></dt><dd>临时收起 / 展开当前右侧面板</dd></div>
             <div><dt>完整状态下选中对象</dt><dd>自动打开对应属性检查器（可在设置中分别关闭）</dd></div>
             <div><dt>右下<kbd>⚙</kbd></dt><dd>语言、速度与延迟、三个检查器、深色优化、压感和自动保存等</dd></div>
@@ -2431,6 +2777,39 @@
         <span><span data-i18n="shortcutsPress" data-i18n-zh="按">按</span> <kbd>?</kbd> <span data-i18n="shortcutsOr" data-i18n-zh="或">或</span> <kbd>Esc</kbd> <span data-i18n="shortcutsCloseSuffix" data-i18n-zh="即可关闭">即可关闭</span></span>
       </div>
     </div>
+  </div>
+
+  <!-- 尺子右键角度面板：预设角度 + 整数输入 -->
+  <div class="ruler-angle-menu" data-role="ruler-angle-menu"
+       role="dialog" aria-label="尺子角度" data-editor-i18n-aria="rulerAngleTitle" hidden>
+    <div class="ruler-angle-menu-head">
+      <strong data-toolbar-i18n="rulerAngleTitle">尺子角度</strong>
+      <span data-role="ruler-angle-current">0°</span>
+    </div>
+    <div class="ruler-angle-presets" role="group" aria-label="角度预设"
+         data-editor-i18n-aria="rulerAnglePresets">
+      <button type="button" data-ruler-angle-preset="0" aria-pressed="false">0°</button>
+      <button type="button" data-ruler-angle-preset="30" aria-pressed="false">30°</button>
+      <button type="button" data-ruler-angle-preset="45" aria-pressed="false">45°</button>
+      <button type="button" data-ruler-angle-preset="60" aria-pressed="false">60°</button>
+      <button type="button" data-ruler-angle-preset="90" aria-pressed="false">90°</button>
+      <button type="button" data-ruler-angle-preset="120" aria-pressed="false">120°</button>
+      <button type="button" data-ruler-angle-preset="135" aria-pressed="false">135°</button>
+      <button type="button" data-ruler-angle-preset="150" aria-pressed="false">150°</button>
+    </div>
+    <div class="ruler-angle-custom">
+      <label for="ruler-angle-input" data-toolbar-i18n="rulerAngleCustom">自定义</label>
+      <span class="ruler-angle-input-wrap">
+        <input id="ruler-angle-input" data-role="ruler-angle-input" type="number" step="1"
+               inputmode="numeric" autocomplete="off" aria-label="自定义尺子角度"
+               data-editor-i18n-aria="rulerAngleInput">
+        <span aria-hidden="true">°</span>
+      </span>
+      <button type="button" class="ruler-angle-apply" data-action="apply-ruler-angle"
+              data-toolbar-i18n="apply">应用</button>
+    </div>
+    <p class="ruler-angle-error" data-role="ruler-angle-error"
+       data-toolbar-i18n="rulerAngleInvalid" role="alert" hidden>请输入整数角度</p>
   </div>
 
   <!-- 节点右键菜单（右键节点弹出：改颜色 / 复制 / 删除）-->
@@ -2643,6 +3022,10 @@
   <script src="markdown-table.js" defer></script>
   <script src="markdown.js" defer></script>
   <script src="table-editor.js" defer></script>
+  <script src="ruler.js" defer></script>
+  <script src="canvas-import.js" defer></script>
+  <script src="node-matrix.js" defer></script>
+  <script src="canvas-timer.js" defer></script>
   <script src="canvas.js" defer></script>
   <script src="graph-gl.js" defer></script>
   <script src="graph-engine.js" defer></script>

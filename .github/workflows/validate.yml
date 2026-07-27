@@ -44,6 +44,35 @@ jobs:
         shell: pwsh
         run: node tests/richtext-regression.js
 
+      - name: Run node resize contract tests
+        shell: pwsh
+        run: node tests/node-resize-contract.js
+
+      - name: Run ruler regression tests
+        shell: pwsh
+        run: |
+          node tests/ruler-regression.js
+          node tests/ruler-contract.js
+
+      - name: Run canvas import regression tests
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_canvas_import_library
+          node tests/canvas-import-regression.js
+          node tests/canvas-import-contract.js
+
+      - name: Run node matrix regression tests
+        shell: pwsh
+        run: |
+          node tests/node-matrix-regression.js
+          node tests/node-matrix-contract.js
+
+      - name: Run canvas timer regression tests
+        shell: pwsh
+        run: |
+          node tests/canvas-timer-regression.js
+          node tests/canvas-timer-contract.js
+
       - name: Run table regression tests
         shell: pwsh
         run: |
