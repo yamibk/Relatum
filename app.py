@@ -548,6 +548,358 @@ def load_recent() -> dict:
     return data
 
 
+class CanvasImportLibraryError(ValueError):
+    """A user-facing validation failure for the managed canvas import flow."""
+
+    def __init__(self, message: str, *, code: str = "INVALID_IMPORT", status: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+def _managed_canvas_import_entry(source_id: object, recent: dict | None = None) -> tuple[dict, Path]:
+    """Resolve an opaque recent-file id to a live top-level managed canvas."""
+    wanted = str(source_id or "").strip()
+    if not wanted:
+        raise CanvasImportLibraryError("缺少来源画布 ID", code="MISSING_SOURCE_ID")
+    library = recent if isinstance(recent, dict) else load_recent()
+    entry = next(
+        (
+            item for item in library.get("files", [])
+            if isinstance(item, dict) and str(item.get("id") or "") == wanted
+        ),
+        None,
+    )
+    if entry is None:
+        raise CanvasImportLibraryError(
+            "来源画布不在 Relatum 画布库中",
+            code="SOURCE_NOT_MANAGED",
+            status=404,
+        )
+    raw_path = str(entry.get("path") or "").strip()
+    target = Path(raw_path)
+    try:
+        resolved = target.resolve()
+        managed_root = CANVASES.resolve()
+    except OSError as err:
+        raise CanvasImportLibraryError(
+            "无法解析来源画布路径",
+            code="SOURCE_UNAVAILABLE",
+            status=404,
+        ) from err
+    if (
+        resolved.suffix.lower() != ".canvas"
+        or resolved.parent != managed_root
+        or not resolved.is_file()
+        or is_in_trash(resolved)
+    ):
+        raise CanvasImportLibraryError(
+            "来源画布不是有效的内部画布",
+            code="SOURCE_NOT_MANAGED",
+            status=404,
+        )
+    return entry, resolved
+
+
+def _validate_canvas_import_payload(payload: object) -> dict:
+    """Perform the server-side structural preflight before exposing a source."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
+        raise CanvasImportLibraryError(
+            "来源画布缺少有效的 nodes 数组",
+            code="INVALID_SOURCE",
+        )
+    edges = payload.get("edges", [])
+    if edges is not None and not isinstance(edges, list):
+        raise CanvasImportLibraryError("来源画布的 edges 格式无效", code="INVALID_SOURCE")
+    ink = payload.get("ink", {})
+    if ink is not None and not isinstance(ink, dict):
+        raise CanvasImportLibraryError("来源画布的 ink 格式无效", code="INVALID_SOURCE")
+
+    node_ids: set[str] = set()
+    for index, node in enumerate(payload["nodes"]):
+        if not isinstance(node, dict):
+            raise CanvasImportLibraryError(
+                f"来源画布第 {index + 1} 个节点格式无效",
+                code="INVALID_SOURCE",
+            )
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            raise CanvasImportLibraryError("来源画布存在缺少 ID 的节点", code="MISSING_NODE_ID")
+        if node_id in node_ids:
+            raise CanvasImportLibraryError("来源画布存在重复的节点 ID", code="DUPLICATE_NODE_ID")
+        node_ids.add(node_id)
+        if "assetPath" in node and (
+            not isinstance(node.get("assetPath"), str) or not node["assetPath"].strip()
+        ):
+            raise CanvasImportLibraryError("来源画布存在无效的素材路径", code="INVALID_ASSET_PATH")
+
+    for edge in edges or []:
+        if not isinstance(edge, dict):
+            raise CanvasImportLibraryError("来源画布存在无效的连线", code="INVALID_SOURCE")
+        if edge.get("waypoints") is not None and not isinstance(edge.get("waypoints"), list):
+            raise CanvasImportLibraryError("来源画布存在无效的连线折点", code="INVALID_SOURCE")
+
+    ink = ink or {}
+    for key in ("strokes", "arrows"):
+        if ink.get(key) is not None and not isinstance(ink.get(key), list):
+            raise CanvasImportLibraryError(f"来源画布的 {key} 格式无效", code="INVALID_SOURCE")
+    for stroke in ink.get("strokes", []) or []:
+        if not isinstance(stroke, dict) or not isinstance(stroke.get("points"), list):
+            raise CanvasImportLibraryError("来源画布存在无效的手写笔画", code="INVALID_SOURCE")
+    for arrow in ink.get("arrows", []) or []:
+        if not isinstance(arrow, dict) or arrow.get("start") is None or arrow.get("end") is None:
+            raise CanvasImportLibraryError("来源画布存在无效的自由箭头", code="INVALID_SOURCE")
+        if arrow.get("waypoints") is not None and not isinstance(arrow.get("waypoints"), list):
+            raise CanvasImportLibraryError("来源画布存在无效的箭头折点", code="INVALID_SOURCE")
+    return payload
+
+
+def _read_managed_canvas_import_source(
+    source_id: object,
+    recent: dict | None = None,
+) -> tuple[dict, Path, bytes, dict]:
+    entry, source = _managed_canvas_import_entry(source_id, recent)
+    try:
+        size = source.stat().st_size
+    except OSError as err:
+        raise CanvasImportLibraryError(
+            "无法读取来源画布",
+            code="SOURCE_UNAVAILABLE",
+            status=404,
+        ) from err
+    if size > MAX_JSON_BODY_BYTES:
+        raise CanvasImportLibraryError(
+            "来源画布超过 160 MiB",
+            code="SOURCE_TOO_LARGE",
+            status=413,
+        )
+    try:
+        content = source.read_bytes()
+        payload = json.loads(content.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise CanvasImportLibraryError(
+            "来源画布不是有效的 JSON 文件",
+            code="INVALID_JSON",
+        ) from err
+    return entry, source, content, _validate_canvas_import_payload(payload)
+
+
+def canvas_import_library_payload(current: object = "") -> dict:
+    """Return managed canvas metadata without leaking any absolute path."""
+    recent = load_recent()
+    groups = [
+        {"id": str(group.get("id") or ""), "name": str(group.get("name") or "")}
+        for group in recent.get("groups", [])
+        if isinstance(group, dict) and group.get("id") and group.get("name")
+    ]
+    group_ids = {group["id"] for group in groups}
+    current_norm = _norm(str(current or "")) if str(current or "").strip() else ""
+    current_id = None
+    current_group_id = None
+    files = []
+
+    if current_norm:
+        for raw in recent.get("files", []):
+            if not isinstance(raw, dict) or not raw.get("path"):
+                continue
+            if os.path.normcase(_norm(raw["path"])) != os.path.normcase(current_norm):
+                continue
+            current_id = str(raw.get("id") or "") or None
+            raw_group_id = str(raw.get("groupId") or "")
+            current_group_id = raw_group_id if raw_group_id in group_ids else "__inbox__"
+            break
+
+    for raw in recent.get("files", []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            entry, source = _managed_canvas_import_entry(raw.get("id"), recent)
+        except CanvasImportLibraryError:
+            continue
+        source_norm = _norm(source)
+        group_id = str(entry.get("groupId") or "")
+        if group_id not in group_ids:
+            group_id = ""
+        if current_norm and os.path.normcase(source_norm) == os.path.normcase(current_norm):
+            continue
+        try:
+            size_bytes = source.stat().st_size
+        except OSError:
+            continue
+        item = {
+            "id": str(entry.get("id") or ""),
+            "title": str(entry.get("title") or source.stem),
+            "groupId": group_id,
+            "groupRank": entry.get("groupRank", 0),
+            "lastOpenedAt": str(entry.get("lastOpenedAt") or ""),
+            "sizeBytes": size_bytes,
+            "favorite": bool(entry.get("favorite")),
+        }
+        if item["favorite"]:
+            item["favoriteRank"] = entry.get("favoriteRank", 0)
+        files.append(item)
+
+    return {
+        "groups": groups,
+        "files": files,
+        "recentLimit": RECENT_LIMIT,
+        "currentId": current_id,
+        "currentGroupId": current_group_id,
+    }
+
+
+def canvas_import_source_payload(source_id: object) -> dict:
+    entry, _, content, payload = _read_managed_canvas_import_source(source_id)
+    return {
+        "id": str(entry.get("id") or ""),
+        "title": str(entry.get("title") or ""),
+        "revision": hashlib.sha256(content).hexdigest(),
+        "data": payload,
+    }
+
+
+def _canvas_import_asset_references(payload: dict) -> dict[str, list[str]]:
+    references: dict[str, list[str]] = {}
+    for node in payload.get("nodes", []):
+        if not isinstance(node, dict) or "assetPath" not in node:
+            continue
+        raw = str(node.get("assetPath") or "")
+        normalized = raw.replace("\\", "/")
+        references.setdefault(normalized, []).append(raw)
+    return references
+
+
+def copy_canvas_import_assets(
+    source_id: object,
+    revision: object,
+    target_path: object,
+    requested_assets: object,
+) -> dict:
+    """Copy referenced managed assets transactionally and return a path map."""
+    wanted_revision = str(revision or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", wanted_revision):
+        raise CanvasImportLibraryError("来源修订指纹无效", code="INVALID_REVISION")
+    if not isinstance(requested_assets, list):
+        raise CanvasImportLibraryError("素材列表格式无效", code="INVALID_ASSET_LIST")
+
+    _, source, content, payload = _read_managed_canvas_import_source(source_id)
+    if hashlib.sha256(content).hexdigest() != wanted_revision:
+        raise CanvasImportLibraryError(
+            "来源画布已发生变化，请重新选择后再导入",
+            code="SOURCE_CHANGED",
+            status=409,
+        )
+    raw_target = str(target_path or "").strip()
+    target = Path(raw_target)
+    if (
+        not raw_target
+        or target.suffix.lower() != ".canvas"
+        or not target.is_file()
+        or not is_authorized(target)
+    ):
+        raise CanvasImportLibraryError(
+            "当前目标画布未获授权",
+            code="TARGET_UNAUTHORIZED",
+            status=403,
+        )
+    if os.path.normcase(_norm(target)) == os.path.normcase(_norm(source)):
+        raise CanvasImportLibraryError("不能把画布导入到自身", code="SAME_CANVAS")
+
+    source_refs = _canvas_import_asset_references(payload)
+    requested: list[tuple[str, str]] = []
+    seen_requested: set[str] = set()
+    for raw in requested_assets:
+        if not isinstance(raw, str) or not raw.strip():
+            raise CanvasImportLibraryError("素材路径无效", code="INVALID_ASSET_PATH")
+        normalized = raw.replace("\\", "/")
+        if normalized not in source_refs:
+            raise CanvasImportLibraryError(
+                "请求包含来源画布未引用的素材",
+                code="ASSET_NOT_REFERENCED",
+            )
+        if normalized not in seen_requested:
+            seen_requested.add(normalized)
+            requested.append((raw, normalized))
+
+    planned: list[tuple[str, str, Path, Path]] = []
+    destination_by_source: dict[str, str] = {}
+    reserved_destinations: set[str] = set()
+    for raw, normalized in requested:
+        try:
+            source_asset = _resolve_canvas_asset(source, normalized)
+        except ValueError as err:
+            raise CanvasImportLibraryError(str(err), code="INVALID_ASSET_PATH") from err
+        if not source_asset.is_file():
+            raise CanvasImportLibraryError(
+                f"来源素材不存在：{normalized}",
+                code="ASSET_MISSING",
+                status=404,
+            )
+        if source_asset.suffix.lower() not in CANVAS_ASSET_TYPES:
+            raise CanvasImportLibraryError(
+                f"不支持复制这种素材：{source_asset.name}",
+                code="ASSET_TYPE_UNSUPPORTED",
+            )
+        source_key = os.path.normcase(_norm(source_asset))
+        if source_key in destination_by_source:
+            continue
+        try:
+            preferred = _resolve_canvas_asset(target, normalized)
+        except ValueError as err:
+            raise CanvasImportLibraryError(str(err), code="INVALID_ASSET_PATH") from err
+        destination = preferred
+        destination_key = os.path.normcase(_norm(destination))
+        if destination.exists() or destination_key in reserved_destinations:
+            destination = _unused_path(destination.parent, destination.stem, destination.suffix)
+            destination_key = os.path.normcase(_norm(destination))
+            while destination_key in reserved_destinations:
+                destination = _unused_path(
+                    destination.parent,
+                    destination.stem + "-copy",
+                    destination.suffix,
+                )
+                destination_key = os.path.normcase(_norm(destination))
+        reserved_destinations.add(destination_key)
+        relative = destination.relative_to(canvas_assets_root(target).resolve()).as_posix()
+        destination_by_source[source_key] = relative
+        planned.append((source_key, normalized, source_asset, destination))
+
+    created: list[Path] = []
+    target_assets = canvas_assets_root(target).resolve()
+    try:
+        for _, _, source_asset, destination in planned:
+            _atomic_copy_file(source_asset, destination)
+            created.append(destination)
+    except OSError as err:
+        for created_file in reversed(created):
+            try:
+                created_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for created_file in reversed(created):
+            parent = created_file.parent
+            while parent != target_assets:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+        raise CanvasImportLibraryError(
+            f"复制素材失败：{err}",
+            code="ASSET_COPY_FAILED",
+            status=500,
+        ) from err
+
+    mapping: dict[str, str] = {}
+    for raw in requested_assets:
+        if not isinstance(raw, str):
+            continue
+        normalized = raw.replace("\\", "/")
+        source_asset = _resolve_canvas_asset(source, normalized)
+        mapping[raw] = destination_by_source[os.path.normcase(_norm(source_asset))]
+    return {"mapping": mapping, "assetCount": len(planned)}
+
+
 @_serialized_data
 def save_recent(data: dict) -> None:
     _save_recent_unlocked(data)
@@ -5289,6 +5641,7 @@ CANVAS_FILE_POST_ROUTES = {
     "/api/trash-empty",
     "/api/restore",
     "/api/import-canvas",
+    "/api/canvas-import-assets",
     "/api/upload-background-image",
     "/api/upload-canvas-image",
     "/api/upload-canvas-attachment",
@@ -5521,6 +5874,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(200, load_countdown())
         if parsed.path == "/api/templates":
             return self._send_json(200, load_templates())
+        if parsed.path == "/api/canvas-import-library":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                payload = canvas_import_library_payload(q.get("current", [""])[0])
+            except OSError as err:
+                return self._send_json(500, {"error": f"读取画布库失败：{err}"})
+            return self._send_json(200, payload)
+        if parsed.path == "/api/canvas-import-source":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                payload = canvas_import_source_payload(q.get("id", [""])[0])
+            except CanvasImportLibraryError as err:
+                return self._send_json(
+                    err.status,
+                    {"error": str(err), "code": err.code},
+                )
+            return self._send_json(200, payload)
         if parsed.path == "/api/load":
             q = urllib.parse.parse_qs(parsed.query)
             return self._api_load(q.get("path", [""])[0])
@@ -5735,6 +6105,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_import_markdown()
         if path == "/api/import-canvas":
             return self._api_import_canvas(body)
+        if path == "/api/canvas-import-assets":
+            return self._api_canvas_import_assets(body)
         if path == "/api/pick-background-image":
             return self._api_pick_background_image()
         if path == "/api/upload-background-image":
@@ -5830,6 +6202,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "group": gid,
             "hasAssets": has_assets,
         })
+
+    def _api_canvas_import_assets(self, body: dict):
+        if not isinstance(body, dict):
+            return self._send_json(400, {"error": "请求格式不正确"})
+        try:
+            result = copy_canvas_import_assets(
+                body.get("sourceId"),
+                body.get("revision"),
+                body.get("targetPath"),
+                body.get("assets"),
+            )
+        except CanvasImportLibraryError as err:
+            return self._send_json(
+                err.status,
+                {"error": str(err), "code": err.code},
+            )
+        return self._send_json(200, {"ok": True, **result})
 
     # ── AI 助手 ──
     def _api_ai_config(self, body: dict):

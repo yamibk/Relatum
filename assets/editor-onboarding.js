@@ -47,7 +47,7 @@
         {
           kicker: '04 · CANVAS', title: '画布模式：自由记录和连接',
           body: '双击新建内容，把卡片拖到任意位置，再用连线建立关系。',
-          note: '右键点击节点，可以快速换颜色、复制或删除。', scene: 'canvas-mode',
+          note: '右键点击节点，可以快速换颜色、复制或删除。顶栏“工具”是临时入口，不是第四种工作模式。', scene: 'canvas-mode',
         },
         {
           kicker: '05 · MIND MAP', title: '导图模式：一键排版和换样式',
@@ -105,7 +105,7 @@
         { kicker: '01 · CREATE', title: 'Double-click empty space to create a card', body: 'Double-click wherever you want to write. Type your content, then click outside the card to finish.', note: 'Use cards for fuller notes and sticky notes for short ideas.', scene: 'create' },
         { kicker: '02 · CONNECT', title: 'Hold Alt and drag a connection', body: 'Drag from one node to another to connect their content.', note: 'With a node selected, Tab creates a child and Enter creates a sibling.', scene: 'connect' },
         { kicker: '03 · NAVIGATE', title: 'Hold Space to pan; use the wheel to zoom', body: 'When the canvas grows, hold Space and drag it. The wheel zooms, and arrow keys move the view.', note: 'The bottom-left corner shows the current zoom level.', scene: 'navigate' },
-        { kicker: '04 · CANVAS', title: 'Canvas mode: place and connect freely', body: 'Double-click to add content, drag cards anywhere, and connect related notes.', note: 'Right-click a node to quickly recolor, duplicate, or delete it.', scene: 'canvas-mode' },
+        { kicker: '04 · CANVAS', title: 'Canvas mode: place and connect freely', body: 'Double-click to add content, drag cards anywhere, and connect related notes.', note: 'Right-click a node to recolor, duplicate, or delete it. Tools is a temporary entry, not a fourth workspace mode.', scene: 'canvas-mode' },
         { kicker: '05 · MIND MAP', title: 'Mind Map mode: arrange and style in one click', body: 'Select connected nodes and click a preset to arrange their positions, node styles, and lines.', note: 'You can also change level spacing, branch spacing, line shapes, and colors.', scene: 'mindmap-mode' },
         { kicker: '06 · SHAPES', title: 'Shapes mode: add sections and emphasis', body: 'Use boxes to group areas, color blocks as backgrounds, and notes or text for extra explanation.', note: 'Shapes change the visual layout, not the node relationships.', scene: 'decor-mode' },
         { kicker: '07 · PANEL', title: 'Press Tab to hide or restore the panel', body: 'When the right panel covers your work, press Tab to hide it. Press Tab again to bring it back.', note: 'Click the flashlight at the panel’s top-right to dim it until it is almost transparent; click again to restore it.', scene: 'panel-control' },

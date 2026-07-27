@@ -95,7 +95,54 @@
   const TOOLBAR_LANGUAGE_KEY = 'canvas:toolbarLanguage';
   const TOOLBAR_COPY = {
     'zh-CN': {
-      back: '起步页', canvas: '画布', mindmap: '导图', patterns: '图案',
+      back: '起步页', canvas: '画布', mindmap: '导图', patterns: '图案', tools: '工具',
+      ruler: '尺子', rulerHint: '阻挡简单节点；画笔靠近长边即吸附直线',
+      removeRuler: '移除尺子',
+      importCanvas: '导入画布', importCanvasHint: '从画布库复制内容到这里',
+      nodeMatrix: '节点矩阵', nodeMatrixHint: '批量生成规则排列的节点',
+      canvasTimer: '倒计时 / 正计时', canvasTimerHint: '在画布上放置独立计时器',
+      toolsAria: '画布工具：尺子、内容导入、节点矩阵与计时器',
+      canvasTimerKicker: '画布工具', canvasTimerCreateTitle: '创建计时器',
+      canvasTimerEditTitle: '编辑计时器', canvasTimerClose: '关闭计时器面板',
+      canvasTimerType: '计时方式', canvasTimerCountdown: '倒计时', canvasTimerCountup: '正计时',
+      canvasTimerName: '名称（可选）', canvasTimerNamePlaceholder: '例如：阅读',
+      canvasTimerDuration: '倒计时时长', canvasTimerHours: '时', canvasTimerMinutes: '分',
+      canvasTimerSeconds: '秒', canvasTimerCancel: '取消', canvasTimerCreate: '创建到画布',
+      canvasTimerSave: '保存', canvasTimerResetSave: '重置并保存',
+      canvasTimerInvalidDuration: '请输入 00:00:01–99:59:59 之间的时长。',
+      nodeMatrixKicker: '画布工具', nodeMatrixTitle: '创建节点矩阵',
+      nodeMatrixClose: '关闭节点矩阵', nodeMatrixDimensions: '矩阵尺寸',
+      nodeMatrixRows: '行数', nodeMatrixColumns: '列数', nodeMatrixKind: '节点类型',
+      matrixKindCard: '卡片', matrixKindSticky: '便签', matrixKindIndex: '索引',
+      matrixKindPreview: '预览', matrixKindCode: '代码', nodeMatrixContent: '节点内容',
+      nodeMatrixBlank: '空白', nodeMatrixSequence: '连续编号', nodeMatrixPaste: '粘贴内容',
+      nodeMatrixStart: '起始', nodeMatrixPrefix: '前缀', nodeMatrixSuffix: '后缀',
+      nodeMatrixOrder: '编号顺序', nodeMatrixRowFirst: '按行', nodeMatrixColumnFirst: '按列',
+      nodeMatrixPasteLabel: '二维文本', nodeMatrixPasteAria: '粘贴二维文本',
+      nodeMatrixPasteHint: '可直接粘贴 Excel 或表格区域；自动按列和行拆分。',
+      nodeMatrixLayout: '排列', nodeMatrixSpacing: '节点间距',
+      nodeMatrixCompact: '紧凑', nodeMatrixStandard: '标准', nodeMatrixLoose: '宽松',
+      nodeMatrixCustom: '自定义', nodeMatrixGapX: '水平', nodeMatrixGapY: '垂直',
+      nodeMatrixWidth: '统一宽度', nodeMatrixWidthAuto: '自动', nodeMatrixWidthCustom: '手动',
+      nodeMatrixWidthAria: '节点宽度', nodeMatrixPreview: '布局预览',
+      nodeMatrixStyleHint: '颜色、形状和文字样式继承当前画布的新建样式。',
+      nodeMatrixCancel: '取消', nodeMatrixCreate: '生成到画布',
+      nodeMatrixNodes: '个节点', nodeMatrixWillCreate: '将生成',
+      nodeMatrixInvalid: '请检查矩阵设置。', nodeMatrixSuccess: '已生成',
+      canvasLibraryKicker: '画布工具', canvasLibraryTitle: '从画布库导入',
+      canvasLibraryClose: '关闭画布库', canvasLibrarySearch: '搜索画布标题',
+      canvasLibraryGroups: '画布分组', canvasLibraryFiles: '可导入的画布',
+      canvasLibraryRecent: '最近', canvasLibraryFavorites: '收藏',
+      canvasLibraryInbox: '未分组', canvasLibraryEmpty: '这里没有可导入的画布',
+      canvasLibraryEmptyHint: '当前画布不会出现在来源列表中。',
+      canvasLibrarySearchEmpty: '没有匹配的画布', canvasLibrarySearchEmptyHint: '换一个标题关键词试试。',
+      canvasLibraryLoading: '正在读取画布库…', canvasLibraryCancel: '取消',
+      canvasLibraryConfirm: '导入到当前画布', canvasLibraryNothingSelected: '尚未选择画布',
+      canvasLibrarySelected: '已选择：', canvasLibraryImporting: '正在复制内容与素材…',
+      canvasLibraryLoadFailed: '读取画布库失败',
+      rulerAngleTitle: '尺子角度', rulerAnglePresets: '角度预设',
+      rulerAngleCustom: '自定义', rulerAngleInput: '自定义尺子角度',
+      rulerAngleInvalid: '请输入整数角度', apply: '应用',
       ai: 'AI 助手', graph: '图谱', background: '背景', templates: '模板',
       exportMd: '导出 MD', exportPng: '导出 PNG', tasks: '转为任务',
       tasksConfirm: '确认转为任务', archiveConfirm: '确认归档划线节点',
@@ -228,7 +275,54 @@
       epConvertConfirmOk: '确认',
     },
     en: {
-      back: 'Home', canvas: 'Canvas', mindmap: 'Mind Map', patterns: 'Shapes',
+      back: 'Home', canvas: 'Canvas', mindmap: 'Mind Map', patterns: 'Shapes', tools: 'Tools',
+      ruler: 'Ruler', rulerHint: 'Blocks simple nodes; pen strokes snap when they reach an edge',
+      removeRuler: 'Remove Ruler',
+      importCanvas: 'Import Canvas', importCanvasHint: 'Copy content here from your canvas library',
+      nodeMatrix: 'Node Matrix', nodeMatrixHint: 'Generate a regular grid of nodes',
+      canvasTimer: 'Countdown / Stopwatch', canvasTimerHint: 'Place independent timers on the canvas',
+      toolsAria: 'Canvas tools: ruler, content import, node matrix, and timers',
+      canvasTimerKicker: 'CANVAS TOOL', canvasTimerCreateTitle: 'Create Timer',
+      canvasTimerEditTitle: 'Edit Timer', canvasTimerClose: 'Close timer panel',
+      canvasTimerType: 'Timer Type', canvasTimerCountdown: 'Countdown', canvasTimerCountup: 'Stopwatch',
+      canvasTimerName: 'Name (optional)', canvasTimerNamePlaceholder: 'For example: Reading',
+      canvasTimerDuration: 'Countdown Duration', canvasTimerHours: 'hr', canvasTimerMinutes: 'min',
+      canvasTimerSeconds: 'sec', canvasTimerCancel: 'Cancel', canvasTimerCreate: 'Create on Canvas',
+      canvasTimerSave: 'Save', canvasTimerResetSave: 'Reset and Save',
+      canvasTimerInvalidDuration: 'Enter a duration from 00:00:01 to 99:59:59.',
+      nodeMatrixKicker: 'CANVAS TOOL', nodeMatrixTitle: 'Create Node Matrix',
+      nodeMatrixClose: 'Close node matrix', nodeMatrixDimensions: 'Matrix Size',
+      nodeMatrixRows: 'Rows', nodeMatrixColumns: 'Columns', nodeMatrixKind: 'Node Type',
+      matrixKindCard: 'Card', matrixKindSticky: 'Sticky', matrixKindIndex: 'Index',
+      matrixKindPreview: 'Preview', matrixKindCode: 'Code', nodeMatrixContent: 'Node Content',
+      nodeMatrixBlank: 'Blank', nodeMatrixSequence: 'Sequence', nodeMatrixPaste: 'Paste',
+      nodeMatrixStart: 'Start', nodeMatrixPrefix: 'Prefix', nodeMatrixSuffix: 'Suffix',
+      nodeMatrixOrder: 'Numbering', nodeMatrixRowFirst: 'By Row', nodeMatrixColumnFirst: 'By Column',
+      nodeMatrixPasteLabel: 'Grid Text', nodeMatrixPasteAria: 'Paste grid text',
+      nodeMatrixPasteHint: 'Paste a range from Excel or another table; rows and columns are detected automatically.',
+      nodeMatrixLayout: 'Layout', nodeMatrixSpacing: 'Node Spacing',
+      nodeMatrixCompact: 'Compact', nodeMatrixStandard: 'Standard', nodeMatrixLoose: 'Loose',
+      nodeMatrixCustom: 'Custom', nodeMatrixGapX: 'Horizontal', nodeMatrixGapY: 'Vertical',
+      nodeMatrixWidth: 'Uniform Width', nodeMatrixWidthAuto: 'Auto', nodeMatrixWidthCustom: 'Manual',
+      nodeMatrixWidthAria: 'Node width', nodeMatrixPreview: 'Layout Preview',
+      nodeMatrixStyleHint: 'Colors, shapes, and typography inherit the current canvas creation style.',
+      nodeMatrixCancel: 'Cancel', nodeMatrixCreate: 'Create on Canvas',
+      nodeMatrixNodes: 'nodes', nodeMatrixWillCreate: 'Will create',
+      nodeMatrixInvalid: 'Check the matrix settings.', nodeMatrixSuccess: 'Created',
+      canvasLibraryKicker: 'CANVAS TOOL', canvasLibraryTitle: 'Import from Canvas Library',
+      canvasLibraryClose: 'Close canvas library', canvasLibrarySearch: 'Search canvas titles',
+      canvasLibraryGroups: 'Canvas groups', canvasLibraryFiles: 'Canvases available to import',
+      canvasLibraryRecent: 'Recent', canvasLibraryFavorites: 'Favorites',
+      canvasLibraryInbox: 'Ungrouped', canvasLibraryEmpty: 'No canvases to import here',
+      canvasLibraryEmptyHint: 'The current canvas is excluded from source choices.',
+      canvasLibrarySearchEmpty: 'No matching canvases', canvasLibrarySearchEmptyHint: 'Try a different title.',
+      canvasLibraryLoading: 'Loading canvas library…', canvasLibraryCancel: 'Cancel',
+      canvasLibraryConfirm: 'Import into Current Canvas', canvasLibraryNothingSelected: 'No canvas selected',
+      canvasLibrarySelected: 'Selected: ', canvasLibraryImporting: 'Copying content and assets…',
+      canvasLibraryLoadFailed: 'Could not load the canvas library',
+      rulerAngleTitle: 'Ruler Angle', rulerAnglePresets: 'Angle presets',
+      rulerAngleCustom: 'Custom', rulerAngleInput: 'Custom ruler angle',
+      rulerAngleInvalid: 'Enter an integer angle', apply: 'Apply',
       ai: 'AI', graph: 'Graph', background: 'Background', templates: 'Templates',
       exportMd: 'Markdown', exportPng: 'PNG', tasks: 'Tasks',
       tasksConfirm: 'Confirm Tasks', archiveConfirm: 'Confirm Archive',
@@ -433,7 +527,7 @@
         };
     const activeMode = document.body.dataset.mode || 'normal';
     const submode = document.body.dataset.modeSubmode || 'clean';
-    sw.querySelectorAll('.editor-mode-btn').forEach((button) => {
+    sw.querySelectorAll('.editor-mode-btn[data-mode]').forEach((button) => {
       const active = button.dataset.mode === activeMode;
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
       let label = descriptions[button.dataset.mode] || '';
@@ -472,6 +566,9 @@
     });
     document.querySelectorAll('[data-editor-i18n-aria]').forEach((element) => {
       element.setAttribute('aria-label', toolbarCopy(element.dataset.editorI18nAria));
+    });
+    document.querySelectorAll('[data-editor-i18n-placeholder]').forEach((element) => {
+      element.setAttribute('placeholder', toolbarCopy(element.dataset.editorI18nPlaceholder));
     });
     const modeSwitch = document.querySelector('[data-role="mode-switch"]');
     const quickActions = document.querySelector('.editor-quick-actions');
@@ -672,14 +769,15 @@
   (function setupModeSwitch() {
     const sw = document.querySelector('[data-role="mode-switch"]');
     if (!sw) return;
-    const btns = sw.querySelectorAll('.editor-mode-btn');
+    const btns = sw.querySelectorAll('.editor-mode-btn[data-mode]');
+    const toolsButton = sw.querySelector('[data-action="tools"]');
     const slider = sw.querySelector('[data-role="mode-slider"]');
     const hoverLine = sw.querySelector('[data-role="mode-hover-line"]');
     let sliderReady = false;
     // 把黑色滑块移到当前激活按钮处；首次（与窗口尺寸变化）瞬时定位，之后滑动过渡。
     function placeSlider(animate) {
       if (!slider) return;
-      const active = sw.querySelector('.editor-mode-btn.active');
+      const active = sw.querySelector('.editor-mode-btn[data-mode].active');
       if (!active || !active.offsetWidth) return;   // 内嵌/隐藏顶栏时按钮量不到，跳过
       if (!animate) slider.classList.add('no-transition');
       slider.style.width = active.offsetWidth + 'px';
@@ -704,7 +802,7 @@
       if (shadow) hoverLine.style.setProperty('--mode-line-shadow', shadow);
     }
     function restoreHoverLine() {
-      const active = sw.querySelector('.editor-mode-btn.active');
+      const active = sw.querySelector('.editor-mode-btn[data-mode].active');
       placeHoverLine(active);
     }
     const VALID = ['normal', 'mindmap', 'decor'];
@@ -780,6 +878,14 @@
         placeHoverLine(button);
       });
     });
+    if (toolsButton) {
+      const leaveModePreview = () => {
+        sw.classList.remove('mode-hovering');
+        restoreHoverLine();
+      };
+      toolsButton.addEventListener('mouseenter', leaveModePreview);
+      toolsButton.addEventListener('focus', leaveModePreview);
+    }
     sw.addEventListener('mouseleave', () => {
       sw.classList.remove('mode-hovering');
       restoreHoverLine();
@@ -798,6 +904,1061 @@
     window.addEventListener('load', function () {
       placeSlider(false);
       restoreHoverLine();
+    });
+  })();
+
+  // ── 临时工具入口：不参与 canvas:mode / 子模式持久化 ──
+  (function setupToolsMenu() {
+    const button = document.querySelector('[data-action="tools"]');
+    const pop = document.querySelector('[data-role="tools-pop"]');
+    const useRuler = pop && pop.querySelector('[data-action="use-ruler"]');
+    const removeRuler = pop && pop.querySelector('[data-action="remove-ruler"]');
+    const importCanvas = pop && pop.querySelector('[data-action="import-canvas"]');
+    const nodeMatrix = pop && pop.querySelector('[data-action="node-matrix"]');
+    const canvasTimer = pop && pop.querySelector('[data-action="canvas-timer"]');
+    const importLibrary = document.querySelector('[data-role="canvas-import-library"]');
+    const importSearch = importLibrary && importLibrary.querySelector('[data-role="canvas-import-search"]');
+    const importGroups = importLibrary && importLibrary.querySelector('[data-role="canvas-import-groups"]');
+    const importFiles = importLibrary && importLibrary.querySelector('[data-role="canvas-import-files"]');
+    const importEmpty = importLibrary && importLibrary.querySelector('[data-role="canvas-import-empty"]');
+    const importLoading = importLibrary && importLibrary.querySelector('[data-role="canvas-import-loading"]');
+    const importError = importLibrary && importLibrary.querySelector('[data-role="canvas-import-error"]');
+    const importSelection = importLibrary && importLibrary.querySelector('[data-role="canvas-import-selection"]');
+    const importConfirm = importLibrary && importLibrary.querySelector('[data-action="confirm-canvas-import"]');
+    const importCancel = importLibrary && importLibrary.querySelector('[data-action="cancel-canvas-import"]');
+    const importClose = importLibrary && importLibrary.querySelector('[data-action="close-canvas-import-library"]');
+    if (!button || !pop || !useRuler || !removeRuler || !importCanvas || !nodeMatrix || !canvasTimer) return;
+    let importState = null;
+    let importView = 'recent';
+    let importSelectedId = '';
+    let importBusy = false;
+    let importRequestToken = 0;
+    let importReturnFocus = null;
+
+    function editorIsEnglish() {
+      return toolbarLanguage === 'en';
+    }
+
+    function importFormatSize(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value < 0) return '';
+      if (value < 1024) return Math.round(value) + ' B';
+      if (value < 1048576) {
+        const kb = value / 1024;
+        return (kb < 10 ? kb.toFixed(1) : Math.round(kb)) + ' KB';
+      }
+      return (value / 1048576).toFixed(1) + ' MB';
+    }
+
+    function importFormatTime(iso) {
+      const then = new Date(iso || '');
+      if (Number.isNaN(then.getTime())) return '';
+      const diff = Date.now() - then.getTime();
+      const minute = 60000;
+      const hour = minute * 60;
+      const day = hour * 24;
+      if (diff < minute) return editorIsEnglish() ? 'Just now' : '刚刚';
+      if (diff < hour) {
+        const value = Math.max(1, Math.floor(diff / minute));
+        return editorIsEnglish() ? value + ' min ago' : value + ' 分钟前';
+      }
+      if (diff < day) {
+        const value = Math.max(1, Math.floor(diff / hour));
+        return editorIsEnglish() ? value + ' hr ago' : value + ' 小时前';
+      }
+      if (diff < day * 7) {
+        const value = Math.max(1, Math.floor(diff / day));
+        return editorIsEnglish()
+          ? value + (value === 1 ? ' day ago' : ' days ago')
+          : value + ' 天前';
+      }
+      return then.getFullYear() + '-'
+        + String(then.getMonth() + 1).padStart(2, '0') + '-'
+        + String(then.getDate()).padStart(2, '0');
+    }
+
+    function importRank(file, field) {
+      const value = Number(file && file[field]);
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function importOpenedAt(file) {
+      const value = Date.parse(file && file.lastOpenedAt || '');
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function importByRank(field) {
+      return (a, b) => importRank(a, field) - importRank(b, field)
+        || importOpenedAt(b) - importOpenedAt(a)
+        || String(a.id || '').localeCompare(String(b.id || ''));
+    }
+
+    function importGroupMap() {
+      return new Map(((importState && importState.groups) || [])
+        .map((group) => [String(group.id || ''), group]));
+    }
+
+    function importGroupName(file) {
+      const groups = importGroupMap();
+      const group = groups.get(String(file && file.groupId || ''));
+      return group ? String(group.name || '') : toolbarCopy('canvasLibraryInbox');
+    }
+
+    function importViewFiles() {
+      if (!importState) return [];
+      const files = Array.isArray(importState.files) ? importState.files.slice() : [];
+      const query = String(importSearch && importSearch.value || '').trim().toLocaleLowerCase();
+      if (query) {
+        return files
+          .filter((file) => String(file.title || '').toLocaleLowerCase().includes(query))
+          .sort((a, b) => importOpenedAt(b) - importOpenedAt(a)
+            || String(a.id || '').localeCompare(String(b.id || '')));
+      }
+      if (importView === 'favorites') {
+        return files.filter((file) => file.favorite).sort(importByRank('favoriteRank'));
+      }
+      if (importView === 'inbox') {
+        const validGroups = new Set(((importState && importState.groups) || [])
+          .map((group) => String(group.id || '')));
+        return files
+          .filter((file) => !file.groupId || !validGroups.has(String(file.groupId)))
+          .sort(importByRank('groupRank'));
+      }
+      if (importView.indexOf('group:') === 0) {
+        const groupId = importView.slice(6);
+        return files
+          .filter((file) => String(file.groupId || '') === groupId)
+          .sort(importByRank('groupRank'));
+      }
+      return files
+        .sort((a, b) => importOpenedAt(b) - importOpenedAt(a)
+          || String(a.id || '').localeCompare(String(b.id || '')))
+        .slice(0, Number(importState.recentLimit) || 30);
+    }
+
+    function importViewCount(view) {
+      if (!importState) return 0;
+      const files = importState.files || [];
+      if (view === 'recent') return Math.min(files.length, Number(importState.recentLimit) || 30);
+      if (view === 'favorites') return files.filter((file) => file.favorite).length;
+      if (view === 'inbox') {
+        const valid = new Set((importState.groups || []).map((group) => String(group.id || '')));
+        return files.filter((file) => !file.groupId || !valid.has(String(file.groupId))).length;
+      }
+      const groupId = view.slice(6);
+      return files.filter((file) => String(file.groupId || '') === groupId).length;
+    }
+
+    function setImportError(message) {
+      if (!importError) return;
+      importError.textContent = message || '';
+      importError.hidden = !message;
+    }
+
+    function setImportBusy(next) {
+      importBusy = !!next;
+      if (!importLibrary) return;
+      importLibrary.dataset.busy = importBusy ? 'true' : 'false';
+      if (importConfirm) importConfirm.disabled = importBusy || !importSelectedId;
+      if (importSelection) {
+        importSelection.textContent = importBusy
+          ? toolbarCopy('canvasLibraryImporting')
+          : (importSelectedId
+              ? toolbarCopy('canvasLibrarySelected') + (
+                (importState.files || []).find((file) => String(file.id) === importSelectedId) || {}
+              ).title
+              : toolbarCopy('canvasLibraryNothingSelected'));
+      }
+    }
+
+    function renderImportGroups() {
+      if (!importGroups || !importState) return;
+      importGroups.innerHTML = '';
+      const searching = !!String(importSearch && importSearch.value || '').trim();
+      const entries = [
+        { view: 'recent', label: toolbarCopy('canvasLibraryRecent') },
+        { view: 'favorites', label: toolbarCopy('canvasLibraryFavorites') },
+        { view: 'inbox', label: toolbarCopy('canvasLibraryInbox') },
+      ].concat((importState.groups || []).map((group) => ({
+        view: 'group:' + group.id,
+        label: String(group.name || ''),
+      })));
+      entries.forEach((entry) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'canvas-import-library-group';
+        item.classList.toggle('active', !searching && entry.view === importView);
+        item.setAttribute(
+          'aria-pressed',
+          !searching && entry.view === importView ? 'true' : 'false',
+        );
+        item.dataset.importView = entry.view;
+        const name = document.createElement('span');
+        name.textContent = entry.label;
+        const count = document.createElement('span');
+        count.textContent = String(importViewCount(entry.view));
+        item.append(name, count);
+        item.addEventListener('click', () => {
+          if (importBusy) return;
+          importView = entry.view;
+          if (importSearch) importSearch.value = '';
+          importSelectedId = '';
+          renderImportLibrary();
+        });
+        importGroups.appendChild(item);
+      });
+    }
+
+    function selectImportFile(fileId, focus) {
+      if (importBusy || !importState) return;
+      importSelectedId = String(fileId || '');
+      importFiles.querySelectorAll('.canvas-import-library-file').forEach((item) => {
+        const selected = item.dataset.sourceId === importSelectedId;
+        item.setAttribute('aria-selected', selected ? 'true' : 'false');
+        if (selected && focus) item.focus();
+      });
+      setImportBusy(false);
+    }
+
+    function renderImportFiles() {
+      if (!importFiles || !importState) return;
+      importFiles.innerHTML = '';
+      const files = importViewFiles();
+      const query = String(importSearch && importSearch.value || '').trim();
+      if (!files.some((file) => String(file.id) === importSelectedId)) importSelectedId = '';
+      files.forEach((file) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'canvas-import-library-file';
+        item.dataset.sourceId = String(file.id || '');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', String(file.id) === importSelectedId ? 'true' : 'false');
+        const title = document.createElement('span');
+        title.className = 'canvas-import-library-file-title';
+        title.textContent = String(file.title || (editorIsEnglish() ? 'Untitled' : '未命名'));
+        title.setAttribute('data-user-content', '');
+        const group = document.createElement('span');
+        group.className = 'canvas-import-library-file-group';
+        group.textContent = query ? importGroupName(file) : '';
+        const meta = document.createElement('span');
+        meta.className = 'canvas-import-library-file-meta';
+        const when = document.createElement('span');
+        when.textContent = importFormatTime(file.lastOpenedAt);
+        const size = document.createElement('span');
+        size.textContent = importFormatSize(file.sizeBytes);
+        if (when.textContent) meta.appendChild(when);
+        if (size.textContent) meta.appendChild(size);
+        item.append(title, group, meta);
+        item.addEventListener('click', () => selectImportFile(file.id, false));
+        item.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          if (importSelectedId === String(file.id)) confirmCanvasImport();
+          else selectImportFile(file.id, false);
+        });
+        importFiles.appendChild(item);
+      });
+      const emptyTitle = importEmpty && importEmpty.querySelector('strong');
+      const emptyHint = importEmpty && importEmpty.querySelector('span');
+      if (emptyTitle) {
+        emptyTitle.textContent = toolbarCopy(
+          query ? 'canvasLibrarySearchEmpty' : 'canvasLibraryEmpty',
+        );
+      }
+      if (emptyHint) {
+        emptyHint.textContent = toolbarCopy(
+          query ? 'canvasLibrarySearchEmptyHint' : 'canvasLibraryEmptyHint',
+        );
+      }
+      if (importEmpty) importEmpty.hidden = files.length > 0;
+      setImportBusy(importBusy);
+    }
+
+    function renderImportLibrary() {
+      if (!importState) return;
+      renderImportGroups();
+      renderImportFiles();
+    }
+
+    function syncImportLibraryLanguage() {
+      if (!importLibrary) return;
+      importLibrary.lang = toolbarLanguage;
+      if (importSearch) {
+        importSearch.placeholder = toolbarCopy('canvasLibrarySearch');
+        importSearch.setAttribute('aria-label', toolbarCopy('canvasLibrarySearch'));
+        importSearch.removeAttribute('title');
+      }
+      if (importGroups) importGroups.setAttribute('aria-label', toolbarCopy('canvasLibraryGroups'));
+      if (importFiles) importFiles.setAttribute('aria-label', toolbarCopy('canvasLibraryFiles'));
+      if (importState) renderImportLibrary();
+    }
+
+    function closeImportLibrary(restoreFocus) {
+      if (!importLibrary || importBusy || importLibrary.hidden) return false;
+      importRequestToken += 1;
+      importLibrary.hidden = true;
+      importLibrary.removeAttribute('data-busy');
+      importState = null;
+      importSelectedId = '';
+      setImportError('');
+      if (restoreFocus !== false && importReturnFocus && importReturnFocus.isConnected) {
+        importReturnFocus.focus();
+      }
+      importReturnFocus = null;
+      return true;
+    }
+
+    async function openImportLibrary() {
+      if (!importLibrary || EMBED) return;
+      importReturnFocus = button;
+      importLibrary.hidden = false;
+      importState = null;
+      importSelectedId = '';
+      importView = 'recent';
+      if (importSearch) importSearch.value = '';
+      if (importFiles) importFiles.innerHTML = '';
+      if (importGroups) importGroups.innerHTML = '';
+      if (importEmpty) importEmpty.hidden = true;
+      if (importLoading) importLoading.hidden = false;
+      if (importConfirm) importConfirm.disabled = true;
+      setImportError('');
+      syncImportLibraryLanguage();
+      const token = ++importRequestToken;
+      requestAnimationFrame(() => { if (importSearch) importSearch.focus(); });
+      try {
+        const response = await fetch(
+          '/api/canvas-import-library?current=' + encodeURIComponent(filePath),
+          { cache: 'no-store' },
+        );
+        const json = await response.json();
+        if (token !== importRequestToken || importLibrary.hidden) return;
+        if (!response.ok) throw new Error(json.error || toolbarCopy('canvasLibraryLoadFailed'));
+        importState = {
+          groups: Array.isArray(json.groups) ? json.groups : [],
+          files: Array.isArray(json.files) ? json.files : [],
+          recentLimit: Number(json.recentLimit) || 30,
+        };
+        const groupIds = new Set(importState.groups.map((group) => String(group.id || '')));
+        if (json.currentGroupId === '__inbox__') importView = 'inbox';
+        else if (json.currentGroupId && groupIds.has(String(json.currentGroupId))) {
+          importView = 'group:' + json.currentGroupId;
+        }
+        if (importLoading) importLoading.hidden = true;
+        renderImportLibrary();
+      } catch (error) {
+        if (token !== importRequestToken || importLibrary.hidden) return;
+        if (importLoading) importLoading.hidden = true;
+        if (importEmpty) importEmpty.hidden = true;
+        setImportError(
+          toolbarCopy('canvasLibraryLoadFailed')
+          + (editorIsEnglish() ? ': ' : '：')
+          + error.message,
+        );
+      }
+    }
+
+    async function confirmCanvasImport() {
+      if (importBusy || !importSelectedId || !window.CanvasModule
+          || typeof window.CanvasModule.importManagedCanvas !== 'function') return;
+      setImportError('');
+      setImportBusy(true);
+      try {
+        await window.CanvasModule.importManagedCanvas(importSelectedId);
+        setImportBusy(false);
+        closeImportLibrary(false);
+      } catch (error) {
+        setImportBusy(false);
+        setImportError(
+          error && (error.displayMessage || error.message)
+            ? (error.displayMessage || error.message)
+            : toolbarCopy('canvasLibraryLoadFailed'),
+        );
+      }
+    }
+
+    function rulerExists() {
+      return !!(window.CanvasModule
+        && typeof window.CanvasModule.hasRuler === 'function'
+        && window.CanvasModule.hasRuler());
+    }
+    function sync() {
+      const exists = rulerExists();
+      removeRuler.hidden = !exists;
+      button.setAttribute('aria-label', toolbarCopy('toolsAria'));
+      pop.setAttribute('aria-label', toolbarCopy('toolsAria'));
+    }
+    function close() {
+      pop.hidden = true;
+      button.classList.remove('open');
+      button.setAttribute('aria-expanded', 'false');
+    }
+    function position() {
+      const rect = button.getBoundingClientRect();
+      const left = Math.max(12, Math.min(
+        window.innerWidth - pop.offsetWidth - 12,
+        rect.left,
+      ));
+      pop.style.left = left + 'px';
+      pop.style.top = (rect.bottom + 8) + 'px';
+    }
+    function open() {
+      sync();
+      pop.hidden = false;
+      position();
+      button.classList.add('open');
+      button.setAttribute('aria-expanded', 'true');
+    }
+
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (pop.hidden) open(); else close();
+    });
+    useRuler.addEventListener('click', () => {
+      if (window.EditorShell && typeof window.EditorShell.setMode === 'function') {
+        window.EditorShell.setMode('normal');
+      }
+      if (window.CanvasModule) {
+        if (rulerExists() && typeof window.CanvasModule.focusRuler === 'function') {
+          window.CanvasModule.focusRuler();
+        } else if (typeof window.CanvasModule.ensureRuler === 'function') {
+          window.CanvasModule.ensureRuler();
+        }
+      }
+      close();
+    });
+    removeRuler.addEventListener('click', () => {
+      if (window.CanvasModule && typeof window.CanvasModule.removeRuler === 'function') {
+        window.CanvasModule.removeRuler();
+      }
+      close();
+    });
+    importCanvas.addEventListener('click', () => {
+      close();
+      openImportLibrary();
+    });
+    nodeMatrix.addEventListener('click', () => {
+      close();
+      document.dispatchEvent(new CustomEvent('editor:open-node-matrix'));
+    });
+    canvasTimer.addEventListener('click', () => {
+      close();
+      document.dispatchEvent(new CustomEvent('editor:open-canvas-timer'));
+    });
+    if (importSearch) {
+      importSearch.addEventListener('input', () => {
+        if (!importState || importBusy) return;
+        importSelectedId = '';
+        renderImportLibrary();
+      });
+      importSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && importSelectedId) {
+          event.preventDefault();
+          confirmCanvasImport();
+        }
+      });
+    }
+    if (importConfirm) importConfirm.addEventListener('click', confirmCanvasImport);
+    if (importCancel) importCancel.addEventListener('click', () => closeImportLibrary(true));
+    if (importClose) importClose.addEventListener('click', () => closeImportLibrary(true));
+    if (importLibrary) {
+      importLibrary.addEventListener('mousedown', (event) => {
+        if (event.target === importLibrary) closeImportLibrary(true);
+      });
+      importLibrary.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          if (!importBusy) {
+            event.preventDefault();
+            closeImportLibrary(true);
+          }
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = [...importLibrary.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        )].filter((element) => !element.hidden && element.offsetParent !== null);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+    }
+    document.addEventListener('mousedown', (event) => {
+      if (!pop.hidden && !pop.contains(event.target) && !button.contains(event.target)) close();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (!pop.hidden && event.key === 'Escape') {
+        event.preventDefault();
+        close();
+        button.focus();
+      }
+    });
+    document.addEventListener('editor:modechange', () => {
+      close();
+      closeImportLibrary(false);
+    });
+    document.addEventListener('editor:languagechange', () => {
+      sync();
+      syncImportLibraryLanguage();
+    });
+    document.addEventListener('canvas:rulerchange', sync);
+    document.addEventListener('editor:canvasready', sync);
+    window.addEventListener('resize', () => { if (!pop.hidden) position(); });
+    sync();
+  })();
+
+  // ── 节点矩阵：只负责配置与预览，真实节点事务由 CanvasModule 提交 ──
+  (function setupNodeMatrixDialog() {
+    const dialog = document.querySelector('[data-role="node-matrix-dialog"]');
+    const form = dialog && dialog.querySelector('[data-role="node-matrix-form"]');
+    const rowsInput = dialog && dialog.querySelector('[data-role="node-matrix-rows"]');
+    const columnsInput = dialog && dialog.querySelector('[data-role="node-matrix-columns"]');
+    const countOutput = dialog && dialog.querySelector('[data-role="node-matrix-count"]');
+    const startInput = dialog && dialog.querySelector('[data-role="node-matrix-start"]');
+    const prefixInput = dialog && dialog.querySelector('[data-role="node-matrix-prefix"]');
+    const suffixInput = dialog && dialog.querySelector('[data-role="node-matrix-suffix"]');
+    const sequencePanel = dialog && dialog.querySelector('[data-role="node-matrix-sequence-panel"]');
+    const pastePanel = dialog && dialog.querySelector('[data-role="node-matrix-paste-panel"]');
+    const pasteInput = dialog && dialog.querySelector('[data-role="node-matrix-paste-text"]');
+    const customGap = dialog && dialog.querySelector('[data-role="node-matrix-custom-gap"]');
+    const gapXInput = dialog && dialog.querySelector('[data-role="node-matrix-gap-x"]');
+    const gapYInput = dialog && dialog.querySelector('[data-role="node-matrix-gap-y"]');
+    const widthWrap = dialog && dialog.querySelector('[data-role="node-matrix-width-wrap"]');
+    const widthInput = dialog && dialog.querySelector('[data-role="node-matrix-width-value"]');
+    const previewGrid = dialog && dialog.querySelector('[data-role="node-matrix-preview-grid"]');
+    const previewSummary = dialog && dialog.querySelector('[data-role="node-matrix-preview-summary"]');
+    const footerCount = dialog && dialog.querySelector('[data-role="node-matrix-footer-count"]');
+    const errorEl = dialog && dialog.querySelector('[data-role="node-matrix-error"]');
+    const submitButton = dialog && dialog.querySelector('[data-action="create-node-matrix"]');
+    const closeButton = dialog && dialog.querySelector('[data-action="close-node-matrix"]');
+    const cancelButton = dialog && dialog.querySelector('[data-action="cancel-node-matrix"]');
+    if (!dialog || !form || !rowsInput || !columnsInput || !previewGrid || !submitButton) return;
+
+    const STORAGE_KEY = 'canvas:nodeMatrixDefaults:v1';
+    const TYPE_MIN_WIDTH = { card: 80, sticky: 150, index: 80, preview: 168, code: 248 };
+    let busy = false;
+    let returnFocus = null;
+
+    function selectedValue(name, fallback) {
+      const selected = form.querySelector('input[name="' + name + '"]:checked');
+      return selected ? selected.value : fallback;
+    }
+
+    function selectValue(name, value, fallback) {
+      const input = form.querySelector(
+        'input[name="' + name + '"][value="' + String(value || '') + '"]',
+      ) || form.querySelector(
+        'input[name="' + name + '"][value="' + String(fallback || '') + '"]',
+      );
+      if (input) input.checked = true;
+    }
+
+    function matrixText(zh, en) {
+      return toolbarLanguage === 'en' ? en : zh;
+    }
+
+    function formatCount(count, prefix) {
+      if (toolbarLanguage === 'en') {
+        return (prefix ? toolbarCopy('nodeMatrixWillCreate') + ' ' : '')
+          + count + ' ' + toolbarCopy('nodeMatrixNodes');
+      }
+      return (prefix ? toolbarCopy('nodeMatrixWillCreate') + ' ' : '')
+        + count + ' ' + toolbarCopy('nodeMatrixNodes');
+    }
+
+    function setError(message) {
+      errorEl.textContent = message || '';
+      errorEl.hidden = !message;
+    }
+
+    function matrixErrorMessage(error) {
+      const code = error && error.code;
+      if (code === 'INVALID_ROWS') return matrixText('行数必须是 1–20 之间的整数。', 'Rows must be an integer from 1 to 20.');
+      if (code === 'INVALID_COLUMNS') return matrixText('列数必须是 1–20 之间的整数。', 'Columns must be an integer from 1 to 20.');
+      if (code === 'TOO_MANY_CELLS') return matrixText('一次最多生成 100 个节点。', 'You can create at most 100 nodes at once.');
+      if (code === 'GRID_TOO_LARGE') return matrixText('粘贴内容最多支持 20 行、20 列。', 'Pasted content supports at most 20 rows and 20 columns.');
+      if (code === 'EMPTY_PASTE') return matrixText('请先粘贴至少一个单元格。', 'Paste at least one cell first.');
+      if (code === 'INVALID_START') return matrixText('起始编号必须是整数。', 'The starting number must be an integer.');
+      if (code === 'AFFIX_TOO_LONG') return matrixText('编号前缀和后缀最多各 40 个字符。', 'Prefix and suffix can contain at most 40 characters each.');
+      if (code === 'INVALID_GAP_X' || code === 'INVALID_GAP_Y') {
+        return matrixText('节点间距必须是 0–400 之间的整数。', 'Node spacing must be an integer from 0 to 400.');
+      }
+      if (code === 'INVALID_WIDTH') return matrixText('节点宽度超出允许范围。', 'Node width is outside the allowed range.');
+      if (code === 'MATRIX_UNAVAILABLE') {
+        return matrixText('节点矩阵当前不可用，请回到主编辑器后重试。', 'Node Matrix is unavailable here. Return to the main editor and try again.');
+      }
+      return error && error.message ? error.message : toolbarCopy('nodeMatrixInvalid');
+    }
+
+    function collectConfig() {
+      return {
+        rows: Number(rowsInput.value),
+        columns: Number(columnsInput.value),
+        kind: selectedValue('node-matrix-kind', 'card'),
+        contentMode: selectedValue('node-matrix-content', 'sequence'),
+        start: Number(startInput.value),
+        prefix: prefixInput.value,
+        suffix: suffixInput.value,
+        order: selectedValue('node-matrix-order', 'row'),
+        pasteText: pasteInput.value,
+        gapPreset: selectedValue('node-matrix-gap', 'standard'),
+        gapX: Number(gapXInput.value),
+        gapY: Number(gapYInput.value),
+        widthMode: selectedValue('node-matrix-width-mode', 'auto'),
+        width: Number(widthInput.value),
+      };
+    }
+
+    function loadSettings() {
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; }
+      catch (error) { saved = {}; }
+      rowsInput.value = Number.isInteger(Number(saved.rows)) ? saved.rows : 3;
+      columnsInput.value = Number.isInteger(Number(saved.columns)) ? saved.columns : 3;
+      startInput.value = Number.isSafeInteger(Number(saved.start)) ? saved.start : 1;
+      prefixInput.value = typeof saved.prefix === 'string' ? saved.prefix.slice(0, 40) : '';
+      suffixInput.value = typeof saved.suffix === 'string' ? saved.suffix.slice(0, 40) : '.';
+      gapXInput.value = Number.isInteger(Number(saved.gapX)) ? saved.gapX : 48;
+      gapYInput.value = Number.isInteger(Number(saved.gapY)) ? saved.gapY : 36;
+      widthInput.value = Number.isInteger(Number(saved.width)) ? saved.width : 160;
+      pasteInput.value = '';
+      selectValue('node-matrix-kind', saved.kind, 'card');
+      selectValue('node-matrix-content', saved.contentMode, 'sequence');
+      selectValue('node-matrix-order', saved.order, 'row');
+      selectValue('node-matrix-gap', saved.gapPreset, 'standard');
+      selectValue('node-matrix-width-mode', saved.widthMode, 'auto');
+    }
+
+    function saveSettings(config) {
+      const saved = {
+        rows: config.rows,
+        columns: config.columns,
+        kind: config.kind,
+        contentMode: config.contentMode,
+        start: config.start,
+        prefix: config.prefix,
+        suffix: config.suffix,
+        order: config.order,
+        gapPreset: config.gapPreset,
+        gapX: config.gapX,
+        gapY: config.gapY,
+        widthMode: config.widthMode,
+        width: config.width,
+      };
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); } catch (error) {}
+    }
+
+    function syncPasteDimensions() {
+      if (selectedValue('node-matrix-content', 'sequence') !== 'paste') return;
+      const Matrix = window.RelatumNodeMatrix;
+      if (!Matrix || typeof Matrix.parsePastedGrid !== 'function') return;
+      const parsed = Matrix.parsePastedGrid(pasteInput.value);
+      if (parsed.rows && parsed.columns) {
+        rowsInput.value = parsed.rows;
+        columnsInput.value = parsed.columns;
+      }
+    }
+
+    function renderPreview() {
+      const Matrix = window.RelatumNodeMatrix;
+      const contentMode = selectedValue('node-matrix-content', 'sequence');
+      const gapPreset = selectedValue('node-matrix-gap', 'standard');
+      const widthMode = selectedValue('node-matrix-width-mode', 'auto');
+      const kind = selectedValue('node-matrix-kind', 'card');
+      sequencePanel.hidden = contentMode !== 'sequence';
+      pastePanel.hidden = contentMode !== 'paste';
+      rowsInput.disabled = contentMode === 'paste';
+      columnsInput.disabled = contentMode === 'paste';
+      customGap.hidden = gapPreset !== 'custom';
+      widthWrap.hidden = widthMode !== 'custom';
+      widthInput.min = String(TYPE_MIN_WIDTH[kind] || 80);
+      if (widthMode === 'custom' && Number(widthInput.value) < Number(widthInput.min)) {
+        widthInput.value = widthInput.min;
+      }
+
+      previewGrid.innerHTML = '';
+      let built = null;
+      let validationError = null;
+      try {
+        if (!Matrix || typeof Matrix.buildCells !== 'function') {
+          const error = new Error('');
+          error.code = 'MATRIX_UNAVAILABLE';
+          throw error;
+        }
+        built = Matrix.buildCells(collectConfig());
+      } catch (error) {
+        validationError = error;
+      }
+
+      const rows = built ? built.config.rows : Math.max(0, Number(rowsInput.value) || 0);
+      const columns = built ? built.config.columns : Math.max(0, Number(columnsInput.value) || 0);
+      const count = built ? built.config.count : rows * columns;
+      countOutput.value = String(count);
+      countOutput.textContent = count + ' / 100';
+      previewSummary.textContent = rows + ' × ' + columns + ' · ' + formatCount(count, false);
+      footerCount.textContent = formatCount(count, true);
+      submitButton.disabled = busy || !!validationError;
+      form.dataset.valid = validationError ? 'false' : 'true';
+      previewGrid.style.gridTemplateColumns = 'repeat(' + Math.max(1, columns) + ', minmax(6px, 1fr))';
+
+      if (built) {
+        previewGrid.style.setProperty(
+          '--node-matrix-preview-gap-x',
+          Math.max(2, Math.min(8, built.config.gapX / 10)) + 'px',
+        );
+        previewGrid.style.setProperty(
+          '--node-matrix-preview-gap-y',
+          Math.max(2, Math.min(8, built.config.gapY / 8)) + 'px',
+        );
+        built.cells.forEach((cell) => {
+          const item = document.createElement('span');
+          item.className = 'node-matrix-preview-cell';
+          item.dataset.kind = built.config.kind;
+          item.textContent = cell.text;
+          item.setAttribute('aria-hidden', 'true');
+          previewGrid.appendChild(item);
+        });
+      }
+      return { built: built, error: validationError };
+    }
+
+    function refresh() {
+      syncPasteDimensions();
+      renderPreview();
+    }
+
+    function setBusy(next) {
+      busy = !!next;
+      dialog.dataset.busy = busy ? 'true' : 'false';
+      renderPreview();
+    }
+
+    function close(restoreFocus) {
+      if (busy || dialog.hidden) return false;
+      dialog.hidden = true;
+      dialog.removeAttribute('data-busy');
+      setError('');
+      if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+        window.CanvasModule.setExternalOverlayOpen(false);
+      }
+      if (restoreFocus !== false && returnFocus && returnFocus.isConnected) returnFocus.focus();
+      returnFocus = null;
+      return true;
+    }
+
+    function open() {
+      if (EMBED || !dialog.hidden) return;
+      returnFocus = document.querySelector('[data-action="node-matrix"]')
+        || document.querySelector('[data-action="tools"]');
+      loadSettings();
+      setError('');
+      dialog.hidden = false;
+      dialog.lang = toolbarLanguage;
+      if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+        window.CanvasModule.setExternalOverlayOpen(true);
+      }
+      refresh();
+      requestAnimationFrame(() => rowsInput.focus());
+    }
+
+    function submit() {
+      if (busy) return;
+      setError('');
+      const result = renderPreview();
+      if (!result.built) {
+        setError(matrixErrorMessage(result.error));
+        return;
+      }
+      setBusy(true);
+      try {
+        if (!window.CanvasModule || typeof window.CanvasModule.createNodeMatrix !== 'function') {
+          const error = new Error('');
+          error.code = 'MATRIX_UNAVAILABLE';
+          throw error;
+        }
+        window.CanvasModule.createNodeMatrix(collectConfig());
+        if (window.EditorShell && typeof window.EditorShell.setMode === 'function') {
+          window.EditorShell.setMode('normal');
+        }
+        saveSettings(result.built.config);
+        setBusy(false);
+        close(false);
+      } catch (error) {
+        setBusy(false);
+        setError(matrixErrorMessage(error));
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submit();
+    });
+    function handleConfigChange() {
+      if (!busy) setError('');
+      refresh();
+    }
+    form.addEventListener('input', handleConfigChange);
+    form.addEventListener('change', handleConfigChange);
+    pasteInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        submit();
+      }
+    });
+    if (closeButton) closeButton.addEventListener('click', () => close(true));
+    if (cancelButton) cancelButton.addEventListener('click', () => close(true));
+    dialog.addEventListener('mousedown', (event) => {
+      if (event.target === dialog) close(true);
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (!busy) {
+          event.preventDefault();
+          close(true);
+        }
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...dialog.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), '
+        + '[tabindex]:not([tabindex="-1"])',
+      )].filter((element) => !element.hidden && element.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    document.addEventListener('editor:open-node-matrix', open);
+    document.addEventListener('editor:languagechange', () => {
+      dialog.lang = toolbarLanguage;
+      if (!dialog.hidden) refresh();
+    });
+  })();
+
+  // ── 倒计时 / 正计时：面板只收集配置，计时与画布事务由 CanvasModule 管理 ──
+  (function setupCanvasTimerDialog() {
+    const dialog = document.querySelector('[data-role="canvas-timer-dialog"]');
+    const form = dialog && dialog.querySelector('[data-role="canvas-timer-form"]');
+    const title = dialog && dialog.querySelector('[data-role="canvas-timer-dialog-title"]');
+    const labelInput = dialog && dialog.querySelector('[data-role="canvas-timer-label"]');
+    const durationSection = dialog && dialog.querySelector('[data-role="canvas-timer-duration-section"]');
+    const hoursInput = dialog && dialog.querySelector('[data-role="canvas-timer-hours"]');
+    const minutesInput = dialog && dialog.querySelector('[data-role="canvas-timer-minutes"]');
+    const secondsInput = dialog && dialog.querySelector('[data-role="canvas-timer-seconds"]');
+    const errorEl = dialog && dialog.querySelector('[data-role="canvas-timer-error"]');
+    const submitButton = dialog && dialog.querySelector('[data-role="canvas-timer-submit"]');
+    const closeButton = dialog && dialog.querySelector('[data-action="close-canvas-timer"]');
+    const cancelButton = dialog && dialog.querySelector('[data-action="cancel-canvas-timer"]');
+    if (!dialog || !form || !labelInput || !hoursInput || !minutesInput
+        || !secondsInput || !submitButton) return;
+
+    let editingTimer = null;
+    let returnFocus = null;
+    let busy = false;
+
+    function selectedMode() {
+      const checked = form.querySelector('input[name="canvas-timer-mode"]:checked');
+      return checked ? checked.value : 'countdown';
+    }
+
+    function setMode(mode) {
+      const input = form.querySelector('input[name="canvas-timer-mode"][value="' + mode + '"]')
+        || form.querySelector('input[name="canvas-timer-mode"][value="countdown"]');
+      if (input) input.checked = true;
+    }
+
+    function setError(message) {
+      errorEl.textContent = message || '';
+      errorEl.hidden = !message;
+    }
+
+    function readDuration() {
+      const api = window.RelatumCanvasTimer;
+      if (!api || typeof api.durationFromParts !== 'function') return null;
+      return api.durationFromParts(
+        Number(hoursInput.value),
+        Number(minutesInput.value),
+        Number(secondsInput.value),
+      );
+    }
+
+    function writeDuration(durationMs) {
+      const api = window.RelatumCanvasTimer;
+      const parts = api && typeof api.durationParts === 'function'
+        ? api.durationParts(durationMs)
+        : { hours: 0, minutes: 25, seconds: 0 };
+      hoursInput.value = parts.hours;
+      minutesInput.value = parts.minutes;
+      secondsInput.value = parts.seconds;
+    }
+
+    function syncPreset() {
+      const duration = readDuration();
+      dialog.querySelectorAll('[data-timer-minutes]').forEach((button) => {
+        button.classList.toggle(
+          'active',
+          duration === Number(button.dataset.timerMinutes) * 60 * 1000,
+        );
+      });
+    }
+
+    function structuralEdit() {
+      if (!editingTimer) return false;
+      const mode = selectedMode();
+      if (mode !== editingTimer.mode) return true;
+      return mode === 'countdown' && readDuration() !== editingTimer.durationMs;
+    }
+
+    function syncCopy() {
+      const editing = !!editingTimer;
+      title.textContent = toolbarCopy(editing ? 'canvasTimerEditTitle' : 'canvasTimerCreateTitle');
+      submitButton.textContent = toolbarCopy(
+        editing ? (structuralEdit() ? 'canvasTimerResetSave' : 'canvasTimerSave') : 'canvasTimerCreate',
+      );
+      dialog.querySelectorAll('[data-timer-minutes]').forEach((button) => {
+        const minutes = button.dataset.timerMinutes;
+        button.textContent = toolbarLanguage === 'en' ? (minutes + ' min') : (minutes + ' 分');
+      });
+      durationSection.hidden = selectedMode() !== 'countdown';
+      syncPreset();
+    }
+
+    function close(restoreFocus) {
+      if (busy || dialog.hidden) return false;
+      dialog.hidden = true;
+      editingTimer = null;
+      setError('');
+      if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+        window.CanvasModule.setExternalOverlayOpen(false);
+      }
+      if (restoreFocus !== false && returnFocus && returnFocus.isConnected) returnFocus.focus();
+      returnFocus = null;
+      return true;
+    }
+
+    function open(timer) {
+      if (EMBED || !dialog.hidden) return;
+      editingTimer = timer && typeof timer === 'object' ? timer : null;
+      returnFocus = document.activeElement && document.activeElement !== document.body
+        ? document.activeElement
+        : (document.querySelector('[data-action="canvas-timer"]')
+          || document.querySelector('[data-action="tools"]'));
+      setMode(editingTimer ? editingTimer.mode : 'countdown');
+      labelInput.value = editingTimer ? editingTimer.label || '' : '';
+      writeDuration(editingTimer && editingTimer.mode === 'countdown'
+        ? editingTimer.durationMs
+        : 25 * 60 * 1000);
+      setError('');
+      dialog.hidden = false;
+      dialog.lang = toolbarLanguage;
+      if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+        window.CanvasModule.setExternalOverlayOpen(true);
+      }
+      syncCopy();
+      requestAnimationFrame(() => labelInput.focus());
+    }
+
+    function submit() {
+      if (busy) return;
+      const mode = selectedMode();
+      const durationMs = mode === 'countdown' ? readDuration() : undefined;
+      if (mode === 'countdown' && durationMs === null) {
+        setError(toolbarCopy('canvasTimerInvalidDuration'));
+        return;
+      }
+      if (!window.CanvasModule) return;
+      const config = {
+        mode: mode,
+        label: labelInput.value,
+        durationMs: durationMs,
+      };
+      busy = true;
+      submitButton.disabled = true;
+      try {
+        const result = editingTimer
+          ? window.CanvasModule.updateCanvasTimer(editingTimer.id, config)
+          : window.CanvasModule.createCanvasTimer(config);
+        if (!result || !result.ok) throw new Error('Timer unavailable');
+        if (!editingTimer && window.EditorShell && typeof window.EditorShell.setMode === 'function') {
+          window.EditorShell.setMode('normal');
+        }
+        busy = false;
+        submitButton.disabled = false;
+        close(false);
+      } catch (error) {
+        busy = false;
+        submitButton.disabled = false;
+        setError(toolbarLanguage === 'en'
+          ? 'The timer could not be saved.'
+          : '计时器保存失败，请重试。');
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submit();
+    });
+    form.addEventListener('input', () => {
+      if (!busy) setError('');
+      syncCopy();
+    });
+    form.addEventListener('change', syncCopy);
+    dialog.querySelectorAll('[data-timer-minutes]').forEach((button) => {
+      button.addEventListener('click', () => {
+        writeDuration(Number(button.dataset.timerMinutes) * 60 * 1000);
+        setError('');
+        syncCopy();
+      });
+    });
+    if (closeButton) closeButton.addEventListener('click', () => close(true));
+    if (cancelButton) cancelButton.addEventListener('click', () => close(true));
+    dialog.addEventListener('mousedown', (event) => {
+      if (event.target === dialog) close(true);
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (!busy) {
+          event.preventDefault();
+          close(true);
+        }
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...dialog.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter((element) => !element.hidden && element.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    document.addEventListener('editor:open-canvas-timer', () => open(null));
+    document.addEventListener('editor:edit-canvas-timer', (event) => {
+      open(event.detail && event.detail.timer);
+    });
+    document.addEventListener('editor:modechange', () => {
+      if (!dialog.hidden) close(false);
+    });
+    document.addEventListener('editor:languagechange', () => {
+      dialog.lang = toolbarLanguage;
+      if (!dialog.hidden) syncCopy();
     });
   })();
 
@@ -4491,6 +5652,7 @@
           // 完整的新手引导由 editor-onboarding.js 接管；旧的定时文字胶囊仅保留兼容数据，不再由新建画布触发。
           onboardingReset: null,
           fresh: false,
+          rulerMenu: document.querySelector('[data-role="ruler-angle-menu"]'),
           nodeMenu: document.querySelector('[data-role="node-menu"]'),
           edgeMenu: document.querySelector('[data-role="edge-menu"]'),
           editPanel: document.querySelector('[data-role="edit-panel"]'),
@@ -4513,6 +5675,7 @@
           minimapNodes: document.querySelector('[data-role="minimap-nodes"]'),
           minimapViewbox: document.querySelector('[data-role="minimap-viewbox"]'),
           filePath: filePath,
+          embed: EMBED,
           data: canvasData,
           initialViewport: json.viewport,
           onViewportChange: queueViewportSave,
