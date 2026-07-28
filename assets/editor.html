@@ -81,9 +81,6 @@
         document.documentElement.dataset.uiLanguage = language;
         document.documentElement.lang = language;
         document.body.dataset.uiLanguage = language;
-        if (localStorage.getItem('canvas:showNodeChecklists') === '1') {
-          document.body.classList.add('show-node-checklists');
-        }
         if (localStorage.getItem('canvas:showMindmapFolds') === '1') {
           document.body.classList.add('show-mindmap-folds');
         }
@@ -139,42 +136,104 @@
         <button type="button" class="editor-mode-btn editor-tools-btn" data-action="tools"
                 data-toolbar-i18n="tools" aria-haspopup="true" aria-expanded="false"
                 aria-controls="editor-tools-pop">工具</button>
+        <button type="button" class="editor-mode-btn editor-notebook-shortcut"
+                data-action="markdown-notebook-shortcut"
+                data-toolbar-i18n="notebookShortcut"
+                aria-haspopup="dialog" aria-expanded="false"
+                aria-controls="markdown-notebook-dialog" hidden>笔记</button>
+        <button type="button" class="editor-mode-btn editor-taskbook-shortcut"
+                data-action="taskbook-shortcut"
+                data-toolbar-i18n="taskbookShortcut"
+                aria-haspopup="dialog" aria-expanded="false"
+                aria-controls="canvas-taskbook-dialog" hidden>任务</button>
       </div>
       <div class="editor-tools-pop" id="editor-tools-pop" data-role="tools-pop"
            role="dialog" aria-label="画布工具" hidden>
         <div class="editor-tool-group">
           <button type="button" class="editor-tool-card" data-action="use-ruler">
-            <span class="editor-tool-ruler-icon" aria-hidden="true"></span>
+            <span class="editor-tool-icon editor-tool-ruler-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M4 8.5h16v7H4zM8 8.5v3M12 8.5v2M16 8.5v3"/>
+              </svg>
+            </span>
             <span>
               <strong data-toolbar-i18n="ruler">尺子</strong>
-              <small data-toolbar-i18n="rulerHint">阻挡简单节点；画笔靠近长边即吸附直线</small>
+              <small data-toolbar-i18n="rulerHint">对齐笔迹与节点</small>
             </span>
           </button>
           <button type="button" class="editor-tool-remove" data-action="remove-ruler" hidden
                   data-toolbar-i18n="removeRuler">移除尺子</button>
         </div>
+        <button type="button" class="editor-tool-card editor-tool-notebook-card"
+                data-action="markdown-notebook" data-editor-i18n-title="markdownNotebookHint"
+                data-editor-i18n-aria="markdownNotebook">
+          <span class="editor-tool-icon editor-tool-notebook-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M6 4.5h10.5A1.5 1.5 0 0 1 18 6v12.5H7.5A1.5 1.5 0 0 1 6 17z"/>
+              <path d="M6 17a1.5 1.5 0 0 0 1.5 1.5M9 8h6M9 11h5M9 14h3.5"/>
+            </svg>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="markdownNotebook">笔记坞</strong>
+            <small data-toolbar-i18n="markdownNotebookHint">长期笔记与导图快照</small>
+          </span>
+        </button>
+        <button type="button" class="editor-tool-card editor-tool-scenes-card"
+                data-action="canvas-scenes" data-editor-i18n-title="canvasScenesHint"
+                data-editor-i18n-aria="canvasScenes">
+          <span class="editor-tool-icon editor-tool-scenes-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <rect x="4" y="5" width="16" height="14" rx="2"/>
+              <path d="M8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4"/>
+            </svg>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="canvasScenes">镜头册</strong>
+            <small data-toolbar-i18n="canvasScenesHint">保存视角并组织演示</small>
+          </span>
+        </button>
+        <button type="button" class="editor-tool-card editor-tool-taskbook-card"
+                data-action="canvas-taskbook" data-editor-i18n-title="canvasTaskbookHint"
+                data-editor-i18n-aria="canvasTaskbook">
+          <span class="editor-tool-icon editor-tool-taskbook-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M5 4.5h11.5A2.5 2.5 0 0 1 19 7v12.5H7.5A2.5 2.5 0 0 1 5 17z"/>
+              <path d="M5 17a2.5 2.5 0 0 0 2.5 2.5M8.5 8.5l1.2 1.2 2.1-2.3M13.5 9h3M8.5 13l1.2 1.2 2.1-2.3M13.5 13.5h3"/>
+            </svg>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="canvasTaskbook">任务簿</strong>
+            <small data-toolbar-i18n="canvasTaskbookHint">管理顶级任务与任务树</small>
+          </span>
+        </button>
         <button type="button" class="editor-tool-card editor-tool-import-card"
                 data-action="import-canvas" data-editor-i18n-title="importCanvasHint"
                 data-editor-i18n-aria="importCanvas">
-          <span class="editor-tool-import-icon" aria-hidden="true">
-            <svg viewBox="0 0 52 30" focusable="false">
-              <path class="editor-tool-import-page" d="M7.5 3.5h20l7 7v16H7.5z"/>
-              <path class="editor-tool-import-fold" d="M27.5 3.5v7h7"/>
-              <path class="editor-tool-import-arrow" d="M45 15H23m0 0 5-5m-5 5 5 5"/>
+          <span class="editor-tool-icon editor-tool-import-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5M10 8l-4 4 4 4M6 12h10"/>
             </svg>
           </span>
           <span>
             <strong data-toolbar-i18n="importCanvas">导入画布</strong>
-            <small data-toolbar-i18n="importCanvasHint">从画布库复制内容到这里</small>
+            <small data-toolbar-i18n="importCanvasHint">合并另一张画布的内容</small>
           </span>
         </button>
         <button type="button" class="editor-tool-card editor-tool-matrix-card"
                 data-action="node-matrix" data-editor-i18n-title="nodeMatrixHint"
                 data-editor-i18n-aria="nodeMatrix">
-          <span class="editor-tool-matrix-icon" aria-hidden="true">
-            <i></i><i></i><i></i>
-            <i></i><i></i><i></i>
-            <i></i><i></i><i></i>
+          <span class="editor-tool-icon editor-tool-matrix-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <rect x="4" y="4" width="5" height="5" rx="1"/>
+              <rect x="10.5" y="4" width="5" height="5" rx="1"/>
+              <rect x="17" y="4" width="3" height="5" rx="1"/>
+              <rect x="4" y="10.5" width="5" height="5" rx="1"/>
+              <rect x="10.5" y="10.5" width="5" height="5" rx="1"/>
+              <rect x="17" y="10.5" width="3" height="5" rx="1"/>
+              <rect x="4" y="17" width="5" height="3" rx="1"/>
+              <rect x="10.5" y="17" width="5" height="3" rx="1"/>
+              <rect x="17" y="17" width="3" height="3" rx="1"/>
+            </svg>
           </span>
           <span>
             <strong data-toolbar-i18n="nodeMatrix">节点矩阵</strong>
@@ -184,15 +243,15 @@
         <button type="button" class="editor-tool-card editor-tool-timer-card"
                 data-action="canvas-timer" data-editor-i18n-title="canvasTimerHint"
                 data-editor-i18n-aria="canvasTimer">
-          <span class="editor-tool-timer-icon" aria-hidden="true">
-            <svg viewBox="0 0 36 36" focusable="false">
-              <circle cx="18" cy="19" r="12"></circle>
-              <path d="M14 4h8M18 7v3M18 19l5-4"></path>
+          <span class="editor-tool-icon editor-tool-timer-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="13" r="7.5"/>
+              <path d="M9 3h6M12 5.5v2M12 13l3-2.5"/>
             </svg>
           </span>
           <span>
             <strong data-toolbar-i18n="canvasTimer">倒计时 / 正计时</strong>
-            <small data-toolbar-i18n="canvasTimerHint">在画布上放置独立计时器</small>
+            <small data-toolbar-i18n="canvasTimerHint">添加独立计时器</small>
           </span>
         </button>
       </div>
@@ -472,7 +531,40 @@
       </button>
       <div class="settings-pop" id="settings-pop" data-role="settings-pop" role="dialog"
            data-editor-i18n-aria="canvasSettings" aria-label="画布设置" hidden>
-        <div class="settings-pop-title" data-editor-i18n="canvasSettings">画布设置</div>
+        <div class="settings-pop-head">
+          <div class="settings-pop-title" data-editor-i18n="canvasSettings">画布设置</div>
+          <div class="settings-reset-area" data-role="settings-reset-area">
+            <button type="button" class="settings-reset-btn" data-role="settings-reset-open"
+                    data-editor-i18n-aria="settingsReset" aria-label="恢复默认设置"
+                    aria-expanded="false" aria-controls="settings-reset-confirm">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none"
+                   stroke="currentColor" stroke-width="1.45" stroke-linecap="round"
+                   stroke-linejoin="round" aria-hidden="true">
+                <path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1"/>
+                <path d="M2.8 3.4v3h3"/>
+              </svg>
+              <span data-editor-i18n="settingsResetAccept">恢复默认</span>
+            </button>
+            <div class="settings-reset-confirm" id="settings-reset-confirm"
+                 data-role="settings-reset-confirm" role="alertdialog"
+                 data-editor-i18n-aria="settingsResetConfirmTitle"
+                 aria-label="恢复默认设置？" hidden>
+              <div class="settings-reset-confirm-copy">
+                <strong data-editor-i18n="settingsResetConfirmTitle">恢复默认设置？</strong>
+                <span data-editor-i18n="settingsResetConfirmCopy">只重置本面板；保留语言、画布内容和引导记录。</span>
+              </div>
+              <div class="settings-reset-confirm-actions">
+                <button type="button" data-role="settings-reset-cancel"
+                        data-editor-i18n="cancel">取消</button>
+                <button type="button" class="settings-reset-confirm-btn"
+                        data-role="settings-reset-accept"
+                        data-editor-i18n="settingsResetAccept">恢复默认</button>
+              </div>
+            </div>
+            <span class="settings-reset-status" data-role="settings-reset-status"
+                  role="status" aria-live="polite"></span>
+          </div>
+        </div>
         <label class="settings-select toolbar-language-select">
           <span data-role="toolbar-language-label">界面语言</span>
           <select data-role="toolbar-language" aria-label="界面语言">
@@ -503,15 +595,6 @@
             <input type="range" class="editor-slider-input"
                    data-role="zoom-speed" min="0.5" max="3" step="0.1" value="1">
             <span class="settings-slider-tick" style="--default-pos:20%" title="默认 1×"></span>
-          </div>
-        </div>
-        <div class="editor-slider settings-slider" title="悬停节点多久后浮出任务清单（最左=瞬发）">
-          <span class="editor-slider-label"><span data-editor-i18n="checklistDelay">任务清单出现延迟</span>
-            <span class="editor-slider-val" data-role="checklist-delay-val">0.8s</span></span>
-          <div class="settings-slider-track-wrap">
-            <input type="range" class="editor-slider-input"
-                   data-role="checklist-delay" min="0" max="2000" step="50" value="800">
-            <span class="settings-slider-tick" style="--default-pos:40%" title="默认 0.8s"></span>
           </div>
         </div>
         <div class="editor-slider settings-slider" title="悬停已收起的脑图节点多久后临时展开分支（最左=瞬发）">
@@ -568,10 +651,6 @@
           <input type="checkbox" data-role="enable-text-snap">
           <span data-editor-i18n="textSnap">文本框拖动自动对齐</span>
         </label>
-        <label class="settings-check" title="在节点左侧显示悬停任务清单入口">
-          <input type="checkbox" data-role="show-node-checklists">
-          <span data-editor-i18n="nodeChecklists">显示节点任务清单</span>
-        </label>
         <label class="settings-check" title="在有子节点的节点右侧显示收起 / 展开按钮">
           <input type="checkbox" data-role="show-mindmap-folds">
           <span data-editor-i18n="foldControls">显示收起子节点按钮</span>
@@ -599,6 +678,16 @@
         <label class="settings-check" title="左键框选节点后浮出「+ 分组」按钮（默认开启）">
           <input type="checkbox" data-role="enable-group-create" checked>
           <span data-editor-i18n="groupCreate">框选节点创建分组</span>
+        </label>
+        <label class="settings-check" title="完成的顶级任务归档后，在画布保留一份已划线的普通枝桠树副本。">
+          <input type="checkbox" data-role="taskbook-archive-snapshot" checked>
+          <span data-editor-i18n="taskbookArchiveSnapshot">归档时在画布保留完成副本</span>
+        </label>
+        <label class="settings-check"
+               data-editor-i18n-title="taskbookLeafTimerButtonsHint"
+               title="鼠标悬停任务簿叶子任务时，在节点左侧显示开始或暂停计时按钮（默认开启）。">
+          <input type="checkbox" data-role="taskbook-leaf-timer-buttons" checked>
+          <span data-editor-i18n="taskbookLeafTimerButtons">显示子任务悬停计时按钮</span>
         </label>
         <label class="settings-check" title="框选多个节点后浮出「生成索引」小按钮，一键收成目录卡（默认关闭）">
           <input type="checkbox" data-role="enable-gen-index">
@@ -1984,6 +2073,474 @@
     <div class="side-panel-note">设置对所有画布生效；图片只记录本地绝对路径，移动文件后会回退为默认背景。</div>
   </aside>
 
+  <aside class="canvas-scenes-panel" data-role="canvas-scenes-panel"
+         aria-labelledby="canvas-scenes-title" hidden>
+    <header class="canvas-scenes-head" data-editor-i18n-title="canvasScenesMoveHint"
+            title="拖动移动镜头册；双击恢复默认位置">
+      <div>
+        <span data-toolbar-i18n="canvasScenesKicker">画布工具</span>
+        <h2 id="canvas-scenes-title" data-toolbar-i18n="canvasScenes">镜头册</h2>
+      </div>
+      <div class="canvas-scenes-head-actions">
+        <span data-role="canvas-scenes-count">0</span>
+        <button type="button" data-action="close-canvas-scenes"
+                data-editor-i18n-aria="canvasScenesClose" aria-label="关闭镜头册">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="m4 4 8 8M12 4l-8 8"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div class="canvas-scenes-capture">
+      <button type="button" class="canvas-scenes-capture-primary"
+              data-action="capture-camera-scene">
+        <svg viewBox="0 0 18 18" aria-hidden="true">
+          <path d="M3 5.5h12v8H3zM6 3.5h6M9 7.2v4.6M6.7 9.5h4.6"/>
+        </svg>
+        <span data-toolbar-i18n="canvasScenesSaveView">保存当前视角</span>
+      </button>
+      <button type="button" data-action="capture-selection-scene">
+        <svg viewBox="0 0 18 18" aria-hidden="true">
+          <path d="M3.5 6V3.5H6M12 3.5h2.5V6M14.5 12v2.5H12M6 14.5H3.5V12"/>
+          <rect x="6.2" y="6.2" width="5.6" height="5.6" rx="1"/>
+        </svg>
+        <span data-toolbar-i18n="canvasScenesSaveSelection">收录所选内容</span>
+      </button>
+      <p data-role="canvas-scenes-selection-status"
+         data-toolbar-i18n="canvasScenesSelectionHint">选择节点或分组后可创建跟随镜头</p>
+    </div>
+    <div class="canvas-scenes-list" data-role="canvas-scenes-list"
+         role="list" aria-label="镜头列表" data-editor-i18n-aria="canvasScenesList"></div>
+    <div class="canvas-scenes-empty" data-role="canvas-scenes-empty">
+      <span aria-hidden="true">
+        <svg viewBox="0 0 36 36">
+          <rect x="6" y="8" width="24" height="20" rx="4"/>
+          <path d="M11 8v20M25 8v20M6 14h5M6 22h5M25 14h5M25 22h5"/>
+        </svg>
+      </span>
+      <strong data-toolbar-i18n="canvasScenesEmpty">还没有镜头</strong>
+      <p data-toolbar-i18n="canvasScenesEmptyHint">保存当前视角，或选择内容创建会跟随移动的章节。</p>
+    </div>
+    <p class="canvas-scenes-message" data-role="canvas-scenes-message"
+       aria-live="polite"></p>
+    <footer class="canvas-scenes-foot">
+      <button type="button" data-action="capture-group-scenes">
+        <span data-toolbar-i18n="canvasScenesGroups">按所选分组创建</span>
+      </button>
+      <button type="button" class="canvas-scenes-present"
+              data-action="present-canvas-scenes">
+        <svg viewBox="0 0 18 18" aria-hidden="true">
+          <path d="M4 3.5h10v8H4zM9 11.5v3M6.5 14.5h5"/>
+          <path d="m7.6 6 3.2 1.5-3.2 1.7z"/>
+        </svg>
+        <span data-toolbar-i18n="canvasScenesPresent">演示</span>
+      </button>
+    </footer>
+  </aside>
+
+  <div class="canvas-scenes-presentation" data-role="canvas-scenes-presentation"
+       aria-live="polite" hidden>
+    <div class="canvas-scenes-presentation-title">
+      <strong data-role="canvas-scenes-presentation-name"></strong>
+      <span data-role="canvas-scenes-presentation-index"></span>
+    </div>
+    <nav aria-label="镜头演示" data-editor-i18n-aria="canvasScenesPresentation">
+      <button type="button" data-action="restart-canvas-scenes-presentation"
+              data-editor-i18n-aria="canvasScenesRestart" aria-label="回到第一个镜头">
+        <svg viewBox="0 0 18 18" aria-hidden="true">
+          <path d="M5.1 5.2A5.8 5.8 0 1 1 3.4 9M3.4 4.3v4.8h4.8"/>
+        </svg>
+      </button>
+      <button type="button" data-action="previous-canvas-scene"
+              data-editor-i18n-aria="canvasScenesPrevious" aria-label="上一镜头">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="m11 4-5 5 5 5"/></svg>
+      </button>
+      <button type="button" data-action="exit-canvas-scenes-presentation"
+              data-toolbar-i18n="canvasScenesExit">退出演示</button>
+      <button type="button" data-action="next-canvas-scene"
+              data-editor-i18n-aria="canvasScenesNext" aria-label="下一镜头">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="m7 4 5 5-5 5"/></svg>
+      </button>
+    </nav>
+  </div>
+
+  <div class="canvas-scenes-undo" data-role="canvas-scenes-undo"
+       role="status" aria-live="polite" hidden>
+    <span data-toolbar-i18n="canvasScenesDeleted">镜头已删除</span>
+    <button type="button" data-action="undo-delete-canvas-scene"
+            data-toolbar-i18n="canvasScenesUndo">撤销</button>
+  </div>
+
+  <div class="canvas-taskbook-overlay taskbook-library-overlay" id="canvas-taskbook-dialog"
+       data-role="canvas-taskbook-dialog" hidden>
+    <section class="taskbook-library" role="dialog" aria-modal="true"
+             aria-labelledby="canvas-taskbook-title">
+      <header class="taskbook-library-head">
+        <div class="taskbook-library-title">
+          <span class="canvas-taskbook-kicker">画布工具</span>
+          <div class="taskbook-library-title-line">
+            <h2 id="canvas-taskbook-title">任务簿</h2>
+            <button type="button" class="taskbook-help-toggle"
+                    data-action="toggle-taskbook-help"
+                    aria-controls="canvas-taskbook-help"
+                    aria-expanded="false"
+                    aria-label="任务簿使用说明">?</button>
+          </div>
+          <aside class="taskbook-help-card" id="canvas-taskbook-help"
+                 data-role="taskbook-help"
+                 aria-labelledby="canvas-taskbook-help-title"
+                 hidden>
+            <strong id="canvas-taskbook-help-title"
+                    data-role="taskbook-help-title">快速上手</strong>
+            <ol>
+              <li data-role="taskbook-help-create">点击右上角“+”新建顶级任务，再把它放到画布。</li>
+              <li data-role="taskbook-help-connect">从顶级任务或已有任务连向普通卡片，把卡片收为子任务。</li>
+              <li data-role="taskbook-help-time">悬停叶子任务，点击左侧“▶”开始计时；点击“Ⅱ”暂停。</li>
+              <li data-role="taskbook-help-manage">双击顶级任务，或选中后按 F，进入任务管理页；按 F 或 Esc 返回。</li>
+              <li data-role="taskbook-help-finish">勾选叶子任务完成；全部完成后可以归档。画布上的“×”仅隐藏任务树，任务簿行内“×”才会删除顶级任务。</li>
+            </ol>
+          </aside>
+        </div>
+        <div class="taskbook-library-head-actions">
+          <label class="markdown-notebook-topbar-option taskbook-topbar-option">
+            <input type="checkbox" data-role="taskbook-topbar-toggle">
+            <span data-toolbar-i18n="taskbookTopbarToggle">将任务簿添加到编辑器顶栏</span>
+          </label>
+          <button type="button" class="taskbook-icon-button taskbook-add-root"
+                  data-action="new-top-level-task" aria-label="新建顶级任务">+</button>
+          <button type="button" class="taskbook-icon-button" data-action="close-canvas-taskbook"
+                  aria-label="关闭任务簿">×</button>
+        </div>
+      </header>
+      <div class="taskbook-library-body">
+        <section class="taskbook-library-section">
+          <div class="taskbook-library-section-title">
+            <strong data-role="taskbook-active-label">进行中</strong>
+            <span data-role="taskbook-active-count">0</span>
+          </div>
+          <div class="taskbook-root-list" data-role="taskbook-active-list" role="list"></div>
+        </section>
+        <section class="taskbook-library-section taskbook-library-completed">
+          <div class="taskbook-library-section-title">
+            <strong data-role="taskbook-completed-label">已完成</strong>
+            <span data-role="taskbook-completed-count">0</span>
+          </div>
+          <div class="taskbook-root-list" data-role="taskbook-completed-list" role="list"></div>
+        </section>
+        <div class="taskbook-library-empty" data-role="taskbook-library-empty">
+          <span aria-hidden="true">✓</span>
+          <strong>还没有顶级任务</strong>
+          <p>按右上角“+”开始。任务不会自动放到画布。</p>
+        </div>
+      </div>
+      <p class="canvas-taskbook-message" data-role="canvas-taskbook-message"
+         aria-live="polite"></p>
+      <div class="canvas-taskbook-confirm-layer" data-role="canvas-taskbook-confirm" hidden>
+        <section role="alertdialog" aria-modal="true"
+                 aria-labelledby="canvas-taskbook-confirm-title"
+                 aria-describedby="canvas-taskbook-confirm-copy">
+          <span class="canvas-taskbook-confirm-icon" aria-hidden="true">!</span>
+          <h3 id="canvas-taskbook-confirm-title" data-role="canvas-taskbook-confirm-title"></h3>
+          <p id="canvas-taskbook-confirm-copy" data-role="canvas-taskbook-confirm-copy"></p>
+          <div>
+            <button type="button" data-action="cancel-taskbook-confirm">取消</button>
+            <button type="button" class="danger" data-action="accept-taskbook-confirm">删除</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <div class="task-root-overlay" id="task-root-dialog" data-role="task-root-dialog" hidden>
+    <section class="task-root-manager" role="dialog" aria-modal="true"
+             aria-labelledby="task-root-manager-title">
+      <header class="task-root-manager-head">
+        <button type="button" class="taskbook-icon-button" data-action="back-task-root"
+                aria-label="返回任务簿">‹</button>
+        <div class="task-root-manager-title">
+          <span>顶级任务</span>
+          <input id="task-root-manager-title" type="text" maxlength="240"
+                 data-role="task-root-title" aria-label="顶级任务名称">
+        </div>
+        <div class="task-root-manager-summary">
+          <span data-role="task-root-progress">0 / 0</span>
+          <span data-role="task-root-time">00:00</span>
+        </div>
+        <button type="button" class="task-root-run" data-action="toggle-task-root-root"
+                aria-label="开始顶级任务">▶</button>
+      </header>
+      <div class="task-root-manager-body" data-role="task-root-manager-body">
+        <main class="task-root-tree-panel">
+          <div class="task-root-tree" data-role="task-root-tree" role="tree"
+               aria-label="任务结构"></div>
+        </main>
+        <aside class="task-root-detail-panel">
+          <div class="task-root-detail-form" data-role="task-root-detail-form">
+            <div class="task-root-detail-top">
+              <span data-role="task-root-task-path"></span>
+              <button type="button" data-action="locate-task-root-task">定位到画布</button>
+            </div>
+            <label>
+              <span>任务名称</span>
+              <input type="text" data-role="task-root-task-title" maxlength="240">
+            </label>
+            <label class="task-root-detail-body">
+              <span>附加说明 · Markdown</span>
+              <textarea data-role="task-root-task-body" spellcheck="false"></textarea>
+            </label>
+            <div class="task-root-time-card">
+              <div>
+                <span>实际用时</span>
+                <strong data-role="task-root-task-time">00:00</strong>
+              </div>
+              <button type="button" class="primary" data-action="toggle-task-root-task">开始</button>
+            </div>
+            <div class="task-root-detail-actions">
+              <button type="button" class="task-root-archive-root"
+                      data-action="archive-current-task-root" hidden>归档这个顶级任务</button>
+              <button type="button" class="task-root-delete-root"
+                      data-action="delete-current-task-root">删除这个顶级任务</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <p class="task-root-message" data-role="task-root-message" aria-live="polite"></p>
+      <div class="canvas-taskbook-confirm-layer" data-role="task-root-confirm" hidden>
+        <section role="alertdialog" aria-modal="true"
+                 aria-labelledby="task-root-confirm-title"
+                 aria-describedby="task-root-confirm-copy">
+          <span class="canvas-taskbook-confirm-icon" aria-hidden="true">!</span>
+          <h3 id="task-root-confirm-title" data-role="task-root-confirm-title"></h3>
+          <p id="task-root-confirm-copy" data-role="task-root-confirm-copy"></p>
+          <div>
+            <button type="button" data-action="cancel-task-root-confirm">取消</button>
+            <button type="button" class="danger" data-action="accept-task-root-confirm">删除</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <div class="markdown-notebook-overlay" id="markdown-notebook-dialog"
+       data-role="markdown-notebook-dialog" hidden>
+    <section class="markdown-notebook-card" role="dialog" aria-modal="true"
+             aria-labelledby="markdown-notebook-title">
+      <div class="markdown-notebook-shell" data-role="markdown-notebook-shell">
+        <header class="markdown-notebook-head">
+          <div>
+            <span class="markdown-notebook-kicker" data-toolbar-i18n="markdownNotebookKicker">画布工具</span>
+            <h2 id="markdown-notebook-title" data-toolbar-i18n="markdownNotebookTitle">笔记坞</h2>
+          </div>
+          <div class="markdown-notebook-head-meta">
+            <label class="markdown-notebook-topbar-option">
+              <input type="checkbox" data-role="markdown-notebook-topbar-toggle">
+              <span data-toolbar-i18n="markdownNotebookTopbarToggle">将笔记坞添加到编辑器顶栏</span>
+            </label>
+            <span class="markdown-notebook-save-note"
+                  data-toolbar-i18n="markdownNotebookSavedWithCanvas">随当前 .canvas 保存</span>
+            <button type="button" class="markdown-notebook-close"
+                    data-action="close-markdown-notebook"
+                    data-editor-i18n-aria="markdownNotebookClose"
+                    aria-label="关闭笔记坞">×</button>
+          </div>
+        </header>
+
+        <div class="markdown-notebook-main">
+          <aside class="markdown-notebook-rail" aria-label="笔记列表"
+                 data-editor-i18n-aria="markdownNotebookList">
+            <div class="markdown-notebook-rail-head">
+              <strong data-toolbar-i18n="markdownNotebookPages">笔记</strong>
+              <button type="button" data-action="add-markdown-note"
+                      data-editor-i18n-aria="markdownNotebookAdd"
+                      aria-label="新建笔记">+</button>
+            </div>
+            <div class="markdown-notebook-list" data-role="markdown-notebook-list"
+                 role="listbox"></div>
+          </aside>
+
+          <div class="markdown-notebook-workspace">
+            <div class="markdown-notebook-mobile-nav">
+              <select data-role="markdown-notebook-mobile-select"
+                      data-editor-i18n-aria="markdownNotebookPages"
+                      aria-label="笔记"></select>
+              <button type="button" data-action="add-markdown-note"
+                      data-editor-i18n-aria="markdownNotebookAdd"
+                      aria-label="新建笔记">+</button>
+            </div>
+
+            <div class="markdown-notebook-document-head">
+              <input type="text" data-role="markdown-notebook-note-title" maxlength="120"
+                     data-editor-i18n-placeholder="markdownNotebookUntitled"
+                     data-editor-i18n-aria="markdownNotebookNoteTitle"
+                     placeholder="未命名笔记" aria-label="笔记标题">
+              <button type="button" data-action="delete-markdown-note"
+                      data-editor-i18n-aria="markdownNotebookDelete"
+                      aria-label="删除当前笔记">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M4.5 6h11M8 3.5h4M6.5 6l.6 10h5.8l.6-10M8.5 8.5v5M11.5 8.5v5"/>
+                </svg>
+              </button>
+            </div>
+
+            <div class="markdown-notebook-mobile-modes" role="group" aria-label="编辑与预览"
+                 data-editor-i18n-aria="markdownNotebookModes">
+              <button type="button" data-notebook-pane="edit" class="active"
+                      data-toolbar-i18n="markdownNotebookEdit">编辑</button>
+              <button type="button" data-notebook-pane="preview"
+                      data-toolbar-i18n="markdownNotebookPreview">预览</button>
+            </div>
+
+            <div class="markdown-notebook-split" data-role="markdown-notebook-split"
+                 data-active-pane="edit">
+              <section class="markdown-notebook-pane markdown-notebook-editor-pane">
+                <div class="markdown-notebook-pane-head">
+                  <strong>MARKDOWN</strong>
+                  <span data-toolbar-i18n="markdownNotebookSourceHint">标题与缩进列表会成为导图节点</span>
+                </div>
+                <textarea class="markdown-notebook-source"
+                          data-role="markdown-notebook-source" spellcheck="false"
+                          data-editor-i18n-placeholder="markdownNotebookPlaceholder"
+                          placeholder="# 主题&#10;&#10;- 分支&#10;  - 子分支"
+                          data-editor-i18n-aria="markdownNotebookSource"
+                          aria-label="Markdown 源码"></textarea>
+              </section>
+              <section class="markdown-notebook-pane markdown-notebook-preview-pane">
+                <div class="markdown-notebook-pane-head">
+                  <strong data-toolbar-i18n="markdownNotebookPreview">预览</strong>
+                  <span data-role="markdown-notebook-preview-meta"></span>
+                </div>
+                <article class="markdown-notebook-preview node-text"
+                         data-role="markdown-notebook-preview"></article>
+                <div class="markdown-notebook-preview-empty"
+                     data-role="markdown-notebook-preview-empty"
+                     data-toolbar-i18n="markdownNotebookPreviewEmpty">开始输入后，这里会显示实时预览。</div>
+              </section>
+            </div>
+
+            <p class="markdown-notebook-message" data-role="markdown-notebook-message"
+               role="status" aria-live="polite"></p>
+            <footer class="markdown-notebook-actions">
+              <div class="markdown-notebook-structure">
+                <strong data-role="markdown-notebook-structure-count">0 个节点</strong>
+                <span data-role="markdown-notebook-structure-detail"
+                      data-toolbar-i18n="markdownNotebookNeedStructure">添加标题或列表后即可生成导图</span>
+              </div>
+              <div class="markdown-notebook-generation-options">
+                <label>
+                  <span data-toolbar-i18n="markdownNotebookStyle">样式</span>
+                  <select data-role="markdown-notebook-preset">
+                    <option value="paper" data-toolbar-i18n="classicBranches">经典枝桠</option>
+                    <option value="focus" data-toolbar-i18n="focusedCenter">中心聚焦</option>
+                    <option value="rounded" data-toolbar-i18n="roundedBranches">圆角树枝</option>
+                    <option value="scholar" data-toolbar-i18n="academicCurves">学术曲线</option>
+                    <option value="journal" data-toolbar-i18n="softOrganic">柔彩自然</option>
+                    <option value="ink" data-toolbar-i18n="monoLines">黑白直线</option>
+                    <option value="forest" data-toolbar-i18n="tieredTitles">层级标题</option>
+                    <option value="blueprint" data-toolbar-i18n="blueprintS">蓝图 S 线</option>
+                    <option value="classroom" data-toolbar-i18n="highContrastElbow">高对比折线</option>
+                    <option value="editorial" data-toolbar-i18n="editorialArcs">杂志弧线</option>
+                  </select>
+                </label>
+                <label>
+                  <span data-toolbar-i18n="markdownNotebookLayout">布局</span>
+                  <select data-role="markdown-notebook-layout">
+                    <option value="balanced" data-toolbar-i18n="layoutBalanced">左右平衡</option>
+                    <option value="right" data-toolbar-i18n="layoutRight">向右</option>
+                    <option value="left" data-toolbar-i18n="layoutLeft">向左</option>
+                    <option value="down" data-toolbar-i18n="layoutDown">向下</option>
+                    <option value="radial" data-toolbar-i18n="layoutRadial">放射</option>
+                  </select>
+                </label>
+              </div>
+              <div class="markdown-notebook-footer-actions">
+                <span class="markdown-notebook-selection" data-role="markdown-notebook-selection">未选择画布内容</span>
+                <button type="button" class="markdown-notebook-secondary"
+                        data-action="append-selection-to-note" disabled
+                        data-toolbar-i18n="markdownNotebookAppend">追加选中内容</button>
+                <div class="markdown-notebook-help-anchor">
+                  <button type="button" class="markdown-notebook-help-trigger"
+                          data-action="toggle-markdown-notebook-help"
+                          aria-controls="markdown-notebook-help"
+                          aria-expanded="false"
+                          data-editor-i18n-aria="markdownNotebookHelp"
+                          aria-label="了解导图生成规则">?</button>
+                  <aside class="markdown-notebook-help-popover"
+                         id="markdown-notebook-help"
+                         data-role="markdown-notebook-help"
+                         role="dialog"
+                         aria-labelledby="markdown-notebook-help-title"
+                         hidden>
+                    <header>
+                      <div>
+                        <span data-toolbar-i18n="markdownNotebookHelpEyebrow">一次性结构快照</span>
+                        <h3 id="markdown-notebook-help-title"
+                            data-toolbar-i18n="markdownNotebookHelpTitle">导图如何生成？</h3>
+                      </div>
+                      <button type="button" data-action="close-markdown-notebook-help"
+                              data-editor-i18n-aria="markdownNotebookHelpClose"
+                              aria-label="关闭说明">×</button>
+                    </header>
+                    <p class="markdown-notebook-help-intro"
+                       data-toolbar-i18n="markdownNotebookHelpIntro">笔记坞只读取 Markdown 结构，不会在两边建立同步。</p>
+                    <div class="markdown-notebook-help-live">
+                      <span data-toolbar-i18n="markdownNotebookHelpCurrent">当前笔记</span>
+                      <strong data-role="markdown-notebook-help-count">还没有可生成的结构</strong>
+                      <small data-role="markdown-notebook-help-detail">添加标题或列表后即可生成导图</small>
+                    </div>
+                    <ul class="markdown-notebook-help-rules">
+                      <li data-toolbar-i18n="markdownNotebookHelpRoot">笔记标题成为根节点；相同的首个一级标题会自动合并。</li>
+                      <li data-toolbar-i18n="markdownNotebookHelpStructure">H1–H6、缩进列表和任务列表生成结构节点。</li>
+                      <li data-toolbar-i18n="markdownNotebookHelpBody">段落、引用、代码、公式和表格进入最近节点正文。</li>
+                      <li data-toolbar-i18n="markdownNotebookHelpSnapshot">生成的是独立快照，之后修改任意一侧都不会同步。</li>
+                      <li data-toolbar-i18n="markdownNotebookHelpLimit">单次最多生成 200 个结构节点。</li>
+                    </ul>
+                    <div class="markdown-notebook-help-example">
+                      <span data-toolbar-i18n="markdownNotebookHelpExample">结构示例</span>
+                      <div>
+                        <pre><code data-toolbar-i18n="markdownNotebookHelpExampleMarkdown"># 研究
+- 假设 A
+  - 证据</code></pre>
+                        <span aria-hidden="true">→</span>
+                        <pre data-toolbar-i18n="markdownNotebookHelpExampleTree">研究
+└ 假设 A
+  └ 证据</pre>
+                      </div>
+                    </div>
+                  </aside>
+                </div>
+                <button type="button" class="markdown-notebook-primary"
+                        data-action="generate-note-mindmap" disabled
+                        data-toolbar-i18n="markdownNotebookGenerate">生成导图</button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      </div>
+
+      <div class="markdown-notebook-confirm" data-role="markdown-notebook-delete-confirm" hidden>
+        <section class="markdown-notebook-confirm-card" role="alertdialog" aria-modal="true"
+                 aria-labelledby="markdown-notebook-delete-title"
+                 aria-describedby="markdown-notebook-delete-detail">
+          <span class="markdown-notebook-confirm-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M5 7h14M9 4h6M7.5 7l.7 12h7.6l.7-12M10 10v6M14 10v6"/>
+            </svg>
+          </span>
+          <h3 id="markdown-notebook-delete-title"
+              data-role="markdown-notebook-delete-title">删除这篇笔记？</h3>
+          <p id="markdown-notebook-delete-detail"
+             data-toolbar-i18n="markdownNotebookDeleteConfirm">这篇笔记会从当前 .canvas 中移除，已生成的导图不会受到影响。</p>
+          <div class="markdown-notebook-confirm-actions">
+            <button type="button" data-action="cancel-markdown-note-delete"
+                    data-toolbar-i18n="markdownNotebookCancel">取消</button>
+            <button type="button" class="danger" data-action="confirm-markdown-note-delete"
+                    data-toolbar-i18n="markdownNotebookConfirmDelete">删除笔记</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+
   <div class="canvas-import-library-overlay" data-role="canvas-import-library" hidden>
     <section class="canvas-import-library-card" role="dialog" aria-modal="true"
              aria-labelledby="canvas-import-library-title">
@@ -3026,6 +3583,9 @@
   <script src="canvas-import.js" defer></script>
   <script src="node-matrix.js" defer></script>
   <script src="canvas-timer.js" defer></script>
+  <script src="markdown-notebook.js" defer></script>
+  <script src="canvas-scenes.js" defer></script>
+  <script src="canvas-taskbook.js" defer></script>
   <script src="canvas.js" defer></script>
   <script src="graph-gl.js" defer></script>
   <script src="graph-engine.js" defer></script>

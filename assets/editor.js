@@ -10,6 +10,7 @@
   const params = new URLSearchParams(window.location.search);
   let filePath = params.get('file') || '';
   const LOCATE_NODE = params.get('node') || '';
+  const LOCATE_TASK_ROOT = params.get('taskRoot') || '';
   const FROM_STUDY = params.get('from') === 'study';
   // 新建画布首次打开标志（由起步页「新建」带 &fresh=1）：进简洁模式 + 弹一次提示。
   // 读完即从地址栏抹掉，避免刷新后又触发。
@@ -93,15 +94,178 @@
 
   // 界面语言与起始页共用同一偏好；本文件负责画布特有控件，通用文字由 i18n.js 补齐。
   const TOOLBAR_LANGUAGE_KEY = 'canvas:toolbarLanguage';
+  const toolLayerMotionTimers = new WeakMap();
+
+  function prefersReducedToolMotion() {
+    return !!(window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function revealToolLayer(layer) {
+    if (!layer) return false;
+    const pending = toolLayerMotionTimers.get(layer);
+    if (pending) window.clearTimeout(pending);
+    toolLayerMotionTimers.delete(layer);
+    layer.classList.remove('tool-layer-leaving');
+    layer.classList.add('tool-layer-entering');
+    layer.hidden = false;
+    if (prefersReducedToolMotion()) {
+      layer.classList.remove('tool-layer-entering');
+      return true;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (!layer.hidden && !layer.classList.contains('tool-layer-leaving')) {
+          layer.classList.remove('tool-layer-entering');
+        }
+      });
+    });
+    return true;
+  }
+
+  function concealToolLayer(layer, onHidden, duration) {
+    if (!layer || layer.hidden || layer.classList.contains('tool-layer-leaving')) return false;
+    layer.classList.remove('tool-layer-entering');
+    layer.classList.add('tool-layer-leaving');
+    const finish = () => {
+      toolLayerMotionTimers.delete(layer);
+      layer.hidden = true;
+      layer.classList.remove('tool-layer-leaving');
+      if (typeof onHidden === 'function') onHidden();
+    };
+    if (prefersReducedToolMotion()) {
+      finish();
+      return true;
+    }
+    const timer = window.setTimeout(finish, Math.max(0, Number(duration) || 210));
+    toolLayerMotionTimers.set(layer, timer);
+    return true;
+  }
+
   const TOOLBAR_COPY = {
     'zh-CN': {
       back: '起步页', canvas: '画布', mindmap: '导图', patterns: '图案', tools: '工具',
-      ruler: '尺子', rulerHint: '阻挡简单节点；画笔靠近长边即吸附直线',
+      notebookShortcut: '笔记', taskbookShortcut: '任务',
+      ruler: '尺子', rulerHint: '对齐笔迹与节点',
       removeRuler: '移除尺子',
-      importCanvas: '导入画布', importCanvasHint: '从画布库复制内容到这里',
-      nodeMatrix: '节点矩阵', nodeMatrixHint: '批量生成规则排列的节点',
-      canvasTimer: '倒计时 / 正计时', canvasTimerHint: '在画布上放置独立计时器',
-      toolsAria: '画布工具：尺子、内容导入、节点矩阵与计时器',
+      markdownNotebook: '笔记坞', markdownNotebookHint: '长期笔记与导图快照',
+      markdownNotebookKicker: '画布工具', markdownNotebookTitle: '笔记坞',
+      markdownNotebookSavedWithCanvas: '随当前 .canvas 保存',
+      markdownNotebookTopbarToggle: '将笔记坞添加到编辑器顶栏',
+      taskbookTopbarToggle: '将任务簿添加到编辑器顶栏',
+      markdownNotebookClose: '关闭笔记坞', markdownNotebookList: '笔记列表',
+      markdownNotebookPages: '笔记', markdownNotebookAdd: '新建笔记',
+      markdownNotebookUntitled: '未命名笔记', markdownNotebookDelete: '删除当前笔记',
+      markdownNotebookNoteTitle: '笔记标题', markdownNotebookSource: 'Markdown 源码',
+      markdownNotebookModes: '编辑与预览',
+      markdownNotebookEdit: '编辑', markdownNotebookPreview: '预览',
+      markdownNotebookSourceHint: '标题与缩进列表会成为导图节点',
+      markdownNotebookPlaceholder: '# 主题\n\n- 分支\n  - 子分支',
+      markdownNotebookPreviewEmpty: '开始输入后，这里会显示实时预览。',
+      markdownNotebookNeedStructure: '添加标题或列表后即可生成导图',
+      markdownNotebookStyle: '样式', markdownNotebookLayout: '布局',
+      layoutBalanced: '左右平衡', layoutRight: '向右', layoutLeft: '向左',
+      layoutDown: '向下', layoutRadial: '放射',
+      markdownNotebookAppend: '追加选中内容', markdownNotebookGenerate: '生成导图',
+      markdownNotebookNoSelection: '未选择画布内容',
+      markdownNotebookSelected: '已选中 {count} 项',
+      markdownNotebookIgnored: '，忽略 {count} 项',
+      markdownNotebookNodes: '{count} 个节点',
+      markdownNotebookDepth: '{count} 层结构',
+      markdownNotebookEmptyError: '请先写下标题或列表，再生成导图。',
+      markdownNotebookLimitError: '一篇笔记最多生成 200 个结构节点。',
+      markdownNotebookDeleteConfirm: '这篇笔记会从当前 .canvas 中移除，已生成的导图不会受到影响。',
+      markdownNotebookDeleteTitle: '删除“{title}”？',
+      markdownNotebookCancel: '取消', markdownNotebookConfirmDelete: '删除笔记',
+      markdownNotebookHelp: '了解导图生成规则',
+      markdownNotebookHelpClose: '关闭导图生成说明',
+      markdownNotebookHelpEyebrow: '一次性结构快照',
+      markdownNotebookHelpTitle: '导图如何生成？',
+      markdownNotebookHelpIntro: '笔记坞只读取 Markdown 结构，不会在两边建立同步。',
+      markdownNotebookHelpCurrent: '当前笔记',
+      markdownNotebookHelpReady: '将生成 {count} 个节点',
+      markdownNotebookHelpReadyDetail: '{count} 层结构 · 生成后独立',
+      markdownNotebookHelpEmpty: '还没有可生成的结构',
+      markdownNotebookHelpRoot: '笔记标题成为根节点；相同的首个一级标题会自动合并。',
+      markdownNotebookHelpStructure: 'H1–H6、缩进列表和任务列表生成结构节点。',
+      markdownNotebookHelpBody: '段落、引用、代码、公式和表格进入最近节点正文。',
+      markdownNotebookHelpSnapshot: '生成的是独立快照，之后修改任意一侧都不会同步。',
+      markdownNotebookHelpLimit: '单次最多生成 200 个结构节点。',
+      markdownNotebookHelpExample: '结构示例',
+      markdownNotebookHelpExampleMarkdown: '# 研究\n- 假设 A\n  - 证据',
+      markdownNotebookHelpExampleTree: '研究\n└ 假设 A\n  └ 证据',
+      markdownNotebookAppended: '已追加画布选区快照。后续修改不会自动同步。',
+      markdownNotebookComplexSelection: '选区包含交叉关系，已按画布位置转为平级列表。',
+      markdownNotebookGenerated: '已生成独立导图快照。',
+      markdownNotebookUnavailable: '笔记坞尚未准备好。',
+      canvasScenes: '镜头册', canvasScenesHint: '保存视角并组织演示',
+      canvasScenesKicker: '画布工具', canvasScenesClose: '关闭镜头册',
+      canvasScenesMoveHint: '拖动移动镜头册；双击恢复默认位置',
+      canvasScenesList: '镜头列表', canvasScenesSaveView: '保存当前视角',
+      canvasScenesSaveSelection: '收录所选内容',
+      canvasScenesSelectionHint: '选择节点或分组后可创建跟随镜头',
+      canvasScenesSelectionReady: '已选择 {count} 项',
+      canvasScenesIgnored: '，将忽略 {count} 项',
+      canvasScenesEmpty: '还没有镜头',
+      canvasScenesEmptyHint: '保存当前视角，或选择内容创建会跟随移动的章节。',
+      canvasScenesGroups: '按所选分组创建', canvasScenesPresent: '演示',
+      canvasScenesDeleted: '镜头已删除', canvasScenesUndo: '撤销',
+      canvasScenesCamera: '固定视角', canvasScenesFollow: '跟随内容',
+      canvasScenesMissing: '内容已缺失', canvasScenesPartialMissing: '部分内容已缺失',
+      canvasScenesUpdate: '更新镜头', canvasScenesRename: '重命名',
+      canvasScenesDelete: '删除镜头', canvasScenesMenu: '镜头操作',
+      canvasScenesUntitled: '未命名镜头', canvasScenesDefaultName: '镜头 {count}',
+      canvasScenesNoSelection: '请先选择节点、连线或语义分组。',
+      canvasScenesCreated: '已保存镜头。', canvasScenesGroupsCreated: '已从 {count} 个分组创建镜头。',
+      canvasScenesNoGroups: '请先选择一个或多个语义分组。',
+      canvasScenesUpdated: '镜头已更新。', canvasScenesUnavailable: '镜头册尚未准备好。',
+      canvasScenesPresentation: '镜头演示', canvasScenesPrevious: '上一镜头',
+      canvasScenesRestart: '回到第一个镜头',
+      canvasScenesNext: '下一镜头', canvasScenesExit: '退出演示',
+      canvasTaskbook: '任务簿', canvasTaskbookHint: '管理顶级任务与任务树',
+      canvasTaskbookKicker: '画布工具', canvasTaskbookClose: '关闭任务簿',
+      canvasTaskbookSavedWithCanvas: '随当前 .canvas 保存',
+      canvasTaskbookStructure: '结构', canvasTaskbookDetail: '详情',
+      canvasTaskbookBooks: '任务簿', canvasTaskbookNew: '新建任务簿',
+      canvasTaskbookEmpty: '还没有任务簿',
+      canvasTaskbookEmptyHint: '新建一个任务簿，把复杂工作拆成可以开始的小步骤。',
+      canvasTaskbookCollectSelected: '收录所选节点', canvasTaskbookArrange: '整理到画布',
+      canvasTaskbookAddRoot: '添加任务', canvasTaskbookNoTasks: '尚无任务',
+      canvasTaskbookNoTasksHint: '添加任务，或从画布收录卡片和预览节点。',
+      canvasTaskbookSelectTask: '选择一项任务',
+      canvasTaskbookSelectTaskHint: '在中间的任务树中选择任务以编辑详情。',
+      canvasTaskbookLocate: '定位到画布', canvasTaskbookTaskTitle: '任务名称',
+      canvasTaskbookTaskBody: '附加说明 · Markdown', canvasTaskbookTaskType: '节点类型',
+      canvasTaskbookCard: '卡片', canvasTaskbookPreview: '预览',
+      canvasTaskbookEstimate: '估时（分钟）', canvasTaskbookActual: '实际用时',
+      canvasTaskbookStart: '开始', canvasTaskbookPause: '暂停',
+      canvasTaskbookAddSibling: '添加同级', canvasTaskbookAddChild: '添加子级',
+      canvasTaskbookOutdent: '升一级', canvasTaskbookIndent: '降一级',
+      canvasTaskbookDeleteSubtree: '删除子树',
+      canvasTaskbookBudget: '总预算（分钟，可选）',
+      canvasTaskbookRelease: '释放任务', canvasTaskbookComplete: '完成并沉淀',
+      canvasTaskbookCancel: '取消', canvasTaskbookConfirm: '确认',
+      canvasTaskbookUntitled: '未命名任务簿', canvasTaskbookUntitledTask: '未命名任务',
+      canvasTaskbookReorderTask: '调整任务顺序',
+      canvasTaskbookNoExecutable: '尚无可执行任务',
+      canvasTaskbookProgress: '{done} / {total} 个叶子任务完成',
+      canvasTaskbookCreated: '已创建任务簿。',
+      canvasTaskbookCollected: '已收录 {count} 个节点。',
+      canvasTaskbookNothingSelected: '请先选择卡片或预览节点。',
+      canvasTaskbookArrangeDone: '任务结构已整理到画布。',
+      canvasTaskbookReleaseTitle: '释放“{title}”？',
+      canvasTaskbookReleaseCopy: '任务簿对象将被删除，后代节点会保留并解除管理锁，工作流连线转为普通连线。',
+      canvasTaskbookDeleteTitle: '删除“{title}”及其子任务？',
+      canvasTaskbookDeleteCopy: '这会从画布删除整棵子树，且只能通过画布历史撤销。',
+      canvasTaskbookCompleteTitle: '完成并沉淀“{title}”？',
+      canvasTaskbookCompleteCopy: '计时段会写入专注记录，任务节点原地保留并归入普通分组；此终局操作不进入 Ctrl+Z。',
+      canvasTaskbookCompleteUnavailable: '至少需要一个叶子任务，且所有叶子都必须完成。',
+      canvasTaskbookCompleteDone: '任务簿已沉淀为完成分组。',
+      canvasTaskbookSaveFailed: '任务簿沉淀失败，请稍后重试。',
+      importCanvas: '导入画布', importCanvasHint: '合并另一张画布的内容',
+      nodeMatrix: '节点矩阵', nodeMatrixHint: '批量创建规则排列的节点',
+      canvasTimer: '倒计时 / 正计时', canvasTimerHint: '添加独立计时器',
+      toolsAria: '画布工具：尺子、笔记坞、镜头册、任务簿、内容导入、节点矩阵与计时器',
       canvasTimerKicker: '画布工具', canvasTimerCreateTitle: '创建计时器',
       canvasTimerEditTitle: '编辑计时器', canvasTimerClose: '关闭计时器面板',
       canvasTimerType: '计时方式', canvasTimerCountdown: '倒计时', canvasTimerCountup: '正计时',
@@ -171,21 +335,27 @@
       textAlignLeft: '左对齐', textAlignCenter: '居中', textAlignRight: '右对齐',
       textBindToggle: '绑定到所选节点 / 解除跟随', textConvertMindmap: '将文本框转为所选节点的导图子节点',
       canvasSettings: '画布设置', panSpeed: '方向键平移速度', panInertia: '拖拽惯性',
-      zoomSpeed: '滚轮缩放速度', checklistDelay: '任务清单出现延迟',
+      zoomSpeed: '滚轮缩放速度',
       branchDelay: '分支预展开延迟', indexDelay: '目录出现延迟',
       tooltipHoverDelay: '提示框出现延迟', tooltipHideDelay: '提示框消失延迟',
       codeLanguage: '新建代码节点语言', penPressure: '手写笔压感总开关（含批注钢笔）',
-      textSnap: '文本框拖动自动对齐',
-      nodeChecklists: '显示节点任务清单', foldControls: '显示收起子节点按钮',
+      textSnap: '文本框拖动自动对齐', foldControls: '显示收起子节点按钮',
       canvasInspector: '启动《画布》的属性检查器',
       mindmapInspector: '启动思维导图模式的属性检查器',
       decorInspector: '启动图案模式的属性检查器',
       indexHover: '悬停弹出目录',
       selectionIndex: '框选生成索引目录', boxCreate: '空白框选创建盒子', groupCreate: '框选节点创建分组',
+      taskbookArchiveSnapshot: '归档时在画布保留完成副本',
+      taskbookLeafTimerButtons: '显示子任务悬停计时按钮',
+      taskbookLeafTimerButtonsHint: '鼠标悬停任务簿叶子任务时，在节点左侧显示开始或暂停计时按钮（默认开启）。',
       darkLines: '深色模式线条优化',
       darkUi: '深色语义 UI 优化', autosave: '自动保存', view: '视图',
       locateLatest: '定位最近节点', space: '空格', spaceLocate: '空格键定位最近节点',
       centerZoom: '偏好缩放并居中', zoomLevel: '缩放比例',
+      settingsReset: '恢复默认设置',
+      settingsResetConfirmTitle: '恢复默认设置？',
+      settingsResetConfirmCopy: '只重置本面板；保留语言、画布内容和引导记录。',
+      settingsResetAccept: '恢复默认', settingsResetDone: '已恢复', cancel: '取消',
       canvasNewStyles: '画布 · 新建样式', nodes: '节点', typeAndOutline: '文字与轮廓',
       lines: '线条', inspectorPanel: '属性检查器', patternsMode: '图案模式', graphRelax: '舒展',
       insertShapes: '插入图案', mindMapMode: '思维导图模式', presets: '预设',
@@ -276,12 +446,127 @@
     },
     en: {
       back: 'Home', canvas: 'Canvas', mindmap: 'Mind Map', patterns: 'Shapes', tools: 'Tools',
-      ruler: 'Ruler', rulerHint: 'Blocks simple nodes; pen strokes snap when they reach an edge',
+      notebookShortcut: 'Notes', taskbookShortcut: 'Tasks',
+      ruler: 'Ruler', rulerHint: 'Align strokes and nodes',
       removeRuler: 'Remove Ruler',
-      importCanvas: 'Import Canvas', importCanvasHint: 'Copy content here from your canvas library',
-      nodeMatrix: 'Node Matrix', nodeMatrixHint: 'Generate a regular grid of nodes',
-      canvasTimer: 'Countdown / Stopwatch', canvasTimerHint: 'Place independent timers on the canvas',
-      toolsAria: 'Canvas tools: ruler, content import, node matrix, and timers',
+      markdownNotebook: 'Notebook', markdownNotebookHint: 'Long-term notes and mind-map snapshots',
+      markdownNotebookKicker: 'CANVAS TOOL', markdownNotebookTitle: 'Notebook',
+      markdownNotebookSavedWithCanvas: 'Saved with this .canvas',
+      markdownNotebookTopbarToggle: 'Add Notebook to the editor toolbar',
+      taskbookTopbarToggle: 'Add Taskbook to the editor toolbar',
+      markdownNotebookClose: 'Close Notebook', markdownNotebookList: 'Note list',
+      markdownNotebookPages: 'Notes', markdownNotebookAdd: 'New note',
+      markdownNotebookUntitled: 'Untitled note', markdownNotebookDelete: 'Delete current note',
+      markdownNotebookNoteTitle: 'Note title', markdownNotebookSource: 'Markdown source',
+      markdownNotebookModes: 'Edit and preview',
+      markdownNotebookEdit: 'Edit', markdownNotebookPreview: 'Preview',
+      markdownNotebookSourceHint: 'Headings and nested lists become mind-map nodes',
+      markdownNotebookPlaceholder: '# Topic\n\n- Branch\n  - Sub-branch',
+      markdownNotebookPreviewEmpty: 'Start typing to see a live preview here.',
+      markdownNotebookNeedStructure: 'Add a heading or list to generate a mind map',
+      markdownNotebookStyle: 'Style', markdownNotebookLayout: 'Layout',
+      layoutBalanced: 'Balanced', layoutRight: 'Right', layoutLeft: 'Left',
+      layoutDown: 'Down', layoutRadial: 'Radial',
+      markdownNotebookAppend: 'Append Selection', markdownNotebookGenerate: 'Generate Mind Map',
+      markdownNotebookNoSelection: 'No canvas selection',
+      markdownNotebookSelected: '{count} selected',
+      markdownNotebookIgnored: ', {count} ignored',
+      markdownNotebookNodes: '{count} nodes',
+      markdownNotebookDepth: '{count} levels',
+      markdownNotebookEmptyError: 'Add a heading or list before generating a mind map.',
+      markdownNotebookLimitError: 'A note can generate at most 200 structural nodes.',
+      markdownNotebookDeleteConfirm: 'This note will be removed from the current .canvas. Existing generated mind maps will remain.',
+      markdownNotebookDeleteTitle: 'Delete “{title}”?',
+      markdownNotebookCancel: 'Cancel', markdownNotebookConfirmDelete: 'Delete Note',
+      markdownNotebookHelp: 'Learn how mind-map generation works',
+      markdownNotebookHelpClose: 'Close mind-map generation guide',
+      markdownNotebookHelpEyebrow: 'ONE-TIME STRUCTURE SNAPSHOT',
+      markdownNotebookHelpTitle: 'How is the mind map built?',
+      markdownNotebookHelpIntro: 'Notebook reads Markdown structure only. It never creates a hidden sync between both sides.',
+      markdownNotebookHelpCurrent: 'Current note',
+      markdownNotebookHelpReady: 'Will create {count} nodes',
+      markdownNotebookHelpReadyDetail: '{count} levels · independent after generation',
+      markdownNotebookHelpEmpty: 'No generatable structure yet',
+      markdownNotebookHelpRoot: 'The note title becomes the root; a matching first H1 is merged automatically.',
+      markdownNotebookHelpStructure: 'H1–H6, nested lists, and task lists create structural nodes.',
+      markdownNotebookHelpBody: 'Paragraphs, quotes, code, math, and tables become the nearest node body.',
+      markdownNotebookHelpSnapshot: 'Generation creates an independent snapshot; later edits on either side never sync.',
+      markdownNotebookHelpLimit: 'One generation can contain at most 200 structural nodes.',
+      markdownNotebookHelpExample: 'Structure example',
+      markdownNotebookHelpExampleMarkdown: '# Research\n- Hypothesis A\n  - Evidence',
+      markdownNotebookHelpExampleTree: 'Research\n└ Hypothesis A\n  └ Evidence',
+      markdownNotebookAppended: 'Canvas selection appended as a snapshot. Later edits will not sync.',
+      markdownNotebookComplexSelection: 'Cross-links were flattened into a position-ordered list.',
+      markdownNotebookGenerated: 'Independent mind-map snapshot created.',
+      markdownNotebookUnavailable: 'Notebook is not ready yet.',
+      canvasScenes: 'Scenes', canvasScenesHint: 'Save views and organize presentations',
+      canvasScenesKicker: 'CANVAS TOOL', canvasScenesClose: 'Close Scenes',
+      canvasScenesMoveHint: 'Drag to move Scenes; double-click to reset its position',
+      canvasScenesList: 'Scene list', canvasScenesSaveView: 'Save Current View',
+      canvasScenesSaveSelection: 'Capture Selection',
+      canvasScenesSelectionHint: 'Select nodes or groups to create a following scene',
+      canvasScenesSelectionReady: '{count} selected',
+      canvasScenesIgnored: ', {count} will be ignored',
+      canvasScenesEmpty: 'No scenes yet',
+      canvasScenesEmptyHint: 'Save the current view, or capture content to create a chapter that follows it.',
+      canvasScenesGroups: 'Create from Groups', canvasScenesPresent: 'Present',
+      canvasScenesDeleted: 'Scene deleted', canvasScenesUndo: 'Undo',
+      canvasScenesCamera: 'Fixed view', canvasScenesFollow: 'Follows content',
+      canvasScenesMissing: 'Content missing', canvasScenesPartialMissing: 'Some content missing',
+      canvasScenesUpdate: 'Update scene', canvasScenesRename: 'Rename',
+      canvasScenesDelete: 'Delete scene', canvasScenesMenu: 'Scene actions',
+      canvasScenesUntitled: 'Untitled scene', canvasScenesDefaultName: 'Scene {count}',
+      canvasScenesNoSelection: 'Select nodes, edges, or semantic groups first.',
+      canvasScenesCreated: 'Scene saved.', canvasScenesGroupsCreated: 'Created scenes from {count} groups.',
+      canvasScenesNoGroups: 'Select one or more semantic groups first.',
+      canvasScenesUpdated: 'Scene updated.', canvasScenesUnavailable: 'Scenes is not ready yet.',
+      canvasScenesPresentation: 'Scene presentation', canvasScenesPrevious: 'Previous scene',
+      canvasScenesRestart: 'Restart from the first scene',
+      canvasScenesNext: 'Next scene', canvasScenesExit: 'Exit Presentation',
+      canvasTaskbook: 'Taskbook', canvasTaskbookHint: 'Manage top-level tasks and task trees',
+      canvasTaskbookKicker: 'CANVAS TOOL', canvasTaskbookClose: 'Close Taskbook',
+      canvasTaskbookSavedWithCanvas: 'Saved with this .canvas',
+      canvasTaskbookStructure: 'Structure', canvasTaskbookDetail: 'Details',
+      canvasTaskbookBooks: 'Taskbooks', canvasTaskbookNew: 'New Taskbook',
+      canvasTaskbookEmpty: 'No taskbooks yet',
+      canvasTaskbookEmptyHint: 'Create a taskbook and turn complex work into small, startable steps.',
+      canvasTaskbookCollectSelected: 'Collect Selection', canvasTaskbookArrange: 'Arrange on Canvas',
+      canvasTaskbookAddRoot: 'Add Task', canvasTaskbookNoTasks: 'No tasks yet',
+      canvasTaskbookNoTasksHint: 'Add a task, or collect selected card and preview nodes.',
+      canvasTaskbookSelectTask: 'Select a task',
+      canvasTaskbookSelectTaskHint: 'Choose a task in the tree to edit its details.',
+      canvasTaskbookLocate: 'Locate on Canvas', canvasTaskbookTaskTitle: 'Task name',
+      canvasTaskbookTaskBody: 'Notes · Markdown', canvasTaskbookTaskType: 'Node type',
+      canvasTaskbookCard: 'Card', canvasTaskbookPreview: 'Preview',
+      canvasTaskbookEstimate: 'Estimate (minutes)', canvasTaskbookActual: 'Actual time',
+      canvasTaskbookStart: 'Start', canvasTaskbookPause: 'Pause',
+      canvasTaskbookAddSibling: 'Add Sibling', canvasTaskbookAddChild: 'Add Child',
+      canvasTaskbookOutdent: 'Outdent', canvasTaskbookIndent: 'Indent',
+      canvasTaskbookDeleteSubtree: 'Delete Subtree',
+      canvasTaskbookBudget: 'Total budget (minutes, optional)',
+      canvasTaskbookRelease: 'Release Tasks', canvasTaskbookComplete: 'Complete & Preserve',
+      canvasTaskbookCancel: 'Cancel', canvasTaskbookConfirm: 'Confirm',
+      canvasTaskbookUntitled: 'Untitled Taskbook', canvasTaskbookUntitledTask: 'Untitled Task',
+      canvasTaskbookReorderTask: 'Reorder task',
+      canvasTaskbookNoExecutable: 'No executable tasks yet',
+      canvasTaskbookProgress: '{done} / {total} leaf tasks complete',
+      canvasTaskbookCreated: 'Taskbook created.',
+      canvasTaskbookCollected: 'Collected {count} nodes.',
+      canvasTaskbookNothingSelected: 'Select card or preview nodes first.',
+      canvasTaskbookArrangeDone: 'Task structure arranged on the canvas.',
+      canvasTaskbookReleaseTitle: 'Release “{title}”?',
+      canvasTaskbookReleaseCopy: 'The Taskbook object will be removed. Descendant nodes remain unlocked and workflow links become ordinary links.',
+      canvasTaskbookDeleteTitle: 'Delete “{title}” and its subtasks?',
+      canvasTaskbookDeleteCopy: 'The entire subtree will be removed from the canvas. Canvas history is the only way to undo it.',
+      canvasTaskbookCompleteTitle: 'Complete and preserve “{title}”?',
+      canvasTaskbookCompleteCopy: 'Time segments will be written to Focus history. Task nodes stay in place inside a normal group. This final action is not added to Ctrl+Z.',
+      canvasTaskbookCompleteUnavailable: 'Add at least one leaf task and complete every leaf first.',
+      canvasTaskbookCompleteDone: 'Taskbook preserved as a completed group.',
+      canvasTaskbookSaveFailed: 'Could not preserve this Taskbook. Try again.',
+      importCanvas: 'Import Canvas', importCanvasHint: 'Merge content from another canvas',
+      nodeMatrix: 'Node Matrix', nodeMatrixHint: 'Create a regular grid of nodes',
+      canvasTimer: 'Countdown / Stopwatch', canvasTimerHint: 'Add an independent timer',
+      toolsAria: 'Canvas tools: ruler, Notebook, Scenes, Taskbook, content import, node matrix, and timers',
       canvasTimerKicker: 'CANVAS TOOL', canvasTimerCreateTitle: 'Create Timer',
       canvasTimerEditTitle: 'Edit Timer', canvasTimerClose: 'Close timer panel',
       canvasTimerType: 'Timer Type', canvasTimerCountdown: 'Countdown', canvasTimerCountup: 'Stopwatch',
@@ -352,21 +637,27 @@
       textAlignLeft: 'Align left', textAlignCenter: 'Center', textAlignRight: 'Align right',
       textBindToggle: 'Bind to selected node / stop following', textConvertMindmap: 'Convert text box to child of selected node',
       canvasSettings: 'Canvas Settings', panSpeed: 'Arrow-key pan speed', panInertia: 'Drag momentum',
-      zoomSpeed: 'Scroll zoom speed', checklistDelay: 'Checklist delay',
+      zoomSpeed: 'Scroll zoom speed',
       branchDelay: 'Branch preview delay', indexDelay: 'Index preview delay',
       tooltipHoverDelay: 'Tooltip delay', tooltipHideDelay: 'Tooltip hide delay',
       codeLanguage: 'Default code language', penPressure: 'Pen pressure (including annotations)',
-      textSnap: 'Align text boxes while dragging',
-      nodeChecklists: 'Show node checklists', foldControls: 'Show branch controls',
+      textSnap: 'Align text boxes while dragging', foldControls: 'Show branch controls',
       canvasInspector: 'Enable the Canvas inspector',
       mindmapInspector: 'Enable inspector in Mind Map mode',
       decorInspector: 'Enable inspector in Shapes mode',
       indexHover: 'Preview index on hover',
       selectionIndex: 'Offer index from selection', boxCreate: 'Box from empty selection', groupCreate: 'Group selected nodes',
+      taskbookArchiveSnapshot: 'Keep a completed canvas copy when archiving',
+      taskbookLeafTimerButtons: 'Show task timer button on hover',
+      taskbookLeafTimerButtonsHint: 'Show a start or pause timer button to the left of Taskbook leaf tasks on hover (enabled by default).',
       darkLines: 'Optimize lines on dark backgrounds',
       darkUi: 'Dark semantic UI', autosave: 'Autosave', view: 'View',
       locateLatest: 'Locate latest node', space: 'Space', spaceLocate: 'Space locates latest node',
       centerZoom: 'Center at preferred zoom', zoomLevel: 'Zoom level',
+      settingsReset: 'Restore Default Settings',
+      settingsResetConfirmTitle: 'Restore default settings?',
+      settingsResetConfirmCopy: 'Only this panel resets. Language, canvas content, and onboarding stay untouched.',
+      settingsResetAccept: 'Reset', settingsResetDone: 'Restored', cancel: 'Cancel',
       canvasNewStyles: 'Canvas · New Styles', nodes: 'Nodes', typeAndOutline: 'Type & Outline',
       lines: 'Lines', inspectorPanel: 'Inspector', patternsMode: 'Shapes Mode', graphRelax: 'Relax',
       insertShapes: 'Insert Shapes', mindMapMode: 'Mind Map Mode', presets: 'Presets',
@@ -695,6 +986,10 @@
     stateEl.textContent = translateTopbarStatus(label || '');
   }
 
+  // 需要在缺少 file 参数的空壳页也可安全读取；后续加载成功后再写入真实画布。
+  // 放在 opening 回调之前，避免空壳页提前结束初始化时触发 let 的暂时性死区。
+  let canvasData = null;
+
   // 顶栏入场：内容就位后移除 topbar-pending，让顶栏从顶部滑入（见 styles.css）。
   // 加载成功 / 失败都会调用；再加一道超时兜底，避免异常时顶栏一直藏着。
   let topBarRevealed = false;
@@ -913,6 +1208,9 @@
     const pop = document.querySelector('[data-role="tools-pop"]');
     const useRuler = pop && pop.querySelector('[data-action="use-ruler"]');
     const removeRuler = pop && pop.querySelector('[data-action="remove-ruler"]');
+    const markdownNotebook = pop && pop.querySelector('[data-action="markdown-notebook"]');
+    const canvasScenes = pop && pop.querySelector('[data-action="canvas-scenes"]');
+    const canvasTaskbook = pop && pop.querySelector('[data-action="canvas-taskbook"]');
     const importCanvas = pop && pop.querySelector('[data-action="import-canvas"]');
     const nodeMatrix = pop && pop.querySelector('[data-action="node-matrix"]');
     const canvasTimer = pop && pop.querySelector('[data-action="canvas-timer"]');
@@ -927,7 +1225,9 @@
     const importConfirm = importLibrary && importLibrary.querySelector('[data-action="confirm-canvas-import"]');
     const importCancel = importLibrary && importLibrary.querySelector('[data-action="cancel-canvas-import"]');
     const importClose = importLibrary && importLibrary.querySelector('[data-action="close-canvas-import-library"]');
-    if (!button || !pop || !useRuler || !removeRuler || !importCanvas || !nodeMatrix || !canvasTimer) return;
+    if (!button || !pop || !useRuler || !removeRuler || !markdownNotebook || !canvasScenes
+        || !canvasTaskbook
+        || !importCanvas || !nodeMatrix || !canvasTimer) return;
     let importState = null;
     let importView = 'recent';
     let importSelectedId = '';
@@ -1194,24 +1494,25 @@
     }
 
     function closeImportLibrary(restoreFocus) {
-      if (!importLibrary || importBusy || importLibrary.hidden) return false;
+      if (!importLibrary || importBusy || importLibrary.hidden
+          || importLibrary.classList.contains('tool-layer-leaving')) return false;
       importRequestToken += 1;
-      importLibrary.hidden = true;
-      importLibrary.removeAttribute('data-busy');
-      importState = null;
-      importSelectedId = '';
-      setImportError('');
-      if (restoreFocus !== false && importReturnFocus && importReturnFocus.isConnected) {
-        importReturnFocus.focus();
-      }
-      importReturnFocus = null;
-      return true;
+      const focusTarget = restoreFocus !== false && importReturnFocus && importReturnFocus.isConnected
+        ? importReturnFocus : null;
+      return concealToolLayer(importLibrary, () => {
+        importLibrary.removeAttribute('data-busy');
+        importState = null;
+        importSelectedId = '';
+        setImportError('');
+        if (focusTarget) focusTarget.focus();
+        importReturnFocus = null;
+      }, 210);
     }
 
     async function openImportLibrary() {
       if (!importLibrary || EMBED) return;
       importReturnFocus = button;
-      importLibrary.hidden = false;
+      revealToolLayer(importLibrary);
       importState = null;
       importSelectedId = '';
       importView = 'recent';
@@ -1288,9 +1589,12 @@
       pop.setAttribute('aria-label', toolbarCopy('toolsAria'));
     }
     function close() {
-      pop.hidden = true;
+      if (pop.hidden || pop.classList.contains('tool-layer-leaving')) return;
       button.classList.remove('open');
       button.setAttribute('aria-expanded', 'false');
+      concealToolLayer(pop, () => {
+        document.body.classList.remove('editor-tools-open');
+      }, 180);
     }
     function position() {
       const rect = button.getBoundingClientRect();
@@ -1303,9 +1607,10 @@
     }
     function open() {
       sync();
-      pop.hidden = false;
+      revealToolLayer(pop);
       position();
       button.classList.add('open');
+      document.body.classList.add('editor-tools-open');
       button.setAttribute('aria-expanded', 'true');
     }
 
@@ -1331,6 +1636,18 @@
         window.CanvasModule.removeRuler();
       }
       close();
+    });
+    markdownNotebook.addEventListener('click', () => {
+      close();
+      document.dispatchEvent(new CustomEvent('editor:open-markdown-notebook'));
+    });
+    canvasScenes.addEventListener('click', () => {
+      close();
+      document.dispatchEvent(new CustomEvent('editor:open-canvas-scenes'));
+    });
+    canvasTaskbook.addEventListener('click', () => {
+      close();
+      document.dispatchEvent(new CustomEvent('editor:open-taskbook'));
     });
     importCanvas.addEventListener('click', () => {
       close();
@@ -1410,6 +1727,3352 @@
     document.addEventListener('editor:canvasready', sync);
     window.addEventListener('resize', () => { if (!pop.hidden) position(); });
     sync();
+  })();
+
+  // ── 笔记坞：随当前 .canvas 保存；与画布内容只交换显式快照 ──
+  (function setupMarkdownNotebook() {
+    const dialog = document.querySelector('[data-role="markdown-notebook-dialog"]');
+    const shell = dialog && dialog.querySelector('[data-role="markdown-notebook-shell"]');
+    const list = dialog && dialog.querySelector('[data-role="markdown-notebook-list"]');
+    const mobileSelect = dialog && dialog.querySelector('[data-role="markdown-notebook-mobile-select"]');
+    const workspace = dialog && dialog.querySelector('.markdown-notebook-workspace');
+    const titleInput = dialog && dialog.querySelector('[data-role="markdown-notebook-note-title"]');
+    const sourceInput = dialog && dialog.querySelector('[data-role="markdown-notebook-source"]');
+    const preview = dialog && dialog.querySelector('[data-role="markdown-notebook-preview"]');
+    const previewEmpty = dialog && dialog.querySelector('[data-role="markdown-notebook-preview-empty"]');
+    const previewMeta = dialog && dialog.querySelector('[data-role="markdown-notebook-preview-meta"]');
+    const split = dialog && dialog.querySelector('[data-role="markdown-notebook-split"]');
+    const structureCount = dialog && dialog.querySelector('[data-role="markdown-notebook-structure-count"]');
+    const structureDetail = dialog && dialog.querySelector('[data-role="markdown-notebook-structure-detail"]');
+    const message = dialog && dialog.querySelector('[data-role="markdown-notebook-message"]');
+    const selectionLabel = dialog && dialog.querySelector('[data-role="markdown-notebook-selection"]');
+    const presetSelect = dialog && dialog.querySelector('[data-role="markdown-notebook-preset"]');
+    const layoutSelect = dialog && dialog.querySelector('[data-role="markdown-notebook-layout"]');
+    const appendButton = dialog && dialog.querySelector('[data-action="append-selection-to-note"]');
+    const generateButton = dialog && dialog.querySelector('[data-action="generate-note-mindmap"]');
+    const closeButton = dialog && dialog.querySelector('[data-action="close-markdown-notebook"]');
+    const addButtons = dialog ? [...dialog.querySelectorAll('[data-action="add-markdown-note"]')] : [];
+    const deleteButton = dialog && dialog.querySelector('[data-action="delete-markdown-note"]');
+    const helpButton = dialog && dialog.querySelector('[data-action="toggle-markdown-notebook-help"]');
+    const helpCloseButton = dialog && dialog.querySelector('[data-action="close-markdown-notebook-help"]');
+    const helpPopover = dialog && dialog.querySelector('[data-role="markdown-notebook-help"]');
+    const helpCount = dialog && dialog.querySelector('[data-role="markdown-notebook-help-count"]');
+    const helpDetail = dialog && dialog.querySelector('[data-role="markdown-notebook-help-detail"]');
+    const helpLive = dialog && dialog.querySelector('.markdown-notebook-help-live');
+    const deleteConfirm = dialog && dialog.querySelector('[data-role="markdown-notebook-delete-confirm"]');
+    const deleteConfirmTitle = dialog && dialog.querySelector('[data-role="markdown-notebook-delete-title"]');
+    const deleteCancelButton = dialog && dialog.querySelector('[data-action="cancel-markdown-note-delete"]');
+    const deleteConfirmButton = dialog && dialog.querySelector('[data-action="confirm-markdown-note-delete"]');
+    const paneButtons = dialog ? [...dialog.querySelectorAll('[data-notebook-pane]')] : [];
+    const topbarShortcut = document.querySelector('[data-action="markdown-notebook-shortcut"]');
+    const topbarToggle = dialog && dialog.querySelector('[data-role="markdown-notebook-topbar-toggle"]');
+    const Notebook = window.RelatumMarkdownNotebook;
+    if (!dialog || !shell || !list || !mobileSelect || !workspace || !titleInput
+        || !sourceInput || !preview || !helpButton || !helpPopover || !deleteConfirm
+        || !deleteCancelButton || !deleteConfirmButton || !topbarShortcut || !topbarToggle
+        || !Notebook || !window.MarkdownMini) return;
+
+    const DEFAULTS_KEY = 'canvas:notebookMindmapDefaults:v1';
+    const TOPBAR_SHORTCUT_KEY = 'canvas:notebookTopbarShortcut';
+    const VALID_PRESETS = new Set([
+      'paper', 'focus', 'rounded', 'scholar', 'journal',
+      'ink', 'forest', 'blueprint', 'classroom', 'editorial',
+    ]);
+    const VALID_LAYOUTS = new Set(['balanced', 'right', 'left', 'down', 'radial']);
+    let activeId = '';
+    let virtualNote = null;
+    let capturedSelection = null;
+    let outlineModel = null;
+    let returnFocus = null;
+    let previewTimer = 0;
+    let previewRevision = 0;
+    let noteDrag = null;
+    let noteDragClickGuard = '';
+    const noteFlipAnimations = new Map();
+    let pendingDeleteId = '';
+    let noteMotionTimer = 0;
+
+    function copyWithCount(key, count) {
+      return toolbarCopy(key).replace('{count}', String(Math.max(0, Number(count) || 0)));
+    }
+
+    function copyWithTitle(key, title) {
+      return toolbarCopy(key).replace('{title}', String(title || toolbarCopy('markdownNotebookUntitled')));
+    }
+
+    function noteTitle(note) {
+      const value = String(note && note.title || '').trim();
+      return value || toolbarCopy('markdownNotebookUntitled');
+    }
+
+    function notebookNotes() {
+      const notebook = canvasData && canvasData.markdownNotebook;
+      return notebook && Array.isArray(notebook.notes) ? notebook.notes : [];
+    }
+
+    function currentNote() {
+      if (virtualNote && virtualNote.id === activeId) return virtualNote;
+      return notebookNotes().find((note) => note.id === activeId) || null;
+    }
+
+    function ensureNotebook() {
+      if (!canvasData) return null;
+      if (!canvasData.markdownNotebook || !Array.isArray(canvasData.markdownNotebook.notes)) {
+        canvasData.markdownNotebook = { version: Notebook.VERSION, notes: [] };
+      }
+      canvasData.markdownNotebook.version = Notebook.VERSION;
+      return canvasData.markdownNotebook;
+    }
+
+    function persistVirtual() {
+      if (!virtualNote) return currentNote();
+      const notebook = ensureNotebook();
+      if (!notebook) return null;
+      notebook.notes.push(virtualNote);
+      const note = virtualNote;
+      virtualNote = null;
+      return note;
+    }
+
+    function touchNote(note) {
+      if (!note) return;
+      note.updatedAt = new Date().toISOString();
+      markDirty();
+    }
+
+    function setMessage(text, tone) {
+      if (!message) return;
+      message.textContent = text || '';
+      if (tone) message.dataset.tone = tone;
+      else message.removeAttribute('data-tone');
+    }
+
+    function readDefaults() {
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(DEFAULTS_KEY) || '{}') || {}; }
+      catch (error) {}
+      return {
+        preset: VALID_PRESETS.has(saved.preset) ? saved.preset : 'paper',
+        layout: VALID_LAYOUTS.has(saved.layout) ? saved.layout : 'balanced',
+      };
+    }
+
+    function notebookTopbarShortcutEnabled() {
+      if (EMBED) return false;
+      try { return localStorage.getItem(TOPBAR_SHORTCUT_KEY) === '1'; }
+      catch (error) { return false; }
+    }
+
+    function syncNotebookTopbarShortcut(enabled) {
+      const visible = !EMBED && !!enabled;
+      const dialogOpen = visible && !dialog.hidden
+        && !dialog.classList.contains('tool-layer-leaving');
+      topbarToggle.checked = visible;
+      topbarShortcut.hidden = !visible;
+      topbarShortcut.classList.toggle('open', dialogOpen);
+      topbarShortcut.setAttribute('aria-expanded', dialogOpen ? 'true' : 'false');
+      if (!visible) {
+        if (returnFocus === topbarShortcut) {
+          returnFocus = document.querySelector('[data-action="tools"]');
+        }
+      }
+    }
+
+    function setNotebookTopbarShortcut(enabled) {
+      const visible = !EMBED && !!enabled;
+      try {
+        if (visible) localStorage.setItem(TOPBAR_SHORTCUT_KEY, '1');
+        else localStorage.removeItem(TOPBAR_SHORTCUT_KEY);
+      } catch (error) {}
+      syncNotebookTopbarShortcut(visible);
+    }
+
+    function saveDefaults() {
+      try {
+        localStorage.setItem(DEFAULTS_KEY, JSON.stringify({
+          preset: VALID_PRESETS.has(presetSelect.value) ? presetSelect.value : 'paper',
+          layout: VALID_LAYOUTS.has(layoutSelect.value) ? layoutSelect.value : 'balanced',
+        }));
+      } catch (error) {}
+    }
+
+    function noteLineCount(note) {
+      return String(note && note.markdown || '').split(/\r?\n/)
+        .filter((line) => line.trim()).length;
+    }
+
+    function noteLineLabel(note) {
+      const lines = noteLineCount(note);
+      return toolbarLanguage === 'en'
+        ? (lines + (lines === 1 ? ' line' : ' lines'))
+        : (lines + ' 行');
+    }
+
+    function updateActiveNoteMeta() {
+      const note = currentNote();
+      if (!note) return;
+      const row = list.querySelector('[data-note-id="' + CSS.escape(note.id) + '"]');
+      if (row) {
+        const title = row.querySelector('strong');
+        const detail = row.querySelector('small');
+        if (title) title.textContent = noteTitle(note);
+        if (detail) detail.textContent = noteLineLabel(note);
+      }
+      const option = [...mobileSelect.options].find((item) => item.value === note.id);
+      if (option) {
+        const visibleNotes = notebookNotes().length ? notebookNotes() : (virtualNote ? [virtualNote] : []);
+        const index = Math.max(0, visibleNotes.findIndex((item) => item.id === note.id));
+        option.textContent = (index + 1) + '. ' + noteTitle(note);
+      }
+    }
+
+    function noteListRows() {
+      return [...list.querySelectorAll('.markdown-notebook-list-item[data-note-id]')];
+    }
+
+    function stopNoteFlipAnimations() {
+      noteFlipAnimations.forEach((animation) => animation.cancel());
+      noteFlipAnimations.clear();
+    }
+
+    function flipNoteRows(mutate) {
+      if (prefersReducedToolMotion()) {
+        mutate();
+        return;
+      }
+      const rows = noteListRows();
+      const before = new Map();
+      rows.forEach((row) => before.set(row, row.getBoundingClientRect()));
+      mutate();
+      rows.forEach((row) => {
+        const animation = noteFlipAnimations.get(row);
+        if (animation) animation.cancel();
+      });
+      rows.forEach((row) => {
+        if (noteDrag && row === noteDrag.row) return;
+        const oldRect = before.get(row);
+        if (!oldRect) return;
+        const newRect = row.getBoundingClientRect();
+        const dx = oldRect.left - newRect.left;
+        const dy = oldRect.top - newRect.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        const distance = Math.hypot(dx, dy);
+        const animation = row.animate([
+          { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
+          { transform: 'translate3d(0,0,0)' },
+        ], {
+          duration: Math.max(170, Math.min(280, 160 + distance * 0.28)),
+          easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)',
+        });
+        noteFlipAnimations.set(row, animation);
+        animation.finished.catch(() => undefined).then(() => {
+          if (noteFlipAnimations.get(row) === animation) noteFlipAnimations.delete(row);
+        });
+      });
+    }
+
+    function positionNoteDragGhost(drag, clientX, clientY) {
+      if (!drag || !drag.ghost) return;
+      const left = clientX - drag.offsetX;
+      const top = clientY - drag.offsetY;
+      drag.ghostLeft = left;
+      drag.ghostTop = top;
+      drag.ghost.style.transform = 'translate3d(' + left + 'px,' + top + 'px,0) scale(1.028)';
+      drag.ghost.dataset.dragLeft = String(left);
+      drag.ghost.dataset.dragTop = String(top);
+    }
+
+    function noteInsertPoint(clientY) {
+      if (!noteDrag) return null;
+      const rows = noteListRows().filter((row) => row !== noteDrag.row);
+      let beforeNode = null;
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (clientY < rect.top + rect.height / 2) {
+          beforeNode = row;
+          break;
+        }
+      }
+      return beforeNode;
+    }
+
+    function liveReorderNote(clientY) {
+      if (!noteDrag) return;
+      const beforeNode = noteInsertPoint(clientY);
+      if (noteDrag.row.nextElementSibling === beforeNode) return;
+      flipNoteRows(() => list.insertBefore(noteDrag.row, beforeNode));
+    }
+
+    function noteEdgeScroll(clientY) {
+      const rect = list.getBoundingClientRect();
+      const edge = Math.min(42, Math.max(28, rect.height * 0.12));
+      let velocity = 0;
+      if (clientY < rect.top + edge) {
+        velocity = -Math.ceil(10 * (rect.top + edge - clientY) / edge);
+      } else if (clientY > rect.bottom - edge) {
+        velocity = Math.ceil(10 * (clientY - (rect.bottom - edge)) / edge);
+      }
+      if (!velocity) return false;
+      const previous = list.scrollTop;
+      list.scrollTop += velocity;
+      return Math.abs(list.scrollTop - previous) > 0.5;
+    }
+
+    function runNoteDragFrame() {
+      const drag = noteDrag;
+      if (!drag || !drag.active) return;
+      drag.frame = 0;
+      positionNoteDragGhost(drag, drag.pendingX, drag.pendingY);
+      const scrolled = noteEdgeScroll(drag.pendingY);
+      liveReorderNote(drag.pendingY);
+      if (scrolled && noteDrag === drag) {
+        drag.frame = window.requestAnimationFrame(runNoteDragFrame);
+      }
+    }
+
+    function scheduleNoteDragFrame(clientX, clientY) {
+      if (!noteDrag) return;
+      noteDrag.pendingX = clientX;
+      noteDrag.pendingY = clientY;
+      if (!noteDrag.frame) {
+        noteDrag.frame = window.requestAnimationFrame(runNoteDragFrame);
+      }
+    }
+
+    function activateNoteDrag() {
+      const drag = noteDrag;
+      if (!drag || drag.active) return;
+      try { drag.handle.setPointerCapture(drag.pointerId); } catch (error) {}
+      const ghost = drag.row.cloneNode(true);
+      const rowStyle = window.getComputedStyle(drag.row);
+      const notebookStyle = window.getComputedStyle(dialog);
+      ghost.classList.add('markdown-notebook-list-ghost');
+      ghost.classList.remove('drag-source', 'is-entering', 'is-removing');
+      ghost.setAttribute('aria-hidden', 'true');
+      ghost.tabIndex = -1;
+      ghost.style.width = drag.width + 'px';
+      ghost.style.height = drag.height + 'px';
+      ghost.style.color = rowStyle.color;
+      ghost.style.background = notebookStyle.getPropertyValue('--notebook-card').trim()
+        || rowStyle.backgroundColor;
+      ghost.style.borderColor = notebookStyle.getPropertyValue('--notebook-card-border').trim()
+        || rowStyle.borderColor;
+      ghost.style.transition = 'none';
+      ghost.style.animation = 'none';
+      drag.ghost = ghost;
+      positionNoteDragGhost(drag, drag.startX, drag.startY);
+      document.body.appendChild(ghost);
+      drag.active = true;
+      drag.row.classList.add('drag-source');
+      document.body.classList.add('markdown-notebook-dragging');
+      const selection = window.getSelection();
+      if (selection) selection.removeAllRanges();
+    }
+
+    function onNoteDragPointerMove(event) {
+      if (!noteDrag || event.pointerId !== noteDrag.pointerId) return;
+      const dx = event.clientX - noteDrag.startX;
+      const dy = event.clientY - noteDrag.startY;
+      if (!noteDrag.active) {
+        if (Math.hypot(dx, dy) < 6) return;
+        activateNoteDrag();
+      }
+      event.preventDefault();
+      scheduleNoteDragFrame(event.clientX, event.clientY);
+    }
+
+    function clearNoteDragListeners(drag) {
+      window.removeEventListener('pointermove', onNoteDragPointerMove);
+      window.removeEventListener('pointerup', onNoteDragPointerUp);
+      window.removeEventListener('pointercancel', onNoteDragPointerCancel);
+      if (drag && drag.frame) window.cancelAnimationFrame(drag.frame);
+      if (drag) drag.frame = 0;
+      try {
+        if (drag) drag.handle.releasePointerCapture(drag.pointerId);
+      } catch (error) {}
+    }
+
+    function revealNoteLanding(row, ghost, immediate) {
+      if (!row) {
+        if (ghost) ghost.remove();
+        return;
+      }
+      const ghostStyle = ghost ? window.getComputedStyle(ghost) : null;
+      row.classList.add('drag-handoff');
+      if (ghostStyle) {
+        row.style.backgroundColor = ghostStyle.backgroundColor;
+        row.style.borderColor = ghostStyle.borderColor;
+        row.style.boxShadow = ghostStyle.boxShadow;
+        row.style.color = ghostStyle.color;
+      }
+      row.classList.remove('drag-source');
+      if (ghost) ghost.remove();
+      if (immediate || prefersReducedToolMotion()) {
+        row.classList.remove('drag-handoff');
+        row.style.removeProperty('background-color');
+        row.style.removeProperty('border-color');
+        row.style.removeProperty('box-shadow');
+        row.style.removeProperty('color');
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        if (!row.isConnected) return;
+        row.classList.remove('drag-handoff');
+        window.requestAnimationFrame(() => {
+          if (!row.isConnected) return;
+          row.style.removeProperty('background-color');
+          row.style.removeProperty('border-color');
+          row.style.removeProperty('box-shadow');
+          row.style.removeProperty('color');
+        });
+      });
+    }
+
+    function flyNoteGhostTo(ghost, row, done) {
+      if (!ghost || !row || prefersReducedToolMotion()) {
+        if (done) done();
+        return;
+      }
+      const target = row.getBoundingClientRect();
+      const ghostRect = ghost.getBoundingClientRect();
+      const fromLeft = Number(ghost.dataset.dragLeft);
+      const fromTop = Number(ghost.dataset.dragTop);
+      const startLeft = Number.isFinite(fromLeft) ? fromLeft : ghostRect.left;
+      const startTop = Number.isFinite(fromTop) ? fromTop : ghostRect.top;
+      const distance = Math.hypot(target.left - startLeft, target.top - startTop);
+      const ghostStyle = window.getComputedStyle(ghost);
+      const targetStyle = window.getComputedStyle(row);
+      const duration = distance < 8
+        ? 130
+        : Math.max(300, Math.min(470, 270 + distance * 0.18));
+      const animation = ghost.animate([
+        {
+          transform: 'translate3d(' + startLeft + 'px,' + startTop + 'px,0) scale(1.028)',
+          opacity: 1,
+          backgroundColor: ghostStyle.backgroundColor,
+          borderColor: ghostStyle.borderColor,
+          boxShadow: ghostStyle.boxShadow,
+        },
+        {
+          transform: 'translate3d(' + target.left + 'px,' + target.top + 'px,0) scale(1)',
+          opacity: 1,
+          backgroundColor: targetStyle.backgroundColor,
+          borderColor: targetStyle.borderColor,
+          boxShadow: targetStyle.boxShadow,
+        },
+      ], {
+        duration,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        fill: 'forwards',
+      });
+      animation.finished.catch(() => undefined).then(() => {
+        if (done) done();
+      });
+    }
+
+    function restoreNoteDomOrder(order) {
+      order.forEach((id) => {
+        const row = list.querySelector('[data-note-id="' + CSS.escape(id) + '"]');
+        if (row) list.appendChild(row);
+      });
+    }
+
+    function syncMobileNoteOrder(order) {
+      const notesById = new Map(notebookNotes().map((note) => [note.id, note]));
+      const optionsById = new Map(
+        [...mobileSelect.options].map((option) => [option.value, option]),
+      );
+      order.forEach((id, index) => {
+        const option = optionsById.get(id);
+        const note = notesById.get(id);
+        if (!option || !note) return;
+        option.textContent = (index + 1) + '. ' + noteTitle(note);
+        mobileSelect.appendChild(option);
+      });
+      mobileSelect.value = activeId;
+    }
+
+    function finishNoteDrag(options) {
+      options = options || {};
+      const drag = noteDrag;
+      if (!drag) return false;
+      noteDrag = null;
+      clearNoteDragListeners(drag);
+      document.body.classList.remove('markdown-notebook-dragging');
+
+      if (!drag.active) return false;
+      noteDragClickGuard = drag.noteId;
+      window.setTimeout(() => {
+        if (noteDragClickGuard === drag.noteId) noteDragClickGuard = '';
+      }, 0);
+
+      if (options.cancel) {
+        if (options.immediate || prefersReducedToolMotion()) {
+          stopNoteFlipAnimations();
+          restoreNoteDomOrder(drag.originalOrder);
+        } else {
+          flipNoteRows(() => restoreNoteDomOrder(drag.originalOrder));
+        }
+      }
+
+      const domOrder = noteListRows().map((row) => row.dataset.noteId);
+      const changed = !options.cancel
+        && domOrder.some((id, index) => id !== drag.originalOrder[index]);
+      if (changed) {
+        const notes = notebookNotes();
+        const byId = new Map(notes.map((note) => [note.id, note]));
+        const ordered = domOrder.map((id) => byId.get(id)).filter(Boolean);
+        if (ordered.length === notes.length) notes.splice(0, notes.length, ...ordered);
+        touchNote(byId.get(drag.noteId));
+        syncMobileNoteOrder(domOrder);
+      }
+
+      const landingRow = list.querySelector(
+        '[data-note-id="' + CSS.escape(drag.noteId) + '"]',
+      );
+      if (landingRow) landingRow.classList.add('drag-source');
+      if (options.immediate) {
+        stopNoteFlipAnimations();
+        revealNoteLanding(landingRow, drag.ghost, true);
+      } else {
+        flyNoteGhostTo(drag.ghost, landingRow, () => revealNoteLanding(landingRow, drag.ghost));
+      }
+      return true;
+    }
+
+    function onNoteDragPointerUp(event) {
+      if (!noteDrag || event.pointerId !== noteDrag.pointerId) return;
+      if (noteDrag.active) {
+        if (noteDrag.frame) {
+          window.cancelAnimationFrame(noteDrag.frame);
+          noteDrag.frame = 0;
+        }
+        positionNoteDragGhost(noteDrag, event.clientX, event.clientY);
+        noteEdgeScroll(event.clientY);
+        liveReorderNote(event.clientY);
+      }
+      finishNoteDrag();
+    }
+
+    function onNoteDragPointerCancel(event) {
+      if (!noteDrag || event.pointerId !== noteDrag.pointerId) return;
+      finishNoteDrag({ cancel: true });
+    }
+
+    function beginNoteDrag(event, row, note) {
+      if (event.button !== 0 || notebookNotes().length < 2 || noteDrag) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = row.getBoundingClientRect();
+      noteDrag = {
+        noteId: note.id,
+        row,
+        handle: event.currentTarget,
+        pointerId: event.pointerId,
+        active: false,
+        ghost: null,
+        frame: 0,
+        startX: event.clientX,
+        startY: event.clientY,
+        pendingX: event.clientX,
+        pendingY: event.clientY,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        width: rect.width,
+        height: rect.height,
+        originalOrder: noteListRows().map((item) => item.dataset.noteId),
+      };
+      window.addEventListener('pointermove', onNoteDragPointerMove, { passive: false });
+      window.addEventListener('pointerup', onNoteDragPointerUp);
+      window.addEventListener('pointercancel', onNoteDragPointerCancel);
+    }
+
+    function renderList(options) {
+      options = options || {};
+      const notes = notebookNotes();
+      const visibleNotes = notes.length ? notes : (virtualNote ? [virtualNote] : []);
+      list.innerHTML = '';
+      mobileSelect.innerHTML = '';
+      visibleNotes.forEach((note, index) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'markdown-notebook-list-item';
+        row.dataset.noteId = note.id;
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', note.id === activeId ? 'true' : 'false');
+        row.classList.toggle('active', note.id === activeId);
+        row.classList.toggle('is-entering', note.id === options.enteringId);
+        row.innerHTML = '<span class="markdown-notebook-list-grip" aria-hidden="true">⋮⋮</span>'
+          + '<span class="markdown-notebook-list-copy"><strong></strong><small></small></span>';
+        row.querySelector('strong').textContent = noteTitle(note);
+        row.querySelector('small').textContent = noteLineLabel(note);
+        const grip = row.querySelector('.markdown-notebook-list-grip');
+        row.addEventListener('click', () => {
+          if (noteDragClickGuard !== note.id) selectNote(note.id);
+        });
+        grip.addEventListener('pointerdown', (event) => beginNoteDrag(event, row, note));
+        grip.addEventListener('click', (event) => event.stopPropagation());
+        list.appendChild(row);
+
+        const option = document.createElement('option');
+        option.value = note.id;
+        option.textContent = (index + 1) + '. ' + noteTitle(note);
+        option.selected = note.id === activeId;
+        mobileSelect.appendChild(option);
+      });
+      if (options.enteringId && !prefersReducedToolMotion()) {
+        const entering = list.querySelector('[data-note-id="' + CSS.escape(options.enteringId) + '"]');
+        if (entering) {
+          window.requestAnimationFrame(() => entering.classList.remove('is-entering'));
+        }
+      }
+    }
+
+    function renderPreview(revision) {
+      if (revision !== previewRevision || dialog.hidden) return;
+      const note = currentNote();
+      const markdown = String(note && note.markdown || '');
+      const title = noteTitle(note);
+      outlineModel = Notebook.parseOutline(title, markdown, { maxNodes: 200 });
+      preview.hidden = !markdown.trim();
+      if (previewEmpty) previewEmpty.hidden = !!markdown.trim();
+      if (markdown.trim()) {
+        const rendered = typeof window.MarkdownMini.renderResult === 'function'
+          ? window.MarkdownMini.renderResult(markdown)
+          : {
+            html: window.MarkdownMini.render(markdown),
+            features: window.MarkdownMini.structure.scanFeatures(markdown),
+          };
+        preview.dataset.notebookRenderRevision = String(revision);
+        preview.innerHTML = rendered.html;
+        const canvasApi = window.CanvasModule;
+        if (rendered.features.math && canvasApi
+            && typeof canvasApi.scheduleMarkdownMath === 'function') {
+          canvasApi.scheduleMarkdownMath(preview, markdown, true);
+        } else if (canvasApi && typeof canvasApi.clearMarkdownMath === 'function') {
+          canvasApi.clearMarkdownMath(preview);
+        }
+        if (rendered.features.mermaid && window.MermaidRenderer
+            && typeof window.MermaidRenderer.renderAll === 'function') {
+          Promise.resolve(window.MermaidRenderer.renderAll(preview)).then(() => {
+            if (revision !== previewRevision
+                || preview.dataset.notebookRenderRevision !== String(revision)) return;
+            preview.dataset.notebookRenderRevision = String(revision);
+          }).catch(() => {});
+        }
+      } else {
+        const canvasApi = window.CanvasModule;
+        if (canvasApi && typeof canvasApi.clearMarkdownMath === 'function') {
+          canvasApi.clearMarkdownMath(preview);
+        }
+        preview.innerHTML = '';
+      }
+      const count = outlineModel && outlineModel.ok
+        ? outlineModel.count
+        : (outlineModel && outlineModel.reason === 'too-many'
+          && Array.isArray(outlineModel.nodes) ? outlineModel.nodes.length : 0);
+      if (helpCount && helpDetail && helpLive) {
+        if (outlineModel && outlineModel.ok) {
+          helpCount.textContent = copyWithCount('markdownNotebookHelpReady', outlineModel.count);
+          helpDetail.textContent = copyWithCount(
+            'markdownNotebookHelpReadyDetail',
+            outlineModel.maxDepth,
+          );
+          helpLive.removeAttribute('data-tone');
+        } else if (outlineModel && outlineModel.reason === 'too-many') {
+          helpCount.textContent = toolbarCopy('markdownNotebookLimitError');
+          helpDetail.textContent = copyWithCount('markdownNotebookNodes', count);
+          helpLive.dataset.tone = 'error';
+        } else {
+          helpCount.textContent = toolbarCopy('markdownNotebookHelpEmpty');
+          helpDetail.textContent = toolbarCopy('markdownNotebookNeedStructure');
+          helpLive.removeAttribute('data-tone');
+        }
+      }
+      if (structureCount) structureCount.textContent = copyWithCount('markdownNotebookNodes', count);
+      if (structureDetail) {
+        structureDetail.textContent = outlineModel && outlineModel.ok
+          ? copyWithCount('markdownNotebookDepth', outlineModel.maxDepth)
+          : (outlineModel && outlineModel.reason === 'too-many'
+            ? toolbarCopy('markdownNotebookLimitError')
+            : toolbarCopy('markdownNotebookNeedStructure'));
+      }
+      if (previewMeta) previewMeta.textContent = count
+        ? copyWithCount('markdownNotebookNodes', count) : '';
+      if (generateButton) generateButton.disabled = !(outlineModel && outlineModel.ok);
+    }
+
+    function schedulePreview(immediate) {
+      if (previewTimer) window.clearTimeout(previewTimer);
+      const revision = ++previewRevision;
+      previewTimer = window.setTimeout(() => {
+        previewTimer = 0;
+        window.requestAnimationFrame(() => renderPreview(revision));
+      }, immediate ? 0 : 100);
+    }
+
+    function animateNoteSwitch() {
+      if (prefersReducedToolMotion()) return;
+      if (noteMotionTimer) window.clearTimeout(noteMotionTimer);
+      workspace.classList.remove('is-switching');
+      void workspace.offsetWidth;
+      workspace.classList.add('is-switching');
+      noteMotionTimer = window.setTimeout(() => {
+        workspace.classList.remove('is-switching');
+        noteMotionTimer = 0;
+      }, 180);
+    }
+
+    function selectNote(id, options) {
+      options = options || {};
+      const note = (virtualNote && virtualNote.id === id)
+        ? virtualNote : notebookNotes().find((item) => item.id === id);
+      if (!note) return;
+      activeId = note.id;
+      titleInput.value = note.title || '';
+      sourceInput.value = note.markdown || '';
+      setMessage('');
+      renderList({ enteringId: options.enteringId || '' });
+      schedulePreview(true);
+    }
+
+    function createVirtualIfEmpty() {
+      const notes = notebookNotes();
+      if (notes.length) {
+        virtualNote = null;
+        return notes[0];
+      }
+      if (!virtualNote) {
+        virtualNote = Notebook.createNote(toolbarCopy('markdownNotebookUntitled'), '');
+      }
+      return virtualNote;
+    }
+
+    function addNote() {
+      if (!canvasData) return;
+      const note = Notebook.createNote(toolbarCopy('markdownNotebookUntitled'), '');
+      ensureNotebook().notes.push(note);
+      virtualNote = null;
+      markDirty();
+      selectNote(note.id, { enteringId: note.id });
+      requestAnimationFrame(() => {
+        titleInput.focus();
+        titleInput.select();
+      });
+    }
+
+    function setNotebookShellBlocked(blocked) {
+      shell.inert = !!blocked;
+      if (blocked) shell.setAttribute('aria-hidden', 'true');
+      else shell.removeAttribute('aria-hidden');
+    }
+
+    function closeMindmapHelp(restoreFocus) {
+      helpButton.setAttribute('aria-expanded', 'false');
+      if (helpPopover.hidden) return false;
+      return concealToolLayer(helpPopover, () => {
+        if (restoreFocus !== false) helpButton.focus();
+      }, 180);
+    }
+
+    function toggleMindmapHelp() {
+      if (!helpPopover.hidden && !helpPopover.classList.contains('tool-layer-leaving')) {
+        closeMindmapHelp(true);
+        return;
+      }
+      helpButton.setAttribute('aria-expanded', 'true');
+      revealToolLayer(helpPopover);
+      schedulePreview(true);
+      window.requestAnimationFrame(() => {
+        if (helpCloseButton) helpCloseButton.focus({ preventScroll: true });
+      });
+    }
+
+    function closeDeleteConfirm(restoreFocus) {
+      if (deleteConfirm.hidden) return false;
+      const shouldRestore = restoreFocus !== false;
+      return concealToolLayer(deleteConfirm, () => {
+        setNotebookShellBlocked(false);
+        deleteConfirmButton.disabled = false;
+        pendingDeleteId = '';
+        if (shouldRestore && deleteButton.isConnected) deleteButton.focus();
+      }, 190);
+    }
+
+    function deleteNote() {
+      const note = currentNote();
+      if (!note || !deleteConfirm.hidden) return;
+      closeMindmapHelp(false);
+      pendingDeleteId = note.id;
+      if (deleteConfirmTitle) {
+        deleteConfirmTitle.textContent = copyWithTitle('markdownNotebookDeleteTitle', noteTitle(note));
+      }
+      deleteButton.classList.remove('is-acknowledged');
+      void deleteButton.offsetWidth;
+      deleteButton.classList.add('is-acknowledged');
+      window.setTimeout(() => deleteButton.classList.remove('is-acknowledged'), 200);
+      setNotebookShellBlocked(true);
+      revealToolLayer(deleteConfirm);
+      window.requestAnimationFrame(() => deleteCancelButton.focus({ preventScroll: true }));
+    }
+
+    function removeNoteById(noteId) {
+      if (!noteId) return;
+      if (virtualNote && noteId === virtualNote.id) {
+        virtualNote = null;
+      } else {
+        const notebook = ensureNotebook();
+        const index = notebook.notes.findIndex((item) => item.id === noteId);
+        if (index >= 0) notebook.notes.splice(index, 1);
+        if (!notebook.notes.length) delete canvasData.markdownNotebook;
+        markDirty();
+      }
+      const next = createVirtualIfEmpty();
+      selectNote(next.id);
+    }
+
+    function confirmDeleteNote() {
+      const noteId = pendingDeleteId;
+      if (!noteId || deleteConfirmButton.disabled) return;
+      deleteConfirmButton.disabled = true;
+      const row = list.querySelector('[data-note-id="' + CSS.escape(noteId) + '"]');
+      if (row) row.classList.add('is-removing');
+      closeDeleteConfirm(false);
+      window.setTimeout(() => removeNoteById(noteId), prefersReducedToolMotion() ? 0 : 175);
+    }
+
+    function captureCanvasSelection() {
+      capturedSelection = null;
+      if (window.CanvasModule && typeof window.CanvasModule.getSelectedMarkdownOutline === 'function') {
+        capturedSelection = window.CanvasModule.getSelectedMarkdownOutline();
+      }
+      const count = capturedSelection && Array.isArray(capturedSelection.nodes)
+        ? capturedSelection.nodes.length : 0;
+      const ignored = capturedSelection ? Number(capturedSelection.ignoredCount) || 0 : 0;
+      selectionLabel.textContent = count
+        ? copyWithCount('markdownNotebookSelected', count)
+          + (ignored ? copyWithCount('markdownNotebookIgnored', ignored) : '')
+        : toolbarCopy('markdownNotebookNoSelection');
+      appendButton.disabled = count < 1;
+    }
+
+    function appendSelection() {
+      if (!capturedSelection) return;
+      const result = Notebook.selectionToMarkdown(capturedSelection, {
+        untitled: toolbarCopy('markdownNotebookUntitled'),
+        fallbackTitle: toolbarLanguage === 'en' ? 'Canvas selection' : '画布选区',
+        relationLabel: toolbarLanguage === 'en' ? 'Relation' : '关系',
+        relationSeparator: toolbarLanguage === 'en' ? ': ' : '：',
+      });
+      if (!result.markdown.trim()) return;
+      let note = currentNote();
+      if (virtualNote && note === virtualNote) note = persistVirtual();
+      const start = sourceInput.selectionStart;
+      const end = sourceInput.selectionEnd;
+      const before = String(note.markdown || '');
+      const needsGap = before.slice(0, start).trim() ? '\n\n' : '';
+      const addition = needsGap + result.markdown.trimEnd();
+      note.markdown = before.slice(0, start) + addition + before.slice(end);
+      note.updatedAt = new Date().toISOString();
+      sourceInput.value = note.markdown;
+      const caret = start + addition.length;
+      sourceInput.setSelectionRange(caret, caret);
+      markDirty();
+      renderList();
+      schedulePreview();
+      setMessage(result.complex
+        ? toolbarCopy('markdownNotebookComplexSelection')
+        : toolbarCopy('markdownNotebookAppended'));
+      sourceInput.focus();
+    }
+
+    function close(restoreFocus) {
+      if (dialog.hidden || dialog.classList.contains('tool-layer-leaving')) return false;
+      if (noteDrag) finishNoteDrag({ cancel: true, immediate: true });
+      if (previewTimer) window.clearTimeout(previewTimer);
+      if (noteMotionTimer) window.clearTimeout(noteMotionTimer);
+      previewTimer = 0;
+      noteMotionTimer = 0;
+      previewRevision += 1;
+      workspace.classList.remove('is-switching');
+      closeMindmapHelp(false);
+      const focusTarget = restoreFocus !== false && returnFocus && returnFocus.isConnected
+        && !returnFocus.hidden
+        ? returnFocus : null;
+      topbarShortcut.classList.remove('open');
+      topbarShortcut.setAttribute('aria-expanded', 'false');
+      if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+        window.CanvasModule.setExternalOverlayOpen(false);
+      }
+      return concealToolLayer(dialog, () => {
+        setMessage('');
+        capturedSelection = null;
+        if (focusTarget) focusTarget.focus();
+        returnFocus = null;
+      }, 220);
+    }
+
+    function open(event) {
+      if (!canvasData || dialog.classList.contains('tool-layer-entering')) return;
+      const requestedReturnFocus = event && event.detail && event.detail.returnFocus;
+      returnFocus = requestedReturnFocus && requestedReturnFocus.isConnected
+        ? requestedReturnFocus
+        : document.querySelector('[data-action="tools"]');
+      if (!topbarShortcut.hidden) {
+        topbarShortcut.classList.add('open');
+        topbarShortcut.setAttribute('aria-expanded', 'true');
+      }
+      helpPopover.hidden = true;
+      helpPopover.classList.remove('tool-layer-entering', 'tool-layer-leaving');
+      helpButton.setAttribute('aria-expanded', 'false');
+      deleteConfirm.hidden = true;
+      deleteConfirm.classList.remove('tool-layer-entering', 'tool-layer-leaving');
+      deleteConfirmButton.disabled = false;
+      pendingDeleteId = '';
+      setNotebookShellBlocked(false);
+      const normalized = Notebook.normalizeNotebook(canvasData.markdownNotebook);
+      if (canvasData.markdownNotebook && normalized.notes.length) {
+        canvasData.markdownNotebook = normalized;
+      }
+      const first = createVirtualIfEmpty();
+      activeId = activeId && (normalized.notes.some((note) => note.id === activeId)
+        || (virtualNote && virtualNote.id === activeId)) ? activeId : first.id;
+      const defaults = readDefaults();
+      presetSelect.value = defaults.preset;
+      layoutSelect.value = defaults.layout;
+      split.dataset.activePane = 'edit';
+      paneButtons.forEach((button) => button.classList.toggle('active', button.dataset.notebookPane === 'edit'));
+      dialog.lang = toolbarLanguage;
+      setMessage('');
+      captureCanvasSelection();
+      selectNote(activeId);
+      revealToolLayer(dialog);
+      if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+        window.CanvasModule.setExternalOverlayOpen(true);
+      }
+      requestAnimationFrame(() => sourceInput.focus());
+    }
+
+    function generateMindmap() {
+      const note = currentNote();
+      outlineModel = Notebook.parseOutline(noteTitle(note), note && note.markdown || '', { maxNodes: 200 });
+      if (!outlineModel.ok) {
+        setMessage(
+          outlineModel.reason === 'too-many'
+            ? toolbarCopy('markdownNotebookLimitError')
+            : toolbarCopy('markdownNotebookEmptyError'),
+          'error',
+        );
+        return;
+      }
+      const api = window.CanvasModule;
+      if (!api || typeof api.createMindmapFromOutline !== 'function') {
+        setMessage(toolbarCopy('markdownNotebookUnavailable'), 'error');
+        return;
+      }
+      saveDefaults();
+      const result = api.createMindmapFromOutline(outlineModel, {
+        preset: presetSelect.value,
+        layout: layoutSelect.value,
+      });
+      if (!result || !result.ok) {
+        setMessage(toolbarCopy('markdownNotebookUnavailable'), 'error');
+        return;
+      }
+      if (window.EditorShell && typeof window.EditorShell.setMode === 'function') {
+        window.EditorShell.setMode('mindmap');
+      }
+      setMessage(toolbarCopy('markdownNotebookGenerated'));
+      close(false);
+    }
+
+    function commitSourceInput() {
+      let note = currentNote();
+      if (virtualNote && note === virtualNote) note = persistVirtual();
+      if (!note) return;
+      note.markdown = sourceInput.value;
+      touchNote(note);
+      updateActiveNoteMeta();
+      schedulePreview(false);
+    }
+
+    function replaceSourceRange(start, end, replacement) {
+      const before = sourceInput.value;
+      const expected = before.slice(0, start) + replacement + before.slice(end);
+      sourceInput.focus();
+      sourceInput.setSelectionRange(start, end);
+      let inserted = false;
+      try {
+        inserted = document.execCommand('insertText', false, replacement);
+      } catch (error) {}
+      if (!inserted || sourceInput.value !== expected) {
+        sourceInput.value = before;
+        sourceInput.setSelectionRange(start, end);
+        sourceInput.setRangeText(replacement, start, end, 'end');
+        commitSourceInput();
+      } else {
+        const note = currentNote();
+        if (!note || note.markdown !== expected) commitSourceInput();
+      }
+    }
+
+    function continueMarkdownList(event) {
+      if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
+          || event.isComposing || sourceInput.selectionStart !== sourceInput.selectionEnd) return false;
+      const edit = Notebook.listContinuation(
+        sourceInput.value,
+        sourceInput.selectionStart,
+        sourceInput.selectionEnd,
+      );
+      if (!edit) return false;
+      event.preventDefault();
+      replaceSourceRange(edit.start, edit.end, edit.text);
+      return true;
+    }
+
+    function handleNotebookEscape(event) {
+      if (event.key !== 'Escape' || dialog.hidden) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      if (noteDrag) {
+        finishNoteDrag({ cancel: true });
+        return true;
+      }
+      if (!deleteConfirm.hidden) {
+        closeDeleteConfirm(true);
+        return true;
+      }
+      if (!helpPopover.hidden) {
+        closeMindmapHelp(true);
+        return true;
+      }
+      // Esc 是“退出工作区”而不是“返回触发按钮”：不把键盘焦点锁到
+      // 顶栏的「笔记」或「工具」，让隐藏弹窗后的焦点自然回到画布环境。
+      close(false);
+      return true;
+    }
+
+    titleInput.addEventListener('input', () => {
+      let note = currentNote();
+      if (virtualNote && note === virtualNote) note = persistVirtual();
+      if (!note) return;
+      note.title = titleInput.value.slice(0, 120);
+      touchNote(note);
+      updateActiveNoteMeta();
+      schedulePreview(false);
+    });
+    sourceInput.addEventListener('input', commitSourceInput);
+    sourceInput.addEventListener('keydown', continueMarkdownList);
+    mobileSelect.addEventListener('change', () => selectNote(mobileSelect.value));
+    addButtons.forEach((button) => button.addEventListener('click', addNote));
+    topbarToggle.addEventListener('change', () => {
+      setNotebookTopbarShortcut(topbarToggle.checked);
+    });
+    topbarShortcut.addEventListener('click', () => {
+      document.dispatchEvent(new CustomEvent('editor:open-markdown-notebook', {
+        detail: { returnFocus: topbarShortcut },
+      }));
+    });
+    deleteButton.addEventListener('click', deleteNote);
+    helpButton.addEventListener('click', toggleMindmapHelp);
+    if (helpCloseButton) {
+      helpCloseButton.addEventListener('click', () => closeMindmapHelp(true));
+    }
+    deleteCancelButton.addEventListener('click', () => closeDeleteConfirm(true));
+    deleteConfirmButton.addEventListener('click', confirmDeleteNote);
+    closeButton.addEventListener('click', () => close(true));
+    appendButton.addEventListener('click', appendSelection);
+    generateButton.addEventListener('click', generateMindmap);
+    presetSelect.addEventListener('change', saveDefaults);
+    layoutSelect.addEventListener('change', saveDefaults);
+    paneButtons.forEach((button) => button.addEventListener('click', () => {
+      split.dataset.activePane = button.dataset.notebookPane;
+      paneButtons.forEach((item) => item.classList.toggle('active', item === button));
+      animateNoteSwitch();
+    }));
+    dialog.addEventListener('mousedown', (event) => {
+      if (event.target === deleteConfirm) {
+        closeDeleteConfirm(true);
+        return;
+      }
+      if (!helpPopover.hidden && event.target !== helpButton
+          && !helpPopover.contains(event.target)) {
+        closeMindmapHelp(false);
+      }
+      if (event.target === dialog) close(true);
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (handleNotebookEscape(event)) return;
+      event.stopPropagation();
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        save();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusRoot = !deleteConfirm.hidden ? deleteConfirm : dialog;
+      const focusable = [...focusRoot.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter((element) => !element.hidden && element.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    document.addEventListener('keydown', handleNotebookEscape, true);
+    document.addEventListener('editor:open-markdown-notebook', open);
+    list.addEventListener('dragstart', (event) => event.preventDefault());
+    window.addEventListener('blur', () => {
+      if (noteDrag) finishNoteDrag({ cancel: true, immediate: true });
+    });
+    document.addEventListener('editor:languagechange', () => {
+      dialog.lang = toolbarLanguage;
+      if (!dialog.hidden) {
+        if (noteDrag) finishNoteDrag({ cancel: true, immediate: true });
+        renderList();
+        captureCanvasSelection();
+        const note = currentNote();
+        if (!deleteConfirm.hidden && note && deleteConfirmTitle) {
+          deleteConfirmTitle.textContent = copyWithTitle(
+            'markdownNotebookDeleteTitle',
+            noteTitle(note),
+          );
+        }
+        schedulePreview();
+      }
+    });
+    syncNotebookTopbarShortcut(notebookTopbarShortcutEnabled());
+  })();
+
+  // ── 镜头册：相机书签、跟随选区章节与只读演示 ──
+  (function setupCanvasScenes() {
+    const panel = document.querySelector('[data-role="canvas-scenes-panel"]');
+    const panelHead = panel && panel.querySelector('.canvas-scenes-head');
+    const list = panel && panel.querySelector('[data-role="canvas-scenes-list"]');
+    const empty = panel && panel.querySelector('[data-role="canvas-scenes-empty"]');
+    const count = panel && panel.querySelector('[data-role="canvas-scenes-count"]');
+    const selectionStatus = panel && panel.querySelector('[data-role="canvas-scenes-selection-status"]');
+    const message = panel && panel.querySelector('[data-role="canvas-scenes-message"]');
+    const captureCameraButton = panel && panel.querySelector('[data-action="capture-camera-scene"]');
+    const captureSelectionButton = panel && panel.querySelector('[data-action="capture-selection-scene"]');
+    const captureGroupsButton = panel && panel.querySelector('[data-action="capture-group-scenes"]');
+    const presentButton = panel && panel.querySelector('[data-action="present-canvas-scenes"]');
+    const closeButton = panel && panel.querySelector('[data-action="close-canvas-scenes"]');
+    const presentation = document.querySelector('[data-role="canvas-scenes-presentation"]');
+    const presentationName = presentation
+      && presentation.querySelector('[data-role="canvas-scenes-presentation-name"]');
+    const presentationIndex = presentation
+      && presentation.querySelector('[data-role="canvas-scenes-presentation-index"]');
+    const restartButton = presentation
+      && presentation.querySelector('[data-action="restart-canvas-scenes-presentation"]');
+    const previousButton = presentation
+      && presentation.querySelector('[data-action="previous-canvas-scene"]');
+    const nextButton = presentation
+      && presentation.querySelector('[data-action="next-canvas-scene"]');
+    const exitButton = presentation
+      && presentation.querySelector('[data-action="exit-canvas-scenes-presentation"]');
+    const undoToast = document.querySelector('[data-role="canvas-scenes-undo"]');
+    const undoButton = undoToast
+      && undoToast.querySelector('[data-action="undo-delete-canvas-scene"]');
+    const Scenes = window.RelatumCanvasScenes;
+    if (!panel || !panelHead || !list || !empty || !presentation || !undoToast || !Scenes) return;
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const PANEL_POSITION_KEY = 'canvas:sceneBookPanelPosition:v1';
+    const PANEL_EDGE_GAP = 10;
+    const PANEL_SNAP_DISTANCE = 24;
+    let activeId = '';
+    let presentationIndexValue = -1;
+    let presenting = false;
+    let closeTimer = 0;
+    let messageTimer = 0;
+    let geometryTimer = 0;
+    let selectionTimer = 0;
+    let undoTimer = 0;
+    let undoState = null;
+    let dragState = null;
+    let panelDragState = null;
+    let renameState = null;
+    let hudTimer = 0;
+    const sceneFlipAnimations = new Map();
+
+    function api() {
+      return window.CanvasModule || null;
+    }
+
+    function reducedMotion() {
+      return !!(window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    function narrowSceneLayout() {
+      return !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
+    }
+
+    function readPanelPosition() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(PANEL_POSITION_KEY) || 'null');
+        if (!parsed || typeof parsed !== 'object') return null;
+        const left = Number(parsed && parsed.left);
+        const top = Number(parsed && parsed.top);
+        return Number.isFinite(left) && Number.isFinite(top) ? { left, top } : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function savePanelPosition(left, top) {
+      try {
+        localStorage.setItem(PANEL_POSITION_KEY, JSON.stringify({ left, top }));
+      } catch (error) {}
+    }
+
+    function panelPositionLimits() {
+      const rect = panel.getBoundingClientRect();
+      return {
+        minLeft: PANEL_EDGE_GAP,
+        maxLeft: Math.max(PANEL_EDGE_GAP, window.innerWidth - rect.width - PANEL_EDGE_GAP),
+        minTop: PANEL_EDGE_GAP,
+        maxTop: Math.max(PANEL_EDGE_GAP, window.innerHeight - rect.height - PANEL_EDGE_GAP),
+      };
+    }
+
+    function applyPanelPosition(left, top, persist, snapHorizontal) {
+      if (narrowSceneLayout()) return null;
+      const limits = panelPositionLimits();
+      let nextLeft = Math.max(limits.minLeft, Math.min(limits.maxLeft, Number(left)));
+      const nextTop = Math.max(limits.minTop, Math.min(limits.maxTop, Number(top)));
+      if (!Number.isFinite(nextLeft) || !Number.isFinite(nextTop)) return null;
+      if (snapHorizontal) {
+        if (Math.abs(nextLeft - limits.minLeft) <= PANEL_SNAP_DISTANCE) {
+          nextLeft = limits.minLeft;
+        } else if (Math.abs(nextLeft - limits.maxLeft) <= PANEL_SNAP_DISTANCE) {
+          nextLeft = limits.maxLeft;
+        }
+      }
+      panel.style.setProperty('--canvas-scenes-left', nextLeft + 'px');
+      panel.style.setProperty('--canvas-scenes-top', nextTop + 'px');
+      if (persist) savePanelPosition(nextLeft, nextTop);
+      return { left: nextLeft, top: nextTop };
+    }
+
+    function restorePanelPosition() {
+      if (narrowSceneLayout()) return;
+      const saved = readPanelPosition();
+      if (saved) applyPanelPosition(saved.left, saved.top, false);
+      else {
+        panel.style.removeProperty('--canvas-scenes-left');
+        panel.style.removeProperty('--canvas-scenes-top');
+      }
+    }
+
+    function positionPanelDragFrame() {
+      const state = panelDragState;
+      if (!state || !state.active) return;
+      state.frame = 0;
+      applyPanelPosition(
+        state.startLeft + state.pendingX - state.startX,
+        state.startTop + state.pendingY - state.startY,
+        false,
+        true,
+      );
+    }
+
+    function schedulePanelDragFrame(clientX, clientY) {
+      if (!panelDragState) return;
+      panelDragState.pendingX = clientX;
+      panelDragState.pendingY = clientY;
+      if (!panelDragState.frame) {
+        panelDragState.frame = window.requestAnimationFrame(positionPanelDragFrame);
+      }
+    }
+
+    function activatePanelDrag() {
+      const state = panelDragState;
+      if (!state || state.active) return;
+      state.active = true;
+      try { panelHead.setPointerCapture(state.pointerId); } catch (error) {}
+      panel.classList.add('is-moving');
+      document.body.classList.add('canvas-scenes-panel-moving');
+    }
+
+    function onPanelDragMove(event) {
+      if (!panelDragState || event.pointerId !== panelDragState.pointerId) return;
+      const dx = event.clientX - panelDragState.startX;
+      const dy = event.clientY - panelDragState.startY;
+      if (!panelDragState.active) {
+        if (Math.hypot(dx, dy) < 6) return;
+        activatePanelDrag();
+      }
+      event.preventDefault();
+      schedulePanelDragFrame(event.clientX, event.clientY);
+    }
+
+    function clearPanelDragListeners(state) {
+      window.removeEventListener('pointermove', onPanelDragMove);
+      window.removeEventListener('pointerup', onPanelDragEnd);
+      window.removeEventListener('pointercancel', onPanelDragCancel);
+      if (state && state.frame) window.cancelAnimationFrame(state.frame);
+      if (state) state.frame = 0;
+      try {
+        if (state) panelHead.releasePointerCapture(state.pointerId);
+      } catch (error) {}
+    }
+
+    function finishPanelDrag(cancel) {
+      const state = panelDragState;
+      if (!state) return false;
+      panelDragState = null;
+      clearPanelDragListeners(state);
+      panel.classList.remove('is-moving');
+      document.body.classList.remove('canvas-scenes-panel-moving');
+      if (!state.active) return false;
+      if (cancel) {
+        applyPanelPosition(state.startLeft, state.startTop, false);
+        return true;
+      }
+      const rect = panel.getBoundingClientRect();
+      applyPanelPosition(rect.left, rect.top, true, true);
+      return true;
+    }
+
+    function onPanelDragEnd(event) {
+      if (!panelDragState || event.pointerId !== panelDragState.pointerId) return;
+      if (panelDragState.active) {
+        if (panelDragState.frame) {
+          window.cancelAnimationFrame(panelDragState.frame);
+          panelDragState.frame = 0;
+        }
+        applyPanelPosition(
+          panelDragState.startLeft + event.clientX - panelDragState.startX,
+          panelDragState.startTop + event.clientY - panelDragState.startY,
+          false,
+          true,
+        );
+      }
+      finishPanelDrag(false);
+    }
+
+    function onPanelDragCancel(event) {
+      if (!panelDragState || event.pointerId !== panelDragState.pointerId) return;
+      finishPanelDrag(true);
+    }
+
+    function beginPanelDrag(event) {
+      if (event.button !== 0 || narrowSceneLayout() || panelDragState || dragState) return;
+      if (event.target.closest('button, input, textarea, select, a')) return;
+      const rect = panel.getBoundingClientRect();
+      panelDragState = {
+        pointerId: event.pointerId,
+        active: false,
+        frame: 0,
+        startX: event.clientX,
+        startY: event.clientY,
+        pendingX: event.clientX,
+        pendingY: event.clientY,
+        startLeft: rect.left,
+        startTop: rect.top,
+      };
+      window.addEventListener('pointermove', onPanelDragMove, { passive: false });
+      window.addEventListener('pointerup', onPanelDragEnd);
+      window.addEventListener('pointercancel', onPanelDragCancel);
+    }
+
+    function resetPanelPosition(event) {
+      if (event && event.target.closest('button, input, textarea, select, a')) return;
+      if (narrowSceneLayout() || panelDragState) return;
+      try { localStorage.removeItem(PANEL_POSITION_KEY); } catch (error) {}
+      panel.classList.add('is-resetting');
+      panel.getBoundingClientRect();
+      panel.style.removeProperty('--canvas-scenes-left');
+      panel.style.removeProperty('--canvas-scenes-top');
+      window.setTimeout(() => panel.classList.remove('is-resetting'), 230);
+    }
+
+    function copy(key, replacements) {
+      let value = toolbarCopy(key);
+      Object.keys(replacements || {}).forEach((name) => {
+        value = value.replace('{' + name + '}', String(replacements[name]));
+      });
+      return value;
+    }
+
+    function currentBook() {
+      if (!canvasData || typeof canvasData !== 'object') return Scenes.normalizeBook(null);
+      return Scenes.normalizeBook(canvasData.sceneBook);
+    }
+
+    function commitBook(book) {
+      if (!canvasData || typeof canvasData !== 'object') return false;
+      const normalized = Scenes.normalizeBook(book);
+      if (normalized.scenes.length) canvasData.sceneBook = normalized;
+      else delete canvasData.sceneBook;
+      markDirty();
+      render();
+      return true;
+    }
+
+    function sceneInsets() {
+      if (!viewportEl || panel.hidden || presenting) {
+        return { left: 0, right: 0, top: 0, bottom: 0 };
+      }
+      const viewportRect = viewportEl.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      if (narrowSceneLayout()) {
+        return {
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: Math.max(0, viewportRect.bottom - panelRect.top + 12),
+        };
+      }
+      const panelCenter = panelRect.left + panelRect.width / 2;
+      const viewportCenter = viewportRect.left + viewportRect.width / 2;
+      if (panelCenter <= viewportCenter) {
+        return {
+          left: Math.max(0, panelRect.right - viewportRect.left + 12),
+          right: 0,
+          top: 0,
+          bottom: 0,
+        };
+      }
+      return {
+        left: 0,
+        right: Math.max(0, viewportRect.right - panelRect.left + 12),
+        top: 0,
+        bottom: 0,
+      };
+    }
+
+    function focusViewport() {
+      if (!viewportEl) return;
+      if (!viewportEl.hasAttribute('tabindex')) {
+        viewportEl.setAttribute('tabindex', '-1');
+        viewportEl.dataset.sceneFocusTarget = 'true';
+      }
+      try { viewportEl.focus({ preventScroll: true }); } catch (error) { viewportEl.focus(); }
+    }
+
+    function showMessage(text, tone) {
+      if (!message) return;
+      if (messageTimer) window.clearTimeout(messageTimer);
+      message.textContent = text || '';
+      message.dataset.tone = tone || '';
+      if (!text) return;
+      messageTimer = window.setTimeout(() => {
+        messageTimer = 0;
+        message.textContent = '';
+        delete message.dataset.tone;
+      }, 2600);
+    }
+
+    function defaultTitle(index) {
+      return copy('canvasScenesDefaultName', { count: index + 1 });
+    }
+
+    function capture(source) {
+      const canvasApi = api();
+      if (!canvasApi || typeof canvasApi.captureScene !== 'function') return null;
+      try {
+        return canvasApi.captureScene({ source: source, insets: sceneInsets() });
+      } catch (error) {
+        console.warn('[Scenes] capture failed', error);
+        return null;
+      }
+    }
+
+    function createFromSeed(seed, title, book) {
+      return Scenes.createScene({
+        title: String(title || seed.titleHint || defaultTitle(book.scenes.length)).trim(),
+        kind: seed.kind,
+        camera: seed.camera,
+        anchorNodeIds: seed.anchorNodeIds,
+        anchorGroupIds: seed.anchorGroupIds,
+      });
+    }
+
+    function createScene(source) {
+      const seed = capture(source);
+      if (!seed) {
+        showMessage(copy('canvasScenesUnavailable'), 'error');
+        return;
+      }
+      if (!seed.ok) {
+        showMessage(copy('canvasScenesNoSelection'), 'error');
+        refreshSelectionStatus();
+        return;
+      }
+      const book = currentBook();
+      const scene = createFromSeed(seed, seed.titleHint, book);
+      book.scenes.push(scene);
+      activeId = scene.id;
+      commitBook(book);
+      showMessage(copy('canvasScenesCreated'), 'success');
+    }
+
+    function createGroupScenes() {
+      const canvasApi = api();
+      if (!canvasApi || typeof canvasApi.captureSelectedGroupsAsScenes !== 'function') {
+        showMessage(copy('canvasScenesUnavailable'), 'error');
+        return;
+      }
+      let seeds = [];
+      try {
+        seeds = canvasApi.captureSelectedGroupsAsScenes({ insets: sceneInsets() }) || [];
+      } catch (error) {
+        console.warn('[Scenes] group capture failed', error);
+      }
+      if (!seeds.length) {
+        showMessage(copy('canvasScenesNoGroups'), 'error');
+        return;
+      }
+      const book = currentBook();
+      seeds.forEach((seed) => {
+        const scene = createFromSeed(seed, seed.titleHint, book);
+        book.scenes.push(scene);
+        activeId = scene.id;
+      });
+      commitBook(book);
+      showMessage(copy('canvasScenesGroupsCreated', { count: seeds.length }), 'success');
+    }
+
+    function navigate(scene, options) {
+      const canvasApi = api();
+      if (!canvasApi || typeof canvasApi.navigateToScene !== 'function') return false;
+      try {
+        canvasApi.navigateToScene(scene, Object.assign({
+          insets: presenting ? null : sceneInsets(),
+        }, options || {}));
+        activeId = scene.id;
+        if (!presenting) renderActiveState();
+        return true;
+      } catch (error) {
+        console.warn('[Scenes] navigation failed', error);
+        return false;
+      }
+    }
+
+    function previewGeometry(scene) {
+      const canvasApi = api();
+      if (!canvasApi || typeof canvasApi.getScenePreviewGeometry !== 'function') return null;
+      try {
+        return canvasApi.getScenePreviewGeometry(scene, { insets: sceneInsets() });
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function svgElement(name, attributes) {
+      const element = document.createElementNS(SVG_NS, name);
+      Object.keys(attributes || {}).forEach((key) => {
+        element.setAttribute(key, String(attributes[key]));
+      });
+      return element;
+    }
+
+    function createThumbnail(scene, geometry) {
+      const wrap = document.createElement('span');
+      wrap.className = 'canvas-scene-thumb';
+      wrap.setAttribute('aria-hidden', 'true');
+      const svg = svgElement('svg', { viewBox: '0 0 168 94', preserveAspectRatio: 'xMidYMid meet' });
+      wrap.appendChild(svg);
+      if (!geometry || !geometry.bounds) return wrap;
+      const bounds = geometry.bounds;
+      const width = Math.max(1, Number(bounds.maxX) - Number(bounds.minX));
+      const height = Math.max(1, Number(bounds.maxY) - Number(bounds.minY));
+      const scale = Math.min(150 / width, 76 / height);
+      const offsetX = 84 - width * scale / 2;
+      const offsetY = 47 - height * scale / 2;
+      const byId = new Map();
+      (geometry.nodes || []).forEach((node) => byId.set(node.id, node));
+      const point = (node) => ({
+        x: offsetX + (node.x - bounds.minX + node.w / 2) * scale,
+        y: offsetY + (node.y - bounds.minY + node.h / 2) * scale,
+      });
+      (geometry.edges || []).forEach((edge) => {
+        const from = byId.get(edge.from);
+        const to = byId.get(edge.to);
+        if (!from || !to) return;
+        const a = point(from);
+        const b = point(to);
+        svg.appendChild(svgElement('line', {
+          x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'canvas-scene-thumb-edge',
+        }));
+      });
+      (geometry.nodes || []).forEach((node) => {
+        const x = offsetX + (node.x - bounds.minX) * scale;
+        const y = offsetY + (node.y - bounds.minY) * scale;
+        svg.appendChild(svgElement('rect', {
+          x: x,
+          y: y,
+          width: Math.max(3, node.w * scale),
+          height: Math.max(2.4, node.h * scale),
+          rx: Math.min(4, Math.max(1, 3 * scale)),
+          class: node.group ? 'canvas-scene-thumb-group' : 'canvas-scene-thumb-node',
+        }));
+      });
+      return wrap;
+    }
+
+    function sceneBadge(scene, geometry) {
+      if (scene.kind !== 'selection') return copy('canvasScenesCamera');
+      if (geometry && geometry.usedFallback) return copy('canvasScenesMissing');
+      if (geometry && geometry.missingCount) return copy('canvasScenesPartialMissing');
+      return copy('canvasScenesFollow');
+    }
+
+    function iconButton(action, label, path) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.action = action;
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      const svg = svgElement('svg', { viewBox: '0 0 18 18', 'aria-hidden': 'true' });
+      svg.appendChild(svgElement('path', { d: path }));
+      button.appendChild(svg);
+      return button;
+    }
+
+    function sceneCard(scene, index) {
+      const geometry = previewGeometry(scene);
+      const card = document.createElement('article');
+      card.className = 'canvas-scene-card';
+      card.dataset.sceneId = scene.id;
+      card.setAttribute('role', 'listitem');
+      if (scene.id === activeId) card.classList.add('active');
+      if (geometry && geometry.usedFallback) card.classList.add('is-missing');
+
+      const main = document.createElement('button');
+      main.type = 'button';
+      main.className = 'canvas-scene-main';
+      main.dataset.action = 'navigate-canvas-scene';
+      main.appendChild(createThumbnail(scene, geometry));
+
+      const meta = document.createElement('span');
+      meta.className = 'canvas-scene-meta';
+      const heading = document.createElement('span');
+      heading.className = 'canvas-scene-heading';
+      const sequence = document.createElement('span');
+      sequence.className = 'canvas-scene-sequence';
+      sequence.setAttribute('aria-hidden', 'true');
+      sequence.textContent = String(index + 1).padStart(2, '0');
+      const title = document.createElement('strong');
+      title.className = 'canvas-scene-title';
+      title.textContent = scene.title || copy('canvasScenesUntitled');
+      const badge = document.createElement('span');
+      badge.className = 'canvas-scene-badge';
+      badge.textContent = sceneBadge(scene, geometry);
+      heading.append(sequence, title);
+      meta.append(heading, badge);
+      main.appendChild(meta);
+      if (scene.id === activeId) main.setAttribute('aria-current', 'true');
+
+      const actions = document.createElement('div');
+      actions.className = 'canvas-scene-actions';
+      const grip = iconButton(
+        'drag-canvas-scene',
+        copy('canvasScenesList'),
+        'M6 4.5h.01M6 9h.01M6 13.5h.01M12 4.5h.01M12 9h.01M12 13.5h.01',
+      );
+      grip.className = 'canvas-scene-grip';
+      grip.dataset.sceneGrip = 'true';
+      const update = iconButton(
+        'update-canvas-scene',
+        copy('canvasScenesUpdate'),
+        'M14.2 6.5A5.6 5.6 0 1 0 15 10M14.2 3.5v3h-3',
+      );
+      const rename = iconButton(
+        'rename-canvas-scene',
+        copy('canvasScenesRename'),
+        'm4 13.8.7-3.1 6.8-6.8 2.4 2.4-6.8 6.8zM10.7 4.7l2.4 2.4',
+      );
+      const remove = iconButton(
+        'delete-canvas-scene',
+        copy('canvasScenesDelete'),
+        'M4.5 5.5h9M7 5.5v-2h4v2M6 7.5v6M9 7.5v6M12 7.5v6M5.3 5.5l.5 9h6.4l.5-9',
+      );
+      actions.append(grip, update, rename, remove);
+      card.append(main, actions);
+      return card;
+    }
+
+    function renderActiveState() {
+      list.querySelectorAll('[data-scene-id]').forEach((card) => {
+        const active = card.dataset.sceneId === activeId;
+        card.classList.toggle('active', active);
+        const main = card.querySelector('.canvas-scene-main');
+        if (!main) return;
+        if (active) main.setAttribute('aria-current', 'true');
+        else main.removeAttribute('aria-current');
+      });
+    }
+
+    function render() {
+      if (panel.hidden || dragState || renameState) return;
+      const book = currentBook();
+      if (activeId && !book.scenes.some((scene) => scene.id === activeId)) activeId = '';
+      const fragment = document.createDocumentFragment();
+      book.scenes.forEach((scene, index) => fragment.appendChild(sceneCard(scene, index)));
+      list.replaceChildren(fragment);
+      empty.hidden = book.scenes.length > 0;
+      list.hidden = book.scenes.length === 0;
+      if (count) count.textContent = String(book.scenes.length);
+      if (presentButton) presentButton.disabled = book.scenes.length === 0;
+    }
+
+    function refreshSelectionStatus() {
+      if (panel.hidden || presenting) return;
+      const seed = capture('selection');
+      if (!seed || !seed.ok) {
+        if (selectionStatus) selectionStatus.textContent = copy('canvasScenesSelectionHint');
+        if (captureSelectionButton) captureSelectionButton.disabled = true;
+        return;
+      }
+      const selectedCount = (seed.anchorNodeIds || []).length + (seed.anchorGroupIds || []).length;
+      let label = copy('canvasScenesSelectionReady', { count: selectedCount });
+      if (seed.ignoredCount) {
+        label += copy('canvasScenesIgnored', { count: seed.ignoredCount });
+      }
+      if (selectionStatus) selectionStatus.textContent = label;
+      if (captureSelectionButton) captureSelectionButton.disabled = false;
+    }
+
+    function scheduleSelectionRefresh() {
+      if (selectionTimer) window.clearTimeout(selectionTimer);
+      selectionTimer = window.setTimeout(() => {
+        selectionTimer = 0;
+        refreshSelectionStatus();
+      }, 40);
+    }
+
+    function scheduleGeometryRefresh() {
+      if (geometryTimer) window.clearTimeout(geometryTimer);
+      geometryTimer = window.setTimeout(() => {
+        geometryTimer = 0;
+        if (!panel.hidden && !presenting && !dragState && !renameState) render();
+      }, 140);
+    }
+
+    function open() {
+      if (closeTimer) {
+        window.clearTimeout(closeTimer);
+        closeTimer = 0;
+      }
+      panel.hidden = false;
+      restorePanelPosition();
+      panel.classList.remove('is-closing');
+      document.body.classList.add('canvas-scenes-open');
+      requestAnimationFrame(() => panel.classList.add('is-open'));
+      render();
+      scheduleSelectionRefresh();
+    }
+
+    function close(options) {
+      const settings = options || {};
+      if (presenting) exitPresentation({ focus: false });
+      if (dragState) finishDrag({ cancel: true, immediate: true });
+      if (panelDragState) finishPanelDrag(true);
+      finishRename(false);
+      document.body.classList.remove('canvas-scenes-open');
+      panel.classList.remove('is-open');
+      panel.classList.add('is-closing');
+      const finish = () => {
+        closeTimer = 0;
+        panel.hidden = true;
+        panel.classList.remove('is-closing');
+        if (settings.focus !== false) focusViewport();
+      };
+      if (settings.immediate || reducedMotion()) finish();
+      else closeTimer = window.setTimeout(finish, 170);
+    }
+
+    function sceneById(id) {
+      return currentBook().scenes.find((scene) => scene.id === id) || null;
+    }
+
+    function updateScene(scene) {
+      if (!scene) return;
+      const source = scene.kind === 'selection' ? 'selection' : 'camera';
+      const seed = capture(source);
+      if (!seed || !seed.ok) {
+        showMessage(source === 'selection'
+          ? copy('canvasScenesNoSelection') : copy('canvasScenesUnavailable'), 'error');
+        return;
+      }
+      const book = currentBook();
+      const index = book.scenes.findIndex((item) => item.id === scene.id);
+      if (index < 0) return;
+      book.scenes[index] = Scenes.updateScene(scene, {
+        kind: seed.kind,
+        camera: seed.camera,
+        anchorNodeIds: seed.anchorNodeIds,
+        anchorGroupIds: seed.anchorGroupIds,
+      });
+      commitBook(book);
+      showMessage(copy('canvasScenesUpdated'), 'success');
+    }
+
+    function beginRename(scene, card) {
+      finishRename(false);
+      const title = card && card.querySelector('.canvas-scene-title');
+      if (!title) return;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 80;
+      input.value = scene.title || '';
+      input.className = 'canvas-scene-title-input';
+      input.setAttribute('aria-label', copy('canvasScenesRename'));
+      title.hidden = true;
+      title.after(input);
+      card.classList.add('is-renaming');
+      renameState = { sceneId: scene.id, card: card, title: title, input: input };
+      input.focus();
+      input.select();
+    }
+
+    function finishRename(saveChange) {
+      const state = renameState;
+      if (!state) return;
+      renameState = null;
+      const value = state.input.value.trim();
+      state.input.remove();
+      state.title.hidden = false;
+      state.card.classList.remove('is-renaming');
+      if (!saveChange) return;
+      const book = currentBook();
+      const index = book.scenes.findIndex((scene) => scene.id === state.sceneId);
+      if (index < 0) return;
+      const previous = book.scenes[index];
+      const nextTitle = value || copy('canvasScenesUntitled');
+      if (nextTitle === previous.title) return;
+      book.scenes[index] = Scenes.updateScene(previous, { title: nextTitle });
+      commitBook(book);
+    }
+
+    function hideUndo() {
+      if (undoTimer) window.clearTimeout(undoTimer);
+      undoTimer = 0;
+      undoState = null;
+      undoToast.classList.remove('is-visible');
+      const finish = () => { undoToast.hidden = true; };
+      if (reducedMotion()) finish();
+      else window.setTimeout(finish, 150);
+    }
+
+    function deleteScene(scene) {
+      if (!scene) return;
+      const book = currentBook();
+      const index = book.scenes.findIndex((item) => item.id === scene.id);
+      if (index < 0) return;
+      undoState = { scene: book.scenes[index], index: index };
+      book.scenes.splice(index, 1);
+      if (activeId === scene.id) activeId = '';
+      commitBook(book);
+      undoToast.hidden = false;
+      requestAnimationFrame(() => undoToast.classList.add('is-visible'));
+      if (undoTimer) window.clearTimeout(undoTimer);
+      undoTimer = window.setTimeout(hideUndo, 5200);
+    }
+
+    function undoDelete() {
+      if (!undoState) return;
+      const state = undoState;
+      if (undoTimer) window.clearTimeout(undoTimer);
+      undoTimer = 0;
+      const book = currentBook();
+      book.scenes.splice(Math.max(0, Math.min(state.index, book.scenes.length)), 0, state.scene);
+      activeId = state.scene.id;
+      undoState = null;
+      undoToast.classList.remove('is-visible');
+      undoToast.hidden = true;
+      commitBook(book);
+    }
+
+    function sceneRows() {
+      return [...list.querySelectorAll('.canvas-scene-card[data-scene-id]')];
+    }
+
+    function syncSceneSequenceLabels() {
+      sceneRows().forEach((row, index) => {
+        const sequence = row.querySelector('.canvas-scene-sequence');
+        if (sequence) sequence.textContent = String(index + 1).padStart(2, '0');
+      });
+      if (dragState && dragState.ghost) {
+        const source = dragState.row.querySelector('.canvas-scene-sequence');
+        const ghost = dragState.ghost.querySelector('.canvas-scene-sequence');
+        if (source && ghost) ghost.textContent = source.textContent;
+      }
+    }
+
+    function stopSceneFlipAnimations() {
+      sceneFlipAnimations.forEach((animation) => animation.cancel());
+      sceneFlipAnimations.clear();
+    }
+
+    function flipSceneRows(mutate) {
+      if (reducedMotion()) {
+        mutate();
+        return;
+      }
+      const rows = sceneRows();
+      const before = new Map();
+      rows.forEach((row) => before.set(row, row.getBoundingClientRect()));
+      mutate();
+      rows.forEach((row) => {
+        const animation = sceneFlipAnimations.get(row);
+        if (animation) animation.cancel();
+      });
+      rows.forEach((row) => {
+        if (dragState && row === dragState.row) return;
+        const oldRect = before.get(row);
+        if (!oldRect) return;
+        const nextRect = row.getBoundingClientRect();
+        const dx = oldRect.left - nextRect.left;
+        const dy = oldRect.top - nextRect.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        const distance = Math.hypot(dx, dy);
+        const animation = row.animate([
+          { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
+          { transform: 'translate3d(0,0,0)' },
+        ], {
+          duration: Math.max(170, Math.min(280, 160 + distance * 0.28)),
+          easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)',
+        });
+        sceneFlipAnimations.set(row, animation);
+        animation.finished.catch(() => undefined).then(() => {
+          if (sceneFlipAnimations.get(row) === animation) sceneFlipAnimations.delete(row);
+        });
+      });
+    }
+
+    function clearTextSelection() {
+      const selection = window.getSelection && window.getSelection();
+      if (selection && typeof selection.removeAllRanges === 'function') selection.removeAllRanges();
+    }
+
+    function positionSceneDragGhost(state, clientX, clientY) {
+      if (!state || !state.ghost) return;
+      const left = clientX - state.offsetX;
+      const top = clientY - state.offsetY;
+      state.ghostLeft = left;
+      state.ghostTop = top;
+      state.ghost.style.transform = 'translate3d(' + left + 'px,' + top + 'px,0) scale(1.028)';
+      state.ghost.dataset.dragLeft = String(left);
+      state.ghost.dataset.dragTop = String(top);
+    }
+
+    function sceneInsertPoint(clientY) {
+      if (!dragState) return null;
+      const rows = sceneRows().filter((row) => row !== dragState.row);
+      let beforeNode = null;
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (clientY < rect.top + rect.height / 2) {
+          beforeNode = row;
+          break;
+        }
+      }
+      return beforeNode;
+    }
+
+    function liveReorderScene(clientY) {
+      if (!dragState) return;
+      const beforeNode = sceneInsertPoint(clientY);
+      if (dragState.row.nextElementSibling === beforeNode) return;
+      flipSceneRows(() => {
+        list.insertBefore(dragState.row, beforeNode);
+        syncSceneSequenceLabels();
+      });
+    }
+
+    function sceneEdgeScroll(clientY) {
+      const rect = list.getBoundingClientRect();
+      const edge = Math.min(42, Math.max(28, rect.height * 0.12));
+      let velocity = 0;
+      if (clientY < rect.top + edge) {
+        velocity = -Math.ceil(10 * (rect.top + edge - clientY) / edge);
+      } else if (clientY > rect.bottom - edge) {
+        velocity = Math.ceil(10 * (clientY - (rect.bottom - edge)) / edge);
+      }
+      if (!velocity) return false;
+      const previous = list.scrollTop;
+      list.scrollTop += velocity;
+      return Math.abs(list.scrollTop - previous) > 0.5;
+    }
+
+    function runSceneDragFrame() {
+      const state = dragState;
+      if (!state || !state.active) return;
+      state.frame = 0;
+      positionSceneDragGhost(state, state.pendingX, state.pendingY);
+      const scrolled = sceneEdgeScroll(state.pendingY);
+      liveReorderScene(state.pendingY);
+      if (scrolled && dragState === state) {
+        state.frame = window.requestAnimationFrame(runSceneDragFrame);
+      }
+    }
+
+    function scheduleSceneDragFrame(clientX, clientY) {
+      if (!dragState) return;
+      dragState.pendingX = clientX;
+      dragState.pendingY = clientY;
+      if (!dragState.frame) {
+        dragState.frame = window.requestAnimationFrame(runSceneDragFrame);
+      }
+    }
+
+    function activateSceneDrag() {
+      const state = dragState;
+      if (!state || state.active) return;
+      try { state.handle.setPointerCapture(state.pointerId); } catch (error) {}
+      stopSceneFlipAnimations();
+      clearTextSelection();
+      const ghost = state.row.cloneNode(true);
+      const rowStyle = window.getComputedStyle(state.row);
+      const panelStyle = window.getComputedStyle(panel);
+      ghost.classList.add('canvas-scene-drag-ghost');
+      ghost.classList.remove('active', 'is-renaming', 'is-drag-placeholder', 'is-drag-handoff');
+      ghost.setAttribute('aria-hidden', 'true');
+      ghost.tabIndex = -1;
+      ghost.style.width = state.width + 'px';
+      ghost.style.height = state.height + 'px';
+      ghost.style.color = rowStyle.color;
+      [
+        '--scene-surface',
+        '--scene-workbench',
+        '--scene-hover',
+        '--scene-text',
+        '--scene-muted',
+        '--scene-border',
+        '--scene-border-strong',
+      ].forEach((name) => {
+        const value = panelStyle.getPropertyValue(name).trim();
+        if (value) ghost.style.setProperty(name, value);
+      });
+      ghost.style.background = panelStyle.getPropertyValue('--scene-surface').trim()
+        || rowStyle.backgroundColor;
+      ghost.style.borderColor = rowStyle.borderColor;
+      ghost.style.transition = 'none';
+      ghost.style.animation = 'none';
+      state.ghost = ghost;
+      positionSceneDragGhost(state, state.startX, state.startY);
+      document.body.appendChild(ghost);
+      state.active = true;
+      state.row.classList.add('is-drag-placeholder');
+      document.body.classList.add('canvas-scene-dragging');
+    }
+
+    function onDragMove(event) {
+      const state = dragState;
+      if (!state || event.pointerId !== state.pointerId) return;
+      const dx = event.clientX - state.startX;
+      const dy = event.clientY - state.startY;
+      if (!state.active) {
+        if (Math.hypot(dx, dy) < 6) return;
+        activateSceneDrag();
+      }
+      event.preventDefault();
+      scheduleSceneDragFrame(event.clientX, event.clientY);
+    }
+
+    function clearDragListeners(state) {
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragEnd);
+      window.removeEventListener('pointercancel', onDragCancel);
+      if (state && state.frame) window.cancelAnimationFrame(state.frame);
+      if (state) state.frame = 0;
+      try {
+        if (state) state.handle.releasePointerCapture(state.pointerId);
+      } catch (error) {}
+    }
+
+    function revealSceneLanding(row, ghost, immediate) {
+      if (!row) {
+        if (ghost) ghost.remove();
+        return;
+      }
+      const ghostStyle = ghost ? window.getComputedStyle(ghost) : null;
+      row.classList.add('is-drag-handoff');
+      if (ghostStyle) {
+        row.style.backgroundColor = ghostStyle.backgroundColor;
+        row.style.borderColor = ghostStyle.borderColor;
+        row.style.boxShadow = ghostStyle.boxShadow;
+        row.style.color = ghostStyle.color;
+      }
+      row.classList.remove('is-drag-placeholder');
+      if (ghost) ghost.remove();
+      if (immediate || reducedMotion()) {
+        row.classList.remove('is-drag-handoff');
+        row.style.removeProperty('background-color');
+        row.style.removeProperty('border-color');
+        row.style.removeProperty('box-shadow');
+        row.style.removeProperty('color');
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        if (!row.isConnected) return;
+        row.classList.remove('is-drag-handoff');
+        window.requestAnimationFrame(() => {
+          if (!row.isConnected) return;
+          row.style.removeProperty('background-color');
+          row.style.removeProperty('border-color');
+          row.style.removeProperty('box-shadow');
+          row.style.removeProperty('color');
+        });
+      });
+    }
+
+    function flySceneGhostTo(ghost, row, done) {
+      if (!ghost || !row || reducedMotion()) {
+        if (done) done();
+        return;
+      }
+      const target = row.getBoundingClientRect();
+      const ghostRect = ghost.getBoundingClientRect();
+      const fromLeft = Number(ghost.dataset.dragLeft);
+      const fromTop = Number(ghost.dataset.dragTop);
+      const startLeft = Number.isFinite(fromLeft) ? fromLeft : ghostRect.left;
+      const startTop = Number.isFinite(fromTop) ? fromTop : ghostRect.top;
+      const distance = Math.hypot(target.left - startLeft, target.top - startTop);
+      const ghostStyle = window.getComputedStyle(ghost);
+      const targetStyle = window.getComputedStyle(row);
+      const duration = distance < 8
+        ? 130
+        : Math.max(300, Math.min(470, 270 + distance * 0.18));
+      const animation = ghost.animate([
+        {
+          transform: 'translate3d(' + startLeft + 'px,' + startTop + 'px,0) scale(1.028)',
+          opacity: 1,
+          backgroundColor: ghostStyle.backgroundColor,
+          borderColor: ghostStyle.borderColor,
+          boxShadow: ghostStyle.boxShadow,
+        },
+        {
+          transform: 'translate3d(' + target.left + 'px,' + target.top + 'px,0) scale(1)',
+          opacity: 1,
+          backgroundColor: targetStyle.backgroundColor,
+          borderColor: targetStyle.borderColor,
+          boxShadow: targetStyle.boxShadow,
+        },
+      ], {
+        duration,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        fill: 'forwards',
+      });
+      animation.finished.catch(() => undefined).then(() => {
+        if (done) done();
+      });
+    }
+
+    function restoreOrder(ids) {
+      const rows = new Map(sceneRows().map((row) => [row.dataset.sceneId, row]));
+      ids.forEach((id) => {
+        const row = rows.get(id);
+        if (row) list.appendChild(row);
+      });
+      syncSceneSequenceLabels();
+    }
+
+    function finishDrag(options) {
+      options = options || {};
+      const state = dragState;
+      if (!state) return false;
+      dragState = null;
+      clearDragListeners(state);
+      document.body.classList.remove('canvas-scene-dragging');
+      if (!state.active) return false;
+
+      if (options.cancel) {
+        if (options.immediate || reducedMotion()) {
+          stopSceneFlipAnimations();
+          restoreOrder(state.originalIds);
+        } else {
+          flipSceneRows(() => restoreOrder(state.originalIds));
+        }
+      }
+
+      const orderedIds = sceneRows().map((row) => row.dataset.sceneId);
+      const changed = !options.cancel
+        && orderedIds.some((id, index) => id !== state.originalIds[index]);
+      if (changed) {
+        const next = Scenes.reorderScenes(currentBook(), orderedIds);
+        if (canvasData && typeof canvasData === 'object') {
+          canvasData.sceneBook = next;
+          markDirty();
+        }
+      }
+
+      const landingRow = list.querySelector(
+        '[data-scene-id="' + CSS.escape(state.sceneId) + '"]',
+      );
+      if (landingRow) landingRow.classList.add('is-drag-placeholder');
+      if (options.immediate) {
+        stopSceneFlipAnimations();
+        revealSceneLanding(landingRow, state.ghost, true);
+      } else {
+        flySceneGhostTo(state.ghost, landingRow, () => {
+          revealSceneLanding(landingRow, state.ghost);
+        });
+      }
+      return true;
+    }
+
+    function onDragEnd(event) {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      if (dragState.active) {
+        event.preventDefault();
+        if (dragState.frame) {
+          window.cancelAnimationFrame(dragState.frame);
+          dragState.frame = 0;
+        }
+        positionSceneDragGhost(dragState, event.clientX, event.clientY);
+        sceneEdgeScroll(event.clientY);
+        liveReorderScene(event.clientY);
+      }
+      finishDrag();
+    }
+
+    function onDragCancel(event) {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      finishDrag({ cancel: true });
+    }
+
+    function beginDrag(event, row, handle) {
+      if (event.button !== 0 || dragState || panelDragState || renameState) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = row.getBoundingClientRect();
+      dragState = {
+        sceneId: row.dataset.sceneId,
+        pointerId: event.pointerId,
+        row,
+        handle,
+        active: false,
+        ghost: null,
+        frame: 0,
+        startX: event.clientX,
+        startY: event.clientY,
+        pendingX: event.clientX,
+        pendingY: event.clientY,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        width: rect.width,
+        height: rect.height,
+        originalIds: sceneRows().map((item) => item.dataset.sceneId),
+      };
+      window.addEventListener('pointermove', onDragMove, { passive: false });
+      window.addEventListener('pointerup', onDragEnd);
+      window.addEventListener('pointercancel', onDragCancel);
+    }
+
+    function showPresentationHud() {
+      if (!presenting) return;
+      presentation.classList.remove('is-quiet');
+      if (hudTimer) window.clearTimeout(hudTimer);
+      hudTimer = window.setTimeout(() => {
+        hudTimer = 0;
+        presentation.classList.add('is-quiet');
+      }, 2200);
+    }
+
+    function goToPresentationScene(index) {
+      const scenes = currentBook().scenes;
+      if (!scenes.length) {
+        exitPresentation();
+        return;
+      }
+      presentationIndexValue = Math.max(0, Math.min(index, scenes.length - 1));
+      const scene = scenes[presentationIndexValue];
+      activeId = scene.id;
+      navigate(scene, { insets: null });
+      if (presentationName) presentationName.textContent = scene.title;
+      if (presentationIndex) {
+        presentationIndex.textContent = (presentationIndexValue + 1) + ' / ' + scenes.length;
+      }
+      if (restartButton) restartButton.disabled = presentationIndexValue === 0;
+      if (previousButton) previousButton.disabled = presentationIndexValue === 0;
+      if (nextButton) nextButton.disabled = presentationIndexValue === scenes.length - 1;
+      showPresentationHud();
+    }
+
+    function startPresentation() {
+      const scenes = currentBook().scenes;
+      if (!scenes.length) return;
+      presenting = true;
+      const selectedIndex = scenes.findIndex((scene) => scene.id === activeId);
+      presentationIndexValue = selectedIndex >= 0 ? selectedIndex : 0;
+      const canvasApi = api();
+      if (canvasApi && typeof canvasApi.setScenePresentationMode === 'function') {
+        canvasApi.setScenePresentationMode(true);
+      }
+      document.body.classList.add('canvas-scenes-presenting');
+      presentation.hidden = false;
+      requestAnimationFrame(() => presentation.classList.add('is-visible'));
+      goToPresentationScene(presentationIndexValue);
+    }
+
+    function exitPresentation(options) {
+      if (!presenting) return;
+      presenting = false;
+      if (hudTimer) window.clearTimeout(hudTimer);
+      hudTimer = 0;
+      const canvasApi = api();
+      if (canvasApi && typeof canvasApi.setScenePresentationMode === 'function') {
+        canvasApi.setScenePresentationMode(false);
+      }
+      document.body.classList.remove('canvas-scenes-presenting');
+      presentation.classList.remove('is-visible', 'is-quiet');
+      const finish = () => { if (!presenting) presentation.hidden = true; };
+      if (reducedMotion()) finish();
+      else window.setTimeout(finish, 170);
+      renderActiveState();
+      if (!options || options.focus !== false) focusViewport();
+    }
+
+    function handlePresentationKey(event) {
+      if (!presenting) return false;
+      let next = null;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        exitPresentation();
+        return true;
+      }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'PageUp') {
+        next = presentationIndexValue - 1;
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown'
+          || event.key === 'PageDown' || event.key === ' ') {
+        next = presentationIndexValue + 1;
+      } else if (event.key === 'Home') {
+        next = 0;
+      } else if (event.key === 'End') {
+        next = currentBook().scenes.length - 1;
+      }
+      if (next === null) return false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      goToPresentationScene(next);
+      return true;
+    }
+
+    list.addEventListener('click', (event) => {
+      const card = event.target.closest('[data-scene-id]');
+      if (!card) return;
+      const scene = sceneById(card.dataset.sceneId);
+      if (!scene) return;
+      const action = event.target.closest('[data-action]');
+      if (!action || action.dataset.action === 'navigate-canvas-scene') {
+        navigate(scene);
+        return;
+      }
+      if (action.dataset.action === 'update-canvas-scene') updateScene(scene);
+      else if (action.dataset.action === 'rename-canvas-scene') beginRename(scene, card);
+      else if (action.dataset.action === 'delete-canvas-scene') deleteScene(scene);
+    });
+    list.addEventListener('pointerdown', (event) => {
+      const grip = event.target.closest('[data-scene-grip]');
+      const row = grip && grip.closest('[data-scene-id]');
+      if (grip && row) beginDrag(event, row, grip);
+    });
+    panelHead.addEventListener('pointerdown', beginPanelDrag);
+    panelHead.addEventListener('dblclick', resetPanelPosition);
+    list.addEventListener('dragstart', (event) => event.preventDefault());
+    list.addEventListener('keydown', (event) => {
+      if (!renameState || event.target !== renameState.input) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        finishRename(true);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        finishRename(false);
+      }
+    });
+    list.addEventListener('focusout', (event) => {
+      if (!renameState || event.target !== renameState.input) return;
+      window.setTimeout(() => {
+        if (renameState && document.activeElement !== renameState.input) finishRename(true);
+      }, 0);
+    });
+    if (captureCameraButton) captureCameraButton.addEventListener('click', () => createScene('camera'));
+    if (captureSelectionButton) captureSelectionButton.addEventListener('click', () => createScene('selection'));
+    if (captureGroupsButton) captureGroupsButton.addEventListener('click', createGroupScenes);
+    if (presentButton) presentButton.addEventListener('click', startPresentation);
+    if (closeButton) closeButton.addEventListener('click', () => close());
+    if (undoButton) undoButton.addEventListener('click', undoDelete);
+    if (restartButton) restartButton.addEventListener('click', () => {
+      goToPresentationScene(0);
+    });
+    if (previousButton) previousButton.addEventListener('click', () => {
+      goToPresentationScene(presentationIndexValue - 1);
+    });
+    if (nextButton) nextButton.addEventListener('click', () => {
+      goToPresentationScene(presentationIndexValue + 1);
+    });
+    if (exitButton) exitButton.addEventListener('click', () => exitPresentation());
+
+    document.addEventListener('editor:open-canvas-scenes', open);
+    document.addEventListener('canvas:scene-geometry-change', scheduleGeometryRefresh);
+    document.addEventListener('editor:canvasready', () => {
+      if (!panel.hidden) {
+        render();
+        refreshSelectionStatus();
+      }
+    });
+    document.addEventListener('editor:languagechange', () => {
+      if (!panel.hidden) {
+        finishRename(false);
+        render();
+        refreshSelectionStatus();
+      }
+      if (presenting) goToPresentationScene(presentationIndexValue);
+    });
+    document.addEventListener('pointerup', () => {
+      if (!panel.hidden && !dragState) scheduleSelectionRefresh();
+    }, true);
+    document.addEventListener('keyup', () => {
+      if (!panel.hidden && !presenting) scheduleSelectionRefresh();
+    }, true);
+    document.addEventListener('keydown', (event) => {
+      if (handlePresentationKey(event)) return;
+      if (event.key !== 'Escape') return;
+      if (panelDragState) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        finishPanelDrag(true);
+        return;
+      }
+      if (dragState) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        finishDrag({ cancel: true });
+        return;
+      }
+      if (!panel.hidden) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (renameState) finishRename(false);
+        else close();
+      }
+    }, true);
+    document.addEventListener('pointermove', showPresentationHud, { passive: true });
+    window.addEventListener('blur', () => {
+      if (panelDragState) finishPanelDrag(true);
+      if (dragState) finishDrag({ cancel: true, immediate: true });
+    });
+    window.addEventListener('resize', () => {
+      if (!panel.hidden) {
+        if (panelDragState) finishPanelDrag(true);
+        const rect = panel.getBoundingClientRect();
+        applyPanelPosition(rect.left, rect.top, true);
+        scheduleGeometryRefresh();
+        if (activeId && !presenting) {
+          const scene = sceneById(activeId);
+          if (scene) navigate(scene, { immediate: true });
+        }
+      }
+    });
+  })();
+
+  // ── 任务簿 V3：单列顶级任务库 + 无拖动的树内就地管理 ──
+  (function setupTaskbookV3() {
+    const library = document.querySelector('[data-role="canvas-taskbook-dialog"]');
+    const manager = document.querySelector('[data-role="task-root-dialog"]');
+    const topbarShortcut = document.querySelector('[data-action="taskbook-shortcut"]');
+    const topbarToggle = library && library.querySelector('[data-role="taskbook-topbar-toggle"]');
+    if (!library || !manager || !topbarShortcut || !topbarToggle) return;
+
+    const TOPBAR_SHORTCUT_KEY = 'canvas:taskbookTopbarShortcut';
+    const activeList = library.querySelector('[data-role="taskbook-active-list"]');
+    const completedList = library.querySelector('[data-role="taskbook-completed-list"]');
+    const activeCount = library.querySelector('[data-role="taskbook-active-count"]');
+    const completedCount = library.querySelector('[data-role="taskbook-completed-count"]');
+    const libraryEmpty = library.querySelector('[data-role="taskbook-library-empty"]');
+    const libraryHelp = library.querySelector('[data-role="taskbook-help"]');
+    const libraryHelpToggle = library.querySelector('[data-action="toggle-taskbook-help"]');
+    const libraryMessage = library.querySelector('[data-role="canvas-taskbook-message"]');
+    const libraryConfirm = library.querySelector('[data-role="canvas-taskbook-confirm"]');
+    const libraryConfirmTitle = library.querySelector('[data-role="canvas-taskbook-confirm-title"]');
+    const libraryConfirmCopy = library.querySelector('[data-role="canvas-taskbook-confirm-copy"]');
+    const libraryConfirmAccept = library.querySelector('[data-action="accept-taskbook-confirm"]');
+
+    const rootTitle = manager.querySelector('[data-role="task-root-title"]');
+    const rootProgress = manager.querySelector('[data-role="task-root-progress"]');
+    const rootTime = manager.querySelector('[data-role="task-root-time"]');
+    const rootRun = manager.querySelector('[data-action="toggle-task-root-root"]');
+    const tree = manager.querySelector('[data-role="task-root-tree"]');
+    const detailForm = manager.querySelector('[data-role="task-root-detail-form"]');
+    const detailPath = manager.querySelector('[data-role="task-root-task-path"]');
+    const detailTitle = manager.querySelector('[data-role="task-root-task-title"]');
+    const detailBody = manager.querySelector('[data-role="task-root-task-body"]');
+    const detailTime = manager.querySelector('[data-role="task-root-task-time"]');
+    const detailToggle = manager.querySelector('[data-action="toggle-task-root-task"]');
+    const detailLocate = manager.querySelector('[data-action="locate-task-root-task"]');
+    const detailArchive = manager.querySelector('[data-action="archive-current-task-root"]');
+    const managerMessage = manager.querySelector('[data-role="task-root-message"]');
+    const taskConfirm = manager.querySelector('[data-role="task-root-confirm"]');
+    const taskConfirmTitle = manager.querySelector('[data-role="task-root-confirm-title"]');
+    const taskConfirmCopy = manager.querySelector('[data-role="task-root-confirm-copy"]');
+    const taskConfirmAccept = manager.querySelector('[data-action="accept-task-root-confirm"]');
+
+    let activeRootId = '';
+    let selectedTaskId = '';
+    let editingRootId = '';
+    let confirmAction = null;
+    let archiveBusy = false;
+    const archiveAttemptIds = new Map();
+
+    function api() {
+      return window.CanvasModule || null;
+    }
+
+    function t(zh, en) {
+      return toolbarLanguage === 'en' ? en : zh;
+    }
+
+    function taskbookTopbarShortcutEnabled() {
+      if (EMBED) return false;
+      try { return localStorage.getItem(TOPBAR_SHORTCUT_KEY) === '1'; }
+      catch (error) { return false; }
+    }
+
+    function syncTaskbookTopbarShortcut(enabled) {
+      const visible = !EMBED && !!enabled;
+      const dialogOpen = visible && !library.hidden
+        && !library.classList.contains('tool-layer-leaving');
+      topbarToggle.checked = visible;
+      topbarShortcut.hidden = !visible;
+      topbarShortcut.classList.toggle('open', dialogOpen);
+      topbarShortcut.setAttribute('aria-expanded', dialogOpen ? 'true' : 'false');
+    }
+
+    function setTaskbookTopbarShortcut(enabled) {
+      const visible = !EMBED && !!enabled;
+      try {
+        if (visible) localStorage.setItem(TOPBAR_SHORTCUT_KEY, '1');
+        else localStorage.removeItem(TOPBAR_SHORTCUT_KEY);
+      } catch (error) {}
+      syncTaskbookTopbarShortcut(visible);
+    }
+
+    function snapshots() {
+      const canvasApi = api();
+      return canvasApi && typeof canvasApi.listTaskbooks === 'function'
+        ? (canvasApi.listTaskbooks() || []) : [];
+    }
+
+    function snapshot(rootId) {
+      const canvasApi = api();
+      return canvasApi && typeof canvasApi.getTaskbookSnapshot === 'function'
+        ? canvasApi.getTaskbookSnapshot(rootId) : null;
+    }
+
+    function formatTime(value) {
+      const seconds = Math.max(0, Math.floor((Number(value) || 0) / 1000));
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const rest = seconds % 60;
+      return hours
+        ? String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(rest).padStart(2, '0')
+        : String(minutes).padStart(2, '0') + ':' + String(rest).padStart(2, '0');
+    }
+
+    function setExternalOverlay(open) {
+      const canvasApi = api();
+      if (canvasApi && typeof canvasApi.setExternalOverlayOpen === 'function') {
+        canvasApi.setExternalOverlayOpen(!!open);
+      }
+    }
+
+    function focusViewport() {
+      if (!viewportEl) return;
+      if (!viewportEl.hasAttribute('tabindex')) viewportEl.setAttribute('tabindex', '-1');
+      try { viewportEl.focus({ preventScroll: true }); } catch (error) { viewportEl.focus(); }
+    }
+
+    function announce(element, value, kind) {
+      if (!element) return;
+      clearTimeout(element._taskbookTimer);
+      element.textContent = value || '';
+      element.dataset.kind = kind || '';
+      if (value) {
+        element._taskbookTimer = setTimeout(function () { element.textContent = ''; }, 2600);
+      }
+    }
+
+    function localize() {
+      const set = function (selector, zh, en) {
+        const element = document.querySelector(selector);
+        if (element) element.textContent = t(zh, en);
+      };
+      set('#canvas-taskbook-title', '任务簿', 'Taskbook');
+      set('[data-role="taskbook-active-label"]', '进行中', 'In progress');
+      set('[data-role="taskbook-completed-label"]', '已完成', 'Completed');
+      set('[data-role="taskbook-library-empty"] strong', '还没有顶级任务', 'No top-level tasks yet');
+      set('[data-role="taskbook-library-empty"] p', '按右上角“+”开始。任务不会自动放到画布。', 'Use “+” to begin. Tasks are not placed automatically.');
+      set('[data-role="taskbook-help-title"]', '快速上手', 'Quick start');
+      set('[data-role="taskbook-help-create"]', '点击右上角“+”新建顶级任务，再把它放到画布。', 'Use “+” to create a top-level task, then place it on the canvas.');
+      set('[data-role="taskbook-help-connect"]', '从顶级任务或已有任务连向普通卡片，把卡片收为子任务。', 'Connect a top-level or existing task to a regular card to make it a subtask.');
+      set('[data-role="taskbook-help-time"]', '悬停叶子任务，点击左侧“▶”开始计时；点击“Ⅱ”暂停。', 'Hover a leaf task and use the left “▶” to start timing; use “Ⅱ” to pause.');
+      set('[data-role="taskbook-help-manage"]', '双击顶级任务，或选中后按 F，进入任务管理页；按 F 或 Esc 返回。', 'Double-click a top-level task, or select it and press F, to open task management; press F or Esc to return.');
+      set('[data-role="taskbook-help-finish"]', '勾选叶子任务完成；全部完成后可以归档。画布上的“×”仅隐藏任务树，任务簿行内“×”才会删除顶级任务。', 'Check off leaf tasks; archive after all are done. The canvas “×” only hides the task tree, while the Taskbook row “×” deletes the top-level task.');
+      set('.task-root-manager-title span', '顶级任务', 'Top-level task');
+      set('.task-root-detail-form > label:not(.task-root-detail-body) > span', '任务名称', 'Task name');
+      set('.task-root-detail-body > span', '附加说明 · Markdown', 'Notes · Markdown');
+      set('.task-root-time-card span', '实际用时', 'Actual time');
+      set('[data-action="locate-task-root-task"]', '定位到画布', 'Locate on canvas');
+      set('[data-action="archive-current-task-root"]', '归档这个顶级任务', 'Archive this top-level task');
+      set('[data-action="delete-current-task-root"]', '删除这个顶级任务', 'Delete this top-level task');
+      set('[data-action="cancel-taskbook-confirm"]', '取消', 'Cancel');
+      set('[data-action="cancel-task-root-confirm"]', '取消', 'Cancel');
+      const kicker = library.querySelector('.canvas-taskbook-kicker');
+      if (kicker) kicker.textContent = t('画布工具', 'CANVAS TOOL');
+      if (libraryHelpToggle) {
+        libraryHelpToggle.setAttribute('aria-label', t('任务簿使用说明', 'Taskbook help'));
+      }
+    }
+
+    function setLibraryHelpOpen(open, restoreFocus) {
+      if (!libraryHelp || !libraryHelpToggle) return;
+      libraryHelp.hidden = !open;
+      libraryHelpToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open && restoreFocus) {
+        try { libraryHelpToggle.focus({ preventScroll: true }); }
+        catch (error) { libraryHelpToggle.focus(); }
+      }
+    }
+
+    function progressLabel(item) {
+      return item.doneLeaves + ' / ' + item.totalLeaves;
+    }
+
+    function commitInlineName(item, input) {
+      const canvasApi = api();
+      if (canvasApi && typeof canvasApi.updateTaskbook === 'function') {
+        canvasApi.updateTaskbook(item.id, { title: input.value });
+      }
+      editingRootId = '';
+      renderLibrary();
+    }
+
+    function makeRootRow(item) {
+      const row = document.createElement('article');
+      row.className = 'taskbook-root-row';
+      row.dataset.rootId = item.id;
+      row.dataset.completed = item.completed ? '1' : '0';
+      row.setAttribute('role', 'listitem');
+
+      const main = document.createElement('button');
+      main.type = 'button';
+      main.className = 'taskbook-root-main';
+      main.dataset.action = 'open-task-root';
+      const title = document.createElement('strong');
+      title.textContent = item.title || t('未命名任务', 'Untitled task');
+      const meta = document.createElement('span');
+      meta.textContent = progressLabel(item) + ' · ' + formatTime(item.actualMs);
+      main.append(title, meta);
+
+      if (editingRootId === item.id) {
+        const input = document.createElement('input');
+        input.className = 'taskbook-root-inline-name';
+        input.type = 'text';
+        input.maxLength = 240;
+        input.value = item.title || '';
+        input.setAttribute('aria-label', t('顶级任务名称', 'Top-level task name'));
+        main.replaceChildren(input, meta);
+        requestAnimationFrame(function () {
+          input.focus();
+          input.select();
+        });
+        input.addEventListener('click', function (event) { event.stopPropagation(); });
+        input.addEventListener('blur', function () { commitInlineName(item, input); }, { once: true });
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') { event.preventDefault(); input.blur(); }
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            input.value = item.title || '';
+            input.blur();
+          }
+        });
+      }
+
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'taskbook-root-canvas';
+      if (item.completed) {
+        action.dataset.action = 'archive-task-root';
+        action.textContent = t('归档', 'Archive');
+      } else {
+        action.dataset.action = item.canvasPlaced ? 'locate-task-root' : 'place-task-root';
+        action.textContent = item.canvasPlaced ? t('定位', 'Locate') : t('放到画布', 'Place');
+      }
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'taskbook-root-delete';
+      remove.dataset.action = 'delete-task-root';
+      remove.setAttribute('aria-label', t('删除顶级任务“' + item.title + '”', 'Delete top-level task “' + item.title + '”'));
+      remove.textContent = '×';
+
+      const actions = document.createElement('div');
+      actions.className = 'taskbook-root-actions';
+      actions.append(action, remove);
+      row.append(main, actions);
+      return row;
+    }
+
+    function renderLibrary() {
+      const books = snapshots();
+      const active = books.filter(function (item) { return !item.completed; });
+      const completed = books.filter(function (item) { return item.completed; });
+      activeList.replaceChildren.apply(activeList, active.map(makeRootRow));
+      completedList.replaceChildren.apply(completedList, completed.map(makeRootRow));
+      activeCount.textContent = String(active.length);
+      completedCount.textContent = String(completed.length);
+      libraryEmpty.hidden = books.length > 0;
+      library.querySelector('.taskbook-library-completed').hidden = completed.length === 0;
+    }
+
+    function taskById(current, taskId) {
+      return current && current.tasks.find(function (task) { return task.id === taskId; }) || null;
+    }
+
+    function makeTreeRow(current, task) {
+      const isRoot = !task;
+      const id = isRoot ? current.id : task.id;
+      const depth = isRoot ? 0 : task.depth;
+      const done = isRoot ? current.completed : task.done;
+      const leaf = isRoot ? current.tasks.length === 0 : task.leaf;
+      const row = document.createElement('div');
+      row.className = 'task-root-tree-row' + (isRoot ? ' task-root-tree-root' : '');
+      row.dataset.taskId = id;
+      row.dataset.parentId = isRoot ? '' : (task.parentId || '');
+      row.dataset.depth = String(depth);
+      row.style.setProperty('--task-depth', String(Math.max(0, depth)));
+      row.setAttribute('role', 'treeitem');
+      row.tabIndex = 0;
+      row.classList.toggle('selected', id === selectedTaskId);
+      row.classList.toggle('done', !!done);
+
+      const check = document.createElement('button');
+      check.type = 'button';
+      check.className = 'task-root-tree-check';
+      check.dataset.action = isRoot ? 'toggle-task-root-done' : 'toggle-task-root-done';
+      check.disabled = !leaf;
+      check.setAttribute('aria-label', done ? t('标记未完成', 'Mark incomplete') : t('标记完成', 'Mark complete'));
+      check.textContent = done ? '✓' : '';
+
+      const title = document.createElement('button');
+      title.type = 'button';
+      title.className = 'task-root-tree-title';
+      title.dataset.action = 'select-task-root-task';
+      title.textContent = isRoot ? current.title : (task.title || t('未命名任务', 'Untitled task'));
+
+      const time = document.createElement('span');
+      time.className = 'task-root-tree-time';
+      time.textContent = formatTime(isRoot ? current.actualMs : task.actualMs);
+
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'task-root-tree-add';
+      add.dataset.action = 'add-task-root-child';
+      add.setAttribute('aria-label', t('添加子任务', 'Add subtask'));
+      add.textContent = '+';
+
+      row.append(check, title, time, add);
+      if (!isRoot) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'task-root-tree-remove';
+        remove.dataset.action = 'delete-task-root-subtree';
+        remove.setAttribute('aria-label', t('删除任务', 'Delete task'));
+        remove.textContent = '×';
+        row.append(remove);
+      }
+      return row;
+    }
+
+    function selectedEntity(current) {
+      if (!current) return null;
+      if (!selectedTaskId || selectedTaskId === current.id) {
+        return {
+          id: current.id,
+          title: current.title,
+          body: current.body || '',
+          actualMs: current.actualMs,
+          leaf: current.tasks.length === 0,
+          done: current.completed,
+          isRoot: true,
+          canvasPlaced: current.canvasPlaced,
+        };
+      }
+      const task = taskById(current, selectedTaskId);
+      return task ? Object.assign({ isRoot: false, canvasPlaced: true }, task) : null;
+    }
+
+    function taskPath(current, entity) {
+      if (!current || !entity) return '';
+      if (entity.isRoot) return current.title;
+      const labels = [];
+      let cursor = entity;
+      const seen = new Set();
+      while (cursor && !seen.has(cursor.id)) {
+        seen.add(cursor.id);
+        labels.unshift(cursor.title || t('未命名任务', 'Untitled task'));
+        cursor = cursor.parentId ? taskById(current, cursor.parentId) : null;
+      }
+      labels.unshift(current.title);
+      return labels.join(' / ');
+    }
+
+    function renderDetail(current) {
+      const entity = selectedEntity(current);
+      if (!entity) return;
+      detailForm.hidden = false;
+      detailForm.dataset.rootSelected = entity.isRoot ? '1' : '0';
+      detailPath.textContent = taskPath(current, entity);
+      if (document.activeElement !== detailTitle) detailTitle.value = entity.title || '';
+      if (document.activeElement !== detailBody) detailBody.value = entity.body || '';
+      detailTime.textContent = formatTime(entity.actualMs);
+      detailToggle.textContent = current.runningTaskId === entity.id ? t('暂停', 'Pause') : t('开始', 'Start');
+      detailToggle.disabled = !entity.leaf || !!entity.done;
+      detailLocate.disabled = entity.isRoot ? !current.canvasPlaced : false;
+      detailLocate.hidden = entity.isRoot && !current.canvasPlaced;
+      detailArchive.hidden = !entity.isRoot || !current.completed;
+      detailArchive.disabled = archiveBusy;
+    }
+
+    function renderManager() {
+      const current = snapshot(activeRootId);
+      if (!current) {
+        closeManager(false);
+        return;
+      }
+      if (!selectedTaskId || (selectedTaskId !== current.id && !taskById(current, selectedTaskId))) {
+        selectedTaskId = current.id;
+      }
+      if (document.activeElement !== rootTitle) rootTitle.value = current.title || '';
+      rootProgress.textContent = current.doneLeaves + ' / ' + current.totalLeaves;
+      rootTime.textContent = formatTime(current.actualMs);
+      rootRun.textContent = current.runningTaskId ? 'Ⅱ' : '▶';
+      rootRun.disabled = !current.runningTaskId && !current.nextTaskId;
+      tree.replaceChildren(
+        makeTreeRow(current, null),
+        ...current.tasks.map(function (task) { return makeTreeRow(current, task); }),
+      );
+      renderDetail(current);
+    }
+
+    function openLibrary() {
+      localize();
+      setLibraryHelpOpen(false);
+      if (!manager.hidden) concealToolLayer(manager);
+      revealToolLayer(library);
+      document.body.classList.add('canvas-taskbook-open');
+      if (!topbarShortcut.hidden) {
+        topbarShortcut.classList.add('open');
+        topbarShortcut.setAttribute('aria-expanded', 'true');
+      }
+      setExternalOverlay(true);
+      renderLibrary();
+      requestAnimationFrame(function () {
+        const add = library.querySelector('[data-action="new-top-level-task"]');
+        if (add) add.focus({ preventScroll: true });
+      });
+    }
+
+    function closeLibrary(restoreFocus) {
+      setLibraryHelpOpen(false);
+      closeConfirm(libraryConfirm);
+      concealToolLayer(library);
+      document.body.classList.remove('canvas-taskbook-open');
+      topbarShortcut.classList.remove('open');
+      topbarShortcut.setAttribute('aria-expanded', 'false');
+      if (manager.hidden) setExternalOverlay(false);
+      if (restoreFocus !== false) requestAnimationFrame(focusViewport);
+    }
+
+    function openManager(rootId) {
+      const current = snapshot(rootId);
+      if (!current) return;
+      setLibraryHelpOpen(false);
+      localize();
+      activeRootId = rootId;
+      selectedTaskId = rootId;
+      if (!library.hidden) {
+        concealToolLayer(library);
+        document.body.classList.remove('canvas-taskbook-open');
+      }
+      revealToolLayer(manager);
+      document.body.classList.add('task-root-manager-open');
+      setExternalOverlay(true);
+      renderManager();
+      requestAnimationFrame(function () {
+        const row = tree.querySelector('.task-root-tree-root');
+        if (row) row.focus({ preventScroll: true });
+      });
+    }
+
+    function closeManager(openLibraryAfter) {
+      closeConfirm(taskConfirm);
+      concealToolLayer(manager);
+      document.body.classList.remove('task-root-manager-open');
+      if (openLibraryAfter) requestAnimationFrame(openLibrary);
+      else {
+        document.body.classList.remove('canvas-taskbook-open');
+        topbarShortcut.classList.remove('open');
+        topbarShortcut.setAttribute('aria-expanded', 'false');
+        setExternalOverlay(false);
+        requestAnimationFrame(focusViewport);
+      }
+    }
+
+    function closeConfirm(layer) {
+      if (!layer) return;
+      layer.classList.remove('open');
+      layer.hidden = true;
+      confirmAction = null;
+    }
+
+    function openConfirm(layer, titleEl, copyEl, acceptEl, title, copy, accept, action) {
+      confirmAction = action;
+      titleEl.textContent = title;
+      copyEl.textContent = copy;
+      acceptEl.textContent = accept;
+      layer.classList.remove('open');
+      layer.hidden = false;
+      requestAnimationFrame(function () {
+        if (layer.hidden) return;
+        layer.classList.add('open');
+        const cancel = layer.querySelector('button:not(.danger)');
+        if (cancel) cancel.focus({ preventScroll: true });
+      });
+    }
+
+    function showRootDeleteConfirm(rootId, source) {
+      const current = snapshot(rootId);
+      if (!current) return;
+      const fromLibrary = source === 'library';
+      const confirmLayer = fromLibrary ? libraryConfirm : taskConfirm;
+      const confirmTitle = fromLibrary ? libraryConfirmTitle : taskConfirmTitle;
+      const confirmCopy = fromLibrary ? libraryConfirmCopy : taskConfirmCopy;
+      const confirmAccept = fromLibrary ? libraryConfirmAccept : taskConfirmAccept;
+      openConfirm(
+        confirmLayer, confirmTitle, confirmCopy, confirmAccept,
+        t('删除“' + current.title + '”？', 'Delete “' + current.title + '”?'),
+        t('顶级任务会移除；普通任务节点将保留并解除管理。', 'The top-level task is removed; ordinary task nodes remain unlocked.'),
+        t('删除', 'Delete'),
+        function () {
+          const canvasApi = api();
+          if (canvasApi && typeof canvasApi.deleteTopLevelTask === 'function') {
+            canvasApi.deleteTopLevelTask(rootId);
+          }
+          closeConfirm(confirmLayer);
+          if (fromLibrary) renderLibrary();
+          else closeManager(true);
+        },
+      );
+    }
+
+    function showTaskDeleteConfirm(taskId) {
+      const current = snapshot(activeRootId);
+      const task = taskById(current, taskId);
+      if (!task) return;
+      openConfirm(
+        taskConfirm, taskConfirmTitle, taskConfirmCopy, taskConfirmAccept,
+        t('删除“' + task.title + '”及其子任务？', 'Delete “' + task.title + '” and its subtasks?'),
+        t(
+          '对应画布节点和相关连线会一起删除；累计用时会保留在顶级任务中。',
+          'Their canvas nodes and connected lines will be removed; tracked time remains in the top-level task.',
+        ),
+        t('删除', 'Delete'),
+        function () {
+          const canvasApi = api();
+          if (canvasApi && typeof canvasApi.deleteTaskbookSubtree === 'function') {
+            canvasApi.deleteTaskbookSubtree(activeRootId, taskId);
+          }
+          closeConfirm(taskConfirm);
+          selectedTaskId = activeRootId;
+          renderManager();
+        },
+      );
+    }
+
+    function archiveSnapshotEnabled() {
+      try { return localStorage.getItem('canvas:taskbookArchiveSnapshotEnabled') !== '0'; }
+      catch (error) { return true; }
+    }
+
+    async function archiveRoot(rootId, source) {
+      if (archiveBusy) return;
+      const current = snapshot(rootId);
+      const canvasApi = api();
+      if (!current || !current.completed || !canvasApi) return;
+      const fromManager = source === 'manager';
+      const confirmLayer = fromManager ? taskConfirm : libraryConfirm;
+      const confirmAccept = fromManager ? taskConfirmAccept : libraryConfirmAccept;
+      const messageTarget = fromManager ? managerMessage : libraryMessage;
+      archiveBusy = true;
+      confirmAccept.disabled = true;
+      if (fromManager) renderManager();
+      setState(t('归档中…', 'Archiving…'));
+      try {
+        if (typeof canvasApi.settleTaskbookForArchive === 'function') {
+          const settled = await canvasApi.settleTaskbookForArchive(rootId);
+          if (!settled || !settled.ok) throw new Error(t('专注记录尚未同步，请稍后重试', 'Focus records are not synced yet'));
+        }
+        if (!(await save())) throw new Error(t('当前画布尚未保存', 'The canvas is not saved'));
+        const prepared = canvasApi.prepareTaskbookArchive(rootId, archiveSnapshotEnabled());
+        if (!prepared || !prepared.ok) throw new Error(t('当前任务还不能归档', 'This task cannot be archived yet'));
+        let archiveId = archiveAttemptIds.get(rootId);
+        if (!archiveId) {
+          archiveId = 'taskbook-archive-' + Date.now().toString(36)
+            + '-' + Math.random().toString(36).slice(2, 10);
+          archiveAttemptIds.set(rootId, archiveId);
+        }
+        const response = await fetch('/api/taskbook-archive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: filePath,
+            rootId: rootId,
+            archiveId: archiveId,
+            retainSnapshot: archiveSnapshotEnabled(),
+            snapshotRootNodeId: prepared.archive.snapshotRootNodeId,
+            data: prepared.data,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || t('归档失败', 'Archive failed'));
+        archiveAttemptIds.delete(rootId);
+        closeConfirm(confirmLayer);
+        if (fromManager) closeManager(true);
+        canvasApi.applyTaskbookArchive(prepared.data);
+        if (result.savedAt) canvasData.updatedAt = result.savedAt;
+        markClean(t('已归档', 'Archived'));
+        renderLibrary();
+        announce(libraryMessage, t('已归档“' + current.title + '”', 'Archived “' + current.title + '”'), 'success');
+      } catch (error) {
+        setState(dirty ? t('未保存', 'Unsaved') : t('已保存', 'Saved'));
+        announce(messageTarget, error && error.message || t('归档失败', 'Archive failed'), 'error');
+      } finally {
+        archiveBusy = false;
+        confirmAccept.disabled = false;
+        if (fromManager && !manager.hidden) renderManager();
+      }
+    }
+
+    function showArchiveConfirm(rootId, source) {
+      const current = snapshot(rootId);
+      if (!current || !current.completed) return;
+      const fromManager = source === 'manager';
+      openConfirm(
+        fromManager ? taskConfirm : libraryConfirm,
+        fromManager ? taskConfirmTitle : libraryConfirmTitle,
+        fromManager ? taskConfirmCopy : libraryConfirmCopy,
+        fromManager ? taskConfirmAccept : libraryConfirmAccept,
+        t('归档“' + current.title + '”？', 'Archive “' + current.title + '”?'),
+        t(
+          '活动任务和原始任务节点会被彻底删除，不能通过画布撤销恢复。'
+            + (archiveSnapshotEnabled() ? '画布会保留一份已完成的普通枝桠树副本。' : ''),
+          'The active task and original nodes will be permanently removed and cannot be restored with Undo.'
+            + (archiveSnapshotEnabled() ? ' A completed ordinary branch copy will remain on the canvas.' : ''),
+        ),
+        t('归档', 'Archive'),
+        function () { archiveRoot(rootId, source); },
+      );
+    }
+
+    function addTask(parentId) {
+      const canvasApi = api();
+      if (!canvasApi || typeof canvasApi.addTaskbookTask !== 'function') return;
+      const result = canvasApi.addTaskbookTask(activeRootId, parentId || activeRootId, {
+        title: t('未命名任务', 'Untitled task'),
+      });
+      if (result && result.ok) {
+        selectedTaskId = result.id;
+        renderManager();
+        requestAnimationFrame(function () {
+          detailTitle.focus();
+          detailTitle.select();
+        });
+      }
+    }
+
+    function updateSelectedEntity(patch) {
+      const canvasApi = api();
+      if (!canvasApi) return;
+      if (selectedTaskId === activeRootId) {
+        if (typeof canvasApi.updateTaskbook === 'function') canvasApi.updateTaskbook(activeRootId, patch);
+      } else if (selectedTaskId && typeof canvasApi.updateTaskbookTask === 'function') {
+        canvasApi.updateTaskbookTask(activeRootId, selectedTaskId, patch);
+      }
+    }
+
+    library.addEventListener('click', function (event) {
+      const action = event.target.closest('[data-action]');
+      if (!action) return;
+      const row = action.closest('.taskbook-root-row');
+      const rootId = row && row.dataset.rootId;
+      const canvasApi = api();
+      switch (action.dataset.action) {
+        case 'toggle-taskbook-help':
+          setLibraryHelpOpen(libraryHelp && libraryHelp.hidden);
+          break;
+        case 'new-top-level-task': {
+          if (!canvasApi || typeof canvasApi.createTopLevelTask !== 'function') return;
+          const result = canvasApi.createTopLevelTask({ title: t('未命名任务', 'Untitled task') });
+          if (result && result.ok) {
+            editingRootId = result.id;
+            renderLibrary();
+          }
+          break;
+        }
+        case 'close-canvas-taskbook': closeLibrary(); break;
+        case 'open-task-root': if (rootId) openManager(rootId); break;
+        case 'place-task-root':
+          if (canvasApi && typeof canvasApi.placeTaskRoot === 'function') canvasApi.placeTaskRoot(rootId);
+          closeLibrary(false);
+          requestAnimationFrame(focusViewport);
+          break;
+        case 'locate-task-root':
+          if (canvasApi && typeof canvasApi.locateTaskRoot === 'function') canvasApi.locateTaskRoot(rootId);
+          closeLibrary(false);
+          requestAnimationFrame(focusViewport);
+          break;
+        case 'delete-task-root': if (rootId) showRootDeleteConfirm(rootId, 'library'); break;
+        case 'archive-task-root': showArchiveConfirm(rootId); break;
+        case 'cancel-taskbook-confirm':
+          closeConfirm(libraryConfirm);
+          break;
+        case 'accept-taskbook-confirm':
+          if (confirmAction) confirmAction();
+          break;
+      }
+    });
+
+    manager.addEventListener('click', function (event) {
+      const action = event.target.closest('[data-action]');
+      if (!action) return;
+      const row = action.closest('.task-root-tree-row');
+      const taskId = row && row.dataset.taskId;
+      const canvasApi = api();
+      switch (action.dataset.action) {
+        case 'back-task-root': closeManager(true); break;
+        case 'select-task-root-task':
+          selectedTaskId = taskId;
+          renderManager();
+          break;
+        case 'add-task-root-child': addTask(taskId); break;
+        case 'delete-task-root-subtree': showTaskDeleteConfirm(taskId); break;
+        case 'archive-current-task-root': showArchiveConfirm(activeRootId, 'manager'); break;
+        case 'delete-current-task-root': showRootDeleteConfirm(activeRootId); break;
+        case 'toggle-task-root-done': {
+          const current = snapshot(activeRootId);
+          if (!current) break;
+          if (taskId === activeRootId) {
+            if (!current.tasks.length && canvasApi && typeof canvasApi.updateTaskbook === 'function') {
+              canvasApi.updateTaskbook(activeRootId, { completed: !current.completed });
+            }
+          } else {
+            const task = taskById(current, taskId);
+            if (task && task.leaf && canvasApi && typeof canvasApi.updateTaskbookTask === 'function') {
+              canvasApi.updateTaskbookTask(activeRootId, taskId, { done: !task.done });
+            }
+          }
+          renderManager();
+          break;
+        }
+        case 'toggle-task-root-root': {
+          const current = snapshot(activeRootId);
+          const targetId = current && (current.runningTaskId || current.nextTaskId || current.id);
+          if (targetId && canvasApi && typeof canvasApi.toggleTaskbookTask === 'function') {
+            canvasApi.toggleTaskbookTask(activeRootId, targetId);
+          }
+          renderManager();
+          break;
+        }
+        case 'toggle-task-root-task': {
+          const current = snapshot(activeRootId);
+          const entity = selectedEntity(current);
+          if (entity && canvasApi && typeof canvasApi.toggleTaskbookTask === 'function') {
+            canvasApi.toggleTaskbookTask(activeRootId, entity.id);
+          }
+          renderManager();
+          break;
+        }
+        case 'locate-task-root-task':
+          if (selectedTaskId && canvasApi && typeof canvasApi.locateTaskbookItem === 'function') {
+            canvasApi.locateTaskbookItem(selectedTaskId);
+          }
+          closeManager(false);
+          break;
+        case 'cancel-task-root-confirm':
+          closeConfirm(taskConfirm);
+          break;
+        case 'accept-task-root-confirm':
+          if (confirmAction) confirmAction();
+          break;
+      }
+    });
+
+    rootTitle.addEventListener('change', function () {
+      const canvasApi = api();
+      if (canvasApi && typeof canvasApi.updateTaskbook === 'function') {
+        canvasApi.updateTaskbook(activeRootId, { title: rootTitle.value });
+      }
+      renderManager();
+    });
+    detailTitle.addEventListener('change', function () {
+      updateSelectedEntity({ title: detailTitle.value });
+      renderManager();
+    });
+    detailBody.addEventListener('change', function () {
+      updateSelectedEntity({ body: detailBody.value });
+      renderManager();
+    });
+
+    tree.addEventListener('keydown', function (event) {
+      const row = event.target.closest('.task-root-tree-row');
+      if (!row || event.target.matches('button:not(.task-root-tree-title)')) return;
+      const current = snapshot(activeRootId);
+      const taskId = row.dataset.taskId;
+      const task = taskById(current, taskId);
+      if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        addTask(task ? (task.parentId || activeRootId) : activeRootId);
+        return;
+      }
+      if (!task || event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault();
+      const canvasApi = api();
+      if (!canvasApi || typeof canvasApi.moveTaskbookTask !== 'function') return;
+      if (event.shiftKey) {
+        const parent = task.parentId ? taskById(current, task.parentId) : null;
+        canvasApi.moveTaskbookTask(activeRootId, task.id, parent && parent.parentId || activeRootId, '');
+      } else {
+        const index = current.tasks.findIndex(function (item) { return item.id === task.id; });
+        const previous = index > 0 ? current.tasks[index - 1] : null;
+        if (previous) canvasApi.moveTaskbookTask(activeRootId, task.id, previous.id, '');
+      }
+      renderManager();
+    });
+
+    function trapKeys(event, host, confirmLayer, close) {
+      if (host.hidden) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (host === library && libraryHelp && !libraryHelp.hidden) {
+          setLibraryHelpOpen(false, true);
+        } else if (!confirmLayer.hidden) {
+          closeConfirm(confirmLayer);
+        } else close();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const scope = !confirmLayer.hidden ? confirmLayer : host.querySelector('[role="dialog"]');
+      const focusable = [...scope.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter(function (element) { return !element.hidden && element.offsetParent !== null; });
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    library.addEventListener('keydown', function (event) {
+      trapKeys(event, library, libraryConfirm, closeLibrary);
+    });
+    manager.addEventListener('keydown', function (event) {
+      const target = event.target;
+      const isTextInput = target && target.closest
+        && target.closest('input, textarea, [contenteditable="true"]');
+      if ((event.key === 'f' || event.key === 'F')
+          && !event.ctrlKey && !event.metaKey && !event.altKey
+          && taskConfirm.hidden && !isTextInput) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeManager(false);
+        return;
+      }
+      trapKeys(event, manager, taskConfirm, function () { closeManager(false); });
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape') return;
+      if (!manager.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!taskConfirm.hidden) {
+          closeConfirm(taskConfirm);
+        } else closeManager(false);
+      } else if (!library.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (libraryHelp && !libraryHelp.hidden) {
+          setLibraryHelpOpen(false, true);
+        } else if (!libraryConfirm.hidden) {
+          closeConfirm(libraryConfirm);
+        } else closeLibrary();
+      }
+    }, true);
+
+    library.addEventListener('mousedown', function (event) {
+      if (libraryHelp && !libraryHelp.hidden
+          && !libraryHelp.contains(event.target)
+          && !libraryHelpToggle.contains(event.target)) {
+        setLibraryHelpOpen(false);
+      }
+      if (event.target === library && libraryConfirm.hidden) closeLibrary();
+    });
+    manager.addEventListener('mousedown', function (event) {
+      if (event.target === manager && taskConfirm.hidden) closeManager(false);
+    });
+    library.addEventListener('dragstart', function (event) { event.preventDefault(); });
+    tree.addEventListener('dragstart', function (event) { event.preventDefault(); });
+    topbarToggle.addEventListener('change', function () {
+      setTaskbookTopbarShortcut(topbarToggle.checked);
+    });
+    topbarShortcut.addEventListener('click', function () {
+      document.dispatchEvent(new CustomEvent('editor:open-taskbook'));
+    });
+
+    document.addEventListener('editor:open-taskbook', openLibrary);
+    document.addEventListener('editor:open-task-root', function (event) {
+      const detail = event && event.detail || {};
+      if (detail.rootId) {
+        openManager(detail.rootId);
+        if (detail.taskId) {
+          selectedTaskId = detail.taskId;
+          renderManager();
+        }
+      }
+    });
+    document.addEventListener('canvas:taskbook-change', function () {
+      if (!library.hidden) renderLibrary();
+      if (!manager.hidden) renderManager();
+    });
+    document.addEventListener('canvas:taskbook-tick', function (event) {
+      if (!library.hidden) renderLibrary();
+      if (!manager.hidden && (!event.detail || event.detail.rootId === activeRootId)) renderManager();
+    });
+    document.addEventListener('editor:languagechange', function () {
+      localize();
+      if (!library.hidden) renderLibrary();
+      if (!manager.hidden) renderManager();
+    });
+    syncTaskbookTopbarShortcut(taskbookTopbarShortcutEnabled());
   })();
 
   // ── 节点矩阵：只负责配置与预览，真实节点事务由 CanvasModule 提交 ──
@@ -1639,16 +5302,18 @@
     }
 
     function close(restoreFocus) {
-      if (busy || dialog.hidden) return false;
-      dialog.hidden = true;
-      dialog.removeAttribute('data-busy');
-      setError('');
+      if (busy || dialog.hidden || dialog.classList.contains('tool-layer-leaving')) return false;
+      const focusTarget = restoreFocus !== false && returnFocus && returnFocus.isConnected
+        ? returnFocus : null;
       if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
         window.CanvasModule.setExternalOverlayOpen(false);
       }
-      if (restoreFocus !== false && returnFocus && returnFocus.isConnected) returnFocus.focus();
-      returnFocus = null;
-      return true;
+      return concealToolLayer(dialog, () => {
+        dialog.removeAttribute('data-busy');
+        setError('');
+        if (focusTarget) focusTarget.focus();
+        returnFocus = null;
+      }, 220);
     }
 
     function open() {
@@ -1657,7 +5322,7 @@
         || document.querySelector('[data-action="tools"]');
       loadSettings();
       setError('');
-      dialog.hidden = false;
+      revealToolLayer(dialog);
       dialog.lang = toolbarLanguage;
       if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
         window.CanvasModule.setExternalOverlayOpen(true);
@@ -1835,16 +5500,18 @@
     }
 
     function close(restoreFocus) {
-      if (busy || dialog.hidden) return false;
-      dialog.hidden = true;
-      editingTimer = null;
-      setError('');
+      if (busy || dialog.hidden || dialog.classList.contains('tool-layer-leaving')) return false;
+      const focusTarget = restoreFocus !== false && returnFocus && returnFocus.isConnected
+        ? returnFocus : null;
       if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
         window.CanvasModule.setExternalOverlayOpen(false);
       }
-      if (restoreFocus !== false && returnFocus && returnFocus.isConnected) returnFocus.focus();
-      returnFocus = null;
-      return true;
+      return concealToolLayer(dialog, () => {
+        editingTimer = null;
+        setError('');
+        if (focusTarget) focusTarget.focus();
+        returnFocus = null;
+      }, 210);
     }
 
     function open(timer) {
@@ -1860,7 +5527,7 @@
         ? editingTimer.durationMs
         : 25 * 60 * 1000);
       setError('');
-      dialog.hidden = false;
+      revealToolLayer(dialog);
       dialog.lang = toolbarLanguage;
       if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
         window.CanvasModule.setExternalOverlayOpen(true);
@@ -2166,16 +5833,83 @@
     const btn = document.querySelector('[data-role="settings-btn"]');
     const pop = document.querySelector('[data-role="settings-pop"]');
     if (!btn || !pop) return;
-    const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
-    const open = () => { pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); };
-    btn.addEventListener('click', (e) => { e.stopPropagation(); if (pop.hidden) open(); else close(); });
+    let closing = false;
+    let closeTimer = null;
+    let reduceMotion = false;
+    try {
+      reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) {}
+
+    const syncScrolledState = () => {
+      pop.classList.toggle('is-scrolled', pop.scrollTop > 4);
+    };
+    const finishClose = () => {
+      if (!closing) return;
+      closing = false;
+      if (closeTimer) {
+        window.clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+      pop.removeEventListener('animationend', onCloseAnimationEnd);
+      pop.classList.remove('is-closing', 'is-scrolled');
+      pop.hidden = true;
+    };
+    const onCloseAnimationEnd = (event) => {
+      if (event.target === pop && event.animationName === 'settings-panel-out') {
+        finishClose();
+      }
+    };
+    const close = () => {
+      btn.setAttribute('aria-expanded', 'false');
+      document.dispatchEvent(new CustomEvent('editor:settings-reset-cancel'));
+      if (pop.hidden || closing) return;
+      closing = true;
+      if (reduceMotion) {
+        finishClose();
+        return;
+      }
+      pop.classList.add('is-closing');
+      pop.addEventListener('animationend', onCloseAnimationEnd);
+      closeTimer = window.setTimeout(finishClose, 190);
+    };
+    const open = () => {
+      if (closeTimer) {
+        window.clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+      pop.removeEventListener('animationend', onCloseAnimationEnd);
+      closing = false;
+      pop.classList.remove('is-closing');
+      pop.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      window.requestAnimationFrame(syncScrolledState);
+    };
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (pop.hidden || closing) open();
+      else close();
+    });
+    // 面板自己处理滚动，避免 wheel 冒泡到画布后触发缩放。
+    pop.addEventListener('wheel', (event) => {
+      event.stopPropagation();
+    }, { passive: true });
+    pop.addEventListener('scroll', syncScrolledState, { passive: true });
     document.addEventListener('mousedown', (e) => {
-      if (pop.hidden) return;
+      if (pop.hidden || closing) return;
       if (pop.contains(e.target) || btn.contains(e.target)) return;
       close();
     });
     document.addEventListener('keydown', (e) => {
-      if (!pop.hidden && e.key === 'Escape') { close(); btn.focus(); }
+      if (pop.hidden || closing || e.key !== 'Escape') return;
+      const resetConfirm = pop.querySelector('[data-role="settings-reset-confirm"]');
+      if (resetConfirm && !resetConfirm.hidden) {
+        document.dispatchEvent(new CustomEvent('editor:settings-reset-cancel', {
+          detail: { restoreFocus: true },
+        }));
+        return;
+      }
+      close();
+      btn.focus();
     });
   })();
 
@@ -2886,34 +6620,6 @@
     sync();
   })();
 
-  // 任务清单出现延迟（齿轮里滑条调；全局偏好 canvas:checklistDelay，单位 ms；0=瞬发）。
-  // 纯 CSS 变量驱动：写到 :root 的 --checklist-delay，styles.css 的 .node-checklist 悬停态读取。
-  (function setupChecklistDelay() {
-    const input = document.querySelector('[data-role="checklist-delay"]');
-    const valEl = document.querySelector('[data-role="checklist-delay-val"]');
-    if (!input) return;
-    const KEY = 'canvas:checklistDelay';
-    const MIN = 0, MAX = 2000;
-    const clamp = (n) => Math.max(MIN, Math.min(MAX, n));
-    const fmt = (ms) => {
-      if (ms <= 0) return '瞬发';
-      return (ms / 1000).toFixed(2).replace(/0+$/, '').replace(/\.$/, '') + 's';
-    };
-    let saved = 800;
-    try { const v = parseInt(localStorage.getItem(KEY), 10); if (Number.isFinite(v)) saved = clamp(v); } catch (e) {}
-    const apply = (ms) => {
-      document.documentElement.style.setProperty('--checklist-delay', ms + 'ms');
-      if (valEl) valEl.textContent = fmt(ms);
-    };
-    input.value = String(saved);
-    apply(saved);
-    input.addEventListener('input', () => {
-      const ms = clamp(parseInt(input.value, 10) || 0);
-      apply(ms);
-      try { localStorage.setItem(KEY, String(ms)); } catch (e) {}
-    });
-  })();
-
   // 脑图收起分支：悬停后临时预展开的延迟。只存浏览器偏好，不改 .canvas 正式折叠状态。
   (function setupMindmapHoverDelay() {
     const input = document.querySelector('[data-role="mindmap-hover-delay"]');
@@ -3112,11 +6818,9 @@
     });
   })();
 
-  // 节点两侧的辅助入口默认保持安静，需要时可从齿轮里恢复显示。
-  // 这里只切视觉类，不改任务清单或脑图折叠数据。
+  // 脑图分支入口默认保持安静，需要时可从齿轮里恢复显示。
   (function setupNodeAssistVisibility() {
     [
-      { role: 'show-node-checklists', key: 'canvas:showNodeChecklists', cls: 'show-node-checklists' },
       { role: 'show-mindmap-folds', key: 'canvas:showMindmapFolds', cls: 'show-mindmap-folds' },
     ].forEach((pref) => {
       const cb = document.querySelector('[data-role="' + pref.role + '"]');
@@ -3170,6 +6874,39 @@
     try { on = localStorage.getItem(KEY) !== '0'; } catch (e) {}
     cb.checked = on;
     cb.addEventListener('change', () => {
+      try { localStorage.setItem(KEY, cb.checked ? '1' : '0'); } catch (e) {}
+    });
+  })();
+
+  // 任务簿完成归档：默认在画布留下脱离任务管理的普通枝桠树副本。
+  (function setupTaskbookArchiveSnapshotToggle() {
+    const cb = document.querySelector('[data-role="taskbook-archive-snapshot"]');
+    if (!cb) return;
+    const KEY = 'canvas:taskbookArchiveSnapshotEnabled';
+    let on = true;
+    try { on = localStorage.getItem(KEY) !== '0'; } catch (e) {}
+    cb.checked = on;
+    cb.addEventListener('change', () => {
+      try { localStorage.setItem(KEY, cb.checked ? '1' : '0'); } catch (e) {}
+    });
+  })();
+
+  // 任务簿叶子计时入口：默认开启，只控制画布节点左侧的悬停按钮。
+  (function setupTaskbookLeafTimerButtonsToggle() {
+    const cb = document.querySelector('[data-role="taskbook-leaf-timer-buttons"]');
+    if (!cb) return;
+    const KEY = 'canvas:taskbookLeafTimerButtonsEnabled';
+    let on = true;
+    try { on = localStorage.getItem(KEY) !== '0'; } catch (e) {}
+    const apply = (enabled) => {
+      cb.checked = enabled;
+      document.dispatchEvent(new CustomEvent('canvas:taskbook-leaf-timer-buttons-enabled', {
+        detail: enabled,
+      }));
+    };
+    apply(on);
+    cb.addEventListener('change', () => {
+      apply(cb.checked);
       try { localStorage.setItem(KEY, cb.checked ? '1' : '0'); } catch (e) {}
     });
   })();
@@ -3237,6 +6974,147 @@
     cb.checked = on;
     cb.addEventListener('change', () => {
       try { localStorage.setItem(KEY, cb.checked ? '1' : '0'); } catch (e) {}
+    });
+  })();
+
+  // 齿轮面板恢复默认：只重置当前面板管理的浏览器偏好，保留语言、画布数据和引导记录。
+  // 先通过既有控件事件即时同步运行态，再删除显式存储值，让后续版本仍可继承新的出厂默认。
+  (function setupSettingsReset() {
+    const area = document.querySelector('[data-role="settings-reset-area"]');
+    if (!area) return;
+    const openBtn = area.querySelector('[data-role="settings-reset-open"]');
+    const confirmBox = area.querySelector('[data-role="settings-reset-confirm"]');
+    const cancelBtn = area.querySelector('[data-role="settings-reset-cancel"]');
+    const acceptBtn = area.querySelector('[data-role="settings-reset-accept"]');
+    const statusEl = area.querySelector('[data-role="settings-reset-status"]');
+    const settingsPanel = area.closest('[data-role="settings-pop"]');
+    if (!openBtn || !confirmBox || !cancelBtn || !acceptBtn) return;
+
+    const preferences = [
+      { role: 'pan-speed', value: '8', event: 'input', key: 'canvas:panSpeed' },
+      { role: 'pan-inertia', value: '0.15', event: 'input', key: 'canvas:panInertia' },
+      { role: 'zoom-speed', value: '1', event: 'input', key: 'canvas:zoomSpeed' },
+      { role: 'mindmap-hover-delay', value: '500', event: 'input', key: 'canvas:mindmapHoverDelay' },
+      { role: 'index-hover-delay', value: '400', event: 'input', key: 'canvas:indexHoverDelay' },
+      { role: 'tooltip-hover-delay', value: '3500', event: 'input', key: 'canvas:tooltipHoverDelay' },
+      { role: 'tooltip-hide-delay', value: '70', event: 'input', key: 'canvas:tooltipHideDelay' },
+      { role: 'code-default-language', value: 'c', event: 'change', key: 'canvas:codeDefaultLanguage' },
+      { role: 'pen-pressure', checked: true, event: 'change', key: 'canvas:penPressure' },
+      { role: 'enable-text-snap', checked: false, event: 'change', key: 'canvas:textSnapEnabled' },
+      { role: 'show-mindmap-folds', checked: false, event: 'change', key: 'canvas:showMindmapFolds' },
+      { role: 'enable-inspector', checked: true, event: 'change', key: 'canvas:inspectorEnabled' },
+      { role: 'enable-mindmap-inspector', checked: false, event: 'change', key: 'canvas:mindmapInspectorEnabled' },
+      { role: 'enable-decor-inspector', checked: true, event: 'change', key: 'canvas:decorInspectorEnabled' },
+      { role: 'enable-index-hover', checked: true, event: 'change', key: 'canvas:indexHoverEnabled' },
+      { role: 'enable-box-create', checked: true, event: 'change', key: 'canvas:boxCreateEnabled' },
+      { role: 'enable-group-create', checked: true, event: 'change', key: 'canvas:groupCreateEnabled' },
+      { role: 'taskbook-archive-snapshot', checked: true, event: 'change', key: 'canvas:taskbookArchiveSnapshotEnabled' },
+      { role: 'taskbook-leaf-timer-buttons', checked: true, event: 'change', key: 'canvas:taskbookLeafTimerButtonsEnabled' },
+      { role: 'enable-gen-index', checked: false, event: 'change', key: 'canvas:genIndexEnabled' },
+      { role: 'enable-dark-edge-optimization', checked: true, event: 'change', key: 'canvas:darkEdgeOptimization' },
+      { role: 'enable-dark-semantic-ui', checked: true, event: 'change', key: 'canvas:darkSemanticUiOptimization' },
+      { role: 'enable-autosave', checked: true, event: 'change', key: 'canvas:autosaveEnabled' },
+      { role: 'enable-space-locate', checked: false, event: 'change', key: 'canvas:spaceLocateEnabled' },
+      { role: 'zoom-pref', value: '100%', event: 'blur', key: 'canvas:zoomPref' },
+    ];
+    let statusTimer = null;
+    let statusClearTimer = null;
+    let confirmHideTimer = null;
+    let confirming = false;
+    let reduceMotion = false;
+    try {
+      reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) {}
+
+    function focusWithoutScroll(element) {
+      const previousScrollTop = settingsPanel ? settingsPanel.scrollTop : 0;
+      try { element.focus({ preventScroll: true }); }
+      catch (e) { element.focus(); }
+      if (!settingsPanel) return;
+      settingsPanel.scrollTop = previousScrollTop;
+      window.requestAnimationFrame(() => {
+        settingsPanel.scrollTop = previousScrollTop;
+      });
+    }
+
+    function setConfirming(nextConfirming, restoreFocus) {
+      if (confirmHideTimer) {
+        window.clearTimeout(confirmHideTimer);
+        confirmHideTimer = null;
+      }
+      confirming = !!nextConfirming;
+      if (confirming) {
+        if (statusTimer) {
+          window.clearTimeout(statusTimer);
+          statusTimer = null;
+        }
+        if (statusClearTimer) {
+          window.clearTimeout(statusClearTimer);
+          statusClearTimer = null;
+        }
+        area.classList.remove('is-restored');
+        if (statusEl) statusEl.textContent = '';
+        confirmBox.hidden = false;
+        openBtn.setAttribute('aria-expanded', 'true');
+        area.classList.add('is-confirming');
+        window.requestAnimationFrame(() => confirmBox.classList.add('is-visible'));
+        focusWithoutScroll(cancelBtn);
+        return;
+      }
+
+      openBtn.setAttribute('aria-expanded', 'false');
+      area.classList.remove('is-confirming');
+      confirmBox.classList.remove('is-visible');
+      const finishHide = () => {
+        if (confirming) return;
+        confirmBox.hidden = true;
+        confirmHideTimer = null;
+      };
+      if (reduceMotion || confirmBox.hidden) finishHide();
+      else confirmHideTimer = window.setTimeout(finishHide, 150);
+      if (restoreFocus) focusWithoutScroll(openBtn);
+    }
+
+    function resetPreferences() {
+      preferences.forEach((preference) => {
+        const control = document.querySelector('[data-role="' + preference.role + '"]');
+        if (!control) return;
+        if (Object.prototype.hasOwnProperty.call(preference, 'checked')) {
+          control.checked = preference.checked;
+        } else {
+          control.value = preference.value;
+        }
+        control.dispatchEvent(new Event(preference.event, { bubbles: true }));
+      });
+      try {
+        preferences.forEach((preference) => localStorage.removeItem(preference.key));
+      } catch (e) {}
+    }
+
+    // 鼠标按下默认会先把吸顶按钮的 DOM 原位滚回视口；拦下这一步，再由确认层接管焦点。
+    openBtn.addEventListener('mousedown', (event) => event.preventDefault());
+    openBtn.addEventListener('click', () => setConfirming(!confirming, false));
+    cancelBtn.addEventListener('click', () => setConfirming(false, true));
+    acceptBtn.addEventListener('click', () => {
+      resetPreferences();
+      setConfirming(false, true);
+      if (!statusEl) return;
+      if (statusTimer) window.clearTimeout(statusTimer);
+      if (statusClearTimer) window.clearTimeout(statusClearTimer);
+      statusEl.textContent = toolbarCopy('settingsResetDone');
+      area.classList.add('is-restored');
+      statusTimer = window.setTimeout(() => {
+        area.classList.remove('is-restored');
+        statusTimer = null;
+        statusClearTimer = window.setTimeout(() => {
+          statusEl.textContent = '';
+          statusClearTimer = null;
+        }, reduceMotion ? 0 : 180);
+      }, 1700);
+    });
+    document.addEventListener('editor:settings-reset-cancel', (event) => {
+      if (!confirming && confirmBox.hidden) return;
+      setConfirming(false, !!(event.detail && event.detail.restoreFocus));
     });
   })();
 
@@ -4475,7 +8353,6 @@
     return;
   }
 
-  let canvasData = null;
   let dirty = false;
   let isSaving = false;
   let savePromise = null;
@@ -5682,9 +9559,17 @@
           onChange: markDirty,
         });
         document.dispatchEvent(new CustomEvent('editor:canvasready'));
-        if (LOCATE_NODE && typeof window.CanvasModule.revealNode === 'function') {
+        if ((LOCATE_NODE || LOCATE_TASK_ROOT) && typeof window.CanvasModule.revealNode === 'function') {
           window.setTimeout(() => {
-            try { window.CanvasModule.revealNode(LOCATE_NODE); } catch (e) {}
+            let located = false;
+            if (LOCATE_NODE) {
+              try { located = !!window.CanvasModule.revealNode(LOCATE_NODE); } catch (e) {}
+            }
+            if (!located && LOCATE_TASK_ROOT) {
+              document.dispatchEvent(new CustomEvent('editor:open-task-root', {
+                detail: { rootId: LOCATE_TASK_ROOT },
+              }));
+            }
           }, 240);
         }
       }
@@ -5882,7 +9767,15 @@
         window.alert(json.error || '导出失败');
         return;
       }
-      window.alert('导出完成：' + json.count + ' 个 Markdown 文件\n\n' + json.path);
+      const noteCount = Number(json.noteCount) || 0;
+      const nodeCount = Number(json.nodeCount);
+      window.alert(toolbarLanguage === 'en'
+        ? ('Exported ' + json.count + ' Markdown files'
+          + (Number.isFinite(nodeCount) ? ' (' + nodeCount + ' nodes, ' + noteCount + ' notes)' : '')
+          + '\n\n' + json.path)
+        : ('导出完成：' + json.count + ' 个 Markdown 文件'
+          + (Number.isFinite(nodeCount) ? '（' + nodeCount + ' 个节点，' + noteCount + ' 篇笔记）' : '')
+          + '\n\n' + json.path));
       try {
         await fetch('/api/open-external', {
           method: 'POST',

@@ -1058,6 +1058,15 @@
       + (date.getMonth() + 1) + ' 月 ' + date.getDate() + ' 日 · ' + weekdays[date.getDay()];
   }
 
+  function cadenceRecordCopy(item) {
+    const title = '<strong>' + escapeHtml(item.title || '未命名任务') + '</strong>';
+    if (item.kind !== 'taskbook') return title;
+    const leafCount = Math.max(0, Number(item.leafCount) || 0);
+    const duration = focusDurationLabel(Math.max(0, Number(item.durationMs) || 0) / 1000);
+    return title + '<span class="cadence-taskbook-meta"><i>任务簿</i><span>'
+      + leafCount + ' 项 · ' + escapeHtml(duration) + '</span></span>';
+  }
+
   function cadenceDayDetailHtml(day, entries, count, todayKey) {
     const items = (entries || []).filter((item) => item.day === day);
     const future = day > todayKey;
@@ -1071,8 +1080,8 @@
             + escapeHtml(item.linkedCanvas) + '">打开画布</button>'
           : '';
         return '<div class="cadence-day-detail-item" style="--detail-delay:' + (index * 45) + 'ms">'
-          + '<span aria-hidden="true"></span><strong>' + escapeHtml(item.title || '未命名任务')
-          + '</strong>' + canvas + '</div>';
+          + '<span aria-hidden="true"></span><div class="cadence-record-copy">'
+          + cadenceRecordCopy(item) + '</div>' + canvas + '</div>';
       }).join('') + '</div>'
       : '<p class="cadence-day-detail-empty">' + note + '</p>';
     return '<div class="cadence-day-detail-copy"><p>' + escapeHtml(cadenceDateLabel(day, true)) + '</p>'
@@ -1106,8 +1115,9 @@
             ? '<button type="button" class="cadence-open-canvas" data-canvas-path="'
               + escapeHtml(item.linkedCanvas) + '">打开画布</button>'
             : '';
-          return '<div class="cadence-recent-item"><span class="cadence-recent-dot"></span><strong>'
-            + escapeHtml(item.title || '未命名任务') + '</strong>' + canvas + '</div>';
+          return '<div class="cadence-recent-item"><span class="cadence-recent-dot"></span>'
+            + '<div class="cadence-record-copy">' + cadenceRecordCopy(item) + '</div>'
+            + canvas + '</div>';
         }).join('') + '</div></section>';
     }).join('') + '</div>';
   }

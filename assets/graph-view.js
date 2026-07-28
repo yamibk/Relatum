@@ -17,7 +17,8 @@
   };
   const KIND_COLORS = {
     index: '#2f3437', text: '#2f3437', preview: '#bc913c',
-    card: '#4f9571', table: '#477f78', pdf: '#b07a4f', md: '#5b8c7e', normal: '#35383b',
+    card: '#4f9571', taskbook: '#202124', 'task-root': '#202124', table: '#477f78',
+    pdf: '#b07a4f', md: '#5b8c7e', normal: '#35383b',
   };
 
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
@@ -52,6 +53,8 @@
     if (node.kind === 'index' || node.kind === 'text') return '索引节点';
     if (node.kind === 'preview') return '预览节点';
     if (node.kind === 'card') return '卡片节点';
+    if (node.kind === 'task-root') return '顶级任务';
+    if (node.kind === 'taskbook') return '任务簿';
     if (node.kind === 'table') return '表格对象';
     if (node.kind === 'pdf') return 'PDF 附件';
     if (node.kind === 'md') return 'Markdown 附件';

@@ -280,6 +280,10 @@
   }
 
   function hasMathSource(text) {
+    const markdown = window.MarkdownMini;
+    if (markdown && markdown.structure && typeof markdown.structure.scanFeatures === 'function') {
+      return markdown.structure.scanFeatures(text || '').math;
+    }
     return /(?:\$|\\\(|\\\[|\\begin\{|\\ref\{|\\eqref\{)/.test(text || '');
   }
 
@@ -294,13 +298,18 @@
       el.innerHTML = '';
       return false;
     }
+    let rendered = null;
     if (window.MarkdownMini && typeof window.MarkdownMini.render === 'function') {
-      el.innerHTML = window.MarkdownMini.render(text);
+      rendered = typeof window.MarkdownMini.renderResult === 'function'
+        ? window.MarkdownMini.renderResult(text) : null;
+      el.innerHTML = rendered ? rendered.html : window.MarkdownMini.render(text);
     } else {
       el.textContent = text;
     }
-    if (hasMathSource(text)) typeset(el);
-    if (window.MermaidRenderer) window.MermaidRenderer.renderAll(el);
+    if (rendered ? rendered.features.math : hasMathSource(text)) typeset(el);
+    if ((!rendered || rendered.features.mermaid) && window.MermaidRenderer) {
+      window.MermaidRenderer.renderAll(el);
+    }
     return true;
   }
 

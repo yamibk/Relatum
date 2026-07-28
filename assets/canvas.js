@@ -350,6 +350,9 @@
   function cloneNode(n) {
     const c = { ...n };
     if (Array.isArray(n.groupMemberIds)) c.groupMemberIds = n.groupMemberIds.slice();
+    if (n.sourceCompletion && typeof n.sourceCompletion === 'object') {
+      c.sourceCompletion = { ...n.sourceCompletion };
+    }
     if (Array.isArray(n.textMarks)) c.textMarks = n.textMarks.map((mark) => ({ ...mark }));
     if (Array.isArray(n.bodyMarks)) c.bodyMarks = n.bodyMarks.map((mark) => ({ ...mark }));
     if (n.tableLayout && typeof n.tableLayout === 'object') {
@@ -382,13 +385,19 @@
     return [];
   }
 
-  function cloneState(nodes, edges, ink, ruler, timers) {
+  function cloneTaskbook(taskbook) {
+    if (!taskbook || typeof taskbook !== 'object') return null;
+    return JSON.parse(JSON.stringify(taskbook));
+  }
+
+  function cloneState(nodes, edges, ink, ruler, timers, taskbook) {
     return {
       nodes: nodes.map(cloneNode),
       edges: edges.map(cloneEdge),
       ink: cloneInk(ink),
       ruler: cloneRuler(ruler),
       timers: cloneTimers(timers),
+      taskbook: cloneTaskbook(taskbook),
     };
   }
 
@@ -889,6 +898,7 @@
     const data = opts.data;
     const Ruler = global.RelatumRuler || null;
     const Timer = global.RelatumCanvasTimer || null;
+    const Taskbooks = global.RelatumCanvasTaskbooks || null;
     const CanvasImport = global.RelatumCanvasImport || null;
     let canvasImportBusy = false;
     const onViewportChange = opts.onViewportChange || function () {};
@@ -933,7 +943,7 @@
     }
 
     function showRelevantOnboardingHint() {
-      const contentNodes = data.nodes.filter((node) => !isDecorationNode(node));
+      const contentNodes = data.nodes.filter((node) => !isDecorationNode(node) && !isTaskbookNode(node));
       // 空画布交给左上角常驻提示，这里不再弹同义胶囊（避免与静态提示重复）；
       // 胶囊只负责"下一步"：有了第一个节点教连线，多个节点教 Tab/Enter。
       if (contentNodes.length === 0) {
@@ -962,6 +972,31 @@
     }
     if (!Array.isArray(data.nodes)) data.nodes = [];
     if (!Array.isArray(data.edges)) data.edges = [];
+    if (Taskbooks && typeof Taskbooks.normalizeCanvas === 'function') {
+      const normalizedTaskbookCanvas = Taskbooks.normalizeCanvas(data);
+      data.nodes = normalizedTaskbookCanvas.nodes;
+      data.edges = normalizedTaskbookCanvas.edges;
+      if (normalizedTaskbookCanvas.taskbook) data.taskbook = normalizedTaskbookCanvas.taskbook;
+      else delete data.taskbook;
+      // 进程异常或强制退出后，活动段只计到最后一次保存检查点；重开时一律暂停，
+      // 不能把应用关闭后的墙钟时间误算成专注投入。
+      Taskbooks.sortedRoots(data).forEach(function (root) {
+        if (!root.activeSession) return;
+        const active = root.activeSession;
+        if (Number(active.elapsedMs) > 0) {
+          const session = Taskbooks.normalizeSession({
+            id: active.id,
+            nodeId: active.nodeId,
+            taskTitle: active.taskTitle,
+            durationMs: active.elapsedMs,
+            startedAt: active.startedAt,
+            endedAt: active.checkpointAt,
+          }, new Date().toISOString());
+          if (session) root.sessions.push(session);
+        }
+        delete root.activeSession;
+      });
+    }
     const RichText = global.RelatumRichText;
     let richMigrationChanged = false;
 
@@ -1113,6 +1148,10 @@
     }
     data.nodes.forEach(function (node) {
       if (node && node.kind === 'text') node.kind = 'index';
+      if (node && Object.prototype.hasOwnProperty.call(node, 'checklist')) {
+        delete node.checklist;
+        richMigrationChanged = true;
+      }
       if (normalizeNodeRichText(node)) richMigrationChanged = true;
       if (normalizeTableNodeLayout(node)) richMigrationChanged = true;
     });
@@ -1257,11 +1296,14 @@
     let editingTextBoxOriginalMarks = [];
     let editingTextBoxIsNew = false;
     let textSnapEnabled = false;         // 齿轮开关：文本框拖动时是否显示参考线并自动对齐（默认关）
+    let taskbookLeafTimerButtonsEnabled = true;
     let textSnapGuideX = null;
     let textSnapGuideY = null;
     let rulerEl = null;
     let rulerSelected = false;
     let rulerContactTimer = null;
+    let rulerMenuMotionTimer = null;
+    let rulerMenuMotionEpoch = 0;
     let suppressDecorTitleClick = false;
     let decorTitleLongPressTimer = null;
     let decorTitleLongPressTriggered = false;
@@ -1274,9 +1316,16 @@
     let lastMouseClientY = -1;
 
     try { textSnapEnabled = localStorage.getItem('canvas:textSnapEnabled') === '1'; } catch (e) {}
+    try {
+      taskbookLeafTimerButtonsEnabled = localStorage.getItem('canvas:taskbookLeafTimerButtonsEnabled') !== '0';
+    } catch (e) {}
     document.addEventListener('canvas:text-snap-enabled', function (e) {
       textSnapEnabled = !!e.detail;
       if (!textSnapEnabled) hideTextSnapGuides();
+    });
+    document.addEventListener('canvas:taskbook-leaf-timer-buttons-enabled', function (e) {
+      taskbookLeafTimerButtonsEnabled = e.detail !== false;
+      refreshTaskbookCards();
     });
 
     // ── Z 轮：视口系统（缩放 + 平移）────────
@@ -1327,6 +1376,11 @@
     let spaceUsedForPan = false;        // 本次空格按住期间是否拖动过（区分"短按定位" vs "按住平移"）
     let shortcutsOpen = false;          // 速查表浮层是否打开（Y1 轮）
     let externalOverlayOpen = false;    // 图谱等外部浮窗显示时暂停底层画布快捷操作
+    let scenePresentationMode = false;  // 镜头册演示：锁内容编辑，只保留相机平移/缩放
+    let sceneGeometryCache = null;      // 镜头缩略图共用的一次性节点/连线几何快照
+    let taskbookOwnershipCache = null;  // 任务簿归属只在结构变化后重建，删除/连线热路径复用
+    let taskbookRuntime = null;         // 全局唯一运行段：{rootId,sessionId,startedAtMs}
+    let taskbookTickHandle = null;
     let drawTool = 'select';
     let eraserChanged = false;
     // 橡皮两种模式：'stroke' 整笔擦（默认，碰到就整条删）/ 'area' 局部擦（只擦橡皮圈内的一段）。再点橡皮切换。
@@ -2213,7 +2267,7 @@
     }
 
     function snapshotCanvasState() {
-      return cloneState(data.nodes, data.edges, data.ink, data.ruler, snapshotTimers());
+      return cloneState(data.nodes, data.edges, data.ink, data.ruler, snapshotTimers(), data.taskbook);
     }
 
     // 历史栈：栈顶 = 当前状态
@@ -2242,21 +2296,34 @@
     refreshHistoryButtons();
 
     function notify() {
+      sceneGeometryCache = null;
+      taskbookOwnershipCache = null;
+      if (Taskbooks) Taskbooks.synchronizeCompletion(data);
+      document.dispatchEvent(new CustomEvent('canvas:scene-geometry-change'));
       updateEmptyHint();
       refreshGroupContainers();
       refreshMindmapFolding();
       refreshAllIndexNodes();
+      refreshTaskbookCards();
       // 阶段 4：搜索开着时，增删改后重算命中（不强制居中）
       if (searchOpen) runSearch(searchInput ? searchInput.value : '', false);
       redrawMinimap();   // 阶段 4：节点增删改后刷新小地图
+      if (Taskbooks && data.taskbook && data.taskbook.roots && data.taskbook.roots.length) {
+        document.dispatchEvent(new CustomEvent('canvas:taskbook-change'));
+      }
       onChange();
     }
 
     function updateEmptyHint() {
       const ink = ensureInkData();
-      const hasVisibleNode = data.nodes.some((node) => !isEdgeAnchorNode(node));
+      const hasVisibleNode = data.nodes.some((node) => (
+        !isEdgeAnchorNode(node) && !isCanvasNodeVisuallyHidden(node.id)
+      ));
+      const hasVisibleEdge = data.edges.some((edge) => (
+        !isCanvasNodeVisuallyHidden(edge.from) && !isCanvasNodeVisuallyHidden(edge.to)
+      ));
       if (emptyHint) emptyHint.hidden = hasVisibleNode
-        || data.edges.length > 0
+        || hasVisibleEdge
         || ink.strokes.length > 0
         || ink.arrows.length > 0
         || timerList().length > 0;
@@ -2265,6 +2332,10 @@
     // ── 工具 ──────────────────────────────────
     // 把节点 .node-text 切到"显示态"：渲染 markdown，记下 source 避免重复渲染
     function hasMathSource(source) {
+      const md = global.MarkdownMini;
+      if (md && md.structure && typeof md.structure.scanFeatures === 'function') {
+        return md.structure.scanFeatures(source || '').math;
+      }
       return /(?:\$|\\\(|\\\[|\\begin\{|\\ref\{|\\eqref\{)/.test(source || '');
     }
     function nextMathToken(textEl) {
@@ -2281,8 +2352,8 @@
       }
       delete textEl.dataset.hasMath;
     }
-    function scheduleElementMath(textEl, source) {
-      if (hasMathSource(source)) {
+    function scheduleElementMath(textEl, source, featureHint) {
+      if (featureHint === true || (featureHint == null && hasMathSource(source))) {
         textEl.dataset.hasMath = '1';
         ensureMathJaxForCanvas();
         typesetMath(textEl);
@@ -2299,13 +2370,14 @@
       textEl.dataset.source = renderSource;
       delete textEl.dataset.codeLanguage;
       const md = global.MarkdownMini;
-      textEl.innerHTML = md ? md.render(renderSource) : (source ? source.replace(/[&<>"]/g, function (c) {
+      const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(renderSource) : null;
+      textEl.innerHTML = rendered ? rendered.html : (md ? md.render(renderSource) : (source ? source.replace(/[&<>"]/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-      }) : '');
+      }) : ''));
       // 仅含公式时触发 MathJax，避免大画布里普通文本也排队重排。
-      scheduleElementMath(textEl, source);
+      scheduleElementMath(textEl, source, rendered ? rendered.features.math : null);
       // Mermaid 图表（```mermaid 块）：交由 Mermaid 渲染为 SVG
-      renderMermaidDiagrams(textEl);
+      if (!rendered || rendered.features.mermaid) renderMermaidDiagrams(textEl);
     }
 
     // 阅读浮层标题只需要行内 Markdown：复用完整渲染器，再剥掉单段落外壳。
@@ -2322,15 +2394,16 @@
         return;
       }
       const wrap = document.createElement('div');
-      wrap.innerHTML = md.render(renderSource);
+      const rendered = typeof md.renderResult === 'function' ? md.renderResult(renderSource) : null;
+      wrap.innerHTML = rendered ? rendered.html : md.render(renderSource);
       if (wrap.children.length === 1 && wrap.firstElementChild && wrap.firstElementChild.tagName === 'P') {
         textEl.innerHTML = wrap.firstElementChild.innerHTML;
       } else {
         textEl.innerHTML = wrap.innerHTML;
       }
-      scheduleElementMath(textEl, source);
+      scheduleElementMath(textEl, source, rendered ? rendered.features.math : null);
       // Mermaid 图表（```mermaid 块）：交由 Mermaid 渲染为 SVG
-      renderMermaidDiagrams(textEl);
+      if (!rendered || rendered.features.mermaid) renderMermaidDiagrams(textEl);
     }
 
     // 正文节点的主体内容渲染入口：代码=纯代码着色（不解析 Markdown）；
@@ -2747,10 +2820,10 @@
     };
     // 独立表格等非 .node-text Markdown DOM 也必须复用同一条 MathJax 串行队列，
     // 不能自行 typeset 或恢复全页面观察器。
-    global.CanvasModule.scheduleMarkdownMath = function (element, source) {
+    global.CanvasModule.scheduleMarkdownMath = function (element, source, featureHint) {
       if (!element) return Promise.resolve();
       if (element.dataset.hasMath === '1') clearMath(element);
-      if (!hasMathSource(source || '')) return Promise.resolve();
+      if (featureHint !== true && !hasMathSource(source || '')) return Promise.resolve();
       element.dataset.hasMath = '1';
       ensureMathJaxForCanvas();
       if (global.MathJax && typeof global.MathJax.typesetPromise === 'function') {
@@ -2777,6 +2850,11 @@
     }
     function isCardNode(node) {
       return !!node && node.kind === 'card';
+    }
+    function isTaskbookNode(node) {
+      return !!node && (Taskbooks
+        ? Taskbooks.isTaskRootNode(node)
+        : node.kind === 'task-root');
     }
     function isCodeNode(node) {
       return !!node && node.kind === 'code';
@@ -2848,7 +2926,7 @@
     // 可连线节点：正文节点 + 附件（PDF/MD）+ 专用连接锚点。其他图案/图片仍不参与连线。
     // 锚点沿用 shape 存储以天然退出图谱、AI、Markdown 与模板等内容语义，只在画布连线层例外可连。
     function isLinkable(node) {
-      return !!node && (isEdgeAnchorNode(node)
+      return !!node && (isTaskbookNode(node) || isEdgeAnchorNode(node)
         || (!isShapeNode(node) && !isImageNode(node) && !isTextBoxNode(node)));
     }
     function revealedEdgeAnchorIds() {
@@ -4170,7 +4248,10 @@
         connectedNodeIds.add(edge.from);
         connectedNodeIds.add(edge.to);
       });
-      const fitNodes = data.nodes.filter((node) => !isEdgeAnchorNode(node) || connectedNodeIds.has(node.id));
+      const fitNodes = data.nodes.filter((node) => (
+        !isCanvasNodeVisuallyHidden(node.id)
+        && (!isEdgeAnchorNode(node) || connectedNodeIds.has(node.id))
+      ));
       if (fitNodes.length === 0 && !inkBox) {
         if (immediate) setViewportImmediate(1, 0, 0);
         else resetViewport();
@@ -4207,6 +4288,352 @@
         rememberViewport();
         requestTick();
       }
+    }
+
+    function focusNodeIds(ids, immediate) {
+      const nodes = Array.from(ids || []).map(findNode).filter(Boolean);
+      if (!nodes.length) return false;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      nodes.forEach(function (node) {
+        const rect = nodeRect(node);
+        minX = Math.min(minX, rect.x);
+        minY = Math.min(minY, rect.y);
+        maxX = Math.max(maxX, rect.x + rect.w);
+        maxY = Math.max(maxY, rect.y + rect.h);
+      });
+      const padding = 96;
+      const contentW = Math.max(1, maxX - minX) + padding * 2;
+      const contentH = Math.max(1, maxY - minY) + padding * 2;
+      const viewportRect = viewport.getBoundingClientRect();
+      const scale = clamp(Math.min(
+        viewportRect.width / contentW,
+        viewportRect.height / contentH,
+        1,
+      ), MIN_SCALE, MAX_SCALE);
+      const panX = viewportRect.width / 2 - ((minX + maxX) / 2) * scale;
+      const panY = viewportRect.height / 2 - ((minY + maxY) / 2) * scale;
+      if (immediate) setViewportImmediate(scale, panX, panY);
+      else {
+        targetScale = scale;
+        targetPanX = panX;
+        targetPanY = panY;
+        rememberViewport();
+        requestTick();
+      }
+      return true;
+    }
+
+    function sceneInsets(value) {
+      const source = value && typeof value === 'object' ? value : {};
+      const width = Math.max(1, viewport.clientWidth || viewport.getBoundingClientRect().width || 1);
+      const height = Math.max(1, viewport.clientHeight || viewport.getBoundingClientRect().height || 1);
+      const left = clamp(Number(source.left) || 0, 0, Math.max(0, width - 80));
+      const right = clamp(Number(source.right) || 0, 0, Math.max(0, width - left - 80));
+      const top = clamp(Number(source.top) || 0, 0, Math.max(0, height - 80));
+      const bottom = clamp(Number(source.bottom) || 0, 0, Math.max(0, height - top - 80));
+      return {
+        left: left,
+        right: right,
+        top: top,
+        bottom: bottom,
+        width: Math.max(80, width - left - right),
+        height: Math.max(80, height - top - bottom),
+        centerX: left + Math.max(80, width - left - right) / 2,
+        centerY: top + Math.max(80, height - top - bottom) / 2,
+      };
+    }
+
+    function currentSceneCamera(insets) {
+      const safe = sceneInsets(insets);
+      const scale = clamp(curScale, MIN_SCALE, MAX_SCALE);
+      return {
+        centerX: (safe.centerX - curPanX) / scale,
+        centerY: (safe.centerY - curPanY) / scale,
+        scale: scale,
+      };
+    }
+
+    function applySceneCamera(camera, options) {
+      const source = camera && typeof camera === 'object' ? camera : {};
+      const safe = sceneInsets(options && options.insets);
+      const scale = clamp(Number(source.scale) || 1, MIN_SCALE, MAX_SCALE);
+      const centerX = Number.isFinite(Number(source.centerX)) ? Number(source.centerX) : 0;
+      const centerY = Number.isFinite(Number(source.centerY)) ? Number(source.centerY) : 0;
+      const panX = safe.centerX - centerX * scale;
+      const panY = safe.centerY - centerY * scale;
+      const immediate = !!(options && options.immediate)
+        || (typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      if (immediate) {
+        setViewportImmediate(scale, panX, panY);
+        rememberViewport();
+      } else {
+        targetScale = scale;
+        targetPanX = panX;
+        targetPanY = panY;
+        rememberViewport();
+        requestTick();
+      }
+      return true;
+    }
+
+    function sceneBoundsForNodes(ids, geometry) {
+      const source = geometry || sceneGeometrySnapshot();
+      const wanted = ids instanceof Set ? ids : new Set(ids || []);
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      source.nodes.forEach(function (item) {
+        if (!wanted.has(item.id)) return;
+        minX = Math.min(minX, item.x);
+        minY = Math.min(minY, item.y);
+        maxX = Math.max(maxX, item.x + item.w);
+        maxY = Math.max(maxY, item.y + item.h);
+      });
+      if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+      return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+    }
+
+    function focusSceneBounds(bounds, options) {
+      if (!bounds) return false;
+      const safe = sceneInsets(options && options.insets);
+      const padding = Math.max(24, Number(options && options.padding) || 96);
+      const contentW = Math.max(1, bounds.maxX - bounds.minX) + padding * 2;
+      const contentH = Math.max(1, bounds.maxY - bounds.minY) + padding * 2;
+      const scale = clamp(Math.min(safe.width / contentW, safe.height / contentH, 1), MIN_SCALE, MAX_SCALE);
+      return applySceneCamera({
+        centerX: (bounds.minX + bounds.maxX) / 2,
+        centerY: (bounds.minY + bounds.maxY) / 2,
+        scale: scale,
+      }, options);
+    }
+
+    function sceneNodeTitle(node) {
+      if (!node) return '';
+      const value = node.text || node.name || node.label || '';
+      return String(value).trim().split(/\r?\n/)[0].slice(0, 80);
+    }
+
+    function classifySceneNode(node, nodeIds, groupIds) {
+      if (!node || isEdgeAnchorNode(node)) return false;
+      if (isGroupBoxNode(node)) groupIds.add(node.id);
+      else nodeIds.add(node.id);
+      return true;
+    }
+
+    function captureScene(options) {
+      options = options || {};
+      const camera = currentSceneCamera(options.insets);
+      if (options.source !== 'selection') {
+        return { ok: true, kind: 'camera', camera: camera, titleHint: '', ignoredCount: 0 };
+      }
+      const nodeIds = new Set();
+      const groupIds = new Set();
+      let ignoredCount = selectedTimerIds.size + (selectedArrowId ? 1 : 0) + (rulerSelected ? 1 : 0);
+      selectedNodeIds.forEach(function (id) {
+        if (!classifySceneNode(findNode(id), nodeIds, groupIds)) ignoredCount += 1;
+      });
+      selectedEdgeIds.forEach(function (id) {
+        const edge = findEdge(id);
+        if (!edge) {
+          ignoredCount += 1;
+          return;
+        }
+        classifySceneNode(findNode(edge.from), nodeIds, groupIds);
+        classifySceneNode(findNode(edge.to), nodeIds, groupIds);
+      });
+      groupIds.forEach(function (id) { nodeIds.delete(id); });
+      if (!nodeIds.size && !groupIds.size) {
+        return {
+          ok: false,
+          reason: 'no-supported-selection',
+          camera: camera,
+          ignoredCount: ignoredCount,
+        };
+      }
+      const all = [...groupIds, ...nodeIds];
+      const titleHint = all.length === 1 ? sceneNodeTitle(findNode(all[0])) : '';
+      return {
+        ok: true,
+        kind: 'selection',
+        camera: camera,
+        anchorNodeIds: [...nodeIds],
+        anchorGroupIds: [...groupIds],
+        titleHint: titleHint,
+        ignoredCount: ignoredCount,
+      };
+    }
+
+    function resolveSceneAnchors(scene) {
+      const ids = new Set();
+      let missingCount = 0;
+      (Array.isArray(scene && scene.anchorNodeIds) ? scene.anchorNodeIds : []).forEach(function (id) {
+        const node = findNode(id);
+        if (!node || isEdgeAnchorNode(node)) {
+          missingCount += 1;
+          return;
+        }
+        ids.add(node.id);
+      });
+      (Array.isArray(scene && scene.anchorGroupIds) ? scene.anchorGroupIds : []).forEach(function (id) {
+        const group = findNode(id);
+        if (!group || !isGroupBoxNode(group)) {
+          missingCount += 1;
+          return;
+        }
+        ids.add(group.id);
+        semanticGroupMembers(group).forEach(function (node) { ids.add(node.id); });
+      });
+      return { ids: ids, missingCount: missingCount };
+    }
+
+    function navigateToScene(scene, options) {
+      if (!scene || typeof scene !== 'object') return { ok: false, reason: 'invalid-scene' };
+      if (scene.kind === 'selection') {
+        const resolved = resolveSceneAnchors(scene);
+        const bounds = sceneBoundsForNodes(resolved.ids);
+        if (bounds) {
+          focusSceneBounds(bounds, options || {});
+          return {
+            ok: true,
+            missingCount: resolved.missingCount,
+            usedFallback: false,
+            anchorCount: resolved.ids.size,
+          };
+        }
+        applySceneCamera(scene.camera, options || {});
+        return {
+          ok: true,
+          missingCount: resolved.missingCount,
+          usedFallback: true,
+          anchorCount: 0,
+        };
+      }
+      applySceneCamera(scene.camera, options || {});
+      return { ok: true, missingCount: 0, usedFallback: false, anchorCount: 0 };
+    }
+
+    function sceneGeometrySnapshot() {
+      if (sceneGeometryCache) return sceneGeometryCache;
+      const nodes = [];
+      data.nodes.forEach(function (node) {
+        if (!node || isEdgeAnchorNode(node)) return;
+        const rect = nodeRect(node);
+        nodes.push({
+          id: node.id,
+          x: rect.x,
+          y: rect.y,
+          w: rect.w,
+          h: rect.h,
+          group: isGroupBoxNode(node),
+        });
+      });
+      const nodeIds = new Set(nodes.map(function (node) { return node.id; }));
+      const edges = data.edges.filter(function (edge) {
+        return edge && edge.from !== edge.to && nodeIds.has(edge.from) && nodeIds.has(edge.to);
+      }).map(function (edge) {
+        return { from: edge.from, to: edge.to };
+      });
+      sceneGeometryCache = {
+        nodes: nodes,
+        edges: edges,
+        byId: new Map(nodes.map(function (node) { return [node.id, node]; })),
+      };
+      return sceneGeometryCache;
+    }
+
+    function cameraSceneBounds(camera, insets) {
+      const safe = sceneInsets(insets);
+      const source = camera && typeof camera === 'object' ? camera : {};
+      const scale = clamp(Number(source.scale) || 1, MIN_SCALE, MAX_SCALE);
+      const centerX = Number(source.centerX) || 0;
+      const centerY = Number(source.centerY) || 0;
+      const halfW = safe.width / scale / 2;
+      const halfH = safe.height / scale / 2;
+      return {
+        minX: centerX - halfW,
+        minY: centerY - halfH,
+        maxX: centerX + halfW,
+        maxY: centerY + halfH,
+      };
+    }
+
+    function getScenePreviewGeometry(scene, options) {
+      const geometry = sceneGeometrySnapshot();
+      let bounds = null;
+      let missingCount = 0;
+      let usedFallback = false;
+      let included = null;
+      if (scene && scene.kind === 'selection') {
+        const resolved = resolveSceneAnchors(scene);
+        missingCount = resolved.missingCount;
+        included = resolved.ids;
+        bounds = sceneBoundsForNodes(included, geometry);
+        if (!bounds) usedFallback = true;
+      }
+      if (!bounds) bounds = cameraSceneBounds(scene && scene.camera, options && options.insets);
+      const padX = Math.max(12, (bounds.maxX - bounds.minX) * 0.06);
+      const padY = Math.max(12, (bounds.maxY - bounds.minY) * 0.08);
+      const framed = {
+        minX: bounds.minX - padX,
+        minY: bounds.minY - padY,
+        maxX: bounds.maxX + padX,
+        maxY: bounds.maxY + padY,
+      };
+      const nodes = geometry.nodes.filter(function (node) {
+        if (included) return included.has(node.id);
+        return node.x < framed.maxX && node.x + node.w > framed.minX
+          && node.y < framed.maxY && node.y + node.h > framed.minY;
+      });
+      const visibleIds = new Set(nodes.map(function (node) { return node.id; }));
+      const edges = geometry.edges.filter(function (edge) {
+        return visibleIds.has(edge.from) && visibleIds.has(edge.to);
+      });
+      return {
+        bounds: framed,
+        nodes: nodes,
+        edges: edges,
+        missingCount: missingCount,
+        usedFallback: usedFallback,
+      };
+    }
+
+    function captureSelectedGroupsAsScenes(options) {
+      const camera = currentSceneCamera(options && options.insets);
+      const groups = [];
+      selectedNodeIds.forEach(function (id) {
+        const node = findNode(id);
+        if (!node || !isGroupBoxNode(node)) return;
+        groups.push({
+          kind: 'selection',
+          camera: camera,
+          anchorNodeIds: [],
+          anchorGroupIds: [node.id],
+          titleHint: sceneNodeTitle(node),
+          x: Number(node.x) || 0,
+          y: Number(node.y) || 0,
+        });
+      });
+      groups.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+      return groups;
+    }
+
+    function setScenePresentationMode(enabled) {
+      const next = !!enabled;
+      if (scenePresentationMode === next) return;
+      if (next) {
+        if (editingNodeId !== null) commitNodeEdit();
+        if (editingEdgeId !== null) commitEdgeEdit();
+        if (editingTextBoxId !== null) commitTextBoxEdit();
+        if (textReaderEditing) finishTextReaderEdit();
+        finishMindmapGlide();
+        hideNodeMenu();
+        hideEdgeMenu();
+        hideRulerAngleMenu();
+      } else if (drag && drag.mode === 'pan') {
+        drag = null;
+        viewport.classList.remove('panning');
+      }
+      scenePresentationMode = next;
+      viewport.classList.toggle('scene-presentation-active', next);
     }
 
     // ── W 轮：方向键平移 + 定位 + 偏好缩放 ───
@@ -4668,6 +5095,7 @@
       else if (isStickyNode(node)) el.dataset.kind = 'sticky';
       else if (isTableNode(node)) el.dataset.kind = 'table';
       else el.removeAttribute('data-kind');
+      el.classList.toggle('archive-cover-node', isCardNode(node) && node.archiveCover === true);
       if (node.shape && node.shape !== 'rect') el.dataset.shape = node.shape;
       else el.removeAttribute('data-shape');
       if (node.bgColor || node.opacity != null) {
@@ -4824,14 +5252,18 @@
         if (!isCurrentAttachmentBody(node.id, body)) return;
         const fp = mdContentFp(text);            // 当前正文指纹，用于校验/失效旧标注
         const md = global.MarkdownMini;
-        const html = md ? md.render(text)
-          : ('<pre>' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>');
+        const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(text) : null;
+        const html = rendered ? rendered.html : (md ? md.render(text)
+          : ('<pre>' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>'));
         body.innerHTML = '<div class="attach-md-body node-text">' + html + '</div>';
         const mathBody = body.querySelector('.attach-md-body');
-        if (mathBody && hasMathSource(text)) mathBody.dataset.hasMath = '1';
+        if (mathBody && (rendered ? rendered.features.math : hasMathSource(text))) {
+          mathBody.dataset.hasMath = '1';
+        }
         // Mermaid 与公式都完成后再捕获净快照；否则无公式附件会先保存
         // loading/source 占位，后续套批注时把已经画好的 SVG 洗回占位。
-        const mermaidDone = renderMermaidDiagrams(mathBody);
+        const mermaidDone = !rendered || rendered.features.mermaid
+          ? renderMermaidDiagrams(mathBody) : Promise.resolve();
         whenMathReady(() => {
           if (!isCurrentAttachmentBody(node.id, body)) return;
           Promise.all([
@@ -5579,6 +6011,20 @@
     // 长按节点切换“删除线”：node.strike 持久存进 .canvas；带从左到右画出 / 收回的过渡动画。
     function toggleNodeStrike(node) {
       if (!node || isDecorationNode(node)) return;
+      const ownerId = taskbookOwnerId(node.id);
+      if (ownerId) {
+        const model = taskbookModel(ownerId);
+        if (!model || !model.leaves.includes(node.id)) {
+          showCanvasToast('父任务由叶子任务进度汇总，不能直接标记完成');
+          return;
+        }
+        if (!node.strike && taskbookRuntime && taskbookRuntime.rootId === ownerId) {
+          const root = taskbookRoot(ownerId);
+          if (root && root.activeSession && root.activeSession.nodeId === node.id) {
+            pauseTaskbookRuntime(false);
+          }
+        }
+      }
       pushHistory();
       const el = nodeMap.get(node.id);
       if (node.strike) {
@@ -6753,13 +7199,29 @@
       setRulerAngleMenuInvalid(false);
     }
     function hideRulerAngleMenu() {
-      if (!rulerMenu) return;
-      rulerMenu.hidden = true;
+      if (!rulerMenu || rulerMenu.hidden || rulerMenu.classList.contains('tool-layer-leaving')) return;
+      const epoch = ++rulerMenuMotionEpoch;
+      if (rulerMenuMotionTimer) window.clearTimeout(rulerMenuMotionTimer);
+      rulerMenu.classList.remove('tool-layer-entering');
+      rulerMenu.classList.add('tool-layer-leaving');
       setRulerAngleMenuInvalid(false);
+      const finish = function () {
+        if (epoch !== rulerMenuMotionEpoch) return;
+        rulerMenuMotionTimer = null;
+        rulerMenu.hidden = true;
+        rulerMenu.classList.remove('tool-layer-leaving');
+      };
+      if (prefersReducedMotion()) finish();
+      else rulerMenuMotionTimer = window.setTimeout(finish, 170);
     }
     function showRulerAngleMenu(clientX, clientY) {
       if (!rulerMenu || !rulerAvailable()) return false;
+      const epoch = ++rulerMenuMotionEpoch;
+      if (rulerMenuMotionTimer) window.clearTimeout(rulerMenuMotionTimer);
+      rulerMenuMotionTimer = null;
       syncRulerAngleMenu();
+      rulerMenu.classList.remove('tool-layer-leaving');
+      rulerMenu.classList.add('tool-layer-entering');
       rulerMenu.hidden = false;
       const rect = rulerMenu.getBoundingClientRect();
       let x = Number(clientX) || 0;
@@ -6769,10 +7231,14 @@
       rulerMenu.style.left = Math.max(8, x) + 'px';
       rulerMenu.style.top = Math.max(8, y) + 'px';
       window.requestAnimationFrame(function () {
-        if (!rulerMenu.hidden && rulerAngleInput) {
-          rulerAngleInput.focus({ preventScroll: true });
-          rulerAngleInput.select();
-        }
+        window.requestAnimationFrame(function () {
+          if (epoch !== rulerMenuMotionEpoch || rulerMenu.hidden) return;
+          rulerMenu.classList.remove('tool-layer-entering');
+          if (rulerAngleInput) {
+            rulerAngleInput.focus({ preventScroll: true });
+            rulerAngleInput.select();
+          }
+        });
       });
       return true;
     }
@@ -7296,169 +7762,761 @@
         : info.count + ' 项 · ' + info.depth + ' 层';
     }
 
-    // ── 节点任务清单（悬停节点左侧浮出，可勾选 / 增删改）──────────
-    // 数据：node.checklist = [{ text, done }]，空则不写字段；纯前端浮层，定位靠 DOM
-    // 内嵌在节点元素里（right:100%），随节点平移/缩放自动跟随，无需手算坐标。
-    function nodeChecklistArr(node) {
-      return Array.isArray(node.checklist) ? node.checklist : [];
+    // ── 任务簿 V2：顶级任务库、可移除画布投影与单活动计时段 ───────
+    function taskbookCopy(zh, en) {
+      return document.body.dataset.toolbarLanguage === 'en' ? en : zh;
     }
 
-    function setNodeChecklist(node, list) {
-      if (list && list.length) node.checklist = list;
-      else delete node.checklist;
+    function taskbookOwnership() {
+      if (!Taskbooks) return null;
+      if (!taskbookOwnershipCache) taskbookOwnershipCache = Taskbooks.buildOwnershipIndex(data);
+      return taskbookOwnershipCache;
     }
 
-    function reRenderNodeChecklist(node, enteringIdx) {
-      const el = nodeMap.get(node.id);
-      if (el) renderNodeChecklist(el, node, enteringIdx);
+    function taskbookRoot(rootId) {
+      return Taskbooks ? Taskbooks.findRoot(data, rootId) : null;
     }
 
-    function toggleChecklistItem(node, idx) {
-      const list = nodeChecklistArr(node).slice();
-      if (!list[idx]) return;
-      pushHistory();
-      list[idx] = { text: list[idx].text, done: !list[idx].done };
-      setNodeChecklist(node, list);
-      reRenderNodeChecklist(node);
-      notify();
+    function taskbookOwnerId(nodeId) {
+      const index = taskbookOwnership();
+      return index && index.owners.get(String(nodeId || '')) || null;
     }
 
-    function nextChecklistDefaultText(node) {
-      let max = 0;
-      nodeChecklistArr(node).forEach(function (item) {
-        const match = String(item && item.text || '').trim().match(/^(\d+)\.?$/);
-        if (match) max = Math.max(max, parseInt(match[1], 10) || 0);
+    function taskbookProjectionRootId(nodeId) {
+      const index = taskbookOwnership();
+      return index && index.projectionOwners.get(String(nodeId || '')) || null;
+    }
+
+    function isTaskbookManagedNodeId(nodeId) {
+      return !!taskbookOwnerId(nodeId);
+    }
+
+    function isProtectedTaskbookEdge(edge) {
+      return !!(Taskbooks && Taskbooks.isWorkflowEdge(edge));
+    }
+
+    function taskbookModel(rootId) {
+      return Taskbooks ? Taskbooks.buildModel(data, rootId) : null;
+    }
+
+    function ensureTaskbookData() {
+      if (!data.taskbook || data.taskbook.version !== Taskbooks.VERSION) {
+        data.taskbook = { version: Taskbooks.VERSION, roots: [] };
+      }
+      if (!Array.isArray(data.taskbook.roots)) data.taskbook.roots = [];
+      return data.taskbook;
+    }
+
+    function refreshHistoryTaskbookHead() {
+      if (!history.length) return;
+      history[history.length - 1].taskbook = cloneTaskbook(data.taskbook);
+    }
+
+    function syncTaskbookVisuals() {
+      Taskbooks.rebuildWorkflowEdges(data);
+      rebuildNodeIndex();
+      taskbookOwnershipCache = null;
+      reconcileAll();
+      data.edges.forEach(updateEdgePath);
+    }
+
+    function taskbookEffectiveActiveMs(root, now) {
+      const active = root && root.activeSession;
+      if (!active) return 0;
+      const base = Math.max(0, Number(active.elapsedMs) || 0);
+      if (!taskbookRuntime || taskbookRuntime.rootId !== root.id
+          || taskbookRuntime.sessionId !== active.id) return base;
+      return base + Math.max(0, (Number(now) || Date.now()) - taskbookRuntime.startedAtMs);
+    }
+
+    function taskbookActualMs(root, now) {
+      return (Array.isArray(root && root.sessions) ? root.sessions : [])
+        .reduce(function (sum, session) {
+          return sum + Math.max(0, Number(session && session.durationMs) || 0);
+        }, 0) + taskbookEffectiveActiveMs(root, now);
+    }
+
+    function taskbookClock(milliseconds) {
+      const total = Math.max(0, Math.floor((Number(milliseconds) || 0) / 1000));
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const seconds = total % 60;
+      return (hours ? String(hours).padStart(2, '0') + ':' : '')
+        + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+
+    function taskbookCardAria(root, model, now) {
+      return root.title + '，' + taskbookCopy('进度 ', 'Progress ')
+        + model.doneLeaves + '/' + model.totalLeaves + '，'
+        + taskbookCopy('实际用时 ', 'Actual ') + taskbookClock(taskbookActualMs(root, now));
+    }
+
+    function updateTaskbookCard(node, now, renderedElement) {
+      if (!Taskbooks || !isTaskbookNode(node)) return;
+      const root = taskbookRoot(node.taskRootId);
+      const el = renderedElement || nodeMap.get(node.id);
+      if (!root || !el) return;
+      const model = taskbookModel(root.id);
+      const title = el.querySelector('[data-taskbook-title]');
+      const progress = el.querySelector('[data-taskbook-progress]');
+      const time = el.querySelector('[data-taskbook-time]');
+      const toggle = el.querySelector('[data-taskbook-action="toggle"]');
+      const completeBadge = el.querySelector('[data-taskbook-complete-badge]');
+      const standaloneToggle = el.querySelector('[data-taskbook-action="complete"]');
+      // 直接使用 root.members 判断“单独顶级任务”。派生模型可能暂时带有
+      // 待清理的失效成员，不能因此把用户唯一的完成入口隐藏掉。
+      const standalone = !Array.isArray(root.members) || root.members.length === 0;
+      if (title) title.textContent = root.title;
+      if (progress) {
+        progress.textContent = model.doneLeaves + ' / ' + model.totalLeaves;
+        progress.style.setProperty('--taskbook-progress', Math.round(model.progress * 100) + '%');
+      }
+      if (time) time.textContent = taskbookClock(taskbookActualMs(root, now));
+      const running = !!(taskbookRuntime && taskbookRuntime.rootId === root.id);
+      const wasCompleted = el.classList.contains('taskbook-complete-ready');
+      el.classList.toggle('taskbook-running', running);
+      el.classList.toggle('taskbook-complete-ready', model.completed);
+      el.classList.toggle('taskbook-standalone-root', standalone);
+      if (completeBadge) {
+        if (!model.completed) {
+          completeBadge.classList.remove('taskbook-complete-reveal');
+        } else if (!wasCompleted && !prefersReducedMotion()) {
+          completeBadge.classList.add('taskbook-complete-reveal');
+        }
+      }
+      if (standaloneToggle) {
+        standaloneToggle.disabled = !standalone;
+        standaloneToggle.setAttribute('aria-pressed', model.completed ? 'true' : 'false');
+        standaloneToggle.setAttribute('aria-label', model.completed
+          ? taskbookCopy('取消完成这个顶级任务', 'Mark this top-level task incomplete')
+          : taskbookCopy('完成这个顶级任务', 'Complete this top-level task'));
+      }
+      el.setAttribute('aria-label', taskbookCardAria(root, model, now));
+      if (toggle) {
+        toggle.textContent = running ? 'Ⅱ' : '▶';
+        toggle.disabled = !running && !model.nextTaskId;
+        toggle.setAttribute('aria-label', running
+          ? taskbookCopy('暂停当前任务', 'Pause current task')
+          : taskbookCopy('开始下一项任务', 'Start next task'));
+      }
+    }
+
+    function renderTaskbookNode(el, node) {
+      el.classList.add('taskbook-node', 'task-root-node');
+      el.innerHTML = '<button type="button" class="taskbook-root-complete-toggle"'
+        + ' data-taskbook-action="complete" aria-pressed="false">✓</button>'
+        + '<button type="button" class="taskbook-node-remove" data-taskbook-action="remove" aria-label="'
+        + taskbookCopy('从画布移除', 'Remove from canvas') + '">×</button>'
+        + '<span class="taskbook-node-complete-badge" data-taskbook-complete-badge aria-hidden="true">✓</span>'
+        + '<strong class="taskbook-node-title" data-taskbook-title></strong>'
+        + '<div class="taskbook-node-foot"><span class="taskbook-node-progress" data-taskbook-progress>0 / 1</span>'
+        + '<span data-taskbook-time>00:00</span>'
+        + '<button type="button" class="taskbook-node-toggle" data-taskbook-action="toggle">▶</button></div>';
+      el.querySelector('[data-taskbook-complete-badge]').addEventListener('animationend', function (event) {
+        if (event.animationName === 'taskbookCompleteReveal') {
+          event.currentTarget.classList.remove('taskbook-complete-reveal');
+        }
       });
-      return String(max + 1) + '.';
-    }
-
-    function addChecklistItem(node) {
-      pushHistory();
-      const list = nodeChecklistArr(node).slice();
-      list.push({ text: nextChecklistDefaultText(node), done: false });
-      setNodeChecklist(node, list);
-      reRenderNodeChecklist(node, list.length - 1);
-      notify();
-    }
-
-    function deleteChecklistItem(node, idx) {
-      const list = nodeChecklistArr(node).slice();
-      if (!list[idx]) return;
-      pushHistory();
-      list.splice(idx, 1);
-      setNodeChecklist(node, list);
-      reRenderNodeChecklist(node);
-      notify();
-    }
-
-    // 通用可编辑行：单击文字后改写，Enter 保存，Esc 取消。
-    function makeChecklistEditRow(initial, onCommit, onCancel) {
-      const row = document.createElement('div');
-      row.className = 'checklist-item editing';
-      const box = document.createElement('span');
-      box.className = 'checklist-box';
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'checklist-edit';
-      input.value = initial || '';
-      input.placeholder = '任务内容';
-      let settled = false;
-      const commit = (chain) => {
-        if (settled) return;
-        settled = true;
-        onCommit(input.value, chain);
-      };
-      input.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') { e.preventDefault(); commit(true); }
-        else if (e.key === 'Escape') { e.preventDefault(); settled = true; onCancel(); }
+      el.querySelectorAll('button').forEach(function (button) {
+        ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach(function (type) {
+          button.addEventListener(type, function (event) { event.stopPropagation(); });
+        });
       });
-      input.addEventListener('blur', () => { if (!settled) commit(false); });
-      row.appendChild(box);
-      row.appendChild(input);
-      return { row, input };
+      el.querySelector('[data-taskbook-action="complete"]').addEventListener('click', function () {
+        const root = taskbookRoot(node.taskRootId);
+        const model = taskbookModel(node.taskRootId);
+        if (!root || !model || (Array.isArray(root.members) && root.members.length)) return;
+        updateTaskbook(node.taskRootId, { completed: !model.completed });
+      });
+      el.querySelector('[data-taskbook-action="remove"]').addEventListener('click', function () {
+        removeTaskRootProjection(node.taskRootId);
+      });
+      el.querySelector('[data-taskbook-action="toggle"]').addEventListener('click', function () {
+        const model = taskbookModel(node.taskRootId);
+        if (taskbookRuntime && taskbookRuntime.rootId === node.taskRootId) pauseTaskbookRuntime(true);
+        else if (model && model.nextTaskId) toggleTaskbookTask(node.taskRootId, model.nextTaskId);
+      });
+      updateTaskbookCard(node, Date.now(), el);
     }
 
-    function startChecklistEdit(node, idx, rowEl) {
-      const list = nodeChecklistArr(node);
-      const item = list[idx];
-      if (!item) return;
-      const er = makeChecklistEditRow(item.text || '', (text) => {
-        const t = String(text || '').trim();
-        pushHistory();
-        const next = nodeChecklistArr(node).slice();
-        if (t) next[idx] = { text: t, done: next[idx] ? next[idx].done : false };
-        else next.splice(idx, 1);   // 清空文字 = 删除该任务
-        setNodeChecklist(node, next);
-        reRenderNodeChecklist(node);
-        notify();
-      }, () => { reRenderNodeChecklist(node); });
-      if (rowEl && rowEl.parentNode) rowEl.parentNode.replaceChild(er.row, rowEl);
-      er.input.focus();
-      er.input.select();
-    }
-
-    function buildChecklistRow(node, item, idx, enteringIdx) {
-      const row = document.createElement('div');
-      row.className = 'checklist-item' + (item.done ? ' done' : '') + (idx === enteringIdx ? ' quick-enter' : '');
-      const box = document.createElement('button');
-      box.type = 'button';
-      box.className = 'checklist-box';
-      box.tabIndex = -1;
-      box.innerHTML = '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">'
-        + '<path d="M3 8.4 6.2 11.5 13 4.6" fill="none" stroke="currentColor" '
-        + 'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      box.addEventListener('click', () => toggleChecklistItem(node, idx));
-      const txt = document.createElement('div');
-      txt.className = 'checklist-text';
-      txt.textContent = item.text || '';
-      txt.title = '点击编辑';
-      txt.addEventListener('click', () => startChecklistEdit(node, idx, row));
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'checklist-delete';
-      del.tabIndex = -1;
-      del.title = '删除任务';
-      del.setAttribute('aria-label', '删除任务');
-      del.textContent = '×';
-      del.addEventListener('click', () => deleteChecklistItem(node, idx));
-      row.appendChild(box);
-      row.appendChild(txt);
-      row.appendChild(del);
-      return row;
-    }
-
-    function renderNodeChecklist(el, node, enteringIdx) {
-      let panel = el.querySelector(':scope > .node-checklist');
-      if (isDecorationNode(node) || node.handText) {
-        if (panel) panel.remove();
+    function updateTaskbookTaskToggle(node, renderedElement) {
+      if (!Taskbooks || !node || !Taskbooks.isTaskNode(node)) return;
+      const el = renderedElement || nodeMap.get(node.id);
+      if (!el) return;
+      const rootId = taskbookOwnerId(node.id);
+      const model = rootId && taskbookModel(rootId);
+      const leaf = !!(model && model.leaves.includes(node.id));
+      const executable = taskbookLeafTimerButtonsEnabled && leaf;
+      const summaryComplete = !!(model && !leaf && model.completedTaskIds
+        && model.completedTaskIds.has(node.id));
+      el.classList.toggle('taskbook-summary-complete', summaryComplete);
+      let control = el.querySelector(':scope > .taskbook-task-hover-control');
+      if (!executable) {
+        if (control) control.remove();
         return;
       }
-      if (!panel) {
-        panel = document.createElement('div');
-        panel.className = 'node-checklist';
-        // 面板内交互不应触发节点拖动 / 选择
-        ['mousedown', 'click', 'dblclick'].forEach((evt) => {
-          panel.addEventListener(evt, (e) => e.stopPropagation());
+      if (!control) {
+        control = document.createElement('div');
+        control.className = 'taskbook-task-hover-control';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'taskbook-task-hover-toggle';
+        ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach(function (type) {
+          button.addEventListener(type, function (event) { event.stopPropagation(); });
         });
-        el.appendChild(panel);
+        button.addEventListener('click', function () {
+          const currentRootId = taskbookOwnerId(node.id);
+          const currentRoot = currentRootId && taskbookRoot(currentRootId);
+          if (!currentRoot) return;
+          if (taskbookRuntime && taskbookRuntime.rootId === currentRootId
+              && currentRoot.activeSession && currentRoot.activeSession.nodeId === node.id) {
+            pauseTaskbookRuntime(true);
+          } else {
+            toggleTaskbookTask(currentRootId, node.id);
+          }
+        });
+        control.appendChild(button);
+        el.appendChild(control);
       }
-      panel.innerHTML = '';
-      const inner = document.createElement('div');
-      inner.className = 'node-checklist-inner';
-      panel.appendChild(inner);
-
-      nodeChecklistArr(node).forEach((item, idx) => {
-        inner.appendChild(buildChecklistRow(node, item, idx, enteringIdx));
-      });
-
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.className = 'checklist-add';
-      add.innerHTML = '<span class="checklist-add-icon">+</span><span>任务</span>';
-      add.addEventListener('click', () => addChecklistItem(node));
-      inner.appendChild(add);
+      const button = control.querySelector('.taskbook-task-hover-toggle');
+      const root = taskbookRoot(rootId);
+      const running = !!(root && taskbookRuntime && taskbookRuntime.rootId === rootId
+        && root.activeSession && root.activeSession.nodeId === node.id);
+      control.classList.toggle('running', running);
+      button.textContent = running ? 'Ⅱ' : '▶';
+      button.disabled = !!node.strike;
+      button.setAttribute('aria-label', node.strike
+        ? taskbookCopy('任务已完成', 'Task completed')
+        : (running
+          ? taskbookCopy('暂停这个任务', 'Pause this task')
+          : taskbookCopy('开始这个任务', 'Start this task')));
     }
+
+    function refreshTaskbookCards(now) {
+      if (!Taskbooks) return;
+      data.nodes.forEach(function (node) {
+        if (isTaskbookNode(node)) updateTaskbookCard(node, now || Date.now());
+        else if (Taskbooks.isTaskNode(node)) updateTaskbookTaskToggle(node);
+      });
+    }
+
+    function taskbookFocusPayload(root, session) {
+      return {
+        id: session.id,
+        mode: 'countup',
+        durationSec: Math.max(1, Math.round(session.durationMs / 1000)),
+        taskId: 'taskbook:' + root.id + ':' + (session.nodeId || 'root'),
+        taskTitle: session.taskTitle || root.title,
+        goal: root.title,
+        outcome: '',
+        endedAt: session.endedAt,
+        source: {
+          kind: 'taskbook',
+          rootId: root.id,
+          rootTitle: root.title,
+          canvasPath: filePath || '',
+          nodeId: session.nodeId || '',
+        },
+      };
+    }
+
+    function syncTaskbookFocusSession(root, session) {
+      if (!root || !session || session.focusLogged) return Promise.resolve(true);
+      if (!filePath) return Promise.resolve(false);
+      return fetch('/api/focus-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(taskbookFocusPayload(root, session)),
+      }).then(function (response) {
+        if (!response.ok) throw new Error('focus-log');
+        session.focusLogged = true;
+        root.updatedAt = new Date().toISOString();
+        onChange();
+        return true;
+      }).catch(function () {
+        // The segment remains in .canvas and will be retried after the next open/save.
+        return false;
+      });
+    }
+
+    function retryTaskbookFocusLogs() {
+      if (!Taskbooks) return;
+      Taskbooks.sortedRoots(data).forEach(function (root) {
+        (root.sessions || []).forEach(function (session) {
+          if (!session.focusLogged) syncTaskbookFocusSession(root, session);
+        });
+      });
+    }
+
+    function checkpointTaskbookRuntime() {
+      if (!taskbookRuntime || !Taskbooks) return false;
+      const root = taskbookRoot(taskbookRuntime.rootId);
+      const active = root && root.activeSession;
+      if (!active || active.id !== taskbookRuntime.sessionId) {
+        taskbookRuntime = null;
+        scheduleTaskbookTick();
+        return false;
+      }
+      const now = Date.now();
+      active.elapsedMs = Math.round(taskbookEffectiveActiveMs(root, now));
+      active.checkpointAt = new Date(now).toISOString();
+      taskbookRuntime.startedAtMs = now;
+      return true;
+    }
+
+    function pauseTaskbookRuntime(changed) {
+      if (!taskbookRuntime || !Taskbooks) return false;
+      checkpointTaskbookRuntime();
+      const root = taskbookRoot(taskbookRuntime.rootId);
+      const active = root && root.activeSession;
+      let session = null;
+      if (root && active && active.id === taskbookRuntime.sessionId) {
+        session = Taskbooks.normalizeSession({
+          id: active.id,
+          nodeId: active.nodeId,
+          taskTitle: active.taskTitle,
+          durationMs: active.elapsedMs,
+          startedAt: active.startedAt,
+          endedAt: active.checkpointAt,
+          focusLogged: false,
+        }, new Date().toISOString());
+        if (session) root.sessions.push(session);
+        delete root.activeSession;
+        root.updatedAt = new Date().toISOString();
+      }
+      taskbookRuntime = null;
+      scheduleTaskbookTick();
+      refreshTaskbookCards();
+      if (changed !== false) notify();
+      else onChange();
+      if (root && session) syncTaskbookFocusSession(root, session);
+      return true;
+    }
+
+    function toggleTaskbookTask(rootId, nodeId) {
+      if (!Taskbooks) return { ok: false, reason: 'unavailable' };
+      const model = taskbookModel(rootId);
+      const root = model && model.root;
+      const isRootTask = model && !model.tasks.length && nodeId === rootId;
+      const node = isRootTask ? null : findNode(nodeId);
+      const executable = !!(model && root && (isRootTask || model.leaves.includes(nodeId)));
+      if (!executable || (isRootTask ? root.completed : !node || node.strike)) {
+        return { ok: false, reason: 'not-executable' };
+      }
+      if (taskbookRuntime && taskbookRuntime.rootId === rootId
+          && root.activeSession && root.activeSession.nodeId === (isRootTask ? '' : nodeId)) {
+        pauseTaskbookRuntime(true);
+        return { ok: true, running: false };
+      }
+      if (taskbookRuntime) pauseTaskbookRuntime(false);
+      const now = Date.now();
+      const sessionId = Taskbooks.makeId('task-segment');
+      root.activeSession = {
+        id: sessionId,
+        nodeId: isRootTask ? '' : nodeId,
+        taskTitle: isRootTask ? root.title : String(node.text || '').trim(),
+        elapsedMs: 0,
+        startedAt: new Date(now).toISOString(),
+        checkpointAt: new Date(now).toISOString(),
+      };
+      root.updatedAt = new Date(now).toISOString();
+      taskbookRuntime = { rootId: rootId, sessionId: sessionId, startedAtMs: now };
+      scheduleTaskbookTick();
+      refreshTaskbookCards(now);
+      notify();
+      return { ok: true, running: true, nodeId: isRootTask ? null : nodeId };
+    }
+
+    function scheduleTaskbookTick() {
+      if (taskbookTickHandle != null) {
+        clearTimeout(taskbookTickHandle);
+        taskbookTickHandle = null;
+      }
+      if (!taskbookRuntime) return;
+      const now = Date.now();
+      taskbookTickHandle = setTimeout(function () {
+        taskbookTickHandle = null;
+        refreshTaskbookCards(Date.now());
+        document.dispatchEvent(new CustomEvent('canvas:taskbook-tick', {
+          detail: { rootId: taskbookRuntime && taskbookRuntime.rootId },
+        }));
+        scheduleTaskbookTick();
+      }, Math.max(80, 1020 - (now % 1000)));
+    }
+
+    function taskbookSnapshot(rootId) {
+      const model = taskbookModel(rootId);
+      if (!model || !model.root) return null;
+      const root = model.root;
+      const taskSessions = new Map();
+      (root.sessions || []).forEach(function (session) {
+        const key = session.nodeId || root.id;
+        taskSessions.set(key, (taskSessions.get(key) || 0) + (Number(session.durationMs) || 0));
+      });
+      if (root.activeSession) {
+        const key = root.activeSession.nodeId || root.id;
+        taskSessions.set(key, (taskSessions.get(key) || 0) + taskbookEffectiveActiveMs(root, Date.now()));
+      }
+      const tasks = [];
+      function walk(nodeId, depth) {
+        const node = findNode(nodeId);
+        if (!node) return;
+        const children = (model.children.get(nodeId) || []).slice();
+        tasks.push({
+          id: node.id,
+          parentId: model.parent.get(nodeId),
+          depth: depth,
+          title: String(node.text || ''),
+          body: String(node.body || ''),
+          kind: node.kind,
+          done: !!(model.completedTaskIds && model.completedTaskIds.has(nodeId)),
+          leaf: children.length === 0,
+          childIds: children,
+          actualMs: taskSessions.get(node.id) || 0,
+        });
+        children.forEach(function (childId) { walk(childId, depth + 1); });
+      }
+      model.roots.forEach(function (id) { walk(id, 1); });
+      return {
+        id: root.id,
+        title: root.title,
+        body: root.body,
+        completed: model.completed,
+        canvasNodeId: root.canvasNodeId || null,
+        canvasPlaced: !!(root.canvasNodeId && findNode(root.canvasNodeId)),
+        actualMs: taskbookActualMs(root, Date.now()),
+        doneLeaves: model.doneLeaves,
+        totalLeaves: model.totalLeaves,
+        progress: model.progress,
+        nextTaskId: model.nextTaskId,
+        runningTaskId: root.activeSession ? (root.activeSession.nodeId || root.id) : null,
+        tasks: tasks,
+        errors: model.errors.slice(),
+        valid: model.ok,
+      };
+    }
+
+    function listTaskbookSnapshots() {
+      return Taskbooks ? Taskbooks.sortedRoots(data).map(function (root) {
+        return taskbookSnapshot(root.id);
+      }).filter(Boolean) : [];
+    }
+
+    function createTopLevelTask(options) {
+      if (!Taskbooks || embeddedEditor) return { ok: false, reason: 'unavailable' };
+      const book = ensureTaskbookData();
+      const root = Taskbooks.createRoot({
+        title: options && options.title,
+        body: options && options.body,
+        order: book.roots.length,
+      });
+      book.roots.push(root);
+      taskbookOwnershipCache = null;
+      refreshHistoryTaskbookHead();
+      notify();
+      return { ok: true, id: root.id };
+    }
+
+    function updateTaskbook(rootId, patch) {
+      const root = taskbookRoot(rootId);
+      if (!root) return { ok: false, reason: 'missing' };
+      const source = patch || {};
+      let changed = false;
+      if (source.title != null) {
+        const title = String(source.title).trim().slice(0, 160)
+          || taskbookCopy('未命名任务', 'Untitled task');
+        if (title !== root.title) { root.title = title; changed = true; }
+      }
+      if (source.body != null && String(source.body) !== String(root.body || '')) {
+        root.body = String(source.body);
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(source, 'completed')) {
+        const model = taskbookModel(root.id);
+        if (model && !model.tasks.length && root.completed !== !!source.completed) {
+          if (source.completed && taskbookRuntime && taskbookRuntime.rootId === root.id) {
+            pauseTaskbookRuntime(false);
+          }
+          root.completed = !!source.completed;
+          changed = true;
+        }
+      }
+      if (!changed) return { ok: true, unchanged: true };
+      root.updatedAt = new Date().toISOString();
+      refreshHistoryTaskbookHead();
+      refreshTaskbookCards();
+      notify();
+      return { ok: true };
+    }
+
+    function reorderTopLevelTasks(ids) {
+      const book = ensureTaskbookData();
+      const order = Array.isArray(ids) ? ids : [];
+      const rank = new Map(order.map(function (id, index) { return [id, index]; }));
+      book.roots.sort(function (a, b) {
+        return (rank.has(a.id) ? rank.get(a.id) : order.length + a.order)
+          - (rank.has(b.id) ? rank.get(b.id) : order.length + b.order);
+      });
+      book.roots.forEach(function (root, index) { root.order = index; });
+      refreshHistoryTaskbookHead();
+      notify();
+      return { ok: true };
+    }
+
+    function placeTaskRoot(rootId) {
+      const root = taskbookRoot(rootId);
+      if (!root) return { ok: false, reason: 'missing' };
+      if (root.canvasNodeId && findNode(root.canvasNodeId)) {
+        selectNodes([root.canvasNodeId], false);
+        centerOnNode(root.canvasNodeId);
+        return { ok: true, existing: true, nodeId: root.canvasNodeId };
+      }
+      const rect = viewport.getBoundingClientRect();
+      const center = clientToSurface(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      const remembered = root.hiddenCanvasPosition;
+      const hasRememberedPosition = !!(remembered
+        && Number.isFinite(Number(remembered.x))
+        && Number.isFinite(Number(remembered.y)));
+      const node = Taskbooks.createProjection({
+        id: newNodeId(),
+        taskRootId: root.id,
+        x: hasRememberedPosition ? Math.round(Number(remembered.x)) : Math.round(center.x - 120),
+        y: hasRememberedPosition ? Math.round(Number(remembered.y)) : Math.round(center.y - 52),
+      });
+      root.canvasNodeId = node.id;
+      delete root.hiddenCanvasPosition;
+      root.updatedAt = new Date().toISOString();
+      data.nodes.push(node);
+      syncTaskbookVisuals();
+      selectNodes([node.id], false);
+      lastCreatedNodeId = node.id;
+      pushHistory();
+      notify();
+      return { ok: true, nodeId: node.id };
+    }
+
+    function removeTaskRootProjection(rootId) {
+      const root = taskbookRoot(rootId);
+      if (!root || !root.canvasNodeId) return { ok: false, reason: 'missing' };
+      const nodeId = root.canvasNodeId;
+      const projection = findNode(nodeId);
+      if (projection) {
+        root.hiddenCanvasPosition = {
+          x: Math.round(Number(projection.x) || 0),
+          y: Math.round(Number(projection.y) || 0),
+        };
+      }
+      data.nodes = data.nodes.filter(function (node) { return node.id !== nodeId; });
+      delete root.canvasNodeId;
+      root.updatedAt = new Date().toISOString();
+      selectedNodeIds.delete(nodeId);
+      syncTaskbookVisuals();
+      applySelection();
+      pushHistory();
+      notify();
+      showCanvasToast(taskbookCopy(
+        '已从画布隐藏整棵任务树，任务仍保留在任务簿',
+        'Task tree hidden from canvas; task kept in Taskbook',
+      ));
+      return { ok: true };
+    }
+
+    function locateTaskRoot(rootId) {
+      const root = taskbookRoot(rootId);
+      if (!root || !root.canvasNodeId || !findNode(root.canvasNodeId)) return false;
+      selectNodes([root.canvasNodeId], false);
+      centerOnNode(root.canvasNodeId);
+      return true;
+    }
+
+    function addTaskbookTask(rootId, parentId, input) {
+      if (!Taskbooks) return { ok: false, reason: 'unavailable' };
+      const model = taskbookModel(rootId);
+      if (!model || !model.root) return { ok: false, reason: 'missing-root' };
+      const parentNodeId = parentId && parentId !== rootId ? parentId : null;
+      if (parentNodeId && !model.taskSet.has(parentNodeId)) return { ok: false, reason: 'invalid-parent' };
+      const parent = parentNodeId ? findNode(parentNodeId)
+        : (model.root.canvasNodeId ? findNode(model.root.canvasNodeId) : null);
+      const siblings = model.children.get(parentNodeId || '') || [];
+      let x, y;
+      if (parent) {
+        x = (Number(parent.x) || 0) + 300;
+        y = (Number(parent.y) || 0) + siblings.length * 124;
+      } else {
+        const rect = viewport.getBoundingClientRect();
+        const center = clientToSurface(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        x = center.x - 110;
+        y = center.y - 48 + siblings.length * 124;
+      }
+      const source = input || {};
+      const node = {
+        id: newNodeId(),
+        kind: 'card',
+        text: String(source.title || '').trim() || taskbookCopy('未命名任务', 'Untitled task'),
+        body: String(source.body || ''),
+        x: Math.round(x),
+        y: Math.round(y),
+      };
+      applyProDefaults(node);
+      data.nodes.push(node);
+      const attached = Taskbooks.attachMember(data, rootId, parentNodeId, node.id);
+      if (!attached.ok) {
+        data.nodes.pop();
+        return attached;
+      }
+      if (parentNodeId) {
+        const parentTask = findNode(parentNodeId);
+        if (parentTask && parentTask.strike) delete parentTask.strike;
+      }
+      syncTaskbookVisuals();
+      pushHistory();
+      notify();
+      return { ok: true, id: node.id };
+    }
+
+    function updateTaskbookTask(rootId, nodeId, patch) {
+      const model = taskbookModel(rootId);
+      const node = findNode(nodeId);
+      if (!model || !model.taskSet.has(nodeId) || !node) return { ok: false, reason: 'missing' };
+      const source = patch || {};
+      let changed = false;
+      if (source.title != null) {
+        const value = String(source.title).trim() || taskbookCopy('未命名任务', 'Untitled task');
+        if (value !== node.text) { node.text = value; changed = true; }
+      }
+      if (source.body != null && String(source.body) !== String(node.body || '')) {
+        if (String(source.body)) node.body = String(source.body); else delete node.body;
+        changed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(source, 'done') && model.leaves.includes(nodeId)) {
+        if (!!source.done !== !!node.strike) {
+          if (source.done && taskbookRuntime && taskbookRuntime.rootId === rootId
+              && model.root.activeSession && model.root.activeSession.nodeId === nodeId) {
+            pauseTaskbookRuntime(false);
+          }
+          if (source.done) node.strike = true; else delete node.strike;
+          changed = true;
+        }
+      }
+      if (!changed) return { ok: true, unchanged: true };
+      const el = nodeMap.get(node.id);
+      if (el) {
+        applyNodeStyle(el, node);
+        const textEl = el.querySelector('.node-text');
+        if (textEl) {
+          delete textEl.dataset.source;
+          renderBodyNodeContent(textEl, node);
+        }
+        renderTextNodeMeta(el, node);
+      }
+      pushHistory();
+      notify();
+      return { ok: true };
+    }
+
+    function moveTaskbookTask(rootId, nodeId, nextParentId, beforeId) {
+      const parentId = nextParentId && nextParentId !== rootId ? nextParentId : null;
+      const result = Taskbooks.moveMember(data, rootId, nodeId, parentId, beforeId);
+      if (!result.ok) return result;
+      if (parentId) {
+        const parent = findNode(parentId);
+        if (parent && parent.strike) delete parent.strike;
+      }
+      syncTaskbookVisuals();
+      pushHistory();
+      notify();
+      return result;
+    }
+
+    function deleteTaskbookSubtree(rootId, nodeId) {
+      const plan = buildTaskbookDeletionPlan(
+        [{ rootId: rootId, nodeId: nodeId }],
+        [],
+        [],
+      );
+      if (!plan.taskNodeCount) return { ok: false, reason: 'missing' };
+      return executeTaskbookDeletionPlan(plan);
+    }
+
+    function deleteTopLevelTask(rootId) {
+      if (taskbookRuntime && taskbookRuntime.rootId === rootId) pauseTaskbookRuntime(false);
+      const result = Taskbooks.releaseRoot(data, rootId);
+      if (!result.ok) return result;
+      syncTaskbookVisuals();
+      applySelection();
+      pushHistory();
+      notify();
+      return result;
+    }
+
+    function settleTaskbookForArchive(rootId) {
+      const root = taskbookRoot(rootId);
+      if (!root) return Promise.resolve({ ok: false, reason: 'missing-root' });
+      if (taskbookRuntime && taskbookRuntime.rootId === rootId) pauseTaskbookRuntime(false);
+      if (root.activeSession && !taskbookRuntime) {
+        const active = root.activeSession;
+        const session = Taskbooks.normalizeSession({
+          id: active.id,
+          nodeId: active.nodeId,
+          taskTitle: active.taskTitle,
+          durationMs: active.elapsedMs,
+          startedAt: active.startedAt,
+          endedAt: active.checkpointAt,
+          focusLogged: false,
+        }, new Date().toISOString());
+        if (session) root.sessions.push(session);
+        delete root.activeSession;
+        root.updatedAt = new Date().toISOString();
+        onChange();
+      }
+      const pending = (root.sessions || []).filter(function (session) {
+        return !session.focusLogged;
+      }).map(function (session) {
+        return syncTaskbookFocusSession(root, session);
+      });
+      return Promise.all(pending).then(function (results) {
+        return {
+          ok: results.every(Boolean),
+          pendingCount: results.filter(function (value) { return !value; }).length,
+        };
+      });
+    }
+
+    function prepareTaskbookArchive(rootId, retainSnapshot) {
+      if (!Taskbooks) return { ok: false, reason: 'unavailable' };
+      const rect = viewport.getBoundingClientRect();
+      const center = clientToSurface(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return Taskbooks.prepareArchive(data, rootId, {
+        retainSnapshot: retainSnapshot !== false,
+        originX: Math.round(center.x - 110),
+        originY: Math.round(center.y - 52),
+        archiveLabel: taskbookCopy('已归档', 'Archived'),
+        taskCountLabel: taskbookCopy('任务', 'Tasks'),
+        durationLabel: taskbookCopy('用时', 'Time'),
+      });
+    }
+
+    function applyTaskbookArchive(nextData) {
+      if (!nextData || !Array.isArray(nextData.nodes) || !Array.isArray(nextData.edges)) {
+        return { ok: false, reason: 'invalid-data' };
+      }
+      taskbookRuntime = null;
+      scheduleTaskbookTick();
+      applySnapshot({
+        nodes: nextData.nodes,
+        edges: nextData.edges,
+        ink: nextData.ink,
+        ruler: nextData.ruler,
+        timers: nextData.timers,
+        taskbook: nextData.taskbook,
+      });
+      history.splice(0, history.length, snapshotCanvasState());
+      redoStack.length = 0;
+      refreshHistoryButtons();
+      return { ok: true };
+    }
+
+    window.setTimeout(retryTaskbookFocusLogs, 0);
 
     function createNodeEl(node) {
       const el = document.createElement('div');
@@ -7469,7 +8527,9 @@
       applyNodeStyle(el, node);                         // 5-1：形状/颜色/透明度
       applyTransform(el, node.x, node.y);
 
-      if (isDecorationNode(node)) {
+      if (isTaskbookNode(node)) {
+        renderTaskbookNode(el, node);
+      } else if (isDecorationNode(node)) {
         renderDecoration(el, node);
         ensureDecorResizeHandles(el, node);
       } else {
@@ -7496,12 +8556,13 @@
         });
         el.appendChild(removeBtn);
 
-        if (!isTableNode(node)) renderNodeChecklist(el, node);   // 悬停左侧任务清单
+        updateTaskbookTaskToggle(node, el);
         if (!isTableNode(node)) ensureMindmapFoldControl(el, node);
         ensureBodyResizeHandles(el, node);   // 卡片/代码/便签/预览：拖左右边缘改宽
       }
       if (hiddenMindmapNodeIds.has(node.id)) el.classList.add('mindmap-fold-hidden');
       if (hiddenGroupNodeIds.has(node.id)) el.classList.add('group-fold-hidden');
+      if (hiddenTaskbookNodeIds.has(node.id)) el.classList.add('taskbook-tree-hidden');
 
       bindNodeEvents(el, node);
       return el;
@@ -7713,7 +8774,7 @@
       const out = [];
       selectedNodeIds.forEach((id) => {
         const n = findNode(id);
-        if (n && !isDecorationNode(n) && !isTableNode(n)) out.push(n);
+        if (n && !isDecorationNode(n) && !isTableNode(n) && !isTaskbookNode(n)) out.push(n);
       });
       return out;
     }
@@ -8524,6 +9585,10 @@
     function convertSelectedToBodyNode(kind) {
       const n = editGetNode();
       if (!n || isReadableNode(n) || currentMode() === 'decor') return;
+      if (isTaskbookManagedNodeId(n.id)) {
+        showCanvasToast('受任务簿管理的节点只能在完整视图切换类型');
+        return;
+      }
       const body = n.text || '';
       n.kind = kind;
       ensureStickyNodeColor(n);
@@ -8564,6 +9629,10 @@
     function switchSelectedBodyNodeKind(kind) {
       const n = editGetNode();
       if (!n || !isReadableNode(n) || (isIndexNode(n) ? kind === 'index' : n.kind === kind) || currentMode() === 'decor') return;
+      if (isTaskbookManagedNodeId(n.id)) {
+        showCanvasToast('受任务簿管理的节点只能在完整视图切换类型');
+        return;
+      }
       var prevKind = n.kind;
 
       // ── 内容迁移：标题不在转换中丢失或重复 ──
@@ -11722,6 +12791,7 @@
     }
 
     function onPaste(e) {
+      if (scenePresentationMode) return;
       const active = document.activeElement;
       const inEditable = !!(active && (
         active.isContentEditable
@@ -11968,6 +13038,7 @@
       nodes.forEach(function (node) {
         if (node.kind === 'text') node.kind = 'index';
         if (!node.kind) node.kind = 'card';
+        delete node.checklist;
         if (node.text != null) node.text = String(node.text);
         if (node.body != null) node.body = String(node.body);
         normalizeNodeRichText(node);
@@ -12183,6 +13254,10 @@
     }
 
     function onViewportDragOver(e) {
+      if (scenePresentationMode) {
+        e.preventDefault();
+        return;
+      }
       if (!hasFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
@@ -12195,6 +13270,11 @@
     }
 
     function onViewportDrop(e) {
+      if (scenePresentationMode) {
+        e.preventDefault();
+        viewport.classList.remove('file-drag-over');
+        return;
+      }
       if (!hasFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       viewport.classList.remove('file-drag-over');
@@ -12413,6 +13493,10 @@
       const hit = document.createElementNS(SVG_NS, 'path');
       hit.setAttribute('class', 'canvas-edge-hit');
       hit.dataset.id = edge.id;
+      if (isProtectedTaskbookEdge(edge)) {
+        path.classList.add('taskbook-workflow-edge');
+        hit.classList.add('taskbook-workflow-edge');
+      }
       // hit 放底下，path 在上：视觉上看的是 path，但 hit 比 path 粗更易点中
       edgesLayer.appendChild(hit);
       edgesLayer.appendChild(path);
@@ -12421,11 +13505,17 @@
       labelEl.className = 'canvas-edge-label';
       labelEl.dataset.id = edge.id;
       labelEl.textContent = edge.text || '';
+      if (isProtectedTaskbookEdge(edge)) labelEl.classList.add('taskbook-workflow-edge');
       if (!edge.text) labelEl.classList.add('empty');
       if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)) {
         path.classList.add('mindmap-fold-hidden');
         hit.classList.add('mindmap-fold-hidden');
         labelEl.classList.add('mindmap-fold-hidden');
+      }
+      if (hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) {
+        path.classList.add('taskbook-tree-hidden');
+        hit.classList.add('taskbook-tree-hidden');
+        labelEl.classList.add('taskbook-tree-hidden');
       }
       surface.appendChild(labelEl);
 
@@ -12725,7 +13815,8 @@
       for (let i = 0; i < data.edges.length; i++) {
         const edge = data.edges[i];
         if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)
-            || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)) continue;
+            || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)
+            || hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) continue;
         const item = edgeCachedPath2D(edge);
         if (!item) continue;
         const b = item.bounds;
@@ -12766,6 +13857,7 @@
       reconcileNodes();
       reconcileEdges();
       renderTimers();
+      refreshTaskbookVisibility();
       refreshGroupContainers();
       refreshMindmapFolding();
       applySelection();
@@ -12789,15 +13881,18 @@
           if (node.color) el.dataset.color = node.color;
           else el.removeAttribute('data-color');
           applyNodeStyle(el, node);                     // 5-1：同步形状/颜色/透明度
-          if (isDecorationNode(node)) {
+          if (isTaskbookNode(node)) {
+            updateTaskbookCard(node);
+          } else if (isDecorationNode(node)) {
             renderDecoration(el, node);
             ensureDecorResizeHandles(el, node);
           } else {
             renderTextNodeMeta(el, node);               // 文本/预览节点：同步提示与悬停正文
+            updateTaskbookTaskToggle(node, el);         // 任务簿叶子：同步悬停计时按钮
             ensureBodyResizeHandles(el, node);           // 复用元素时也补上拖宽热区
           }
           // 编辑中的文字节点不要被 reconcile 重写内容（用户正在打字）
-          if (!isDecorationNode(node) && editingNodeId !== node.id) {
+          if (!isDecorationNode(node) && !isTaskbookNode(node) && editingNodeId !== node.id) {
             const text = el.querySelector('.node-text');
             renderBodyNodeContent(text, node);
           }
@@ -12832,6 +13927,13 @@
           }
           applyEdgeStyle(refs, edge);          // 5-2：同步粗细/箭头（撤销重做等）
         }
+        refs.path.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
+        refs.hit.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
+        refs.labelEl.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
+        const taskbookHidden = hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to);
+        refs.path.classList.toggle('taskbook-tree-hidden', taskbookHidden);
+        refs.hit.classList.toggle('taskbook-tree-hidden', taskbookHidden);
+        refs.labelEl.classList.toggle('taskbook-tree-hidden', taskbookHidden);
         updateEdgePath(edge);
       });
       for (const [id, refs] of edgeMap) {
@@ -13113,7 +14215,8 @@
         // 长按（按住不拖）→ 切换删除线；一旦拖动或松手即取消（见 onWindowMouseMove / onWindowMouseUp）
         stopNodeStrikeLongPressTimer();
         nodeStrikeLongPressTriggered = false;
-        if (!isDecorationNode(node) && drag && drag.mode === 'node' && !drag.moved) {
+        if (!isDecorationNode(node) && !isTaskbookNode(node)
+            && drag && drag.mode === 'node' && !drag.moved) {
           nodeStrikeLongPressTimer = setTimeout(() => {
             nodeStrikeLongPressTimer = null;
             if (!drag || drag.mode !== 'node' || drag.moved) return;
@@ -13186,6 +14289,14 @@
           enterTextBoxEdit(node, false, { x: e.clientX, y: e.clientY });
           return;
         }
+        if (isTaskbookNode(node)) {
+          e.preventDefault();
+          e.stopPropagation();
+          document.dispatchEvent(new CustomEvent('editor:open-task-root', {
+            detail: { rootId: node.taskRootId },
+          }));
+          return;
+        }
         if (isDecorationNode(node)) {
           e.stopPropagation();
           return;
@@ -13235,6 +14346,12 @@
           return;
         }
         e.stopPropagation();
+        if (isProtectedTaskbookEdge(edge)) {
+          document.dispatchEvent(new CustomEvent('editor:open-task-root', {
+            detail: { rootId: edge.taskRootId },
+          }));
+          return;
+        }
         enterEdgeEdit(edge);
       };
       hitEl.addEventListener('dblclick', onEditTrigger);
@@ -15392,6 +16509,7 @@
     // 纯结构模板：正文/文字框 + 当前内置装饰可复用；图片/PDF/MD 和其他历史图案不收取。
     function isTemplateEligibleNode(n) {
       if (!n) return false;
+      if (isTaskbookNode(n)) return false;
       if (!isShapeNode(n)) {
         return n.kind !== 'image' && n.kind !== 'pdf' && n.kind !== 'md';
       }
@@ -15571,6 +16689,11 @@
       data.edges.forEach(function (e) {
         if (!pickedIds.has(e.from) || !pickedIds.has(e.to)) return;   // 只收两端都在圈内的连线
         const c = JSON.parse(JSON.stringify(e));
+        if (isProtectedTaskbookEdge(c)) {
+          delete c.role;
+          delete c.taskRootId;
+          delete c.workflowOrder;
+        }
         if (Array.isArray(c.waypoints)) {
           c.waypoints = c.waypoints.map(function (p) {
             return { x: Math.round((Number(p.x) || 0) - minX), y: Math.round((Number(p.y) || 0) - minY) };
@@ -16086,12 +17209,38 @@
         const targetId = nodeEl ? nodeEl.dataset.id : null;
         const targetNode = targetId ? findNode(targetId) : null;
         const made = [];
+        let taskbookStructureChanged = false;
         if (targetId && targetNode && isLinkable(targetNode)) {
           const fromIds = drag.fromIds || [drag.fromId];
+          const batch = Taskbooks && typeof Taskbooks.resolveConnectionBatch === 'function'
+            ? Taskbooks.resolveConnectionBatch(data, fromIds, targetId, drag.fromId)
+            : null;
+          const workflowByFromId = new Map((batch && batch.workflows || []).map(function (item) {
+            return [item.firstId, item.workflow];
+          }));
+          const ordinaryFirstIds = batch
+            ? new Set(batch.ordinaryFirstIds || [])
+            : new Set(fromIds);
           fromIds.forEach((fromId) => {
             if (!fromId || fromId === targetId) return;
             const sourceNode = findNode(fromId);
             if (!sourceNode || !isLinkable(sourceNode)) return;
+            const workflow = workflowByFromId.get(fromId);
+            if (workflow && workflow.ok) {
+              const result = Taskbooks.attachMember(
+                data, workflow.rootId, workflow.parentNodeId, workflow.nodeId,
+              );
+              if (!result.ok) return;
+              if (workflow.parentNodeId) {
+                const parent = findNode(workflow.parentNodeId);
+                if (parent && parent.strike) delete parent.strike;
+              }
+              taskbookOwnershipCache = null;
+              taskbookStructureChanged = true;
+              made.push('task:' + workflow.nodeId);
+              return;
+            }
+            if (!ordinaryFirstIds.has(fromId)) return;
             // 防同向重复
             const exists = data.edges.some(
               (ed) => ed.from === fromId && ed.to === targetId,
@@ -16112,10 +17261,15 @@
             made.push(edge.id);
           });
           if (made.length) {
+            if (taskbookStructureChanged) {
+              syncTaskbookVisuals();
+              showCanvasToast(taskbookCopy('已加入任务', 'Added to task'));
+            }
             // Alt 拖线属于连续创作：保留发起前的节点选择，不自动选中新线，
             // 避免刚创建成功就把右栏切换到连线属性检查器。用户仍可随后点线编辑。
             pushHistory();
             notify();
+            document.dispatchEvent(new CustomEvent('canvas:taskbook-change'));
             hideOnboardingHint();
             showOnboardingHint('outline', '按 <kbd>Tab</kbd> 创建子节点，按 <kbd>Enter</kbd> 创建同级节点', 5200);
           }
@@ -16671,36 +17825,159 @@
       requestEdgesCanvasRender();
     }
 
+    function buildTaskbookDeletionPlan(taskRequests, ordinaryNodeIds, selectedEdgeIdList) {
+      const nodesToDelete = new Set(Array.isArray(ordinaryNodeIds) ? ordinaryNodeIds : []);
+      const memberIdsByRoot = new Map();
+      let danger = false;
+      (Array.isArray(taskRequests) ? taskRequests : []).forEach(function (request) {
+        if (!request) return;
+        const rootId = String(request.rootId || '');
+        const nodeId = String(request.nodeId || '');
+        const ids = Taskbooks ? Taskbooks.subtreeIds(data, rootId, nodeId) : [];
+        if (!ids.length) return;
+        if (ids.length > 1) danger = true;
+        if (!memberIdsByRoot.has(rootId)) memberIdsByRoot.set(rootId, new Set());
+        const rootIds = memberIdsByRoot.get(rootId);
+        ids.forEach(function (id) {
+          rootIds.add(id);
+          nodesToDelete.add(id);
+        });
+      });
+
+      memberIdsByRoot.forEach(function (ids, rootId) {
+        const root = taskbookRoot(rootId);
+        if (!root) return;
+        if ((root.sessions || []).some(function (session) {
+          return ids.has(session.nodeId) && Math.max(0, Number(session.durationMs) || 0) > 0;
+        })) danger = true;
+        if (root.activeSession && ids.has(root.activeSession.nodeId)) danger = true;
+      });
+
+      const removedTaskRootIds = new Set();
+      nodesToDelete.forEach(function (id) {
+        const node = findNode(id);
+        if (isTaskbookNode(node)) removedTaskRootIds.add(node.taskRootId);
+      });
+
+      const edgesToDelete = new Set();
+      data.edges.forEach(function (edge) {
+        if (nodesToDelete.has(edge.from) || nodesToDelete.has(edge.to)) edgesToDelete.add(edge.id);
+      });
+      let protectedCount = 0;
+      (Array.isArray(selectedEdgeIdList) ? selectedEdgeIdList : []).forEach(function (id) {
+        const edge = findEdge(id);
+        if (!edge || edgesToDelete.has(id)) return;
+        if (isProtectedTaskbookEdge(edge)) protectedCount += 1;
+        else edgesToDelete.add(id);
+      });
+
+      let taskNodeCount = 0;
+      memberIdsByRoot.forEach(function (ids) { taskNodeCount += ids.size; });
+      return {
+        danger: danger,
+        taskNodeCount: taskNodeCount,
+        nodesToDelete: nodesToDelete,
+        edgesToDelete: edgesToDelete,
+        memberIdsByRoot: memberIdsByRoot,
+        removedTaskRootIds: removedTaskRootIds,
+        protectedCount: protectedCount,
+      };
+    }
+
+    function executeTaskbookDeletionPlan(plan) {
+      if (!plan || (!plan.nodesToDelete.size && !plan.edgesToDelete.size)) {
+        return { ok: false, reason: 'empty' };
+      }
+
+      plan.memberIdsByRoot.forEach(function (ids, rootId) {
+        const root = taskbookRoot(rootId);
+        if (taskbookRuntime && taskbookRuntime.rootId === rootId
+            && root && root.activeSession && ids.has(root.activeSession.nodeId)) {
+          pauseTaskbookRuntime(false);
+        }
+      });
+
+      plan.memberIdsByRoot.forEach(function (ids, rootId) {
+        const root = taskbookRoot(rootId);
+        if (!root) return;
+        root.members = root.members.filter(function (member) { return !ids.has(member.nodeId); });
+        root.updatedAt = new Date().toISOString();
+      });
+
+      if (!prefersReducedMotion()) {
+        plan.nodesToDelete.forEach(function (id) {
+          const el = nodeMap.get(id);
+          if (el) ghostRemove(el, true);
+        });
+        plan.edgesToDelete.forEach(function (id) {
+          const refs = edgeMap.get(id);
+          if (refs) ghostRemove(refs.path, false);
+        });
+      }
+
+      plan.edgesToDelete.forEach(removeEdgeRaw);
+      plan.nodesToDelete.forEach(removeNodeRaw);
+      plan.removedTaskRootIds.forEach(function (rootId) {
+        const root = taskbookRoot(rootId);
+        if (root) delete root.canvasNodeId;
+      });
+
+      if (Taskbooks && (plan.memberIdsByRoot.size || plan.removedTaskRootIds.size)) {
+        Taskbooks.synchronizeCompletion(data);
+        syncTaskbookVisuals();
+      }
+      applySelection();
+      pushHistory();
+      notify();
+      return { ok: true, count: plan.taskNodeCount };
+    }
+
     function deleteSelected() {
       if (selectedTimerIds.size) {
         deleteSelectedTimers();
         return;
       }
       if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return;
-      // 与被删节点相关的边也一并删
-      const nodesToDelete = new Set(selectedNodeIds);
-      const edgesToDelete = new Set(selectedEdgeIds);
-      data.edges.forEach((e) => {
-        if (nodesToDelete.has(e.from) || nodesToDelete.has(e.to)) {
-          edgesToDelete.add(e.id);
-        }
+      const taskRequests = [];
+      const ordinaryNodeIds = [];
+      selectedNodeIds.forEach(function (id) {
+        const node = findNode(id);
+        const rootId = taskbookOwnerId(id);
+        if (rootId) taskRequests.push({ rootId: rootId, nodeId: id });
+        else if (node) ordinaryNodeIds.push(id);
       });
-      // 离场动画：在真正移除前，给每个被删元素叠一个淡出缩小的幽灵
-      if (!prefersReducedMotion()) {
-        nodesToDelete.forEach((id) => { const el = nodeMap.get(id); if (el) ghostRemove(el, true); });
-        edgesToDelete.forEach((id) => { const refs = edgeMap.get(id); if (refs) ghostRemove(refs.path, false); });
+      const plan = buildTaskbookDeletionPlan(taskRequests, ordinaryNodeIds, [...selectedEdgeIds]);
+      if (plan.protectedCount) {
+        showCanvasToast(taskbookCopy(
+          '任务工作流连线由任务结构自动维护，不能单独删除',
+          'Task workflow lines are managed by the task structure',
+        ));
       }
-      edgesToDelete.forEach(removeEdgeRaw);
-      nodesToDelete.forEach(removeNodeRaw);
-      applySelection();
-      pushHistory();
-      notify();
+      if (!plan.nodesToDelete.size && !plan.edgesToDelete.size) return;
+      if (plan.taskNodeCount && plan.danger) {
+        showConfirm({
+          title: taskbookCopy(
+            '删除选中的任务节点？',
+            'Delete the selected task nodes?',
+          ),
+          detail: taskbookCopy(
+            '任务子树及相关连线会一起删除；累计用时会保留在顶级任务中。',
+            'The task subtrees and connected lines will be removed; tracked time remains in the top-level task.',
+          ),
+          okLabel: taskbookCopy('删除', 'Delete'),
+          destructive: true,
+        }, function () {
+          executeTaskbookDeletionPlan(plan);
+        });
+        return;
+      }
+      executeTaskbookDeletionPlan(plan);
     }
 
     function removeArchivedNodes(ids) {
       const nodesToRemove = new Set((Array.isArray(ids) ? ids : [])
         .map(function (id) { return String(id || ''); })
-        .filter(function (id) { return !!id && !!findNode(id); }));
+        .filter(function (id) { return !!id && !!findNode(id) && !isTaskbookManagedNodeId(id); }));
       if (nodesToRemove.size === 0) return { ok: true, removedNodes: 0, removedEdges: 0 };
 
       function pruneLoadedAnnotations() {
@@ -16944,6 +18221,11 @@
       menuEdgeId = null;
     }
     function onContextMenu(e) {
+      if (scenePresentationMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       // 尺子在画笔状态会 pointer-events:none，因此不能只依赖 event.target；
       // 统一用画布坐标做有限旋转矩形命中，并优先于“右键空白切回选择工具”。
       if (rulerHitAtClient(e.clientX, e.clientY)) {
@@ -17374,7 +18656,7 @@
       toc.innerHTML = '';
       toc.hidden = true;
       if (!enabled || !content || !scroll) return;
-      const headings = Array.from(content.querySelectorAll('h2, h3, h4')).filter(function (heading) {
+      const headings = Array.from(content.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(function (heading) {
         return !!heading.textContent.trim();
       });
       if (!headings.length) return;
@@ -17590,8 +18872,9 @@
         if (token !== indexPaneMdToken || indexReaderTargetId !== node.id) return;
         const fp = mdContentFp(text);
         const md = global.MarkdownMini;
-        const html = md ? md.render(text)
-          : ('<pre>' + text.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }) + '</pre>');
+        const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(text) : null;
+        const html = rendered ? rendered.html : (md ? md.render(text)
+          : ('<pre>' + text.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }) + '</pre>'));
         host.innerHTML = '';
         const fit = document.createElement('div');     // 裁剪 + 占据缩放后高度的外框
         fit.className = 'index-pane-md-fit';
@@ -17606,13 +18889,14 @@
         scaleEl.appendChild(mdc);
         fit.appendChild(scaleEl);
         host.appendChild(fit);
-        if (hasMathSource(text)) body.dataset.hasMath = '1';
+        if (rendered ? rendered.features.math : hasMathSource(text)) body.dataset.hasMath = '1';
         // Mermaid 图表渲染（异步）。与 MD 专用浮层同口径：必须等所有图表都画完，再捕净快照 + 测高对齐，
         // 否则 ① indexPaneMdBase 里缺 SVG，下面 applyMarksToBody 会把已渲染的图洗回占位；
         //      ② syncIndexPaneMdAnnot 在图表撑高前测 body 高度，fit 外框(overflow:hidden)被设过矮 → 底部内容被裁、滚不到底。
-        var mermaidDone = renderMermaidDiagrams(body);
+        var mermaidDone = !rendered || rendered.features.mermaid
+          ? renderMermaidDiagrams(body) : Promise.resolve();
         // 右栏正文宽 = 浮层渲染这篇时的真实正文宽（笔迹按该宽归一化）；换行逐行一致才贴合
-        const hasHeadings = body.querySelectorAll('h2,h3').length > 0;
+        const hasHeadings = body.querySelectorAll('h1,h2,h3,h4,h5,h6').length > 0;
         indexPaneMdRefW = measureMdReaderBodyWidth(hasHeadings);
         scaleEl.style.width = indexPaneMdRefW + 'px';   // body 由 .md-reader-content .attach-md-body 的 max-width + 容器宽自然撑满
         whenMathReady(function () {
@@ -18695,14 +19979,18 @@
           if (!mdReaderOpen || mdReaderNodeId !== node.id) return;   // 期间已关/已切，丢弃
           const fp = mdContentFp(text);
           const md = global.MarkdownMini;
-          const html = md ? md.render(text)
-            : ('<pre>' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>');
+          const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(text) : null;
+          const html = rendered ? rendered.html : (md ? md.render(text)
+            : ('<pre>' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>'));
           content.innerHTML = '<div class="attach-md-body node-text">' + html + '</div>';
           const mathContent = content.querySelector('.attach-md-body');
-          if (mathContent && hasMathSource(text)) mathContent.dataset.hasMath = '1';
+          if (mathContent && (rendered ? rendered.features.math : hasMathSource(text))) {
+            mathContent.dataset.hasMath = '1';
+          }
           // Mermaid 图表渲染（异步；等所有图表都完成后再捕获净快照，
           // 否则 mdReaderBase 里没有 SVG，后续 applyMarksToBody 会把已渲染的图洗掉）
-          var mermaidDone = renderMermaidDiagrams(mathContent);
+          var mermaidDone = !rendered || rendered.features.mermaid
+            ? renderMermaidDiagrams(mathContent) : Promise.resolve();
           whenMathReady(() => {
             Promise.all([
               Promise.resolve(typesetMath(mathContent)),
@@ -21292,7 +22580,8 @@
       } else {
         searchMatches = data.nodes
           .filter(function (n) {
-            return ((n.text || '') + '\n' + ((isBodyNode(n) || isTableNode(n)) ? (n.body || '') : ''))
+            return !isCanvasNodeVisuallyHidden(n.id)
+              && ((n.text || '') + '\n' + ((isBodyNode(n) || isTableNode(n)) ? (n.body || '') : ''))
               .toLowerCase().indexOf(q) !== -1;
           })
           .map(function (n) { return n.id; });
@@ -21350,7 +22639,9 @@
     const MM_PAD = 60;   // 映射域四周留白（surface 单位）
 
     function hasMinimapNodes() {
-      return data.nodes.some((node) => !isEdgeAnchorNode(node));
+      return data.nodes.some((node) => (
+        !isEdgeAnchorNode(node) && !isCanvasNodeVisuallyHidden(node.id)
+      ));
     }
 
     // 当前视口在 surface 坐标中可见区域的 [x0,y0,x1,y1]
@@ -21419,7 +22710,7 @@
       const mmH = minimap.clientHeight || 120;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       data.nodes.forEach(function (n) {
-        if (isEdgeAnchorNode(n) || hiddenMindmapNodeIds.has(n.id) || hiddenGroupNodeIds.has(n.id)) return;
+        if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
         const s = cachedNodeSize(nodeMap.get(n.id), n.id);
         if (n.x < minX) minX = n.x;
         if (n.y < minY) minY = n.y;
@@ -21480,7 +22771,7 @@
       // 节点小矩形：持久 div 池，增删改时同步（不每帧重建）
       const seen = new Set();
       data.nodes.forEach(function (n) {
-        if (isEdgeAnchorNode(n) || hiddenMindmapNodeIds.has(n.id) || hiddenGroupNodeIds.has(n.id)) return;
+        if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
         seen.add(n.id);
         const sz = cachedNodeSize(nodeMap.get(n.id), n.id);
         let dot = mmNodeMap.get(n.id);
@@ -21516,7 +22807,7 @@
       let needsFullRedraw = false;
       liveCoords.forEach((pos, id) => {
         const node = findNode(id);
-        if (isEdgeAnchorNode(node) || hiddenMindmapNodeIds.has(id) || hiddenGroupNodeIds.has(id)) return;
+        if (isEdgeAnchorNode(node) || isCanvasNodeVisuallyHidden(id)) return;
         if (!node) return;
         const dot = mmNodeMap.get(id);
         if (!dot) { needsFullRedraw = true; return; }
@@ -21952,10 +23243,58 @@
     // 隐藏范围按 parent → child 方向实时推导，因此旧画布缺省就是全部展开。
     let hiddenMindmapNodeIds = new Set();
     let hiddenGroupNodeIds = new Set();
+    let hiddenTaskbookNodeIds = new Set();
     let mindmapHoverDelay = 500;
     let mindmapPreviewRootId = null;
     let mindmapPreviewOpenTimer = null;
     let mindmapPreviewCloseTimer = null;
+
+    function computeHiddenTaskbookNodeIds() {
+      const hidden = new Set();
+      if (!Taskbooks) return hidden;
+      Taskbooks.sortedRoots(data).forEach(function (root) {
+        const projection = root.canvasNodeId && findNode(root.canvasNodeId);
+        if (projection && isTaskbookNode(projection)) return;
+        (root.members || []).forEach(function (member) { hidden.add(member.nodeId); });
+      });
+      return hidden;
+    }
+
+    function isCanvasNodeVisuallyHidden(nodeId) {
+      return hiddenMindmapNodeIds.has(nodeId)
+        || hiddenGroupNodeIds.has(nodeId)
+        || hiddenTaskbookNodeIds.has(nodeId);
+    }
+
+    function refreshTaskbookVisibility() {
+      hiddenTaskbookNodeIds = computeHiddenTaskbookNodeIds();
+      hiddenTaskbookNodeIds.forEach(function (id) { selectedNodeIds.delete(id); });
+      data.edges.forEach(function (edge) {
+        if (hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) {
+          selectedEdgeIds.delete(edge.id);
+        }
+      });
+      nodeMap.forEach(function (el, id) {
+        const hidden = hiddenTaskbookNodeIds.has(id);
+        el.classList.toggle('taskbook-tree-hidden', hidden);
+        if (hidden) el.classList.remove('selected');
+      });
+      const edgesById = new Map(data.edges.map(function (edge) { return [edge.id, edge]; }));
+      edgeMap.forEach(function (refs, id) {
+        const edge = edgesById.get(id);
+        const hidden = !!edge
+          && (hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to));
+        refs.path.classList.toggle('taskbook-tree-hidden', hidden);
+        refs.hit.classList.toggle('taskbook-tree-hidden', hidden);
+        refs.labelEl.classList.toggle('taskbook-tree-hidden', hidden);
+        if (hidden) {
+          refs.path.classList.remove('selected');
+          refs.labelEl.classList.remove('selected');
+        }
+      });
+      renderEdgeHandles();
+      requestEdgesCanvasRender();
+    }
 
     function semanticGroupMembers(group) {
       if (!isGroupBoxNode(group) || !Array.isArray(group.groupMemberIds)) return [];
@@ -22429,6 +23768,10 @@
 
     // ── 双击空白 → 新建节点 ────────────────
     function onSurfaceDblClick(e) {
+      if (scenePresentationMode) {
+        e.preventDefault();
+        return;
+      }
       // 绑在 viewport 上：surface 框外（含负坐标区）的空白处也能建节点
       if (e.target !== surface && e.target !== viewport && e.target !== emptyHint) return;
       if (lastPointerType === 'pen') return;   // 手写笔双击不建节点（防批注时误触；鼠标/触摸照常）
@@ -22459,6 +23802,12 @@
 
     // ── 空白 mousedown → 框选 / 清选 ───────
     function onSurfaceMouseDown(e) {
+      if (scenePresentationMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.button === 0) startPan(e);
+        return;
+      }
       if (e.target !== surface && e.target !== viewport && e.target !== emptyHint) return;
       if (mindmapColorBrushState) {
         e.preventDefault();
@@ -22514,6 +23863,12 @@
       freezeViewportForInteraction();
       finishMindmapGlide(); // 脑图滑行中按下（拖节点/平移）→ 立即贴到终态，避免与拖动抢 transform
       if (e.button !== 0) return;
+      if (scenePresentationMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        startPan(e);
+        return;
+      }
       // 标题拖动 / 尺寸手柄需要上面的动画收尾，但不能继续落入绘图工具捕获。
       if (e.target.closest && e.target.closest('.decor-box-title, .decor-resize-handle')) return;
       // 套索工具：捕获相接管（早于节点自身 mousedown），画布任意处起手都进矩形框选、不拖动节点。
@@ -22546,6 +23901,18 @@
       if (e.target.closest && e.target.closest('.group-collapse-btn')) return;
       lastPointerType = e.pointerType || 'mouse';
       freezeViewportForInteraction();
+      if (scenePresentationMode) {
+        if (e.button !== 0 || e.pointerType === 'mouse') return;
+        e.preventDefault();
+        e.stopPropagation();
+        startPan(e);
+        if (drag) {
+          drag.viaPointer = true;
+          drawPointerId = e.pointerId;
+          try { viewport.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+        return;
+      }
       if (e.target.closest && e.target.closest('.decor-box-title, .decor-resize-handle')) return;
       if (drawTool === 'select' || drawTool === 'lasso' || drawTool === 'table') return;
       // 选择、套索和表格不走指针绘图链路；表格统一由双击空白创建。
@@ -22573,6 +23940,15 @@
     function applySnapshot(snap) {
       const now = Date.now();
       const liveTimers = new Map();
+      const liveTaskbooks = new Map();
+      if (Taskbooks) Taskbooks.sortedRoots(data).forEach(function (root) {
+        liveTaskbooks.set(root.id, {
+          sessions: Array.isArray(root.sessions)
+            ? root.sessions.map(function (session) { return Object.assign({}, session); })
+            : [],
+          active: root.activeSession ? Object.assign({}, root.activeSession) : null,
+        });
+      });
       timerList().forEach(function (timer) {
         if (!Timer) return;
         const copy = Timer.clone(timer);
@@ -22583,8 +23959,29 @@
         });
       });
       data.nodes = snap.nodes.map(cloneNode);
+      const restoredTaskbook = cloneTaskbook(snap.taskbook);
+      if (restoredTaskbook) data.taskbook = restoredTaskbook;
+      else delete data.taskbook;
+      if (Taskbooks) {
+        Taskbooks.sortedRoots(data).forEach(function (root) {
+          const live = liveTaskbooks.get(root.id);
+          if (!live) return;
+          root.sessions = live.sessions;
+          if (live.active) root.activeSession = live.active;
+          else delete root.activeSession;
+        });
+        taskbookOwnershipCache = null;
+      }
+      if (taskbookRuntime && !(function () {
+        const root = taskbookRoot(taskbookRuntime.rootId);
+        return !!(root && root.activeSession && root.activeSession.id === taskbookRuntime.sessionId);
+      })()) {
+        taskbookRuntime = null;
+        scheduleTaskbookTick();
+      }
       rebuildNodeIndex();
       data.edges = snap.edges.map(cloneEdge);   // 5-3：深拷 waypoints，避免与快照共享
+      if (Taskbooks) Taskbooks.rebuildWorkflowEdges(data);
       data.ink = cloneInk(snap.ink);
       const snapshotRuler = cloneRuler(snap.ruler);
       if (snapshotRuler) data.ruler = snapshotRuler;
@@ -22610,6 +24007,7 @@
       // 撤销/重做重建 DOM 前先推导隐藏集合，避免折叠分支先闪现一帧再隐藏。
       hiddenMindmapNodeIds = computeHiddenMindmapNodeIds();
       hiddenGroupNodeIds = computeHiddenGroupNodeIds();
+      hiddenTaskbookNodeIds = computeHiddenTaskbookNodeIds();
       // 全部 DOM 推倒重建（最稳）
       nodeMap.forEach((el) => {
         if (nodeSizeObserver) nodeSizeObserver.unobserve(el);   // 旧元素退订，避免观察器攒游离 DOM
@@ -22690,6 +24088,7 @@
     }
 
     function onKeyDown(e) {
+      if (scenePresentationMode) return;
       if (externalOverlayOpen) return;
       if (e.target && e.target.closest && e.target.closest('.table-grid-root')) {
         const tableGlobalShortcut = (e.ctrlKey || e.metaKey)
@@ -22703,9 +24102,6 @@
         cancelMindmapColorBrush(true);
         return;
       }
-
-      // 任务清单输入框打字时：所有键交给输入框本身，画布快捷键一律让位
-      if (e.target && e.target.classList && e.target.classList.contains('checklist-edit')) return;
 
       // 尺子角度浮窗打开时，Esc 先关闭；输入框中的 Enter 由浮窗自身提交。
       if (rulerMenu && !rulerMenu.hidden && e.key === 'Escape') {
@@ -23247,6 +24643,15 @@
           e.preventDefault();
           return;
         }
+      }
+
+      // 顶级任务投影按 F 进入该任务自己的管理页，不复用任务簿总入口。
+      if (selNode && isTaskbookNode(selNode) && (e.key === 'f' || e.key === 'F') && !anyMod) {
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent('editor:open-task-root', {
+          detail: { rootId: selNode.taskRootId },
+        }));
+        return;
       }
 
       // 独立表格按 F 进入专用网格工作台，不复用正文阅读器。
@@ -23957,6 +25362,7 @@
       refreshDecorToolButtons();
       renderRuler();
       renderTimers();
+      refreshTaskbookCards();
     };
     global.CanvasModule.ensureRuler = ensureRuler;
     global.CanvasModule.focusRuler = focusRuler;
@@ -23968,6 +25374,51 @@
     global.CanvasModule.toggleSelectedTimers = toggleSelectedTimers;
     global.CanvasModule.resetSelectedTimers = resetSelectedTimers;
     global.CanvasModule.checkpointCanvasTimers = checkpointCanvasTimers;
+    global.CanvasModule.createTopLevelTask = createTopLevelTask;
+    global.CanvasModule.listTaskbooks = listTaskbookSnapshots;
+    global.CanvasModule.getTaskbookSnapshot = taskbookSnapshot;
+    global.CanvasModule.updateTaskbook = updateTaskbook;
+    global.CanvasModule.reorderTopLevelTasks = reorderTopLevelTasks;
+    global.CanvasModule.placeTaskRoot = placeTaskRoot;
+    global.CanvasModule.removeTaskRootProjection = removeTaskRootProjection;
+    global.CanvasModule.locateTaskRoot = locateTaskRoot;
+    global.CanvasModule.addTaskbookTask = addTaskbookTask;
+    global.CanvasModule.updateTaskbookTask = updateTaskbookTask;
+    global.CanvasModule.moveTaskbookTask = moveTaskbookTask;
+    global.CanvasModule.deleteTaskbookSubtree = deleteTaskbookSubtree;
+    global.CanvasModule.deleteTopLevelTask = deleteTopLevelTask;
+    global.CanvasModule.settleTaskbookForArchive = settleTaskbookForArchive;
+    global.CanvasModule.prepareTaskbookArchive = prepareTaskbookArchive;
+    global.CanvasModule.applyTaskbookArchive = applyTaskbookArchive;
+    global.CanvasModule.toggleTaskbookTask = toggleTaskbookTask;
+    global.CanvasModule.checkpointTaskbook = checkpointTaskbookRuntime;
+    global.CanvasModule.retryTaskbookFocusLogs = retryTaskbookFocusLogs;
+    global.CanvasModule.locateTaskbookItem = function (nodeId) {
+      const root = taskbookRoot(nodeId);
+      if (root) {
+        if (locateTaskRoot(root.id)) return true;
+        return !!placeTaskRoot(root.id).ok;
+      }
+      if (!findNode(nodeId)) return false;
+      const ownerId = taskbookOwnerId(nodeId);
+      const owner = ownerId && taskbookRoot(ownerId);
+      if (owner && (!owner.canvasNodeId || !findNode(owner.canvasNodeId))) {
+        const placed = placeTaskRoot(ownerId);
+        if (!placed.ok) return false;
+      }
+      selectNodes([nodeId], false);
+      centerOnNode(nodeId);
+      return true;
+    };
+    global.CanvasModule.isTaskbookManagedNode = isTaskbookManagedNodeId;
+    global.CanvasModule.getSelectedTaskbookCandidateCount = function () {
+      let count = 0;
+      selectedNodeIds.forEach(function (id) {
+        const node = findNode(id);
+        if (Taskbooks && Taskbooks.isTaskNode(node) && !taskbookOwnerId(id)) count += 1;
+      });
+      return count;
+    };
     global.CanvasModule.setFilePath = function (nextPath) {
       filePath = nextPath || filePath;
       data.nodes.filter(isImageNode).forEach(function (node) {
@@ -23989,7 +25440,9 @@
       if (editingEdgeId !== null) commitEdgeEdit();
       if (editingTextBoxId !== null) commitTextBoxEdit();
       if (textReaderEditing) finishTextReaderEdit();
-      if (checkpointCanvasTimers()) notify();
+      const timerChanged = checkpointCanvasTimers();
+      const taskbookChanged = checkpointTaskbookRuntime();
+      if (timerChanged || taskbookChanged) notify();
     };
     global.CanvasModule.createNodeMatrix = createNodeMatrix;
     // 是否有正在进行的就地编辑（与 commitPendingEdits 会 commit 的集合一一对应）。
@@ -24269,7 +25722,7 @@
         if (by1 > maxY) maxY = by1;
       }
       data.nodes.forEach(function (n) {
-        if (n.kind === 'pdf' || isEdgeAnchorNode(n)) return;
+        if (n.kind === 'pdf' || isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
         const el = nodeMap.get(n.id);
         const w = el ? el.offsetWidth : 160;
         const h = el ? el.offsetHeight : 36;
@@ -24282,7 +25735,8 @@
         const tgt = findNode(edge.to);
         if (!src || !tgt || src.kind === 'pdf' || tgt.kind === 'pdf') return;
         if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)
-            || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)) return;
+            || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)
+            || hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) return;
         const rects = edgeCanvasRects(edge);
         if (!rects) return;
         const geom = edgeGeom(edge, rects.srcRect, rects.tgtRect);
@@ -25409,7 +26863,8 @@
       if (textReaderEditing) finishTextReaderEdit();
       finishMindmapGlide();
       options = options || {};
-      const tree = buildMindmapTreeForScope(options.scope);
+      const tree = options.tree && options.tree.nodeSet
+        ? options.tree : buildMindmapTreeForScope(options.scope);
       if (!tree || tree.nodeSet.size < 1) return false;
       markMindmapRoot(tree);
       orientMindmapTreeEdges(tree);
@@ -25759,6 +27214,191 @@
       if (!tree || tree.nodeSet.size < 2) return false;
       return applyMindmapPositions(tree, alignMindmapLocal(tree, layout, options), false);
     }
+
+    function getSelectedMarkdownOutline() {
+      const supported = [];
+      let ignoredCount = 0;
+      selectedNodeIds.forEach(function (id) {
+        const node = findNode(id);
+        if (!node || (!isReadableNode(node) && !isTableNode(node))) {
+          ignoredCount += 1;
+          return;
+        }
+        let title = richSource(node, 'text');
+        let body = '';
+        if (isCodeNode(node)) {
+          const language = String(node.language || '').trim();
+          body = '```' + language + '\n' + String(node.body || '') + '\n```';
+        } else if (isTableNode(node)) {
+          body = String(node.body || '');
+        } else if (isBodyNode(node)) {
+          body = richSource(node, 'body');
+        }
+        supported.push({
+          id: node.id,
+          kind: node.kind,
+          title: title,
+          body: body,
+          x: Number(node.x) || 0,
+          y: Number(node.y) || 0,
+        });
+      });
+      ignoredCount += selectedTimerIds.size;
+      if (selectedArrowId) ignoredCount += 1;
+      if (rulerSelected) ignoredCount += 1;
+      const supportedIds = new Set(supported.map(function (node) { return node.id; }));
+      const edges = data.edges.filter(function (edge) {
+        return supportedIds.has(edge.from) && supportedIds.has(edge.to) && edge.from !== edge.to;
+      }).map(function (edge) {
+        return {
+          id: edge.id,
+          from: edge.from,
+          to: edge.to,
+          text: String(edge.text || ''),
+        };
+      });
+      return {
+        nodes: supported,
+        edges: edges,
+        ignoredCount: ignoredCount,
+      };
+    }
+
+    function createMindmapFromOutline(model, options) {
+      options = options || {};
+      if (embeddedEditor || !model || !model.ok || !Array.isArray(model.nodes)
+          || model.nodes.length < 2 || model.nodes.length > 200) {
+        return { ok: false, reason: 'invalid-outline' };
+      }
+      if (editingNodeId !== null) commitNodeEdit();
+      if (editingEdgeId !== null) commitEdgeEdit();
+      if (editingTextBoxId !== null) commitTextBoxEdit();
+      if (textReaderEditing) finishTextReaderEdit();
+      finishMindmapGlide();
+
+      const before = {
+        nodeLength: data.nodes.length,
+        edgeLength: data.edges.length,
+        lastCreatedNodeId: lastCreatedNodeId,
+        nodeSelection: [...selectedNodeIds],
+        edgeSelection: [...selectedEdgeIds],
+        timerSelection: [...selectedTimerIds],
+        arrowSelection: selectedArrowId,
+        rulerSelection: rulerSelected,
+      };
+      const center = viewportCenterInSurface();
+      const createdNodes = [];
+      const createdEdges = [];
+      const idByIndex = [];
+      try {
+        model.nodes.forEach(function (entry, index) {
+          const node = {
+            id: newNodeId(),
+            kind: 'card',
+            x: center.x + (Number(entry.depth) || 0) * 190,
+            y: center.y + index * 12,
+            text: String(entry.title || '').trim() || '未命名',
+            body: String(entry.body || ''),
+          };
+          applyProDefaults(node, 'card');
+          data.nodes.push(node);
+          createdNodes.push(node);
+          idByIndex.push(node.id);
+        });
+        (Array.isArray(model.edges) ? model.edges : []).forEach(function (entry) {
+          const from = idByIndex[Number(entry.from)];
+          const to = idByIndex[Number(entry.to)];
+          if (!from || !to || from === to) return;
+          const edge = {
+            id: newEdgeId(),
+            from: from,
+            to: to,
+            text: String(entry.text || ''),
+          };
+          data.edges.push(edge);
+          createdEdges.push(edge);
+        });
+        rebuildNodeIndex();
+        selectedNodeIds.clear();
+        selectedEdgeIds.clear();
+        selectedTimerIds.clear();
+        createdNodes.forEach(function (node) { selectedNodeIds.add(node.id); });
+        selectedArrowId = null;
+        rulerSelected = false;
+        reconcileAll();
+
+        const childrenOf = new Map();
+        const depth = new Map();
+        createdNodes.forEach(function (node, index) {
+          childrenOf.set(node.id, []);
+          depth.set(node.id, Math.max(0, Number(model.nodes[index].depth) || 0));
+        });
+        createdEdges.forEach(function (edge) {
+          if (childrenOf.has(edge.from)) childrenOf.get(edge.from).push(edge.to);
+        });
+        const tree = {
+          center: createdNodes[0],
+          nodeSet: new Set(createdNodes.map(function (node) { return node.id; })),
+          childrenOf: childrenOf,
+          depth: depth,
+          newEdges: [],
+        };
+        markMindmapRoot(tree);
+        orientMindmapTreeEdges(tree);
+        const preset = MINDMAP_STYLE_PRESETS[options.preset] ? options.preset : 'paper';
+        const layout = ['balanced', 'right', 'left', 'down', 'radial'].indexOf(options.layout) >= 0
+          ? options.layout : 'balanced';
+        applyMindmapStyle(preset, {
+          tree: tree,
+          history: false,
+          notify: false,
+          cleanWaypoints: true,
+          hierarchySize: true,
+        });
+        const local = layout === 'radial'
+          ? layoutMindmapRadial(tree, options)
+          : (layout === 'balanced'
+            ? layoutMindmapBalanced(tree, options)
+            : layoutMindmapTree(tree, layout, options));
+        applyMindmapPositions(tree, local, true, {
+          history: false,
+          notify: false,
+          duration: 340,
+        });
+        lastCreatedNodeId = createdNodes[createdNodes.length - 1].id;
+        applySelection();
+        pushHistory();
+        notify();
+        focusNodeIds(tree.nodeSet, false);
+        showCanvasToast(canvasImportText(
+          '已生成 ' + createdNodes.length + ' 个独立导图节点。',
+          'Created ' + createdNodes.length + ' independent mind-map nodes.',
+        ));
+        return {
+          ok: true,
+          count: createdNodes.length,
+          nodeIds: createdNodes.map(function (node) { return node.id; }),
+          edgeIds: createdEdges.map(function (edge) { return edge.id; }),
+        };
+      } catch (error) {
+        data.nodes.length = before.nodeLength;
+        data.edges.length = before.edgeLength;
+        lastCreatedNodeId = before.lastCreatedNodeId;
+        selectedNodeIds.clear();
+        before.nodeSelection.forEach(function (id) { selectedNodeIds.add(id); });
+        selectedEdgeIds.clear();
+        before.edgeSelection.forEach(function (id) { selectedEdgeIds.add(id); });
+        selectedTimerIds.clear();
+        before.timerSelection.forEach(function (id) { selectedTimerIds.add(id); });
+        selectedArrowId = before.arrowSelection;
+        rulerSelected = before.rulerSelection;
+        rebuildNodeIndex();
+        reconcileAll();
+        renderRuler();
+        throw error;
+      }
+    }
+
     global.CanvasModule.applyMindmap = applyMindmap;
     global.CanvasModule.applyMindmapStyle = applyMindmapStyle;
     global.CanvasModule.getMindmapPresetPreview = getMindmapPresetPreview;
@@ -25772,6 +27412,13 @@
     global.CanvasModule.restoreMindmapNodeSizes = restoreSelectedMindmapNodeSizes;
     global.CanvasModule.equalizeMindmapLevelWidths = equalizeSelectedMindmapLevelWidths;
     global.CanvasModule.repairMindmapOverlaps = repairSelectedMindmapOverlaps;
+    global.CanvasModule.getSelectedMarkdownOutline = getSelectedMarkdownOutline;
+    global.CanvasModule.createMindmapFromOutline = createMindmapFromOutline;
+    global.CanvasModule.captureScene = captureScene;
+    global.CanvasModule.navigateToScene = navigateToScene;
+    global.CanvasModule.getScenePreviewGeometry = getScenePreviewGeometry;
+    global.CanvasModule.captureSelectedGroupsAsScenes = captureSelectedGroupsAsScenes;
+    global.CanvasModule.setScenePresentationMode = setScenePresentationMode;
 
     // ── 供新建面板单选节点时直接编辑节点属性 ──
     global.CanvasModule.findNode = findNode;
@@ -25868,6 +27515,7 @@
     global.CanvasModule.switchSingleNodeKind = function (nodeId, kind) {
       const node = findNode(nodeId);
       if (!node || !isReadableNode(node) || (isIndexNode(node) ? kind === 'index' : node.kind === kind) || currentMode() === 'decor') return;
+      if (isTaskbookManagedNodeId(nodeId)) return;
       var prevKind = node.kind;
 
       // ── 内容迁移：标题不在转换中丢失或重复 ──
@@ -25903,6 +27551,7 @@
     global.CanvasModule.convertSingleToBodyNode = function (nodeId, kind) {
       const node = findNode(nodeId);
       if (!node || isReadableNode(node) || currentMode() === 'decor') return;
+      if (isTaskbookManagedNodeId(nodeId)) return;
       const body = node.text || '';
       node.kind = kind;
       ensureStickyNodeColor(node);
