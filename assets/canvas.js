@@ -851,8 +851,6 @@
     const zoomSpeedInput = opts.zoomSpeedInput || null;
     const locateBtn = opts.locateBtn || null;
     const spaceLocateInput = opts.spaceLocateInput || null;
-    const zoomPresetBtn = opts.zoomPresetBtn || null;
-    const zoomPrefInput = opts.zoomPrefInput || null;
     // 速查表浮层（Y1 轮）
     const shortcutsOverlay = opts.shortcutsOverlay || null;
     const shortcutsClose = opts.shortcutsClose || null;
@@ -1370,7 +1368,6 @@
     let panSpeed = 8;                   // 像素/帧（@60fps ≈ 480 px/秒）
     let panInertia = 0.15;              // 空格拖拽松手惯性倍率；0=关闭，1=旧版完整惯性
     let zoomSpeed = 1.0;                // 滚轮缩放速度倍率（0.5-3.0）
-    let zoomPref = 1.0;                 // 偏好缩放（25%-400%）
     let spaceLocateEnabled = false;     // 短按空格定位最近节点；不影响空格+拖拽平移（默认关闭，齿轮里打开）
     const horizontalScrollState = new WeakMap(); // MD 宽内容：Shift+滚轮目标值 + RAF 缓动
     let spaceUsedForPan = false;        // 本次空格按住期间是否拖动过（区分"短按定位" vs "按住平移"）
@@ -1497,8 +1494,6 @@
       if (Number.isFinite(pi) && pi >= 0 && pi <= 1) panInertia = pi;
       const zs = parseFloat(localStorage.getItem('canvas:zoomSpeed'));
       if (Number.isFinite(zs) && zs >= 0.5 && zs <= 3) zoomSpeed = zs;
-      const zp = parseFloat(localStorage.getItem('canvas:zoomPref'));
-      if (Number.isFinite(zp) && zp >= 0.25 && zp <= 4) zoomPref = zp;
       const sl = localStorage.getItem('canvas:spaceLocateEnabled');
       if (sl === '0') spaceLocateEnabled = false;
       else if (sl === '1') spaceLocateEnabled = true;
@@ -4713,20 +4708,6 @@
       canvasToastTimer = setTimeout(() => t.classList.remove('show'), 1800);
     }
 
-    // 按钮 B：切到偏好缩放，以当前视口中心为锚点（不改变看的位置）
-    function applyZoomPref() {
-      const vRect = viewport.getBoundingClientRect();
-      // 当前视口中心对应的 surface 坐标
-      const cx = (vRect.width / 2 - targetPanX) / targetScale;
-      const cy = (vRect.height / 2 - targetPanY) / targetScale;
-      const newScale = clamp(zoomPref, MIN_SCALE, MAX_SCALE);
-      targetPanX = vRect.width / 2 - cx * newScale;
-      targetPanY = vRect.height / 2 - cy * newScale;
-      targetScale = newScale;
-      rememberViewport();
-      requestTick();
-    }
-
     // 方向键平移循环：每帧把 target/cur 同步推 N 像素（不缓动、跟手）
     function arrowTick(ts) {
       let dx = 0, dy = 0;
@@ -4789,18 +4770,6 @@
         else panVel = null;
       }
       panInertiaRaf = requestAnimationFrame(step);
-    }
-
-    // 偏好框：提交输入 → 解析、夹紧、保存
-    function commitZoomPref() {
-      if (!zoomPrefInput) return;
-      let raw = String(zoomPrefInput.value).replace(/[%\s]/g, '');
-      let v = parseInt(raw, 10);
-      if (!Number.isFinite(v)) v = Math.round(zoomPref * 100);
-      v = Math.max(25, Math.min(400, v));
-      zoomPref = v / 100;
-      try { localStorage.setItem('canvas:zoomPref', String(zoomPref)); } catch (e) {}
-      zoomPrefInput.value = v + '%';
     }
 
     function horizontalWheelDelta(e) {
@@ -24930,32 +24899,6 @@
       spaceLocateInput.addEventListener('change', function () {
         spaceLocateEnabled = !!spaceLocateInput.checked;
         try { localStorage.setItem('canvas:spaceLocateEnabled', spaceLocateEnabled ? '1' : '0'); } catch (e) {}
-      });
-    }
-    if (zoomPresetBtn) {
-      zoomPresetBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        zoomPresetBtn.blur();
-        applyZoomPref();
-      });
-    }
-    if (zoomPrefInput) {
-      zoomPrefInput.value = Math.round(zoomPref * 100) + '%';
-      // 聚焦时全选数字，方便覆盖
-      zoomPrefInput.addEventListener('focus', function () {
-        // 进 input 期间不要让画布 keydown 拦截方向键 / Esc——浏览器原生处理就好
-        zoomPrefInput.select();
-      });
-      zoomPrefInput.addEventListener('blur', commitZoomPref);
-      zoomPrefInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          zoomPrefInput.blur();   // 触发 commit
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          zoomPrefInput.value = Math.round(zoomPref * 100) + '%';
-          zoomPrefInput.blur();   // commit 会把同样值写回（不变）
-        }
       });
     }
     // Y1 轮：速查表浮层的开/关入口

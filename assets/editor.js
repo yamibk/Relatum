@@ -351,7 +351,6 @@
       darkLines: '深色模式线条优化',
       darkUi: '深色语义 UI 优化', autosave: '自动保存', view: '视图',
       locateLatest: '定位最近节点', space: '空格', spaceLocate: '空格键定位最近节点',
-      centerZoom: '偏好缩放并居中', zoomLevel: '缩放比例',
       settingsReset: '恢复默认设置',
       settingsResetConfirmTitle: '恢复默认设置？',
       settingsResetConfirmCopy: '只重置本面板；保留语言、画布内容和引导记录。',
@@ -653,7 +652,6 @@
       darkLines: 'Optimize lines on dark backgrounds',
       darkUi: 'Dark semantic UI', autosave: 'Autosave', view: 'View',
       locateLatest: 'Locate latest node', space: 'Space', spaceLocate: 'Space locates latest node',
-      centerZoom: 'Center at preferred zoom', zoomLevel: 'Zoom level',
       settingsReset: 'Restore Default Settings',
       settingsResetConfirmTitle: 'Restore default settings?',
       settingsResetConfirmCopy: 'Only this panel resets. Language, canvas content, and onboarding stay untouched.',
@@ -7015,7 +7013,6 @@
       { role: 'enable-dark-semantic-ui', checked: true, event: 'change', key: 'canvas:darkSemanticUiOptimization' },
       { role: 'enable-autosave', checked: true, event: 'change', key: 'canvas:autosaveEnabled' },
       { role: 'enable-space-locate', checked: false, event: 'change', key: 'canvas:spaceLocateEnabled' },
-      { role: 'zoom-pref', value: '100%', event: 'blur', key: 'canvas:zoomPref' },
     ];
     let statusTimer = null;
     let statusClearTimer = null;
@@ -9520,8 +9517,6 @@
           zoomSpeedInput: document.querySelector('[data-role="zoom-speed"]'),
           locateBtn: document.querySelector('[data-role="locate-recent"]'),
           spaceLocateInput: document.querySelector('[data-role="enable-space-locate"]'),
-          zoomPresetBtn: document.querySelector('[data-role="zoom-preset"]'),
-          zoomPrefInput: document.querySelector('[data-role="zoom-pref"]'),
           shortcutsOverlay: document.querySelector('[data-role="shortcuts"]'),
           shortcutsClose: document.querySelector('[data-role="shortcuts-close"]'),
           helpBtn: document.querySelector('[data-role="help-btn"]'),
