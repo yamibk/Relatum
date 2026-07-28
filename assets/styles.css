@@ -25945,6 +25945,45 @@ mjx-container.eq-jump-flash {
 
 .settings-pop > .settings-space-locate-check {
   grid-column: 2;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  gap: 9px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.44);
+  font-size: 12.5px;
+  transition: color 150ms var(--easing-soft),
+              border-color 150ms var(--easing-soft),
+              background 150ms var(--easing-soft),
+              box-shadow 180ms var(--easing-soft);
+}
+
+.settings-pop > .settings-space-locate-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+.settings-pop > .settings-space-locate-check:hover,
+.settings-pop > .settings-space-locate-check:focus-within {
+  border-color: var(--border-strong);
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(28, 28, 30, 0.045);
+}
+
+.editor-page[data-background-tone="dark"] .settings-pop > .settings-space-locate-check {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.editor-page[data-background-tone="dark"] .settings-pop > .settings-space-locate-check:hover,
+.editor-page[data-background-tone="dark"] .settings-pop > .settings-space-locate-check:focus-within {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14);
 }
 
 .settings-checks-grid {
@@ -25983,7 +26022,7 @@ mjx-container.eq-jump-flash {
   margin: 1px 0;
 }
 
-/* 从顶栏迁来的视图操作（定位最近节点 / 偏好缩放并居中）：弹窗里改成带标签的整行按钮 */
+/* 从顶栏迁来的“定位最近节点”：弹窗里改成带标签的整行按钮 */
 .settings-action-btn {
   appearance: none;
   -webkit-appearance: none;
