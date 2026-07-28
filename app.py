@@ -2157,6 +2157,18 @@ def _sanitize_focus_session(item: object) -> dict | None:
         "outcome": (outcome if isinstance(outcome, str) else "").strip()[:1000],
         "endedAt": (ended_at if isinstance(ended_at, str) else "")[:40],
     }
+    source = item.get("source")
+    if isinstance(source, dict) and source.get("kind") == "taskbook":
+        root_id = str(source.get("rootId") or "").strip()[:160]
+        canvas_path = str(source.get("canvasPath") or "").strip()[:2048]
+        if root_id and canvas_path:
+            session["source"] = {
+                "kind": "taskbook",
+                "rootId": root_id,
+                "rootTitle": str(source.get("rootTitle") or "").strip()[:200],
+                "canvasPath": canvas_path,
+                "nodeId": str(source.get("nodeId") or "").strip()[:160],
+            }
     raw_day = item.get("day")
     if isinstance(raw_day, str):
         session["day"] = raw_day[:10]
@@ -2182,6 +2194,181 @@ def _focus_day_key(session: dict) -> str:
         except ValueError:
             pass
     return date.today().isoformat()
+
+
+def _taskbook_managed_node_ids(canvas: dict) -> set[str]:
+    """返回 V2 任务簿成员节点；members 是结构真相，视觉连线不参与判定。"""
+    taskbook = canvas.get("taskbook") if isinstance(canvas, dict) else None
+    if not isinstance(taskbook, dict) or taskbook.get("version") != 2:
+        return set()
+    managed: set[str] = set()
+    for root in taskbook.get("roots") or []:
+        if not isinstance(root, dict):
+            continue
+        for member in root.get("members") or []:
+            if not isinstance(member, dict):
+                continue
+            node_id = str(member.get("nodeId") or "").strip()
+            if node_id:
+                managed.add(node_id)
+    return managed
+
+
+def _taskbook_archive_source_summary(canvas: dict, root_id: str) -> dict:
+    """校验一个待归档顶级任务，并返回服务端可信的归档摘要。
+
+    归档条件只读取当前磁盘上的原画布；客户端不能自行声明完成数量或用时。
+    """
+    taskbook = canvas.get("taskbook") if isinstance(canvas, dict) else None
+    if not isinstance(taskbook, dict) or taskbook.get("version") != 2:
+        raise ValueError("当前画布没有可归档的任务簿")
+    roots = taskbook.get("roots")
+    if not isinstance(roots, list):
+        raise ValueError("任务簿数据损坏")
+    matches = [
+        root for root in roots
+        if isinstance(root, dict) and str(root.get("id") or "").strip() == root_id
+    ]
+    if len(matches) != 1:
+        raise ValueError("没有找到这个顶级任务")
+    root = matches[0]
+
+    nodes_by_id: dict[str, dict] = {}
+    for node in canvas.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+        if node_id in nodes_by_id:
+            raise ValueError("画布节点标识重复，不能归档")
+        nodes_by_id[node_id] = node
+
+    members = root.get("members")
+    if not isinstance(members, list):
+        members = []
+    member_ids: list[str] = []
+    parent_by_id: dict[str, str | None] = {}
+    for item in members:
+        if not isinstance(item, dict):
+            raise ValueError("任务树结构损坏")
+        node_id = str(item.get("nodeId") or "").strip()
+        if not node_id or node_id in parent_by_id or node_id not in nodes_by_id:
+            raise ValueError("任务树包含缺失或重复的节点")
+        parent_raw = str(item.get("parentNodeId") or "").strip()
+        parent_by_id[node_id] = parent_raw or None
+        member_ids.append(node_id)
+    for node_id, parent_id in parent_by_id.items():
+        if parent_id is not None and (parent_id == node_id or parent_id not in parent_by_id):
+            raise ValueError("任务树包含无效父级")
+
+    children: dict[str, list[str]] = {node_id: [] for node_id in member_ids}
+    for node_id, parent_id in parent_by_id.items():
+        if parent_id:
+            children[parent_id].append(node_id)
+    states: dict[str, int] = {}
+
+    def visit(node_id: str) -> None:
+        state = states.get(node_id, 0)
+        if state == 1:
+            raise ValueError("任务树包含循环")
+        if state == 2:
+            return
+        states[node_id] = 1
+        for child_id in children[node_id]:
+            visit(child_id)
+        states[node_id] = 2
+
+    for node_id in member_ids:
+        visit(node_id)
+
+    if member_ids:
+        leaf_ids = [node_id for node_id in member_ids if not children[node_id]]
+        if not leaf_ids or not all(bool(nodes_by_id[node_id].get("strike")) for node_id in leaf_ids):
+            raise ValueError("还有未完成的叶子任务，暂时不能归档")
+    else:
+        leaf_ids = []
+        if not bool(root.get("completed")):
+            raise ValueError("顶级任务尚未完成")
+
+    if isinstance(root.get("activeSession"), dict):
+        raise ValueError("请先结束正在运行的计时")
+    duration_ms = 0
+    for session in root.get("sessions") or []:
+        if not isinstance(session, dict):
+            continue
+        try:
+            duration_ms += max(0, int(session.get("durationMs") or 0))
+        except (TypeError, ValueError):
+            continue
+
+    projection_id = str(root.get("canvasNodeId") or "").strip()
+    removed_ids = set(member_ids)
+    if projection_id:
+        removed_ids.add(projection_id)
+    return {
+        "root": root,
+        "title": str(root.get("title") or "").strip() or "未命名任务",
+        "leafCount": len(leaf_ids) if member_ids else 1,
+        "durationMs": duration_ms,
+        "removedNodeIds": removed_ids,
+    }
+
+
+def _validate_taskbook_archive_snapshot(
+    canvas: dict,
+    root_id: str,
+    removed_node_ids: set[str],
+    retain_snapshot: bool,
+    snapshot_root_node_id: str,
+) -> None:
+    """确认客户端提交的是归档后的完整画布，而不是任意替换请求。"""
+    if not isinstance(canvas, dict) or not isinstance(canvas.get("nodes"), list) \
+            or not isinstance(canvas.get("edges"), list):
+        raise ValueError("归档后的画布快照无效")
+    taskbook = canvas.get("taskbook")
+    if isinstance(taskbook, dict):
+        if taskbook.get("version") != 2 or not isinstance(taskbook.get("roots"), list):
+            raise ValueError("归档后的任务簿数据无效")
+        if any(
+            isinstance(root, dict) and str(root.get("id") or "").strip() == root_id
+            for root in taskbook["roots"]
+        ):
+            raise ValueError("归档后的快照仍包含原顶级任务")
+
+    nodes_by_id: dict[str, dict] = {}
+    for node in canvas["nodes"]:
+        if not isinstance(node, dict):
+            raise ValueError("归档后的节点数据无效")
+        node_id = str(node.get("id") or "").strip()
+        if not node_id or node_id in nodes_by_id:
+            raise ValueError("归档后的节点标识无效")
+        if node_id in removed_node_ids:
+            raise ValueError("归档后的快照仍包含原任务节点")
+        if str(node.get("taskRootId") or "").strip() == root_id:
+            raise ValueError("归档后的快照仍包含任务归属")
+        members = node.get("groupMemberIds")
+        if isinstance(members, list) and any(str(value or "") in removed_node_ids for value in members):
+            raise ValueError("归档后的分组仍引用原任务节点")
+        nodes_by_id[node_id] = node
+
+    for edge in canvas["edges"]:
+        if not isinstance(edge, dict):
+            raise ValueError("归档后的连线数据无效")
+        if str(edge.get("from") or "") in removed_node_ids \
+                or str(edge.get("to") or "") in removed_node_ids:
+            raise ValueError("归档后的连线仍引用原任务节点")
+        if str(edge.get("taskRootId") or "").strip() == root_id:
+            raise ValueError("归档后的连线仍包含任务归属")
+
+    if retain_snapshot:
+        root_copy = nodes_by_id.get(snapshot_root_node_id)
+        if not root_copy or root_copy.get("kind") in {"task-root", "taskbook"}:
+            raise ValueError("归档完成副本缺少普通根节点")
+        if not root_copy.get("strike") and root_copy.get("archiveCover") is not True:
+            raise ValueError("归档完成副本未标记为完成")
+    elif snapshot_root_node_id:
+        raise ValueError("关闭完成副本时不能提交副本根节点")
 
 
 def _focus_rebuild_days(sessions: list) -> dict:
@@ -2249,6 +2436,10 @@ def load_focus() -> dict:
 
 def append_focus_session(item: object) -> dict:
     """追加一条专注记录：明细截断保留最近若干条，每日汇总永久累加；原子写回。"""
+    if isinstance(item, dict) and isinstance(item.get("source"), dict) \
+            and item["source"].get("kind") == "taskbook":
+        data, _added = append_focus_sessions_idempotent([item])
+        return data
     session = _sanitize_focus_session(item)
     if not session:
         raise ValueError("无效的专注记录")
@@ -2264,6 +2455,58 @@ def append_focus_session(item: object) -> dict:
         task_bucket["count"] += 1
     _atomic_write_json(FOCUS_FILE, data)
     return data
+
+
+def append_focus_sessions_idempotent(items: object) -> tuple[dict, int]:
+    """批量追加专注段；以稳定 id 去重，供任务簿计时段安全重试。"""
+    if not isinstance(items, list):
+        raise ValueError("无效的专注记录列表")
+    data = load_focus()
+    known = {str(session.get("id") or "") for session in data["sessions"]}
+    added = 0
+    for item in items:
+        session = _sanitize_focus_session(item)
+        if not session:
+            raise ValueError("无效的专注记录")
+        if session["id"] in known:
+            continue
+        known.add(session["id"])
+        data["sessions"].append(session)
+        bucket = data["days"].setdefault(_focus_day_key(session), {"sec": 0, "count": 0})
+        bucket["sec"] += session["durationSec"]
+        bucket["count"] += 1
+        if session.get("taskId"):
+            task_bucket = data["tasks"].setdefault(session["taskId"], {"sec": 0, "count": 0})
+            task_bucket["sec"] += session["durationSec"]
+            task_bucket["count"] += 1
+        added += 1
+    data["sessions"] = data["sessions"][-FOCUS_SESSIONS_MAX:]
+    if added:
+        _atomic_write_json(FOCUS_FILE, data)
+    return data, added
+
+
+def rewrite_taskbook_focus_canvas_path(old_path: Path, new_path: Path) -> int:
+    """画布重命名或恢复后，更新任务簿专注记录的被动回看路径。"""
+    focus = load_focus()
+    old_key = os.path.normcase(str(old_path.resolve()))
+    changed = 0
+    for session in focus.get("sessions", []):
+        source = session.get("source")
+        if not isinstance(source, dict) or source.get("kind") != "taskbook":
+            continue
+        raw = str(source.get("canvasPath") or "")
+        try:
+            matches = os.path.normcase(str(Path(raw).resolve())) == old_key
+        except (OSError, ValueError):
+            matches = False
+        if not matches:
+            continue
+        source["canvasPath"] = _norm(new_path)
+        changed += 1
+    if changed:
+        _atomic_write_json(FOCUS_FILE, focus)
+    return changed
 
 
 def focus_task_payload(data: dict | None = None) -> tuple[dict, list]:
@@ -3032,11 +3275,10 @@ def study_public_payload() -> dict:
 
 
 def study_activity_records() -> tuple[dict[str, int], list[dict]]:
-    """按「完成日期」统计**已归档**任务的逐日数量，供学习页一年活跃热力图使用。
+    """按归档日期汇总学习任务、速记、画布节点和任务簿完成记录。
 
-    口径：只数已归档的任务（归档 = 把已完成任务搬进 data/学习归档/<...>/tasks.json）。
-    当前看板里仍是 done、还没归档的任务不计——「归档」即「记入活跃」。每个归档任务按
-    它自己的 completedAt 落到对应日期，所以归档后历史照样留在图上、不会消失。
+    任务簿每个 ``taskbook.json`` marker 只形成一条足迹；它携带叶子数和实际
+    用时供界面说明，但不会再次并入专注时长统计。
     """
     counts: dict[str, int] = {}
     records: list[dict] = []
@@ -3063,12 +3305,24 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
             counts[day] = counts.get(day, 0) + 1
             linked = str(task.get("linkedCanvas") or "").strip()
             linked_path = Path(linked) if linked else None
+            try:
+                leaf_count = max(0, int(task.get("leafCount") or 0))
+            except (TypeError, ValueError):
+                leaf_count = 0
+            try:
+                duration_ms = max(0, int(task.get("durationMs") or 0))
+            except (TypeError, ValueError):
+                duration_ms = 0
             records.append({
                 "title": str(task.get("title") or "未命名任务"),
                 "completedAt": str(completed_at or ""),
                 "day": day,
                 "linkedCanvas": linked,
                 "canvasAvailable": linked_canvas_available(linked_path),
+                "kind": str(task.get("kind") or ""),
+                "leafCount": leaf_count,
+                "durationMs": duration_ms,
+                "snapshotRootNodeId": str(task.get("snapshotRootNodeId") or ""),
             })
 
     study_archive_folders = (
@@ -3076,18 +3330,35 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
     )
     if study_archive_folders:
         for folder in study_archive_folders:
+            if not folder.is_dir():
+                continue
             archive_file = folder / "tasks.json"
-            if not (folder.is_dir() and archive_file.is_file()):
+            if archive_file.is_file():
+                try:
+                    payload = json.loads(archive_file.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    payload = None
+                if isinstance(payload, dict):
+                    for task in payload.get("tasks", []):
+                        if isinstance(task, dict):
+                            tally(task)
+            taskbook_file = folder / "taskbook.json"
+            if not taskbook_file.is_file():
                 continue
             try:
-                payload = json.loads(archive_file.read_text(encoding="utf-8"))
+                taskbook_payload = json.loads(taskbook_file.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
-            if not isinstance(payload, dict):
-                continue
-            for task in payload.get("tasks", []):
-                if isinstance(task, dict):
-                    tally(task)
+            if isinstance(taskbook_payload, dict):
+                tally({
+                    "title": taskbook_payload.get("title"),
+                    "completedAt": taskbook_payload.get("archivedAt"),
+                    "linkedCanvas": taskbook_payload.get("canvasPath"),
+                    "kind": "taskbook",
+                    "leafCount": taskbook_payload.get("leafCount"),
+                    "durationMs": taskbook_payload.get("durationMs"),
+                    "snapshotRootNodeId": taskbook_payload.get("snapshotRootNodeId"),
+                })
 
     # 画布归档（编辑器顶栏「归档」）也并入同一片足迹：每张归档画布＝做成的一件事，
     # 按 archivedAt 落点、按画布名命名，与任务完成一视同仁、不做区分（用户已拍板）。
@@ -3521,6 +3792,119 @@ def _study_archive_folder(task_count: int) -> Path:
         if not candidate.exists():
             return candidate
         index += 1
+
+
+def _taskbook_archive_folder() -> Path:
+    """返回一个易读且不覆盖旧记录的任务簿归档目录。"""
+    base_name = f"{date.today().isoformat()}+1项任务簿"
+    target = STUDY_ARCHIVE_DIR / base_name
+    if not target.exists():
+        return target
+    index = 2
+    while True:
+        candidate = STUDY_ARCHIVE_DIR / f"{base_name}-{index}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def _find_taskbook_archive(archive_id: str) -> tuple[Path, dict] | None:
+    if not STUDY_ARCHIVE_DIR.exists():
+        return None
+    for folder in STUDY_ARCHIVE_DIR.iterdir():
+        marker = folder / "taskbook.json"
+        if not (folder.is_dir() and marker.is_file()):
+            continue
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and payload.get("archiveId") == archive_id:
+            return folder, payload
+    return None
+
+
+def archive_taskbook_canvas(
+    src: Path,
+    *,
+    root_id: str,
+    archive_id: str,
+    retain_snapshot: bool,
+    snapshot_root_node_id: str,
+    transformed_canvas: dict,
+) -> dict:
+    """幂等归档一个已完成顶级任务。
+
+    调用者须持有“画布锁 → 数据锁”。先落轻量 marker，再原子替换画布；
+    画布写入失败时会删除本次 marker，使客户端可以安全重试。
+    """
+    existing = _find_taskbook_archive(archive_id)
+    if existing is not None:
+        folder, marker = existing
+        try:
+            current = json.loads(src.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+            raise OSError(f"读取画布失败：{err}") from err
+        taskbook = current.get("taskbook") if isinstance(current, dict) else None
+        roots = taskbook.get("roots") if isinstance(taskbook, dict) else []
+        if any(
+            isinstance(root, dict) and str(root.get("id") or "").strip() == root_id
+            for root in (roots if isinstance(roots, list) else [])
+        ):
+            raise ValueError("归档记录与当前画布状态不一致，请重新打开画布后再试")
+        return {**marker, "folder": folder.name, "idempotent": True}
+
+    try:
+        source_canvas = json.loads(src.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise OSError(f"读取画布失败：{err}") from err
+    if not isinstance(source_canvas, dict):
+        raise ValueError("画布数据无效")
+    summary = _taskbook_archive_source_summary(source_canvas, root_id)
+    _validate_taskbook_archive_snapshot(
+        transformed_canvas,
+        root_id,
+        summary["removedNodeIds"],
+        retain_snapshot,
+        snapshot_root_node_id,
+    )
+
+    archived_at = _study_now()
+    next_canvas = dict(transformed_canvas)
+    next_canvas["updatedAt"] = archived_at
+    next_canvas["savedAt"] = archived_at
+    marker = {
+        "version": 1,
+        "archiveId": archive_id,
+        "rootId": root_id,
+        "title": summary["title"],
+        "archivedAt": archived_at,
+        "leafCount": summary["leafCount"],
+        "durationMs": summary["durationMs"],
+        "canvasPath": _norm(src),
+        "snapshotRootNodeId": snapshot_root_node_id if retain_snapshot else "",
+        "retainedSnapshot": bool(retain_snapshot),
+    }
+    folder = _taskbook_archive_folder()
+    marker_path = folder / "taskbook.json"
+    try:
+        folder.mkdir(parents=True, exist_ok=False)
+        _atomic_write_json(marker_path, marker)
+        _atomic_write_json(src, next_canvas, streaming=True)
+    except OSError:
+        try:
+            marker_path.unlink(missing_ok=True)
+            folder.rmdir()
+        except OSError:
+            pass
+        raise
+    return {
+        **marker,
+        "folder": folder.name,
+        "idempotent": False,
+        "savedAt": archived_at,
+        "removedNodeIds": sorted(summary["removedNodeIds"]),
+    }
 
 
 def _canvas_archive_folder(node_count: int) -> Path:
@@ -4405,9 +4789,8 @@ def mark_review_card(card_id: object, rating: object) -> dict:
 
 
 def _archive_folder_count() -> int:
-    """活跃页「累计归档」口径：归档文件夹的个数（学习归档 + 速记归档 + 画布归档），不是任务件数。
-    每点一次归档生成一个带日期的文件夹，这里数的就是这些文件夹。速记归档也落在学习归档目录下，
-    用 notes.json 作 marker 与任务归档的 tasks.json 区分，所以单列一条。"""
+    """活跃页「累计归档」口径：归档 marker 的个数，不是任务件数。
+    学习任务、速记和任务簿共用学习归档目录，以不同 JSON marker 区分。"""
     total = 0
     if STUDY_ARCHIVE_DIR.exists():
         # 学习任务与速记共用同一父目录，一次枚举同时检查两个 marker。
@@ -4416,6 +4799,7 @@ def _archive_folder_count() -> int:
                 continue
             total += int((folder / "tasks.json").is_file())
             total += int((folder / "notes.json").is_file())
+            total += int((folder / "taskbook.json").is_file())
     if CANVAS_ARCHIVE_DIR.exists():
         total += sum(
             1 for folder in CANVAS_ARCHIVE_DIR.iterdir()
@@ -4740,7 +5124,11 @@ def _serialize_rich_text(text: object, raw_marks: object) -> str:
     return "".join(output)
 
 
-def export_markdown_bundle(canvas_path: Path, payload: dict, destination: Path) -> tuple[Path, int]:
+def export_markdown_bundle(
+    canvas_path: Path,
+    payload: dict,
+    destination: Path,
+) -> tuple[Path, int, int, int]:
     """把当前画布导出为一组互相双链的 Markdown；发布前先在临时目录写齐。"""
     if not destination.is_dir():
         raise OSError("选择的目标文件夹不存在")
@@ -4761,7 +5149,7 @@ def export_markdown_bundle(canvas_path: Path, payload: dict, destination: Path) 
     for index, node in enumerate(nodes, 1):
         if not isinstance(node, dict):
             continue
-        if node.get("kind") in {"shape", "image", "pdf", "md", "textBox"}:
+        if node.get("kind") in {"shape", "image", "pdf", "md", "textBox", "taskbook", "task-root"}:
             continue   # 装饰与附件不进 Markdown 导出（连到附件的边随之被 neighbors 过滤掉）
         node_id = str(node.get("id") or f"node-{index}")
         base = _safe_export_stem(str(node.get("text") or ""), f"未命名节点-{index}")
@@ -4772,6 +5160,21 @@ def export_markdown_bundle(canvas_path: Path, payload: dict, destination: Path) 
             duplicate += 1
         used_names.add(stem.casefold())
         node_files[node_id] = stem
+
+    notebook = payload.get("markdownNotebook")
+    raw_notes = notebook.get("notes") if isinstance(notebook, dict) else []
+    notes = [note for note in raw_notes if isinstance(note, dict)] if isinstance(raw_notes, list) else []
+    note_files: list[tuple[str, str]] = []
+    used_note_names: set[str] = set()
+    for index, note in enumerate(notes, 1):
+        base = _safe_export_stem(str(note.get("title") or ""), f"未命名笔记-{index}")
+        stem = base
+        duplicate = 2
+        while stem.casefold() in used_note_names:
+            stem = f"{base}-{duplicate}"
+            duplicate += 1
+        used_note_names.add(stem.casefold())
+        note_files.append((stem, str(note.get("markdown") or "")))
 
     neighbors: dict[str, set[str]] = {node_id: set() for node_id in node_files}
     for edge in edges:
@@ -4813,12 +5216,22 @@ def export_markdown_bundle(canvas_path: Path, payload: dict, destination: Path) 
             if text:
                 text += "\n"
             (temp_dir / f"{node_files[node_id]}.md").write_text(text, encoding="utf-8")
+        if note_files:
+            notebook_dir = temp_dir / "笔记坞"
+            notebook_dir.mkdir()
+            for stem, markdown in note_files:
+                text = markdown.rstrip()
+                if text:
+                    text += "\n"
+                (notebook_dir / f"{stem}.md").write_text(text, encoding="utf-8")
         temp_dir.rename(output_dir)
     except OSError:
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
         raise
-    return output_dir, len(node_files)
+    node_count = len(node_files)
+    note_count = len(note_files)
+    return output_dir, node_count + note_count, node_count, note_count
 
 
 class MarkdownImportError(ValueError):
@@ -5636,10 +6049,8 @@ CANVAS_FILE_POST_ROUTES = {
     "/api/new",
     "/api/save",
     "/api/clean-assets",
-    "/api/rename",
     "/api/trash",
     "/api/trash-empty",
-    "/api/restore",
     "/api/import-canvas",
     "/api/canvas-import-assets",
     "/api/upload-background-image",
@@ -5652,6 +6063,9 @@ CANVAS_FILE_POST_ROUTES = {
 CANVAS_AND_DATA_POST_ROUTES = {
     "/api/study-archive-done",
     "/api/study-task-create-canvas",
+    "/api/taskbook-archive",
+    "/api/rename",
+    "/api/restore",
 }
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -5961,6 +6375,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_study_archive_done()
         if path == "/api/archive-canvas":
             return self._api_archive_canvas(body)
+        if path == "/api/taskbook-archive":
+            return self._api_taskbook_archive(body)
         if path == "/api/export-canvas-to-tasks":
             return self._api_export_canvas_to_tasks(body)
         if path == "/api/study-task-create-canvas":
@@ -6499,6 +6915,49 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "trashedCanvases": trashed_canvases,
         })
 
+    def _api_taskbook_archive(self, body: dict):
+        """归档一个已完成顶级任务，并用稳定 archiveId 保证重复请求幂等。"""
+        if not isinstance(body, dict):
+            return self._send_json(400, {"error": "请求格式不正确"})
+        raw_path = str(body.get("path") or "").strip()
+        root_id = str(body.get("rootId") or "").strip()
+        archive_id = str(body.get("archiveId") or "").strip()
+        retain_snapshot = bool(body.get("retainSnapshot"))
+        snapshot_root_node_id = str(body.get("snapshotRootNodeId") or "").strip()
+        transformed = body.get("data")
+        if not raw_path:
+            return self._send_json(400, {"error": "缺少 path"})
+        if not root_id or len(root_id) > 160:
+            return self._send_json(400, {"error": "顶级任务标识无效"})
+        if not re.fullmatch(r"[A-Za-z0-9._:-]{8,160}", archive_id):
+            return self._send_json(400, {"error": "归档标识无效"})
+        if not isinstance(transformed, dict):
+            return self._send_json(400, {"error": "缺少归档后的画布快照"})
+        src = Path(raw_path)
+        if not src.is_file():
+            return self._send_json(404, {"error": "文件不存在"})
+        if not is_authorized(src):
+            return self._send_json(403, {"error": "路径未授权"})
+        try:
+            result = archive_taskbook_canvas(
+                src,
+                root_id=root_id,
+                archive_id=archive_id,
+                retain_snapshot=retain_snapshot,
+                snapshot_root_node_id=snapshot_root_node_id,
+                transformed_canvas=transformed,
+            )
+        except ValueError as err:
+            return self._send_json(409, {"error": str(err)})
+        except OSError as err:
+            return self._send_json(500, {"error": f"归档失败：{err}"})
+        if not result.get("idempotent"):
+            try:
+                _prune_node_annotations(src, set(result.get("removedNodeIds") or []))
+            except OSError:
+                pass
+        self._send_json(200, {"ok": True, **result})
+
     def _api_archive_canvas(self, body: dict):
         """编辑器顶栏「归档」：只归档已划删除线的正文节点。
 
@@ -6524,10 +6983,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         counts = {k: 0 for k in ("preview", "card", "sticky", "code")}
         archived_nodes = []
         archived_ids = set()
+        managed_task_ids = _taskbook_managed_node_ids(data)
+        protected_skipped = 0
         for node in (data.get("nodes") or []):
             if not isinstance(node, dict):
                 continue
             if not node.get("strike"):       # 没划删除线 → 留在当前画布
+                continue
+            if str(node.get("id") or "") in managed_task_ids:
+                protected_skipped += 1
                 continue
             kind = node.get("kind")
             if kind == "text":
@@ -6590,6 +7054,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "removedNodeIds": sorted(archived_ids),
             "removedEdges": len(archived_edges),
             "remainingNodes": len(remaining_nodes),
+            "protectedSkipped": protected_skipped,
         })
 
     def _api_export_canvas_to_tasks(self, body: dict):
@@ -6625,6 +7090,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             canvas = json.loads(src.read_text(encoding="utf-8-sig"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
             return self._send_json(500, {"error": f"读取画布失败：{err}"})
+
+        managed_task_ids = _taskbook_managed_node_ids(canvas)
+        protected_requested = sorted(requested_set & managed_task_ids)
+        if protected_requested:
+            return self._send_json(409, {
+                "error": "任务簿管理中的任务不能直接转为学习任务，请在顶级任务管理页中调整或删除它们",
+                "protectedNodeIds": protected_requested,
+            })
 
         nodes_by_id = {}
         duplicate_ids = set()
@@ -7216,6 +7689,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(500, {"error": f"重命名失败：{err}"})
         rename_in_recent(src, dst)
         move_viewport_state(src, dst)
+        rewrite_taskbook_focus_canvas_path(src, dst)
         self._send_json(200, {"path": _norm(dst), "title": dst.stem})
 
     # ── 分组（阶段 3a）──
@@ -7432,6 +7906,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except OSError as err:
             return self._send_json(500, {"error": f"恢复失败：{err}"})
         move_viewport_state(src, dst)
+        rewrite_taskbook_focus_canvas_path(src, dst)
         register_recent(dst)
         if gid:
             file_set_group(_norm(dst), gid)   # 目标组不存在则忽略（留在未分组）
@@ -7907,13 +8382,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not picked:
             return self._send_json(200, {"cancelled": True})
         try:
-            output_dir, count = export_markdown_bundle(canvas_path, payload, Path(picked))
+            output_dir, count, node_count, note_count = export_markdown_bundle(
+                canvas_path, payload, Path(picked)
+            )
         except OSError as err:
             return self._send_json(500, {"error": f"导出失败：{err}"})
         self._send_json(200, {
             "ok": True,
             "path": _norm(output_dir),
             "count": count,
+            "nodeCount": node_count,
+            "noteCount": note_count,
         })
 
     def _api_export_png(self, body: dict):

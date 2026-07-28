@@ -1449,11 +1449,17 @@
     const body = root.querySelector('[data-diary-body]');
     if (!preview || !body) return;
     const markdown = window.MarkdownMini;
-    preview.innerHTML = markdown && markdown.render
-      ? markdown.render(body.value)
-      : '<pre>' + escapeHtml(body.value) + '</pre>';
-    if (window.MermaidRenderer) window.MermaidRenderer.renderAll(preview);
-    if (window.MathJax && window.MathJax.typesetPromise) {
+    const rendered = markdown && typeof markdown.renderResult === 'function'
+      ? markdown.renderResult(body.value) : null;
+    preview.innerHTML = rendered
+      ? rendered.html
+      : (markdown && markdown.render
+        ? markdown.render(body.value)
+        : '<pre>' + escapeHtml(body.value) + '</pre>');
+    if ((!rendered || rendered.features.mermaid) && window.MermaidRenderer) {
+      window.MermaidRenderer.renderAll(preview);
+    }
+    if ((!rendered || rendered.features.math) && window.MathJax && window.MathJax.typesetPromise) {
       window.MathJax.typesetPromise([preview]).catch(() => {});
     }
   }

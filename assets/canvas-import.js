@@ -219,6 +219,9 @@
     const importEntries = sourceNodes
       .map(function (node, index) { return { node: node, index: index }; })
       .filter(function (entry) {
+        if (entry.node && (entry.node.kind === 'task-root' || entry.node.kind === 'taskbook')) {
+          return false;
+        }
         return assetPolicy === 'include' || !hasAssetPath(entry.node);
       });
     const reservedNodeIds = opts.reservedNodeIds || new Set();
@@ -266,6 +269,10 @@
     const edges = [];
     sourceEdges.forEach(function (raw) {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        skippedEdges += 1;
+        return;
+      }
+      if (raw.role === 'task-workflow' || raw.role === 'taskbook-workflow') {
         skippedEdges += 1;
         return;
       }

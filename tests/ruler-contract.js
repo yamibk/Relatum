@@ -44,7 +44,7 @@ assert(
   'the persisted mode set must remain normal / mindmap / decor',
 );
 assert(editor.includes('embed: EMBED'), 'embedded editors must explicitly disable the ruler');
-assert(canvas.includes('cloneState(data.nodes, data.edges, data.ink, data.ruler, snapshotTimers())'));
+assert(canvas.includes('cloneState(data.nodes, data.edges, data.ink, data.ruler, snapshotTimers(), data.taskbook)'));
 assert(canvas.includes('data.ruler = snapshotRuler'));
 assert(canvas.includes('Ruler.canConstrainSelection(candidateRects, data.ruler'));
 assert(canvas.includes('Ruler.constrainTranslation('));

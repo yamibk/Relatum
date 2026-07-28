@@ -1,10 +1,10 @@
 // 迷你 Markdown 解析器 — 阶段 3 A/B 轮 + STEM 增强轮
 // 供画布节点正文与 MD 附件共用，故意写得小、零依赖：
-//   块级：#–###### 标题、- * + 无序列表、1. 有序列表、空行分段、普通行 → 段落、
-//        ``` 围栏代码块（带轻量语法高亮）、$$…$$ 块级公式、> 引用、
+//   块级：#–###### 标题、可嵌套的无序/有序/任务列表、空行分段、普通行 → 段落、
+//        ``` / ~~~ 围栏代码块（带轻量语法高亮）、$$…$$ 块级公式、> 引用、
 //        > [!type] Obsidian Callout、| | 表格、--- 分隔线
 //   行内：**加粗** *斜体* _斜体_ __加粗__ `代码`、$…$ 公式、链接、高光、文字颜色、字号
-//   不支持：嵌套列表、图片
+//   不支持：图片
 //
 // 安全：所有用户文本经 escapeHtml 再进 DOM，杜绝 HTML 注入。
 //
@@ -12,13 +12,137 @@
 // markdown 行内规则破坏），再做块解析，最后回填。占位符用 ASCII 控制字符，markdown
 // 规则不会碰到。
 //
-// 对外接口：window.MarkdownMini.render(src) → 一段 HTML 字串
+// 对外接口：window.MarkdownMini.render(src) → 一段 HTML 字串；
+//           window.MarkdownMini.renderResult(src) → HTML + Math/Mermaid 特征。
 
 (function (global) {
   'use strict';
 
+  // Shared, DOM-free line grammar. The renderer and Notebook outline parser
+  // deliberately consume the same recognizers so an incomplete construct can
+  // never be accepted by one layer and rejected by the other.
+  function normalizeSource(value) {
+    return String(value == null ? '' : value).replace(/\r\n?/g, '\n');
+  }
+
+  function indentWidth(raw) {
+    let width = 0;
+    const value = String(raw || '');
+    for (let i = 0; i < value.length; i++) width += value.charAt(i) === '\t' ? 4 : 1;
+    return width;
+  }
+
+  function parseHeadingLine(line) {
+    const match = /^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(String(line || ''));
+    if (!match) return null;
+    const content = match[2].replace(/[ \t]+#+[ \t]*$/, '').trim();
+    if (!content) return null;
+    return { level: match[1].length, text: content };
+  }
+
+  function parseListMarker(line) {
+    const match = /^([ \t]*)([-+*]|(\d+)([.)]))(?:[ \t]+|$)(.*)$/.exec(String(line || ''));
+    if (!match) return null;
+    const content = match[5] || '';
+    const taskMatch = /^\[([ xX])\](?:[ \t]+|$)(.*)$/.exec(content);
+    const taskText = taskMatch ? (taskMatch[2] || '') : '';
+    return {
+      indentRaw: match[1],
+      indent: indentWidth(match[1]),
+      marker: match[2],
+      ordered: !!match[3],
+      number: match[3] ? Number(match[3]) : null,
+      delimiter: match[4] || '',
+      content: content,
+      task: taskMatch ? taskMatch[1].toLowerCase() === 'x' : null,
+      taskText: taskText,
+      empty: taskMatch ? !taskText.trim() : !content.trim(),
+    };
+  }
+
+  function parseFenceLine(line) {
+    const match = /^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)$/.exec(String(line || ''));
+    if (!match) return null;
+    const marker = match[1];
+    const info = (match[2] || '').trim();
+    if (marker.charAt(0) === '`' && info.indexOf('`') >= 0) return null;
+    return {
+      marker: marker,
+      char: marker.charAt(0),
+      length: marker.length,
+      info: info,
+      language: (info.split(/\s+/, 1)[0] || '').toLowerCase(),
+    };
+  }
+
+  function isFenceClose(line, fence) {
+    if (!fence) return false;
+    const match = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/.exec(String(line || ''));
+    return !!(match
+      && match[1].charAt(0) === fence.char
+      && match[1].length >= fence.length);
+  }
+
+  function classifyLine(line) {
+    const raw = String(line || '');
+    const trimmed = raw.trim();
+    if (!trimmed) return { type: 'blank' };
+    const fence = parseFenceLine(raw);
+    if (fence) return { type: 'fence', fence: fence };
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) return { type: 'hr' };
+    const heading = parseHeadingLine(raw);
+    if (heading) return { type: 'heading', heading: heading };
+    if (/^[ \t]{0,3}>\s?/.test(raw)) return { type: 'quote' };
+    const list = parseListMarker(raw);
+    if (list) return { type: list.empty ? 'incomplete-list' : 'list', list: list };
+    if (/^\$\$(?:\s|$)/.test(trimmed)) return { type: 'math' };
+    return { type: 'text' };
+  }
+
+  function scanFeatures(value) {
+    const source = normalizeSource(value);
+    const lines = source.split('\n');
+    let mermaid = false;
+    const visibleLines = [];
+    for (let i = 0; i < lines.length; i++) {
+      const fence = parseFenceLine(lines[i]);
+      if (fence) {
+        let close = i + 1;
+        while (close < lines.length && !isFenceClose(lines[close], fence)) close++;
+        if (close < lines.length) {
+          if (/^(?:mermaid|flowchart|graph|flow|sequence|sequencediagram|timeline|gantt|class|classdiagram|state|statediagram|er|erdiagram|mindmap)$/.test(fence.language)) {
+            mermaid = true;
+          }
+          for (let pad = i; pad <= close; pad++) visibleLines.push('');
+          i = close;
+          continue;
+        }
+      }
+      visibleLines.push(lines[i].replace(/`+[^`]*`+/g, ''));
+    }
+    const visible = visibleLines.join('\n');
+    const math = /\\\[[\s\S]+?\\\]/.test(visible)
+      || /\\\([^\n]+?\\\)/.test(visible)
+      || /(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$/.test(visible)
+      || /(^|[^\\])\$[^$\n]+?(?<!\\)\$/m.test(visible)
+      || /\\begin\{([^{}\s]+)\}[\s\S]+?\\end\{\1\}/.test(visible)
+      || /\\(?:ref|eqref)\{[^{}\n]+\}/.test(visible);
+    return { math: math, mermaid: mermaid };
+  }
+
+  const structure = {
+    normalizeSource: normalizeSource,
+    indentWidth: indentWidth,
+    parseHeading: parseHeadingLine,
+    parseListMarker: parseListMarker,
+    parseFence: parseFenceLine,
+    isFenceClose: isFenceClose,
+    classifyLine: classifyLine,
+    scanFeatures: scanFeatures,
+  };
+
   function escapeHtml(s) {
-    return s
+    return String(s == null ? '' : s)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -119,15 +243,28 @@
 
   function protectCode(src) {
     const codes = [];
-    const s = src.replace(/(^|\n)```([^\n`]*)\n([\s\S]*?)\n```(?=\n|$)/g, function (m, pre, lang, body) {
-      codes.push({ lang: (lang || '').trim().toLowerCase(), code: body });
-      // 占位符补足与原块等量的换行，保住其后内容的源码行号（data-ln）——否则多行块被压成一行，
-      // 阅读浮层"点哪定位哪"的反查会整体偏移（多行公式 / 代码块下方点击错位）。
-      const nlTotal = (m.match(/\n/g) || []).length;
-      const pad = '\n'.repeat(Math.max(0, nlTotal - (pre === '\n' ? 1 : 0)));
-      return pre + '\x00CODE' + (codes.length - 1) + '\x00' + pad;
-    });
-    return { protected: s, codes: codes };
+    const lines = normalizeSource(src).split('\n');
+    const output = [];
+    for (let i = 0; i < lines.length; i++) {
+      const fence = parseFenceLine(lines[i]);
+      if (!fence) {
+        output.push(lines[i]);
+        continue;
+      }
+      let close = i + 1;
+      while (close < lines.length && !isFenceClose(lines[close], fence)) close++;
+      // An unfinished fence is editable plain text, never a block that consumes
+      // the rest of the document.
+      if (close >= lines.length) {
+        output.push(lines[i]);
+        continue;
+      }
+      codes.push({ lang: fence.language, code: lines.slice(i + 1, close).join('\n') });
+      output.push('\x00CODE' + (codes.length - 1) + '\x00');
+      for (let pad = i + 1; pad <= close; pad++) output.push('');
+      i = close;
+    }
+    return { protected: output.join('\n'), codes: codes };
   }
   function restoreCode(html, codes) {
     if (!codes.length) return html;
@@ -175,14 +312,23 @@
   // ── 数学公式：先抠 $$块$$ 再抠 $行内$（占位符回填时再 escape，MathJax 读 textContent 会 decode）──
   function protectMath(src) {
     const maths = [];
-    let s = src.replace(/\$\$([\s\S]+?)\$\$/g, function (m, content) {
-      maths.push(content);
+    let s = src.replace(/\\\[([\s\S]+?)\\\]/g, function (m, content) {
+      maths.push({ content: content, delimiter: 'bracket-block' });
+      const nl = (m.match(/\n/g) || []).length;
+      return '\x00DMATH' + (maths.length - 1) + '\x00' + (nl ? '\n'.repeat(nl) : '');
+    });
+    s = s.replace(/(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$/g, function (m, content) {
+      maths.push({ content: content, delimiter: 'dollar-block' });
       // 同 protectCode：占位符补足等量换行，保住多行 $$…$$ 之后内容的源码行号（修点击定位错位）
       const nl = (m.match(/\n/g) || []).length;
       return '\x00DMATH' + (maths.length - 1) + '\x00' + (nl ? '\n'.repeat(nl) : '');   // 块级（独占一行 → 居中展示）
     });
-    s = s.replace(/\$([^\$\n]+?)\$/g, function (_, content) {
-      maths.push(content);
+    s = s.replace(/\\\(([\s\S]+?)\\\)/g, function (_, content) {
+      maths.push({ content: content, delimiter: 'paren-inline' });
+      return '\x00MATH' + (maths.length - 1) + '\x00';
+    });
+    s = s.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, function (_, content) {
+      maths.push({ content: content, delimiter: 'dollar-inline' });
       return '\x00MATH' + (maths.length - 1) + '\x00';     // 行内
     });
     return { protected: s, maths: maths };
@@ -190,10 +336,34 @@
   function restoreMath(html, maths) {
     if (maths.length === 0) return html;
     html = html.replace(/\x00DMATH(\d+)\x00/g, function (_, idx) {
-      return '<div class="md-math-block">$$' + escapeHtml(maths[+idx]) + '$$</div>';
+      const item = maths[+idx];
+      if (!item) return '';
+      const content = escapeHtml(item.content);
+      return '<div class="md-math-block">'
+        + (item.delimiter === 'bracket-block' ? '\\[' + content + '\\]' : '$$' + content + '$$')
+        + '</div>';
     });
     return html.replace(/\x00MATH(\d+)\x00/g, function (_, idx) {
-      return '$' + escapeHtml(maths[+idx]) + '$';
+      const item = maths[+idx];
+      if (!item) return '';
+      const content = escapeHtml(item.content);
+      return item.delimiter === 'paren-inline' ? '\\(' + content + '\\)' : '$' + content + '$';
+    });
+  }
+
+  function protectEscapes(src) {
+    const chars = [];
+    const protectedSource = String(src || '').replace(/\\([\\`*${}\[\]()#+\-.!_>~|])/g, function (_, char) {
+      chars.push(char);
+      return '\x00ESC' + (chars.length - 1) + '\x00';
+    });
+    return { protected: protectedSource, chars: chars };
+  }
+
+  function restoreEscapes(html, chars) {
+    if (!chars.length) return html;
+    return html.replace(/\x00ESC(\d+)\x00/g, function (_, idx) {
+      return escapeHtml(chars[+idx] || '');
     });
   }
 
@@ -212,9 +382,9 @@
   // 抠出链接：markdown [文字](目标) + 裸 http(s):// URL → \x00LINK<N>\x00 占位符。
   function protectLinks(src) {
     const links = [];
-    let s = src.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, function (_, text, target) {
+    let s = src.replace(/(^|[^\\])\[([^\]\n]+)\]\(([^)\n]+)\)/g, function (_, prefix, text, target) {
       links.push({ text: text.trim(), target: target.trim() });
-      return '\x00LINK' + (links.length - 1) + '\x00';
+      return prefix + '\x00LINK' + (links.length - 1) + '\x00';
     });
     s = s.replace(/https?:\/\/[\w\-._~:/?#@!$&'()*+,;=%\[\]]+/g, function (url) {
       links.push({ text: url, target: url });
@@ -242,9 +412,9 @@
     + '<path d="M6 3.5H4.2A1.7 1.7 0 0 0 2.5 5.2v5.6A1.7 1.7 0 0 0 4.2 12.5H6M10 3.5h1.8A1.7 1.7 0 0 1 13.5 5.2v5.6a1.7 1.7 0 0 1-1.7 1.7H10"/></svg>';
   function protectWikiLinks(src) {
     const wikis = [];
-    const s = src.replace(/\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (_, name, alias) {
+    const s = src.replace(/(^|[^\\])\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (_, prefix, name, alias) {
       wikis.push({ name: name.trim(), alias: (alias || '').trim() });
-      return '\x00WIKI' + (wikis.length - 1) + '\x00';
+      return prefix + '\x00WIKI' + (wikis.length - 1) + '\x00';
     });
     return { protected: s, wikis: wikis };
   }
@@ -318,15 +488,102 @@
     return '';
   }
 
+  // 大纲常用 2 或 4 空格缩进。按相对缩进建树，不锁死空格数，
+  // 同时允许有序、无序与任务列表在不同层级混用。
+  function parseListBlock(lines, start, topLevel) {
+    const root = { children: [] };
+    const stack = [];
+    let i = start;
+    while (i < lines.length) {
+      const marker = parseListMarker(lines[i]);
+      if (!marker || marker.empty) break;
+      const indent = marker.indent;
+      while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+      let parent = root;
+      if (stack.length) {
+        const tail = stack[stack.length - 1];
+        if (tail.indent < indent) parent = tail.item;
+        else stack.pop();
+      }
+      if (parent === root && stack.length) parent = stack[stack.length - 1].item;
+      const item = {
+        ordered: marker.ordered,
+        text: marker.task == null ? marker.content : marker.taskText,
+        task: marker.task,
+        line: i,
+        children: [],
+      };
+      parent.children.push(item);
+      stack.push({ indent: indent, item: item });
+      i++;
+    }
+
+    function renderChildren(items) {
+      let html = '';
+      let index = 0;
+      while (index < items.length) {
+        const ordered = items[index].ordered;
+        const tag = ordered ? 'ol' : 'ul';
+        html += '<' + tag + '>';
+        while (index < items.length && items[index].ordered === ordered) {
+          const item = items[index++];
+          const lineAttr = topLevel ? (' data-ln="' + item.line + '"') : '';
+          const taskClass = item.task == null ? '' : ' class="md-task-item"';
+          const taskBox = item.task == null ? ''
+            : ('<span class="md-task-box" aria-hidden="true">' + (item.task ? '✓' : '') + '</span>');
+          html += '<li' + taskClass + lineAttr + '>' + taskBox
+            + renderInline(escapeHtml(item.text))
+            + (item.children.length ? renderChildren(item.children) : '')
+            + '</li>';
+        }
+        html += '</' + tag + '>';
+      }
+      return html;
+    }
+
+    return { html: renderChildren(root.children), end: i };
+  }
+
+  function renderParagraphLines(lines) {
+    let html = '';
+    lines.forEach(function (raw, index) {
+      let value = String(raw || '');
+      const hardBreak = /(?: {2,}|\\)$/.test(value);
+      if (hardBreak) value = value.replace(/(?: {2,}|\\)$/, '');
+      html += renderInline(escapeHtml(value));
+      if (index < lines.length - 1) html += hardBreak ? '<br>' : '\n';
+    });
+    return html;
+  }
+
   // ── 块解析：在"已抠占位符"的文本上做行级解析，返回带占位符的 HTML（占位符在最外层统一回填）──
   // topLevel=true 时给块加 data-ln（源码行号，供节点阅读浮层反查）；递归（引用/callout 内）不加。
   function parseBlocks(text, topLevel) {
     const lines = text.split('\n');
     const out = [];
     let i = 0;
+    let previousIndex = -1;
+    let iterations = 0;
+    const maxIterations = Math.max(64, lines.length * 4 + 16);
     const ln = function (n) { return topLevel ? (' data-ln="' + n + '"') : ''; };
 
     while (i < lines.length) {
+      if (++iterations > maxIterations) {
+        while (i < lines.length) {
+          out.push('<p' + ln(i) + ' class="md-parse-fallback">'
+            + renderInline(escapeHtml(lines[i])) + '</p>');
+          i++;
+        }
+        break;
+      }
+      if (i === previousIndex) {
+        out.push('<p' + ln(i) + ' class="md-parse-fallback">'
+          + renderInline(escapeHtml(lines[i])) + '</p>');
+        i++;
+        previousIndex = -1;
+        continue;
+      }
+      previousIndex = i;
       const line = lines[i];
       const trimmed = line.trim();
 
@@ -340,12 +597,12 @@
       // 分隔线：--- *** ___（整行）
       if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) { out.push('<hr class="md-hr">'); i++; continue; }
 
-      // 标题 #–######：#/## → h2，### → h3，####+ → h4（画布节点不需要更大字号）
+      // 标题 #–######：保留真实 h1–h6 语义，紧凑程度交由容器 CSS 变量控制。
       let m;
-      if ((m = /^(#{1,6})\s+(.+)$/.exec(trimmed))) {
-        const lvl = m[1].length;
-        const tag = lvl <= 2 ? 'h2' : (lvl === 3 ? 'h3' : 'h4');
-        out.push('<' + tag + ln(i) + '>' + renderInline(escapeHtml(m[2])) + '</' + tag + '>');
+      const heading = parseHeadingLine(line);
+      if (heading) {
+        const tag = 'h' + heading.level;
+        out.push('<' + tag + ln(i) + '>' + renderInline(escapeHtml(heading.text)) + '</' + tag + '>');
         i++;
         continue;
       }
@@ -415,64 +672,70 @@
         continue;
       }
 
-      // 无序列表：连续的 - * +
-      if (/^[-*+]\s+/.test(trimmed)) {
-        const items = [];
-        while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
-          const mm = /^[-*+]\s+(.+)$/.exec(lines[i].trim());
-          items.push('<li' + ln(i) + '>' + renderInline(escapeHtml(mm[1])) + '</li>');
-          i++;
+      // 有序 / 无序 / 任务列表：连续缩进行组成一棵安全的嵌套列表。
+      const listMarker = parseListMarker(line);
+      if (listMarker && !listMarker.empty) {
+        const parsedList = parseListBlock(lines, i, topLevel);
+        if (parsedList.end > i) {
+          out.push(parsedList.html);
+          i = parsedList.end;
+          continue;
         }
-        out.push('<ul>' + items.join('') + '</ul>');
-        continue;
       }
 
-      // 有序列表：连续的 1. 2. ...
-      if (/^\d+\.\s+/.test(trimmed)) {
-        const items = [];
-        while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
-          const mm = /^\d+\.\s+(.+)$/.exec(lines[i].trim());
-          items.push('<li' + ln(i) + '>' + renderInline(escapeHtml(mm[1])) + '</li>');
-          i++;
-        }
-        out.push('<ol>' + items.join('') + '</ol>');
-        continue;
-      }
-
-      // 段落：吃掉连续的非空、非块级行；行间用 <br> 连
+      // 段落：吃掉连续的非空、非块级行；普通换行保留源码换行，双空格或反斜杠才是硬换行。
       const paraStart = i;
       const para = [];
-      while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])) {
-        para.push(renderInline(escapeHtml(lines[i])));
+      while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])
+             && !(lines[i].indexOf('|') >= 0 && i + 1 < lines.length && isTableSep(lines[i + 1]))) {
+        para.push(lines[i]);
         i++;
       }
-      out.push('<p' + ln(paraStart) + '>' + para.join('<br>') + '</p>');
+      if (para.length) out.push('<p' + ln(paraStart) + '>' + renderParagraphLines(para) + '</p>');
     }
     return out.join('');
   }
 
   function isBlockStart(line) {
     const t = line.trim();
-    return /^#{1,6}\s+/.test(t)
-      || /^[-*+]\s+/.test(t)
-      || /^\d+\.\s+/.test(t)
-      || /^>\s?/.test(t)
-      || /^(-{3,}|\*{3,}|_{3,})$/.test(t)
-      || /^\x00(CODE|DMATH)\d+\x00$/.test(t);
+    if (/^\x00(CODE|DMATH)\d+\x00$/.test(t)) return true;
+    const kind = classifyLine(line).type;
+    return kind === 'heading'
+      || kind === 'list'
+      || kind === 'quote'
+      || kind === 'hr'
+      || kind === 'fence'
+      || kind === 'math';
+  }
+
+  function renderResult(src) {
+    const source = normalizeSource(src);
+    if (!source) return { html: '', features: { math: false, mermaid: false }, error: false };
+    const features = scanFeatures(source);
+    try {
+      const codeGuard = protectCode(source);
+      const wikiGuard = protectWikiLinks(codeGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
+      const linkGuard = protectLinks(wikiGuard.protected);
+      const mathGuard = protectMath(linkGuard.protected);
+      const escapeGuard = protectEscapes(mathGuard.protected);
+      let html = parseBlocks(escapeGuard.protected, true);
+      html = restoreMath(html, mathGuard.maths);
+      html = restoreLinks(html, linkGuard.links);
+      html = restoreWikiLinks(html, wikiGuard.wikis);
+      html = restoreEscapes(html, escapeGuard.chars);
+      html = restoreCode(html, codeGuard.codes);
+      return { html: html, features: features, error: false };
+    } catch (error) {
+      return {
+        html: '<p class="md-parse-fallback">' + escapeHtml(source).replace(/\n/g, '<br>') + '</p>',
+        features: features,
+        error: true,
+      };
+    }
   }
 
   function render(src) {
-    if (!src) return '';
-    const codeGuard = protectCode(String(src));
-    const wikiGuard = protectWikiLinks(codeGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
-    const linkGuard = protectLinks(wikiGuard.protected);
-    const mathGuard = protectMath(linkGuard.protected);
-    let html = parseBlocks(mathGuard.protected, true);
-    html = restoreMath(html, mathGuard.maths);
-    html = restoreLinks(html, linkGuard.links);
-    html = restoreWikiLinks(html, wikiGuard.wikis);
-    html = restoreCode(html, codeGuard.codes);
-    return html;
+    return renderResult(src).html;
   }
 
   // ── Y2 轮：标记符号区间（给编辑态实时高亮用）────────────
@@ -495,7 +758,7 @@
         out.push([p, p + 1]);
       }
       // 行首有序列表 1. 2. …
-      m = /^(\s*)(\d+\.)\s/.exec(line);
+      m = /^(\s*)(\d+[.)])\s/.exec(line);
       if (m) {
         const p = base + m[1].length;
         out.push([p, p + m[2].length]);
@@ -554,9 +817,11 @@
 
   global.MarkdownMini = {
     render: render,
+    renderResult: renderResult,
     renderInline: renderInlineSafe,
     escapeHtml: escapeHtml,
     highlightCode: highlightCode,
     markIntervals: markIntervals,
+    structure: structure,
   };
 })(window);

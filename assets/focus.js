@@ -73,6 +73,7 @@
   const sessionTitleEl = root.querySelector('[data-role="focus-session-title"]');
   const sessionGoalEl = root.querySelector('[data-role="focus-session-goal"]');
   const sessionOutcomeEl = root.querySelector('[data-role="focus-session-outcome"]');
+  const sessionSourceEl = root.querySelector('[data-role="focus-session-source"]');
   const dailyRoot = root.querySelector('[data-role="focus-daily"]');
   const dailyHandle = root.querySelector('.focus-daily-handle');
   const dailyListEl = root.querySelector('[data-role="focus-daily-list"]');
@@ -1113,6 +1114,15 @@
     }
     if (sessionGoalEl) sessionGoalEl.value = session.goal || '';
     if (sessionOutcomeEl) sessionOutcomeEl.value = session.outcome || '';
+    if (sessionSourceEl) {
+      const source = session.source;
+      const isTaskbook = source && source.kind === 'taskbook'
+        && source.canvasPath && source.rootId;
+      sessionSourceEl.hidden = !isTaskbook;
+      sessionSourceEl.dataset.canvasPath = isTaskbook ? source.canvasPath : '';
+      sessionSourceEl.dataset.rootId = isTaskbook ? source.rootId : '';
+      sessionSourceEl.dataset.nodeId = isTaskbook ? (source.nodeId || '') : '';
+    }
     sessionEditor.classList.remove('focus-card-exiting');
     sessionEditor.hidden = false;
     replayClass(sessionEditor, 'focus-card-entering');
@@ -3396,6 +3406,16 @@
     if (action.dataset.action === 'focus-session-close') closeSessionEditor();
     if (action.dataset.action === 'focus-session-save') saveSessionEdit();
     if (action.dataset.action === 'focus-session-delete') deleteSessionEdit();
+    if (action.dataset.action === 'focus-session-open-source' && sessionSourceEl) {
+      const canvasPath = sessionSourceEl.dataset.canvasPath || '';
+      const rootId = sessionSourceEl.dataset.rootId || '';
+      const nodeId = sessionSourceEl.dataset.nodeId || '';
+      if (canvasPath && rootId) {
+        window.location.href = 'editor.html?file=' + encodeURIComponent(canvasPath)
+          + (nodeId ? '&node=' + encodeURIComponent(nodeId) : '')
+          + '&taskRoot=' + encodeURIComponent(rootId);
+      }
+    }
     if (action.dataset.action === 'focus-help-close') toggleHelp(false);
     if (action.dataset.action === 'focus-zen-enter') toggleZen();
     if (action.dataset.action === 'daily-toggle') toggleDaily();

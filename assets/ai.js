@@ -500,6 +500,9 @@
     if (emptyEl) emptyEl.hidden = has;
   }
   function hasMathSource(source) {
+    if (md && md.structure && typeof md.structure.scanFeatures === 'function') {
+      return md.structure.scanFeatures(source || '').math;
+    }
     return /(?:\$|\\\(|\\\[|\\begin\{|\\ref\{|\\eqref\{)/.test(source || '');
   }
   function typeset(el) {
@@ -617,9 +620,12 @@
   }
   function renderMarkdownInto(bubble, text, opts) {
     if (md && typeof md.render === 'function') {
-      bubble.innerHTML = md.render(text);
-      if (hasMathSource(text)) typeset(bubble);
-      if (window.MermaidRenderer) window.MermaidRenderer.renderAll(bubble);
+      const rendered = typeof md.renderResult === 'function' ? md.renderResult(text) : null;
+      bubble.innerHTML = rendered ? rendered.html : md.render(text);
+      if (rendered ? rendered.features.math : hasMathSource(text)) typeset(bubble);
+      if ((!rendered || rendered.features.mermaid) && window.MermaidRenderer) {
+        window.MermaidRenderer.renderAll(bubble);
+      }
     }
     else bubble.textContent = text;
     if (!opts || opts.copyable !== false) addCopyButton(bubble, text);
