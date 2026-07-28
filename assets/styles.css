@@ -25943,6 +25943,10 @@ mjx-container.eq-jump-flash {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+.settings-pop > .settings-space-locate-check {
+  grid-column: 2;
+}
+
 .settings-checks-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -26242,6 +26246,10 @@ mjx-container.eq-jump-flash {
 }
 
 @media (max-width: 560px) {
+  .settings-pop > .settings-space-locate-check {
+    grid-column: 1 / -1;
+  }
+
   .settings-reset-confirm {
     width: min(292px, calc(100vw - 52px));
   }
