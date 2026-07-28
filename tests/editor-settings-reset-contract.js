@@ -5,6 +5,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'assets', 'editor.html'), 'utf8');
 const editor = fs.readFileSync(path.join(root, 'assets', 'editor.js'), 'utf8');
+const canvas = fs.readFileSync(path.join(root, 'assets', 'canvas.js'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'assets', 'styles.css'), 'utf8');
 
 [
@@ -27,8 +28,19 @@ assert(!html.includes('settings-reset-copy'),
   "{ role: 'pan-speed', value: '8'",
   "{ role: 'enable-mindmap-inspector', checked: false",
   "{ role: 'enable-autosave', checked: true",
-  "{ role: 'zoom-pref', value: '100%'",
 ].forEach((needle) => assert(editor.includes(needle), 'missing reset behavior contract: ' + needle));
+
+const removedZoomPreferenceSurface = html + '\n' + editor + '\n' + canvas + '\n' + styles;
+[
+  'data-role="zoom-preset"',
+  'data-role="zoom-pref"',
+  'canvas:zoomPref',
+  'zoomPrefInput',
+  'zoomPresetBtn',
+  'settings-zoom-row',
+  'editor-zoom-pref',
+].forEach((needle) => assert(!removedZoomPreferenceSurface.includes(needle),
+  'removed preferred zoom feature must not leave implementation residue: ' + needle));
 
 const popupStart = editor.indexOf('(function setupSettingsPopup()');
 const popupEnd = editor.indexOf('// 小手电筒', popupStart);
