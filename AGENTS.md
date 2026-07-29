@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-07-28。
+> 最后按源码校准：2026-07-29。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -50,7 +50,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 编辑器启用深色语义且背景判定为深色时，右侧完整面板、简洁样式面板与简洁节点入口统一使用高不透明度的墨绿黑表面、细亮边框和暖白选中态；这些常驻面板不使用 `backdrop-filter`，避免背景透亮发白和持续模糊开销。
 - 大画布、图谱、PDF、MathJax、Mermaid 都在热路径附近。改动 `canvas.js`、`graph-engine.js`、`graph-gl.js` 前先定位最小区域。
 - MathJax 与 Mermaid 都是本地按需运行时：前者只由真实公式源触发，后者只由 Mermaid fence 触发。普通文字/普通 Markdown 不应加载它们，也不要恢复全 `document.body` 的 Mermaid MutationObserver；所有生成 Markdown DOM 的入口必须显式调用对应渲染器。
-- 画布节点按 id 使用常驻索引供连线热路径查询；静态连线由 Canvas 绘制，拖节点和脑图滑行期间临时切到 SVG 增量更新，收尾后一次性重建 Canvas。删除或快照重建连线时必须同步清理 SVG marker 与 `edgePathCache`。
+- 画布节点按 id 使用常驻索引供连线热路径查询；静态连线由 Canvas 绘制，拖节点和脑图滑行期间临时切到 SVG 增量更新，收尾后一次性重建 Canvas。`edgePathCache` 保存 Path2D、端点/箭头点、中点和边界，512 画布单位空间网格只查询视口附近连线；平移/缩放不得退回逐边重算几何。当前静态态仍保留 SVG 路径与命中路径作为交互兼容层，但空名称连线不创建标签 DOM，进入名称编辑时才按需创建。删除或快照重建连线时必须同步清理 SVG marker、完整几何缓存与空间索引。
 - `prefers-reduced-motion` 已在多处使用；新增动画要考虑降级。
 
 ## 3. 源码地图
@@ -306,6 +306,10 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 附件和批注
 
+- 普通画布图片也由外层视口独立管理，使用与 PDF/Markdown 相同的垂直 `150%`、水平 `125%` 预加载边界、120ms 稳定激活和 8 秒延迟释放；远处节点只保留固定尺寸外壳，不创建带 `src` 的图片元素。图片被选中或定位时必须立即激活；释放时移除旧 `img` 及其 `src`，让浏览器回收解码表面。异步 load/error 回写必须校验节点、资源 URL、元素和 generation；旧 WebView 无 `IntersectionObserver` 时仍立即加载。
+- PDF/Markdown 画布附件统一由外层画布视口的 `IntersectionObserver` 管理，预加载边界为垂直 `150%`、水平 `125%`，与画布节点总数无关。节点初建只保留固定外壳、标题和加载占位；进入预加载区稳定 120ms、被选中、被定位或打开阅读器时才加载正文，避免长距离相机滑行沿途激活附件。不支持 `IntersectionObserver` 的旧 WebView 回退为立即加载。
+- 附件离开预加载区 8 秒且未选中、未阅读时释放重资源；快速往返必须取消待卸载。Markdown 先提交待保存批注，再移除正文 DOM 与净 HTML 快照，但保留 marks/strokes/boxes 轻量状态；PDF 断开页 observer、取消在途栅格化、清零 Canvas 并销毁节点自己的 PDF.js 文档。删除、撤销快照重建或资源更换还要注销外层 observer 和 generation 票据。
+- 画布附件的异步回写必须同时校验节点 ID、资源 URL、当前 body 和 generation。Markdown 只允许合并“同时进行中的同 URL 请求”，Promise 完成后立即从 `markdownInflight` 移除，禁止缓存最终正文，确保外部修改后再次激活能读到新内容。
 - PDF 使用离线 PDF.js。画布附件、索引右栏和大阅读器都只保留视野缓冲带内的页面；滚远、关闭、删除、快照重建或资源更换时必须取消在途 canvas/文字层任务、清零位图、断开 observer 并销毁 PDF 文档。大阅读器的会话 token 用于隔离快速关闭/重开；调整附件尺寸后只重栅格化可见页以恢复清晰。
 - PDF 读者批注包括文本高亮/下划线、画笔、荧光笔、框选、便签、橡皮、撤销/重做、清页。坐标归一化到虚拟宽度 `PDF_ANNOT_VW = 1000`。
 - Markdown 附件的文本高亮按源文件指纹处理；源文本变更时，字符偏移型标注可能失效，手写/框选仍保留。
@@ -446,7 +450,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - Markdown 导出会生成一组互相双链的节点 `.md` 文件；若画布含笔记坞，还会在结果的 `笔记坞/` 子目录按去重后的笔记标题输出每篇原始 Markdown。响应中的 `nodeCount` / `noteCount` 分别计数，`count` 是两者之和。独立 `table` 节点按可选标题 + `body` 中的规范表格源码导出；装饰、图片、PDF、MD 附件不导出，连到这些被跳过对象的边也会被邻接过滤。
 - Markdown 导入只接受文件夹第一层 `.md` 文件；开头连续的 `[[标题]]` 行表示双链。单文件最多 4MiB、总计最多 64MiB、一次最多 2000 个文件；单个连通簇超过 240 个节点时改用确定性网格，避免 O(n²) 力导向长时间占满 CPU。
-- PNG 导出由前端 `CanvasModule.exportImage` 生成，尽量包含节点、边、手写、图片、形状和基础背景；编辑辅助底纹与尺子不导出，PDF 节点不完整导出，公式可能降级。
+- PNG 导出由前端 `CanvasModule.exportImage` 生成，尽量包含节点、边、手写、图片、形状和基础背景；编辑辅助底纹与尺子不导出，PDF 节点不完整导出，公式可能降级。导出副本必须移除 `.culled`，并按节点数据补齐视口外未常驻的图片；图片转 data URI 最多四路并发且同 URL 复用同一转换 Promise，避免漏图或瞬时占满内存。
 - 编辑器顶栏“归档”只移走当前画布中已划删除线的正文节点及其相邻连线，画布本身保留，并在 `data/画布归档/` 留轻量记录。
 - “导出画布到任务”会按画布节点生成学习任务；修改时要同时检查学习任务字段和画布读取逻辑。
 
@@ -567,6 +571,15 @@ node .\tests\tools-neutral-ui-contract.js
 ```powershell
 node .\tests\node-resize-contract.js
 ```
+
+改动画布图片/附件生命周期、PDF/Markdown 激活逻辑、连线几何缓存、空间索引或空标签策略时，还要运行：
+
+```powershell
+node .\tests\canvas-performance-contract.js
+python .\tests\generate-performance-fixtures.py <隔离的 Relatum 运行目录>
+```
+
+性能夹具只能写入一次性隔离运行目录，禁止指向仓库真实 `canvases/` 或 `data/`。`?perf=1` 才会暴露 `window.__relatumPerfSnapshot()` 与隐藏的 `#relatum-perf-snapshot`；正常页面不得创建调试全局、采样循环或输出节点。
 
 本地服务冒烟：
 
