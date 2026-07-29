@@ -835,6 +835,7 @@
   }
 
   function init(opts) {
+    const initStartedAt = Date.now();
     const viewport = opts.viewport;
     const surface = opts.surface;
     const emptyHint = opts.emptyHint || null;
@@ -1206,12 +1207,16 @@
       if (node && node.id && nodeById.get(node.id) === node) nodeById.delete(node.id);
     }
     rebuildNodeIndex();
-    // ── 连线 canvas 层（阶段①：与 SVG 并存做 A/B；默认关 = 行为零变化）──
-    // 几何复用 edgeGeom() 吐的 SVG 路径字符串，经 new Path2D(d) 直接在 canvas 上描；
-    // 几何没变就复用缓存的 Path2D，平移/缩放只是按相机重描，屏外连线跳过。
+    // ── 连线 Canvas 层 ───────────────────────────────────────────
+    // 静态几何缓存包含路径、箭头点、中点和边界；相机移动只查 512 单位空间网格并重描，
+    // 不再逐帧重算全部连线。拖动/脑图滑行仍走临时 SVG 与实时几何。
     const edgesCtx = edgesCanvas ? edgesCanvas.getContext('2d') : null;
-    const edgePathCache = new Map();     // id → { d, path }
+    const edgePathCache = new Map();     // id → { edge, d, path, geom, midpoint, points, bounds, order }
     const edgeMidpointCache = new Map(); // id → { d, x, y }，名称与选中标记共用真实路径中点
+    const EDGE_GRID_SIZE = 512;
+    const edgeSpatialGrid = new Map();   // "gx,gy" → Set<edgeId>
+    const edgeSpatialCells = new Map();  // edgeId → string[]
+    const edgeGeometryDirty = new Set();
     const EDGE_CANVAS_ON = !!edgesCtx
       && typeof Path2D === 'function'
       && typeof requestAnimationFrame === 'function';  // 可用时启用；否则自动回退 SVG
@@ -1243,7 +1248,6 @@
           }
           if (!resizedIds.size) return;
           edgesIncidentTo(resizedIds).forEach(function (edge) {
-            edgePathCache.delete(edge.id);
             updateEdgePath(edge);
           });
           requestEdgesCanvasRender();
@@ -4637,6 +4641,8 @@
     function centerOnNode(id) {
       const n = findNode(id);
       if (!n) return false;
+      if (isAttachmentNode(n)) activateAttachment(id); // 搜索/目录/定位跳转不等待 observer 下一拍
+      if (isImageNode(n)) activateCanvasImage(id);      // 图片定位同样立即揭示，不等待 observer 稳定窗口
       const el = nodeMap.get(id);
       const w = el ? el.offsetWidth : 160;
       const h = el ? el.offsetHeight : 36;
@@ -5104,6 +5110,51 @@
     const PDFJS_BASE = 'vendor/pdfjs/';
     let pdfjsLibPromise = null;
     const attachPdfState = new Map();   // node.id -> { doc, src, ratio, observer, token }
+    // 画布附件只在外层视口附近激活。PDF 页仍由正文自己的 observer 做第二层懒渲染。
+    // runtime 不保存正文结果；离开预加载区后只留下外壳和轻量批注状态。
+    const ATTACH_DEACTIVATE_MS = 8000;
+    const ATTACH_ACTIVATE_DELAY_MS = 120;
+    const attachmentRuntime = new Map(); // node.id -> { el, body, src, kind, active, near, generation, activateTimer, deactivateTimer }
+    const markdownInflight = new Map();  // src -> Promise<string>；只合并同时进行中的请求
+    const attachmentObserver = (typeof IntersectionObserver === 'function')
+      ? new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            const id = entry.target && entry.target.dataset ? entry.target.dataset.id : '';
+            const runtime = id && attachmentRuntime.get(id);
+            if (!runtime || runtime.el !== entry.target) return;
+            runtime.near = !!entry.isIntersecting;
+            if (runtime.near) scheduleAttachmentActivate(id);
+            else {
+              if (runtime.activateTimer) {
+                clearTimeout(runtime.activateTimer);
+                runtime.activateTimer = null;
+              }
+              scheduleAttachmentDeactivate(id);
+            }
+          });
+        }, { root: viewport, rootMargin: '150% 125%' })
+      : null;
+    // 图片使用与附件相同的外层预加载边界，但保持独立运行时：图片没有正文、批注或阅读器，
+    // 离开视口后直接丢弃 img 元素，允许浏览器释放该 URL 对应的解码表面。
+    const imageRuntime = new Map(); // node.id -> { el, content, img, src, active, loaded, near, generation, activateTimer, deactivateTimer }
+    const imageObserver = (typeof IntersectionObserver === 'function')
+      ? new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            const id = entry.target && entry.target.dataset ? entry.target.dataset.id : '';
+            const runtime = id && imageRuntime.get(id);
+            if (!runtime || runtime.el !== entry.target) return;
+            runtime.near = !!entry.isIntersecting;
+            if (runtime.near) scheduleCanvasImageActivate(id);
+            else {
+              if (runtime.activateTimer) {
+                clearTimeout(runtime.activateTimer);
+                runtime.activateTimer = null;
+              }
+              scheduleCanvasImageDeactivate(id);
+            }
+          });
+        }, { root: viewport, rootMargin: '150% 125%' })
+      : null;
     // ── MD 附件高光批注（伴生文件 <md>.annot.json，不改 .md 源码、不破坏哈希去重）──
     // node.id -> { marks:[{start,end,hl,color,size}], loaded, base(净渲染HTML快照), saveTimer, srcFp, staleCleared }
     // marks 的 start/end = "排版后、剔除公式" 的正文字符偏移。
@@ -5172,7 +5223,7 @@
       if (st.observer) { try { st.observer.disconnect(); } catch (e) {} }
       destroyPdfLoadingTask(st.loadingTask);
       st.loadingTask = null;
-      const host = nodeMap.get(id);
+      const host = st.body || nodeMap.get(id);
       if (host) host.querySelectorAll('.attach-page').forEach((pageEl) => {
         cancelPdfRenderTask(pageEl);
         pageEl.querySelectorAll('canvas').forEach((canvas) => { canvas.width = 0; canvas.height = 0; });
@@ -5181,19 +5232,305 @@
       attachPdfState.delete(id);
     }
     function disposeAttachment(id) {
+      const runtime = attachmentRuntime.get(id);
+      if (runtime) {
+        runtime.generation += 1;
+        runtime.active = false;
+        if (runtime.activateTimer) clearTimeout(runtime.activateTimer);
+        if (runtime.deactivateTimer) clearTimeout(runtime.deactivateTimer);
+        if (attachmentObserver && runtime.el) attachmentObserver.unobserve(runtime.el);
+        attachmentRuntime.delete(id);
+      }
       disposeMdAnnot(id);   // MD 附件：清掉高光批注的内存状态与待存定时器
       disposePdfAttachment(id);
     }
 
-    function isCurrentAttachmentBody(id, body) {
-      const host = nodeMap.get(id);
-      return !!(host && body && body.isConnected && host.contains(body));
+    function createCanvasImageElement() {
+      const img = document.createElement('img');
+      img.className = 'decor-image';
+      img.alt = '';
+      img.draggable = false;
+      img.decoding = 'async';
+      return img;
+    }
+
+    function detachCanvasImage(runtime) {
+      if (!runtime || !runtime.img) return;
+      const img = runtime.img;
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute('src');
+      img.removeAttribute('data-source');
+      img.remove();
+      runtime.img = null;
+      runtime.loaded = false;
+      if (runtime.content) runtime.content.setAttribute('aria-busy', 'true');
+    }
+
+    function disposeCanvasImage(id) {
+      const runtime = imageRuntime.get(id);
+      if (!runtime) return;
+      runtime.generation += 1;
+      runtime.active = false;
+      if (runtime.activateTimer) clearTimeout(runtime.activateTimer);
+      if (runtime.deactivateTimer) clearTimeout(runtime.deactivateTimer);
+      if (imageObserver && runtime.el) imageObserver.unobserve(runtime.el);
+      detachCanvasImage(runtime);
+      imageRuntime.delete(id);
+    }
+
+    function disposeViewportAsset(id) {
+      disposeAttachment(id);
+      disposeCanvasImage(id);
+    }
+
+    function isAttachmentForced(id) {
+      return selectedNodeIds.has(id)
+        || (mdReaderOpen && mdReaderNodeId === id)
+        || (pdfReaderOpen && pdfReaderNodeId === id);
+    }
+
+    function isCanvasImageForced(id) {
+      return selectedNodeIds.has(id);
+    }
+
+    function isCurrentAttachmentBody(id, body, src, generation) {
+      const runtime = attachmentRuntime.get(id);
+      const node = findNode(id);
+      return !!(runtime && runtime.active && runtime.body === body && runtime.src === src
+        && runtime.generation === generation && body && body.isConnected && node
+        && decorationAssetUrl(node) === src);
+    }
+
+    function attachmentLoadingHtml(kind) {
+      return '<div class="attach-status">' + (kind === 'pdf' ? '正在载入 PDF…' : '正在载入…') + '</div>';
+    }
+
+    function releaseAttachmentBody(runtime, generation) {
+      if (!runtime || runtime.generation !== generation || runtime.active) return;
+      if (runtime.kind === 'pdf') disposePdfAttachment(runtime.id);
+      const st = runtime.kind === 'md' ? mdAnnotStore.get(runtime.id) : null;
+      if (st) st.base = null; // 净 HTML 快照和正文 DOM 一起释放；marks/strokes/boxes 继续常驻
+      if (runtime.body && runtime.body.isConnected) {
+        runtime.body.className = 'attach-body';
+        runtime.body.innerHTML = attachmentLoadingHtml(runtime.kind);
+      }
+    }
+
+    function deactivateAttachment(id) {
+      const runtime = attachmentRuntime.get(id);
+      if (!runtime || !runtime.active || runtime.near || isAttachmentForced(id)) return;
+      runtime.active = false;
+      runtime.generation += 1; // 先让所有旧异步回调失效，再等待批注写入
+      const generation = runtime.generation;
+      if (runtime.deactivateTimer) {
+        clearTimeout(runtime.deactivateTimer);
+        runtime.deactivateTimer = null;
+      }
+      if (runtime.kind === 'pdf') {
+        releaseAttachmentBody(runtime, generation);
+        return;
+      }
+      const st = mdAnnotStore.get(id);
+      const pending = st && st.saveTimer ? flushMdAnnotSave(id) : Promise.resolve();
+      Promise.resolve(pending).finally(function () {
+        releaseAttachmentBody(runtime, generation);
+      });
+    }
+
+    function scheduleAttachmentDeactivate(id) {
+      const runtime = attachmentRuntime.get(id);
+      if (!runtime || runtime.near || isAttachmentForced(id)) return;
+      if (!runtime.active) return;
+      if (runtime.deactivateTimer) clearTimeout(runtime.deactivateTimer);
+      runtime.deactivateTimer = setTimeout(function () {
+        runtime.deactivateTimer = null;
+        deactivateAttachment(id);
+      }, ATTACH_DEACTIVATE_MS);
+    }
+
+    function scheduleAttachmentActivate(id) {
+      const runtime = attachmentRuntime.get(id);
+      if (!runtime || !runtime.near || runtime.active) return;
+      if (isAttachmentForced(id)) {
+        activateAttachment(id);
+        return;
+      }
+      if (runtime.activateTimer) clearTimeout(runtime.activateTimer);
+      runtime.activateTimer = setTimeout(function () {
+        runtime.activateTimer = null;
+        if (runtime.near) activateAttachment(id);
+      }, ATTACH_ACTIVATE_DELAY_MS);
+    }
+
+    function activateAttachment(id) {
+      const runtime = attachmentRuntime.get(id);
+      const node = findNode(id);
+      if (!runtime || !node || !isAttachmentNode(node) || decorationAssetUrl(node) !== runtime.src) return;
+      if (runtime.activateTimer) {
+        clearTimeout(runtime.activateTimer);
+        runtime.activateTimer = null;
+      }
+      if (runtime.deactivateTimer) {
+        clearTimeout(runtime.deactivateTimer);
+        runtime.deactivateTimer = null;
+      }
+      if (runtime.active) return;
+      runtime.active = true;
+      runtime.generation += 1;
+      const generation = runtime.generation;
+      if (runtime.kind === 'pdf') renderPdfInto(runtime.body, node, runtime.src, generation);
+      else renderMdInto(runtime.body, node, runtime.src, generation);
+    }
+
+    function deactivateCanvasImage(id) {
+      const runtime = imageRuntime.get(id);
+      if (!runtime || !runtime.active || runtime.near || isCanvasImageForced(id)) return;
+      runtime.active = false;
+      runtime.generation += 1;
+      if (runtime.deactivateTimer) {
+        clearTimeout(runtime.deactivateTimer);
+        runtime.deactivateTimer = null;
+      }
+      detachCanvasImage(runtime);
+    }
+
+    function scheduleCanvasImageDeactivate(id) {
+      const runtime = imageRuntime.get(id);
+      if (!runtime || runtime.near || isCanvasImageForced(id) || !runtime.active) return;
+      if (runtime.deactivateTimer) clearTimeout(runtime.deactivateTimer);
+      runtime.deactivateTimer = setTimeout(function () {
+        runtime.deactivateTimer = null;
+        deactivateCanvasImage(id);
+      }, ATTACH_DEACTIVATE_MS);
+    }
+
+    function scheduleCanvasImageActivate(id) {
+      const runtime = imageRuntime.get(id);
+      if (!runtime || !runtime.near || runtime.active) return;
+      if (isCanvasImageForced(id)) {
+        activateCanvasImage(id);
+        return;
+      }
+      if (runtime.activateTimer) clearTimeout(runtime.activateTimer);
+      runtime.activateTimer = setTimeout(function () {
+        runtime.activateTimer = null;
+        if (runtime.near) activateCanvasImage(id);
+      }, ATTACH_ACTIVATE_DELAY_MS);
+    }
+
+    function activateCanvasImage(id) {
+      const runtime = imageRuntime.get(id);
+      const node = findNode(id);
+      if (!runtime || !node || !isImageNode(node) || decorationAssetUrl(node) !== runtime.src) return;
+      if (runtime.activateTimer) {
+        clearTimeout(runtime.activateTimer);
+        runtime.activateTimer = null;
+      }
+      if (runtime.deactivateTimer) {
+        clearTimeout(runtime.deactivateTimer);
+        runtime.deactivateTimer = null;
+      }
+      if (runtime.active) return;
+      runtime.active = true;
+      runtime.loaded = false;
+      runtime.generation += 1;
+      const generation = runtime.generation;
+      const img = createCanvasImageElement();
+      runtime.img = img;
+      runtime.content.replaceChildren(img);
+      runtime.content.setAttribute('aria-busy', 'true');
+      const isCurrent = function () {
+        const current = imageRuntime.get(id);
+        const currentNode = findNode(id);
+        return !!(current && current === runtime && current.active && current.img === img
+          && current.src === runtime.src && current.generation === generation
+          && img.isConnected && currentNode && decorationAssetUrl(currentNode) === runtime.src);
+      };
+      img.onload = function () {
+        if (!isCurrent()) return;
+        runtime.loaded = true;
+        runtime.content.setAttribute('aria-busy', 'false');
+      };
+      img.onerror = function () {
+        if (!isCurrent()) return;
+        runtime.loaded = false;
+        runtime.content.setAttribute('aria-busy', 'false');
+      };
+      img.dataset.source = runtime.src;
+      img.src = runtime.src;
+    }
+
+    function renderCanvasImage(content, el, node) {
+      const src = decorationAssetUrl(node);
+      const existing = imageRuntime.get(node.id);
+      if (content.dataset.imageSrc === src && existing && existing.el === el) return;
+      disposeCanvasImage(node.id);
+      content.dataset.imageSrc = src;
+      content.innerHTML = '';
+      content.setAttribute('aria-busy', 'true');
+      const runtime = {
+        id: node.id, el: el, content: content, img: null, src: src,
+        active: false, loaded: false, near: false, generation: 0,
+        activateTimer: null, deactivateTimer: null,
+      };
+      imageRuntime.set(node.id, runtime);
+      if (imageObserver) {
+        imageObserver.observe(el);
+        if (isCanvasImageForced(node.id)) activateCanvasImage(node.id);
+      } else {
+        // 老 WebView 没有 IntersectionObserver 时保持原来的立即加载行为。
+        setTimeout(function () { activateCanvasImage(node.id); }, 0);
+      }
+    }
+
+    function reloadAttachment(id) {
+      const runtime = attachmentRuntime.get(id);
+      if (!runtime) return;
+      runtime.generation += 1;
+      runtime.active = false;
+      if (runtime.activateTimer) {
+        clearTimeout(runtime.activateTimer);
+        runtime.activateTimer = null;
+      }
+      if (runtime.deactivateTimer) {
+        clearTimeout(runtime.deactivateTimer);
+        runtime.deactivateTimer = null;
+      }
+      disposePdfAttachment(id);
+      runtime.body.className = 'attach-body';
+      runtime.body.innerHTML = attachmentLoadingHtml(runtime.kind);
+      activateAttachment(id);
+    }
+
+    function syncSelectedAttachmentLifecycle() {
+      attachmentRuntime.forEach(function (runtime, id) {
+        if (isAttachmentForced(id)) activateAttachment(id);
+        else if (!runtime.near) scheduleAttachmentDeactivate(id);
+      });
+      imageRuntime.forEach(function (runtime, id) {
+        if (isCanvasImageForced(id)) activateCanvasImage(id);
+        else if (!runtime.near) scheduleCanvasImageDeactivate(id);
+      });
+    }
+
+    function fetchMarkdownAttachment(src) {
+      const existing = markdownInflight.get(src);
+      if (existing) return existing;
+      const pending = fetch(src).then((r) => r.ok ? r.text() : Promise.reject(new Error('读取失败')));
+      markdownInflight.set(src, pending);
+      const clear = function () {
+        if (markdownInflight.get(src) === pending) markdownInflight.delete(src);
+      };
+      pending.then(clear, clear);
+      return pending;
     }
 
     function renderAttachment(content, el, node) {
       el.dataset.attachKind = node.kind;
       const src = decorationAssetUrl(node);
-      if (content.dataset.attachSrc === src) return;   // 幂等：缩放/重渲不重建内容
+      let runtime = attachmentRuntime.get(node.id);
+      if (content.dataset.attachSrc === src && runtime && runtime.el === el) return; // 幂等：缩放/重渲不重建内容
       disposeAttachment(node.id);       // 资源已更换：先释放旧文档/监听，避免新资源载入失败时旧状态悬空
       content.dataset.attachSrc = src;
       content.innerHTML = '';
@@ -5206,20 +5543,38 @@
         || (isPdfNode(node) ? 'PDF 文档' : 'Markdown 文档');
       const body = document.createElement('div');
       body.className = 'attach-body';
+      body.innerHTML = attachmentLoadingHtml(isPdfNode(node) ? 'pdf' : 'md');
       content.appendChild(head);
       content.appendChild(body);
-      if (isPdfNode(node)) renderPdfInto(body, node, src);
-      else renderMdInto(body, node, src);
+      runtime = {
+        id: node.id, el: el, body: body, src: src,
+        kind: isPdfNode(node) ? 'pdf' : 'md',
+        active: false, near: false, generation: 0, activateTimer: null, deactivateTimer: null,
+      };
+      attachmentRuntime.set(node.id, runtime);
+      if (attachmentObserver) {
+        attachmentObserver.observe(el);
+        if (isAttachmentForced(node.id)) activateAttachment(node.id);
+      } else {
+        // 老 WebView 没有 IntersectionObserver 时保持原来的立即加载行为。
+        setTimeout(function () { activateAttachment(node.id); }, 0);
+      }
     }
 
-    function renderMdInto(body, node, src) {
+    function renderMdInto(body, node, src, generation) {
       body.classList.add('attach-md');
-      body.innerHTML = '<div class="attach-status">正在载入…</div>';
-      fetch(src).then((r) => r.ok ? r.text() : Promise.reject(new Error('读取失败'))).then((text) => {
+      body.innerHTML = attachmentLoadingHtml('md');
+      fetchMarkdownAttachment(src).then((text) => {
         // 快照重建/资源更换可能让旧 fetch 比新 fetch 更晚返回。旧 body 已脱离当前节点时
         // 立即丢弃结果，不让它回写 mdAnnotStore 或继续排队 MathJax/Mermaid。
-        if (!isCurrentAttachmentBody(node.id, body)) return;
+        if (!isCurrentAttachmentBody(node.id, body, src, generation)) return;
         const fp = mdContentFp(text);            // 当前正文指纹，用于校验/失效旧标注
+        const previous = mdAnnotStore.get(node.id);
+        if (previous && previous.loaded && previous.srcFp && previous.srcFp !== fp && previous.marks.length) {
+          previous.marks = [];
+          previous.staleCleared = true;
+        }
+        if (previous && previous.loaded) previous.srcFp = fp;
         const md = global.MarkdownMini;
         const rendered = md && typeof md.renderResult === 'function' ? md.renderResult(text) : null;
         const html = rendered ? rendered.html : (md ? md.render(text)
@@ -5234,16 +5589,19 @@
         const mermaidDone = !rendered || rendered.features.mermaid
           ? renderMermaidDiagrams(mathBody) : Promise.resolve();
         whenMathReady(() => {
-          if (!isCurrentAttachmentBody(node.id, body)) return;
+          if (!isCurrentAttachmentBody(node.id, body, src, generation)) return;
           Promise.all([
             Promise.resolve(typesetMath(mathBody)),
             mermaidDone || Promise.resolve(),
           ]).then(() => {
-            if (!isCurrentAttachmentBody(node.id, body)) return;
+            if (!isCurrentAttachmentBody(node.id, body, src, generation)) return;
             const inner = body.querySelector('.attach-md-body');
             if (!inner) return;
             mdAnnotBase(node.id, inner.innerHTML);   // 净快照（无批注）→ 改批注时还原再重套，避免嵌套脏化
-            loadMdAnnot(node, fp).then(() => {
+            loadMdAnnot(node, fp, function () {
+              return isCurrentAttachmentBody(node.id, body, src, generation);
+            }).then(() => {
+              if (!isCurrentAttachmentBody(node.id, body, src, generation)) return;
               const st = mdAnnotState(node.id);
               if (st.staleCleared) { st.staleCleared = false; flushMdAnnotSave(node.id); }  // 正文已变 → 写回空标注
               renderMdMarks(node.id);
@@ -5251,7 +5609,7 @@
           });
         }, mathBody);
       }).catch((err) => {
-        if (!isCurrentAttachmentBody(node.id, body)) return;
+        if (!isCurrentAttachmentBody(node.id, body, src, generation)) return;
         body.innerHTML = '<div class="attach-status attach-error">Markdown 载入失败</div>';
         console.warn('[画布] Markdown 载入失败', err);
       });
@@ -5339,13 +5697,14 @@
     }
     // currentFp：当前正文的内容指纹。加载到的标注若是针对旧版正文做的（存的指纹与当前不符），
     // 说明正文已被外部编辑器改过 → 偏移已失效 → 整批丢弃，并打 staleCleared 让上层把空标注写回。
-    function loadMdAnnot(node, currentFp) {
+    function loadMdAnnot(node, currentFp, isCurrent) {
       const st = mdAnnotState(node.id);
       if (typeof currentFp === 'string') st.srcFp = currentFp;   // 记下当前指纹，保存时写回伴生文件
       if (st.loaded) return Promise.resolve();
       return fetch('/api/canvas-annotation?path=' + encodeURIComponent(filePath)
         + '&asset=' + encodeURIComponent(node.assetPath || ''))
         .then((r) => r.json()).then((res) => {
+          if (isCurrent && !isCurrent()) return;
           const ann = res && res.annotation;
           let marks = (ann && Array.isArray(ann.marks)) ? ann.marks.filter((m) => m && m.end > m.start) : [];
           // 手绘笔迹按内容框归一化坐标存，与正文字符偏移无关 → 不随正文改动失效。
@@ -5360,7 +5719,9 @@
           st.strokes = strokes;
           st.boxes = boxes;
           st.loaded = true;
-        }).catch(() => { st.loaded = true; });
+        }).catch(() => {
+          if (!isCurrent || isCurrent()) st.loaded = true;
+        });
     }
     function scheduleMdAnnotSave(nodeId) {
       const st = mdAnnotState(nodeId);
@@ -5371,8 +5732,8 @@
       const st = mdAnnotStore.get(nodeId);
       if (st && st.saveTimer) { clearTimeout(st.saveTimer); st.saveTimer = null; }
       const node = findNode(nodeId);
-      if (!node || !st) return;
-      fetch('/api/save-canvas-annotation', {
+      if (!node || !st) return Promise.resolve();
+      return fetch('/api/save-canvas-annotation', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: filePath, asset: node.assetPath, data: { version: 1, src: st.srcFp || null, marks: st.marks, strokes: st.strokes || [], boxes: st.boxes || [] } }),
       }).then((r) => r.json()).then((res) => {
@@ -5478,20 +5839,23 @@
       scheduleSelToolbar();
     }
 
-    function renderPdfInto(body, node, src) {
-      body.innerHTML = '<div class="attach-status">正在载入 PDF…</div>';
+    function renderPdfInto(body, node, src, generation) {
+      body.innerHTML = attachmentLoadingHtml('pdf');
       const id = node.id;
       let state = null;
       loadPdfjs().then((lib) => {
         // PDF.js 脚本本身可能比节点生命周期更慢；已换资源时不再启动文档任务。
-        if (!isCurrentAttachmentBody(id, body)) return null;
+        if (!isCurrentAttachmentBody(id, body, src, generation)) return null;
         const loadingTask = lib.getDocument({
           url: src,
           cMapUrl: PDFJS_BASE + 'cmaps/',
           cMapPacked: true,
           standardFontDataUrl: PDFJS_BASE + 'standard_fonts/',
         });
-        state = { loadingTask: loadingTask, doc: null, src: src, ratio: 1.414, token: 0, observer: null };
+        state = {
+          loadingTask: loadingTask, doc: null, src: src, ratio: 1.414, token: 0,
+          observer: null, body: body, generation: generation,
+        };
         attachPdfState.set(id, state);
         return loadingTask.promise;
       }).then((doc) => {
@@ -5502,7 +5866,7 @@
           destroyPdfDocument(doc);
           return;
         }
-        if (!isCurrentAttachmentBody(id, body)) {
+        if (!isCurrentAttachmentBody(id, body, src, generation)) {
           state.loadingTask = null;
           state.doc = doc;
           disposePdfAttachment(id);
@@ -5515,14 +5879,14 @@
             destroyPdfDocument(doc);
             return;
           }
-          if (!isCurrentAttachmentBody(id, body)) { disposePdfAttachment(id); return; }
+          if (!isCurrentAttachmentBody(id, body, src, generation)) { disposePdfAttachment(id); return; }
           const vp = page.getViewport({ scale: 1 });
           state.ratio = vp.height / vp.width;
           buildPdfPages(body, node);
         });
       }).catch((err) => {
         if (state && attachPdfState.get(id) === state) disposePdfAttachment(id);
-        if (!isCurrentAttachmentBody(id, body)) return;
+        if (!isCurrentAttachmentBody(id, body, src, generation)) return;
         body.innerHTML = '<div class="attach-status attach-error">PDF 载入失败</div>';
         console.warn('[画布] PDF 载入失败', err);
       });
@@ -5755,20 +6119,7 @@
       if (isTextBoxNode(node)) {
         renderTextBox(content, node);
       } else if (isImageNode(node)) {
-        let img = content.querySelector('.decor-image');
-        if (!img) {
-          content.innerHTML = '';
-          img = document.createElement('img');
-          img.className = 'decor-image';
-          img.alt = '';
-          img.draggable = false;
-          content.appendChild(img);
-        }
-        const src = decorationAssetUrl(node);
-        if (img.dataset.source !== src) {
-          img.dataset.source = src;
-          img.src = src;
-        }
+        renderCanvasImage(content, el, node);
       } else if (isAttachmentNode(node)) {
         renderAttachment(content, el, node);
       } else {
@@ -13454,6 +13805,35 @@
       refreshDecorPanel();
     }
 
+    function ensureEdgeLabel(edge, refs) {
+      if (!edge || !refs) return null;
+      if (refs.labelEl) return refs.labelEl;
+      const labelEl = document.createElement('div');
+      labelEl.className = 'canvas-edge-label';
+      labelEl.dataset.id = edge.id;
+      labelEl.textContent = edge.text || '';
+      labelEl.classList.toggle('empty', !edge.text);
+      labelEl.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
+      labelEl.classList.toggle('mindmap-fold-hidden',
+        hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to));
+      labelEl.classList.toggle('group-fold-hidden',
+        hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to));
+      labelEl.classList.toggle('taskbook-tree-hidden',
+        hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to));
+      labelEl.classList.toggle('selected', selectedEdgeIds.has(edge.id));
+      surface.appendChild(labelEl);
+      refs.labelEl = labelEl;
+      bindEdgeEvents(null, null, labelEl, edge);
+      ensureEdgeExactMidpoint(edge);
+      return labelEl;
+    }
+
+    function removeEmptyEdgeLabel(edge, refs) {
+      if (!edge || !refs || !refs.labelEl || edge.text || editingEdgeId === edge.id) return;
+      refs.labelEl.remove();
+      refs.labelEl = null;
+    }
+
     function createEdgeEls(edge) {
       const path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('class', 'canvas-edge');
@@ -13470,26 +13850,22 @@
       edgesLayer.appendChild(hit);
       edgesLayer.appendChild(path);
 
-      const labelEl = document.createElement('div');
-      labelEl.className = 'canvas-edge-label';
-      labelEl.dataset.id = edge.id;
-      labelEl.textContent = edge.text || '';
-      if (isProtectedTaskbookEdge(edge)) labelEl.classList.add('taskbook-workflow-edge');
-      if (!edge.text) labelEl.classList.add('empty');
       if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)) {
         path.classList.add('mindmap-fold-hidden');
         hit.classList.add('mindmap-fold-hidden');
-        labelEl.classList.add('mindmap-fold-hidden');
+      }
+      if (hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)) {
+        path.classList.add('group-fold-hidden');
+        hit.classList.add('group-fold-hidden');
       }
       if (hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) {
         path.classList.add('taskbook-tree-hidden');
         hit.classList.add('taskbook-tree-hidden');
-        labelEl.classList.add('taskbook-tree-hidden');
       }
-      surface.appendChild(labelEl);
 
-      bindEdgeEvents(path, hit, labelEl, edge);
-      const refs = { path: path, hit: hit, labelEl: labelEl };
+      bindEdgeEvents(path, hit, null, edge);
+      const refs = { path: path, hit: hit, labelEl: null, order: edgeMap.size };
+      if (edge.text) ensureEdgeLabel(edge, refs);
       applyEdgeStyle(refs, edge);     // 5-2：粗细 + 箭头
       return refs;
     }
@@ -13500,11 +13876,13 @@
       const src = findNode(edge.from);
       const tgt = findNode(edge.to);
       if (!src || !tgt) return;
-      const bez = edgeGeom(edge, nodeRect(src), nodeRect(tgt));
+      const rects = { srcRect: nodeRect(src), tgtRect: nodeRect(tgt), live: false };
+      const bez = edgeGeom(edge, rects.srcRect, rects.tgtRect);
       refs.path.setAttribute('d', bez.d);
       refs.hit.setAttribute('d', bez.d);
       updateEdgeMidpoint(edge, refs, bez);
-      edgePathCache.delete(edge.id);   // 几何可能变了 → 让 canvas 层下次重建 Path2D
+      invalidateEdgeGeometry(edge.id);
+      cacheStaticEdgeGeometry(edge, rects, bez);
       requestEdgesCanvasRender();
     }
 
@@ -13545,8 +13923,12 @@
       if (!cached || cached.d !== pathD) {
         edgeMidpointCache.set(edge.id, { d: pathD, x: mid.x, y: mid.y });
       }
-      refs.labelEl.style.left = mid.x + 'px';
-      refs.labelEl.style.top = mid.y + 'px';
+      const canvasItem = edgePathCache.get(edge.id);
+      if (canvasItem && canvasItem.d === pathD) canvasItem.midpoint = { x: mid.x, y: mid.y };
+      if (refs.labelEl) {
+        refs.labelEl.style.left = mid.x + 'px';
+        refs.labelEl.style.top = mid.y + 'px';
+      }
       return mid;
     }
 
@@ -13556,8 +13938,12 @@
       const pathD = refs.path.getAttribute('d') || '';
       const cached = edgeMidpointCache.get(edge.id);
       if (cached && cached.d === pathD) {
-        refs.labelEl.style.left = cached.x + 'px';
-        refs.labelEl.style.top = cached.y + 'px';
+        const canvasItem = edgePathCache.get(edge.id);
+        if (canvasItem && canvasItem.d === pathD) canvasItem.midpoint = { x: cached.x, y: cached.y };
+        if (refs.labelEl) {
+          refs.labelEl.style.left = cached.x + 'px';
+          refs.labelEl.style.top = cached.y + 'px';
+        }
         return;
       }
       const rects = edgeCanvasRects(edge);
@@ -13650,22 +14036,130 @@
       return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
     }
 
-    // 取（或重建）一条连线在 surface 坐标系的 Path2D，静态几何字符串变了才重新 new。
+    function edgeGridKeys(bounds) {
+      const keys = [];
+      if (!bounds) return keys;
+      const gx0 = Math.floor(bounds.minX / EDGE_GRID_SIZE);
+      const gy0 = Math.floor(bounds.minY / EDGE_GRID_SIZE);
+      const gx1 = Math.floor(bounds.maxX / EDGE_GRID_SIZE);
+      const gy1 = Math.floor(bounds.maxY / EDGE_GRID_SIZE);
+      for (let gy = gy0; gy <= gy1; gy++) {
+        for (let gx = gx0; gx <= gx1; gx++) keys.push(gx + ',' + gy);
+      }
+      return keys;
+    }
+
+    function removeEdgeFromSpatialIndex(id) {
+      const keys = edgeSpatialCells.get(id);
+      if (keys) {
+        keys.forEach(function (key) {
+          const bucket = edgeSpatialGrid.get(key);
+          if (!bucket) return;
+          bucket.delete(id);
+          if (!bucket.size) edgeSpatialGrid.delete(key);
+        });
+      }
+      edgeSpatialCells.delete(id);
+    }
+
+    function indexEdgeGeometry(item) {
+      removeEdgeFromSpatialIndex(item.edge.id);
+      const keys = edgeGridKeys(item.bounds);
+      keys.forEach(function (key) {
+        let bucket = edgeSpatialGrid.get(key);
+        if (!bucket) {
+          bucket = new Set();
+          edgeSpatialGrid.set(key, bucket);
+        }
+        bucket.add(item.edge.id);
+      });
+      edgeSpatialCells.set(item.edge.id, keys);
+    }
+
+    function invalidateEdgeGeometry(id) {
+      if (!EDGE_CANVAS_ON) return;
+      removeEdgeFromSpatialIndex(id);
+      edgePathCache.delete(id);
+      edgeGeometryDirty.add(id);
+    }
+
+    function cacheStaticEdgeGeometry(edge, rects, geom, order) {
+      if (!EDGE_CANVAS_ON || !edge || !rects || rects.live) return null;
+      const points = edgeCanvasPoints(edge, rects);
+      const item = {
+        edge: edge,
+        d: geom.d,
+        path: new Path2D(geom.d),
+        geom: geom,
+        midpoint: cachedEdgeMidpoint(edge, geom),
+        points: points,
+        bounds: edgeCanvasBounds(edge, rects, points),
+        order: Number.isFinite(order) ? order
+          : ((edgeMap.get(edge.id) && edgeMap.get(edge.id).order) || 0),
+      };
+      edgePathCache.set(edge.id, item);
+      edgeGeometryDirty.delete(edge.id);
+      indexEdgeGeometry(item);
+      return item;
+    }
+
+    function ensureEdgeGeometryCache() {
+      if (!edgeGeometryDirty.size && edgePathCache.size === data.edges.length) return;
+      for (let i = 0; i < data.edges.length; i++) {
+        const edge = data.edges[i];
+        let item = edgePathCache.get(edge.id);
+        if (!item || edgeGeometryDirty.has(edge.id)) {
+          const rects = edgeCanvasRects(edge);
+          if (!rects || rects.live) continue;
+          const geom = edgeGeom(edge, rects.srcRect, rects.tgtRect);
+          item = cacheStaticEdgeGeometry(edge, rects, geom, i);
+        } else {
+          item.order = i;
+        }
+      }
+      const liveIds = new Set(data.edges.map(function (edge) { return edge.id; }));
+      edgeGeometryDirty.forEach(function (id) {
+        if (!liveIds.has(id)) {
+          removeEdgeFromSpatialIndex(id);
+          edgePathCache.delete(id);
+          edgeGeometryDirty.delete(id);
+        }
+      });
+    }
+
+    function queryEdgeGeometry(bounds) {
+      ensureEdgeGeometryCache();
+      const ids = new Set();
+      edgeGridKeys(bounds).forEach(function (key) {
+        const bucket = edgeSpatialGrid.get(key);
+        if (bucket) bucket.forEach(function (id) { ids.add(id); });
+      });
+      const items = [];
+      ids.forEach(function (id) {
+        const item = edgePathCache.get(id);
+        if (item) items.push(item);
+      });
+      items.sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+      return items;
+    }
+
+    // 取（或重建）一条连线在 surface 坐标系的完整几何项。
     function edgeCachedPath2D(edge) {
       const rects = edgeCanvasRects(edge);
       if (!rects) return null;
-      const bez = edgeGeom(edge, rects.srcRect, rects.tgtRect);
-      const pts = edgeCanvasPoints(edge, rects);
-      const midpoint = cachedEdgeMidpoint(edge, bez);
-      let c = edgePathCache.get(edge.id);
       if (rects.live) {
-        return { path: new Path2D(bez.d), geom: bez, midpoint: midpoint, points: pts, bounds: edgeCanvasBounds(edge, rects, pts) };
+        const geom = edgeGeom(edge, rects.srcRect, rects.tgtRect);
+        const points = edgeCanvasPoints(edge, rects);
+        return {
+          edge: edge, d: geom.d, path: new Path2D(geom.d), geom: geom,
+          midpoint: cachedEdgeMidpoint(edge, geom), points: points,
+          bounds: edgeCanvasBounds(edge, rects, points),
+        };
       }
-      if (!c || c.d !== bez.d) {
-        c = { d: bez.d, path: new Path2D(bez.d) };
-        edgePathCache.set(edge.id, c);
-      }
-      return { path: c.path, geom: bez, midpoint: midpoint, points: pts, bounds: edgeCanvasBounds(edge, rects, pts) };
+      const cached = edgePathCache.get(edge.id);
+      if (cached && !edgeGeometryDirty.has(edge.id)) return cached;
+      const geom = edgeGeom(edge, rects.srcRect, rects.tgtRect);
+      return cacheStaticEdgeGeometry(edge, rects, geom);
     }
 
     function requestEdgesCanvasRender() {
@@ -13781,13 +14275,13 @@
       const pad = 80;
       const x0 = (-curPanX) / curScale - pad, y0 = (-curPanY) / curScale - pad;
       const x1 = (vw - curPanX) / curScale + pad, y1 = (vh - curPanY) / curScale + pad;
-      for (let i = 0; i < data.edges.length; i++) {
-        const edge = data.edges[i];
+      const visibleItems = queryEdgeGeometry({ minX: x0, minY: y0, maxX: x1, maxY: y1 });
+      for (let i = 0; i < visibleItems.length; i++) {
+        const item = visibleItems[i];
+        const edge = item.edge;
         if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)
             || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)
             || hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) continue;
-        const item = edgeCachedPath2D(edge);
-        if (!item) continue;
         const b = item.bounds;
         if (b.maxX < x0 || b.minX > x1 || b.maxY < y0 || b.minY > y1) continue;  // 屏外跳过
         const selected = selectedEdgeIds.has(edge.id);
@@ -13869,7 +14363,7 @@
       });
       for (const [id, el] of nodeMap) {
         if (!seen.has(id)) {
-          disposeAttachment(id);   // 附件被删/撤销移除时，释放 PDF 文档与懒渲染监听
+          disposeViewportAsset(id); // 附件/图片被删或撤销移除时，释放文档、位图与外层监听
           if (nodeSizeObserver) nodeSizeObserver.unobserve(el);
           nodeSizeCache.delete(id);
           el.remove();
@@ -13882,27 +14376,32 @@
 
     function reconcileEdges() {
       const seen = new Set();
-      data.edges.forEach((edge) => {
+      data.edges.forEach((edge, edgeIndex) => {
         seen.add(edge.id);
         let refs = edgeMap.get(edge.id);
         if (!refs) {
           refs = createEdgeEls(edge);
           edgeMap.set(edge.id, refs);
-        } else {
-          const want = edge.text || '';
-          if (refs.labelEl.textContent !== want) {
-            refs.labelEl.textContent = want;
-            refs.labelEl.classList.toggle('empty', !want);
-          }
-          applyEdgeStyle(refs, edge);          // 5-2：同步粗细/箭头（撤销重做等）
         }
+        refs.order = edgeIndex;
+        const want = edge.text || '';
+        if (want) {
+          const labelEl = ensureEdgeLabel(edge, refs);
+          if (labelEl.textContent !== want) {
+            labelEl.textContent = want;
+            labelEl.classList.remove('empty');
+          }
+        } else {
+          removeEmptyEdgeLabel(edge, refs);
+        }
+        applyEdgeStyle(refs, edge);          // 5-2：同步粗细/箭头（撤销重做等）
         refs.path.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
         refs.hit.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
-        refs.labelEl.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
+        if (refs.labelEl) refs.labelEl.classList.toggle('taskbook-workflow-edge', isProtectedTaskbookEdge(edge));
         const taskbookHidden = hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to);
         refs.path.classList.toggle('taskbook-tree-hidden', taskbookHidden);
         refs.hit.classList.toggle('taskbook-tree-hidden', taskbookHidden);
-        refs.labelEl.classList.toggle('taskbook-tree-hidden', taskbookHidden);
+        if (refs.labelEl) refs.labelEl.classList.toggle('taskbook-tree-hidden', taskbookHidden);
         updateEdgePath(edge);
       });
       for (const [id, refs] of edgeMap) {
@@ -13910,9 +14409,11 @@
           removeEdgeMarkers(id);               // 5-2：连带删该线的箭头 marker
           refs.path.remove();
           refs.hit.remove();
-          refs.labelEl.remove();
+          if (refs.labelEl) refs.labelEl.remove();
           edgeMap.delete(id);
+          removeEdgeFromSpatialIndex(id);
           edgePathCache.delete(id);
+          edgeGeometryDirty.delete(id);
           edgeMidpointCache.delete(id);
           selectedEdgeIds.delete(id);
         }
@@ -13935,6 +14436,7 @@
         el.classList.toggle('selected', selectedNodeIds.has(id));
         el.classList.toggle('transient-movable-decor', id === transientMovableDecorId && selectedNodeIds.has(id));
       });
+      syncSelectedAttachmentLifecycle();
       edgeMap.forEach((refs, id) => {
         const sel = selectedEdgeIds.has(id);
         if (sel) {
@@ -13942,7 +14444,7 @@
           if (edge) ensureEdgeExactMidpoint(edge);
         }
         refs.path.classList.toggle('selected', sel);
-        refs.labelEl.classList.toggle('selected', sel);
+        if (refs.labelEl) refs.labelEl.classList.toggle('selected', sel);
       });
       applyTimerSelection();
       requestEdgesCanvasRender();
@@ -14302,12 +14804,14 @@
         selectEdges([edge.id], false);
         if (allowBend && currentMode() !== 'decor') startBendPending(edge, e);
       };
-      hitEl.addEventListener('mousedown', (e) => pick(e, true));
-      pathEl.addEventListener('mousedown', (e) => pick(e, true));
-      labelEl.addEventListener('mousedown', (e) => {
-        if (editingEdgeId === edge.id) return; // 编辑中不抢
-        pick(e, false);
-      });
+      if (hitEl) hitEl.addEventListener('mousedown', (e) => pick(e, true));
+      if (pathEl) pathEl.addEventListener('mousedown', (e) => pick(e, true));
+      if (labelEl) {
+        labelEl.addEventListener('mousedown', (e) => {
+          if (editingEdgeId === edge.id) return; // 编辑中不抢
+          pick(e, false);
+        });
+      }
       const onEditTrigger = (e) => {
         if (consumeSelectionToggleClick(e.currentTarget, e)) {
           e.preventDefault();
@@ -14323,9 +14827,9 @@
         }
         enterEdgeEdit(edge);
       };
-      hitEl.addEventListener('dblclick', onEditTrigger);
-      pathEl.addEventListener('dblclick', onEditTrigger);
-      labelEl.addEventListener('dblclick', onEditTrigger);
+      if (hitEl) hitEl.addEventListener('dblclick', onEditTrigger);
+      if (pathEl) pathEl.addEventListener('dblclick', onEditTrigger);
+      if (labelEl) labelEl.addEventListener('dblclick', onEditTrigger);
       // 右键连线 → 选中它 + 弹菜单（stopPropagation 防 surface 弹原生菜单）
       const onMenu = (e) => {
         e.preventDefault();
@@ -14334,9 +14838,9 @@
         menuEdgeId = edge.id;
         showEdgeMenu(e.clientX, e.clientY);
       };
-      hitEl.addEventListener('contextmenu', onMenu);
-      pathEl.addEventListener('contextmenu', onMenu);
-      labelEl.addEventListener('contextmenu', onMenu);
+      if (hitEl) hitEl.addEventListener('contextmenu', onMenu);
+      if (pathEl) pathEl.addEventListener('contextmenu', onMenu);
+      if (labelEl) labelEl.addEventListener('contextmenu', onMenu);
     }
 
     // ── 拖动：节点 / 多选 ────────────────────
@@ -17697,7 +18201,7 @@
 
       const refs = edgeMap.get(edge.id);
       if (!refs) return;
-      const labelEl = refs.labelEl;
+      const labelEl = ensureEdgeLabel(edge, refs);
       labelEl.classList.add('editing');
       labelEl.classList.remove('empty');
       selectEdges([edge.id], false);
@@ -17722,6 +18226,7 @@
       const refs = edgeMap.get(id);
       if (!edge || !refs) return;
       const labelEl = refs.labelEl;
+      if (!labelEl) return;
       const newText = (labelEl.textContent || '').trim();
       labelEl.textContent = newText;
       labelEl.contentEditable = 'false';
@@ -17733,6 +18238,7 @@
         pushHistory();
         notify();
       }
+      if (!newText) removeEmptyEdgeLabel(edge, refs);
     }
 
     function cancelEdgeEdit() {
@@ -17745,11 +18251,14 @@
       const refs = edgeMap.get(id);
       if (!refs) return;
       const labelEl = refs.labelEl;
+      if (!labelEl) return;
       labelEl.textContent = oldText;
       labelEl.contentEditable = 'false';
       labelEl.classList.remove('editing');
       labelEl.classList.toggle('empty', !oldText);
       labelEl.blur();
+      const edge = findEdge(id);
+      if (edge && !oldText) removeEmptyEdgeLabel(edge, refs);
     }
 
     // ── 删除（不进 history 的原始操作）──────
@@ -17758,7 +18267,7 @@
       data.nodes.forEach(function (candidate) {
         if (isTextBoxNode(candidate) && candidate.textBindTarget === id) clearTextBinding(candidate);
       });
-      disposeAttachment(id);   // 附件节点：释放 PDF.js 文档 + 懒渲染监听 + MD 批注定时器（删除闭环，防内存堆积）
+      disposeViewportAsset(id); // 附件/图片：释放 PDF.js 文档、解码位图、懒渲染监听与批注定时器
       // 正文节点批注暂不物理删除：节点删除可撤销，提前清掉会让 Ctrl+Z 恢复节点却丢批注。
       // 未被节点引用的批注条目由“清理未用附件”统一识别并在用户确认后永久裁剪。
       const idx = data.nodes.findIndex((n) => n.id === id);
@@ -17785,10 +18294,12 @@
       if (refs) {
         refs.path.remove();
         refs.hit.remove();
-        refs.labelEl.remove();
+        if (refs.labelEl) refs.labelEl.remove();
       }
       edgeMap.delete(id);
+      removeEdgeFromSpatialIndex(id);
       edgePathCache.delete(id);
+      edgeGeometryDirty.delete(id);
       edgeMidpointCache.delete(id);
       selectedEdgeIds.delete(id);
       requestEdgesCanvasRender();
@@ -19922,6 +20433,7 @@
     }
     function openMdReader(node) {
       if (!mdReader || !isMdNode(node)) return;
+      activateAttachment(node.id);
       setupMdReader();
       if (editingNodeId !== null) commitNodeEdit();
       if (editingEdgeId !== null) commitEdgeEdit();
@@ -19944,7 +20456,7 @@
         content.innerHTML = '<div class="attach-status">正在载入…</div>';
         buildReaderToc(mdReader.querySelector('[data-role="md-reader-toc"]'), content,
           mdReader.querySelector('[data-role="md-reader-scroll"]'), false);
-        fetch(src).then((r) => r.ok ? r.text() : Promise.reject(new Error('读取失败'))).then((text) => {
+        fetchMarkdownAttachment(src).then((text) => {
           if (!mdReaderOpen || mdReaderNodeId !== node.id) return;   // 期间已关/已切，丢弃
           const fp = mdContentFp(text);
           const md = global.MarkdownMini;
@@ -19992,6 +20504,7 @@
     }
     function closeMdReader() {
       if (!mdReaderOpen) return;
+      const closingNodeId = mdReaderNodeId;
       mdAnnotTool = null;
       mdSelBox = null;
       armMdAnnotSvg();
@@ -20004,6 +20517,7 @@
         dismissReaderOverlay(mdReader, '.text-reader-card',
           function () { if (!mdReaderOpen) mdReader.hidden = true; });
       }
+      scheduleAttachmentDeactivate(closingNodeId);
       hideSelToolbar();
     }
     // ── 在外部编辑器打开 MD 附件 + 改完回来自动刷新 ───────────────────
@@ -20036,10 +20550,7 @@
       const st = mdAnnotStore.get(id);
       if (st) { st.loaded = false; st.srcFp = null; }   // 让 loadMdAnnot 重新拉标注并按新指纹判废
       const el = nodeMap.get(id);
-      if (el) {
-        const content = el.querySelector('.decor-content');
-        if (content) { delete content.dataset.attachSrc; renderAttachment(content, el, node); }
-      }
+      if (el) reloadAttachment(id);
       if (mdReaderOpen && mdReaderNodeId === id) openMdReader(node);   // 浮层开着就连同浮层一起重载
     }
 
@@ -20862,6 +21373,7 @@
 
     function openPdfReader(node) {
       if (!pdfReader || !isPdfNode(node)) return;
+      activateAttachment(node.id);
       setupPdfReader();
       if (editingNodeId !== null) commitNodeEdit();
       if (textReaderOpen) closeTextReader();
@@ -20939,6 +21451,7 @@
     }
     function closePdfReader() {
       if (!pdfReaderOpen) return;
+      const closingNodeId = pdfReaderNodeId;
       pdfReaderToken += 1;
       flushPdfAnnotSave();
       clearPdfAnnotSelection();
@@ -20959,6 +21472,7 @@
           if (pagesEl) pagesEl.innerHTML = '';
         });
       }
+      scheduleAttachmentDeactivate(closingNodeId);
     }
 
     // ── 选中文字浮动工具栏（高光 / 文字颜色 / 字号）─────────────
@@ -23255,10 +23769,10 @@
           && (hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to));
         refs.path.classList.toggle('taskbook-tree-hidden', hidden);
         refs.hit.classList.toggle('taskbook-tree-hidden', hidden);
-        refs.labelEl.classList.toggle('taskbook-tree-hidden', hidden);
+        if (refs.labelEl) refs.labelEl.classList.toggle('taskbook-tree-hidden', hidden);
         if (hidden) {
           refs.path.classList.remove('selected');
-          refs.labelEl.classList.remove('selected');
+          if (refs.labelEl) refs.labelEl.classList.remove('selected');
         }
       });
       renderEdgeHandles();
@@ -23330,10 +23844,10 @@
         const hidden = !!edge && (hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to));
         refs.path.classList.toggle('group-fold-hidden', hidden);
         refs.hit.classList.toggle('group-fold-hidden', hidden);
-        refs.labelEl.classList.toggle('group-fold-hidden', hidden);
+        if (refs.labelEl) refs.labelEl.classList.toggle('group-fold-hidden', hidden);
         if (hidden) {
           refs.path.classList.remove('selected');
-          refs.labelEl.classList.remove('selected');
+          if (refs.labelEl) refs.labelEl.classList.remove('selected');
         }
       });
       renderEdgeHandles();
@@ -23513,10 +24027,10 @@
         const hide = !!edge && (hidden.has(edge.from) || hidden.has(edge.to));
         refs.path.classList.toggle('mindmap-fold-hidden', hide);
         refs.hit.classList.toggle('mindmap-fold-hidden', hide);
-        refs.labelEl.classList.toggle('mindmap-fold-hidden', hide);
+        if (refs.labelEl) refs.labelEl.classList.toggle('mindmap-fold-hidden', hide);
         if (hide) {
           refs.path.classList.remove('selected');
-          refs.labelEl.classList.remove('selected');
+          if (refs.labelEl) refs.labelEl.classList.remove('selected');
         }
       });
       renderEdgeHandles();
@@ -23978,7 +24492,8 @@
       hiddenGroupNodeIds = computeHiddenGroupNodeIds();
       hiddenTaskbookNodeIds = computeHiddenTaskbookNodeIds();
       // 全部 DOM 推倒重建（最稳）
-      nodeMap.forEach((el) => {
+      nodeMap.forEach((el, id) => {
+        disposeViewportAsset(id);
         if (nodeSizeObserver) nodeSizeObserver.unobserve(el);   // 旧元素退订，避免观察器攒游离 DOM
         el.remove();
       });
@@ -23987,10 +24502,13 @@
       edgeMap.forEach((refs) => {
         refs.path.remove();
         refs.hit.remove();
-        refs.labelEl.remove();
+        if (refs.labelEl) refs.labelEl.remove();
       });
       edgeMap.clear();
       edgePathCache.clear();
+      edgeSpatialGrid.clear();
+      edgeSpatialCells.clear();
+      edgeGeometryDirty.clear();
       edgeMidpointCache.clear();
       edgeCanvasLiveCoords = null;
       selectedNodeIds.clear();
@@ -24791,7 +25309,7 @@
       }
       if (editingEdgeId !== null) {
         const refs = edgeMap.get(editingEdgeId);
-        if (refs && (!e.relatedTarget || !refs.labelEl.contains(e.relatedTarget))) {
+        if (refs && refs.labelEl && (!e.relatedTarget || !refs.labelEl.contains(e.relatedTarget))) {
           commitEdgeEdit();
         }
       }
@@ -25726,14 +26244,15 @@
         + '.table-node-grip, .table-drag-strip, .table-node-actions, .table-grid-toolbar, .table-edge-add, '
         + '.table-grid-corner, .table-column-head, .table-row-head'
       ).forEach(function (e) { e.remove(); });
-      clone.querySelectorAll('.selected, .is-selected, .editing, .dragging').forEach(function (e) {
-        e.classList.remove('selected', 'is-selected', 'editing', 'dragging');
+      clone.querySelectorAll('.selected, .is-selected, .editing, .dragging, .culled').forEach(function (e) {
+        e.classList.remove('selected', 'is-selected', 'editing', 'dragging', 'culled');
       });
       // 连线/墨迹 SVG 层固定 4000×3000，导出可能超出 → 不裁切
       clone.querySelectorAll('.canvas-edges-layer, .canvas-ink-layer').forEach(function (svg) {
         svg.style.overflow = 'visible';
       });
       materializeExportEdges(clone);
+      materializeExportImages(clone);
 
       function exportMarker(layer, index, suffix, size, orient, color) {
         let defs = layer.querySelector('defs');
@@ -25798,21 +26317,65 @@
         });
       }
 
+      // 视口外图片没有常驻 img；导出副本按数据补齐，但只挂 data-export-src，
+      // 避免 detached DOM 自行发起一次请求，随后 inlineImages 再重复请求。
+      function materializeExportImages(root) {
+        const cloneNodes = new Map();
+        Array.prototype.forEach.call(root.querySelectorAll('.node[data-id]'), function (el) {
+          cloneNodes.set(el.dataset.id || '', el);
+        });
+        data.nodes.forEach(function (node) {
+          if (!isImageNode(node) || isCanvasNodeVisuallyHidden(node.id)) return;
+          const cloneNode = cloneNodes.get(node.id);
+          const content = cloneNode && cloneNode.querySelector('.decor-content');
+          if (!content) return;
+          let img = content.querySelector('.decor-image');
+          if (!img) {
+            img = createCanvasImageElement();
+            content.replaceChildren(img);
+          }
+          if (!img.getAttribute('src')) img.dataset.exportSrc = decorationAssetUrl(node);
+        });
+      }
+
       // 3) 工具：内联所有 <img> 为 dataURI（data:SVG 里加载不到外部 URL）
       function inlineImages(root) {
         const imgs = Array.prototype.slice.call(root.querySelectorAll('img'));
-        return Promise.all(imgs.map(function (im) {
-          const src = im.getAttribute('src') || '';
-          if (!src || src.indexOf('data:') === 0) return Promise.resolve();
-          return fetch(src).then(function (r) { return r.blob(); }).then(function (b) {
-            return new Promise(function (res) {
-              const fr = new FileReader();
-              fr.onload = function () { im.setAttribute('src', fr.result); res(); };
-              fr.onerror = function () { res(); };
-              fr.readAsDataURL(b);
+        const encodedBySrc = new Map();
+        let cursor = 0;
+        function encodeSource(src) {
+          let pending = encodedBySrc.get(src);
+          if (pending) return pending;
+          pending = fetch(src).then(function (r) {
+            if (!r.ok) throw new Error('图片读取失败');
+            return r.blob();
+          }).then(function (blob) {
+            return new Promise(function (resolve, reject) {
+              const reader = new FileReader();
+              reader.onload = function () { resolve(reader.result); };
+              reader.onerror = function () { reject(reader.error || new Error('图片内联失败')); };
+              reader.readAsDataURL(blob);
             });
-          }).catch(function () {});
-        }));
+          });
+          encodedBySrc.set(src, pending);
+          return pending;
+        }
+        function worker() {
+          const index = cursor;
+          cursor += 1;
+          if (index >= imgs.length) return Promise.resolve();
+          const img = imgs[index];
+          const src = img.getAttribute('src') || img.dataset.exportSrc || '';
+          if (!src || src.indexOf('data:') === 0) return worker();
+          return encodeSource(src).then(function (dataUrl) {
+            img.setAttribute('src', dataUrl);
+            delete img.dataset.exportSrc;
+          }).catch(function () {}).then(worker);
+        }
+        const workerCount = Math.min(4, imgs.length);
+        const workers = [];
+        for (let i = 0; i < workerCount; i++) workers.push(worker());
+        return Promise.all(workers);
       }
       // 背景：底色 + 尽力还原画布背景（纯色/渐变直接用，图片内联）。
       // 背景图可能在 viewport::before（“画布背景”模式）或 immersive 元素::before（“沉浸背景”模式）。
@@ -27574,6 +28137,93 @@
         notify();
       });
     };
+
+    // 只在显式性能夹具中暴露；正常运行不创建调试全局。
+    let perfSnapshotEnabled = false;
+    try { perfSnapshotEnabled = new URLSearchParams(global.location.search).get('perf') === '1'; } catch (e) {}
+    if (perfSnapshotEnabled) {
+      const perfInitMs = Date.now() - initStartedAt;
+      const perfLoadMs = global.performance && Number.isFinite(Number(global.performance.timeOrigin))
+        ? Date.now() - Number(global.performance.timeOrigin)
+        : perfInitMs;
+      const perfFrameDeltas = [];
+      let perfLastFrame = 0;
+      const samplePerfFrame = function (stamp) {
+        if (perfLastFrame) {
+          perfFrameDeltas.push(stamp - perfLastFrame);
+          if (perfFrameDeltas.length > 240) perfFrameDeltas.shift();
+        }
+        perfLastFrame = stamp;
+        global.requestAnimationFrame(samplePerfFrame);
+      };
+      global.requestAnimationFrame(samplePerfFrame);
+      global.__relatumPerfSnapshot = function () {
+        let activeMarkdown = 0;
+        let activePdf = 0;
+        attachmentRuntime.forEach(function (runtime) {
+          if (!runtime.active) return;
+          if (runtime.kind === 'pdf') activePdf += 1;
+          else activeMarkdown += 1;
+        });
+        let activeImages = 0;
+        let loadedImages = 0;
+        imageRuntime.forEach(function (runtime) {
+          if (runtime.active) activeImages += 1;
+          if (runtime.loaded) loadedImages += 1;
+        });
+        let indexedRefs = 0;
+        edgeSpatialGrid.forEach(function (bucket) { indexedRefs += bucket.size; });
+        const orderedFrames = perfFrameDeltas.slice().sort(function (a, b) { return a - b; });
+        const p95Index = Math.max(0, Math.ceil(orderedFrames.length * 0.95) - 1);
+        return {
+          attachments: {
+            registered: attachmentRuntime.size,
+            active: activeMarkdown + activePdf,
+            markdown: activeMarkdown,
+            pdf: activePdf,
+            markdownInflight: markdownInflight.size,
+            pdfDocuments: attachPdfState.size,
+            pdfCanvases: surface.querySelectorAll('.attach-page canvas').length,
+            pdfPagePlaceholders: surface.querySelectorAll('.attach-page').length,
+          },
+          images: {
+            registered: imageRuntime.size,
+            active: activeImages,
+            loaded: loadedImages,
+            elements: surface.querySelectorAll('.decor-image').length,
+          },
+          edges: {
+            total: data.edges.length,
+            geometryCache: edgePathCache.size,
+            spatialBuckets: edgeSpatialGrid.size,
+            spatialRefs: indexedRefs,
+            svgPaths: edgesLayer ? edgesLayer.querySelectorAll('.canvas-edge').length : 0,
+            svgHits: edgesLayer ? edgesLayer.querySelectorAll('.canvas-edge-hit').length : 0,
+            labels: surface.querySelectorAll('.canvas-edge-label').length,
+          },
+          frames: {
+            samples: orderedFrames.length,
+            p95: orderedFrames.length ? orderedFrames[p95Index] : null,
+            over33Ratio: orderedFrames.length
+              ? orderedFrames.filter(function (value) { return value > 33; }).length / orderedFrames.length
+              : 0,
+          },
+          domElements: document.getElementsByTagName('*').length,
+          initMs: perfInitMs,
+          loadMs: perfLoadMs,
+        };
+      };
+      const perfOutput = document.createElement('output');
+      perfOutput.id = 'relatum-perf-snapshot';
+      perfOutput.hidden = true;
+      document.body.appendChild(perfOutput);
+      const updatePerfOutput = function () {
+        if (!perfOutput.isConnected) return;
+        perfOutput.textContent = JSON.stringify(global.__relatumPerfSnapshot());
+      };
+      updatePerfOutput();
+      setInterval(updatePerfOutput, 200);
+    }
 
     if (richMigrationChanged) {
       // 旧语法只在加载时迁移一次；延后通知自动保存，避免在编辑器尚未完成绑定时写盘。
