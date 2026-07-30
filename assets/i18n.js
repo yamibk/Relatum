@@ -236,6 +236,13 @@
     '聊天': 'Chat', '生成卡片网络': 'Create Graph', '生成导图': 'Create Mind Map',
     '扩展导图分支': 'Extend Branch', '基于画布补充': 'Supplement', '整理精炼': 'Refine',
     '聊点什么，或先生成一份画布预览': 'Chat, or generate a canvas preview',
+    '从一个想法开始': 'Start with an idea',
+    '聊天会直接回复；画布操作会先生成预览，确认后才应用。': 'Chat replies directly. Canvas actions show a preview before anything is applied.',
+    '首次使用请先在右上角设置 API Key。': 'First time here? Set your API key from the top-right corner.',
+    '灵感起点': 'Starting points',
+    '牛顿定律': 'Newton’s law',
+    'C 指针': 'C pointers',
+    '研究计划': 'Research plan',
     '发送': 'Send',
     '（→）只用于聊天；六种操作中的画布动作会先生成可勾选预览，确认后才改动画布。':
       '(→) is for chat only. Canvas actions first create an itemized preview and change the canvas only after confirmation.',
