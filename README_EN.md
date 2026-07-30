@@ -158,7 +158,7 @@ Relatum/
 ├─ packaging/                Icon, font, and desktop build helpers
 ├─ build-desktop.ps1         Windows release build entry point
 ├─ start.ps1                 Source-mode launcher
-├─ AI笔记创作指南.md          Prompt guide for AI canvas generation
+├─ AI笔记创作指南.md          External canvas/Markdown authoring reference (not a runtime dependency)
 └─ AGENTS.md                 Architecture and maintenance constraints
 ```
 

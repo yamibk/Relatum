@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-07-29。
+> 最后按源码校准：2026-07-30。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -16,7 +16,7 @@
 
 Relatum 是一个离线优先的本地学习与知识组织工具：
 
-- `editor.html` + `assets/canvas.js` 提供无限画布、卡片/索引/代码/便签/附件、手写、连线、模板、脑图、AI 注入等核心编辑能力。
+- `editor.html` + `assets/canvas.js` 提供无限画布、卡片/索引/代码/便签/附件、手写、连线、模板、导图和受控 AI 计划执行等核心编辑能力。
 - `index.html` + 多个页面模块提供最近画布、分组、收藏、回收站、学习任务、活跃星图、速记墙、日历日记、复习池、专注钟和每日任务。
 - `app.py` 是本地 HTTP 服务和所有持久化逻辑，监听 `127.0.0.1`，默认端口 `8765`，自动寻找空闲端口。
 - `desktop.py` 是 pywebview / WebView2 桌面外壳，启动同一个本地服务并打开桌面窗口。
@@ -58,6 +58,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 路径 | 责任 |
 | --- | --- |
 | `app.py` | 本地 HTTP 服务、路由、持久化、导入导出、AI 代理、独立复习卡片数据库、学习/日历/速记/专注数据。 |
+| `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认。 |
 | `build-desktop.ps1` | PyInstaller onedir 打包，输出 `Relatum-release/Relatum.exe`。脚本保持 ASCII。 |
 | `start.ps1`、`打开画布.bat` | 源码模式启动器，查找 Python 并运行 `app.py`。 |
@@ -69,7 +70,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/editor-onboarding.js` | 编辑器首次使用引导：十一页 CSS 演示浮窗、翻页/重播、中英文案和真实画布四步练习。 |
 | `assets/i18n.js` | 起始页与编辑器共用的界面语言层；保存语言偏好、翻译静态/动态 UI，并保护用户内容区。 |
 | `assets/tooltip.js` | 全局自定义说明框层；接管静态与动态 `title`，同步中英文文案，并处理悬停/键盘焦点与视口避让。 |
-| `assets/canvas.js` | 核心画布引擎，节点/边/手写/附件/批注/选择/历史/脑图/独立表格/AI 注入。 |
+| `assets/canvas.js` | 核心画布引擎，节点/边/手写/附件/批注/选择/历史/导图/独立表格/AI 计划执行。 |
 | `assets/ruler.js` | 画布尺子的无 DOM 几何层；负责数据归一化、坐标旋转、有限长边投影、笔迹线段捕获与节点扫掠碰撞。 |
 | `assets/canvas-import.js` | `.canvas` 内容合并的无 DOM 数据层；负责结构校验、深拷贝、ID/引用重映射、附件策略与节点/墨迹联合边界偏移。 |
 | `assets/node-matrix.js` | “节点矩阵”的无 DOM 数据层；负责行列与数量校验、连续编号、Tab/换行二维粘贴、统一宽度解析和居中网格布局。 |
@@ -77,7 +78,9 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/canvas-scenes.js` | “镜头册”的无 DOM 数据层；负责固定/跟随镜头规范化、创建、更新、删除、排序和失效引用清理。 |
 | `assets/canvas-taskbook.js` | “任务簿” V3 界面的无 DOM 数据层（盘面仍为 `taskbook.version:2`）；负责顶级任务与成员树规范化、独占归属、叶子进度、计时段、枝桠工作流镜像和归档完成副本。 |
 | `assets/markdown-notebook.js` | “笔记坞”的无 DOM 数据层；负责多页笔记规范化、复用共享 Markdown 结构规则生成导图层级、结构统计、画布选区反向序列化和 Enter 列表续写。 |
-| `assets/ai.js` | 右侧 AI 面板、聊天、上下文模式、生成预览、确认后注入。 |
+| `assets/ai.js` | 右侧 AI 助手 V2 面板、聊天、操作推荐、上下文模式、逐项预览和确认应用。 |
+| `assets/ai-canvas-plan.js` | AI 助手 V2 的无 DOM 画布数据层；负责上下文截断与指纹、预览操作依赖、严格导图/扩展子树转换和普通网络的确定性局部布局。 |
+| `AI笔记创作指南.md` | 外部 AI agent / 人工准备 `.canvas` 或 Markdown 笔记时的创作参考；不参与内置 AI 运行，也不打进桌面包。 |
 | `assets/richtext.js` | 画布文字的结构化局部格式层；管理 `textMarks` / `bodyMarks`、旧内联语法迁移、编辑 DOM 与导出序列化。 |
 | `assets/markdown-table.js` | Markdown 表格的无 DOM 数据层；负责解析、规范化、序列化、CSV/TSV 粘贴与正文内表格定位。 |
 | `assets/markdown.js` | 零依赖 Markdown 结构层与安全渲染器；统一标题、列表/任务项、引用、围栏、公式和段落分类，提供 `renderResult()` 的 HTML + Math/Mermaid 特征结果，并保留 `render()` 兼容入口。 |
@@ -108,7 +111,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 源码运行时，`ROOT` 是源码目录。
 - PyInstaller 冻结运行时，静态资源来自 `_internal`，用户数据在 exe 同级目录创建。
-- `SOURCE_ROOT` / `RESOURCE_ROOT` 的区分用于寻找源码资源和打包资源，尤其是 `AI笔记创作指南.md`。
+- `SOURCE_ROOT` 表示源码目录，`RESOURCE_ROOT` 表示源码或 PyInstaller `_internal` 的只读资源目录；运行时静态资产从 `RESOURCE_ROOT/assets` 读取。外部《AI笔记创作指南》不属于运行时资源。
 
 ### 用户数据文件
 
@@ -156,7 +159,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 很多 UI 偏好存在 `localStorage` / `sessionStorage`，不进 `.canvas`：
 
 - 起步页：当前分组、主题、背景风格（`canvas:startBackgroundStyle`，unset 时默认“简洁”）、翻页速度、速记惯性、日历倒数日开关、隐藏特殊页开关（`canvas:hideSpecialPages`，**默认关闭**：只有显式存为 `'1'` 才隐藏，unset 或其他值都正常显示全部页面；开启后书脊只留最近/收藏/分组，滚轮翻页与点击都不进 6 张前置页）、帮助看过状态。
-- 编辑器：顶栏“画布 / 导图 / 图案”（内部 `canvas:mode` 仍只支持 `normal` / `mindmap` / `decor`；旧 `pro` / `edit` 读取时迁移为 `normal`）以及不持久化为模式的临时“工具”入口、节点矩阵上次成功使用的结构设置 `canvas:nodeMatrixDefaults:v1`（行列、类型、内容模式、编号、间距和宽度，不保存粘贴正文）、笔记坞导图上次使用的样式与布局 `canvas:notebookMindmapDefaults:v1`、任务簿归档完成副本开关 `canvas:taskbookArchiveSnapshotEnabled`（默认开启，仅显式 `'0'` 关闭）、全应用中英语言偏好 `canvas:toolbarLanguage`（由 `i18n.js` 在起始页、学习、活跃、日历、复习、专注与编辑器间共用；只翻译界面，不翻译文件名、任务名、便签、日记和画布内容）、首次语言确认 `canvas:initialLanguageChosen:v1`（只在全新用户第一次打开新画布且既无语言偏好也无引导状态时写入 `zh-CN` / `en`）、新手引导状态 `canvas:editorOnboarding:v2`（`in-progress` / `completed` / `skipped`）、三种模式各自的 `canvas:normalSubmode` / `canvas:mindmapSubmode` / `canvas:decorSubmode` 双模式偏好、右侧面板最后一次 Tab 收放选择 `canvas:sidePanelsCollapsed`（主编辑器全局共用，内嵌编辑器不读取也不改写）、镜头册浮窗位置 `canvas:sceneBookPanelPosition:v1`（仅桌面宽屏读取和更新；固定尺寸不随镜头数量变化，窗口尺寸变化时夹回可视区）、底部文字属性带的全局收起偏好 `canvas:textToolbarCollapsed`（未设置时默认收起；显式 `'0'` 展开、`'1'` 收起）、普通画布属性检查器开关 `canvas:inspectorEnabled`、导图属性检查器开关 `canvas:mindmapInspectorEnabled`、图案属性检查器开关 `canvas:decorInspectorEnabled`（三个独立偏好；画布与图案默认开启，导图默认关闭）、文本框拖动自动对齐开关 `canvas:textSnapEnabled`（默认关闭，仅显式 `'1'` 开启）、完整画布模式的 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults` 与简洁画布模式独立的 `canvas:cleanNodeDefaults` / `canvas:cleanEdgeDefaults` 新建默认、文本框新建默认 `canvas:textDefaults` 以及共享柔和色栏镜像保存的高光/字色 `canvas:textHighlightColor` / `canvas:textInlineColor`、自动保存、暗色连线优化、平移/缩放/读者透明度、索引/脑图悬停延迟等。右下角设置面板标题栏提供常驻的小型黑白“恢复默认”入口，确认步骤使用不占面板高度的悬浮卡；操作只清除该面板负责的显式偏好并即时恢复出厂值，界面语言、画布内容、新手引导和其他编辑器偏好不受影响。设置面板会拦截自身的滚轮事件冒泡，面板内滚动不得触发底层画布缩放。
+- 编辑器：顶栏“画布 / 导图 / 图案”（内部 `canvas:mode` 仍只支持 `normal` / `mindmap` / `decor`；旧 `pro` / `edit` 读取时迁移为 `normal`）以及不持久化为模式的临时“工具”入口、节点矩阵上次成功使用的结构设置 `canvas:nodeMatrixDefaults:v1`（行列、类型、内容模式、编号、间距和宽度，不保存粘贴正文）、笔记坞导图上次使用的样式与布局 `canvas:notebookMindmapDefaults:v1`、任务簿归档完成副本开关 `canvas:taskbookArchiveSnapshotEnabled`（默认开启，仅显式 `'0'` 关闭）、AI 助手宽度 `canvas:ai-panel-width:v1`（桌面默认 520px、从左边缘拖动并记住，窄窗口仅临时夹紧且不覆盖偏好，≤640px 改为全屏侧栏）、全应用中英语言偏好 `canvas:toolbarLanguage`（由 `i18n.js` 在起始页、学习、活跃、日历、复习、专注与编辑器间共用；只翻译界面，不翻译文件名、任务名、便签、日记和画布内容）、首次语言确认 `canvas:initialLanguageChosen:v1`（只在全新用户第一次打开新画布且既无语言偏好也无引导状态时写入 `zh-CN` / `en`）、新手引导状态 `canvas:editorOnboarding:v2`（`in-progress` / `completed` / `skipped`）、三种模式各自的 `canvas:normalSubmode` / `canvas:mindmapSubmode` / `canvas:decorSubmode` 双模式偏好、右侧面板最后一次 Tab 收放选择 `canvas:sidePanelsCollapsed`（主编辑器全局共用，内嵌编辑器不读取也不改写）、镜头册浮窗位置 `canvas:sceneBookPanelPosition:v1`（仅桌面宽屏读取和更新；固定尺寸不随镜头数量变化，窗口尺寸变化时夹回可视区）、底部文字属性带的全局收起偏好 `canvas:textToolbarCollapsed`（未设置时默认收起；显式 `'0'` 展开、`'1'` 收起）、普通画布属性检查器开关 `canvas:inspectorEnabled`、导图属性检查器开关 `canvas:mindmapInspectorEnabled`、图案属性检查器开关 `canvas:decorInspectorEnabled`（三个独立偏好；画布与图案默认开启，导图默认关闭）、文本框拖动自动对齐开关 `canvas:textSnapEnabled`（默认关闭，仅显式 `'1'` 开启）、完整画布模式的 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults` 与简洁画布模式独立的 `canvas:cleanNodeDefaults` / `canvas:cleanEdgeDefaults` 新建默认、文本框新建默认 `canvas:textDefaults` 以及共享柔和色栏镜像保存的高光/字色 `canvas:textHighlightColor` / `canvas:textInlineColor`、自动保存、暗色连线优化、平移/缩放/读者透明度、索引/脑图悬停延迟等。右下角设置面板标题栏提供常驻的小型黑白“恢复默认”入口，确认步骤使用不占面板高度的悬浮卡；操作只清除该面板负责的显式偏好并即时恢复出厂值，界面语言、画布内容、新手引导和其他编辑器偏好不受影响。设置面板会拦截自身的滚轮事件冒泡，面板内滚动不得触发底层画布缩放。
 - 右下角设置面板使用高不透明度纸白/墨黑表面，不运行持续背景模糊；开合、恢复确认和完成反馈都是一次有限过渡，“已恢复”在同一按钮槽位交叉替换，不得与恢复按钮叠字。
 - 右下角设置面板的“视图”区只保留“定位最近节点”和对应空格键开关；已删除独立的偏好缩放比例与“偏好缩放并居中”，正常滚轮缩放、左下角实时缩放读数和画布视口保存不受影响。
 - 笔记坞顶栏快捷入口偏好使用 `canvas:notebookTopbarShortcut`，未设置时默认关闭；开启后在“工具 / Tools”右侧显示“笔记 / Notes”，取消后立即隐藏。它只是一项全局编辑器 UI 偏好，不写入 `.canvas`。
@@ -197,7 +200,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 专注：`/api/focus-log`、`/api/focus-session-update`、`/api/focus-session-delete`
 - 每日任务：`/api/daily-create`、`/api/daily-update`、`/api/daily-delete`、`/api/daily-toggle`、`/api/daily-add-minutes`、`/api/daily-reorder`、`/api/daily-group-create`、`/api/daily-group-update`、`/api/daily-group-delete`、`/api/daily-tree`
 - 日历：`/api/diary-save`、`/api/diary-delete`、`/api/calendar-pins-save`、`/api/countdown-save`
-- AI：`/api/ai-chat`、`/api/ai-compose`、`/api/ai-test`、`/api/ai-config`
+- AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
 
 ### HTTP 与并发边界
 
@@ -300,7 +303,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - Mermaid fence 走 `MermaidRenderer` 离线按需渲染；首次真实图表才插入 `vendor/mermaid/mermaid.min.js`。
 - 代码节点绕开 Markdown 渲染，标题从代码内容/语言推导。
 - 手写层包含笔、荧光笔、箭头、橡皮、压力/倾斜/书法效果。撤销历史包含节点、边、手写。
-- 历史栈限制约 50。AI 注入、模板实例化等批量操作应保持可整体撤销。
+- 历史栈限制约 50。AI 计划应用、模板实例化等批量操作应保持可整体撤销。
 
 - 表格收尾交互以当前实现为准：紧凑表格右键或 `Ctrl+-` 打开的行列菜单同时提供“上/下插入行、左/右插入列”和原有删除项，不再是只含删除的菜单；表头上方插入行禁用，避免破坏首行表头语义。F 工作室的“尺寸”菜单复用紧凑态字号与内边距测量，支持只展开确实被省略的列、全部按内容适宽、按当前总宽等分所有列以及恢复默认列宽/行高；列宽仍限制在 72–480px，每次批量尺寸变化只提交一条历史。矩阵外观额外显示“转置”，按完整二维数据交换行列、重置对齐与展示尺寸并提交一条历史；普通表格隐藏该入口。以上操作只改 Markdown 真源或 `tableLayout`，不得引入第二份二维数据。
 
@@ -319,10 +322,10 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 模板库在 `data/templates.json`，所有画布共享。
 - 保存模板只保留“纯结构”：可读节点、边、允许的装饰形状。图片、PDF、MD 附件不进入模板。
-- AI 注入会剥离样式字段以保持安全和统一；模板实例化会保留样式字段。
+- 模板实例化会保留模板中的样式字段；AI V2 的样式边界由计划协议和执行器单独控制，二者不要共用一条宽松注入路径。
 - 图案模式“组合”分类内置研究链、系统边界、对照实验、论证框架、验证闭环、故障树、研究问题画布、V 型验证、风险四象限、决策树十套只读结构，分别覆盖线性、边界、汇聚、分支、循环、层级树、中心辐射、V 型追踪、二维矩阵和两级决策分叉；只有拓扑或工作流价值明显不同的结构才可继续增加，不得用换词扩充数量。组合可复用真实卡片、连线、纯文本框和少量成熟装饰图案，预览与插入必须读取同一份结构数据，不使用额外图片资源；需要曲线表达的组合连线统一使用“枝桠曲线” `branch`，不使用“平滑曲线” `smooth`。它们不写入模板库，单击插入可见画布中心、拖动可精确落位；系统边界仍只是无成员关系的装饰盒。组合成功落地后自动进入用户原先记忆的画布简洁/完整子模式，并在模式切换清理选择之后重新选中本批全部节点，使卡片可立即整体移动或双击编辑；取消拖放不得切换模式，模式切换不进入撤销历史，整批插入仍只产生一条撤销历史。模板裁剪只保留选区内部的 `groupMemberIds`，实例化时与文字绑定、连线端点一起重映射，重复插入不得互相引用。
 
-### AI 注入接口
+### AI 计划接口
 
 `CanvasModule` 暴露的关键方法：
 
@@ -334,9 +337,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - `removeArchivedNodes`
 - `revealNode`
 - `setExternalOverlayOpen`
-- `injectCanvas`
 - `instantiateTemplate`
 - `describeCanvas`
+- `describeAIContext`
+- `describeAIPresentation`
+- `applyAIPlan`
+- `createMindmapFromOutline`
 - `exportImage`
 - `applyMindmap`
 - `applyMindmapStyle`
@@ -347,7 +353,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - `equalizeMindmapLevelWidths`
 - `repairMindmapOverlaps`
 
-`describeCanvas` 只给 AI 读取可读节点和连线摘要，不发送装饰、附件正文、坐标等。`injectCanvas` 只接受 `card/index/preview/sticky/code`，并把新增内容放在当前视野中心附近。
+`describeCanvas` 是给新手引导等调用方判断可读内容变化的轻量快照，不是 AI 协议。AI V2 只通过 `describeAIContext` / `describeAIPresentation` 读取受限上下文，并只通过 `applyAIPlan` 原子执行用户确认后的计划；不要重新引入绕过预览的通用 AI 注入器。
 
 ## 7. 起步页和页面模块
 
@@ -437,14 +443,21 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - AI 配置存在 `data/ai.json`：`apiKey`、`model`、`baseUrl`。前端只看到是否有 Key 和末尾掩码，不长期保存完整 Key。
 - 默认 `baseUrl` 是 `https://api.deepseek.com`，默认模型是 `deepseek-chat`。调用接口是 OpenAI 兼容 `/chat/completions`。
-- 单次请求上下文最多保留 40 条消息；输出上限给到 `32768`，超长会回传截断提示。
-- 后端启用 DeepSeek thinking 参数；其他 OpenAI 兼容服务通常会忽略未知字段或自行处理。改这块前要测试对应服务。
-- AI 面板有两类行为：
-  - 普通发送：只在右侧对话区回复，不改画布。
-  - 生成到画布/挂到选中/基于画布补充/整理精炼：调用 `/api/ai-compose`，后端要求模型只输出 JSON，解析后布局，前端先展示预览，用户点“放进画布”才调用 `CanvasModule.injectCanvas`。
-- `AI笔记创作指南.md` 是 compose 的完整提示词资源。源码模式从项目根读取；冻结包里如果缺失，会退回内置精简提示。
-- compose 允许的节点类型是 `card/index/preview/sticky/code`，最多 40 个。端点可以是本次生成节点下标，或上下文里已有节点 id。
+- “聊天”不发送内置 system 提示词，不预设角色、语气、语言或 Markdown 格式；连续对话只发送最近的用户/助手消息，单次请求只发送当前用户消息。五种画布操作仍必须使用 `ai_plan.py` 的严格 V2 计划提示词，不能因聊天无提示词而一并移除。
+- 单次请求上下文最多保留 40 条消息。普通聊天输出上限为 `8192` 且不强制深度思考；画布计划使用 `32768` 与高质量思考预算，超长会返回明确错误，不会把截断 JSON 当成可执行计划。
+- `call_ai_chat()` 会给高质量任务尝试 `thinking` / `reasoning_effort`，给结构化任务尝试 `response_format`。OpenAI 兼容服务以 400/422 明确拒绝这些可选参数时，只剥离被拒绝的能力组重试一次，并按 `baseUrl + model` 在当前进程缓存；不要把缓存落盘。
+- V2 后端入口是 `/api/ai-plan`。请求动作固定为 `create_graph/create_mindmap/extend_branch/supplement/refine`，携带页面内对话、界面语言、画布语义上下文和编辑器表现快照；响应是只读的 `plan.version:2`，接口本身绝不写画布。
+- V2 计划只允许创建 `card/index/preview/sticky/code/table`，已有节点只能由 `refine` 更新标题/正文，禁止删节点和改类型。已有对象必须使用请求上下文里的真实 ID；新增节点使用 `n1/n2…` 临时引用。普通计划拒绝自连和重复边；导图计划只用 `card`，并校验单根、无循环、无多父级和无交叉边。
+- V2 默认提示模型在用户未指定时生成 6–12 个节点，解析器硬拒绝超过 40 个新增节点。首次回复校验失败会自动要求模型完整修复一次；第二次仍失败就返回明确错误，不降级为可注入内容。
+- `CanvasModule.describeAIContext({scope})` 是 V2 的唯一画布语义入口。选区最多 60 个节点、每节点 2000 字；整张画布最多 100 个节点、每节点 600 字；两者总正文最多 60000 字、连线最多 200 条。它只发送 `card/index/preview/sticky/code/table`，排除装饰、附件、任务簿投影、计时器和尺子；上下文含节点位置、是否属于导图、节点/连线内容指纹与截断报告，选区另含严格导图根与父子关系报告。
+- `CanvasModule.describeAIPresentation()` 返回当前画布/导图表现快照。普通网络优先使用当前简洁/完整模式的显式新建连线默认，没有显式曲线时固定使用 `branch`（枝桠曲线）；导图优先使用当前显式曲线，否则跟随当前预设，预设缺失回退经典纸张预设的枝桠曲线。
+- `CanvasModule.applyAIPlan(plan, options)` 是 V2 的原子执行入口。它按预览勾选过滤操作，默认不勾选连线移除，取消新节点会丢弃依赖边，导图根不可取消、取消父节点会级联取消子树；应用前核对节点标题/正文/类型和连线端点/标签指纹。更新只写原节点标题/正文，未修改字段、样式、批注和默认位置保留；普通网络只布局新增节点，只有显式 `relayoutSelection:true` 才移动目标选区。失败无通知回滚，成功只压入一条历史并触发一次 `onChange`。
+- 新建导图通过现有 `createMindmapFromOutline()` 接入唯一 `mindmapRoot`、预设样式、布局、聚焦与导图模式；扩展分支要求实时单选一个有效导图节点，只接入严格新子树、继承父分支样式并仅排版新子树。两条路径都由 AI 外层统一提交一次历史和保存。
+- `assets/ai.js` 已迁到 V2 面板：固定展示聊天、生成卡片网络、生成导图、扩展导图分支、基于画布补充、整理精炼六种操作；模式与选区只改变推荐，不自动执行。补充/整理明确选择“选区 / 整张画布”，有选区时默认选区；聊天仍走 `/api/ai-chat`，五种画布动作只走 `/api/ai-plan`。AI 助手在桌面端是距窗口 12px 的悬浮停靠侧栏，默认 520px，允许从左边缘在 440px 到 `min(820px,72vw)` 间拖宽、方向键调节和双击复位；设置与帮助覆盖主工作区而不挤压底部编辑器，≤640px 退化为不可拖宽的全屏侧栏。六种操作使用三列两行常驻分段控件，输入区默认三行并在达到 `min(240px,28vh)` 后内部滚动；预览清单不再建立独立纵向滚动区，AI 内必要滚动容器使用无系统箭头的自动显现细滚动条。输入区只保留一个随操作切换的主按钮：聊天时显示发送箭头，画布操作时显示“生成预览”，Enter 执行当前所选操作，Shift+Enter 换行。问号帮助使用“3 步上手 / 六个按钮 / 选区与预览 / 设置与排错”四页操作速查，不保留左侧圆点或横向滚动目录；六个操作卡片的“使用这个”只关闭教程、选中真实操作并聚焦输入框，不填词、不发送也不改画布。后五种画布操作各有两条中英文示例指令，点击示例会选择对应操作、关闭教程并把文字带入输入框，但不发送、不生成预览、不改动画布，且保留当前目标范围。
+- V2 预览显示动作、目标、节点/连线数、导图根与层级、最终线型、截断警告和摘要。节点与连线逐项勾选；新增/更新默认勾选，连线移除默认不勾选；取消新节点会同步取消依赖边，导图按子树级联。普通画布的“重新排版所选范围”默认关闭；预览后画布指纹变化时拒绝应用并要求重生成。
+- 旧 `/api/ai-compose`、compose 提示词/解析器和 `CanvasModule.injectCanvas` 已删除。`AI笔记创作指南.md` 只保留为外部创作参考，不是运行时提示词或打包资源；不要把这些旧链路接回面板。
 - 前端 AI 上下文模式有“连续对话”和“单次请求”，偏好键是 `canvas:ai-context-mode:v1`。聊天历史是页面内存，刷新后重新开始。
+- AI V2 不新增用户数据文件、不迁移或清空 `data/ai.json`，也不提升 `.canvas` 文件版本。计划接口只读上下文；只有用户在预览中确认后，前端才按现有保存链写画布。
 
 ## 9. 导入、导出、归档
 
@@ -476,13 +489,24 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 Python 改动：
 
 ```powershell
-python -m py_compile .\app.py .\desktop.py .\packaging\make_icon.py .\packaging\make_font_subset.py
+python -m py_compile .\app.py .\ai_plan.py .\desktop.py .\packaging\make_icon.py .\packaging\make_font_subset.py
+```
+
+改动 AI 计划协议、提示词、结构修复或 OpenAI 兼容参数降级时，还要运行：
+
+```powershell
+python -m unittest .\tests\test_ai_plan.py
+node .\tests\ai-canvas-plan-regression.js
+node .\tests\ai-canvas-plan-contract.js
+node .\tests\ai-panel-v2-contract.js
 ```
 
 前端 JS 改动：
 
 ```powershell
 node --check .\assets\canvas.js
+node --check .\assets\ai.js
+node --check .\assets\ai-canvas-plan.js
 node --check .\assets\editor.js
 node --check .\assets\i18n.js
 node --check .\assets\ruler.js
@@ -600,7 +624,7 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 
 - 先读 `README.md` 的“构建 Windows 桌面版”章节。
 - 只在用户要求或任务确实需要时运行 `build-desktop.ps1`。
-- 验收 `Relatum-release/Relatum.exe`、同级 `Relatum.exe.config`、`_internal/assets/`、`_internal/AI笔记创作指南.md`，并确认没有把 `canvases/`、`data/` 打进包里。
+- 验收 `Relatum-release/Relatum.exe`、同级 `Relatum.exe.config`、`_internal/assets/`，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
 
 ## 12. 常见坑
 
@@ -621,7 +645,7 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 - 新增入口文件或模块：更新“源码地图”。
 - 新增持久化文件、字段、localStorage key：更新“运行时和数据位置”。
 - 新增/删除 API：更新“后端路由总览”。
-- 改节点、边、附件、模板、AI 注入：更新“画布编辑器契约”或“AI 功能现状”。
+- 改节点、边、附件、模板、AI 计划执行：更新“画布编辑器契约”或“AI 功能现状”。
 - 改桌面/构建：更新“桌面壳和打包”。
 - 改验证方式：更新“验证清单”。
 
