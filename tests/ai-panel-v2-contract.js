@@ -93,6 +93,12 @@ assert(/\.ai-panel\s*\{[\s\S]*?border-radius:\s*24px;/.test(styles),
   'AI 工作台必须使用 24px 外框圆角');
 assert(/\.ai-action-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/.test(styles),
   '桌面六操作必须使用三列两行布局');
+assert(/\.ai-empty-templates\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/.test(styles)
+  && (editor.match(/class="ai-empty-template-index"/g) || []).length === 3,
+  '空状态的三条灵感起点必须在常见桌面高度下一行完整显示');
+assert(/\.ai-composer\s*\{[\s\S]*?margin:\s*0 10px 10px;[\s\S]*?border-radius:\s*18px;/.test(styles)
+  && /\.ai-action-grid\s*\{[\s\S]*?padding:\s*3px;[\s\S]*?background:\s*#f0f0ee;/.test(styles),
+  '六种操作与输入区必须收在轻量悬浮控制坞和统一分段底座中');
 assert(/\.ai-input\s*\{[\s\S]*?min-height:\s*84px;[\s\S]*?max-height:\s*min\(240px,\s*28vh\);/.test(styles),
   '输入框必须默认约三行，并限制最大高度');
 assert(/\.ai-preview-checklist\s*\{[\s\S]*?max-height:\s*none;[\s\S]*?overflow:\s*visible;/.test(styles),
