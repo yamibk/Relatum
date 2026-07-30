@@ -997,6 +997,7 @@
       });
     }
     const RichText = global.RelatumRichText;
+    const AIPlanCanvas = global.RelatumAIPlanCanvas;
     let richMigrationChanged = false;
 
     function richMarksKey(field) { return field === 'body' ? 'bodyMarks' : 'textMarks'; }
@@ -24420,7 +24421,8 @@
     }
 
     // ── 撤销 / 重做 ────────────────────────
-    function applySnapshot(snap) {
+    function applySnapshot(snap, options) {
+      options = options || {};
       const now = Date.now();
       const liveTimers = new Map();
       const liveTaskbooks = new Map();
@@ -24520,7 +24522,7 @@
       // 阶段 4：DOM 推倒重建后高亮 class 没了，搜索开着就重算（撤销/重做）
       if (searchOpen) runSearch(searchInput ? searchInput.value : '', false);
       redrawMinimap();   // 阶段 4：撤销/重做后刷新小地图
-      onChange();
+      if (options.notify !== false) onChange();
     }
 
     function undo() {
@@ -25938,107 +25940,8 @@
       externalOverlayOpen = !!open;
     };
 
-    // ── 阶段 2：注入 AI 生成的「卡片 + 连线」到当前画布 ───────────────
-    // payload.nodes：后端力导向已排好的相对坐标（带 text/body/kind/color/language/indexDepth）；
-    // payload.edges：from/to 是 nodes 的下标（不是 id），方向 = 父→子。
-    // 全程复用既有的建节点/建连线/撤销/保存路径——注入 = 一次可整体 Ctrl+Z 撤销的批量新建。
-    global.CanvasModule.injectCanvas = function (payload, opts) {
-      payload = payload || {};
-      opts = opts || {};
-      const inNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
-      const inEdges = Array.isArray(payload.edges) ? payload.edges : [];
-      if (!inNodes.length) return { ok: false, count: 0 };
-      if (editingNodeId !== null) commitNodeEdit();
-      if (editingEdgeId !== null) commitEdgeEdit();
-      if (textReaderEditing) finishTextReaderEdit();
-
-      const ALLOWED_KINDS = { card: 1, index: 1, preview: 1, sticky: 1, code: 1 };
-      const NAMED_COLORS = { gray: 1, blue: 1, green: 1, yellow: 1, red: 1, purple: 1 };
-
-      // 量后端给的相对坐标包围盒，整体平移到当前视野中央；rightInset 让出右侧 AI 面板宽度，避免落在面板下面。
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      inNodes.forEach(function (n) {
-        const x = Number(n.x) || 0, y = Number(n.y) || 0;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      });
-      if (!isFinite(minX)) { minX = minY = maxX = maxY = 0; }
-      const vRect = viewport.getBoundingClientRect();
-      const rightInset = Math.max(0, Number(opts.rightInset) || 0);
-      const center = clientToSurface(vRect.left + (vRect.width - rightInset) / 2,
-                                     vRect.top + vRect.height / 2);
-      const offX = center.x - (minX + maxX) / 2;
-      const offY = center.y - (minY + maxY) / 2;
-
-      const newIds = [];
-      const idByIndex = [];
-      inNodes.forEach(function (raw, i) {
-        const kind = ALLOWED_KINDS[raw.kind] ? raw.kind : 'card';
-        const node = {
-          id: newNodeId(),
-          x: Math.round((Number(raw.x) || 0) + offX),
-          y: Math.round((Number(raw.y) || 0) + offY),
-          text: String(raw.text || ''),
-          kind: kind,
-        };
-        if (raw.body) node.body = String(raw.body);
-        if (NAMED_COLORS[raw.color]) node.color = raw.color;
-        if (kind === 'code') {
-          node.language = normalizeCodeLanguage(raw.language);
-          if (!node.text) node.text = codeTitleFromBody(node.body || '', node.language);
-        }
-        if (kind === 'index') {
-          const d = parseInt(raw.indexDepth, 10);
-          if (Number.isFinite(d) && d >= 1 && d <= 6) node.indexDepth = d;
-        }
-        if (isStickyNode(node) && !node.bgColor) node.bgColor = randomStickyColor();
-        data.nodes.push(node);
-        indexNodeData(node);
-        const el = createNodeEl(node);     // 内部已渲染标题+正文+公式+配色
-        surface.appendChild(el);
-        nodeMap.set(node.id, el);
-        spawnNodeEl(el);
-        idByIndex[i] = node.id;
-        newIds.push(node.id);
-      });
-
-      // 端点：数字=本批新节点的下标；字符串=画布上已有节点的 id（阶段3"基于画布补充"用，连回已有卡片）。
-      function resolveEndpoint(ep) {
-        if (typeof ep === 'number') return idByIndex[ep] || null;
-        if (typeof ep === 'string') return findNode(ep) ? ep : null;
-        return null;
-      }
-      inEdges.forEach(function (e) {
-        const from = resolveEndpoint(e.from);
-        const to = resolveEndpoint(e.to);
-        if (!from || !to || from === to) return;
-        const edge = {
-          id: newEdgeId(), from: from, to: to,
-          text: String(e.text || ''), curve: 'smooth', color: '#bcbcbc',
-        };
-        data.edges.push(edge);
-        const refs = createEdgeEls(edge);
-        edgeMap.set(edge.id, refs);
-        updateEdgePath(edge);
-        spawnEdgeEls(refs);
-      });
-
-      data.edges.forEach(updateEdgePath);
-      redrawMinimap();
-      if (newIds.length) {
-        selectNodes(newIds, false);
-        lastCreatedNodeId = newIds[newIds.length - 1];
-      }
-      hideOnboardingHint();
-      pushHistory();      // 整批进撤销栈：不满意一次 Ctrl+Z 撤掉
-      notify();           // 触发自动保存 + 刷新索引/小地图
-      return { ok: true, count: newIds.length };
-    };
-
     // ── 模板落地：把存好的模板（一段 .canvas 身体）保真克隆进当前画布，模板中心对到落点 ──
-    // 与 injectCanvas 同骨架，但**保留全部样式字段**（injectCanvas 是给 AI 用、故意剥样式）；
+    // 模板保留全部样式字段；
     // 每次落地都重生成 id 并按映射改写连线 from/to，所以同一模板拖多次互不串扰，整批一次 Ctrl+Z 撤掉。
     global.CanvasModule.instantiateTemplate = function (tpl, clientPt) {
       if (!tpl || !Array.isArray(tpl.nodes) || !tpl.nodes.length) return { ok: false, count: 0 };
@@ -26125,9 +26028,8 @@
       return { ok: true, count: newIds.length, nodeIds: newIds.slice() };
     };
 
-    // ── 阶段 3：把当前画布内容打包给 AI（"基于这张图补充 / 美化"用）──────
-    // 只摘正文节点(index/preview/card/sticky/code，不含装饰/图片/附件)，带 id 让 AI 能用 edges 连回已有卡片；
-    // 正文截断控制请求体大小。装饰、坐标、样式都不发——AI 只需要"有哪些卡片、讲什么、谁连谁"。
+    // ── 轻量可读快照：供新手引导等只关心内容变化的调用方使用 ───────
+    // AI V2 使用下方 describeAIContext() 的限额、指纹和导图语义，不再复用这个旧格式。
     global.CanvasModule.describeCanvas = function (opts) {
       opts = opts || {};
       const maxNodes = opts.maxNodes || 60;
@@ -26157,6 +26059,876 @@
       });
       return { nodes: outNodes, edges: outEdges, scope: selectedOnly ? 'selection' : 'canvas' };
     };
+
+    // ── AI 助手 V2：受限语义上下文 + 表现快照 + 原子计划执行 ─────────
+    const AI_NODE_KINDS = new Set(['card', 'index', 'preview', 'sticky', 'code', 'table']);
+    const AI_ACTIONS = new Set(['create_graph', 'create_mindmap', 'extend_branch', 'supplement', 'refine']);
+    const AI_COLOR_ROLE_TO_NODE_COLOR = {
+      neutral: 'gray',
+      definition: 'blue',
+      example: 'green',
+      warning: 'red',
+      summary: 'purple',
+      tip: 'yellow',
+    };
+
+    function aiSerializableNode(node) {
+      if (!node || !AI_NODE_KINDS.has(node.kind)) return null;
+      let title = richSource(node, 'text');
+      let body = '';
+      if (isCodeNode(node) || isTableNode(node)) body = String(node.body || '');
+      else if (isBodyNode(node)) body = richSource(node, 'body');
+      return {
+        id: node.id,
+        kind: node.kind,
+        title: title,
+        body: body,
+        x: Number(node.x) || 0,
+        y: Number(node.y) || 0,
+        mindmapMember: editIsMindmapNode(node),
+        mindmapRoot: !!node.mindmapRoot,
+      };
+    }
+
+    function describeAIContext(options) {
+      options = options || {};
+      if (!AIPlanCanvas || typeof AIPlanCanvas.describeContext !== 'function') {
+        return {
+          scope: options.scope === 'selection' ? 'selection' : 'canvas',
+          selectedIds: [],
+          nodes: [],
+          edges: [],
+          truncation: { truncated: false },
+        };
+      }
+      const selectedIds = [...selectedNodeIds];
+      const serializedNodes = data.nodes.map(aiSerializableNode).filter(Boolean);
+      const context = AIPlanCanvas.describeContext({
+        nodes: serializedNodes,
+        edges: data.edges.map(function (edge) {
+          return {
+            id: edge.id,
+            from: edge.from,
+            to: edge.to,
+            text: String(edge.text || ''),
+          };
+        }),
+        selectedIds: selectedIds,
+      }, {
+        scope: options.scope === 'selection' ? 'selection' : 'canvas',
+      });
+      if (context.scope === 'selection') {
+        const included = new Set(context.selectedIds);
+        context.ignoredCount = selectedIds.filter(function (id) { return !included.has(id); }).length
+          + selectedTimerIds.size + (selectedArrowId ? 1 : 0) + (rulerSelected ? 1 : 0);
+      } else {
+        context.ignoredCount = data.nodes.length - serializedNodes.length
+          + timerList().length + (data.ruler ? 1 : 0);
+      }
+      return context;
+    }
+
+    function readJSONPreference(key) {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function aiNormalSubmode() {
+      const datasetValue = document.body && document.body.dataset.normalSubmode;
+      if (datasetValue === 'full' || datasetValue === 'clean') return datasetValue;
+      try { return localStorage.getItem('canvas:normalSubmode') === 'full' ? 'full' : 'clean'; }
+      catch (error) { return 'clean'; }
+    }
+
+    function describeAIPresentation() {
+      const normalSubmode = aiNormalSubmode();
+      const normalNodeDefaults = readNodeDefaults(normalSubmode);
+      const normalEdgeDefaults = readJSONPreference(
+        normalSubmode === 'full' ? 'canvas:proEdgeDefaults' : 'canvas:cleanEdgeDefaults',
+      );
+      const arrow = ['none', 'start', 'end', 'both'].indexOf(normalEdgeDefaults.arrow) >= 0
+        ? normalEdgeDefaults.arrow : 'none';
+      const normalResolvedEdge = {
+        curve: EDGE_CURVES.indexOf(normalEdgeDefaults.curve) >= 0 ? normalEdgeDefaults.curve : 'branch',
+        lineStyle: EDGE_LINE_STYLES.indexOf(normalEdgeDefaults.lineStyle) >= 0
+          ? normalEdgeDefaults.lineStyle : 'solid',
+        arrow: arrow,
+        color: normalizeHexColor(normalEdgeDefaults.color) || '#000000',
+        width: Number.isFinite(Number(normalEdgeDefaults.width))
+          ? clampValue(Number(normalEdgeDefaults.width), 0.5, 8) : 1.5,
+        arrowSize: Number.isFinite(Number(normalEdgeDefaults.arrowSize))
+          ? clampValue(Number(normalEdgeDefaults.arrowSize), 6, 28) : 12,
+        explicitCurve: EDGE_CURVES.indexOf(normalEdgeDefaults.curve) >= 0,
+      };
+      const dataset = document.body && document.body.dataset ? document.body.dataset : {};
+      const presetId = MINDMAP_STYLE_PRESETS[dataset.mindmapPreset] ? dataset.mindmapPreset : 'paper';
+      const preset = mindmapPreset(presetId);
+      const curveOverride = EDGE_CURVES.indexOf(dataset.mindmapCurve) >= 0
+        ? dataset.mindmapCurve : 'preset';
+      const lineStyleOverride = EDGE_LINE_STYLES.indexOf(dataset.mindmapLineStyle) >= 0
+        ? dataset.mindmapLineStyle : 'preset';
+      const levelGap = clampValue(Number(dataset.mindmapLevelGap) || 92, 56, 180);
+      const branchGap = clampValue(Number(dataset.mindmapBranchGap) || 32, 14, 96);
+      const radialGap = clampValue(Number(dataset.mindmapRadialGap) || 220, 140, 360);
+      let density = 'custom';
+      if (levelGap === 68 && branchGap === 20 && radialGap === 180) density = 'compact';
+      else if (levelGap === 92 && branchGap === 32 && radialGap === 220) density = 'balanced';
+      else if (levelGap === 122 && branchGap === 46 && radialGap === 270) density = 'relaxed';
+      return {
+        mode: currentMode(),
+        normalSubmode: normalSubmode,
+        language: document.documentElement.dataset.uiLanguage === 'en' ? 'en' : 'zh-CN',
+        normal: {
+          nodeDefaults: JSON.parse(JSON.stringify(normalNodeDefaults || {})),
+          edgeDefaults: JSON.parse(JSON.stringify(normalEdgeDefaults || {})),
+          resolvedEdge: normalResolvedEdge,
+        },
+        mindmap: {
+          preset: presetId,
+          layout: ['auto', 'balanced', 'right', 'left', 'down', 'radial'].indexOf(dataset.mindmapLayout) >= 0
+            ? dataset.mindmapLayout : 'balanced',
+          density: density,
+          levelGap: levelGap,
+          branchGap: branchGap,
+          radialGap: radialGap,
+          centerSize: clampValue(Number(dataset.mindmapCenterSize) || 110, 65, 155),
+          branchSize: clampValue(Number(dataset.mindmapBranchSize) || 100, 65, 155),
+          leafSize: clampValue(Number(dataset.mindmapLeafSize) || 85, 65, 155),
+          curve: curveOverride,
+          lineStyle: lineStyleOverride,
+          resolvedCurves: {
+            branch: curveOverride === 'preset' ? (preset.branch.curve || 'branch') : curveOverride,
+            leaf: curveOverride === 'preset' ? (preset.leaf.curve || 'branch') : curveOverride,
+          },
+        },
+      };
+    }
+
+    function aiFailure(reason, detail) {
+      return { ok: false, reason: reason, detail: detail || '' };
+    }
+
+    function aiRestoreSelection(selection) {
+      selectedNodeIds.clear();
+      (selection.nodes || []).forEach(function (id) {
+        if (findNode(id)) selectedNodeIds.add(id);
+      });
+      selectedEdgeIds.clear();
+      (selection.edges || []).forEach(function (id) {
+        if (findEdge(id)) selectedEdgeIds.add(id);
+      });
+      selectedTimerIds.clear();
+      (selection.timers || []).forEach(function (id) {
+        if (findTimer(id)) selectedTimerIds.add(id);
+      });
+      selectedArrowId = selection.arrow || null;
+      rulerSelected = !!selection.ruler;
+      applySelection();
+      renderRuler();
+    }
+
+    function aiSelectionSnapshot() {
+      return {
+        nodes: [...selectedNodeIds],
+        edges: [...selectedEdgeIds],
+        timers: [...selectedTimerIds],
+        arrow: selectedArrowId,
+        ruler: rulerSelected,
+      };
+    }
+
+    function aiLiveNodeFingerprint(node) {
+      const serialized = aiSerializableNode(node);
+      return serialized && AIPlanCanvas ? AIPlanCanvas.nodeFingerprint(serialized) : '';
+    }
+
+    function aiLiveEdgeFingerprint(edge) {
+      if (!edge || !AIPlanCanvas) return '';
+      return AIPlanCanvas.edgeFingerprint({
+        id: edge.id,
+        from: edge.from,
+        to: edge.to,
+        text: String(edge.text || ''),
+      });
+    }
+
+    function validateAIExpectations(plan) {
+      const expectations = plan && plan.expectations;
+      if (!expectations || typeof expectations !== 'object') return aiFailure('preview-stale', 'missing-expectations');
+      const nodeExpectations = expectations.nodes && typeof expectations.nodes === 'object'
+        ? expectations.nodes : {};
+      const edgeExpectations = expectations.edges && typeof expectations.edges === 'object'
+        ? expectations.edges : {};
+      const nodeIds = Object.keys(nodeExpectations);
+      for (let index = 0; index < nodeIds.length; index++) {
+        const id = nodeIds[index];
+        const node = findNode(id);
+        if (!node || aiLiveNodeFingerprint(node) !== String(nodeExpectations[id] || '')) {
+          return aiFailure('preview-stale', 'node:' + id);
+        }
+      }
+      const edgeIds = Object.keys(edgeExpectations);
+      for (let index = 0; index < edgeIds.length; index++) {
+        const id = edgeIds[index];
+        const edge = findEdge(id);
+        if (!edge || aiLiveEdgeFingerprint(edge) !== String(edgeExpectations[id] || '')) {
+          return aiFailure('preview-stale', 'edge:' + id);
+        }
+      }
+      return { ok: true };
+    }
+
+    function aiRichValue(value) {
+      const source = String(value == null ? '' : value);
+      if (!RichText || typeof RichText.parseLegacy !== 'function') {
+        return { text: source, marks: [] };
+      }
+      const parsed = RichText.parseLegacy(source);
+      return { text: parsed.text, marks: parsed.marks || [] };
+    }
+
+    function aiCanonicalTable(value) {
+      const syntax = global.MarkdownTable;
+      if (!syntax || typeof syntax.parse !== 'function' || typeof syntax.serialize !== 'function') {
+        throw new Error('table-runtime-missing');
+      }
+      const parsed = syntax.parse(String(value || ''), { ensureBodyRow: false });
+      if (!parsed || !parsed.ok) throw new Error('invalid-table');
+      return syntax.serialize(parsed.model);
+    }
+
+    function aiPreparedNodeOperation(item) {
+      if (!item || (item.op !== 'create' && item.op !== 'update')) throw new Error('invalid-node-operation');
+      const kind = item.op === 'create'
+        ? String(item.kind || 'card')
+        : String((findNode(item.id) || {}).kind || '');
+      if (!AI_NODE_KINDS.has(kind)) throw new Error('invalid-node-kind');
+      const prepared = { item: item, kind: kind };
+      if (Object.prototype.hasOwnProperty.call(item, 'title')) {
+        prepared.title = aiRichValue(item.title);
+      }
+      if (Object.prototype.hasOwnProperty.call(item, 'body')) {
+        if (kind === 'table') prepared.tableBody = aiCanonicalTable(item.body);
+        else if (kind === 'code') prepared.codeBody = String(item.body || '');
+        else prepared.body = aiRichValue(item.body);
+      }
+      if (item.op === 'update') {
+        if (!findNode(item.id)) throw new Error('missing-node');
+        if ((kind === 'code' || kind === 'sticky') && prepared.title && !Object.prototype.hasOwnProperty.call(item, 'body')) {
+          throw new Error('body-only-node');
+        }
+        if (kind === 'index' && Object.prototype.hasOwnProperty.call(item, 'body')) {
+          throw new Error('index-body');
+        }
+      }
+      return prepared;
+    }
+
+    function aiStoreRich(node, field, parsed) {
+      node[field] = parsed.text;
+      const key = field === 'body' ? 'bodyMarks' : 'textMarks';
+      if (parsed.marks && parsed.marks.length) node[key] = parsed.marks.map(function (mark) {
+        return Object.assign({}, mark);
+      });
+      else delete node[key];
+    }
+
+    function aiApplyPreparedContent(node, prepared, creating) {
+      const kind = prepared.kind;
+      if (kind === 'code') {
+        if (prepared.codeBody !== undefined) node.body = prepared.codeBody;
+        node.language = normalizeCodeLanguage(
+          creating && prepared.item.language ? prepared.item.language : node.language,
+        );
+        node.text = codeTitleFromBody(node.body || '', node.language);
+        delete node.textMarks;
+        delete node.bodyMarks;
+        return;
+      }
+      if (kind === 'sticky') {
+        if (prepared.body) aiStoreRich(node, 'body', prepared.body);
+        else if (creating && prepared.title) aiStoreRich(node, 'body', prepared.title);
+        if (creating) node.text = '';
+        delete node.textMarks;
+        return;
+      }
+      if (prepared.title) aiStoreRich(node, 'text', prepared.title);
+      if (kind === 'table') {
+        if (prepared.tableBody !== undefined) node.body = prepared.tableBody;
+        delete node.textMarks;
+        delete node.bodyMarks;
+        normalizeTableNodeLayout(node);
+        return;
+      }
+      if (kind === 'index') {
+        delete node.body;
+        delete node.bodyMarks;
+        if (creating) {
+          const depth = parseInt(prepared.item.indexDepth, 10);
+          if (Number.isFinite(depth) && depth >= 1 && depth <= 6) node.indexDepth = depth;
+        }
+        return;
+      }
+      if (prepared.body) aiStoreRich(node, 'body', prepared.body);
+    }
+
+    function aiApplyNormalNodeDefaults(node, kind, plan) {
+      if (kind === 'table') return;
+      const normal = plan && plan.presentation && plan.presentation.normal;
+      const defaults = normal && normal.nodeDefaults && typeof normal.nodeDefaults === 'object'
+        ? normal.nodeDefaults : {};
+      const shape = ['rect', 'square', 'circle'].indexOf(defaults.shape) >= 0
+        ? defaults.shape : 'rect';
+      if (shape !== 'rect') node.shape = shape;
+      const borderColor = normalizeHexColor(defaults.borderColor);
+      if (borderColor && borderColor.toLowerCase() !== '#000000') node.borderColor = borderColor;
+      const fullStickyDefaults = plan && plan.presentation
+        && plan.presentation.normalSubmode === 'full' && kind === 'sticky';
+      if (fullStickyDefaults) {
+        const stickyBg = normalizeHexColor(defaults.stickyBgColor);
+        if (defaults.stickyColorMode === 'fixed' && stickyBg) node.bgColor = stickyBg;
+      } else {
+        const bgColor = normalizeHexColor(defaults.bgColor);
+        if (bgColor && bgColor.toLowerCase() !== '#ffffff') node.bgColor = bgColor;
+      }
+      const opacity = Number(defaults.opacity);
+      if (Number.isFinite(opacity) && opacity !== 1) node.opacity = clampValue(opacity, 0.08, 1);
+      if (defaults.hideChrome === true) node.hideChrome = true;
+      const scale = Number(defaults.scale);
+      if (Number.isFinite(scale) && scale >= 0.5 && scale <= 2 && scale !== 1) node.scale = scale;
+      const radius = Number(defaults.radius);
+      if (Number.isFinite(radius) && radius >= 0 && radius !== 10) node.radius = clampValue(radius, 0, 80);
+      if (Object.prototype.hasOwnProperty.call(defaults, 'fontWeight')) {
+        const fontWeight = normalizedFontWeight(defaults.fontWeight);
+        if (Number.isFinite(fontWeight)) node.fontWeight = fontWeight;
+      }
+      const fontScale = Number(defaults.fontScale);
+      if (Number.isFinite(fontScale) && fontScale > 0 && fontScale !== 1) {
+        node.fontScale = clampValue(fontScale, 0.5, 2.5);
+      }
+      if (defaults.textAlign === 'center' || defaults.textAlign === 'right') {
+        node.textAlign = defaults.textAlign;
+      }
+    }
+
+    function aiCreateNode(prepared, initialPoint, plan) {
+      const item = prepared.item;
+      const node = {
+        id: newNodeId(),
+        kind: prepared.kind,
+        x: Math.round(Number(initialPoint.x) || 0),
+        y: Math.round(Number(initialPoint.y) || 0),
+        text: '',
+      };
+      const mindmapAction = plan
+        && (plan.action === 'create_mindmap' || plan.action === 'extend_branch');
+      if (!mindmapAction) aiApplyNormalNodeDefaults(node, prepared.kind, plan);
+      aiApplyPreparedContent(node, prepared, true);
+      const semanticColor = mindmapAction
+        ? '' : AI_COLOR_ROLE_TO_NODE_COLOR[item.colorRole || 'neutral'];
+      if (semanticColor) node.color = semanticColor;
+      if (isStickyNode(node) && !node.bgColor) node.bgColor = randomStickyColor();
+      return node;
+    }
+
+    function aiOrdinaryEdgeStyle(plan) {
+      const snapshot = plan && plan.presentation && plan.presentation.normal
+        && plan.presentation.normal.resolvedEdge;
+      const live = describeAIPresentation().normal.resolvedEdge;
+      const source = snapshot && typeof snapshot === 'object' ? snapshot : live;
+      const style = {
+        curve: EDGE_CURVES.indexOf(source.curve) >= 0 ? source.curve : 'branch',
+        lineStyle: EDGE_LINE_STYLES.indexOf(source.lineStyle) >= 0 ? source.lineStyle : 'solid',
+        arrow: ['none', 'start', 'end', 'both'].indexOf(source.arrow) >= 0 ? source.arrow : 'none',
+      };
+      const color = normalizeHexColor(source.color);
+      if (color && color.toLowerCase() !== '#000000') style.color = color;
+      const width = Number(source.width);
+      if (Number.isFinite(width) && width !== 1.5) style.width = clampValue(width, 0.5, 8);
+      const arrowSize = Number(source.arrowSize);
+      if (Number.isFinite(arrowSize) && arrowSize !== 12) style.arrowSize = clampValue(arrowSize, 6, 28);
+      return style;
+    }
+
+    function aiMindmapOptions(plan) {
+      const source = plan && plan.presentation && plan.presentation.mindmap;
+      const live = describeAIPresentation().mindmap;
+      const snapshot = source && typeof source === 'object' ? source : live;
+      return {
+        preset: MINDMAP_STYLE_PRESETS[snapshot.preset] ? snapshot.preset : 'paper',
+        layout: ['auto', 'balanced', 'right', 'left', 'down', 'radial'].indexOf(snapshot.layout) >= 0
+          ? snapshot.layout : 'balanced',
+        density: ['compact', 'balanced', 'relaxed', 'custom'].indexOf(snapshot.density) >= 0
+          ? snapshot.density : 'balanced',
+        levelGap: clampValue(Number(snapshot.levelGap) || 92, 56, 180),
+        branchGap: clampValue(Number(snapshot.branchGap) || 32, 14, 96),
+        radialGap: clampValue(Number(snapshot.radialGap) || 220, 140, 360),
+        centerSize: clampValue(Number(snapshot.centerSize) || 110, 65, 155),
+        branchSize: clampValue(Number(snapshot.branchSize) || 100, 65, 155),
+        leafSize: clampValue(Number(snapshot.leafSize) || 85, 65, 155),
+        curveOverride: EDGE_CURVES.indexOf(snapshot.curve) >= 0 ? snapshot.curve : '',
+        lineStyleOverride: EDGE_LINE_STYLES.indexOf(snapshot.lineStyle) >= 0 ? snapshot.lineStyle : '',
+      };
+    }
+
+    function aiEndpointKey(endpoint) {
+      if (!endpoint || (endpoint.kind !== 'new' && endpoint.kind !== 'existing')) return '';
+      return endpoint.kind + ':' + String(endpoint.kind === 'new' ? endpoint.ref : endpoint.id);
+    }
+
+    function validateAIOperations(plan, selected) {
+      const refs = new Set();
+      const preparedNodes = [];
+      const expectedNodes = plan.expectations && plan.expectations.nodes
+        && typeof plan.expectations.nodes === 'object' ? plan.expectations.nodes : {};
+      const expectedEdges = plan.expectations && plan.expectations.edges
+        && typeof plan.expectations.edges === 'object' ? plan.expectations.edges : {};
+      try {
+        selected.nodes.forEach(function (entry) {
+          const item = entry.item;
+          if (!item || (item.op !== 'create' && item.op !== 'update')) throw new Error('invalid-node-operation');
+          if (item.op === 'create') {
+            const ref = String(item.ref || '');
+            if (!ref || refs.has(ref)) throw new Error('invalid-new-ref');
+            refs.add(ref);
+            if ((plan.action === 'create_mindmap' || plan.action === 'extend_branch')
+                && item.kind !== 'card') {
+              throw new Error('invalid-mindmap-node-kind');
+            }
+          } else {
+            if (plan.action !== 'refine') throw new Error('node-update-forbidden');
+            if (!Object.prototype.hasOwnProperty.call(expectedNodes, item.id)) {
+              throw new Error('missing-node-expectation');
+            }
+          }
+          preparedNodes.push({ index: entry.index, prepared: aiPreparedNodeOperation(item) });
+        });
+      } catch (error) {
+        return aiFailure('invalid-plan', error.message);
+      }
+      const touchedEdges = new Set();
+      const edgePairs = new Set();
+      const selectedEdgeIds = new Set(selected.edges.filter(function (entry) {
+        return entry.item && (entry.item.op === 'update' || entry.item.op === 'remove');
+      }).map(function (entry) { return entry.item.id; }));
+      data.edges.forEach(function (edge) {
+        if (selectedEdgeIds.has(edge.id) || edge.from === edge.to) return;
+        edgePairs.add([
+          'existing:' + edge.from,
+          'existing:' + edge.to,
+        ].sort().join('\u0000'));
+      });
+      for (let index = 0; index < selected.edges.length; index++) {
+        const item = selected.edges[index].item;
+        if (!item || ['create', 'update', 'remove'].indexOf(item.op) < 0) {
+          return aiFailure('invalid-plan', 'invalid-edge-operation');
+        }
+        if (item.op !== 'create') {
+          if (plan.action !== 'refine') return aiFailure('invalid-plan', 'edge-mutation-forbidden');
+          if (!findEdge(item.id) || touchedEdges.has(item.id)) return aiFailure('invalid-plan', 'missing-edge');
+          if (!Object.prototype.hasOwnProperty.call(expectedEdges, item.id)) {
+            return aiFailure('invalid-plan', 'missing-edge-expectation');
+          }
+          touchedEdges.add(item.id);
+        }
+        if (item.op === 'remove') continue;
+        const fromKey = aiEndpointKey(item.from);
+        const toKey = aiEndpointKey(item.to);
+        if (!fromKey || !toKey || fromKey === toKey) return aiFailure('invalid-plan', 'invalid-edge-endpoint');
+        if (item.from.kind === 'existing' && !findNode(item.from.id)) return aiFailure('invalid-plan', 'missing-node');
+        if (item.to.kind === 'existing' && !findNode(item.to.id)) return aiFailure('invalid-plan', 'missing-node');
+        if (item.from.kind === 'existing'
+            && !Object.prototype.hasOwnProperty.call(expectedNodes, item.from.id)) {
+          return aiFailure('invalid-plan', 'missing-node-expectation');
+        }
+        if (item.to.kind === 'existing'
+            && !Object.prototype.hasOwnProperty.call(expectedNodes, item.to.id)) {
+          return aiFailure('invalid-plan', 'missing-node-expectation');
+        }
+        if (item.from.kind === 'new' && !refs.has(String(item.from.ref))) return aiFailure('invalid-plan', 'missing-ref');
+        if (item.to.kind === 'new' && !refs.has(String(item.to.ref))) return aiFailure('invalid-plan', 'missing-ref');
+        if (plan.action === 'create_graph'
+            && (item.from.kind !== 'new' || item.to.kind !== 'new')) {
+          return aiFailure('invalid-plan', 'graph-existing-endpoint');
+        }
+        const pair = [fromKey, toKey].sort().join('\u0000');
+        if (edgePairs.has(pair)) return aiFailure('invalid-plan', 'duplicate-edge');
+        edgePairs.add(pair);
+      }
+      if (plan.action === 'supplement') {
+        const attached = selected.edges.some(function (entry) {
+          const item = entry.item;
+          return item && item.op === 'create'
+            && item.from && item.to
+            && ((item.from.kind === 'existing' && item.to.kind === 'new')
+              || (item.from.kind === 'new' && item.to.kind === 'existing'));
+        });
+        if (!attached) return aiFailure('invalid-plan', 'supplement-detached');
+      }
+      return { ok: true, preparedNodes: preparedNodes };
+    }
+
+    function aiSwitchMode(mode) {
+      if (global.EditorShell && typeof global.EditorShell.setMode === 'function') {
+        global.EditorShell.setMode(mode);
+      }
+    }
+
+    function applyAICreateMindmap(plan, selected) {
+      const outline = AIPlanCanvas.mindmapOutline(plan, selected);
+      if (!outline.ok) return aiFailure('invalid-mindmap', outline.reason);
+      const options = aiMindmapOptions(plan);
+      let result;
+      try {
+        result = createMindmapFromOutline({
+          ok: true,
+          nodes: outline.nodes,
+          edges: outline.edges,
+        }, Object.assign({}, options, {
+          history: false,
+          notify: false,
+          focus: true,
+          toast: false,
+          normalDefaults: false,
+        }));
+      } catch (error) {
+        return aiFailure('apply-failed', error.message);
+      }
+      if (!result || !result.ok) return aiFailure('apply-failed', result && result.reason);
+      pushHistory();
+      notify();
+      aiSwitchMode('mindmap');
+      const refMap = {};
+      outline.refs.forEach(function (ref, index) { refMap[ref] = result.nodeIds[index]; });
+      const actualCurves = { branch: '', leaf: '' };
+      outline.edges.forEach(function (edge, index) {
+        const liveEdge = findEdge(result.edgeIds[index]);
+        const child = outline.nodes[Number(edge.to)];
+        if (!liveEdge || !child) return;
+        if (Number(child.depth) <= 1 && !actualCurves.branch) {
+          actualCurves.branch = edgeCurveType(liveEdge);
+        } else if (Number(child.depth) > 1 && !actualCurves.leaf) {
+          actualCurves.leaf = edgeCurveType(liveEdge);
+        }
+      });
+      actualCurves.branch = actualCurves.branch || options.curveOverride
+        || mindmapPreset(options.preset).branch.curve || 'branch';
+      actualCurves.leaf = actualCurves.leaf || options.curveOverride
+        || mindmapPreset(options.preset).leaf.curve || actualCurves.branch;
+      return {
+        ok: true,
+        action: plan.action,
+        count: result.count,
+        nodeIds: result.nodeIds,
+        edgeIds: result.edgeIds,
+        refMap: refMap,
+        finalLineTypes: actualCurves,
+      };
+    }
+
+    function applyAIExtendBranch(plan, selected, prepared) {
+      const extension = AIPlanCanvas.extensionSubtree(plan, selected);
+      if (!extension.ok) return aiFailure('invalid-mindmap', extension.reason);
+      const anchor = findNode(extension.anchorId);
+      const currentSelected = [...selectedNodeIds].filter(function (id) {
+        const node = findNode(id);
+        return node && !isDecorationNode(node);
+      });
+      if (!anchor || currentSelected.length !== 1 || currentSelected[0] !== anchor.id
+          || !editIsMindmapNode(anchor)) {
+        return aiFailure('invalid-anchor', 'selection-changed');
+      }
+      const existingTree = buildManagedMindmapTree(anchor);
+      if (!existingTree.valid) return aiFailure('invalid-anchor', existingTree.reason);
+      const before = snapshotCanvasState();
+      const beforeSelection = aiSelectionSnapshot();
+      const beforeLastCreatedNodeId = lastCreatedNodeId;
+      const refMap = {};
+      const createdNodes = [];
+      const createdEdges = [];
+      const preparedByRef = new Map();
+      prepared.preparedNodes.forEach(function (entry) {
+        if (entry.prepared.item.op === 'create') {
+          preparedByRef.set(String(entry.prepared.item.ref), entry.prepared);
+        }
+      });
+      try {
+        const direction = mindmapRootBranchDirection(existingTree, anchor.id) || 'right';
+        const anchorRect = nodeRect(anchor);
+        const basePoint = direction === 'left'
+          ? { x: anchorRect.x - 280, y: anchorRect.y }
+          : (direction === 'down'
+            ? { x: anchorRect.x, y: anchorRect.y + 180 }
+            : { x: anchorRect.x + anchorRect.w + 120, y: anchorRect.y });
+        extension.refs.forEach(function (ref, index) {
+          const preparedNode = preparedByRef.get(ref);
+          if (!preparedNode) throw new Error('missing-ref');
+          const node = aiCreateNode(preparedNode, {
+            x: basePoint.x + index * 18,
+            y: basePoint.y + index * 18,
+          }, plan);
+          data.nodes.push(node);
+          indexNodeData(node);
+          refMap[ref] = node.id;
+          createdNodes.push(node);
+        });
+        extension.edges.forEach(function (item) {
+          const from = item.from.kind === 'existing' ? item.from.id : refMap[item.from.ref];
+          const to = item.to.kind === 'existing' ? item.to.id : refMap[item.to.ref];
+          if (!from || !to || from === to) throw new Error('invalid-edge');
+          const edge = { id: newEdgeId(), from: from, to: to, text: String(item.text || '') };
+          data.edges.push(edge);
+          createdEdges.push(edge);
+        });
+        rebuildNodeIndex();
+        reconcileAll();
+        extension.refs.forEach(function (ref) {
+          const child = findNode(refMap[ref]);
+          const incoming = createdEdges.find(function (edge) { return edge.to === child.id; });
+          const parent = incoming && findNode(incoming.from);
+          if (!parent || !incoming) throw new Error('invalid-tree');
+          styleMindmapCreatedChild(parent, child, incoming);
+        });
+        const mmOptions = aiMindmapOptions(plan);
+        createdEdges.forEach(function (edge) {
+          if (mmOptions.curveOverride) edge.curve = mmOptions.curveOverride;
+          if (mmOptions.lineStyleOverride) edge.lineStyle = mmOptions.lineStyleOverride;
+          const refs = edgeMap.get(edge.id);
+          if (refs) applyEdgeStyle(refs, edge);
+          updateEdgePath(edge);
+        });
+        const nextTree = buildManagedMindmapTree(anchor);
+        if (!nextTree.valid) throw new Error(nextTree.reason || 'invalid-tree');
+        const subtree = mindmapSubtreeTree(nextTree, refMap[extension.rootRef]);
+        applyMindmapPositions(subtree, mindmapLocalForOptions(subtree, mmOptions), true, {
+          history: false,
+          notify: false,
+          duration: 320,
+        });
+        selectedNodeIds.clear();
+        selectedEdgeIds.clear();
+        selectedTimerIds.clear();
+        createdNodes.forEach(function (node) { selectedNodeIds.add(node.id); });
+        selectedArrowId = null;
+        rulerSelected = false;
+        lastCreatedNodeId = createdNodes[createdNodes.length - 1].id;
+        applySelection();
+        pushHistory();
+        notify();
+        focusNodeIds(new Set(createdNodes.map(function (node) { return node.id; })), false);
+        aiSwitchMode('mindmap');
+        const actualCurves = { branch: '', leaf: '' };
+        createdEdges.forEach(function (edge) {
+          const role = (nextTree.depth.get(edge.to) || 1) <= 1 ? 'branch' : 'leaf';
+          if (!actualCurves[role]) actualCurves[role] = edgeCurveType(edge);
+        });
+        actualCurves.branch = actualCurves.branch || mmOptions.curveOverride
+          || mindmapPreset(mmOptions.preset).branch.curve || 'branch';
+        actualCurves.leaf = actualCurves.leaf || mmOptions.curveOverride
+          || mindmapPreset(mmOptions.preset).leaf.curve || actualCurves.branch;
+        return {
+          ok: true,
+          action: plan.action,
+          count: createdNodes.length,
+          nodeIds: createdNodes.map(function (node) { return node.id; }),
+          edgeIds: createdEdges.map(function (edge) { return edge.id; }),
+          refMap: refMap,
+          finalLineTypes: actualCurves,
+        };
+      } catch (error) {
+        finishMindmapGlide();
+        applySnapshot(before, { notify: false });
+        lastCreatedNodeId = beforeLastCreatedNodeId;
+        aiRestoreSelection(beforeSelection);
+        return aiFailure('apply-failed', error.message);
+      }
+    }
+
+    function applyAINormalPlan(plan, selected, prepared, options) {
+      const before = snapshotCanvasState();
+      const beforeSelection = aiSelectionSnapshot();
+      const beforeLastCreatedNodeId = lastCreatedNodeId;
+      const refMap = {};
+      const createdNodes = [];
+      const updatedNodeIds = [];
+      const createdEdgeIds = [];
+      const updatedEdgeIds = [];
+      const removedEdgeIds = [];
+      try {
+        const center = viewportCenterInSurface();
+        prepared.preparedNodes.forEach(function (entry) {
+          const item = entry.prepared.item;
+          if (item.op === 'update') {
+            const node = findNode(item.id);
+            if (!node) throw new Error('missing-node');
+            aiApplyPreparedContent(node, entry.prepared, false);
+            updatedNodeIds.push(node.id);
+            return;
+          }
+          const node = aiCreateNode(entry.prepared, center, plan);
+          data.nodes.push(node);
+          indexNodeData(node);
+          refMap[item.ref] = node.id;
+          createdNodes.push(node);
+        });
+        function endpointId(endpoint) {
+          return endpoint.kind === 'new' ? refMap[endpoint.ref] : endpoint.id;
+        }
+        selected.edges.forEach(function (entry) {
+          const item = entry.item;
+          if (item.op === 'remove') {
+            const index = data.edges.findIndex(function (edge) { return edge.id === item.id; });
+            if (index < 0) throw new Error('missing-edge');
+            data.edges.splice(index, 1);
+            removedEdgeIds.push(item.id);
+            return;
+          }
+          const from = endpointId(item.from);
+          const to = endpointId(item.to);
+          if (!from || !to || from === to) throw new Error('invalid-edge');
+          if (item.op === 'update') {
+            const edge = findEdge(item.id);
+            if (!edge) throw new Error('missing-edge');
+            edge.from = from;
+            edge.to = to;
+            edge.text = String(item.text || '');
+            delete edge.waypoints;
+            updatedEdgeIds.push(edge.id);
+            return;
+          }
+          const edge = Object.assign({
+            id: newEdgeId(),
+            from: from,
+            to: to,
+            text: String(item.text || ''),
+          }, aiOrdinaryEdgeStyle(plan));
+          data.edges.push(edge);
+          createdEdgeIds.push(edge.id);
+        });
+        const movableIds = createdNodes.map(function (node) { return node.id; });
+        if (options.relayoutSelection && plan.scope === 'selection') {
+          (Array.isArray(plan.targetNodeIds) ? plan.targetNodeIds : []).forEach(function (id) {
+            const node = findNode(id);
+            if (node && AI_NODE_KINDS.has(node.kind) && movableIds.indexOf(id) < 0) movableIds.push(id);
+          });
+        }
+        let layoutCenter = center;
+        if (options.relayoutSelection && movableIds.length > createdNodes.length) {
+          const existingMovable = movableIds.map(findNode).filter(Boolean);
+          layoutCenter = {
+            x: existingMovable.reduce(function (sum, node) { return sum + (Number(node.x) || 0); }, 0)
+              / Math.max(1, existingMovable.length),
+            y: existingMovable.reduce(function (sum, node) { return sum + (Number(node.y) || 0); }, 0)
+              / Math.max(1, existingMovable.length),
+          };
+        } else {
+          const anchors = [];
+          selected.edges.forEach(function (entry) {
+            const item = entry.item;
+            if (!item || item.op !== 'create') return;
+            [item.from, item.to].forEach(function (endpoint) {
+              if (endpoint && endpoint.kind === 'existing') {
+                const node = findNode(endpoint.id);
+                if (node && anchors.indexOf(node) < 0) anchors.push(node);
+              }
+            });
+          });
+          if (anchors.length) {
+            layoutCenter = {
+              x: anchors.reduce(function (sum, node) { return sum + (Number(node.x) || 0); }, 0)
+                / anchors.length + 300,
+              y: anchors.reduce(function (sum, node) { return sum + (Number(node.y) || 0); }, 0)
+                / anchors.length,
+            };
+          }
+        }
+        const positions = AIPlanCanvas.deterministicLayout({
+          nodes: data.nodes.map(function (node) {
+            return { id: node.id, x: node.x, y: node.y };
+          }),
+          edges: data.edges.map(function (edge) {
+            return { from: edge.from, to: edge.to };
+          }),
+          movableIds: movableIds,
+          center: layoutCenter,
+        });
+        movableIds.forEach(function (id) {
+          const node = findNode(id);
+          const point = positions[id];
+          if (node && point) {
+            node.x = point.x;
+            node.y = point.y;
+          }
+        });
+        rebuildNodeIndex();
+        reconcileAll();
+        const selectedIds = createdNodes.length
+          ? createdNodes.map(function (node) { return node.id; })
+          : updatedNodeIds;
+        if (selectedIds.length) selectNodes(selectedIds, false);
+        else if (createdEdgeIds.length || updatedEdgeIds.length) {
+          selectEdges(createdEdgeIds.concat(updatedEdgeIds), false);
+        } else {
+          applySelection();
+        }
+        if (createdNodes.length) lastCreatedNodeId = createdNodes[createdNodes.length - 1].id;
+        pushHistory();
+        notify();
+        if (currentMode() === 'decor') aiSwitchMode('normal');
+        return {
+          ok: true,
+          action: plan.action,
+          count: createdNodes.length + updatedNodeIds.length,
+          nodeIds: createdNodes.map(function (node) { return node.id; }),
+          updatedNodeIds: updatedNodeIds,
+          edgeIds: createdEdgeIds,
+          updatedEdgeIds: updatedEdgeIds,
+          removedEdgeIds: removedEdgeIds,
+          refMap: refMap,
+          finalLineType: aiOrdinaryEdgeStyle(plan).curve,
+          relayoutSelection: !!options.relayoutSelection,
+          droppedEdgeIndexes: selected.droppedEdgeIndexes.slice(),
+        };
+      } catch (error) {
+        applySnapshot(before, { notify: false });
+        lastCreatedNodeId = beforeLastCreatedNodeId;
+        aiRestoreSelection(beforeSelection);
+        return aiFailure('apply-failed', error.message);
+      }
+    }
+
+    function applyAIPlan(plan, options) {
+      options = options || {};
+      if (!AIPlanCanvas || !plan || plan.version !== 2 || !AI_ACTIONS.has(plan.action)) {
+        return aiFailure('invalid-plan', 'unsupported-version-or-action');
+      }
+      if (global.CanvasModule && typeof global.CanvasModule.commitPendingEdits === 'function') {
+        global.CanvasModule.commitPendingEdits();
+      }
+      finishMindmapGlide();
+      const stale = validateAIExpectations(plan);
+      if (!stale.ok) return stale;
+      const selected = AIPlanCanvas.selectOperations(plan, {
+        nodeIndexes: options.nodeIndexes,
+        edgeIndexes: options.edgeIndexes,
+      });
+      const prepared = validateAIOperations(plan, selected);
+      if (!prepared.ok) return prepared;
+      if (!selected.nodes.length && !selected.edges.length) return aiFailure('empty-selection');
+      if (plan.action === 'create_mindmap') return applyAICreateMindmap(plan, selected);
+      if (plan.action === 'extend_branch') return applyAIExtendBranch(plan, selected, prepared);
+      return applyAINormalPlan(plan, selected, prepared, {
+        relayoutSelection: options.relayoutSelection === true,
+      });
+    }
+
+    global.CanvasModule.describeAIContext = describeAIContext;
+    global.CanvasModule.describeAIPresentation = describeAIPresentation;
+    global.CanvasModule.applyAIPlan = applyAIPlan;
 
     // ── 导出整张画布为 PNG（Phase 1）─────────────────────────────
     // 收录：节点 / 连线 / 墨迹 / 图片 / 盒子 / 色块 / 背景；跳过 PDF 附件；数学公式暂作降级。
@@ -27806,7 +28578,7 @@
             text: String(entry.title || '').trim() || '未命名',
             body: String(entry.body || ''),
           };
-          applyProDefaults(node, 'card');
+          if (options.normalDefaults !== false) applyProDefaults(node, 'card');
           data.nodes.push(node);
           createdNodes.push(node);
           idByIndex.push(node.id);
@@ -27852,7 +28624,7 @@
         markMindmapRoot(tree);
         orientMindmapTreeEdges(tree);
         const preset = MINDMAP_STYLE_PRESETS[options.preset] ? options.preset : 'paper';
-        const layout = ['balanced', 'right', 'left', 'down', 'radial'].indexOf(options.layout) >= 0
+        const layout = ['auto', 'balanced', 'right', 'left', 'down', 'radial'].indexOf(options.layout) >= 0
           ? options.layout : 'balanced';
         applyMindmapStyle(preset, {
           tree: tree,
@@ -27860,12 +28632,13 @@
           notify: false,
           cleanWaypoints: true,
           hierarchySize: true,
+          centerSize: options.centerSize,
+          branchSize: options.branchSize,
+          leafSize: options.leafSize,
+          curveOverride: options.curveOverride,
+          lineStyleOverride: options.lineStyleOverride,
         });
-        const local = layout === 'radial'
-          ? layoutMindmapRadial(tree, options)
-          : (layout === 'balanced'
-            ? layoutMindmapBalanced(tree, options)
-            : layoutMindmapTree(tree, layout, options));
+        const local = mindmapLocalForOptions(tree, Object.assign({}, options, { layout: layout }));
         applyMindmapPositions(tree, local, true, {
           history: false,
           notify: false,
@@ -27873,13 +28646,16 @@
         });
         lastCreatedNodeId = createdNodes[createdNodes.length - 1].id;
         applySelection();
-        pushHistory();
-        notify();
-        focusNodeIds(tree.nodeSet, false);
-        showCanvasToast(canvasImportText(
-          '已生成 ' + createdNodes.length + ' 个独立导图节点。',
-          'Created ' + createdNodes.length + ' independent mind-map nodes.',
-        ));
+        if (options.history !== false) pushHistory();
+        if (options.notify !== false) notify();
+        else redrawMinimap();
+        if (options.focus !== false) focusNodeIds(tree.nodeSet, false);
+        if (options.toast !== false) {
+          showCanvasToast(canvasImportText(
+            '已生成 ' + createdNodes.length + ' 个独立导图节点。',
+            'Created ' + createdNodes.length + ' independent mind-map nodes.',
+          ));
+        }
         return {
           ok: true,
           count: createdNodes.length,

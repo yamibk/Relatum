@@ -1,9 +1,6 @@
-// AI 助手 — 右侧滑出对话栏，代理后端调 DeepSeek。
-// 故意写得小、零依赖：复用 MarkdownMini 渲染回复、MathJax（若已加载）排版公式。
+// AI 助手 V2 — 聊天与受控画布计划。
+// 聊天走 /api/ai-chat；五种画布动作走 /api/ai-plan，逐项预览后才由 CanvasModule.applyAIPlan 原子应用。
 // 配置（Key/模型/接口地址）经后端 /api/ai-config 存 data/ai.json，前端不长期保存。
-// 阶段 1：纯对话 /api/ai-chat。
-// 阶段 2：「生成到画布」按钮 /api/ai-compose —— 后端按《创作指南》让模型吐卡片+连线、
-//   排好坐标，前端先给预览，用户确认后再调 CanvasModule.injectCanvas 注入当前画布（可整体 Ctrl+Z 撤销）。
 
 (function () {
   'use strict';
@@ -12,6 +9,9 @@
   if (!panel) return;
 
   const toggleBtn = document.querySelector('[data-role="ai-toggle"]');
+  const resizeHandle = panel.querySelector('[data-role="ai-resize-handle"]');
+  const workspace = panel.querySelector('[data-role="ai-workspace"]');
+  const conversation = panel.querySelector('[data-role="ai-conversation"]');
   const closeBtn = panel.querySelector('[data-role="ai-close"]');
   const helpBtn = panel.querySelector('[data-role="ai-help"]');
   const helpPanel = panel.querySelector('[data-role="ai-help-panel"]');
@@ -31,8 +31,18 @@
   const form = panel.querySelector('[data-role="ai-composer"]');
   const input = panel.querySelector('[data-role="ai-input"]');
   const sendBtn = panel.querySelector('[data-role="ai-send"]');
+  const submitIcon = panel.querySelector('[data-role="ai-submit-icon"]');
+  const submitLabel = panel.querySelector('[data-role="ai-submit-label"]');
+  const composerTip = panel.querySelector('[data-role="ai-composer-tip"]');
   const cancelBtn = panel.querySelector('[data-role="ai-cancel"]');
-  const chipsEl = panel.querySelector('[data-role="ai-chips"]');   // 预设快捷按钮容器
+  const actionPicker = panel.querySelector('[data-role="ai-action-picker"]');
+  const actionBtns = panel.querySelectorAll('[data-ai-action]');
+  const actionRecommendation = panel.querySelector('[data-role="ai-action-recommendation"]');
+  const actionDescription = panel.querySelector('[data-role="ai-action-description"]');
+  const targetRow = panel.querySelector('[data-role="ai-target-row"]');
+  const targetBtns = panel.querySelectorAll('[data-ai-target]');
+  const targetSelectionBtn = panel.querySelector('[data-ai-target="selection"]');
+  const selectionCountEl = panel.querySelector('[data-role="ai-selection-count"]');
   const contextToggle = panel.querySelector('[data-role="ai-context-toggle"]');
   const contextMenu = panel.querySelector('[data-role="ai-context-menu"]');
   const contextLabel = panel.querySelector('[data-role="ai-context-label"]');
@@ -42,15 +52,30 @@
   const contextCloseBtn = panel.querySelector('[data-role="ai-context-close"]');
   const contextModeBtns = panel.querySelectorAll('[data-ai-context-mode]');
 
-  // 阶段 1 的轻量人设；阶段 2 会换成《AI 笔记创作指南》并接入"注入画布"。
-  const SYSTEM_PROMPT = '你是嵌入在一款中文本地知识画布工具里的 AI 助手，帮用户生成、整理、润色学习与科研笔记。'
-    + '请用简洁清楚的中文回答；数学公式用 $...$ 或 $$...$$ 包裹，代码放进围栏代码块。';
+  function currentLanguage() {
+    const api = window.RelatumI18n;
+    if (api && api.language) return api.language;
+    return document.documentElement.dataset.uiLanguage === 'en' ? 'en' : 'zh-CN';
+  }
+  function ui(zh, en) { return currentLanguage() === 'en' ? en : zh; }
+  function localize(value) {
+    return Array.isArray(value) ? ui(value[0], value[1]) : String(value == null ? '' : value);
+  }
 
-  let history = [{ role: 'system', content: SYSTEM_PROMPT }];   // 内存对话（含开头 system）
+  // 聊天不预设角色、语气、语言或输出格式；只发送用户输入和可选的近期对话。
+  // 五种画布操作仍由后端各自的 V2 计划提示词约束。
+  let history = [];
   let sending = false;
   let configLoaded = false;
-  let lastRun = null;          // 上一次请求 { kind:'chat'|'compose', mode? }，供失败重试
+  let lastRun = null;          // 上一次请求 { kind:'chat'|'plan', action?, scope? }，供失败重试
   let activeRequest = null;    // 当前可取消请求 { controller, kind, pending, cancelled }
+  let selectedAction = 'chat';
+  let recommendedAction = 'create_graph';
+  let actionUserChosen = false;
+  let targetScope = 'canvas';
+  let targetUserChosen = false;
+  let selectedContentCount = 0;
+  let currentEditorMode = 'normal';
 
   const md = window.MarkdownMini;
   const HISTORY_LIMIT = 40;    // 与后端单次上下文上限一致，避免长会话请求体和内存无界增长
@@ -58,130 +83,491 @@
   const CLOSE_MS = 240;   // 与 CSS 过渡时长一致
   const PANELLET_CLOSE_MS = 190;
   const CONTEXT_MODE_KEY = 'canvas:ai-context-mode:v1';
+  const PANEL_WIDTH_KEY = 'canvas:ai-panel-width:v1';
+  const PANEL_DEFAULT_WIDTH = 520;
+  const PANEL_MIN_WIDTH = 440;
+  const PANEL_MAX_WIDTH = 820;
+  const PANEL_MAX_VIEWPORT_RATIO = 0.72;
+  const PANEL_NARROW_BREAKPOINT = 640;
+  const INPUT_MIN_HEIGHT = 84;
+  const INPUT_MAX_HEIGHT = 240;
   const prefersReduced = window.matchMedia
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let contextMode = loadContextMode();
+  let preferredPanelWidth = loadPanelWidth();
+  let panelResizeState = null;
+  const scrollbarTimers = new WeakMap();
+  const scrollbarIndicators = new WeakMap();
+  const installedScrollers = [];
+  let scrollbarDragState = null;
+
+  const ACTION_META = {
+    chat: {
+      icon: '↗',
+      label: ['聊天', 'Chat'],
+      description: ['只在侧栏回复，不改动画布。', 'Reply in the panel without changing the canvas.'],
+      guide: {
+        fit: ['只想提问、解释概念或继续追问，不需要改动画布。', 'Ask a question, explain a concept, or follow up without changing the canvas.'],
+        before: ['在输入框写下问题即可，不需要选中节点。', 'Type your question. No canvas selection is needed.'],
+        result: ['答案只显示在侧栏，不会生成节点或连线。', 'The answer stays in the panel and creates no nodes or links.'],
+      },
+    },
+    create_graph: {
+      icon: '⌘',
+      label: ['生成卡片网络', 'Create Graph'],
+      description: ['从零生成 6–12 个节点的自由关系网络。', 'Create a free-form network of 6–12 nodes.'],
+      guide: {
+        fit: ['从零整理知识、方案或复习内容，关系可以交叉连接。', 'Build knowledge, plans, or revision material from scratch with cross-links.'],
+        before: ['写清主题和用途；无需先选节点。', 'Describe the topic and purpose. No selection is needed.'],
+        result: ['默认新增 6–12 个节点并连接成自由关系网络。', 'Adds 6–12 new nodes by default and connects them as a free network.'],
+        examples: [
+          ['把“牛顿第二定律”整理成 8 个复习节点，包含定义、公式、变量、例题和易错点。',
+            'Turn “Newton’s second law” into eight revision nodes covering the definition, formula, variables, examples, and common mistakes.'],
+          ['围绕“C 语言指针”建立知识网络，连接概念、语法、内存模型和常见错误。',
+            'Build a knowledge network for “C pointers” linking concepts, syntax, memory models, and common mistakes.'],
+        ],
+      },
+    },
+    create_mindmap: {
+      icon: '⌁',
+      label: ['生成导图', 'Create Mind Map'],
+      description: ['生成严格单根导图，确认后切到导图模式。', 'Create a strict single-root map and switch modes after confirmation.'],
+      guide: {
+        fit: ['从零生成“一个中心主题向下分层”的严格结构。', 'Create a strict hierarchy that branches from one central topic.'],
+        before: ['写清中心主题和需要的层级；无需先选节点。', 'Describe the central topic and desired levels. No selection is needed.'],
+        result: ['生成单根父子导图，确认应用后进入导图模式。', 'Creates a single-root parent-child map and enters Mind Map mode after applying.'],
+        examples: [
+          ['以“毕业论文计划”为中心，分成选题、文献、方法、写作和答辩五个一级分支。',
+            'Create a mind map for “Thesis plan” with five main branches: topic, literature, methods, writing, and defense.'],
+          ['用导图拆解“产品发布”，包含准备、内容、渠道、时间线和复盘，每项再列 2–3 个子项。',
+            'Break down “Product launch” into preparation, content, channels, timeline, and review, with 2–3 child items each.'],
+        ],
+      },
+    },
+    extend_branch: {
+      icon: '↳',
+      label: ['扩展导图分支', 'Extend Branch'],
+      description: ['把严格子树接到一个选中的导图节点。', 'Attach a strict subtree to one selected mind-map node.'],
+      guide: {
+        fit: ['继续展开现有导图中的某一个分支。', 'Continue one branch of an existing mind map.'],
+        before: ['必须先恰好选中 1 个有效导图节点。', 'Select exactly one valid mind-map node first.'],
+        result: ['把新子树接到该节点，只重新整理受影响的分支。', 'Attaches a new subtree and rearranges only the affected branch.'],
+        examples: [
+          ['为选中的“实验方法”分支补充步骤、变量、风险和验证指标。',
+            'Expand the selected “Experiment method” branch with steps, variables, risks, and validation metrics.'],
+          ['把选中的章节继续展开为关键概念、实际例子和自测问题。',
+            'Expand the selected chapter into key concepts, practical examples, and self-check questions.'],
+        ],
+      },
+    },
+    supplement: {
+      icon: '＋',
+      label: ['基于画布补充', 'Supplement'],
+      description: ['查漏补缺，并把新增内容接回相关节点。', 'Fill gaps and connect new material to relevant nodes.'],
+      guide: {
+        fit: ['检查已有内容还缺哪些概念、例子、推导或对比。', 'Find missing concepts, examples, derivations, or comparisons in existing content.'],
+        before: ['选择局部节点，或把目标切换为整张画布。', 'Select local nodes or target the entire canvas.'],
+        result: ['只新增缺失节点和连接，不改原节点文字。', 'Adds missing nodes and links without rewriting existing node text.'],
+        examples: [
+          ['检查目标范围缺少的定义、例子和连接，只补充缺失内容。',
+            'Find missing definitions, examples, and links in the target, and add only what is absent.'],
+          ['为现有知识补充必要的前置概念、实际应用和常见误区。',
+            'Add the necessary prerequisites, real-world applications, and common misconceptions to the existing material.'],
+        ],
+      },
+    },
+    refine: {
+      icon: '✦',
+      label: ['整理精炼', 'Refine'],
+      description: ['预览后更新原节点与连接，不删除节点。', 'Update original nodes and links after preview, without deleting nodes.'],
+      guide: {
+        fit: ['压缩重复内容、改进标题正文，或梳理已有连接。', 'Condense repetition, improve titles and bodies, or clean up existing links.'],
+        before: ['选择局部节点，或把目标切换为整张画布。', 'Select local nodes or target the entire canvas.'],
+        result: ['可更新标题、正文和连接；不删除节点、不改变节点类型。', 'May update titles, bodies, and links without deleting nodes or changing their types.'],
+        examples: [
+          ['压缩重复表述，统一标题，并梳理必要连接；不要删除节点。',
+            'Condense repeated wording, standardize titles, and clean up necessary links without deleting nodes.'],
+          ['把目标范围整理成适合复习的短标题和要点，保持节点类型不变。',
+            'Rewrite the target into concise revision titles and key points while preserving every node type.'],
+        ],
+      },
+    },
+  };
 
   const AI_HELP_PAGES = [
     {
       id: 'start',
-      eyebrow: '01 · START',
-      title: '先分清：聊天和画图',
-      subtitle: '输入框不是唯一入口。发送是聊天，快捷按钮才会把内容变成卡片。',
+      layout: 'steps',
+      eyebrow: ['01 · 3 步上手', '01 · 3-STEP START'],
+      title: ['第一次用，只做这三步', 'Start with these three steps'],
+      subtitle: ['先写需求，再选操作；只有确认应用后，画布才会变化。', 'Describe what you need, choose an action, and apply only after reviewing.'],
       sections: [
-        ['发送箭头', '适合问概念、让它改写一段话、帮你想结构。它只在右侧对话区回复，不会改动画布。'],
-        ['上方快捷按钮', '生成到画布、挂到选中、基于画布补充、整理精炼，都会先生成预览；你点“放进画布”后才真正写入。'],
-        ['第一次使用', '先点右上角齿轮填 API Key，再点“测试连接”。Key 只保存在本机。'],
-      ],
-      prompts: [
-        ['问概念', '用高中生能听懂的方式解释惯性，并给 2 个生活例子。'],
-        ['改写', '把这段笔记改成更适合复习的短句：'],
+        [['设置 API Key', 'Set up your API key'], ['点右上角齿轮，填写 API Key 并测试连接。Key 只保存在本机。', 'Open Settings, add your API key, and test the connection. The key stays on this device.']],
+        [['输入你想做什么', 'Describe what you need'], ['在底部输入框写清主题、用途和限制，例如“整理牛顿第二定律，生成 8 个复习节点”。', 'Describe the topic, purpose, and limits, such as “Create eight revision nodes for Newton’s second law.”']],
+        [['选择操作并提交', 'Choose an action and submit'], ['底部主按钮会跟着操作变化：聊天显示发送箭头，其他五项显示“生成预览”。预览逐项确认后才会应用。', 'The primary button follows the selected action: Chat shows the send arrow; the other five show “Generate preview.” Previewed changes are applied only after review.']],
       ],
     },
     {
-      id: 'generate',
-      eyebrow: '02 · CREATE',
-      title: '从零生成一张画布',
-      subtitle: '主题、数量、用途写清楚，比“随便生成一下”稳定很多。',
-      sections: [
-        ['好提示词公式', '主题 + 卡片数量 + 卡片类型 + 读者/用途。例：给我 8 张卡片，适合考前复习。'],
-        ['结果怎么进画布', '先点“生成到画布”，看预览；满意再点“放进画布”。不满意可重生成或取消。'],
-        ['数量要明确', '写“只要 3 张”“生成 1 张总结卡”会比“简单整理一下”更可控。'],
-      ],
-      prompts: [
-        ['知识点卡组', '整理牛顿第二定律：生成 6 张卡片，包含定义、公式、变量含义、生活例子、典型题、易错点。'],
-        ['论文导读', '把“机器学习中的过拟合”整理成 7 张入门卡片：定义、原因、表现、检测、解决方法、例子、复习总结。'],
-        ['代码笔记', '整理 C 语言指针：生成 5 张卡片，包含概念、内存示意、常见错误、代码例子、练习题。'],
-      ],
+      id: 'actions',
+      layout: 'actions',
+      eyebrow: ['02 · 六个按钮', '02 · SIX ACTIONS'],
+      title: ['按你现在想做的事来选', 'Choose by what you want to do now'],
+      subtitle: ['“推荐”只根据当前模式和选区给提示，不会自动执行。', 'Recommended actions are suggestions based on mode and selection; nothing runs automatically.'],
+      actionIds: ['chat', 'create_graph', 'create_mindmap', 'extend_branch', 'supplement', 'refine'],
     },
     {
-      id: 'attach',
-      eyebrow: '03 · ATTACH',
-      title: '挂到当前选中节点',
-      subtitle: '先在画布里点选一张卡片，再让 AI 生成新内容并连回它。',
+      id: 'preview',
+      layout: 'sections',
+      eyebrow: ['03 · 选区与预览', '03 · SCOPE & PREVIEW'],
+      title: ['先确定目标，再逐项确认', 'Choose the target, then review each change'],
+      subtitle: ['生成预览不会写入画布；只有点击“应用选中项”才会真正修改。', 'Generating a preview does not write to the canvas; only applying selected items makes changes.'],
       sections: [
-        ['什么时候用', '你已经有一张中心卡，想往下接例题、前置概念、易错提醒、拓展阅读。'],
-        ['怎么操作', '选中那张卡片，在输入框写“补什么”，点“挂到选中”。AI 会优先把新卡片连到选中的卡片。'],
-        ['多选也可以', '框选几张相关卡片后使用，会把它们作为当前关注范围；新内容不会围绕整张画布乱发散。'],
-      ],
-      prompts: [
-        ['补三张', '围绕我选中的卡片，补充 3 张相关卡片：前置概念、典型例题、易错提醒。'],
-        ['加例题', '给我选中的卡片补 2 张例题卡：一张基础题，一张容易出错的变式题。'],
-        ['接下一层', '把我选中的卡片继续展开成下一层知识树，生成 4 张子卡片并连回选中卡片。'],
-      ],
-    },
-    {
-      id: 'polish',
-      eyebrow: '04 · REFINE',
-      title: '基于画布补充 / 整理精炼',
-      subtitle: '它会读当前画布或当前选区，只新增卡片，不改你原来的卡片。',
-      sections: [
-        ['基于画布补充', '查漏补缺：找出还缺的背景知识、对比例子、推导步骤、常见误区，帮你补上并连到相关卡片。'],
-        ['整理精炼', '把已有内容重新整理成更有条理的一套卡片：目录卡、定义卡、例题卡、易错卡，配 Callout 和语义配色。'],
-        ['两者区别', '补充＝把“缺的”补进来；整理精炼＝把“已有的”重排得更清楚。两者都只新增、不动你的原卡片。'],
-        ['选区优先', '如果你选中了卡片，它会优先读选区；没有选区才读整张画布。'],
-      ],
-      prompts: [
-        ['查漏补缺', '检查当前画布还缺哪些关键概念，补充 5 张卡片，并连到最相关的已有卡片。'],
-        ['复习结构', '把当前内容整理成更适合复习的结构：目录卡、定义卡、例题卡、易错卡。'],
-        ['整理表达', '把当前画布内容做成更清晰的版本：标题更短，正文分层，易错点用 warning Callout。'],
-      ],
-    },
-    {
-      id: 'context',
-      eyebrow: '05 · CONTEXT',
-      title: '上下文：你说了算',
-      subtitle: '对话上下文是右侧聊天历史，不等于整张画布。你可以连续追问，也可以每次只发当前输入。',
-      sections: [
-        ['连续对话', '默认模式。AI 会参考右侧之前的问答，适合追问、让它“按刚才的版本再改”。关闭 AI 侧栏不会清空它。'],
-        ['单次请求', '只把当前这条输入发给 AI，不带旧聊天。适合换主题、怕旧问题干扰、或者想让结果更干净。'],
-        ['清空上下文', '点上下文条或齿轮里的“清空上下文”会清掉右侧聊天记录。刷新/关闭这张画布页面后，内存上下文也会重新开始。'],
-      ],
-      prompts: [
-        ['连续追问', '沿用刚才的主题，把内容改成更适合画布卡片的结构：标题短一点，层级清楚一点。'],
-        ['换主题前', '从现在开始忽略前面的聊天，只围绕【新主题】生成 5 张复习卡。'],
-        ['少受干扰', '不要参考前面的例子。只根据这条要求回答：把【主题】拆成定义、公式、例题、易错点。'],
-      ],
-    },
-    {
-      id: 'templates',
-      eyebrow: '06 · PROMPTS',
-      title: '常用提示词模板',
-      subtitle: '点一下会填进输入框，你可以把主题名替换掉再生成。',
-      sections: [
-        ['学习笔记', '适合数学、物理、C 语言、论文阅读、课程复习。'],
-        ['科研想法', '适合把一个问题拆成假设、证据、方法、风险、下一步。'],
-        ['别只写闲聊', '少写“随便聊聊”，多写“生成几张、给谁看、用来干嘛、要什么结构”。'],
-      ],
-      prompts: [
-        ['一章课', '把【主题】整理成一章课的画布：1 张目录卡、5 张概念卡、2 张例题卡、1 张总结卡。'],
-        ['公式推导', '整理【公式/定理】：生成定义、适用条件、推导链、变量解释、例题、易错提醒。'],
-        ['论文精读', '把【论文主题】拆成：研究问题、核心方法、关键实验、创新点、局限、我可以借鉴的地方。'],
-        ['科研想法', '围绕【想法】生成一张研究计划画布：问题、假设、现有证据、实验设计、风险、下一步。'],
-        ['考试复盘', '围绕【错题/知识点】生成 5 张复盘卡：错因、正确思路、同类题、记忆钩子、下次检查清单。'],
+        [['哪些操作需要选区', 'Which actions need a selection'], ['扩展分支必须选中 1 个导图节点；补充和整理可选“选区”或“整张画布”；从零生成和聊天无需选节点。', 'Extend Branch needs one mind-map node. Supplement and Refine can target a selection or the entire canvas. Creation and chat need no selection.']],
+        [['预览里可以取消什么', 'What you can uncheck'], ['新增或更新默认勾选；连线移除默认不勾选。取消新节点会同步取消依赖连线，导图父节点会连同子树一起取消。', 'Creates and updates start checked; link removals do not. Unchecking a new node also drops dependent links, and mind-map parents cascade to their subtree.']],
+        [['应用后的安全边界', 'Safety after applying'], ['预览后画布若发生变化，会要求重新生成；成功应用只产生一条历史记录，可用 Ctrl+Z 整批撤销。', 'If the canvas changes after preview, regeneration is required. A successful apply creates one history entry and can be undone as a batch with Ctrl+Z.']],
       ],
     },
     {
       id: 'trouble',
-      eyebrow: '07 · SAFE',
-      title: '取消、预览和排错',
-      subtitle: 'AI 生成慢或方向不对，可以中途取消；结果进画布前也能放弃。',
+      layout: 'sections',
+      eyebrow: ['04 · 设置与排错', '04 · SETUP & HELP'],
+      title: ['常见问题都在这里', 'Fix the common issues here'],
+      subtitle: ['对话历史、画布目标和网络请求是三件分开控制的事。', 'Chat history, canvas scope, and network requests are controlled separately.'],
       sections: [
-        ['取消生成', '底部出现“取消”时，说明前端正在等待模型回复。点它会停止本次等待，不会改动画布。'],
-        ['预览取消', '生成完成后，如果预览不满意，点“重生成”或“取消生成”；只有“放进画布”才真正添加卡片。'],
-        ['常见问题', '提示没反应，多半是没填 API Key；挂到选中失败，多半是没有先选中正文卡片。'],
-      ],
-      prompts: [
-        ['更严格', '只生成 3 张卡片，不要扩展到其它主题；每张正文不超过 80 字。'],
-        ['更细', '刚才太粗略了。请保留主题，但增加公式解释和一个具体例题。'],
-        ['更清爽', '刚才太长了。请改成更适合扫读的卡片：短标题、短段落、重点用 Callout。'],
+        [['连续对话与单次请求', 'Continuous vs single request'], ['“上下文”只决定下一次是否携带侧栏聊天历史，不决定发送哪些画布节点；画布范围由操作和目标按钮决定。', 'Context only controls whether panel history is included next time. Canvas content is controlled by the action and target buttons.']],
+        [['为什么不能扩展或整理', 'Why an action cannot run'], ['扩展失败通常是没有恰好选中 1 个有效导图节点；补充或整理失败通常是目标范围里没有可发送的正文节点。', 'Extension usually fails without exactly one valid mind-map node. Supplement or Refine usually fails when the target has no eligible content nodes.']],
+        [['取消、过期与撤销', 'Cancel, stale preview, and undo'], ['“取消”只停止当前网络请求；预览过期请重新生成；应用成功后按 Ctrl+Z 可整批撤销。', 'Cancel only stops the current request. Regenerate stale previews, and use Ctrl+Z to undo a successful apply as one batch.']],
       ],
     },
   ];
 
+  // ── 面板尺寸：桌面端从左侧拖宽，偏好只存在 localStorage ──
+  function narrowPanelLayout() {
+    return window.innerWidth <= PANEL_NARROW_BREAKPOINT;
+  }
+  function panelWidthLimits() {
+    const viewportMax = Math.floor(window.innerWidth * PANEL_MAX_VIEWPORT_RATIO);
+    return {
+      min: PANEL_MIN_WIDTH,
+      max: Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, viewportMax)),
+    };
+  }
+  function clampPanelWidth(width) {
+    const limits = panelWidthLimits();
+    const value = Number(width);
+    const safe = Number.isFinite(value) ? value : PANEL_DEFAULT_WIDTH;
+    return Math.max(limits.min, Math.min(limits.max, Math.round(safe)));
+  }
+  function loadPanelWidth() {
+    try {
+      const saved = Number(window.localStorage && window.localStorage.getItem(PANEL_WIDTH_KEY));
+      return Number.isFinite(saved) && saved > 0 ? saved : PANEL_DEFAULT_WIDTH;
+    } catch (error) {
+      return PANEL_DEFAULT_WIDTH;
+    }
+  }
+  function savePanelWidth(width) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(width)));
+    } catch (error) {}
+  }
+  function syncResizeHandle(width) {
+    if (!resizeHandle) return;
+    const limits = panelWidthLimits();
+    resizeHandle.setAttribute('aria-valuemin', String(limits.min));
+    resizeHandle.setAttribute('aria-valuemax', String(limits.max));
+    resizeHandle.setAttribute('aria-valuenow', String(Math.round(width)));
+    resizeHandle.setAttribute('aria-label', ui('调整 AI 助手宽度', 'Resize AI Assistant'));
+    resizeHandle.setAttribute('title', ui(
+      '拖动调整宽度，双击恢复默认',
+      'Drag to resize. Double-click to restore the default width.',
+    ));
+  }
+  function applyPanelWidth(width, options) {
+    const opts = options || {};
+    if (narrowPanelLayout()) {
+      panel.style.removeProperty('--ai-panel-width');
+      syncResizeHandle(window.innerWidth);
+      return window.innerWidth;
+    }
+    const next = clampPanelWidth(width);
+    panel.style.setProperty('--ai-panel-width', next + 'px');
+    syncResizeHandle(next);
+    updateAllScrollbarIndicators();
+    if (opts.remember) preferredPanelWidth = next;
+    if (opts.persist) savePanelWidth(next);
+    return next;
+  }
+  function restorePanelWidth() {
+    return applyPanelWidth(preferredPanelWidth);
+  }
+  function runPanelResizeFrame() {
+    const state = panelResizeState;
+    if (!state) return;
+    state.frame = 0;
+    state.renderedWidth = applyPanelWidth(
+      state.startWidth + state.startX - state.pendingX,
+    );
+  }
+  function schedulePanelResize(clientX) {
+    if (!panelResizeState) return;
+    panelResizeState.pendingX = clientX;
+    if (!panelResizeState.frame) {
+      panelResizeState.frame = window.requestAnimationFrame(runPanelResizeFrame);
+    }
+  }
+  function onPanelResizeMove(event) {
+    if (!panelResizeState || event.pointerId !== panelResizeState.pointerId) return;
+    event.preventDefault();
+    schedulePanelResize(event.clientX);
+  }
+  function clearPanelResizeListeners(state) {
+    window.removeEventListener('pointermove', onPanelResizeMove);
+    window.removeEventListener('pointerup', onPanelResizeEnd);
+    window.removeEventListener('pointercancel', onPanelResizeCancel);
+    if (state && state.frame) window.cancelAnimationFrame(state.frame);
+    try {
+      if (state && resizeHandle) resizeHandle.releasePointerCapture(state.pointerId);
+    } catch (error) {}
+  }
+  function finishPanelResize(cancel) {
+    const state = panelResizeState;
+    if (!state) return;
+    panelResizeState = null;
+    clearPanelResizeListeners(state);
+    document.body.classList.remove('ai-panel-resizing');
+    panel.classList.remove('is-resizing');
+    const next = cancel
+      ? applyPanelWidth(state.startWidth)
+      : applyPanelWidth(state.renderedWidth || state.startWidth, { remember: true, persist: true });
+    syncResizeHandle(next);
+  }
+  function onPanelResizeEnd(event) {
+    if (!panelResizeState || event.pointerId !== panelResizeState.pointerId) return;
+    if (panelResizeState.frame) {
+      window.cancelAnimationFrame(panelResizeState.frame);
+      panelResizeState.frame = 0;
+    }
+    panelResizeState.pendingX = event.clientX;
+    panelResizeState.renderedWidth = applyPanelWidth(
+      panelResizeState.startWidth + panelResizeState.startX - event.clientX,
+    );
+    finishPanelResize(false);
+  }
+  function onPanelResizeCancel(event) {
+    if (!panelResizeState || event.pointerId !== panelResizeState.pointerId) return;
+    finishPanelResize(true);
+  }
+  function onPanelResizeStart(event) {
+    if (!resizeHandle || narrowPanelLayout() || event.button !== 0 || panelResizeState) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startWidth = panel.getBoundingClientRect().width;
+    panelResizeState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      pendingX: event.clientX,
+      startWidth: startWidth,
+      renderedWidth: startWidth,
+      frame: 0,
+    };
+    try { resizeHandle.setPointerCapture(event.pointerId); } catch (error) {}
+    panel.classList.add('is-resizing');
+    document.body.classList.add('ai-panel-resizing');
+    window.addEventListener('pointermove', onPanelResizeMove, { passive: false });
+    window.addEventListener('pointerup', onPanelResizeEnd);
+    window.addEventListener('pointercancel', onPanelResizeCancel);
+  }
+  function resetPanelWidth() {
+    if (narrowPanelLayout()) return;
+    applyPanelWidth(PANEL_DEFAULT_WIDTH, { remember: true, persist: true });
+  }
+  function onPanelResizeKeydown(event) {
+    if (narrowPanelLayout()) return;
+    const current = panel.getBoundingClientRect().width;
+    const step = event.shiftKey ? 48 : 16;
+    let next = null;
+    if (event.key === 'ArrowLeft') next = current + step;
+    if (event.key === 'ArrowRight') next = current - step;
+    if (event.key === 'Home') next = PANEL_DEFAULT_WIDTH;
+    if (event.key === 'End') next = panelWidthLimits().max;
+    if (next == null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    applyPanelWidth(next, { remember: true, persist: true });
+  }
+
+  function markScrollbarActive(element) {
+    if (!element) return;
+    element.classList.add('ai-scroll-active');
+    const indicator = scrollbarIndicators.get(element);
+    if (indicator) {
+      indicator.rail.classList.add('is-active');
+      updateScrollbarIndicator(element);
+    }
+    const oldTimer = scrollbarTimers.get(element);
+    if (oldTimer) window.clearTimeout(oldTimer);
+    const timer = window.setTimeout(function () {
+      const focused = element === document.activeElement
+        || (element.contains && element.contains(document.activeElement));
+      if (focused || element.matches(':hover')) {
+        scrollbarTimers.delete(element);
+        return;
+      }
+      element.classList.remove('ai-scroll-active');
+      const current = scrollbarIndicators.get(element);
+      if (current && (!scrollbarDragState || scrollbarDragState.element !== element)) {
+        current.rail.classList.remove('is-active');
+      }
+      scrollbarTimers.delete(element);
+    }, 760);
+    scrollbarTimers.set(element, timer);
+  }
+  function updateScrollbarIndicator(element) {
+    const indicator = scrollbarIndicators.get(element);
+    if (!indicator) return;
+    const panelRect = panel.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    const clientHeight = element.clientHeight;
+    const scrollHeight = element.scrollHeight;
+    const scrollable = !panel.hidden
+      && rect.width > 0
+      && rect.height > 0
+      && clientHeight > 0
+      && scrollHeight > clientHeight + 1;
+    indicator.rail.classList.toggle('is-scrollable', scrollable);
+    if (!scrollable) {
+      indicator.rail.classList.remove('is-active');
+      return;
+    }
+    const railInset = Math.min(7, Math.max(3, rect.height * 0.04));
+    const railHeight = Math.max(18, rect.height - railInset * 2);
+    const thumbHeight = Math.min(
+      railHeight,
+      Math.max(32, railHeight * (clientHeight / scrollHeight)),
+    );
+    const travel = Math.max(0, railHeight - thumbHeight);
+    const maxScroll = Math.max(1, scrollHeight - clientHeight);
+    const thumbTop = travel * Math.max(0, Math.min(1, element.scrollTop / maxScroll));
+    indicator.rail.style.left = Math.round(rect.right - panelRect.left - 9) + 'px';
+    indicator.rail.style.top = Math.round(rect.top - panelRect.top + railInset) + 'px';
+    indicator.rail.style.height = Math.round(railHeight) + 'px';
+    indicator.thumb.style.height = Math.round(thumbHeight) + 'px';
+    indicator.thumb.style.transform = 'translate3d(0,' + Math.round(thumbTop) + 'px,0)';
+    indicator.travel = travel;
+    indicator.maxScroll = maxScroll;
+  }
+  function updateAllScrollbarIndicators() {
+    installedScrollers.forEach(updateScrollbarIndicator);
+  }
+  function moveScrollbarDrag(clientY) {
+    const state = scrollbarDragState;
+    if (!state) return;
+    const indicator = scrollbarIndicators.get(state.element);
+    if (!indicator || !indicator.travel) return;
+    const railRect = indicator.rail.getBoundingClientRect();
+    const next = Math.max(0, Math.min(
+      indicator.travel,
+      clientY - railRect.top - state.pointerOffset,
+    ));
+    state.element.scrollTop = (next / indicator.travel) * indicator.maxScroll;
+    markScrollbarActive(state.element);
+  }
+  function onScrollbarDragMove(event) {
+    if (!scrollbarDragState || event.pointerId !== scrollbarDragState.pointerId) return;
+    event.preventDefault();
+    moveScrollbarDrag(event.clientY);
+  }
+  function finishScrollbarDrag(event) {
+    const state = scrollbarDragState;
+    if (!state) return;
+    if (event && event.pointerId != null && event.pointerId !== state.pointerId) return;
+    scrollbarDragState = null;
+    window.removeEventListener('pointermove', onScrollbarDragMove);
+    window.removeEventListener('pointerup', finishScrollbarDrag);
+    window.removeEventListener('pointercancel', finishScrollbarDrag);
+    try { state.rail.releasePointerCapture(state.pointerId); } catch (error) {}
+    state.rail.classList.remove('is-dragging');
+    markScrollbarActive(state.element);
+  }
+  function startScrollbarDrag(event, element) {
+    if (event.button !== 0 || scrollbarDragState) return;
+    const indicator = scrollbarIndicators.get(element);
+    if (!indicator || !indicator.rail.classList.contains('is-scrollable')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateScrollbarIndicator(element);
+    const thumbRect = indicator.thumb.getBoundingClientRect();
+    const onThumb = event.target === indicator.thumb;
+    scrollbarDragState = {
+      element: element,
+      rail: indicator.rail,
+      pointerId: event.pointerId,
+      pointerOffset: onThumb
+        ? event.clientY - thumbRect.top
+        : thumbRect.height / 2,
+    };
+    try { indicator.rail.setPointerCapture(event.pointerId); } catch (error) {}
+    indicator.rail.classList.add('is-dragging', 'is-active');
+    window.addEventListener('pointermove', onScrollbarDragMove, { passive: false });
+    window.addEventListener('pointerup', finishScrollbarDrag);
+    window.addEventListener('pointercancel', finishScrollbarDrag);
+    if (!onThumb) moveScrollbarDrag(event.clientY);
+  }
+  function installAutoScrollbar(element) {
+    if (!element || scrollbarIndicators.has(element)) return;
+    element.classList.add('ai-custom-scroll');
+    const rail = document.createElement('span');
+    const thumb = document.createElement('span');
+    rail.className = 'ai-scroll-indicator';
+    rail.setAttribute('aria-hidden', 'true');
+    thumb.className = 'ai-scroll-indicator-thumb';
+    rail.appendChild(thumb);
+    panel.appendChild(rail);
+    scrollbarIndicators.set(element, {
+      rail: rail,
+      thumb: thumb,
+      travel: 0,
+      maxScroll: 0,
+    });
+    installedScrollers.push(element);
+    element.addEventListener('scroll', function () {
+      markScrollbarActive(element);
+      updateScrollbarIndicator(element);
+    }, { passive: true });
+    element.addEventListener('mouseenter', function () { markScrollbarActive(element); });
+    element.addEventListener('mouseleave', function () { markScrollbarActive(element); });
+    element.addEventListener('focusin', function () { markScrollbarActive(element); });
+    element.addEventListener('focusout', function () { markScrollbarActive(element); });
+    rail.addEventListener('pointerdown', function (event) { startScrollbarDrag(event, element); });
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(function () { updateScrollbarIndicator(element); });
+      observer.observe(element);
+    }
+    if (window.MutationObserver) {
+      const observer = new MutationObserver(function () { updateScrollbarIndicator(element); });
+      observer.observe(element, { childList: true, subtree: true, characterData: true });
+    }
+    updateScrollbarIndicator(element);
+  }
+
+  function syncWorkspaceSheetState() {
+    const sheetOpen = panelletOpen(helpPanel) || panelletOpen(settings);
+    panel.classList.toggle('ai-sheet-open', sheetOpen);
+    if (conversation) {
+      conversation.toggleAttribute('inert', sheetOpen);
+      if (sheetOpen) conversation.setAttribute('aria-hidden', 'true');
+      else conversation.removeAttribute('aria-hidden');
+    }
+    if (workspace) workspace.dataset.activeSheet = helpOpen()
+      ? 'help' : (settingsOpen() ? 'settings' : '');
+    window.requestAnimationFrame(updateAllScrollbarIndicators);
+  }
+
   // ── 面板开关 ──
   function panelOpen() { return panel.classList.contains('open'); }
   function openPanel() {
+    restorePanelWidth();
     panel.hidden = false;
     void panel.offsetWidth;                 // 触发过渡
     panel.classList.add('open');
@@ -189,9 +575,11 @@
     if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
     if (!configLoaded) loadConfig();
     syncContextStatus();
+    window.requestAnimationFrame(updateAllScrollbarIndicators);
     setTimeout(function () { if (input) input.focus(); }, 60);
   }
   function closePanel() {
+    if (panelResizeState) finishPanelResize(true);
     panel.classList.remove('open');
     document.body.classList.remove('ai-panel-open');
     if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
@@ -202,9 +590,6 @@
   // ── 问号教程 / 齿轮设置开关 ──
   let helpPageIndex = 0;
   let helpFlipping = false;
-  let helpNavReady = false;
-  let helpWheelAccum = 0;
-  let helpWheelResetTimer = null;
 
   function esc(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, function (ch) {
@@ -228,27 +613,37 @@
     } catch (e) {}
   }
   function historyCount() {
-    return history.filter(function (m) { return m && m.role !== 'system'; }).length;
+    return history.length;
   }
   function pushHistory(message) {
     history.push(message);
-    const overflow = history.length - (HISTORY_LIMIT + 1);
-    if (overflow > 0) history.splice(1, overflow);  // 固定保留开头 system + 最近消息
+    const overflow = history.length - HISTORY_LIMIT;
+    if (overflow > 0) history.splice(0, overflow);
   }
   function requestMessages() {
     if (contextMode === 'continuous') return history.slice();
     const lastUser = history.slice().reverse().find(function (m) { return m && m.role === 'user'; });
-    return lastUser ? [history[0], lastUser] : [history[0]];
+    return lastUser ? [lastUser] : [];
   }
   function syncContextStatus() {
     const count = historyCount();
     const continuous = contextMode === 'continuous';
-    if (contextLabel) contextLabel.textContent = continuous ? '上下文：连续对话' : '上下文：单次请求';
-    if (contextCount) contextCount.textContent = continuous ? (count + ' 条') : '不带历史';
+    if (contextLabel) contextLabel.textContent = continuous
+      ? ui('上下文：连续对话', 'Context: continuous')
+      : ui('上下文：单次请求', 'Context: single request');
+    if (contextCount) contextCount.textContent = continuous
+      ? ui(count + ' 条', count + ' items')
+      : ui('不带历史', 'No history');
     if (contextHint) {
       contextHint.textContent = continuous
-        ? '下一次请求会带上右侧聊天历史。关闭 AI 侧栏不会清空；刷新或关闭画布页面会重新开始。'
-        : '下一次请求只带当前输入，不带旧聊天。右侧记录仍会显示，你也可以随时清空。';
+        ? ui(
+          '下一次请求会带上右侧聊天历史。关闭 AI 侧栏不会清空；刷新或关闭画布页面会重新开始。',
+          'The next request includes recent panel history. Closing the panel keeps it; reloading the canvas starts over.',
+        )
+        : ui(
+          '下一次请求只带当前输入，不带旧聊天。右侧记录仍会显示，你也可以随时清空。',
+          'The next request includes only the current input. The transcript remains visible and can be cleared anytime.',
+        );
     }
     contextModeBtns.forEach(function (btn) {
       const active = btn.dataset.aiContextMode === contextMode;
@@ -274,6 +669,7 @@
       if (el.dataset.aiPanelletState === 'open') el.classList.add('open');
     });
     if (button) button.setAttribute('aria-expanded', 'true');
+    syncWorkspaceSheetState();
   }
   function closePanellet(el, button, immediate) {
     if (!el || el.hidden) return;
@@ -283,6 +679,7 @@
     if (prefersReduced || immediate) {
       el.hidden = true;
       el.classList.remove('ai-panellet-closing');
+      syncWorkspaceSheetState();
       return;
     }
     el.classList.add('ai-panellet-closing');
@@ -290,54 +687,86 @@
       if (!el.classList.contains('open')) {
         el.hidden = true;
         el.classList.remove('ai-panellet-closing');
+        syncWorkspaceSheetState();
       }
     }, PANELLET_CLOSE_MS);
+    syncWorkspaceSheetState();
   }
-  function syncHelpNav(index, animate) {
+  function syncHelpNav(index) {
     if (!helpPanel) return;
     const item = AI_HELP_PAGES[index];
-    const nav = helpPanel.querySelector('.ai-help-nav');
-    const slider = helpPanel.querySelector('[data-role="ai-help-nav-slider"]');
-    const spineSlider = helpPanel.querySelector('[data-role="ai-help-spine-slider"]');
-    if (!item || !nav || !slider || !spineSlider) return;
+    const page = helpPanel.querySelector('[data-role="ai-help-page"]');
+    if (!item) return;
     let active = null;
-    let activeSpine = null;
     helpPanel.querySelectorAll('[data-ai-help-page]').forEach(function (button) {
       const selected = button.dataset.aiHelpPage === item.id;
       button.classList.toggle('active', selected);
-      if (selected && button.closest('.ai-help-nav')) active = button;
-      if (selected && button.closest('.ai-help-spine')) activeSpine = button;
+      button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button.setAttribute('tabindex', selected ? '0' : '-1');
+      if (selected) active = button;
     });
-    if (!active || !activeSpine) return;
-    if (!animate || !helpNavReady) {
-      slider.classList.add('no-transition');
-      spineSlider.classList.add('no-transition');
-    }
-    slider.style.width = active.offsetWidth + 'px';
-    slider.style.height = active.offsetHeight + 'px';
-    slider.style.transform = 'translate3d(' + active.offsetLeft + 'px,' + active.offsetTop + 'px,0)';
-    slider.classList.add('show');
-    spineSlider.style.transform = 'translate3d(0,'
-      + (activeSpine.offsetTop + (activeSpine.offsetHeight - spineSlider.offsetHeight) / 2) + 'px,0)';
-    spineSlider.classList.add('show');
-    if (!animate || !helpNavReady) {
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          slider.classList.remove('no-transition');
-          spineSlider.classList.remove('no-transition');
-        });
-      });
-    }
-    helpNavReady = true;
+    if (page && active && active.id) page.setAttribute('aria-labelledby', active.id);
   }
-  function helpPromptButtons(prompts) {
-    if (!Array.isArray(prompts) || !prompts.length) return '';
-    return '<div class="ai-help-template-list">'
-      + prompts.map(function (item) {
-        return '<button type="button" data-prompt="' + esc(item[1]) + '"><b>'
-          + esc(item[0]) + '</b><span>' + esc(item[1]) + '</span></button>';
+
+  function helpSections(sections, layout) {
+    return '<div class="ai-help-sections">'
+      + (Array.isArray(sections) ? sections : []).map(function (section, index) {
+        const step = layout === 'steps' ? ' data-step="' + String(index + 1) + '"' : '';
+        return '<section class="ai-help-section"' + step + '><h4>'
+          + esc(localize(section[0])) + '</h4><p>' + esc(localize(section[1])) + '</p></section>';
       }).join('') + '</div>';
   }
+
+  function helpActionCards(actionIds) {
+    const fitLabel = ui('适合', 'Best for');
+    const beforeLabel = ui('使用前', 'Before');
+    const resultLabel = ui('结果', 'Result');
+    const useLabel = ui('使用这个', 'Use this');
+    const exampleLabel = ui('示例指令', 'Example prompts');
+    const exampleHint = ui('点击带入输入框，不会自动发送', 'Click to fill the input; nothing is sent');
+    return '<div class="ai-help-action-list">'
+      + (Array.isArray(actionIds) ? actionIds : []).map(function (action) {
+        const meta = ACTION_META[action];
+        if (!meta || !meta.guide) return '';
+        const name = localize(meta.label);
+        const headingId = 'ai-help-action-' + action;
+        const examples = Array.isArray(meta.guide.examples) ? meta.guide.examples : [];
+        const examplesHtml = examples.length
+          ? '<div class="ai-help-action-examples"><div class="ai-help-example-head"><b>' + esc(exampleLabel)
+            + '</b><span>' + esc(exampleHint) + '</span></div><div class="ai-help-example-list">'
+            + examples.map(function (example, index) {
+              const prompt = localize(example);
+              return '<button type="button" data-ai-help-example="' + esc(action)
+                + '" data-example-index="' + String(index) + '" aria-label="'
+                + esc(ui('带入示例：' + prompt, 'Use example: ' + prompt)) + '"><span aria-hidden="true">↳</span>'
+                + esc(prompt) + '</button>';
+            }).join('') + '</div></div>'
+          : '';
+        return '<article class="ai-help-action-card" aria-labelledby="' + headingId + '">'
+          + '<header><span class="ai-help-action-icon" aria-hidden="true">' + esc(meta.icon) + '</span>'
+          + '<h4 id="' + headingId + '">' + esc(name) + '</h4>'
+          + '<button type="button" class="ai-help-action-use" data-ai-help-action="' + esc(action)
+          + '" aria-label="' + esc(ui('使用：' + name, 'Use ' + name)) + '">' + esc(useLabel) + '</button></header>'
+          + '<dl><div><dt>' + esc(fitLabel) + '</dt><dd>' + esc(localize(meta.guide.fit)) + '</dd></div>'
+          + '<div><dt>' + esc(beforeLabel) + '</dt><dd>' + esc(localize(meta.guide.before)) + '</dd></div>'
+          + '<div><dt>' + esc(resultLabel) + '</dt><dd>' + esc(localize(meta.guide.result)) + '</dd></div></dl>'
+          + examplesHtml
+          + '</article>';
+      }).join('') + '</div>';
+  }
+
+  function syncHelpPager(index) {
+    if (!helpPanel) return;
+    const total = AI_HELP_PAGES.length;
+    const prev = helpPanel.querySelector('[data-action="ai-help-prev"]');
+    const next = helpPanel.querySelector('[data-action="ai-help-next"]');
+    const nextLabel = helpPanel.querySelector('[data-role="ai-help-next-label"]');
+    const last = index >= total - 1;
+    if (prev) prev.disabled = index <= 0;
+    if (next) next.setAttribute('aria-label', last ? ui('收起教程', 'Close guide') : ui('下一步', 'Next'));
+    if (nextLabel) nextLabel.textContent = last ? ui('收起教程', 'Close guide') : ui('下一步', 'Next');
+  }
+
   function renderHelpPage(index, direction) {
     if (!helpPanel) return;
     const page = helpPanel.querySelector('[data-role="ai-help-page"]');
@@ -347,19 +776,18 @@
     const item = AI_HELP_PAGES[index];
     if (!page || !copy || !item) return;
     const apply = function () {
-      copy.innerHTML = '<div class="ai-help-page-intro"><p>' + esc(item.eyebrow) + '</p><h3>'
-        + esc(item.title) + '</h3><span>' + esc(item.subtitle) + '</span></div>'
-        + '<div class="ai-help-sections">'
-        + item.sections.map(function (section) {
-          return '<section class="ai-help-section"><h4>' + esc(section[0]) + '</h4><p>'
-            + esc(section[1]) + '</p></section>';
-        }).join('') + '</div>'
-        + helpPromptButtons(item.prompts);
+      copy.dataset.helpLayout = item.layout || 'sections';
+      copy.innerHTML = '<div class="ai-help-page-intro"><p>' + esc(localize(item.eyebrow)) + '</p><h3>'
+        + esc(localize(item.title)) + '</h3><span>' + esc(localize(item.subtitle)) + '</span></div>'
+        + (item.layout === 'actions'
+          ? helpActionCards(item.actionIds)
+          : helpSections(item.sections, item.layout));
       if (position) position.textContent = String(index + 1).padStart(2, '0') + ' / '
         + String(AI_HELP_PAGES.length).padStart(2, '0');
+      syncHelpPager(index);
       if (book) book.scrollTop = 0;
     };
-    syncHelpNav(index, !!direction);
+    syncHelpNav(index);
     if (!direction || prefersReduced || typeof page.animate !== 'function') { apply(); return; }
     helpFlipping = true;
     const outgoingX = direction > 0 ? -26 : 26;
@@ -385,7 +813,7 @@
   function gotoHelpPage(index) {
     if (helpFlipping) return;
     const total = AI_HELP_PAGES.length;
-    const next = ((index % total) + total) % total;
+    const next = Math.max(0, Math.min(total - 1, index));
     if (next === helpPageIndex) return;
     const direction = index > helpPageIndex ? 1 : -1;
     helpPageIndex = next;
@@ -398,7 +826,6 @@
     closeContextMenu(true);
     openPanellet(helpPanel, helpBtn);
     renderHelpPage(helpPageIndex, 0);
-    requestAnimationFrame(function () { syncHelpNav(helpPageIndex, false); });
   }
   function closeHelp(immediate) { closePanellet(helpPanel, helpBtn, immediate); }
   function toggleHelp() { if (helpOpen()) closeHelp(); else openHelp(); }
@@ -435,17 +862,36 @@
   function updateKeyHint(cfg) {
     if (!keyHint) return;
     if (cfg && cfg.hasKey) {
-      keyHint.textContent = '已设置 ' + (cfg.keyHint || '');
+      keyHint.textContent = ui('已设置 ', 'Configured ') + (cfg.keyHint || '');
       keyHint.classList.remove('ai-key-missing');
     } else {
-      keyHint.textContent = '尚未设置';
+      keyHint.textContent = ui('尚未设置', 'Not configured');
       keyHint.classList.add('ai-key-missing');
     }
   }
   function setConfigFeedback(t) { if (cfgFeedback) cfgFeedback.textContent = t || ''; }
+  function responseErrorMessage(data, status) {
+    if (currentLanguage() !== 'en') {
+      return (data && data.error) || ('请求失败（' + status + '）');
+    }
+    const code = data && data.code ? String(data.code) : '';
+    const messages = {
+      PLAN_MESSAGES_INVALID: 'The request has no usable conversation content.',
+      PLAN_ACTION_INVALID: 'This canvas action is not supported.',
+      PLAN_TRUNCATED: 'The generated plan reached the output limit. Ask for fewer or shorter nodes.',
+      PLAN_BRANCH_ANCHOR_INVALID: 'Select exactly one mind-map node before extending a branch.',
+      PLAN_BRANCH_ANCHOR_NOT_MINDMAP: 'The selected node is not part of a valid mind map.',
+      PLAN_CONTEXT_REQUIRED: 'This action needs eligible canvas content.',
+      PLAN_EMPTY: 'The model proposed no usable changes.',
+    };
+    if (messages[code]) return messages[code];
+    return code
+      ? 'The request failed safely (' + code + '). Try regenerating or narrowing the target.'
+      : 'Request failed (' + status + '). Check the AI settings and try again.';
+  }
   function readJsonOrThrow(r) {
     return r.json().catch(function () { return {}; }).then(function (data) {
-      if (!r.ok) throw new Error(data.error || ('请求失败（' + r.status + '）'));
+      if (!r.ok) throw new Error(responseErrorMessage(data, r.status));
       return data;
     });
   }
@@ -456,7 +902,7 @@
     };
     const k = keyInput ? keyInput.value.trim() : '';
     if (k) patch.apiKey = k;                 // 留空 = 不修改已存的 Key
-    setConfigFeedback('保存中…');
+    setConfigFeedback(ui('保存中…', 'Saving…'));
     fetch('/api/ai-config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
@@ -466,9 +912,9 @@
       if (keyInput) keyInput.value = '';     // 不在输入框里留明文
       if (modelInput && cfg.model) modelInput.value = cfg.model;
       if (baseInput && cfg.baseUrl) baseInput.value = cfg.baseUrl;
-      setConfigFeedback('已保存');
+      setConfigFeedback(ui('已保存', 'Saved'));
       setTimeout(function () { setConfigFeedback(''); }, 1600);
-    }).catch(function () { setConfigFeedback('保存失败，请重试'); });
+    }).catch(function () { setConfigFeedback(ui('保存失败，请重试', 'Save failed. Try again.')); });
   }
   function testConfig() {
     const patch = {
@@ -477,17 +923,17 @@
     };
     const k = keyInput ? keyInput.value.trim() : '';
     if (k) patch.apiKey = k;                 // 可测试尚未保存的新 Key
-    setConfigFeedback('测试中…');
+    setConfigFeedback(ui('测试中…', 'Testing…'));
     if (testCfgBtn) testCfgBtn.disabled = true;
     fetch('/api/ai-test', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     }).then(readJsonOrThrow).then(function (data) {
-      const model = data && data.model ? data.model : '当前模型';
-      setConfigFeedback('连接正常：' + model);
+      const model = data && data.model ? data.model : ui('当前模型', 'Current model');
+      setConfigFeedback(ui('连接正常：', 'Connected: ') + model);
       setTimeout(function () { setConfigFeedback(''); }, 2200);
     }).catch(function (err) {
-      setConfigFeedback(err && err.message ? err.message : '测试失败');
+      setConfigFeedback(err && err.message ? err.message : ui('测试失败', 'Connection test failed'));
     }).finally(function () {
       if (testCfgBtn) testCfgBtn.disabled = false;
     });
@@ -495,8 +941,7 @@
 
   // ── 消息渲染 ──
   function syncEmpty() {
-    const has = history.some(function (m) { return m.role !== 'system'; })
-      || !!(messagesEl && messagesEl.querySelector('.ai-msg'));
+    const has = history.length > 0 || !!(messagesEl && messagesEl.querySelector('.ai-msg'));
     if (emptyEl) emptyEl.hidden = has;
   }
   function hasMathSource(source) {
@@ -547,7 +992,11 @@
     clearTypeset(row);
     row.remove();
   }
-  function scrollToBottom() { if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight; }
+  function scrollToBottom() {
+    if (!messagesEl) return;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    updateScrollbarIndicator(messagesEl);
+  }
 
   // 复制回复原文：优先原生剪贴板（WebView2 支持），失败再退回 execCommand。
   function copyTextToClipboard(text) {
@@ -579,22 +1028,22 @@
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'ai-copy-btn';
-    btn.title = '复制这条回复';
-    btn.setAttribute('aria-label', '复制这条回复');
+    btn.title = ui('复制这条回复', 'Copy this reply');
+    btn.setAttribute('aria-label', ui('复制这条回复', 'Copy this reply'));
     const ico = document.createElement('span');
     ico.className = 'ai-copy-ico';
     ico.setAttribute('aria-hidden', 'true');
     ico.textContent = '⧉';
     const label = document.createElement('span');
     label.className = 'ai-copy-label';
-    label.textContent = '复制';
+    label.textContent = ui('复制', 'Copy');
     btn.appendChild(ico);
     btn.appendChild(label);
     let holdTimer = null, outTimer = null;
     function resetIdle() {
       btn.classList.remove('copied', 'copy-failed', 'ai-copy-out');
       ico.textContent = '⧉';
-      label.textContent = '复制';
+      label.textContent = ui('复制', 'Copy');
     }
     function flash(ok) {
       if (holdTimer) clearTimeout(holdTimer);
@@ -604,7 +1053,7 @@
       void btn.offsetWidth;
       btn.classList.add(ok ? 'copied' : 'copy-failed');
       ico.textContent = ok ? '✓' : '✕';
-      label.textContent = ok ? '已复制' : '复制失败';
+      label.textContent = ok ? ui('已复制', 'Copied') : ui('复制失败', 'Copy failed');
       holdTimer = setTimeout(function () {
         btn.classList.add('ai-copy-out');           // 0.8s 后开始渐隐
         outTimer = setTimeout(resetIdle, 400);      // 与渐隐过渡时长一致
@@ -636,6 +1085,7 @@
     row.className = 'ai-msg ai-msg-' + role;
     const bubble = document.createElement('div');
     bubble.className = 'ai-bubble';
+    bubble.setAttribute('data-user-content', '');
     if (role === 'assistant' && !opts.plain) renderMarkdownInto(bubble, content);
     else bubble.textContent = content;       // 用户消息 / 占位文本：纯文本，绝不当 HTML
     row.appendChild(bubble);
@@ -655,23 +1105,55 @@
     if (!bubble) return;
     const note = document.createElement('div');
     note.className = 'ai-truncated-note';
-    note.textContent = '⚠ 这次回复写到长度上限被截断了，内容可能不完整。可让我「接着上面继续写」，或拆成更少/更短的卡片再试。';
+    note.textContent = ui(
+      '⚠ 这次回复写到长度上限被截断了，内容可能不完整。可让我「接着上面继续写」，或拆成更少/更短的卡片再试。',
+      '⚠ This reply reached the output limit and may be incomplete. Ask me to continue, or request fewer and shorter items.',
+    );
     bubble.appendChild(note);
   }
 
   // ── 发送 / 生成 ──
-  function setChipsDisabled(on) {
-    if (!chipsEl) return;
-    chipsEl.querySelectorAll('.ai-chip').forEach(function (b) { b.disabled = on; });
+  function setActionControlsDisabled(on) {
+    actionBtns.forEach(function (button) { button.disabled = on; });
+    targetBtns.forEach(function (button) {
+      button.disabled = on || (button === targetSelectionBtn && selectedContentCount < 1);
+    });
+  }
+  function syncSubmitControl() {
+    if (!sendBtn) return;
+    const chatMode = selectedAction === 'chat';
+    sendBtn.disabled = sending;
+    sendBtn.classList.toggle('ai-send-preview', !chatMode);
+    sendBtn.title = chatMode
+      ? ui('发送聊天（Enter）', 'Send chat (Enter)')
+      : ui('生成画布预览（Enter）', 'Generate canvas preview (Enter)');
+    sendBtn.setAttribute('aria-label', chatMode
+      ? ui('发送聊天', 'Send chat')
+      : ui('生成画布预览', 'Generate canvas preview'));
+    if (submitIcon) submitIcon.toggleAttribute('hidden', !chatMode);
+    if (submitLabel) {
+      submitLabel.hidden = chatMode;
+      submitLabel.textContent = ui('生成预览', 'Generate preview');
+    }
+    if (input) {
+      input.placeholder = chatMode
+        ? ui('输入消息，Enter 发送，Shift+Enter 换行', 'Type a message. Enter to send; Shift+Enter for a new line.')
+        : ui('输入画布需求，Enter 生成预览，Shift+Enter 换行', 'Describe the canvas change. Enter to preview; Shift+Enter for a new line.');
+    }
+    if (composerTip) {
+      composerTip.textContent = chatMode
+        ? ui('Enter / → 发送聊天', 'Enter / → sends chat')
+        : ui('Enter / 生成预览 · 确认后才改动画布', 'Enter / Generate preview · the canvas changes only after confirmation');
+    }
   }
   function setSending(on) {
     sending = on;
-    if (sendBtn) sendBtn.disabled = on;
     if (cancelBtn) {
       cancelBtn.hidden = !on;
       cancelBtn.disabled = !on;
     }
-    setChipsDisabled(on);
+    setActionControlsDisabled(on);
+    syncSubmitControl();
     panel.classList.toggle('ai-sending', on);
   }
   function beginRequest(kind, pending) {
@@ -693,9 +1175,9 @@
     if (!pending || !pending.row || !pending.bubble) return;
     pending.row.classList.remove('ai-msg-pending', 'ai-msg-error');
     pending.row.classList.add('ai-msg-hint');
-    pending.bubble.textContent = kind === 'compose'
-      ? '已取消生成，没有改动画布。'
-      : '已取消本次回复。';
+    pending.bubble.textContent = kind === 'plan'
+      ? ui('已取消生成，没有改动画布。', 'Generation canceled. The canvas was not changed.')
+      : ui('已取消本次回复。', 'This reply was canceled.');
     syncEmpty();
   }
   function cancelActiveRequest() {
@@ -710,7 +1192,7 @@
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'ai-retry-btn';
-    btn.textContent = '↻ 重试';
+    btn.textContent = ui('↻ 重试', '↻ Retry');
     btn.addEventListener('click', function () {
       if (sending) return;
       removeMessageRow(row);  // 去掉这条失败气泡再重跑
@@ -720,13 +1202,13 @@
   }
   function rerun() {
     if (!lastRun) return;
-    if (lastRun.kind === 'compose') runCompose(lastRun.mode);
+    if (lastRun.kind === 'plan') runPlan(lastRun.action, lastRun.scope);
     else runChat();
   }
   // 纯聊天的请求部分（不押入用户消息，便于重试复用）。
   function runChat() {
     setSending(true);
-    const pending = appendMessage('assistant', '正在思考…', { plain: true });
+    const pending = appendMessage('assistant', ui('正在思考…', 'Thinking…'), { plain: true });
     pending.row.classList.add('ai-msg-pending');
     const req = beginRequest('chat', pending);
     fetch('/api/ai-chat', {
@@ -735,7 +1217,7 @@
       signal: req.controller.signal,
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (data) {
-        if (!r.ok) throw new Error(data.error || ('请求失败（' + r.status + '）'));
+        if (!r.ok) throw new Error(responseErrorMessage(data, r.status));
         return data;
       });
     }).then(function (data) {
@@ -753,7 +1235,7 @@
       }
       pending.row.classList.remove('ai-msg-pending');
       pending.row.classList.add('ai-msg-error');
-      pending.bubble.textContent = '⚠ ' + (err && err.message ? err.message : '出错了');
+      pending.bubble.textContent = '⚠ ' + (err && err.message ? err.message : ui('出错了', 'Something went wrong'));
       addRetryButton(pending.row);
     }).finally(function () {
       finishRequest(req);
@@ -766,7 +1248,7 @@
     if (sending || !input) return;
     const text = (input.value || '').trim();
     if (!text) return;
-    clearComposeHint();
+    clearPlanHint();
     pushHistory({ role: 'user', content: text });
     syncContextStatus();
     appendMessage('user', text);
@@ -777,282 +1259,604 @@
     runChat();
   }
 
-  // 预设按钮空着点 / 画布为空时：给一条会自动去重的教学提示，而不是静默无反应
-  //（用户反馈过"点了一点反馈都没有、不知道有啥用"）。
-  function clearComposeHint() {
+  const CURVE_LABELS = {
+    bezier: ['曲线', 'Curve'],
+    straight: ['直线', 'Straight'],
+    elbow: ['折线', 'Elbow'],
+    'rounded-elbow': ['圆角折线', 'Rounded elbow'],
+    's-curve': ['S 曲线', 'S curve'],
+    smooth: ['平滑曲线', 'Smooth curve'],
+    branch: ['枝桠曲线', 'Branch curve'],
+    arc: ['弧线', 'Arc'],
+    organic: ['自然曲线', 'Organic curve'],
+  };
+
+  function actionLabel(action) {
+    return localize((ACTION_META[action] || ACTION_META.chat).label);
+  }
+  function curveLabel(curve) {
+    return localize(CURVE_LABELS[curve] || [curve || '枝桠曲线', curve || 'Branch curve']);
+  }
+  function selectedContext() {
+    const mod = window.CanvasModule;
+    try {
+      return mod && typeof mod.describeAIContext === 'function'
+        ? mod.describeAIContext({ scope: 'selection' }) : null;
+    } catch (error) { return null; }
+  }
+  function syncCanvasAwareness() {
+    const mod = window.CanvasModule;
+    let selection = selectedContext();
+    let presentation = null;
+    try {
+      presentation = mod && typeof mod.describeAIPresentation === 'function'
+        ? mod.describeAIPresentation() : null;
+    } catch (error) {}
+    if (presentation && presentation.mode) currentEditorMode = presentation.mode;
+    selectedContentCount = selection && Array.isArray(selection.nodes) ? selection.nodes.length : 0;
+    const oneMindmapNode = selectedContentCount === 1 && !!selection.nodes[0].mindmapMember;
+    if (currentEditorMode === 'mindmap') {
+      recommendedAction = oneMindmapNode ? 'extend_branch' : 'create_mindmap';
+    } else if (selectedContentCount > 1) {
+      recommendedAction = 'refine';
+    } else if (selectedContentCount === 1) {
+      recommendedAction = 'supplement';
+    } else {
+      recommendedAction = 'create_graph';
+    }
+    if (!actionUserChosen) selectedAction = recommendedAction;
+    if (!targetUserChosen) targetScope = selectedContentCount ? 'selection' : 'canvas';
+    if (!selectedContentCount && targetScope === 'selection') targetScope = 'canvas';
+    syncActionPicker();
+  }
+  function syncActionPicker() {
+    actionBtns.forEach(function (button) {
+      const action = button.dataset.aiAction;
+      const active = action === selectedAction;
+      button.classList.toggle('active', active);
+      button.classList.toggle('recommended', action === recommendedAction);
+      button.setAttribute('aria-checked', active ? 'true' : 'false');
+      const icon = button.querySelector('.ai-action-icon');
+      const label = button.querySelector('span:last-child');
+      if (icon && ACTION_META[action]) icon.textContent = ACTION_META[action].icon;
+      if (label) label.textContent = actionLabel(action);
+    });
+    if (actionRecommendation) {
+      actionRecommendation.textContent = ui('推荐：', 'Recommended: ') + actionLabel(recommendedAction);
+    }
+    const targeted = selectedAction === 'supplement' || selectedAction === 'refine';
+    if (targetRow) targetRow.hidden = !targeted;
+    if (targetSelectionBtn) {
+      targetSelectionBtn.disabled = sending || selectedContentCount < 1;
+      if (selectionCountEl) {
+        selectionCountEl.textContent = String(selectedContentCount);
+        targetSelectionBtn.replaceChildren(
+          document.createTextNode(ui('选区 ', 'Selection · ')),
+          selectionCountEl,
+          document.createTextNode(ui(' 个节点', selectedContentCount === 1 ? ' node' : ' nodes')),
+        );
+      }
+    }
+    targetBtns.forEach(function (button) {
+      const active = button.dataset.aiTarget === targetScope;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+    if (actionDescription) {
+      actionDescription.textContent = localize((ACTION_META[selectedAction] || ACTION_META.chat).description);
+    }
+    syncSubmitControl();
+  }
+
+  function useHelpAction(action) {
+    if (!ACTION_META[action] || sending) return;
+    selectedAction = action;
+    actionUserChosen = true;
+    syncActionPicker();
+    closeHelp();
+    const actionButton = panel.querySelector('[data-ai-action="' + action + '"]');
+    const delay = prefersReduced ? 0 : PANELLET_CLOSE_MS + 20;
+    setTimeout(function () {
+      if (actionButton) {
+        actionButton.classList.remove('ai-action-guided');
+        void actionButton.offsetWidth;
+        actionButton.classList.add('ai-action-guided');
+        setTimeout(function () { actionButton.classList.remove('ai-action-guided'); }, 920);
+      }
+      if (input) input.focus();
+    }, delay);
+  }
+  function useHelpExample(action, index) {
+    const meta = ACTION_META[action];
+    const examples = meta && meta.guide && Array.isArray(meta.guide.examples)
+      ? meta.guide.examples : [];
+    const example = examples[index];
+    if (!example || sending || !input) return;
+    useHelpAction(action);
+    input.value = localize(example);
+    autoGrow();
+  }
+
+  // 输入或画布状态不满足动作要求时，给一条会自动去重的教学提示。
+  function clearPlanHint() {
     if (!messagesEl) return;
     const old = messagesEl.querySelector('.ai-msg-hint');
     if (old) old.remove();
   }
-  function showComposeHint(msg) {
-    clearComposeHint();
+  function showPlanHint(msg) {
+    clearPlanHint();
     const m = appendMessage('assistant',
-      msg || '💡「✦ 生成到画布」会把你的需求做成一张张卡片，直接画进当前画布。先在下面输入框写要点'
-      + '（例：「整理傅里叶变换：定义、性质、典型例子」），再点上面的按钮。',
+      msg || ui(
+        '💡 请先在输入框写清主题与用途，再选择一个画布操作生成预览。',
+        '💡 Describe the topic and purpose first, then choose a canvas action to generate a preview.',
+      ),
       { plain: true });
     m.row.classList.add('ai-msg-hint');
     syncEmpty();
     scrollToBottom();
   }
 
-  // 「生成到画布」：generate / attach / supplement / beautify。与「发送」分流——发送=纯聊天，
-  // 这些=产出笔记画进画布。attach/supplement/beautify 会把当前画布内容随请求发给后端。
-  // 没按格式输出时降级成普通回复，不乱注入。
-  const COMPOSE_DEFAULTS = {
-    attach: '请围绕当前选中的卡片生成新的下级卡片，并把新卡片连回选中的卡片。',
-    supplement: '请基于当前画布已有的内容，补充相关的概念、例子或推导，并连到相关的卡片。',
-    beautify: '请基于当前画布已有的内容，生成更清晰、更美观的改进版本（作为新增卡片，别改我的原卡片）。',
-  };
-  function readSelectedComposeContext(mod) {
-    try { return mod.describeCanvas ? mod.describeCanvas({ selectedOnly: true }) : null; } catch (e) {}
-    return null;
-  }
-  function readComposeContext(mod) {
-    const selected = readSelectedComposeContext(mod);
-    if (selected && selected.nodes && selected.nodes.length) return selected;
-    try { return mod.describeCanvas ? mod.describeCanvas() : null; } catch (e) {}
-    return null;
-  }
-  function defaultComposeText(mode, desc) {
-    const scope = desc && desc.scope === 'selection' ? '当前选中的卡片' : '当前画布已有的内容';
-    if (mode === 'attach') return '请围绕当前选中的卡片生成新的下级卡片，并把新卡片连回选中的卡片。';
-    if (mode === 'supplement') return '请基于' + scope + '，补充相关的概念、例子或推导，并连到相关的卡片。';
-    if (mode === 'beautify') return '请基于' + scope + '，生成更清晰、更美观的改进版本（作为新增卡片，别改我的原卡片）。';
-    return COMPOSE_DEFAULTS[mode] || '';
-  }
-  function composeScopeText(desc) {
-    return desc && desc.scope === 'selection' ? '当前选中的卡片' : '当前画布';
-  }
-  function selectedAnchorIds(context) {
-    if (!context || context.scope !== 'selection' || !Array.isArray(context.nodes)) return [];
-    const out = [];
-    context.nodes.forEach(function (n) {
-      const id = n && n.id ? String(n.id) : '';
-      if (id && out.indexOf(id) < 0) out.push(id);
-    });
-    return out.slice(0, 3);
-  }
-  function hasSelectedAnchorEdge(edges, anchors) {
-    return edges.some(function (e) {
-      if (!e) return false;
-      const fromOld = typeof e.from === 'string' && anchors.indexOf(e.from) >= 0 && typeof e.to === 'number';
-      const toOld = typeof e.to === 'string' && anchors.indexOf(e.to) >= 0 && typeof e.from === 'number';
-      return fromOld || toOld;
-    });
-  }
-  function ensureSelectedAnchors(data, context) {
-    if (!data || !data.canvas) return data;
-    const canvas = data.canvas;
-    const nodes = Array.isArray(canvas.nodes) ? canvas.nodes : [];
-    if (!nodes.length) return data;
-    const anchors = selectedAnchorIds(context);
-    if (!anchors.length) return data;
-    const edges = Array.isArray(canvas.edges) ? canvas.edges.slice() : [];
-    if (hasSelectedAnchorEdge(edges, anchors)) return data;
-    anchors.forEach(function (id, i) {
-      edges.push({ from: id, to: Math.min(i, nodes.length - 1), text: '补充' });
-    });
-    canvas.edges = edges;
-    data.edgeCount = edges.length;
-    data.anchorFixed = true;
-    return data;
-  }
   function disablePreviewButtons(row) {
     row.querySelectorAll('button').forEach(function (btn) { btn.disabled = true; });
+    row.querySelectorAll('input').forEach(function (control) { control.disabled = true; });
   }
-  function applyComposePreview(pending, data) {
-    const mod = window.CanvasModule;
-    if (!mod || typeof mod.injectCanvas !== 'function') return;
-    disablePreviewButtons(pending.row);
-    let result = null;
-    try {
-      const rightInset = panelOpen() ? (panel.offsetWidth || 0) : 0;
-      result = mod.injectCanvas(data.canvas, { rightInset: rightInset });
-    } catch (e) { result = null; }
-    const count = result && result.ok ? (result.count || 0) : 0;
-    pending.row.classList.remove('ai-msg-preview');
-    if (count > 0) {
-      const edges = data.edgeCount || 0;
-      pending.bubble.textContent = '✦ 已在画布中添加 ' + count + ' 张卡片'
-        + (edges ? '、' + edges + ' 条连线' : '') + '。不满意可按 Ctrl+Z 整批撤销。';
-      pending.row.classList.add('ai-msg-compose-done');
-      pushHistory({ role: 'assistant', content: '（已生成 ' + count + ' 张卡片注入画布）' });
-      syncContextStatus();
-    } else {
-      pending.row.classList.add('ai-msg-error');
-      pending.bubble.textContent = '⚠ 没能把回复变成画布卡片，请重试或换个说法';
-      addRetryButton(pending.row);
+  function defaultPlanText(action, scope) {
+    const selection = scope === 'selection';
+    if (action === 'extend_branch') return ui(
+      '围绕选中的导图节点继续扩展一个清晰、互不重复的子分支。',
+      'Extend the selected mind-map node with a clear subtree of non-duplicative ideas.',
+    );
+    if (action === 'supplement') return selection
+      ? ui('检查选区还缺什么，补充相关概念、例子或推导并连接回去。', 'Find gaps in the selection, add relevant concepts, examples, or derivations, and connect them back.')
+      : ui('检查整张画布还缺什么，补充相关概念、例子或推导并连接回去。', 'Find gaps across the canvas, add relevant concepts, examples, or derivations, and connect them back.');
+    if (action === 'refine') return selection
+      ? ui('整理精炼选区：压缩重复表述，改进标题与正文，并梳理必要连接。', 'Refine the selection: condense repetition, improve titles and bodies, and clean up necessary links.')
+      : ui('整理精炼整张画布：压缩重复表述，改进标题与正文，并梳理必要连接。', 'Refine the entire canvas: condense repetition, improve titles and bodies, and clean up necessary links.');
+    return '';
+  }
+  function planScope(action, requestedScope) {
+    if (action === 'extend_branch') return 'selection';
+    if (action === 'supplement' || action === 'refine') {
+      return requestedScope === 'selection' ? 'selection' : 'canvas';
     }
-    syncEmpty();
-    scrollToBottom();
+    return 'canvas';
   }
-  function renderComposePreview(pending, data, mode, context) {
-    const canvas = data.canvas || {};
-    const nodes = Array.isArray(canvas.nodes) ? canvas.nodes : [];
-    const rawEdges = Array.isArray(canvas.edges) ? canvas.edges : [];
-    const edges = Number.isFinite(data.edgeCount) ? data.edgeCount : rawEdges.length;
+  function readPlanSnapshot(action, requestedScope) {
+    const mod = window.CanvasModule;
+    if (!mod || typeof mod.describeAIContext !== 'function'
+        || typeof mod.describeAIPresentation !== 'function'
+        || typeof mod.applyAIPlan !== 'function') {
+      return { error: ui('当前页面没有可用的 V2 画布执行器。', 'The V2 canvas executor is unavailable on this page.') };
+    }
+    try {
+      if (typeof mod.commitPendingEdits === 'function') mod.commitPendingEdits();
+      const scope = planScope(action, requestedScope);
+      const canvas = mod.describeAIContext({ scope: scope });
+      const editor = mod.describeAIPresentation();
+      const nodes = canvas && Array.isArray(canvas.nodes) ? canvas.nodes : [];
+      if (action === 'extend_branch') {
+        if (nodes.length !== 1) {
+          return { error: ui('扩展导图分支需要恰好选中一个有效导图节点。', 'Extend Branch requires exactly one valid mind-map node.') };
+        }
+        if (!nodes[0].mindmapMember) {
+          return { error: ui('选中的节点不属于有效导图，请先选择一个导图节点。', 'The selected node is not part of a valid mind map.') };
+        }
+      }
+      if ((action === 'supplement' || action === 'refine') && !nodes.length) {
+        return { error: scope === 'selection'
+          ? ui('选区里没有可发送的正文节点，请重新选择或改用整张画布。', 'The selection has no eligible content nodes. Select again or target the entire canvas.')
+          : ui('画布里还没有可发送的正文节点，请先创建内容。', 'The canvas has no eligible content nodes yet.') };
+      }
+      return { scope: scope, canvas: canvas, editor: editor };
+    } catch (error) {
+      return { error: error && error.message ? error.message : ui('读取画布失败。', 'Could not read the canvas.') };
+    }
+  }
+  function planLineTypes(plan) {
+    const presentation = plan && plan.presentation;
+    if (plan && (plan.action === 'create_mindmap' || plan.action === 'extend_branch')) {
+      const curves = presentation && presentation.mindmap && presentation.mindmap.resolvedCurves;
+      const branch = curves && curves.branch ? curves.branch : 'branch';
+      const leaf = curves && curves.leaf ? curves.leaf : branch;
+      return branch === leaf
+        ? curveLabel(branch)
+        : ui('主枝 ', 'Branch ') + curveLabel(branch) + ui(' · 叶枝 ', ' · Leaf ') + curveLabel(leaf);
+    }
+    const curve = presentation && presentation.normal && presentation.normal.resolvedEdge
+      && presentation.normal.resolvedEdge.curve;
+    return curveLabel(curve || 'branch');
+  }
+  function planTreeMeta(plan, operations) {
+    const helpers = window.RelatumAIPlanCanvas;
+    if (!helpers) return null;
+    const tree = plan.action === 'create_mindmap'
+      ? helpers.mindmapOutline(plan, operations)
+      : (plan.action === 'extend_branch' ? helpers.extensionSubtree(plan, operations) : null);
+    if (!tree || !tree.ok) return null;
+    const nodes = Array.isArray(tree.nodes) ? tree.nodes : [];
+    const maxDepth = nodes.reduce(function (value, node) {
+      return Math.max(value, Number(node.depth) || 0);
+    }, 0);
+    const root = nodes.find(function (node) { return node.ref === tree.rootRef; });
+    return {
+      rootRef: tree.rootRef,
+      rootTitle: root && root.title ? root.title : tree.rootRef,
+      levels: maxDepth + 1,
+    };
+  }
+  function previewOperationLabel(op, kind) {
+    const labels = kind === 'node'
+      ? {
+        create: ['新增节点', 'Create node'],
+        update: ['更新节点', 'Update node'],
+      }
+      : {
+        create: ['新增连线', 'Create edge'],
+        update: ['更新连线', 'Update edge'],
+        remove: ['移除连线', 'Remove edge'],
+      };
+    return localize(labels[op] || [op, op]);
+  }
+  function renderPlanPreview(pending, plan, context, repaired, initialState) {
+    const helpers = window.RelatumAIPlanCanvas;
+    const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
+    const edges = Array.isArray(plan.edges) ? plan.edges : [];
+    if (!helpers || typeof helpers.selectOperations !== 'function') {
+      throw new Error(ui('计划预览组件未加载。', 'The plan preview component is unavailable.'));
+    }
     pending.row.classList.add('ai-msg-preview');
     pending.bubble.textContent = '';
 
+    let operations = helpers.selectOperations(plan, {
+      nodeIndexes: initialState && initialState.nodeIndexes,
+      edgeIndexes: initialState && initialState.edgeIndexes,
+    });
+    let nodeIndexes = new Set();
+    let edgeIndexes = new Set();
+    nodeIndexes = new Set(operations.nodes.map(function (entry) { return entry.index; }));
+    edgeIndexes = new Set(operations.edges.map(function (entry) { return entry.index; }));
+    const rootRef = plan.mindmap && plan.mindmap.rootRef;
+    const rootIndex = nodes.findIndex(function (node) {
+      return node && node.op === 'create' && node.ref === rootRef;
+    });
+    const existingTitles = {};
+    (context && Array.isArray(context.nodes) ? context.nodes : []).forEach(function (node) {
+      existingTitles[node.id] = node.title || node.id;
+    });
+    const existingEdgeLabels = {};
+    (context && Array.isArray(context.edges) ? context.edges : []).forEach(function (edge) {
+      existingEdgeLabels[edge.id] = (existingTitles[edge.from] || edge.from) + ' → '
+        + (existingTitles[edge.to] || edge.to)
+        + (edge.text ? ' · ' + String(edge.text).slice(0, 48) : '');
+    });
+    const newTitles = {};
+    nodes.forEach(function (node) {
+      if (node && node.op === 'create') newTitles[node.ref] = node.title || node.body || node.ref;
+    });
+    function endpointLabel(endpoint) {
+      if (!endpoint) return ui('未知', 'Unknown');
+      if (endpoint.kind === 'new') return newTitles[endpoint.ref] || endpoint.ref;
+      return existingTitles[endpoint.id] || endpoint.id;
+    }
+    function nodeLabel(node) {
+      const fallback = node.op === 'update' ? existingTitles[node.id] : '';
+      return String(node.title || node.body || fallback || node.ref || node.id || ui('未命名', 'Untitled')).slice(0, 100);
+    }
+    function edgeLabel(edge) {
+      if (edge.op === 'create') {
+        return endpointLabel(edge.from) + ' → ' + endpointLabel(edge.to)
+          + (edge.text ? ' · ' + String(edge.text).slice(0, 48) : '');
+      }
+      return existingEdgeLabels[edge.id] || edge.text || edge.id;
+    }
+
+    const heading = document.createElement('div');
+    heading.className = 'ai-preview-heading';
     const title = document.createElement('div');
     title.className = 'ai-preview-title';
-    title.textContent = '已生成预览';
-    pending.bubble.appendChild(title);
+    title.textContent = ui('画布计划预览', 'Canvas plan preview');
+    const actionBadge = document.createElement('span');
+    actionBadge.className = 'ai-preview-action-badge';
+    actionBadge.textContent = actionLabel(plan.action);
+    heading.appendChild(title);
+    heading.appendChild(actionBadge);
+    pending.bubble.appendChild(heading);
 
-    const meta = document.createElement('div');
-    meta.className = 'ai-preview-meta';
-    meta.textContent = '将基于' + composeScopeText(context) + '添加 ' + nodes.length + ' 张卡片'
-      + (edges ? '、' + edges + ' 条连线' : '') + '。满意再放进画布。'
-      + (data.anchorFixed ? ' 已自动补上与选中卡片的连接。' : '');
-    pending.bubble.appendChild(meta);
-    if (data.truncated) appendTruncatedNote(pending.bubble);
+    const summary = document.createElement('p');
+    summary.className = 'ai-preview-summary';
+    summary.textContent = plan.summary || actionLabel(plan.action);
+    pending.bubble.appendChild(summary);
 
-    const list = document.createElement('ol');
-    list.className = 'ai-preview-list';
-    nodes.slice(0, 5).forEach(function (n) {
-      const li = document.createElement('li');
-      li.textContent = String(n.text || n.title || '未命名').slice(0, 80);
-      list.appendChild(li);
+    const allOperations = helpers.selectOperations(plan, {
+      nodeIndexes: nodes.map(function (_node, index) { return index; }),
+      edgeIndexes: edges.map(function (_edge, index) { return index; }),
     });
-    if (nodes.length > 5) {
-      const li = document.createElement('li');
-      li.textContent = '… 还有 ' + (nodes.length - 5) + ' 张';
-      list.appendChild(li);
-    }
-    if (nodes.length) pending.bubble.appendChild(list);
-
-    const existingTitleById = {};
-    if (context && Array.isArray(context.nodes)) {
-      context.nodes.forEach(function (n) {
-        if (n && n.id) existingTitleById[String(n.id)] = String(n.title || n.id);
-      });
-    }
-    function endpointLabel(ep) {
-      if (typeof ep === 'number' && nodes[ep]) return String(nodes[ep].text || nodes[ep].title || '未命名');
-      if (typeof ep === 'string') return existingTitleById[ep] ? ('已有：' + existingTitleById[ep]) : ('已有：' + ep);
-      return '';
-    }
-    const linkLines = [];
-    rawEdges.slice(0, 5).forEach(function (e) {
-      if (!e) return;
-      const from = endpointLabel(e.from);
-      const to = endpointLabel(e.to);
-      if (!from || !to) return;
-      const text = String(e.text || '').trim();
-      linkLines.push(from.slice(0, 48) + ' → ' + to.slice(0, 48) + (text ? '（' + text.slice(0, 24) + '）' : ''));
+    const treeMeta = planTreeMeta(plan, allOperations);
+    const facts = document.createElement('dl');
+    facts.className = 'ai-preview-facts';
+    [
+      [ui('目标', 'Target'), plan.scope === 'selection'
+        ? ui('选区 · ', 'Selection · ') + ((context.selectedIds || []).length) + ui(' 个节点', ' nodes')
+        : ui('整张画布', 'Entire canvas')],
+      [ui('变化', 'Changes'), nodes.length + ui(' 个节点 · ', ' nodes · ') + edges.length + ui(' 条连线', ' edges')],
+      [ui('最终线型', 'Final curves'), planLineTypes(plan)],
+    ].concat(treeMeta ? [
+      [ui('导图根', 'Mind-map root'), treeMeta.rootTitle],
+      [ui('层级', 'Levels'), String(treeMeta.levels)],
+    ] : []).forEach(function (fact) {
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      dt.textContent = fact[0];
+      dd.textContent = fact[1];
+      facts.appendChild(dt);
+      facts.appendChild(dd);
     });
-    if (linkLines.length) {
-      const linkTitle = document.createElement('div');
-      linkTitle.className = 'ai-preview-section-title';
-      linkTitle.textContent = '连线预览';
-      pending.bubble.appendChild(linkTitle);
-      const linkList = document.createElement('ul');
-      linkList.className = 'ai-preview-list ai-preview-links';
-      linkLines.forEach(function (line) {
-        const li = document.createElement('li');
-        li.textContent = line;
-        linkList.appendChild(li);
-      });
-      if (rawEdges.length > linkLines.length) {
-        const li = document.createElement('li');
-        li.textContent = '… 还有 ' + (rawEdges.length - linkLines.length) + ' 条';
-        linkList.appendChild(li);
-      }
-      pending.bubble.appendChild(linkList);
+    pending.bubble.appendChild(facts);
+
+    const truncation = context && context.truncation;
+    if (truncation && truncation.truncated) {
+      const warning = document.createElement('div');
+      warning.className = 'ai-preview-warning';
+      warning.textContent = ui(
+        '⚠ 画布上下文已截断：省略 ' + truncation.omittedNodes + ' 个节点、'
+          + truncation.omittedEdges + ' 条连线，' + truncation.fieldTruncations + ' 个文本字段被裁短。',
+        '⚠ Canvas context was truncated: ' + truncation.omittedNodes + ' nodes and '
+          + truncation.omittedEdges + ' edges were omitted; ' + truncation.fieldTruncations + ' text fields were clipped.',
+      );
+      pending.bubble.appendChild(warning);
     }
+    if (repaired) {
+      const repairedNote = document.createElement('div');
+      repairedNote.className = 'ai-preview-note';
+      repairedNote.textContent = ui('结构已由后端自动修复并重新校验。', 'The structure was repaired and revalidated by the server.');
+      pending.bubble.appendChild(repairedNote);
+    }
+
+    function makeSection(titleText, items, kind) {
+      if (!items.length) return null;
+      const details = document.createElement('details');
+      details.className = 'ai-preview-section';
+      details.open = true;
+      const sectionTitle = document.createElement('summary');
+      sectionTitle.textContent = titleText;
+      details.appendChild(sectionTitle);
+      const list = document.createElement('div');
+      list.className = 'ai-preview-checklist';
+      items.forEach(function (item, index) {
+        const label = document.createElement('label');
+        label.className = 'ai-preview-check';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.dataset.aiPreviewKind = kind;
+        checkbox.dataset.aiPreviewIndex = String(index);
+        checkbox.checked = kind === 'node' ? nodeIndexes.has(index) : edgeIndexes.has(index);
+        if (kind === 'node' && index === rootIndex) {
+          checkbox.checked = true;
+          checkbox.disabled = true;
+          label.classList.add('root-locked');
+        }
+        const copy = document.createElement('span');
+        const badge = document.createElement('b');
+        badge.textContent = previewOperationLabel(item.op, kind);
+        const text = document.createElement('span');
+        text.textContent = kind === 'node' ? nodeLabel(item) : edgeLabel(item);
+        copy.appendChild(badge);
+        copy.appendChild(text);
+        label.appendChild(checkbox);
+        label.appendChild(copy);
+        list.appendChild(label);
+      });
+      details.appendChild(list);
+      return details;
+    }
+    const nodeSection = makeSection(ui('节点变化', 'Node changes'), nodes, 'node');
+    const edgeSection = makeSection(ui('连线变化', 'Edge changes'), edges, 'edge');
+    if (nodeSection) pending.bubble.appendChild(nodeSection);
+    if (edgeSection) pending.bubble.appendChild(edgeSection);
+
+    let relayoutCheckbox = null;
+    if (plan.scope === 'selection'
+        && plan.action !== 'create_mindmap' && plan.action !== 'extend_branch') {
+      const relayout = document.createElement('label');
+      relayout.className = 'ai-preview-relayout';
+      relayoutCheckbox = document.createElement('input');
+      relayoutCheckbox.type = 'checkbox';
+      relayoutCheckbox.checked = !!(initialState && initialState.relayoutSelection);
+      const relayoutCopy = document.createElement('span');
+      relayoutCopy.textContent = ui(
+        '重新排版所选范围（范围外节点固定）',
+        'Relayout the selected area (nodes outside stay fixed)',
+      );
+      relayout.appendChild(relayoutCheckbox);
+      relayout.appendChild(relayoutCopy);
+      pending.bubble.appendChild(relayout);
+    }
+
+    const selectionStatus = document.createElement('div');
+    selectionStatus.className = 'ai-preview-selection-status';
+    pending.bubble.appendChild(selectionStatus);
+    const notice = document.createElement('div');
+    notice.className = 'ai-preview-apply-notice';
+    notice.hidden = true;
+    pending.bubble.appendChild(notice);
 
     const actions = document.createElement('div');
     actions.className = 'ai-preview-actions';
     const applyBtn = document.createElement('button');
     applyBtn.type = 'button';
     applyBtn.className = 'ai-btn-primary';
-    applyBtn.textContent = '放进画布';
+    applyBtn.textContent = ui('应用所选变化', 'Apply selected changes');
     const retryBtn = document.createElement('button');
     retryBtn.type = 'button';
     retryBtn.className = 'ai-btn-secondary';
-    retryBtn.textContent = '重生成';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'ai-btn-secondary';
-    cancelBtn.textContent = '取消生成';
+    retryBtn.textContent = ui('重生成', 'Regenerate');
+    const discardBtn = document.createElement('button');
+    discardBtn.type = 'button';
+    discardBtn.className = 'ai-btn-secondary';
+    discardBtn.textContent = ui('取消预览', 'Discard preview');
     actions.appendChild(applyBtn);
     actions.appendChild(retryBtn);
-    actions.appendChild(cancelBtn);
+    actions.appendChild(discardBtn);
     pending.bubble.appendChild(actions);
+
+    function syncPreviewSelection() {
+      operations = helpers.selectOperations(plan, {
+        nodeIndexes: Array.from(nodeIndexes),
+        edgeIndexes: Array.from(edgeIndexes),
+      });
+      nodeIndexes = new Set(operations.nodes.map(function (entry) { return entry.index; }));
+      edgeIndexes = new Set(operations.edges.map(function (entry) { return entry.index; }));
+      pending.bubble.querySelectorAll('[data-ai-preview-kind]').forEach(function (checkbox) {
+        const index = Number(checkbox.dataset.aiPreviewIndex);
+        checkbox.checked = checkbox.dataset.aiPreviewKind === 'node'
+          ? nodeIndexes.has(index) : edgeIndexes.has(index);
+      });
+      const total = operations.nodes.length + operations.edges.length;
+      selectionStatus.textContent = ui(
+        '已选 ' + operations.nodes.length + ' 个节点变化、' + operations.edges.length + ' 个连线变化',
+        operations.nodes.length + ' node changes and ' + operations.edges.length + ' edge changes selected',
+      );
+      applyBtn.disabled = total < 1;
+    }
+    pending.bubble.addEventListener('change', function (event) {
+      const checkbox = event.target.closest('[data-ai-preview-kind]');
+      if (!checkbox) return;
+      const index = Number(checkbox.dataset.aiPreviewIndex);
+      const set = checkbox.dataset.aiPreviewKind === 'node' ? nodeIndexes : edgeIndexes;
+      if (checkbox.checked) set.add(index);
+      else set.delete(index);
+      syncPreviewSelection();
+    });
+    syncPreviewSelection();
 
     applyBtn.addEventListener('click', function () {
       if (sending) return;
-      applyComposePreview(pending, data);
+      const mod = window.CanvasModule;
+      let result = null;
+      try {
+        result = mod && typeof mod.applyAIPlan === 'function'
+          ? mod.applyAIPlan(plan, {
+            nodeIndexes: Array.from(nodeIndexes),
+            edgeIndexes: Array.from(edgeIndexes),
+            relayoutSelection: !!(relayoutCheckbox && relayoutCheckbox.checked),
+          }) : null;
+      } catch (error) {
+        result = { ok: false, reason: 'apply-failed', detail: error.message };
+      }
+      if (!result || !result.ok) {
+        notice.hidden = false;
+        notice.classList.add('error');
+        if (result && result.reason === 'preview-stale') {
+          notice.textContent = ui(
+            '⚠ 画布内容或连接已经变化，这份预览已过期。请重生成后再应用。',
+            '⚠ Canvas content or connections changed. This preview is stale; regenerate it before applying.',
+          );
+          applyBtn.disabled = true;
+          pending.row.classList.add('ai-msg-preview-stale');
+        } else {
+          notice.textContent = ui('⚠ 应用失败：', '⚠ Apply failed: ')
+            + ((result && (result.detail || result.reason)) || ui('未知错误', 'Unknown error'));
+        }
+        return;
+      }
+      disablePreviewButtons(pending.row);
+      pending.row.classList.remove('ai-msg-preview', 'ai-msg-preview-stale');
+      pending.row.classList.add('ai-msg-plan-done');
+      const curves = result.finalLineTypes
+        ? (result.finalLineTypes.branch === result.finalLineTypes.leaf
+          ? curveLabel(result.finalLineTypes.branch)
+          : curveLabel(result.finalLineTypes.branch) + ' / ' + curveLabel(result.finalLineTypes.leaf))
+        : curveLabel(result.finalLineType || 'branch');
+      pending.bubble.textContent = ui(
+        '✦ 已应用 ' + operations.nodes.length + ' 个节点变化、' + operations.edges.length
+          + ' 个连线变化；最终线型：' + curves + '。不满意可按 Ctrl+Z 整批撤销。',
+        '✦ Applied ' + operations.nodes.length + ' node changes and ' + operations.edges.length
+          + ' edge changes. Final curve: ' + curves + '. Press Ctrl+Z to undo the whole batch.',
+      );
+      pushHistory({
+        role: 'assistant',
+        content: ui('（已确认并应用画布计划：', '(Canvas plan confirmed and applied: ')
+          + actionLabel(plan.action) + ui('）', ')'),
+      });
+      syncContextStatus();
+      syncCanvasAwareness();
+      scrollToBottom();
     });
     retryBtn.addEventListener('click', function () {
       if (sending) return;
       removeMessageRow(pending.row);
-      runCompose(mode);
+      runPlan(plan.action, plan.scope);
     });
-    cancelBtn.addEventListener('click', function () {
+    discardBtn.addEventListener('click', function () {
       if (sending) return;
       removeMessageRow(pending.row);
       syncEmpty();
       scrollToBottom();
       if (input) input.focus();
     });
+    pending.row.__aiRefreshLanguage = function () {
+      const bubble = document.createElement('div');
+      bubble.className = 'ai-bubble';
+      bubble.setAttribute('data-user-content', '');
+      pending.row.replaceChildren(bubble);
+      pending.bubble = bubble;
+      renderPlanPreview(pending, plan, context, repaired, {
+        nodeIndexes: Array.from(nodeIndexes),
+        edgeIndexes: Array.from(edgeIndexes),
+        relayoutSelection: !!(relayoutCheckbox && relayoutCheckbox.checked),
+      });
+    };
     syncEmpty();
     scrollToBottom();
   }
-  // 请求部分（不押入用户消息，便于重试复用）。
-  function runCompose(mode) {
-    const mod = window.CanvasModule;
-    if (!mod || typeof mod.injectCanvas !== 'function') {
-      appendMessage('assistant', '⚠ 当前页面没有可注入的画布', { plain: true })
-        .row.classList.add('ai-msg-error');
+
+  // 计划请求不重复押入用户消息，供重试复用；每次重试重新抓取上下文与表现快照。
+  function runPlan(action, requestedScope) {
+    const snapshot = readPlanSnapshot(action, requestedScope);
+    if (snapshot.error) {
+      const failure = appendMessage('assistant', '⚠ ' + snapshot.error, { plain: true });
+      failure.row.classList.add('ai-msg-error');
+      addRetryButton(failure.row);
       return;
     }
-    const payload = { messages: requestMessages(), mode: mode };
-    if (mode === 'attach') {
-      payload.canvas = readSelectedComposeContext(mod);
-    } else if (mode === 'supplement' || mode === 'beautify') {
-      payload.canvas = readComposeContext(mod);
-    }
-    if (mode === 'attach' && (!payload.canvas || !payload.canvas.nodes || !payload.canvas.nodes.length)) {
-      appendMessage('assistant', '⚠ 现在没有选中的正文卡片，请先选中一张卡片再挂接。', { plain: true })
-        .row.classList.add('ai-msg-error');
-      return;
-    }
+    const payload = {
+      action: action,
+      messages: requestMessages(),
+      language: currentLanguage() === 'en' ? 'en' : 'zh-CN',
+      canvas: snapshot.canvas,
+      editor: snapshot.editor,
+    };
     setSending(true);
-    const pending = appendMessage('assistant', '正在生成笔记… 可点底部“取消”停止等待。', { plain: true });
+    const pending = appendMessage('assistant', ui(
+      '正在生成并校验画布计划… 可点底部“取消”停止等待。',
+      'Generating and validating a canvas plan… Use Cancel below to stop waiting.',
+    ), { plain: true });
     pending.row.classList.add('ai-msg-pending');
-    const req = beginRequest('compose', pending);
-    fetch('/api/ai-compose', {
+    const req = beginRequest('plan', pending);
+    fetch('/api/ai-plan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: req.controller.signal,
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (data) {
-        if (!r.ok) throw new Error(data.error || ('请求失败（' + r.status + '）'));
+        if (!r.ok) throw new Error(responseErrorMessage(data, r.status));
         return data;
       });
     }).then(function (data) {
       pending.row.classList.remove('ai-msg-pending');
-      if (data && data.ok && data.canvas) {
-        ensureSelectedAnchors(data, payload.canvas);
-        renderComposePreview(pending, data, mode, payload.canvas);
-      } else {
-        // 模型没按格式输出 → 当普通回复展示，不注入。
-        const reply = ((data && data.reply) || '').trim() || '（空回复）';
-        pushHistory({ role: 'assistant', content: reply });
-        syncContextStatus();
-        renderMarkdownInto(pending.bubble, reply);
-        if (data && data.truncated) appendTruncatedNote(pending.bubble);
+      if (!data || !data.ok || !data.plan || data.plan.version !== 2) {
+        throw new Error(ui('服务器没有返回有效的 V2 计划。', 'The server did not return a valid V2 plan.'));
       }
+      renderPlanPreview(pending, data.plan, snapshot.canvas, !!data.repaired);
       scrollToBottom();
     }).catch(function (err) {
       if (req.cancelled || isAbortError(err)) {
-        markRequestCanceled(pending, 'compose');
+        markRequestCanceled(pending, 'plan');
         return;
       }
       pending.row.classList.remove('ai-msg-pending');
       pending.row.classList.add('ai-msg-error');
-      pending.bubble.textContent = '⚠ ' + (err && err.message ? err.message : '出错了');
+      pending.bubble.textContent = '⚠ ' + (err && err.message ? err.message : ui('出错了', 'Something went wrong'));
       addRetryButton(pending.row);
     }).finally(function () {
       finishRequest(req);
@@ -1061,65 +1865,66 @@
       if (input) input.focus();
     });
   }
-  // 点预设按钮：校验 → 押入用户消息（generate 必填正文；补充/美化正文可空、以画布为输入）→ 发起。
-  function onChip(mode) {
+  function onRunAction() {
     if (sending || !input) return;
-    const mod = window.CanvasModule;
-    if (!mod || typeof mod.injectCanvas !== 'function') {
-      appendMessage('assistant', '⚠ 当前页面没有可注入的画布', { plain: true })
-        .row.classList.add('ai-msg-error');
+    if (selectedAction === 'chat') return;
+    const scope = planScope(selectedAction, targetScope);
+    let text = (input.value || '').trim();
+    if (!text && (selectedAction === 'create_graph' || selectedAction === 'create_mindmap')) {
+      showPlanHint(ui(
+        '请先输入要生成的主题，再点“生成预览”。',
+        'Enter a topic before generating a preview.',
+      ));
+      if (input) input.focus();
       return;
     }
-    let text = (input.value || '').trim();
-    if (mode === 'generate') {
-      if (!text) { showComposeHint(); if (input) input.focus(); return; }
-    } else if (mode === 'attach') {
-      const desc = readSelectedComposeContext(mod);
-      if (!desc || !desc.nodes || !desc.nodes.length) {
-        showComposeHint('先在画布里选中一张正文卡片，再点「↳ 挂到选中」。'
-          + '这样 AI 才知道新内容要接到哪里。');
-        return;
-      }
-      if (!text) text = defaultComposeText(mode, desc);
-    } else {
-      let desc = null;
-      desc = readComposeContext(mod);
-      if (!desc || !desc.nodes || !desc.nodes.length) {
-        showComposeHint('当前画布还是空的——「↳ 挂到选中 / 🔗 基于画布补充 / ✨ 整理精炼」需要画布上先有卡片。'
-          + '可以先用「✦ 生成到画布」从零生成，或自己建几张卡片。');
-        return;
-      }
-      if (!text) text = defaultComposeText(mode, desc);
-    }
-    clearComposeHint();
+    const snapshot = readPlanSnapshot(selectedAction, scope);
+    if (snapshot.error) { showPlanHint('⚠ ' + snapshot.error); return; }
+    if (!text) text = defaultPlanText(selectedAction, scope);
+    clearPlanHint();
     pushHistory({ role: 'user', content: text });
     syncContextStatus();
     appendMessage('user', text);
     syncEmpty();
     input.value = '';
     autoGrow();
-    lastRun = { kind: 'compose', mode: mode };
-    runCompose(mode);
+    lastRun = { kind: 'plan', action: selectedAction, scope: scope };
+    runPlan(selectedAction, scope);
+  }
+  function submitSelectedAction() {
+    if (selectedAction === 'chat') send();
+    else onRunAction();
   }
 
   function clearContext() {
-    history = [{ role: 'system', content: SYSTEM_PROMPT }];
+    history = [];
     if (messagesEl) {
       messagesEl.querySelectorAll('.ai-msg').forEach(removeMessageRow);
     }
     syncEmpty();
     syncContextStatus();
-    setConfigFeedback('上下文已清空');
+    setConfigFeedback(ui('上下文已清空', 'Context cleared'));
     setTimeout(function () { setConfigFeedback(''); }, 1600);
   }
 
   function autoGrow() {
     if (!input) return;
     input.style.height = 'auto';
-    input.style.height = Math.min(160, input.scrollHeight) + 'px';
+    const maxHeight = Math.max(INPUT_MIN_HEIGHT, Math.min(INPUT_MAX_HEIGHT, window.innerHeight * 0.28));
+    const nextHeight = Math.max(INPUT_MIN_HEIGHT, Math.min(maxHeight, input.scrollHeight));
+    const scrollable = input.scrollHeight > maxHeight + 1;
+    input.style.height = Math.ceil(nextHeight) + 'px';
+    input.style.overflowY = scrollable ? 'auto' : 'hidden';
+    input.classList.toggle('ai-input-scrollable', scrollable);
+    updateScrollbarIndicator(input);
   }
 
   // ── 绑定 ──
+  if (resizeHandle) {
+    resizeHandle.addEventListener('pointerdown', onPanelResizeStart);
+    resizeHandle.addEventListener('keydown', onPanelResizeKeydown);
+    resizeHandle.addEventListener('dblclick', resetPanelWidth);
+  }
   if (toggleBtn) toggleBtn.addEventListener('click', togglePanel);
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
   if (helpBtn) helpBtn.addEventListener('click', toggleHelp);
@@ -1139,17 +1944,23 @@
   function resetClearKeyBtn() {
     clearKeyArmed = false;
     if (clearKeyTimer) { clearTimeout(clearKeyTimer); clearKeyTimer = null; }
-    if (clearKeyBtn) { clearKeyBtn.textContent = '清除我的 Key'; clearKeyBtn.classList.remove('armed'); }
+    if (clearKeyBtn) {
+      clearKeyBtn.textContent = ui('清除我的 Key', 'Clear my key');
+      clearKeyBtn.classList.remove('armed');
+    }
   }
   function onClearKey() {
     if (!clearKeyArmed) {                       // 第一次点：进入确认态，3 秒内不再点就还原
       clearKeyArmed = true;
-      if (clearKeyBtn) { clearKeyBtn.textContent = '再点一次确认清除'; clearKeyBtn.classList.add('armed'); }
+      if (clearKeyBtn) {
+        clearKeyBtn.textContent = ui('再点一次确认清除', 'Click again to confirm');
+        clearKeyBtn.classList.add('armed');
+      }
       clearKeyTimer = setTimeout(resetClearKeyBtn, 3000);
       return;
     }
     resetClearKeyBtn();                          // 第二次点：真的清
-    setConfigFeedback('清除中…');
+    setConfigFeedback(ui('清除中…', 'Clearing…'));
     fetch('/api/ai-config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey: '' }),     // 显式空串 = 清空（与"留空不改"区分：那种情况根本不发 apiKey）
@@ -1157,23 +1968,60 @@
       configLoaded = true;
       updateKeyHint(cfg);
       if (keyInput) keyInput.value = '';
-      setConfigFeedback('Key 已清除');
+      setConfigFeedback(ui('Key 已清除', 'Key cleared'));
       setTimeout(function () { setConfigFeedback(''); }, 1800);
-    }).catch(function () { setConfigFeedback('清除失败，请重试'); });
+    }).catch(function () { setConfigFeedback(ui('清除失败，请重试', 'Could not clear the key. Try again.')); });
   }
   if (clearKeyBtn) clearKeyBtn.addEventListener('click', onClearKey);
-  if (form) form.addEventListener('submit', function (e) { e.preventDefault(); send(); });
-  if (chipsEl) chipsEl.addEventListener('click', function (e) {
-    const btn = e.target.closest('[data-mode]');
-    if (btn && chipsEl.contains(btn)) onChip(btn.getAttribute('data-mode'));
+  if (form) form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submitSelectedAction();
+  });
+  if (actionPicker) actionPicker.addEventListener('click', function (e) {
+    const actionBtn = e.target.closest('[data-ai-action]');
+    if (actionBtn && actionPicker.contains(actionBtn)) {
+      selectedAction = actionBtn.dataset.aiAction;
+      actionUserChosen = true;
+      syncActionPicker();
+      return;
+    }
+    const targetBtn = e.target.closest('[data-ai-target]');
+    if (targetBtn && actionPicker.contains(targetBtn) && !targetBtn.disabled) {
+      targetScope = targetBtn.dataset.aiTarget;
+      targetUserChosen = true;
+      syncActionPicker();
+    }
+  });
+  if (actionPicker) actionPicker.addEventListener('keydown', function (e) {
+    const current = e.target.closest('[data-ai-action]');
+    if (!current || !/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown)$/.test(e.key)) return;
+    const buttons = Array.from(actionBtns).filter(function (button) { return !button.disabled; });
+    const index = buttons.indexOf(current);
+    if (index < 0) return;
+    e.preventDefault();
+    const delta = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1;
+    const next = buttons[(index + delta + buttons.length) % buttons.length];
+    selectedAction = next.dataset.aiAction;
+    actionUserChosen = true;
+    syncActionPicker();
+    next.focus();
   });
   if (input) {
     input.addEventListener('input', autoGrow);
     input.addEventListener('keydown', function (e) {
-      // Enter 发送，Shift+Enter 换行（输入法组字中的 Enter 不拦截）
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+      // Enter 执行当前操作，Shift+Enter 换行（输入法组字中的 Enter 不拦截）。
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        submitSelectedAction();
+      }
     });
   }
+  [
+    messagesEl,
+    helpPanel && helpPanel.querySelector('.ai-help-book'),
+    settings,
+    input,
+  ].forEach(installAutoScrollbar);
   // 把模板文字填进输入框（帮助书模板 / 空状态「快速开始」共用），不直接发送，留给用户挑动作。
   function fillInputWithPrompt(text) {
     if (!input) return;
@@ -1185,7 +2033,9 @@
   if (emptyEl) emptyEl.addEventListener('click', function (e) {
     const btn = e.target.closest('[data-prompt]');
     if (!btn) return;
-    fillInputWithPrompt(btn.getAttribute('data-prompt') || '');
+    fillInputWithPrompt(currentLanguage() === 'en'
+      ? (btn.getAttribute('data-prompt-en') || btn.getAttribute('data-prompt') || '')
+      : (btn.getAttribute('data-prompt') || ''));
   });
   if (helpPanel) {
     helpPanel.addEventListener('click', function (e) {
@@ -1195,31 +2045,46 @@
         if (index >= 0) gotoHelpPage(index);
         return;
       }
+      const helpAction = e.target.closest('[data-ai-help-action]');
+      if (helpAction && helpPanel.contains(helpAction)) {
+        useHelpAction(helpAction.dataset.aiHelpAction);
+        return;
+      }
+      const helpExample = e.target.closest('[data-ai-help-example]');
+      if (helpExample && helpPanel.contains(helpExample)) {
+        useHelpExample(
+          helpExample.dataset.aiHelpExample,
+          Number(helpExample.dataset.exampleIndex),
+        );
+        return;
+      }
       const action = e.target.closest('[data-action]');
       if (action && helpPanel.contains(action)) {
         if (action.dataset.action === 'ai-help-prev') gotoHelpPage(helpPageIndex - 1);
-        if (action.dataset.action === 'ai-help-next') gotoHelpPage(helpPageIndex + 1);
+        if (action.dataset.action === 'ai-help-next') {
+          if (helpPageIndex >= AI_HELP_PAGES.length - 1) closeHelp();
+          else gotoHelpPage(helpPageIndex + 1);
+        }
         return;
       }
-      const btn = e.target.closest('[data-prompt]');
-      if (!btn || !helpPanel.contains(btn) || !input) return;
-      closeHelp();
-      fillInputWithPrompt(btn.getAttribute('data-prompt') || '');
     });
-    const helpSpine = helpPanel.querySelector('.ai-help-spine');
-    if (helpSpine) helpSpine.addEventListener('wheel', function (e) {
-      e.preventDefault();
-      if (helpFlipping) return;
-      helpWheelAccum += e.deltaY;
-      clearTimeout(helpWheelResetTimer);
-      helpWheelResetTimer = window.setTimeout(function () { helpWheelAccum = 0; }, 200);
-      if (Math.abs(helpWheelAccum) < 24) return;
-      const direction = helpWheelAccum > 0 ? 1 : -1;
-      helpWheelAccum = 0;
-      gotoHelpPage(helpPageIndex + direction);
-    }, { passive: false });
   }
-  window.addEventListener('resize', function () { if (helpOpen()) syncHelpNav(helpPageIndex, false); });
+  document.addEventListener('editor:selectionchange', syncCanvasAwareness);
+  document.addEventListener('editor:modechange', function (event) {
+    if (event.detail && event.detail.mode) currentEditorMode = event.detail.mode;
+    syncCanvasAwareness();
+  });
+  document.addEventListener('relatum:languagechange', function () {
+    syncResizeHandle(panel.getBoundingClientRect().width || preferredPanelWidth);
+    syncContextStatus();
+    syncActionPicker();
+    if (helpOpen()) renderHelpPage(helpPageIndex, 0);
+    if (messagesEl) {
+      messagesEl.querySelectorAll('.ai-msg-preview').forEach(function (row) {
+        if (typeof row.__aiRefreshLanguage === 'function') row.__aiRefreshLanguage();
+      });
+    }
+  });
   // Esc：焦点在面板内时，先收设置弹窗，再关面板；不绑 document，避免干扰画布快捷键。
   panel.addEventListener('keydown', function (e) {
     const typing = e.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || '') || e.target.isContentEditable);
@@ -1235,7 +2100,20 @@
     if (contextOpen()) { closeContextMenu(); e.stopPropagation(); e.preventDefault(); return; }
     if (panelOpen()) { closePanel(); e.stopPropagation(); e.preventDefault(); }
   });
+  window.addEventListener('resize', function () {
+    if (panelResizeState) finishPanelResize(true);
+    restorePanelWidth();
+    autoGrow();
+    updateAllScrollbarIndicators();
+  });
+  window.addEventListener('blur', function () {
+    if (panelResizeState) finishPanelResize(true);
+    if (scrollbarDragState) finishScrollbarDrag();
+  });
 
+  restorePanelWidth();
+  autoGrow();
   syncEmpty();
   syncContextStatus();
+  syncCanvasAwareness();
 })();

@@ -158,7 +158,7 @@ Relatum/
 ├─ packaging/                图标、字体和桌面构建辅助工具
 ├─ build-desktop.ps1         Windows 桌面发布包构建入口
 ├─ start.ps1                 源码模式启动入口
-├─ AI笔记创作指南.md          AI 生成画布时使用的提示指南
+├─ AI笔记创作指南.md          外部准备画布/Markdown 笔记的参考（非运行时依赖）
 └─ AGENTS.md                 架构约束与维护说明
 ```
 

@@ -229,6 +229,52 @@
     '分钟': 'min', '小时': 'hr', '分': 'min', '天': ' days',
 
     'AI 助手': 'AI Assistant', '图谱': 'Graph', '背景': 'Background', '模板': 'Templates',
+    '对话 · 受控画布计划': 'Chat · controlled canvas plans',
+    '六种操作': 'Six actions', '目标范围': 'Target scope',
+    '操作': 'Action', '整张画布': 'Entire canvas',
+    '发送消息': 'Send message', '生成预览': 'Generate preview',
+    '聊天': 'Chat', '生成卡片网络': 'Create Graph', '生成导图': 'Create Mind Map',
+    '扩展导图分支': 'Extend Branch', '基于画布补充': 'Supplement', '整理精炼': 'Refine',
+    '聊点什么，或先生成一份画布预览': 'Chat, or generate a canvas preview',
+    '发送': 'Send',
+    '（→）只用于聊天；六种操作中的画布动作会先生成可勾选预览，确认后才改动画布。':
+      '(→) is for chat only. Canvas actions first create an itemized preview and change the canvas only after confirmation.',
+    '第一次用请先点右上角齿轮填入 API Key。':
+      'Before first use, add your API key from Settings in the upper-right corner.',
+    '试试 · 点一下填进输入框，再选择「生成卡片网络」或「生成导图」':
+      'Try one · fill the input, then choose Create Graph or Create Mind Map',
+    '这里控制右侧聊天历史是否随下一次请求发给 AI；画布内容仅在生成计划时按目标范围另行发送。':
+      'This controls whether panel history is sent with the next request. Canvas content is sent separately only when generating a plan, using the chosen target.',
+    'Enter / → 发送聊天': 'Enter / → sends chat',
+    '发送聊天（Enter）': 'Send chat (Enter)', '发送聊天': 'Send chat',
+    '画布目标范围': 'Canvas target scope', 'AI 操作': 'AI actions',
+    '3 步上手': '3-step start', '六个按钮': 'Six actions',
+    '选区与预览': 'Scope & preview', '设置与排错': 'Setup & help',
+    '对话上下文': 'Chat context', '连续对话': 'Continuous', '单次请求': 'Single request',
+    '清空上下文': 'Clear context', '管理 AI 对话上下文': 'Manage AI chat context',
+    '模型名字': 'Model', '接口地址': 'API endpoint', '测试连接': 'Test connection',
+    '清除我的 Key': 'Clear my key',
+    '连接设置': 'Connection settings',
+    '本机保存 · 下一条请求生效': 'Saved locally · applies to the next request',
+    '调整 AI 助手宽度': 'Resize AI Assistant',
+    '拖动调整宽度，双击恢复默认': 'Drag to resize. Double-click to restore the default width.',
+    '粘贴 DeepSeek API Key（留空=不修改）': 'Paste a DeepSeek API key (leave blank to keep the current key)',
+    'Key 只存在本机 data/ai.json，不写入笔记、不上传别处。模型改动保存后对下一条消息生效。':
+      'The key stays in local data/ai.json; it is not written into notes or uploaded elsewhere. Model changes apply to the next request.',
+    '输入消息，Enter 发送，Shift+Enter 换行': 'Type a message. Enter to send; Shift+Enter for a new line.',
+    '关闭（Esc）': 'Close (Esc)', '关闭 AI 助手': 'Close AI Assistant',
+    'AI 助手使用指南': 'AI Assistant guide', 'AI 助手操作速查': 'AI Assistant quick guide',
+    'AI 操作速查目录': 'AI action guide', 'AI 操作速查翻页': 'AI action guide pages',
+    '上一步': 'Back', '下一步': 'Next', '收起教程': 'Close guide',
+    '⚡ 牛顿第二定律 · 复习卡组': '⚡ Newton’s second law · revision set',
+    '🧩 C 指针 · 知识网络': '🧩 C pointers · knowledge graph',
+    '🔬 科研想法 · 研究计划': '🔬 Research idea · research plan',
+    '整理牛顿第二定律：生成定义、公式 F=ma、变量含义、生活例子、典型题、易错点，连成一张知识网络。':
+      'Organize Newton’s second law into a knowledge graph with its definition, F=ma, variables, everyday examples, typical problems, and common mistakes.',
+    '系统讲解 C 语言指针，做成一张知识网络画布：基本概念、取地址与解引用、指针与数组、指针与函数、多级指针、动态内存、常见错误。':
+      'Explain C pointers as a knowledge graph: fundamentals, address-of and dereference, arrays, functions, multi-level pointers, dynamic memory, and common mistakes.',
+    '围绕一个研究想法，生成一张研究计划画布：研究问题、假设、现有证据、实验设计、风险、下一步。':
+      'Turn a research idea into a plan covering the question, hypothesis, current evidence, experiment design, risks, and next steps.',
     '导出 MD': 'Export MD', '导出 PNG': 'Export PNG', '转为任务': 'Turn into Tasks',
     '确认转为任务': 'Confirm Tasks', '确认归档划线节点': 'Confirm Archive',
     '已保存': 'Saved', '保存中…': 'Saving…', '未保存': 'Unsaved', '顶栏语言': 'Interface language',

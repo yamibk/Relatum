@@ -131,8 +131,17 @@ assert(canvas.includes('global.CanvasModule.createMindmapFromOutline = createMin
   'CanvasModule must expose atomic outline generation');
 assert(canvas.includes('history: false') && canvas.includes('notify: false'),
   'generation must suppress intermediate history/save commits');
-assert(canvas.includes('pushHistory();\n        notify();\n        focusNodeIds(tree.nodeSet, false);'),
-  'generation must commit exactly once then focus the created tree');
+assert(
+  canvas.includes('if (options.history !== false) pushHistory();')
+    && canvas.includes('if (options.notify !== false) notify();')
+    && canvas.includes('if (options.focus !== false) focusNodeIds(tree.nodeSet, false);'),
+  'outline generation must commit and focus by default while allowing an atomic outer caller to take ownership',
+);
+assert(
+  editor.includes('api.createMindmapFromOutline(outlineModel, {')
+    && !editor.includes('api.createMindmapFromOutline(outlineModel, {\n        history: false'),
+  'Notebook generation must keep the default one-history/one-save behavior',
+);
 
 const notebookStart = css.indexOf('/* ── 笔记坞');
 const notebookEnd = css.indexOf('/* 选中态：', notebookStart);

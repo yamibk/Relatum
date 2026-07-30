@@ -138,22 +138,12 @@ if (-not (Test-Path -LiteralPath $RuntimeConfig)) {
     throw ('Runtime config missing: ' + $RuntimeConfig)
 }
 
-# The AI compose prompt guide lives at the project root (not under assets/).
-# Keep the script ASCII-only by discovering it with an ASCII glob.
-$AiGuide = Get-ChildItem -LiteralPath $ProjectRoot -Filter 'AI*.md' |
-    Where-Object { -not $_.PSIsContainer } |
-    Select-Object -First 1
-if (-not $AiGuide) {
-    throw 'AI guide markdown missing (expected AI*.md in the project root).'
-}
-
 # -- 4. PyInstaller (onedir; only the Windows pywebview platform code) ----------
 & $Python -m PyInstaller `
     --noconfirm --clean --windowed --onedir `
     --name $ExeName `
     --icon $Icon `
     --add-data ($PackAssets + ';assets') `
-    --add-data ($AiGuide.FullName + ';.') `
     --hidden-import webview.platforms.winforms `
     --hidden-import webview.platforms.edgechromium `
     --specpath $BuildRoot `
@@ -182,13 +172,9 @@ $ReleaseConfig = Join-Path $Release ($ExeName + '.exe.config')
 $ReleaseInternal = Join-Path $Release '_internal'
 $ReleaseAssets = Join-Path $ReleaseInternal 'assets'
 $ReleaseTtf = Join-Path $ReleaseAssets 'fonts\kose-font.ttf'
-$ReleaseGuide = Get-ChildItem -LiteralPath $ReleaseInternal -Filter 'AI*.md' -ErrorAction SilentlyContinue |
-    Where-Object { -not $_.PSIsContainer } |
-    Select-Object -First 1
 if (-not (Test-Path -LiteralPath $ReleaseExe)) { throw ('Release exe missing: ' + $ReleaseExe) }
 if (-not (Test-Path -LiteralPath $ReleaseConfig)) { throw ('Runtime config missing from release: ' + $ReleaseConfig) }
 if (-not (Test-Path -LiteralPath $ReleaseAssets)) { throw ('Release assets missing: ' + $ReleaseAssets) }
-if (-not $ReleaseGuide) { throw 'AI guide missing from release resources.' }
 if (Test-Path -LiteralPath $ReleaseTtf) { throw ('Build-only TTF leaked into release: ' + $ReleaseTtf) }
 if ((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData)) {
     throw ('User data leaked into release: ' + $Release)

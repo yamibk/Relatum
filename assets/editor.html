@@ -3404,13 +3404,18 @@
     </div>
   </div>
 
-  <!-- AI 助手：右侧滑出对话栏（阶段 1 纯对话；阶段 2 起接入"注入画布"）。
+  <!-- AI 助手 V2：聊天与受控画布计划共用一个侧栏；计划先预览，确认后才原子应用。
        配置经后端存 data/ai.json，不写入 .canvas、不长期留前端。 -->
   <aside class="ai-panel" id="ai-panel" data-role="ai-panel" role="dialog" aria-label="AI 助手" hidden>
+    <div class="ai-panel-resize-handle" data-role="ai-resize-handle" role="separator"
+         aria-orientation="vertical" aria-valuemin="440" aria-valuemax="820" aria-valuenow="520"
+         aria-label="调整 AI 助手宽度" title="拖动调整宽度，双击恢复默认" tabindex="0">
+      <span aria-hidden="true"></span>
+    </div>
     <header class="ai-panel-head">
       <div class="ai-panel-title">
         <span class="ai-panel-kicker">AI 助手</span>
-        <span class="ai-panel-sub">对话生成 · 整理笔记</span>
+        <span class="ai-panel-sub">对话 · 受控画布计划</span>
       </div>
       <div class="ai-panel-head-tools">
         <button type="button" class="ai-head-btn" data-role="ai-help"
@@ -3428,134 +3433,173 @@
       </div>
     </header>
 
-    <div class="ai-settings" data-role="ai-settings" hidden>
-      <label class="ai-field">
-        <span class="ai-field-label">API Key
-          <span class="ai-key-hint" data-role="ai-key-hint">尚未设置</span></span>
-        <input type="password" class="ai-input-text" data-role="ai-key"
-               placeholder="粘贴 DeepSeek API Key（留空=不修改）" autocomplete="off" spellcheck="false">
-      </label>
-      <label class="ai-field">
-        <span class="ai-field-label">模型名字</span>
-        <input type="text" class="ai-input-text" data-role="ai-model"
-               placeholder="deepseek-chat" autocomplete="off" spellcheck="false">
-      </label>
-      <label class="ai-field">
-        <span class="ai-field-label">接口地址</span>
-        <input type="text" class="ai-input-text" data-role="ai-base"
-               placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false">
-      </label>
-      <div class="ai-settings-actions">
-        <button type="button" class="ai-btn-secondary" data-role="ai-clear"
-                title="清空当前对话上下文">清空上下文</button>
-        <span class="ai-config-feedback" data-role="ai-config-feedback" aria-live="polite"></span>
-        <button type="button" class="ai-btn-secondary" data-role="ai-test"
-                title="用当前设置发一条极短请求，检查 Key / 模型 / 接口地址是否可用">测试连接</button>
-        <button type="button" class="ai-btn-primary" data-role="ai-save-config">保存设置</button>
+    <div class="ai-panel-workspace" data-role="ai-workspace">
+      <div class="ai-settings" data-role="ai-settings" hidden>
+        <div class="ai-sheet-heading">
+          <span>连接设置</span>
+          <small>本机保存 · 下一条请求生效</small>
+        </div>
+        <label class="ai-field">
+          <span class="ai-field-label">API Key
+            <span class="ai-key-hint" data-role="ai-key-hint">尚未设置</span></span>
+          <input type="password" class="ai-input-text" data-role="ai-key"
+                 placeholder="粘贴 DeepSeek API Key（留空=不修改）" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="ai-field">
+          <span class="ai-field-label">模型名字</span>
+          <input type="text" class="ai-input-text" data-role="ai-model"
+                 placeholder="deepseek-chat" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="ai-field">
+          <span class="ai-field-label">接口地址</span>
+          <input type="text" class="ai-input-text" data-role="ai-base"
+                 placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="ai-settings-actions">
+          <button type="button" class="ai-btn-secondary" data-role="ai-clear"
+                  title="清空当前对话上下文">清空上下文</button>
+          <span class="ai-config-feedback" data-role="ai-config-feedback" aria-live="polite"></span>
+          <button type="button" class="ai-btn-secondary" data-role="ai-test"
+                  title="用当前设置发一条极短请求，检查 Key / 模型 / 接口地址是否可用">测试连接</button>
+          <button type="button" class="ai-btn-primary" data-role="ai-save-config">保存设置</button>
+        </div>
+        <div class="ai-settings-note">Key 只存在本机 data/ai.json，不写入笔记、不上传别处。模型改动保存后对下一条消息生效。</div>
+        <div class="ai-settings-danger-row">
+          <button type="button" class="ai-btn-danger" data-role="ai-clear-key"
+                  title="把本机保存的 API Key 清空（分发前用，防止误带出去）">清除我的 Key</button>
+        </div>
       </div>
-      <div class="ai-settings-note">Key 只存在本机 data/ai.json，不写入笔记、不上传别处。模型改动保存后对下一条消息生效。</div>
-      <div class="ai-settings-danger-row">
-        <button type="button" class="ai-btn-danger" data-role="ai-clear-key"
-                title="把本机保存的 API Key 清空（分发前用，防止误带出去）">清除我的 Key</button>
-      </div>
-    </div>
 
-    <div class="ai-help" data-role="ai-help-panel" role="dialog" aria-label="AI 助手使用指南" hidden>
-      <nav class="ai-help-spine" aria-label="AI 教程翻页">
-        <span class="ai-help-spine-slider" data-role="ai-help-spine-slider" aria-hidden="true"></span>
-        <button type="button" class="active" data-ai-help-page="start" title="先分清按钮"><span></span></button>
-        <button type="button" data-ai-help-page="generate" title="从零生成"><span></span></button>
-        <button type="button" data-ai-help-page="attach" title="挂到选中"><span></span></button>
-        <button type="button" data-ai-help-page="polish" title="补充与整理精炼"><span></span></button>
-        <button type="button" data-ai-help-page="context" title="上下文控制"><span></span></button>
-        <button type="button" data-ai-help-page="templates" title="提示词模板"><span></span></button>
-        <button type="button" data-ai-help-page="trouble" title="排错"><span></span></button>
-      </nav>
-      <div class="ai-help-main">
-        <nav class="ai-help-nav" aria-label="AI 教程目录">
-          <span class="ai-help-nav-slider" data-role="ai-help-nav-slider" aria-hidden="true"></span>
-          <button type="button" class="active" data-ai-help-page="start">入门</button>
-          <button type="button" data-ai-help-page="generate">生成</button>
-          <button type="button" data-ai-help-page="attach">挂到选中</button>
-          <button type="button" data-ai-help-page="polish">补充整理</button>
-          <button type="button" data-ai-help-page="context">上下文</button>
-          <button type="button" data-ai-help-page="templates">模板</button>
-          <button type="button" data-ai-help-page="trouble">排错</button>
-        </nav>
-        <div class="ai-help-book">
-          <div class="ai-help-page" data-role="ai-help-page">
-            <div class="ai-help-page-copy" data-role="ai-help-page-copy"></div>
+      <div class="ai-help" data-role="ai-help-panel" role="dialog" aria-label="AI 助手操作速查" hidden>
+        <div class="ai-help-main">
+          <nav class="ai-help-nav" role="tablist" aria-label="AI 操作速查目录">
+            <button type="button" id="ai-help-tab-start" class="active" role="tab" aria-selected="true"
+                    aria-controls="ai-help-page-content" data-ai-help-page="start">3 步上手</button>
+            <button type="button" id="ai-help-tab-actions" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="ai-help-page-content" data-ai-help-page="actions">六个按钮</button>
+            <button type="button" id="ai-help-tab-preview" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="ai-help-page-content" data-ai-help-page="preview">选区与预览</button>
+            <button type="button" id="ai-help-tab-trouble" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="ai-help-page-content" data-ai-help-page="trouble">设置与排错</button>
+          </nav>
+          <div class="ai-help-book">
+            <div class="ai-help-page" id="ai-help-page-content" role="tabpanel"
+                 aria-labelledby="ai-help-tab-start" tabindex="0" data-role="ai-help-page">
+              <div class="ai-help-page-copy" data-role="ai-help-page-copy"></div>
+            </div>
+          </div>
+          <footer class="ai-help-foot">
+            <div class="ai-help-pager" aria-label="AI 操作速查翻页">
+              <button type="button" data-action="ai-help-prev" aria-label="上一步" disabled>
+                <span aria-hidden="true">‹</span><span>上一步</span>
+              </button>
+              <span data-role="ai-help-position">01 / 04</span>
+              <button type="button" data-action="ai-help-next" aria-label="下一步">
+                <span data-role="ai-help-next-label">下一步</span><span aria-hidden="true">›</span>
+              </button>
+            </div>
+          </footer>
+        </div>
+      </div>
+
+      <div class="ai-conversation" data-role="ai-conversation">
+        <div class="ai-context" data-role="ai-context">
+          <button type="button" class="ai-context-toggle" data-role="ai-context-toggle"
+                  aria-expanded="false" title="管理 AI 对话上下文">
+            <span class="ai-context-main" data-role="ai-context-label">上下文：连续对话</span>
+            <span class="ai-context-count" data-role="ai-context-count">0 条</span>
+          </button>
+          <div class="ai-context-menu" data-role="ai-context-menu" hidden>
+            <div class="ai-context-title">对话上下文</div>
+            <p>这里控制右侧聊天历史是否随下一次请求发给 AI；画布内容仅在生成计划时按目标范围另行发送。</p>
+            <div class="ai-context-options" role="group" aria-label="上下文模式">
+              <button type="button" data-ai-context-mode="continuous">连续对话</button>
+              <button type="button" data-ai-context-mode="single">单次请求</button>
+            </div>
+            <div class="ai-context-hint" data-role="ai-context-hint"></div>
+            <div class="ai-context-actions">
+              <button type="button" class="ai-btn-secondary" data-role="ai-context-clear">清空上下文</button>
+              <button type="button" class="ai-btn-secondary" data-role="ai-context-close">收起</button>
+            </div>
           </div>
         </div>
-        <footer class="ai-help-foot">
-          <span>左侧圆点滚轮或 ← → 翻页</span>
-          <div class="ai-help-pager">
-            <button type="button" data-action="ai-help-prev" aria-label="上一页">‹</button>
-            <span data-role="ai-help-position">01 / 07</span>
-            <button type="button" data-action="ai-help-next" aria-label="下一页">›</button>
+
+        <div class="ai-messages" data-role="ai-messages">
+          <div class="ai-empty" data-role="ai-empty">
+            <div class="ai-empty-mark" aria-hidden="true">✦</div>
+            <div class="ai-empty-title">聊点什么，或先生成一份画布预览</div>
+            <div class="ai-empty-hint"><b>发送</b>（→）只用于聊天；六种操作中的画布动作会先生成可勾选预览，确认后才改动画布。<br>第一次用请先点右上角齿轮填入 API Key。</div>
+            <div class="ai-empty-templates" data-role="ai-empty-templates">
+              <div class="ai-empty-templates-label">试试 · 点一下填进输入框，再选择「生成卡片网络」或「生成导图」</div>
+              <button type="button" class="ai-empty-template"
+                      data-prompt="整理牛顿第二定律：生成定义、公式 F=ma、变量含义、生活例子、典型题、易错点，连成一张知识网络。"
+                      data-prompt-en="Organize Newton’s second law into a knowledge graph with its definition, F=ma, variables, everyday examples, typical problems, and common mistakes.">⚡ 牛顿第二定律 · 复习卡组</button>
+              <button type="button" class="ai-empty-template"
+                      data-prompt="系统讲解 C 语言指针，做成一张知识网络画布：基本概念、取地址与解引用、指针与数组、指针与函数、多级指针、动态内存、常见错误。"
+                      data-prompt-en="Explain C pointers as a knowledge graph: fundamentals, address-of and dereference, arrays, functions, multi-level pointers, dynamic memory, and common mistakes.">🧩 C 指针 · 知识网络</button>
+              <button type="button" class="ai-empty-template"
+                      data-prompt="围绕一个研究想法，生成一张研究计划画布：研究问题、假设、现有证据、实验设计、风险、下一步。"
+                      data-prompt-en="Turn a research idea into a plan covering the question, hypothesis, current evidence, experiment design, risks, and next steps.">🔬 科研想法 · 研究计划</button>
+            </div>
           </div>
-        </footer>
-      </div>
-    </div>
-
-    <div class="ai-context" data-role="ai-context">
-      <button type="button" class="ai-context-toggle" data-role="ai-context-toggle"
-              aria-expanded="false" title="管理 AI 对话上下文">
-        <span class="ai-context-main" data-role="ai-context-label">上下文：连续对话</span>
-        <span class="ai-context-count" data-role="ai-context-count">0 条</span>
-      </button>
-      <div class="ai-context-menu" data-role="ai-context-menu" hidden>
-        <div class="ai-context-title">对话上下文</div>
-        <p>这里控制的是右侧聊天历史是否随下一次请求发给 AI；画布内容只会在你点“基于画布补充 / 整理精炼 / 挂到选中”时另外发送。</p>
-        <div class="ai-context-options" role="group" aria-label="上下文模式">
-          <button type="button" data-ai-context-mode="continuous">连续对话</button>
-          <button type="button" data-ai-context-mode="single">单次请求</button>
-        </div>
-        <div class="ai-context-hint" data-role="ai-context-hint"></div>
-        <div class="ai-context-actions">
-          <button type="button" class="ai-btn-secondary" data-role="ai-context-clear">清空上下文</button>
-          <button type="button" class="ai-btn-secondary" data-role="ai-context-close">收起</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="ai-messages" data-role="ai-messages">
-      <div class="ai-empty" data-role="ai-empty">
-        <div class="ai-empty-title">问点什么，或让我帮你做笔记</div>
-        <div class="ai-empty-hint"><b>发送</b>（→）用于聊天问答；上方快捷按钮会把内容做成卡片，直接画进当前画布。<br>第一次用请先点右上角齿轮填入 API Key。</div>
-        <div class="ai-empty-templates" data-role="ai-empty-templates">
-          <div class="ai-empty-templates-label">试试 · 点一下填进输入框，再点上方「✦ 生成到画布」</div>
-          <button type="button" class="ai-empty-template" data-prompt="整理牛顿第二定律：生成定义、公式 F=ma、变量含义、生活例子、典型题、易错点，连成一张知识网络。">⚡ 牛顿第二定律 · 复习卡组</button>
-          <button type="button" class="ai-empty-template" data-prompt="系统讲解 C 语言指针，做成一张知识网络画布：基本概念、取地址与解引用、指针与数组、指针与函数、多级指针、动态内存、常见错误。">🧩 C 指针 · 知识网络</button>
-          <button type="button" class="ai-empty-template" data-prompt="围绕一个研究想法，生成一张研究计划画布：研究问题、假设、现有证据、实验设计、风险、下一步。">🔬 科研想法 · 研究计划</button>
         </div>
       </div>
     </div>
 
     <form class="ai-composer" data-role="ai-composer">
-      <!-- 预设快捷按钮：点一下=带对应意图把笔记画进画布（不是聊天）。data-mode 决定意图。 -->
-      <div class="ai-compose-chips" data-role="ai-chips">
-        <button type="button" class="ai-chip" data-mode="generate"
-                title="按你写的内容，从零生成卡片并画进当前画布">✦ 生成到画布</button>
-        <button type="button" class="ai-chip" data-mode="attach"
-                title="先选中一张卡片，再把新生成内容挂到这张卡片下面">↳ 挂到选中</button>
-        <button type="button" class="ai-chip" data-mode="supplement"
-                title="读当前画布，找出还缺的概念/例子/推导帮你补上，并连到相关卡片（只新增，不改原卡片）">🔗 基于画布补充</button>
-        <button type="button" class="ai-chip" data-mode="beautify"
-                title="读当前画布，把已有内容重新整理成一套更有条理的卡片（目录/定义/例题/易错，带 Callout 与配色）；只新增，不改你的原卡片">✨ 整理精炼</button>
+      <div class="ai-action-picker" data-role="ai-action-picker">
+        <div class="ai-action-picker-head">
+          <span class="ai-action-picker-label">操作</span>
+          <span class="ai-action-recommendation" data-role="ai-action-recommendation"></span>
+        </div>
+        <div class="ai-action-grid" role="radiogroup" aria-label="AI 操作">
+          <button type="button" class="ai-action-option" data-ai-action="chat" role="radio" aria-checked="true">
+            <span class="ai-action-icon">↗</span><span>聊天</span>
+          </button>
+          <button type="button" class="ai-action-option" data-ai-action="create_graph" role="radio" aria-checked="false">
+            <span class="ai-action-icon">⌘</span><span>生成卡片网络</span>
+          </button>
+          <button type="button" class="ai-action-option" data-ai-action="create_mindmap" role="radio" aria-checked="false">
+            <span class="ai-action-icon">⌁</span><span>生成导图</span>
+          </button>
+          <button type="button" class="ai-action-option" data-ai-action="extend_branch" role="radio" aria-checked="false">
+            <span class="ai-action-icon">↳</span><span>扩展导图分支</span>
+          </button>
+          <button type="button" class="ai-action-option" data-ai-action="supplement" role="radio" aria-checked="false">
+            <span class="ai-action-icon">＋</span><span>基于画布补充</span>
+          </button>
+          <button type="button" class="ai-action-option" data-ai-action="refine" role="radio" aria-checked="false">
+            <span class="ai-action-icon">✦</span><span>整理精炼</span>
+          </button>
+        </div>
+        <div class="ai-target-row" data-role="ai-target-row" hidden>
+          <span class="ai-target-label">目标范围</span>
+          <div class="ai-target-options" role="radiogroup" aria-label="画布目标范围">
+            <button type="button" data-ai-target="selection" role="radio" aria-checked="false">
+              选区 <span data-role="ai-selection-count">0</span> 个节点
+            </button>
+            <button type="button" data-ai-target="canvas" role="radio" aria-checked="true">整张画布</button>
+          </div>
+        </div>
+        <div class="ai-action-description-row">
+          <span class="ai-action-description" data-role="ai-action-description"></span>
+        </div>
       </div>
-      <textarea class="ai-input" data-role="ai-input" rows="1"
-                placeholder="输入消息，Enter 发送，Shift+Enter 换行" spellcheck="false"></textarea>
-      <div class="ai-composer-actions">
-        <span class="ai-composer-tip">Enter / → 发送＝聊天问答 · 上面按钮＝画进画布</span>
-        <button type="button" class="ai-cancel" data-role="ai-cancel"
-                title="停止等待本次 AI 生成，不改动画布" hidden>取消</button>
-        <button type="submit" class="ai-send" data-role="ai-send" title="发送（Enter）" aria-label="发送">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 12 L20 12 M13 5 L20 12 L13 19"/>
-          </svg>
-        </button>
+      <div class="ai-compose-box">
+        <textarea class="ai-input" data-role="ai-input" rows="3"
+                  placeholder="输入消息，Enter 发送，Shift+Enter 换行" spellcheck="false"></textarea>
+        <div class="ai-composer-actions">
+          <span class="ai-composer-tip" data-role="ai-composer-tip">Enter / → 发送聊天</span>
+          <button type="button" class="ai-cancel" data-role="ai-cancel"
+                  title="停止等待本次 AI 生成，不改动画布" hidden>取消</button>
+          <button type="submit" class="ai-send" data-role="ai-send" title="发送聊天（Enter）" aria-label="发送聊天">
+            <svg data-role="ai-submit-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 12 L20 12 M13 5 L20 12 L13 19"/>
+            </svg>
+            <span data-role="ai-submit-label" hidden>生成预览</span>
+          </button>
+        </div>
       </div>
     </form>
   </aside>
@@ -3574,6 +3618,7 @@
   <script src="markdown-notebook.js" defer></script>
   <script src="canvas-scenes.js" defer></script>
   <script src="canvas-taskbook.js" defer></script>
+  <script src="ai-canvas-plan.js" defer></script>
   <script src="canvas.js" defer></script>
   <script src="graph-gl.js" defer></script>
   <script src="graph-engine.js" defer></script>

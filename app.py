@@ -34,6 +34,14 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from ai_plan import (
+    AIPlanError,
+    PLAN_ACTIONS,
+    build_plan_system,
+    build_repair_instruction,
+    parse_plan,
+)
+
 # 桌面打包版把内置资源放在运行时资源目录，而用户数据必须始终留在
 # EXE 旁边，不能和应用资源混在一起。
 SOURCE_ROOT = Path(__file__).resolve().parent
@@ -5591,10 +5599,14 @@ AI_MAX_MESSAGES = 40              # 单次请求最多带多少条上下文（�
 # 输出天花板：v4-pro 实际支持到 384K，但这里是"防截断"不是"油门"——真正决定长度的是提示词。
 # 32768 足够任何丰富多卡生成（思考预算也含在内），再高也只是让极端跑飞的情况空等更久，无收益。
 AI_MAX_OUTPUT_TOKENS = 32768
+AI_CHAT_MAX_OUTPUT_TOKENS = 8192
 # DeepSeek 思考模式（v4-pro 默认就开）：显式声明便于稳定与日后切换；reasoning_effort 控制思考强度。
 # 思考内容走独立的 reasoning_content 字段、不混进正文；强度越高质量越好但越慢，想更狠可改 "max"。
 AI_THINKING_ENABLED = True
 AI_REASONING_EFFORT = "high"      # None=用模型默认；可选 "high" / "max"
+AI_OPTIONAL_CAPABILITY_CACHE: dict[tuple[str, str], set[str]] = {}
+AI_OPTIONAL_CAPABILITY_LOCK = threading.Lock()
+AI_OPTIONAL_FIELDS = {"thinking", "reasoning_effort", "response_format"}
 
 
 def load_ai_config() -> dict:
@@ -5643,35 +5655,118 @@ def ai_public_config() -> dict:
     return {"hasKey": bool(key), "keyHint": hint, "model": cfg["model"], "baseUrl": cfg["baseUrl"]}
 
 
-def call_ai_chat(messages: list, cfg: dict, timeout: int = AI_REQUEST_TIMEOUT,
-                 json_mode: bool = False):
-    """用标准库 urllib 调用 OpenAI 兼容的 /chat/completions（DeepSeek 兼容）。
-    返回 (回复文本, 是否因长度上限被截断)。出错抛异常，由调用方翻译成中文提示。
-    - max_tokens：显式给足；不带时各家默认上限偏保守、思考又吃预算，长笔记/多卡片会被悄悄掐断。
-    - thinking / reasoning_effort：DeepSeek 思考模式，让 v4-pro 先推理再答、质量更高（思考内容在
-      reasoning_content 字段，不混进正文）。非 DeepSeek 接口忽略这俩参数即可，不影响 OpenAI 兼容性。
-    - json_mode：生成卡片(compose)时开 response_format=json_object，从根上保证吐合法 JSON。
-    finish_reason == 'length' 说明写到上限被截，回传给上层好提示用户。"""
-    base = (cfg.get("baseUrl") or AI_DEFAULT_BASE_URL).rstrip("/")
-    url = base + "/chat/completions"
+def _ai_unsupported_optional_fields(err: urllib.error.HTTPError, sent_fields: set[str]) -> set[str]:
+    """读取一次兼容接口的参数错误，并找出需要在本进程禁用的可选字段。"""
+    try:
+        raw = err.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        raw = ""
+    err._relatum_detail = raw  # type: ignore[attr-defined]
+    if err.code not in (400, 422) or not raw:
+        return set()
+    lowered = raw.lower()
+    rejection_words = (
+        "unsupported", "not supported", "unknown", "unrecognized",
+        "not allowed", "extra inputs", "extra_forbidden", "invalid parameter",
+        "unexpected", "not permitted",
+    )
+    if not any(word in lowered for word in rejection_words):
+        return set()
+    unsupported = {field for field in sent_fields if field.lower() in lowered}
+    # thinking 和 reasoning_effort 是同一组“深度思考”能力；接口若明确拒绝其中一个，
+    # 一次兼容重试里应同时剥离二者，避免服务端逐个报未知参数。
+    if unsupported.intersection({"thinking", "reasoning_effort"}):
+        unsupported.update(sent_fields.intersection({"thinking", "reasoning_effort"}))
+    return unsupported
+
+
+def _ai_request_body(
+    messages: list,
+    cfg: dict,
+    *,
+    json_mode: bool,
+    thinking: bool,
+    max_tokens: int,
+    disabled_fields: set[str],
+) -> dict:
     body = {
         "model": cfg.get("model") or AI_DEFAULT_MODEL,
         "messages": messages,
         "stream": False,
-        "max_tokens": AI_MAX_OUTPUT_TOKENS,
+        "max_tokens": max_tokens,
     }
-    if AI_THINKING_ENABLED:
+    if thinking and AI_THINKING_ENABLED and "thinking" not in disabled_fields:
         body["thinking"] = {"type": "enabled"}
-        if AI_REASONING_EFFORT:
-            body["reasoning_effort"] = AI_REASONING_EFFORT
-    if json_mode:
+    if (
+        thinking
+        and AI_THINKING_ENABLED
+        and AI_REASONING_EFFORT
+        and "reasoning_effort" not in disabled_fields
+    ):
+        body["reasoning_effort"] = AI_REASONING_EFFORT
+    if json_mode and "response_format" not in disabled_fields:
         body["response_format"] = {"type": "json_object"}
+    return body
+
+
+def _send_ai_request(url: str, body: dict, cfg: dict, timeout: int) -> dict:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", "Bearer " + (cfg.get("apiKey") or ""))
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def call_ai_chat(
+    messages: list,
+    cfg: dict,
+    timeout: int = AI_REQUEST_TIMEOUT,
+    json_mode: bool = False,
+    thinking: bool = False,
+    max_tokens: int = AI_CHAT_MAX_OUTPUT_TOKENS,
+):
+    """用标准库 urllib 调用 OpenAI 兼容的 /chat/completions（DeepSeek 兼容）。
+    返回 (回复文本, 是否因长度上限被截断)。出错抛异常，由调用方翻译成中文提示。
+    - max_tokens：显式给足；不带时各家默认上限偏保守、思考又吃预算，长笔记/多卡片会被悄悄掐断。
+    - thinking / reasoning_effort：只用于画布计划等高质量任务，普通聊天不强制开启。
+    - json_mode：画布计划等结构化请求使用 response_format=json_object。
+    对拒绝上述可选字段的 OpenAI 兼容接口，会剥离服务端明确点名的字段重试一次，
+    并在当前进程按接口和模型缓存能力。
+    finish_reason == 'length' 说明写到上限被截，回传给上层好提示用户。"""
+    base = (cfg.get("baseUrl") or AI_DEFAULT_BASE_URL).rstrip("/")
+    url = base + "/chat/completions"
+    capability_key = (base.lower(), str(cfg.get("model") or AI_DEFAULT_MODEL))
+    with AI_OPTIONAL_CAPABILITY_LOCK:
+        disabled = set(AI_OPTIONAL_CAPABILITY_CACHE.get(capability_key, set()))
+    body = _ai_request_body(
+        messages,
+        cfg,
+        json_mode=json_mode,
+        thinking=thinking,
+        max_tokens=max_tokens,
+        disabled_fields=disabled,
+    )
+    sent_optional = AI_OPTIONAL_FIELDS.intersection(body)
+    try:
+        payload = _send_ai_request(url, body, cfg, timeout)
+    except urllib.error.HTTPError as err:
+        unsupported = _ai_unsupported_optional_fields(err, sent_optional)
+        if not unsupported:
+            raise
+        with AI_OPTIONAL_CAPABILITY_LOCK:
+            cached = AI_OPTIONAL_CAPABILITY_CACHE.setdefault(capability_key, set())
+            cached.update(unsupported)
+            disabled = set(cached)
+        retry_body = _ai_request_body(
+            messages,
+            cfg,
+            json_mode=json_mode,
+            thinking=thinking,
+            max_tokens=max_tokens,
+            disabled_fields=disabled,
+        )
+        payload = _send_ai_request(url, retry_body, cfg, timeout)
     choices = payload.get("choices") if isinstance(payload, dict) else None
     if not choices:
         raise ValueError("AI 没有返回任何内容")
@@ -5681,333 +5776,6 @@ def call_ai_chat(messages: list, cfg: dict, timeout: int = AI_REQUEST_TIMEOUT,
     content = content if isinstance(content, str) else str(content)
     truncated = first.get("finish_reason") == "length"
     return content, truncated
-
-
-# ─── AI 助手（阶段 2：生成笔记并注入当前画布） ──────────────────
-# 思路：把《AI笔记创作指南》当 system prompt 喂给模型，强制它【只】吐一段
-# 规定结构的 JSON（卡片内容 + 用「下标」表示的连接，不算坐标、不编 id）；
-# 后端防御性解析后，复用导入用的力导向布局 _layout_import_canvas 排好坐标，
-# 把干净的「节点 + 连线（下标）」交给前端注入当前画布。模型算不准坐标，就不让它算。
-
-AI_COMPOSE_ALLOWED_KINDS = {"card", "index", "preview", "sticky", "code"}
-AI_COMPOSE_NAMED_COLORS = {"gray", "blue", "green", "yellow", "red", "purple"}
-AI_COMPOSE_CODE_LANGS = {"c", "python", "matlab"}
-AI_COMPOSE_MAX_NODES = 40
-
-# 创作指南随源码放在画布根目录（非 assets，故未封进 EXE）；冻结包里可能缺失，
-# 缺失时退回内置精简版，保证功能不依赖那份文件也能跑。
-AI_GUIDE_CANDIDATES = [
-    SOURCE_ROOT / "AI笔记创作指南.md",
-    RESOURCE_ROOT / "AI笔记创作指南.md",
-]
-
-# 输出契约：永远追加在指南之后，优先级高于指南里"交付文件"的说法。
-AI_COMPOSE_CONTRACT = """\
-────────────────────────────────────────
-【本次任务的输出格式 · 必须严格遵守，优先级高于上文任何"交付 .canvas/.md 文件"的说法】
-你现在不是写文件交给用户，而是在为用户【当前正在编辑的画布】直接生成卡片。请遵守：
-
-1. 上文指南里讲【外部交付】的部分——写 .md 文件夹/手写 .canvas 文件、算坐标 x/y、编 id、
-   节点 width/height、装饰图形、§8 交付话术、§9 自检清单——本场景【一概忽略】，那些都由后端自动完成。
-   你真正要用的只有：节点类型（§3.4）、正文 Markdown 增强语法大全（§4）、排版美学守则（§5）。
-   不要输出 .canvas/.md 文件、不要算坐标、不要编 id、不要写 width/height。
-2. 你的【整条回复只能是一个 JSON 对象】，前后不要任何解释文字，不要用 ``` 代码块包裹。结构：
-{
-  "nodes": [
-    { "title": "卡片标题", "body": "正文(Markdown,可用上文全部增强语法)", "kind": "card", "color": "blue" }
-  ],
-  "edges": [
-    { "from": 0, "to": 1, "text": "线上标签(可空)" }
-  ]
-}
-3. nodes：卡片数组。除非用户限定数量，否则【宁多勿少、力求把主题讲透】：常见 6~30 张，
-   主题复杂、内容丰富时尽管铺满整张知识网络（上限 40 张），不要为了省事只给三五张提纲。
-   - 如果用户明确指定数量（如“只要 1 张”“生成 3 张”），必须严格遵守，不要额外扩展。
-   - title：必填，简短标题。
-   - body：正文 Markdown，要【写充实、有实质内容】——给定义/原理 + 要点 + 例子/公式/代码 +
-     易错或对比，能展开就展开，不要只写一两句敷衍的提纲（便签/代码可只给 body）。
-     善用上文全部增强语法：标题、列表、行内/围栏代码、$公式$、==高光==、字色字号、提示框等。
-   - kind：card(默认) / index(目录中枢) / preview(悬停展开) / sticky(便签) / code(代码)。拿不准就用 card。
-   - color(可选)：只能是 gray/blue/green/yellow/red/purple，用来编码语义、≤3~4 种、克制；不需要就省略。
-   - kind=code 时：body 放源码，另加 "language"，取值 c/python/matlab。
-   - kind=index 时：可加 "indexDepth"(整数 1~6)。
-4. edges：连线数组(可空)。from/to 是连线端点，写法按场景区分：
-   - 指向本次新建卡片：必须用【nodes 数组里的下标，从 0 开始的整数】。
-   - 指向用户画布里已有卡片：只有当下方出现【已有卡片/选中卡片】列表时，才可以用列表里的 id 字符串；
-     必须原样复制 `[id=...]` 里的 id，不要编造、不要用标题代替 id。
-   - 如果下方没有已有卡片列表，就只能使用新建卡片下标。
-   - 有层级时让 from=父、to=子(索引目录、脑图都靠这个方向)。
-   - 不要连到不存在的下标/id，不要自己连自己。
-5. body 是 JSON 字符串：换行写成 \\n，公式里的反斜杠写成 \\\\(标准 JSON 转义)。
-6. 一张图讲一个主题：宁可拆成多张小卡片用连线相连，也不要把所有内容塞进一张大卡片；
-   但每张小卡片自身仍要写到位、有血有肉，"拆得多"不等于"每张写得少"。
-7. 多用连线把卡片织成知识网络：上下位、并列、因果、对比都连起来，别让卡片孤立散落。
-8. 善用画布特色语法提升质量与可读性（详见上文 §4）：用 ==高光== / {hl:red|红色高光} / {tc:red|红字} / {fs:lg|大字} 句内点睛、
-   用 > [!tip]/[!warning] 等 Callout 标定义/技巧/易错/结论、数理多步推导用 ```derive``` 竖排步骤、
-   用 index 节点当目录中枢统领一组卡片。颜色编码语义、克制有度（一张图节点色 ≤3~4 种）。
-────────────────────────────────────────"""
-
-# 少样本示例：用 json.dumps 生成，保证示范本身就是一段合法 JSON（用正确示例教模型，而非空讲）。
-# 注意 Python 源码里 LaTeX 写单反斜杠（如 \\lim 在源码=一个反斜杠），json.dumps 会自动转成
-# JSON 该有的双反斜杠；正文里的真实换行也会被自动转成 \n。
-_AI_COMPOSE_EXAMPLE = {
-    "nodes": [
-        {"title": "导数", "kind": "index", "indexDepth": 2, "color": "blue",
-         "body": "## 核心\n导数是函数在某点的==瞬时变化率==，本质是一个**极限**。\n\n"
-                 "> [!note] 定义\n> $f'(x)=\\lim_{h\\to0}\\dfrac{f(x+h)-f(x)}{h}$"},
-        {"title": "求导四则法则", "kind": "card", "color": "green",
-         "body": "- 和差：$(u\\pm v)'=u'\\pm v'$\n- 乘积：$(uv)'=u'v+uv'$\n"
-                 "- 商：$\\left(\\dfrac{u}{v}\\right)'=\\dfrac{u'v-uv'}{v^2}$\n\n"
-                 "> [!warning] 易错\n> 商法则分子是 {tc:red|u'v−uv'}，顺序别写反。"},
-        {"title": "用定义求 x² 的导数", "kind": "card",
-         "body": "```derive\nf(x)=x^2 || 原函数\n"
-                 "f'(x)=\\lim_{h\\to0}\\frac{(x+h)^2-x^2}{h} || 代入定义\n"
-                 "=\\lim_{h\\to0}(2x+h) || 展开约分\n=2x || 取极限\n```"},
-    ],
-    "edges": [
-        {"from": 0, "to": 1, "text": "法则"},
-        {"from": 0, "to": 2, "text": "示例"},
-    ],
-}
-AI_COMPOSE_CONTRACT += (
-    "\n\n【优秀输出示例 · 学它的结构、语法密度与连线方向，不要照抄内容】\n"
-    + json.dumps(_AI_COMPOSE_EXAMPLE, ensure_ascii=False, indent=2)
-    + "\n────────────────────────────────────────"
-)
-
-# 找不到指南文件时的内置精简兜底（仅冻结包缺文件时用到）。
-AI_COMPOSE_FALLBACK_GUIDE = """\
-你是嵌入在一款中文本地知识画布工具里的笔记生成助手，帮用户把内容做成一张张互相连线的卡片笔记。
-- 卡片正文用 Markdown：## ### 标题、列表、**加粗**、`代码`、表格、$...$ 与 $$...$$ 公式、围栏代码块；
-  还支持高光 ==文字== / {hl:red|红色高光}、字色 {tc:red|文字}、字号 {fs:lg|文字}、Callout(> [!tip] 标题 + > 正文)。
-- 一个概念一张卡片，用连线表达关系；颜色用来编码语义、克制使用。"""
-
-
-# 阶段 3：基于当前画布的意图（都"只新增、不动原卡片"，用户拍板的安全口径）。
-AI_COMPOSE_INTENTS = {
-    "attach": "本次请把用户刚才输入的新主题/需求生成成【新增】卡片，"
-              "并且必须用 edges 把主干新卡片挂到用户当前选中的卡片上。"
-              "不要重复选中卡片已写过的内容；如果用户没有指定数量，生成 2~5 张即可。",
-    "supplement": "本次请基于上面已有卡片做【补充】：补全缺失的概念、例子、推导或对比，"
-                  "并用 edges 把新卡片挂到相关的已有卡片上。不要重复已有卡片已写过的内容。",
-    "beautify": "本次请基于上面已有卡片生成【改进 / 美化版本】，作为【新增】卡片："
-                "更清晰的标题层级、用 Callout 标定义 / 技巧 / 易错、长推导用推导链、统一语义配色。"
-                "这些是新增卡片、不会替换原卡片；可用 edges 把改进版连到它对应的原卡片。",
-}
-
-
-def _format_canvas_context(mode: str, canvas) -> str:
-    """把当前画布的卡片(带 id)+连线列成上下文，附在 system prompt 末尾；
-    只有 attach/supplement/beautify 且有内容时才生成，generate 返回空串。"""
-    intent = AI_COMPOSE_INTENTS.get(mode)
-    if not intent or not isinstance(canvas, dict):
-        return ""
-    nodes = canvas.get("nodes")
-    if not isinstance(nodes, list) or not nodes:
-        return ""
-    valid_ids: set[str] = set()
-    node_lines: list[str] = []
-    for n in nodes[:60]:
-        if not isinstance(n, dict):
-            continue
-        nid = str(n.get("id") or "").strip()
-        if not nid:
-            continue
-        valid_ids.add(nid)
-        title = str(n.get("title") or "").strip() or "(无标题)"
-        excerpt = " ".join(str(n.get("excerpt") or "").split())[:120]
-        node_lines.append(f"[id={nid}] {title}" + (f" — {excerpt}" if excerpt else ""))
-    if not node_lines:
-        return ""
-    scoped = canvas.get("scope") == "selection"
-    heading = "【用户当前选中的卡片】（请优先围绕这些卡片展开，不要重复它们已写过的内容）：" if scoped else \
-        "【用户当前画布上已有这些卡片】（不要重复它们已写过的内容）："
-    edge_lines: list[str] = []
-    raw_edges = canvas.get("edges")
-    if isinstance(raw_edges, list):
-        for e in raw_edges[:120]:
-            if not isinstance(e, dict):
-                continue
-            ef, et = str(e.get("from") or ""), str(e.get("to") or "")
-            if ef in valid_ids and et in valid_ids:
-                lbl = str(e.get("text") or "").strip()
-                edge_lines.append(f"{ef} → {et}" + (f" ({lbl})" if lbl else ""))
-    block = ["", "────────────────────────────────────────", heading]
-    block.extend(node_lines)
-    if edge_lines:
-        block.append("已有连线：")
-        block.extend(edge_lines)
-    block.append("")
-    if scoped:
-        block.append("这些卡片是用户手动选中的当前关注范围；除非必要，不要围绕未选中的整张画布发散。")
-        block.append("必须至少生成一条连线，把某个选中卡片 id 作为 from 或 to，另一端连到你新建卡片的下标；"
-                     "优先使用 from=选中卡片 id、to=主干新卡片下标。")
-    block.append(intent)
-    block.append("连线说明：edges 的 from/to 可以是你新建卡片的下标（整数，从 0 起），"
-                 "也可以是上面某张已有卡片的 id（字符串原样照抄）。已有 id 必须从列表复制，"
-                 "不要编造 id、不要用标题代替 id。这样新内容就能挂到已有卡片上。")
-    block.append("────────────────────────────────────────")
-    return "\n".join(block)
-
-
-def build_compose_system(mode: str = "generate", canvas=None) -> str:
-    """拼出 compose 的 system prompt：完整《创作指南》(或兜底) + 输出契约 + (可选)当前画布上下文。"""
-    guide = ""
-    for path in AI_GUIDE_CANDIDATES:
-        try:
-            if path.is_file():
-                guide = path.read_text(encoding="utf-8-sig").strip()
-                break
-        except OSError:
-            continue
-    if not guide:
-        guide = AI_COMPOSE_FALLBACK_GUIDE
-    return guide + "\n\n" + AI_COMPOSE_CONTRACT + _format_canvas_context(mode, canvas)
-
-
-def _repair_json_backslashes(s: str) -> str:
-    """把字符串里的「孤立反斜杠」补成 \\\\：中等模型常把 LaTeX 的 \\lim \\frac \\to 直接写进
-    body，漏掉 JSON 该有的双反斜杠 → 非法 JSON。这里只在标准解析失败后兜底重试时用。"""
-    valid_next = set('"\\/bfnrtu')   # JSON 合法转义的后续字符
-    out = []
-    i, n = 0, len(s)
-    while i < n:
-        c = s[i]
-        if c == '\\':
-            nxt = s[i + 1] if i + 1 < n else ''
-            if nxt in valid_next:        # 已是合法转义（含 \\）→ 整体保留，跳过下一个
-                out.append(c)
-                out.append(nxt)
-                i += 2
-                continue
-            out.append('\\\\')           # 孤立反斜杠 → 转义成字面反斜杠
-            i += 1
-            continue
-        out.append(c)
-        i += 1
-    return ''.join(out)
-
-
-def _extract_json_object(text: str) -> dict:
-    """从模型回复里抠出 JSON 对象：取第一个 { 到最后一个 } 之间的内容(自然跳过 ``` 围栏与前后解释)。
-    两段式：① strict=False 标准解析(容忍 body 里的原始换行)；② 失败再修复孤立反斜杠重试。
-    听话的模型走 ①、不动；写漏双反斜杠的(数学笔记常见)靠 ② 救回来。"""
-    s = (text or "").strip()
-    start = s.find("{")
-    end = s.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("回复里没有 JSON 对象")
-    sub = s[start:end + 1]
-    try:
-        return json.loads(sub, strict=False)
-    except json.JSONDecodeError:
-        return json.loads(_repair_json_backslashes(sub), strict=False)
-
-
-def parse_ai_compose(reply: str, existing_ids=None) -> dict:
-    """防御性解析模型输出，返回 {'nodes': [...已排版含坐标], 'edges': [...]}。
-    edges 的 from/to：整数=本批新节点下标；字符串=画布已有节点 id(仅当落在 existing_ids 内)。
-    任何不合规(漏字段、编造下标/id、自连、空内容)都就地丢弃；全空则抛 ValueError。"""
-    parsed = _extract_json_object(reply)
-    if not isinstance(parsed, dict):
-        raise ValueError("不是 JSON 对象")
-    raw_nodes = parsed.get("nodes")
-    if not isinstance(raw_nodes, list) or not raw_nodes:
-        raise ValueError("缺少 nodes")
-
-    nodes: list[dict] = []
-    index_map: dict[int, int] = {}     # 模型原下标 → 清洗后新下标
-    for orig_i, rn in enumerate(raw_nodes):
-        if not isinstance(rn, dict):
-            continue
-        title = str(rn.get("title") or rn.get("text") or "").strip()
-        body = str(rn.get("body") or "").strip()
-        if not title and not body:
-            continue
-        kind = rn.get("kind")
-        kind = kind if kind in AI_COMPOSE_ALLOWED_KINDS else "card"
-        node: dict = {"id": f"n_ai_{len(nodes) + 1}", "x": 0, "y": 0, "kind": kind}
-        if kind == "code":
-            node["body"] = body or title
-            lang = rn.get("language")
-            node["language"] = lang if lang in AI_COMPOSE_CODE_LANGS else "c"
-            first_line = next((ln for ln in node["body"].splitlines() if ln.strip()), "")
-            node["text"] = first_line.strip()[:80]
-        else:
-            node["text"] = title or "未命名"
-            if body:
-                node["body"] = body
-            color = rn.get("color")
-            if color in AI_COMPOSE_NAMED_COLORS:
-                node["color"] = color
-            if kind == "index":
-                try:
-                    depth = int(rn.get("indexDepth"))
-                    if 1 <= depth <= 6:
-                        node["indexDepth"] = depth
-                except (TypeError, ValueError):
-                    pass
-        index_map[orig_i] = len(nodes)
-        nodes.append(node)
-        if len(nodes) >= AI_COMPOSE_MAX_NODES:
-            break
-    if not nodes:
-        raise ValueError("nodes 全部无效")
-
-    valid_existing = existing_ids if isinstance(existing_ids, (set, frozenset)) else set()
-
-    def _norm_ep(v):
-        """归一化一个连线端点 → ('new', 新下标) / ('exist', id字符串) / None。"""
-        if isinstance(v, bool):
-            return None
-        if isinstance(v, int):
-            return ("new", index_map[v]) if v in index_map else None
-        if isinstance(v, str):
-            s = v.strip()
-            if s.lstrip("-").isdigit():
-                iv = int(s)
-                return ("new", index_map[iv]) if iv in index_map else None
-            return ("exist", s) if s in valid_existing else None
-        return None
-
-    edges_out: list[dict] = []
-    seen_pairs: set = set()
-    raw_edges = parsed.get("edges")
-    if isinstance(raw_edges, list):
-        for re_ in raw_edges:
-            if not isinstance(re_, dict):
-                continue
-            ef = _norm_ep(re_.get("from"))
-            et = _norm_ep(re_.get("to"))
-            if not ef or not et or ef == et:
-                continue
-            key = (ef, et) if ef <= et else (et, ef)
-            if key in seen_pairs:
-                continue
-            seen_pairs.add(key)
-            edges_out.append({"from": ef[1], "to": et[1], "text": str(re_.get("text") or "")})
-
-    # 力导向只对【新节点之间】的连线算坐标（连到已有卡片的线，交给前端按已有位置实时画）；
-    # assign_colors=False 保留模型给的语义配色。
-    id_pairs = set()
-    for e in edges_out:
-        if isinstance(e["from"], int) and isinstance(e["to"], int):
-            id_pairs.add(tuple(sorted((nodes[e["from"]]["id"], nodes[e["to"]]["id"]))))
-    _layout_import_canvas(nodes, id_pairs, assign_colors=False)
-
-    out_nodes = []
-    for n in nodes:
-        item = {"x": n["x"], "y": n["y"], "text": n.get("text", ""), "kind": n["kind"]}
-        if n.get("body"):
-            item["body"] = n["body"]
-        if n.get("color"):
-            item["color"] = n["color"]
-        if n.get("language"):
-            item["language"] = n["language"]
-        if n.get("indexDepth"):
-            item["indexDepth"] = n["indexDepth"]
-        out_nodes.append(item)
-    return {"nodes": out_nodes, "edges": edges_out}
 
 
 # ─── HTTP 处理 ──────────────────────────────────────────────
@@ -6028,7 +5796,7 @@ class RequestBodyError(ValueError):
 POST_WITHOUT_DATA_LOCK = {
     "/api/file-stats",
     "/api/ai-chat",
-    "/api/ai-compose",
+    "/api/ai-plan",
     "/api/ai-test",
     "/api/pick",
     "/api/trash-list",
@@ -6465,8 +6233,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(200, {"ok": True, "countdown": countdown})
         if path == "/api/ai-chat":
             return self._api_ai_chat(body)
-        if path == "/api/ai-compose":
-            return self._api_ai_compose(body)
+        if path == "/api/ai-plan":
+            return self._api_ai_plan(body)
         if path == "/api/ai-test":
             return self._api_ai_test(body)
         if path == "/api/ai-config":
@@ -6647,18 +6415,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(500, {"error": f"保存 AI 配置失败：{err}"})
         self._send_json(200, ai_public_config())
 
-    def _ai_call(self, clean: list, cfg: dict, timeout: int = AI_REQUEST_TIMEOUT,
-                 json_mode: bool = False):
+    def _ai_call(
+        self,
+        clean: list,
+        cfg: dict,
+        timeout: int = AI_REQUEST_TIMEOUT,
+        json_mode: bool = False,
+        thinking: bool = False,
+        max_tokens: int = AI_CHAT_MAX_OUTPUT_TOKENS,
+    ):
         """调用模型：成功返回 (reply, truncated, None)；失败返回 (None, False, (status, payload))。
-        truncated=是否写到长度上限被截断；json_mode=是否强制模型吐 JSON(生成卡片用)。
+        truncated=是否写到长度上限被截断；json_mode=是否请求 JSON；
+        thinking 只给画布计划等高质量任务开启，普通聊天不强制深度思考。
         对话与生成两条接口共用，避免错误处理两份各写一遍而走样。"""
         try:
-            content, truncated = call_ai_chat(clean, cfg, timeout=timeout, json_mode=json_mode)
+            content, truncated = call_ai_chat(
+                clean,
+                cfg,
+                timeout=timeout,
+                json_mode=json_mode,
+                thinking=thinking,
+                max_tokens=max_tokens,
+            )
             return content, truncated, None
         except urllib.error.HTTPError as err:
             detail = ""
             try:
-                raw = err.read().decode("utf-8", "replace")
+                raw = getattr(err, "_relatum_detail", "") or err.read().decode("utf-8", "replace")
                 parsed = json.loads(raw)
                 if isinstance(parsed, dict):
                     detail = ((parsed.get("error") or {}).get("message")) if isinstance(parsed.get("error"), dict) else ""
@@ -6670,6 +6453,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None, False, (502, {"error": msg})
         except urllib.error.URLError as err:
             return None, False, (502, {"error": f"连接 AI 服务失败：{err.reason}（请检查网络或接口地址）"})
+        except (TimeoutError, socket.timeout):
+            return None, False, (504, {"error": "AI 请求超时，请稍后重试或缩小画布上下文"})
         except (ValueError, json.JSONDecodeError, KeyError) as err:
             return None, False, (502, {"error": f"AI 返回内容异常：{err}"})
         except Exception as err:  # noqa: BLE001
@@ -6693,7 +6478,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 clean.append({"role": role, "content": content})
         if not clean:
             return self._send_json(400, {"error": "对话内容无效"})
-        # 只保留最近若干条（始终保留开头的 system 提示），控制请求体大小
+        # 只保留最近若干条，控制请求体大小。内置聊天前端不发送 system；
+        # 此处仍兼容显式调用本地接口的其它客户端。
         if len(clean) > AI_MAX_MESSAGES:
             head = clean[:1] if clean[0]["role"] == "system" else []
             clean = head + clean[len(head) - AI_MAX_MESSAGES:]
@@ -6725,16 +6511,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         text = (reply or "").strip()
         self._send_json(200, {"ok": True, "reply": text[:80], "model": cfg["model"], "baseUrl": cfg["baseUrl"]})
 
-    def _api_ai_compose(self, body: dict):
-        """让模型按《创作指南》把对话生成成「卡片 + 连线」，后端排好坐标交前端注入当前画布。
-        模型没按格式输出时不报错、不乱注入，降级成普通文字回复(ok=False)。本接口不写任何文件。"""
+    def _api_ai_plan(self, body: dict):
+        """生成并校验 V2 画布操作计划；本接口只返回计划，不写任何画布或配置。"""
+        if not isinstance(body, dict):
+            return self._send_json(400, {"error": "请求格式不正确", "code": "PLAN_REQUEST_INVALID"})
+        action = str(body.get("action") or "").strip()
+        if action not in PLAN_ACTIONS:
+            return self._send_json(400, {"error": "不支持的 AI 操作", "code": "PLAN_ACTION_INVALID"})
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
-            return self._send_json(400, {"error": "没有可发送的对话内容"})
+            return self._send_json(400, {"error": "没有可发送的对话内容", "code": "PLAN_MESSAGES_INVALID"})
         cfg = load_ai_config()
         if not cfg["apiKey"]:
-            return self._send_json(400, {"error": "还没有设置 API Key，请点面板右上角的齿轮填写"})
-        # 丢弃客户端自带的 system（那是阶段1对话人设），强制换成创作指南 system。
+            return self._send_json(400, {
+                "error": "还没有设置 API Key，请点面板右上角的齿轮填写",
+                "code": "AI_KEY_MISSING",
+            })
+
         convo = []
         for item in messages:
             if not isinstance(item, dict):
@@ -6744,36 +6537,74 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if role in ("user", "assistant") and isinstance(content, str) and content.strip():
                 convo.append({"role": role, "content": content})
         if not convo:
-            return self._send_json(400, {"error": "对话内容无效"})
-        if len(convo) > AI_MAX_MESSAGES:
-            convo = convo[-AI_MAX_MESSAGES:]
-        # 阶段3：mode + 当前画布上下文。attach/supplement/beautify 会把已有卡片(带 id)喂给模型，
-        # 并允许新连线挂到这些已有 id 上；generate 不带上下文（凭对话从零生成）。
-        mode = body.get("mode")
-        mode = mode if mode in AI_COMPOSE_INTENTS else "generate"
-        canvas_ctx = body.get("canvas") if isinstance(body.get("canvas"), dict) else None
-        existing_ids = set()
-        if canvas_ctx and isinstance(canvas_ctx.get("nodes"), list):
-            for n in canvas_ctx["nodes"]:
-                if isinstance(n, dict) and str(n.get("id") or "").strip():
-                    existing_ids.add(str(n["id"]).strip())
-        clean = [{"role": "system", "content": build_compose_system(mode, canvas_ctx)}] + convo
-        # compose 强制 JSON 模式：response_format=json_object，从根上消灭"吐了非 JSON / JSON 截断"导致的残缺。
-        reply, truncated, err = self._ai_call(clean, cfg, json_mode=True)
+            return self._send_json(400, {"error": "对话内容无效", "code": "PLAN_MESSAGES_INVALID"})
+        # 为修复回合预留 assistant + user 两条消息。
+        if len(convo) > AI_MAX_MESSAGES - 3:
+            convo = convo[-(AI_MAX_MESSAGES - 3):]
+
+        canvas_ctx = body.get("canvas") if isinstance(body.get("canvas"), dict) else {}
+        editor_ctx = body.get("editor") if isinstance(body.get("editor"), dict) else {}
+        language = body.get("language") or editor_ctx.get("language")
+        language = "en" if language == "en" else "zh-CN"
+        editor_ctx = {**editor_ctx, "language": language}
+        try:
+            system = build_plan_system(action, language, canvas_ctx, editor_ctx)
+        except AIPlanError as plan_err:
+            return self._send_json(400, {"error": plan_err.message, **plan_err.as_payload()})
+
+        clean = [{"role": "system", "content": system}] + convo
+        reply, truncated, err = self._ai_call(
+            clean,
+            cfg,
+            json_mode=True,
+            thinking=True,
+            max_tokens=AI_MAX_OUTPUT_TOKENS,
+        )
         if err:
             return self._send_json(*err)
         try:
-            composed = parse_ai_compose(reply, existing_ids=existing_ids)
-        except (ValueError, json.JSONDecodeError):
-            # 没按格式 → 原样把文本回给前端，按普通回复展示，不注入。
-            # 被截断往往正是 JSON 没收尾导致解析失败，连同 truncated 一起回传，前端好解释原因。
-            return self._send_json(200, {"ok": False, "reply": reply, "truncated": truncated})
+            if truncated:
+                raise AIPlanError("PLAN_TRUNCATED", "AI 计划写到输出上限，结构可能不完整")
+            plan = parse_plan(reply, action, canvas_ctx, editor_ctx)
+        except AIPlanError as first_error:
+            repair_clean = clean + [
+                {"role": "assistant", "content": reply or ""},
+                {"role": "user", "content": build_repair_instruction(first_error)},
+            ]
+            repaired_reply, repaired_truncated, repair_err = self._ai_call(
+                repair_clean,
+                cfg,
+                json_mode=True,
+                thinking=True,
+                max_tokens=AI_MAX_OUTPUT_TOKENS,
+            )
+            if repair_err:
+                status, payload = repair_err
+                return self._send_json(status, {**payload, "repairAttempted": True})
+            try:
+                if repaired_truncated:
+                    raise AIPlanError("PLAN_TRUNCATED", "修复后的 AI 计划仍被输出上限截断")
+                plan = parse_plan(repaired_reply, action, canvas_ctx, editor_ctx)
+            except AIPlanError as final_error:
+                payload = final_error.as_payload()
+                return self._send_json(502, {
+                    "error": f"AI 未能生成可安全应用的计划：{final_error.message}",
+                    **payload,
+                    "repairAttempted": True,
+                    "initialError": first_error.code,
+                })
+            return self._send_json(200, {
+                "ok": True,
+                "plan": plan,
+                "truncated": False,
+                "repaired": True,
+            })
+
         self._send_json(200, {
             "ok": True,
-            "canvas": composed,
-            "count": len(composed["nodes"]),
-            "edgeCount": len(composed["edges"]),
-            "truncated": truncated,
+            "plan": plan,
+            "truncated": False,
+            "repaired": False,
         })
 
     # ── 内置学习页 ──
