@@ -148,6 +148,18 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 
 输出位于项目同级的 `Relatum-release/`。构建脚本不会把 `data/` 或 `canvases/` 打进发布包。
 
+### 构建 Microsoft Store 包
+
+先安装 Windows 10/11 SDK（需要其中的 `MakeAppx.exe`），然后运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-msix.ps1
+```
+
+输出位于项目同级的 `Relatum-store/`。向合作伙伴中心上传其中的
+`Relatum_<版本>_x64.msixupload`。商店安装版把画布和设置保存在
+`%LOCALAPPDATA%\Relatum`；源码模式和 GitHub 便携版的数据位置保持不变。
+
 ## 项目结构
 
 ```text
@@ -157,7 +169,8 @@ Relatum/
 ├─ windows_wallpaper.py      隔离的倒数日动态背景子进程、WorkerW 挂载与托盘生命周期
 ├─ assets/                   HTML、CSS、JavaScript 与运行资源
 ├─ packaging/                图标、字体和桌面构建辅助工具
-├─ build-desktop.ps1         Windows 桌面发布包构建入口
+├─ build-desktop.ps1         Windows 便携发布包构建入口
+├─ build-msix.ps1            Microsoft Store MSIX 构建入口
 ├─ start.ps1                 源码模式启动入口
 ├─ AI笔记创作指南.md          外部准备画布/Markdown 笔记的参考（非运行时依赖）
 └─ AGENTS.md                 架构约束与维护说明
