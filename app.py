@@ -42,11 +42,46 @@ from ai_plan import (
     parse_plan,
 )
 
-# 桌面打包版把内置资源放在运行时资源目录，而用户数据必须始终留在
-# EXE 旁边，不能和应用资源混在一起。
+# 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
+# 旁边；具有 MSIX 包身份时改用 %LOCALAPPDATA%\Relatum，避免写只读安装目录。
 SOURCE_ROOT = Path(__file__).resolve().parent
 RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT))
-ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else SOURCE_ROOT
+
+
+def _has_package_identity() -> bool:
+    """Return whether this process is running with an MSIX package identity."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        length = ctypes.c_uint32(0)
+        result = ctypes.windll.kernel32.GetCurrentPackageFullName(
+            ctypes.byref(length), None,
+        )
+        return result == 122  # ERROR_INSUFFICIENT_BUFFER: a package name exists.
+    except (AttributeError, OSError):
+        return False
+
+
+def _resolve_user_root(*, packaged: bool | None = None) -> Path:
+    """Choose a writable root without changing portable/source-mode behavior."""
+    override = os.environ.get("RELATUM_DATA_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    is_packaged = _has_package_identity() if packaged is None else packaged
+    if is_packaged:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data) / "Relatum"
+        return Path.home() / "AppData" / "Local" / "Relatum"
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return SOURCE_ROOT
+
+
+PACKAGED = _has_package_identity()
+ROOT = _resolve_user_root(packaged=PACKAGED)
 ASSETS = RESOURCE_ROOT / "assets"
 CANVASES = ROOT / "canvases"
 TRASH = CANVASES / "回收站"   # 右键删除 = 移到这里（用户自己管理，可恢复）

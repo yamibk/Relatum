@@ -61,7 +61,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
-| `build-desktop.ps1` | PyInstaller onedir 打包，输出 `Relatum-release/Relatum.exe`。脚本保持 ASCII。 |
+| `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`。脚本保持 ASCII。 |
+| `build-msix.ps1` | Microsoft Store x64 MSIX 打包；复用便携版产物，生成匹配商店身份的清单与图标，输出 `Relatum-store/*.msixupload`。脚本保持 ASCII。 |
 | `start.ps1`、`打开画布.bat` | 源码模式启动器，查找 Python 并运行 `app.py`。 |
 | `index.html` | 起步页壳，书脊导航、最近画布、学习/速记/日历/复习/专注入口。 |
 | `editor.html` | 画布编辑器壳，工具栏、各模式面板、读者浮层、AI 面板、图谱浮层。 |
@@ -113,7 +114,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ### 根目录选择
 
 - 源码运行时，`ROOT` 是源码目录。
-- PyInstaller 冻结运行时，静态资源来自 `_internal`，用户数据在 exe 同级目录创建。
+- PyInstaller 冻结运行时，静态资源来自 `_internal`。无包身份的 GitHub 便携版仍在 exe 同级创建用户数据；具有 MSIX 包身份的商店版改在 `%LOCALAPPDATA%/Relatum` 创建，不能向只读安装目录写入。
 - `SOURCE_ROOT` 表示源码目录，`RESOURCE_ROOT` 表示源码或 PyInstaller `_internal` 的只读资源目录；运行时静态资产从 `RESOURCE_ROOT/assets` 读取。外部《AI笔记创作指南》不属于运行时资源。
 
 ### 用户数据文件

@@ -148,6 +148,19 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 
 The output is placed in the sibling `Relatum-release/` directory. User `data/` and `canvases/` are never bundled into the release.
 
+### Build the Microsoft Store package
+
+Install the Windows 10/11 SDK (including `MakeAppx.exe`), then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-msix.ps1
+```
+
+The output is placed in the sibling `Relatum-store/` directory. Upload
+`Relatum_<version>_x64.msixupload` to Partner Center. Store installations keep
+canvas and settings data under `%LOCALAPPDATA%\Relatum`; source mode and the
+GitHub portable build retain their existing data locations.
+
 ## Project structure
 
 ```text
@@ -156,7 +169,8 @@ Relatum/
 ├─ desktop.py                Windows desktop shell
 ├─ assets/                   HTML, CSS, JavaScript, and runtime assets
 ├─ packaging/                Icon, font, and desktop build helpers
-├─ build-desktop.ps1         Windows release build entry point
+├─ build-desktop.ps1         Windows portable release build entry point
+├─ build-msix.ps1            Microsoft Store MSIX build entry point
 ├─ start.ps1                 Source-mode launcher
 ├─ AI笔记创作指南.md          External canvas/Markdown authoring reference (not a runtime dependency)
 └─ AGENTS.md                 Architecture and maintenance constraints
