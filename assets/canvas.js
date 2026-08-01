@@ -892,6 +892,8 @@
     let filePath = opts.filePath || '';
     const initialViewport = opts.initialViewport || null;
     const embeddedEditor = !!opts.embed;
+    const readOnlyCanvas = !!opts.readonly;
+    const referenceOnlyCanvas = !!opts.referenceOnly;
     // 当前 .canvas 文件所在目录（去掉最后一段文件名）
     const baseDir = filePath.replace(/[\\/][^\\/]*$/, '');
     const data = opts.data;
@@ -2566,6 +2568,7 @@
         markdown: node.body || '',
         title: node.text || '',
         compact: true,
+        readOnly: readOnlyCanvas,
         chromeHidden: node.tableChrome === 'hidden',
         headerEmphasized: node.tableHeader === 'emphasized',
         appearance: normalizedTableAppearance(node.tableAppearance),
@@ -5682,6 +5685,7 @@
     }
     // 当前选区落在哪个 MD 附件正文里（用于工具栏路由）。
     function currentMdAnnotContext() {
+      if (readOnlyCanvas) return null;
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
       const range = sel.getRangeAt(0);
@@ -5725,6 +5729,7 @@
         });
     }
     function scheduleMdAnnotSave(nodeId) {
+      if (readOnlyCanvas) return;
       const st = mdAnnotState(nodeId);
       if (st.saveTimer) clearTimeout(st.saveTimer);
       st.saveTimer = setTimeout(() => flushMdAnnotSave(nodeId), 600);
@@ -6469,6 +6474,7 @@
         document.execCommand('insertText', false, text.replace(/\r\n?/g, '\n'));
       });
       el.addEventListener('drop', function (event) {
+        if (readOnlyCanvas) return;
         const text = event.dataTransfer && event.dataTransfer.getData('text/plain');
         if (!text) return;
         event.preventDefault();
@@ -6709,6 +6715,7 @@
     }
 
     function startBodyResize(node, dir, e) {
+      if (readOnlyCanvas) return;
       if (e.button !== 0 || !isWidthResizableNode(node)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -8977,7 +8984,7 @@
     // ── 5-3：连线拐点（waypoints，编辑模式）──────────
     // 编辑模式是持续工作的属性检查器，仍允许新建、粘贴、复制与 Alt 拖线；
     // 只有图案模式会把交互专门让给装饰对象创建。
-    function canCreate() { return currentMode() !== 'decor'; }
+    function canCreate() { return !readOnlyCanvas && currentMode() !== 'decor'; }
 
     let handleEls = [];   // 当前显示的拐点手柄（SVG 圆）
 
@@ -13112,6 +13119,7 @@
     }
 
     function onPaste(e) {
+      if (readOnlyCanvas) return;
       if (scenePresentationMode) return;
       const active = document.activeElement;
       const inEditable = !!(active && (
@@ -13457,7 +13465,7 @@
       return payload;
     }
 
-    function prepareManagedCanvasImport(payload) {
+    function prepareManagedCanvasImport(payload, dropPoint) {
       if (!CanvasImport || typeof CanvasImport.prepare !== 'function') {
         throw canvasImportError('IMPORT_UNAVAILABLE', canvasImportText(
           '导入组件没有正确加载。',
@@ -13467,7 +13475,7 @@
       const currentInk = cloneInk(data.ink);
       return CanvasImport.prepare(payload, {
         assetPolicy: 'include',
-        dropPoint: viewportCenterInSurface(),
+        dropPoint: dropPoint || viewportCenterInSurface(),
         newNodeId: newNodeId,
         newEdgeId: newEdgeId,
         newInkId: newInkId,
@@ -13541,6 +13549,135 @@
       }
     }
 
+    function getDualSelectionPayload() {
+      if (editingNodeId !== null) commitNodeEdit();
+      if (editingEdgeId !== null) commitEdgeEdit();
+      if (editingTextBoxId !== null) commitTextBoxEdit();
+      if (textReaderEditing) finishTextReaderEdit();
+      const pickedIds = new Set();
+      selectedNodeIds.forEach(function (id) {
+        const node = findNode(id);
+        if (!node || isTaskbookNode(node)) return;
+        pickedIds.add(id);
+      });
+      if (!pickedIds.size) {
+        return { ok: false, reason: 'empty-selection', nodes: [], edges: [] };
+      }
+      const nodes = [];
+      pickedIds.forEach(function (id) {
+        const node = findNode(id);
+        if (!node) return;
+        nodes.push(JSON.parse(JSON.stringify(node)));
+      });
+      const edges = data.edges
+        .filter(function (edge) {
+          return edge && pickedIds.has(edge.from) && pickedIds.has(edge.to)
+            && !isProtectedTaskbookEdge(edge);
+        })
+        .map(function (edge) { return JSON.parse(JSON.stringify(edge)); });
+      const assetPaths = [...new Set(nodes
+        .filter(function (node) {
+          return Object.prototype.hasOwnProperty.call(node, 'assetPath');
+        })
+        .map(function (node) { return String(node.assetPath || ''); })
+        .filter(Boolean))];
+      return {
+        ok: true,
+        version: 1,
+        nodes: nodes,
+        edges: edges,
+        ink: { version: 1, strokes: [], arrows: [] },
+        assetPaths: assetPaths,
+        summary: {
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          assetCount: assetPaths.length,
+        },
+      };
+    }
+
+    function preferredDualPastePoint() {
+      freezeViewportForInteraction();
+      const rect = viewport.getBoundingClientRect();
+      const mouseInside = lastMouseClientX >= rect.left && lastMouseClientX <= rect.right
+        && lastMouseClientY >= rect.top && lastMouseClientY <= rect.bottom;
+      return mouseInside
+        ? clientToSurface(lastMouseClientX, lastMouseClientY)
+        : viewportCenterInSurface();
+    }
+
+    async function importDualSelectionPayload(options) {
+      const opts = options || {};
+      if (readOnlyCanvas) {
+        throw canvasImportError('IMPORT_UNAVAILABLE', canvasImportText(
+          '当前画布是只读状态。',
+          'This canvas is read-only.',
+        ));
+      }
+      if (canvasImportBusy) throw canvasImportError('IMPORT_BUSY', '');
+      const id = String(opts.sourceId || '').trim();
+      const revision = String(opts.revision || '').trim();
+      const payload = opts.payload && typeof opts.payload === 'object' ? opts.payload : null;
+      if (!id) throw canvasImportError('MISSING_SOURCE_ID', '');
+      if (!payload || !Array.isArray(payload.nodes)) {
+        throw canvasImportError('INVALID_PAYLOAD', canvasImportText(
+          '双屏选区数据无效。',
+          'The dual-screen selection data is invalid.',
+        ));
+      }
+      canvasImportBusy = true;
+      try {
+        const plan = prepareManagedCanvasImport({
+          nodes: payload.nodes,
+          edges: Array.isArray(payload.edges) ? payload.edges : [],
+          ink: payload.ink && typeof payload.ink === 'object'
+            ? payload.ink
+            : { version: 1, strokes: [], arrows: [] },
+        }, preferredDualPastePoint());
+        const assetPaths = [...new Set(plan.nodes
+          .filter(function (node) {
+            return Object.prototype.hasOwnProperty.call(node, 'assetPath');
+          })
+          .map(function (node) { return String(node.assetPath || ''); })
+          .filter(Boolean))];
+        const copied = await canvasImportRequest('/api/canvas-import-assets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceId: id,
+            revision: revision,
+            targetPath: filePath,
+            assets: assetPaths,
+          }),
+        });
+        let copiedAssets = 0;
+        if (assetPaths.length) {
+          const mapping = copied && copied.mapping && typeof copied.mapping === 'object'
+            ? copied.mapping
+            : {};
+          plan.nodes.forEach(function (node) {
+            if (!Object.prototype.hasOwnProperty.call(node, 'assetPath')) return;
+            const mapped = mapping[String(node.assetPath || '')];
+            if (!mapped) throw canvasImportError('INCOMPLETE_ASSET_MAPPING', '');
+            node.assetPath = mapped;
+          });
+          copiedAssets = Number(copied.assetCount) || 0;
+        }
+        plan.meta.copiedAssets = copiedAssets;
+        const meta = commitCanvasImportPlan(plan);
+        showCanvasImportSuccess(meta);
+        return meta;
+      } catch (error) {
+        const normalized = error && error.code
+          ? error
+          : canvasImportError('REQUEST_FAILED', error && error.message ? error.message : '');
+        normalized.displayMessage = canvasImportDisplayMessage(normalized);
+        throw normalized;
+      } finally {
+        canvasImportBusy = false;
+      }
+    }
+
     function attachmentFileFromDataTransfer(data) {
       if (!data) return null;
       let file = [...(data.files || [])].find(isLikelyAttachmentFile);
@@ -13575,6 +13712,7 @@
     }
 
     function onViewportDragOver(e) {
+      if (readOnlyCanvas) return;
       if (scenePresentationMode) {
         e.preventDefault();
         return;
@@ -13591,6 +13729,7 @@
     }
 
     function onViewportDrop(e) {
+      if (readOnlyCanvas) return;
       if (scenePresentationMode) {
         e.preventDefault();
         viewport.classList.remove('file-drag-over');
@@ -13624,12 +13763,14 @@
     }
 
     function onWindowFileDragOver(e) {
+      if (readOnlyCanvas) return;
       if (!hasFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     }
 
     function onWindowFileDrop(e) {
+      if (readOnlyCanvas) return;
       if (!hasFileDrag(e.dataTransfer)) return;
       // 防止浏览器把拖入的本地文件打开成新标签页；画布内 drop 会继续冒泡给 onViewportDrop 处理。
       e.preventDefault();
@@ -14669,7 +14810,7 @@
         // 图片在其他模式也可选中/移动；图案 SVG 仍只在图案模式可动。
         // 与节点重合时点中谁交给 z-index：front 图片在节点之上→选图片，back 图片在节点之下→选节点。
         // 语义分组是内容组织工具，不是单纯装饰：普通 / 脑图模式也应可选中、拖动与折叠。
-        if (isShapeNode(node) && currentMode() !== 'decor'
+        if (!referenceOnlyCanvas && isShapeNode(node) && currentMode() !== 'decor'
             && !isTransientMovableDecor(node) && !isGroupBoxNode(node) && !isEdgeAnchorNode(node)) return;
         if (editingNodeId === node.id) return;
         e.stopPropagation();
@@ -15951,6 +16092,12 @@
 
     function startNodeDrag(node, e) {
       hideFrameActionButton();
+      if (readOnlyCanvas) {
+        if (referenceOnlyCanvas && isTaskbookNode(node)) return;
+        if (isSelectionToggleEvent(e)) toggleNodeSelection(node.id);
+        else if (!selectedNodeIds.has(node.id)) selectNodes([node.id], false);
+        return;
+      }
       if (currentMode() === 'mindmap') {
         finishMindmapGlide();
         clearMindmapDropPreview();
@@ -16071,6 +16218,7 @@
     }
 
     function startDecorResize(node, dir, e) {
+      if (readOnlyCanvas) return;
       if (e.button !== 0 || !isDecorationNode(node)) return;
       if (currentMode() !== 'decor' && !isTextBoxNode(node)) return;
       if (isGroupBoxNode(node) && (dir === 'n' || dir === 'ne' || dir === 'nw')) return;
@@ -17235,6 +17383,7 @@
       const nodeSizes = options && options.nodeSizes;
       const out = [];
       data.nodes.forEach((n) => {
+        if (referenceOnlyCanvas && isTaskbookNode(n)) return;
         // 锚点平时是隐藏结构，不参与框选；只有锚点工具激活、锚点全部显形时才纳入。
         const selectableAnchor = isEdgeAnchorNode(n)
           && drawTool === 'edge-anchor'
@@ -17243,8 +17392,8 @@
         if (forTemplate) {
           if (!isTemplateEligibleNode(n)) return;
         } else {
-          if (currentMode() === 'decor' && !isDecorationNode(n)) return;
-          if (currentMode() !== 'decor' && isShapeNode(n) && !selectableAnchor) return;   // 图案仍限图案模式；图片可随框选选中
+          if (!referenceOnlyCanvas && currentMode() === 'decor' && !isDecorationNode(n)) return;
+          if (!referenceOnlyCanvas && currentMode() !== 'decor' && isShapeNode(n) && !selectableAnchor) return;   // 图案仍限图案模式；图片可随框选选中
         }
         const el = nodeMap.get(n.id);
         const size = nodeSizes && nodeSizes.get(n.id);
@@ -17485,7 +17634,7 @@
               forTemplate: drag.forTemplate,
               nodeSizes: drag.nodeSizes,
             });
-            const timerInFrame = drag.forTemplate ? [] : timerIdsInFrame(rect);
+            const timerInFrame = (referenceOnlyCanvas || drag.forTemplate) ? [] : timerIdsInFrame(rect);
             const ordinarySelectionPresent = frameTouchesOtherObject(rect, drag.nodeSizes)
               || (drag.additive && (drag.baselineNodes.size > 0 || drag.baselineEdges.size > 0));
             selectedNodeIds.clear();
@@ -17759,6 +17908,11 @@
         const rect = dragRectFromState(drag);
         const forTemplate = drag.forTemplate;
         clearFrameEl();
+        if (referenceOnlyCanvas) {
+          if (!drag.moved && !drag.additive) clearSelection();
+          drag = null;
+          return;
+        }
         if (forTemplate) {
           // 套索：圈到东西就浮「保存到模板？」；不论存不存，这次操作结束都切回「选择」工具
           const ids = templateEligibleSelectionIds();
@@ -17817,6 +17971,7 @@
 
     // ── 节点文字编辑 ───────────────────────
     function enterNodeEdit(node, isNew, caretPoint) {
+      if (readOnlyCanvas) return;
       if (isDecorationNode(node) || isTableNode(node)) return;
       // 已在编辑同一个节点时，双击只移动光标，绝不能用尚未提交的模型值
       // 重建 DOM；否则多行输入会在一次双击中被旧内容覆盖，且不进入历史栈。
@@ -17872,6 +18027,7 @@
     // Figma 风格：选中节点时按字母键 → 进编辑 + 用首字符替换原内容（X 轮）
     // 原内容若有损失，Ctrl+Z 能恢复（commitNodeEdit 时会 pushHistory）
     function enterNodeEditWithChar(node, ch) {
+      if (readOnlyCanvas) return;
       if (isDecorationNode(node) || isTableNode(node)) return;
       if (editingNodeId !== null && editingNodeId !== node.id) commitNodeEdit();
       if (editingEdgeId !== null) commitEdgeEdit();
@@ -18414,6 +18570,7 @@
     }
 
     function deleteSelected() {
+      if (readOnlyCanvas) return;
       if (selectedTimerIds.size) {
         deleteSelectedTimers();
         return;
@@ -18705,6 +18862,19 @@
       if (scenePresentationMode) {
         e.preventDefault();
         e.stopPropagation();
+        return;
+      }
+      if (referenceOnlyCanvas) {
+        const nodeEl = e.target.closest ? e.target.closest('.node') : null;
+        const node = nodeEl && surface.contains(nodeEl) ? findNode(nodeEl.dataset.id) : null;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!node || isTaskbookNode(node)) {
+          hideNodeMenu();
+          return;
+        }
+        if (!selectedNodeIds.has(node.id)) selectNodes([node.id], false);
+        showNodeMenu(e.clientX, e.clientY);
         return;
       }
       // 尺子在画笔状态会 pointer-events:none，因此不能只依赖 event.target；
@@ -19840,6 +20010,7 @@
       scroll.scrollTop = Math.max(0, Math.min(max, blockTopWithin - (screenY - scrollRect.top)));
     }
     function beginTextReaderEdit(clickEvent) {
+      if (readOnlyCanvas) return;
       const node = findNode(readingNodeId);
       if (!textReaderOpen || !node || !isBodyNode(node) || !textReader) return;
       const editor = textReader.querySelector('[data-role="text-reader-editor"]');
@@ -20107,6 +20278,7 @@
     }
     // 工具切换：再点同一个回只读。进钢笔/橡皮时收起选区工具栏、清残留选区。
     function mdSetTool(tool) {
+      if (readOnlyCanvas) return;
       mdAnnotTool = (mdAnnotTool === tool) ? null : tool;
       mdSelBox = null;
       if (mdAnnotTool) {
@@ -20596,6 +20768,7 @@
       });
     }
     function setPdfAnnotTool(tool) {
+      if (readOnlyCanvas) return;
       pdfAnnotTool = (pdfAnnotTool === tool) ? null : tool;   // 再点同一个 = 回只读
       clearPdfAnnotSelection();
       refreshPdfToolButtons();
@@ -20677,6 +20850,7 @@
       showPdfAnnotPop(clientX, clientY);
     }
     function recolorSelectedPdfAnnot(color) {
+      if (readOnlyCanvas) return;
       if (!pdfSelAnnot) return;
       pushPdfHistory();
       pdfSelAnnot.item.color = color;
@@ -20688,6 +20862,7 @@
       });
     }
     function deleteSelectedPdfAnnot() {
+      if (readOnlyCanvas) return;
       if (!pdfSelAnnot) return;
       const pageNo = pdfSelAnnot.pageNo, item = pdfSelAnnot.item;
       pushPdfHistory();
@@ -20711,6 +20886,7 @@
       });
     }
     function pickPdfColor(color) {
+      if (readOnlyCanvas) return;
       pdfAnnotColor = color;
       if (!pdfAnnotTool || pdfAnnotTool === 'eraser') pdfAnnotTool = 'pen';
       refreshPdfToolButtons();
@@ -20811,6 +20987,7 @@
         }).catch(() => ({ version: 1, pages: {} }));
     }
     function schedulePdfAnnotSave() {
+      if (readOnlyCanvas) return;
       pdfAnnotDirty = true;
       setPdfReaderStatus('编辑中…');
       if (pdfAnnotSaveTimer) clearTimeout(pdfAnnotSaveTimer);
@@ -20911,6 +21088,7 @@
 
     // ── 划词高光：选中 PDF 原文文字 → 存归一化矩形（按页宽）到当前页 ──
     function commitPdfTextHighlight() {
+      if (readOnlyCanvas) return;
       if (pdfAnnotTool !== 'thl' && pdfAnnotTool !== 'tul') return;
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
@@ -20942,6 +21120,7 @@
 
     // ── 便签：像节点一样随手建、可拖可改可删，半透明便签外观，存进当页批注数组 ──
     function createPdfNote(pageNo, clientX, clientY) {
+      if (readOnlyCanvas) return;
       const st = pdfReaderPageState.get(pageNo);
       if (!st || !st.wrap) return;
       const r = st.wrap.getBoundingClientRect();
@@ -21059,6 +21238,7 @@
     }
 
     function onPdfPagePointerDown(pageNo, svg, VH, e) {
+      if (readOnlyCanvas) return;
       if (!pdfAnnotTool) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
@@ -22928,6 +23108,7 @@
     // Ctrl+D：复制选中节点 / 图片（贴近鼠标悬停处）；选区内两端都在的连线也一并复制；
     // 复制一次即结束——不选中副本，避免反复 Ctrl+D 连续复制。
     function duplicateSelected() {
+      if (readOnlyCanvas) return;
       if (!canCreate()) return;             // 图案模式不复制内容节点
       if (selectedNodeIds.size === 0) return;
 
@@ -24252,6 +24433,7 @@
 
     // ── 双击空白 → 新建节点 ────────────────
     function onSurfaceDblClick(e) {
+      if (readOnlyCanvas) return;
       if (scenePresentationMode) {
         e.preventDefault();
         return;
@@ -24977,12 +25159,14 @@
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         if (inEditable) return;
         e.preventDefault();
+        if (readOnlyCanvas) return;
         if (e.shiftKey) redo(); else undo();
         return;
       }
       if (mod && (e.key === 'y' || e.key === 'Y')) {
         if (inEditable) return;
         e.preventDefault();
+        if (readOnlyCanvas) return;
         redo();
         return;
       }
@@ -25215,7 +25399,7 @@
       // Figma 风格：单选节点时按任意可打印单字符 → 进编辑 + 替换为该字符
       // 排除空格（留给未来"空格+拖动平移画布"）
       if (selNode && !isDecorationNode(selNode) && !isTableNode(selNode)
-          && !anyMod && e.key.length === 1 && e.key !== ' ') {
+          && !readOnlyCanvas && !anyMod && e.key.length === 1 && e.key !== ' ') {
         e.preventDefault();
         enterNodeEditWithChar(selNode, e.key);
         return;
@@ -25346,6 +25530,13 @@
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('resize', keepRememberedViewportCentered);
     window.addEventListener('resize', requestEdgesCanvasRender);
+    // 分屏、侧栏等 flex 布局会改变 viewport 尺寸但不会触发 window.resize。
+    // Canvas 连线层的 backing store 必须在容器尺寸变化后重建，否则浏览器会拉伸旧位图，
+    // 节点位置仍正确而连线整体错位。ResizeObserver 回调内仍走 rAF 合并重绘。
+    const viewportSizeObserver = (typeof ResizeObserver === 'function')
+      ? new ResizeObserver(function () { requestEdgesCanvasRender(); })
+      : null;
+    if (viewportSizeObserver) viewportSizeObserver.observe(viewport);
     // 从外部编辑器改完 MD 回到画布：重渲那几篇附件（重新校验内容指纹，失效标注自动判废）。
     window.addEventListener('focus', function () {
       if (!mdExternalPending.size) return;
@@ -25832,6 +26023,9 @@
     global.CanvasModule.removeRuler = function () { return removeRuler(true); };
     global.CanvasModule.hasRuler = hasRuler;
     global.CanvasModule.importManagedCanvas = importManagedCanvas;
+    global.CanvasModule.getDualSelectionPayload = getDualSelectionPayload;
+    global.CanvasModule.importDualSelectionPayload = importDualSelectionPayload;
+    global.CanvasModule.showToast = showCanvasToast;
     global.CanvasModule.createCanvasTimer = createCanvasTimer;
     global.CanvasModule.updateCanvasTimer = updateCanvasTimer;
     global.CanvasModule.toggleSelectedTimers = toggleSelectedTimers;

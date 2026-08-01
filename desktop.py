@@ -21,6 +21,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 import app
+from windows_wallpaper import WallpaperController, run_wallpaper_child
 
 try:
     import webview
@@ -363,6 +364,7 @@ class DesktopBridge:
         self.restored_height = restored_height
         self.maximized = False
         self.dirty = False
+        self.wallpaper: WallpaperController | None = None
         self._lock = threading.Lock()
 
     def set_dirty(self, value: bool) -> None:
@@ -420,6 +422,54 @@ class DesktopBridge:
         if self._window is not None:
             self._window.destroy()
 
+    def get_countdown_wallpaper_state(self) -> dict:
+        if self.wallpaper is None:
+            return {
+                "ok": True, "supported": False, "active": False,
+                "eventId": "", "error": "当前桌面运行时不支持动态背景。",
+            }
+        return self.wallpaper.state()
+
+    def start_countdown_wallpaper(self, event_id: str, language: str = "zh-CN") -> dict:
+        if self.wallpaper is None:
+            return {
+                "ok": False, "supported": False, "active": False,
+                "eventId": "", "error": "当前桌面运行时不支持动态背景。",
+            }
+        wanted = str(event_id or "").strip()
+        countdown = app.load_countdown()
+        event = next(
+            (item for item in countdown.get("events", [])
+             if isinstance(item, dict) and str(item.get("id") or "") == wanted),
+            None,
+        )
+        if event is None:
+            return {
+                **self.wallpaper.state(), "ok": False,
+                "error": "找不到要设为桌面背景的倒数事件。",
+            }
+        return self.wallpaper.start(wanted, str(event.get("event") or ""), language)
+
+    def stop_countdown_wallpaper(self) -> dict:
+        if self.wallpaper is None:
+            return self.get_countdown_wallpaper_state()
+        return self.wallpaper.stop()
+
+    def update_countdown_wallpaper_event(self, event_id: str, title: str) -> None:
+        if self.wallpaper is not None:
+            self.wallpaper.update_event(event_id, title)
+
+    def countdown_wallpaper_event_missing(self, event_id: str) -> None:
+        if self.wallpaper is not None:
+            # Destroying the calling WebView inside its bridge invocation can
+            # deadlock WinForms.  Defer the teardown to a separate thread.
+            threading.Thread(
+                target=self.wallpaper.event_missing,
+                args=(event_id,),
+                name="relatum-wallpaper-missing",
+                daemon=True,
+            ).start()
+
 
 def _message_box(text: str, flags: int = 0x40) -> int:
     if sys.platform == "win32":
@@ -459,7 +509,42 @@ def _open_url(port: int, initial_file: Path | None) -> str:
     return base + "editor.html?desktop=1&file=" + urllib.parse.quote(str(initial_file))
 
 
+def _wallpaper_url(port: int, event_id: str, language: str) -> str:
+    import urllib.parse
+    return (f"http://127.0.0.1:{port}/countdown.html?wallpaper=1&event="
+            + urllib.parse.quote(str(event_id or ""), safe="")
+            + "&lang=" + ("en" if language == "en" else "zh-CN"))
+
+
+def _wallpaper_child_command(pipe_name: str, authkey_hex: str, url: str) -> list[str]:
+    args = [
+        "--countdown-wallpaper-child",
+        "--wallpaper-pipe", pipe_name,
+        "--wallpaper-auth", authkey_hex,
+        "--wallpaper-url", url,
+    ]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    return [sys.executable, str(Path(__file__).resolve()), *args]
+
+
+def _run_wallpaper_child_from_args() -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--countdown-wallpaper-child", action="store_true")
+    parser.add_argument("--wallpaper-pipe", required=True)
+    parser.add_argument("--wallpaper-auth", required=True)
+    parser.add_argument("--wallpaper-url", required=True)
+    args = parser.parse_args()
+    if not args.wallpaper_url.startswith("http://127.0.0.1:"):
+        return 2
+    return run_wallpaper_child(
+        args.wallpaper_pipe, args.wallpaper_auth, args.wallpaper_url,
+    )
+
+
 def main() -> int:
+    if "--countdown-wallpaper-child" in sys.argv[1:]:
+        return _run_wallpaper_child_from_args()
     # 透传纯服务模式给 app.py（供调试 / 外部调用）。
     if any(arg in {"--no-browser", "--port", "--allow-dir"} for arg in sys.argv[1:]):
         return app.main()
@@ -549,6 +634,63 @@ def main() -> int:
         _message_box(f"桌面窗口创建失败：\n{err}", 0x10)
         return 1
     bridge._window = window
+    lifecycle_lock = threading.RLock()
+    lifecycle = {"quitting": False}
+
+    def show_main_window() -> None:
+        try:
+            window.show()
+            if sys.platform == "win32":
+                hwnd = _hwnd(window)
+                if ctypes.windll.user32.IsIconic(hwnd):
+                    ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
+    def confirm_discard_changes() -> bool:
+        with bridge._lock:
+            dirty = bridge.dirty
+        if not dirty:
+            return True
+        result = _message_box(
+            "当前画布还有未保存的修改。\n\n确定关闭窗口并放弃这些修改吗？",
+            0x131,  # MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2
+        )
+        return result != 2
+
+    def request_quit_from_tray() -> None:
+        with lifecycle_lock:
+            if lifecycle["quitting"]:
+                return
+        with bridge._lock:
+            dirty = bridge.dirty
+        if dirty:
+            show_main_window()
+            if not confirm_discard_changes():
+                return
+        with lifecycle_lock:
+            lifecycle["quitting"] = True
+        if bridge.wallpaper is not None:
+            bridge.wallpaper.stop()
+        try:
+            window.destroy()
+        except Exception:
+            stop_server()
+
+    def wallpaper_fatal_error(message: str) -> None:
+        show_main_window()
+        _message_box(message, 0x30)
+
+    bridge.wallpaper = WallpaperController(
+        root=app.ROOT,
+        icon_path=app.ASSETS / "app-icon.ico",
+        url_builder=lambda event_id, language: _wallpaper_url(port, event_id, language),
+        child_command_builder=_wallpaper_child_command,
+        show_main=show_main_window,
+        request_quit=request_quit_from_tray,
+        fatal_error=wallpaper_fatal_error,
+    )
 
     def on_shown() -> None:
         _install_frameless(window)
@@ -574,19 +716,24 @@ def main() -> int:
         _apply_corners(window, maximized=False)
 
     def confirm_close() -> bool | None:
-        # 先记住窗口状态，再处理未保存提示。
+        # 先记住窗口状态，再处理后台隐藏或未保存提示。
         _save_window_state(
             window, bridge.maximized, (bridge.restored_width, bridge.restored_height),
         )
-        with bridge._lock:
-            dirty = bridge.dirty
-        if not dirty:
+        with lifecycle_lock:
+            quitting = lifecycle["quitting"]
+        wallpaper_active = bool(bridge.wallpaper and bridge.wallpaper.state().get("active"))
+        if wallpaper_active and not quitting:
+            # 动态背景仍运行时，关闭主窗只是收进托盘。DOM 和 dirty 状态
+            # 都留在内存中，因此不需要也不应该询问是否放弃修改。
+            try:
+                window.hide()
+            except Exception:
+                pass
+            return False
+        if quitting:
             return None
-        result = _message_box(
-            "当前画布还有未保存的修改。\n\n确定关闭窗口并放弃这些修改吗？",
-            0x131,  # MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2
-        )
-        return False if result == 2 else None
+        return None if confirm_discard_changes() else False
 
     window.events.shown += on_shown
     window.events.loaded += on_loaded
@@ -610,6 +757,8 @@ def main() -> int:
         return 1
     finally:
         # closed 事件通常已先执行；finally 兜底覆盖启动失败或事件未触发。
+        if bridge.wallpaper is not None:
+            bridge.wallpaper.stop()
         stop_server()
     return 0
 

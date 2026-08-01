@@ -12,11 +12,17 @@
   const dateDisplay = document.querySelector('[data-countdown-date]');
   const focusButton = document.querySelector('[data-countdown-focus]');
   const focusExit = document.querySelector('[data-countdown-focus-exit]');
+  const wallpaperButton = document.querySelector('[data-countdown-wallpaper]');
   const topBar = document.querySelector('.countdown-top-bar');
   const eventsPanel = root && root.querySelector('.countdown-events');
   const stageHead = stage && stage.querySelector('.countdown-stage-head');
+  const pageParams = new URLSearchParams(window.location.search);
+  const wallpaperMode = pageParams.get('wallpaper') === '1';
+  const wallpaperEventId = wallpaperMode ? String(pageParams.get('event') || '') : '';
+  const wallpaperLanguage = wallpaperMode && pageParams.get('lang') === 'en' ? 'en' : 'zh-CN';
   if (!root || !list || !stage || !empty || !editorMask || !form || !titleDisplay || !dateDisplay
-      || !focusButton || !focusExit || !topBar || !eventsPanel || !stageHead) return;
+      || !focusButton || !focusExit || !wallpaperButton || !topBar || !eventsPanel || !stageHead) return;
+  if (wallpaperMode) document.body.classList.add('countdown-wallpaper-mode');
 
   const reducedMotion = (() => {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
@@ -25,22 +31,26 @@
   const COPY = {
     'zh-CN': {
       back: '返回日历', eventsTitle: '倒数日', eventsHint: '选择一个日子，让时间有一个方向。',
-      edit: '编辑', expand: '放大', exitExpand: '退出放大', days: '天', hours: '时', minutes: '分', seconds: '秒', exitHint: '返回日历',
+      edit: '编辑', expand: '放大', exitExpand: '退出放大', days: '天', hours: '时', minutes: '分', seconds: '秒', exitHint: '返回日历', focusHint: '放大/取消放大',
       emptyTitle: '还没有倒数日', emptyBody: '写下一个值得期待的日子，时钟会从这一秒开始陪你靠近它。',
       emptyAction: '创建第一个倒数日', eventName: '事件名称', targetDate: '目标日期',
       delete: '删除', deleteAgain: '再次点击删除', cancel: '取消', save: '保存',
       newTitle: '新建倒数日', editTitle: '编辑倒数日', future: '距离目标还有', past: '已经过去', today: '就是今天',
       quickName: '双击快速重命名；Enter 保存，Esc 取消', quickDate: '双击快速修改日期；Enter 保存，Esc 取消',
+      setWallpaper: '设为桌面背景', replaceWallpaper: '替换桌面背景', stopWallpaper: '取消桌面背景',
+      wallpaperStarting: '正在连接桌面…', wallpaperFailed: '动态背景启动失败',
       loadFailed: '倒数日读取失败', saveFailed: '保存失败', saved: '已保存', unnamed: '未命名倒数日',
     },
     en: {
       back: 'Back to Calendar', eventsTitle: 'Countdowns', eventsHint: 'Choose a day and give time a direction.',
-      edit: 'Edit', expand: 'Enlarge', exitExpand: 'Exit enlarged view', days: 'days', hours: 'hr', minutes: 'min', seconds: 'sec', exitHint: 'Back to Calendar',
+      edit: 'Edit', expand: 'Enlarge', exitExpand: 'Exit enlarged view', days: 'days', hours: 'hr', minutes: 'min', seconds: 'sec', exitHint: 'Back to Calendar', focusHint: 'Enlarge / Exit',
       emptyTitle: 'No countdowns yet', emptyBody: 'Write down a day worth anticipating. The clock will stay with you from this second on.',
       emptyAction: 'Create first countdown', eventName: 'Event name', targetDate: 'Target date',
       delete: 'Delete', deleteAgain: 'Click again to delete', cancel: 'Cancel', save: 'Save',
       newTitle: 'New countdown', editTitle: 'Edit countdown', future: 'Time remaining', past: 'Time since', today: 'Today',
       quickName: 'Double-click to rename · Enter saves · Esc cancels', quickDate: 'Double-click to change date · Enter saves · Esc cancels',
+      setWallpaper: 'Set as Desktop', replaceWallpaper: 'Replace Desktop', stopWallpaper: 'Stop Desktop',
+      wallpaperStarting: 'Connecting to desktop…', wallpaperFailed: 'Could not start desktop wallpaper',
       loadFailed: 'Could not load countdowns', saveFailed: 'Could not save', saved: 'Saved', unnamed: 'Untitled countdown',
     },
   };
@@ -55,9 +65,14 @@
     loaded: false,
     inlineEdit: null,
     focusMode: false,
+    wallpaper: { supported: false, active: false, eventId: '', busy: false },
+    wallpaperSyncTimer: 0,
+    wallpaperSyncBusy: false,
+    wallpaperMissingNotified: false,
   };
 
   function language() {
+    if (wallpaperMode) return wallpaperLanguage;
     return window.RelatumI18n && window.RelatumI18n.language === 'en' ? 'en' : 'zh-CN';
   }
 
@@ -71,12 +86,13 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function normalize(payload) {
+  function normalize(payload, preferredId) {
     const events = Array.isArray(payload && payload.events) ? payload.events.filter((item) =>
       item && item.id && item.event && item.date).slice(0, 100).map((item) => ({
       id: String(item.id), event: String(item.event), date: String(item.date),
     })) : [];
-    const selected = events.find((item) => item.id === String(payload && payload.selectedId || '')) || events[0] || null;
+    const selected = events.find((item) => item.id === String(preferredId || ''))
+      || events.find((item) => item.id === String(payload && payload.selectedId || '')) || events[0] || null;
     return {
       version: 2,
       selectedId: selected ? selected.id : '',
@@ -188,7 +204,7 @@
 
   function scheduleClock() {
     window.clearTimeout(state.timer);
-    if (document.hidden || !selectedEvent()) return;
+    if ((document.hidden && !wallpaperMode) || !selectedEvent()) return;
     updateClock(true);
     const delay = Math.max(80, 1016 - (Date.now() % 1000));
     state.timer = window.setTimeout(scheduleClock, delay);
@@ -223,18 +239,28 @@
     const hasEvents = !!selected;
     empty.hidden = hasEvents;
     stage.hidden = !hasEvents;
-    renderList();
+    if (!wallpaperMode) renderList();
     if (hasEvents) {
       titleDisplay.textContent = selected.event || text('unnamed');
       dateDisplay.dateTime = selected.date;
       dateDisplay.textContent = formatDate(selected.date);
+      if (wallpaperMode) {
+        titleDisplay.removeAttribute('role');
+        titleDisplay.removeAttribute('tabindex');
+        titleDisplay.removeAttribute('title');
+        dateDisplay.removeAttribute('role');
+        dateDisplay.removeAttribute('tabindex');
+        dateDisplay.removeAttribute('title');
+      }
       updateClock(!(options && options.immediate));
       scheduleClock();
     } else {
       window.clearTimeout(state.timer);
       state.timer = 0;
+      if (wallpaperMode && state.loaded) notifyWallpaperMissing();
     }
     root.setAttribute('aria-busy', 'false');
+    updateWallpaperButton();
   }
 
   function showToast(message) {
@@ -242,6 +268,127 @@
     toast.classList.add('show');
     window.clearTimeout(showToast.timer);
     showToast.timer = window.setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+
+  function updateWallpaperButton() {
+    if (wallpaperMode) return;
+    const selected = selectedEvent();
+    const wallpaper = state.wallpaper;
+    wallpaperButton.hidden = !wallpaper.supported || !selected;
+    wallpaperButton.disabled = wallpaper.busy || !selected;
+    wallpaperButton.classList.toggle('is-busy', wallpaper.busy);
+    wallpaperButton.classList.toggle('is-active', !!selected && wallpaper.active
+      && wallpaper.eventId === selected.id);
+    wallpaperButton.setAttribute('aria-pressed', String(!!selected && wallpaper.active
+      && wallpaper.eventId === selected.id));
+    const label = wallpaperButton.querySelector('[data-countdown-wallpaper-label]');
+    if (!label) return;
+    if (wallpaper.busy) label.textContent = text('wallpaperStarting');
+    else if (wallpaper.active && selected && wallpaper.eventId === selected.id) {
+      label.textContent = text('stopWallpaper');
+    } else if (wallpaper.active) label.textContent = text('replaceWallpaper');
+    else label.textContent = text('setWallpaper');
+  }
+
+  function applyWallpaperState(result) {
+    const next = result && typeof result === 'object' ? result : {};
+    state.wallpaper.supported = !!next.supported;
+    state.wallpaper.active = !!next.active;
+    state.wallpaper.eventId = next.active ? String(next.eventId || '') : '';
+    updateWallpaperButton();
+  }
+
+  async function refreshWallpaperState() {
+    if (wallpaperMode || !window.CanvasDesktop
+        || typeof window.CanvasDesktop.getCountdownWallpaperState !== 'function') return;
+    try {
+      applyWallpaperState(await window.CanvasDesktop.getCountdownWallpaperState());
+    } catch (error) {
+      state.wallpaper.supported = false;
+      updateWallpaperButton();
+    }
+  }
+
+  async function toggleDesktopWallpaper() {
+    const selected = selectedEvent();
+    if (!selected || state.wallpaper.busy || !window.CanvasDesktop) return;
+    state.wallpaper.busy = true;
+    updateWallpaperButton();
+    try {
+      const sameEvent = state.wallpaper.active && state.wallpaper.eventId === selected.id;
+      const result = sameEvent
+        ? await window.CanvasDesktop.stopCountdownWallpaper()
+        : await window.CanvasDesktop.startCountdownWallpaper(selected.id, language());
+      applyWallpaperState(result);
+      if (!result || !result.ok) {
+        throw new Error(result && result.error ? result.error : text('wallpaperFailed'));
+      }
+    } catch (error) {
+      showToast(text('wallpaperFailed') + ' · ' + error.message);
+      await refreshWallpaperState();
+    } finally {
+      state.wallpaper.busy = false;
+      updateWallpaperButton();
+    }
+  }
+
+  function callWallpaperApi(method, ...args) {
+    const invoke = () => {
+      try {
+        const api = window.pywebview && window.pywebview.api;
+        if (api && typeof api[method] === 'function') api[method](...args);
+      } catch (error) {}
+    };
+    try {
+      const api = window.pywebview && window.pywebview.api;
+      if (api && typeof api[method] === 'function') invoke();
+      else window.addEventListener('pywebviewready', invoke, { once: true });
+    } catch (error) {
+      window.addEventListener('pywebviewready', invoke, { once: true });
+    }
+  }
+
+  function notifyWallpaperMissing() {
+    if (!wallpaperMode || state.wallpaperMissingNotified) return;
+    state.wallpaperMissingNotified = true;
+    callWallpaperApi('countdown_wallpaper_event_missing', wallpaperEventId);
+  }
+
+  function scheduleWallpaperSync(delay) {
+    window.clearTimeout(state.wallpaperSyncTimer);
+    if (!wallpaperMode || state.wallpaperMissingNotified) return;
+    state.wallpaperSyncTimer = window.setTimeout(syncWallpaperData, delay == null ? 3000 : delay);
+  }
+
+  async function syncWallpaperData() {
+    if (!wallpaperMode || state.wallpaperSyncBusy) return;
+    state.wallpaperSyncBusy = true;
+    try {
+      const response = await fetch('/api/countdown', { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || text('loadFailed'));
+      const events = Array.isArray(payload && payload.events) ? payload.events : [];
+      const pinned = events.find((item) => item && String(item.id || '') === wallpaperEventId);
+      if (!pinned) {
+        notifyWallpaperMissing();
+        return;
+      }
+      const next = normalize(payload, wallpaperEventId);
+      const current = selectedEvent();
+      const changed = !current || current.id !== wallpaperEventId
+        || current.event !== String(pinned.event || '') || current.date !== String(pinned.date || '');
+      if (changed) {
+        state.data = next;
+        state.loaded = true;
+        render({ immediate: true });
+      }
+      callWallpaperApi('update_countdown_wallpaper_event', wallpaperEventId, String(pinned.event || ''));
+    } catch (error) {
+      // A transient local-server failure should not tear down a healthy desktop.
+    } finally {
+      state.wallpaperSyncBusy = false;
+      scheduleWallpaperSync(3000);
+    }
   }
 
   async function save(previous) {
@@ -260,6 +407,7 @@
         render({ immediate: true });
       }
       showToast(text('saved'));
+      refreshWallpaperState();
     } catch (error) {
       if (seq !== state.saveSeq) return;
       state.data = previous;
@@ -475,9 +623,12 @@
     });
     document.querySelector('[data-countdown-back]').setAttribute('aria-label', text('back'));
     document.querySelector('[data-countdown-new]').setAttribute('aria-label', text('newTitle'));
-    restoreInlineTarget(titleDisplay);
-    restoreInlineTarget(dateDisplay);
+    if (!wallpaperMode) {
+      restoreInlineTarget(titleDisplay);
+      restoreInlineTarget(dateDisplay);
+    }
     updateFocusControls();
+    updateWallpaperButton();
     if (!editorMask.hidden) {
       document.querySelector('[data-countdown-editor-title]').textContent = text(state.editingId ? 'editTitle' : 'newTitle');
     }
@@ -503,6 +654,7 @@
   });
   focusButton.addEventListener('click', () => setFocusMode(true));
   focusExit.addEventListener('click', () => setFocusMode(false, true));
+  wallpaperButton.addEventListener('click', toggleDesktopWallpaper);
   titleDisplay.addEventListener('dblclick', () => beginInlineEdit('title'));
   dateDisplay.addEventListener('dblclick', () => beginInlineEdit('date'));
   [titleDisplay, dateDisplay].forEach((target) => {
@@ -543,32 +695,74 @@
   });
   document.querySelector('[data-countdown-back]').addEventListener('click', leave);
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
+    if (wallpaperMode) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (!editorMask.hidden) closeEditor();
+      else if (state.focusMode) setFocusMode(false, true);
+      else leave();
+      return;
+    }
+    if (event.isComposing || event.repeat || event.ctrlKey || event.altKey || event.metaKey
+        || event.key.toLowerCase() !== 'f' || !editorMask.hidden || state.inlineEdit || state.leaving) return;
+    const target = event.target;
+    if (target instanceof HTMLElement
+        && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    if (!selectedEvent()) return;
     event.preventDefault();
-    if (!editorMask.hidden) closeEditor();
-    else if (state.focusMode) setFocusMode(false, true);
-    else leave();
+    setFocusMode(!state.focusMode, false);
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
+    if (document.hidden && !wallpaperMode) {
       window.clearTimeout(state.timer);
       state.timer = 0;
+      window.clearTimeout(state.wallpaperSyncTimer);
+      state.wallpaperSyncTimer = 0;
     } else {
       scheduleClock();
+      scheduleWallpaperSync(0);
     }
   });
-  window.addEventListener('pagehide', () => window.clearTimeout(state.timer));
+  window.addEventListener('pagehide', () => {
+    window.clearTimeout(state.timer);
+    window.clearTimeout(state.wallpaperSyncTimer);
+  });
   window.addEventListener('pageshow', () => {
-    if (state.loaded) scheduleClock();
+    if (state.loaded) {
+      scheduleClock();
+      scheduleWallpaperSync(0);
+    }
   });
 
   fetch('/api/countdown').then(async (response) => {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || text('loadFailed'));
-    state.data = normalize(payload);
+    if (wallpaperMode) {
+      const events = Array.isArray(payload && payload.events) ? payload.events : [];
+      if (!events.some((item) => item && String(item.id || '') === wallpaperEventId)) {
+        state.data = normalize({ events: [], selectedId: '' });
+        state.loaded = true;
+        render({ immediate: true });
+        notifyWallpaperMissing();
+        return;
+      }
+    }
+    state.data = normalize(payload, wallpaperMode ? wallpaperEventId : '');
     state.loaded = true;
     render({ immediate: true });
+    if (wallpaperMode) {
+      const selected = selectedEvent();
+      if (selected) callWallpaperApi('update_countdown_wallpaper_event', selected.id, selected.event);
+      scheduleWallpaperSync(3000);
+    } else {
+      refreshWallpaperState();
+    }
   }).catch((error) => {
+    if (wallpaperMode) {
+      state.loaded = false;
+      scheduleWallpaperSync(1200);
+      return;
+    }
     state.loaded = true;
     showToast(text('loadFailed') + ' · ' + error.message);
     render({ immediate: true });
