@@ -744,7 +744,10 @@ def main() -> int:
 
     try:
         local = os.environ.get("LOCALAPPDATA")
-        storage = (Path(local) / "Canvas" / "WebView2") if local else (app.DATA / "webview")
+        if app.PACKAGED:
+            storage = app.ROOT / "WebView2"
+        else:
+            storage = (Path(local) / "Canvas" / "WebView2") if local else (app.DATA / "webview")
         storage.mkdir(parents=True, exist_ok=True)
         _apply_webview_cache_limits()
         icon = app.ASSETS / "app-icon.ico"
