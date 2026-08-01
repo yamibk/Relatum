@@ -124,6 +124,66 @@ class CanvasImportLibraryTest(unittest.TestCase):
         )
         self.assertEqual(self.recent_file.read_bytes(), before)
 
+    def test_dual_open_returns_managed_canvas_path_without_recent_side_effects(self):
+        source_payload = {
+            "version": 2,
+            "nodes": [{"id": "node-a", "kind": "card", "text": "A"}],
+            "edges": [],
+        }
+        source = self.write_canvas(self.canvases_dir / "dual-source.canvas", source_payload)
+        current = self.write_canvas(self.canvases_dir / "current.canvas")
+        self.write_recent([
+            self.entry("cf_source", source, title="Dual Source", lastOpenedAt="2026-07-20T08:00:00"),
+            self.entry("cf_current", current, lastOpenedAt="2026-07-27T08:00:00"),
+        ])
+        before = self.recent_file.read_bytes()
+
+        result = target.canvas_dual_open_payload("cf_source", str(current))
+
+        self.assertEqual(result["id"], "cf_source")
+        self.assertEqual(result["title"], "Dual Source")
+        self.assertEqual(Path(result["path"]).resolve(), source.resolve())
+        self.assertEqual(result["revision"], hashlib.sha256(source.read_bytes()).hexdigest())
+        self.assertEqual(result["data"], source_payload)
+        self.assertEqual(self.recent_file.read_bytes(), before)
+
+    def test_dual_open_rejects_current_canvas(self):
+        current = self.write_canvas(self.canvases_dir / "current.canvas")
+        self.write_recent([self.entry("cf_current", current)])
+
+        with self.assertRaises(target.CanvasImportLibraryError) as rejected:
+            target.canvas_dual_open_payload("cf_current", str(current))
+
+        self.assertEqual(rejected.exception.code, "SAME_CANVAS")
+
+    def test_dual_open_rejects_unmanaged_non_top_level_missing_and_damaged_sources(self):
+        managed = self.write_canvas(self.canvases_dir / "managed.canvas")
+        external = self.write_canvas(self.root / "external.canvas")
+        nested = self.write_canvas(self.canvases_dir / "nested" / "nested.canvas")
+        missing = self.canvases_dir / "missing.canvas"
+        damaged = self.canvases_dir / "damaged.canvas"
+        damaged.write_text("{", encoding="utf-8")
+        self.write_recent([
+            self.entry("cf_managed", managed),
+            self.entry("cf_external", external),
+            self.entry("cf_nested", nested),
+            self.entry("cf_missing", missing),
+            self.entry("cf_damaged", damaged),
+        ])
+
+        with self.assertRaises(target.CanvasImportLibraryError) as unknown:
+            target.canvas_dual_open_payload("cf_unknown", "")
+        self.assertEqual(unknown.exception.code, "SOURCE_NOT_MANAGED")
+
+        for file_id in ["cf_external", "cf_nested", "cf_missing"]:
+            with self.assertRaises(target.CanvasImportLibraryError) as rejected:
+                target.canvas_dual_open_payload(file_id, "")
+            self.assertEqual(rejected.exception.code, "SOURCE_NOT_MANAGED")
+
+        with self.assertRaises(target.CanvasImportLibraryError) as invalid:
+            target.canvas_dual_open_payload("cf_damaged", "")
+        self.assertEqual(invalid.exception.code, "INVALID_JSON")
+
     def test_registered_external_target_can_default_to_its_group(self):
         managed = self.write_canvas(self.canvases_dir / "内部来源.canvas")
         external_current = self.write_canvas(self.root / "外部当前.canvas")

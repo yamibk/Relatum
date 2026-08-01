@@ -766,6 +766,30 @@ def canvas_import_source_payload(source_id: object) -> dict:
     }
 
 
+def canvas_dual_open_payload(source_id: object, current: object = "") -> dict:
+    """Return one validated snapshot for the local dual-screen reference viewer."""
+    entry, source, content, payload = _read_managed_canvas_import_source(source_id)
+    raw_current = str(current or "").strip()
+    if raw_current:
+        try:
+            current_path = Path(raw_current).resolve()
+        except OSError as err:
+            raise CanvasImportLibraryError(
+                "当前画布路径无效",
+                code="CURRENT_UNAVAILABLE",
+                status=400,
+            ) from err
+        if os.path.normcase(_norm(current_path)) == os.path.normcase(_norm(source)):
+            raise CanvasImportLibraryError("不能在双屏中打开当前画布", code="SAME_CANVAS")
+    return {
+        "id": str(entry.get("id") or ""),
+        "title": str(entry.get("title") or source.stem),
+        "path": str(source),
+        "revision": hashlib.sha256(content).hexdigest(),
+        "data": payload,
+    }
+
+
 def _canvas_import_asset_references(payload: dict) -> dict[str, list[str]]:
     references: dict[str, list[str]] = {}
     for node in payload.get("nodes", []):
@@ -6067,6 +6091,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             q = urllib.parse.parse_qs(parsed.query)
             try:
                 payload = canvas_import_source_payload(q.get("id", [""])[0])
+            except CanvasImportLibraryError as err:
+                return self._send_json(
+                    err.status,
+                    {"error": str(err), "code": err.code},
+                )
+            return self._send_json(200, payload)
+        if parsed.path == "/api/canvas-dual-open":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                payload = canvas_dual_open_payload(
+                    q.get("id", [""])[0],
+                    q.get("current", [""])[0],
+                )
             except CanvasImportLibraryError as err:
                 return self._send_json(
                     err.status,
