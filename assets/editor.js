@@ -17,6 +17,7 @@
   const FRESH = params.get('fresh') === '1';
   // 内嵌迷你画布（学习页 Tab 浮窗）：顶栏隐藏=无法切模式，锁「普通」，且不写回 localStorage（不污染完整编辑器的模式偏好）
   const EMBED = params.get('embed') === '1';
+  const READONLY = params.get('readonly') === '1';
   if (FRESH) {
     try {
       history.replaceState(null, '', 'editor.html?file=' + encodeURIComponent(filePath)
@@ -142,6 +143,62 @@
     return true;
   }
 
+  const managedCanvasLibrarySession = (() => {
+    const freshForMs = 2000;
+    const snapshots = new Map();
+    const inFlight = new Map();
+
+    function keyFor(current) {
+      return String(current || '');
+    }
+
+    function peek(current) {
+      return snapshots.get(keyFor(current)) || null;
+    }
+
+    function refresh(current) {
+      const key = keyFor(current);
+      if (inFlight.has(key)) return inFlight.get(key);
+      const cached = snapshots.get(key);
+      if (cached && Date.now() - cached.refreshedAt < freshForMs) {
+        return Promise.resolve(cached);
+      }
+      const request = fetch(
+        '/api/canvas-import-library?current=' + encodeURIComponent(key),
+        { cache: 'no-store' },
+      ).then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || toolbarCopy('canvasLibraryLoadFailed'));
+        const entry = {
+          payload: payload,
+          signature: JSON.stringify(payload),
+          refreshedAt: Date.now(),
+        };
+        snapshots.set(key, entry);
+        return entry;
+      }).finally(() => {
+        if (inFlight.get(key) === request) inFlight.delete(key);
+      });
+      inFlight.set(key, request);
+      return request;
+    }
+
+    return { peek, refresh };
+  })();
+
+  if (!EMBED) {
+    document.addEventListener('editor:canvasready', () => {
+      const warmLibrary = () => {
+        managedCanvasLibrarySession.refresh(filePath).catch(() => {});
+      };
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(warmLibrary, { timeout: 1800 });
+      } else {
+        window.setTimeout(warmLibrary, 700);
+      }
+    }, { once: true });
+  }
+
   const TOOLBAR_COPY = {
     'zh-CN': {
       back: '起步页', canvas: '画布', mindmap: '导图', patterns: '图案', tools: '工具',
@@ -263,6 +320,14 @@
       canvasTaskbookCompleteDone: '任务簿已沉淀为完成分组。',
       canvasTaskbookSaveFailed: '任务簿沉淀失败，请稍后重试。',
       importCanvas: '导入画布', importCanvasHint: '合并另一张画布的内容',
+      dualScreen: '双屏', dualScreenHint: '打开只读参考画布',
+      dualNoCanvas: '选择参考画布', dualPick: '切换参考画布', dualClose: '关闭参考画布',
+      dualPickerTitle: '打开参考画布', dualPickerSearch: '搜索画布标题',
+      dualPickerEmpty: '没有匹配的画布。', dualLoading: '正在打开参考画布…',
+      dualShortcutLead: '右侧选中对象后', dualShortcutMiddle: '，再到主画布',
+      dualReady: '参考画布已打开。', dualPickFailed: '无法打开参考画布',
+      dualCopied: '已复制，可在主画布按 Ctrl+V 粘贴。', dualPasting: '正在复制到主画布…',
+      dualPasted: '已复制到主画布。', dualClipboardExpired: '这份参考选区已过期，请在右侧重新复制。',
       nodeMatrix: '节点矩阵', nodeMatrixHint: '批量创建规则排列的节点',
       canvasTimer: '倒计时 / 正计时', canvasTimerHint: '添加独立计时器',
       toolsAria: '画布工具：尺子、笔记坞、镜头册、任务簿、内容导入、节点矩阵与计时器',
@@ -563,6 +628,14 @@
       canvasTaskbookCompleteDone: 'Taskbook preserved as a completed group.',
       canvasTaskbookSaveFailed: 'Could not preserve this Taskbook. Try again.',
       importCanvas: 'Import Canvas', importCanvasHint: 'Merge content from another canvas',
+      dualScreen: 'Dual Screen', dualScreenHint: 'Open a read-only reference canvas',
+      dualNoCanvas: 'Choose reference canvas', dualPick: 'Switch reference canvas', dualClose: 'Close reference canvas',
+      dualPickerTitle: 'Open Reference Canvas', dualPickerSearch: 'Search canvas titles',
+      dualPickerEmpty: 'No matching canvases.', dualLoading: 'Opening reference canvas…',
+      dualShortcutLead: 'Select on the right, copy with', dualShortcutMiddle: ', then paste on the main canvas with',
+      dualReady: 'Reference canvas is ready.', dualPickFailed: 'Could not open reference canvas',
+      dualCopied: 'Copied. Press Ctrl+V on the main canvas to paste.', dualPasting: 'Copying to the main canvas…',
+      dualPasted: 'Copied to the main canvas.', dualClipboardExpired: 'This reference selection has expired. Copy it again on the right.',
       nodeMatrix: 'Node Matrix', nodeMatrixHint: 'Create a regular grid of nodes',
       canvasTimer: 'Countdown / Stopwatch', canvasTimerHint: 'Add an independent timer',
       toolsAria: 'Canvas tools: ruler, Notebook, Scenes, Taskbook, content import, node matrix, and timers',
@@ -1210,6 +1283,7 @@
     const canvasScenes = pop && pop.querySelector('[data-action="canvas-scenes"]');
     const canvasTaskbook = pop && pop.querySelector('[data-action="canvas-taskbook"]');
     const importCanvas = pop && pop.querySelector('[data-action="import-canvas"]');
+    const dualScreen = pop && pop.querySelector('[data-action="dual-screen"]');
     const nodeMatrix = pop && pop.querySelector('[data-action="node-matrix"]');
     const canvasTimer = pop && pop.querySelector('[data-action="canvas-timer"]');
     const importLibrary = document.querySelector('[data-role="canvas-import-library"]');
@@ -1507,45 +1581,57 @@
       }, 210);
     }
 
-    async function openImportLibrary() {
-      if (!importLibrary || EMBED) return;
-      importReturnFocus = button;
-      revealToolLayer(importLibrary);
-      importState = null;
-      importSelectedId = '';
-      importView = 'recent';
-      if (importSearch) importSearch.value = '';
-      if (importFiles) importFiles.innerHTML = '';
-      if (importGroups) importGroups.innerHTML = '';
-      if (importEmpty) importEmpty.hidden = true;
-      if (importLoading) importLoading.hidden = false;
-      if (importConfirm) importConfirm.disabled = true;
-      setImportError('');
-      syncImportLibraryLanguage();
-      const token = ++importRequestToken;
-      requestAnimationFrame(() => { if (importSearch) importSearch.focus(); });
-      try {
-        const response = await fetch(
-          '/api/canvas-import-library?current=' + encodeURIComponent(filePath),
-          { cache: 'no-store' },
-        );
-        const json = await response.json();
-        if (token !== importRequestToken || importLibrary.hidden) return;
-        if (!response.ok) throw new Error(json.error || toolbarCopy('canvasLibraryLoadFailed'));
-        importState = {
-          groups: Array.isArray(json.groups) ? json.groups : [],
-          files: Array.isArray(json.files) ? json.files : [],
-          recentLimit: Number(json.recentLimit) || 30,
-        };
+    function applyImportLibrarySnapshot(entry, initializeView) {
+      const json = entry && entry.payload || {};
+      importState = {
+        groups: Array.isArray(json.groups) ? json.groups : [],
+        files: Array.isArray(json.files) ? json.files : [],
+        recentLimit: Number(json.recentLimit) || 30,
+      };
+      if (initializeView) {
         const groupIds = new Set(importState.groups.map((group) => String(group.id || '')));
         if (json.currentGroupId === '__inbox__') importView = 'inbox';
         else if (json.currentGroupId && groupIds.has(String(json.currentGroupId))) {
           importView = 'group:' + json.currentGroupId;
         }
-        if (importLoading) importLoading.hidden = true;
-        renderImportLibrary();
+      }
+      if (importLoading) importLoading.hidden = true;
+      renderImportLibrary();
+    }
+
+    async function openImportLibrary() {
+      if (!importLibrary || EMBED) return;
+      importReturnFocus = button;
+      revealToolLayer(importLibrary);
+      importSelectedId = '';
+      importView = 'recent';
+      if (importSearch) importSearch.value = '';
+      if (importEmpty) importEmpty.hidden = true;
+      if (importConfirm) importConfirm.disabled = true;
+      setImportError('');
+      syncImportLibraryLanguage();
+      const token = ++importRequestToken;
+      const cached = managedCanvasLibrarySession.peek(filePath);
+      let displayedSignature = '';
+      if (cached) {
+        displayedSignature = cached.signature;
+        applyImportLibrarySnapshot(cached, true);
+      } else {
+        importState = null;
+        if (importFiles) importFiles.innerHTML = '';
+        if (importGroups) importGroups.innerHTML = '';
+        if (importLoading) importLoading.hidden = false;
+      }
+      requestAnimationFrame(() => { if (importSearch) importSearch.focus(); });
+      try {
+        const fresh = await managedCanvasLibrarySession.refresh(filePath);
+        if (token !== importRequestToken || importLibrary.hidden) return;
+        if (fresh.signature !== displayedSignature) {
+          applyImportLibrarySnapshot(fresh, !displayedSignature);
+        }
       } catch (error) {
         if (token !== importRequestToken || importLibrary.hidden) return;
+        if (cached) return;
         if (importLoading) importLoading.hidden = true;
         if (importEmpty) importEmpty.hidden = true;
         setImportError(
@@ -1651,6 +1737,10 @@
       close();
       openImportLibrary();
     });
+    if (dualScreen) dualScreen.addEventListener('click', () => {
+      close();
+      document.dispatchEvent(new CustomEvent('editor:open-dual-screen'));
+    });
     nodeMatrix.addEventListener('click', () => {
       close();
       document.dispatchEvent(new CustomEvent('editor:open-node-matrix'));
@@ -1725,6 +1815,639 @@
     document.addEventListener('editor:canvasready', sync);
     window.addEventListener('resize', () => { if (!pop.hidden) position(); });
     sync();
+  })();
+
+  (function setupDualScreen() {
+    if (EMBED) return;
+    const pane = document.querySelector('[data-role="dual-pane"]');
+    const resizer = document.querySelector('[data-role="dual-resizer"]');
+    const sharedBackground = document.querySelector('[data-role="dual-shared-background"]');
+    const frameWrap = document.querySelector('[data-role="dual-frame-wrap"]');
+    const title = document.querySelector('[data-role="dual-title"]');
+    const titleButton = document.querySelector('[data-action="dual-open-picker"]');
+    const closeButton = document.querySelector('[data-action="close-dual-screen"]');
+    const picker = document.querySelector('[data-role="dual-picker"]');
+    const pickerClose = document.querySelector('[data-action="dual-close-picker"]');
+    const search = document.querySelector('[data-role="dual-search"]');
+    const filesShell = document.querySelector('[data-role="dual-files-shell"]');
+    const filesList = document.querySelector('[data-role="dual-files"]');
+    const scrollRail = document.querySelector('[data-role="dual-scrollbar"]');
+    const scrollThumb = document.querySelector('[data-role="dual-scrollbar-thumb"]');
+    const pickerState = document.querySelector('[data-role="dual-picker-state"]');
+    const copyShortcut = document.querySelector('[data-role="dual-copy-shortcut"]');
+    const pasteShortcut = document.querySelector('[data-role="dual-paste-shortcut"]');
+    const toast = document.querySelector('[data-role="dual-toast"]');
+    if (!pane || !resizer || !frameWrap || !picker || !search || !filesList) return;
+
+    const macPlatform = /Mac|iPhone|iPad|iPod/i.test(
+      String(navigator.userAgentData && navigator.userAgentData.platform || navigator.platform || ''),
+    );
+    if (copyShortcut) copyShortcut.textContent = macPlatform ? '⌘C' : 'Ctrl+C';
+    if (pasteShortcut) pasteShortcut.textContent = macPlatform ? '⌘V' : 'Ctrl+V';
+
+    let libraryFiles = [];
+    let filteredFiles = [];
+    let activeIndex = 0;
+    let activeFrame = null;
+    let pendingFrame = null;
+    let loadToken = 0;
+    let rightInfo = null;
+    let dualClipboard = null;
+    let toastTimer = 0;
+    let pickerRequest = 0;
+    let pickerEntranceTimer = 0;
+    let scrollbarFrame = 0;
+    let scrollbarTimer = 0;
+    let scrollbarDrag = null;
+    const scrollbarMetrics = { travel: 0, maxScroll: 0 };
+
+    function showDualToast(message, isError) {
+      if (!toast) return;
+      window.clearTimeout(toastTimer);
+      toast.textContent = String(message || '');
+      toast.classList.toggle('error', !!isError);
+      if (!message) {
+        concealToolLayer(toast, null, 140);
+        return;
+      }
+      revealToolLayer(toast);
+      toastTimer = window.setTimeout(() => concealToolLayer(toast, null, 140), 2600);
+    }
+
+    function showMainToast(message, isError) {
+      const fn = window.CanvasModule && window.CanvasModule.showToast;
+      if (typeof fn === 'function') fn(String(message || ''), !!isError);
+      else showDualToast(message, isError);
+    }
+
+    function updateDualScrollbar() {
+      scrollbarFrame = 0;
+      if (!filesShell || !scrollRail || !scrollThumb || picker.hidden) return;
+      const clientHeight = filesList.clientHeight;
+      const scrollHeight = filesList.scrollHeight;
+      const railHeight = scrollRail.clientHeight;
+      const scrollable = clientHeight > 0 && railHeight > 0 && scrollHeight > clientHeight + 1;
+      scrollRail.classList.toggle('is-scrollable', scrollable);
+      if (!scrollable) {
+        scrollRail.classList.remove('is-active', 'is-dragging');
+        scrollbarMetrics.travel = 0;
+        scrollbarMetrics.maxScroll = 0;
+        return;
+      }
+      const thumbHeight = Math.min(railHeight, Math.max(32, railHeight * (clientHeight / scrollHeight)));
+      const travel = Math.max(0, railHeight - thumbHeight);
+      const maxScroll = Math.max(1, scrollHeight - clientHeight);
+      const top = travel * Math.max(0, Math.min(1, filesList.scrollTop / maxScroll));
+      scrollThumb.style.height = Math.round(thumbHeight) + 'px';
+      scrollThumb.style.transform = 'translate3d(0,' + Math.round(top) + 'px,0)';
+      scrollbarMetrics.travel = travel;
+      scrollbarMetrics.maxScroll = maxScroll;
+    }
+
+    function queueDualScrollbarUpdate() {
+      if (!scrollbarFrame) scrollbarFrame = window.requestAnimationFrame(updateDualScrollbar);
+    }
+
+    function markDualScrollbarActive(keepVisible) {
+      if (!scrollRail || !scrollRail.classList.contains('is-scrollable')) return;
+      window.clearTimeout(scrollbarTimer);
+      scrollRail.classList.add('is-active');
+      if (!keepVisible && !scrollbarDrag) {
+        scrollbarTimer = window.setTimeout(() => scrollRail.classList.remove('is-active'), 800);
+      }
+    }
+
+    function moveDualScrollbar(clientY) {
+      if (!scrollbarDrag || !scrollbarMetrics.travel) return;
+      const rect = scrollRail.getBoundingClientRect();
+      const top = Math.max(0, Math.min(
+        scrollbarMetrics.travel,
+        clientY - rect.top - scrollbarDrag.pointerOffset,
+      ));
+      filesList.scrollTop = (top / scrollbarMetrics.travel) * scrollbarMetrics.maxScroll;
+      markDualScrollbarActive(true);
+    }
+
+    function finishDualScrollbarDrag(event) {
+      if (!scrollbarDrag) return;
+      if (event && event.pointerId != null && event.pointerId !== scrollbarDrag.pointerId) return;
+      const pointerId = scrollbarDrag.pointerId;
+      scrollbarDrag = null;
+      window.removeEventListener('pointermove', onDualScrollbarDragMove);
+      window.removeEventListener('pointerup', finishDualScrollbarDrag);
+      window.removeEventListener('pointercancel', finishDualScrollbarDrag);
+      try { scrollRail.releasePointerCapture(pointerId); } catch (_) {}
+      scrollRail.classList.remove('is-dragging');
+      markDualScrollbarActive(false);
+    }
+
+    function onDualScrollbarDragMove(event) {
+      if (!scrollbarDrag || event.pointerId !== scrollbarDrag.pointerId) return;
+      event.preventDefault();
+      moveDualScrollbar(event.clientY);
+    }
+
+    function startDualScrollbarDrag(event) {
+      if (event.button !== 0 || scrollbarDrag || !scrollRail.classList.contains('is-scrollable')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      updateDualScrollbar();
+      const thumbRect = scrollThumb.getBoundingClientRect();
+      scrollbarDrag = {
+        pointerId: event.pointerId,
+        pointerOffset: event.target === scrollThumb
+          ? event.clientY - thumbRect.top
+          : thumbRect.height / 2,
+      };
+      try { scrollRail.setPointerCapture(event.pointerId); } catch (_) {}
+      scrollRail.classList.add('is-active', 'is-dragging');
+      window.addEventListener('pointermove', onDualScrollbarDragMove, { passive: false });
+      window.addEventListener('pointerup', finishDualScrollbarDrag);
+      window.addEventListener('pointercancel', finishDualScrollbarDrag);
+      if (event.target !== scrollThumb) moveDualScrollbar(event.clientY);
+    }
+
+    function dualLibraryFiles(entry) {
+      const json = entry && entry.payload || {};
+      return (Array.isArray(json.files) ? json.files : []).slice().sort((a, b) =>
+        String(b.lastOpenedAt || '').localeCompare(String(a.lastOpenedAt || '')));
+    }
+
+    function renderDualPicker(options) {
+      const staggerEnter = !!(options && options.staggerEnter) && !prefersReducedToolMotion();
+      const reuseExisting = !!(options && options.reuseExisting);
+      const term = search.value.trim().toLocaleLowerCase();
+      filteredFiles = libraryFiles.filter((file) =>
+        !term || String(file.title || '').toLocaleLowerCase().includes(term));
+      activeIndex = Math.max(0, Math.min(activeIndex, filteredFiles.length - 1));
+      let buttons = [...filesList.querySelectorAll('.canvas-dual-file')];
+      const canReuse = reuseExisting && buttons.length === filteredFiles.length
+        && buttons.every((button, index) =>
+          button.dataset.sourceId === String(filteredFiles[index] && filteredFiles[index].id || ''));
+      if (!canReuse) {
+        filesList.innerHTML = '';
+        buttons = filteredFiles.map((file, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'canvas-dual-file';
+          button.dataset.sourceId = String(file.id || '');
+          button.setAttribute('role', 'option');
+          button.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+          if (rightInfo && rightInfo.id === String(file.id || '')) button.classList.add('current');
+          const name = document.createElement('span');
+          name.textContent = String(file.title || (toolbarLanguage === 'en' ? 'Untitled' : '未命名'));
+          button.appendChild(name);
+          button.addEventListener('mouseenter', () => {
+            activeIndex = index;
+            syncPickerSelection();
+          });
+          button.addEventListener('click', () => openRightCanvas(file));
+          filesList.appendChild(button);
+          return button;
+        });
+      } else {
+        buttons.forEach((button, index) => {
+          const file = filteredFiles[index];
+          button.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+          button.classList.toggle('current', !!(
+            rightInfo && rightInfo.id === String(file && file.id || '')
+          ));
+          const name = button.querySelector('span');
+          if (name) name.textContent = String(
+            file && file.title || (toolbarLanguage === 'en' ? 'Untitled' : '未命名'),
+          );
+        });
+      }
+      buttons.forEach((button) => {
+        button.classList.remove('is-entering');
+        button.style.removeProperty('--dual-file-delay');
+        button.onanimationend = null;
+      });
+      if (staggerEnter && buttons.length) {
+        void filesList.offsetWidth;
+        buttons.slice(0, 14).forEach((button, index) => {
+          button.classList.add('is-entering');
+          button.style.setProperty('--dual-file-delay', Math.min(index * 22, 154) + 'ms');
+          button.onanimationend = () => {
+            button.classList.remove('is-entering');
+            button.style.removeProperty('--dual-file-delay');
+            button.onanimationend = null;
+          };
+        });
+      }
+      if (pickerState) {
+        pickerState.textContent = filteredFiles.length ? '' : toolbarCopy('dualPickerEmpty');
+      }
+      queueDualScrollbarUpdate();
+    }
+
+    function syncPickerSelection() {
+      [...filesList.querySelectorAll('.canvas-dual-file')].forEach((button, index) => {
+        button.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+      });
+    }
+
+    function playDualPickerEntrance() {
+      window.clearTimeout(pickerEntranceTimer);
+      picker.classList.remove('content-entering');
+      if (prefersReducedToolMotion()) return;
+      void picker.offsetWidth;
+      picker.classList.add('content-entering');
+      pickerEntranceTimer = window.setTimeout(() => {
+        picker.classList.remove('content-entering');
+      }, 480);
+    }
+
+    async function showDualPicker() {
+      const request = ++pickerRequest;
+      revealToolLayer(picker);
+      playDualPickerEntrance();
+      pane.classList.add('picker-open');
+      if (titleButton) titleButton.setAttribute('aria-expanded', 'true');
+      search.value = '';
+      filesList.scrollTop = 0;
+      filesList.setAttribute('aria-busy', 'true');
+      if (pickerState) pickerState.textContent = '';
+      const cached = managedCanvasLibrarySession.peek(filePath);
+      let displayedSignature = '';
+      if (cached) {
+        displayedSignature = cached.signature;
+        libraryFiles = dualLibraryFiles(cached);
+        const currentIndex = rightInfo
+          ? libraryFiles.findIndex((file) => String(file.id || '') === rightInfo.id)
+          : -1;
+        activeIndex = currentIndex >= 0 ? currentIndex : 0;
+        renderDualPicker({ staggerEnter: true, reuseExisting: true });
+      } else {
+        libraryFiles = [];
+        filteredFiles = [];
+        filesList.innerHTML = '';
+      }
+      queueDualScrollbarUpdate();
+      window.requestAnimationFrame(() => search.focus());
+      try {
+        const fresh = await managedCanvasLibrarySession.refresh(filePath);
+        if (request !== pickerRequest || picker.hidden) return;
+        if (fresh.signature !== displayedSignature) {
+          libraryFiles = dualLibraryFiles(fresh);
+          const currentIndex = rightInfo
+            ? libraryFiles.findIndex((file) => String(file.id || '') === rightInfo.id)
+            : -1;
+          activeIndex = currentIndex >= 0 ? currentIndex : 0;
+          renderDualPicker({ staggerEnter: !displayedSignature, reuseExisting: false });
+        }
+      } catch (error) {
+        if (request !== pickerRequest || picker.hidden) return;
+        if (cached) return;
+        if (pickerState) pickerState.textContent = toolbarCopy('dualPickFailed') + ': ' + error.message;
+        queueDualScrollbarUpdate();
+      } finally {
+        if (request === pickerRequest) filesList.removeAttribute('aria-busy');
+      }
+    }
+
+    function hideDualPicker() {
+      pickerRequest += 1;
+      window.clearTimeout(pickerEntranceTimer);
+      picker.classList.remove('content-entering');
+      pane.classList.remove('picker-open');
+      if (titleButton) titleButton.setAttribute('aria-expanded', 'false');
+      concealToolLayer(picker, null, 210);
+    }
+
+    function appearancePayload() {
+      const readVars = (element, names) => {
+        const style = element ? window.getComputedStyle(element) : null;
+        const output = {};
+        names.forEach((name) => { output[name] = style ? style.getPropertyValue(name).trim() : ''; });
+        return output;
+      };
+      const pageStyle = window.getComputedStyle(document.body);
+      const surfaceMode = document.body.classList.contains('immersive-background')
+        ? 'immersive'
+        : (viewportEl && viewportEl.classList.contains('image-background')
+          ? 'image'
+          : (viewportEl && viewportEl.classList.contains('flowing-background') ? 'flowing' : 'plain'));
+      return {
+        sharedBackground: true,
+        tone: document.body.dataset.backgroundTone === 'dark' ? 'dark' : 'light',
+        baseFill: pageStyle.backgroundColor || (document.body.dataset.backgroundTone === 'dark' ? '#121815' : '#f1f0ed'),
+        guideType: viewportEl && viewportEl.dataset.guideType || 'none',
+        surfaceMode: surfaceMode,
+        viewportVars: readVars(viewportEl, [
+          '--canvas-background-fill', '--canvas-background-image', '--canvas-background-opacity',
+          '--canvas-background-scale', '--canvas-background-position',
+        ]),
+        backgroundVars: readVars(immersiveBackgroundEl, [
+          '--immersive-background-image', '--immersive-background-opacity',
+          '--immersive-background-scale', '--immersive-background-position',
+        ]),
+      };
+    }
+
+    function applyPaneAppearance(appearance) {
+      if (!appearance || !frameWrap) return;
+      if (sharedBackground) {
+        sharedBackground.dataset.backgroundTone = appearance.tone === 'dark' ? 'dark' : 'light';
+        sharedBackground.dataset.surfaceMode = appearance.surfaceMode || 'plain';
+        const sharedFill = appearance.surfaceMode === 'immersive'
+          ? 'transparent'
+          : String(appearance.viewportVars && appearance.viewportVars['--canvas-background-fill']
+            || appearance.baseFill || '');
+        sharedBackground.style.setProperty('--dual-shared-background-fill', sharedFill);
+        [appearance.viewportVars, appearance.backgroundVars].forEach((vars) => {
+          Object.keys(vars || {}).forEach((name) => {
+            sharedBackground.style.setProperty(name, String(vars[name] || ''));
+          });
+        });
+      }
+      frameWrap.dataset.backgroundTone = appearance.tone === 'dark' ? 'dark' : 'light';
+      frameWrap.dataset.guideType = appearance.guideType || 'none';
+      frameWrap.dataset.surfaceMode = appearance.surfaceMode || 'plain';
+      frameWrap.style.setProperty('--dual-background-base', String(appearance.baseFill || ''));
+      [appearance.viewportVars, appearance.backgroundVars].forEach((vars) => {
+        Object.keys(vars || {}).forEach((name) => {
+          frameWrap.style.setProperty(name, String(vars[name] || ''));
+        });
+      });
+    }
+
+    function sendAppearance(frame) {
+      const appearance = appearancePayload();
+      applyPaneAppearance(appearance);
+      if (!frame || !frame.contentWindow) return;
+      frame.contentWindow.postMessage({
+        type: 'relatum:dual:appearance',
+        appearance: appearance,
+      }, window.location.origin);
+    }
+
+    function openRightCanvas(file) {
+      const sourceId = String(file && file.id || '');
+      if (!sourceId) return;
+      const token = ++loadToken;
+      if (pendingFrame) pendingFrame.remove();
+      const frame = document.createElement('iframe');
+      frame.className = 'canvas-dual-frame pending';
+      frame.dataset.loadToken = String(token);
+      frame.dataset.sourceId = sourceId;
+      frame.title = toolbarCopy('dualScreen');
+      frame.loading = 'eager';
+      frame.src = 'dual-viewer.html?id=' + encodeURIComponent(sourceId)
+        + '&current=' + encodeURIComponent(filePath);
+      frame.addEventListener('load', () => sendAppearance(frame), { once: true });
+      pendingFrame = frame;
+      frameWrap.appendChild(frame);
+      pane.classList.add('loading');
+      showDualToast(toolbarCopy('dualLoading'));
+      applyPaneAppearance(appearancePayload());
+    }
+
+    function activateFrame(frame, info) {
+      const previous = activeFrame;
+      activeFrame = frame;
+      pendingFrame = null;
+      rightInfo = info;
+      frame.classList.remove('pending');
+      frame.classList.add('active');
+      pane.classList.add('has-active-frame');
+      if (previous && previous !== frame) {
+        previous.classList.remove('active');
+        previous.classList.add('outgoing');
+        window.setTimeout(() => previous.remove(), 220);
+      }
+      pane.classList.remove('loading');
+      if (title) {
+        title.removeAttribute('data-toolbar-i18n');
+        title.textContent = info.title || toolbarCopy('dualScreen');
+      }
+      hideDualPicker();
+      sendAppearance(frame);
+      showDualToast(toolbarCopy('dualReady'));
+    }
+
+    async function importToMain(data) {
+      if (!data || !data.payload || !data.sourceId || !data.revision) {
+        showMainToast(toolbarCopy('dualClipboardExpired'), true);
+        return;
+      }
+      const importer = window.CanvasModule && window.CanvasModule.importDualSelectionPayload;
+      if (typeof importer !== 'function') {
+        showMainToast(toolbarCopy('dualPickFailed'), true);
+        return;
+      }
+      showMainToast(toolbarCopy('dualPasting'));
+      try {
+        await importer({
+          sourceId: data.sourceId,
+          revision: data.revision,
+          payload: data.payload,
+        });
+        showMainToast(toolbarCopy('dualPasted'));
+      } catch (error) {
+        showMainToast(error && (error.displayMessage || error.message)
+          ? (error.displayMessage || error.message)
+          : toolbarCopy('dualPickFailed'), true);
+      }
+    }
+
+    window.addEventListener('message', (event) => {
+      if (event.origin !== window.location.origin || !event.data || typeof event.data !== 'object') return;
+      const fromPending = pendingFrame && event.source === pendingFrame.contentWindow;
+      const fromActive = activeFrame && event.source === activeFrame.contentWindow;
+      if (!fromPending && !fromActive) return;
+      const data = event.data;
+      if (data.type === 'relatum:dual:ready' && fromPending) {
+        if (Number(pendingFrame.dataset.loadToken) !== loadToken) return;
+        activateFrame(pendingFrame, {
+          id: String(data.sourceId || pendingFrame.dataset.sourceId || ''),
+          title: String(data.title || ''),
+          revision: String(data.revision || ''),
+        });
+      } else if (data.type === 'relatum:dual:error' && fromPending) {
+        const failed = pendingFrame;
+        pendingFrame = null;
+        failed.remove();
+        pane.classList.remove('loading');
+        showDualToast(toolbarCopy('dualPickFailed') + ': ' + String(data.error || ''), true);
+        if (!activeFrame) showDualPicker();
+      } else if (data.type === 'relatum:dual:copy' && fromActive) {
+        dualClipboard = {
+          token: String(data.token || ''),
+          sourceId: String(data.sourceId || ''),
+          revision: String(data.revision || ''),
+          payload: data.payload,
+        };
+        showDualToast(toolbarCopy('dualCopied'));
+      } else if (data.type === 'relatum:dual:paste-to-main' && fromActive) {
+        importToMain({
+          sourceId: String(data.sourceId || ''),
+          revision: String(data.revision || ''),
+          payload: data.payload,
+        });
+      }
+    });
+
+    window.addEventListener('paste', (event) => {
+      const target = event.target;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      const helper = window.RelatumDualClipboard;
+      const token = helper && typeof helper.readToken === 'function'
+        ? helper.readToken(event.clipboardData)
+        : '';
+      if (!token) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!dualClipboard || dualClipboard.token !== token) {
+        showMainToast(toolbarCopy('dualClipboardExpired'), true);
+        return;
+      }
+      importToMain(dualClipboard);
+    }, true);
+
+    function openDualScreen() {
+      revealToolLayer(pane);
+      resizer.hidden = false;
+      resizer.classList.remove('tool-layer-leaving');
+      resizer.classList.add('tool-layer-entering');
+      document.body.classList.add('dual-screen-open');
+      applyPaneAppearance(appearancePayload());
+      if (!prefersReducedToolMotion()) {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          if (!resizer.hidden) resizer.classList.remove('tool-layer-entering');
+        }));
+      } else {
+        resizer.classList.remove('tool-layer-entering');
+      }
+      if (!activeFrame) showDualPicker();
+    }
+
+    function closeDualScreen() {
+      if (pane.hidden) return;
+      hideDualPicker();
+      resizer.classList.remove('tool-layer-entering');
+      resizer.classList.add('tool-layer-leaving');
+      concealToolLayer(pane, () => {
+        resizer.hidden = true;
+        resizer.classList.remove('tool-layer-leaving');
+        document.body.classList.remove('dual-screen-open');
+      }, 180);
+    }
+
+    let resizeState = null;
+    let resizeFrame = 0;
+    let pendingWidth = 0;
+    function applyResize() {
+      resizeFrame = 0;
+      if (pendingWidth) document.documentElement.style.setProperty('--dual-pane-width', pendingWidth + 'px');
+    }
+    resizer.addEventListener('pointerdown', (event) => {
+      if (pane.hidden || event.button !== 0) return;
+      resizeState = {
+        startX: event.clientX,
+        startWidth: pane.getBoundingClientRect().width,
+      };
+      document.body.classList.add('dual-screen-resizing');
+      try { resizer.setPointerCapture(event.pointerId); } catch (_) {}
+    });
+    resizer.addEventListener('pointermove', (event) => {
+      if (!resizeState) return;
+      const next = resizeState.startWidth - (event.clientX - resizeState.startX);
+      const min = Math.max(280, window.innerWidth * 0.3);
+      const max = Math.max(min, window.innerWidth * 0.7);
+      pendingWidth = Math.max(min, Math.min(max, next));
+      if (!resizeFrame) resizeFrame = window.requestAnimationFrame(applyResize);
+    });
+    function endResize(event) {
+      if (!resizeState) return;
+      resizeState = null;
+      if (resizeFrame) {
+        window.cancelAnimationFrame(resizeFrame);
+        applyResize();
+      }
+      document.body.classList.remove('dual-screen-resizing');
+      try { resizer.releasePointerCapture(event.pointerId); } catch (_) {}
+    }
+    resizer.addEventListener('pointerup', endResize);
+    resizer.addEventListener('pointercancel', endResize);
+
+    filesList.addEventListener('scroll', () => {
+      queueDualScrollbarUpdate();
+      markDualScrollbarActive(false);
+    }, { passive: true });
+    if (filesShell) {
+      filesShell.addEventListener('mouseenter', () => {
+        queueDualScrollbarUpdate();
+        window.requestAnimationFrame(() => markDualScrollbarActive(true));
+      });
+      filesShell.addEventListener('mouseleave', () => markDualScrollbarActive(false));
+      filesShell.addEventListener('focusin', () => markDualScrollbarActive(true));
+      filesShell.addEventListener('focusout', () => markDualScrollbarActive(false));
+    }
+    if (scrollRail && scrollThumb) scrollRail.addEventListener('pointerdown', startDualScrollbarDrag);
+    if (window.ResizeObserver && filesShell) {
+      const scrollbarObserver = new ResizeObserver(queueDualScrollbarUpdate);
+      scrollbarObserver.observe(filesShell);
+      scrollbarObserver.observe(filesList);
+    }
+    window.addEventListener('resize', queueDualScrollbarUpdate);
+
+    search.addEventListener('input', () => { activeIndex = 0; renderDualPicker(); });
+    search.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (!filteredFiles.length) return;
+        activeIndex = (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + filteredFiles.length)
+          % filteredFiles.length;
+        syncPickerSelection();
+        const selected = filesList.querySelector('[aria-selected="true"]');
+        if (selected) {
+          selected.scrollIntoView({ block: 'nearest' });
+          queueDualScrollbarUpdate();
+          markDualScrollbarActive(false);
+        }
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        if (filteredFiles[activeIndex]) openRightCanvas(filteredFiles[activeIndex]);
+      } else if (event.key === 'Escape' && activeFrame) {
+        event.preventDefault();
+        hideDualPicker();
+        if (titleButton) titleButton.focus();
+      }
+    });
+    if (titleButton) titleButton.addEventListener('click', showDualPicker);
+    if (pickerClose) pickerClose.addEventListener('click', () => {
+      if (activeFrame) hideDualPicker();
+      else closeDualScreen();
+    });
+    if (closeButton) closeButton.addEventListener('click', closeDualScreen);
+    document.addEventListener('editor:open-dual-screen', openDualScreen);
+    document.addEventListener('editor:languagechange', () => {
+      if (!rightInfo && title) {
+        title.dataset.toolbarI18n = 'dualNoCanvas';
+        title.textContent = toolbarCopy('dualNoCanvas');
+      }
+      if (!picker.hidden) renderDualPicker();
+    });
+
+    const appearanceObserver = new MutationObserver(() => {
+      applyPaneAppearance(appearancePayload());
+      sendAppearance(activeFrame);
+      sendAppearance(pendingFrame);
+    });
+    if (viewportEl) appearanceObserver.observe(viewportEl, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'data-guide-type'],
+    });
+    if (immersiveBackgroundEl) appearanceObserver.observe(immersiveBackgroundEl, {
+      attributes: true,
+      attributeFilter: ['style'],
+    });
+    appearanceObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['class', 'data-background-tone'],
+    });
+    applyPaneAppearance(appearancePayload());
   })();
 
   // ── 笔记坞：随当前 .canvas 保存；与画布内容只交换显式快照 ──
@@ -9548,6 +10271,7 @@
           minimapViewbox: document.querySelector('[data-role="minimap-viewbox"]'),
           filePath: filePath,
           embed: EMBED,
+          readonly: READONLY,
           data: canvasData,
           initialViewport: json.viewport,
           onViewportChange: queueViewportSave,
@@ -9741,6 +10465,10 @@
     if (ok && dirty) return save();
     return ok;
   }
+
+  window.EditorShell = window.EditorShell || {};
+  window.EditorShell.saveNow = save;
+  window.EditorShell.getFilePath = function () { return filePath; };
 
   async function exportMarkdown() {
     if (isExporting || canvasData === null) return;

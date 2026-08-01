@@ -140,7 +140,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 ## 构建 Windows 桌面版
 
-桌面构建支持 Python 3.9–3.12。构建脚本会在临时目录创建环境，并安装固定版本的 PyWebView、PyInstaller 和 Pillow：
+桌面构建支持 Python 3.9–3.12。构建脚本会在临时目录创建环境，并安装固定版本的 PyWebView、PyInstaller、pystray 和 Pillow：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
@@ -154,6 +154,7 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 Relatum/
 ├─ app.py                    本地 HTTP 服务与数据 API
 ├─ desktop.py                Windows 桌面外壳
+├─ windows_wallpaper.py      隔离的倒数日动态背景子进程、WorkerW 挂载与托盘生命周期
 ├─ assets/                   HTML、CSS、JavaScript 与运行资源
 ├─ packaging/                图标、字体和桌面构建辅助工具
 ├─ build-desktop.ps1         Windows 桌面发布包构建入口
@@ -167,7 +168,7 @@ Relatum/
 项目不需要 npm，也没有前端构建步骤。提交修改前至少运行：
 
 ```powershell
-python -m py_compile app.py desktop.py packaging\make_icon.py packaging\make_font_subset.py
+python -m py_compile app.py desktop.py windows_wallpaper.py packaging\make_icon.py packaging\make_font_subset.py
 
 Get-ChildItem assets -Recurse -Filter *.js |
   Where-Object { $_.FullName -notmatch '\\vendor\\' } |

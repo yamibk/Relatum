@@ -70,6 +70,11 @@ const source = {
   },
   ruler: { cx: 200, cy: 100, angle: 45 },
   background: { kind: 'legacy' },
+  viewport: { x: 20, y: 30, scale: 1.2 },
+  timers: [{ id: 'timer-old', x: 0, y: 0 }],
+  sceneBook: { version: 1, scenes: [{ id: 'scene-old' }] },
+  taskbook: { version: 2, roots: [{ id: 'task-old' }] },
+  markdownNotebook: { version: 1, notes: [{ id: 'note-old', title: 'N' }] },
 };
 
 const frozenSource = JSON.parse(JSON.stringify(source));
@@ -94,6 +99,11 @@ assert.deepStrictEqual(plan.ink.arrows[0].control, { x: 890, y: 410 });
 assert.deepStrictEqual(plan.ink.arrows[1].waypoints, [{ x: 940, y: 430 }]);
 assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'ruler'), false);
 assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'background'), false);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'viewport'), false);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'timers'), false);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'sceneBook'), false);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'taskbook'), false);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(plan, 'markdownNotebook'), false);
 
 const included = prepare(source, 'include');
 assert.strictEqual(included.nodes.length, 4);

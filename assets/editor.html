@@ -52,7 +52,9 @@
         var p = new URLSearchParams(location.search);
         var fresh = p.get('fresh') === '1';
         var embed = p.get('embed') === '1';
+        var readonly = p.get('readonly') === '1';
         if (embed) document.body.classList.add('embed');
+        if (readonly) document.body.classList.add('canvas-readonly');
         var initialTone = document.documentElement.dataset.editorBackgroundTone === 'dark' ? 'dark' : 'light';
         document.body.dataset.backgroundTone = initialTone;
         var returnTheme = localStorage.getItem('canvas:startTheme') === 'dark' ? 'dark' : 'light';
@@ -219,6 +221,21 @@
             <small data-toolbar-i18n="importCanvasHint">合并另一张画布的内容</small>
           </span>
         </button>
+        <button type="button" class="editor-tool-card editor-tool-dual-card"
+                data-action="dual-screen" data-editor-i18n-title="dualScreenHint"
+                data-editor-i18n-aria="dualScreen">
+          <span class="editor-tool-icon editor-tool-dual-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <rect x="3.5" y="5" width="7" height="14" rx="1.5"/>
+              <rect x="13.5" y="5" width="7" height="14" rx="1.5"/>
+              <path d="M11.8 8v8"/>
+            </svg>
+          </span>
+          <span>
+            <strong data-toolbar-i18n="dualScreen">双屏</strong>
+            <small data-toolbar-i18n="dualScreenHint">同时查看两张画布</small>
+          </span>
+        </button>
         <button type="button" class="editor-tool-card editor-tool-matrix-card"
                 data-action="node-matrix" data-editor-i18n-title="nodeMatrixHint"
                 data-editor-i18n-aria="nodeMatrix">
@@ -366,6 +383,7 @@
   </script>
 
   <main class="editor-main">
+    <div class="canvas-dual-shared-background" data-role="dual-shared-background" aria-hidden="true"></div>
     <div class="canvas-viewport" data-role="canvas-viewport">
       <div class="canvas-guide-layer" data-role="canvas-guide-layer" aria-hidden="true" hidden></div>
       <canvas class="canvas-edges-canvas" data-role="canvas-edges-canvas" aria-hidden="true"></canvas>
@@ -726,6 +744,45 @@
         </label>
       </div>
     </div>
+    <button type="button" class="canvas-dual-resizer" data-role="dual-resizer"
+            aria-label="调整双屏宽度" hidden></button>
+    <section class="canvas-dual-pane" data-role="dual-pane" aria-label="参考画布" hidden>
+      <div class="canvas-dual-frame-wrap" data-role="dual-frame-wrap"></div>
+      <button type="button" class="canvas-dual-title-chip" data-action="dual-open-picker"
+              data-toolbar-i18n-title="dualPick" aria-haspopup="dialog">
+        <span data-role="dual-title" data-toolbar-i18n="dualNoCanvas">选择参考画布</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m4 6 4 4 4-4"/></svg>
+      </button>
+      <button type="button" class="canvas-dual-close" data-action="close-dual-screen"
+              data-toolbar-i18n-title="dualClose" aria-label="关闭参考画布">×</button>
+      <div class="canvas-dual-picker-layer" data-role="dual-picker" hidden>
+        <section class="canvas-dual-picker-card" role="dialog" aria-modal="true"
+                 aria-labelledby="dual-picker-title">
+          <header>
+            <strong id="dual-picker-title" data-toolbar-i18n="dualPickerTitle">打开参考画布</strong>
+            <button type="button" data-action="dual-close-picker"
+                    data-toolbar-i18n-title="close" aria-label="关闭">×</button>
+          </header>
+          <input type="search" class="canvas-dual-search" data-role="dual-search"
+                 data-toolbar-i18n-placeholder="dualPickerSearch" placeholder="搜索画布标题"
+                 autocomplete="off" spellcheck="false">
+          <div class="canvas-dual-files-shell" data-role="dual-files-shell">
+            <div class="canvas-dual-files" data-role="dual-files" role="listbox"></div>
+            <span class="canvas-dual-scrollbar" data-role="dual-scrollbar" aria-hidden="true">
+              <span class="canvas-dual-scrollbar-thumb" data-role="dual-scrollbar-thumb"></span>
+            </span>
+          </div>
+          <p class="canvas-dual-picker-state" data-role="dual-picker-state" aria-live="polite"></p>
+          <p class="canvas-dual-shortcut-hint" data-role="dual-shortcut-hint">
+            <span data-toolbar-i18n="dualShortcutLead">右侧选中对象后</span>
+            <kbd data-role="dual-copy-shortcut">Ctrl+C</kbd>
+            <span data-toolbar-i18n="dualShortcutMiddle">，再到主画布</span>
+            <kbd data-role="dual-paste-shortcut">Ctrl+V</kbd>
+          </p>
+        </section>
+      </div>
+      <div class="canvas-dual-toast" data-role="dual-toast" aria-live="polite" hidden></div>
+    </section>
   </main>
 
   <!-- 正常画布模式面板：用于配置之后新建的节点与连线。 -->
@@ -3619,6 +3676,7 @@
   <script src="canvas-scenes.js" defer></script>
   <script src="canvas-taskbook.js" defer></script>
   <script src="ai-canvas-plan.js" defer></script>
+  <script src="dual-clipboard.js" defer></script>
   <script src="canvas.js" defer></script>
   <script src="graph-gl.js" defer></script>
   <script src="graph-engine.js" defer></script>

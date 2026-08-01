@@ -80,6 +80,15 @@
     setRestoredSize(width, height) {
       return callApi('set_restored_size', width, height);
     },
+    getCountdownWallpaperState() {
+      return callApi('get_countdown_wallpaper_state');
+    },
+    startCountdownWallpaper(eventId, language) {
+      return callApi('start_countdown_wallpaper', eventId, language);
+    },
+    stopCountdownWallpaper() {
+      return callApi('stop_countdown_wallpaper');
+    },
   };
 
   const controls = document.createElement('div');
