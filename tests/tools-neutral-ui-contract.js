@@ -45,16 +45,18 @@ assert(
   'the neutral tools override must not reintroduce warm, green, or amber legacy colors',
 );
 
-assert.strictEqual((html.match(/class="editor-tool-icon/g) || []).length, 7);
+assert.strictEqual((html.match(/class="editor-tool-icon/g) || []).length, 8);
 assert(editor.includes("rulerHint: '对齐笔迹与节点'"));
 assert(editor.includes("markdownNotebookHint: '长期笔记与导图快照'"));
 assert(editor.includes("canvasScenesHint: '保存视角并组织演示'"));
 assert(editor.includes("canvasTaskbookHint: '管理顶级任务与任务树'"));
 assert(editor.includes("importCanvasHint: '合并另一张画布的内容'"));
+assert(editor.includes("dualScreenHint: '打开只读参考画布'"));
 assert(editor.includes("nodeMatrixHint: '批量创建规则排列的节点'"));
 assert(editor.includes("canvasTimerHint: '添加独立计时器'"));
 assert(editor.includes("rulerHint: 'Align strokes and nodes'"));
 assert(editor.includes("canvasTaskbookHint: 'Manage top-level tasks and task trees'"));
+assert(editor.includes("dualScreenHint: 'Open a read-only reference canvas'"));
 assert(editor.includes("canvasTimerHint: 'Add an independent timer'"));
 assert(editor.includes("document.body.classList.add('editor-tools-open')"));
 assert(editor.includes("document.body.classList.remove('editor-tools-open')"));

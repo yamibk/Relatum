@@ -13,6 +13,11 @@
       } catch (e) {
         document.documentElement.dataset.uiLanguage = 'zh-CN';
       }
+      try {
+        if (new URLSearchParams(location.search).get('wallpaper') === '1') {
+          document.documentElement.dataset.countdownWallpaper = '1';
+        }
+      } catch (e) {}
     })();
   </script>
   <style>html { background: #0d100f; color-scheme: dark; }</style>
@@ -53,6 +58,10 @@
           <time data-countdown-date role="button" tabindex="0" title="双击快速修改日期"></time>
         </div>
         <div class="countdown-stage-actions">
+          <button type="button" class="countdown-wallpaper-button" data-countdown-wallpaper hidden aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <span data-countdown-wallpaper-label>设为桌面背景</span>
+          </button>
           <button type="button" class="countdown-focus-button" data-countdown-focus aria-pressed="false">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5"/></svg>
             <span data-countdown-focus-label>放大</span>
@@ -85,7 +94,11 @@
           <span data-copy="seconds">秒</span>
         </div>
       </div>
-      <footer><kbd>Esc</kbd><span data-copy="exitHint">返回日历</span></footer>
+      <footer>
+        <kbd>Esc</kbd><span data-copy="exitHint">返回日历</span>
+        <i aria-hidden="true"></i>
+        <kbd>F</kbd><span data-copy="focusHint">放大/取消放大</span>
+      </footer>
     </section>
 
     <section class="countdown-empty" data-countdown-empty hidden>

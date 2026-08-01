@@ -103,7 +103,7 @@ if (-not (Test-Path -LiteralPath $Python)) {
 
 if (-not $SkipInstall) {
     & $Python -m pip install --disable-pip-version-check --no-cache-dir --quiet `
-        'pywebview==6.2.1' 'pyinstaller==6.20.0' 'Pillow>=11.0,<13'
+        'pywebview==6.2.1' 'pyinstaller==6.20.0' 'pystray==0.19.5' 'Pillow>=11.0,<13'
     Assert-NativeSuccess 'Installing build dependencies'
 }
 
@@ -146,6 +146,7 @@ if (-not (Test-Path -LiteralPath $RuntimeConfig)) {
     --add-data ($PackAssets + ';assets') `
     --hidden-import webview.platforms.winforms `
     --hidden-import webview.platforms.edgechromium `
+    --hidden-import pystray._win32 `
     --specpath $BuildRoot `
     --workpath (Join-Path $BuildRoot 'work') `
     --distpath (Join-Path $BuildRoot 'dist') `

@@ -1297,9 +1297,11 @@
       root.dataset.tableBracket = bracket;
       root.classList.toggle('table-chrome-hidden', !!this.options.chromeHidden);
     }
-    root.tabIndex = 0;
-    root.addEventListener('keydown', this.onKeyDown.bind(this));
-    root.addEventListener('contextmenu', function (event) {
+    const readOnly = !!this.options.readOnly;
+    root.classList.toggle('readonly', readOnly);
+    root.tabIndex = readOnly ? -1 : 0;
+    if (!readOnly) root.addEventListener('keydown', this.onKeyDown.bind(this));
+    if (!readOnly) root.addEventListener('contextmenu', function (event) {
       if (!this.options.compact || this.editing || this.sourceMode) return;
       const cell = event.target.closest('[data-table-cell]');
       if (!cell || !root.contains(cell)) return;
@@ -1314,18 +1316,18 @@
       else root.focus({ preventScroll: true });
       this.openContextMenu(event.clientX, event.clientY);
     }.bind(this));
-    root.addEventListener('copy', function (event) {
+    if (!readOnly) root.addEventListener('copy', function (event) {
       if (this.editing || this.sourceMode || !event.clipboardData) return;
       event.preventDefault();
       event.clipboardData.setData('text/plain', this.selectionText());
     }.bind(this));
-    root.addEventListener('cut', function (event) {
+    if (!readOnly) root.addEventListener('cut', function (event) {
       if (this.editing || this.sourceMode || !event.clipboardData) return;
       event.preventDefault();
       event.clipboardData.setData('text/plain', this.selectionText());
       this.clearSelection();
     }.bind(this));
-    root.addEventListener('paste', function (event) {
+    if (!readOnly) root.addEventListener('paste', function (event) {
       if (this.editing || this.sourceMode || !event.clipboardData) return;
       const value = event.clipboardData.getData('text/plain');
       if (!value) return;
@@ -1354,7 +1356,7 @@
       title.addEventListener('mousedown', function (event) {
         if (!title.readOnly || event.detail > 1) event.stopPropagation();
       });
-      title.addEventListener('dblclick', function (event) {
+      if (!readOnly) title.addEventListener('dblclick', function (event) {
         event.preventDefault();
         event.stopPropagation();
         const selectionStart = title.selectionStart;
@@ -1402,7 +1404,7 @@
         event.stopPropagation();
         if (typeof this.options.onOpenStudio === 'function') this.options.onOpenStudio();
       }.bind(this));
-      head.appendChild(open);
+      if (!readOnly) head.appendChild(open);
       root.appendChild(head);
     } else {
       this.renderToolbar(root);
@@ -1491,19 +1493,19 @@
         display.innerHTML = renderInline(row[col] || '');
         td.appendChild(display);
         scheduleInlineMath(display, row[col] || '');
-        td.addEventListener('mousedown', function (event) {
+        if (!readOnly) td.addEventListener('mousedown', function (event) {
           if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
           this.select(rowIndex, col, event.shiftKey);
           dragController = this;
         }.bind(this));
-        td.addEventListener('mouseenter', function () {
+        if (!readOnly) td.addEventListener('mouseenter', function () {
           if (dragController !== this) return;
           this.selection = { r1: this.anchor.row, c1: this.anchor.col, r2: rowIndex, c2: col };
           this.markSelection();
         }.bind(this));
-        td.addEventListener('dblclick', function (event) {
+        if (!readOnly) td.addEventListener('dblclick', function (event) {
           event.preventDefault();
           event.stopPropagation();
           this.startCellEdit(rowIndex, col);
@@ -1512,7 +1514,7 @@
       }
       table.appendChild(tr);
     }, this);
-    this.renderDimensionHandles(scroll);
+    if (!readOnly) this.renderDimensionHandles(scroll);
     this.applyLayoutStyles();
 
     const addColumn = document.createElement('button');
@@ -1526,7 +1528,7 @@
       event.stopPropagation();
       this.addColumn(true);
     }.bind(this));
-    pane.appendChild(addColumn);
+    if (!readOnly) pane.appendChild(addColumn);
 
     const addRow = document.createElement('button');
     addRow.type = 'button';
@@ -1539,7 +1541,7 @@
       event.stopPropagation();
       this.addRow(false);
     }.bind(this));
-    pane.appendChild(addRow);
+    if (!readOnly) pane.appendChild(addRow);
     this.markSelection();
   };
 
