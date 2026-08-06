@@ -750,7 +750,30 @@
     '最近打卡': 'Recent check-ins',
     '未分组': 'Ungrouped',
     '今日目标': 'Daily goal',
+    '累计目标': 'Cumulative goal',
+    '累计打卡目标': 'Cumulative check-in goal',
+    '累计打卡目标天数': 'Cumulative check-in goal in days',
+    '高级设置': 'Advanced settings',
+    '设置累计小目标': 'Set cumulative milestones',
+    '请先设置累计目标': 'Set a cumulative goal first',
+    '请先移除小目标，再清除累计目标': 'Remove the milestones before clearing the cumulative goal',
+    '不能超过累计目标': ' cannot exceed the cumulative goal',
+    '小目标名称': 'Milestone name',
+    '累计天数': 'Cumulative days',
+    '删除这个小目标': 'Delete this milestone',
+    '添加小目标': 'Add milestone',
+    '已达到 6 个上限': 'Limit of 6 reached',
+    '关闭高级设置': 'Close advanced settings',
+    '确定': 'Done',
+    '已达成': 'Reached',
+    '未达成': 'Upcoming',
+    '请填写小目标名称': 'Enter a milestone name',
+    '小目标名称不能超过 40 个字符': 'Milestone names can contain at most 40 characters',
+    '小目标天数必须在 1 到累计目标之间': 'Milestone days must be between 1 and the cumulative goal',
+    '同一天只能设置一个小目标': 'Only one milestone can be set on the same day',
+    '把累计目标拆成最多 6 个有名字的小目标。达成状态会根据累计打卡天数自动点亮。': 'Split the cumulative goal into up to 6 named milestones. Each milestone lights up automatically when its day is reached.',
     '分钟 · 可选': 'Minutes · optional',
+    '天 · 可选': 'Days · optional',
     '每日任务名称': 'Daily task name',
     '关闭每日任务详情': 'Close daily task details',
     '今天还没开始': 'Not started today',
@@ -1024,6 +1047,10 @@
     if (match) return `${match[1]} min total`;
     match = source.match(/^今天\s*(\d+)\s*分$/);
     if (match) return `${match[1]} min today`;
+    match = source.match(/^累计\s*(\d+)\s*\/\s*(\d+)\s*天\s*·\s*已达成$/);
+    if (match) return `${match[1]} / ${match[2]} days total · goal met`;
+    match = source.match(/^累计\s*(\d+)\s*\/\s*(\d+)\s*天$/);
+    if (match) return `${match[1]} / ${match[2]} days total`;
     match = source.match(/^(\d+)\s*件全部完成\s*·\s*专注\s*(\d+)\s*分钟\s*·\s*明天见$/);
     if (match) return `${match[1]} all complete · ${match[2]} min focused · See you tomorrow`;
     match = source.match(/^(\d+)\s*件全部完成\s*·\s*明天见$/);

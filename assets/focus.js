@@ -115,6 +115,11 @@
   let dailyLoaded = false;
   let dailyOpen = false;
   let dailyEditId = '';
+  let dailyEditMilestones = null;
+  let dailyMilestoneDialog = null;
+  let dailyMilestoneDialogDraft = [];
+  let dailyMilestoneReturnEl = null;
+  let dailyMilestoneTipSeq = 0;
   let dailyConfirmDeleteId = '';  // 删除二次确认：编辑器内就地变「确认删除？」，不弹原生 confirm
   let dailyGroupEditId = '';      // 正在展开菜单/改名的分组 id
   let dailyGroupConfirmDeleteId = '';
@@ -1710,6 +1715,144 @@
     if (!(Number(task.targetMinutes) > 0) && today > 0) parts.push(T('今天 ' + today + ' 分'));
     return parts.length ? parts.join(' · ') : T('今天还没开始');
   }
+  function dailyGoalState(task) {
+    const target = Math.max(0, Math.min(3660, Number(task && task.targetDays) || 0));
+    const total = Math.max(0, Number(task && task.totalDays) || 0);
+    return {
+      target: target,
+      total: total,
+      progress: target > 0 ? Math.max(0, Math.min(1, total / target)) : 0,
+      reached: target > 0 && total >= target,
+    };
+  }
+  function dailyGoalProgressText(task) {
+    const goal = dailyGoalState(task);
+    if (!goal.target) return '';
+    return T('累计 ' + goal.total + ' / ' + goal.target + ' 天' + (goal.reached ? ' · 已达成' : ''));
+  }
+  function dailyMilestoneList(task) {
+    const goal = dailyGoalState(task);
+    const seen = new Set();
+    return (Array.isArray(task && task.milestones) ? task.milestones : [])
+      .filter((item) => {
+        const days = Number(item && item.days);
+        const name = typeof (item && item.name) === 'string' ? item.name.trim() : '';
+        if (!name || !Number.isInteger(days) || days < 1 || days > goal.target || seen.has(days)) return false;
+        seen.add(days);
+        return true;
+      })
+      .slice(0, 6)
+      .map((item, index) => ({
+        id: String(item.id || ('dm_' + item.days + '_' + index)),
+        name: item.name.trim(),
+        days: Number(item.days),
+      }))
+      .sort((a, b) => a.days - b.days);
+  }
+  function dailyMilestoneText(milestone, reached) {
+    return milestone.name + ' · ' + T('累计目标') + ' ' + milestone.days + T('天')
+      + ' · ' + T(reached ? '已达成' : '未达成');
+  }
+  function dailyMilestoneLanes(milestones, target) {
+    const lanes = [[], [], []];
+    return milestones.map((milestone) => {
+      const position = target > 0 ? Math.max(0, Math.min(100, milestone.days / target * 100)) : 0;
+      let lane = lanes.findIndex((positions) => positions.every((value) => Math.abs(value - position) >= 4.5));
+      if (lane < 0) lane = lanes.reduce((best, positions, index) => positions.length < lanes[best].length ? index : best, 0);
+      lanes[lane].push(position);
+      return { milestone: milestone, position: position, lane: [0, -1, 1][lane] };
+    });
+  }
+  function syncDailyMilestones(shell, task, options) {
+    const layer = shell && shell.querySelector('[data-role="daily-goal-milestones"]');
+    if (!layer) return;
+    const opts = options || {};
+    const goal = dailyGoalState(task);
+    const crossed = new Set(Array.isArray(opts.milestoneIds) ? opts.milestoneIds : []);
+    const layout = dailyMilestoneLanes(dailyMilestoneList(task), goal.target);
+    const keep = new Set(layout.map((entry) => entry.milestone.id));
+    layer.querySelectorAll('.focus-daily-milestone').forEach((marker) => {
+      if (keep.has(marker.dataset.milestoneId)) return;
+      if (prefersReduced) marker.remove();
+      else {
+        marker.classList.add('is-leaving');
+        window.setTimeout(() => marker.remove(), 220);
+      }
+    });
+    layout.forEach((entry) => {
+      const milestone = entry.milestone;
+      const reached = goal.total >= milestone.days;
+      let marker = Array.prototype.find.call(layer.children, (item) => item.dataset.milestoneId === milestone.id);
+      if (!marker) {
+        marker = document.createElement('span');
+        marker.className = 'focus-daily-milestone is-entering';
+        marker.dataset.milestoneId = milestone.id;
+        marker.tabIndex = 0;
+        marker.setAttribute('role', 'img');
+        const stamp = document.createElement('span');
+        stamp.className = 'focus-daily-milestone-stamp';
+        stamp.setAttribute('aria-hidden', 'true');
+        const tip = document.createElement('span');
+        tip.className = 'focus-daily-milestone-tip';
+        tip.setAttribute('role', 'tooltip');
+        dailyMilestoneTipSeq += 1;
+        tip.id = 'daily-milestone-tip-' + dailyMilestoneTipSeq;
+        marker.setAttribute('aria-describedby', tip.id);
+        marker.append(stamp, tip);
+        layer.appendChild(marker);
+        if (!prefersReduced) window.setTimeout(() => marker.classList.remove('is-entering'), 260);
+        else marker.classList.remove('is-entering');
+      }
+      const text = dailyMilestoneText(milestone, reached);
+      marker.style.setProperty('--milestone-position', entry.position.toFixed(3) + '%');
+      marker.style.setProperty('--milestone-lane', String(entry.lane));
+      marker.classList.toggle('is-edge-start', entry.position < 12);
+      marker.classList.toggle('is-edge-end', entry.position > 88);
+      marker.classList.toggle('is-reached', reached);
+      marker.setAttribute('aria-label', text);
+      marker.querySelector('.focus-daily-milestone-tip').textContent = text;
+      if (crossed.has(milestone.id) && !prefersReduced) replayClass(marker, 'is-just-reached');
+    });
+  }
+  function syncDailyGoalProgress(shell, task, options) {
+    if (!shell) return;
+    const opts = options || {};
+    const goal = dailyGoalState(task);
+    const text = dailyGoalProgressText(task);
+    const bar = shell.querySelector('[data-role="daily-goal-track"]');
+    const fill = shell.querySelector('[data-role="daily-goal-fill"]');
+    if (!bar) return;
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', String(goal.target));
+    bar.setAttribute('aria-valuenow', String(Math.min(goal.total, goal.target)));
+    bar.setAttribute('aria-valuetext', text);
+    bar.setAttribute('data-ui-tooltip', text);
+    bar.classList.toggle('is-full', goal.reached);
+    if (fill) fill.style.width = (goal.progress * 100).toFixed(2) + '%';
+    if (opts.glow && !prefersReduced) {
+      replayClass(bar, opts.reached ? 'is-goal-reached' : 'is-advancing');
+    }
+    syncDailyMilestones(shell, task, opts);
+  }
+  function buildDailyGoalProgress(task, className) {
+    const shell = document.createElement('div');
+    shell.className = 'focus-daily-goal-shell';
+    const bar = document.createElement('div');
+    bar.className = (className || 'focus-daily-goal') + ' focus-daily-goal-track';
+    bar.dataset.role = 'daily-goal-track';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-label', T('累计打卡目标'));
+    const fill = document.createElement('span');
+    fill.className = 'focus-daily-goal-fill';
+    fill.dataset.role = 'daily-goal-fill';
+    bar.appendChild(fill);
+    const markers = document.createElement('div');
+    markers.className = 'focus-daily-milestones';
+    markers.dataset.role = 'daily-goal-milestones';
+    shell.append(bar, markers);
+    syncDailyGoalProgress(shell, task);
+    return shell;
+  }
   function dailyDoneDateSet(task) {
     return new Set(Array.isArray(task && task.doneDates) ? task.doneDates : []);
   }
@@ -2028,6 +2171,7 @@
     const todayMinutes = Number(task.todayMinutes) || 0;
     const target = Number(task.targetMinutes) || 0;
     const totalMinutes = Number(task.totalMinutes) || 0;
+    const dayGoal = dailyGoalState(task);
     const recorded = doneDates.size;
     const group = task.groupId ? dailyGroupById(task.groupId) : null;
     const groupLabel = group ? dailyGroupPathLabel(group) : T('未分组');
@@ -2161,6 +2305,17 @@
 
     const side = document.createElement('aside');
     side.className = 'focus-daily-detail-side';
+    if (dayGoal.target > 0) {
+      const goalBlock = dailyDetailBlock(T('累计目标'));
+      const goalText = document.createElement('p');
+      goalText.className = 'focus-daily-detail-progress-text';
+      goalText.dataset.role = 'daily-detail-goal-text';
+      goalText.textContent = dailyGoalProgressText(task);
+      goalBlock.appendChild(goalText);
+      const goalBar = buildDailyGoalProgress(task, 'focus-daily-detail-progress is-cumulative');
+      goalBlock.appendChild(goalBar);
+      side.appendChild(goalBlock);
+    }
     const progressBlock = dailyDetailBlock('今日进度');
     const progressText = document.createElement('p');
     progressText.className = 'focus-daily-detail-progress-text';
@@ -2248,22 +2403,7 @@
     stat.textContent = dailyStatText(task);
     main.appendChild(stat);
 
-    const target = Number(task.targetMinutes) || 0;
-    if (target > 0) {
-      const today = Number(task.todayMinutes) || 0;
-      const lab = document.createElement('div');
-      lab.className = 'focus-daily-bar-label';
-      lab.textContent = '今天 ' + today + ' / ' + target + ' 分' + (today >= target ? ' · 达标 ✦' : '');
-      main.appendChild(lab);
-      const bar = document.createElement('div');
-      bar.className = 'focus-daily-bar';
-      const fill = document.createElement('span');
-      const pct = Math.max(0, Math.min(1, today / target));
-      fill.style.width = (pct * 100).toFixed(0) + '%';
-      if (pct >= 1) fill.classList.add('is-full');
-      bar.appendChild(fill);
-      main.appendChild(bar);
-    }
+    if (dailyGoalState(task).target > 0) main.appendChild(buildDailyGoalProgress(task));
 
     if (dailyEditId === task.id) main.appendChild(buildDailyEditor(task));
     row.appendChild(main);
@@ -2332,6 +2472,41 @@
     targetIn.placeholder = '分钟 · 可选';
     targetIn.value = Number(task.targetMinutes) > 0 ? String(task.targetMinutes) : '';
     targetWrap.append(tspan, targetIn);
+    const goalWrap = document.createElement('div');
+    goalWrap.className = 'focus-daily-edit-target';
+    const goalField = document.createElement('label');
+    goalField.className = 'focus-daily-edit-target-field';
+    const goalSpan = document.createElement('span');
+    goalSpan.textContent = T('累计目标');
+    const goalIn = document.createElement('input');
+    goalIn.type = 'number';
+    goalIn.min = '0';
+    goalIn.max = '3660';
+    goalIn.step = '1';
+    goalIn.className = 'focus-daily-edit-days';
+    goalIn.dataset.role = 'daily-edit-days';
+    goalIn.placeholder = T('天 · 可选');
+    goalIn.setAttribute('aria-label', T('累计打卡目标天数'));
+    goalIn.value = Number(task.targetDays) > 0 ? String(task.targetDays) : '';
+    const advanced = document.createElement('button');
+    advanced.type = 'button';
+    advanced.className = 'focus-daily-edit-advanced';
+    advanced.dataset.role = 'daily-edit-advanced';
+    advanced.textContent = T('高级设置');
+    advanced.setAttribute('aria-haspopup', 'dialog');
+    const updateAdvanced = () => {
+      const value = Number(goalIn.value);
+      const enabled = Number.isInteger(value) && value > 0 && value <= 3660;
+      advanced.disabled = !enabled;
+      advanced.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      advanced.setAttribute('data-ui-tooltip', enabled ? T('设置累计小目标') : T('请先设置累计目标'));
+      const count = Array.isArray(dailyEditMilestones) ? dailyEditMilestones.length : 0;
+      advanced.textContent = T('高级设置') + (count ? ' · ' + count + '/6' : '');
+    };
+    goalIn.addEventListener('input', updateAdvanced);
+    goalField.append(goalSpan, goalIn);
+    goalWrap.append(goalField, advanced);
+    updateAdvanced();
     const actions = document.createElement('div');
     actions.className = 'focus-daily-edit-actions';
     const del = document.createElement('button');
@@ -2346,9 +2521,214 @@
     save.textContent = '完成';
     actions.append(del, save);
     const groupRow = buildDailyGroupSelect(task);
-    if (groupRow) box.append(nameIn, targetWrap, groupRow, actions);
-    else box.append(nameIn, targetWrap, actions);
+    if (groupRow) box.append(nameIn, targetWrap, goalWrap, groupRow, actions);
+    else box.append(nameIn, targetWrap, goalWrap, actions);
     return box;
+  }
+  function cloneDailyMilestones(items) {
+    return (Array.isArray(items) ? items : []).slice(0, 6).map((item, index) => ({
+      id: String(item && item.id || ('dm_draft_' + Date.now().toString(36) + '_' + index)),
+      name: String(item && item.name || ''),
+      days: Number(item && item.days) || 0,
+    }));
+  }
+  function dailyMilestoneDraftId() {
+    return 'dm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+  }
+  function dailyEditTargetDays(id) {
+    const row = dailyListEl && dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"]');
+    const input = row && row.querySelector('[data-role="daily-edit-days"]');
+    const value = Number(input && input.value);
+    return Number.isInteger(value) && value > 0 && value <= 3660 ? value : 0;
+  }
+  function setDailyMilestoneDialogError(message) {
+    if (!dailyMilestoneDialog) return;
+    const error = dailyMilestoneDialog.querySelector('[data-role="daily-milestone-error"]');
+    if (error) error.textContent = message || '';
+  }
+  function updateDailyMilestoneAddState() {
+    if (!dailyMilestoneDialog) return;
+    const count = dailyMilestoneDialog.querySelectorAll('.focus-daily-milestone-row:not(.is-leaving)').length;
+    const add = dailyMilestoneDialog.querySelector('[data-action="daily-milestone-add"]');
+    if (add) {
+      add.disabled = count >= 6;
+      add.textContent = count >= 6 ? T('已达到 6 个上限') : T('添加小目标') + ' · ' + count + '/6';
+    }
+  }
+  function appendDailyMilestoneDraftRow(item, animate) {
+    if (!dailyMilestoneDialog) return null;
+    const list = dailyMilestoneDialog.querySelector('[data-role="daily-milestone-list"]');
+    if (!list) return null;
+    const row = document.createElement('div');
+    row.className = 'focus-daily-milestone-row' + (animate && !prefersReduced ? ' is-entering' : '');
+    row.dataset.milestoneId = item.id || dailyMilestoneDraftId();
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.maxLength = 40;
+    name.className = 'focus-daily-milestone-name';
+    name.dataset.role = 'daily-milestone-name';
+    name.placeholder = T('小目标名称');
+    name.setAttribute('aria-label', T('小目标名称'));
+    name.value = item.name || '';
+    const daysWrap = document.createElement('label');
+    daysWrap.className = 'focus-daily-milestone-days-wrap';
+    const days = document.createElement('input');
+    days.type = 'number';
+    days.min = '1';
+    days.max = String(dailyEditTargetDays(dailyEditId) || 3660);
+    days.step = '1';
+    days.className = 'focus-daily-milestone-days';
+    days.dataset.role = 'daily-milestone-days';
+    days.setAttribute('aria-label', T('累计天数'));
+    days.value = Number(item.days) > 0 ? String(item.days) : '';
+    const unit = document.createElement('span');
+    unit.textContent = T('天');
+    daysWrap.append(days, unit);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'focus-daily-milestone-remove';
+    remove.dataset.action = 'daily-milestone-remove';
+    remove.setAttribute('aria-label', T('删除这个小目标'));
+    remove.textContent = '×';
+    row.append(name, daysWrap, remove);
+    list.appendChild(row);
+    if (row.classList.contains('is-entering')) window.setTimeout(() => row.classList.remove('is-entering'), 260);
+    updateDailyMilestoneAddState();
+    return row;
+  }
+  function readDailyMilestoneDialog() {
+    const targetDays = dailyEditTargetDays(dailyEditId);
+    if (!targetDays) return { error: T('请先设置累计目标') };
+    const rows = Array.from(dailyMilestoneDialog.querySelectorAll('.focus-daily-milestone-row:not(.is-leaving)'));
+    const result = [];
+    const seenDays = new Set();
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const nameInput = row.querySelector('[data-role="daily-milestone-name"]');
+      const daysInput = row.querySelector('[data-role="daily-milestone-days"]');
+      const name = String(nameInput && nameInput.value || '').trim();
+      const rawDays = String(daysInput && daysInput.value || '').trim();
+      const days = /^\d+$/.test(rawDays) ? Number(rawDays) : 0;
+      row.classList.remove('has-error');
+      if (!name) {
+        row.classList.add('has-error');
+        if (nameInput) nameInput.focus();
+        return { error: T('请填写小目标名称') };
+      }
+      if (name.length > 40) {
+        row.classList.add('has-error');
+        if (nameInput) nameInput.focus();
+        return { error: T('小目标名称不能超过 40 个字符') };
+      }
+      if (!days || days > targetDays) {
+        row.classList.add('has-error');
+        if (daysInput) daysInput.focus();
+        return { error: T('小目标天数必须在 1 到累计目标之间') };
+      }
+      if (seenDays.has(days)) {
+        row.classList.add('has-error');
+        if (daysInput) daysInput.focus();
+        return { error: T('同一天只能设置一个小目标') };
+      }
+      seenDays.add(days);
+      result.push({ id: row.dataset.milestoneId || dailyMilestoneDraftId(), name: name, days: days });
+    }
+    result.sort((a, b) => a.days - b.days);
+    return { milestones: result };
+  }
+  function openDailyMilestoneDialog(id, returnElement) {
+    const targetDays = dailyEditTargetDays(id);
+    if (!targetDays) { toast(T('请先设置累计目标')); return; }
+    if (dailyMilestoneDialog) closeDailyMilestoneDialog(false, true);
+    dailyMilestoneDialogDraft = cloneDailyMilestones(dailyEditMilestones);
+    dailyMilestoneReturnEl = returnElement || null;
+    const shell = document.createElement('div');
+    shell.className = 'focus-daily-milestone-shell';
+    shell.dataset.role = 'daily-milestone-dialog';
+    const dialog = document.createElement('section');
+    dialog.className = 'focus-daily-milestone-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'focus-daily-milestone-title');
+    const head = document.createElement('header');
+    const heading = document.createElement('div');
+    const eyebrow = document.createElement('span');
+    eyebrow.textContent = T('累计目标') + ' · ' + targetDays + T('天');
+    const title = document.createElement('h2');
+    title.id = 'focus-daily-milestone-title';
+    title.textContent = T('高级设置');
+    heading.append(eyebrow, title);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.dataset.action = 'daily-milestone-cancel';
+    close.setAttribute('aria-label', T('关闭高级设置'));
+    close.textContent = '×';
+    head.append(heading, close);
+    const intro = document.createElement('p');
+    intro.className = 'focus-daily-milestone-intro';
+    intro.textContent = T('把累计目标拆成最多 6 个有名字的小目标。达成状态会根据累计打卡天数自动点亮。');
+    const list = document.createElement('div');
+    list.className = 'focus-daily-milestone-list';
+    list.dataset.role = 'daily-milestone-list';
+    const error = document.createElement('p');
+    error.className = 'focus-daily-milestone-error';
+    error.dataset.role = 'daily-milestone-error';
+    error.setAttribute('aria-live', 'polite');
+    const footer = document.createElement('footer');
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'focus-daily-milestone-add';
+    add.dataset.action = 'daily-milestone-add';
+    const footerActions = document.createElement('div');
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'focus-daily-milestone-cancel';
+    cancel.dataset.action = 'daily-milestone-cancel';
+    cancel.textContent = T('取消');
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'focus-daily-milestone-confirm';
+    confirm.dataset.action = 'daily-milestone-confirm';
+    confirm.textContent = T('确定');
+    footerActions.append(cancel, confirm);
+    footer.append(add, footerActions);
+    dialog.append(head, intro, list, error, footer);
+    shell.appendChild(dialog);
+    root.appendChild(shell);
+    dailyMilestoneDialog = shell;
+    dailyMilestoneDialogDraft.forEach((item) => appendDailyMilestoneDraftRow(item, false));
+    updateDailyMilestoneAddState();
+    requestAnimationFrame(() => shell.classList.add('is-open'));
+    const first = shell.querySelector('input, [data-action="daily-milestone-add"]');
+    if (first) first.focus();
+  }
+  function closeDailyMilestoneDialog(apply, instant) {
+    const shell = dailyMilestoneDialog;
+    if (!shell) return;
+    if (apply) {
+      const result = readDailyMilestoneDialog();
+      if (result.error) { setDailyMilestoneDialogError(result.error); return; }
+      dailyEditMilestones = result.milestones;
+    }
+    const returnEl = dailyMilestoneReturnEl;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (shell.isConnected) shell.remove();
+      if (dailyMilestoneDialog === shell) dailyMilestoneDialog = null;
+      dailyMilestoneDialogDraft = [];
+      dailyMilestoneReturnEl = null;
+      const row = dailyListEl && dailyListEl.querySelector('.focus-daily-row[data-id="' + dailyEditId + '"]');
+      const button = row && row.querySelector('[data-role="daily-edit-advanced"]');
+      if (button) button.textContent = T('高级设置') + (dailyEditMilestones && dailyEditMilestones.length ? ' · ' + dailyEditMilestones.length + '/6' : '');
+      if (!instant && returnEl && returnEl.isConnected) returnEl.focus();
+    };
+    if (instant || prefersReduced) { finish(); return; }
+    shell.classList.remove('is-open');
+    shell.classList.add('is-closing');
+    shell.addEventListener('animationend', finish, { once: true });
+    window.setTimeout(finish, 260);
   }
   function updateDailyFoot() {
     if (!dailyFootEl) return;
@@ -2363,7 +2743,7 @@
     if (!dailyFootEl || prefersReduced) return;
     replayClass(dailyFootEl, 'is-updating');
   }
-  function startDailyClear() {
+  function startDailyClear(settleDelay) {
     clearTimeout(dailyClearTimer);
     dailyClearing = true;
     if (dailyRoot) dailyRoot.classList.add('is-completing');
@@ -2381,7 +2761,7 @@
       const reveal = () => { if (!fired) { fired = true; dailyClearing = false; showDailyCelebrate(true); } };
       if (last && !prefersReduced) last.addEventListener('animationend', reveal, { once: true });
       dailyClearTimer = setTimeout(reveal, items.length * 76 + 460);
-    }, 240);
+    }, Math.max(0, Number(settleDelay) || 240));
   }
   function showDailyCelebrate(animate) {
     if (!dailyCelebrateEl) return;
@@ -2732,10 +3112,16 @@
     endDailyPointerDrag(event, false);
   }
   function onDailyPointerDown(event) {
+    const milestone = event.target.closest('.focus-daily-milestone');
+    if (milestone) {
+      event.stopPropagation();
+      if (event.pointerType === 'mouse') event.preventDefault();
+      return;
+    }
     if (event.button !== 0 || dailyEditId || dailyGroupEditId || dailyConfirmDeleteId
         || dailyGroupConfirmDeleteId || dailyClearing || dailyDrag) return;
     // 这些控件是纯点击，不从它们起拖（勾选 / 编辑器内部 / 折叠箭头 / ⋯菜单）
-    if (event.target.closest('[data-role="daily-check"], [data-role="daily-history"], [data-role="daily-menu"], .focus-daily-edit, [data-role="daily-group-toggle"], [data-role="daily-group-menu"]')) return;
+    if (event.target.closest('[data-role="daily-check"], [data-role="daily-history"], [data-role="daily-menu"], .focus-daily-edit, .focus-daily-milestone, [data-role="daily-group-toggle"], [data-role="daily-group-menu"]')) return;
     const taskRow = event.target.closest('.focus-daily-row');
     const groupRow = taskRow ? null : event.target.closest('.focus-daily-group');
     const el = taskRow || groupRow;
@@ -2776,7 +3162,9 @@
     dailyHintTimers.set(row, window.setTimeout(() => row.classList.remove('is-hint'), 640));
   }
   function openDailyEdit(id) {
+    const task = dailyTasks.find((item) => item.id === id);
     dailyEditId = id;
+    dailyEditMilestones = cloneDailyMilestones(task && task.milestones);
     dailyConfirmDeleteId = '';
     rebuildDailyRows({ flip: true });
     const input = dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"] .focus-daily-edit-name');
@@ -2784,6 +3172,7 @@
   }
   function closeDailyEdit() {
     if (!dailyEditId) return;
+    if (dailyMilestoneDialog) closeDailyMilestoneDialog(false, true);
     const id = dailyEditId;
     const edit = dailyListEl
       ? dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"] .focus-daily-edit')
@@ -2791,6 +3180,7 @@
     const finish = () => {
       if (dailyEditId !== id) return;
       dailyEditId = '';
+      dailyEditMilestones = null;
       dailyConfirmDeleteId = '';
       rebuildDailyRows({ flip: true });
     };
@@ -2811,18 +3201,42 @@
     if (!row) { dailyEditId = ''; return; }
     const nameIn = row.querySelector('.focus-daily-edit-name');
     const targetIn = row.querySelector('.focus-daily-edit-min');
+    const goalIn = row.querySelector('.focus-daily-edit-days');
     const name = (nameIn ? nameIn.value : '').trim();
     if (!name) { if (nameIn) nameIn.focus(); toast('名称不能为空'); return; }
     const target = Math.max(0, Math.min(600, parseInt(targetIn ? targetIn.value : '0', 10) || 0));
+    const targetDays = Math.max(0, Math.min(3660, parseInt(goalIn ? goalIn.value : '0', 10) || 0));
+    const milestones = cloneDailyMilestones(dailyEditMilestones);
+    if (milestones.length && !targetDays) {
+      if (goalIn) goalIn.focus();
+      toast(T('请先移除小目标，再清除累计目标'));
+      return;
+    }
+    const over = milestones.find((item) => item.days > targetDays);
+    if (over) {
+      if (goalIn) goalIn.focus();
+      toast('「' + over.name + '」' + T('不能超过累计目标'));
+      return;
+    }
     const groupSel = row.querySelector('[data-role="daily-edit-group"]');
-    const body = { id: id, name: name, targetMinutes: target };
+    const body = { id: id, name: name, targetMinutes: target, targetDays: targetDays, milestones: milestones };
     if (groupSel) body.groupId = groupSel.value || '';
-    dailyEditId = '';
-    dailyConfirmDeleteId = '';
-    rebuildDailyRows({ flip: true });
+    const edit = row.querySelector('.focus-daily-edit');
+    if (edit && edit.classList.contains('is-saving')) return;
+    if (edit) edit.classList.add('is-saving');
     post('/api/daily-update', body)
-      .then((json) => { applyDailyPayload(json); renderDaily(); renderTaskOptions(); })
-      .catch((error) => toast(error.message));
+      .then((json) => {
+        dailyEditId = '';
+        dailyEditMilestones = null;
+        dailyConfirmDeleteId = '';
+        applyDailyPayload(json);
+        renderDaily();
+        renderTaskOptions();
+      })
+      .catch((error) => {
+        if (edit) edit.classList.remove('is-saving');
+        toast(error.message);
+      });
   }
   function requestDeleteDaily(id) {
     // 二次确认：把编辑器就地切到「确认删除？」，不弹原生 confirm
@@ -2834,8 +3248,10 @@
     rebuildDailyRows({ flip: true });
   }
   function performDeleteDaily(id) {
+    if (dailyMilestoneDialog) closeDailyMilestoneDialog(false, true);
     dailyConfirmDeleteId = '';
     dailyEditId = '';
+    dailyEditMilestones = null;
     rebuildDailyRows({ flip: true });   // 先收起确认编辑器，行回到常态，再滑出收拢
     const send = () => post('/api/daily-delete', { id: id })
       .then((json) => { applyDailyPayload(json); renderDaily(); renderTaskOptions(); toast('已删除'); })
@@ -3077,13 +3493,14 @@
   }
   // 勾选只切换该行的完成态（不整列重建），对勾弹入与删除线生长才有过渡；
   // 统计数字等服务端真值回来后就地补，不打断动画。全部完成的清场/庆祝照旧判定。
-  function dailyCelebrationCheck() {
+  function dailyCelebrationCheck(options) {
+    const opts = options || {};
     const allDone = allDailyDone();
     if (!allDone) dailyPeek = false;
     const became = allDone && !dailyWasAllDone;
     dailyWasAllDone = allDone;
     if (allDone && !dailyPeek) {
-      if (became && !prefersReduced) startDailyClear();
+      if (became && !prefersReduced) startDailyClear(opts.waitForMilestone ? 1420 : (opts.waitForGoal ? 860 : 240));
       else showDailyCelebrate(false);
     } else {
       hideDailyCelebrate();
@@ -3093,27 +3510,35 @@
     if (!row) return;
     row.classList.toggle('is-done', done);
     const check = row.querySelector('.focus-daily-check');
-    if (check) check.setAttribute('aria-pressed', done ? 'true' : 'false');
+    if (check) {
+      const task = dailyTasks.find((item) => item.id === row.dataset.id);
+      check.setAttribute('aria-pressed', done ? 'true' : 'false');
+      check.setAttribute('aria-label', (done ? '取消完成 · ' : '标记完成 · ') + (task && task.name || '每日任务'));
+    }
     if (!prefersReduced) {
       replayClass(row, done ? 'is-complete-pop' : 'is-reopen-pop');
       const stat = row.querySelector('.focus-daily-stat');
       replayClass(stat, 'is-updating');
     }
   }
-  function refreshDailyRowStats(task) {
+  function refreshDailyRowStats(task, options) {
     const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + task.id + '"]');
     if (!row) return;
     const stat = row.querySelector('.focus-daily-stat');
     if (stat) stat.textContent = dailyStatText(task);
-    const target = Number(task.targetMinutes) || 0;
-    const fill = row.querySelector('.focus-daily-bar span');
-    const label = row.querySelector('.focus-daily-bar-label');
-    if (target > 0 && fill) {
-      const today = Number(task.todayMinutes) || 0;
-      const pct = Math.max(0, Math.min(1, today / target));
-      fill.style.width = (pct * 100).toFixed(0) + '%';
-      fill.classList.toggle('is-full', pct >= 1);
-      if (label) label.textContent = '今天 ' + today + ' / ' + target + ' 分' + (today >= target ? ' · 达标 ✦' : '');
+    syncDailyGoalProgress(row.querySelector('.focus-daily-goal-shell'), task, options);
+  }
+  function refreshDailyDetailGoal(task, options) {
+    if (!task || dailyDetailTaskId !== task.id) return;
+    const shell = root.querySelector('[data-role="daily-detail"]');
+    if (!shell) return;
+    const text = shell.querySelector('[data-role="daily-detail-goal-text"]');
+    if (text) text.textContent = dailyGoalProgressText(task);
+    syncDailyGoalProgress(shell.querySelector('.focus-daily-goal-shell'), task, options);
+    const toggle = shell.querySelector('[data-action="daily-detail-toggle"]');
+    if (toggle) {
+      toggle.setAttribute('aria-pressed', task.doneToday ? 'true' : 'false');
+      toggle.textContent = task.doneToday ? T('取消今日打卡') : T('今日打卡');
     }
   }
   // 三期：把刚因这次勾选而「整组完成」的最高祖先组自动收起。延迟到对勾/删除线动画走完；
@@ -3146,19 +3571,32 @@
     const task = dailyTasks.find((item) => item.id === id);
     if (!task) return;
     const want = !task.doneToday;
+    const prevTotalDays = Math.max(0, Number(task.totalDays) || 0);
+    const targetDays = dailyGoalState(task).target;
     task.doneToday = want;
     const today = todayStr();
     const prevDates = Array.isArray(task.doneDates) ? task.doneDates.slice() : [];
     const nextDates = prevDates.slice();
     if (want && nextDates.indexOf(today) < 0) nextDates.push(today);
     task.doneDates = want ? nextDates.sort() : nextDates.filter((day) => day !== today);
+    task.totalDays = want ? prevTotalDays + 1 : Math.max(0, prevTotalDays - 1);
+    const reachedNow = want && targetDays > 0 && prevTotalDays < targetDays && task.totalDays >= targetDays;
+    const crossedMilestones = want ? dailyMilestoneList(task)
+      .filter((milestone) => prevTotalDays < milestone.days && task.totalDays >= milestone.days)
+      .map((milestone) => milestone.id) : [];
     const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"]');
     setRowDone(row, want);
+    const goalMotion = { glow: want && targetDays > 0, reached: reachedNow, milestoneIds: crossedMilestones };
+    refreshDailyRowStats(task, goalMotion);
+    refreshDailyDetailGoal(task, goalMotion);
     refreshDailyGroupProgress(task.groupId);
     updateDailyFoot();
     pulseDailyFoot();
     renderDailyHistory();
-    dailyCelebrationCheck();
+    dailyCelebrationCheck({
+      waitForGoal: want && targetDays > 0,
+      waitForMilestone: want && crossedMilestones.length > 0,
+    });
     maybeAutoCollapseCompletedGroup(id);
     post('/api/daily-toggle', { id: id, done: want })
       .then((json) => {
@@ -3166,6 +3604,7 @@
         const fresh = dailyTasks.find((item) => item.id === id);
         if (fresh) {
           if (!dailyClearing) refreshDailyRowStats(fresh);
+          refreshDailyDetailGoal(fresh);
           refreshDailyGroupProgress(fresh.groupId);
         }
         renderDailyHistory();
@@ -3174,7 +3613,10 @@
       .catch((error) => {
         task.doneToday = !want;
         task.doneDates = prevDates;
+        task.totalDays = prevTotalDays;
         setRowDone(row, !want);
+        refreshDailyRowStats(task);
+        refreshDailyDetailGoal(task);
         refreshDailyGroupProgress(task.groupId);
         updateDailyFoot();
         pulseDailyFoot();
@@ -3392,7 +3834,29 @@
     savePreferences();
     if (noisePlaying) rampNoise(noiseTarget());
   });
+  root.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest('.focus-daily-milestone')) return;
+    event.stopPropagation();
+    if (event.pointerType === 'mouse') event.preventDefault();
+  });
   root.addEventListener('click', (event) => {
+    const marker = event.target.closest('.focus-daily-milestone');
+    if (marker) {
+      event.preventDefault();
+      event.stopPropagation();
+      const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (coarse) {
+        root.querySelectorAll('.focus-daily-milestone.is-tip-pinned').forEach((item) => {
+          if (item !== marker) item.classList.remove('is-tip-pinned');
+        });
+        marker.classList.toggle('is-tip-pinned');
+      }
+      return;
+    }
+    if (dailyMilestoneDialog && event.target === dailyMilestoneDialog) {
+      closeDailyMilestoneDialog(false);
+      return;
+    }
     const detailShell = event.target.closest('[data-role="daily-detail"]');
     if (detailShell && event.target === detailShell) {
       closeDailyDetail();
@@ -3400,6 +3864,30 @@
     }
     const action = event.target.closest('[data-action]');
     if (!action) return;
+    if (action.dataset.action === 'daily-milestone-add') {
+      if (!action.disabled) {
+        const row = appendDailyMilestoneDraftRow({ id: dailyMilestoneDraftId(), name: '', days: 0 }, true);
+        const input = row && row.querySelector('[data-role="daily-milestone-name"]');
+        if (input) input.focus();
+        setDailyMilestoneDialogError('');
+      }
+      return;
+    }
+    if (action.dataset.action === 'daily-milestone-remove') {
+      const row = action.closest('.focus-daily-milestone-row');
+      if (!row) return;
+      const finish = () => { if (row.isConnected) row.remove(); updateDailyMilestoneAddState(); };
+      if (prefersReduced) finish();
+      else {
+        row.classList.add('is-leaving');
+        row.addEventListener('animationend', finish, { once: true });
+        window.setTimeout(finish, 220);
+      }
+      setDailyMilestoneDialogError('');
+      return;
+    }
+    if (action.dataset.action === 'daily-milestone-cancel') { closeDailyMilestoneDialog(false); return; }
+    if (action.dataset.action === 'daily-milestone-confirm') { closeDailyMilestoneDialog(true); return; }
     if (action.dataset.action === 'focus-wrapup-next') finishWrapup('next').catch(() => {});
     if (action.dataset.action === 'focus-wrapup-stop') finishWrapup('stop').catch(() => {});
     if (action.dataset.action === 'focus-wrapup-done') finishWrapup('done').catch(() => {});
@@ -3461,12 +3949,29 @@
         event.stopPropagation();
         return;
       }
+      const milestone = event.target.closest('.focus-daily-milestone');
+      if (milestone) {
+        event.preventDefault();
+        event.stopPropagation();
+        const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        if (coarse) {
+          dailyListEl.querySelectorAll('.focus-daily-milestone.is-tip-pinned').forEach((item) => {
+            if (item !== milestone) item.classList.remove('is-tip-pinned');
+          });
+          milestone.classList.toggle('is-tip-pinned');
+        }
+        return;
+      }
       // 任务行优先：任务现在嵌在 .focus-daily-group 里，必须先判任务，否则点勾选会被外层分组分支吃掉
       const row = event.target.closest('.focus-daily-row');
       if (row) {
         const id = row.dataset.id;
         if (event.target.closest('[data-role="daily-check"]')) { toggleDailyTask(id); return; }
         if (event.target.closest('[data-role="daily-history"]')) { openDailyHistory(id); return; }
+        if (event.target.closest('[data-role="daily-edit-advanced"]')) {
+          openDailyMilestoneDialog(id, event.target.closest('[data-role="daily-edit-advanced"]'));
+          return;
+        }
         if (event.target.closest('[data-role="daily-edit-save"]')) { commitDailyEdit(id); return; }
         if (event.target.closest('[data-role="daily-edit-delete"]')) { requestDeleteDaily(id); return; }
         if (event.target.closest('[data-role="daily-delete-cancel"]')) { cancelDeleteDaily(); return; }
@@ -3509,7 +4014,7 @@
         else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDailyGroupEdit(); }
         return;
       }
-      if (!event.target.matches('.focus-daily-edit-name, .focus-daily-edit-min')) return;
+      if (!event.target.matches('.focus-daily-edit-name, .focus-daily-edit-min, .focus-daily-edit-days')) return;
       const row = event.target.closest('.focus-daily-row');
       if (!row) return;
       if (event.key === 'Enter') { event.preventDefault(); commitDailyEdit(row.dataset.id); }
@@ -3527,6 +4032,9 @@
   if (dailyComposeGroupBtn) dailyComposeGroupBtn.addEventListener('click', () => setDailyCompose('group', dailyAddTargetGroup));
   if (dailyComposeTargetBtn) dailyComposeTargetBtn.addEventListener('click', () => setDailyCompose(dailyComposeMode, ''));
   document.addEventListener('click', (event) => {
+    if (!event.target.closest('.focus-daily-milestone')) {
+      root.querySelectorAll('.focus-daily-milestone.is-tip-pinned').forEach((item) => item.classList.remove('is-tip-pinned'));
+    }
     if (settingsPop && !settingsPop.hidden
       && !settingsPop.contains(event.target) && !(gearBtn && gearBtn.contains(event.target))) {
       toggleSettings(false);
@@ -3537,6 +4045,38 @@
     }
   });
   document.addEventListener('keydown', (event) => {
+    if (dailyMilestoneDialog) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeDailyMilestoneDialog(false);
+        return;
+      }
+      if (event.key === 'Tab') {
+        const focusables = Array.from(dailyMilestoneDialog.querySelectorAll(dailyFocusableSelector))
+          .filter((item) => !item.disabled && item.getAttribute('aria-hidden') !== 'true');
+        if (focusables.length) {
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      const pinned = root.querySelector('.focus-daily-milestone.is-tip-pinned');
+      if (pinned) {
+        event.preventDefault();
+        pinned.classList.remove('is-tip-pinned');
+        return;
+      }
+    }
     if (!focusPageActive()) return;
     const target = event.target;
     const typing = isTypingTarget(target);

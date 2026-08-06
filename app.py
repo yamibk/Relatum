@@ -2646,11 +2646,14 @@ def delete_focus_session(session_id: object) -> dict:
 # ── 专注页「每日任务」习惯清单 ─────────────────────────────
 # 自成一体：每天重置勾选，累计完成天数/连续天数/累计专注分钟；不进 .canvas、与学习任务解耦。
 # 数据存 data/daily.json：{version, date(每日状态所属自然日), tasks:[...]}。
-# v3 起每条任务补 doneDates / minutesByDate，供打卡日历使用；旧汇总字段继续保留。
+# v3 起每条任务补 doneDates / minutesByDate，供打卡日历使用；可选 targetDays / milestones 保存长期累计目标；旧汇总字段继续保留。
 DAILY_TASKS_MAX = 40           # 上限保护，避免清单无限膨胀
 DAILY_NAME_MAX = 80
 DAILY_TARGET_MAX = 600
 DAILY_HISTORY_MAX = 3660       # 单任务最多保留约 10 年逐日记录
+DAILY_GOAL_DAYS_MAX = 3660     # 累计打卡目标上限，与逐日历史的十年保护边界一致
+DAILY_MILESTONES_MAX = 6
+DAILY_MILESTONE_NAME_MAX = 40
 DAILY_GROUPS_MAX = 60          # 分组数量上限（与任务上限分开计）
 DAILY_GROUP_NAME_MAX = 60
 DAILY_DEPTH_MAX = 12           # 分组嵌套层级安全上限（够深，主要防御成环/失控缩进）
@@ -2738,6 +2741,89 @@ def _daily_best_streak(done_dates: list[str]) -> int:
     return best
 
 
+def _sanitize_daily_milestones(value: object, target_days: int) -> list[dict]:
+    """加载旧数据或损坏数据时尽量保留合法里程碑。"""
+    if not isinstance(value, list) or target_days <= 0:
+        return []
+    result: list[dict] = []
+    seen_days: set[int] = set()
+    seen_ids: set[str] = set()
+    for index, item in enumerate(value):
+        if len(result) >= DAILY_MILESTONES_MAX:
+            break
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") if isinstance(item.get("name"), str) else "").strip()
+        days = _daily_nat(item.get("days"))
+        if not name or days < 1 or days > target_days or days in seen_days:
+            continue
+        mid = (item.get("id") if isinstance(item.get("id"), str) else "").strip()[:64]
+        if not mid or mid in seen_ids:
+            mid = f"dm_{days:x}_{index + 1:x}"
+            suffix = 1
+            while mid in seen_ids:
+                suffix += 1
+                mid = f"dm_{days:x}_{index + 1:x}_{suffix:x}"
+        seen_days.add(days)
+        seen_ids.add(mid)
+        result.append({"id": mid, "name": name[:DAILY_MILESTONE_NAME_MAX], "days": days})
+    result.sort(key=lambda item: item["days"])
+    return result
+
+
+def _validate_daily_milestones(value: object, target_days: int) -> list[dict]:
+    """校验客户端提交的完整数组；任一项有误都拒绝整次原子更新。"""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("小目标格式不正确")
+    if len(value) > DAILY_MILESTONES_MAX:
+        raise ValueError(f"小目标最多 {DAILY_MILESTONES_MAX} 个")
+    if value and target_days <= 0:
+        raise ValueError("请先设置累计目标，再添加小目标")
+    result: list[dict] = []
+    seen_days: set[int] = set()
+    seen_ids: set[str] = set()
+    for index, item in enumerate(value):
+        label = f"第 {index + 1} 个小目标"
+        if not isinstance(item, dict):
+            raise ValueError(f"{label}格式不正确")
+        raw_name = item.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if not name:
+            raise ValueError(f"请填写{label}的名称")
+        if len(name) > DAILY_MILESTONE_NAME_MAX:
+            raise ValueError(f"{label}名称不能超过 {DAILY_MILESTONE_NAME_MAX} 个字符")
+        raw_days = item.get("days")
+        if isinstance(raw_days, bool):
+            raise ValueError(f"{label}的天数必须是正整数")
+        if isinstance(raw_days, int):
+            days = raw_days
+        elif isinstance(raw_days, str) and re.fullmatch(r"[0-9]+", raw_days.strip()):
+            days = int(raw_days.strip())
+        else:
+            raise ValueError(f"{label}的天数必须是正整数")
+        if days < 1:
+            raise ValueError(f"{label}的天数必须至少为 1")
+        if days > target_days:
+            raise ValueError(f"{label}（{days} 天）不能超过累计目标 {target_days} 天")
+        if days in seen_days:
+            raise ValueError(f"不能在第 {days} 天设置两个小目标")
+        raw_id = item.get("id")
+        mid = raw_id.strip() if isinstance(raw_id, str) else ""
+        if len(mid) > 64:
+            raise ValueError(f"{label}标识无效")
+        if not mid:
+            mid = "dm_" + uuid.uuid4().hex[:16]
+        if mid in seen_ids:
+            raise ValueError("小目标标识重复")
+        seen_days.add(days)
+        seen_ids.add(mid)
+        result.append({"id": mid, "name": name, "days": days})
+    result.sort(key=lambda item: item["days"])
+    return result
+
+
 def _sanitize_daily_task(item: object) -> dict | None:
     """把一条每日任务规范化成可信结构；非法直接丢弃（返回 None）。"""
     if not isinstance(item, dict):
@@ -2752,10 +2838,13 @@ def _sanitize_daily_task(item: object) -> dict | None:
     if last_done and last_done not in done_dates:
         done_dates.append(last_done)
         done_dates.sort()
+    target_days = min(_daily_nat(item.get("targetDays")), DAILY_GOAL_DAYS_MAX)
     task = {
         "id": tid[:64],
         "name": (item.get("name") if isinstance(item.get("name"), str) else "").strip()[:DAILY_NAME_MAX],
         "targetMinutes": min(_daily_nat(item.get("targetMinutes")), DAILY_TARGET_MAX),
+        "targetDays": target_days,
+        "milestones": _sanitize_daily_milestones(item.get("milestones"), target_days),
         "totalDays": _daily_nat(item.get("totalDays")),
         "streak": _daily_nat(item.get("streak")),
         "bestStreak": _daily_nat(item.get("bestStreak")),
@@ -2920,6 +3009,8 @@ def daily_public_payload(data: dict | None = None) -> dict:
             "id": task.get("id"),
             "name": task.get("name") or "",
             "targetMinutes": _daily_nat(task.get("targetMinutes")),
+            "targetDays": min(_daily_nat(task.get("targetDays")), DAILY_GOAL_DAYS_MAX),
+            "milestones": [dict(item) for item in task.get("milestones", [])],
             "totalDays": _daily_nat(task.get("totalDays")),
             "streak": _daily_nat(task.get("streak")),
             "bestStreak": _daily_nat(task.get("bestStreak")),
@@ -2948,11 +3039,15 @@ def daily_create(body: dict) -> dict:
     if not name:
         raise ValueError("请填写每日任务名称")
     target = min(_daily_nat(body.get("targetMinutes")), DAILY_TARGET_MAX)
+    target_days = min(_daily_nat(body.get("targetDays")), DAILY_GOAL_DAYS_MAX)
+    milestones = _validate_daily_milestones(body.get("milestones", []), target_days)
     group_id = _daily_valid_group_id(data, body.get("groupId") if isinstance(body, dict) else "")
     task = {
         "id": "dt_" + format(int(datetime.now().timestamp() * 1000), "x") + "_" + uuid.uuid4().hex[:3],
         "name": name,
         "targetMinutes": target,
+        "targetDays": target_days,
+        "milestones": milestones,
         "totalDays": 0,
         "streak": 0,
         "bestStreak": 0,
@@ -2972,13 +3067,24 @@ def daily_create(body: dict) -> dict:
 def daily_update(body: dict) -> dict:
     data = load_daily()
     task = _daily_find(data, str(body.get("id") or "").strip() if isinstance(body, dict) else "")
+    next_name = task.get("name") or ""
     if "name" in body:
         name = str(body.get("name") or "").strip()[:DAILY_NAME_MAX]
         if not name:
             raise ValueError("名称不能为空")
-        task["name"] = name
+        next_name = name
+    next_target_minutes = task.get("targetMinutes", 0)
     if "targetMinutes" in body:
-        task["targetMinutes"] = min(_daily_nat(body.get("targetMinutes")), DAILY_TARGET_MAX)
+        next_target_minutes = min(_daily_nat(body.get("targetMinutes")), DAILY_TARGET_MAX)
+    next_target_days = min(_daily_nat(task.get("targetDays")), DAILY_GOAL_DAYS_MAX)
+    if "targetDays" in body:
+        next_target_days = min(_daily_nat(body.get("targetDays")), DAILY_GOAL_DAYS_MAX)
+    milestone_source = body.get("milestones") if "milestones" in body else task.get("milestones", [])
+    next_milestones = _validate_daily_milestones(milestone_source, next_target_days)
+    task["name"] = next_name
+    task["targetMinutes"] = next_target_minutes
+    task["targetDays"] = next_target_days
+    task["milestones"] = next_milestones
     if "groupId" in body:
         task["groupId"] = _daily_valid_group_id(data, body.get("groupId"))
     save_daily(data)
