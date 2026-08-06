@@ -134,7 +134,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 起步页跨页便签 | `data/start-sticky-notes.json`，按 `recent/study/cadence/calendar/review/focus` 页面归属保存；不进入速记墙归档 |
 | 速记归档 | `data/学习归档/<时间>-速记归档/notes.json` |
 | 专注记录 | `data/focus.json` |
-| 每日任务 | `data/daily.json`，含汇总字段与逐日历史 `doneDates` / `minutesByDate` |
+| 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、至多 6 个命名里程碑 `milestones[]` 与逐日历史 `doneDates` / `minutesByDate` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
 | 日历任务便签 | `data/calendar-pins.json` |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移 |
@@ -438,7 +438,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 支持番茄钟和正计时，运行状态存在 `localStorage`，刷新后可恢复。
 - 可绑定学习任务或每日任务。专注完成后写入 `data/focus.json`，并同步任务统计。
 - 支持音效、柔和噪音、时长偏好、目标/收尾记录、记录编辑/删除、Zen 模式。
-- 每日任务是独立清单 `data/daily.json`，每天重置勾选状态，但累计天数和分钟保留；v3 起每条任务记录 `doneDates` / `minutesByDate`，用于专注页任务打卡日历。
+- 每日任务是独立清单 `data/daily.json`，每天重置勾选状态，但累计天数和分钟保留；v3 起每条任务记录 `doneDates` / `minutesByDate`，用于专注页任务打卡日历，并可用 `targetDays` 设置基于历史 `totalDays` 的累计打卡目标（`0` 表示未设置，上限 3660 天）。可选 `milestones:[{id,name,days}]` 保存至多 6 个命名小目标，天数必须唯一且位于 `1..targetDays`，达成态只由 `totalDays >= days` 推导；高级设置先写任务编辑草稿，最后与总目标一起经 `/api/daily-update` 原子保存。任务卡和详情长期进度条以非按钮圆印章显示节点，悬停/键盘聚焦显示即时说明，桌面点击无操作、触屏轻触只揭示说明；今日分钟目标仍保留在编辑器与详情面板。
 - 每日任务详情标题保留单行省略号，但行盒必须给中英文及拉丁字母上下伸部留足空间，短标题也不能被纵向裁切。
 - `pagehide` 会持久化运行态、停 ticker 并暂停 AudioContext；BFCache `pageshow` 会按保存时间补算经过秒数、恢复 ticker/显示和需要继续播放的噪音。
 

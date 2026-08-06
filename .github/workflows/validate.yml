@@ -40,6 +40,12 @@ jobs:
             Where-Object { $_.FullName -notmatch '\\vendor\\' } |
             ForEach-Object { node --check $_.FullName }
 
+      - name: Run daily goal tests
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_daily_goals
+          node tests/daily-goal-contract.js
+
       - name: Run rich-text regression tests
         shell: pwsh
         run: node tests/richtext-regression.js
