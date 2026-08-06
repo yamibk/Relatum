@@ -8777,11 +8777,11 @@ body.start-page[data-start-theme="dark"] .focus-overlay-card {
 
 .focus-daily {
   position: absolute;
-  top: clamp(84px, 13vh, 122px);
+  top: clamp(42px, 6vh, 58px);
   right: clamp(14px, 3vw, 52px);
-  bottom: clamp(20px, 6vh, 56px);
+  bottom: clamp(8px, 1.5vh, 16px);
   z-index: 15;
-  width: clamp(298px, 30vw, 366px);
+  width: clamp(360px, 32vw, 440px);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -8831,7 +8831,7 @@ body.start-page[data-start-theme="dark"] .focus-overlay-card {
   display: flex;
   align-items: flex-start;
   gap: 11px;
-  padding: 10px 8px;
+  padding: 15px 8px;
   border-radius: 13px;
   transition: background 200ms var(--easing-soft), opacity 200ms var(--easing-soft),
               box-shadow 220ms var(--easing-soft), filter 220ms var(--easing-soft);
@@ -9022,10 +9022,161 @@ body.focus-daily-dragging .focus-daily-row { will-change: transform; }
 .focus-daily-stat { margin-top: 3px; color: var(--text-tertiary); font-size: 11.5px; line-height: 1.5; }
 .focus-daily-stat.is-updating { animation: focus-daily-stat-pop 260ms var(--easing-soft) both; }
 .focus-daily-row.is-done .focus-daily-stat { opacity: 0.72; }
-.focus-daily-bar-label { margin-top: 5px; color: var(--text-secondary); font-size: 11px; }
-.focus-daily-bar { margin-top: 4px; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text) 9%, transparent); overflow: hidden; }
-.focus-daily-bar span { display: block; height: 100%; border-radius: 999px; background: color-mix(in srgb, var(--text) 42%, transparent); transition: width 520ms var(--easing-page), background 360ms var(--easing-soft); }
-.focus-daily-bar span.is-full { background: #5f9e6c; }
+.focus-daily-goal-shell {
+  position: relative;
+  height: 22px;
+  margin-top: 3px;
+  isolation: isolate;
+}
+.focus-daily-goal {
+  position: relative;
+  top: 8px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  isolation: isolate;
+}
+.focus-daily-goal .focus-daily-goal-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #729f79, #86ae84);
+  transition: width 620ms cubic-bezier(0.22, 1, 0.36, 1), background 320ms var(--easing-soft);
+}
+.focus-daily-goal.is-full .focus-daily-goal-fill { background: linear-gradient(90deg, #5f9e6c, #d0ad58); }
+.focus-daily-goal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(105deg, transparent 20%, rgba(255, 249, 220, 0.84) 48%, transparent 72%);
+  opacity: 0;
+  transform: translateX(-145%);
+  pointer-events: none;
+}
+.focus-daily-goal.is-advancing,
+.focus-daily-detail-progress.is-cumulative.is-advancing { animation: focus-daily-goal-glow 780ms var(--easing-soft) both; }
+.focus-daily-goal.is-goal-reached,
+.focus-daily-detail-progress.is-cumulative.is-goal-reached { animation: focus-daily-goal-reached 920ms var(--easing-soft) both; }
+.focus-daily-goal.is-advancing::after,
+.focus-daily-goal.is-goal-reached::after { animation: focus-daily-goal-sheen 720ms 70ms var(--easing-soft) both; }
+@keyframes focus-daily-goal-glow {
+  0%, 100% { box-shadow: 0 0 0 rgba(104, 158, 113, 0); }
+  38% { box-shadow: 0 0 11px rgba(104, 158, 113, 0.48), 0 0 3px rgba(215, 173, 77, 0.22); }
+}
+@keyframes focus-daily-goal-reached {
+  0%, 100% { box-shadow: 0 0 0 rgba(104, 158, 113, 0); }
+  34% { box-shadow: 0 0 15px rgba(104, 158, 113, 0.56), 0 0 7px rgba(215, 173, 77, 0.42); }
+}
+@keyframes focus-daily-goal-sheen {
+  0% { opacity: 0; transform: translateX(-145%); }
+  28% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(145%); }
+}
+.focus-daily-milestones {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: visible;
+}
+.focus-daily-milestone {
+  position: absolute;
+  left: clamp(6px, var(--milestone-position), calc(100% - 6px));
+  top: calc(11px + var(--milestone-lane, 0) * 6px);
+  width: 15px;
+  height: 15px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: default;
+  outline: none;
+  z-index: calc(5 + var(--milestone-lane, 0));
+  transition: left 420ms var(--easing-page), top 320ms var(--easing-soft), opacity 180ms var(--easing-soft), transform 180ms var(--easing-soft);
+}
+.focus-daily-milestone-stamp {
+  position: absolute;
+  inset: 2px;
+  border: 1.5px solid color-mix(in srgb, var(--text) 34%, var(--surface));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface) 82%, transparent);
+  transition: border-color 220ms var(--easing-soft), background 220ms var(--easing-soft), box-shadow 220ms var(--easing-soft), transform 180ms var(--easing-soft);
+}
+.focus-daily-milestone.is-reached .focus-daily-milestone-stamp {
+  border-color: #5f9e6c;
+  background: #6da779;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface) 86%, transparent), 0 1px 5px rgba(76, 130, 87, 0.32);
+}
+.focus-daily-milestone:focus-visible .focus-daily-milestone-stamp {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, #5f9e6c 58%, transparent);
+}
+.focus-daily-milestone-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  width: max-content;
+  max-width: min(230px, calc(100vw - 34px));
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 97%, #fff 3%);
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(22, 24, 23, 0.16);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.35;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 4px) scale(0.97);
+  transform-origin: 50% 100%;
+  transition: opacity 150ms var(--easing-soft) 60ms, transform 170ms var(--easing-soft) 60ms, visibility 0s linear 230ms;
+  pointer-events: none;
+  z-index: 30;
+}
+.focus-daily-milestone.is-edge-start .focus-daily-milestone-tip {
+  left: -1px;
+  transform: translate(0, 4px) scale(0.97);
+  transform-origin: 0 100%;
+}
+.focus-daily-milestone.is-edge-end .focus-daily-milestone-tip {
+  right: -1px;
+  left: auto;
+  transform: translate(0, 4px) scale(0.97);
+  transform-origin: 100% 100%;
+}
+.focus-daily-milestone:hover .focus-daily-milestone-tip,
+.focus-daily-milestone:focus-visible .focus-daily-milestone-tip,
+.focus-daily-milestone.is-tip-pinned .focus-daily-milestone-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0) scale(1);
+  transition-delay: 140ms, 140ms, 0s;
+}
+.focus-daily-milestone.is-edge-start:hover .focus-daily-milestone-tip,
+.focus-daily-milestone.is-edge-start:focus-visible .focus-daily-milestone-tip,
+.focus-daily-milestone.is-edge-start.is-tip-pinned .focus-daily-milestone-tip,
+.focus-daily-milestone.is-edge-end:hover .focus-daily-milestone-tip,
+.focus-daily-milestone.is-edge-end:focus-visible .focus-daily-milestone-tip,
+.focus-daily-milestone.is-edge-end.is-tip-pinned .focus-daily-milestone-tip { transform: translate(0, 0) scale(1); }
+.focus-daily-milestone.is-entering { animation: focus-daily-milestone-in 240ms var(--easing-page) both; }
+.focus-daily-milestone.is-leaving { pointer-events: none; animation: focus-daily-milestone-out 190ms var(--easing-soft) both; }
+.focus-daily-milestone.is-just-reached .focus-daily-milestone-stamp { animation: focus-daily-milestone-reached 880ms 500ms var(--easing-soft) both; }
+@keyframes focus-daily-milestone-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.45); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes focus-daily-milestone-out {
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.42); }
+}
+@keyframes focus-daily-milestone-reached {
+  0%, 100% { transform: scale(1); }
+  34% { transform: scale(1.55); box-shadow: 0 0 0 2px var(--surface), 0 0 0 8px rgba(95, 158, 108, 0.18), 0 0 16px rgba(95, 158, 108, 0.52); }
+  62% { transform: scale(0.92); }
+}
 
 /* —— 分组：就地折叠手风琴。任务/分组同列，靠 --daily-depth 缩进表达层级 —— */
 .focus-daily-row { padding-left: calc(8px + var(--daily-depth, 0) * 16px); }
@@ -9353,9 +9504,26 @@ body.focus-daily-dragging .focus-daily-group-head {
   font-size: 13.5px;
 }
 .focus-daily-edit input:focus-visible { outline: none; border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
-.focus-daily-edit-target { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text-secondary); }
-.focus-daily-edit-target span { flex: none; }
-.focus-daily-edit-target input { width: 122px; }
+.focus-daily-edit-target { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.focus-daily-edit-target-field { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.focus-daily-edit-target-field span { flex: none; }
+.focus-daily-edit-target input { width: 112px; }
+.focus-daily-edit-advanced {
+  flex: none;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 170ms var(--easing-soft), background 170ms var(--easing-soft), border-color 170ms var(--easing-soft), transform 120ms var(--easing-soft), opacity 170ms var(--easing-soft);
+}
+.focus-daily-edit-advanced:not(:disabled):hover { color: var(--text); border-color: color-mix(in srgb, var(--text) 28%, var(--border)); background: color-mix(in srgb, var(--text) 7%, var(--surface)); }
+.focus-daily-edit-advanced:not(:disabled):active { transform: scale(0.97); }
+.focus-daily-edit-advanced:disabled { opacity: 0.42; cursor: not-allowed; }
+.focus-daily-edit.is-saving { pointer-events: none; opacity: 0.68; }
 .focus-daily-edit-actions { display: flex; justify-content: space-between; gap: 10px; }
 .focus-daily-edit-del,
 .focus-daily-edit-save {
@@ -9374,6 +9542,131 @@ body.focus-daily-dragging .focus-daily-group-head {
 .focus-daily-edit-save:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .focus-daily-edit-del:active,
 .focus-daily-edit-save:active { transform: scale(0.97); }
+
+.focus-daily-milestone-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(24, 25, 24, 0);
+  opacity: 0;
+  transition: opacity 190ms var(--easing-soft), background 190ms var(--easing-soft);
+}
+.focus-daily-milestone-shell.is-open { opacity: 1; background: rgba(24, 25, 24, 0.28); }
+.focus-daily-milestone-shell.is-closing { animation: focus-daily-milestone-shell-out 210ms var(--easing-soft) both; }
+.focus-daily-milestone-dialog {
+  width: min(560px, calc(100vw - 34px));
+  max-height: min(720px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 21px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 98%, #fff 2%);
+  color: var(--text);
+  box-shadow: 0 28px 72px rgba(24, 26, 25, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  opacity: 0;
+  transform: translateY(10px) scale(0.975);
+  transition: opacity 220ms var(--easing-soft), transform 260ms var(--easing-page);
+}
+.focus-daily-milestone-shell.is-open .focus-daily-milestone-dialog { opacity: 1; transform: translateY(0) scale(1); }
+.focus-daily-milestone-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.focus-daily-milestone-dialog > header span { display: block; margin-bottom: 3px; color: var(--text-tertiary); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.focus-daily-milestone-dialog h2 { margin: 0; font-size: 21px; line-height: 1.25; }
+.focus-daily-milestone-dialog > header button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 20px;
+  cursor: pointer;
+  transition: color 160ms var(--easing-soft), background 160ms var(--easing-soft), transform 120ms var(--easing-soft);
+}
+.focus-daily-milestone-dialog > header button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.focus-daily-milestone-dialog > header button:active { transform: scale(0.94); }
+.focus-daily-milestone-intro { margin: 13px 0 16px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }
+.focus-daily-milestone-list { display: grid; gap: 8px; }
+.focus-daily-milestone-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px 32px;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+}
+.focus-daily-milestone-row.is-entering { animation: focus-daily-milestone-row-in 240ms var(--easing-page) both; }
+.focus-daily-milestone-row.is-leaving { pointer-events: none; animation: focus-daily-milestone-row-out 190ms var(--easing-soft) both; }
+.focus-daily-milestone-row.has-error { border-color: color-mix(in srgb, #b4533f 58%, var(--border)); background: color-mix(in srgb, #b4533f 5%, var(--surface)); }
+.focus-daily-milestone-row input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.focus-daily-milestone-row input:focus-visible { outline: none; border-color: color-mix(in srgb, #5f9e6c 54%, var(--border)); }
+.focus-daily-milestone-days-wrap { display: flex; align-items: center; gap: 4px; color: var(--text-tertiary); font-size: 11.5px; }
+.focus-daily-milestone-days-wrap input { min-width: 0; }
+.focus-daily-milestone-remove {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  transition: color 160ms var(--easing-soft), background 160ms var(--easing-soft), transform 120ms var(--easing-soft);
+}
+.focus-daily-milestone-remove:hover { color: #b4533f; background: color-mix(in srgb, #b4533f 8%, transparent); }
+.focus-daily-milestone-remove:active { transform: scale(0.92); }
+.focus-daily-milestone-error { min-height: 18px; margin: 8px 2px 0; color: #a44b3a; font-size: 11.5px; line-height: 1.45; }
+.focus-daily-milestone-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 5px; }
+.focus-daily-milestone-dialog > footer > div { display: flex; gap: 8px; }
+.focus-daily-milestone-add,
+.focus-daily-milestone-cancel,
+.focus-daily-milestone-confirm {
+  min-height: 36px;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 170ms var(--easing-soft), background 170ms var(--easing-soft), border-color 170ms var(--easing-soft), transform 120ms var(--easing-soft), opacity 170ms var(--easing-soft);
+}
+.focus-daily-milestone-add:disabled { opacity: 0.42; cursor: not-allowed; }
+.focus-daily-milestone-confirm { color: var(--text); font-weight: 650; border-color: color-mix(in srgb, var(--text) 42%, var(--border)); }
+.focus-daily-milestone-add:not(:disabled):hover,
+.focus-daily-milestone-cancel:hover,
+.focus-daily-milestone-confirm:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, var(--surface)); }
+.focus-daily-milestone-add:not(:disabled):active,
+.focus-daily-milestone-cancel:active,
+.focus-daily-milestone-confirm:active { transform: scale(0.97); }
+@keyframes focus-daily-milestone-shell-out { to { opacity: 0; background: rgba(24, 25, 24, 0); } }
+@keyframes focus-daily-milestone-row-in {
+  from { min-height: 0; max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateY(-5px) scale(0.985); }
+  to { max-height: 56px; opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes focus-daily-milestone-row-out {
+  from { max-height: 56px; opacity: 1; }
+  to { min-height: 0; max-height: 0; padding-top: 0; padding-bottom: 0; border-width: 0; opacity: 0; transform: translateY(-4px) scale(0.98); }
+}
 
 /* 删除二次确认：编辑器就地变「确认删除？」，简洁优雅，不弹原生 confirm */
 .focus-daily-edit.is-confirming {
@@ -9947,11 +10240,14 @@ body.focus-daily-dragging .focus-daily-group-head {
   line-height: 1.55;
 }
 .focus-daily-detail-progress {
+  position: relative;
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--text) 10%, transparent);
 }
+.focus-daily-detail-progress.is-cumulative { top: 7px; }
+.focus-daily-detail-block .focus-daily-goal-shell { height: 23px; margin-top: 0; }
 .focus-daily-detail-progress span {
   display: block;
   height: 100%;
@@ -9960,6 +10256,9 @@ body.focus-daily-dragging .focus-daily-group-head {
   transition: width 240ms var(--easing-soft);
 }
 .focus-daily-detail-progress span.is-full {
+  background: linear-gradient(90deg, #5f9e6c, #d7ad4d);
+}
+.focus-daily-detail-progress.is-cumulative.is-full .focus-daily-goal-fill {
   background: linear-gradient(90deg, #5f9e6c, #d7ad4d);
 }
 .focus-daily-detail-recent {
@@ -10288,6 +10587,42 @@ body.start-page[data-start-theme="dark"] .focus-daily-edit,
 body.start-page[data-start-theme="dark"] .focus-daily-edit input,
 body.start-page[data-start-theme="dark"] .focus-daily-add input,
 body.start-page[data-start-theme="dark"] .focus-daily-add-btn { background: rgba(15, 17, 18, 0.6); }
+body.start-page[data-start-theme="dark"] .focus-daily-goal {
+  background: rgba(255, 255, 255, 0.11);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-goal .focus-daily-goal-fill {
+  background: linear-gradient(90deg, #75aa7f, #9bc18f);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-goal.is-full .focus-daily-goal-fill {
+  background: linear-gradient(90deg, #72b07f, #d7b85f);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-stamp {
+  border-color: rgba(242, 241, 237, 0.46);
+  background: #202322;
+  box-shadow: 0 0 0 2px rgba(20, 22, 21, 0.92);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-milestone.is-reached .focus-daily-milestone-stamp {
+  border-color: #81bd8c;
+  background: #6cab78;
+  box-shadow: 0 0 0 2px rgba(20, 22, 21, 0.94), 0 0 8px rgba(111, 181, 124, 0.30);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-tip {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: #202322;
+  color: #f2f1ed;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-dialog {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: #1d201f;
+  box-shadow: 0 30px 76px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-row,
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-row input,
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-add,
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-cancel,
+body.start-page[data-start-theme="dark"] .focus-daily-milestone-confirm,
+body.start-page[data-start-theme="dark"] .focus-daily-edit-advanced { background: rgba(255, 255, 255, 0.055); }
 
 body.start-page[data-start-theme="dark"] .focus-daily-detail-shell {
   background: rgba(5, 7, 8, 0.52);
@@ -10365,6 +10700,11 @@ body.start-page[data-start-theme="dark"] .focus-daily-detail-recent span.today {
 
 @media (max-width: 720px) {
   .focus-daily { top: 70px; right: 10px; bottom: 14px; left: 10px; width: auto; }
+  .focus-daily-milestone-shell { padding: 12px; }
+  .focus-daily-milestone-dialog { width: min(100%, 560px); max-height: calc(100vh - 24px); padding: 17px; border-radius: 17px; }
+  .focus-daily-milestone-row { grid-template-columns: minmax(0, 1fr) 100px 30px; gap: 5px; }
+  .focus-daily-milestone-dialog > footer { align-items: stretch; flex-direction: column; }
+  .focus-daily-milestone-dialog > footer > div { justify-content: flex-end; }
 }
 @media (prefers-reduced-motion: reduce) {
   .focus-daily,
@@ -10380,7 +10720,22 @@ body.start-page[data-start-theme="dark"] .focus-daily-detail-recent span.today {
   .focus-daily.is-peeking .focus-daily-foot,
   .focus-daily.is-completing .focus-daily-add,
   .focus-daily.is-completing .focus-daily-foot,
-  .focus-daily-bar span,
+  .focus-daily-goal,
+  .focus-daily-goal-shell,
+  .focus-daily-goal::after,
+  .focus-daily-goal .focus-daily-goal-fill,
+  .focus-daily-milestone,
+  .focus-daily-milestone-stamp,
+  .focus-daily-milestone-tip,
+  .focus-daily-milestone.is-entering,
+  .focus-daily-milestone.is-leaving,
+  .focus-daily-milestone.is-just-reached .focus-daily-milestone-stamp,
+  .focus-daily-milestone-shell,
+  .focus-daily-milestone-shell.is-closing,
+  .focus-daily-milestone-dialog,
+  .focus-daily-milestone-row.is-entering,
+  .focus-daily-milestone-row.is-leaving,
+  .focus-daily-detail-progress span,
   .focus-daily-name,
   .focus-daily-name::after,
   .focus-daily-check::after,
