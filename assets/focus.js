@@ -127,6 +127,9 @@
   const dailyHintTimers = new WeakMap();    // 点任务名/空白的「⋯ 提示」收尾计时器，按 row 元素索引
   let dailyComposeMode = 'task';  // 新增控制条当前模式：'task' | 'group'
   let dailyAddTargetGroup = '';   // 新增项的目标父分组；'' = 根
+  // 实验开关：隐藏「今日目标」（每日目标分钟）的前端 UI，后端字段与数据保留。
+  // 想恢复时改回 false 即可；编辑器输入行与详情页的目标对比会自动还原。
+  const DAILY_TARGET_UI_HIDDEN = true;
   let dailyEnterId = '';          // 刚新增的任务/分组 id：仅这一行播放入场动画
   let dailyPeek = false;          // 全部完成后用户主动「查看清单」，临时展开供取消勾选
   let dailyWasAllDone = false;
@@ -2169,7 +2172,7 @@
     const minutesByDate = dailyMinutesMap(task);
     const orderedDates = Array.from(doneDates).sort();
     const todayMinutes = Number(task.todayMinutes) || 0;
-    const target = Number(task.targetMinutes) || 0;
+    const target = DAILY_TARGET_UI_HIDDEN ? 0 : (Number(task.targetMinutes) || 0);
     const totalMinutes = Number(task.totalMinutes) || 0;
     const dayGoal = dailyGoalState(task);
     const recorded = doneDates.size;
@@ -2316,22 +2319,24 @@
       goalBlock.appendChild(goalBar);
       side.appendChild(goalBlock);
     }
-    const progressBlock = dailyDetailBlock('今日进度');
-    const progressText = document.createElement('p');
-    progressText.className = 'focus-daily-detail-progress-text';
-    progressText.textContent = target > 0
-      ? todayMinutes + ' / ' + target + ' 分钟' + (todayMinutes >= target ? ' · 已达标' : '')
-      : (todayMinutes > 0 ? '今天已专注 ' + todayMinutes + ' 分钟' : '今天还没有专注分钟');
-    progressBlock.appendChild(progressText);
-    const bar = document.createElement('div');
-    bar.className = 'focus-daily-detail-progress';
-    const fill = document.createElement('span');
-    const pct = target > 0 ? Math.max(0, Math.min(1, todayMinutes / target)) : (todayMinutes > 0 ? 1 : 0);
-    fill.style.width = (pct * 100).toFixed(0) + '%';
-    if (pct >= 1 && target > 0) fill.classList.add('is-full');
-    bar.appendChild(fill);
-    progressBlock.appendChild(bar);
-    side.appendChild(progressBlock);
+    if (!DAILY_TARGET_UI_HIDDEN) {
+      const progressBlock = dailyDetailBlock('今日进度');
+      const progressText = document.createElement('p');
+      progressText.className = 'focus-daily-detail-progress-text';
+      progressText.textContent = target > 0
+        ? todayMinutes + ' / ' + target + ' 分钟' + (todayMinutes >= target ? ' · 已达标' : '')
+        : (todayMinutes > 0 ? '今天已专注 ' + todayMinutes + ' 分钟' : '今天还没有专注分钟');
+      progressBlock.appendChild(progressText);
+      const bar = document.createElement('div');
+      bar.className = 'focus-daily-detail-progress';
+      const fill = document.createElement('span');
+      const pct = target > 0 ? Math.max(0, Math.min(1, todayMinutes / target)) : (todayMinutes > 0 ? 1 : 0);
+      fill.style.width = (pct * 100).toFixed(0) + '%';
+      if (pct >= 1 && target > 0) fill.classList.add('is-full');
+      bar.appendChild(fill);
+      progressBlock.appendChild(bar);
+      side.appendChild(progressBlock);
+    }
 
     const recentBlock = dailyDetailBlock('最近打卡');
     const recent = document.createElement('div');
@@ -2458,20 +2463,23 @@
     nameIn.dataset.role = 'daily-edit-name';
     nameIn.value = task.name || '';
     nameIn.setAttribute('aria-label', '每日任务名称');
-    const targetWrap = document.createElement('label');
-    targetWrap.className = 'focus-daily-edit-target';
-    const tspan = document.createElement('span');
-    tspan.textContent = '今日目标';
-    const targetIn = document.createElement('input');
-    targetIn.type = 'number';
-    targetIn.min = '0';
-    targetIn.max = '600';
-    targetIn.step = '5';
-    targetIn.className = 'focus-daily-edit-min';
-    targetIn.dataset.role = 'daily-edit-target';
-    targetIn.placeholder = '分钟 · 可选';
-    targetIn.value = Number(task.targetMinutes) > 0 ? String(task.targetMinutes) : '';
-    targetWrap.append(tspan, targetIn);
+    let targetWrap = null;
+    if (!DAILY_TARGET_UI_HIDDEN) {
+      targetWrap = document.createElement('label');
+      targetWrap.className = 'focus-daily-edit-target';
+      const tspan = document.createElement('span');
+      tspan.textContent = '今日目标';
+      const targetIn = document.createElement('input');
+      targetIn.type = 'number';
+      targetIn.min = '0';
+      targetIn.max = '600';
+      targetIn.step = '5';
+      targetIn.className = 'focus-daily-edit-min';
+      targetIn.dataset.role = 'daily-edit-target';
+      targetIn.placeholder = '分钟 · 可选';
+      targetIn.value = Number(task.targetMinutes) > 0 ? String(task.targetMinutes) : '';
+      targetWrap.append(tspan, targetIn);
+    }
     const goalWrap = document.createElement('div');
     goalWrap.className = 'focus-daily-edit-target';
     const goalField = document.createElement('label');
@@ -2521,8 +2529,13 @@
     save.textContent = '完成';
     actions.append(del, save);
     const groupRow = buildDailyGroupSelect(task);
-    if (groupRow) box.append(nameIn, targetWrap, goalWrap, groupRow, actions);
-    else box.append(nameIn, targetWrap, goalWrap, actions);
+    // 拼装时跳过空块：隐藏的 targetWrap 为 null，不传给 append（避免被渲染成 "null" 文本）
+    const editParts = [nameIn];
+    if (targetWrap) editParts.push(targetWrap);
+    editParts.push(goalWrap);
+    if (groupRow) editParts.push(groupRow);
+    editParts.push(actions);
+    box.append(...editParts);
     return box;
   }
   function cloneDailyMilestones(items) {
@@ -3204,7 +3217,10 @@
     const goalIn = row.querySelector('.focus-daily-edit-days');
     const name = (nameIn ? nameIn.value : '').trim();
     if (!name) { if (nameIn) nameIn.focus(); toast('名称不能为空'); return; }
-    const target = Math.max(0, Math.min(600, parseInt(targetIn ? targetIn.value : '0', 10) || 0));
+    const task = dailyTasks.find((item) => item.id === id);
+    // 「今日目标」输入隐藏时沿用已有值，避免编辑其他字段误把目标清零（开关见 DAILY_TARGET_UI_HIDDEN）
+    const target = Math.max(0, Math.min(600, parseInt(
+      targetIn ? targetIn.value : String(Number(task && task.targetMinutes) || 0), 10) || 0));
     const targetDays = Math.max(0, Math.min(3660, parseInt(goalIn ? goalIn.value : '0', 10) || 0));
     const milestones = cloneDailyMilestones(dailyEditMilestones);
     if (milestones.length && !targetDays) {
