@@ -17,6 +17,8 @@
   const TASK_KEY = 'canvas:focusTask';
   const KIND_KEY = 'canvas:focusTaskKind';
   const STATE_KEY = 'canvas:focusRuntime';
+  const VIEW_MODE_KEY = 'focus:viewMode';
+  const DAILY_REVIEWED_KEY = 'focus:dailyReviewedDate';
   const RUNTIME_PERSIST_MS = 5000;
   const DUR_DEFAULT = { focus: 25, brk: 5, long: 15, rounds: 4 };
   const LOG_MIN_SEC = 60;
@@ -27,6 +29,8 @@
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
   })();
   const T = (window.RelatumI18n && window.RelatumI18n.t) || function (s) { return s; };
+  const bootFocusData = window.RelatumBoot && window.RelatumBoot.focus
+    ? window.RelatumBoot.focus : {};
 
   const ringWrap = root.querySelector('[data-role="focus-ring-wrap"]');
   const ringFill = root.querySelector('[data-role="focus-ring-fill"]');
@@ -74,14 +78,22 @@
   const sessionGoalEl = root.querySelector('[data-role="focus-session-goal"]');
   const sessionOutcomeEl = root.querySelector('[data-role="focus-session-outcome"]');
   const sessionSourceEl = root.querySelector('[data-role="focus-session-source"]');
+  const timerViewEl = root.querySelector('[data-role="focus-timer-view"]');
   const dailyRoot = root.querySelector('[data-role="focus-daily"]');
-  const dailyHandle = root.querySelector('.focus-daily-handle');
+  const dailyScrollEl = root.querySelector('[data-role="focus-daily-scroll"]');
+  const dailyCountEl = root.querySelector('[data-role="focus-daily-count"]');
+  const dailyCreateBtn = root.querySelector('[data-action="daily-compose-toggle"]');
+  const dailySkeletonEl = root.querySelector('[data-role="focus-daily-skeleton"]');
+  const dailyComposerEl = root.querySelector('[data-role="focus-daily-composer"]');
   const dailyListEl = root.querySelector('[data-role="focus-daily-list"]');
   const dailyAddForm = root.querySelector('[data-role="focus-daily-add"]');
   const dailyInputEl = root.querySelector('[data-role="focus-daily-input"]');
+  const dailySubmitBtn = dailyAddForm && dailyAddForm.querySelector('button[type="submit"]');
   const dailyFootEl = root.querySelector('[data-role="focus-daily-foot"]');
   const dailyCelebrateEl = root.querySelector('[data-role="focus-daily-celebrate"]');
+  const dailyCelebrateTitleEl = dailyCelebrateEl && dailyCelebrateEl.querySelector('strong');
   const dailyCelebrateSubEl = root.querySelector('[data-role="focus-daily-celebrate-sub"]');
+  const dailyReviewBtn = root.querySelector('[data-action="daily-review-today"]');
   const dailyComposeEl = root.querySelector('[data-role="focus-daily-compose"]');
   const dailyComposeTaskBtn = root.querySelector('[data-role="daily-compose-task"]');
   const dailyComposeGroupBtn = root.querySelector('[data-role="daily-compose-group"]');
@@ -113,7 +125,19 @@
   let dailyTasks = [];
   let dailyGroups = [];           // 分组树：每个 {id,name,parentId,collapsed}，parentId:'' = 根
   let dailyLoaded = false;
-  let dailyOpen = false;
+  let dailySignature = '';
+  let dailyRequestSeq = 0;
+  let dailyRequestController = null;
+  let dailyRevealKey = '';
+  let viewMode = readViewMode();
+  let focusLifecycleActive = false;
+  let focusPrepared = false;
+  let focusActivationSeq = 0;
+  let focusWarmupPromise = null;
+  let viewTransitionSeq = 0;
+  let viewTransitionTimer = 0;
+  let dailyComposerOpen = false;
+  let dailyCreatePending = false;
   let dailyEditId = '';
   let dailyEditMilestones = null;
   let dailyMilestoneDialog = null;
@@ -124,21 +148,26 @@
   let dailyGroupEditId = '';      // 正在展开菜单/改名的分组 id
   let dailyGroupConfirmDeleteId = '';
   const dailyExpandTimers = new WeakMap();  // 分组就地展开的逐项交错收尾计时器，按 wrap 元素索引
-  const dailyHintTimers = new WeakMap();    // 点任务名/空白的「⋯ 提示」收尾计时器，按 row 元素索引
+  const replayCleanupTimers = new WeakMap();
   let dailyComposeMode = 'task';  // 新增控制条当前模式：'task' | 'group'
   let dailyAddTargetGroup = '';   // 新增项的目标父分组；'' = 根
   // 实验开关：隐藏「今日目标」（每日目标分钟）的前端 UI，后端字段与数据保留。
   // 想恢复时改回 false 即可；编辑器输入行与详情页的目标对比会自动还原。
   const DAILY_TARGET_UI_HIDDEN = true;
   let dailyEnterId = '';          // 刚新增的任务/分组 id：仅这一行播放入场动画
-  let dailyPeek = false;          // 全部完成后用户主动「查看清单」，临时展开供取消勾选
   let dailyWasAllDone = false;
-  let dailyClearing = false;      // 清场动画进行中：别让异步刷新打断
-  let dailyClearTimer = 0;
   let dailyDrag = null;
   let dailySuppressClick = false;
   let dailyRevealTimer = 0;
-  let dailyFocusReturnEl = null;
+  let dailyRevealWaitingForData = false;
+  let dailyDataRevealTimer = 0;
+  let dailyCelebrateMotionTimer = 0;
+  let dailyCelebrateHideTimer = 0;
+  let dailyCelebrateGeneration = 0;
+  let dailyCelebratePhase = 'hidden';
+  let dailyCelebrateFocusTimer = 0;
+  let dailyCelebrateReturnId = '';
+  const dailyToggleStates = new Map();
   let dailyHistoryTaskId = '';
   let dailyHistoryMonth = '';
   let dailyDetailTaskId = '';
@@ -244,48 +273,45 @@
     const book = root.closest('.book-view');
     return !!(book && book.classList.contains('focus-active'));
   }
+  function readViewMode() {
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'daily' ? 'daily' : 'timer'; }
+    catch (e) { return 'timer'; }
+  }
+  function dailyReviewedToday() {
+    const today = todayStr();
+    try {
+      const stored = localStorage.getItem(DAILY_REVIEWED_KEY) || '';
+      if (stored && stored !== today) localStorage.removeItem(DAILY_REVIEWED_KEY);
+      return stored === today;
+    } catch (e) {
+      return false;
+    }
+  }
+  function setDailyReviewedToday(reviewed) {
+    try {
+      if (reviewed) localStorage.setItem(DAILY_REVIEWED_KEY, todayStr());
+      else localStorage.removeItem(DAILY_REVIEWED_KEY);
+    } catch (e) {}
+  }
+  function sessionLocksView() {
+    return !!(running || pendingSession);
+  }
   function isTypingTarget(target) {
     return !!(target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]'));
   }
-  function rememberDailyFocus() {
-    dailyFocusReturnEl = null;
-  }
-  function restoreDailyFocus() {
-    const active = document.activeElement;
-    if (active && dailyRoot && dailyRoot.contains(active) && active.blur) active.blur();
-    if (active && dailyHandle && dailyHandle.contains(active) && active.blur) active.blur();
-    dailyFocusReturnEl = null;
-    if (document.activeElement && document.activeElement !== document.body
-      && document.activeElement !== document.documentElement
-      && !isTypingTarget(document.activeElement)
-      && document.activeElement.blur) document.activeElement.blur();
-  }
-  function settleDailyPanelFocus() {
-    if (!dailyRoot || !dailyOpen) return;
-    const active = document.activeElement;
-    if (active && dailyRoot.contains(active)) return;
-    if (active && active.blur && !isTypingTarget(active)) active.blur();
-  }
-  function syncDailyPanelFocusability() {
-    if (!dailyRoot) return;
-    const enabled = !!dailyOpen;
-    dailyRoot.toggleAttribute('inert', !enabled);
-    dailyRoot.setAttribute('aria-hidden', enabled ? 'false' : 'true');
-    dailyRoot.querySelectorAll(dailyFocusableSelector).forEach((element) => {
-      if (enabled) {
-        if (element.dataset.dailySavedTabindex !== undefined) {
-          const saved = element.dataset.dailySavedTabindex;
-          delete element.dataset.dailySavedTabindex;
-          if (saved === '') element.removeAttribute('tabindex');
-          else element.setAttribute('tabindex', saved);
-        }
-      } else {
-        if (element.dataset.dailySavedTabindex === undefined) {
-          element.dataset.dailySavedTabindex = element.getAttribute('tabindex') || '';
-        }
-        element.setAttribute('tabindex', '-1');
-      }
-    });
+  function syncViewAccessibility(options) {
+    const opts = options || {};
+    const daily = viewMode === 'daily';
+    if (timerViewEl) {
+      timerViewEl.hidden = opts.keepBoth ? false : daily;
+      timerViewEl.toggleAttribute('inert', daily);
+      timerViewEl.setAttribute('aria-hidden', daily ? 'true' : 'false');
+    }
+    if (dailyRoot) {
+      dailyRoot.hidden = opts.keepBoth ? false : !daily;
+      dailyRoot.toggleAttribute('inert', !daily);
+      dailyRoot.setAttribute('aria-hidden', daily ? 'false' : 'true');
+    }
   }
 
   function beginTimeEdit() {
@@ -341,11 +367,21 @@
     }, 2200);
   }
 
-  function replayClass(element, className) {
+  function replayClass(element, className, cleanupMs) {
     if (!element || prefersReduced) return;
+    const cleanupByClass = replayCleanupTimers.get(element) || new Map();
+    window.clearTimeout(cleanupByClass.get(className));
+    cleanupByClass.delete(className);
+    replayCleanupTimers.set(element, cleanupByClass);
     element.classList.remove(className);
     void element.offsetWidth;
     element.classList.add(className);
+    if (Number(cleanupMs) > 0) {
+      cleanupByClass.set(className, window.setTimeout(() => {
+        element.classList.remove(className);
+        cleanupByClass.delete(className);
+      }, Number(cleanupMs)));
+    }
   }
   // 收起浮层/卡片时先播放退场动画，动画结束（或兜底超时）再真正 hidden。
   function dismiss(element, exitClass, after) {
@@ -409,7 +445,16 @@
       replayClass(element, 'focus-stat-updated');
     });
   }
+  function cancelDailyRead() {
+    if (!dailyRequestController) return;
+    dailyRequestSeq += 1;
+    dailyRequestController.abort();
+    dailyRequestController = null;
+  }
   function post(path, body) {
+    // A mutation is newer than any background snapshot requested before it.
+    // Abort that read so a slow GET can never repaint stale task state over the mutation.
+    if (String(path || '').startsWith('/api/daily-')) cancelDailyRead();
     return fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1193,8 +1238,24 @@
     });
     if (modeSlider) modeSlider.style.transform = mode === 'countup' ? 'translateX(100%)' : 'translateX(0)';
   }
-  function loadTasks() {
-    return fetch('/api/study').then((response) => response.json()).then((json) => {
+  function focusJsonSource(source, path, fetchOptions) {
+    if (!source) {
+      return fetch(path, fetchOptions).then((response) => {
+        if (!response.ok) throw new Error('load failed');
+        return response.json();
+      });
+    }
+    return Promise.resolve(source).then((result) => {
+      if (result && result.ok) return result.json;
+      return fetch(path, fetchOptions).then((response) => {
+        if (!response.ok) throw new Error('load failed');
+        return response.json();
+      });
+    });
+  }
+  function loadTasks(options) {
+    const opts = options || {};
+    return focusJsonSource(opts.source, '/api/study').then((json) => {
       tasks = json && Array.isArray(json.tasks) ? json.tasks : [];
       renderTaskOptions();
     }).catch(() => {});
@@ -1288,73 +1349,162 @@
       bindTask(task ? task.id : '', task ? task.title || '' : '', task ? 'study' : '');
     }
   }
-  function loadSessions() {
-    return fetch('/api/focus').then((response) => response.json()).then((json) => {
+  function loadSessions(options) {
+    const opts = options || {};
+    return focusJsonSource(opts.source, '/api/focus').then((json) => {
       sessions = json && Array.isArray(json.sessions) ? json.sessions : [];
       loadedSessions = true;
       renderFootprint();
     }).catch(() => renderFootprint());
   }
 
-  // ── 每日任务侧栏（习惯清单，Tab 开合；与学习任务、.canvas 完全解耦）─────────────
-  function replayDailyPanelEntrance() {
-    if (!dailyRoot || prefersReduced || !dailyOpen) return;
-    clearTimeout(dailyRevealTimer);
+  // ── 专注钟 / 每日任务双视图。页面进入前先稳定最终 DOM，进入后只刷新一次。 ──────────
+  function dailyPayload(json) {
+    const payload = json && json.daily ? json.daily : json;
+    return payload && typeof payload === 'object' ? payload : {};
+  }
+  function dailyPayloadSignature(payload) {
+    return JSON.stringify({
+      tasks: Array.isArray(payload.tasks) ? payload.tasks : [],
+      groups: Array.isArray(payload.groups) ? payload.groups : [],
+    });
+  }
+  function applyDailyPayload(json) {
+    const payload = dailyPayload(json);
+    if (Array.isArray(payload.tasks)) dailyTasks = payload.tasks;
+    if (Array.isArray(payload.groups)) dailyGroups = payload.groups;
+    dailySignature = dailyPayloadSignature({ tasks: dailyTasks, groups: dailyGroups });
+  }
+  function setDailyLoading(loading, reveal) {
+    if (!dailyRoot) return;
+    window.clearTimeout(dailyDataRevealTimer);
+    dailyDataRevealTimer = 0;
+    dailyRoot.classList.toggle('is-loading', !!loading);
+    if (dailyListEl) dailyListEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+    if (!dailySkeletonEl) return;
+    if (loading) {
+      dailyRoot.classList.remove('is-data-revealing');
+      dailySkeletonEl.hidden = false;
+      return;
+    }
+    if (reveal && !prefersReduced && !dailySkeletonEl.hidden && focusPageActive() && viewMode === 'daily') {
+      dailyRoot.classList.add('is-data-revealing');
+      dailyDataRevealTimer = window.setTimeout(() => {
+        dailyRoot.classList.remove('is-data-revealing');
+        dailySkeletonEl.hidden = true;
+        dailyDataRevealTimer = 0;
+      }, 520);
+    } else {
+      dailyRoot.classList.remove('is-data-revealing');
+      dailySkeletonEl.hidden = true;
+    }
+  }
+  function armDailyViewEntranceCleanup() {
+    window.clearTimeout(dailyRevealTimer);
+    dailyRevealTimer = window.setTimeout(() => {
+      if (dailyRoot) dailyRoot.classList.remove('is-revealing');
+      dailyRevealTimer = 0;
+      dailyRevealWaitingForData = false;
+    }, 1450);
+  }
+  function replayDailyViewEntrance(key, options) {
+    if (!dailyRoot || prefersReduced || viewMode !== 'daily' || !focusPageActive()) return;
+    const opts = options || {};
+    const revealKey = String(key || 'manual');
+    if (dailyRevealKey === revealKey) {
+      if (dailyRevealWaitingForData && !opts.waitForData) {
+        dailyRevealWaitingForData = false;
+        armDailyViewEntranceCleanup();
+      }
+      return;
+    }
+    dailyRevealKey = revealKey;
+    window.clearTimeout(dailyRevealTimer);
     dailyRoot.classList.remove('is-revealing');
     void dailyRoot.offsetWidth;
     dailyRoot.classList.add('is-revealing');
-    dailyRevealTimer = setTimeout(() => {
-      if (dailyRoot) dailyRoot.classList.remove('is-revealing');
+    dailyRevealWaitingForData = !!opts.waitForData;
+    if (!dailyRevealWaitingForData) armDailyViewEntranceCleanup();
+  }
+  function clearViewTransition(sync) {
+    viewTransitionSeq += 1;
+    window.clearTimeout(viewTransitionTimer);
+    viewTransitionTimer = 0;
+    [timerViewEl, dailyRoot].forEach((element) => {
+      if (element) element.classList.remove('is-view-entering', 'is-view-exiting');
+    });
+    root.classList.remove('focus-view-transition');
+    if (sync !== false) syncViewAccessibility();
+  }
+  function commitViewMode(next, options) {
+    const opts = options || {};
+    viewMode = next === 'daily' ? 'daily' : 'timer';
+    if (opts.persist !== false) {
+      try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch (e) {}
+    }
+    root.classList.toggle('focus-view-daily', viewMode === 'daily');
+    syncViewAccessibility({ keepBoth: !!opts.keepBoth });
+    if (viewMode === 'daily') {
+      toggleSettings(false);
+      toggleHelp(false);
+      closeSessionEditor();
+      if (!dailyLoaded) setDailyLoading(true);
+    } else {
+      endDailyPointerDrag(null, false);
+      closeDailyHistory();
+      closeDailyDetail({ restore: false });
+      closeDailyComposer({ focus: false });
+      window.clearTimeout(dailyRevealTimer);
       dailyRevealTimer = 0;
-    }, 980);
-  }
-  function setDailyOpen(open) {
-    const wasOpen = dailyOpen;
-    if (open && !wasOpen) rememberDailyFocus();
-    dailyOpen = !!open;
-    if (dailyRoot) {
-      if (dailyOpen) {
-        dailyRoot.hidden = false; void dailyRoot.offsetWidth;
-        dailyRoot.classList.remove('is-closing');
-        dailyRoot.classList.add('is-open');
-      } else if (wasOpen) {
-        endDailyPointerDrag(null, false);
-        clearTimeout(dailyRevealTimer);
-        dailyRoot.classList.remove('is-revealing', 'is-peeking');
-        closeDailyHistory();
-        closeDailyDetail({ restore: false });
-        if (prefersReduced) {
-          dailyRoot.classList.remove('is-open');
-        } else {
-          dailyRoot.classList.add('is-closing');
-          const finish = () => {
-            dailyRoot.classList.remove('is-open', 'is-closing');
-            dailyRoot.removeEventListener('animationend', finish);
-          };
-          dailyRoot.addEventListener('animationend', finish, { once: true });
-          clearTimeout(dailyRevealTimer);
-          dailyRevealTimer = setTimeout(finish, 400);
-        }
-      }
-      syncDailyPanelFocusability();
-    }
-    if (bookView) bookView.classList.toggle('focus-daily-open', dailyOpen);
-    if (dailyHandle) dailyHandle.setAttribute('aria-expanded', dailyOpen ? 'true' : 'false');
-    if (dailyOpen) {
-      if (!dailyLoaded) {
-        loadDaily().then(() => replayDailyPanelEntrance());
-      } else {
-        renderDaily({ opening: true });
-        replayDailyPanelEntrance();
-      }
-      if (dailyInputEl && !dailyTasks.length) setTimeout(() => dailyInputEl.focus(), 220);
-      else setTimeout(settleDailyPanelFocus, 80);
-    } else if (wasOpen) {
-      restoreDailyFocus();
+      dailyRevealWaitingForData = false;
+      if (dailyRoot) dailyRoot.classList.remove('is-revealing');
     }
   }
-  function toggleDaily(force) {
-    setDailyOpen(typeof force === 'boolean' ? force : !dailyOpen);
+  function setViewMode(mode, options) {
+    const opts = options || {};
+    const next = mode === 'daily' ? 'daily' : 'timer';
+    if (next === viewMode && !root.classList.contains('focus-view-transition')) {
+      syncViewAccessibility();
+      return true;
+    }
+    if (next === 'daily' && sessionLocksView() && !opts.force) {
+      toast('请先完成收尾或重置当前专注段，再查看每日任务');
+      return false;
+    }
+    const outgoing = viewMode === 'daily' ? dailyRoot : timerViewEl;
+    const incoming = next === 'daily' ? dailyRoot : timerViewEl;
+    const animate = opts.animate !== false && !prefersReduced && focusPageActive() && outgoing && incoming;
+    clearViewTransition(true);
+    if (!animate) {
+      commitViewMode(next, opts);
+      if (next === 'daily' && !dailyLoaded && opts.load !== false) {
+        loadDaily({ reveal: true, entrance: false });
+      }
+      return true;
+    }
+    const transitionId = ++viewTransitionSeq;
+    commitViewMode(next, Object.assign({}, opts, { keepBoth: true }));
+    root.classList.add('focus-view-transition');
+    outgoing.classList.add('is-view-exiting');
+    incoming.classList.add('is-view-entering');
+    if (next === 'daily') {
+      if (!dailyLoaded && opts.load !== false) loadDaily({ reveal: true, entrance: false });
+    }
+    viewTransitionTimer = window.setTimeout(() => {
+      if (transitionId !== viewTransitionSeq) return;
+      outgoing.classList.remove('is-view-exiting');
+      incoming.classList.remove('is-view-entering');
+      root.classList.remove('focus-view-transition');
+      syncViewAccessibility();
+      viewTransitionTimer = 0;
+    }, 560);
+    return true;
+  }
+  function toggleViewMode() {
+    return setViewMode(viewMode === 'daily' ? 'timer' : 'daily', { persist: true, animate: true });
+  }
+  function showTimerView(options) {
+    return setViewMode('timer', Object.assign({ persist: false, animate: false, force: true }, options || {}));
   }
   function allDailyDone() {
     return dailyTasks.length > 0 && dailyTasks.every((task) => task.doneToday);
@@ -1362,41 +1512,69 @@
   function dailyTodayMinutesTotal() {
     return dailyTasks.reduce((sum, task) => sum + (Number(task.todayMinutes) || 0), 0);
   }
-  function applyDailyPayload(json) {
-    const payload = json && json.daily ? json.daily : json;
-    if (payload && Array.isArray(payload.tasks)) dailyTasks = payload.tasks;
-    if (payload && Array.isArray(payload.groups)) dailyGroups = payload.groups;
-  }
-  function loadDaily() {
-    return fetch('/api/daily').then((response) => response.json()).then((json) => {
-      dailyTasks = json && Array.isArray(json.tasks) ? json.tasks : [];
-      dailyGroups = json && Array.isArray(json.groups) ? json.groups : [];
-      dailyLoaded = true;
-      dailyWasAllDone = allDailyDone();
-      renderDaily({ initial: true });
+  function loadDaily(options) {
+    const opts = options || {};
+    const requestId = ++dailyRequestSeq;
+    if (dailyRequestController) dailyRequestController.abort();
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    dailyRequestController = controller;
+    const wasLoaded = dailyLoaded;
+    if (!wasLoaded && viewMode === 'daily') setDailyLoading(true);
+    const fetchOptions = controller ? { signal: controller.signal } : undefined;
+    return focusJsonSource(opts.source, '/api/daily', fetchOptions).then((json) => {
+      if (requestId !== dailyRequestSeq) return false;
+      const payload = dailyPayload(json);
+      const nextSignature = dailyPayloadSignature(payload);
+      const changed = !wasLoaded || nextSignature !== dailySignature;
+      if (changed) {
+        applyDailyPayload(payload);
+        dailyLoaded = true;
+        dailyWasAllDone = allDailyDone();
+        renderDaily({ initial: !wasLoaded, flip: wasLoaded });
+      }
       renderTaskOptions();
-    }).catch(() => {});
+      setDailyLoading(false, !wasLoaded && opts.reveal !== false);
+      if (!wasLoaded && viewMode === 'daily' && focusLifecycleActive
+        && opts.reveal !== false && opts.entrance !== false) {
+        replayDailyViewEntrance(opts.revealKey || ('load-' + focusActivationSeq), { waitForData: false });
+      }
+      return changed;
+    }).catch((error) => {
+      if (error && error.name === 'AbortError') return false;
+      if (requestId === dailyRequestSeq) {
+        setDailyLoading(false, false);
+        if (!wasLoaded && opts.entrance !== false) {
+          replayDailyViewEntrance(opts.revealKey || ('load-' + focusActivationSeq), { waitForData: false });
+        }
+        if (!dailyLoaded && !opts.quiet) toast(error.message || '每日任务载入失败');
+      }
+      return false;
+    }).finally(() => {
+      if (requestId === dailyRequestSeq) dailyRequestController = null;
+    });
+  }
+
+  function preloadFocusView() {
+    if (focusWarmupPromise) return focusWarmupPromise;
+    focusWarmupPromise = Promise.allSettled([
+      loadTasks({ source: bootFocusData.study }),
+      loadDaily({ source: bootFocusData.daily, reveal: false, entrance: false, quiet: true }),
+      loadSessions({ source: bootFocusData.sessions }),
+    ]);
+    return focusWarmupPromise;
   }
 
   function renderDaily(opts) {
     opts = opts || {};
-    if (!dailyListEl || dailyClearing) return;
-    const allDone = allDailyDone();
-    if (!allDone) dailyPeek = false;
-    const became = allDone && !dailyWasAllDone && !opts.initial;
-    dailyWasAllDone = allDone;
-    rebuildDailyRows({ flip: !opts.initial && dailyOpen });
-    syncDailyPanelFocusability();
+    if (!dailyListEl) return;
+    rebuildDailyRows({ flip: opts.flip !== false && !opts.initial && viewMode === 'daily' });
+    syncViewAccessibility();
+    if (dailyCountEl) dailyCountEl.textContent = String(dailyTasks.length);
     updateDailyFoot();
     updateDailyComposeUI();
     renderDailyHistory();
     renderDailyDetail();
-    if (allDone && !dailyPeek) {
-      if (became && !prefersReduced) startDailyClear();
-      else showDailyCelebrate(false);
-    } else {
-      hideDailyCelebrate();
-    }
+    dailyCelebrationCheck({ animate: !!opts.celebrate && !opts.initial });
   }
   // FLIP 的身份键：任务用 t:id，分组头用 g:id，二者同列参与位移动画（折叠/重排都顺滑）
   function dailyFlipKey(el) {
@@ -1529,20 +1707,23 @@
   }
   function buildDailyRows() {
     dailyListEl.innerHTML = '';
+    if (dailyRoot) dailyRoot.style.setProperty('--daily-exit-tail', '0');
     if (!dailyTasks.length && !dailyGroups.length) {
       const empty = document.createElement('p');
       empty.className = 'focus-daily-empty';
-      empty.textContent = '还没有每日任务 · 在下面加一件想每天坚持的事';
+      empty.textContent = '还没有每日任务 · 点右上角“＋”加一件想每天坚持的事';
       dailyListEl.appendChild(empty);
       return;
     }
     // 借鉴博客分类树：每层先列子分组，再列本层任务。子树渲进 .focus-daily-group-children 容器，
     // 始终渲染（即便折叠），折叠交给 CSS grid-rows 平滑收合——不再靠重建，避免子项瞬移。
     let index = 0;
-    const renderInto = (container, parentId, depth) => {
+    const visibleExitNodes = [];
+    const renderInto = (container, parentId, depth, visible) => {
       dailyChildGroups(parentId).forEach((group) => {
         const wrap = buildDailyGroupRow(group, depth);
-        wrap.style.setProperty('--daily-row-index', String(index++));
+        wrap.style.setProperty('--daily-row-index', String(Math.min(index++, 7)));
+        if (visible) visibleExitNodes.push(wrap);
         container.appendChild(wrap);
         const childrenWrap = document.createElement('div');
         childrenWrap.className = 'focus-daily-group-children';
@@ -1551,15 +1732,23 @@
         if (group.collapsed) inner.setAttribute('inert', '');   // 折叠子树不可聚焦/点击
         childrenWrap.appendChild(inner);
         wrap.appendChild(childrenWrap);
-        renderInto(inner, group.id, depth + 1);
+        renderInto(inner, group.id, depth + 1, visible && !group.collapsed);
       });
       dailyDirectTasks(parentId).forEach((task) => {
         const row = buildDailyRow(task, depth);
-        row.style.setProperty('--daily-row-index', String(index++));
+        row.style.setProperty('--daily-row-index', String(Math.min(index++, 7)));
+        if (visible) visibleExitNodes.push(row);
         container.appendChild(row);
       });
     };
-    renderInto(dailyListEl, '', 0);
+    renderInto(dailyListEl, '', 0, true);
+    const exitTail = Math.min(Math.max(visibleExitNodes.length - 1, 0), 8);
+    visibleExitNodes.forEach((element, visibleIndex) => {
+      element.style.setProperty('--daily-exit-order', String(Math.min(
+        Math.max(visibleExitNodes.length - 1 - visibleIndex, 0), 8
+      )));
+    });
+    if (dailyRoot) dailyRoot.style.setProperty('--daily-exit-tail', String(exitTail));
     dailyEnterId = '';   // 入场动画只播一次
   }
   function buildDailyGroupRow(group, depth) {
@@ -2392,7 +2581,9 @@
     check.className = 'focus-daily-check';
     check.dataset.role = 'daily-check';
     check.setAttribute('aria-pressed', task.doneToday ? 'true' : 'false');
-    check.setAttribute('aria-label', (task.doneToday ? '取消完成 · ' : '标记完成 · ') + (task.name || '每日任务'));
+    const checkLabel = (task.doneToday ? '取消完成 · ' : '标记完成 · ') + (task.name || '每日任务');
+    check.setAttribute('data-i18n-source-aria-label', checkLabel);
+    check.setAttribute('aria-label', T(checkLabel));
     row.appendChild(check);
 
     const main = document.createElement('div');
@@ -2746,77 +2937,162 @@
   function updateDailyFoot() {
     if (!dailyFootEl) return;
     const T = (window.RelatumI18n && window.RelatumI18n.t) || function (s) { return s; };
-    if (!dailyTasks.length) { dailyFootEl.textContent = ''; return; }
+    if (!dailyTasks.length || (allDailyDone() && !dailyReviewedToday())) {
+      dailyFootEl.textContent = '';
+      dailyFootEl.hidden = true;
+      return;
+    }
     const done = dailyTasks.filter((task) => task.doneToday).length;
     const mins = dailyTodayMinutesTotal();
     dailyFootEl.textContent = T('今天 ' + done + ' / ' + dailyTasks.length + ' 完成'
       + (mins > 0 ? ' · 今日已专注 ' + mins + ' 分' : ''));
+    // 撤销最后一项完成时，先让完成落款自然收拢，再接回普通汇总，避免两份统计短暂叠在一起。
+    dailyFootEl.hidden = dailyCelebratePhase !== 'hidden';
   }
   function pulseDailyFoot() {
     if (!dailyFootEl || prefersReduced) return;
     replayClass(dailyFootEl, 'is-updating');
   }
-  function startDailyClear(settleDelay) {
-    clearTimeout(dailyClearTimer);
-    dailyClearing = true;
-    if (dailyRoot) dailyRoot.classList.add('is-completing');
-    const items = Array.prototype.slice.call(dailyListEl.children).filter((el) =>
-      el.classList.contains('focus-daily-row') || el.classList.contains('focus-daily-group'));
-    dailyClearTimer = setTimeout(() => {
-      items.forEach((el, index) => {
-        el.classList.remove('is-complete-pop', 'is-reopen-pop');
-        el.style.setProperty('--daily-clear-delay', (index * 76) + 'ms');
-        el.classList.add('is-clearing');
-      });
-      // 末项滑完即触发庆祝，animationend 为主、setTimeout 兜底
-      const last = items[items.length - 1];
-      let fired = false;
-      const reveal = () => { if (!fired) { fired = true; dailyClearing = false; showDailyCelebrate(true); } };
-      if (last && !prefersReduced) last.addEventListener('animationend', reveal, { once: true });
-      dailyClearTimer = setTimeout(reveal, items.length * 76 + 460);
-    }, Math.max(0, Number(settleDelay) || 240));
-  }
-  function showDailyCelebrate(animate) {
+  function updateDailyCelebrateCopy() {
     if (!dailyCelebrateEl) return;
-    if (dailyRoot) dailyRoot.classList.remove('is-completing');
-    if (dailyListEl) dailyListEl.hidden = true;
-    if (dailyAddForm) dailyAddForm.classList.add('is-dimmed');
-    if (dailyFootEl) dailyFootEl.hidden = true;
+    if (dailyCelebrateTitleEl) dailyCelebrateTitleEl.textContent = T('今日清单已全部完成');
     if (dailyCelebrateSubEl) {
       const count = dailyTasks.length;
       const mins = dailyTodayMinutesTotal();
-      dailyCelebrateSubEl.textContent = count + ' 件全部完成'
-        + (mins > 0 ? ' · 专注 ' + mins + ' 分钟' : '') + ' · 明天见';
-    }
-    dailyCelebrateEl.hidden = false;
-    if (animate && !prefersReduced) {
-      if (dailyRoot) replayClass(dailyRoot, 'is-celebrate-ready');
-      replayClass(dailyCelebrateEl, 'is-celebrating');
+      dailyCelebrateSubEl.textContent = T('今天做完了 ' + count + ' 件事'
+        + (mins > 0 ? ' · 专注 ' + mins + ' 分钟' : ''));
     }
   }
-  function hideDailyCelebrate() {
-    clearTimeout(dailyClearTimer);
-    dailyClearing = false;
-    if (dailyRoot) dailyRoot.classList.remove('is-completing', 'is-celebrate-ready');
-    if (dailyCelebrateEl) dailyCelebrateEl.hidden = true;
-    if (dailyListEl) dailyListEl.hidden = false;
-    if (dailyAddForm) dailyAddForm.classList.remove('is-dimmed');
-    if (dailyFootEl) dailyFootEl.hidden = false;
-  }
-  function dailyPeekList() {
-    dailyPeek = true;
-    if (dailyRoot && !prefersReduced) {
-      clearTimeout(dailyRevealTimer);
-      dailyRoot.classList.remove('is-peeking');
-      void dailyRoot.offsetWidth;
-      dailyRoot.classList.add('is-peeking');
-      dailyRevealTimer = setTimeout(() => {
-        if (dailyRoot) dailyRoot.classList.remove('is-peeking');
-        dailyRevealTimer = 0;
-      }, 820);
+  function commitDailyCelebratePhase(phase) {
+    if (!dailyCelebrateEl) return;
+    dailyCelebratePhase = phase;
+    dailyCelebrateEl.dataset.phase = phase;
+    dailyCelebrateEl.setAttribute('aria-hidden', phase === 'hidden' ? 'true' : 'false');
+    if (dailyRoot) {
+      dailyRoot.classList.toggle('is-celebration-open', phase === 'entering' || phase === 'visible');
+      dailyRoot.classList.toggle('is-celebration-entering', phase === 'entering');
+      dailyRoot.classList.toggle('is-celebration-leaving', phase === 'leaving');
     }
-    hideDailyCelebrate();
-    renderDaily();
+    if (dailyScrollEl) {
+      const blocked = phase !== 'hidden';
+      dailyScrollEl.toggleAttribute('inert', blocked);
+      dailyScrollEl.setAttribute('aria-hidden', blocked ? 'true' : 'false');
+    }
+  }
+  function dailyCelebrateReturnTarget() {
+    if (dailyCelebrateReturnId && dailyListEl) {
+      const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + dailyCelebrateReturnId + '"]');
+      const check = row && row.querySelector('.focus-daily-check');
+      if (check) return check;
+    }
+    return dailyScrollEl || dailyCreateBtn || null;
+  }
+  function focusDailyCelebrateAction(delay) {
+    window.clearTimeout(dailyCelebrateFocusTimer);
+    dailyCelebrateFocusTimer = window.setTimeout(() => {
+      dailyCelebrateFocusTimer = 0;
+      if (dailyCelebratePhase === 'hidden' || viewMode !== 'daily' || !focusPageActive()) return;
+      if (dailyReviewBtn) {
+        try { dailyReviewBtn.focus({ preventScroll: true }); }
+        catch (e) { dailyReviewBtn.focus(); }
+      }
+    }, Math.max(0, Number(delay) || 0));
+  }
+  function restoreDailyCelebrateFocus() {
+    const target = dailyCelebrateReturnTarget();
+    dailyCelebrateReturnId = '';
+    if (!target || !target.isConnected || viewMode !== 'daily' || !focusPageActive()) return;
+    try { target.focus({ preventScroll: true }); }
+    catch (e) { target.focus(); }
+  }
+  function showDailyCelebrate(animate) {
+    if (!dailyCelebrateEl) return;
+    updateDailyCelebrateCopy();
+    if (dailyReviewedToday()) {
+      hideDailyCelebrate({ instant: true, restoreFocus: false });
+      return;
+    }
+
+    // 接口回包会再次同步同一份完成态。进入动画尚未结束时只更新文案，
+    // 不能递增 generation、清计时器或移除 is-entering，否则动画会被截成硬切。
+    if (dailyCelebratePhase === 'entering' || dailyCelebratePhase === 'visible') return;
+
+    const generation = ++dailyCelebrateGeneration;
+    window.clearTimeout(dailyCelebrateMotionTimer);
+    window.clearTimeout(dailyCelebrateHideTimer);
+    window.clearTimeout(dailyCelebrateFocusTimer);
+    dailyCelebrateMotionTimer = 0;
+    dailyCelebrateHideTimer = 0;
+    dailyCelebrateFocusTimer = 0;
+    dailyCelebrateEl.classList.remove('is-leaving', 'is-static');
+
+    if (!animate || prefersReduced) {
+      dailyCelebrateEl.classList.remove('is-entering');
+      dailyCelebrateEl.classList.add('is-visible', 'is-static');
+      commitDailyCelebratePhase('visible');
+      // is-static 只屏蔽这一次恢复的 transition；可见状态不变后再移除不会补播动画。
+      window.requestAnimationFrame(() => {
+        if (generation !== dailyCelebrateGeneration || !dailyCelebrateEl) return;
+        dailyCelebrateEl.classList.remove('is-static');
+      });
+      return;
+    }
+
+    dailyCelebrateEl.classList.remove('is-entering');
+    void dailyCelebrateEl.offsetWidth;
+    dailyCelebrateEl.classList.add('is-visible', 'is-entering');
+    commitDailyCelebratePhase('entering');
+    focusDailyCelebrateAction(1720);
+    dailyCelebrateMotionTimer = window.setTimeout(() => {
+      if (generation !== dailyCelebrateGeneration || !dailyCelebrateEl) return;
+      dailyCelebrateEl.classList.remove('is-entering');
+      commitDailyCelebratePhase('visible');
+      dailyCelebrateMotionTimer = 0;
+    }, 2360);
+  }
+  function hideDailyCelebrate(options) {
+    const opts = options || {};
+    if (!dailyCelebrateEl) return;
+    if (dailyCelebratePhase === 'hidden') {
+      commitDailyCelebratePhase('hidden');
+      updateDailyFoot();
+      if (opts.restoreFocus) restoreDailyCelebrateFocus();
+      return;
+    }
+    const generation = ++dailyCelebrateGeneration;
+    window.clearTimeout(dailyCelebrateMotionTimer);
+    window.clearTimeout(dailyCelebrateHideTimer);
+    window.clearTimeout(dailyCelebrateFocusTimer);
+    dailyCelebrateMotionTimer = 0;
+    dailyCelebrateHideTimer = 0;
+    dailyCelebrateFocusTimer = 0;
+    dailyCelebrateEl.classList.remove('is-entering', 'is-static');
+    if (prefersReduced || opts.instant) {
+      dailyCelebrateEl.classList.remove('is-visible', 'is-leaving');
+      commitDailyCelebratePhase('hidden');
+      updateDailyFoot();
+      if (opts.restoreFocus) restoreDailyCelebrateFocus();
+      return;
+    }
+    dailyCelebrateEl.classList.add('is-leaving');
+    dailyCelebrateEl.classList.remove('is-visible');
+    commitDailyCelebratePhase('leaving');
+    dailyCelebrateHideTimer = window.setTimeout(() => {
+      if (generation !== dailyCelebrateGeneration || !dailyCelebrateEl) return;
+      dailyCelebrateEl.classList.remove('is-leaving');
+      commitDailyCelebratePhase('hidden');
+      dailyCelebrateHideTimer = 0;
+      updateDailyFoot();
+      if (opts.restoreFocus) restoreDailyCelebrateFocus();
+    }, 280);
+  }
+  function reviewDailyCelebration() {
+    if (!allDailyDone()) {
+      hideDailyCelebrate({ restoreFocus: true });
+      return;
+    }
+    setDailyReviewedToday(true);
+    hideDailyCelebrate({ restoreFocus: true });
   }
   function makeDailyDragGhost(row, rect) {
     const ghost = row.cloneNode(true);
@@ -3089,9 +3365,21 @@
     clearDailyDropInto();
     dailyDrag = null;
     try { d.row.releasePointerCapture(d.pointerId); } catch (e) {}
-    if (!d.active) return;
+    if (!d.active) {
+      if (d.ghost) d.ghost.remove();
+      return;
+    }
     if (event && event.preventDefault) event.preventDefault();
     if (document.body) document.body.classList.remove('focus-daily-dragging');
+    if (!commit && !event) {
+      if (d.ghost) d.ghost.remove();
+      if (dailyListEl) {
+        dailyListEl.querySelectorAll('.is-dragging, .is-drag-subtree').forEach((element) => {
+          element.classList.remove('is-dragging', 'is-drag-subtree');
+        });
+      }
+      return;
+    }
     dailySuppressClick = true;
     setTimeout(() => { dailySuppressClick = false; }, 0);
     const changed = !!(t && t.valid) && applyDailyDrop(d, t);
@@ -3132,7 +3420,7 @@
       return;
     }
     if (event.button !== 0 || dailyEditId || dailyGroupEditId || dailyConfirmDeleteId
-        || dailyGroupConfirmDeleteId || dailyClearing || dailyDrag) return;
+        || dailyGroupConfirmDeleteId || dailyDrag) return;
     // 这些控件是纯点击，不从它们起拖（勾选 / 编辑器内部 / 折叠箭头 / ⋯菜单）
     if (event.target.closest('[data-role="daily-check"], [data-role="daily-history"], [data-role="daily-menu"], .focus-daily-edit, .focus-daily-milestone, [data-role="daily-group-toggle"], [data-role="daily-group-menu"]')) return;
     const taskRow = event.target.closest('.focus-daily-row');
@@ -3165,15 +3453,6 @@
     window.addEventListener('pointercancel', onDailyPointerCancel);
   }
 
-  // 点任务名/空白处的轻反馈：不改状态，只让 ⋯ 轻跳一下（提示编辑入口），尊重 reduced-motion。
-  function hintDailyRow(row) {
-    if (!row || prefersReduced) return;
-    row.classList.remove('is-hint');
-    void row.offsetWidth;   // 重启动画
-    row.classList.add('is-hint');
-    window.clearTimeout(dailyHintTimers.get(row));
-    dailyHintTimers.set(row, window.setTimeout(() => row.classList.remove('is-hint'), 640));
-  }
   function openDailyEdit(id) {
     const task = dailyTasks.find((item) => item.id === id);
     dailyEditId = id;
@@ -3285,18 +3564,25 @@
   }
   function createDailyTask(name, groupId) {
     name = (name || '').trim();
-    if (!name) return;
+    if (!name || dailyCreatePending) return;
+    setDailyCreatePending(true);
     const prevIds = dailyTasks.map((task) => task.id);
     post('/api/daily-create', { name: name, groupId: groupId || '' })
       .then((json) => {
         applyDailyPayload(json);
         const fresh = dailyTasks.find((task) => prevIds.indexOf(task.id) < 0);
         dailyEnterId = fresh ? fresh.id : '';
-        if (dailyInputEl) { dailyInputEl.value = ''; dailyInputEl.focus(); }
+        if (dailyInputEl) dailyInputEl.value = '';
+        setDailyCreatePending(false);
+        closeDailyComposer({ focus: true });
         renderDaily();
         renderTaskOptions();
       })
-      .catch((error) => toast(error.message));
+      .catch((error) => {
+        setDailyCreatePending(false);
+        toast(error.message);
+        if (dailyInputEl) dailyInputEl.focus();
+      });
   }
   // 分组就地展开时让直接子项「一个一个」逐步揭示（与面板打开的逐行入场同手法），
   // 而非整块一起冒出。临时加 .is-expanding + 逐项 --daily-expand-index 驱动交错，结束后清理。
@@ -3334,6 +3620,7 @@
   function setDailyGroupCollapsed(gid, collapsed) {
     const group = dailyGroupById(gid);
     if (!group) return;
+    const previous = !!group.collapsed;
     group.collapsed = collapsed;
     const wrap = dailyListEl.querySelector('.focus-daily-group[data-group-id="' + gid + '"]');
     if (wrap) {
@@ -3353,8 +3640,15 @@
     } else {
       rebuildDailyRows({ flip: false });
     }
-    syncDailyPanelFocusability();
-    post('/api/daily-group-update', { id: gid, collapsed: collapsed }).catch(() => {});
+    syncViewAccessibility();
+    post('/api/daily-group-update', { id: gid, collapsed: collapsed })
+      .then((json) => applyDailyPayload(json))
+      .catch((error) => {
+        const current = dailyGroupById(gid);
+        if (current) current.collapsed = previous;
+        rebuildDailyRows({ flip: true });
+        toast(error.message || '分组状态保存失败');
+      });
   }
   function toggleDailyGroupCollapse(gid) {
     const group = dailyGroupById(gid);
@@ -3403,12 +3697,22 @@
     const nameIn = wrap.querySelector('[data-role="daily-group-edit-name"]');
     const name = (nameIn ? nameIn.value : '').trim();
     if (!name) { if (nameIn) nameIn.focus(); toast('分组名不能为空'); return; }
-    dailyGroupEditId = '';
-    dailyGroupConfirmDeleteId = '';
-    rebuildDailyRows({ flip: true });
+    const edit = wrap.querySelector('.focus-daily-group-edit');
+    if (edit && edit.classList.contains('is-saving')) return;
+    if (edit) edit.classList.add('is-saving');
     post('/api/daily-group-update', { id: gid, name: name })
-      .then((json) => { applyDailyPayload(json); renderDaily(); renderTaskOptions(); })
-      .catch((error) => toast(error.message));
+      .then((json) => {
+        dailyGroupEditId = '';
+        dailyGroupConfirmDeleteId = '';
+        applyDailyPayload(json);
+        renderDaily();
+        renderTaskOptions();
+      })
+      .catch((error) => {
+        if (edit) edit.classList.remove('is-saving');
+        toast(error.message);
+        if (nameIn) nameIn.focus();
+      });
   }
   function requestDeleteDailyGroup(gid) {
     dailyGroupConfirmDeleteId = gid;
@@ -3435,22 +3739,55 @@
   }
   function createDailyGroup(name, parentId) {
     name = (name || '').trim();
-    if (!name) return;
+    if (!name || dailyCreatePending) return;
+    setDailyCreatePending(true);
     const prevIds = dailyGroups.map((g) => g.id);
     post('/api/daily-group-create', { name: name, parentId: parentId || '' })
       .then((json) => {
         applyDailyPayload(json);
         const fresh = dailyGroups.find((g) => prevIds.indexOf(g.id) < 0);
         dailyEnterId = fresh ? fresh.id : '';
-        if (dailyInputEl) { dailyInputEl.value = ''; dailyInputEl.focus(); }
-        setDailyCompose('task', '');   // 建完分组回到「任务」模式
+        if (dailyInputEl) dailyInputEl.value = '';
+        dailyComposeMode = 'task';
+        dailyAddTargetGroup = '';
+        setDailyCreatePending(false);
+        closeDailyComposer({ focus: true });
         renderDaily();
         renderTaskOptions();
       })
-      .catch((error) => toast(error.message));
+      .catch((error) => {
+        setDailyCreatePending(false);
+        toast(error.message);
+        if (dailyInputEl) dailyInputEl.focus();
+      });
+  }
+  function openDailyComposer(mode, targetGroupId) {
+    dailyComposerOpen = true;
+    if (dailyComposerEl) dailyComposerEl.hidden = false;
+    if (dailyCreateBtn) dailyCreateBtn.setAttribute('aria-expanded', 'true');
+    setDailyCompose(mode || dailyComposeMode, targetGroupId == null ? dailyAddTargetGroup : targetGroupId);
+  }
+  function closeDailyComposer(options) {
+    const opts = options || {};
+    dailyComposerOpen = false;
+    dailyAddTargetGroup = '';
+    dailyComposeMode = 'task';
+    if (dailyComposerEl) dailyComposerEl.hidden = true;
+    if (dailyCreateBtn) dailyCreateBtn.setAttribute('aria-expanded', 'false');
+    if (dailyInputEl) dailyInputEl.value = '';
+    updateDailyComposeUI();
+    if (opts.focus !== false && dailyCreateBtn && dailyCreateBtn.isConnected) dailyCreateBtn.focus();
+  }
+  function toggleDailyComposer() {
+    if (dailyCreatePending) return;
+    if (dailyComposerOpen) closeDailyComposer({ focus: true });
+    else openDailyComposer('task', '');
   }
   // 新增控制条：在「任务 / 分组」两种模式 + 目标父分组之间切换，复用同一个输入框
   function setDailyCompose(mode, targetGroupId) {
+    dailyComposerOpen = true;
+    if (dailyComposerEl) dailyComposerEl.hidden = false;
+    if (dailyCreateBtn) dailyCreateBtn.setAttribute('aria-expanded', 'true');
     dailyComposeMode = mode === 'group' ? 'group' : 'task';
     dailyAddTargetGroup = targetGroupId || '';
     let needRebuild = false;
@@ -3474,6 +3811,8 @@
     if (dailyInputEl) dailyInputEl.focus();
   }
   function updateDailyComposeUI() {
+    if (dailyComposerEl) dailyComposerEl.hidden = !dailyComposerOpen;
+    if (dailyCreateBtn) dailyCreateBtn.setAttribute('aria-expanded', dailyComposerOpen ? 'true' : 'false');
     const isGroup = dailyComposeMode === 'group';
     if (dailyComposeTaskBtn) {
       dailyComposeTaskBtn.classList.toggle('is-active', !isGroup);
@@ -3506,21 +3845,39 @@
         ? (target ? '在「' + (target.name || '分组') + '」下新建子分组…' : '新建分组名称…')
         : (target ? '在「' + (target.name || '分组') + '」下添加任务…' : '添加一件今天想坚持的事…');
     }
+    if (dailySubmitBtn) dailySubmitBtn.setAttribute('aria-label', isGroup ? '添加分组' : '添加每日任务');
   }
-  // 勾选只切换该行的完成态（不整列重建），对勾弹入与删除线生长才有过渡；
-  // 统计数字等服务端真值回来后就地补，不打断动画。全部完成的清场/庆祝照旧判定。
+  function setDailyCreatePending(pending) {
+    dailyCreatePending = !!pending;
+    if (dailyComposerEl) dailyComposerEl.classList.toggle('is-pending', dailyCreatePending);
+    if (dailyInputEl) dailyInputEl.disabled = dailyCreatePending;
+    if (dailySubmitBtn) {
+      dailySubmitBtn.disabled = dailyCreatePending;
+      dailySubmitBtn.setAttribute('aria-busy', dailyCreatePending ? 'true' : 'false');
+    }
+    if (dailyCreateBtn) dailyCreateBtn.disabled = dailyCreatePending;
+    [dailyComposeTaskBtn, dailyComposeGroupBtn, dailyComposeTargetBtn].forEach((button) => {
+      if (button) button.disabled = dailyCreatePending;
+    });
+  }
+  // 勾选只切换该行的完成态；全部完成时保留原位清单，只追加有限反馈。
   function dailyCelebrationCheck(options) {
     const opts = options || {};
     const allDone = allDailyDone();
-    if (!allDone) dailyPeek = false;
     const became = allDone && !dailyWasAllDone;
     dailyWasAllDone = allDone;
-    if (allDone && !dailyPeek) {
-      if (became && !prefersReduced) startDailyClear(opts.waitForMilestone ? 1420 : (opts.waitForGoal ? 860 : 240));
-      else showDailyCelebrate(false);
-    } else {
+    if (!allDone) {
+      setDailyReviewedToday(false);
       hideDailyCelebrate();
+      return;
     }
+    if (dailyReviewedToday()) {
+      if (dailyCelebratePhase !== 'leaving') {
+        hideDailyCelebrate({ instant: dailyCelebratePhase === 'hidden', restoreFocus: false });
+      }
+      return;
+    }
+    showDailyCelebrate(opts.animate === false ? false : became);
   }
   function setRowDone(row, done) {
     if (!row) return;
@@ -3528,13 +3885,16 @@
     const check = row.querySelector('.focus-daily-check');
     if (check) {
       const task = dailyTasks.find((item) => item.id === row.dataset.id);
+      const checkLabel = (done ? '取消完成 · ' : '标记完成 · ') + (task && task.name || '每日任务');
       check.setAttribute('aria-pressed', done ? 'true' : 'false');
-      check.setAttribute('aria-label', (done ? '取消完成 · ' : '标记完成 · ') + (task && task.name || '每日任务'));
+      // i18n 的属性观察器会保留首次见到的中文源文本；同步更新源值，
+      // 避免快速勾选后把新的按钮状态翻译回旧的 “Undo / Mark done”。
+      check.setAttribute('data-i18n-source-aria-label', checkLabel);
+      check.setAttribute('aria-label', T(checkLabel));
     }
     if (!prefersReduced) {
-      replayClass(row, done ? 'is-complete-pop' : 'is-reopen-pop');
-      const stat = row.querySelector('.focus-daily-stat');
-      replayClass(stat, 'is-updating');
+      row.classList.remove('is-complete-pop', 'is-reopen-pop');
+      replayClass(row, done ? 'is-complete-pop' : 'is-reopen-pop', 520);
     }
   }
   function refreshDailyRowStats(task, options) {
@@ -3557,36 +3917,80 @@
       toggle.textContent = task.doneToday ? T('取消今日打卡') : T('今日打卡');
     }
   }
-  // 三期：把刚因这次勾选而「整组完成」的最高祖先组自动收起。延迟到对勾/删除线动画走完；
-  // 期间被改动或正在拖拽就放弃，手动展开不打扰（全清则交给庆祝流程）。
-  function maybeAutoCollapseCompletedGroup(taskId) {
-    if (allDailyDone()) return;
-    const task = dailyTasks.find((t) => t.id === taskId);
-    if (!task || !task.doneToday || !task.groupId) return;
-    let target = '';
-    let cur = task.groupId;
-    const guard = new Set();
-    while (cur && !guard.has(cur)) {
-      guard.add(cur);
-      const prog = dailyGroupProgress(cur);
-      if (prog.total > 0 && prog.done === prog.total) target = cur; else break;
-      cur = (dailyGroupById(cur) || {}).parentId || '';
+  function syncDailyToggleResult(id, task) {
+    const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"]');
+    setRowDone(row, !!task.doneToday);
+    refreshDailyRowStats(task);
+    refreshDailyDetailGoal(task);
+    refreshDailyGroupProgress(task.groupId);
+    updateDailyFoot();
+    renderDailyHistory();
+    dailyCelebrationCheck();
+    renderTaskOptions();
+  }
+  function finishDailyToggleState(id, state) {
+    if (dailyToggleStates.get(id) === state) dailyToggleStates.delete(id);
+    const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"]');
+    if (row) row.classList.remove('is-syncing');
+  }
+  function drainDailyToggle(id, state) {
+    if (!state || state.inFlight || dailyToggleStates.get(id) !== state) return;
+    if (!!state.desired === !!state.confirmedTask.doneToday) {
+      const current = dailyTasks.find((item) => item.id === id);
+      if (current) Object.assign(current, JSON.parse(JSON.stringify(state.confirmedTask)));
+      dailySignature = dailyPayloadSignature({ tasks: dailyTasks, groups: dailyGroups });
+      if (current) syncDailyToggleResult(id, current);
+      finishDailyToggleState(id, state);
+      return;
     }
-    if (!target) return;
-    const g = dailyGroupById(target);
-    if (!g || g.collapsed) return;
-    setTimeout(() => {
-      const gg = dailyGroupById(target);
-      if (!gg || gg.collapsed || dailyClearing || dailyDrag) return;
-      const prog = dailyGroupProgress(target);
-      if (!(prog.total > 0 && prog.done === prog.total)) return;
-      setDailyGroupCollapsed(target, true);   // 走 CSS 平滑收合
-    }, 480);
+    const target = !!state.desired;
+    state.inFlight = true;
+    post('/api/daily-toggle', { id: id, done: target }).then((json) => {
+      if (dailyToggleStates.get(id) !== state) return;
+      const payload = dailyPayload(json);
+      const confirmed = Array.isArray(payload.tasks) ? payload.tasks.find((item) => item.id === id) : null;
+      if (confirmed) state.confirmedTask = JSON.parse(JSON.stringify(confirmed));
+      else state.confirmedTask.doneToday = target;
+      state.inFlight = false;
+      if (!!state.desired !== target) {
+        drainDailyToggle(id, state);
+        return;
+      }
+      applyDailyPayload(payload);
+      const fresh = dailyTasks.find((item) => item.id === id);
+      if (fresh) syncDailyToggleResult(id, fresh);
+      finishDailyToggleState(id, state);
+    }).catch((error) => {
+      if (dailyToggleStates.get(id) !== state) return;
+      state.inFlight = false;
+      if (!!state.desired !== target) {
+        drainDailyToggle(id, state);
+        return;
+      }
+      const current = dailyTasks.find((item) => item.id === id);
+      if (current) {
+        Object.assign(current, JSON.parse(JSON.stringify(state.confirmedTask)));
+        dailySignature = dailyPayloadSignature({ tasks: dailyTasks, groups: dailyGroups });
+        syncDailyToggleResult(id, current);
+      }
+      finishDailyToggleState(id, state);
+      toast(error.message);
+    });
   }
   function toggleDailyTask(id) {
     const task = dailyTasks.find((item) => item.id === id);
     if (!task) return;
-    const want = !task.doneToday;
+    let state = dailyToggleStates.get(id);
+    if (!state) {
+      state = {
+        confirmedTask: JSON.parse(JSON.stringify(task)),
+        desired: !!task.doneToday,
+        inFlight: false,
+      };
+      dailyToggleStates.set(id, state);
+    }
+    const want = !state.desired;
+    state.desired = want;
     const prevTotalDays = Math.max(0, Number(task.totalDays) || 0);
     const targetDays = dailyGoalState(task).target;
     task.doneToday = want;
@@ -3609,43 +4013,17 @@
     updateDailyFoot();
     pulseDailyFoot();
     renderDailyHistory();
-    dailyCelebrationCheck({
-      waitForGoal: want && targetDays > 0,
-      waitForMilestone: want && crossedMilestones.length > 0,
-    });
-    maybeAutoCollapseCompletedGroup(id);
-    post('/api/daily-toggle', { id: id, done: want })
-      .then((json) => {
-        applyDailyPayload(json);
-        const fresh = dailyTasks.find((item) => item.id === id);
-        if (fresh) {
-          if (!dailyClearing) refreshDailyRowStats(fresh);
-          refreshDailyDetailGoal(fresh);
-          refreshDailyGroupProgress(fresh.groupId);
-        }
-        renderDailyHistory();
-        renderTaskOptions();
-      })
-      .catch((error) => {
-        task.doneToday = !want;
-        task.doneDates = prevDates;
-        task.totalDays = prevTotalDays;
-        setRowDone(row, !want);
-        refreshDailyRowStats(task);
-        refreshDailyDetailGoal(task);
-        refreshDailyGroupProgress(task.groupId);
-        updateDailyFoot();
-        pulseDailyFoot();
-        hideDailyCelebrate();
-        renderDaily();
-        toast(error.message);
-      });
+    if (want && allDailyDone()) dailyCelebrateReturnId = id;
+    dailyCelebrationCheck();
+    if (row) row.classList.add('is-syncing');
+    drainDailyToggle(id, state);
   }
   function completeDailyTask(id) {
     return post('/api/daily-toggle', { id: id, done: true }).then((json) => {
       applyDailyPayload(json);
       dailyLoaded = true;
-      if (dailyOpen && !dailyClearing) renderDaily();
+      if (allDailyDone()) dailyCelebrateReturnId = id;
+      if (dailyLoaded) renderDaily({ celebrate: true });
       renderTaskOptions();
     });
   }
@@ -3654,7 +4032,7 @@
     return post('/api/daily-add-minutes', { id: id, minutes: minutes })
       .then((json) => {
         applyDailyPayload(json);
-        if (dailyLoaded && !dailyClearing) renderDaily();
+        if (dailyLoaded) renderDaily();
         renderTaskOptions();
       })
       .catch(() => {});
@@ -3922,9 +4300,8 @@
     }
     if (action.dataset.action === 'focus-help-close') toggleHelp(false);
     if (action.dataset.action === 'focus-zen-enter') toggleZen();
-    if (action.dataset.action === 'daily-toggle') toggleDaily();
-    if (action.dataset.action === 'daily-close') toggleDaily(false);
-    if (action.dataset.action === 'daily-peek') dailyPeekList();
+    if (action.dataset.action === 'daily-review-today') { reviewDailyCelebration(); return; }
+    if (action.dataset.action === 'daily-compose-toggle') toggleDailyComposer();
     if (action.dataset.action === 'daily-history-close') closeDailyHistory();
     if (action.dataset.action === 'daily-history-prev') moveDailyHistoryMonth(-1);
     if (action.dataset.action === 'daily-history-next') moveDailyHistoryMonth(1);
@@ -3948,7 +4325,7 @@
       if (task && bindTask(task.id, task.name || '', 'daily')) {
         renderTaskOptions();
         syncDisplay();
-        renderDailyDetail();
+        showTimerView({ persist: false, animate: false });
       }
     }
     if (action.dataset.action === 'daily-detail-edit' && dailyDetailTaskId) {
@@ -4098,31 +4475,14 @@
     const typing = isTypingTarget(target);
     const dailyDetailShell = getDailyDetailShell();
     const dailyDetailOpen = !!dailyDetailTaskId || !!dailyDetailShell;
-    if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey && !zenActive) {
-      const blocked = (helpPop && !helpPop.hidden) || (settingsPop && !settingsPop.hidden)
-        || (sessionEditor && !sessionEditor.hidden) || (wrapupEl && !wrapupEl.hidden) || dailyDetailOpen;
-      if (dailyDetailOpen) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!dailyDetailShell || !dailyDetailShell.classList.contains('is-closing')) closeDailyDetail();
-        return;
-      }
-      if (!blocked && dailyOpen) {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleDaily(false);
-        return;
-      }
-      if (typing) return;
-      if (!blocked) {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleDaily();
-        return;
-      }
+    if (event.key === 'Escape' && dailyComposerOpen && dailyComposerEl && dailyComposerEl.contains(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDailyComposer({ focus: true });
+      return;
     }
     if (typing) return;
-    if (event.key === '?') {
+    if (viewMode === 'timer' && event.key === '?') {
       event.preventDefault();
       if (!zenActive) toggleHelp();
       return;
@@ -4142,15 +4502,17 @@
       if (dailyGroupEditId) { event.preventDefault(); closeDailyGroupEdit(); return; }
       if (dailyConfirmDeleteId) { event.preventDefault(); cancelDeleteDaily(); return; }
       if (dailyEditId) { event.preventDefault(); closeDailyEdit(); return; }
-      if (dailyOpen) { event.preventDefault(); toggleDaily(false); return; }
+      if (dailyComposerOpen) { event.preventDefault(); closeDailyComposer({ focus: true }); return; }
     }
     const overlayOpen = (helpPop && !helpPop.hidden) || (settingsPop && !settingsPop.hidden)
       || (sessionEditor && !sessionEditor.hidden) || dailyDetailOpen;
-    if (event.code === 'Space' && !overlayOpen && !pendingSession && !(wrapupEl && !wrapupEl.hidden)) {
+    if (viewMode === 'timer' && event.code === 'Space'
+      && !overlayOpen && !pendingSession && !(wrapupEl && !wrapupEl.hidden)) {
       event.preventDefault();
       if (!running || paused) start(); else pause();
     }
-    if ((event.key === 'z' || event.key === 'Z') && !overlayOpen && running && !pendingSession) {
+    if (viewMode === 'timer' && (event.key === 'z' || event.key === 'Z')
+      && !overlayOpen && running && !pendingSession) {
       event.preventDefault();
       toggleZen();
     }
@@ -4175,20 +4537,84 @@
   try { boundTaskId = localStorage.getItem(TASK_KEY) || ''; } catch (e) {}
   try { boundKind = boundTaskId ? (localStorage.getItem(KIND_KEY) || 'study') : ''; } catch (e) {}
   restoreRuntime();
+  if (root.dataset.pendingForceTimer === '1' || sessionLocksView()) viewMode = 'timer';
   syncModeUI();
   syncDisplay();
-  syncDailyPanelFocusability();
+  root.classList.toggle('focus-view-daily', viewMode === 'daily');
+  syncViewAccessibility();
 
-  window.CanvasFocus = {
+  function prepareFocusActivation(options) {
+    const opts = options || {};
+    focusActivationSeq += 1;
+    focusPrepared = true;
+    focusLifecycleActive = false;
+    dailyRevealKey = '';
+    clearViewTransition(true);
+    const preferred = opts.forceTimer || sessionLocksView() ? 'timer' : readViewMode();
+    commitViewMode(preferred, { persist: false, load: false, reveal: false });
+    if (preferred === 'daily' && !dailyLoaded) setDailyLoading(true);
+    return preferred;
+  }
+  function deactivateFocusView() {
+    focusLifecycleActive = false;
+    focusPrepared = false;
+    focusActivationSeq += 1;
+    clearViewTransition(true);
+    window.clearTimeout(dailyRevealTimer);
+    window.clearTimeout(dailyDataRevealTimer);
+    window.clearTimeout(dailyCelebrateMotionTimer);
+    window.clearTimeout(dailyCelebrateHideTimer);
+    window.clearTimeout(dailyCelebrateFocusTimer);
+    dailyRevealTimer = 0;
+    dailyDataRevealTimer = 0;
+    dailyCelebrateMotionTimer = 0;
+    dailyCelebrateHideTimer = 0;
+    dailyCelebrateFocusTimer = 0;
+    dailyCelebrateGeneration += 1;
+    dailyRevealWaitingForData = false;
+    dailyRevealKey = '';
+    if (dailyRoot) dailyRoot.classList.remove('is-revealing', 'is-data-revealing');
+    if (dailyCelebrateEl) {
+      dailyCelebrateEl.classList.remove('is-entering', 'is-leaving', 'is-static');
+      if (allDailyDone() && !dailyReviewedToday()) {
+        dailyCelebrateEl.classList.add('is-visible');
+        commitDailyCelebratePhase('visible');
+      } else {
+        dailyCelebrateEl.classList.remove('is-visible');
+        commitDailyCelebratePhase('hidden');
+      }
+    }
+    cancelDailyRead();
+    endDailyPointerDrag(null, false);
+    closeDailyHistory();
+    closeDailyDetail({ restore: false, instant: true });
+  }
+
+  const canvasFocusApi = {
+    prepareActivate(options) {
+      return prepareFocusActivation(options);
+    },
     activate() {
+      if (!focusPrepared) prepareFocusActivation();
+      focusPrepared = false;
+      focusLifecycleActive = true;
+      const activationId = focusActivationSeq;
       footprintDay = todayStr();
       footprintSessionId = '';
       loadTasks();   // 任务下拉框每次重读，和学习页实时同步（任务联动敏感，不缓存）
-      loadDaily();   // 每日任务每次重读：跨天重置要靠它，开销也小
+      const hadDaily = dailyLoaded;
+      const dailyEntranceKey = 'activation-' + activationId;
+      if (viewMode === 'daily') {
+        // 首载先让页首只入场一次，并保持同一 generation；数据到达后新插入的卡片
+        // 在同一个 is-revealing 周期内接上错峰，不再重放页首或整页动画。
+        replayDailyViewEntrance(dailyEntranceKey, { waitForData: !hadDaily });
+      }
+      loadDaily({ reveal: !hadDaily, revealKey: dailyEntranceKey });
+      // 每日任务每次静默重读以处理跨天重置；签名没变化时不重建、不重播动画。
       if (!loadedSessions) loadSessions(); else renderFootprint();
       syncDisplay();
       handleExpiredRestore();
-      requestAnimationFrame(replayFocusEntrance);
+      if (viewMode === 'timer') requestAnimationFrame(replayFocusEntrance);
       if (helpBtn) {
         try {
           if (localStorage.getItem('canvas:focusHelpSeen') !== '1') {
@@ -4198,7 +4624,9 @@
         } catch (e) {}
       }
     },
+    deactivate: deactivateFocusView,
     prepareTask(id, title) {
+      showTimerView({ persist: false, animate: false });
       if (!bindTask(id, title)) return false;
       loadTasks().then(() => {
         if (taskSelect) taskSelect.value = boundTaskId;
@@ -4207,6 +4635,7 @@
       return true;
     },
     showDay(day, sessionId) {
+      showTimerView({ persist: false, animate: false });
       footprintDay = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? String(day) : todayStr();
       footprintSessionId = String(sessionId || '');
       return loadSessions().then(() => {
@@ -4216,5 +4645,13 @@
         if (footprintSessionId) openSessionEditor(footprintSessionId);
       });
     },
+    toggleMode: toggleViewMode,
+    showTimer(options) { return showTimerView(options); },
+    getViewMode() { return viewMode; },
+    isViewLocked: sessionLocksView,
   };
+  preloadFocusView().finally(() => {
+    window.CanvasFocus = canvasFocusApi;
+    document.dispatchEvent(new CustomEvent('canvasfocus:ready'));
+  });
 })();

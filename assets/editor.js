@@ -9088,6 +9088,109 @@
   let pendingViewport = null;
   let viewportSaveQueue = Promise.resolve();
   let graphView = null;
+  let canvasActivityReady = false;
+  let canvasActivityActive = false;
+  let canvasActivityLastCapturedAt = 0;
+  let canvasActivityHeartbeat = 0;
+  let canvasActivitySending = null;
+  const canvasActivityPending = [];
+  const canvasActivitySessionId = (window.crypto && typeof window.crypto.randomUUID === 'function')
+    ? window.crypto.randomUUID()
+    : 'canvas-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+
+  function captureCanvasActivity(endAt) {
+    if (!canvasActivityActive || !canvasActivityLastCapturedAt) return;
+    const endedAt = Math.max(canvasActivityLastCapturedAt, Number(endAt) || Date.now());
+    let cursor = canvasActivityLastCapturedAt;
+    while (endedAt - cursor >= 250) {
+      const chunkEnd = Math.min(endedAt, cursor + 9 * 60 * 1000);
+      canvasActivityPending.push({ startedAt: cursor, endedAt: chunkEnd });
+      cursor = chunkEnd;
+    }
+    canvasActivityLastCapturedAt = endedAt;
+  }
+
+  function sendNextCanvasActivity(keepalive) {
+    if (canvasActivitySending || !canvasActivityPending.length || !filePath) return;
+    const interval = canvasActivityPending[0];
+    canvasActivitySending = interval;
+    postCanvasActivity(interval, keepalive)
+      .then(({ response, json }) => {
+        if (!response.ok) throw new Error(json.error || 'canvas activity failed');
+        const index = canvasActivityPending.indexOf(interval);
+        if (index >= 0) canvasActivityPending.splice(index, 1);
+      })
+      .catch((error) => {
+        console.warn('[画布] 前台时间暂未写入，将稍后重试', error);
+      })
+      .finally(() => {
+        if (canvasActivitySending === interval) canvasActivitySending = null;
+        if (canvasActivityPending.length && canvasActivityActive) {
+          window.setTimeout(() => sendNextCanvasActivity(false), 1200);
+        }
+      });
+  }
+
+  function postCanvasActivity(interval, keepalive) {
+    return fetch('/api/canvas-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: !!keepalive,
+      body: JSON.stringify({
+        path: filePath,
+        sessionId: canvasActivitySessionId,
+        startedAt: new Date(interval.startedAt).toISOString(),
+        endedAt: new Date(interval.endedAt).toISOString(),
+      }),
+    }).then((response) => response.json().then((json) => ({ response, json })));
+  }
+
+  function flushCanvasActivityKeepalive() {
+    canvasActivityPending.slice().forEach((interval) => {
+      postCanvasActivity(interval, true)
+      .then(({ response, json }) => {
+        if (!response.ok) throw new Error(json.error || 'canvas activity failed');
+        const index = canvasActivityPending.indexOf(interval);
+        if (index >= 0) canvasActivityPending.splice(index, 1);
+      })
+      .catch(() => {});
+    });
+  }
+
+  function pauseCanvasActivity(keepalive) {
+    if (!canvasActivityActive) return;
+    captureCanvasActivity(Date.now());
+    canvasActivityActive = false;
+    canvasActivityLastCapturedAt = 0;
+    if (canvasActivityHeartbeat) window.clearInterval(canvasActivityHeartbeat);
+    canvasActivityHeartbeat = 0;
+    if (keepalive) flushCanvasActivityKeepalive();
+    else sendNextCanvasActivity(false);
+  }
+
+  function resumeCanvasActivity() {
+    if (!canvasActivityReady || canvasActivityActive || document.hidden || !document.hasFocus()) return;
+    canvasActivityActive = true;
+    canvasActivityLastCapturedAt = Date.now();
+    if (canvasActivityHeartbeat) window.clearInterval(canvasActivityHeartbeat);
+    canvasActivityHeartbeat = window.setInterval(() => {
+      captureCanvasActivity(Date.now());
+      sendNextCanvasActivity(false);
+    }, 30000);
+    sendNextCanvasActivity(false);
+  }
+
+  function startCanvasActivityTracker() {
+    canvasActivityReady = true;
+    window.addEventListener('focus', resumeCanvasActivity);
+    window.addEventListener('blur', () => pauseCanvasActivity(true));
+    window.addEventListener('pagehide', () => pauseCanvasActivity(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) pauseCanvasActivity(true);
+      else resumeCanvasActivity();
+    });
+    window.requestAnimationFrame(resumeCanvasActivity);
+  }
 
   const BACKGROUND_GRADIENTS = {
     'morning-mist': {
@@ -10278,6 +10381,7 @@
           onChange: markDirty,
         });
         document.dispatchEvent(new CustomEvent('editor:canvasready'));
+        startCanvasActivityTracker(json.canvasActivity || {});
         if ((LOCATE_NODE || LOCATE_TASK_ROOT) && typeof window.CanvasModule.revealNode === 'function') {
           window.setTimeout(() => {
             let located = false;
@@ -10412,6 +10516,7 @@
       });
       const json = await resp.json();
       if (resp.ok) {
+        applyCanvasActivityTotals(json.canvasActivity || {});
         if (dirtyEpoch === savedEpoch) {
           markClean('已保存');             // 保存途中没有新编辑 → 确实干净
         } else {

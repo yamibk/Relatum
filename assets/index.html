@@ -28,6 +28,28 @@
     html { background: #fbfbfa; }
     html[data-start-theme="dark"] { background: #111213; color-scheme: dark; }
   </style>
+  <link rel="preload" href="focus.js" as="script">
+  <script>
+    // 专注页位于脚本队列末端。页面解析时就并行读取其轻量数据，第一次翻页与后续翻页共用缓存。
+    (function () {
+      function preloadJson(path) {
+        return fetch(path, { credentials: 'same-origin' }).then(function (response) {
+          if (!response.ok) throw new Error('preload failed');
+          return response.json();
+        }).then(function (json) {
+          return { ok: true, json: json };
+        }, function () {
+          return { ok: false, json: null };
+        });
+      }
+      window.RelatumBoot = window.RelatumBoot || {};
+      window.RelatumBoot.focus = {
+        daily: preloadJson('/api/daily'),
+        sessions: preloadJson('/api/focus'),
+        study: preloadJson('/api/study'),
+      };
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="start-page">
@@ -324,7 +346,7 @@
 
       <!-- 活跃热力图 · 独立前置页（与学习页之间可翻页；内容由 study.js 渲染）-->
       <section class="cadence-embedded" data-role="cadence-view" aria-label="活跃热力图页">
-        <section class="study-cadence" data-role="study-cadence" aria-label="已完成任务 · 一年活跃"></section>
+        <section class="study-cadence" data-role="study-cadence" aria-label="年度足迹与画布活跃"></section>
       </section>
 
       <!-- 速记 · 便签墙独立前置页（活跃更左一格；便签由 notes.js 创建/渲染/存盘）。
@@ -693,7 +715,7 @@
 
       <!-- 专注钟 · 当下在做的前置页：计时 + 目标成果 + 今日足迹 -->
       <section class="focus-embedded" data-role="focus-view" aria-label="专注钟页">
-        <div class="focus-shell">
+        <div class="focus-shell focus-timer-view" data-role="focus-timer-view">
           <header class="focus-head">
             <div>
               <p class="study-eyebrow">FOCUS</p>
@@ -854,50 +876,69 @@
             <dl>
               <div><dt>双击时间</dt><dd>修改番茄钟的专注分钟数；运行中不可修改。</dd></div>
               <div><dt>选择任务</dt><dd>这一段会计入所选的学习任务或每日任务。</dd></div>
-              <div><dt>每日任务</dt><dd>按 Tab 划出右侧清单：勾选完成、累计天数与专注分钟，全部完成有庆祝。</dd></div>
+              <div><dt>每日任务</dt><dd>再次点击左侧“专”进入完整清单：勾选完成、管理分组，并回看累计天数与专注分钟。</dd></div>
               <div><dt>本段目标</dt><dd>开始前写下这一段准备完成什么；运行中也可点座舱目标行随时补改。</dd></div>
               <div><dt>结束收尾</dt><dd>补一句实际成果，再继续、收工或明确完成任务。</dd></div>
               <div><dt>今日足迹</dt><dd>点击圆点可查看、修改或删除一段记录。</dd></div>
               <div><dt>深度专注</dt><dd>运行时点 ⛶ 或按 Z 进入全屏极简，Esc 退出。</dd></div>
             </dl>
-            <p class="focus-help-shortcuts"><kbd>Space</kbd> 开始 / 暂停　<kbd>Tab</kbd> 每日任务　<kbd>Z</kbd> 深度专注　<kbd>?</kbd> 帮助　<kbd>Esc</kbd> 关闭 / 退出</p>
+            <p class="focus-help-shortcuts"><kbd>Space</kbd> 开始 / 暂停　<kbd>Z</kbd> 深度专注　<kbd>?</kbd> 帮助　<kbd>Esc</kbd> 关闭 / 退出</p>
             <footer>学习页负责安排，专注页负责执行，日历负责回看。</footer>
           </aside>
         </div>
 
-        <!-- 每日任务侧栏：习惯清单，默认收起，Tab / 右侧把手划出；与学习任务、.canvas 完全解耦 -->
-        <button type="button" class="focus-daily-handle" data-action="daily-toggle"
-          aria-label="每日任务（Tab 开合）" aria-expanded="false">
-          <span class="focus-daily-handle-text">每日任务</span>
-          <kbd>Tab</kbd>
-        </button>
-        <aside class="focus-daily" data-role="focus-daily" aria-label="每日任务" hidden>
-          <header class="focus-daily-head">
-            <div><p class="study-eyebrow">DAILY</p><h2>每日任务</h2></div>
-            <button type="button" class="study-icon-button" data-action="daily-close"
-              aria-label="收起每日任务（Tab / Esc）">×</button>
-          </header>
-          <div class="focus-daily-list" data-role="focus-daily-list"></div>
-          <div class="focus-daily-compose" data-role="focus-daily-compose">
-            <div class="focus-daily-compose-modes" role="group" aria-label="新增类型">
-              <button type="button" class="is-active" data-role="daily-compose-task" aria-pressed="true">任务</button>
-              <button type="button" data-role="daily-compose-group" aria-pressed="false">分组</button>
+        <!-- 每日任务独立视图：再次点击左侧“专”与专注钟切换；数据仍来自 data/daily.json。 -->
+        <section class="focus-daily focus-daily-view" data-role="focus-daily" aria-label="每日任务视图" hidden>
+          <div class="focus-daily-scroll" data-role="focus-daily-scroll" tabindex="-1">
+            <header class="focus-daily-head">
+              <div>
+                <p class="study-eyebrow">DAILY</p>
+                <h1>每日任务 <span data-role="focus-daily-count">0</span></h1>
+              </div>
+              <button type="button" class="focus-daily-create" data-action="daily-compose-toggle"
+                aria-label="新增每日任务或分组" aria-expanded="false">＋</button>
+            </header>
+            <div class="focus-daily-content">
+              <div class="focus-daily-skeleton" data-role="focus-daily-skeleton" aria-hidden="true" hidden>
+                <span></span><span></span><span></span>
+              </div>
+              <div class="focus-daily-list" data-role="focus-daily-list"></div>
             </div>
-            <button type="button" class="focus-daily-compose-target" data-role="daily-compose-target" hidden></button>
+            <div class="focus-daily-composer" data-role="focus-daily-composer" hidden>
+              <div class="focus-daily-compose" data-role="focus-daily-compose">
+                <div class="focus-daily-compose-modes" role="group" aria-label="新增类型">
+                  <button type="button" class="is-active" data-role="daily-compose-task" aria-pressed="true">任务</button>
+                  <button type="button" data-role="daily-compose-group" aria-pressed="false">分组</button>
+                </div>
+                <button type="button" class="focus-daily-compose-target" data-role="daily-compose-target" hidden></button>
+              </div>
+              <form class="focus-daily-add" data-role="focus-daily-add">
+                <input type="text" maxlength="80" data-role="focus-daily-input"
+                  placeholder="添加一件今天想坚持的事…" aria-label="新增每日任务">
+                <button type="submit" class="focus-daily-add-btn" aria-label="添加每日任务">＋</button>
+              </form>
+            </div>
+            <p class="focus-daily-foot" data-role="focus-daily-foot"></p>
           </div>
-          <form class="focus-daily-add" data-role="focus-daily-add">
-            <input type="text" maxlength="80" data-role="focus-daily-input"
-              placeholder="添加一件今天想坚持的事…" aria-label="新增每日任务">
-            <button type="submit" class="focus-daily-add-btn" aria-label="添加每日任务">＋</button>
-          </form>
-          <p class="focus-daily-foot" data-role="focus-daily-foot"></p>
-          <div class="focus-daily-celebrate" data-role="focus-daily-celebrate" hidden aria-live="polite">
-            <span class="focus-daily-celebrate-burst" aria-hidden="true"></span>
-            <strong>今天的每日任务都做完了</strong>
-            <span class="focus-daily-celebrate-sub" data-role="focus-daily-celebrate-sub"></span>
-            <button type="button" class="focus-daily-celebrate-peek" data-action="daily-peek">查看今日清单</button>
+          <div class="focus-daily-celebrate" data-role="focus-daily-celebrate"
+            data-phase="hidden" aria-hidden="true" aria-labelledby="focus-daily-celebrate-title">
+            <div class="focus-daily-celebrate-inner">
+              <div class="focus-daily-star-gather" aria-hidden="true">
+                <span class="focus-daily-star-halo"></span>
+                <i class="focus-daily-star-dot dot-far-left"></i>
+                <i class="focus-daily-star-dot dot-near-left"></i>
+                <span class="focus-daily-star-main"></span>
+                <i class="focus-daily-star-dot dot-near-right"></i>
+                <i class="focus-daily-star-dot dot-far-right"></i>
+              </div>
+              <div class="focus-daily-celebrate-copy" aria-live="polite" aria-atomic="true">
+                <strong id="focus-daily-celebrate-title">今日清单已全部完成</strong>
+                <span class="focus-daily-celebrate-sub" data-role="focus-daily-celebrate-sub"></span>
+              </div>
+              <button type="button" class="focus-daily-review-today" data-action="daily-review-today">回顾今日</button>
+            </div>
           </div>
-        </aside>
+        </section>
       </section>
     </section>
   </main>
