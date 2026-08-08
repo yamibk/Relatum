@@ -59,7 +59,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | --- | --- |
 | `app.py` | 本地 HTTP 服务、路由、持久化、导入导出、AI 代理、独立复习卡片数据库、学习/日历/速记/专注数据。 |
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
-| `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调。 |
+| `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
 | `desktop_instance.py` | Windows 桌面主程序单实例协调；按数据根持有命名互斥锁，通过带认证的本地命名管道转交窗口激活或 `.canvas` 打开请求，并管理 `%TEMP%` 中的短期状态文件。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
 | `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`。脚本保持 ASCII。 |

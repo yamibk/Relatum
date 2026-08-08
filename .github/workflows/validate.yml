@@ -54,6 +54,10 @@ jobs:
         shell: pwsh
         run: node tests/node-resize-contract.js
 
+      - name: Run desktop window contract tests
+        shell: pwsh
+        run: node tests/desktop-window-contract.js
+
       - name: Run ruler regression tests
         shell: pwsh
         run: |

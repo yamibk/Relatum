@@ -116,7 +116,14 @@
   function setMaximized(maximized) {
     document.documentElement.classList.toggle('desktop-maximized', maximized);
     document.body.classList.toggle('desktop-maximized', maximized);
+    // pywebview 的拖拽区会直接调用 SetWindowPos；最大化时必须撤销标记，避免窗口被
+    // 整体移出显示器工作区并在顶部露出空条。还原后再恢复正常的标题栏拖动。
+    bar.classList.toggle('pywebview-drag-region', !maximized);
   }
+
+  window.addEventListener('canvasdesktop:window-state', (event) => {
+    setMaximized(!!(event.detail && event.detail.maximized));
+  });
 
   function setWindowTransitioning(value) {
     windowTransitioning = value;
