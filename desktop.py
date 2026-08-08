@@ -21,6 +21,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 import app
+from desktop_instance import DesktopInstanceCoordinator
 from windows_wallpaper import WallpaperController, run_wallpaper_child
 
 try:
@@ -509,6 +510,107 @@ def _open_url(port: int, initial_file: Path | None) -> str:
     return base + "editor.html?desktop=1&file=" + urllib.parse.quote(str(initial_file))
 
 
+def _current_window_canvas(window) -> Path | None:
+    """Return the canvas currently shown by the desktop window, if any."""
+    import urllib.parse
+
+    try:
+        current_url = str(window.get_current_url() or "")
+        parsed = urllib.parse.urlparse(current_url)
+        if not parsed.path.endswith("/editor.html"):
+            return None
+        raw = urllib.parse.parse_qs(parsed.query).get("file", [""])[0]
+        if not raw:
+            return None
+        return Path(raw).resolve()
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+class DesktopActivationRouter:
+    """Validate and apply activation commands received from later launches."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._window = None
+        self._bridge: DesktopBridge | None = None
+        self._port = 0
+        self._show_main = None
+        self._ready = False
+        self._pending: dict | None = None
+
+    def attach(self, window, bridge: DesktopBridge, port: int, show_main) -> None:
+        with self._lock:
+            self._window = window
+            self._bridge = bridge
+            self._port = int(port)
+            self._show_main = show_main
+
+    def mark_ready(self) -> None:
+        with self._lock:
+            self._ready = True
+            pending, self._pending = self._pending, None
+        if pending is not None:
+            self._apply(pending)
+
+    def handle(self, command: dict) -> dict:
+        raw = str(command.get("file") or "").strip()
+        target = None
+        if raw:
+            try:
+                candidate = Path(raw).resolve()
+            except OSError:
+                candidate = Path()
+            if candidate.suffix.lower() != ".canvas" or not candidate.is_file():
+                return {
+                    "ok": False,
+                    "status": "invalid-file",
+                    "error": "要打开的画布不存在或格式无效",
+                }
+            target = candidate
+        normalized = {"file": str(target) if target is not None else ""}
+        with self._lock:
+            if not self._ready or self._window is None or self._bridge is None:
+                self._pending = normalized
+                return {"ok": True, "status": "queued"}
+        return self._apply(normalized)
+
+    def _apply(self, command: dict) -> dict:
+        with self._lock:
+            window = self._window
+            bridge = self._bridge
+            port = self._port
+            show_main = self._show_main
+        if window is None or bridge is None or not port or show_main is None:
+            return {"ok": False, "status": "unavailable", "error": "主窗口尚未准备好"}
+
+        show_main()
+        raw = str(command.get("file") or "").strip()
+        if not raw:
+            return {"ok": True, "status": "activated"}
+        target = Path(raw)
+        if not target.is_file() or target.suffix.lower() != ".canvas":
+            return {"ok": False, "status": "invalid-file", "error": "要打开的画布已不存在"}
+
+        current = _current_window_canvas(window)
+        if current is not None and os.path.normcase(str(current)) == os.path.normcase(str(target)):
+            return {"ok": True, "status": "activated"}
+        with bridge._lock:
+            dirty = bridge.dirty
+        if dirty:
+            return {
+                "ok": True,
+                "status": "blocked-dirty",
+                "error": "当前画布还有未保存的修改",
+            }
+        try:
+            app.register_recent(target)
+            window.load_url(_open_url(port, target))
+        except Exception as err:
+            return {"ok": False, "status": "open-failed", "error": str(err)}
+        return {"ok": True, "status": "opened"}
+
+
 def _wallpaper_url(port: int, event_id: str, language: str) -> str:
     import urllib.parse
     return (f"http://127.0.0.1:{port}/countdown.html?wallpaper=1&event="
@@ -565,8 +667,38 @@ def main() -> int:
         )
         return 1
 
-    app.ensure_dirs()
     initial_file = app.resolve_initial_file(args.file)
+    activation_router = DesktopActivationRouter()
+    instance = DesktopInstanceCoordinator(app.ROOT, activation_router.handle)
+    try:
+        instance_result = instance.acquire_or_forward(initial_file)
+    except Exception as err:
+        _message_box(f"Relatum 单实例协调启动失败：\n{err}", 0x10)
+        return 1
+    if not instance_result.get("primary"):
+        status = str(instance_result.get("status") or "")
+        if status == "blocked-dirty":
+            _message_box(
+                "Relatum 已在运行。\n\n当前窗口有未保存的修改，已保留当前画布，未切换到另一张画布。",
+                0x30,
+            )
+            return 0
+        if not instance_result.get("ok"):
+            detail = str(instance_result.get("error") or "主实例暂不可用")
+            _message_box(
+                "Relatum 已在运行或正在启动，但暂时无法唤醒。\n\n"
+                f"请稍后重试。\n\n{detail}",
+                0x30,
+            )
+            return 1
+        return 0
+
+    try:
+        app.ensure_dirs()
+    except Exception as err:
+        instance.close()
+        _message_box(f"Relatum 数据目录初始化失败：\n{err}", 0x10)
+        return 1
     if initial_file is not None:
         app.register_recent(initial_file)
 
@@ -575,6 +707,7 @@ def main() -> int:
         port = app.find_free_port(app.DEFAULT_PORT)
         server = app.CanvasServer(("127.0.0.1", port), app.Handler)
     except Exception as err:
+        instance.close()
         _message_box(f"Relatum 启动失败：\n{err}", 0x10)
         return 1
     # selector 会在请求到达时立即唤醒；poll_interval 只影响 shutdown 检查。
@@ -631,6 +764,7 @@ def main() -> int:
         )
     except Exception as err:
         stop_server()
+        instance.close()
         _message_box(f"桌面窗口创建失败：\n{err}", 0x10)
         return 1
     bridge._window = window
@@ -647,6 +781,8 @@ def main() -> int:
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
         except Exception:
             pass
+
+    activation_router.attach(window, bridge, port, show_main_window)
 
     def confirm_discard_changes() -> bool:
         with bridge._lock:
@@ -706,6 +842,7 @@ def main() -> int:
     def on_loaded() -> None:
         # 页面加载完成、WebView2 完成首次绘制后再补一次圆角，确保立即显形。
         _apply_corners(window, maximized=bridge.maximized)
+        activation_router.mark_ready()
 
     def on_maximized() -> None:
         bridge.maximized = True
@@ -763,6 +900,7 @@ def main() -> int:
         if bridge.wallpaper is not None:
             bridge.wallpaper.stop()
         stop_server()
+        instance.close()
     return 0
 
 

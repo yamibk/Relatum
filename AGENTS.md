@@ -60,6 +60,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `app.py` | 本地 HTTP 服务、路由、持久化、导入导出、AI 代理、独立复习卡片数据库、学习/日历/速记/专注数据。 |
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调。 |
+| `desktop_instance.py` | Windows 桌面主程序单实例协调；按数据根持有命名互斥锁，通过带认证的本地命名管道转交窗口激活或 `.canvas` 打开请求，并管理 `%TEMP%` 中的短期状态文件。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
 | `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`。脚本保持 ASCII。 |
 | `build-msix.ps1` | Microsoft Store x64 MSIX 打包；复用便携版产物，生成匹配商店身份的清单与图标，输出 `Relatum-store/*.msixupload`。脚本保持 ASCII。 |
@@ -480,6 +481,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 桌面方案是 pywebview + WebView2，不是 Electron。
 - `desktop.py` 会先启动本地服务，再打开 `index.html?desktop=1` 或 `editor.html?desktop=1&file=...`。
+- Windows 普通桌面启动按 `ROOT` 保持一个主实例：第二次启动不再创建服务和 WebView2，而是通过 `desktop_instance.py` 的本地认证命名管道唤醒已有窗口。传入另一张有效 `.canvas` 时，当前窗口干净才在原窗口切换；当前画布 dirty 时只唤醒并拒绝切换；传入同一画布只唤醒、不刷新。窗口尚未就绪时只保留最后一条有效请求。动态背景子进程及 `--no-browser` / `--port` / `--allow-dir` 服务模式不参与这项主实例限制。
+- 主实例状态只短期写在 `%TEMP%/relatum-desktop-<ROOT哈希>.json`，含随机管道和认证材料；正常退出仅删除仍属于自己的状态，异常退出后的陈旧文件由下一主实例覆盖。IPC 只接受窗口激活与已重新验证的 `.canvas` 路径，不得扩成通用控制面。
 - Windows 下做了无边框窗口：隐藏原生标题栏、保留系统最小化/最大化动画、DWM 圆角、关闭时检查 dirty。
 - `desktop-shell.js` 负责窗口按钮、pywebview ready 队列、dirty 标记和桌面 session 标识。
 - 倒数日动态背景仍只发布一个 `Relatum.exe`，但背景 WebView2 必须由该 EXE 的隔离子进程承载，不能再与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
@@ -499,7 +502,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 Python 改动：
 
 ```powershell
-python -m py_compile .\app.py .\ai_plan.py .\desktop.py .\windows_wallpaper.py .\packaging\make_icon.py .\packaging\make_font_subset.py
+python -m py_compile .\app.py .\ai_plan.py .\desktop.py .\desktop_instance.py .\windows_wallpaper.py .\packaging\make_icon.py .\packaging\make_font_subset.py
 ```
 
 改动 AI 计划协议、提示词、结构修复或 OpenAI 兼容参数降级时，还要运行：
@@ -634,6 +637,7 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 
 - 先读 `README.md` 的“构建 Windows 桌面版”章节。
 - 只在用户要求或任务确实需要时运行 `build-desktop.ps1`。
+- 改动主实例、窗口激活或桌面 IPC 时运行 `python -m unittest .\tests\test_desktop_instance.py .\tests\test_windows_wallpaper.py .\tests\test_runtime_paths.py`，并用同一数据根连续启动多次验证只有一个主窗口；WebView2 的浏览器/GPU/渲染器子进程不算重复主实例。
 - 验收 `Relatum-release/Relatum.exe`、同级 `Relatum.exe.config`、`_internal/assets/`，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
 
 ## 12. 常见坑
