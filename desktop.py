@@ -39,6 +39,7 @@ WS_MAXIMIZEBOX = 0x00010000
 WS_MINIMIZEBOX = 0x00020000
 WM_NCCALCSIZE = 0x0083
 WM_NCHITTEST = 0x0084
+WM_WINDOWPOSCHANGING = 0x0046
 WM_WINDOWPOSCHANGED = 0x0047
 HTCLIENT = 1
 SW_MINIMIZE = 6
@@ -49,6 +50,11 @@ MONITOR_DEFAULTTONEAREST = 2
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
 DWMWA_COLOR_NONE = 0xFFFFFFFE
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_SHOWWINDOW = 0x0040
+PYWEBVIEW_MOVE_FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW
 
 MIN_WIDTH, MIN_HEIGHT = 720, 480
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 800
@@ -74,6 +80,14 @@ class _MONITORINFO(ctypes.Structure):
 
 class _NCCALCSIZE_PARAMS(ctypes.Structure):
     _fields_ = [("rgrc", wintypes.RECT * 3), ("lppos", ctypes.c_void_p)]
+
+
+class _WINDOWPOS(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND), ("hwndInsertAfter", wintypes.HWND),
+        ("x", ctypes.c_int), ("y", ctypes.c_int),
+        ("cx", ctypes.c_int), ("cy", ctypes.c_int), ("flags", wintypes.UINT),
+    ]
 
 
 def _reassert_corners(hwnd: int) -> None:
@@ -159,6 +173,15 @@ def _install_frameless(window) -> None:
                         params = ctypes.cast(lparam, ctypes.POINTER(_NCCALCSIZE_PARAMS))
                         params.contents.rgrc[0] = rect
                 return 0
+            if (msg == WM_WINDOWPOSCHANGING and lparam
+                    and ctypes.windll.user32.IsZoomed(int(h))):
+                # pywebview 的显式拖拽区通过连续 SetWindowPos(..., SWP_NOSIZE) 移动窗口。
+                # Windows 不会自动拒绝这种对最大化窗口的直接定位，结果会把整块最大化客户区
+                # 推离工作区并露出顶部空条。只拦“仅移动”请求，不干扰系统最大化、还原或换屏。
+                position = ctypes.cast(lparam, ctypes.POINTER(_WINDOWPOS))
+                flags = int(position.contents.flags)
+                if flags == PYWEBVIEW_MOVE_FLAGS:
+                    position.contents.flags = flags | SWP_NOMOVE
             if msg == WM_NCHITTEST:
                 # 禁用边缘缩放：把本会落在缩放边框上的命中（HTLEFT..HTBOTTOMRIGHT=10..17）
                 # 改成客户区，原生拖边缩放彻底失效；最大化/移动/动画不受影响。
@@ -215,6 +238,22 @@ def _is_maximized(window) -> bool:
     if sys.platform != "win32" or window is None:
         return False
     return bool(ctypes.windll.user32.IsZoomed(_hwnd(window)))
+
+
+def _notify_window_state(window, maximized: bool) -> None:
+    """Keep the HTML drag region aligned with native maximize/restore events."""
+    if window is None:
+        return
+    try:
+        value = "true" if maximized else "false"
+        window.evaluate_js(
+            "window.dispatchEvent(new CustomEvent('canvasdesktop:window-state',"
+            f"{{detail:{{maximized:{value}}}}}));"
+        )
+    except Exception:
+        # The initial maximize event can precede WebView2/desktop-shell readiness.
+        # desktop-shell.js also queries get_window_state() once the bridge is ready.
+        pass
 
 
 # ── 窗口状态记忆（大小 / 位置 / 最大化） ────────────────────────
@@ -847,10 +886,12 @@ def main() -> int:
     def on_maximized() -> None:
         bridge.maximized = True
         _apply_corners(window, maximized=True)
+        _notify_window_state(window, True)
 
     def on_restored() -> None:
         bridge.maximized = False
         _apply_corners(window, maximized=False)
+        _notify_window_state(window, False)
 
     def confirm_close() -> bool | None:
         # 先记住窗口状态，再处理后台隐藏或未保存提示。
