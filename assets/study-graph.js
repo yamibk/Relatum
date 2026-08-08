@@ -105,6 +105,16 @@
     else if (total >= 1) level = 1;
     return tones[level];
   }
+  function durationLabel(seconds, english) {
+    const min = Math.round(Math.max(0, Number(seconds) || 0) / 60);
+    if (min < 1) return english ? 'under 1 min' : '不足 1 分钟';
+    if (min < 60) return english ? min + ' min' : min + ' 分钟';
+    const hours = Math.floor(min / 60);
+    const rest = min % 60;
+    return english
+      ? hours + ' hr' + (rest ? ' ' + rest + ' min' : '')
+      : hours + ' 小时' + (rest ? ' ' + rest + ' 分' : '');
+  }
   function clipLabel(text, max) {
     const s = String(text || '').replace(/\s+/g, ' ').trim() || (isEnglish() ? 'Untitled' : '未命名');
     return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -128,7 +138,8 @@
     const canvas = document.createElement('canvas');
     canvas.className = 'star-canvas';
     canvas.setAttribute('role', 'img');
-    canvas.setAttribute('aria-label', '已完成任务足迹星图');
+    const canvasActivityGraph = !!(graphData && graphData.kind === 'canvas');
+    canvas.setAttribute('aria-label', canvasActivityGraph ? '画布使用时间星图' : '已完成任务足迹星图');
     stage.appendChild(canvas);
     const tooltip = document.createElement('div');
     tooltip.className = 'star-tooltip';
@@ -136,7 +147,9 @@
     stage.appendChild(tooltip);
     const empty = document.createElement('div');
     empty.className = 'star-empty';
-    empty.textContent = '归档过的完成任务，会在这里连成一片星图。';
+    empty.textContent = canvasActivityGraph
+      ? '使用过的画布，会在这里连成一片星图。'
+      : '归档过的完成任务，会在这里连成一片星图。';
     empty.hidden = true;
     stage.appendChild(empty);
     host.appendChild(stage);
@@ -194,11 +207,26 @@
       edges = [];
       const months = (data && Array.isArray(data.months)) ? data.months : [];
       const years = (data && Array.isArray(data.years)) ? data.years : [];
+      const canvasGraph = !!(data && data.kind === 'canvas');
       if (!months.length && !years.length) return;
 
-      const totalAll = years.length
-        ? years.reduce((sum, year) => sum + (year.total || 0), 0)
-        : months.reduce((sum, month) => sum + (month.total || 0), 0);
+      const canvasIds = new Set();
+      if (canvasGraph) {
+        const sourceMonths = years.length
+          ? years.flatMap((year) => Array.isArray(year.months) ? year.months : [])
+          : months;
+        sourceMonths.forEach((month) => (month.named || []).forEach((item) => {
+          canvasIds.add(String(item.id || item.path || item.title || ''));
+        }));
+      }
+      const totalAll = canvasGraph
+        ? canvasIds.size
+        : years.length
+          ? years.reduce((sum, year) => sum + (year.total || 0), 0)
+          : months.reduce((sum, month) => sum + (month.total || 0), 0);
+      const durationAll = years.length
+        ? years.reduce((sum, year) => sum + (year.durationSec || 0), 0)
+        : months.reduce((sum, month) => sum + (month.durationSec || 0), 0);
       const rootColor = theme.rootColor;
       const yearColor = theme.yearColor;
       const taskColor = theme.taskColor;
@@ -206,7 +234,11 @@
       const english = isEnglish();
       const root = {
         tier: 'root', label: english ? 'Me' : '我',
-        tip: english
+        tip: canvasGraph
+          ? (english
+            ? totalAll + ' canvases · ' + durationLabel(durationAll, true)
+            : totalAll + ' 张画布 · ' + durationLabel(durationAll, false))
+          : english
           ? totalAll + ' total · ' + (years.length ? years.length + ' years' : months.length + ' months')
           : '累计 ' + totalAll + ' 件'
             + (years.length ? ' · ' + years.length + ' 年' : ' · ' + months.length + ' 个月'),
@@ -218,21 +250,36 @@
 
       function addMonth(month, parentIndex, rest) {
         const total = month.total || 0;
-        const color = monthTone(total, theme.monthTones);
+        const durationSec = Math.max(0, Number(month.durationSec) || 0);
+        const color = monthTone(canvasGraph ? Math.max(0, Math.ceil(durationSec / 3600)) : total, theme.monthTones);
         const monthNode = {
           tier: 'month', label: monthLabel(month.month),
-          tip: monthLabel(month.month) + (english ? ' · ' + total + ' completed' : ' · 完成 ' + total + ' 项'),
+          tip: canvasGraph
+            ? monthLabel(month.month) + ' · ' + total + (english ? ' canvases · ' : ' 张画布 · ')
+              + durationLabel(durationSec, english)
+            : monthLabel(month.month) + (english ? ' · ' + total + ' completed' : ' · 完成 ' + total + ' 项'),
           color: color, rgb: rgbString(color),
-          r: clamp(8 + total * 1.1, 8, 18), x: 0, y: 0,
+          r: canvasGraph
+            ? clamp(8 + Math.log1p(durationSec / 60) * 1.45, 8, 18)
+            : clamp(8 + total * 1.1, 8, 18), x: 0, y: 0,
         };
         const monthIndex = nodes.push(monthNode) - 1;
         edges.push({ source: parentIndex, target: monthIndex, rest: rest });
 
         (month.named || []).forEach((task) => {
+          const taskSec = Math.max(0, Number(task.durationSec) || 0);
+          const totalTaskSec = Math.max(taskSec, Number(task.totalDurationSec) || 0);
           const leaf = {
             tier: 'task', label: clipLabel(task.title, 14),
-            tip: clipLabel(task.title, 40) + (task.day ? ' · ' + task.day : ''),
-            color: taskColor, rgb: rgbString(taskColor), r: 5.5, x: 0, y: 0,
+            tip: canvasGraph
+              ? clipLabel(task.title, 40) + ' · ' + durationLabel(taskSec, english)
+                + (totalTaskSec > taskSec
+                  ? (english ? ' · total ' : ' · 累计 ') + durationLabel(totalTaskSec, english) : '')
+                + (task.inferred && !taskSec ? (english ? ' · historical time unavailable' : ' · 历史时长无法还原') : '')
+              : clipLabel(task.title, 40) + (task.day ? ' · ' + task.day : ''),
+            color: taskColor, rgb: rgbString(taskColor),
+            r: canvasGraph ? clamp(5.5 + Math.log1p(taskSec / 60) * 1.15, 5.5, 13) : 5.5,
+            x: 0, y: 0,
           };
           const leafIndex = nodes.push(leaf) - 1;
           edges.push({ source: monthIndex, target: leafIndex, rest: 74 });
@@ -255,11 +302,17 @@
         years.forEach((year) => {
           const yearNode = {
             tier: 'year', label: String(year.year || ''),
-            tip: english
+            tip: canvasGraph
+              ? String(year.year || '') + (english ? ' · ' : ' 年 · ')
+                + (year.total || 0) + (english ? ' canvases · ' : ' 张画布 · ')
+                + durationLabel(year.durationSec || 0, english)
+              : english
               ? String(year.year || '') + ' · ' + (year.total || 0) + ' completed'
               : String(year.year || '') + ' 年 · 完成 ' + (year.total || 0) + ' 项',
             color: yearColor, rgb: rgbString(yearColor),
-            r: clamp(10 + (year.total || 0) * 0.34, 11, 19), x: 0, y: 0,
+            r: canvasGraph
+              ? clamp(11 + Math.log1p((year.durationSec || 0) / 3600) * 2.2, 11, 19)
+              : clamp(10 + (year.total || 0) * 0.34, 11, 19), x: 0, y: 0,
           };
           const yearIndex = nodes.push(yearNode) - 1;
           edges.push({ source: rootIndex, target: yearIndex, rest: 178 });

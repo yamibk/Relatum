@@ -67,6 +67,8 @@
   let calendarActive = false;  // 日历与日记前置页（在复习与速记之间）是否展开
   let reviewActive = false;    // 复习卡片前置页（最左一格）是否展开
   let focusActive = false;     // 专注钟前置页（学习更右一格、紧邻书页）是否展开
+  let pendingFocusActivation = null;
+  let pendingFocusReadyActions = [];
   let specialPagesHidden = false; // 「隐藏特殊页」开启：书脊只留普通书页，6 张前置页既不显示也不可翻入
   const FAVORITES_PAGE = '__favorites__';
   const INBOX_PAGE = '__inbox__';
@@ -1068,6 +1070,16 @@
     // 'cadence'（活跃热力图页）与 'study' 共用同一套书页舞台布局壳，只用 cadence-active 切换浮层，
     // 这样 [data-start-state="study"] 那批布局 CSS 仍然生效，无需为 cadence 再写一套。
     const previous = bookView ? (bookView.dataset.viewName || '') : '';
+    if (name !== 'focus') {
+      pendingFocusActivation = null;
+      pendingFocusReadyActions = [];
+      const focusRoot = document.querySelector('.focus-embedded');
+      if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
+    }
+    if (previous === 'focus' && name !== 'focus'
+      && window.CanvasFocus && typeof window.CanvasFocus.deactivate === 'function') {
+      window.CanvasFocus.deactivate();
+    }
     const layout = (name === 'cadence' || name === 'notes' || name === 'calendar'
       || name === 'review' || name === 'focus') ? 'study' : name;
     main.dataset.state = layout;
@@ -1464,7 +1476,7 @@
     if (bookStage) bookStage.scrollTop = 0;
   }
 
-  function setFocusActive(active) {
+  function setFocusActive(active, options) {
     focusActive = !!active;
     if (focusActive) {
       studyActive = false;
@@ -1474,13 +1486,52 @@
       reviewActive = false;
       cancelPendingDelete();
       closeContextMenu();
-      showView('focus');
-      if (window.CanvasFocus && window.CanvasFocus.activate) window.CanvasFocus.activate();
+      if (window.CanvasFocus && typeof window.CanvasFocus.prepareActivate === 'function') {
+        pendingFocusActivation = null;
+        pendingFocusReadyActions = [];
+        window.CanvasFocus.prepareActivate(options || {});
+        const focusRoot = document.querySelector('.focus-embedded');
+        if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
+        showView('focus');
+        if (window.CanvasFocus.activate) window.CanvasFocus.activate();
+        return;
+      }
+      pendingFocusActivation = { options: Object.assign({}, options || {}) };
+      pendingFocusReadyActions = [];
+      const focusRoot = document.querySelector('.focus-embedded');
+      if (focusRoot) focusRoot.dataset.pendingForceTimer = options && options.forceTimer ? '1' : '0';
       return;
     }
     showView(listViewName());
     if (bookStage) bookStage.scrollTop = 0;
   }
+
+  function runWhenCanvasFocusReady(action) {
+    if (typeof action !== 'function' || !focusActive) return;
+    if (window.CanvasFocus) {
+      action(window.CanvasFocus);
+      return;
+    }
+    pendingFocusReadyActions.push(action);
+  }
+
+  function finishPendingFocusActivation() {
+    if (!focusActive || !pendingFocusActivation || !window.CanvasFocus) return;
+    const pending = pendingFocusActivation;
+    const actions = pendingFocusReadyActions.slice();
+    pendingFocusActivation = null;
+    pendingFocusReadyActions = [];
+    const focusRoot = document.querySelector('.focus-embedded');
+    if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
+    if (typeof window.CanvasFocus.prepareActivate === 'function') {
+      window.CanvasFocus.prepareActivate(pending.options || {});
+    }
+    showView('focus');
+    if (typeof window.CanvasFocus.activate === 'function') window.CanvasFocus.activate();
+    actions.forEach((action) => action(window.CanvasFocus));
+  }
+
+  document.addEventListener('canvasfocus:ready', finishPendingFocusActivation);
 
   function gotoEditor(path, sourceItem, fresh) {
     if (document.body.classList.contains('canvas-route-leaving')) return;
@@ -1540,6 +1591,17 @@
     return parts.join(' · ');
   }
 
+  function formatCanvasActivity(sec) {
+    sec = Math.max(0, Number(sec) || 0);
+    if (!sec) return '';
+    if (sec < 60) return '累计不足 1 分钟';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return '累计 ' + min + ' 分钟';
+    const hours = Math.floor(min / 60);
+    const rest = min % 60;
+    return '累计 ' + hours + ' 小时' + (rest ? ' ' + rest + ' 分' : '');
+  }
+
   function updateFileItemStats(li, f) {
     if (!li || !f) return;
     const missing = f.exists === false;
@@ -1558,6 +1620,18 @@
     }
 
     const meta = li.querySelector('.recent-item-meta');
+    let duration = meta && meta.querySelector('.recent-item-duration');
+    const durationText = formatCanvasActivity(f.canvasActivitySec);
+    if (durationText && meta) {
+      if (!duration) {
+        duration = document.createElement('span');
+        duration.className = 'recent-item-duration';
+        meta.appendChild(duration);
+      }
+      duration.textContent = durationText;
+    } else if (duration) {
+      duration.remove();
+    }
     let stats = meta && meta.querySelector('.recent-item-stats');
     const statsText = formatFileStats(f);
     if (statsText && meta) {
@@ -1570,6 +1644,8 @@
     } else if (stats) {
       stats.remove();
     }
+    // 节点数和文件大小可能稍后异步补回；每次更新后都把累计时长重新放到末尾。
+    if (duration && durationText && meta) meta.appendChild(duration);
   }
 
   async function requestFileStats(paths, requestId) {
@@ -2143,6 +2219,13 @@
       stats.className = 'recent-item-stats';
       stats.textContent = statsText;
       meta.appendChild(stats);
+    }
+    const durationText = formatCanvasActivity(f.canvasActivitySec);
+    if (durationText) {
+      const duration = document.createElement('span');
+      duration.className = 'recent-item-duration';
+      duration.textContent = durationText;
+      meta.appendChild(duration);
     }
     const favorite = document.createElement('button');
     favorite.type = 'button';
@@ -2789,7 +2872,13 @@
     btn.addEventListener('click', () => { setCalendarActive(true); });
   });
   document.querySelectorAll('[data-action="focus-view"]').forEach((btn) => {
-    btn.addEventListener('click', () => { setFocusActive(true); });
+    btn.addEventListener('click', () => {
+      if (focusActive && window.CanvasFocus && typeof window.CanvasFocus.toggleMode === 'function') {
+        window.CanvasFocus.toggleMode();
+      } else {
+        setFocusActive(true);
+      }
+    });
   });
   // 速记归档：把整墙便签里「有名字」的搬进 data/学习归档/<日期>+<N>条速记/，
   // 无名便签随之清空但不归档；归档后刷新活跃页统计。由长按速记图标触发。
@@ -2859,20 +2948,20 @@
     }
     if (view === 'cadence') setCadenceActive(true);
     if (view === 'focus') {
-      setFocusActive(true);
-      if (event.detail.day && window.CanvasFocus && window.CanvasFocus.showDay) {
-        window.CanvasFocus.showDay(event.detail.day, event.detail.sessionId);
-      }
+      setFocusActive(true, { forceTimer: true });
+      runWhenCanvasFocusReady((focus) => {
+        if (event.detail.day && focus.showDay) focus.showDay(event.detail.day, event.detail.sessionId);
+      });
     }
   });
 
   document.addEventListener('focus:prepare', (event) => {
     const detail = event.detail || {};
-    setFocusActive(true);
-    requestAnimationFrame(() => {
-      if (window.CanvasFocus && window.CanvasFocus.prepareTask) {
-        window.CanvasFocus.prepareTask(detail.taskId, detail.taskTitle);
-      }
+    setFocusActive(true, { forceTimer: true });
+    runWhenCanvasFocusReady((focus) => {
+      requestAnimationFrame(() => {
+        if (focus.prepareTask) focus.prepareTask(detail.taskId, detail.taskTitle);
+      });
     });
   });
 
