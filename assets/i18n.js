@@ -67,10 +67,10 @@
     '选中任务按 G 加入，或按 F 进入今日专注': 'Select a task and press G, or press F to enter Focus.',
     '今天的任务，全部完成。': 'Everything for today is complete.',
     '给自己一个停顿。明天的事，明天再说。': 'Take a breath. Tomorrow can wait until tomorrow.',
-    '还没有每日任务 · 在下面加一件想每天坚持的事': 'No daily tasks yet · add one small thing to repeat each day.',
+    '还没有每日任务 · 点右上角“＋”加一件想每天坚持的事': 'No daily tasks yet · use “+” to add one small thing to repeat each day.',
     '未命名任务': 'Untitled task', '未命名分组': 'Untitled group', '（不分组）': '(No group)',
     '子分组': 'Subgroup', '在此加任务': 'Add task here', '空': 'Empty',
-    '已绑定本段': 'Bound to session', '设为本段专注': 'Focus on this',
+    '已绑定本段': 'Bound to session', '设为本段专注': 'Focus on this', '添加分组': 'Add group',
     '取消今日打卡': 'Undo today', '今日打卡': 'Check in today', '还没有历史打卡': 'No check-ins yet',
 
     '复习卡片': 'Review Cards', '待复习': 'Due', '今日复习': 'Reviewed today', '更新': 'Refresh',
@@ -185,7 +185,6 @@
     '这一段准备完成什么？（可选）': 'What will you accomplish this session? (optional)',
     '绑定学习任务': 'Link a study task', '计时模式': 'Timer mode',
     '双击修改专注时长': 'Double-click to change focus length',
-    '每日任务（Tab 开合）': 'Daily tasks (Tab to toggle)',
     '开始或暂停': 'Start or pause', '开始': 'Start', '暂停': 'Pause', '完成本段': 'Finish session',
     '退出深度专注': 'Exit deep focus', '深度专注': 'Deep focus', '今日足迹': 'Today’s trail',
     '今天还没有专注记录 · 开始第一段吧': 'No focus sessions yet · begin the first one.',
@@ -201,14 +200,33 @@
     '修改番茄钟的专注分钟数；运行中不可修改。': 'Change focus minutes before the timer starts.',
     '选择任务': 'Choose a task', '这一段会计入所选的学习任务或每日任务。': 'This session will count toward the selected study or daily task.',
     '每日任务': 'Daily tasks', '深度专注': 'Deep focus',
+    '每日任务视图': 'Daily tasks view', '新增每日任务或分组': 'Add a daily task or group',
+    '再次点击左侧“专”进入完整清单：勾选完成、管理分组，并回看累计天数与专注分钟。': 'Select Focus again in the left spine to open the full list, manage groups, and review check-ins and focus minutes.',
     '运行时点 ⛶ 或按 Z 进入全屏极简，Esc 退出。': 'While running, select ⛶ or press Z for a minimal full-screen view. Press Esc to leave.',
     '学习页负责安排，专注页负责执行，日历负责回看。': 'Plan in Study, do the work in Focus, and look back in Calendar.',
-    '查看今日清单': 'View today’s list', '今天的每日任务都做完了': 'All daily tasks are complete.',
+    '今日清单已全部完成': "Today's list is complete.", '回顾今日': 'Review today',
     '正在做': 'Now doing', '自由专注': 'Open focus', '＋ 为这一段写个目标': '+ Add an intention',
     '继续': 'Continue', '跳过休息': 'Skip break', '保存并完成这件每日任务': 'Save & complete daily task',
     '本段将计入': 'This session counts toward',
 
     '年度足迹': 'Annual Activity', '完成': 'Completed', '静': 'Quiet', '丰': 'Full',
+    '画布星图': 'Canvas Constellation', '本月画布时间': 'Canvas time this month',
+    '累计画布时间': 'Total canvas time', '活跃画布': 'Active canvases',
+    '连续活跃': 'Active streak', '历史记录': 'Historical record',
+    '历史时长无法还原': 'Historical time unavailable', '修改': 'Edited',
+    '不足 1 分钟': 'Under 1 min',
+    '画布使用时间星图': 'Canvas time constellation',
+    '使用过的画布，会在这里连成一片星图。': 'Used canvases gather here as a constellation.',
+    '年度足迹与画布活跃': 'Annual activity and canvas usage',
+    '画布时间统计': 'Canvas time summary', '新建': 'Created',
+    '最长连续': 'Longest streak', '当年画布时间': 'Canvas time this year',
+    '悬停回望，点击展开当天画布': 'Hover to look back; select a day to open its canvases.',
+    '这一天还没有画布使用记录。': 'No canvas activity was recorded this day.',
+    '今天还没有打开画布。': 'No canvas has been opened today.',
+    '有历史画布记录，时长无法还原': 'Historical canvas record; time unavailable',
+    '未使用画布': 'No canvas use', '未命名画布': 'Untitled canvas',
+    '打开画布': 'Open canvas', '这里会慢慢长出你的节奏。': 'Your rhythm will gradually take shape here.',
+    '重新统计一年活跃热力图（画布计时、完成任务或专注后想立刻看到，点这里）': 'Refresh annual activity after canvas time, completed work, or focus changes.',
     '足迹浓度从静到丰': 'Activity intensity from quiet to full', '热力图查看': 'Activity view',
     '足迹星图': 'Activity Constellation', '最近完成': 'Recent Completions',
     '活跃统计': 'Activity summary', '专注时间统计': 'Focus summary',
@@ -737,11 +755,10 @@
     '建立分组后可命名、折叠并整体移动': 'Name, collapse, and move the group as a whole',
     '可以把空白选区变成一个盒子': 'Turn an empty selection into a box',
 
-    // ── 专注页 · 每日任务侧栏 ──
+    // ── 专注页 · 每日任务独立视图 ──
     '添加一件今天想坚持的事…': 'Add one thing to repeat today…',
     '新增每日任务': 'Add daily task',
     '添加每日任务': 'Add daily task',
-    '收起每日任务（Tab / Esc）': 'Close daily tasks (Tab / Esc)',
     '新增类型': 'Add type',
     '新建分组名称…': 'New group name…',
     '＋ 子分组': '+ Subgroup',
@@ -813,11 +830,11 @@
     '本段完成': 'Session complete',
     '可选：留下结果、进度或下一步。': 'Optional: record outcomes, progress, or next steps.',
     '请先完成或重置当前专注段': 'Please finish or reset the current session first.',
+    '请先完成收尾或重置当前专注段，再查看每日任务': 'Finish the wrap-up or reset the current session before opening daily tasks.',
 
     // ── 专注页 · 设置 / 帮助 / 提示 ──
     '重新读取任务/每日/记录（平时翻进来用上次结果；在别处改了，点这里才更新）': 'Refresh tasks, daily items, and records. (Uses cached data; click after making changes elsewhere.)',
     '进入深度专注（Z）': 'Enter deep focus (Z)',
-    '按 Tab 划出右侧清单：勾选完成、累计天数与专注分钟，全部完成有庆祝。': 'Press Tab to open the side panel: check off tasks, track streaks and focus minutes. Celebrate when all done.',
     '结束收尾': 'Wrap up',
     '点击圆点可查看、修改或删除一段记录。': 'Click a dot to view, edit, or delete a session.',
     '删除这段专注记录？当天与长期统计会同步扣除。': 'Delete this session? Daily and long-term stats will be updated accordingly.',
@@ -924,6 +941,15 @@
       const days = { 日: 'Sun', 一: 'Mon', 二: 'Tue', 三: 'Wed', 四: 'Thu', 五: 'Fri', 六: 'Sat' };
       return `${days[match[3]]} · ${months[Number(match[1]) - 1]} ${Number(match[2])} · ${EN[match[4]] || translateDynamic(match[4])}`;
     }
+    match = source.match(/^(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*·\s*周([日一二三四五六])\s*·\s*(画布\s*.+|有历史画布记录，时长无法还原|未使用画布)$/);
+    if (match) {
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const days = { 日: 'Sun', 一: 'Mon', 二: 'Tue', 三: 'Wed', 四: 'Thu', 五: 'Fri', 六: 'Sat' };
+      const status = match[4].startsWith('画布 ')
+        ? `Canvas ${EN[match[4].slice(3)] || translateDynamic(match[4].slice(3))}`
+        : (EN[match[4]] || match[4]);
+      return `${days[match[3]]} · ${months[Number(match[1]) - 1]} ${Number(match[2])} · ${status}`;
+    }
     match = source.match(/^(\d{1,2})\s*月$/);
     if (match) {
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -937,6 +963,9 @@
     if (match) return `${match[1]} sessions · ${EN[match[2]] || translateDynamic(match[2])}`;
     match = source.match(/^共\s*(\d+)\s*段专注$/);
     if (match) return `${match[1]} focus ${match[1] === '1' ? 'session' : 'sessions'}`;
+    match = source.match(/^使用\s*(\d+)\s*张画布(?:\s*·\s*(.+))?$/);
+    if (match) return `${match[1]} ${match[1] === '1' ? 'canvas' : 'canvases'} used`
+      + (match[2] ? ` · ${EN[match[2]] || translateDynamic(match[2])}` : '');
     match = source.match(/^(\d+)\s*分(?:钟)?$/);
     if (match) return `${match[1]} min`;
     match = source.match(/^(\d+(?:\.\d+)?)\s*小时(?:\s*(\d+)\s*分)?$/);
@@ -947,8 +976,12 @@
     if (match) return `View ${match[1]}`;
     match = source.match(/^(\d{4})\s*年逐日已完成任务热力图$/);
     if (match) return `Daily completed-work activity for ${match[1]}`;
+    match = source.match(/^(\d{4})\s*年逐日画布使用时长热力图$/);
+    if (match) return `Daily canvas time for ${match[1]}`;
+    match = source.match(/^(\d{4})\s*年逐日专注时长热力图$/);
+    if (match) return `Daily focus time for ${match[1]}`;
     match = source.match(/^(\d+)\s*天$/);
-    if (match) return `${match[1]} days`;
+    if (match) return `${match[1]} ${match[1] === '1' ? 'day' : 'days'}`;
     match = source.match(/^自动保存到\s*(.+)$/);
     if (match) return `Autosaved to ${match[1]}`;
     match = source.match(/^应用(.+)并整理$/);
@@ -1045,12 +1078,23 @@
     if (match) return `${match[1]} days total`;
     match = source.match(/^累计\s*(\d+)\s*分$/);
     if (match) return `${match[1]} min total`;
+    match = source.match(/^累计不足\s*1\s*分钟$/);
+    if (match) return 'Under 1 min total';
+    match = source.match(/^累计\s*(\d+)\s*分钟$/);
+    if (match) return `${match[1]} min total`;
+    match = source.match(/^累计\s*(\d+)\s*小时(?:\s*(\d+)\s*分)?$/);
+    if (match) return `${match[1]} hr${match[2] ? ` ${match[2]} min` : ''} total`;
     match = source.match(/^今天\s*(\d+)\s*分$/);
     if (match) return `${match[1]} min today`;
     match = source.match(/^累计\s*(\d+)\s*\/\s*(\d+)\s*天\s*·\s*已达成$/);
     if (match) return `${match[1]} / ${match[2]} days total · goal met`;
     match = source.match(/^累计\s*(\d+)\s*\/\s*(\d+)\s*天$/);
     if (match) return `${match[1]} / ${match[2]} days total`;
+    match = source.match(/^今天做完了\s*(\d+)\s*件事(?:\s*·\s*专注\s*(\d+)\s*分钟)?$/);
+    if (match) {
+      const noun = match[1] === '1' ? 'thing' : 'things';
+      return `Finished ${match[1]} ${noun} today${match[2] ? ` · ${match[2]} min focused` : ''}`;
+    }
     match = source.match(/^(\d+)\s*件全部完成\s*·\s*专注\s*(\d+)\s*分钟\s*·\s*明天见$/);
     if (match) return `${match[1]} all complete · ${match[2]} min focused · See you tomorrow`;
     match = source.match(/^(\d+)\s*件全部完成\s*·\s*明天见$/);

@@ -979,8 +979,11 @@
   let starInstance = null;   // 足迹星图当前实例（活跃图重绘时先销毁旧实例再挂新的）
   let cadenceShown = false;  // 活跃页当前是否被选为前置页（起步页翻页时由 StudyActivity.setActive 同步）
   let starMode = 'normal';
-  let cadenceLens = 'complete';   // 活跃热力图镜头：'complete'(完成数) | 'focus'(专注时长)
-  try { if (localStorage.getItem('canvas:cadenceLens') === 'focus') cadenceLens = 'focus'; } catch (e) {}
+  let cadenceLens = 'canvas';   // v2 首次默认画布；之后记住 canvas / complete / focus
+  try {
+    const storedLens = localStorage.getItem('canvas:cadenceLens:v2');
+    if (storedLens === 'canvas' || storedLens === 'complete' || storedLens === 'focus') cadenceLens = storedLens;
+  } catch (e) {}
   let cadenceInteractionCleanup = null;
   const CADENCE = { cell: 16, gap: 4, leftPad: 38, topPad: 28 };
   const CADENCE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -1024,6 +1027,52 @@
   function focusStatCell(sec, label) {
     const f = fmtFocusStat(sec);
     return '<div><strong>' + f.num + '<small> ' + f.unit + '</small></strong><span>' + label + '</span></div>';
+  }
+
+  function canvasStatCell(sec, label) {
+    if (Number(sec) > 0 && Number(sec) < 60) {
+      return '<div><strong>&lt;1<small> 分钟</small></strong><span>' + label + '</span></div>';
+    }
+    return focusStatCell(sec, label);
+  }
+
+  function fmtCanvasDuration(sec) {
+    sec = Math.max(0, Number(sec) || 0);
+    if (sec > 0 && sec < 60) return '不足 1 分钟';
+    return fmtFocusDur(Math.round(sec / 60));
+  }
+
+  function cadenceCanvasDayDetailHtml(day, entries, summary, todayKey) {
+    const items = (entries || []).filter((item) => item.day === day);
+    const future = day > todayKey;
+    const durationSec = Math.max(0, Number(summary && summary.durationSec) || 0);
+    let note = '这一天还没有画布使用记录。';
+    if (future) note = '这一天还在前方。';
+    else if (day === todayKey && !items.length) note = '今天还没有打开画布。';
+    const list = items.length
+      ? '<div class="cadence-day-detail-list">' + items.map((item, index) => {
+        const flags = [];
+        if (item.created) flags.push('<i>新建</i>');
+        if (item.modified) flags.push('<i>修改</i>');
+        if (item.inferred && !item.durationSec) flags.push('<i>历史记录</i>');
+        const duration = item.durationSec
+          ? '<span>' + escapeHtml(fmtCanvasDuration(item.durationSec)) + '</span>'
+          : '<span>历史时长无法还原</span>';
+        const open = item.canvasAvailable
+          ? '<button type="button" class="cadence-open-canvas cadence-day-open" data-canvas-path="'
+            + escapeHtml(item.path) + '">打开画布</button>'
+          : '';
+        return '<div class="cadence-day-detail-item cadence-canvas-detail-item" style="--detail-delay:'
+          + (index * 45) + 'ms"><span aria-hidden="true"></span><div class="cadence-record-copy">'
+          + '<strong>' + escapeHtml(item.title || '未命名画布') + '</strong>'
+          + '<span class="cadence-canvas-meta">' + flags.join('') + duration + '</span></div>' + open + '</div>';
+      }).join('') + '</div>'
+      : '<p class="cadence-day-detail-empty">' + note + '</p>';
+    const heading = items.length
+      ? '使用 ' + items.length + ' 张画布' + (durationSec ? ' · ' + fmtCanvasDuration(durationSec) : '')
+      : '安静的一天';
+    return '<div class="cadence-day-detail-copy"><p>' + escapeHtml(cadenceDateLabel(day, true)) + '</p>'
+      + '<h3>' + heading + '</h3></div>' + list;
   }
   function cadenceFocusDayDetailHtml(day, sec, count, todayKey) {
     const future = day > todayKey;
@@ -1173,7 +1222,10 @@
     if (starInstance) { try { starInstance.destroy(); } catch (e) {} starInstance = null; }
     const starStage = host.querySelector('[data-role="study-starmap"]');
     if (starStage && window.StudyGraph) {
-      const graph = starMode === 'overview' ? (payload.overviewGraph || {}) : (payload.graph || {});
+      const canvasLens = cadenceLens === 'canvas';
+      const graph = starMode === 'overview'
+        ? (canvasLens ? (payload.canvasOverviewGraph || {}) : (payload.overviewGraph || {}))
+        : (canvasLens ? (payload.canvasGraph || {}) : (payload.graph || {}));
       // 活跃页不是当前前置页时，星图以挂起态挂载（建好静态帧但不空转 RAF），进入活跃页再唤醒。
       starInstance = window.StudyGraph.mount(starStage, graph, {
         active: cadenceShown,
@@ -1212,6 +1264,9 @@
     const recent = payload.recent || [];
     const focusDays = payload.focusDays || {};   // { 'YYYY-MM-DD': {sec,count} } 当年逐日专注
     const focusStats = payload.focusStats || {};  // { today, month, year, total }（秒）
+    const canvasDays = payload.canvasDays || {};
+    const canvasEntries = payload.canvasEntries || [];
+    const canvasStats = payload.canvasStats || {};
     const C = CADENCE;
     const step = C.cell + C.gap;
     const now = new Date();
@@ -1266,18 +1321,30 @@
         const ftip = cadenceDateLabel(key, false) + (future
           ? ' · 尚未到来'
           : fmin ? ' · 专注 ' + fmtFocusDur(fmin) : ' · 未专注');
+        const cd = canvasDays[key] || {};
+        const csec = Math.max(0, Number(cd.durationSec) || 0);
+        const cmin = csec ? Math.max(1, Math.ceil(csec / 60)) : 0;
+        const clv = cadenceFocusLevel(cmin);
+        const canvasHistorical = !!cd.inferred && !csec;
+        const ctip = cadenceDateLabel(key, false) + (future
+          ? ' · 尚未到来'
+          : csec ? ' · 画布 ' + fmtCanvasDuration(csec)
+            : canvasHistorical ? ' · 有历史画布记录，时长无法还原' : ' · 未使用画布');
+        const activeTip = cadenceLens === 'canvas' ? ctip : (cadenceLens === 'focus' ? ftip : tip);
         rects.push('<rect x="' + (C.leftPad + w * step) + '" y="' + (C.topPad + d * step)
           + '" width="' + C.cell + '" height="' + C.cell + '" rx="3" class="cadence-cell cadence-l'
-          + lv + ' cadence-fl' + flv + (count ? ' has-activity' : '') + (future ? ' is-future' : '')
+          + lv + ' cadence-fl' + flv + ' cadence-cl' + clv + (count ? ' has-activity' : '')
+          + (canvasHistorical ? ' has-canvas-history' : '') + (future ? ' is-future' : '')
           + (isToday ? ' is-today' : '')
           + '" style="--cadence-delay:' + Math.round(Math.min(760, d * 92 + w * 5))
           + 'ms" data-wave-x="' + (C.leftPad + w * step + C.cell / 2) + '" data-wave-y="'
           + (C.topPad + d * step + C.cell / 2) + '" data-wave-w="' + w + '" data-wave-d="' + d
           + '" data-month="' + cell.getMonth() + '" data-day-key="' + key + '" data-count="' + count
           + '" data-focus-min="' + fmin + '" data-focus-count="' + fcount
-          + '" data-tip="' + escapeHtml(tip) + '" data-tip-focus="' + escapeHtml(ftip)
+          + '" data-canvas-sec="' + csec + '" data-tip="' + escapeHtml(tip)
+          + '" data-tip-focus="' + escapeHtml(ftip) + '" data-tip-canvas="' + escapeHtml(ctip)
           + '" tabindex="' + (future ? '-1' : '0')
-          + '" role="button" aria-label="' + escapeHtml(cadenceLens === 'focus' ? ftip : tip) + '"></rect>');
+          + '" role="button" aria-label="' + escapeHtml(activeTip) + '"></rect>');
       }
     }
     const dayLabels = [[0, 'Mon'], [2, 'Wed'], [4, 'Fri']].map((p) =>
@@ -1289,7 +1356,8 @@
     const statOneLabel = currentYear ? '本月完成' : year + ' 年完成';
     const statTwo = currentYear ? (stats.streak || 0) : (stats.longestStreak || 0);
     const statTwoLabel = currentYear ? '连续推进' : '最长连续';
-    const activeKeys = Object.keys(days).filter((key) => days[key] && key <= todayKey).sort();
+    const activeSource = cadenceLens === 'canvas' ? canvasDays : (cadenceLens === 'focus' ? focusDays : days);
+    const activeKeys = Object.keys(activeSource).filter((key) => activeSource[key] && key <= todayKey).sort();
     const initialDay = currentYear
       ? todayKey
       : (activeKeys[activeKeys.length - 1] || year + '-01-01');
@@ -1300,6 +1368,7 @@
         + '<div class="cadence-head-tools">'
         + '<div class="cadence-lens-switch" data-role="cadence-lens-switch" data-active="' + cadenceLens + '" aria-label="热力图查看">'
           + '<span class="cadence-lens-slider" aria-hidden="true"></span>'
+          + '<button type="button" class="cadence-lens-btn' + (cadenceLens === 'canvas' ? ' active' : '') + '" data-lens="canvas">画布</button>'
           + '<button type="button" class="cadence-lens-btn' + (cadenceLens === 'complete' ? ' active' : '') + '" data-lens="complete">完成</button>'
           + '<button type="button" class="cadence-lens-btn' + (cadenceLens === 'focus' ? ' active' : '') + '" data-lens="focus">专注</button>'
         + '</div>'
@@ -1315,7 +1384,7 @@
         + '<span class="cadence-legend-cell cadence-l7"></span>'
         + '</span><span>丰</span></div>'
         + '<button type="button" class="page-refresh" data-cadence-refresh'
-        + ' aria-label="重新读取活跃数据" title="重新统计一年活跃热力图（平时翻进来用上次结果；完成任务/专注后想立刻看到，点这里）">'
+        + ' aria-label="重新读取活跃数据" title="重新统计一年活跃热力图（画布计时、完成任务或专注后想立刻看到，点这里）">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>'
         + '<span>更新</span></button>'
         + '</div>'
@@ -1324,20 +1393,31 @@
         + '<div class="cadence-chart-wrap">'
         + '<svg class="cadence-chart" viewBox="0 0 ' + svgW + ' ' + svgH + '" width="' + svgW
         + '" height="' + svgH + '" xmlns="http://www.w3.org/2000/svg" role="img"'
-        + ' aria-label="' + year + ' 年逐日已完成任务热力图">'
+        + ' aria-label="' + year + (cadenceLens === 'canvas' ? ' 年逐日画布使用时长热力图'
+          : cadenceLens === 'focus' ? ' 年逐日专注时长热力图' : ' 年逐日已完成任务热力图') + '">'
         + monthLabels.join('') + dayLabels.join('') + rects.join('')
         + '</svg>'
         + '</div>'
         + '<div class="cadence-chart-caption"><span><i class="is-today-mark"></i>今天</span>'
           + '<span><i class="is-future-mark"></i>尚未到来</span>'
-          + '<p>悬停回望，点击展开当天成果</p></div>'
+          + '<p>' + (cadenceLens === 'canvas' ? '悬停回望，点击展开当天画布' : '悬停回望，点击展开当天成果') + '</p></div>'
       + '</div>'
       + '<section class="cadence-day-detail" data-role="cadence-day-detail" aria-live="polite">'
-        + (cadenceLens === 'focus'
+        + (cadenceLens === 'canvas'
+          ? cadenceCanvasDayDetailHtml(initialDay, canvasEntries, canvasDays[initialDay] || {}, todayKey)
+          : cadenceLens === 'focus'
             ? cadenceFocusDayDetailHtml(initialDay, (focusDays[initialDay] || {}).sec || 0,
                 (focusDays[initialDay] || {}).count || 0, todayKey)
             : cadenceDayDetailHtml(initialDay, entries, days[initialDay] || 0, todayKey))
       + '</section>'
+      + '<div class="cadence-stats cadence-stats-canvas" aria-label="画布时间统计">'
+        + canvasStatCell(currentYear ? canvasStats.monthSec : canvasStats.yearSec,
+          currentYear ? '本月画布时间' : '当年画布时间')
+        + '<div><strong>' + (currentYear ? (canvasStats.streak || 0) : (canvasStats.longestStreak || 0))
+          + '<small> 天</small></strong><span>' + (currentYear ? '连续活跃' : '最长连续') + '</span></div>'
+        + '<div><strong>' + (canvasStats.activeCanvasCount || 0) + '</strong><span>活跃画布</span></div>'
+        + canvasStatCell(canvasStats.totalSec, '累计画布时间')
+      + '</div>'
       + '<div class="cadence-stats cadence-stats-complete" aria-label="活跃统计">'
         + '<div><strong>' + statOne + '</strong><span>' + statOneLabel + '</span></div>'
         + '<div><strong>' + statTwo + '<small> 天</small></strong><span>' + statTwoLabel + '</span></div>'
@@ -1352,7 +1432,7 @@
       + '</div>'
       + '<section class="cadence-starmap">'
         + '<div class="cadence-starmap-head"><div><p class="study-eyebrow">STARMAP</p>'
-          + '<h3>足迹星图</h3></div>'
+          + '<h3 data-role="cadence-starmap-title">' + (cadenceLens === 'canvas' ? '画布星图' : '足迹星图') + '</h3></div>'
           + '<div class="cadence-starmap-tools">'
             + '<div class="star-mode-switch" data-role="star-mode-switch" aria-label="星图查看模式">'
               + '<span class="star-mode-slider" data-role="star-mode-slider" aria-hidden="true"></span>'
@@ -1379,6 +1459,7 @@
         + '" data-role="cadence-year-page">' + contentHtml + '</div>'
       + '<div class="cadence-tooltip" role="status" aria-hidden="true"></div>';
     host.classList.toggle('cadence-lens-focus', cadenceLens === 'focus');
+    host.classList.toggle('cadence-lens-canvas', cadenceLens === 'canvas');
     const yearPage = host.querySelector('[data-role="cadence-year-page"]');
     if (incoming && yearPage && !prefersReduced) {
       void yearPage.offsetHeight;
@@ -1421,8 +1502,11 @@
     }
     let selectedDay = initialDay;
     let detailHeightAnim = null;   // 切换日期时的高度补间句柄；快速连切时先取消旧的，避免叠加
-    // 当天详情按当前镜头取内容：完成镜头=当天完成的任务列表；专注镜头=当天专注时长 / 段数。
+    // 当天详情按当前镜头取内容：画布时间 / 完成记录 / 专注时长。
     function detailHtmlForDay(day) {
+      if (cadenceLens === 'canvas') {
+        return cadenceCanvasDayDetailHtml(day, canvasEntries, canvasDays[day] || {}, todayKey);
+      }
       if (cadenceLens === 'focus') {
         const fd = focusDays[day] || {};
         return cadenceFocusDayDetailHtml(day, fd.sec || 0, fd.count || 0, todayKey);
@@ -1473,16 +1557,31 @@
         button.addEventListener('click', () => {
           const next = button.dataset.lens;
           if (next === cadenceLens) return;
+          const remountStar = (next === 'canvas') !== (cadenceLens === 'canvas');
           cadenceLens = next;
-          try { localStorage.setItem('canvas:cadenceLens', cadenceLens); } catch (e) {}
+          try { localStorage.setItem('canvas:cadenceLens:v2', cadenceLens); } catch (e) {}
           lensSwitch.dataset.active = cadenceLens;
           lensSwitch.querySelectorAll('.cadence-lens-btn').forEach((b) =>
             b.classList.toggle('active', b.dataset.lens === cadenceLens));
           host.classList.toggle('cadence-lens-focus', cadenceLens === 'focus');
+          host.classList.toggle('cadence-lens-canvas', cadenceLens === 'canvas');
           cells.forEach((cell) => {
-            cell.setAttribute('aria-label',
-              cadenceLens === 'focus' ? (cell.dataset.tipFocus || cell.dataset.tip) : cell.dataset.tip);
+            const label = cadenceLens === 'canvas'
+              ? (cell.dataset.tipCanvas || cell.dataset.tip)
+              : cadenceLens === 'focus' ? (cell.dataset.tipFocus || cell.dataset.tip) : cell.dataset.tip;
+            cell.setAttribute('aria-label', label);
           });
+          const starTitle = host.querySelector('[data-role="cadence-starmap-title"]');
+          if (starTitle) starTitle.textContent = cadenceLens === 'canvas' ? '画布星图' : '足迹星图';
+          const chart = host.querySelector('.cadence-chart');
+          if (chart) chart.setAttribute('aria-label', year + (cadenceLens === 'canvas'
+            ? ' 年逐日画布使用时长热力图'
+            : cadenceLens === 'focus' ? ' 年逐日专注时长热力图' : ' 年逐日已完成任务热力图'));
+          const chartCaption = host.querySelector('.cadence-chart-caption p');
+          if (chartCaption) chartCaption.textContent = cadenceLens === 'canvas'
+            ? '悬停回望，点击展开当天画布'
+            : '悬停回望，点击展开当天成果';
+          if (remountStar) mountStarGraph(host, payload, { intro: true });
           applyDayDetail();
         });
       });
@@ -1590,8 +1689,9 @@
         const hostRect = geometry ? geometry.host : host.getBoundingClientRect();
         if (cell !== tooltipCell) {
           tooltipCell = cell;
-          tooltip.textContent = (cadenceLens === 'focus' && cell.dataset.tipFocus)
-            ? cell.dataset.tipFocus : cell.dataset.tip;
+          tooltip.textContent = cadenceLens === 'canvas' && cell.dataset.tipCanvas
+            ? cell.dataset.tipCanvas
+            : (cadenceLens === 'focus' && cell.dataset.tipFocus) ? cell.dataset.tipFocus : cell.dataset.tip;
           tooltip.classList.add('is-visible');
           tooltip.setAttribute('aria-hidden', 'false');
         }

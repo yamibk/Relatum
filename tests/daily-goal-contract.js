@@ -41,16 +41,17 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'task.totalDays = want ? prevTotalDays + 1 : Math.max(0, prevTotalDays - 1)',
   'milestoneIds: crossedMilestones',
   'refreshDailyRowStats(task, goalMotion)',
-  'task.totalDays = prevTotalDays',
-  'waitForGoal: want && targetDays > 0,',
-  'opts.waitForMilestone ? 1420',
-  'waitForMilestone: want && crossedMilestones.length > 0',
+  'Object.assign(current, JSON.parse(JSON.stringify(state.confirmedTask)))',
+  'dailyCelebrationCheck();',
   'function refreshDailyDetailGoal(task, options)',
   "dailyDetailBlock(T('累计目标'))",
   "dailyDetailBlock('今日进度')",
   "event.target.closest('.focus-daily-milestone')",
   "window.matchMedia('(pointer: coarse)').matches",
 ].forEach((needle) => assert(focus.includes(needle), 'missing frontend daily-goal contract: ' + needle));
+
+assert(!focus.includes('function startDailyClear('),
+  'completed daily tasks must remain visible instead of clearing the list');
 
 assert(!focus.includes("bar.className = 'focus-daily-bar'"),
   'daily cards must no longer render the old per-day minute bar');
