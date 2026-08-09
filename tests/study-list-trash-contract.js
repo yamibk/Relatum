@@ -35,6 +35,12 @@ assert(study.includes("const buttons = Array.from(document.querySelectorAll('[da
 assert(!index.includes('这里只处理任务。关联画布在删除任务时已进入 Relatum 回收站，可在那里恢复。')
   && !styles.includes('.study-trash-card > header p:not(.study-eyebrow)'),
   'the task trash panel must not retain the removed explanatory copy or its unused styling');
+assert(index.includes('<h2 class="confirm-title" id="study-trash-confirm-title">永久清空任务回收站</h2>')
+  && !index.includes('永久清空任务回收站？')
+  && !index.includes('这里将只清除任务记录，且不可恢复。')
+  && !styles.includes('.trash-empty-warning')
+  && i18n.includes("'永久清空任务回收站': 'Permanently empty Task Trash'"),
+  'empty-trash confirmation must keep only the concise bilingual title');
 assert(study.includes("const archiveMessage = '已归档' + json.count + '项已完成任务';")
   && !study.includes("件任务，关联画布已移到回收站 · data/学习归档/")
   && i18n.includes("return `Archived ${match[1]} completed ${match[1] === '1' ? 'task' : 'tasks'}`;"),
