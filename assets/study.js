@@ -57,12 +57,12 @@
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
   })();
 
-  // —— 视图模式：board(看板，默认) / list(极简清单)；在学习页再点一次「学」书脊切换、localStorage 记忆 ——
+  // —— 视图模式：list(极简清单，默认) / board(看板)；在学习页再点一次「学」书脊切换、localStorage 记忆 ——
   const VIEW_MODE_KEY = 'study:viewMode';
   const studyViewEl = document.querySelector('[data-role="study-view"]');
   function readViewMode() {
-    try { return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'board'; }
-    catch (e) { return 'board'; }
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'board' ? 'board' : 'list'; }
+    catch (e) { return 'list'; }
   }
   let viewMode = readViewMode();
   function applyViewMode() {
@@ -723,7 +723,7 @@
     applySelected();   // 末尾同步定位选中环（此刻卡片在最终布局位，尚未加 FLIP 偏移）
   }
 
-  // ============ 极简清单视图（mode=list；方案 A：只勾完成 / 双击改名 / + 新建）============
+  // ============ 极简清单视图（mode=list；勾选 / 双击改名 / 直接回收 / + 新建）============
   // 分组照搬看板那套（今日/待办/进行中/已完成），不按截止日重排；只是换成干净的英文清单。
   function renderList() {
     const host = document.querySelector('[data-role="study-list"]');
@@ -746,6 +746,25 @@
       head.innerHTML = '<h2>' + group.label + '</h2>'
         + (tasks.length ? '<span class="study-list-count">' + tasks.length + '</span>' : '');
       if (group.add) {
+        const actions = document.createElement('div');
+        actions.className = 'study-list-actions';
+        const archiveBtn = document.createElement('button');
+        archiveBtn.type = 'button';
+        archiveBtn.className = 'study-list-archive';
+        archiveBtn.dataset.action = 'archive-done';
+        archiveBtn.setAttribute('aria-label', '归档已完成任务');
+        archiveBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+          + '<path d="M4.5 8h15v11h-15zM3.5 5h17v3h-17zM9.5 12h5"></path></svg>';
+        archiveBtn.addEventListener('click', (event) => { event.stopPropagation(); archiveDone(); });
+        actions.appendChild(archiveBtn);
+        const trashBtn = document.createElement('button');
+        trashBtn.type = 'button';
+        trashBtn.className = 'study-list-trash';
+        trashBtn.setAttribute('aria-label', '任务回收站');
+        trashBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+          + '<path d="M8 7h8m-7.25 0 .55 11h5.4l.55-11M10 4.75h4M6.75 7h10.5"></path></svg>';
+        trashBtn.addEventListener('click', (event) => { event.stopPropagation(); openTrash(); });
+        actions.appendChild(trashBtn);
         const addBtn = document.createElement('button');
         addBtn.type = 'button';
         addBtn.className = 'study-list-add';
@@ -753,7 +772,8 @@
         addBtn.setAttribute('aria-label', '新建任务');
         addBtn.textContent = '+';
         addBtn.addEventListener('click', (event) => { event.stopPropagation(); listQuickAdd(); });
-        head.appendChild(addBtn);
+        actions.appendChild(addBtn);
+        head.appendChild(actions);
       }
       section.appendChild(head);
       tasks.forEach((task) => section.appendChild(taskRow(task)));
@@ -769,6 +789,17 @@
     row.innerHTML = '<button type="button" class="study-list-check' + (checked ? ' on' : '')
       + '" aria-label="标记完成">' + (checked ? '✓' : '') + '</button>'
       + '<span class="study-list-title">' + escapeHtml(task.title) + '</span>';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'study-list-remove';
+    removeBtn.setAttribute('aria-label', '删除任务');
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('pointerdown', (event) => { event.stopPropagation(); });
+    removeBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      trashTaskById(task.id);
+    });
+    row.appendChild(removeBtn);
     // 只点左边小方框 = 完成（再点 = 取消完成）；阻断冒泡，不触发改名
     row.querySelector('.study-list-check').addEventListener('click', (event) => {
       event.stopPropagation();
@@ -777,7 +808,7 @@
     // 双击行 = 就地改名，复用看板那套 beginRename
     const titleEl = row.querySelector('.study-list-title');
     row.addEventListener('dblclick', (event) => {
-      if (event.target.closest('.study-list-check')) return;
+      if (event.target.closest('.study-list-check, .study-list-remove')) return;
       if (row.classList.contains('renaming')) return;
       beginRename(row, task, titleEl);
     });
@@ -2612,10 +2643,10 @@
       showToast('已完成这一列还是空的');
       return;
     }
-    const button = document.querySelector('[data-action="archive-done"]');
+    const buttons = Array.from(document.querySelectorAll('[data-action="archive-done"]'));
     const lane = document.querySelector('.study-lane[data-status="done"]');
-    if (button.disabled) return;
-    button.disabled = true;
+    if (buttons.some((button) => button.disabled)) return;
+    buttons.forEach((button) => { button.disabled = true; });
     try {
       await Promise.all(done.map(async (task) => {
         await ensureTaskCreated(task);
@@ -2626,7 +2657,7 @@
       const archivedIds = new Set(json.archivedIds || []);
       const trashedCanvasPaths = new Set((json.trashedCanvases || []).map((item) => item.from));
       lane.classList.add('archive-success');
-      button.classList.add('archive-success');
+      buttons.forEach((button) => button.classList.add('archive-success'));
       await dismissArchivedSelection(archivedIds);
       if (viewMode === 'board') {
         await animateArchiveCards(Array.from(lane.querySelectorAll('.study-task-card')));
@@ -2641,14 +2672,15 @@
       const empty = lane.querySelector('.study-lane-empty');
       if (empty) empty.classList.add('archive-empty-enter');
       invalidateActivity();   // 归档只是搬走数据，完成历史仍按完成日留在活跃图上
-      showToast('已归档 ' + json.count + ' 件任务，关联画布已移到回收站 · data/学习归档/' + json.folder);
+      const archiveMessage = '已归档' + json.count + '项已完成任务';
+      showToast(window.RelatumI18n ? window.RelatumI18n.t(archiveMessage) : archiveMessage);
     } catch (error) {
       showToast(error.message);
     } finally {
-      button.disabled = false;
+      buttons.forEach((button) => { button.disabled = false; });
       setTimeout(() => {
         lane.classList.remove('archive-success');
-        button.classList.remove('archive-success');
+        buttons.forEach((button) => button.classList.remove('archive-success'));
       }, 860);
     }
   }

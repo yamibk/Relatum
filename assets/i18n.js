@@ -55,7 +55,7 @@
 
     '新建任务': 'New task', '任务': 'Tasks', '任务详情': 'Task details', '任务画布': 'Task canvas',
     '今日': 'Today', '今日任务': 'Today’s tasks', '待办': 'To do', '进行中': 'In progress',
-    '已完成': 'Completed', '归档': 'Archive', '都带到今天': 'Move all to today', '不用了': 'Not now',
+    '已完成': 'Completed', '归档': 'Archive', '归档已完成任务': 'Archive completed tasks', '都带到今天': 'Move all to today', '不用了': 'Not now',
     '添加今日任务': 'Add today’s task', '开始专注': 'Start focus', '专注投入': 'Focus time',
     '尚无记录': 'No sessions yet', '状态': 'Status', '标题': 'Title', '备注': 'Notes',
     '标签': 'Tags', '用逗号分隔': 'Separate with commas', '截止日期': 'Due date',
@@ -854,7 +854,7 @@
     // ── 每日任务 aria 前缀（用于拼接后匹配）──
     '取消完成 · ': 'Undo · ',
     '标记完成 · ': 'Mark done · ',
-    '查看打卡日历 · ': 'Check-in calendar · ',
+    '查看任务详情 · ': 'View task details · ',
     '任务选项 · ': 'Task options · ',
     '分组选项 · ': 'Group options · ',
     '展开分组 · ': 'Expand group · ',
@@ -914,6 +914,8 @@
     if (match) return `${match[1]} today`;
     match = source.match(/^已完成\s*(\d+)\s*项$/);
     if (match) return `${match[1]} completed`;
+    match = source.match(/^已归档\s*(\d+)\s*项已完成任务$/);
+    if (match) return `Archived ${match[1]} completed ${match[1] === '1' ? 'task' : 'tasks'}`;
     match = source.match(/^第\s*(\d+)\s*段$/);
     if (match) return `Session ${match[1]}`;
     match = source.match(/^(\d{4})\s*年\s*(\d{1,2})\s*月$/);
@@ -1186,8 +1188,8 @@
     if (match) return 'Undo · ' + match[1];
     match = source.match(/^标记完成\s*·\s*(.+)$/);
     if (match) return 'Mark done · ' + match[1];
-    match = source.match(/^查看打卡日历\s*·\s*(.+)$/);
-    if (match) return 'Check-in calendar · ' + match[1];
+    match = source.match(/^查看任务详情\s*·\s*(.+)$/);
+    if (match) return 'View task details · ' + match[1];
     match = source.match(/^任务选项\s*·\s*(.+)$/);
     if (match) return 'Task options · ' + match[1];
     match = source.match(/^分组选项\s*·\s*(.+)$/);

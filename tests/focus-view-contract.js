@@ -56,7 +56,7 @@ assert(html.includes('<link rel="preload" href="focus.js" as="script">')
 [
   "const VIEW_MODE_KEY = 'focus:viewMode'",
   "const DAILY_REVIEWED_KEY = 'focus:dailyReviewedDate'",
-  "localStorage.getItem(VIEW_MODE_KEY) === 'daily'",
+  "localStorage.getItem(VIEW_MODE_KEY) === 'timer' ? 'timer' : 'daily'",
   "localStorage.setItem(VIEW_MODE_KEY, viewMode)",
   'function sessionLocksView()',
   'return !!(running || pendingSession);',
@@ -109,6 +109,14 @@ assert(html.includes('<link rel="preload" href="focus.js" as="script">')
   "dailyListEl.querySelectorAll('.is-dragging, .is-drag-subtree')",
   "showTimerView({ persist: false, animate: false });",
   "if (action.dataset.action === 'daily-detail-bind' && dailyDetailTaskId)",
+  "name.dataset.action = 'daily-detail-open';",
+  "name.setAttribute('data-i18n-source-aria-label', detailLabel);",
+  "detailCue.className = 'focus-daily-detail-cue';",
+  "detailCue.setAttribute('aria-hidden', 'true');",
+  'function fillDailyDetailHistorySummary(recent, note, task)',
+  'function refreshDailyDetail(task, options)',
+  'function handleDailyDetailClick(event)',
+  'document.body.appendChild(shell);',
   'toggleMode: toggleViewMode',
   'showTimer(options) { return showTimerView(options); }',
 ].forEach((needle) => assert(focus.includes(needle), 'missing focus view-state contract: ' + needle));
@@ -168,6 +176,37 @@ assert(!styles.includes('.focus-daily.is-open'),
   'legacy daily sidebar open-state styles must be removed');
 assert(!focus.includes('function startDailyClear('),
   'all-complete state must not clear the daily list');
+[
+  'dailyHistoryTaskId',
+  'dailyHistoryMonth',
+  'daily-history-pop',
+  'daily-history-close',
+  'daily-history-prev',
+  'daily-history-next',
+  'daily-history-today',
+  "history.textContent = '日'",
+].forEach((needle) => assert(!focus.includes(needle), 'legacy daily history entry remains: ' + needle));
+assert(!styles.includes('.focus-daily-history'),
+  'legacy daily history overlay styles must be removed');
+assert(i18n.includes("'查看任务详情 · ': 'View task details · '")
+  && i18n.includes("source.match(/^查看任务详情\\s*·\\s*(.+)$/)")
+  && !i18n.includes('查看打卡日历'),
+  'the unified detail entry must keep an explicit bilingual accessible name and remove the old calendar label');
+assert(styles.includes('width: min(1080px, calc(100vw - 96px));')
+  && styles.includes('grid-auto-rows: clamp(48px, 5.2vh, 58px);')
+  && styles.includes('@media (max-width: 640px)'),
+  'unified daily detail must keep the bounded desktop and responsive calendar layout');
+assert(styles.includes('grid-template-columns: repeat(3, minmax(0, 1fr));')
+  && !focus.includes("dailyDetailStat('today'")
+  && !focus.includes("dailyDetailStat('focus'"),
+  'daily detail must show only streak, total days, and best streak in its summary row');
+assert(focus.includes('closeDailyDetail({ restore: false });'),
+  'Escape must close daily detail without forcing focus back onto the task title');
+assert(focus.includes("if (event.target === shell) { closeDailyDetail({ restore: false }); return; }"),
+  'backdrop dismissal must not force focus back onto the task title');
+assert(styles.includes('color-mix(in srgb, var(--bg) 64%, transparent)')
+  && styles.includes('rgba(18, 20, 21, 0.7)'),
+  'the completion celebration must remain translucent in both light and dark themes');
 assert(focus.includes('dailyCelebrationCheck({ animate: !!opts.celebrate && !opts.initial });'),
   'all-complete feedback must remain non-destructive and use the shared state entry');
 assert(focus.includes('dailyWasAllDone = allDailyDone();')
@@ -304,8 +343,12 @@ const celebrationRule = styles.match(/\.focus-daily-celebrate\s*\{([\s\S]*?)\n\}
 assert(celebrationRule && celebrationRule[1].includes('position: absolute;')
   && celebrationRule[1].includes('inset: 0;')
   && celebrationRule[1].includes('visibility: hidden;')
-  && celebrationRule[1].includes('color-mix(in srgb, var(--bg) 96%, var(--surface) 4%)'),
+  && celebrationRule[1].includes('color-mix(in srgb, var(--bg) 64%, transparent)'),
   'the completion celebration must cover the focus content independently of list height or scroll position');
+const celebrationOpenScrollRule = styles.match(/\.focus-daily-view\.is-celebration-open \.focus-daily-scroll\s*\{([\s\S]*?)\n\}/);
+assert(celebrationOpenScrollRule && celebrationOpenScrollRule[1].includes('opacity: 0;')
+  && celebrationOpenScrollRule[1].includes('transition: none;'),
+  'the completed list must stay hidden when entering hands off to the visible celebration phase');
 assert(styles.includes('.focus-daily-celebrate.is-visible,')
   && styles.includes('.focus-daily-celebrate.is-entering .focus-daily-star-dot,'),
   'reduced-motion mode must disable the flexible reveal and gathering animations');
