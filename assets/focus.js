@@ -168,14 +168,11 @@
   let dailyCelebrateFocusTimer = 0;
   let dailyCelebrateReturnId = '';
   const dailyToggleStates = new Map();
-  let dailyHistoryTaskId = '';
-  let dailyHistoryMonth = '';
   let dailyDetailTaskId = '';
   let dailyDetailMonth = '';
   let dailyDetailReturnEl = null;
   let dailyDetailCloseTimer = 0;
   let dailyDetailMonthMotionTimer = 0;
-  let dailyHistoryCloseTimer = 0;
   let sessions = [];
   let loadedSessions = false;
   let footprintDay = todayStr();
@@ -274,8 +271,8 @@
     return !!(book && book.classList.contains('focus-active'));
   }
   function readViewMode() {
-    try { return localStorage.getItem(VIEW_MODE_KEY) === 'daily' ? 'daily' : 'timer'; }
-    catch (e) { return 'timer'; }
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'timer' ? 'timer' : 'daily'; }
+    catch (e) { return 'daily'; }
   }
   function dailyReviewedToday() {
     const today = todayStr();
@@ -1451,7 +1448,6 @@
       if (!dailyLoaded) setDailyLoading(true);
     } else {
       endDailyPointerDrag(null, false);
-      closeDailyHistory();
       closeDailyDetail({ restore: false });
       closeDailyComposer({ focus: false });
       window.clearTimeout(dailyRevealTimer);
@@ -1572,7 +1568,6 @@
     if (dailyCountEl) dailyCountEl.textContent = String(dailyTasks.length);
     updateDailyFoot();
     updateDailyComposeUI();
-    renderDailyHistory();
     renderDailyDetail();
     dailyCelebrationCheck({ animate: !!opts.celebrate && !opts.initial });
   }
@@ -2052,149 +2047,8 @@
     const raw = task && task.minutesByDate;
     return raw && typeof raw === 'object' ? raw : {};
   }
-  function closeDailyHistory() {
-    dailyHistoryTaskId = '';
-    dailyHistoryMonth = '';
-    if (!dailyRoot) return;
-    const old = dailyRoot.querySelector('[data-role="daily-history-pop"]');
-    if (!old) return;
-    window.clearTimeout(dailyHistoryCloseTimer);
-    if (prefersReduced) { old.remove(); dailyHistoryCloseTimer = 0; return; }
-    old.classList.add('is-closing');
-    const finish = () => {
-      if (old.isConnected) old.remove();
-      dailyHistoryCloseTimer = 0;
-    };
-    old.addEventListener('animationend', finish, { once: true });
-    dailyHistoryCloseTimer = window.setTimeout(finish, 260);
-  }
-  function openDailyHistory(id) {
-    const task = dailyTasks.find((item) => item.id === id);
-    if (!task || !dailyRoot) return;
-    dailyHistoryTaskId = id;
-    dailyHistoryMonth = monthKeyFromDay(task.lastDoneDate || todayStr());
-    renderDailyHistory();
-  }
-  function moveDailyHistoryMonth(delta) {
-    if (!dailyHistoryTaskId) return;
-    dailyHistoryMonth = shiftMonthKey(dailyHistoryMonth || todayStr().slice(0, 7), delta);
-    renderDailyHistory();
-  }
-  function renderDailyHistory() {
-    if (!dailyRoot) return;
-    const old = dailyRoot.querySelector('[data-role="daily-history-pop"]');
-    if (old && !prefersReduced) {
-      window.clearTimeout(dailyHistoryCloseTimer);
-      old.classList.add('is-closing');
-      const proceed = () => {
-        if (old.isConnected) old.remove();
-        dailyHistoryCloseTimer = 0;
-        renderDailyHistory();
-      };
-      old.addEventListener('animationend', proceed, { once: true });
-      dailyHistoryCloseTimer = window.setTimeout(proceed, 260);
-      return;
-    }
-    if (old) old.remove();
-    if (!dailyHistoryTaskId) return;
-    const task = dailyTasks.find((item) => item.id === dailyHistoryTaskId);
-    if (!task) { dailyHistoryTaskId = ''; dailyHistoryMonth = ''; return; }
-    if (!dailyHistoryMonth) dailyHistoryMonth = monthKeyFromDay(task.lastDoneDate || todayStr());
-    const doneDates = dailyDoneDateSet(task);
-    const minutesByDate = dailyMinutesMap(task);
-    const today = todayStr();
-
-    const panel = document.createElement('section');
-    panel.className = 'focus-daily-history';
-    panel.dataset.role = 'daily-history-pop';
-    panel.setAttribute('aria-label', '打卡日历 · ' + (task.name || '每日任务'));
-
-    const head = document.createElement('header');
-    const copy = document.createElement('div');
-    const eyebrow = document.createElement('p');
-    eyebrow.className = 'study-eyebrow';
-    eyebrow.textContent = 'HABIT';
-    const title = document.createElement('h3');
-    title.textContent = task.name || '每日任务';
-    const stat = document.createElement('span');
-    stat.textContent = dailyStatText(task);
-    copy.append(eyebrow, title, stat);
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'focus-daily-history-close';
-    close.dataset.action = 'daily-history-close';
-    close.setAttribute('aria-label', '关闭打卡日历');
-    close.textContent = '×';
-    head.append(copy, close);
-    panel.appendChild(head);
-
-    const nav = document.createElement('div');
-    nav.className = 'focus-daily-history-nav';
-    const prev = document.createElement('button');
-    prev.type = 'button';
-    prev.dataset.action = 'daily-history-prev';
-    prev.setAttribute('aria-label', '上个月');
-    prev.textContent = '‹';
-    const month = document.createElement('strong');
-    month.textContent = monthLabel(dailyHistoryMonth);
-    const next = document.createElement('button');
-    next.type = 'button';
-    next.dataset.action = 'daily-history-next';
-    next.setAttribute('aria-label', '下个月');
-    next.textContent = '›';
-    const now = document.createElement('button');
-    now.type = 'button';
-    now.className = 'focus-daily-history-today';
-    now.dataset.action = 'daily-history-today';
-    now.textContent = '今天';
-    nav.append(prev, month, next, now);
-    panel.appendChild(nav);
-
-    const weekdays = document.createElement('div');
-    weekdays.className = 'focus-daily-history-weekdays';
-    ['一', '二', '三', '四', '五', '六', '日'].forEach((label) => {
-      const span = document.createElement('span');
-      span.textContent = label;
-      weekdays.appendChild(span);
-    });
-    panel.appendChild(weekdays);
-
-    const grid = document.createElement('div');
-    grid.className = 'focus-daily-history-grid';
-    monthCells(dailyHistoryMonth).forEach((cell, index) => {
-      const day = document.createElement('span');
-      day.className = 'focus-daily-history-day';
-      if (!cell.current) day.classList.add('outside');
-      if (cell.date === today) day.classList.add('today');
-      if (doneDates.has(cell.date)) day.classList.add('is-done');
-      day.style.setProperty('--daily-history-delay', Math.min(index, 24) * 4 + 'ms');
-      const num = document.createElement('b');
-      num.textContent = String(cell.number);
-      day.appendChild(num);
-      const mins = Number(minutesByDate[cell.date]) || 0;
-      if (mins > 0) {
-        const small = document.createElement('small');
-        small.textContent = mins + 'm';
-        day.appendChild(small);
-      }
-      day.title = cell.date + (doneDates.has(cell.date) ? ' · 已打卡' : '') + (mins > 0 ? ' · ' + mins + ' 分钟' : '');
-      grid.appendChild(day);
-    });
-    panel.appendChild(grid);
-
-    const foot = document.createElement('footer');
-    const recorded = doneDates.size;
-    const totalDays = Number(task.totalDays) || 0;
-    const best = Number(task.bestStreak) || 0;
-    foot.innerHTML = '<span><i></i>已打卡 ' + recorded + ' 天</span>'
-      + (totalDays && totalDays !== recorded ? '<span>累计 ' + totalDays + ' 天</span>' : '')
-      + (best ? '<span>最佳连续 ' + best + ' 天</span>' : '');
-    panel.appendChild(foot);
-
-    dailyRoot.appendChild(panel);
-  }
   function getDailyDetailShell() {
-    return root.querySelector('[data-role="daily-detail"]');
+    return document.querySelector('[data-role="daily-detail"]');
   }
   function closeDailyDetail(options) {
     const opts = options || {};
@@ -2252,7 +2106,6 @@
     if (!task) return;
     window.clearTimeout(dailyDetailCloseTimer);
     dailyDetailCloseTimer = 0;
-    closeDailyHistory();
     dailyDetailTaskId = id;
     dailyDetailMonth = monthKeyFromDay(task.lastDoneDate || todayStr());
     dailyDetailReturnEl = returnEl || document.activeElement;
@@ -2263,12 +2116,46 @@
     dailyDetailMonth = shiftMonthKey(dailyDetailMonth || todayStr().slice(0, 7), delta);
     renderDailyDetailCalendar(delta);
   }
-  function dailyDetailStat(label, value, hint) {
+  function handleDailyDetailClick(event) {
+    const shell = event.currentTarget;
+    if (event.target === shell) { closeDailyDetail({ restore: false }); return; }
+    const action = event.target.closest('[data-action]');
+    if (!action || !shell.contains(action)) return;
+    if (action.dataset.action === 'daily-detail-close') { closeDailyDetail(); return; }
+    if (action.dataset.action === 'daily-detail-prev') { moveDailyDetailMonth(-1); return; }
+    if (action.dataset.action === 'daily-detail-next') { moveDailyDetailMonth(1); return; }
+    if (action.dataset.action === 'daily-detail-today') {
+      dailyDetailMonth = todayStr().slice(0, 7);
+      renderDailyDetailCalendar(0);
+      return;
+    }
+    if (action.dataset.action === 'daily-detail-toggle' && dailyDetailTaskId) {
+      const task = dailyTasks.find((item) => item.id === dailyDetailTaskId);
+      if (task) toggleDailyTask(task.id);
+      return;
+    }
+    if (action.dataset.action === 'daily-detail-bind' && dailyDetailTaskId) {
+      const task = dailyTasks.find((item) => item.id === dailyDetailTaskId);
+      if (task && bindTask(task.id, task.name || '', 'daily')) {
+        renderTaskOptions();
+        syncDisplay();
+        showTimerView({ persist: false, animate: false });
+      }
+      return;
+    }
+    if (action.dataset.action === 'daily-detail-edit' && dailyDetailTaskId) {
+      const id = dailyDetailTaskId;
+      closeDailyDetail({ restore: false, instant: true });
+      openDailyEdit(id);
+    }
+  }
+  function dailyDetailStat(key, label, value, hint) {
     const item = document.createElement('div');
     item.className = 'focus-daily-detail-stat';
     const small = document.createElement('span');
     small.textContent = label;
     const strong = document.createElement('strong');
+    strong.dataset.role = 'daily-detail-stat-' + key;
     strong.textContent = value;
     item.append(small, strong);
     if (hint) {
@@ -2334,10 +2221,30 @@
     });
     while (grid.children.length > 42) grid.removeChild(grid.lastElementChild);
   }
+  function fillDailyDetailHistorySummary(recent, note, task) {
+    if (!recent || !note || !task) return;
+    const today = todayStr();
+    const orderedDates = Array.from(dailyDoneDateSet(task)).sort();
+    recent.innerHTML = '';
+    orderedDates.slice(-10).reverse().forEach((day) => {
+      const chip = document.createElement('span');
+      chip.textContent = day.slice(5);
+      if (day === today) chip.classList.add('today');
+      recent.appendChild(chip);
+    });
+    if (!recent.childElementCount) {
+      const empty = document.createElement('p');
+      empty.textContent = T('还没有历史打卡');
+      recent.appendChild(empty);
+    }
+    note.textContent = orderedDates.length
+      ? '已记录 ' + orderedDates.length + ' 个打卡日，最近一次是 ' + orderedDates[orderedDates.length - 1] + '。'
+      : T('完成第一次打卡后，这里会开始沉淀它的日历轨迹。');
+  }
   function renderDailyDetailCalendar(direction) {
     if (!dailyDetailTaskId) return;
     const task = dailyTasks.find((item) => item.id === dailyDetailTaskId);
-    const shell = root.querySelector('[data-role="daily-detail"]');
+    const shell = getDailyDetailShell();
     if (!task || !shell) { renderDailyDetail(); return; }
     const monthEl = shell.querySelector('[data-role="daily-detail-month"]');
     const grid = shell.querySelector('[data-role="daily-detail-grid"]');
@@ -2349,7 +2256,8 @@
   function renderDailyDetail() {
     window.clearTimeout(dailyDetailMonthMotionTimer);
     dailyDetailMonthMotionTimer = 0;
-    const old = root.querySelector('[data-role="daily-detail"]');
+    const old = getDailyDetailShell();
+    const shouldFocus = !old;
     if (old) old.remove();
     if (!dailyDetailTaskId) return;
     const task = dailyTasks.find((item) => item.id === dailyDetailTaskId);
@@ -2359,10 +2267,8 @@
     const today = todayStr();
     const doneDates = dailyDoneDateSet(task);
     const minutesByDate = dailyMinutesMap(task);
-    const orderedDates = Array.from(doneDates).sort();
     const todayMinutes = Number(task.todayMinutes) || 0;
     const target = DAILY_TARGET_UI_HIDDEN ? 0 : (Number(task.targetMinutes) || 0);
-    const totalMinutes = Number(task.totalMinutes) || 0;
     const dayGoal = dailyGoalState(task);
     const recorded = doneDates.size;
     const group = task.groupId ? dailyGroupById(task.groupId) : null;
@@ -2372,6 +2278,7 @@
     const shell = document.createElement('div');
     shell.className = 'focus-daily-detail-shell';
     shell.dataset.role = 'daily-detail';
+    shell.addEventListener('click', handleDailyDetailClick);
     const panel = document.createElement('section');
     panel.className = 'focus-daily-detail';
     panel.setAttribute('role', 'dialog');
@@ -2389,6 +2296,7 @@
     title.id = 'focus-daily-detail-title';
     title.textContent = task.name || '每日任务';
     const meta = document.createElement('span');
+    meta.dataset.role = 'daily-detail-meta';
     meta.textContent = groupLabel + ' · ' + dailyStatText(task);
     copy.append(eyebrow, title, meta);
 
@@ -2418,18 +2326,16 @@
     close.dataset.action = 'daily-detail-close';
     close.setAttribute('aria-label', '关闭每日任务详情');
     close.textContent = '×';
-    actions.append(bind, toggle, edit, close);
+    actions.append(toggle, bind, edit, close);
     head.append(copy, actions);
     panel.appendChild(head);
 
     const stats = document.createElement('div');
     stats.className = 'focus-daily-detail-stats';
     stats.append(
-      dailyDetailStat('今天', target > 0 ? todayMinutes + ' / ' + target : String(todayMinutes), '分钟'),
-      dailyDetailStat('连续', String(Number(task.streak) || 0), '天'),
-      dailyDetailStat('累计', String(Number(task.totalDays) || recorded), '天'),
-      dailyDetailStat('最佳', String(Number(task.bestStreak) || 0), '天'),
-      dailyDetailStat('专注', String(totalMinutes), '分钟')
+      dailyDetailStat('streak', '连续', String(Number(task.streak) || 0), '天'),
+      dailyDetailStat('total', '累计', String(Number(task.totalDays) || recorded), '天'),
+      dailyDetailStat('best', '最佳', String(Number(task.bestStreak) || 0), '天')
     );
     panel.appendChild(stats);
 
@@ -2530,33 +2436,28 @@
     const recentBlock = dailyDetailBlock('最近打卡');
     const recent = document.createElement('div');
     recent.className = 'focus-daily-detail-recent';
-    orderedDates.slice(-10).reverse().forEach((day) => {
-      const chip = document.createElement('span');
-      chip.textContent = day.slice(5);
-      if (day === today) chip.classList.add('today');
-      recent.appendChild(chip);
-    });
-    if (!recent.childElementCount) {
-      const empty = document.createElement('p');
-      empty.textContent = '还没有历史打卡';
-      recent.appendChild(empty);
-    }
+    recent.dataset.role = 'daily-detail-recent';
     recentBlock.appendChild(recent);
     side.appendChild(recentBlock);
 
     const noteBlock = dailyDetailBlock('记录');
     const note = document.createElement('p');
     note.className = 'focus-daily-detail-note';
-    note.textContent = recorded
-      ? '已记录 ' + recorded + ' 个打卡日，最近一次是 ' + orderedDates[orderedDates.length - 1] + '。'
-      : '完成第一次打卡后，这里会开始沉淀它的日历轨迹。';
+    note.dataset.role = 'daily-detail-note';
+    fillDailyDetailHistorySummary(recent, note, task);
     noteBlock.appendChild(note);
     side.appendChild(noteBlock);
 
     body.appendChild(side);
     panel.appendChild(body);
     shell.appendChild(panel);
-    root.appendChild(shell);
+    document.body.appendChild(shell);
+    if (shouldFocus) {
+      window.requestAnimationFrame(() => {
+        if (!toggle.isConnected) return;
+        try { toggle.focus({ preventScroll: true }); } catch (e) { toggle.focus(); }
+      });
+    }
     if (!prefersReduced) {
       grid.classList.add('is-entering');
       window.clearTimeout(dailyDetailMonthMotionTimer);
@@ -2591,6 +2492,10 @@
     const name = document.createElement('button');
     name.type = 'button';
     name.className = 'focus-daily-name';
+    name.dataset.action = 'daily-detail-open';
+    const detailLabel = '查看任务详情 · ' + (task.name || '每日任务');
+    name.setAttribute('data-i18n-source-aria-label', detailLabel);
+    name.setAttribute('aria-label', T(detailLabel));
     name.textContent = task.name || '未命名';
     main.appendChild(name);
 
@@ -2604,13 +2509,11 @@
     if (dailyEditId === task.id) main.appendChild(buildDailyEditor(task));
     row.appendChild(main);
 
-    const history = document.createElement('button');
-    history.type = 'button';
-    history.className = 'focus-daily-history-btn';
-    history.dataset.role = 'daily-history';
-    history.setAttribute('aria-label', '查看打卡日历 · ' + (task.name || '每日任务'));
-    history.textContent = '日';
-    row.appendChild(history);
+    const detailCue = document.createElement('span');
+    detailCue.className = 'focus-daily-detail-cue';
+    detailCue.setAttribute('aria-hidden', 'true');
+    detailCue.textContent = '›';
+    row.appendChild(detailCue);
 
     // 右侧 ⋯ 选项按钮：平时透明，悬停该行/编辑态才浮现；只有它能进编辑（对齐分组组头的 ⋯）
     const menu = document.createElement('button');
@@ -3422,7 +3325,7 @@
     if (event.button !== 0 || dailyEditId || dailyGroupEditId || dailyConfirmDeleteId
         || dailyGroupConfirmDeleteId || dailyDrag) return;
     // 这些控件是纯点击，不从它们起拖（勾选 / 编辑器内部 / 折叠箭头 / ⋯菜单）
-    if (event.target.closest('[data-role="daily-check"], [data-role="daily-history"], [data-role="daily-menu"], .focus-daily-edit, .focus-daily-milestone, [data-role="daily-group-toggle"], [data-role="daily-group-menu"]')) return;
+    if (event.target.closest('[data-role="daily-check"], [data-role="daily-menu"], .focus-daily-edit, .focus-daily-milestone, [data-role="daily-group-toggle"], [data-role="daily-group-menu"]')) return;
     const taskRow = event.target.closest('.focus-daily-row');
     const groupRow = taskRow ? null : event.target.closest('.focus-daily-group');
     const el = taskRow || groupRow;
@@ -3906,7 +3809,7 @@
   }
   function refreshDailyDetailGoal(task, options) {
     if (!task || dailyDetailTaskId !== task.id) return;
-    const shell = root.querySelector('[data-role="daily-detail"]');
+    const shell = getDailyDetailShell();
     if (!shell) return;
     const text = shell.querySelector('[data-role="daily-detail-goal-text"]');
     if (text) text.textContent = dailyGoalProgressText(task);
@@ -3917,14 +3820,37 @@
       toggle.textContent = task.doneToday ? T('取消今日打卡') : T('今日打卡');
     }
   }
+  function refreshDailyDetail(task, options) {
+    if (!task || dailyDetailTaskId !== task.id) return;
+    const shell = getDailyDetailShell();
+    if (!shell) return;
+    const group = task.groupId ? dailyGroupById(task.groupId) : null;
+    const meta = shell.querySelector('[data-role="daily-detail-meta"]');
+    if (meta) meta.textContent = (group ? dailyGroupPathLabel(group) : T('未分组')) + ' · ' + dailyStatText(task);
+    const values = {
+      streak: String(Number(task.streak) || 0),
+      total: String(Number(task.totalDays) || dailyDoneDateSet(task).size),
+      best: String(Number(task.bestStreak) || 0),
+    };
+    Object.keys(values).forEach((key) => {
+      const element = shell.querySelector('[data-role="daily-detail-stat-' + key + '"]');
+      if (element) element.textContent = values[key];
+    });
+    fillDailyDetailCalendar(shell.querySelector('[data-role="daily-detail-grid"]'), task);
+    fillDailyDetailHistorySummary(
+      shell.querySelector('[data-role="daily-detail-recent"]'),
+      shell.querySelector('[data-role="daily-detail-note"]'),
+      task
+    );
+    refreshDailyDetailGoal(task, options);
+  }
   function syncDailyToggleResult(id, task) {
     const row = dailyListEl.querySelector('.focus-daily-row[data-id="' + id + '"]');
     setRowDone(row, !!task.doneToday);
     refreshDailyRowStats(task);
-    refreshDailyDetailGoal(task);
+    refreshDailyDetail(task);
     refreshDailyGroupProgress(task.groupId);
     updateDailyFoot();
-    renderDailyHistory();
     dailyCelebrationCheck();
     renderTaskOptions();
   }
@@ -4008,11 +3934,10 @@
     setRowDone(row, want);
     const goalMotion = { glow: want && targetDays > 0, reached: reachedNow, milestoneIds: crossedMilestones };
     refreshDailyRowStats(task, goalMotion);
-    refreshDailyDetailGoal(task, goalMotion);
+    refreshDailyDetail(task, goalMotion);
     refreshDailyGroupProgress(task.groupId);
     updateDailyFoot();
     pulseDailyFoot();
-    renderDailyHistory();
     if (want && allDailyDone()) dailyCelebrateReturnId = id;
     dailyCelebrationCheck();
     if (row) row.classList.add('is-syncing');
@@ -4251,11 +4176,6 @@
       closeDailyMilestoneDialog(false);
       return;
     }
-    const detailShell = event.target.closest('[data-role="daily-detail"]');
-    if (detailShell && event.target === detailShell) {
-      closeDailyDetail();
-      return;
-    }
     const action = event.target.closest('[data-action]');
     if (!action) return;
     if (action.dataset.action === 'daily-milestone-add') {
@@ -4302,37 +4222,6 @@
     if (action.dataset.action === 'focus-zen-enter') toggleZen();
     if (action.dataset.action === 'daily-review-today') { reviewDailyCelebration(); return; }
     if (action.dataset.action === 'daily-compose-toggle') toggleDailyComposer();
-    if (action.dataset.action === 'daily-history-close') closeDailyHistory();
-    if (action.dataset.action === 'daily-history-prev') moveDailyHistoryMonth(-1);
-    if (action.dataset.action === 'daily-history-next') moveDailyHistoryMonth(1);
-    if (action.dataset.action === 'daily-history-today') {
-      dailyHistoryMonth = todayStr().slice(0, 7);
-      renderDailyHistory();
-    }
-    if (action.dataset.action === 'daily-detail-close') closeDailyDetail();
-    if (action.dataset.action === 'daily-detail-prev') moveDailyDetailMonth(-1);
-    if (action.dataset.action === 'daily-detail-next') moveDailyDetailMonth(1);
-    if (action.dataset.action === 'daily-detail-today') {
-      dailyDetailMonth = todayStr().slice(0, 7);
-      renderDailyDetailCalendar(0);
-    }
-    if (action.dataset.action === 'daily-detail-toggle' && dailyDetailTaskId) {
-      const task = dailyTasks.find((item) => item.id === dailyDetailTaskId);
-      if (task) toggleDailyTask(task.id);
-    }
-    if (action.dataset.action === 'daily-detail-bind' && dailyDetailTaskId) {
-      const task = dailyTasks.find((item) => item.id === dailyDetailTaskId);
-      if (task && bindTask(task.id, task.name || '', 'daily')) {
-        renderTaskOptions();
-        syncDisplay();
-        showTimerView({ persist: false, animate: false });
-      }
-    }
-    if (action.dataset.action === 'daily-detail-edit' && dailyDetailTaskId) {
-      const id = dailyDetailTaskId;
-      closeDailyDetail({ restore: false, instant: true });
-      openDailyEdit(id);
-    }
   });
 
   if (dailyListEl) {
@@ -4360,7 +4249,8 @@
       if (row) {
         const id = row.dataset.id;
         if (event.target.closest('[data-role="daily-check"]')) { toggleDailyTask(id); return; }
-        if (event.target.closest('[data-role="daily-history"]')) { openDailyHistory(id); return; }
+        const detailTrigger = event.target.closest('[data-action="daily-detail-open"]');
+        if (detailTrigger) { openDailyDetail(id, detailTrigger); return; }
         if (event.target.closest('[data-role="daily-edit-advanced"]')) {
           openDailyMilestoneDialog(id, event.target.closest('[data-role="daily-edit-advanced"]'));
           return;
@@ -4376,8 +4266,8 @@
           if (dailyEditId === id) closeDailyEdit(); else openDailyEdit(id);
           return;
         }
-        // 点名字 / 空白：不改任何状态，只给一点反馈（⋯ 轻跳，提示编辑入口在这）
-        openDailyDetail(id, row);
+        // 点名字或行内非控件区域统一进入详情；编辑、打卡和拖拽入口已在上方提前截断。
+        openDailyDetail(id, row.querySelector('[data-action="daily-detail-open"]'));
         return;
       }
       // 分组：只在点到「组头」或「组编辑器」时才处理，子项区域的空隙不误触折叠
@@ -4494,10 +4384,11 @@
       if (sessionEditor && !sessionEditor.hidden) { event.preventDefault(); closeSessionEditor(); return; }
       if (dailyDetailOpen) {
         event.preventDefault();
-        if (!dailyDetailShell || !dailyDetailShell.classList.contains('is-closing')) closeDailyDetail();
+        if (!dailyDetailShell || !dailyDetailShell.classList.contains('is-closing')) {
+          closeDailyDetail({ restore: false });
+        }
         return;
       }
-      if (dailyHistoryTaskId) { event.preventDefault(); closeDailyHistory(); return; }
       if (dailyGroupConfirmDeleteId) { event.preventDefault(); cancelDeleteDailyGroup(); return; }
       if (dailyGroupEditId) { event.preventDefault(); closeDailyGroupEdit(); return; }
       if (dailyConfirmDeleteId) { event.preventDefault(); cancelDeleteDaily(); return; }
@@ -4586,7 +4477,6 @@
     }
     cancelDailyRead();
     endDailyPointerDrag(null, false);
-    closeDailyHistory();
     closeDailyDetail({ restore: false, instant: true });
   }
 
