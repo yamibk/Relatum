@@ -30032,14 +30032,6 @@ html.dark-semantic-ui {
   background: #93443e;
 }
 
-.trash-empty-warning {
-  font-family: var(--font-ui);
-  line-height: 1.65;
-  color: #873f38;
-  border-color: #f0d2cf;
-  background: #fcf3f2;
-}
-
 /* ── AI 助手 V2：聊天 + 受控画布计划 ───────────────────────────── */
 .editor-ai-btn {
   display: inline-flex;
