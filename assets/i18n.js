@@ -441,7 +441,7 @@
     '已统一同级节点宽度': 'Node widths unified on this level',
     '已整理重叠节点': 'Overlapping nodes arranged', '当前没有重叠节点': 'No overlapping nodes',
     '画布名称没有改动': 'Canvas name unchanged', '知道了': 'Got it',
-    '这里将只清除任务记录，且不可恢复。关联画布已经单独进入 Relatum 回收站，不受影响。': 'This permanently clears task records only. Linked canvases already in Relatum Trash are not affected.',
+    '永久清空任务回收站': 'Permanently empty Task Trash',
     '当前显示器可用区域不足': 'Not enough usable space on this display',
     '调整窗口大小失败，请重试。': 'Could not resize the window. Please try again.',
     '配色': 'Color', '排版': 'Layout', '方向': 'Direction', '跟随分支': 'Follow branch',
