@@ -869,13 +869,14 @@ def main() -> int:
 
     def on_shown() -> None:
         _install_frameless(window)
+        # 安装无边框样式会重算非客户区。先在普通态重新落实保存的逻辑尺寸，
+        # 再按需最大化，确保稍后 SW_RESTORE 使用的是准确的 normal placement。
+        bridge.restored_width, bridge.restored_height = _fit_restored_window(
+            window, bridge.restored_width, bridge.restored_height,
+        )
         if start_maximized:
             _show_window(window, SW_MAXIMIZE)
             bridge.maximized = _is_maximized(window)
-        else:
-            bridge.restored_width, bridge.restored_height = _fit_restored_window(
-                window, bridge.restored_width, bridge.restored_height,
-            )
         _apply_corners(window, maximized=bridge.maximized)
 
     def on_loaded() -> None:
