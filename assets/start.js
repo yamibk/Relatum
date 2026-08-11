@@ -22,6 +22,7 @@
   let spineBreatheTimer = 0;
   const fileList = document.querySelector('[data-role="file-list"]');
   const panelTitle = document.querySelector('[data-role="panel-title"]');
+  const recentSyncButton = document.querySelector('[data-action="recent-sync"]');
   const ctxMenu = document.querySelector('[data-role="context-menu"]');
   const toastEl = document.querySelector('[data-role="toast"]');
   const startNotice = document.querySelector('[data-role="start-notice"]');
@@ -1735,7 +1736,8 @@
     buckets.forEach((files) => files.sort(byRank('groupRank')));
     inbox.sort(byRank('groupRank'));
     favorites.sort(byRank('favoriteRank'));
-    const recent = lastFiles.slice().filter((file) => file && file.path)
+    const recent = lastFiles.slice().filter((file) => file && file.path
+      && typeof file.lastOpenedAt === 'string' && file.lastOpenedAt.trim())
       .sort((a, b) => openedAtValue(b) - openedAtValue(a)
         || String(a.id || a.path).localeCompare(String(b.id || b.path)))
       .slice(0, recentLimit);
@@ -1900,6 +1902,7 @@
         && activeGroup !== FAVORITES_PAGE && activeGroup !== INBOX_PAGE);
       panelTitle.textContent = nameOf(activeGroup);
     }
+    if (recentSyncButton) recentSyncButton.hidden = activeGroup !== INBOX_PAGE;
     if (fileStatsObserver) fileStatsObserver.disconnect();
     fileList.innerHTML = '';
     panelFiles = filesOf(activeGroup);
@@ -2538,6 +2541,80 @@
       });
       await refresh();
     } catch (err) { console.warn('[画布] 移除失败', err); }
+  }
+
+  function recentSyncResultMessage(result) {
+    const added = Number(result && result.addedCount) || 0;
+    const removed = Number(result && result.removedCount) || 0;
+    const skipped = Number(result && result.skippedInvalidCount) || 0;
+    const remaining = Number(result && result.remainingMissingCount) || 0;
+    if (!added && !removed && !skipped && !remaining) {
+      return englishUI() ? 'Canvas library is already up to date' : '画布库已是最新';
+    }
+    const parts = englishUI()
+      ? [
+        added ? ('Added ' + added) : '',
+        removed ? ('removed ' + removed + ' missing') : '',
+        skipped ? ('skipped ' + skipped + ' invalid') : '',
+        remaining ? (remaining + ' newly missing left unchanged') : '',
+      ]
+      : [
+        added ? ('新增 ' + added + ' 张') : '',
+        removed ? ('移除 ' + removed + ' 个失效项') : '',
+        skipped ? ('跳过 ' + skipped + ' 个异常文件') : '',
+        remaining ? ('另有 ' + remaining + ' 个新失效项未清理') : '',
+      ];
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  async function requestRecentSync(confirmRemoveIds) {
+    const body = Array.isArray(confirmRemoveIds) ? { confirmRemoveIds } : {};
+    const response = await fetch('/api/recent-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    let json = {};
+    try { json = await response.json(); } catch (err) {}
+    if (!response.ok) throw new Error(json.error || (englishUI() ? 'Scan failed' : '扫描失败'));
+    return json;
+  }
+
+  if (recentSyncButton) {
+    recentSyncButton.addEventListener('click', async () => {
+      if (recentSyncButton.disabled) return;
+      recentSyncButton.disabled = true;
+      recentSyncButton.classList.add('is-refreshing');
+      recentSyncButton.setAttribute('aria-busy', 'true');
+      try {
+        let result = await requestRecentSync();
+        if (result.needsConfirmation) {
+          const added = Number(result.pendingAddedCount) || 0;
+          const removed = Number(result.pendingRemovedCount) || 0;
+          const skipped = Number(result.skippedInvalidCount) || 0;
+          const message = englishUI()
+            ? ('Found ' + added + ' new canvas(es) and ' + removed + ' missing list item(s).'
+              + (skipped ? (' ' + skipped + ' invalid file(s) will be skipped.') : '')
+              + '\n\nRemove the missing items from the list and continue? No canvas files will be deleted.')
+            : ('发现 ' + added + ' 张新画布和 ' + removed + ' 个失效登记。'
+              + (skipped ? ('另有 ' + skipped + ' 个异常文件会被跳过。') : '')
+              + '\n\n是否从列表移除失效登记并继续？不会删除任何画布文件。');
+          if (!window.confirm(message)) return;
+          result = await requestRecentSync(result.removeIds || []);
+        }
+        (result.addedPaths || []).forEach((path) => {
+          if (path) flashImportPaths.add(path);
+        });
+        await refresh();
+        showToast(recentSyncResultMessage(result));
+      } catch (err) {
+        showToast((englishUI() ? 'Scan failed: ' : '扫描失败：') + err.message);
+      } finally {
+        recentSyncButton.disabled = false;
+        recentSyncButton.classList.remove('is-refreshing');
+        recentSyncButton.removeAttribute('aria-busy');
+      }
+    });
   }
 
   async function trashCanvas(f, li, armNext) {
