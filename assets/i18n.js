@@ -27,6 +27,8 @@
     '打开文件': 'Open file', '打开已有文件': 'Open an existing file', '新建画布': 'New canvas',
     '导入画布': 'Import canvas', '导入已有画布': 'Import an existing canvas',
     '导入文件夹': 'Import folder', '导入画布文件夹': 'Import canvas folder',
+    '扫描画布文件夹': 'Scan canvas folder',
+    '扫描 canvases 文件夹，补充新画布并清理失效登记': 'Scan the canvases folder, add new canvases, and clean up missing entries',
     '导入 MD': 'Import MD', '导入 MD 文件夹': 'Import MD folder', '进入学习页': 'Go to Study',
     '右上角可以新建空白画布，也可以把外部': 'Use the upper-right actions to create a blank canvas or copy an external',
     '、整个画布文件夹或 Markdown 文件夹复制导入本项目。': ', a full canvas folder, or a Markdown folder into this project.',
