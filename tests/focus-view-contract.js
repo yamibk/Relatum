@@ -14,8 +14,8 @@ assert(html.includes('<link rel="preload" href="focus.js" as="script">')
   && html.includes('window.RelatumBoot.focus = {')
   && html.includes("daily: preloadJson('/api/daily')")
   && html.includes("sessions: preloadJson('/api/focus')")
-  && html.includes("study: preloadJson('/api/study')"),
-  'the start document must begin loading the Focus module and its small datasets during parsing');
+  && !html.includes("study: preloadJson('/api/study')"),
+  'the start document must preload Focus data without coupling it to Study');
 
 [
   'data-role="focus-timer-view"',
@@ -166,8 +166,8 @@ assert(pendingFocusFinish.indexOf('window.CanvasFocus.prepareActivate(pending.op
   'the delayed first flip must prepare hydrated DOM, then turn the page, then play one entrance');
 assert(start.includes('runWhenCanvasFocusReady((focus) => {')
   && start.includes('if (event.detail.day && focus.showDay)')
-  && start.includes('if (focus.prepareTask) focus.prepareTask'),
-  'calendar and study Focus intents must survive the same first-load readiness race');
+  && !start.includes('if (focus.prepareTask) focus.prepareTask'),
+  'calendar Focus intents must survive first-load readiness without a Study binding');
 assert(!focus.includes("event.key === 'Tab' && !event.ctrlKey"),
   'Tab must no longer toggle a daily sidebar');
 assert(!styles.includes('.focus-daily-handle'),

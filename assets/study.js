@@ -1,77 +1,187 @@
 (function () {
   'use strict';
 
-  const STATUS = ['todo', 'doing', 'done'];
-  const STATUS_LABEL = { todo: '待办', doing: '进行中', done: '已完成' };
+  const STATUS = ['active', 'done'];
+  const STATUS_LABEL = { active: '未完成', done: '已完成' };
   const state = {
-    tasks: [], trash: [], canvases: [], focusByTask: {}, focusSessions: [],
-    dialogTaskId: '', selectedId: '',
+    tasks: [], trash: [],
+    selectedId: '',
   };
   let studyRefreshSeq = 0;
   let studyLoaded = false;
+  let studyRevealTimer = 0;
+  let studyRevealKey = '';
+  let studyGoalBreathTimer = 0;
+  let studyGoalCheckFlowTimer = 0;
+  let studyPageActive = false;
   let studyInitialLoad = null;
   let studyLatestRefresh = null;
-  const COLUMN_ORDER = ['todo', 'doing', 'done'];
-  const dialog = document.querySelector('[data-role="task-dialog"]');
-  const form = document.querySelector('[data-role="task-form"]');
+  let progressSettingsId = '';       // 当前浮动设置卡对应的任务 id
+  let progressSettingsMilestones = null; // 浮动设置卡中的任务点草稿
+  let progressSettingsPopover = null;
+  let progressSettingsTrigger = null;
+  let progressSettingsPositionFrame = 0;
   const trashPanel = document.querySelector('[data-role="trash-panel"]');
   const trashConfirm = document.querySelector('[data-role="study-trash-confirm"]');
   const toast = document.querySelector('[data-role="study-toast"]');
-  const canvasSelect = document.querySelector('[data-role="canvas-select"]');
-  const canvasPanel = document.querySelector('[data-role="canvas-panel"]');
-  const canvasFrame = document.querySelector('[data-role="canvas-frame"]');
-  const canvasLoading = document.querySelector('[data-role="canvas-loading"]');
-  const canvasPanelTitle = document.querySelector('[data-role="canvas-panel-title"]');
-  const taskSaveButton = document.querySelector('[data-role="task-save"]');
+  const progressListEl = document.querySelector('[data-role="study-progress-list"]');
+  const completedListEl = document.querySelector('[data-role="study-completed-list"]');
+  const completedSectionEl = document.querySelector('[data-role="study-progress-completed-column"]');
   let toastTimer = null;
-  let drag = null;            // 指针拖拽状态
-  let suppressRenameClickId = ''; // 从标题拖动任务后，吞掉随后的 click，避免误进改名
-  let selectionFollowUntil = 0; // 选中环短时逐帧贴住动画中的卡片
-  let selectionFollowRaf = 0;
-  let selectionRingFlight = null;
-  let landingFlightId = '';    // 松手后幽灵卡仍在飞行：真实卡继续隐藏，直到单层动画抵达
   let optimisticTaskSeq = 0;
   let reorderTimer = null;
   let reorderChain = Promise.resolve();
+  let progressDrag = null;            // 进度面板拖拽排序状态
+  let progressFlipAnims = new Map();  // 拖拽让位 FLIP 动画
+  let progressDragClickGuard = '';    // 拖拽松手后吞掉紧随的 click
   let trashChain = Promise.resolve(); // 快速连删时后台按点击顺序落盘，界面无需等待网络
   let isEmptyingTrash = false;
-  let deleteFlushTimer = null;        // 连续删除时把多次列表重建合并成最后一次（防残影/卡顿）
+  const STUDY_TRASH_LIMIT = 30;
   const taskCreatePromises = new WeakMap(); // 临时任务先动起来，后端随后认领真实 id
-  const taskUpdateChains = new WeakMap();   // 同一任务的连续修改按顺序落盘
+  const taskMutationChains = new WeakMap(); // 同一任务的新建后修改、进度与状态统一按顺序落盘
   const taskUpdateSeq = new WeakMap();
-  let panelOpen = false;      // 迷你画布浮窗是否打开
-  let panelPath = '';         // 浮窗 iframe 当前加载的画布路径
-  let panelHideTimer = null;
-  let suppressFlip = false;   // 拖拽落入用幽灵卡+回弹，跳过 FLIP，避免双重动画
-  const liveFlipAnims = new Map(); // 实时让位中「正在飞」的卡→动画，供下次让位中断复用（防瞬移）
-  let focusOpen = false;      // 今日专注沉浸页是否打开
-  let focusCelebrationRaf = 0;
-  let celebrated = false;     // 沉浸页本次全完成是否已放过庆祝（防重复触发）
-  let focusStatusPopId = '';  // 沉浸页完成/取消完成后，新卡短促回弹
+  const taskProgressSeq = new WeakMap();
   let trashEnterId = '';      // 回收站新增条目轻轻落入
-  const carryoverHideTimers = new WeakMap();
-  const numberPopTimers = new WeakMap();
-  const selectionRing = document.querySelector('[data-role="selection-ring"]');
-  const todayZone = document.querySelector('.study-today');
+  // 里程碑弹窗
+  let studyMilestoneDialog = null;
+  let studyMilestoneDialogDraft = [];
+  let studyMilestoneDialogTarget = 0;
+  let studyMilestoneReturnEl = null;
+  let studyMilestoneTipSeq = 0;
   const prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
   })();
 
-  // —— 视图模式：list(极简清单，默认) / board(看板)；在学习页再点一次「学」书脊切换、localStorage 记忆 ——
-  const VIEW_MODE_KEY = 'study:viewMode';
+  // —— 动画工具：复刻专注页的 replayClass，让同一个 CSS 动画类可以反复触发 ——
+  const STUDY_MILESTONE_REACHED_CLEANUP_MS = 990;
+  const replayCleanupTimers = new WeakMap();
+  function replayClass(element, className, cleanupMs) {
+    if (!element || prefersReduced) return;
+    const cleanupByClass = replayCleanupTimers.get(element) || new Map();
+    window.clearTimeout(cleanupByClass.get(className));
+    cleanupByClass.delete(className);
+    replayCleanupTimers.set(element, cleanupByClass);
+    element.classList.remove(className);
+    void element.offsetWidth;
+    element.classList.add(className);
+    if (Number(cleanupMs) > 0) {
+      cleanupByClass.set(className, window.setTimeout(function () {
+        element.classList.remove(className);
+        cleanupByClass.delete(className);
+      }, Number(cleanupMs)));
+    }
+  }
+  function cancelReplayClass(element, className) {
+    if (!element) return;
+    const cleanupByClass = replayCleanupTimers.get(element);
+    if (cleanupByClass) {
+      window.clearTimeout(cleanupByClass.get(className));
+      cleanupByClass.delete(className);
+    }
+    element.classList.remove(className);
+  }
+
+  // —— 错峰入场：复刻专注页每日视图的三层 spring stagger（头 → 列标题 → 逐行卡片）——
+  function armStudyEntranceCleanup() {
+    window.clearTimeout(studyRevealTimer);
+    studyRevealTimer = window.setTimeout(function () {
+      var view = document.querySelector('[data-role="study-progress-view"]');
+      if (view) view.classList.remove('is-revealing');
+      studyRevealTimer = 0;
+    }, 1450);
+  }
+  function replayStudyEntrance(key) {
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    if (!view || prefersReduced || viewMode !== 'progress') return;
+    var revealKey = String(key || 'manual');
+    if (studyRevealKey === revealKey) return;
+    studyRevealKey = revealKey;
+    window.clearTimeout(studyRevealTimer);
+    view.classList.remove('is-revealing');
+    void view.offsetWidth;
+    view.classList.add('is-revealing');
+    armStudyEntranceCleanup();
+  }
+
+  // —— 视图模式：list(极简清单，默认) / progress(单位进度面板) ——
+  const VIEW_MODE_KEY = 'study:viewMode:v2';
   const studyViewEl = document.querySelector('[data-role="study-view"]');
   function readViewMode() {
-    try { return localStorage.getItem(VIEW_MODE_KEY) === 'board' ? 'board' : 'list'; }
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'progress' ? 'progress' : 'list'; }
     catch (e) { return 'list'; }
   }
   let viewMode = readViewMode();
+  function stopStudyGoalBreath() {
+    window.clearTimeout(studyGoalBreathTimer);
+    studyGoalBreathTimer = 0;
+    document.querySelectorAll('.study-progress-card.is-goal-breathing').forEach(function (card) {
+      cancelReplayClass(card, 'is-goal-breathing');
+    });
+  }
+  function visibleStudyGoalCards() {
+    return Array.from(document.querySelectorAll('.study-progress-card.is-goal-ready:not(.is-goal-pending):not(.is-goal-celebrating)'))
+      .filter(function (card) {
+        var rect = card.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
+      });
+  }
+  function stopStudyGoalCheckFlow() {
+    window.clearTimeout(studyGoalCheckFlowTimer);
+    studyGoalCheckFlowTimer = 0;
+  }
+  function nudgeStudyGoalChecks() {
+    visibleStudyGoalCards().forEach(function (card) {
+      var check = card.querySelector('.study-progress-check');
+      if (!check) return;
+      var names = ['a', 'b', 'c', 'd'];
+      var first = Math.floor(Math.random() * names.length);
+      var second = (first + 1 + Math.floor(Math.random() * (names.length - 1))) % names.length;
+      [names[first], names[second]].forEach(function (name) {
+        var x = 14 + Math.random() * 72;
+        var y = 16 + Math.random() * 68;
+        check.style.setProperty('--study-check-speck-' + name + '-x', x.toFixed(1) + '%');
+        check.style.setProperty('--study-check-speck-' + name + '-y', y.toFixed(1) + '%');
+      });
+    });
+  }
+  function scheduleStudyGoalCheckFlow(delay) {
+    stopStudyGoalCheckFlow();
+    if (prefersReduced || !studyPageActive || viewMode !== 'progress' || document.hidden) return;
+    studyGoalCheckFlowTimer = window.setTimeout(function () {
+      studyGoalCheckFlowTimer = 0;
+      if (prefersReduced || !studyPageActive || viewMode !== 'progress' || document.hidden) return;
+      nudgeStudyGoalChecks();
+      scheduleStudyGoalCheckFlow(3400);
+    }, Math.max(0, Number(delay) || 500));
+  }
+  function scheduleStudyGoalBreath(delay) {
+    window.clearTimeout(studyGoalBreathTimer);
+    studyGoalBreathTimer = 0;
+    if (prefersReduced || !studyPageActive || viewMode !== 'progress' || document.hidden) return;
+    studyGoalBreathTimer = window.setTimeout(function () {
+      studyGoalBreathTimer = 0;
+      if (prefersReduced || !studyPageActive || viewMode !== 'progress' || document.hidden) return;
+      visibleStudyGoalCards().forEach(function (card) {
+        replayClass(card, 'is-goal-breathing', 2540);
+      });
+      scheduleStudyGoalBreath(2800);
+    }, Math.max(0, Number(delay) || 1400));
+  }
   function applyViewMode() {
     if (studyViewEl) studyViewEl.classList.toggle('study-mode-list', viewMode === 'list');
   }
   function setViewMode(mode, animate) {
-    const next = mode === 'list' ? 'list' : 'board';
+    const next = mode === 'list' ? 'list' : 'progress';
     if (next === viewMode) return;
+    closeProgressSettings(false, true);
     viewMode = next;
+    if (next === 'progress') {
+      scheduleStudyGoalBreath(1400);
+      scheduleStudyGoalCheckFlow(500);
+    } else {
+      stopStudyGoalBreath();
+      stopStudyGoalCheckFlow();
+    }
     try { localStorage.setItem(VIEW_MODE_KEY, next); } catch (e) {}
     if (animate && !prefersReduced && studyViewEl) {
       // study-mode-anim 全程在场（承载 transition），study-mode-switching 控制淡出
@@ -80,23 +190,58 @@
         render();                                               // 隐身时换内容
         requestAnimationFrame(() => requestAnimationFrame(() => {
           studyViewEl.classList.remove('study-mode-switching'); // 再淡入
+          if (next === 'progress') replayStudyEntrance('mode-switch');
           setTimeout(() => studyViewEl.classList.remove('study-mode-anim'), 240);
         }));
       }, 200);
     } else {
       render();
+      if (next === 'progress') replayStudyEntrance('mode-switch');
     }
   }
   function toggleViewMode() {
-    setViewMode(viewMode === 'list' ? 'board' : 'list', true);
+    setViewMode(viewMode === 'list' ? 'progress' : 'list', true);
   }
-  window.StudyView = { toggleMode: toggleViewMode };
+  function activateStudyView() {
+    studyPageActive = true;
+    scheduleStudyGoalBreath(1400);
+    scheduleStudyGoalCheckFlow(500);
+    if (studyLoaded) {
+      render();
+      replayStudyEntrance('activate');
+      return;
+    }
+    ensureStudyLoaded().then(function (loaded) {
+      if (loaded) { render(); replayStudyEntrance('activate'); }
+    });
+  }
+  window.StudyView = { toggleMode: toggleViewMode, activate: activateStudyView };
 
-  function studyVisible() {
-    const view = document.querySelector('[data-role="study-view"]');
-    const bookView = view && view.closest('.book-view');
-    return !!(bookView && bookView.classList.contains('study-active'));
-  }
+  // 离开学习页时重置错峰入场状态，确保再次进入时重播动画
+  document.addEventListener('start:viewchange', function (event) {
+    if (event.detail && event.detail.previous === 'study') {
+      studyPageActive = false;
+      stopStudyGoalBreath();
+      stopStudyGoalCheckFlow();
+      closeProgressSettings(false, true);
+      studyRevealKey = '';
+      window.clearTimeout(studyRevealTimer);
+      studyRevealTimer = 0;
+      var view = document.querySelector('[data-role="study-progress-view"]');
+      if (view) view.classList.remove('is-revealing');
+    }
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      stopStudyGoalBreath();
+      stopStudyGoalCheckFlow();
+    } else if (studyPageActive) {
+      scheduleStudyGoalBreath(1400);
+      scheduleStudyGoalCheckFlow(500);
+    }
+  });
+  window.addEventListener('pagehide', stopStudyGoalBreath);
+  window.addEventListener('pagehide', stopStudyGoalCheckFlow);
 
   function localDay(date) {
     const d = date || new Date();
@@ -120,15 +265,18 @@
     return hours + ' 小时' + (rest ? ' ' + rest + ' 分' : '');
   }
 
-  function prepareTaskFocus(task) {
-    if (!task) return;
-    document.dispatchEvent(new CustomEvent('focus:prepare', {
-      detail: { taskId: task.id, taskTitle: task.title || '未命名任务' },
-    }));
+  function T(message) {
+    return window.RelatumI18n ? window.RelatumI18n.t(String(message || '')) : String(message || '');
+  }
+
+  function setStudyAriaLabel(element, source) {
+    if (!element) return;
+    element.dataset.i18nSourceAriaLabel = String(source || '');
+    element.setAttribute('aria-label', T(source));
   }
 
   function showToast(message) {
-    toast.textContent = message;
+    toast.textContent = T(message);
     toast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
@@ -163,12 +311,8 @@
     return {
       id: 'tmp_' + Date.now().toString(36) + '_' + (++optimisticTaskSeq).toString(36),
       title: payload.title || '未命名任务',
-      status: STATUS.includes(payload.status) ? payload.status : 'todo',
-      due: payload.due || '',
-      focusDay: payload.focusDay || '',
-      tags: [],
-      memo: '',
-      linkedCanvas: '',
+      status: STATUS.includes(payload.status) ? payload.status : 'active',
+      progress: { current: 0, target: 0, milestones: [] },
       createdAt: now,
       updatedAt: now,
       completedAt: '',
@@ -178,9 +322,6 @@
   function remapTaskId(task, oldId, newId) {
     task.id = newId;
     if (state.selectedId === oldId) state.selectedId = newId;
-    if (state.dialogTaskId === oldId) state.dialogTaskId = newId;
-    if (drag && drag.id === oldId) drag.id = newId;
-    if (form && form.elements.id.value === oldId) form.elements.id.value = newId;
     document.querySelectorAll(taskSelector(oldId)).forEach((el) => { el.dataset.id = newId; });
   }
 
@@ -189,10 +330,7 @@
     state.tasks.push(task);
     const request = post('/api/study-task-create', payload).then((json) => {
       const oldId = task.id;
-      const live = {
-        title: task.title, status: task.status, due: task.due, focusDay: task.focusDay,
-        tags: task.tags, memo: task.memo, linkedCanvas: task.linkedCanvas,
-      };
+      const live = { title: task.title, status: task.status, progress: task.progress };
       Object.assign(task, json.task, live);
       remapTaskId(task, oldId, json.task.id);
       taskCreatePromises.delete(task);
@@ -227,14 +365,26 @@
     });
   }
 
+  function queueTaskMutation(task, operation) {
+    if (!task) return Promise.resolve(null);
+    const previous = taskMutationChains.get(task) || Promise.resolve();
+    const request = previous.catch(() => undefined).then(async () => {
+      await ensureTaskCreated(task);
+      return operation();
+    });
+    taskMutationChains.set(task, request);
+    request.finally(() => {
+      if (taskMutationChains.get(task) === request) taskMutationChains.delete(task);
+    }).catch(() => undefined);
+    return request;
+  }
+
   function queueTaskPatch(task, patch) {
     if (!task) return Promise.resolve(null);
     applyLocalTaskPatch(task, patch);
     const seq = (taskUpdateSeq.get(task) || 0) + 1;
     taskUpdateSeq.set(task, seq);
-    const previous = taskUpdateChains.get(task) || Promise.resolve();
-    const request = previous.catch(() => undefined).then(async () => {
-      await ensureTaskCreated(task);
+    const request = queueTaskMutation(task, async () => {
       const json = await post('/api/study-task-update', Object.assign({ id: task.id }, patch));
       if (taskUpdateSeq.get(task) === seq) Object.assign(task, json.task);
       else {
@@ -243,10 +393,6 @@
       }
       return task;
     });
-    taskUpdateChains.set(task, request);
-    request.finally(() => {
-      if (taskUpdateChains.get(task) === request) taskUpdateChains.delete(task);
-    }).catch(() => undefined);
     return request;
   }
 
@@ -268,81 +414,287 @@
     return state.tasks.find((task) => task.id === id);
   }
 
-  function canvasName(path) {
-    if (!path) return '';
-    const hit = state.canvases.find((canvas) => canvas.path === path);
-    if (hit) return hit.title;
-    return path.split(/[\\/]/).pop().replace(/\.canvas$/i, '');
+  // ── 拖拽排序：未完成列卡片左侧 2×3 点阵手柄，只在本容器（progressListEl）内排序 ──
+  function enableTaskReorder(card, task) {
+    if (task.status === 'done') return;   // 已完成列不需要手柄
+    const grip = document.createElement('span');
+    grip.className = 'study-progress-grip';
+    grip.setAttribute('aria-hidden', 'true');
+    grip.textContent = '⋮⋮';    // 两个竖省略号 = 2×3 点阵
+    grip.addEventListener('pointerdown', function (event) {
+      beginProgressDrag(event, card, task, grip);
+    });
+    card.insertBefore(grip, card.firstChild);
   }
 
-  function dueLabel(task) {
-    if (!task.due) return '';
-    if (task.due === today) return '今天';
-    if (task.due < today && task.status !== 'done') return '已逾期';
-    return task.due;
+  function progressListRows() {
+    if (!progressListEl) return [];
+    return Array.from(progressListEl.querySelectorAll('.study-progress-card[data-id]'));
   }
 
-  function taskCard(task, compact) {
-    const card = document.createElement('div');
-    card.className = 'study-task-card' + (compact ? ' compact' : '');
-    card.setAttribute('role', 'button');
-    card.tabIndex = 0;
-    card.dataset.id = task.id;
-    const tags = (task.tags || []).slice(0, 3)
-      .map((tag) => '<span class="study-chip">#' + escapeHtml(tag) + '</span>').join('');
-    const due = dueLabel(task);
-    const canvas = task.linkedCanvas
-      ? '<span class="study-chip study-chip-canvas">画布 · ' + escapeHtml(canvasName(task.linkedCanvas)) + '</span>'
-      : '';
-    card.innerHTML = [
-      '<strong class="study-task-title">' + escapeHtml(task.title) + '</strong>',
-      '<div class="study-task-meta">',
-      due ? '<span class="study-chip' + (due === '已逾期' ? ' overdue' : '') + '">' + escapeHtml(due) + '</span>' : '',
-      canvas, tags,
-      '</div>',
-    ].join('');
+  function beginProgressDrag(event, card, task, grip) {
+    if (event.button !== 0) return;
+    if (progressListRows().length < 2) return;
+    if (progressDrag) return;
+    if (card.classList.contains('is-editing') || card.classList.contains('renaming')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var rect = card.getBoundingClientRect();
+    progressDrag = {
+      taskId: task.id,
+      card: card,
+      grip: grip,
+      pointerId: event.pointerId,
+      active: false,
+      ghost: null,
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      originalOrder: progressListRows().map(function (row) { return row.dataset.id; }),
+    };
+    window.addEventListener('pointermove', onProgressDragPointerMove, { passive: false });
+    window.addEventListener('pointerup', onProgressDragPointerUp);
+    window.addEventListener('pointercancel', onProgressDragPointerCancel);
+  }
 
-    const titleEl = card.querySelector('.study-task-title');
-    // 单击标题 → 就地改名（不冒泡到卡片，避免打开详情弹窗）
-    titleEl.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (suppressRenameClickId === task.id) {
-        suppressRenameClickId = '';
-        return;
+  function onProgressDragPointerMove(event) {
+    if (!progressDrag || event.pointerId !== progressDrag.pointerId) return;
+    var dx = event.clientX - progressDrag.startX;
+    var dy = event.clientY - progressDrag.startY;
+    if (!progressDrag.active) {
+      if (Math.hypot(dx, dy) < 6) return;
+      activateProgressDrag();
+    }
+    event.preventDefault();
+    positionProgressGhost(event.clientX, event.clientY);
+    liveReorderProgressCard(event.clientY);
+  }
+
+  function activateProgressDrag() {
+    var drag = progressDrag;
+    if (!drag || drag.active) return;
+    try { drag.grip.setPointerCapture(drag.pointerId); } catch (error) {}
+    var ghost = drag.card.cloneNode(true);
+    var cardStyle = window.getComputedStyle(drag.card);
+    ghost.classList.add('study-progress-ghost');
+    ghost.classList.remove('drag-source', 'is-entering', 'is-leaving', 'is-editing',
+      'renaming', 'is-completing', 'is-reopening', 'is-completed', 'is-goal-pending', 'is-goal-celebrating');
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.tabIndex = -1;
+    ghost.style.width = drag.width + 'px';
+    ghost.style.height = drag.height + 'px';
+    ghost.style.background = cardStyle.backgroundColor;
+    ghost.style.borderColor = cardStyle.borderColor;
+    ghost.style.borderRadius = cardStyle.borderRadius;
+    ghost.style.gridTemplateColumns = '20px 30px minmax(0, 1fr) auto 48px';
+    ghost.style.transition = 'none';
+    ghost.style.animation = 'none';
+    drag.ghost = ghost;
+    positionProgressGhost(drag.startX, drag.startY);
+    document.body.appendChild(ghost);
+    drag.active = true;
+    drag.card.classList.add('drag-source');
+    document.body.classList.add('study-progress-dragging');
+    var selection = window.getSelection();
+    if (selection) selection.removeAllRanges();
+  }
+
+  function positionProgressGhost(x, y) {
+    var drag = progressDrag;
+    if (!drag || !drag.ghost) return;
+    var left = x - drag.offsetX;
+    var top = y - drag.offsetY;
+    drag.ghost.style.transform = 'translate3d(' + left + 'px,' + top + 'px,0) scale(1.028)';
+    drag.ghost.dataset.dragLeft = String(left);
+    drag.ghost.dataset.dragTop = String(top);
+  }
+
+  function progressInsertPoint(clientY) {
+    if (!progressDrag) return null;
+    var rows = progressListRows().filter(function (row) { return row !== progressDrag.card; });
+    var beforeNode = null;
+    for (var i = 0; i < rows.length; i++) {
+      var rect = rows[i].getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) {
+        beforeNode = rows[i];
+        break;
       }
-      beginRename(card, task, titleEl);
-    });
-
-    // 右上角 × 快速删除：pointerdown 阻断冒泡，避免触发卡片拖拽/选中
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'study-task-del';
-    delBtn.title = '删除任务';
-    delBtn.setAttribute('aria-label', '删除任务');
-    delBtn.textContent = '×';
-    delBtn.addEventListener('pointerdown', (event) => { event.stopPropagation(); });
-    delBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      trashTaskById(task.id, card);
-    });
-    card.appendChild(delBtn);
-
-    // 今日卡(compact)与看板卡走同一套交互：单击=选中(onCardPointerUp)、双击=详情、标题单击=改名。
-    // 拖拽只在卡片自己的容器内排序（看板列内 / 今日栏内），不跨列、不跨今日栏。
-    card.addEventListener('pointerdown', (event) => onCardPointerDown(event, card, task));
-    card.addEventListener('dblclick', (event) => {
-      if (card.classList.contains('renaming')) return;
-      if (event.target.closest('.study-task-title')) return;
-      openDialog(task.id);
-    });
-    return card;
+    }
+    return beforeNode;
   }
 
-  // —— 就地改名 ——
+  function stopProgressFlipAnimations() {
+    progressFlipAnims.forEach(function (animation) { animation.cancel(); });
+    progressFlipAnims.clear();
+  }
+
+  function flipProgressCards(mutate) {
+    if (prefersReduced) { mutate(); return; }
+    var rows = progressListRows();
+    var before = new Map();
+    rows.forEach(function (row) { before.set(row, row.getBoundingClientRect()); });
+    mutate();
+    rows.forEach(function (row) {
+      var animation = progressFlipAnims.get(row);
+      if (animation) animation.cancel();
+    });
+    rows.forEach(function (row) {
+      if (progressDrag && row === progressDrag.card) return;
+      var oldRect = before.get(row);
+      if (!oldRect) return;
+      var newRect = row.getBoundingClientRect();
+      var dx = oldRect.left - newRect.left;
+      var dy = oldRect.top - newRect.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      var distance = Math.hypot(dx, dy);
+      var animation = row.animate([
+        { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
+        { transform: 'translate3d(0,0,0)' },
+      ], {
+        duration: Math.max(170, Math.min(280, 160 + distance * 0.28)),
+        easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)',
+      });
+      progressFlipAnims.set(row, animation);
+      animation.finished.catch(function () { return undefined; }).then(function () {
+        if (progressFlipAnims.get(row) === animation) progressFlipAnims.delete(row);
+      });
+    });
+  }
+
+  function liveReorderProgressCard(clientY) {
+    if (!progressDrag) return;
+    var beforeNode = progressInsertPoint(clientY);
+    if (progressDrag.card.nextElementSibling === beforeNode) return;
+    flipProgressCards(function () {
+      progressListEl.insertBefore(progressDrag.card, beforeNode);
+    });
+  }
+
+  function onProgressDragPointerUp(event) {
+    if (!progressDrag || event.pointerId !== progressDrag.pointerId) return;
+    if (progressDrag.active) {
+      positionProgressGhost(event.clientX, event.clientY);
+      liveReorderProgressCard(event.clientY);
+    }
+    finishProgressDrag();
+  }
+
+  function onProgressDragPointerCancel(event) {
+    if (!progressDrag || event.pointerId !== progressDrag.pointerId) return;
+    finishProgressDrag({ cancel: true });
+  }
+
+  function finishProgressDrag(options) {
+    options = options || {};
+    var drag = progressDrag;
+    if (!drag) return false;
+    progressDrag = null;
+    window.removeEventListener('pointermove', onProgressDragPointerMove);
+    window.removeEventListener('pointerup', onProgressDragPointerUp);
+    window.removeEventListener('pointercancel', onProgressDragPointerCancel);
+    document.body.classList.remove('study-progress-dragging');
+
+    if (!drag.active) return false;
+    progressDragClickGuard = drag.taskId;
+    setTimeout(function () {
+      if (progressDragClickGuard === drag.taskId) progressDragClickGuard = '';
+    }, 0);
+
+    if (options.cancel) {
+      if (prefersReduced) {
+        stopProgressFlipAnimations();
+        restoreNoteOrderDirect();
+      } else {
+        flipProgressCards(function () { restoreNoteOrderDirect(); });
+      }
+      function restoreNoteOrderDirect() {
+        drag.originalOrder.forEach(function (id) {
+          var row = progressListEl.querySelector('.study-progress-card[data-id="' + id + '"]');
+          if (row) progressListEl.appendChild(row);
+        });
+      }
+    }
+
+    var domOrder = progressListRows().map(function (row) { return row.dataset.id; });
+    var changed = !options.cancel
+      && domOrder.some(function (id, index) { return id !== drag.originalOrder[index]; });
+    if (changed) {
+      var activeIds = {};
+      domOrder.forEach(function (id) { activeIds[id] = true; });
+      var ordered = domOrder.map(function (id) { return findTask(id); }).filter(Boolean);
+      var gi = 0;
+      state.tasks = state.tasks.map(function (t) {
+        return activeIds[t.id] ? ordered[gi++] : t;
+      });
+      scheduleStudyReorder();
+    }
+
+    var landingCard = progressListEl.querySelector(
+      '.study-progress-card[data-id="' + drag.taskId + '"]');
+    if (landingCard) landingCard.classList.add('drag-source');
+    if (options.immediate || prefersReduced) {
+      if (drag.ghost) drag.ghost.remove();
+      revealLandingCard(landingCard);
+    } else {
+      flyGhostToCard(drag.ghost, landingCard, function () {
+        revealLandingCard(landingCard);
+      });
+    }
+
+    stopProgressFlipAnimations();
+    return true;
+  }
+
+  function revealLandingCard(card) {
+    if (!card) return;
+    card.classList.remove('drag-source');
+    card.classList.remove('drag-handoff');
+    card.style.removeProperty('background-color');
+    card.style.removeProperty('border-color');
+  }
+
+  function flyGhostToCard(ghost, row, done) {
+    if (!ghost || !row || prefersReduced) {
+      if (ghost) ghost.remove();
+      if (done) done();
+      return;
+    }
+    var target = row.getBoundingClientRect();
+    var ghostRect = ghost.getBoundingClientRect();
+    var fromLeft = Number(ghost.dataset.dragLeft);
+    var fromTop = Number(ghost.dataset.dragTop);
+    var startLeft = Number.isFinite(fromLeft) ? fromLeft : ghostRect.left;
+    var startTop = Number.isFinite(fromTop) ? fromTop : ghostRect.top;
+    var distance = Math.hypot(target.left - startLeft, target.top - startTop);
+    var duration = distance < 8
+      ? 130
+      : Math.max(300, Math.min(470, 270 + distance * 0.18));
+    var animation = ghost.animate([
+      {
+        transform: 'translate3d(' + startLeft + 'px,' + startTop + 'px,0) scale(1.028)',
+        opacity: 1,
+      },
+      {
+        transform: 'translate3d(' + target.left + 'px,' + target.top + 'px,0) scale(1)',
+        opacity: 1,
+      },
+    ], {
+      duration: duration,
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      fill: 'forwards',
+    });
+    animation.finished.catch(function () { return undefined; }).then(function () {
+      ghost.remove();
+      if (done) done();
+    });
+  }
+
   function beginRename(card, task, titleEl) {
     if (card.classList.contains('renaming')) return;
     state.selectedId = task.id;
-    applySelected();
     card.classList.add('renaming');
     const original = task.title;
     let done = false;
@@ -383,432 +735,152 @@
     titleEl.addEventListener('blur', onBlur);
   }
 
-  // —— 今日集合：只看手动「今日专注」标记，与截止日完全解耦；标记戳当天日期、隔天自动失效 ——
-  function isToday(task) {
-    return task.focusDay === today;
-  }
-  function todayTasks() {            // 含已完成（沉浸页进度/庆祝要用）
-    return state.tasks.filter(isToday);
-  }
-  function todayActive() {          // 不含已完成（看板小卡列表用）
-    return state.tasks.filter((task) => isToday(task) && task.status !== 'done');
-  }
-
-  function renderStats() {
-    const todays = todayActive();
-    setAnimatedNumber(document.querySelector('[data-role="stat-today"]'), todays.length);
-    setAnimatedNumber(document.querySelector('[data-role="stat-doing"]'),
-      state.tasks.filter((task) => task.status === 'doing').length);
-    setAnimatedNumber(document.querySelector('[data-role="stat-done"]'),
-      state.tasks.filter((task) => task.status === 'done').length);
-    setAnimatedNumber(document.querySelector('[data-role="trash-count"]'), state.trash.length);
-  }
-
-  function setAnimatedNumber(el, value) {
-    if (!el) return;
-    const next = String(value);
-    if (el.textContent === next) return;
-    el.textContent = next;
-    if (prefersReduced) return;
-    el.classList.remove('number-pop');
-    void el.offsetWidth;
-    el.classList.add('number-pop');
-    const previous = numberPopTimers.get(el);
-    if (previous) clearTimeout(previous);
-    numberPopTimers.set(el, setTimeout(() => {
-      el.classList.remove('number-pop');
-      numberPopTimers.delete(el);
-    }, 280));
-  }
-
-  function renderToday() {
-    const list = document.querySelector('[data-role="today-list"]');
-    const tasks = todayActive();
-    list.innerHTML = '';
-    document.querySelector('[data-role="today-label"]').textContent = tasks.length
-      ? tasks.length + ' 件今天专注'
-      : '选中任务按 G 加入，或按 F 进入今日专注';
-    if (!tasks.length) {
-      list.innerHTML = '<div class="study-empty soft-enter">无</div>';
-      return;
-    }
-    tasks.forEach((task) => {
-      const card = taskCard(task, true);
-      if (task.id === landingFlightId) card.classList.add('drag-source');
-      list.appendChild(card);
-    });
-  }
-
-  // —— 跨日顺延提醒（C 方案）：之前标记过专注、还没做完的，温柔提醒带到今天 ——
-  // 候选 = focusDay 是过去某天 且 未完成（隔天它已自动回到原列）。「不用了」用 localStorage 打盹当天。
-  function carryoverCandidates() {
-    return state.tasks.filter((t) => t.focusDay && t.focusDay < today && t.status !== 'done');
-  }
-  function carryoverDismissed() {
-    try { return localStorage.getItem('canvas:carryoverDismissed') === today; } catch (e) { return false; }
-  }
-  function renderCarryover() {
-    const n = carryoverCandidates().length;
-    const show = n > 0 && !carryoverDismissed();
-    document.querySelectorAll('[data-role="carryover"]').forEach((el) => {
-      if (show) {
-        const timer = carryoverHideTimers.get(el);
-        if (timer) clearTimeout(timer);
-        carryoverHideTimers.delete(el);
-        el.hidden = false;
-        el.classList.remove('leaving');
-        const txt = el.querySelector('[data-role="carryover-text"]');
-        if (txt) txt.textContent = '之前还有 ' + n + ' 件专注没做完，接着做吗？';
-      } else if (!el.hidden && !el.classList.contains('leaving')) {
-        if (prefersReduced) {
-          el.hidden = true;
-        } else {
-          el.classList.add('leaving');
-          carryoverHideTimers.set(el, setTimeout(() => {
-            el.hidden = true;
-            el.classList.remove('leaving');
-            carryoverHideTimers.delete(el);
-          }, 220));
-        }
-      }
-    });
-  }
-  function carryoverPull() {
-    const cands = carryoverCandidates();
-    if (!cands.length) return;
-    cands.forEach((t) => { t.focusDay = today; });   // 滚到今天，重新进今日区
-    render();
-    Promise.all(cands.map((t) => queueTaskPatch(t, { focusDay: today })))
-      .catch((err) => { showToast(err.message); refresh(); });
-  }
-  function carryoverDismiss() {
-    try { localStorage.setItem('canvas:carryoverDismissed', today); } catch (e) {}   // 打盹今天，明天若还没做完再提
-    renderCarryover();
-  }
-
-  // —— 学习页卡片 FLIP（借鉴《学习工作台》animateTaskMoves）——
-  // 重渲染前记下每张卡旧位置，渲染后让它从旧位置「滑回」新位置：
-  // ←/→ 搬列、G 键往返今日区、删除补位、快捷新建挤位，都自然滑动而不是「消失-渐显」。
-  function captureCardRects() {
-    const rects = new Map();
-    document.querySelectorAll('.study-lane-list .study-task-card, .study-today-list .study-task-card').forEach((card) => {
-      rects.set(card.dataset.id, card.getBoundingClientRect());
-    });
-    return rects;
-  }
-
-  function animateCardMoves(prevRects) {
-    if (prefersReduced || !prevRects) return;
-    let longest = 0;
-    document.querySelectorAll('.study-lane-list .study-task-card, .study-today-list .study-task-card').forEach((card) => {
-      const prev = prevRects.get(card.dataset.id);
-      if (!prev) return;
-      const now = card.getBoundingClientRect();
-      const dx = prev.left - now.left;
-      const dy = prev.top - now.top;
-      const sx = prev.width / now.width;
-      const sy = prev.height / now.height;
-      const resized = Math.abs(sx - 1) > 0.012 || Math.abs(sy - 1) > 0.012;
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && !resized) return;
-      const distance = Math.hypot(dx, dy);
-      const duration = Math.max(260, Math.min(540, 250 + distance * 0.34));
-      longest = Math.max(longest, duration);
-      const lift = Math.min(12, Math.max(5, Math.abs(dx) * 0.018));   // 跨列时轻轻抬一下
-      card.animate([
-        { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0) scale(' + sx + ',' + sy + ')', transformOrigin: 'top left', offset: 0 },
-        { transform: 'translate3d(' + (dx * 0.16) + 'px,' + (dy * 0.34 - lift) + 'px,0) scale(1.012)', transformOrigin: 'top left', offset: 0.68 },
-        { transform: 'translate3d(0,0,0) scale(1)', transformOrigin: 'top left', offset: 1 },
-      ], { duration, easing: 'cubic-bezier(0.18, 0.9, 0.24, 1)' });
-    });
-    if (longest) followSelectionRing(longest + 80);
-  }
-
-  // —— 删除离场：新增落入动画的反向版。真实卡立即离开布局，临时视觉卡独立淡出。 ——
-  // 临时卡挂到 body，不会被连续删除时的列表重建掐断，也不会留下参与布局的残影。
-  function animateCardRemoval(card) {
-    const list = card.parentElement;
-    if (!list || prefersReduced) { card.remove(); return; }
-    // 余下卡记住当前视觉位置；真实卡马上移除，让列表立即补位。
-    const siblings = Array.from(list.querySelectorAll('.study-task-card'))
-      .filter((c) => c !== card);
-    const before = new Map();
-    siblings.forEach((c) => before.set(c, c.getBoundingClientRect()));
-    const rect = card.getBoundingClientRect();
-    const ghost = card.cloneNode(true);
-    ghost.classList.remove('is-selected', 'quick-enter', 'renaming');
-    ghost.classList.add('study-task-exit-ghost');
-    ghost.style.left = rect.left + 'px';
-    ghost.style.top = rect.top + 'px';
-    ghost.style.width = rect.width + 'px';
-    ghost.style.height = rect.height + 'px';
-    document.body.appendChild(ghost);
-    card.remove();
-
-    // 连删时后一次从余下卡当前视觉位置继续接管，不发生瞬移。
-    siblings.forEach((c) => { const p = liveFlipAnims.get(c); if (p) p.cancel(); });
-    siblings.forEach((c) => {
-      const b = before.get(c);
-      if (!b) return;
-      const now = c.getBoundingClientRect();
-      const dx = b.left - now.left;
-      const dy = b.top - now.top;
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      const distance = Math.hypot(dx, dy);
-      const duration = Math.max(200, Math.min(380, 190 + distance * 0.32));
-      const anim = c.animate([
-        { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
-        { transform: 'translate3d(0,0,0)' },
-      ], { duration, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
-      liveFlipAnims.set(c, anim);
-      anim.finished.catch(() => undefined).then(() => {
-        if (liveFlipAnims.get(c) === anim) liveFlipAnims.delete(c);
-      });
-    });
-
-    // 与 studyQuickEnter 反向呼应：轻轻向上收起，临时卡播完立即销毁。
-    ghost.animate([
-      { opacity: 1, transform: 'translateY(0) scale(1)' },
-      { opacity: 0, transform: 'translateY(-9px) scale(0.97)' },
-    ], { duration: 230, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }).finished
-      .catch(() => undefined).then(() => ghost.remove());
-  }
-
-  // 看板三列计数即时刷新（删除后不整列重建，单独同步徽标数字）
-  function refreshLaneCounts() {
-    STATUS.forEach((status) => {
-      const el = document.querySelector('[data-role="count-' + status + '"]');
-      if (!el) return;
-      const n = state.tasks.filter((task) =>
-        task.status === status && (status === 'done' || !isToday(task))).length;
-      setAnimatedNumber(el, n);
-    });
-  }
-
-  // —— 共享滑动选中环：不再给每张卡硬描边，而是一个浮层环滑到选中卡上（跨列也滑）——
-  function updateSelectionRing() {
-    const ring = selectionRing;
-    if (!ring) return;
-    // 拖拽中 / 落定飞行中：选中框一律隐藏，等卡片完全落地后由 revealLandingCard 在最终位淡入，
-    // 避免选中框跟着幽灵卡飞、与还没落地的卡片错位。
-    if ((drag && drag.active) || landingFlightId) { ring.classList.remove('show'); return; }
-    if (selectionRingFlight) return; // 松手后由选中环自己的飞行动画接管，避免提前跳到落点
-    const board = document.querySelector('.study-board');
-    const card = (state.selectedId && board)
-      ? board.querySelector('.study-task-card[data-id="' + state.selectedId + '"]')
-      : null;
-    if (!board || !card) { ring.classList.remove('show'); return; }
-    const br = board.getBoundingClientRect();
-    const cr = card.getBoundingClientRect();
-    const wasShown = ring.classList.contains('show');
-    if (!wasShown) ring.style.transition = 'none';   // 首次出现：直接定位，不从旧处长距离滑
-    ring.style.width = cr.width + 'px';
-    ring.style.height = cr.height + 'px';
-    ring.style.transform = 'translate(' + (cr.left - br.left) + 'px,' + (cr.top - br.top) + 'px)';
-    if (!wasShown) { void ring.offsetWidth; ring.style.transition = ''; }
-    ring.classList.add('show');
-  }
-
-  function positionSelectionRingAtRect(rect) {
-    const ring = selectionRing;
-    const board = document.querySelector('.study-board');
-    if (!ring || !board || !rect) return;
-    const br = (drag && drag.active && drag.boardRect) ? drag.boardRect : board.getBoundingClientRect();
-    const scale = rect.scale || 1;
-    const width = rect.width * scale;
-    const height = rect.height * scale;
-    ring.style.width = width + 'px';
-    ring.style.height = height + 'px';
-    ring.style.transform = 'translate3d(' + (rect.left - br.left - (width - rect.width) / 2) + 'px,'
-      + (rect.top - br.top - (height - rect.height) / 2) + 'px,0)';
-    ring.classList.add('show', 'tracking');
-  }
-
-  function flySelectionRingToRect(rect, duration, middleRect) {
-    const ring = selectionRing;
-    const board = document.querySelector('.study-board');
-    if (!ring || !board || !rect || prefersReduced) return;
-    if (selectionRingFlight) selectionRingFlight.cancel();
-    const br = board.getBoundingClientRect();
-    const start = ring.style.transform || getComputedStyle(ring).transform;
-    const target = 'translate3d(' + (rect.left - br.left) + 'px,' + (rect.top - br.top) + 'px,0)';
-    const startWidth = ring.getBoundingClientRect().width;
-    const startHeight = ring.getBoundingClientRect().height;
-    ring.style.width = rect.width + 'px';
-    ring.style.height = rect.height + 'px';
-    ring.classList.add('show', 'tracking');
-    const frames = [{ transform: start, width: startWidth + 'px', height: startHeight + 'px' }];
-    if (middleRect) {
-      const middleScale = middleRect.scale || 1;
-      const middleWidth = rect.width * middleScale;
-      const middleHeight = rect.height * middleScale;
-      frames.push({
-        transform: 'translate3d(' + (middleRect.left - br.left - (middleWidth - rect.width) / 2) + 'px,'
-          + (middleRect.top - br.top - (middleHeight - rect.height) / 2) + 'px,0)',
-        width: middleWidth + 'px',
-        height: middleHeight + 'px',
-        offset: 0.68,
-      });
-    }
-    frames.push({ transform: target, width: rect.width + 'px', height: rect.height + 'px' });
-    const animation = ring.animate(frames, {
-      duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards',
-    });
-    selectionRingFlight = animation;
-    animation.finished.catch(() => undefined).then(() => {
-      if (selectionRingFlight !== animation) return;
-      ring.style.transform = target;
-      animation.cancel();
-      selectionRingFlight = null;
-      ring.classList.remove('tracking');
-      updateSelectionRing(); // 幽灵卡移除后再硬校准到真实卡
-    });
-  }
-
-  // 卡片、栏位和滚动容器都有独立动画。环在动画期间逐帧复位，避免只记住中途坐标。
-  function followSelectionRing(duration) {
-    if (!selectionRing) return;
-    selectionFollowUntil = Math.max(selectionFollowUntil, performance.now() + (duration || 0));
-    selectionRing.classList.add('tracking');
-    if (selectionFollowRaf) return;
-    function frame(now) {
-      selectionFollowRaf = 0;
-      updateSelectionRing();
-      if (now < selectionFollowUntil) {
-        selectionFollowRaf = requestAnimationFrame(frame);
-      } else {
-        selectionRing.classList.remove('tracking');
-        updateSelectionRing(); // 动画收束后再硬校准一次
-      }
-    }
-    selectionFollowRaf = requestAnimationFrame(frame);
-  }
-
-  function dismissArchivedSelection(archivedIds) {
-    if (!state.selectedId || !archivedIds.has(state.selectedId)) return Promise.resolve();
-    state.selectedId = '';
-    selectionFollowUntil = 0;
-    if (selectionFollowRaf) cancelAnimationFrame(selectionFollowRaf);
-    selectionFollowRaf = 0;
-    if (selectionRingFlight) selectionRingFlight.cancel();
-    selectionRingFlight = null;
-    if (!selectionRing) return Promise.resolve();
-    selectionRing.classList.remove('tracking');
-    selectionRing.classList.add('dismissing');
-    selectionRing.classList.remove('show');
-    if (prefersReduced) return Promise.resolve();
-    return new Promise((resolve) => setTimeout(resolve, 240));
-  }
-
-  function renderBoard() {
-    STATUS.forEach((status) => {
-      const list = document.querySelector('[data-role="lane-' + status + '"]');
-      // 待办/进行中列隐藏「今日专注」任务（它们端到今日区了）；已完成列照常显示
-      const tasks = state.tasks.filter((task) =>
-        task.status === status && (status === 'done' || !isToday(task)));
-      setAnimatedNumber(document.querySelector('[data-role="count-' + status + '"]'), tasks.length);
-      list.innerHTML = '';
-      if (!tasks.length) {
-        list.innerHTML = '<p class="study-lane-empty soft-enter">暂无任务</p>';
-      } else {
-        tasks.forEach((task) => {
-          const card = taskCard(task, false);
-          if (task.id === landingFlightId || (drag && drag.active && task.id === drag.id)) {
-            card.classList.add('drag-source');
-          }
-          list.appendChild(card);
-        });
-      }
-    });
-    if (state.selectedId && !findTask(state.selectedId)) state.selectedId = '';
-    applySelected();   // 末尾同步定位选中环（此刻卡片在最终布局位，尚未加 FLIP 偏移）
-  }
-
   // ============ 极简清单视图（mode=list；勾选 / 双击改名 / 直接回收 / + 新建）============
-  // 分组照搬看板那套（今日/待办/进行中/已完成），不按截止日重排；只是换成干净的英文清单。
-  function renderList() {
-    const host = document.querySelector('[data-role="study-list"]');
-    if (!host) return;
-    const groups = [
-      { status: 'today', label: 'Today',       match: (t) => isToday(t) && t.status !== 'done' },
-      { status: 'todo', label: 'To Do',       match: (t) => t.status === 'todo' && !isToday(t), add: true },
-      { status: 'doing', label: 'In Progress', match: (t) => t.status === 'doing' && !isToday(t) },
-      { status: 'done', label: 'Done',        match: (t) => t.status === 'done' },
-    ];
-    host.innerHTML = '';
-    groups.forEach((group) => {
-      const tasks = state.tasks.filter(group.match);
-      if (!tasks.length && !group.add) return;   // 空分组不显示大标题；To Do 例外，留着放「+」
-      const section = document.createElement('section');
-      section.className = 'study-list-group';
-      section.dataset.status = group.status;
-      const head = document.createElement('div');
-      head.className = 'study-list-head';
-      head.innerHTML = '<h2>' + group.label + '</h2>'
-        + (tasks.length ? '<span class="study-list-count">' + tasks.length + '</span>' : '');
-      if (group.add) {
-        const actions = document.createElement('div');
-        actions.className = 'study-list-actions';
-        const archiveBtn = document.createElement('button');
-        archiveBtn.type = 'button';
-        archiveBtn.className = 'study-list-archive';
-        archiveBtn.dataset.action = 'archive-done';
-        archiveBtn.setAttribute('aria-label', '归档已完成任务');
-        archiveBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
-          + '<path d="M4.5 8h15v11h-15zM3.5 5h17v3h-17zM9.5 12h5"></path></svg>';
-        archiveBtn.addEventListener('click', (event) => { event.stopPropagation(); archiveDone(); });
-        actions.appendChild(archiveBtn);
-        const trashBtn = document.createElement('button');
-        trashBtn.type = 'button';
-        trashBtn.className = 'study-list-trash';
-        trashBtn.setAttribute('aria-label', '任务回收站');
-        trashBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
-          + '<path d="M8 7h8m-7.25 0 .55 11h5.4l.55-11M10 4.75h4M6.75 7h10.5"></path></svg>';
-        trashBtn.addEventListener('click', (event) => { event.stopPropagation(); openTrash(); });
-        actions.appendChild(trashBtn);
-        const addBtn = document.createElement('button');
-        addBtn.type = 'button';
-        addBtn.className = 'study-list-add';
-        addBtn.title = '新建任务';
-        addBtn.setAttribute('aria-label', '新建任务');
-        addBtn.textContent = '+';
-        addBtn.addEventListener('click', (event) => { event.stopPropagation(); listQuickAdd(); });
-        actions.appendChild(addBtn);
-        head.appendChild(actions);
+  // —— 增量同步：极简清单行（不改名不重建，保留 DOM 以触发 CSS transition）——
+  function syncListRowFromTask(row, task) {
+    if (!row || !task) return;
+    var done = task.status === 'done';
+    row.classList.toggle('is-done', done);
+    var check = row.querySelector('.study-list-check');
+    if (check) {
+      check.classList.toggle('on', done);
+      check.textContent = done ? '✓' : '';
+      check.setAttribute('aria-label', done ? '标记未完成' : '标记完成');
+    }
+    var title = row.querySelector('.study-list-title');
+    if (title) title.textContent = task.title || '未命名';
+  }
+
+  function buildListGroupHead(group, tasks) {
+    var head = document.createElement('div');
+    head.className = 'study-list-head';
+    head.innerHTML = '<h2>' + group.label + '</h2>'
+      + (tasks.length ? '<span class="study-list-count">' + tasks.length + '</span>' : '');
+    if (group.add) {
+      var actions = document.createElement('div');
+      actions.className = 'study-list-actions';
+      var archiveBtn = document.createElement('button');
+      archiveBtn.type = 'button';
+      archiveBtn.className = 'study-list-archive';
+      archiveBtn.dataset.action = 'archive-done';
+      archiveBtn.setAttribute('aria-label', '归档已完成任务');
+      archiveBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+        + '<path d="M4.5 8h15v11h-15zM3.5 5h17v3h-17zM9.5 12h5"></path></svg>';
+      archiveBtn.addEventListener('click', function (event) { event.stopPropagation(); archiveDone(); });
+      actions.appendChild(archiveBtn);
+      var trashBtn = document.createElement('button');
+      trashBtn.type = 'button';
+      trashBtn.className = 'study-list-trash';
+      trashBtn.setAttribute('aria-label', '任务回收站');
+      trashBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+        + '<path d="M8 7h8m-7.25 0 .55 11h5.4l.55-11M10 4.75h4M6.75 7h10.5"></path></svg>';
+      trashBtn.addEventListener('click', function (event) { event.stopPropagation(); openTrash(); });
+      actions.appendChild(trashBtn);
+      var addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'study-list-add';
+      addBtn.title = '新建任务';
+      addBtn.setAttribute('aria-label', '新建任务');
+      addBtn.textContent = '+';
+      addBtn.addEventListener('click', function (event) { event.stopPropagation(); listQuickAdd(); });
+      actions.appendChild(addBtn);
+      head.appendChild(actions);
+    }
+    return head;
+  }
+
+  function incrementalSyncListSection(section, group, tasks) {
+    if (!section) return;
+    // 收集已有行
+    var existing = {};
+    Array.from(section.querySelectorAll('.study-list-row')).forEach(function (row) {
+      if (row.dataset.id) existing[row.dataset.id] = row;
+    });
+
+    // 更新头部计数
+    var head = section.querySelector('.study-list-head');
+    var count = head && head.querySelector('.study-list-count');
+    if (count) count.textContent = String(tasks.length);
+
+    // 按顺序摆放：已有行原地同步，新行直接创建
+    var fragment = document.createDocumentFragment();
+    tasks.forEach(function (task) {
+      var row = existing[task.id];
+      if (row) {
+        syncListRowFromTask(row, task);
+        fragment.appendChild(row);
+      } else {
+        row = taskRow(task);
+        fragment.appendChild(row);
       }
-      section.appendChild(head);
-      tasks.forEach((task) => section.appendChild(taskRow(task)));
-      host.appendChild(section);
+    });
+
+    // 清空旧内容，放入新 fragment
+    section.innerHTML = '';
+    if (head) section.appendChild(head);
+    section.appendChild(fragment);
+  }
+
+  function renderList() {
+    var host = document.querySelector('[data-role="study-list"]');
+    if (!host) return;
+    var groups = [
+      { status: 'active', label: 'To Do', match: function (t) { return t.status === 'active'; }, add: true },
+      { status: 'done', label: 'Done', match: function (t) { return t.status === 'done'; } },
+    ];
+    groups.forEach(function (group) {
+      var tasks = state.tasks.filter(group.match);
+      if (!tasks.length && !group.add) {
+        var emptySection = host.querySelector('.study-list-group[data-status="' + group.status + '"]');
+        if (emptySection) emptySection.remove();
+        return;
+      }
+      var section = host.querySelector('.study-list-group[data-status="' + group.status + '"]');
+      if (!section) {
+        section = document.createElement('section');
+        section.className = 'study-list-group';
+        section.dataset.status = group.status;
+        section.appendChild(buildListGroupHead(group, tasks));
+        tasks.forEach(function (task) { section.appendChild(taskRow(task)); });
+        host.appendChild(section);
+      } else {
+        // 刷新头部（操作按钮可能需重建）
+        var oldHead = section.querySelector('.study-list-head');
+        var newHead = buildListGroupHead(group, tasks);
+        if (oldHead) oldHead.replaceWith(newHead);
+        else section.insertBefore(newHead, section.firstChild);
+        incrementalSyncListSection(section, group, tasks);
+      }
     });
   }
 
   function taskRow(task) {
-    const row = document.createElement('div');
+    var row = document.createElement('div');
     row.className = 'study-list-row' + (task.status === 'done' ? ' is-done' : '');
     row.dataset.id = task.id;
-    const checked = task.status === 'done';
+    enableTaskReorder(row, task);
+    var checked = task.status === 'done';
     row.innerHTML = '<button type="button" class="study-list-check' + (checked ? ' on' : '')
       + '" aria-label="标记完成">' + (checked ? '✓' : '') + '</button>'
       + '<span class="study-list-title">' + escapeHtml(task.title) + '</span>';
-    const removeBtn = document.createElement('button');
+    var removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'study-list-remove';
     removeBtn.setAttribute('aria-label', '删除任务');
     removeBtn.textContent = '×';
-    removeBtn.addEventListener('pointerdown', (event) => { event.stopPropagation(); });
-    removeBtn.addEventListener('click', (event) => {
+    removeBtn.addEventListener('pointerdown', function (event) { event.stopPropagation(); });
+    removeBtn.addEventListener('click', function (event) {
       event.stopPropagation();
       trashTaskById(task.id);
     });
     row.appendChild(removeBtn);
-    // 只点左边小方框 = 完成（再点 = 取消完成）；阻断冒泡，不触发改名
-    row.querySelector('.study-list-check').addEventListener('click', (event) => {
+    row.querySelector('.study-list-check').addEventListener('click', function (event) {
       event.stopPropagation();
-      moveTask(task.id, task.status === 'done' ? 'todo' : 'done');
+      moveTask(task.id, task.status === 'done' ? 'active' : 'done');
     });
-    // 双击行 = 就地改名，复用看板那套 beginRename
-    const titleEl = row.querySelector('.study-list-title');
-    row.addEventListener('dblclick', (event) => {
-      if (event.target.closest('.study-list-check, .study-list-remove')) return;
+    var titleEl = row.querySelector('.study-list-title');
+    titleEl.addEventListener('dblclick', function (event) {
+      event.stopPropagation();
       if (row.classList.contains('renaming')) return;
       beginRename(row, task, titleEl);
     });
@@ -817,16 +889,16 @@
 
   function listQuickAdd() {
     if (!studyLoaded) {
-      ensureStudyLoaded().then((loaded) => { if (loaded) listQuickAdd(); });
+      ensureStudyLoaded().then(function (loaded) { if (loaded) listQuickAdd(); });
       return;
     }
-    const task = createOptimisticTask({ title: '未命名', status: 'todo' });
+    var task = createOptimisticTask({ title: '未命名', status: 'active' });
     render();
     scheduleStudyReorder();
-    const row = document.querySelector('.study-list ' + taskSelector(task.id));
+    var row = document.querySelector('.study-list ' + taskSelector(task.id));
     if (row) {
       row.classList.add('quick-enter');
-      setTimeout(() => row.classList.remove('quick-enter'), 300);
+      setTimeout(function () { row.classList.remove('quick-enter'); }, 300);
     }
   }
 
@@ -857,29 +929,43 @@
   }
 
   function captureListRects(list, selector) {
-    const rects = new Map();
+    var rects = new Map();
     if (!list) return rects;
-    list.querySelectorAll(selector).forEach((item) => {
+    list.querySelectorAll(selector).forEach(function (item) {
       if (item.dataset.id) rects.set(item.dataset.id, item.getBoundingClientRect());
     });
     return rects;
   }
 
+  function captureListRectsInto(rects, list, selector) {
+    if (!list || !rects) return;
+    list.querySelectorAll(selector).forEach(function (item) {
+      if (item.dataset.id) rects.set(item.dataset.id, item.getBoundingClientRect());
+    });
+  }
+
   function animateListMoves(list, selector, prevRects) {
     if (prefersReduced || !list || !prevRects || !prevRects.size) return;
-    list.querySelectorAll(selector).forEach((item) => {
-      const prev = prevRects.get(item.dataset.id);
+    list.querySelectorAll(selector).forEach(function (item) {
+      // 跳过正在播退场动画的卡片（它们有自己的 CSS 动画）
+      if (item.classList.contains('is-leaving')) return;
+      var prev = prevRects.get(item.dataset.id);
       if (!prev) return;
-      const now = item.getBoundingClientRect();
-      const dx = prev.left - now.left;
-      const dy = prev.top - now.top;
+      var now = item.getBoundingClientRect();
+      var dx = prev.left - now.left;
+      var dy = prev.top - now.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      const duration = Math.max(190, Math.min(360, 180 + Math.hypot(dx, dy) * 0.28));
+      var duration = Math.max(190, Math.min(360, 180 + Math.hypot(dx, dy) * 0.28));
       item.animate([
         { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
         { transform: 'translate3d(0,0,0)' },
-      ], { duration, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
+      ], { duration: duration, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
     });
+  }
+
+  function animateListMovesInto(list, selector, prevRects) {
+    // 与 animateListMoves 相同，但不消耗 prevRects（跨容器 FLIP 复用）
+    animateListMoves(list, selector, prevRects);
   }
 
   function animateDetachedExit(item, className) {
@@ -974,25 +1060,983 @@
     item.querySelectorAll('button').forEach((button) => { button.disabled = !!locked; });
   }
 
+  function taskProgress(task) {
+    const raw = task && task.progress && typeof task.progress === 'object' ? task.progress : {};
+    const target = Math.max(0, Math.min(9999, Number(raw.target) || 0));
+    return {
+      current: Math.max(0, Math.min(target, Number(raw.current) || 0)),
+      target: target,
+      milestones: Array.isArray(raw.milestones) ? raw.milestones : [],
+    };
+  }
+
+  function studyGoalReady(task, progress) {
+    var current = progress || taskProgress(task);
+    return !!(task && task.status !== 'done' && current.target > 0 && current.current >= current.target);
+  }
+
+  function syncStudyProgressValue(value, progress, goalReady) {
+    if (!value) return;
+    value.classList.toggle('is-goal-ready', !!goalReady);
+    var label = value.querySelector('.study-progress-goal-label');
+    var number = value.querySelector('.study-progress-value-number');
+    var labelText = T('目标已达');
+    var numberText = progress.target
+      ? progress.current + ' / ' + progress.target
+      : '';
+    if (label && label.textContent !== labelText) label.textContent = labelText;
+    if (number && number.textContent !== numberText) number.textContent = numberText;
+  }
+
+  function buildStudyProgressValue(progress, goalReady) {
+    var value = document.createElement('span');
+    value.className = 'study-progress-value';
+    var label = document.createElement('span');
+    label.className = 'study-progress-goal-label';
+    label.setAttribute('aria-hidden', 'true');
+    label.textContent = T('目标已达');
+    var number = document.createElement('span');
+    number.className = 'study-progress-value-number';
+    value.append(label, number);
+    syncStudyProgressValue(value, progress, goalReady);
+    return value;
+  }
+
+  // —— 里程碑辅助函数（复刻专注页每日任务的里程碑 tooltip / 避让排线）——
+  function studyMilestoneList(task) {
+    var progress = taskProgress(task);
+    var seen = new Set();
+    return progress.milestones
+      .filter(function (item) {
+        var at = Number(item && item.at);
+        var name = typeof (item && item.name) === 'string' ? item.name.trim() : '';
+        if (!name || at < 1 || at > progress.target || seen.has(at)) return false;
+        seen.add(at);
+        return true;
+      })
+      .slice(0, 6)
+      .map(function (item, index) {
+        return {
+          id: String(item.id || ('sm_' + item.at + '_' + index)),
+          name: item.name.trim(),
+          at: Number(item.at),
+        };
+      })
+      .sort(function (a, b) { return a.at - b.at; });
+  }
+  function studyMilestoneText(milestone, reached) {
+    return milestone.name + ' · ' + milestone.at + (reached ? ' · 已达成' : '');
+  }
+  function studyMilestoneLanes(milestones, target) {
+    var lanes = [[], [], []];
+    return milestones.map(function (milestone) {
+      var position = target > 0 ? Math.max(0, Math.min(100, milestone.at / target * 100)) : 0;
+      var lane = lanes.findIndex(function (positions) { return positions.every(function (value) { return Math.abs(value - position) >= 4.5; }); });
+      if (lane < 0) lane = lanes.reduce(function (best, positions, index) { return positions.length < lanes[best].length ? index : best; }, 0);
+      lanes[lane].push(position);
+      return { milestone: milestone, position: position, lane: [0, -1, 1][lane] };
+    });
+  }
+  function syncStudyMilestones(shell, task, options) {
+    var layer = shell && shell.querySelector('.study-progress-milestones');
+    if (!layer) return;
+    var opts = options || {};
+    var progress = taskProgress(task);
+    var crossed = new Set(Array.isArray(opts.crossedMilestoneIds) ? opts.crossedMilestoneIds : []);
+    var layout = studyMilestoneLanes(studyMilestoneList(task), progress.target);
+    var keep = new Set(layout.map(function (entry) { return entry.milestone.id; }));
+    layer.querySelectorAll('.study-progress-milestone').forEach(function (marker) {
+      if (keep.has(marker.dataset.milestoneId)) return;
+      if (prefersReduced) marker.remove();
+      else {
+        marker.classList.add('is-leaving');
+        window.setTimeout(function () { if (marker.parentNode) marker.remove(); }, 220);
+      }
+    });
+    layout.forEach(function (entry) {
+      var milestone = entry.milestone;
+      var reached = progress.current >= milestone.at;
+      var marker = Array.prototype.find.call(layer.children, function (item) { return item.dataset.milestoneId === milestone.id; });
+      if (!marker) {
+        marker = document.createElement('span');
+        marker.className = 'study-progress-milestone is-entering';
+        marker.dataset.milestoneId = milestone.id;
+        marker.tabIndex = 0;
+        marker.setAttribute('role', 'img');
+        var stamp = document.createElement('span');
+        stamp.className = 'study-progress-milestone-stamp';
+        stamp.setAttribute('aria-hidden', 'true');
+        var tip = document.createElement('span');
+        tip.className = 'study-progress-milestone-tip';
+        tip.setAttribute('role', 'tooltip');
+        studyMilestoneTipSeq += 1;
+        tip.id = 'study-milestone-tip-' + studyMilestoneTipSeq;
+        marker.setAttribute('aria-describedby', tip.id);
+        marker.append(stamp, tip);
+        layer.appendChild(marker);
+        if (!prefersReduced) window.setTimeout(function () { marker.classList.remove('is-entering'); }, 260);
+        else marker.classList.remove('is-entering');
+      }
+      var text = studyMilestoneText(milestone, reached);
+      marker.style.setProperty('--milestone-position', entry.position.toFixed(3) + '%');
+      marker.style.setProperty('--milestone-lane', String(entry.lane));
+      marker.classList.toggle('is-edge-start', entry.position < 12);
+      marker.classList.toggle('is-edge-end', entry.position > 88);
+      marker.classList.toggle('is-reached', reached);
+      marker.setAttribute('aria-label', text);
+      var tipEl = marker.querySelector('.study-progress-milestone-tip');
+      if (tipEl) tipEl.textContent = text;
+      if (crossed.has(milestone.id) && !prefersReduced) {
+        replayClass(marker, 'is-just-reached', STUDY_MILESTONE_REACHED_CLEANUP_MS);
+      }
+    });
+  }
+  function syncStudyProgressBar(shell, task, options) {
+    if (!shell) return;
+    var opts = options || {};
+    var progress = taskProgress(task);
+    var goalReady = studyGoalReady(task, progress);
+    var fill = shell.querySelector('.study-progress-fill');
+    if (fill) fill.style.width = (progress.target ? Math.min(100, progress.current / progress.target * 100) : 0).toFixed(2) + '%';
+    var track = shell.querySelector('.study-progress-track');
+    var atTarget = progress.target > 0 && progress.current >= progress.target;
+    if (track) {
+      track.classList.toggle('is-full', atTarget);
+      track.setAttribute('aria-valuemin', '0');
+      track.setAttribute('aria-valuemax', String(progress.target));
+      track.setAttribute('aria-valuenow', String(progress.current));
+      track.setAttribute('aria-valuetext', goalReady
+        ? T('目标已达成，可以手动标记完成')
+        : progress.current + ' / ' + progress.target);
+    }
+    syncStudyMilestones(shell, task, opts);
+  }
+  function buildStudyProgressShell(task) {
+    var shell = document.createElement('span');
+    shell.className = 'study-progress-track-shell';
+    var track = document.createElement('span');
+    track.className = 'study-progress-track';
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', '任务进度');
+    var fill = document.createElement('span');
+    fill.className = 'study-progress-fill';
+    track.appendChild(fill);
+    var markers = document.createElement('span');
+    markers.className = 'study-progress-milestones';
+    shell.append(track, markers);
+    syncStudyProgressBar(shell, task);
+    return shell;
+  }
+
+  function buildProgressCard(task, completed) {
+    const progress = taskProgress(task);
+    const goalReady = !completed && studyGoalReady(task, progress);
+    const card = document.createElement('article');
+    card.className = 'study-progress-card'
+      + (completed ? ' is-completed' : '')
+      + (goalReady ? ' is-goal-ready' : '');
+    card.dataset.id = task.id;
+    enableTaskReorder(card, task);
+
+    const check = document.createElement('button');
+    check.type = 'button';
+    check.className = 'study-progress-check' + (completed ? ' on' : '');
+    setStudyAriaLabel(check, completed
+      ? '恢复任务'
+      : goalReady ? '目标已达成，可以手动标记完成' : '标记完成');
+    check.addEventListener('click', () => moveTask(task.id, completed ? 'active' : 'done'));
+
+    const main = document.createElement('div');
+    main.className = 'study-progress-main';
+    const heading = document.createElement('span');
+    heading.className = 'study-progress-card-head';
+    const title = document.createElement('strong');
+    title.textContent = task.title || '未命名任务';
+    const value = buildStudyProgressValue(progress, goalReady);
+    heading.append(title, value);
+    main.appendChild(heading);
+
+    if (progress.target) {
+      main.appendChild(buildStudyProgressShell(task));
+    }
+
+    // 双击标题 → 原地改名
+    title.addEventListener('dblclick', function (event) {
+      event.stopPropagation();
+      if (card.classList.contains('renaming')) return;
+      beginRename(card, task, title);
+    });
+
+    card.append(check, main);
+    if (!completed && progress.target) {
+      const controls = document.createElement('div');
+      controls.className = 'study-progress-controls';
+      [-1, 1].forEach((delta) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = delta < 0 ? '−1' : '+1';
+        button.dataset.delta = String(delta);
+        button.disabled = delta < 0 ? progress.current <= 0 : progress.current >= progress.target;
+        button.setAttribute('aria-label', delta < 0 ? '进度减一' : '进度加一');
+        button.addEventListener('click', () => changeTaskProgress(task, delta));
+        controls.appendChild(button);
+      });
+      card.appendChild(controls);
+    }
+
+    // 右侧提示区：› 图标（悬停绿光）+ ⋯ 菜单按钮（悬停浮现）
+    const detailGroup = document.createElement('span');
+    detailGroup.className = 'study-progress-detail-group';
+
+    const detailCue = document.createElement('span');
+    detailCue.className = 'study-progress-detail-cue';
+    detailCue.setAttribute('aria-hidden', 'true');
+    detailCue.textContent = '›';
+    detailGroup.appendChild(detailCue);
+
+    const menu = document.createElement('button');
+    menu.type = 'button';
+    menu.className = 'study-progress-menu';
+    menu.setAttribute('aria-label', '任务选项');
+    menu.setAttribute('aria-haspopup', 'dialog');
+    menu.setAttribute('aria-expanded', progressSettingsId === task.id ? 'true' : 'false');
+    menu.setAttribute('aria-controls', 'study-progress-settings-popover');
+    menu.textContent = '⋯';
+    menu.addEventListener('click', function (event) {
+      event.stopPropagation();
+      if (progressSettingsId === task.id && progressSettingsPopover) {
+        closeProgressSettings(true);
+      } else {
+        openProgressSettings(task.id, menu);
+      }
+    });
+    detailGroup.appendChild(menu);
+
+    card.appendChild(detailGroup);
+    return card;
+  }
+
+  // —— 增量同步卡片内容：由 task 数据更新已存在 DOM 卡片的文字 / 进度条 / 按钮 / 里程碑 ——
+  function cardProgressStructureOk(card, task, completed) {
+    var progress = taskProgress(task);
+    var hasTrack = !!card.querySelector('.study-progress-track-shell');
+    var hasControls = !!card.querySelector('.study-progress-controls');
+    var hasStableValue = !!card.querySelector('.study-progress-goal-label')
+      && !!card.querySelector('.study-progress-value-number');
+    var needsTrack = !!progress.target;
+    var needsControls = !completed && !!progress.target;
+    return hasTrack === needsTrack && hasControls === needsControls && hasStableValue;
+  }
+
+  // —— 里程碑弹窗（复刻专注页每日任务的高级设置弹窗）——
+  function cloneProgressMilestones(items) {
+    return (Array.isArray(items) ? items : []).slice(0, 6).map(function (item, index) {
+      return {
+        id: String(item && item.id || ('pm_draft_' + Date.now().toString(36) + '_' + index)),
+        name: String(item && item.name || ''),
+        at: Number(item && item.at) || 0,
+      };
+    });
+  }
+  function progressMilestoneDraftId() {
+    return 'pm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+  }
+  function setStudyMilestoneDialogError(message) {
+    if (!studyMilestoneDialog) return;
+    var error = studyMilestoneDialog.querySelector('[data-role="study-milestone-error"]');
+    if (error) error.textContent = message || '';
+  }
+  function updateStudyMilestoneAddState() {
+    if (!studyMilestoneDialog) return;
+    var count = studyMilestoneDialog.querySelectorAll('.study-milestone-row:not(.is-leaving)').length;
+    var add = studyMilestoneDialog.querySelector('[data-action="study-milestone-add"]');
+    if (add) {
+      add.disabled = count >= 6;
+      add.textContent = count >= 6 ? T('已达到 6 个上限') : T('添加任务点') + ' · ' + count + '/6';
+    }
+  }
+  function appendStudyMilestoneDraftRow(item, animate) {
+    if (!studyMilestoneDialog) return null;
+    var list = studyMilestoneDialog.querySelector('[data-role="study-milestone-list"]');
+    if (!list) return null;
+    var row = document.createElement('div');
+    row.className = 'study-milestone-row' + (animate && !prefersReduced ? ' is-entering' : '');
+    row.dataset.milestoneId = item.id || progressMilestoneDraftId();
+    var name = document.createElement('input');
+    name.type = 'text';
+    name.maxLength = 40;
+    name.className = 'study-milestone-name';
+    name.dataset.role = 'study-milestone-name';
+    name.placeholder = '任务点名称';
+    name.setAttribute('aria-label', '任务点名称');
+    name.value = item.name || '';
+    var atWrap = document.createElement('label');
+    atWrap.className = 'study-milestone-at-wrap';
+    var at = document.createElement('input');
+    at.type = 'number';
+    at.min = '1';
+    at.max = String(studyMilestoneDialogTarget || 9999);
+    at.step = '1';
+    at.className = 'study-milestone-at';
+    at.dataset.role = 'study-milestone-at';
+    at.setAttribute('aria-label', '位置');
+    at.value = Number(item.at) > 0 ? String(item.at) : '';
+    var unit = document.createElement('span');
+    unit.textContent = '/ ' + (studyMilestoneDialogTarget || '?');
+    atWrap.append(at, unit);
+    var remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'study-milestone-remove';
+    remove.dataset.action = 'study-milestone-remove';
+    remove.setAttribute('aria-label', '删除这个任务点');
+    remove.textContent = '×';
+    row.append(name, atWrap, remove);
+    list.appendChild(row);
+    if (row.classList.contains('is-entering')) window.setTimeout(function () { row.classList.remove('is-entering'); }, 260);
+    updateStudyMilestoneAddState();
+    return row;
+  }
+  function readStudyMilestoneDialog() {
+    if (!studyMilestoneDialogTarget) return { error: '请先设置任务长度' };
+    var rows = Array.from(studyMilestoneDialog.querySelectorAll('.study-milestone-row:not(.is-leaving)'));
+    var result = [];
+    var seenAt = new Set();
+    for (var index = 0; index < rows.length; index += 1) {
+      var row = rows[index];
+      var nameInput = row.querySelector('[data-role="study-milestone-name"]');
+      var atInput = row.querySelector('[data-role="study-milestone-at"]');
+      var name = String(nameInput && nameInput.value || '').trim();
+      var rawAt = String(atInput && atInput.value || '').trim();
+      var atVal = /^\d+$/.test(rawAt) ? Number(rawAt) : 0;
+      row.classList.remove('has-error');
+      if (!name) {
+        row.classList.add('has-error');
+        if (nameInput) nameInput.focus();
+        return { error: '请填写任务点名称' };
+      }
+      if (name.length > 40) {
+        row.classList.add('has-error');
+        if (nameInput) nameInput.focus();
+        return { error: '任务点名称不能超过 40 个字符' };
+      }
+      if (!atVal || atVal > studyMilestoneDialogTarget) {
+        row.classList.add('has-error');
+        if (atInput) atInput.focus();
+        return { error: '任务点位置必须在 1 到任务长度之间' };
+      }
+      if (seenAt.has(atVal)) {
+        row.classList.add('has-error');
+        if (atInput) atInput.focus();
+        return { error: '同一位置只能设置一个任务点' };
+      }
+      seenAt.add(atVal);
+      result.push({ id: row.dataset.milestoneId || progressMilestoneDraftId(), name: name, at: atVal });
+    }
+    result.sort(function (a, b) { return a.at - b.at; });
+    return { milestones: result };
+  }
+  function openStudyMilestoneDialog(targetValue, returnElement) {
+    if (!targetValue) { showToast('请先设置任务长度'); return; }
+    if (studyMilestoneDialog) closeStudyMilestoneDialog(false, true);
+    if (progressSettingsPopover) {
+      progressSettingsPopover.classList.add('is-suspended');
+      progressSettingsPopover.setAttribute('aria-hidden', 'true');
+    }
+    studyMilestoneDialogTarget = targetValue;
+    studyMilestoneDialogDraft = cloneProgressMilestones(progressSettingsMilestones);
+    studyMilestoneReturnEl = returnElement || null;
+    var shell = document.createElement('div');
+    shell.className = 'study-milestone-dialog-shell';
+    shell.dataset.role = 'study-milestone-dialog';
+    var dialog = document.createElement('section');
+    dialog.className = 'study-milestone-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'study-milestone-title');
+    var head = document.createElement('header');
+    var heading = document.createElement('div');
+    var eyebrow = document.createElement('span');
+    eyebrow.textContent = T('任务长度') + ' · ' + targetValue;
+    var title = document.createElement('h2');
+    title.id = 'study-milestone-title';
+    title.textContent = '高级设置';
+    heading.append(eyebrow, title);
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.dataset.action = 'study-milestone-cancel';
+    close.setAttribute('aria-label', '关闭高级设置');
+    close.textContent = '×';
+    head.append(heading, close);
+    var intro = document.createElement('p');
+    intro.className = 'study-milestone-intro';
+    intro.textContent = '把任务长度拆成最多 6 个有名字的任务点。达成状态会根据当前进度自动点亮。';
+    var list = document.createElement('div');
+    list.className = 'study-milestone-list';
+    list.dataset.role = 'study-milestone-list';
+    var error = document.createElement('p');
+    error.className = 'study-milestone-error';
+    error.dataset.role = 'study-milestone-error';
+    error.setAttribute('aria-live', 'polite');
+    var footer = document.createElement('footer');
+    var add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'study-milestone-add';
+    add.dataset.action = 'study-milestone-add';
+    var footerActions = document.createElement('div');
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'study-milestone-cancel';
+    cancel.dataset.action = 'study-milestone-cancel';
+    cancel.textContent = '取消';
+    var confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'study-milestone-confirm';
+    confirm.dataset.action = 'study-milestone-confirm';
+    confirm.textContent = '确定';
+    footerActions.append(cancel, confirm);
+    footer.append(add, footerActions);
+    dialog.append(head, intro, list, error, footer);
+    shell.appendChild(dialog);
+    var studyView = document.querySelector('[data-role="study-view"]');
+    (studyView || document.body).appendChild(shell);
+    studyMilestoneDialog = shell;
+    studyMilestoneDialogDraft.forEach(function (item) { appendStudyMilestoneDraftRow(item, false); });
+    updateStudyMilestoneAddState();
+    requestAnimationFrame(function () { shell.classList.add('is-open'); });
+    var first = shell.querySelector('input, [data-action="study-milestone-add"]');
+    if (first) first.focus();
+  }
+  function closeStudyMilestoneDialog(apply, instant) {
+    var shell = studyMilestoneDialog;
+    if (!shell || shell.classList.contains('is-closing')) return;
+    if (apply) {
+      var result = readStudyMilestoneDialog();
+      if (result.error) { setStudyMilestoneDialogError(result.error); return; }
+      progressSettingsMilestones = result.milestones;
+    }
+    var returnEl = studyMilestoneReturnEl;
+    var finished = false;
+    var finish = function () {
+      if (finished) return;
+      finished = true;
+      if (shell.isConnected) shell.remove();
+      if (studyMilestoneDialog === shell) studyMilestoneDialog = null;
+      studyMilestoneDialogDraft = [];
+      studyMilestoneDialogTarget = 0;
+      studyMilestoneReturnEl = null;
+      if (progressSettingsPopover) {
+        progressSettingsPopover.classList.remove('is-suspended');
+        progressSettingsPopover.removeAttribute('aria-hidden');
+        scheduleProgressSettingsPosition();
+      }
+      // 更新浮动设置卡中的任务点数量
+      var button = progressSettingsPopover
+        && progressSettingsPopover.querySelector('[data-role="progress-settings-milestones"]');
+      if (button) {
+        var count = Array.isArray(progressSettingsMilestones) ? progressSettingsMilestones.length : 0;
+        button.textContent = '任务点设置' + (count ? ' · ' + count + '/6' : '');
+      }
+      if (!instant && returnEl && returnEl.isConnected) returnEl.focus();
+    };
+    if (instant || prefersReduced) { finish(); return; }
+    shell.classList.remove('is-open');
+    shell.classList.add('is-closing');
+    shell.addEventListener('animationend', finish, { once: true });
+    window.setTimeout(finish, 260);
+  }
+
+  // ============ 进度卡片的锚定浮动设置卡 ============
+  function setProgressSettingsError(message) {
+    var error = progressSettingsPopover
+      && progressSettingsPopover.querySelector('[data-role="progress-settings-error"]');
+    if (error) error.textContent = message || '';
+  }
+
+  function positionProgressSettings() {
+    if (!progressSettingsPopover || !progressSettingsTrigger || !progressSettingsTrigger.isConnected) return;
+    var triggerRect = progressSettingsTrigger.getBoundingClientRect();
+    var popoverRect = progressSettingsPopover.getBoundingClientRect();
+    var gap = 8;
+    var edge = 12;
+    var left = triggerRect.right - popoverRect.width;
+    left = Math.max(edge, Math.min(left, window.innerWidth - popoverRect.width - edge));
+    var top = triggerRect.bottom + gap;
+    var placement = 'below';
+    if (top + popoverRect.height > window.innerHeight - edge
+        && triggerRect.top - popoverRect.height - gap >= edge) {
+      top = triggerRect.top - popoverRect.height - gap;
+      placement = 'above';
+    } else {
+      top = Math.max(edge, Math.min(top, window.innerHeight - popoverRect.height - edge));
+    }
+    progressSettingsPopover.style.left = Math.round(left) + 'px';
+    progressSettingsPopover.style.top = Math.round(top) + 'px';
+    progressSettingsPopover.dataset.placement = placement;
+  }
+
+  function scheduleProgressSettingsPosition() {
+    if (!progressSettingsPopover || progressSettingsPositionFrame) return;
+    progressSettingsPositionFrame = requestAnimationFrame(function () {
+      progressSettingsPositionFrame = 0;
+      if (!progressSettingsTrigger || !progressSettingsTrigger.isConnected) {
+        closeProgressSettings(false, true);
+        return;
+      }
+      positionProgressSettings();
+    });
+  }
+
+  function buildProgressSettings(task) {
+    var progress = taskProgress(task);
+    var box = document.createElement('section');
+    box.id = 'study-progress-settings-popover';
+    box.className = 'study-progress-settings-popover';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'false');
+    box.setAttribute('aria-labelledby', 'study-progress-settings-title');
+
+    var title = document.createElement('strong');
+    title.id = 'study-progress-settings-title';
+    title.className = 'study-progress-settings-title';
+    title.textContent = '任务设置';
+    box.appendChild(title);
+
+    var targetWrap = document.createElement('label');
+    targetWrap.className = 'study-progress-settings-target';
+    var targetLabel = document.createElement('span');
+    targetLabel.textContent = '任务长度';
+    var targetIn = document.createElement('input');
+    targetIn.type = 'number';
+    targetIn.min = '0';
+    targetIn.max = '9999';
+    targetIn.step = '1';
+    targetIn.inputMode = 'numeric';
+    targetIn.className = 'study-progress-settings-number';
+    targetIn.dataset.role = 'progress-settings-target';
+    targetIn.value = progress.target || '';
+    targetIn.setAttribute('aria-label', '任务长度');
+    targetWrap.append(targetLabel, targetIn);
+    box.appendChild(targetWrap);
+
+    var milestoneBtn = document.createElement('button');
+    milestoneBtn.type = 'button';
+    milestoneBtn.className = 'study-progress-settings-milestones';
+    milestoneBtn.dataset.role = 'progress-settings-milestones';
+    milestoneBtn.setAttribute('aria-haspopup', 'dialog');
+    var updateMilestoneButton = function () {
+      var value = Number(targetIn.value);
+      var enabled = Number.isInteger(value) && value > 0 && value <= 9999;
+      var count = Array.isArray(progressSettingsMilestones) ? progressSettingsMilestones.length : 0;
+      milestoneBtn.disabled = !enabled;
+      milestoneBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      milestoneBtn.textContent = '任务点设置' + (count ? ' · ' + count + '/6' : '');
+      setProgressSettingsError('');
+    };
+    targetIn.addEventListener('input', updateMilestoneButton);
+    milestoneBtn.addEventListener('click', function () {
+      openStudyMilestoneDialog(Number(targetIn.value) || 0, milestoneBtn);
+    });
+    updateMilestoneButton();
+    box.appendChild(milestoneBtn);
+
+    var error = document.createElement('p');
+    error.className = 'study-progress-settings-error';
+    error.dataset.role = 'progress-settings-error';
+    error.setAttribute('aria-live', 'polite');
+    box.appendChild(error);
+
+    var actions = document.createElement('div');
+    actions.className = 'study-progress-settings-actions';
+    var trashBtn = document.createElement('button');
+    trashBtn.type = 'button';
+    trashBtn.className = 'study-progress-settings-trash';
+    trashBtn.textContent = '移到回收站';
+    trashBtn.addEventListener('click', function () {
+      closeProgressSettings(false, true);
+      trashTaskById(task.id);
+    });
+    var actionGroup = document.createElement('span');
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'study-progress-settings-cancel';
+    cancelBtn.textContent = '取消';
+    cancelBtn.addEventListener('click', function () { closeProgressSettings(true); });
+    var saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'study-progress-settings-save';
+    saveBtn.textContent = '保存';
+    saveBtn.addEventListener('click', function () { commitProgressSettings(task.id, box); });
+    actionGroup.append(cancelBtn, saveBtn);
+    actions.append(trashBtn, actionGroup);
+    box.appendChild(actions);
+
+    box.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && event.ctrlKey) {
+        event.preventDefault();
+        commitProgressSettings(task.id, box);
+      }
+    });
+    return box;
+  }
+
+  function openProgressSettings(id, trigger) {
+    var task = findTask(id);
+    if (!task || !trigger) return;
+    if (progressSettingsPopover) closeProgressSettings(false, true);
+    progressSettingsId = id;
+    progressSettingsMilestones = cloneProgressMilestones(taskProgress(task).milestones);
+    progressSettingsTrigger = trigger;
+    progressSettingsPopover = buildProgressSettings(task);
+    trigger.setAttribute('aria-expanded', 'true');
+    document.body.appendChild(progressSettingsPopover);
+    positionProgressSettings();
+    requestAnimationFrame(function () {
+      if (!progressSettingsPopover) return;
+      progressSettingsPopover.classList.add('is-open');
+      positionProgressSettings();
+    });
+    window.setTimeout(function () {
+      var input = progressSettingsPopover
+        && progressSettingsPopover.querySelector('[data-role="progress-settings-target"]');
+      if (input) { input.focus(); input.select(); }
+    }, prefersReduced ? 0 : 80);
+  }
+
+  function closeProgressSettings(restoreFocus, instant) {
+    var popover = progressSettingsPopover;
+    var trigger = progressSettingsTrigger;
+    if (!popover) return;
+    if (progressSettingsPositionFrame) cancelAnimationFrame(progressSettingsPositionFrame);
+    progressSettingsPositionFrame = 0;
+    progressSettingsId = '';
+    progressSettingsMilestones = null;
+    progressSettingsPopover = null;
+    progressSettingsTrigger = null;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    var finish = function () {
+      if (popover.isConnected) popover.remove();
+      if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+    };
+    if (instant || prefersReduced) {
+      finish();
+      return;
+    }
+    popover.classList.remove('is-open');
+    popover.classList.add('is-closing');
+    window.setTimeout(finish, 190);
+  }
+
+  function commitProgressSettings(id, box) {
+    var task = findTask(id);
+    if (!task || box !== progressSettingsPopover) return;
+    var targetIn = box.querySelector('[data-role="progress-settings-target"]');
+    var rawTarget = String(targetIn && targetIn.value || '').trim();
+    if (rawTarget && !/^\d+$/.test(rawTarget)) {
+      setProgressSettingsError('任务长度需要是 0 到 9999 之间的整数');
+      if (targetIn) targetIn.focus();
+      return;
+    }
+    var target = rawTarget ? Number(rawTarget) : 0;
+    var current = taskProgress(task).current;
+    if (target > 9999) {
+      setProgressSettingsError('任务长度不能超过 9999');
+      if (targetIn) targetIn.focus();
+      return;
+    }
+    if (target < current) {
+      setProgressSettingsError('任务长度不能小于当前进度，请先回退进度');
+      if (targetIn) targetIn.focus();
+      return;
+    }
+    var milestones = target ? cloneProgressMilestones(progressSettingsMilestones) : [];
+    if (milestones.some(function (item) { return item.at < 1 || item.at > target; })) {
+      setProgressSettingsError('任务点位置不能超过任务长度');
+      return;
+    }
+
+    closeProgressSettings(false, true);
+    if (!task.progress || typeof task.progress !== 'object') task.progress = {};
+    task.progress.target = target;
+    task.progress.milestones = milestones;
+    render();
+    queueTaskPatch(task, {
+      progress: { target: target, milestones: milestones },
+    }).catch(function (error) {
+      showToast(error.message);
+      return refresh();
+    });
+  }
+
+  function progressQuickAdd() {
+    if (!studyLoaded) {
+      ensureStudyLoaded().then(function (loaded) { if (loaded) progressQuickAdd(); });
+      return;
+    }
+    var task = createOptimisticTask({ title: '未命名', status: 'active' });
+    render();
+    scheduleStudyReorder();
+    var card = document.querySelector('.study-progress-card' + taskSelector(task.id));
+    if (card) {
+      card.classList.add('quick-enter');
+      setTimeout(function () { card.classList.remove('quick-enter'); }, 300);
+    }
+  }
+
+  function syncProgressCardFromTask(card, task) {
+    if (!card || !task) return;
+    const progress = taskProgress(task);
+    const completed = task.status === 'done';
+    const goalReady = !completed && studyGoalReady(task, progress);
+
+    // 完成态与“目标已达、等待手动确认”是两层独立语义。
+    card.classList.toggle('is-completed', completed);
+    card.classList.toggle('is-goal-ready', goalReady);
+    if (!goalReady) card.classList.remove('is-goal-pending', 'is-goal-celebrating');
+
+    // 勾选按钮 — 原地更新状态 + 弹簧动画（复刻 focus-daily-check）
+    const check = card.querySelector('.study-progress-check');
+    if (check) {
+      var wasOn = check.classList.contains('on');
+      check.classList.toggle('on', completed);
+      check.textContent = '';
+      setStudyAriaLabel(check, completed
+        ? '恢复任务'
+        : goalReady ? '目标已达成，可以手动标记完成' : '标记完成');
+      if (wasOn !== completed && !prefersReduced) {
+        replayClass(check, completed ? 'is-check-pop' : 'is-uncheck-pop', 420);
+      }
+    }
+
+    // 标题
+    const title = card.querySelector('.study-progress-card-head strong');
+    if (title) title.textContent = task.title || '未命名任务';
+
+    // 进度数值
+    const value = card.querySelector('.study-progress-value');
+    if (value) syncStudyProgressValue(value, progress, goalReady);
+
+    // 进度条（existing element → CSS transition fires）
+    var shell = card.querySelector('.study-progress-track-shell');
+    if (shell) {
+      syncStudyProgressBar(shell, task);
+    }
+
+    // −1 / +1 按钮（仅未完成任务有）
+    const controls = card.querySelector('.study-progress-controls');
+    if (controls) {
+      if (completed || !progress.target) {
+        controls.style.display = 'none';
+      } else {
+        controls.style.display = '';
+        var btns = controls.querySelectorAll('button');
+        if (btns[0]) btns[0].disabled = progress.current <= 0;
+        if (btns[1]) btns[1].disabled = progress.current >= progress.target;
+      }
+    }
+  }
+
+  // —— 增量同步：不销毁卡片，只更新 / 移动 / 新增 / 移除 ——
+  function incrementalSyncCardList(container, tasks, completed, emptyMessage) {
+    if (!container) return;
+
+    // 收集现有卡片
+    var existing = {};
+    var cardList = Array.from(container.querySelectorAll('.study-progress-card'));
+    cardList.forEach(function (card) {
+      if (card.dataset.id) existing[card.dataset.id] = card;
+    });
+
+    var desiredIds = {};
+    tasks.forEach(function (t) { desiredIds[t.id] = true; });
+
+    // 移除不在目标集合中的卡片（带退场动画）
+    cardList.forEach(function (card) {
+      if (!desiredIds[card.dataset.id]) {
+        if (!prefersReduced) {
+          card.classList.add('is-leaving');
+          setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 280);
+        } else {
+          if (card.parentNode) card.parentNode.removeChild(card);
+        }
+      }
+    });
+
+    // 空态处理
+    if (!tasks.length) {
+      container.innerHTML = '';
+      if (emptyMessage) {
+        var empty = document.createElement('p');
+        empty.className = 'study-progress-empty';
+        empty.textContent = emptyMessage;
+        container.appendChild(empty);
+      }
+      return;
+    }
+
+    // 移除空态占位
+    var existingEmpty = container.querySelector('.study-progress-empty');
+    if (existingEmpty) existingEmpty.remove();
+
+    // 按顺序摆放：已存在的移动位置 + 同步内容，不存在的创建新卡片
+    // 若卡片结构不匹配（如新增/移除了进度条），则重建而非同步
+    var fragment = document.createDocumentFragment();
+    tasks.forEach(function (task) {
+      var card = existing[task.id];
+      if (card && cardProgressStructureOk(card, task, completed)) {
+        syncProgressCardFromTask(card, task);
+        fragment.appendChild(card);   // 从原位置移入 fragment
+      } else {
+        if (card && card.parentNode) card.parentNode.removeChild(card);
+        card = buildProgressCard(task, completed);
+        if (!prefersReduced && !completed) card.classList.add('is-entering');
+        fragment.appendChild(card);
+      }
+    });
+
+    // 保留正在退场的卡片，其余清空后放入新 fragment
+    var leavingCards = [];
+    Array.from(container.children).forEach(function (child) {
+      if (child.classList.contains('study-progress-card') && child.classList.contains('is-leaving')) {
+        leavingCards.push(child);
+      }
+    });
+    container.innerHTML = '';
+    container.appendChild(fragment);
+    // 为错峰入场动画设置行序号（复刻专注页 --daily-row-index）
+    var allCards = container.querySelectorAll('.study-progress-card:not(.is-leaving)');
+    allCards.forEach(function (card, i) {
+      card.style.setProperty('--study-row-index', String(Math.min(i, 7)));
+    });
+    leavingCards.forEach(function (card) { container.appendChild(card); });
+
+    // 清除入场类（动画播完后）
+    if (!prefersReduced) {
+      var enteringCards = container.querySelectorAll('.study-progress-card.is-entering');
+      setTimeout(function () {
+        enteringCards.forEach(function (el) { el.classList.remove('is-entering'); });
+      }, 460);
+    }
+  }
+
+  function changeTaskProgress(task, delta) {
+    var progress = taskProgress(task);
+    if (!progress.target || task.status === 'done') return;
+    var nextValue = Math.max(0, Math.min(progress.target, progress.current + delta));
+    if (nextValue === progress.current) return;
+
+    var prevValue = progress.current;
+    task.progress.current = nextValue;
+
+    // 先对已有卡片做原地 fill 宽度更新（CSS transition 会触发）。
+    var card = document.querySelector('.study-progress-card' + taskSelector(task.id));
+    if (card && !prefersReduced) {
+      if (prevValue < progress.target && nextValue >= progress.target) {
+        cancelReplayClass(card, 'is-goal-breathing');
+        card.classList.add('is-goal-pending');
+      } else if (prevValue >= progress.target && nextValue < progress.target) {
+        cancelReplayClass(card, 'is-goal-breathing');
+        cancelReplayClass(card, 'is-goal-celebrating');
+        card.classList.remove('is-goal-pending');
+      }
+      var shell = card.querySelector('.study-progress-track-shell');
+      if (shell) {
+        // 先把 fill 设回旧值，再 requestAnimationFrame 设新值——
+        // 保证即使 render 尚未发生，transition 也能从旧→新完整播出
+        var fill = shell.querySelector('.study-progress-fill');
+        if (fill) {
+          fill.style.width = (prevValue / progress.target * 100).toFixed(2) + '%';
+          void fill.offsetWidth;
+          fill.style.width = (nextValue / progress.target * 100).toFixed(2) + '%';
+        }
+        var track = shell.querySelector('.study-progress-track');
+        var atTarget = nextValue >= progress.target;
+        if (track) {
+          track.classList.toggle('is-full', atTarget);
+        }
+        syncStudyMilestones(shell, task);
+      }
+      replayClass(card, 'is-progress-pop', 480);
+      // 立刻同步数值文字与按钮态
+      syncProgressCardFromTask(card, task);
+    } else {
+      render();
+    }
+
+    var seq = (taskProgressSeq.get(task) || 0) + 1;
+    taskProgressSeq.set(task, seq);
+    var request = queueTaskMutation(task, function () {
+      return post('/api/study-task-progress', { id: task.id, delta: delta });
+    }).then(function (json) {
+      if (taskProgressSeq.get(task) === seq) {
+        Object.assign(task, json.task || {});
+        var synced = document.querySelector('.study-progress-card' + taskSelector(task.id));
+        if (synced) syncProgressCardFromTask(synced, task);
+        else render();
+      }
+      var crossed = Array.isArray(json.crossedMilestoneIds) ? json.crossedMilestoneIds : [];
+      if (crossed.length) {
+        requestAnimationFrame(function () {
+          crossed.forEach(function (id) {
+            var c = document.querySelector('.study-progress-card' + taskSelector(task.id));
+            var m = c && Array.from(c.querySelectorAll('[data-milestone-id]'))
+              .find(function (item) { return item.dataset.milestoneId === String(id); });
+            if (m) replayClass(m, 'is-just-reached', STUDY_MILESTONE_REACHED_CLEANUP_MS);
+          });
+        });
+      }
+      var reachedCard = document.querySelector('.study-progress-card' + taskSelector(task.id));
+      if (reachedCard && taskProgressSeq.get(task) === seq) {
+        reachedCard.classList.remove('is-goal-pending');
+        if (json.targetReached && studyGoalReady(task) && !prefersReduced) {
+          cancelReplayClass(reachedCard, 'is-goal-breathing');
+          replayClass(reachedCard, 'is-goal-celebrating', 1480);
+          scheduleStudyGoalBreath(1560);
+          scheduleStudyGoalCheckFlow(1560);
+        }
+      }
+    }).catch(function (error) {
+      showToast(error.message);
+      return refresh();
+    });
+  }
+
+  function renderProgress() {
+    if (!progressListEl || !completedListEl || !completedSectionEl) return;
+    // 拖拽排序期间不重建卡片列表，避免掐断幽灵卡与 FLIP 动画
+    if (progressDrag && progressDrag.active) return;
+    var active = state.tasks.filter(function (t) { return t.status === 'active'; });
+    var done = state.tasks.filter(function (t) { return t.status === 'done'; });
+    var count = document.querySelector('[data-role="study-task-count"]');
+    var activeCount = document.querySelector('[data-role="study-active-count"]');
+    var doneCount = document.querySelector('[data-role="study-completed-count"]');
+    if (count) count.textContent = String(state.tasks.length);
+    if (activeCount) activeCount.textContent = String(active.length);
+    if (doneCount) doneCount.textContent = String(done.length);
+
+    // 增量同步：保留已有卡片 DOM，只更新内容与顺序
+    var emptyMsg = done.length ? '当前没有未完成任务。' : '还没有学习任务，点击右上角的 ＋ 开始。';
+    incrementalSyncCardList(progressListEl, active, false, emptyMsg);
+
+    // 已完成列始终可见，保持双列布局避免未完成卡片被拉长
+    completedSectionEl.hidden = false;
+    incrementalSyncCardList(completedListEl, done, true, '还没有已完成的任务。');
+  }
+
   function render() {
     applyViewMode();
     if (viewMode === 'list') {
-      const listHost = document.querySelector('[data-role="study-list"]');
-      const prevListRects = captureListRects(listHost, '.study-list-row');
+      var listHost = document.querySelector('[data-role="study-list"]');
+      var prevListRects = captureListRects(listHost, '.study-list-row');
       renderList();
-      renderTrash();
-      if (focusOpen) renderFocus();
-      requestAnimationFrame(() => animateListMoves(listHost, '.study-list-row', prevListRects));
-      return;
+      requestAnimationFrame(function () { animateListMoves(listHost, '.study-list-row', prevListRects); });
+    } else {
+      renderProgress();
     }
-    const prevRects = suppressFlip ? null : captureCardRects();
-    renderStats();
-    renderToday();
-    renderBoard();
+    if (progressSettingsPopover
+        && (viewMode !== 'progress' || !progressSettingsTrigger || !progressSettingsTrigger.isConnected)) {
+      closeProgressSettings(false, true);
+    }
     renderTrash();
-    renderCarryover();
-    if (focusOpen) renderFocus();   // 沉浸页打开时同步刷新
-    if (prevRects) requestAnimationFrame(() => animateCardMoves(prevRects));
   }
 
   // —— 一年活跃热力图（已完成任务，按完成日；含归档历史，数据来自 /api/study-activity）——
@@ -1005,6 +2049,9 @@
   let cadenceLoadSeq = 0;
   let activityDirty = true;
   let activityLoadPromise = null;
+  let activityPreloadHandle = 0;
+  let activityPreloadUsesIdle = false;
+  let cadenceVisibleSyncFrame = 0;
   let cadenceYearWheelAccum = 0;
   let cadenceYearWheelTimer = 0;
   let starInstance = null;   // 足迹星图当前实例（活跃图重绘时先销毁旧实例再挂新的）
@@ -1845,6 +2892,67 @@
     return promise;
   }
 
+  function ensureActivityReady() {
+    if (activityPayload && !activityDirty) return Promise.resolve(true);
+    if (activityLoadPromise) return activityLoadPromise;
+    return queueActivityLoad();
+  }
+
+  function cancelActivityPreload() {
+    if (!activityPreloadHandle) return;
+    if (activityPreloadUsesIdle && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(activityPreloadHandle);
+    } else {
+      window.clearTimeout(activityPreloadHandle);
+    }
+    activityPreloadHandle = 0;
+    activityPreloadUsesIdle = false;
+  }
+
+  function scheduleActivityPreload() {
+    if (activityPreloadHandle || activityLoadPromise || (activityPayload && !activityDirty)) return;
+    const warmActivity = () => {
+      activityPreloadHandle = 0;
+      activityPreloadUsesIdle = false;
+      ensureActivityReady().catch(() => undefined);
+    };
+    activityPreloadUsesIdle = typeof window.requestIdleCallback === 'function';
+    activityPreloadHandle = activityPreloadUsesIdle
+      ? window.requestIdleCallback(warmActivity, { timeout: 1500 })
+      : window.setTimeout(warmActivity, 600);
+  }
+
+  function cancelCadenceVisibleSync() {
+    if (!cadenceVisibleSyncFrame) return;
+    window.cancelAnimationFrame(cadenceVisibleSyncFrame);
+    cadenceVisibleSyncFrame = 0;
+  }
+
+  function syncCadenceVisibleLayout() {
+    const host = document.querySelector('[data-role="study-cadence"]');
+    if (!host || !host.childElementCount) return;
+    const orb = host.querySelector('[data-role="cadence-year-orb"]');
+    if (orb) orb.classList.add('no-transition');
+    syncCadenceYearOrb(host);
+    placeStarModeSlider(host.querySelector('[data-role="star-mode-switch"]'), false);
+    if (orb) window.requestAnimationFrame(() => orb.classList.remove('no-transition'));
+  }
+
+  function scheduleCadenceVisibleActivation() {
+    cancelCadenceVisibleSync();
+    cadenceVisibleSyncFrame = window.requestAnimationFrame(() => {
+      cadenceVisibleSyncFrame = window.requestAnimationFrame(() => {
+        cadenceVisibleSyncFrame = 0;
+        if (!cadenceShown) return;
+        syncCadenceVisibleLayout();
+        if (starInstance && starInstance.setActive) {
+          starInstance.setActive(true);
+          if (starInstance.replayIntro) starInstance.replayIntro();
+        }
+      });
+    });
+  }
+
   function invalidateActivity() {
     activityDirty = true;
     if (cadenceShown) queueActivityLoad();
@@ -1869,511 +2977,59 @@
     // 起步页翻页时调用：只有活跃页是当前前置页时星图才跑 RAF，离开即挂起，避免隐藏页 60fps 空转。
     setActive(active) {
       cadenceShown = !!active;
-      if (starInstance && starInstance.setActive) starInstance.setActive(cadenceShown);
-      // 每次翻进活跃页都重播生长：重新武装进场（节点先隐形预置），由引擎的可见性自然触发——
-      // 星图在视野内就地长出，仍在折叠线以下则等你滚动到它再长。首访时实例尚未建好（下方加载后挂载，
-      // 其自带 intro 同样由可见性触发），故这里只重播已存在的实例。
-      if (cadenceShown && starInstance && starInstance.replayIntro) starInstance.replayIntro();
-      if (cadenceShown && (!activityPayload || activityDirty)) queueActivityLoad();
+      if (!cadenceShown) {
+        cancelCadenceVisibleSync();
+        if (starInstance && starInstance.setActive) starInstance.setActive(false);
+        return;
+      }
+      cancelActivityPreload();
+      // 预渲染发生在 content-visibility:hidden 下；待外层页面真正可见两帧后，再校准书脊/滑块并唤醒星图。
+      scheduleCadenceVisibleActivation();
+      if (!activityPayload || activityDirty) ensureActivityReady().catch(() => undefined);
     },
     awaitReady() {
-      if (activityLoadPromise) return activityLoadPromise;
-      if (activityPayload && !activityDirty) return Promise.resolve(true);
-      return queueActivityLoad();
+      return ensureActivityReady();
     },
     isReady() {
       return !!(activityPayload && !activityDirty);
     },
   };
-
-  function fillCanvasOptions(value) {
-    canvasSelect.innerHTML = '<option value="">不关联画布</option>';
-    state.canvases.forEach((canvas) => {
-      const option = document.createElement('option');
-      option.value = canvas.path;
-      option.textContent = canvas.title;
-      canvasSelect.appendChild(option);
-    });
-    if (value && !state.canvases.some((canvas) => canvas.path === value)) {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = '已移动或外部画布 · ' + canvasName(value);
-      canvasSelect.appendChild(option);
-    }
-    canvasSelect.value = value || '';
-    syncCanvasButtons();
-  }
-
-  function syncCanvasButtons() {
-    // 关联锁定：任务一旦「已保存」关联某画布，就不可在详情里改/解除/再新建（真正的 1:1 绑定）。
-    // 以任务持久化的 linkedCanvas 为准，而非下拉框当前值——这样未保存前仍可自由挑选。
-    const task = findTask(state.dialogTaskId);
-    const locked = !!(task && task.linkedCanvas);
-    canvasSelect.disabled = locked;
-    const createBtn = document.querySelector('[data-action="create-canvas"]');
-    if (createBtn) createBtn.disabled = locked;
-    document.querySelector('[data-action="open-canvas"]').disabled = !canvasSelect.value;
-  }
-
-  function openDialog(id) {
-    const task = findTask(id);
-    if (!task) return;
-    state.dialogTaskId = id;
-    form.elements.id.value = task.id;
-    form.elements.title.value = task.title;
-    form.elements.status.value = task.status;
-    form.elements.due.value = task.due || '';
-    form.elements.tags.value = (task.tags || []).join(', ');
-    form.elements.memo.value = task.memo || '';
-    fillCanvasOptions(task.linkedCanvas);
-    renderTaskFocusSummary(task);
-    dialog.hidden = false;
-    requestAnimationFrame(() => dialog.classList.add('show'));
-    form.elements.title.focus();
-    form.elements.title.select();
-  }
-
-  function renderTaskFocusSummary(task) {
-    const totalEl = document.querySelector('[data-role="task-focus-total"]');
-    const recentEl = document.querySelector('[data-role="task-focus-recent"]');
-    const summary = state.focusByTask[task.id] || { durationSec: 0, count: 0 };
-    if (totalEl) {
-      totalEl.textContent = summary.count
-        ? focusDurationLabel(summary.durationSec) + ' · ' + summary.count + ' 段'
-        : '尚无记录';
-    }
-    if (!recentEl) return;
-    const recent = state.focusSessions.filter((session) => session.taskId === task.id).slice(0, 4);
-    recentEl.innerHTML = recent.length ? recent.map((session) => {
-      const main = session.outcome || session.goal || '这一段没有留下文字';
-      const prefix = session.outcome ? '成果' : (session.goal ? '目标' : '记录');
-      return '<article><span>' + escapeHtml(String(session.day || '').slice(5))
-        + ' · ' + focusDurationLabel(session.durationSec) + '</span><p><b>'
-        + prefix + '：</b>' + escapeHtml(main) + '</p></article>';
-    }).join('') : '<p class="study-task-focus-empty">从专注页绑定这个任务后，记录会出现在这里。</p>';
-  }
-
-  function closeDialog() {
-    dialog.classList.remove('show');
-    state.dialogTaskId = '';
-    setTimeout(() => { dialog.hidden = true; }, 180);
-  }
-
-  function formPayload() {
-    return {
-      id: form.elements.id.value,
-      title: form.elements.title.value.trim() || '未命名任务',
-      status: form.elements.status.value,
-      due: form.elements.due.value,
-      tags: form.elements.tags.value,
-      memo: form.elements.memo.value,
-      linkedCanvas: form.elements.linkedCanvas.value,
-    };
-  }
-
-  async function saveDialog(options) {
-    const payload = formPayload();
-    const task = findTask(payload.id);
-    if (taskSaveButton) {
-      taskSaveButton.disabled = true;
-      taskSaveButton.classList.add('is-saving');
-      taskSaveButton.textContent = '保存中';
-    }
-    try {
-      const saved = await queueTaskPatch(task, {
-        title: payload.title, status: payload.status, due: payload.due,
-        tags: payload.tags, memo: payload.memo, linkedCanvas: payload.linkedCanvas,
-      });
-      render();
-      if (!(options && options.keepOpen)) closeDialog();
-      return saved;
-    } finally {
-      if (taskSaveButton) {
-        taskSaveButton.disabled = false;
-        taskSaveButton.classList.remove('is-saving');
-        taskSaveButton.textContent = '保存';
-      }
-    }
-  }
-
-  async function createTask() {
-    if (!studyLoaded && !(await ensureStudyLoaded())) return;
-    try {
-      const json = await post('/api/study-task-create', { title: '未命名任务', status: 'todo' });
-      state.tasks.push(json.task);
-      render();
-      openDialog(json.task.id);
-    } catch (error) {
-      showToast(error.message);
-    }
-  }
-
-  function quickAdd(status, button) {
-    if (!studyLoaded) {
-      ensureStudyLoaded().then((loaded) => { if (loaded) quickAdd(status, button); });
-      return;
-    }
-    const task = createOptimisticTask({ title: '未命名', status: status || 'todo' });
-    state.selectedId = task.id;
-    render();
-    scheduleStudyReorder();
-    if (button) {
-      button.classList.remove('just-added');
-      void button.offsetWidth;
-      button.classList.add('just-added');
-      setTimeout(() => button.classList.remove('just-added'), 240);
-    }
-    // 新任务只进入选中态；用户主动点标题时才开始改名。
-    const card = document.querySelector('.study-lane-list ' + taskSelector(task.id));
-    if (card) {
-      card.classList.add('quick-enter');
-      setTimeout(() => card.classList.remove('quick-enter'), 300);
-      card.focus({ preventScroll: true });
-    }
-  }
-
-  // —— 选中任务 + 键盘导航 ——
-  function applySelected() {
-    // 看板卡 + 今日卡都参与选中高亮。看板卡另有浮动选中环；今日卡在 study-board 外，
-    // 环无法跨容器定位，故今日卡用自带的 .is-selected 描边（见 styles.css）。
-    document.querySelectorAll('.study-lane-list .study-task-card, .study-today-list .study-task-card').forEach((card) =>
-      card.classList.toggle('is-selected', !!state.selectedId && card.dataset.id === state.selectedId));
-    updateSelectionRing();
-    followSelectionRing(520);
-  }
-
-  function selectTask(id, scroll) {
-    state.selectedId = id || '';
-    applySelected();
-    if (scroll && id) {
-      const card = document.querySelector('.study-lane-list [data-id="' + id + '"]');
-      if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
-  }
-
-  function tasksInStatus(status) {
-    return state.tasks.filter((task) => task.status === status);
-  }
-
-  // ↑/↓：在选中任务所在列内上下移动高亮
-  function moveSelectionVertical(dir) {
-    const sel = findTask(state.selectedId);
-    const status = sel ? sel.status : 'todo';
-    const list = tasksInStatus(status);
-    if (!list.length) return;
-    const idx = list.findIndex((task) => task.id === state.selectedId);
-    if (idx < 0) { selectTask(list[0].id, true); return; }
-    const next = (idx + dir + list.length) % list.length;
-    selectTask(list[next].id, true);
-  }
-
-  // ←/→：把选中任务搬到相邻列（待办↔进行中↔已完成），保留选中并回弹
-  function moveSelectedTaskHorizontal(dir) {
-    const sel = findTask(state.selectedId);
-    if (!sel) {
-      const first = tasksInStatus('todo')[0] || state.tasks[0];
-      if (first) selectTask(first.id, true);
-      return;
-    }
-    const cur = COLUMN_ORDER.indexOf(sel.status);
-    const ni = cur + dir;
-    if (ni < 0 || ni >= COLUMN_ORDER.length) return; // 到头不绕回
-    moveTask(sel.id, COLUMN_ORDER[ni]);   // FLIP 让卡片滑到新列，选中环随之滑过去
-  }
-
-  // G 键：选中的看板任务 → 加入今日专注；选中的今日任务 → 放回「待办」（清专注+设 todo，风险小）
-  function toggleSelectedTodayFocus() {
-    const task = findTask(state.selectedId);
-    if (!task) return;
-    if (isToday(task)) {
-      task.focusDay = '';
-      task.status = 'todo';
-      render();
-      queueTaskPatch(task, { focusDay: '', status: 'todo' })
-        .catch((error) => { showToast(error.message); refresh(); });
-      showToast('已放回待办');
-    } else {
-      task.focusDay = today;
-      render();
-      queueTaskPatch(task, { focusDay: today })
-        .catch((error) => { showToast(error.message); refresh(); });
-      showToast('已加入今日专注');
-    }
-    applySelected();   // 任务在看板↔今日间移动后，选中高亮跟着它
-  }
-
-  // —— 指针拖拽（带惯性倾斜 + 落入回弹）——
-  function onCardPointerDown(event, card, task) {
-    if (event.button !== 0) return;
-    if (card.classList.contains('renaming')) return;
-    event.preventDefault();                                // 卡片拖拽不触发浏览器原生文字框选
-    const rect = card.getBoundingClientRect();
-    const board = document.querySelector('.study-board');
-    const originList = card.parentNode;                    // 卡片只在自己所属的容器内排序
-    drag = {
-      id: task.id, task, card, ghost: null,
-      pointerId: event.pointerId, active: false,
-      originList,                                          // 待办/进行中/已完成列 或 今日栏
-      horizontal: !!(originList && originList.classList
-        && originList.classList.contains('study-today-list')),  // 今日栏横向、看板列纵向
-      startX: event.clientX, startY: event.clientY,
-      offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top,
-      width: rect.width, height: rect.height,
-      originLeft: rect.left, originTop: rect.top,
-      ghostLeft: rect.left, ghostTop: rect.top,
-      boardRect: board ? board.getBoundingClientRect() : null,
-      targetRaf: 0, pendingX: event.clientX, pendingY: event.clientY,
-    };
-    // 不在此处 setPointerCapture——否则浏览器会把随后的 click 重定向到卡片本身，标题的
-    // 单击改名监听就收不到事件。改在 activateDrag（确实越过拖拽阈值）里再捕获指针。
-    window.addEventListener('pointermove', onCardPointerMove);
-    window.addEventListener('pointerup', onCardPointerUp);
-  }
-
-  function activateDrag() {
-    try { drag.card.setPointerCapture(drag.pointerId); } catch (e) {}  // 确实开始拖动后才捕获指针
-    const ghost = drag.card.cloneNode(true);
-    ghost.classList.add('study-task-ghost');
-    ghost.classList.remove('is-selected', 'quick-enter', 'drag-source');
-    ghost.style.animation = 'none'; // 克隆卡只走幽灵层动画，不继承原卡尚未收束的入场动画
-    ghost.style.width = drag.width + 'px';
-    ghost.style.height = drag.height + 'px';
-    document.body.appendChild(ghost);
-    drag.ghost = ghost;
-    drag.card.classList.add('drag-source');
-    document.body.classList.add('study-dragging');
-    if (selectionRing) selectionRing.classList.remove('show'); // 起拖即藏选中框，落地后再淡入
-    drag.active = true;
-    state.selectedId = drag.id;
-    const selection = window.getSelection();
-    if (selection) selection.removeAllRanges(); // 清掉超过拖拽阈值前可能产生的残留选区
-    // 清掉各列「暂无任务」占位文本：实时让位只在卡片之间移动占位卡，落定后整体 render 会还原
-    document.querySelectorAll('.study-lane-list .study-lane-empty').forEach((el) => el.remove());
-    positionGhost(drag.startX, drag.startY);
-  }
-
-  function positionGhost(x, y) {
-    const tx = x - drag.offsetX;
-    const ty = y - drag.offsetY;
-    drag.ghostLeft = tx;
-    drag.ghostTop = ty;
-    drag.ghost.style.transform =
-      'translate3d(' + tx + 'px,' + ty + 'px,0) scale(1.035)';
-    drag.ghost.dataset.dragLeft = String(tx);
-    drag.ghost.dataset.dragTop = String(ty);
-    // 选中框不再跟随幽灵卡飞行（见 updateSelectionRing）：避免与落定卡错位
-  }
-
-  // 列内排序落定：按某容器当前 DOM 顺序，把其中这些任务在 state.tasks 里重排成同样的相对
-  // 顺序，其余任务原位不动。纯列内排序——status / 今日标记都不变，无需改任何字段。
-  function reorderTasksByDom(list) {
-    if (!list) return;
-    const domIds = Array.from(list.querySelectorAll('.study-task-card')).map((c) => c.dataset.id);
-    const inGroup = new Set(domIds);
-    const ordered = domIds.map((id) => findTask(id)).filter(Boolean);
-    let gi = 0;
-    state.tasks = state.tasks.map((t) => (inGroup.has(t.id) ? ordered[gi++] : t));
-  }
-
-  // —— 实时让位：只移动占位节点 + 复用节点跑 FLIP，绝不重建 DOM ——
-  // 占位卡（被拖卡本身，隐形）作为「洞」，用 insertBefore 在本列已有卡之间移动；其它卡读
-  // 「当前视觉位置」接着滑，节点全程复用，物理上不再瞬移。
-
-  // 只在「卡片自己所属的容器」里算插入点（不跨列、不跨今日栏）。横向今日栏按 x 中线、
-  // 纵向看板列按 y 中线；指针落到容器外也夹取到首/末位，保证卡片始终留在本列。
-  function computeInsertPoint(x, y) {
-    const list = drag.originList;
-    if (!list) return null;
-    const cards = Array.from(list.querySelectorAll('.study-task-card')).filter((c) => c !== drag.card);
-    let beforeNode = null;
-    for (let i = 0; i < cards.length; i++) {
-      const r = cards[i].getBoundingClientRect();
-      const past = drag.horizontal ? (x < r.left + r.width / 2) : (y < r.top + r.height / 2);
-      if (past) { beforeNode = cards[i]; break; }   // 过卡片中线才让位
-    }
-    return { list, beforeNode };
-  }
-
-  // 可中断 FLIP：先记各卡「当前视觉位置」→ mutate 移动占位卡 → 取消在飞的旧动画（清掉残留
-  // transform，读到干净的新布局位）→ 从视觉位平滑滑到新布局位。节点全程复用，快拖也不掐断。
-  function flipBoardReorder(mutate) {
-    if (prefersReduced) { mutate(); return; }
-    const cards = Array.from((drag.originList || document).querySelectorAll('.study-task-card'));
-    const before = new Map();
-    cards.forEach((c) => before.set(c, c.getBoundingClientRect()));   // 含在飞 transform=视觉位
-    mutate();
-    cards.forEach((c) => { const p = liveFlipAnims.get(c); if (p) p.cancel(); }); // 统一清残留 transform
-    cards.forEach((c) => {
-      if (c === drag.card) return;                 // 占位卡隐形，不参与让位动画
-      const b = before.get(c);
-      if (!b) return;
-      const now = c.getBoundingClientRect();        // 取消旧动画后 = 干净新布局位
-      const dx = b.left - now.left;
-      const dy = b.top - now.top;
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      const distance = Math.hypot(dx, dy);
-      const duration = Math.max(190, Math.min(360, 180 + distance * 0.3));
-      const anim = c.animate([
-        { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
-        { transform: 'translate3d(0,0,0)' },
-      ], { duration, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
-      liveFlipAnims.set(c, anim);
-      anim.finished.catch(() => undefined).then(() => {
-        if (liveFlipAnims.get(c) === anim) liveFlipAnims.delete(c);
-      });
-    });
-  }
-
-  // 实时让位：把占位卡（被拖卡本身）移到本列指针所指插入点；位置没变则跳过
-  function liveReorderTo(x, y) {
-    const ins = computeInsertPoint(x, y);
-    if (!ins) return;
-    if (drag.card.parentNode === ins.list && drag.card.nextElementSibling === ins.beforeNode) return; // 已在该位
-    flipBoardReorder(() => {
-      const empty = ins.list.querySelector('.study-lane-empty');
-      if (empty) empty.remove();
-      ins.list.insertBefore(drag.card, ins.beforeNode);
-    });
-  }
-
-  // 指针可能一帧触发多次：幽灵卡即时跟手，布局读取与让位排序合并到每帧最多一次。
-  // 只做本列内让位——不再检测跨列 / 今日栏落入。
-  function applyDragTarget(x, y) {
-    if (!drag) return;
-    liveReorderTo(x, y);
-  }
-
-  function scheduleDragTarget(x, y) {
-    drag.pendingX = x;
-    drag.pendingY = y;
-    if (drag.targetRaf) return;
-    drag.targetRaf = requestAnimationFrame(() => {
-      if (!drag) return;
-      drag.targetRaf = 0;
-      applyDragTarget(drag.pendingX, drag.pendingY);
-    });
-  }
-
-  function onCardPointerMove(event) {
-    if (!drag) return;
-    const dx = event.clientX - drag.startX;
-    const dy = event.clientY - drag.startY;
-    if (!drag.active) {
-      if (Math.hypot(dx, dy) < 6) return;
-      activateDrag();
-    }
-    positionGhost(event.clientX, event.clientY);
-    scheduleDragTarget(event.clientX, event.clientY);
-  }
-
-  // 幽灵卡飞向某元素位置再淡出（el 为空则原地淡出）
-  function flyGhostTo(ghost, el, done) {
-    if (!ghost) {
-      if (done) done();
-      return 0;
-    }
-    if (el) {
-      const r = el.getBoundingClientRect();
-      const gr = ghost.getBoundingClientRect();
-      const startLeft = Number(ghost.dataset.dragLeft);
-      const startTop = Number(ghost.dataset.dragTop);
-      const fromLeft = Number.isFinite(startLeft) ? startLeft : gr.left;
-      const fromTop = Number.isFinite(startTop) ? startTop : gr.top;
-      const dx = r.left - fromLeft;
-      const dy = r.top - fromTop;
-      const distance = Math.hypot(dx, dy);
-      const duration = Math.max(400, Math.min(680, 350 + distance * 0.19));
-      const start = ghost.style.transform || ('translate3d(' + fromLeft + 'px,' + fromTop + 'px,0) scale(1.035)');
-      const middleRect = { left: fromLeft + dx * 0.68, top: fromTop + dy * 0.68, scale: 1.018 };
-      const middle = 'translate3d(' + middleRect.left + 'px,' + middleRect.top + 'px,0) scale(1.018)';
-      const target = 'translate3d(' + r.left + 'px,' + r.top + 'px,0) scale(1)';
-      // 幽灵卡尺寸随飞行渐变到落定卡尺寸：今日卡(compact 240px)飞进满宽列时不再"啪"地跳变；
-      // 同列/跨列普通拖拽尺寸本就一致，此处为恒等变换、无副作用。
-      const startW = parseFloat(ghost.style.width) || gr.width;
-      const startH = parseFloat(ghost.style.height) || gr.height;
-      const midW = startW + (r.width - startW) * 0.66;
-      const midH = startH + (r.height - startH) * 0.66;
-      const animation = ghost.animate([
-        { transform: start, opacity: 1, width: startW + 'px', height: startH + 'px', offset: 0 },
-        { transform: middle, opacity: 1, width: midW + 'px', height: midH + 'px', offset: 0.66 },
-        { transform: target, opacity: 1, width: r.width + 'px', height: r.height + 'px', offset: 1 },
-      ], { duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' });
-      const finish = () => {
-        ghost.remove();
-        if (done) done();
-      };
-      animation.finished.catch(() => undefined).then(finish);
-      return duration;
-    } else {
-      const gr = ghost.getBoundingClientRect();
-      const start = ghost.style.transform || ('translate3d(' + gr.left + 'px,' + gr.top + 'px,0) scale(1.035)');
-      const animation = ghost.animate([
-        { transform: start, opacity: 1, offset: 0 },
-        { transform: 'translate3d(' + gr.left + 'px,' + (gr.top - 3) + 'px,0) scale(0.985)', opacity: 0, offset: 1 },
-      ], { duration: 230, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' });
-      animation.finished.catch(() => undefined).then(() => {
-        ghost.remove();
-        if (done) done();
-      });
-      return 230;
-    }
-  }
-
-  // 单一拖动层：幽灵卡移除后真卡才接管，彻底避免两张卡重叠形成残影。
-  function revealLandingCard(card) {
-    landingFlightId = '';
-    if (!card) return;
-    card.classList.remove('drag-source');
-    updateSelectionRing();
-    followSelectionRing(140);
-  }
-
-  function onCardPointerUp(event) {
-    if (!drag) return;
-    window.removeEventListener('pointermove', onCardPointerMove);
-    window.removeEventListener('pointerup', onCardPointerUp);
-    if (drag.active) {
-      if (drag.targetRaf) cancelAnimationFrame(drag.targetRaf);
-      drag.targetRaf = 0;
-      applyDragTarget(event.clientX, event.clientY); // 快速甩动松手时，最后一个落点也必须生效
-    }
-    const d = drag;
-    drag = null;
-    try { d.card.releasePointerCapture(d.pointerId); } catch (e) {}
-
-    if (!d.active) {            // 没移动 → 单击：选中高亮（今日卡与看板卡一致；双击才开详情）
-      selectTask(d.id);
-      return;
-    }
-
-    document.body.classList.remove('study-dragging');
-    state.selectedId = d.id;    // 落定后保持选中
-    suppressRenameClickId = d.id;
-    setTimeout(() => {
-      if (suppressRenameClickId === d.id) suppressRenameClickId = '';
-    }, 0);
-
-    // 列内落定：占位卡此刻已在本列目标位（实时让位只动 DOM、没动数据），按它在本列的
-    // DOM 顺序把数据排好 → 整体 render 物化落定卡 → 幽灵卡滑入显形。状态/今日标记都不变。
-    liveFlipAnims.forEach((anim) => anim.cancel());   // 收掉在飞的让位动画，避免与 render 打架
-    liveFlipAnims.clear();
-    landingFlightId = d.id;
-    reorderTasksByDom(d.originList);
-    render();
-    const placeholder = (d.originList && d.originList.querySelector(taskSelector(d.id)))
-      || document.querySelector(taskSelector(d.id));
-    flyGhostTo(d.ghost, placeholder, () => revealLandingCard(placeholder));
-    applySelected();            // 选中环回到落定卡
-    scheduleStudyReorder();     // 列内顺序持久化（状态未变，无需发 update）
-  }
+  scheduleActivityPreload();
 
   function moveTask(id, status) {
-    const task = findTask(id);
+    var task = findTask(id);
     if (!task || task.status === status) return;
-    const old = task.status;
+    var old = task.status;
     task.status = status;
-    render();
-    queueTaskPatch(task, { status }).catch((error) => {
+    var done = status === 'done';
+
+    var card = document.querySelector('.study-progress-card' + taskSelector(id));
+    if (card && !prefersReduced) {
+      replayClass(card, done ? 'is-completing' : 'is-reopening', 480);
+    }
+
+    // FLIP：捕获所有卡片位置，渲染后用 animateListMoves 做让位过渡
+    var prevRects = new Map();
+    if (!prefersReduced) {
+      if (progressListEl) captureListRectsInto(prevRects, progressListEl, '.study-progress-card');
+      if (completedListEl) captureListRectsInto(prevRects, completedListEl, '.study-progress-card');
+    }
+
+    // 让动画先起一帧，再触发增量同步（card/row 已在 DOM 中，sync 会更新它们）
+    var doRender = function () {
+      render();
+      if (!prefersReduced && prevRects.size) {
+        if (progressListEl) animateListMovesInto(progressListEl, '.study-progress-card', prevRects);
+        if (completedListEl) animateListMovesInto(completedListEl, '.study-progress-card', prevRects);
+      }
+    };
+    if (!prefersReduced && card) {
+      setTimeout(doRender, 60);
+    } else {
+      doRender();
+    }
+
+    queueTaskPatch(task, { status }).catch(function (error) {
       task.status = old;
       render();
       showToast(error.message);
@@ -2382,64 +3038,31 @@
 
   // 删除任务（移到学习回收站）。若关联了画布：入回收站即「解除绑定」，并把画布一并移入
   // 画布回收站（可恢复、非物理删除）。任务与画布从此各自独立，恢复互不牵连——风险低。
-  function trashTaskById(id, card) {
+  function trashTaskById(id) {
     const task = findTask(id);
     if (!task) return;
-    const canvasPath = task.linkedCanvas || '';
     const index = state.tasks.indexOf(task);
     if (index < 0) return;
 
-    // 与快速创建一致：界面先响应，后台随后按顺序持久化。连续点 × 时每张卡独立收起。
-    const trashedTask = Object.assign({}, task, { linkedCanvas: '' });
+    const trashedTask = Object.assign({}, task);
     state.tasks.splice(index, 1);
     state.trash.unshift({ task: trashedTask, deletedAt: new Date().toISOString() });
+    state.trash = state.trash.slice(0, STUDY_TRASH_LIMIT);
     trashEnterId = task.id;
     if (state.selectedId === id) state.selectedId = '';
-    if (card && !prefersReduced) {
-      const button = card.querySelector('.study-task-del');
-      if (button) button.disabled = true;
-      // 离场卡淡出 + 余下卡即时 FLIP 滑动补位（绝不整列重建，故不会掐断在飞动画 → 无残影）。
-      animateCardRemoval(card);
-      // 计数 / 统计 / 回收站即时同步；离场动画播完后再做一次「对账式」render——届时 DOM
-      // 已与 state 一致（卡片就地滑到位、离场卡已移除），重建无缝、FLIP 为空操作。
-      refreshLaneCounts();
-      renderTrash();
-      clearTimeout(deleteFlushTimer);
-      deleteFlushTimer = setTimeout(() => { deleteFlushTimer = null; render(); }, 300);
-    } else {
-      render();
-    }
-    renderStats();
-    updateSelectionRing();
+    render();
 
     trashChain = trashChain.catch(() => undefined).then(async () => {
       await ensureTaskCreated(task);
       trashedTask.id = task.id; // 刚快速创建又立刻删除时，回收站记录同步后端分配的真实 id
-      const pendingUpdate = taskUpdateChains.get(task);
-      if (pendingUpdate) await pendingUpdate.catch(() => undefined);
-      if (canvasPath) {
-        // 解除绑定：先清掉任务上的关联，回收站里的任务不再指向任何画布
-        await post('/api/study-task-update', { id: task.id, linkedCanvas: '' });
-      }
+      const pendingMutation = taskMutationChains.get(task);
+      if (pendingMutation) await pendingMutation.catch(() => undefined);
       await post('/api/study-task-trash', { id: task.id });
-      if (canvasPath) {
-        // 关联画布移入画布回收站（canvases/回收站/，连同 .assets，可在画布回收站恢复）
-        post('/api/trash', { path: canvasPath }).then(() => {
-          state.canvases = state.canvases.filter((canvas) => canvas.path !== canvasPath);
-        }).catch((error) => showToast('任务已删除，但关联画布移入回收站失败：' + error.message));
-      }
     }).catch((error) => {
       showToast('删除任务失败，正在恢复：' + error.message);
       refresh();
     });
-    showToast(canvasPath ? '任务与关联画布将移到回收站' : '任务已移到回收站');
-  }
-
-  function trashTask() {            // 弹窗「移到回收站」按钮
-    const id = state.dialogTaskId;
-    if (!id) return;
-    closeDialog();
-    trashTaskById(id);
+    showToast('任务已移到回收站');
   }
 
   async function restoreTask(id) {
@@ -2462,7 +3085,7 @@
   }
 
   async function deleteTask(id) {
-    if (!window.confirm('永久移除这条任务？此操作不可恢复（关联画布已在删除时单独进入画布回收站）。')) return;
+    if (!window.confirm(T('永久移除这条任务？此操作不可恢复。'))) return;
     lockTrashItem(id, true);
     try {
       await post('/api/study-task-delete', { id });
@@ -2473,128 +3096,6 @@
       lockTrashItem(id, false);
       showToast(error.message);
     }
-  }
-
-  function gotoCanvas(path, fresh) {
-    if (!path) return;
-    document.body.classList.add('canvas-route-leaving');
-    try { sessionStorage.setItem('canvas:route-from-start', '1'); } catch (e) {}
-    setTimeout(() => {
-      window.location.href = 'editor.html?file=' + encodeURIComponent(path)
-        + '&from=study' + (fresh ? '&fresh=1' : '');
-    }, 150);
-  }
-
-  async function createCanvas() {
-    const task = findTask(state.dialogTaskId);
-    if (!task) return;
-    try {
-      await saveDialog({ keepOpen: true });
-      await ensureTaskCreated(task);
-      const json = await post('/api/study-task-create-canvas', { id: task.id });
-      const index = state.tasks.indexOf(task);
-      if (index >= 0) Object.assign(state.tasks[index], json.task);
-      gotoCanvas(json.path, true);
-    } catch (error) {
-      showToast(error.message);
-    }
-  }
-
-  function openCanvas() {
-    const path = canvasSelect.value;
-    if (path) gotoCanvas(path, false);
-  }
-
-  function resetCanvasPanelMode() {
-    try {
-      const shell = canvasFrame.contentWindow && canvasFrame.contentWindow.EditorShell;
-      if (shell && typeof shell.setMode === 'function') shell.setMode('normal');
-    } catch (e) {}
-  }
-
-  // —— 迷你画布浮窗（Tab 滑出，内嵌 editor.html?embed=1）——
-  // 任务↔画布强关联：选中任务按 Tab，没画布就自动建一张并关联（不跳转），有就直接载入。
-  async function openCanvasPanel(taskId) {
-    const task = findTask(taskId);
-    if (!task) return;
-    try {
-      await ensureTaskCreated(task);
-    } catch (error) {
-      return;
-    }
-    let path = task.linkedCanvas;
-    if (!path) {
-      try {
-        const json = await post('/api/study-task-create-canvas', { id: task.id });
-        const idx = state.tasks.findIndex((t) => t.id === json.task.id);
-        if (idx >= 0) Object.assign(state.tasks[idx], json.task);
-        path = json.path;
-        state.canvases.push({ path: json.path, title: json.title });
-        showToast('已为该任务新建画布');
-      } catch (error) {
-        showToast(error.message);
-        return;
-      }
-    }
-    canvasPanelTitle.textContent = task.title || '任务画布';
-    if (path !== panelPath) {
-      // 切换任务：先淡出，新画布 load 完再淡入，遮住 iframe reload 的白闪
-      canvasFrame.classList.add('switching');
-      if (canvasLoading) canvasLoading.classList.add('show');
-      canvasFrame.addEventListener('load', () => {
-        resetCanvasPanelMode();
-        requestAnimationFrame(() => {
-          canvasFrame.classList.remove('switching');
-          if (canvasLoading) canvasLoading.classList.remove('show');
-        });
-      }, { once: true });
-      canvasFrame.src = 'editor.html?file=' + encodeURIComponent(path) + '&embed=1';
-      panelPath = path;
-    }
-    resetCanvasPanelMode();
-    clearTimeout(panelHideTimer);
-    canvasPanel.hidden = false;
-    requestAnimationFrame(() => canvasPanel.classList.add('open'));
-    panelOpen = true;
-  }
-
-  function closeCanvasPanel() {
-    if (!panelOpen) return;
-    canvasPanel.classList.remove('open');
-    panelOpen = false;
-    panelHideTimer = setTimeout(() => { canvasPanel.hidden = true; }, 320);
-  }
-
-  function canvasPanelFullscreen() {
-    if (panelPath) gotoCanvas(panelPath, false);
-  }
-
-  // 拖左缘调宽，宽度记 localStorage
-  function setupCanvasPanelResize() {
-    const handle = document.querySelector('[data-role="canvas-resize"]');
-    if (!handle) return;
-    try {
-      const saved = parseInt(localStorage.getItem('study:canvasPanelW'), 10);
-      if (saved >= 380) canvasPanel.style.setProperty('--panel-w', saved + 'px');
-    } catch (e) {}
-    handle.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      canvasPanel.classList.add('resizing');
-      try { handle.setPointerCapture(event.pointerId); } catch (e) {}
-      const onMove = (e) => {
-        const w = Math.max(380, Math.min(window.innerWidth * 0.96, window.innerWidth - e.clientX));
-        canvasPanel.style.setProperty('--panel-w', w + 'px');
-      };
-      const onUp = () => {
-        canvasPanel.classList.remove('resizing');
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        const cur = canvasPanel.style.getPropertyValue('--panel-w');
-        try { localStorage.setItem('study:canvasPanelW', parseInt(cur, 10) || 760); } catch (e) {}
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-    });
   }
 
   function openTrash() {
@@ -2644,33 +3145,23 @@
       return;
     }
     const buttons = Array.from(document.querySelectorAll('[data-action="archive-done"]'));
-    const lane = document.querySelector('.study-lane[data-status="done"]');
     if (buttons.some((button) => button.disabled)) return;
     buttons.forEach((button) => { button.disabled = true; });
     try {
       await Promise.all(done.map(async (task) => {
         await ensureTaskCreated(task);
-        const pendingUpdate = taskUpdateChains.get(task);
-        if (pendingUpdate) await pendingUpdate;
+        const pendingMutation = taskMutationChains.get(task);
+        if (pendingMutation) await pendingMutation;
       }));
       const json = await post('/api/study-archive-done');
       const archivedIds = new Set(json.archivedIds || []);
-      const trashedCanvasPaths = new Set((json.trashedCanvases || []).map((item) => item.from));
-      lane.classList.add('archive-success');
       buttons.forEach((button) => button.classList.add('archive-success'));
-      await dismissArchivedSelection(archivedIds);
-      if (viewMode === 'board') {
-        await animateArchiveCards(Array.from(lane.querySelectorAll('.study-task-card')));
-      } else {
+      if (viewMode === 'list') {
         const doneGroup = document.querySelector('.study-list-group[data-status="done"]');
         await animateArchiveRows(doneGroup);
       }
       state.tasks = state.tasks.filter((task) => !archivedIds.has(task.id));
-      state.canvases = state.canvases.filter((canvas) => !trashedCanvasPaths.has(canvas.path));
       render();
-      if (selectionRing) selectionRing.classList.remove('dismissing');
-      const empty = lane.querySelector('.study-lane-empty');
-      if (empty) empty.classList.add('archive-empty-enter');
       invalidateActivity();   // 归档只是搬走数据，完成历史仍按完成日留在活跃图上
       const archiveMessage = '已归档' + json.count + '项已完成任务';
       showToast(window.RelatumI18n ? window.RelatumI18n.t(archiveMessage) : archiveMessage);
@@ -2679,7 +3170,6 @@
     } finally {
       buttons.forEach((button) => { button.disabled = false; });
       setTimeout(() => {
-        lane.classList.remove('archive-success');
         buttons.forEach((button) => button.classList.remove('archive-success'));
       }, 860);
     }
@@ -2696,8 +3186,10 @@
     }
     if (!findTask(id)) return false;
     state.selectedId = id;
-    render();
-    openDialog(id);
+    if (viewMode !== 'progress') setViewMode('progress', false);
+    else render();
+    var menu = document.querySelector('.study-progress-card' + taskSelector(id) + ' .study-progress-menu');
+    if (menu) openProgressSettings(id, menu);
     return true;
   };
 
@@ -2708,15 +3200,8 @@
       if (requestId !== studyRefreshSeq) return false;
       state.tasks = json.tasks || [];
       state.trash = json.trash || [];
-      state.canvases = json.canvases || [];
-      state.focusByTask = json.focusByTask || {};
-      state.focusSessions = json.focusSessions || [];
       studyLoaded = true;
       render();
-      if (state.dialogTaskId) {
-        const task = findTask(state.dialogTaskId);
-        if (task) renderTaskFocusSummary(task);
-      }
       invalidateActivity();   // 顺带刷新一年活跃热力图
       return true;
     } catch (error) {
@@ -2753,244 +3238,113 @@
     return studyInitialLoad.then((success) => success === true && studyLoaded);
   }
 
-  document.querySelector('[data-action="new-task"]').addEventListener('click', createTask);
-  document.querySelectorAll('[data-action="quick-add"]').forEach((button) =>
-    button.addEventListener('click', () => quickAdd(button.dataset.status, button)));
-  document.querySelector('[data-action="study-trash"]').addEventListener('click', openTrash);
-  document.querySelectorAll('[data-action="close-dialog"]').forEach((button) => button.addEventListener('click', closeDialog));
-  document.querySelectorAll('[data-action="close-trash"]').forEach((button) => button.addEventListener('click', closeTrash));
-  document.querySelector('[data-action="trash-task"]').addEventListener('click', trashTask);
-  document.querySelector('[data-action="create-canvas"]').addEventListener('click', createCanvas);
-  document.querySelector('[data-action="open-canvas"]').addEventListener('click', openCanvas);
-  document.querySelector('[data-action="start-task-focus"]').addEventListener('click', () => {
-    const task = findTask(state.dialogTaskId);
-    if (!task) return;
-    closeDialog();
-    prepareTaskFocus(task);
+  const composeToggle = document.querySelector('[data-action="study-compose-toggle"]');
+  if (composeToggle) composeToggle.addEventListener('click', function () {
+    progressQuickAdd();
   });
-  document.querySelector('[data-action="empty-trash"]').addEventListener('click', openTrashConfirm);
-  document.querySelector('[data-action="study-trash-empty-cancel"]').addEventListener('click', closeTrashConfirm);
-  document.querySelector('[data-action="study-trash-empty-confirm"]').addEventListener('click', emptyTrash);
+  const todayPlaceholder = document.querySelector('[data-action="study-today-placeholder"]');
+  if (todayPlaceholder) todayPlaceholder.addEventListener('click', () => showToast('今日任务面板将在后续版本开放'));
+  const studyTrashButton = document.querySelector('[data-action="study-trash"]');
+  if (studyTrashButton) studyTrashButton.addEventListener('click', openTrash);
+  document.querySelectorAll('[data-action="close-trash"]').forEach((button) => button.addEventListener('click', closeTrash));
+  const emptyTrashButton = document.querySelector('[data-action="empty-trash"]');
+  if (emptyTrashButton) emptyTrashButton.addEventListener('click', openTrashConfirm);
+  const emptyTrashCancel = document.querySelector('[data-action="study-trash-empty-cancel"]');
+  if (emptyTrashCancel) emptyTrashCancel.addEventListener('click', closeTrashConfirm);
+  const emptyTrashConfirm = document.querySelector('[data-action="study-trash-empty-confirm"]');
+  if (emptyTrashConfirm) emptyTrashConfirm.addEventListener('click', emptyTrash);
   if (trashConfirm) {
     trashConfirm.addEventListener('mousedown', (event) => {
       if (event.target === trashConfirm) closeTrashConfirm();
     });
   }
-  document.querySelector('[data-action="archive-done"]').addEventListener('click', archiveDone);
-  document.querySelector('[data-action="close-canvas"]').addEventListener('click', closeCanvasPanel);
-  document.querySelector('[data-action="canvas-fullscreen"]').addEventListener('click', canvasPanelFullscreen);
-  setupCanvasPanelResize();
-  const studyView = document.querySelector('[data-role="study-view"]');
-  if (studyView) {
-    studyView.addEventListener('click', (event) => {
-      if (event.target.closest('.study-task-card, button, input, textarea, select, a')) return;
-      selectTask('');
-    });
-  }
-  canvasSelect.addEventListener('change', syncCanvasButtons);
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    saveDialog().catch((error) => showToast(error.message));
-  });
+  const archiveButton = document.querySelector('[data-role="study-progress-completed-column"] [data-action="archive-done"]');
+  if (archiveButton) archiveButton.addEventListener('click', archiveDone);
 
-  // ============ 今日专注 · 沉浸页 ============
-  const focusOverlay = document.querySelector('[data-role="focus-overlay"]');
-  const focusListEl = document.querySelector('[data-role="focus-list"]');
-  const focusConfetti = document.querySelector('[data-role="focus-confetti"]');
-
-  function cancelFocusCelebration() {
-    if (focusCelebrationRaf) cancelAnimationFrame(focusCelebrationRaf);
-    focusCelebrationRaf = 0;
-    if (!focusConfetti || !focusConfetti.width || !focusConfetti.height) return;
-    const ctx = focusConfetti.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, focusConfetti.width, focusConfetti.height);
-  }
-
-  function focusDateLabel() {
-    const d = new Date();
-    const wk = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
-    return d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 · ' + wk;
-  }
-
-  function openFocus() {
-    if (focusOpen || !focusOverlay) return;
-    focusOpen = true;
-    celebrated = false;
-    document.querySelector('[data-role="focus-date"]').textContent = focusDateLabel();
-    focusOverlay.hidden = false;
-    renderFocus();
-    requestAnimationFrame(() => focusOverlay.classList.add('show'));
-  }
-
-  function closeFocus() {
-    if (!focusOpen || !focusOverlay) return;
-    focusOpen = false;
-    cancelFocusCelebration();
-    focusOverlay.classList.remove('show');
-    if (prefersReduced) focusOverlay.hidden = true;
-    else setTimeout(() => { if (!focusOpen) focusOverlay.hidden = true; }, 360);
-  }
-
-  function renderFocus() {
-    if (!focusOpen || !focusOverlay) return;
-    const prevRects = captureListRects(focusListEl, '.study-focus-card');
-    const tasks = todayTasks();
-    const done = tasks.filter((t) => t.status === 'done').length;
-    const total = tasks.length;
-    // 进度环 + 计数
-    const fill = document.querySelector('[data-role="focus-ring-fill"]');
-    const C = 2 * Math.PI * 31;
-    const ratio = total ? done / total : 0;
-    if (fill) { fill.style.strokeDasharray = C.toFixed(1); fill.style.strokeDashoffset = (C * (1 - ratio)).toFixed(1); }
-    setAnimatedNumber(document.querySelector('[data-role="focus-done"]'), done);
-    document.querySelector('[data-role="focus-total"]').textContent = '/ ' + total;
-    // 列表
-    focusListEl.innerHTML = '';
-    if (!total) {
-      focusListEl.innerHTML = '<div class="study-focus-empty soft-enter">还没有今日任务。点下面的 ＋ 加一件，或回看板选中任务后按 G。</div>';
-    } else {
-      tasks.forEach((task) => focusListEl.appendChild(focusCard(task)));
-    }
-    requestAnimationFrame(() => animateListMoves(focusListEl, '.study-focus-card', prevRects));
-    focusStatusPopId = '';
-    renderCarryover();   // 沉浸页顶的顺延提醒
-    // 全部完成 → 庆祝
-    const allDone = total > 0 && done === total;
-    const celebrateEl = document.querySelector('[data-role="focus-celebrate"]');
-    if (allDone) {
-      celebrateEl.hidden = false;
-      if (!celebrated) { celebrated = true; burstConfetti(); }
-    } else {
-      celebrateEl.hidden = true;
-      celebrated = false;
-    }
-  }
-
-  function focusCard(task) {
-    const card = document.createElement('div');
-    card.className = 'study-focus-card' + (task.status === 'done' ? ' is-done' : '')
-      + (task.id === focusStatusPopId ? ' status-pop' : '');
-    card.dataset.id = task.id;
-    const checked = task.status === 'done';
-    card.innerHTML = [
-      '<button type="button" class="study-focus-check' + (checked ? ' on' : '') + '" aria-label="标记完成">' + (checked ? '✓' : '') + '</button>',
-      '<div class="study-focus-card-body">',
-      '<strong class="study-task-title">' + escapeHtml(task.title) + '</strong>',
-      '<div class="study-focus-card-meta">' + escapeHtml(STATUS_LABEL[task.status] || '')
-        + (task.linkedCanvas ? ' · 画布 ' + escapeHtml(canvasName(task.linkedCanvas)) : '') + '</div>',
-      '</div>',
-      '<button type="button" class="study-focus-start" aria-label="开始专注">专注</button>',
-      '<button type="button" class="study-focus-drop" aria-label="移出今日">移出</button>',
-    ].join('');
-    card.querySelector('.study-focus-check').addEventListener('click', (e) => {
-      e.stopPropagation();
-      focusStatusPopId = task.id;
-      moveTask(task.id, task.status === 'done' ? 'todo' : 'done');   // render() 会刷新沉浸页
-    });
-    card.querySelector('.study-focus-drop').addEventListener('click', (e) => {
-      e.stopPropagation();
-      removeFromToday(task);
-    });
-    card.querySelector('.study-focus-start').addEventListener('click', (e) => {
-      e.stopPropagation();
-      closeFocus();
-      prepareTaskFocus(task);
-    });
-    const titleEl = card.querySelector('.study-task-title');
-    titleEl.addEventListener('click', (e) => { e.stopPropagation(); beginRename(card, task, titleEl); });
-    return card;
-  }
-
-  function removeFromToday(task) {
-    const wasFocus = task.focusDay === today;
-    if (wasFocus) {
-      animateDetachedExit(focusListEl.querySelector('.study-focus-card' + taskSelector(task.id)), 'study-focus-exit-ghost');
-      task.focusDay = '';
-      render();
-      queueTaskPatch(task, { focusDay: '' })
-        .then(() => undefined)
-        .catch((err) => { showToast(err.message); refresh(); });
-    }
-  }
-
-  function quickAddFocus() {
-    if (!studyLoaded) {
-      ensureStudyLoaded().then((loaded) => { if (loaded) quickAddFocus(); });
-      return;
-    }
-    const task = createOptimisticTask({ title: '未命名', status: 'todo', focusDay: today });
-    render();   // focusOpen 时会刷新沉浸页列表
-    scheduleStudyReorder();
-    const card = focusListEl.querySelector('.study-focus-card' + taskSelector(task.id));
-    const titleEl = card && card.querySelector('.study-task-title');
-    if (card && titleEl) {
-      card.classList.add('quick-enter');
-      setTimeout(() => card.classList.remove('quick-enter'), 300);
-      beginRename(card, task, titleEl);   // 建完直接改名
-    }
-  }
-
-  // 庆祝彩带：纯 canvas 粒子，无依赖；暖色系无蓝，尊重 reduced-motion
-  function burstConfetti() {
-    if (prefersReduced || !focusConfetti) return;
-    const cv = focusConfetti;
-    const rect = cv.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const dpr = window.devicePixelRatio || 1;
-    cv.width = rect.width * dpr;
-    cv.height = rect.height * dpr;
-    const ctx = cv.getContext('2d');
-    ctx.scale(dpr, dpr);
-    const W = rect.width, H = rect.height;
-    const colors = ['#e8b84b', '#6d9d78', '#d98b6a', '#9a7bc8', '#e07a8b', '#cfa45b'];
-    const parts = [];
-    for (let i = 0; i < 140; i++) {
-      parts.push({
-        x: W / 2 + (Math.random() - 0.5) * 140, y: H * 0.40,
-        vx: (Math.random() - 0.5) * 10, vy: -7 - Math.random() * 9,
-        g: 0.16 + Math.random() * 0.13, s: 5 + Math.random() * 6,
-        rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.32,
-        color: colors[i % colors.length], life: 1,
-      });
-    }
-    cancelFocusCelebration();
-    const start = performance.now();
-    function frame(now) {
-      focusCelebrationRaf = 0;
-      const t = now - start;
-      ctx.clearRect(0, 0, W, H);
-      let alive = false;
-      for (const p of parts) {
-        p.vy += p.g; p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.vx *= 0.99;
-        if (t > 1700) p.life -= 0.02;
-        if (p.life > 0 && p.y < H + 24) {
-          alive = true;
-          ctx.save();
-          ctx.globalAlpha = Math.max(0, p.life);
-          ctx.translate(p.x, p.y); ctx.rotate(p.rot);
-          ctx.fillStyle = p.color;
-          ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.62);
-          ctx.restore();
+  // 里程碑弹窗 & 进度条里程碑 tooltip 的事件代理
+  if (studyViewEl) {
+    studyViewEl.addEventListener('click', function (event) {
+      // 里程碑弹窗内的按钮
+      if (studyMilestoneDialog) {
+        var action = event.target.closest('[data-action]');
+        if (action) {
+          if (action.dataset.action === 'study-milestone-add') {
+            if (!action.disabled) {
+              var row = appendStudyMilestoneDraftRow({ id: progressMilestoneDraftId(), name: '', at: 0 }, true);
+              var input = row && row.querySelector('[data-role="study-milestone-name"]');
+              if (input) input.focus();
+              setStudyMilestoneDialogError('');
+            }
+            return;
+          }
+          if (action.dataset.action === 'study-milestone-remove') {
+            var row = action.closest('.study-milestone-row');
+            if (!row) return;
+            var finish = function () { if (row.isConnected) row.remove(); updateStudyMilestoneAddState(); };
+            if (prefersReduced) finish();
+            else {
+              row.classList.add('is-leaving');
+              row.addEventListener('animationend', finish, { once: true });
+              window.setTimeout(finish, 220);
+            }
+            setStudyMilestoneDialogError('');
+            return;
+          }
+          if (action.dataset.action === 'study-milestone-cancel') { closeStudyMilestoneDialog(false); return; }
+          if (action.dataset.action === 'study-milestone-confirm') { closeStudyMilestoneDialog(true); return; }
+        }
+        if (event.target === studyMilestoneDialog) {
+          closeStudyMilestoneDialog(false);
+          return;
         }
       }
-      if (alive && focusOpen) focusCelebrationRaf = requestAnimationFrame(frame);
-      else ctx.clearRect(0, 0, W, H);
-    }
-    focusCelebrationRaf = requestAnimationFrame(frame);
+      // 进度条里程碑 tooltip（触屏点击固定）
+      var milestone = event.target.closest('.study-progress-milestone');
+      if (milestone) {
+        event.preventDefault();
+        event.stopPropagation();
+        var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        if (coarse) {
+          studyViewEl.querySelectorAll('.study-progress-milestone.is-tip-pinned').forEach(function (item) {
+            if (item !== milestone) item.classList.remove('is-tip-pinned');
+          });
+          milestone.classList.toggle('is-tip-pinned');
+        }
+        return;
+      }
+    });
   }
 
-  document.querySelectorAll('[data-action="focus-close"]').forEach((b) => b.addEventListener('click', closeFocus));
-  document.querySelectorAll('[data-action="focus-add"]').forEach((b) => b.addEventListener('click', quickAddFocus));
-  document.querySelectorAll('[data-action="carryover-pull"]').forEach((b) => b.addEventListener('click', carryoverPull));
-  document.querySelectorAll('[data-action="carryover-dismiss"]').forEach((b) => b.addEventListener('click', carryoverDismiss));
+  // 全局点击：关闭已固定的里程碑 tooltip、取消浮动设置卡；点击弹窗遮罩关闭
+  document.addEventListener('click', function (event) {
+    if (!event.target.closest('.study-progress-milestone')) {
+      document.querySelectorAll('.study-progress-milestone.is-tip-pinned').forEach(function (item) {
+        item.classList.remove('is-tip-pinned');
+      });
+    }
+    if (studyMilestoneDialog && event.target === studyMilestoneDialog) {
+      closeStudyMilestoneDialog(false);
+      return;
+    }
+    if (!studyMilestoneDialog && progressSettingsPopover
+        && !progressSettingsPopover.contains(event.target)
+        && !(progressSettingsTrigger && progressSettingsTrigger.contains(event.target))) {
+      closeProgressSettings(true);
+    }
+  });
+
+  window.addEventListener('resize', scheduleProgressSettingsPosition);
+  window.addEventListener('scroll', scheduleProgressSettingsPosition, true);
 
   document.addEventListener('keydown', (event) => {
-    // 沉浸页打开时优先接管：F/Esc 退出；输入态（改名）放行；其它键吞掉不驱动看板
-    if (focusOpen) {
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)
-        || (document.activeElement && document.activeElement.isContentEditable);
-      if (typing) return;
-      if (event.key === 'f' || event.key === 'F' || event.key === 'Escape') { event.preventDefault(); closeFocus(); }
+    // 里程碑弹窗打开时优先处理
+    if (studyMilestoneDialog) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeStudyMilestoneDialog(false);
+        return;
+      }
       return;
     }
     if (trashConfirm && !trashConfirm.hidden) {
@@ -3001,105 +3355,13 @@
       return;
     }
     if (event.key === 'Escape') {
-      if (panelOpen) { event.preventDefault(); closeCanvasPanel(); return; }
-      if (!dialog.hidden) closeDialog();
-      else if (!trashPanel.hidden) closeTrash();
-    }
-    const boardKeysReady = studyVisible() && viewMode === 'board' && dialog.hidden && trashPanel.hidden && !panelOpen
-      && !/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)
-      && !(document.activeElement && document.activeElement.isContentEditable);
-
-    // Tab：选中任务 → 滑出迷你画布浮窗（再按 Tab 关闭）
-    if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      if (panelOpen) { event.preventDefault(); closeCanvasPanel(); return; }
-      if (boardKeysReady && state.selectedId && findTask(state.selectedId)) {
+      if (progressSettingsPopover) {
         event.preventDefault();
-        openCanvasPanel(state.selectedId);
-        return;
+        closeProgressSettings(true);
+      } else if (!trashPanel.hidden) {
+        closeTrash();
       }
     }
-
-    if ((event.key === 'n' || event.key === 'N') && boardKeysReady) {
-      event.preventDefault();
-      createTask();
-      return;
-    }
-
-    if ((event.key === 'f' || event.key === 'F') && boardKeysReady) {
-      event.preventDefault();
-      openFocus();
-      return;
-    }
-
-    // G：选中任务在「今日专注」与看板之间切换（看板→今日 / 今日→放回待办）
-    if ((event.key === 'g' || event.key === 'G') && boardKeysReady) {
-      if (state.selectedId && findTask(state.selectedId)) {
-        event.preventDefault();
-        toggleSelectedTodayFocus();
-      }
-      return;
-    }
-
-    if (boardKeysReady && !event.altKey && !event.ctrlKey && !event.metaKey) {
-      switch (event.key) {
-        case 'ArrowUp':    event.preventDefault(); moveSelectionVertical(-1); return;
-        case 'ArrowDown':  event.preventDefault(); moveSelectionVertical(1); return;
-        case 'ArrowLeft':  event.preventDefault(); moveSelectedTaskHorizontal(-1); return;
-        case 'ArrowRight': event.preventDefault(); moveSelectedTaskHorizontal(1); return;
-        case 'Enter':
-          if (state.selectedId && findTask(state.selectedId)) { event.preventDefault(); openDialog(state.selectedId); }
-          return;
-        default: break;
-      }
-    }
-  });
-
-  // 滚动、尺寸变化与浏览器布局抖动：持续把选中环复位到真实卡片位置。
-  const studyMain = document.querySelector('.study-main');
-  if (studyMain) studyMain.addEventListener('scroll', () => followSelectionRing(120), { passive: true });
-  window.addEventListener('resize', () => {
-    if (selectionRing && selectionRing.classList.contains('show')) followSelectionRing(260);
-  });
-  let selectionSafetyTimer = 0;
-  function syncSelectionSafetyTimer(active) {
-    if (active && !selectionSafetyTimer) {
-      selectionSafetyTimer = window.setInterval(() => {
-        if (document.hidden) return;
-        if (selectionRing && selectionRing.classList.contains('show')) updateSelectionRing();
-      }, 900); // 保险复位：即使遇到未监听到的布局变化，最迟 0.9 秒自动贴回
-    } else if (!active && selectionSafetyTimer) {
-      window.clearInterval(selectionSafetyTimer);
-      selectionSafetyTimer = 0;
-    }
-  }
-  function stopStudyBackgroundWork() {
-    syncSelectionSafetyTimer(false);
-    selectionFollowUntil = 0;
-    if (selectionFollowRaf) cancelAnimationFrame(selectionFollowRaf);
-    selectionFollowRaf = 0;
-    if (cadenceInteractionCleanup) cadenceInteractionCleanup();
-    cancelFocusCelebration();
-  }
-  syncSelectionSafetyTimer(studyVisible() && !document.hidden);
-  document.addEventListener('start:viewchange', (event) => {
-    const current = event.detail && event.detail.current;
-    syncSelectionSafetyTimer(current === 'study' && !document.hidden);
-    if (current === 'study') ensureStudyLoaded();
-    else {
-      selectionFollowUntil = 0;
-      if (selectionFollowRaf) cancelAnimationFrame(selectionFollowRaf);
-      selectionFollowRaf = 0;
-      cancelFocusCelebration();
-    }
-    if (current !== 'cadence' && cadenceInteractionCleanup) cadenceInteractionCleanup();
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopStudyBackgroundWork();
-    else syncSelectionSafetyTimer(studyVisible());
-  });
-  window.addEventListener('pagehide', stopStudyBackgroundWork);
-  window.addEventListener('pageshow', (event) => {
-    if (event.persisted) syncSelectionSafetyTimer(studyVisible());
   });
 
   window.addEventListener('canvas:starmap-motion-change', () => {
@@ -3108,6 +3370,10 @@
     if (host) mountStarGraph(host, activityPayload, { intro: true });
   });
   document.addEventListener('relatum:languagechange', () => {
+    document.querySelectorAll('.study-progress-card[data-id]').forEach(function (card) {
+      var task = findTask(card.dataset.id);
+      if (task) syncProgressCardFromTask(card, task);
+    });
     if (!activityPayload) return;
     const host = document.querySelector('[data-role="study-cadence"]');
     if (host) renderCadence(activityPayload, { intro: false });

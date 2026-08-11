@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import app
 
@@ -9,11 +10,14 @@ import app
 class DailyGoalTests(unittest.TestCase):
     def setUp(self):
         self.original_daily_file = app.DAILY_FILE
+        self.original_daily_backup_file = app.DAILY_BACKUP_FILE
         self.temp_dir = tempfile.TemporaryDirectory()
         app.DAILY_FILE = Path(self.temp_dir.name) / "daily.json"
+        app.DAILY_BACKUP_FILE = Path(self.temp_dir.name) / "daily.backup.json"
 
     def tearDown(self):
         app.DAILY_FILE = self.original_daily_file
+        app.DAILY_BACKUP_FILE = self.original_daily_backup_file
         self.temp_dir.cleanup()
 
     def test_legacy_v3_task_defaults_to_no_cumulative_goal(self):
@@ -72,11 +76,65 @@ class DailyGoalTests(unittest.TestCase):
         undone = app.daily_toggle({"id": task_id, "done": False})
         self.assertFalse(undone["tasks"][0]["doneToday"])
         self.assertEqual(undone["tasks"][0]["totalDays"], 0)
+        self.assertEqual(undone["tasks"][0]["streak"], 0)
+        self.assertEqual(undone["tasks"][0]["bestStreak"], 0)
         self.assertEqual(undone["tasks"][0]["targetDays"], 100)
         self.assertEqual(undone["tasks"][0]["milestones"], milestones)
 
         focused = app.daily_add_minutes({"id": task_id, "minutes": 25})
         self.assertEqual(focused["tasks"][0]["milestones"], milestones)
+
+    def test_check_in_undo_after_reload_restores_all_statistics(self):
+        created = app.daily_create({"name": "reload undo"})
+        task_id = created["tasks"][0]["id"]
+
+        checked = app.daily_toggle({"id": task_id, "done": True})["tasks"][0]
+        self.assertEqual((checked["totalDays"], checked["streak"], checked["bestStreak"]), (1, 1, 1))
+        self.assertTrue(app.load_daily()["tasks"][0].get("undo"))
+
+        undone = app.daily_toggle({"id": task_id, "done": False})["tasks"][0]
+        self.assertEqual((undone["totalDays"], undone["streak"], undone["bestStreak"]), (0, 0, 0))
+        self.assertEqual(undone["doneDates"], [])
+        self.assertEqual(undone["lastDoneDate"], "")
+
+    def test_repeated_desired_check_state_is_idempotent(self):
+        task_id = app.daily_create({"name": "idempotent"})["tasks"][0]["id"]
+
+        app.daily_toggle({"id": task_id, "done": True})
+        checked_twice = app.daily_toggle({"id": task_id, "done": True})["tasks"][0]
+        self.assertEqual(checked_twice["totalDays"], 1)
+        self.assertEqual(checked_twice["doneDates"], [app._today_iso()])
+
+        app.daily_toggle({"id": task_id, "done": False})
+        undone_twice = app.daily_toggle({"id": task_id, "done": False})["tasks"][0]
+        self.assertEqual(undone_twice["totalDays"], 0)
+        self.assertEqual(undone_twice["bestStreak"], 0)
+        self.assertEqual(undone_twice["doneDates"], [])
+
+    def test_cross_day_rollover_preserves_history_and_starts_new_streak_day(self):
+        with mock.patch.object(app, "_today_iso", return_value="2026-08-10"):
+            task_id = app.daily_create({"name": "rollover"})["tasks"][0]["id"]
+            first = app.daily_toggle({"id": task_id, "done": True})["tasks"][0]
+            self.assertEqual((first["totalDays"], first["streak"], first["bestStreak"]), (1, 1, 1))
+
+        with mock.patch.object(app, "_today_iso", return_value="2026-08-11"):
+            rolled = app.daily_public_payload()["tasks"][0]
+            self.assertFalse(rolled["doneToday"])
+            self.assertEqual((rolled["totalDays"], rolled["streak"], rolled["bestStreak"]), (1, 1, 1))
+            second = app.daily_toggle({"id": task_id, "done": True})["tasks"][0]
+            self.assertEqual((second["totalDays"], second["streak"], second["bestStreak"]), (2, 2, 2))
+
+    def test_corrupt_primary_recovers_backup_and_preserves_corrupt_copy(self):
+        task_id = app.daily_create({"name": "backup value"})["tasks"][0]["id"]
+        app.daily_update({"id": task_id, "name": "new value"})
+        app.DAILY_FILE.write_text("{not json", encoding="utf-8")
+
+        recovered = app.load_daily()
+
+        self.assertEqual(recovered["tasks"][0]["name"], "backup value")
+        self.assertTrue(list(Path(self.temp_dir.name).glob("daily.corrupt-*.json")))
+        restored = json.loads(app.DAILY_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(restored["tasks"][0]["name"], "backup value")
 
     def test_create_and_update_six_sorted_milestones_with_stable_ids(self):
         source = [

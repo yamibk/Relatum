@@ -55,7 +55,7 @@
   const fileStatsCache = new Map();
   let fileStatsObserver = null;
   let draggingPath = null;   // 3c：正在拖拽的文件路径（dataTransfer 的兜底）
-  let flashImportPath = null; // 刚从外部拖入导入的画布路径，渲染后播一次入场动画
+  const flashImportPaths = new Set(); // 新导入画布的路径，渲染后各播一次入场动画
   // 3d：键盘归类
   let panelFiles = [];       // 右栏当前显示的文件（= filesOf(activeGroup)）
   let selectedIndex = -1;    // 右栏键盘选中项下标（-1=未选）
@@ -380,7 +380,7 @@
 
   const START_HELP_PAGES = [
     { id: 'start', eyebrow: '01 · START', title: '起始页', sections: [
-      ['开始第一张画布', '右上角可以新建空白画布、打开已有 <code>.canvas</code> 文件，或把 Markdown 文件夹导入为一张新画布。', [['新建画布', '进入空白画布，在空白处双击创建第一张卡片。'], ['打开文件', '选择已有的 <code>.canvas</code> 文件。'], ['导入 MD', '把 Markdown 文件夹整理为一张新的知识画布。']]],
+      ['开始第一张画布', '右上角可以新建空白画布，也可以把外部 <code>.canvas</code> 或整个画布文件夹复制导入本项目。', [['新建画布', '进入空白画布，在空白处双击创建第一张卡片。'], ['导入画布', '复制一张 <code>.canvas</code> 和同名素材目录，然后打开项目内副本。'], ['导入文件夹', '严格检查并整批导入顶层画布与同名素材。']]],
       ['书脊与翻页', '左侧像书脊一样的入口连接不同页面。最顶端是「速记」灵感墙，往下小矩形是活跃热力图，「学」是学习页，黑色圆点是当前画布页，浅色圆点是其它分组，<strong>+</strong> 用来新建分组。', [['鼠标放在左侧书脊滚轮', '在速记、活跃页、学习页、最近和各分组之间循环翻页。'], ['鼠标放在右侧画布列表滚轮', '只滚动当前页里的文件列表，不会误翻页。'], ['点击圆点', '直接进入对应分组。']]],
       ['速记灵感墙', '书脊最顶端的「速记」是一面与画布、学习任务完全独立的无界面灵感墙。便签、连线、视野会自动保存；深色模式下连线会显示为蓝色荧光。', [['双击空白处', '在落点生成一张随机果冻色便签。'], ['双击便签', '进入文字编辑；按 <kbd>Esc</kbd> 或点到别处结束。'], ['拖动便签', '自由摆放；压到另一张上会叠成一摞，悬停时扇形展开，滚轮可翻动最上面一张。'], ['左键在空白处快速划一刀', '划过便签、连线或箭头即可删除。'], ['右键拖动', '拖出自由箭头；端点落在便签上后会跟随便签移动。'], ['<kbd>Alt</kbd> + 拖动便签', '把一张便签连接到另一张便签。']]],
       ['速记创建与关联', '无需寻找按钮，鼠标位置和当前便签就是新内容的落点。新建后会直接进入输入。', [['<kbd>N</kbd>', '在鼠标位置新建便签；鼠标不在墙面时在视野中央新建。'], ['<kbd>Enter</kbd>', '在当前便签右侧续写一张便签。'], ['<kbd>Shift</kbd> + <kbd>Enter</kbd>', '在当前便签下方续写。'], ['<kbd>Tab</kbd>', '在右侧新建便签并自动连接当前便签。'], ['<kbd>Shift</kbd> + <kbd>Tab</kbd>', '在下方新建便签并自动连接。']]],
@@ -391,20 +391,17 @@
       ['客户端设置', '起始页右下角齿轮用于设置桌面客户端从最大化恢复后的窗口尺寸。可以选择紧凑、均衡、宽敞，也可以填写自定义宽高。设置会按当前显示器可用区域自动约束。'],
     ]},
     { id: 'study', eyebrow: '02 · STUDY', title: '学习页', sections: [
-      ['学习页入口', '点击左侧书脊里的「学」进入学习页。页面由今日任务、待办、进行中和已完成组成。左侧书脊最上方的小矩形可以进入活跃热力图，回看一年里完成任务的节奏。'],
-      ['新建与整理任务', '右上角「新建任务」会打开完整详情；待办列标题旁的 <strong>+</strong> 适合快速记下一条任务。任务卡可以拖动排序，也可以用方向键跨列移动。', [['单击任务标题', '直接就地改名。'], ['双击任务卡', '打开任务详情。'], ['任务卡右上角 <strong>×</strong>', '快速移到任务回收站。'], ['在同一列内拖动任务卡', '调整任务顺序；今日栏里的任务也可以横向拖动排序。']]],
-      ['任务详情与关联画布', '详情里可以填写状态、截止日期、标签、备注，并关联一张已有画布，或新建一张画布后立即关联。', [['关联后锁定', '任务一旦关联画布，就不能再随意改绑或解除。'], ['删除任务', '关联画布会一起进入画布回收站；任务与画布随后解除绑定，各自可以独立恢复。'], ['打开关联画布', '进入完整画布界面继续整理思考。']]],
-      ['今日专注', '选中任务后按 <kbd>G</kbd>，可以加入或移出今天的专注列表。按 <kbd>F</kbd> 打开沉浸式「今日专注」页面。跨天仍未完成的专注任务会在第二天温和提醒是否顺延。'],
-      ['迷你画布', '选中已经关联画布的任务后按 <kbd>Tab</kbd>，画布会从右侧滑出。可以在任务看板旁边快速记录；再次按 <kbd>Tab</kbd> 或按 <kbd>Esc</kbd> 收起。浮窗顶部还能切换到完整画布界面。'],
-      ['归档与回收站', '已完成列右上角的「归档」会保存完成记录，把关联画布移入画布回收站，并清空已完成列。学习页顶部的回收站只管理任务；画布恢复请到起始页左侧的画布回收站。'],
+      ['学习页入口', '点击左侧书脊里的「学」进入学习页；再次点击可以在极简清单和单位进度面板之间切换。左侧书脊最上方的小矩形仍可进入活跃热力图。'],
+      ['新建与推进任务', '进度面板右上角的 <strong>+</strong> 可以快速写下任务。进入详情后设置目标总量、单位和任务点，再用卡片上的 −1 / +1 推进；达到目标后仍由你手动标记完成。', [['单击任务卡', '设置或编辑目标与任务点。'], ['左侧圆圈', '手动完成或恢复任务。'], ['已完成', '展开完成区后可以归档。'], ['今日任务', '入口已经预留，面板将在后续版本开放。']]],
+      ['轻量详情', '学习任务只保留标题、目标、单位和任务点。专注钟、日历与画布不再绑定学习任务，让这里保持成一张独立、安静的进度清单。'],
+      ['归档与回收站', '完成区的「归档」会保存完成记录并清空已完成任务；归档仍计入活跃页。任务回收站支持恢复和永久清空。'],
       ['活跃页与足迹星图', '左侧书脊上方的小矩形进入活跃页：一年完成节奏的热力图，下方还有本月完成、连续推进、累计归档三枚小统计，以及最近归档的任务。再往下是一张「足迹星图」，把已归档的完成任务连成一片个人星空。', [['年份圆点 / 滚轮', '按自然年翻页，分别回看每一年的记录。'], ['正常 / 总览', '正常星图是「我 → 月 → 任务」三层；总览是「我 → 年 → 月 → 任务」四层。'], ['纯回望', '星图只用于回看，不跳转画布——归档后画布已经在回收站里。']]],
-      ['键盘操作', '选中任务卡后，可以快速整理状态或进入专注。', [['<kbd>N</kbd>', '新建任务。'], ['<kbd>↑</kbd> / <kbd>↓</kbd>', '在任务卡之间移动选择。'], ['<kbd>←</kbd> / <kbd>→</kbd>', '把任务移到相邻状态列。'], ['<kbd>Enter</kbd>', '打开所选任务详情。'], ['<kbd>Tab</kbd>', '打开 / 收起所选任务的迷你画布。'], ['<kbd>F</kbd>', '进入 / 退出「今日专注」。'], ['<kbd>G</kbd>', '把所选任务加入 / 移出「今日专注」。']]],
     ]},
     { id: 'normal', eyebrow: '03 · NORMAL', title: '普通模式', sections: [
-      ['两种普通模式', '新建画布默认进入「简洁普通模式」：顶部只保留最常用入口，让空白更安静。再次点击顶部「普通」，会切换到完整普通模式，显示图谱、脑图、背景、导出 MD 等按钮。', [['简洁普通模式', '适合专注记录，不被额外控件打扰。'], ['完整普通模式', '适合整理、导出和调用辅助视图。']]],
+      ['两种普通模式', '新建画布默认进入「简洁普通模式」：顶部只保留最常用入口，让空白更安静。再次点击顶部「普通」，会切换到完整普通模式，显示图谱、脑图、背景、导出 PNG 等按钮。', [['简洁普通模式', '适合专注记录，不被额外控件打扰。'], ['完整普通模式', '适合整理、导出和调用辅助视图。']]],
       ['创建、连接与移动', '普通模式已经覆盖大多数日常操作。', [['双击空白处', '新建卡片节点。'], ['右侧「卡片 / 便签」小浮窗', '完整普通模式下切换接下来新建卡片还是便签；便签正文常驻显示，适合一小段灵感。'], ['<kbd>N</kbd>', '在鼠标附近或视野中心新建节点。'], ['<kbd>Tab</kbd>', '为当前节点创建子节点。'], ['<kbd>Enter</kbd>', '为当前节点创建兄弟节点。'], ['<kbd>Alt</kbd> + 从节点拖动', '创建连线。'], ['<kbd>Space</kbd> + 拖动', '平移视野；滚轮用于锚点缩放。'], ['方向键', '平移视野。']]],
       ['编辑、搜索与保存', '卡片标题适合短句，正文可以承接 Markdown、公式和较长笔记。改动默认会自动保存，右下角齿轮里可以关掉、回到纯手动。', [['<kbd>F2</kbd>', '编辑选中节点标题。'], ['<kbd>F</kbd>', '阅读并编辑正文节点（索引 / 预览 / 卡片 / 便签 / 代码）；选中 PDF 时打开阅读批注浮层。'], ['正文阅读浮层里 <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd>', '钢笔 / 盒子 / 橡皮，在正文上做空间批注；独立保存，不进导出。'], ['<kbd>Ctrl</kbd> + <kbd>F</kbd>', '搜索节点。'], ['<kbd>Ctrl</kbd> + <kbd>S</kbd>', '立即保存（自动保存已开时也可随时手动存）。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做。'], ['<kbd>Delete</kbd>', '删除选中的节点、连线或装饰。'], ['顶部「清理附件」', '删除当前画布资源文件夹里没有被任何节点引用的图片 / 附件。']]],
-      ['正文、公式与选区标注', '正文支持轻量 Markdown 和本地数学公式。编辑节点文字或正文时，选中一段文字会浮出工具栏，可以添加高光、字色和字号。标记会保留在正文里，导出 Markdown 时自然携带。', [['<code>## 标题</code>', '二级标题；<code>###</code> 是三级标题。'], ['<code>**加粗**</code> / <code>*斜体*</code>', '基础强调。'], ['<code>- 列表项</code> / <code>1. 列表项</code>', '无序与有序列表。'], ['<code>$E=mc^2$</code> / <code>$$…$$</code>', '行内公式与块级公式。'], ['<code>==高光==</code> / <code>{hl:red|文字}</code>', '默认黄色高光；选区工具栏可切换多种颜色。'], ['<code>{tc:red|文字}</code> / <code>{fs:lg|文字}</code>', '字色与字号标记。'], ['右下角 <strong>fx</strong> 面板', '打开公式 / 符号面板，向正在编辑的标题或正文插入 LaTeX 片段；先选中文字再点结构键会包裹选区。'], ['<code>\\label</code> / <code>\\eqref</code>', '同一段正文里点击公式引用，会跳转并闪烁目标公式。']]],
+      ['正文、公式与选区标注', '正文支持轻量 Markdown 和本地数学公式。编辑节点文字或正文时，选中一段文字会浮出工具栏，可以添加高光、字色和字号；这些标记会随画布保存。', [['<code>## 标题</code>', '二级标题；<code>###</code> 是三级标题。'], ['<code>**加粗**</code> / <code>*斜体*</code>', '基础强调。'], ['<code>- 列表项</code> / <code>1. 列表项</code>', '无序与有序列表。'], ['<code>$E=mc^2$</code> / <code>$$…$$</code>', '行内公式与块级公式。'], ['<code>==高光==</code> / <code>{hl:red|文字}</code>', '默认黄色高光；选区工具栏可切换多种颜色。'], ['<code>{tc:red|文字}</code> / <code>{fs:lg|文字}</code>', '字色与字号标记。'], ['右下角 <strong>fx</strong> 面板', '打开公式 / 符号面板，向正在编辑的标题或正文插入 LaTeX 片段；先选中文字再点结构键会包裹选区。'], ['<code>\\label</code> / <code>\\eqref</code>', '同一段正文里点击公式引用，会跳转并闪烁目标公式。']]],
       ['任务簿节点计时', '任务簿里的叶子任务放到画布后，把鼠标停在节点上，会从节点左侧浮出 <strong>▶</strong>。点击即可开始该节点计时，运行时同一位置显示 <strong>Ⅱ</strong> 用于暂停。'],
       ['左侧工具栏与右下角设置', '鼠标移到画布左缘，会浮出自由书写、橡皮、文字、三种箭头和三种手绘图形。右下角齿轮可以调节方向键平移速度、滚轮缩放速度和手写笔压感。右下角 <strong>?</strong> 仍保留编辑器快捷键速查。'],
       ['脑图自动整理', '在完整普通模式里，先选中需要整理的节点，再点顶部「脑图」。可以选择向右树形、向左树形、向下树形或放射星形。中心节点会优先选择连线最多的那个；没有连线的散节点会自动连接到中心。'],
@@ -1392,6 +1389,9 @@
       cancelPendingDelete();
       closeContextMenu();
       showView('study');
+      if (window.StudyView && typeof window.StudyView.activate === 'function') {
+        window.StudyView.activate();
+      }
       return;
     }
     showView(listViewName());
@@ -1933,17 +1933,23 @@
       fileList.appendChild(li);
     });
     observeVisibleFileStats();
-    if (flashImportPath) {
-      let flashLi = null;
+    if (flashImportPaths.size) {
+      const flashItems = [];
       fileList.querySelectorAll('.recent-item').forEach((li) => {
-        if (li.dataset.path === flashImportPath) flashLi = li;
+        if (flashImportPaths.has(li.dataset.path)) flashItems.push(li);
       });
-      flashImportPath = null;
-      if (flashLi && !prefersReduced) {
-        flashLi.animate([
-          { opacity: 0, transform: 'translateY(-7px) scale(0.97)' },
-          { opacity: 1, transform: 'translateY(0) scale(1)' },
-        ], { duration: 340, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
+      flashImportPaths.clear();
+      if (!prefersReduced) {
+        flashItems.forEach((item, index) => {
+          item.animate([
+            { opacity: 0, transform: 'translateY(-7px) scale(0.97)' },
+            { opacity: 1, transform: 'translateY(0) scale(1)' },
+          ], {
+            duration: 340,
+            delay: Math.min(index * 34, 238),
+            easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)',
+          });
+        });
       }
     }
     if (prevRects) requestAnimationFrame(() => animateRecentMoves(prevRects));
@@ -2453,7 +2459,7 @@
       if (res) { lastPath = res.path; count += 1; if (res.hasAssets) assetsWarned = true; }
     }
     if (!count) return;
-    flashImportPath = lastPath;
+    flashImportPaths.add(lastPath);
     if (gid && gid !== activeGroup) { activeGroup = gid; saveActive(); }
     await refresh();
     if (assetsWarned) {
@@ -2773,17 +2779,71 @@
     });
   });
 
-  document.querySelectorAll('[data-action="open"]').forEach((btn) => {
+  document.querySelectorAll('[data-action="import-canvas-file"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
-        const resp = await fetch('/api/pick', { method: 'POST' });
+        const resp = await fetch('/api/import-canvas-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group: targetGroupForActivePage() }),
+        });
         const json = await resp.json();
         if (json.cancelled) return;
-        if (resp.ok && json.path) gotoEditor(json.path);
-        else alert(json.error || '打开失败');
+        if (resp.ok && json.path) {
+          if (json.missingAssetCount > 0) {
+            window.alert(englishUI()
+              ? ('The canvas was imported, but ' + json.missingAssetCount
+                + ' referenced asset(s) are missing. Ask the sender for the matching .assets folder.')
+              : ('画布已导入，但有 ' + json.missingAssetCount
+                + ' 个引用素材缺失。请让发送方一并提供同名 .assets 文件夹。'));
+          }
+          gotoEditor(json.path);
+        } else {
+          window.alert(json.error || '导入失败');
+        }
       } catch (err) {
-        alert('打开失败：' + err.message);
+        window.alert('导入失败：' + err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-action="import-canvas-folder"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/import-canvas-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group: targetGroupForActivePage() }),
+        });
+        const json = await resp.json();
+        if (json.cancelled) return;
+        if (!resp.ok || !json.ok) {
+          window.alert(json.error || '导入失败');
+          return;
+        }
+        (json.items || []).forEach((item) => {
+          if (item && item.path) flashImportPaths.add(item.path);
+        });
+        if (activeGroup === FAVORITES_PAGE) {
+          activeGroup = '';
+          saveActive();
+        }
+        await refresh();
+        const renamed = Number(json.renamedCount) || 0;
+        const assets = Number(json.assetCount) || 0;
+        showToast(englishUI()
+          ? ('Imported ' + json.count + ' canvases'
+            + (assets ? (' with ' + assets + ' asset files') : '')
+            + (renamed ? ('; renamed ' + renamed + ' conflicts') : ''))
+          : ('已导入 ' + json.count + ' 张画布'
+            + (assets ? ('、' + assets + ' 个素材文件') : '')
+            + (renamed ? ('，' + renamed + ' 张因同名已改名') : '')));
+      } catch (err) {
+        window.alert('导入失败：' + err.message);
       } finally {
         btn.disabled = false;
       }
@@ -2938,14 +2998,6 @@
 
   document.addEventListener('calendar:navigate', (event) => {
     const view = event.detail && event.detail.view;
-    if (view === 'study') {
-      setStudyActive(true);
-      if (event.detail.taskId) {
-        requestAnimationFrame(() => {
-          if (window.StudyView && window.StudyView.openTask) window.StudyView.openTask(event.detail.taskId);
-        });
-      }
-    }
     if (view === 'cadence') setCadenceActive(true);
     if (view === 'focus') {
       setFocusActive(true, { forceTimer: true });
@@ -2953,16 +3005,6 @@
         if (event.detail.day && focus.showDay) focus.showDay(event.detail.day, event.detail.sessionId);
       });
     }
-  });
-
-  document.addEventListener('focus:prepare', (event) => {
-    const detail = event.detail || {};
-    setFocusActive(true, { forceTimer: true });
-    runWhenCanvasFocusReady((focus) => {
-      requestAnimationFrame(() => {
-        if (focus.prepareTask) focus.prepareTask(detail.taskId, detail.taskTitle);
-      });
-    });
   });
 
   // ── 翻书式翻页 ────────────────────────────────
@@ -3180,6 +3222,9 @@
         : shouldShowStudy ? 'study'
         : listViewName());
       studyActive = shouldShowStudy;
+      if (shouldShowStudy && window.StudyView && typeof window.StudyView.activate === 'function') {
+        window.StudyView.activate();
+      }
       if (initialStudy || initialCalendar) {
         try { history.replaceState(null, '', 'index.html'); } catch (e) {}
         initialStudy = false;
