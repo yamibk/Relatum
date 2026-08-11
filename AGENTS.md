@@ -501,7 +501,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - `desktop-shell.js` 负责窗口按钮、pywebview ready 队列、dirty 标记和桌面 session 标识。
 - 倒数日动态背景仍只发布一个 `Relatum.exe`，但背景 WebView2 必须由该 EXE 的隔离子进程承载，不能再与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
 - WebView2 用户数据默认在 `%LOCALAPPDATA%\Canvas\WebView2`；启动时给 HTTP 磁盘缓存和媒体缓存分别设置 64MiB / 32MiB 参数上限。这不是整个用户目录或 Code/GPU Cache 的硬总上限，不要为清缓存误删 Cookies、localStorage 等用户状态。
-- 窗口状态版本是 `2`，尺寸以逻辑像素原子保存到 `data/window-state.json`。
+- 窗口状态版本是 `2`，尺寸以逻辑像素原子保存到 `data/window-state.json`。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则最大化启动后的首次还原会使用样式切换前留下的错误 normal placement。
 - 构建脚本输出 `Relatum-release/Relatum.exe`、同级 `Relatum.exe.config` 和 `_internal/`。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
 - 构建会整体替换 `Relatum-release/`；若目录内已有 `canvases/` 或 `data/`，默认拒绝覆盖，除非显式 `-ForceReplaceUserData`。
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
