@@ -13914,13 +13914,43 @@ body.start-page[data-start-theme="dark"] .start-page-note.is-selected {
 }
 
 /* 大页标题（每页 = 分组名）*/
+.canvas-library-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 30px;
+}
+
 .page-title {
   font-size: 44px;
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.1;
-  margin: 0 0 30px;
+  margin: 0;
   color: var(--text);
+}
+
+.recent-sync-button {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.recent-sync-button[hidden] { display: none; }
+
+body.start-page[data-start-theme="dark"] .recent-sync-button {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(244, 241, 232, 0.72);
+}
+
+body.start-page[data-start-theme="dark"] .recent-sync-button:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.12);
+  color: #f4f1e8;
 }
 
 /* 空分组提示 */
