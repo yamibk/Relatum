@@ -3,9 +3,6 @@
 
   const root = document.querySelector('[data-role="calendar-shell"]');
   if (!root) return;
-  const taskPanel = document.querySelector('[data-role="calendar-task-panel"]');
-  const taskPanelBody = document.querySelector('[data-role="calendar-task-panel-body"]');
-  const PIN_COLORS = ['yellow', 'red', 'blue', 'green', 'purple', 'orange'];
   const COUNTDOWN_ENABLED_KEY = 'canvas:calendarCountdownEnabled';
   const MONTH_CACHE_MAX = 24;
   const DAY_CACHE_MAX = 96;
@@ -38,11 +35,6 @@
     lastNavAt: 0,
     preview: false,
     diaryExpanded: false,
-    taskPanelOpen: false,
-    taskPanelHideTimer: 0,
-    pinSaveTimer: 0,
-    pinDrag: null,
-    taskPinColors: new Map(),
     countdown: null,
     countdownEnabled: initialCountdownEnabled,
     countdownRevealPending: false,
@@ -219,8 +211,6 @@
       month: payload.month,
       today: payload.today,
       days: payload.days || {},
-      taskPins: payload.taskPins || [],
-      pinTasks: payload.pinTasks || [],
     });
     state.dayCache.set(payload.day.date, payload.day);
     diaryDraft(payload.day.date, payload.day.diary);
@@ -228,7 +218,6 @@
       state.countdown = Object.assign({}, payload.countdown);
     }
     trimCalendarCaches();
-    if (state.taskPanelOpen) renderTaskPanel();
   }
 
   function prefetchMonth(year, month) {
@@ -315,8 +304,6 @@
       month,
       today: cachedMonth ? cachedMonth.today : (state.payload ? state.payload.today : localDay(new Date())),
       days: cachedMonth ? cachedMonth.days : {},
-      taskPins: cachedMonth ? cachedMonth.taskPins : [],
-      pinTasks: cachedMonth ? cachedMonth.pinTasks : (state.payload ? state.payload.pinTasks || [] : []),
       countdown: state.countdown,
       diaries: state.diaries,
       day: cachedDay,
@@ -470,7 +457,7 @@
         + (cell.date === state.day ? ' aria-current="date"' : '') + '>'
         + '<span>' + cell.number + '</span><b>' + dots + '</b></button>';
     }).join('');
-    return '<section class="calendar-month-card" data-calendar-pin-surface>'
+    return '<section class="calendar-month-card">'
       + '<header class="calendar-month-head">'
       + '<button type="button" data-calendar-month="-1" aria-label="上个月">‹</button>'
       + '<h1><span>' + state.year + ' 年 ' + state.month + ' 月</span></h1>'
@@ -479,30 +466,7 @@
       + '</header><div class="calendar-weekdays">' + weekdays + '</div>'
       + '<div class="calendar-grid">' + cells + '</div>'
       + '<footer class="calendar-legend"><span><i class="diary"></i>日记</span>'
-      + '<span><i class="task"></i>任务</span><span><i class="focus"></i>专注</span>'
-      + '<span><i class="done"></i>完成</span></footer>' + renderTaskPins() + '</section>';
-  }
-
-  function pinTaskMap() {
-    return new Map((state.payload.pinTasks || []).map((task) => [String(task.id), task]));
-  }
-
-  function renderTaskPins() {
-    const tasks = pinTaskMap();
-    return '<div class="calendar-pin-layer" data-calendar-pin-layer>'
-      + (state.payload.taskPins || []).map((pin) => {
-        const task = tasks.get(String(pin.taskId));
-        if (!task) return '';
-        const done = task.status === 'done';
-        return '<div class="calendar-task-pin calendar-pin-' + escapeHtml(pin.color)
-          + (done ? ' is-done' : '') + '" role="button" tabindex="0"'
-          + ' data-calendar-pin="' + escapeHtml(pin.id) + '" data-calendar-pin-task="'
-          + escapeHtml(pin.taskId) + '" style="left:' + (Number(pin.x) * 100).toFixed(3)
-          + '%;top:' + (Number(pin.y) * 100).toFixed(3) + '%">'
-          + '<span>' + escapeHtml(task.title) + '</span><small>'
-          + (done ? '已完成' : (task.status === 'doing' ? '进行中' : '待办'))
-          + '</small><button type="button" data-calendar-pin-remove aria-label="移除便签">×</button></div>';
-      }).join('') + '</div>';
+      + '<span><i class="focus"></i>专注</span><span><i class="done"></i>完成</span></footer></section>';
   }
 
   function countdownDistance() {
@@ -959,51 +923,6 @@
       + (draft.exists ? '' : 'hidden') + '>删除这篇</button></footer></section>';
   }
 
-  function renderTaskItems() {
-    const tasks = state.payload.day.tasks || [];
-    const overdue = state.payload.day.overdue || [];
-    if (!tasks.length && !overdue.length) {
-      return '<p class="calendar-empty-line">这一天没有安排学习任务。</p>';
-    }
-    const FOLD_LIMIT = 10;
-    const all = tasks.map((task) => ({ kind: 'task', task }))
-      .concat(overdue.map((task) => ({ kind: 'overdue', task })));
-    const expanded = state.expandedDays.has(state.day);
-    const visible = expanded ? all : all.slice(0, FOLD_LIMIT);
-    const hiddenCount = all.length - visible.length;
-    let delay = 0;
-    const nextDelay = () => Math.min(delay++, 6) * 32;  // 错峰上限 6 项、间隔 32ms，列表再长也不拖
-    const html = visible.map((entry) => {
-      if (entry.kind === 'task') {
-        const task = entry.task;
-        const fresh = task.flags.indexOf('新增') >= 0;
-        return '<button type="button" class="calendar-record-item calendar-record-link"'
-          + ' style="--calendar-item-delay:' + nextDelay() + 'ms"'
-          + (fresh ? ' data-record-fresh="1"' : '')
-          + ' data-calendar-record-key="task:' + escapeHtml(task.id)
-          + '" data-calendar-task="' + escapeHtml(task.id) + '"><div><strong>'
-          + escapeHtml(task.title) + '</strong><span>' + escapeHtml((task.tags || []).join(' · '))
-          + '</span></div><b>' + task.flags.map(escapeHtml).join(' · ') + '</b></button>';
-      }
-      const task = entry.task;
-      return '<div class="calendar-record-item overdue"'
-        + ' style="--calendar-item-delay:' + nextDelay() + 'ms"'
-        + ' data-calendar-record-key="overdue:'
-        + escapeHtml(task.id || task.title + ':' + task.due) + '"><div><strong>'
-        + escapeHtml(task.title) + '</strong><span>截止于 ' + escapeHtml(task.due)
-        + '</span></div><b>已逾期</b></div>';
-    }).join('');
-    if (hiddenCount > 0) {
-      return html + '<button type="button" class="calendar-record-more" data-calendar-expand>'
-        + '展开剩余 ' + hiddenCount + ' 条</button>';
-    }
-    if (expanded && all.length > FOLD_LIMIT) {
-      return html + '<button type="button" class="calendar-record-more" data-calendar-expand="1">'
-        + '收起</button>';
-    }
-    return html;
-  }
-
   function renderFocusItems() {
     const focus = state.payload.day.focus || {};
     const sessions = focus.sessions || [];
@@ -1041,18 +960,15 @@
   function renderDayRecords(animateEntrance) {
     if (state.payload.day.loading) {
       return '<section class="calendar-records calendar-records-loading" aria-label="正在同步当天档案">'
-        + '<article><i></i><i></i><i></i></article>'
         + '<article><i></i><i></i></article>'
         + '<article><i></i><i></i></article></section>';
     }
     const focus = state.payload.day.focus || {};
     return '<section class="calendar-records' + (animateEntrance ? ' calendar-records-enter' : '') + '">'
-      + '<article style="--calendar-card-delay:16ms"><header><div><p>STUDY</p><h3>学习安排</h3></div>'
-      + '<button type="button" data-calendar-go="study">前往学习</button></header>' + renderTaskItems() + '</article>'
-      + '<article style="--calendar-card-delay:38ms"><header><div><p>FOCUS</p><h3>专注记录</h3></div>'
+      + '<article style="--calendar-card-delay:16ms"><header><div><p>FOCUS</p><h3>专注记录</h3></div>'
       + '<span>' + (focus.count || 0) + ' 段 · ' + formatDuration(focus.durationSec) + '</span></header>'
       + renderFocusItems() + '</article>'
-      + '<article style="--calendar-card-delay:60ms"><header><div><p>ARCHIVE</p><h3>当天成果</h3></div>'
+      + '<article style="--calendar-card-delay:38ms"><header><div><p>ARCHIVE</p><h3>当天成果</h3></div>'
       + '<button type="button" data-calendar-go="cadence">查看活跃</button></header>' + renderArchives() + '</article>'
       + '</section>';
   }
@@ -1142,8 +1058,6 @@
     if (!panel) return render(motion);
     panel.innerHTML = renderCalendar();
     bindMonthControls(panel);
-    bindPinControls(panel);
-    syncCalendarPinSize();
     activateMonthMotion(panel, motion);
     requestAnimationFrame(() => restoreKeyboardDayFocus());
   }
@@ -1180,17 +1094,7 @@
     });
     syncCalendarSelection();
     syncCountdownCard({ reveal: revealCountdown });
-    reconcileTaskPins();
     restoreKeyboardDayFocus();
-  }
-
-  function reconcileTaskPins() {
-    const oldLayer = root.querySelector('[data-calendar-pin-layer]');
-    if (!oldLayer) return;
-    const holder = document.createElement('div');
-    holder.innerHTML = renderTaskPins();
-    oldLayer.replaceWith(holder.firstElementChild);
-    bindPinControls(root);
   }
 
   function renderRecordsPanel() {
@@ -1743,9 +1647,7 @@
 
   function bindCalendarControls() {
     bindMonthControls(root);
-    bindPinControls(root);
     bindCountdownControls(root);
-    syncCalendarPinSize();
     const refresh = root.querySelector('[data-calendar-refresh]');
     if (refresh) refresh.addEventListener('click', () => refreshCalendar(refresh));
     const search = root.querySelector('[data-calendar-search]');
@@ -1981,11 +1883,6 @@
         renderRecordsPanel();
       });
     });
-    host.querySelectorAll('[data-calendar-task]').forEach((button) => {
-      button.addEventListener('click', () => {
-        launchAfterFeedback(button, { view: 'study', taskId: button.dataset.calendarTask });
-      });
-    });
     host.querySelectorAll('[data-calendar-focus]').forEach((button) => {
       button.addEventListener('click', () => {
         launchAfterFeedback(button, {
@@ -1996,272 +1893,6 @@
       });
     });
   }
-
-  function currentMonthPins() {
-    if (!Array.isArray(state.payload.taskPins)) state.payload.taskPins = [];
-    return state.payload.taskPins;
-  }
-
-  function syncPinsIntoMonthCache() {
-    const cached = state.monthCache.get(monthKey(state.year, state.month));
-    if (cached) cached.taskPins = currentMonthPins();
-  }
-
-  function schedulePinSave() {
-    syncPinsIntoMonthCache();
-    clearTimeout(state.pinSaveTimer);
-    const month = monthKey(state.year, state.month);
-    const pins = currentMonthPins().map((pin) => Object.assign({}, pin));
-    state.pinSaveTimer = window.setTimeout(() => {
-      request('/api/calendar-pins-save', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month, pins }),
-      }).catch((error) => showToast('便签保存失败 · ' + error.message));
-    }, 260);
-  }
-
-  function pinPointFromClient(clientX, clientY, offsetX, offsetY, pinWidth, pinHeight) {
-    const surface = root.querySelector('[data-calendar-pin-surface]');
-    if (!surface) return null;
-    const rect = surface.getBoundingClientRect();
-    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
-    const grabX = Number.isFinite(offsetX) ? offsetX : 18;
-    const grabY = Number.isFinite(offsetY) ? offsetY : 18;
-    const width = Number.isFinite(pinWidth) ? pinWidth : 128;
-    const height = Number.isFinite(pinHeight) ? pinHeight : 82;
-    const left = clientX - rect.left - grabX;
-    const top = clientY - rect.top - grabY;
-    return {
-      x: Math.max(0.01, Math.min((rect.width - width - 8) / rect.width, left / rect.width)),
-      y: Math.max(0.02, Math.min((rect.height - height - 8) / rect.height, top / rect.height)),
-    };
-  }
-
-  // 仅用于从任务抽屉首次投放：落在日期格内时居中吸附；之后拖动仍是自由坐标。
-  function initialPinPointFromClient(clientX, clientY) {
-    const surface = root.querySelector('[data-calendar-pin-surface]');
-    if (!surface) return null;
-    const surfaceRect = surface.getBoundingClientRect();
-    if (clientX < surfaceRect.left || clientX > surfaceRect.right
-        || clientY < surfaceRect.top || clientY > surfaceRect.bottom) return null;
-    const day = Array.from(root.querySelectorAll('[data-calendar-day]')).find((button) => {
-      const rect = button.getBoundingClientRect();
-      return clientX >= rect.left && clientX <= rect.right
-        && clientY >= rect.top && clientY <= rect.bottom;
-    });
-    if (!day) return pinPointFromClient(clientX, clientY);
-    const dayRect = day.getBoundingClientRect();
-    const pinWidth = Math.max(62, dayRect.width - 12);
-    const pinHeight = Math.max(54, dayRect.height - 12);
-    return {
-      x: (dayRect.left - surfaceRect.left + (dayRect.width - pinWidth) / 2) / surfaceRect.width,
-      y: (dayRect.top - surfaceRect.top + (dayRect.height - pinHeight) / 2) / surfaceRect.height,
-    };
-  }
-
-  function syncCalendarPinSize() {
-    const surface = root.querySelector('[data-calendar-pin-surface]');
-    const day = root.querySelector('[data-calendar-day]');
-    if (!surface || !day) return;
-    const rect = day.getBoundingClientRect();
-    surface.style.setProperty('--calendar-pin-w', Math.max(62, rect.width - 12) + 'px');
-    surface.style.setProperty('--calendar-pin-h', Math.max(54, rect.height - 12) + 'px');
-  }
-
-  function placeTaskPin(taskId, point, color) {
-    if (!point) return;
-    const pinColor = PIN_COLORS.indexOf(color) >= 0 ? color : 'yellow';
-    const pins = currentMonthPins();
-    let pin = pins.find((item) => String(item.taskId) === String(taskId));
-    if (pin) {
-      pin.x = point.x;
-      pin.y = point.y;
-      pin.color = pinColor;
-    } else {
-      pin = {
-        id: 'pin_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
-        taskId: String(taskId), color: pinColor, x: point.x, y: point.y,
-      };
-      pins.push(pin);
-    }
-    reconcileTaskPins();
-    schedulePinSave();
-  }
-
-  function removeTaskPin(pinId) {
-    state.payload.taskPins = currentMonthPins().filter((pin) => pin.id !== pinId);
-    reconcileTaskPins();
-    schedulePinSave();
-  }
-
-  function animateRemoveTaskPin(pinEl) {
-    if (!pinEl || pinEl.classList.contains('is-removing')) return;
-    pinEl.classList.add('is-removing');
-    pinEl.setAttribute('aria-disabled', 'true');
-    const finish = () => {
-      if (!pinEl.isConnected) return;
-      removeTaskPin(pinEl.dataset.calendarPin);
-    };
-    if (prefersReduced) {
-      finish();
-      return;
-    }
-    pinEl.addEventListener('animationend', finish, { once: true });
-    window.setTimeout(finish, 300);
-  }
-
-  function bindPinControls(scope) {
-    const host = scope || root;
-    host.querySelectorAll('[data-calendar-pin]').forEach((pinEl) => {
-      pinEl.addEventListener('click', (event) => {
-        if (pinEl.dataset.suppressClick === '1') return;
-        if (event.target.closest('[data-calendar-pin-remove]')) {
-          event.stopPropagation();
-          animateRemoveTaskPin(pinEl);
-          return;
-        }
-        launchAfterFeedback(pinEl, { view: 'study', taskId: pinEl.dataset.calendarPinTask });
-      });
-      pinEl.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        launchAfterFeedback(pinEl, { view: 'study', taskId: pinEl.dataset.calendarPinTask });
-      });
-      pinEl.addEventListener('pointerdown', (event) => {
-        if (pinEl.classList.contains('is-removing') || event.button !== 0
-            || event.target.closest('[data-calendar-pin-remove]')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const pin = currentMonthPins().find((item) => item.id === pinEl.dataset.calendarPin);
-        if (!pin) return;
-        const startX = event.clientX;
-        const startY = event.clientY;
-        const pinRect = pinEl.getBoundingClientRect();
-        const grabX = event.clientX - pinRect.left;
-        const grabY = event.clientY - pinRect.top;
-        let moved = false;
-        const onMove = (moveEvent) => {
-          if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 4) return;
-          moved = true;
-          const point = pinPointFromClient(
-            moveEvent.clientX, moveEvent.clientY,
-            grabX, grabY, pinRect.width, pinRect.height
-          );
-          if (!point) return;
-          pin.x = point.x;
-          pin.y = point.y;
-          pinEl.style.left = (point.x * 100) + '%';
-          pinEl.style.top = (point.y * 100) + '%';
-          pinEl.classList.add('is-dragging');
-        };
-        const onUp = () => {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-          pinEl.classList.remove('is-dragging');
-          if (moved) {
-            pinEl.dataset.suppressClick = '1';
-            window.setTimeout(() => { delete pinEl.dataset.suppressClick; }, 0);
-            schedulePinSave();
-          }
-        };
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
-      });
-    });
-  }
-
-  function renderTaskPanel() {
-    if (!taskPanelBody || !state.payload) return;
-    const tasks = (state.payload.pinTasks || []).filter((task) => task.status !== 'done');
-    const groups = [
-      { key: 'doing', label: '进行中' },
-      { key: 'todo', label: '待办' },
-    ];
-    taskPanelBody.innerHTML = tasks.length ? groups.map((group) => {
-      const items = tasks.filter((task) => task.status === group.key);
-      if (!items.length) return '';
-      return '<section><header><strong>' + group.label + '</strong><span>' + items.length + '</span></header>'
-        + items.map((task) => {
-          const selected = state.taskPinColors.get(String(task.id)) || 'yellow';
-          return '<div class="calendar-drawer-task" data-calendar-drawer-task="' + escapeHtml(task.id)
-            + '" data-calendar-pin-color="' + selected + '"><div class="calendar-drawer-task-copy"><strong>'
-            + escapeHtml(task.title) + '</strong><span>'
-            + escapeHtml((task.tags || []).join(' · ') || '拖到月历生成便签') + '</span></div>'
-            + '<div class="calendar-drawer-colors" aria-label="便签颜色">'
-            + PIN_COLORS.map((color) => '<button type="button" class="calendar-drawer-color pin-color-'
-              + color + (color === selected ? ' active' : '') + '" data-calendar-color="' + color
-              + '" aria-label="选择' + color + '色便签"></button>').join('') + '</div></div>';
-        }).join('')
-        + '</section>';
-    }).join('') : '<p class="calendar-task-panel-empty">没有未完成任务。</p>';
-    taskPanelBody.querySelectorAll('[data-calendar-drawer-task]').forEach((card) => {
-      card.addEventListener('pointerdown', (event) => beginDrawerTaskDrag(event, card));
-      card.querySelectorAll('[data-calendar-color]').forEach((button) => {
-        button.addEventListener('pointerdown', (event) => event.stopPropagation());
-        button.addEventListener('click', (event) => {
-          event.stopPropagation();
-          const color = button.dataset.calendarColor;
-          state.taskPinColors.set(card.dataset.calendarDrawerTask, color);
-          card.dataset.calendarPinColor = color;
-          card.querySelectorAll('[data-calendar-color]').forEach((item) =>
-            item.classList.toggle('active', item === button));
-        });
-      });
-    });
-  }
-
-  function beginDrawerTaskDrag(event, card) {
-    if (event.button !== 0 || event.target.closest('[data-calendar-color]')) return;
-    event.preventDefault();
-    const rect = card.getBoundingClientRect();
-    const ghost = card.cloneNode(true);
-    ghost.classList.add('calendar-drawer-task-ghost');
-    ghost.style.width = rect.width + 'px';
-    document.body.appendChild(ghost);
-    document.body.classList.add('calendar-pin-dragging');
-    const offsetX = event.clientX - rect.left;
-    const offsetY = event.clientY - rect.top;
-    const move = (moveEvent) => {
-      ghost.style.transform = 'translate3d(' + (moveEvent.clientX - offsetX) + 'px,'
-        + (moveEvent.clientY - offsetY) + 'px,0) rotate(-1deg) scale(1.025)';
-      const surface = root.querySelector('[data-calendar-pin-surface]');
-      if (surface) surface.classList.toggle('is-pin-target', !!pinPointFromClient(moveEvent.clientX, moveEvent.clientY));
-    };
-    const up = (upEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      document.body.classList.remove('calendar-pin-dragging');
-      const surface = root.querySelector('[data-calendar-pin-surface]');
-      if (surface) surface.classList.remove('is-pin-target');
-      const point = initialPinPointFromClient(upEvent.clientX, upEvent.clientY);
-      if (point) placeTaskPin(
-        card.dataset.calendarDrawerTask, point, card.dataset.calendarPinColor
-      );
-      ghost.remove();
-    };
-    move(event);
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }
-
-  function openTaskPanel() {
-    if (!taskPanel) return;
-    renderTaskPanel();
-    clearTimeout(state.taskPanelHideTimer);
-    taskPanel.hidden = false;
-    requestAnimationFrame(() => taskPanel.classList.add('open'));
-    state.taskPanelOpen = true;
-  }
-
-  function closeTaskPanel() {
-    if (!taskPanel || !state.taskPanelOpen) return;
-    taskPanel.classList.remove('open');
-    state.taskPanelOpen = false;
-    state.taskPanelHideTimer = window.setTimeout(() => { taskPanel.hidden = true; }, 300);
-  }
-
-  const taskPanelClose = document.querySelector('[data-action="calendar-task-panel-close"]');
-  if (taskPanelClose) taskPanelClose.addEventListener('click', closeTaskPanel);
 
   document.addEventListener('canvas:data-changed', () => {
     state.stale = true;
@@ -2312,17 +1943,6 @@
       && (target.matches('input, textarea, [contenteditable="true"]')
         || target.closest('[contenteditable="true"]'));
     if (typing) return;
-    if (event.key === 'Tab' && !event.shiftKey) {
-      event.preventDefault();
-      if (state.taskPanelOpen) closeTaskPanel();
-      else openTaskPanel();
-      return;
-    }
-    if (event.key === 'Escape' && state.taskPanelOpen) {
-      event.preventDefault();
-      closeTaskPanel();
-      return;
-    }
     const dayButton = target && target.closest && target.closest('[data-calendar-day]');
     const inCalendar = target === document.body || dayButton;
     if (!inCalendar) return;
@@ -2361,9 +1981,6 @@
     state.resumeAfterPageShow = false;
     window.CanvasCalendar.activate();
   });
-  window.addEventListener('resize', () => {
-    if (state.active) syncCalendarPinSize();
-  });
   window.CanvasCalendar = {
     activate() {
       state.active = true;
@@ -2379,7 +1996,6 @@
       cancelCalendarNetworkWork();
       closeCountdownClock();
       clearEntranceMotion();
-      closeTaskPanel();
       captureCurrentDraft();
       state.drafts.forEach((draft) => {
         if (!draft.deleting && draft.version > draft.savedVersion) queueDiarySave(draft.day, true);

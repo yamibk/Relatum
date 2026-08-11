@@ -16,12 +16,12 @@ assert(study.includes("actions.className = 'study-list-actions'")
   && study.includes('actions.appendChild(trashBtn);')
   && study.includes('actions.appendChild(addBtn);'),
   'compact Study must place archive and trash icons before the add icon');
-assert(study.includes("archiveBtn.addEventListener('click', (event) => { event.stopPropagation(); archiveDone(); });")
+assert(study.includes("archiveBtn.addEventListener('click', function (event) { event.stopPropagation(); archiveDone(); });")
   && study.includes("archiveBtn.dataset.action = 'archive-done';")
   && study.includes('window.StudyView.archiveDone = archiveDone;')
   && start.includes('window.StudyView.archiveDone();'),
   'compact Study archive icon must reuse the existing completed-task archive action');
-assert(study.includes("trashBtn.addEventListener('click', (event) => { event.stopPropagation(); openTrash(); });"),
+assert(study.includes("trashBtn.addEventListener('click', function (event) { event.stopPropagation(); openTrash(); });"),
   'compact Study trash icon must open the existing trash panel');
 assert(study.includes("removeBtn.className = 'study-list-remove'")
   && study.includes('trashTaskById(task.id);'),

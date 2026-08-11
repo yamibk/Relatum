@@ -26,6 +26,8 @@ assert(start.includes('recent-item-duration') && start.includes('canvasActivityS
   'keepalive: !!keepalive',
   '30000',
 ].forEach((needle) => assert(editor.includes(needle), '前台计时契约缺失：' + needle));
+assert(!editor.includes('applyCanvasActivityTotals'),
+  '保存成功后不得调用已移除的编辑器活动时长 UI 同步函数');
 
 assert(study.includes("let cadenceLens = 'canvas';"), '新版年度足迹必须默认画布镜头');
 assert(study.includes("localStorage.getItem('canvas:cadenceLens:v2')"), '必须使用独立 v2 镜头偏好');
@@ -44,6 +46,32 @@ assert(study.includes('const clv = cadenceFocusLevel(cmin);'), '画布分钟必�
 
 assert(styles.includes('.cadence-lens-canvas .cadence-cell:not(.is-future).cadence-cl7'),
   '画布热力图必须提供第七档样式');
+assert(styles.includes('.study-cadence.cadence-entering .cadence-day-detail:not(.is-refreshing) {')
+  && styles.includes('animation: cadenceSectionIn 700ms 500ms var(--easing-page) both;'),
+  'the cadence day summary must join the staged page entrance');
+assert(styles.includes('animation-delay: calc(560ms + var(--detail-delay, 0ms));'),
+  'cadence day records must remain staggered after the summary begins entering');
+const reducedMotionStart = styles.indexOf('@media (prefers-reduced-motion: reduce)');
+const reducedMotionEnd = styles.indexOf('@media (max-width: 680px)', reducedMotionStart);
+const reducedMotionStyles = styles.slice(reducedMotionStart, reducedMotionEnd);
+assert(reducedMotionStart >= 0 && reducedMotionEnd > reducedMotionStart
+  && reducedMotionStyles.includes('.study-cadence.cadence-entering .cadence-day-detail:not(.is-refreshing)')
+  && reducedMotionStyles.includes('animation: none;'),
+  'the cadence day summary entrance must be disabled for reduced motion');
+[
+  'function ensureActivityReady()',
+  'if (activityLoadPromise) return activityLoadPromise;',
+  'function scheduleActivityPreload()',
+  'window.requestIdleCallback(warmActivity, { timeout: 1500 })',
+  'window.setTimeout(warmActivity, 600)',
+  'cancelActivityPreload();',
+  'scheduleCadenceVisibleActivation();',
+].forEach((needle) => assert(study.includes(needle),
+  'cadence idle preload contract missing: ' + needle));
+assert(study.includes('active: cadenceShown'),
+  'a pre-rendered cadence star graph must stay suspended while hidden');
+assert(study.includes('if (!activityPayload || activityDirty) ensureActivityReady()'),
+  'first activation must reuse or retry the idle preload request');
 assert(graph.includes("data.kind === 'canvas'"), '星图必须识别画布数据结构');
 assert(graph.includes('累计 '), '画布星图悬停必须展示累计时长');
 assert(i18n.includes("'画布使用时间星图': 'Canvas time constellation'")

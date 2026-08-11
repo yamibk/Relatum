@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-08-09。
+> 最后按源码校准：2026-08-11。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -94,14 +94,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/graph-engine.js` | 通用关系图引擎，Canvas2D + 可选 WebGL 几何后端。 |
 | `assets/graph-gl.js` | WebGL2 实例化渲染后端，暴露 `window.GraphGL`；只画节点/边几何，文字仍走 2D/DOM。 |
 | `assets/graph-view.js` | 当前画布关系图浮层。 |
-| `assets/study.js` | 学习任务、看板/清单、任务归档、任务关联画布、迷你编辑器。 |
+| `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、轻量详情、回收站与完成归档。 |
 | `assets/study-graph.js` | 活跃页/学习页星图，可视化学习活动和任务结构。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
-| `assets/calendar.js` | 日历、日记、任务日历、自由任务便签、倒数日。 |
+| `assets/calendar.js` | 日历、日记、专注记录、非学习归档与倒数日。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。 |
-| `assets/focus.js` | 专注钟、正计时/番茄钟、学习/每日任务绑定、音效/噪音、记录编辑。 |
+| `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。 |
 | `assets/trash.js` | 回收站页面，按目标分组恢复、键盘恢复、一键清空确认。 |
 | `assets/desktop-shell.js` | 前端到 pywebview 的桥接、窗口按钮、dirty 标记。 |
 | `assets/styles.css` | 全局视觉系统和所有页面样式。 |
@@ -128,7 +128,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 最近、分组、收藏 | `data/recent.json`（v3）；上一次有效快照为 `data/recent.backup.json`，损坏原件隔离成 `data/recent.corrupt-<时间>.json` |
 | 背景偏好、辅助底纹与上传背景 | `data/background.json`（v2：`background` + 可选 `guide`）、`data/backgrounds/` |
 | 画布视口 | `data/viewport.json` |
-| 学习任务 | `data/study.json` |
+| 学习任务 | `data/study.json`（v2）；任务只含标题、`active/done` 状态、单位进度与时间戳，v1 不迁移且读取为空清单 |
 | 学习归档 | `data/学习归档/`；学习任务使用 `tasks.json`、速记使用 `notes.json`、任务簿完成归档使用单条 `taskbook.json` marker。 |
 | 画布归档轻量记录 | `data/画布归档/` |
 | 速记墙 | `data/notes.json` |
@@ -136,9 +136,9 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 速记归档 | `data/学习归档/<时间>-速记归档/notes.json` |
 | 专注记录 | `data/focus.json` |
 | 画布活动账本 | `data/canvas-activity.json`（v1）；独立保存稳定画布 ID、受管路径变更、创建/修改历史标记和按本地日期拆分并合并去重的前台使用时间段，不写入 `.canvas`。首次建立时只从 `createdAt` / `updatedAt` 或文件时间回填事件，不伪造历史时长。 |
-| 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、至多 6 个命名里程碑 `milestones[]` 与逐日历史 `doneDates` / `minutesByDate` |
+| 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、至多 6 个命名里程碑 `milestones[]` 与逐日历史 `doneDates` / `minutesByDate`；上一份有效快照为 `data/daily.backup.json`，损坏原件隔离成 `data/daily.corrupt-<时间>.json` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
-| 日历任务便签 | `data/calendar-pins.json` |
+| 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移 |
 | 模板库 | `data/templates.json` |
 | 复习卡片 | `data/review.db`，SQLite；`review_cards` 保存内容、卡组关联与调度，`review_decks` / `review_tags` / `review_card_tags` 管理组织关系，`review_events` 保存每次评分，`review_settings` 保存复习范围与会话偏好 |
@@ -159,6 +159,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 图片和背景资源按后端上传接口管理。画布附件位于 `.assets/attachments/`。
 - Markdown 附件批注保存在附件旁的 `<asset>.annot.json`。文本区/阅读器手写批注保存在 `.assets/node-annotations.json`。
 - `clean-assets` 会根据画布中仍引用的资源清理孤儿文件；不要手写另一个清理逻辑。
+- 起步页“导入画布”通过服务端原生选择器把一张外部 `.canvas` 复制到 `canvases/`，同名时加 `-2/-3`，并复制实际引用的素材与批注；缺失素材只警告，导入后立即打开项目内副本。“导入文件夹”只接受顶层 `.canvas` 和对应 `.assets`；回收站、未知顶层条目、孤立/未知/缺失素材、损坏批注或链接/重解析点都拒绝整批。批量导入先暂存和复检来源，再一次提交画布、素材、最近索引与活动账本；任一步失败都回滚。外部目录的分组、收藏、排序和回收站不导入。
 
 ### 浏览器本地偏好
 
@@ -173,7 +174,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 笔记坞顶栏快捷入口偏好使用 `canvas:notebookTopbarShortcut`，未设置时默认关闭；开启后在“工具 / Tools”右侧显示“笔记 / Notes”，取消后立即隐藏。它只是一项全局编辑器 UI 偏好，不写入 `.canvas`。
 - 任务簿顶栏快捷入口偏好使用 `canvas:taskbookTopbarShortcut`，未设置时默认关闭；开启后显示“任务 / Tasks”，取消后立即隐藏。叶子任务悬停计时按钮偏好使用 `canvas:taskbookLeafTimerButtonsEnabled`，默认开启，仅显式 `'0'` 隐藏画布节点左侧的 `▶ / Ⅱ`，不影响顶级任务卡片、计时状态或任务数据。两者与任务簿归档副本偏好相互独立，均不写入 `.canvas`。
 - 空白框选创建盒子与框选节点创建分组分别由 `canvas:boxCreateEnabled` / `canvas:groupCreateEnabled` 控制，两个开关默认开启且彼此独立；`canvas:genIndexEnabled` 也必须独立判断，不能因关闭盒子或分组而隐藏框选生成索引入口。
-- 速记、学习、复习、专注各自有视图偏好和临时运行状态；专注页使用 `focus:viewMode` 记住 `timer` / `daily`，未保存偏好或偏好值无效时默认 `daily`（每日任务）；学习页使用 `study:viewMode` 记住 `board` / `list`，未保存偏好或偏好值无效时默认 `list`（极简清单）。极简清单的 `To Do` 标题右侧只保留归档、垃圾桶与 `+` 三个图标：归档复用长按“学”书脊的已完成任务归档动作，垃圾桶复用完整视图的任务回收站；每个任务行悬停或键盘聚焦时在右上角显示 `×`，点击直接调用既有移入回收站流程，不增加二次确认。任务回收站标题下不再显示关联画布说明；清空确认卡只显示“永久清空任务回收站”标题与操作按钮，不显示红色警告段；归档成功提示固定精简为“已归档 n 项已完成任务”及其英文版本。普通进入时恢复上次视图；恢复未结束专注会话、从学习任务发起专注或从日历打开专注记录时只临时强制回到专注钟且不覆盖 `focus:viewMode`。每日任务完成页另用 `focus:dailyReviewedDate` 记住当天是否已经点击“回顾今日”（本地日期变化或当天撤销任一任务后失效）。起始文档解析时会预载 `focus.js`，并行读取 `/api/daily`、`/api/focus` 与 `/api/study`；`focus.js` 先用这些结果填好隐藏 DOM，再发布 `CanvasFocus` 和 `canvasfocus:ready`。若用户更早点击，`start.js` 暂存首次激活及其外部任务/日期意图、保持旧页可见，等就绪后按“准备视图 → 翻页 → 入场”只执行一次，因此首次与后续进入使用同一份稳定数据和同一套动画，不能显示空专注壳或另播骨架动画；年度足迹使用 `canvas:cadenceLens:v2` 记住 `canvas` / `complete` / `focus`，没有 v2 偏好时默认“画布”，不沿用旧镜头偏好；复习方式使用 `canvas:reviewMode:v1` 记住 `scheduled` / `free`，只影响界面路径，不复制卡片数据或调度状态。
+- 速记、学习、复习、专注各自有视图偏好和临时运行状态；专注页使用 `focus:viewMode` 记住 `timer` / `daily`，未保存偏好或偏好值无效时默认 `daily`（每日任务）。学习页使用 `study:viewMode:v2` 记住 `list` / `progress`，未保存偏好或偏好值无效时默认 `list`（极简清单）；再次点击“学”切换视图。极简清单按 `To Do / Done` 分组，保留快速新建、改名、完成、回收、同状态拖拽排序和归档。进度面板是单列卡片，已完成任务收进底部折叠区；“今日任务”只显示尚未开放提示。每日任务完成页另用 `focus:dailyReviewedDate` 记住当天是否已经点击“回顾今日”（本地日期变化或当天撤销任一任务后失效）。起始文档解析时会预载 `focus.js`，并行读取 `/api/daily` 与 `/api/focus`；`focus.js` 不读取学习任务，先填好隐藏 DOM，再发布 `CanvasFocus` 和 `canvasfocus:ready`。年度足迹使用 `canvas:cadenceLens:v2` 记住 `canvas` / `complete` / `focus`，没有 v2 偏好时默认“画布”；复习方式使用 `canvas:reviewMode:v1` 记住 `scheduled` / `free`。
 - `sessionStorage` 的 `canvas:route-from-start` 用于从起步页进入编辑器后的返回/过渡体验。
 
 不要把这些偏好混进 `.canvas`，除非用户明确要求改变持久化设计。
@@ -198,17 +199,17 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 分组/收藏/排序与可见文件统计：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`
 - 回收站：`/api/trash`、`/api/trash-list`、`/api/trash-empty`、`/api/restore`
 - 文件系统交互：`/api/reveal`、`/api/open-external`、`/api/open-attachment`
-- 导入导出：`/api/export-markdown`、`/api/export-png`、`/api/import-markdown`、`/api/import-canvas`（起步页外部画布导入为新文件）、`/api/canvas-import-assets`（编辑器内部内容导入的受管素材复制）
+- 导入导出：`/api/export-markdown`、`/api/export-png`、`/api/import-markdown`、`/api/import-canvas`（起步页拖入内容导入）、`/api/import-canvas-file`（原生单画布复制导入）、`/api/import-canvas-folder`（原生严格文件夹导入）、`/api/canvas-import-assets`（编辑器内部内容导入的受管素材复制）
 - 背景/图片/附件：`/api/pick-background-image`、`/api/upload-background-image`、`/api/import-canvas-image`、`/api/upload-canvas-image`、`/api/upload-canvas-attachment`
 - 批注与视口：`/api/save-canvas-annotation`、`/api/save-node-annotations`、`/api/background-preference`、`/api/viewport`
-- 学习任务：`/api/study-task-create`、`/api/study-task-update`、`/api/study-task-trash`、`/api/study-task-restore`、`/api/study-task-delete`、`/api/study-trash-empty`、`/api/study-archive-done`、`/api/study-task-create-canvas`、`/api/study-reorder`
-- 跨功能：`/api/archive-canvas`、`/api/taskbook-archive`、`/api/export-canvas-to-tasks`
+- 学习任务：`/api/study-task-create`、`/api/study-task-update`、`/api/study-task-progress`、`/api/study-task-trash`、`/api/study-task-restore`、`/api/study-task-delete`、`/api/study-trash-empty`、`/api/study-archive-done`、`/api/study-reorder`
+- 跨功能：`/api/archive-canvas`、`/api/taskbook-archive`
 - 复习：`/api/review-card-create`、`/api/review-card-update`、`/api/review-card-delete`、`/api/review-cards-batch`、`/api/review-cards-batch-delete`、`/api/review-deck-create`、`/api/review-deck-update`、`/api/review-deck-delete`、`/api/review-settings`、`/api/review-mark`
 - 速记、跨页便签和模板：`/api/notes-save`、`/api/notes-archive`、`/api/start-sticky-notes-save`、`/api/templates-save`
 - 专注：`/api/focus-log`、`/api/focus-session-update`、`/api/focus-session-delete`
 - 画布活动：`/api/canvas-activity` 接收已授权画布、会话 ID 与前台时间段；校验后按本地午夜拆分、与既有区间取并集，再返回本画布今日及累计秒数。
 - 每日任务：`/api/daily-create`、`/api/daily-update`、`/api/daily-delete`、`/api/daily-toggle`、`/api/daily-add-minutes`、`/api/daily-reorder`、`/api/daily-group-create`、`/api/daily-group-update`、`/api/daily-group-delete`、`/api/daily-tree`
-- 日历：`/api/diary-save`、`/api/diary-delete`、`/api/calendar-pins-save`、`/api/countdown-save`
+- 日历：`/api/diary-save`、`/api/diary-delete`、`/api/countdown-save`
 - AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
 
 ### HTTP 与并发边界
@@ -390,12 +391,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 学习 `study.js`
 
-- 学习任务有 `todo/doing/done`，支持看板和极简清单两种视图。
-- 任务可链接画布，也可从任务创建画布；学习页内有迷你编辑器 iframe。
-- 拖拽排序、移入回收、恢复、永久删除、归档已完成任务都走后端 API。
-- 隔日未完成任务会作为 carry-over 提醒，可本地打盹当天。
-- 选中环的 900ms 保险校准只在学习页可见时运行；离页/pagehide 停止，BFCache 恢复时按当前页重新启动。
-- 今日任务横向列表必须为卡片悬停上移和 2px 选中环保留纵向裁切缓冲，黑色描边不能在列表顶边被截断。
+- `data/study.json` 固定为 v2；任务结构为 `id/title/status/progress/createdAt/updatedAt/completedAt`。`status` 只允许 `active/done`；`progress` 含 `current/target/unit/milestones[]`，目标 `0` 表示未设置，否则为 `1..9999`，单位最多 12 字，任务点最多 6 个、位置唯一且在目标范围内。
+- 新建只接收标题；学习页的 `+` 创建“未命名”任务且不自动进入编辑，极简清单与进度面板都只有双击任务名文字才能改名。进度卡片的三点按钮打开不参与卡片布局的锚定浮动设置卡，只编辑目标和任务点并提供直接回收；外部点击或 `Esc` 取消草稿，明确保存才提交。`/api/study-task-progress` 只接受 `delta:1|-1`，前端对同一任务串行请求并用响应序号避免快速点击回写旧状态。到达目标后卡片持久显示“目标已达”并提示左侧完成入口，但不自动完成；进度数字与状态标签使用常驻独立 DOM，状态标签只在原位改变透明度且不得裁切英文。左侧完成圆在达标但未完成时由半透明低饱和绿色材质基本铺满，不显示勾；完整材质与四枚斑点常驻在按钮内部伪元素，材质向边框下方外扩 2px，再由按钮自身的圆形 `overflow` 边界裁掉外溢部分，避免两条抗锯齿圆弧贴合时露白；普通态裁切为零，达标时用约 520ms 从圆心原地扩散并淡入，减回未满时向圆心收拢淡出，不能离散增删渐变背景；服务端确认达标时不再额外对圆形播放缩放、外扩环或呼吸。它使用独立于进度条呼吸的单一前台计时器，圆内包含两枚中等和两枚小型的浅柔焦绿斑，每约 3.4 秒只随机挑选其中两枚更新位置，四组坐标分别用约 3.2–4.8 秒连续过渡，形成大小、速度错开的无轨道随机游走而不复位瞬移；后台、离页、清单视图和低动态模式停止更新，真正完成后仍切回既有实心绿色白勾。最后一格填充时底层渐变通过可动画颜色变量在同一个 520ms 过程中由鼠尾草绿连续过渡为略低于镀层亮度的明暖金（当前 `#EFCF72 → #F6E09C`），不离散替换整张渐变；服务端确认首次越过目标后，同属暖金色相但明度更高的半透明镀层、细小碎金高光和高斯光雾用约 1.3 秒从左向右覆盖，语义是为基础金镀上一层光泽而非换色，亮层上下各外扩 0.5px 避免形成边界；条内暖金高光与条外光雾的中心必须随首次揭幕前沿从 `-24%` 移到 `124%`，不能只在后续呼吸类里移动。扫光核心峰值为 1.12，最终持久镀层稳定在 1.05；光雾由峰值 76% 收敛到持久 67%，结束回落更小且动画终点与类清理后的静态值完全一致。首次流动在扫光类完成清理后再衔接；`is-goal-pending` 与 `is-goal-celebrating` 卡片必须从呼吸扫描和呼吸 CSS 选择器中排除，进入待确认、扫光或减回未满时还要主动清除既有呼吸类，防止周期计时器覆盖首次扫光。达标卡片仅在学习进度视图处于前台且卡片可见时，以约 2.4 秒有限 CSS 动画让同一个低色差亮暖金光团从条内光泽和条外高斯光雾中同步由左向右单向穿过，峰值光雾约为 80% 透明度与 12.5px 模糊，条体厚度不闪烁；约每 2.8 秒开始一轮，不折返、不使用 `infinite`，后台、离页、清单视图及低动态模式停止；刷新直接恢复静态最终态且不重播，减回未满立即撤销。
+- 极简清单与单位进度面板共用同一份数据；回收、恢复、永久删除、拖拽排序与完成归档都走后端 API。学习归档的 `tasks.json` 标明 `kind:"study"`：活跃页统计，日历过滤。
+- 同一学习任务的新建后修改、状态切换与单位进度写入在前端共用一条串行队列，避免临时 ID 或待保存目标与进度请求竞态；任务回收站前后端都只保留最近 30 条。完成归档若在写入 `tasks.json` 后未能保存 `data/study.json`，必须撤销本次 marker，避免重复归档和活跃统计重复计数。
+- 学习任务不关联画布、专注钟或日历；编辑器也不提供画布节点转学习任务入口。历史专注记录的标题仍可被动显示，`data/calendar-pins.json` 保留在磁盘但不再读取或写入。
+- 验证运行 `python -m unittest tests.test_study_progress`、`node tests/study-progress-contract.js`，并执行完整 Python unittest 与受影响的 Node 契约测试。
 
 ### 活跃星图 `study-graph.js`
 
@@ -403,6 +404,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 普通视图按根节点、月份、任务组织；概览视图按年份、月份、任务组织。
 - 图谱是只读展示，不负责跳转画布编辑定位。
 - 普通/概览分段滑块必须在动态中英翻译完成后按最终按钮尺寸重定位，不能沿用中文宽度裁切英文 `Normal`。
+- 起步页空闲时由 `study.js` 预读当前年度 `/api/study-activity` 并预渲染隐藏的活跃页；预热、首次进入与 `awaitReady()` 必须复用同一进行中请求。隐藏星图保持 `active:false`，不得运行 RAF 或主题监听；真正翻入后再校准年份书脊、分段滑块和可见尺寸。预热失败保持静默并由首次进入重试，不预读额外历史年份。
 
 ### 速记 `notes.js`
 
@@ -421,8 +423,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ### 日历 `calendar.js`
 
 - 日记是每天一个 Markdown 文件，带 frontmatter：`title/date/tags/updatedAt`。
-- 日历聚合日记、学习任务、专注记录、归档记录、倒数日和任务便签。
-- 月历任务便签保存在 `data/calendar-pins.json`，按月份保存自由坐标和颜色。
+- 日历聚合日记、专注记录、非学习归档记录和倒数日；不读取学习任务或 `data/calendar-pins.json`，也不展示 `kind:"study"` 的学习归档。
 - 倒数日保存在 `data/countdown.json`，起步页可开关显示。
 - 倒数日数据 v2 支持最多 100 个事件，也支持真正的零事件空状态：删除最后一条后后端删除 `data/countdown.json`，GET 返回空的 v2 结构；旧版 `{event,date}` 读取时仍作为第一条事件迁移。事件选择会持久化 `selectedId`，前端不使用 `localStorage` 存事件。
 - 日历右上角显示当前倒数摘要或“创建第一个倒数日”入口；单击时钟图标（空状态时点击创建入口）导航到独立 `countdown.html`，返回统一落到 `index.html?view=calendar`，由起步页恢复日历视图。摘要中的事件名和日期/剩余天数区域支持双击就地编辑，Enter 保存、Esc 取消、失焦保存，键盘聚焦后也可用 Enter/F2；编辑时隐藏摘要标签和其余句子，让输入框独占卡片剩余宽度，不能把固定宽输入框塞进原句导致右侧裁切。倒数日页面不依附日历 DOM，不使用全屏 `backdrop-filter`，也不使用原生 Fullscreen API。
@@ -449,7 +450,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 专注钟与每日任务共享一个固定为 `minmax(0, 1fr)` 的 grid 叠层，根容器不滚动；计时器层可独立滚动，每日任务外层固定不滚动，只由居中约 800px 的 `.focus-daily-scroll` 承担纵向滚动，并隐藏原生滚动条但保留滚轮、触控和键盘滚动。交叉过渡期间较长清单不得撑高计时器层，也不得因滚动条占位改变标题、加号或卡片宽度。内部视图层切换只改变透明度；每日任务的页首、分组和卡片允许使用有限的纵向位移与轻微缩放弹性错峰，但必须以恒等位置收尾，不能影响 grid 尺寸。首次无缓存进入时，页首与随后到达的任务数据共用同一个 entrance generation：骨架只负责退场，禁止再给整个列表叠加第二套揭示动画。完成态不再降低整张卡片透明度，正文弱化通过可过渡的内容层完成，完成/撤销反馈只使用勾选、划线和卡片边缘的一次性动画，不能给任务摘要文字添加闪烁脉冲。
 - 专注钟桌面稳态在共享 grid 中使用固定的轻微右下相对偏移，≤900px 恢复无偏移；标题、工作台、控制区与计时环的重新入场只做透明度和环形进度绘制，不使用位移或缩放，避免外层翻页结束后仍发生第二次位置收尾。
 - 每日任务全部完成且当天尚未回顾时，隐藏普通“今天 n / n 完成”汇总，在 `.focus-daily-scroll` 之外显示覆盖整个专注内容区的半透明“微光聚星”庆祝层，让起步页背景色仍可透出；左侧书脊保持可用，庆祝不受任务数量、滚动位置或列表裁剪影响。初载或重新进入已完成清单只显示静态态且不得主动聚焦“回顾今日”，避免翻页后无端出现焦点圈；仅当前交互由未完成跨到全部完成时，才先按可见顺序自下而上反向错峰、缓慢淡出任务卡与页首，再衔接光点汇聚、主星回弹、文字和按钮入场，交互庆祝完成前可把键盘焦点交给按钮。`entering` 交接到 `visible` 时底层滚动区必须直接保持隐藏，不得因移除卡片退场动画后再补一次外层淡出而闪现。按钮约 260ms 交叉退场后恢复原清单、原滚动位置及最后完成任务的焦点，并在当天持久化回顾日期。庆祝 phase 固定为 `hidden / entering / visible / leaving`，期间底层清单必须 `inert` 且对辅助技术隐藏；接口确认同一完成态时只更新文案，不能中断 `entering` 或回顾退场，任一撤销清除当天回顾日期并收起覆盖层。所有计时器受 generation 保护，快速反复勾选或请求回滚必须以最新状态为准，低动态模式直接切换静态态；覆盖层与滚动区均不得使用持续模糊或常驻 `will-change`。
-- 可绑定学习任务或每日任务。专注完成后写入 `data/focus.json`，并同步任务统计。
+- 只可绑定每日任务；专注完成后写入 `data/focus.json`，并按需同步每日任务分钟与完成状态。历史记录中的旧学习任务标题只作静态展示。
 - 支持音效、柔和噪音、时长偏好、目标/收尾记录、记录编辑/删除、Zen 模式。
 - 每日任务是独立清单 `data/daily.json`，每天重置勾选状态，但累计天数和分钟保留；v3 起每条任务记录 `doneDates` / `minutesByDate`，用于专注页任务详情中的打卡月历，并可用 `targetDays` 设置基于历史 `totalDays` 的累计打卡目标（`0` 表示未设置，上限 3660 天）。可选 `milestones:[{id,name,days}]` 保存至多 6 个命名小目标，天数必须唯一且位于 `1..targetDays`，达成态只由 `totalDays >= days` 推导；高级设置先写任务编辑草稿，最后与总目标一起经 `/api/daily-update` 原子保存。任务卡和详情长期进度条以非按钮圆印章显示节点，悬停/键盘聚焦显示即时说明，桌面点击无操作、触屏轻触只揭示说明；今日分钟目标仍保留在编辑器与详情面板。
 - 每日任务只有一套详情入口：卡片不再显示独立“日”按钮或列表内打卡浮层，点击任务名称、键盘激活名称按钮或点击行内非控件区域统一打开居中详情；勾选、里程碑和 `⋯` 不得误开。桌面详情最大约 1080×780px，使用高不透明度表面与固定约 48–58px 高的月历行，统计区只保留连续、累计和最佳三项，不显示今天分钟或累计专注分钟；月份导航、累计目标/里程碑、最近打卡、今日打卡、绑定专注和编辑仍保留。窄屏改为单列滚动，≤640px 接近全屏。详情标题保留单行省略号，但行盒必须给中英文及拉丁字母上下伸部留足空间；Esc 或点击遮罩关闭详情时不强制把焦点还原到任务名称，避免退出后留下突兀焦点框。任务行装饰箭头继续在鼠标悬停或键盘焦点进入时使用绿色强调。
@@ -483,11 +484,11 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 9. 导入、导出、归档
 
+- Markdown 导入/导出的前端按钮当前暂时下线：起步页不展示“导入 MD”，编辑器不展示“导出 MD”。`start.js` / `editor.js` 中的处理以及 `/api/import-markdown` / `/api/export-markdown` 仍保留，等功能重做时复用。当前仍可见的画布导出入口只有 PNG。
 - Markdown 导出会生成一组互相双链的节点 `.md` 文件；若画布含笔记坞，还会在结果的 `笔记坞/` 子目录按去重后的笔记标题输出每篇原始 Markdown。响应中的 `nodeCount` / `noteCount` 分别计数，`count` 是两者之和。独立 `table` 节点按可选标题 + `body` 中的规范表格源码导出；装饰、图片、PDF、MD 附件不导出，连到这些被跳过对象的边也会被邻接过滤。
 - Markdown 导入只接受文件夹第一层 `.md` 文件；开头连续的 `[[标题]]` 行表示双链。单文件最多 4MiB、总计最多 64MiB、一次最多 2000 个文件；单个连通簇超过 240 个节点时改用确定性网格，避免 O(n²) 力导向长时间占满 CPU。
 - PNG 导出由前端 `CanvasModule.exportImage` 生成，尽量包含节点、边、手写、图片、形状和基础背景；编辑辅助底纹与尺子不导出，PDF 节点不完整导出，公式可能降级。导出副本必须移除 `.culled`，并按节点数据补齐视口外未常驻的图片；图片转 data URI 最多四路并发且同 URL 复用同一转换 Promise，避免漏图或瞬时占满内存。
 - 编辑器顶栏“归档”只移走当前画布中已划删除线的正文节点及其相邻连线，画布本身保留，并在 `data/画布归档/` 留轻量记录。
-- “导出画布到任务”会按画布节点生成学习任务；修改时要同时检查学习任务字段和画布读取逻辑。
 
 ## 10. 桌面壳和打包
 
@@ -580,6 +581,13 @@ node .\tests\ruler-contract.js
 node .\tests\canvas-import-regression.js
 node .\tests\canvas-import-contract.js
 python -m unittest .\tests\test_canvas_import_library.py
+```
+
+改动起步页外部画布/文件夹导入时，还要运行：
+
+```powershell
+python -m unittest .\tests\test_external_canvas_import.py
+node .\tests\start-external-import-contract.js
 ```
 
 改动“工具 → 节点矩阵”、批量节点创建或矩阵布局时，还要运行：
