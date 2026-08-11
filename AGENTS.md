@@ -159,7 +159,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 图片和背景资源按后端上传接口管理。画布附件位于 `.assets/attachments/`。
 - Markdown 附件批注保存在附件旁的 `<asset>.annot.json`。文本区/阅读器手写批注保存在 `.assets/node-annotations.json`。
 - `clean-assets` 会根据画布中仍引用的资源清理孤儿文件；不要手写另一个清理逻辑。
-- 起步页“导入画布”通过服务端原生选择器把一张外部 `.canvas` 复制到 `canvases/`，同名时加 `-2/-3`，并复制实际引用的素材与批注；缺失素材只警告，导入后立即打开项目内副本。“导入文件夹”只接受顶层 `.canvas` 和对应 `.assets`；回收站、未知顶层条目、孤立/未知/缺失素材、损坏批注或链接/重解析点都拒绝整批。批量导入先暂存和复检来源，再一次提交画布、素材、最近索引与活动账本；任一步失败都回滚。外部目录的分组、收藏、排序和回收站不导入。
+- 起步页“导入画布”通过服务端原生选择器把一张外部 `.canvas` 复制到 `canvases/`，同名时加 `-2/-3`，并复制实际引用的素材与批注；缺失素材只警告，导入后立即打开项目内副本。“导入文件夹”只接受顶层 `.canvas` 和对应 `.assets`；回收站、未知顶层条目、孤立/未知/缺失素材、损坏批注或链接/重解析点都拒绝整批。批量导入先暂存和复检来源，再一次提交画布、素材、最近索引与活动账本；任一步失败都回滚。外部目录的分组、收藏、排序和回收站不导入。若用户已经手工把文件复制进当前 `canvases/`，可在起步页“未分组”标题旁手动扫描：只登记合法的顶层 `.canvas`，不复制素材、不伪造打开时间；失效登记必须预览确认后才从 `recent.json` 清理。
 
 ### 浏览器本地偏好
 
@@ -196,7 +196,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ### POST
 
 - 画布文件：`/api/new`、`/api/open`、`/api/pick`、`/api/save`、`/api/remove`、`/api/rename`、`/api/clean-assets`
-- 分组/收藏/排序与可见文件统计：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`
+- 分组/收藏/排序与画布库维护：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`、`/api/recent-sync`
 - 回收站：`/api/trash`、`/api/trash-list`、`/api/trash-empty`、`/api/restore`
 - 文件系统交互：`/api/reveal`、`/api/open-external`、`/api/open-attachment`
 - 导入导出：`/api/export-markdown`、`/api/export-png`、`/api/import-markdown`、`/api/import-canvas`（起步页拖入内容导入）、`/api/import-canvas-file`（原生单画布复制导入）、`/api/import-canvas-folder`（原生严格文件夹导入）、`/api/canvas-import-assets`（编辑器内部内容导入的受管素材复制）
@@ -378,11 +378,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 首页是书本式工作台，不是营销页。
 - 主要页面顺序包括复习、日历、速记、节奏/活跃、学习、专注、最近、收藏、自定义分组和固定在其后的未分组；另有回收站、帮助、主题/背景设置。
-- `recent.json` v3 的文件项有稳定 `id`、`groupId`、`groupRank`，收藏项另有 `favoriteRank`；最近页只按 `lastOpenedAt` 计算（最多展示 30 项），收藏与分组顺序互不覆盖。旧版 `group` 字段自动迁移，内置页保留 id 不得用作自定义分组 id。
+- `recent.json` v3 的文件项有稳定 `id`、`groupId`、`groupRank`，收藏项另有 `favoriteRank`；最近页只展示具有真实 `lastOpenedAt` 的条目并按该字段计算（最多展示 30 项），收藏与分组顺序互不覆盖。旧版 `group` 字段自动迁移，内置页保留 id 不得用作自定义分组 id。
 - `groupId: ""` 表示“未分组”，不是“最近”。删除自定义分组只把成员移到“未分组”，不删除画布，也不改变收藏状态。
 - `/api/favorite-toggle` 是幂等设置接口，请求必须带布尔 `favorite`；`/api/reorder-files` 必须带 `view`，最近页不可手动排序。
 - 最近文件会展示存在状态、节点数、大小等；失效文件不主动删除，需要用户处理。画布卡片的右键菜单与键盘右方向键共用“移到回收站”操作；若文件已不存在，该操作只清理最近记录和残留视野状态，不生成不可恢复的空回收站条目。
 - `/api/recent` 只返回元数据，不扫描全部画布；存在状态、节点数和大小由 `IntersectionObserver` 对视口附近卡片分批请求 `/api/file-stats`。后端统计按文件身份、大小和时间戳缓存，缓存上限 512 项；文件变化必须自动失效。
+- “未分组”标题旁的循环箭头显式调用 `/api/recent-sync`，扫描范围固定为当前 `canvases/*.canvas`。新发现的合法普通文件按文件名追加到未分组且 `lastOpenedAt` 为空；损坏、超限、链接/重解析点跳过。若存在已登记但缺失的受管顶层画布，首个请求只返回不透明 ID 供确认，确认请求重新核验且只删除那批仍缺失的登记；外部路径、现存条目元数据、画布文件、素材和活动账本均不改。
 - 正常规模保留玻璃卡片与现有翻页/收藏/FLIP 动画；仅列表超过 40 项时取消逐项错峰入场，超过 80 项时关闭卡片 `backdrop-filter` 并启用 `content-visibility`。
 - 分组、收藏、排序都存 `data/recent.json`。
 - 当前页通过 `aria-hidden` / `inert` 与 `start:viewchange` 统一管理；退场动画结束后，隐藏页用 `visibility:hidden` + `content-visibility:hidden` 跳过后代绘制。学习、活跃、速记、日历、复习和专注模块应在离页/pagehide 时暂停自己的计时器、RAF、observer 或音频，不能让隐藏页继续耗帧。
@@ -588,6 +589,13 @@ python -m unittest .\tests\test_canvas_import_library.py
 ```powershell
 python -m unittest .\tests\test_external_canvas_import.py
 node .\tests\start-external-import-contract.js
+```
+
+改动起步页画布库扫描、最近/未分组索引时，还要运行：
+
+```powershell
+python -m unittest .\tests\test_recent_groups.py
+node .\tests\start-recent-sync-contract.js
 ```
 
 改动“工具 → 节点矩阵”、批量节点创建或矩阵布局时，还要运行：

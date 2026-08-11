@@ -1269,6 +1269,131 @@ def recent_paths() -> set[str]:
     }
 
 
+def _recent_managed_top_level_path(raw_path: object) -> Path | None:
+    """Return a direct managed .canvas path, including one that is now missing."""
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    try:
+        target = Path(raw_path).resolve()
+        managed_root = CANVASES.resolve()
+    except OSError:
+        return None
+    if target.suffix.lower() != ".canvas" or target.parent != managed_root:
+        return None
+    return target
+
+
+def _is_safe_new_managed_canvas(path: Path) -> bool:
+    """Validate a previously unindexed top-level canvas without following links."""
+    try:
+        info = path.lstat()
+        attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+        if path.is_symlink() or bool(attributes & 0x400) or not path.is_file():
+            return False
+        if int(info.st_size) > MAX_JSON_BODY_BYTES:
+            return False
+        with path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("nodes"), list)
+
+
+def _scan_recent_library(data: dict) -> tuple[list[Path], list[dict], int]:
+    """Compare the recent index with direct children of the managed canvas root."""
+    indexed_paths = {
+        os.path.normcase(_norm(item.get("path", "")))
+        for item in data.get("files", [])
+        if isinstance(item, dict) and item.get("path")
+    }
+    additions: list[Path] = []
+    skipped_invalid = 0
+    try:
+        entries = sorted(CANVASES.iterdir(), key=lambda item: item.name.casefold())
+    except OSError as err:
+        raise OSError(f"无法读取画布文件夹：{err}") from err
+    for path in entries:
+        if path.suffix.lower() != ".canvas":
+            continue
+        key = os.path.normcase(_norm(path))
+        if key in indexed_paths:
+            continue
+        if not _is_safe_new_managed_canvas(path):
+            skipped_invalid += 1
+            continue
+        additions.append(path.resolve())
+
+    missing: list[dict] = []
+    for item in data.get("files", []):
+        if not isinstance(item, dict):
+            continue
+        managed = _recent_managed_top_level_path(item.get("path"))
+        if managed is not None and not managed.is_file():
+            missing.append(item)
+    return additions, missing, skipped_invalid
+
+
+@_serialized_data
+def sync_recent_library(confirm_remove_ids: list[str] | None = None) -> dict:
+    """Discover copied canvases and optionally remove confirmed missing entries."""
+    data = load_recent()
+    additions, missing, skipped_invalid = _scan_recent_library(data)
+    missing_by_id = {
+        str(item.get("id") or ""): item
+        for item in missing
+        if str(item.get("id") or "")
+    }
+    if confirm_remove_ids is None and missing_by_id:
+        return {
+            "ok": True,
+            "needsConfirmation": True,
+            "pendingAddedCount": len(additions),
+            "pendingRemovedCount": len(missing_by_id),
+            "skippedInvalidCount": skipped_invalid,
+            "removeIds": list(missing_by_id),
+        }
+
+    confirmed = set(confirm_remove_ids or [])
+    removed_ids = confirmed.intersection(missing_by_id)
+    if removed_ids:
+        data["files"] = [
+            item for item in data.get("files", [])
+            if not isinstance(item, dict) or str(item.get("id") or "") not in removed_ids
+        ]
+
+    inbox_ranks = [
+        _clean_recent_rank(item.get("groupRank"), 0)
+        for item in data.get("files", [])
+        if isinstance(item, dict) and not item.get("groupId")
+    ]
+    next_rank = (max(inbox_ranks) if inbox_ranks else 0) + RECENT_RANK_STEP
+    added_paths: list[str] = []
+    for path in additions:
+        normalized = _norm(path)
+        data["files"].append({
+            "id": _recent_file_id(),
+            "path": normalized,
+            "title": path.stem,
+            "lastOpenedAt": "",
+            "groupId": "",
+            "groupRank": next_rank,
+        })
+        added_paths.append(normalized)
+        next_rank += RECENT_RANK_STEP
+
+    if removed_ids or added_paths:
+        _save_recent_unlocked(data)
+    return {
+        "ok": True,
+        "needsConfirmation": False,
+        "addedCount": len(added_paths),
+        "removedCount": len(removed_ids),
+        "skippedInvalidCount": skipped_invalid,
+        "remainingMissingCount": len(set(missing_by_id) - removed_ids),
+        "addedPaths": added_paths,
+    }
+
+
 def canvas_file_stats(path: Path | str) -> dict:
     """读 .canvas 返回 {sizeBytes, nodeCount}；失败时对应字段给 None。
     按文件身份/时间/大小做有界缓存，避免起步页重复刷新时反复解析未改画布。"""
@@ -6996,6 +7121,7 @@ CANVAS_FILE_POST_ROUTES = {
 }
 CANVAS_AND_DATA_POST_ROUTES = {
     "/api/new",
+    "/api/recent-sync",
     "/api/save",
     "/api/trash",
     "/api/import-canvas",
@@ -7309,6 +7435,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _dispatch_POST(self, path: str, body: dict):
         if path == "/api/new":
             return self._api_new()
+        if path == "/api/recent-sync":
+            return self._api_recent_sync(body)
         if path == "/api/study-task-create":
             return self._api_study_task_create(body)
         if path == "/api/study-task-update":
@@ -7503,6 +7631,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             item["canvasActivitySec"] = totals.get(canvas_id, 0)
         data["recentLimit"] = RECENT_LIMIT
         self._send_json(200, data)
+
+    def _api_recent_sync(self, body: dict):
+        confirm_ids = body.get("confirmRemoveIds") if isinstance(body, dict) else None
+        if confirm_ids is not None and (
+            not isinstance(confirm_ids, list)
+            or not all(isinstance(item, str) for item in confirm_ids)
+        ):
+            return self._send_json(400, {"error": "confirmRemoveIds 必须是字符串数组"})
+        try:
+            result = sync_recent_library(confirm_ids)
+        except OSError as err:
+            return self._send_json(500, {"error": str(err)})
+        self._send_json(200, result)
 
     def _api_file_stats(self, body: dict):
         paths = body.get("paths") if isinstance(body, dict) else None

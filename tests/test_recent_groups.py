@@ -36,6 +36,14 @@ class RecentGroupsTest(unittest.TestCase):
             json.dumps(payload, ensure_ascii=False), encoding="utf-8",
         )
 
+    def write_canvas(self, name, payload=None):
+        path = self.canvases_dir / name
+        path.write_text(
+            json.dumps(payload if payload is not None else {"nodes": []}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return path
+
     def test_v2_migrates_to_v3_with_stable_ids_and_independent_ranks(self):
         first = str(self.canvases_dir / "第一张.canvas")
         second = str(self.canvases_dir / "第二张.canvas")
@@ -232,6 +240,126 @@ class RecentGroupsTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["nodeCount"], 2)
         self.assertTrue(result[0]["exists"])
+
+    def test_library_sync_adds_valid_top_level_canvases_at_inbox_end_and_is_idempotent(self):
+        existing = self.write_canvas("保留.canvas")
+        alpha = self.write_canvas("A.canvas", {"nodes": [{}]})
+        beta = self.write_canvas("B.canvas", {"nodes": [{}, {}]})
+        self.write_recent({
+            "version": 3,
+            "groups": [{"id": "g1", "name": "原分组"}],
+            "files": [{
+                "id": "cf_keep", "path": str(existing), "title": "保留标题",
+                "lastOpenedAt": "2026-08-01T10:00:00", "groupId": "g1",
+                "groupRank": 4096, "favorite": True, "favoriteRank": 1024,
+            }],
+        })
+
+        with mock.patch.object(target, "_save_recent_unlocked", wraps=target._save_recent_unlocked) as save:
+            result = target.sync_recent_library()
+
+        self.assertFalse(result["needsConfirmation"])
+        self.assertEqual(result["addedCount"], 2)
+        self.assertEqual(result["removedCount"], 0)
+        self.assertEqual(result["addedPaths"], [str(alpha.resolve()), str(beta.resolve())])
+        save.assert_called_once()
+        synced = target.load_recent()
+        kept = next(item for item in synced["files"] if item["id"] == "cf_keep")
+        self.assertEqual(kept["title"], "保留标题")
+        self.assertEqual(kept["groupId"], "g1")
+        self.assertTrue(kept["favorite"])
+        additions = [item for item in synced["files"] if item["id"] != "cf_keep"]
+        self.assertEqual([item["title"] for item in additions], ["A", "B"])
+        self.assertTrue(all(item["groupId"] == "" for item in additions))
+        self.assertTrue(all(item["lastOpenedAt"] == "" for item in additions))
+        self.assertLess(additions[0]["groupRank"], additions[1]["groupRank"])
+
+        second = target.sync_recent_library()
+        self.assertEqual(second["addedCount"], 0)
+        self.assertEqual(len(target.load_recent()["files"]), 3)
+
+    def test_library_sync_previews_missing_without_writing_then_removes_only_confirmed_ids(self):
+        first_missing = self.canvases_dir / "旧一.canvas"
+        second_missing = self.canvases_dir / "旧二.canvas"
+        external_missing = self.root / "外部.canvas"
+        self.write_recent({
+            "version": 3,
+            "groups": [{"id": "g1", "name": "保留分组"}],
+            "files": [
+                {
+                    "id": "cf_first", "path": str(first_missing), "title": "旧一",
+                    "lastOpenedAt": "2026-08-01T10:00:00", "groupId": "g1",
+                    "groupRank": 0, "favorite": True, "favoriteRank": 0,
+                },
+                {
+                    "id": "cf_external", "path": str(external_missing), "title": "外部",
+                    "lastOpenedAt": "2026-08-01T11:00:00", "groupId": "",
+                    "groupRank": 0,
+                },
+            ],
+        })
+
+        before = self.recent_file.read_bytes()
+        preview = target.sync_recent_library()
+        self.assertTrue(preview["needsConfirmation"])
+        self.assertEqual(preview["pendingRemovedCount"], 1)
+        self.assertEqual(preview["removeIds"], ["cf_first"])
+        self.assertEqual(self.recent_file.read_bytes(), before)
+
+        changed = target.load_recent()
+        changed["files"].append({
+            "id": "cf_second", "path": str(second_missing), "title": "旧二",
+            "lastOpenedAt": "", "groupId": "", "groupRank": 1024,
+        })
+        target.save_recent(changed)
+        result = target.sync_recent_library(preview["removeIds"])
+
+        self.assertEqual(result["removedCount"], 1)
+        self.assertEqual(result["remainingMissingCount"], 1)
+        ids = {item["id"] for item in target.load_recent()["files"]}
+        self.assertNotIn("cf_first", ids)
+        self.assertIn("cf_second", ids)
+        self.assertIn("cf_external", ids)
+
+    def test_library_sync_skips_invalid_oversized_nested_and_trash_canvases(self):
+        valid = self.write_canvas("有效.canvas")
+        tracked_invalid = self.canvases_dir / "已登记但损坏.canvas"
+        tracked_invalid.write_text("{temporarily broken", encoding="utf-8")
+        invalid_json = self.canvases_dir / "损坏.canvas"
+        invalid_json.write_text("{not json", encoding="utf-8")
+        self.write_canvas("结构错误.canvas", {"edges": []})
+        oversized = self.canvases_dir / "过大.canvas"
+        oversized.write_text('{"nodes":[],"padding":"' + ('x' * 80) + '"}', encoding="utf-8")
+        nested = self.canvases_dir / "子目录"
+        nested.mkdir()
+        (nested / "嵌套.canvas").write_text('{"nodes":[]}', encoding="utf-8")
+        trash = self.canvases_dir / "回收站"
+        trash.mkdir()
+        (trash / "已删除.canvas").write_text('{"nodes":[]}', encoding="utf-8")
+        self.write_recent({
+            "version": 3,
+            "groups": [],
+            "files": [{
+                "id": "cf_tracked_invalid", "path": str(tracked_invalid),
+                "title": "已登记但损坏", "lastOpenedAt": "2026-08-01T10:00:00",
+                "groupId": "", "groupRank": 0,
+            }],
+        })
+
+        with mock.patch.object(target, "MAX_JSON_BODY_BYTES", 64):
+            result = target.sync_recent_library()
+
+        self.assertEqual(result["addedCount"], 1)
+        self.assertEqual(result["addedPaths"], [str(valid.resolve())])
+        self.assertEqual(result["skippedInvalidCount"], 3)
+        synced = target.load_recent()["files"]
+        self.assertIn("cf_tracked_invalid", {item["id"] for item in synced})
+        self.assertEqual([item["title"] for item in synced], ["已登记但损坏", "有效"])
+
+    def test_new_managed_canvas_validation_rejects_links(self):
+        linked = self.write_canvas("链接.canvas")
+        with mock.patch.object(Path, "is_symlink", return_value=True):
+            self.assertFalse(target._is_safe_new_managed_canvas(linked))
 
 
 if __name__ == "__main__":
