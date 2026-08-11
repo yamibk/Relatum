@@ -2600,7 +2600,7 @@
       detail.classList.remove('is-refreshing');
       detail.innerHTML = detailHtmlForDay(selectedDay);
       detail.querySelectorAll('[data-canvas-path]').forEach((button) => {
-        button.addEventListener('click', () => gotoCanvas(button.dataset.canvasPath, false));
+        button.addEventListener('click', () => window.gotoEditor(button.dataset.canvasPath, null, false));
       });
       if (!prefersReduced) {
         const toHeight = detail.offsetHeight;
@@ -2808,7 +2808,7 @@
       });
     }
     host.querySelectorAll('[data-canvas-path]').forEach((button) => {
-      button.addEventListener('click', () => gotoCanvas(button.dataset.canvasPath, false));
+      button.addEventListener('click', () => window.gotoEditor(button.dataset.canvasPath, null, false));
     });
     const recentList = host.querySelector('.cadence-recent-list');
     if (recentList) {

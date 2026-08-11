@@ -1554,6 +1554,9 @@
     }, 150);
   }
 
+  // 暴露给活跃页等其它前置页：点「打开画布」直接进编辑器（与最近列表共用同一路由）。
+  window.gotoEditor = gotoEditor;
+
   // ── 相对时间 ──────────────────────────────────
   function formatRelTime(iso) {
     if (!iso) return '';
