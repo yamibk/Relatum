@@ -97,23 +97,6 @@
   </script>
   <div class="editor-opening-cover" data-role="editor-opening-cover" aria-hidden="true"></div>
   <div class="editor-immersive-background" data-role="editor-immersive-background" aria-hidden="true"></div>
-  <aside class="task-export-notice" data-role="task-export-notice"
-         role="status" aria-live="polite" aria-atomic="true" hidden>
-    <span class="task-export-notice-icon" aria-hidden="true">
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-           stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6.2 3.7H4.8a1.1 1.1 0 0 0-1.1 1.1v1.4M13.8 3.7h1.4a1.1 1.1 0 0 1 1.1 1.1v1.4M6.2 16.3H4.8a1.1 1.1 0 0 1-1.1-1.1v-1.4M13.8 16.3h1.4a1.1 1.1 0 0 0 1.1-1.1v-1.4"/>
-        <rect x="6.7" y="6.6" width="6.6" height="6.8" rx="1.5"/>
-        <path d="m8.4 10 1.15 1.15 2.2-2.35"/>
-      </svg>
-    </span>
-    <span class="task-export-notice-copy">
-      <strong data-role="task-export-notice-title">请选择卡片</strong>
-      <span data-role="task-export-notice-detail">选中要转换的卡片后再试。</span>
-    </span>
-    <button type="button" class="task-export-notice-close"
-            data-role="task-export-notice-close" aria-label="关闭提示">×</button>
-  </aside>
   <header class="editor-top-bar">
     <div class="editor-topbar-guide" data-role="editor-topbar-guide" aria-hidden="true" hidden></div>
     <div class="editor-nav">
@@ -314,21 +297,11 @@
       </div>
       <span class="editor-action-separator" aria-hidden="true"></span>
       <div class="editor-action-group editor-action-group-export">
-        <button type="button" class="editor-export-btn"
-                data-action="export-md" data-toolbar-i18n-title="exportMdTitle"
-                title="把当前画布导出为一组互相关联的 Markdown 文件">
-          <span data-toolbar-i18n="exportMd">导出 MD</span>
-        </button>
+        <!-- Markdown 导出入口暂时下线；导出实现与接口保留。 -->
         <button type="button" class="editor-export-btn"
                 data-action="export-png" data-toolbar-i18n-title="exportPngTitle"
                 title="把整张画布导出为一张高清 PNG 图片（不含 PDF 附件）">
           <span data-toolbar-i18n="exportPng">导出 PNG</span>
-        </button>
-        <button type="button" class="editor-export-btn editor-task-export-btn"
-                data-action="export-tasks" data-toolbar-i18n-title="tasksTitle"
-                title="把选中的卡片节点转为学习页待办任务；成功后移除这些卡片">
-          <span class="task-export-default-label" data-toolbar-i18n="tasks">转为任务</span>
-          <span class="task-export-confirm-label" data-toolbar-i18n="tasksConfirm">确认转为任务</span>
         </button>
       </div>
       <span class="editor-action-separator" aria-hidden="true"></span>
@@ -3340,7 +3313,7 @@
             <div><dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>立即保存（默认开自动保存，改完约 1.5 秒自动写盘）</dd></div>
             <div><dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>撤销</dd></div>
             <div><dt><kbd>Ctrl</kbd>+<kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></dt><dd>重做</dd></div>
-            <div><dt>顶栏<kbd>导出</kbd></dt><dd>导出 Markdown 或 PNG 图片</dd></div>
+            <div><dt>顶栏<kbd>导出 PNG</kbd></dt><dd>把整张画布导出为 PNG 图片</dd></div>
             <div><dt>顶栏<kbd>清理附件</kbd></dt><dd>删除 .assets 里未被引用的图片 / 附件</dd></div>
           </dl>
           <h3>编辑节点时</h3>

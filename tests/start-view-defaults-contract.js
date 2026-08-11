@@ -15,12 +15,12 @@ assert(focus.includes("const preferred = opts.forceTimer || sessionLocksView() ?
   && focus.includes("commitViewMode(preferred, { persist: false, load: false, reveal: false });"),
   'forced timer entries must remain temporary and must not overwrite the daily default or saved preference');
 
-assert(study.includes("localStorage.getItem(VIEW_MODE_KEY) === 'board' ? 'board' : 'list'")
+assert(study.includes("localStorage.getItem(VIEW_MODE_KEY) === 'progress' ? 'progress' : 'list'")
   && study.includes("catch (e) { return 'list'; }"),
   'Study must default to the compact list when no valid saved view preference exists');
 assert(study.includes("localStorage.setItem(VIEW_MODE_KEY, next)"),
   'Study view changes must continue to persist the explicit user preference');
-assert(study.includes("setViewMode(viewMode === 'list' ? 'board' : 'list', true);"),
-  'the Study spine must continue to toggle between list and board views');
+assert(study.includes("setViewMode(viewMode === 'list' ? 'progress' : 'list', true);"),
+  'the Study spine must continue to toggle between list and progress views');
 
 console.log('start view defaults contract passed');

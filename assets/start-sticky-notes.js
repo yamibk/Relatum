@@ -35,7 +35,7 @@
     '[tabindex]:not([tabindex="-1"])', '[draggable="true"]',
     'canvas', 'svg', 'iframe', 'img', 'video', 'audio',
     '.context-menu', '.start-speed-pop', '.start-notice', '.desktop-settings',
-    '.study-dialog', '.calendar-task-panel', '.calendar-pin', '.focus-daily',
+    '.study-dialog', '.focus-daily',
   ].join(',');
 
   let notes = [];
@@ -533,6 +533,8 @@
 
   function safeCreateTarget(event) {
     if (!activeScope || !activeHost || bookView.classList.contains('view-switching')) return false;
+    // 学习页暂不需要双击创建便签
+    if (activeScope === 'study') return false;
     const target = event.target;
     if (!(target instanceof Element) || !activeHost.contains(target)) return false;
     if (target.closest(blockedCreateSelector)) return false;

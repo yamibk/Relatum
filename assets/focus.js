@@ -1,4 +1,4 @@
-// 起步页「专注钟」：番茄钟 / 正计时、学习任务绑定、目标成果、可靠恢复与记录回看。
+// 起步页「专注钟」：番茄钟 / 正计时、每日任务绑定、目标成果、可靠恢复与记录回看。
 (function () {
   'use strict';
 
@@ -120,8 +120,7 @@
   let lastRuntimePersistAt = 0;
   let boundTaskId = '';
   let boundTaskTitle = '';
-  let boundKind = '';   // '' | 'study' | 'daily'：这一段专注绑的是学习任务还是每日任务
-  let tasks = [];
+  let boundKind = '';   // '' | 'daily'
   let dailyTasks = [];
   let dailyGroups = [];           // 分组树：每个 {id,name,parentId,collapsed}，parentId:'' = 根
   let dailyLoaded = false;
@@ -502,7 +501,7 @@
       localStorage.setItem(MODE_KEY, mode);
       if (boundTaskId) {
         localStorage.setItem(TASK_KEY, boundTaskId);
-        localStorage.setItem(KIND_KEY, boundKind || 'study');
+        localStorage.setItem(KIND_KEY, boundKind || 'daily');
       } else {
         localStorage.removeItem(TASK_KEY);
         localStorage.removeItem(KIND_KEY);
@@ -539,7 +538,8 @@
     completedFocus = Math.max(0, Number(raw.completedFocus) || 0);
     boundTaskId = String(raw.boundTaskId || '');
     boundTaskTitle = String(raw.boundTaskTitle || '');
-    boundKind = raw.boundKind === 'daily' ? 'daily' : (boundTaskId ? 'study' : '');
+    boundKind = raw.boundKind === 'daily' ? 'daily' : '';
+    if (!boundKind) { boundTaskId = ''; boundTaskTitle = ''; }
     if (goalEl) goalEl.value = String(raw.goal || '');
     if (raw.pendingSession && Number(raw.pendingSession.durationSec) >= LOG_MIN_SEC) {
       pendingSession = {
@@ -833,7 +833,7 @@
     }
     if (wrapupDoneBtn) {
       wrapupDoneBtn.hidden = !boundTaskId;
-      wrapupDoneBtn.textContent = boundKind === 'daily' ? T('保存并完成这件每日任务') : T('保存并完成任务');
+      wrapupDoneBtn.textContent = T('保存并完成这件每日任务');
     }
     if (wrapupEl) {
       wrapupEl.classList.remove('focus-card-exiting');
@@ -850,25 +850,12 @@
     const goal = pendingSession.goal;
     const outcome = outcomeEl ? outcomeEl.value.trim() : '';
     await logSession(durationSec, goal, outcome);
-    if (action === 'done' && taskId) {
-      if (kind === 'daily') {
-        try {
-          await completeDailyTask(taskId);
-          toast('已保存专注记录，并完成今天的「' + taskTitle + '」');
-        } catch (error) {
-          toast('专注记录已保存，每日任务未更新 · ' + error.message);
-        }
-      } else {
-        try {
-          await post('/api/study-task-update', { id: taskId, status: 'done' });
-          document.dispatchEvent(new CustomEvent('canvas:data-changed', {
-            detail: { source: 'study', path: '/api/study-task-update' },
-          }));
-          if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
-          toast('已保存专注记录，并完成任务 · ' + taskTitle);
-        } catch (error) {
-          toast('专注记录已保存，任务状态未更新 · ' + error.message);
-        }
+    if (action === 'done' && taskId && kind === 'daily') {
+      try {
+        await completeDailyTask(taskId);
+        toast('已保存专注记录，并完成今天的「' + taskTitle + '」');
+      } catch (error) {
+        toast('专注记录已保存，每日任务未更新 · ' + error.message);
       }
     }
     pendingSession = null;
@@ -896,15 +883,14 @@
   }
 
   function logSession(durationSec, goal, outcome) {
-    // 绑的是每日任务时：focus.json 不按学习任务汇总（taskId 留空，免污染学习统计），
-    // 分钟另走 /api/daily-add-minutes 累计到每日任务；taskTitle 仍留作足迹圆点的显示名。
+    // 每日任务的分钟另走 /api/daily-add-minutes；taskTitle 仍留作足迹圆点的显示名。
     const kind = boundKind;
     const dailyId = kind === 'daily' ? boundTaskId : '';
     const session = {
       id: 'fs_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
       mode,
       durationSec: Math.round(durationSec),
-      taskId: kind === 'study' ? (boundTaskId || '') : '',
+      taskId: '',
       taskTitle: boundTaskTitle || '',
       goal: String(goal || ''),
       outcome: String(outcome || ''),
@@ -921,7 +907,6 @@
         document.dispatchEvent(new CustomEvent('canvas:data-changed', {
           detail: { source: 'focus', path: '/api/focus-log' },
         }));
-        if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
         return session;
       });
     }).catch((error) => {
@@ -937,13 +922,6 @@
     const fraction = Math.max(0, Math.min(1, progress));
     ringFill.style.strokeDasharray = RING_C.toFixed(1);
     ringFill.style.strokeDashoffset = (RING_C * (1 - fraction)).toFixed(1);
-  }
-  function taskTagFor(id) {
-    const task = tasks.find((item) => item.id === id);
-    if (!task) return '';
-    if (task.focusDay === todayStr()) return T('［今日］');
-    if (task.status === 'doing') return T('［进行中］');
-    return '';
   }
   // 运行时在环下方常驻「正在做 + 目标 + 番茄轮次」；按签名跳过无变化的重建，避免每秒刷 DOM。
   function renderCockpit() {
@@ -968,8 +946,7 @@
         const label = document.createElement('span');
         label.textContent = '正在做';
         const name = document.createElement('strong');
-        const tag = boundKind === 'daily' ? T('［每日］') : taskTagFor(boundTaskId);
-        name.textContent = tag + (boundTaskTitle || T('未命名任务'));
+        name.textContent = T('［每日］') + (boundTaskTitle || T('未命名任务'));
         cockpitTaskEl.append(label, name);
       } else {
         const name = document.createElement('strong');
@@ -1251,18 +1228,15 @@
     });
   }
   function loadTasks(options) {
-    const opts = options || {};
-    return focusJsonSource(opts.source, '/api/study').then((json) => {
-      tasks = json && Array.isArray(json.tasks) ? json.tasks : [];
-      renderTaskOptions();
-    }).catch(() => {});
+    renderTaskOptions();
+    return Promise.resolve();
   }
 
   // 「更新」按钮：强制重读任务/每日/记录。平时翻进专注页用缓存，不重读。
   async function refreshFocus(btn) {
     if (btn) btn.classList.add('is-refreshing');
     try {
-      await Promise.all([loadTasks(), loadDaily(), loadSessions()]);
+      await Promise.all([loadDaily(), loadSessions()]);
       toast('专注数据已更新');
     } finally {
       if (btn) btn.classList.remove('is-refreshing');
@@ -1270,27 +1244,7 @@
   }
   function renderTaskOptions() {
     if (!taskSelect) return;
-    const today = todayStr();
-    const active = tasks.filter((task) => task && task.status !== 'done');
-    const rank = { doing: 0, todo: 1 };
-    active.sort((a, b) => {
-      const ax = a.focusDay === today ? -1 : (rank[a.status] ?? 2);
-      const bx = b.focusDay === today ? -1 : (rank[b.status] ?? 2);
-      return ax - bx;
-    });
     taskSelect.innerHTML = '<option value="">' + T('不绑定 · 只是专注') + '</option>';
-    if (active.length) {
-      const group = document.createElement('optgroup');
-      group.label = T('学习任务');
-      active.forEach((task) => {
-        const option = document.createElement('option');
-        option.value = task.id;
-        const tag = task.focusDay === today ? T('［今日］') : (task.status === 'doing' ? T('［进行中］') : '');
-        option.textContent = tag + (task.title || T('未命名任务'));
-        group.appendChild(option);
-      });
-      taskSelect.appendChild(group);
-    }
     if (dailyTasks.length) {
       const group = document.createElement('optgroup');
       group.label = T('每日任务');
@@ -1313,11 +1267,6 @@
       } else if (!running) {
         boundKind = ''; boundTaskId = ''; boundTaskTitle = ''; taskSelect.value = '';
       }
-    } else if (boundTaskId && active.some((task) => task.id === boundTaskId)) {
-      boundKind = 'study';
-      taskSelect.value = boundTaskId;
-      const task = tasks.find((item) => item.id === boundTaskId);
-      boundTaskTitle = task ? task.title || '' : boundTaskTitle;
     } else if (boundTaskId && !running) {
       boundKind = ''; boundTaskId = ''; boundTaskTitle = ''; taskSelect.value = '';
     }
@@ -1329,8 +1278,9 @@
     }
     boundTaskId = String(id || '');
     boundTaskTitle = String(title || '');
-    boundKind = id ? (kind || 'study') : '';
-    if (taskSelect) taskSelect.value = boundKind === 'daily' ? 'daily:' + boundTaskId : boundTaskId;
+    boundKind = id && kind === 'daily' ? 'daily' : '';
+    if (!boundKind) { boundTaskId = ''; boundTaskTitle = ''; }
+    if (taskSelect) taskSelect.value = boundKind === 'daily' ? 'daily:' + boundTaskId : '';
     savePreferences();
     showBindFeedback();
     return true;
@@ -1341,10 +1291,7 @@
       const id = value.slice(6);
       const task = dailyTasks.find((item) => item.id === id);
       bindTask(task ? task.id : '', task ? task.name || '' : '', task ? 'daily' : '');
-    } else {
-      const task = tasks.find((item) => item.id === value);
-      bindTask(task ? task.id : '', task ? task.title || '' : '', task ? 'study' : '');
-    }
+    } else bindTask('', '', '');
   }
   function loadSessions(options) {
     const opts = options || {};
@@ -1553,7 +1500,6 @@
   function preloadFocusView() {
     if (focusWarmupPromise) return focusWarmupPromise;
     focusWarmupPromise = Promise.allSettled([
-      loadTasks({ source: bootFocusData.study }),
       loadDaily({ source: bootFocusData.daily, reveal: false, entrance: false, quiet: true }),
       loadSessions({ source: bootFocusData.sessions }),
     ]);
@@ -4426,7 +4372,8 @@
   });
 
   try { boundTaskId = localStorage.getItem(TASK_KEY) || ''; } catch (e) {}
-  try { boundKind = boundTaskId ? (localStorage.getItem(KIND_KEY) || 'study') : ''; } catch (e) {}
+  try { boundKind = boundTaskId && localStorage.getItem(KIND_KEY) === 'daily' ? 'daily' : ''; } catch (e) {}
+  if (boundKind !== 'daily') { boundTaskId = ''; boundTaskTitle = ''; }
   restoreRuntime();
   if (root.dataset.pendingForceTimer === '1' || sessionLocksView()) viewMode = 'timer';
   syncModeUI();
@@ -4491,7 +4438,6 @@
       const activationId = focusActivationSeq;
       footprintDay = todayStr();
       footprintSessionId = '';
-      loadTasks();   // 任务下拉框每次重读，和学习页实时同步（任务联动敏感，不缓存）
       const hadDaily = dailyLoaded;
       const dailyEntranceKey = 'activation-' + activationId;
       if (viewMode === 'daily') {
@@ -4515,15 +4461,6 @@
       }
     },
     deactivate: deactivateFocusView,
-    prepareTask(id, title) {
-      showTimerView({ persist: false, animate: false });
-      if (!bindTask(id, title)) return false;
-      loadTasks().then(() => {
-        if (taskSelect) taskSelect.value = boundTaskId;
-      });
-      if (goalEl) goalEl.focus();
-      return true;
-    },
     showDay(day, sessionId) {
       showTimerView({ persist: false, animate: false });
       footprintDay = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? String(day) : todayStr();

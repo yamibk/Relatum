@@ -46,7 +46,6 @@
       window.RelatumBoot.focus = {
         daily: preloadJson('/api/daily'),
         sessions: preloadJson('/api/focus'),
-        study: preloadJson('/api/study'),
       };
     })();
   </script>
@@ -181,8 +180,9 @@
     </div>
     <!-- 常驻操作条：仅在画布列表视图显示（空状态由 hero 区承担操作）-->
     <div class="top-actions">
-      <button type="button" class="btn-text" data-action="open">打开文件</button>
-      <button type="button" class="btn-text" data-action="import-md">导入 MD</button>
+      <button type="button" class="btn-text" data-action="import-canvas-file">导入画布</button>
+      <button type="button" class="btn-text" data-action="import-canvas-folder">导入文件夹</button>
+      <!-- Markdown 导入入口暂时下线；导入实现与接口保留。 -->
       <button type="button" class="btn btn-primary" data-action="new">新建画布</button>
     </div>
   </header>
@@ -200,12 +200,13 @@
         <button type="button" class="btn btn-primary" data-action="new">
           新建画布
         </button>
-        <button type="button" class="btn-text" data-action="open">
-          打开已有文件
+        <button type="button" class="btn-text" data-action="import-canvas-file">
+          导入已有画布
         </button>
-        <button type="button" class="btn-text" data-action="import-md">
-          导入 MD 文件夹
+        <button type="button" class="btn-text" data-action="import-canvas-folder">
+          导入画布文件夹
         </button>
+        <!-- Markdown 导入入口暂时下线；导入实现与接口保留。 -->
         <button type="button" class="btn-text" data-action="study-view">
           进入学习页
         </button>
@@ -223,7 +224,7 @@
           <span class="review-spine-glyph" aria-hidden="true" data-i18n="spineReviewGlyph" data-i18n-zh="复">复</span>
           <span class="dot-bubble">复习</span>
         </button>
-        <!-- 日历：把日记、学习任务、专注与归档按日期放回同一条时间线上。 -->
+        <!-- 日历：把日记、专注与非学习归档按日期放回同一条时间线上。 -->
         <button type="button" class="study-spine-tab calendar-spine-tab" data-action="calendar-view" aria-label="日历">
           <span class="calendar-spine-glyph" aria-hidden="true" data-i18n="spineCalendarGlyph" data-i18n-zh="日">日</span>
           <span class="dot-bubble">日历</span>
@@ -272,75 +273,39 @@
           <ul class="recent-list" data-role="file-list"></ul>
         </div>
       </div>
-      <section class="study-main study-embedded" data-role="study-view" aria-label="学习页">
-        <div class="study-page-tools">
-          <button type="button" class="btn-text" data-action="study-trash">
-            回收站 <span class="study-trash-count" data-role="trash-count">0</span>
-          </button>
-          <button type="button" class="btn btn-primary" data-action="new-task">新建任务</button>
-        </div>
-        <section class="study-hero">
-          <div>
-            <p class="study-eyebrow">STUDY DESK</p>
-            <h1>Focus</h1>
-          </div>
-          <div class="study-stats" aria-label="任务统计">
-            <div><strong data-role="stat-today">0</strong><span>今日</span></div>
-            <div><strong data-role="stat-doing">0</strong><span>进行中</span></div>
-            <div><strong data-role="stat-done">0</strong><span>已完成</span></div>
-          </div>
-        </section>
-
-        <section class="study-today">
-          <div class="study-section-head">
+      <section class="study-main study-embedded study-mode-list" data-role="study-view" aria-label="学习页">
+        <section class="study-progress-view" data-role="study-progress-view" aria-label="学习任务进度">
+          <header class="study-progress-head">
             <div>
-              <p class="study-eyebrow">TODAY</p>
-              <h2>今日任务</h2>
+              <p class="study-eyebrow">STUDY</p>
+              <h1>学习任务 <span data-role="study-task-count">0</span></h1>
             </div>
-            <span class="study-section-note" data-role="today-label"></span>
-          </div>
-          <div class="study-carryover" data-role="carryover" hidden>
-            <span class="study-carryover-text" data-role="carryover-text"></span>
-            <div class="study-carryover-actions">
-              <button type="button" class="study-carryover-yes" data-action="carryover-pull">都带到今天</button>
-              <button type="button" class="study-carryover-no" data-action="carryover-dismiss">不用了</button>
+            <div class="study-progress-actions">
+              <button type="button" class="study-progress-today" data-action="study-today-placeholder">今日任务</button>
+              <button type="button" class="study-progress-trash" data-action="study-trash" aria-label="任务回收站" title="任务回收站">♲</button>
+              <button type="button" class="study-progress-create" data-action="study-compose-toggle" aria-label="新建学习任务" aria-expanded="false">＋</button>
             </div>
+          </header>
+          <div class="study-progress-board">
+            <section class="study-progress-column" data-role="study-progress-active-column">
+              <header class="study-progress-column-head">
+                <h2>未完成</h2>
+                <span class="study-progress-column-count" data-role="study-active-count">0</span>
+              </header>
+              <div class="study-progress-list" data-role="study-progress-list"></div>
+            </section>
+            <section class="study-progress-column" data-role="study-progress-completed-column" hidden>
+              <header class="study-progress-column-head">
+                <h2>已完成</h2>
+                <span class="study-progress-column-count" data-role="study-completed-count">0</span>
+                <button type="button" class="study-completed-archive" data-action="archive-done">归档</button>
+              </header>
+              <div class="study-progress-completed-list" data-role="study-completed-list"></div>
+            </section>
           </div>
-          <div class="study-today-list" data-role="today-list"></div>
         </section>
 
-        <section class="study-board" aria-label="任务看板">
-          <article class="study-lane" data-status="todo">
-            <header>
-              <div>
-                <span class="study-lane-dot"></span><h2>待办</h2>
-                <button type="button" class="study-lane-add" data-action="quick-add" data-status="todo" aria-label="新建待办任务" title="新建任务">+</button>
-              </div>
-              <span data-role="count-todo">0</span>
-            </header>
-            <div class="study-lane-list" data-role="lane-todo"></div>
-          </article>
-          <article class="study-lane" data-status="doing">
-            <header>
-              <div><span class="study-lane-dot"></span><h2>进行中</h2></div>
-              <span data-role="count-doing">0</span>
-            </header>
-            <div class="study-lane-list" data-role="lane-doing"></div>
-          </article>
-          <article class="study-lane" data-status="done">
-            <header>
-              <div><span class="study-lane-dot"></span><h2>已完成</h2></div>
-              <div class="study-lane-head-actions">
-                <button type="button" class="study-archive-btn" data-action="archive-done" title="归档已完成任务">归档</button>
-                <span data-role="count-done">0</span>
-              </div>
-            </header>
-            <div class="study-lane-list" data-role="lane-done"></div>
-          </article>
-          <div class="study-selection-ring" data-role="selection-ring" aria-hidden="true"></div>
-        </section>
-
-        <!-- 极简清单视图：再次点「学」在看板/清单间切换；内容由 study.js renderList 填充 -->
+        <!-- 极简清单视图：再次点「学」在进度/清单间切换。 -->
         <section class="study-list" data-role="study-list" aria-label="任务清单"></section>
       </section>
 
@@ -787,7 +752,7 @@
 
               <div class="focus-bind">
                 <span class="focus-bind-label">专注于</span>
-                <select class="focus-bind-select" data-role="focus-task" aria-label="绑定学习任务">
+                <select class="focus-bind-select" data-role="focus-task" aria-label="绑定每日任务">
                   <option value="">不绑定 · 只是专注</option>
                 </select>
               </div>
@@ -875,7 +840,7 @@
             </header>
             <dl>
               <div><dt>双击时间</dt><dd>修改番茄钟的专注分钟数；运行中不可修改。</dd></div>
-              <div><dt>选择任务</dt><dd>这一段会计入所选的学习任务或每日任务。</dd></div>
+              <div><dt>选择任务</dt><dd>这一段可以计入所选的每日任务。</dd></div>
               <div><dt>每日任务</dt><dd>再次点击左侧“专”进入完整清单：勾选完成、管理分组，并回看累计天数与专注分钟。</dd></div>
               <div><dt>本段目标</dt><dd>开始前写下这一段准备完成什么；运行中也可点座舱目标行随时补改。</dd></div>
               <div><dt>结束收尾</dt><dd>补一句实际成果，再继续、收工或明确完成任务。</dd></div>
@@ -883,7 +848,7 @@
               <div><dt>深度专注</dt><dd>运行时点 ⛶ 或按 Z 进入全屏极简，Esc 退出。</dd></div>
             </dl>
             <p class="focus-help-shortcuts"><kbd>Space</kbd> 开始 / 暂停　<kbd>Z</kbd> 深度专注　<kbd>?</kbd> 帮助　<kbd>Esc</kbd> 关闭 / 退出</p>
-            <footer>学习页负责安排，专注页负责执行，日历负责回看。</footer>
+            <footer>学习页记录长期进度，专注页负责执行，日历负责回看。</footer>
           </aside>
         </div>
 
@@ -994,107 +959,6 @@
     </aside>
   </div>
 
-  <!-- 今日专注 · 沉浸页（学习页内按 F 进 / 再按 F 退） -->
-  <div class="study-focus" data-role="focus-overlay" hidden>
-    <div class="study-focus-bg" data-action="focus-close" aria-label="退出"></div>
-    <div class="study-focus-inner">
-      <header class="study-focus-head">
-        <div class="study-focus-heading">
-          <p class="study-eyebrow">FOCUS · TODAY</p>
-          <h1>今日专注</h1>
-          <p class="study-focus-date" data-role="focus-date"></p>
-        </div>
-        <div class="study-focus-meter" aria-label="完成进度">
-          <svg viewBox="0 0 72 72" class="study-focus-ring" aria-hidden="true">
-            <circle class="study-focus-ring-track" cx="36" cy="36" r="31"></circle>
-            <circle class="study-focus-ring-fill" data-role="focus-ring-fill" cx="36" cy="36" r="31"
-              transform="rotate(-90 36 36)"></circle>
-          </svg>
-          <div class="study-focus-meter-num">
-            <strong data-role="focus-done">0</strong><span data-role="focus-total">/ 0</span>
-          </div>
-        </div>
-        <button type="button" class="study-focus-exit" data-action="focus-close" aria-label="退出沉浸（F）">退出 · F</button>
-      </header>
-      <div class="study-carryover study-carryover-focus" data-role="carryover" hidden>
-        <span class="study-carryover-text" data-role="carryover-text"></span>
-        <div class="study-carryover-actions">
-          <button type="button" class="study-carryover-yes" data-action="carryover-pull">都带到今天</button>
-          <button type="button" class="study-carryover-no" data-action="carryover-dismiss">不用了</button>
-        </div>
-      </div>
-      <div class="study-focus-list" data-role="focus-list"></div>
-      <button type="button" class="study-focus-add" data-action="focus-add">
-        <span class="study-focus-add-plus">＋</span> 添加今日任务
-      </button>
-      <div class="study-focus-celebrate" data-role="focus-celebrate" hidden>
-        <div class="study-focus-seal">✓</div>
-        <h2>今天的任务，全部完成。</h2>
-        <p>给自己一个停顿。明天的事，明天再说。</p>
-      </div>
-      <canvas class="study-focus-confetti" data-role="focus-confetti" aria-hidden="true"></canvas>
-    </div>
-  </div>
-
-  <div class="study-dialog" data-role="task-dialog" hidden>
-    <button type="button" class="study-dialog-backdrop" data-action="close-dialog" aria-label="关闭"></button>
-    <form class="study-dialog-card" data-role="task-form">
-      <header class="study-dialog-head">
-        <div>
-          <p class="study-eyebrow">TASK</p>
-          <h2>任务详情</h2>
-        </div>
-        <button type="button" class="study-icon-button" data-action="close-dialog" aria-label="关闭">×</button>
-      </header>
-      <input type="hidden" name="id">
-      <label class="study-field study-field-wide">
-        <span>标题</span>
-        <input type="text" name="title" maxlength="160" autocomplete="off" required>
-      </label>
-      <div class="study-form-grid">
-        <label class="study-field">
-          <span>状态</span>
-          <select name="status">
-            <option value="todo">待办</option>
-            <option value="doing">进行中</option>
-            <option value="done">已完成</option>
-          </select>
-        </label>
-        <label class="study-field">
-          <span>截止日期</span>
-          <input type="date" name="due">
-        </label>
-      </div>
-      <label class="study-field study-field-wide">
-        <span>标签 <small>用逗号分隔</small></span>
-        <input type="text" name="tags" maxlength="240" placeholder="高数, 论文, 本周">
-      </label>
-      <label class="study-field study-field-wide">
-        <span>关联画布 <small>关联后锁定不可更改；删除任务时画布一并进回收站</small></span>
-        <select name="linkedCanvas" data-role="canvas-select"></select>
-      </label>
-      <label class="study-field study-field-wide">
-        <span>备注</span>
-        <textarea name="memo" maxlength="3000" rows="5" placeholder="把下一步写清楚，回来时就不用重新热身。"></textarea>
-      </label>
-      <section class="study-task-focus-summary" data-role="task-focus-summary">
-        <header>
-          <span>专注投入</span>
-          <strong data-role="task-focus-total">尚无记录</strong>
-        </header>
-        <div data-role="task-focus-recent"></div>
-      </section>
-      <div class="study-dialog-actions">
-        <button type="button" class="btn-text study-danger" data-action="trash-task">移到回收站</button>
-        <span class="study-action-spacer"></span>
-        <button type="button" class="btn-text" data-action="start-task-focus">开始专注</button>
-        <button type="button" class="btn-text" data-action="create-canvas">新建并关联画布</button>
-        <button type="button" class="btn-text" data-action="open-canvas">打开关联画布</button>
-        <button type="submit" class="btn btn-primary" data-role="task-save">保存</button>
-      </div>
-    </form>
-  </div>
-
   <aside class="study-trash-panel" data-role="trash-panel" hidden>
     <div class="study-trash-backdrop" data-action="close-trash"></div>
     <section class="study-trash-card">
@@ -1131,41 +995,6 @@
       </div>
     </section>
   </div>
-
-  <!-- 迷你画布浮窗：选中任务按 Tab 从右侧滑出，内嵌 editor.html?embed=1 -->
-  <aside class="study-canvas-panel" data-role="canvas-panel" hidden aria-label="任务画布">
-    <div class="study-canvas-resize" data-role="canvas-resize" title="拖动调节宽度"></div>
-    <header class="study-canvas-head">
-      <div class="study-canvas-title">
-        <span class="study-eyebrow">CANVAS</span>
-        <strong data-role="canvas-panel-title">任务画布</strong>
-      </div>
-      <div class="study-canvas-head-actions">
-        <button type="button" class="btn-text" data-action="canvas-fullscreen" title="在完整画布界面打开">完整界面</button>
-        <button type="button" class="study-icon-button" data-action="close-canvas" aria-label="关闭" title="关闭 (Esc)">×</button>
-      </div>
-    </header>
-    <div class="study-canvas-frame-wrap">
-      <iframe class="study-canvas-frame" data-role="canvas-frame" title="任务画布"></iframe>
-      <div class="study-canvas-loading" data-role="canvas-loading" aria-hidden="true">
-        <span></span><span></span><span></span>
-      </div>
-    </div>
-  </aside>
-
-  <!-- 日历任务抽屉：日历页按 Tab 滑出，把未完成任务拖到月历生成自由便签。 -->
-  <aside class="calendar-task-panel" data-role="calendar-task-panel" hidden aria-label="未完成学习任务">
-    <header class="calendar-task-panel-head">
-      <div>
-        <span class="study-eyebrow">STUDY TASKS</span>
-        <strong>拖到月历</strong>
-      </div>
-      <button type="button" class="study-icon-button" data-action="calendar-task-panel-close"
-        aria-label="关闭" title="关闭 (Tab / Esc)">×</button>
-    </header>
-    <div class="calendar-task-panel-body" data-role="calendar-task-panel-body"></div>
-    <footer>按住任务拖到左侧月历，松手后生成便签。</footer>
-  </aside>
 
   <button type="button" class="desktop-settings-trigger" data-action="desktop-settings-open"
     title="客户端设置" aria-label="客户端设置">
