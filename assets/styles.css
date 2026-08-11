@@ -49,6 +49,7 @@ html[data-ui-language="en"] {
 html[data-ui-language="en"] body { font-family: var(--font-interface-en); }
 html[data-ui-language="en"] .cadence-starmap h3 {
   font-family: var(--font-display-en);
+  font-size: clamp(40px, 4.4vw, 62px);
   font-weight: 500;
   letter-spacing: -.045em;
   line-height: .96;
@@ -61,6 +62,8 @@ html[data-ui-language="en"] .desktop-settings-eyebrow {
 }
 html[data-ui-language="en"] .page-title,
 html[data-ui-language="en"] .study-hero h1,
+html[data-ui-language="en"] .study-progress-head h1,
+html[data-ui-language="en"] .focus-daily-view .focus-daily-head h1,
 html[data-ui-language="en"] .study-cadence-head h2,
 html[data-ui-language="en"] .review-head h1,
 html[data-ui-language="en"] .focus-head h1,
@@ -72,6 +75,10 @@ html[data-ui-language="en"] .start-help-copy h2 {
   letter-spacing: -.045em;
   line-height: .96;
 }
+html[data-ui-language="en"] .study-progress-head h1 span,
+html[data-ui-language="en"] .focus-daily-view .focus-daily-head h1 span {
+  font-family: var(--font-interface-en);
+}
 html[data-ui-language="en"] .page-title { font-size: clamp(42px, 5vw, 72px); }
 html[data-ui-language="en"] .study-hero h1,
 html[data-ui-language="en"] .study-cadence-head h2,
@@ -79,6 +86,9 @@ html[data-ui-language="en"] .review-head h1,
 html[data-ui-language="en"] .focus-head h1,
 html[data-ui-language="en"] .calendar-page-head h1 {
   font-size: clamp(48px, 6vw, 84px);
+}
+html[data-ui-language="en"] .study-cadence-head h2 {
+  font-size: clamp(48px, 6vw, 69px);
 }
 html[data-ui-language="en"] .study-hero,
 html[data-ui-language="en"] .review-head,
@@ -105,6 +115,7 @@ html[data-ui-language="en"] .editor-back {
   letter-spacing: -.018em;
 }
 @media (max-width: 820px) {
+  html[data-ui-language="en"] .cadence-starmap h3 { font-size: 34px; }
   html[data-ui-language="en"] .study-hero h1,
   html[data-ui-language="en"] .study-cadence-head h2,
   html[data-ui-language="en"] .review-head h1,
@@ -819,6 +830,9 @@ body.desktop-host.desktop-maximized {
 .cadence-day-detail.is-refreshing {
   animation: cadenceDetailIn 380ms var(--easing-page) both;
 }
+.study-cadence.cadence-entering .cadence-day-detail:not(.is-refreshing) {
+  animation: cadenceSectionIn 700ms 500ms var(--easing-page) both;
+}
 .cadence-day-detail-copy p {
   margin: 0;
   color: var(--text-tertiary);
@@ -863,6 +877,9 @@ body.desktop-host.desktop-maximized {
   min-height: 32px;
   opacity: 0;
   animation: cadenceDetailItemIn 360ms calc(55ms + var(--detail-delay, 0ms)) var(--easing-soft) forwards;
+}
+.study-cadence.cadence-entering .cadence-day-detail:not(.is-refreshing) .cadence-day-detail-item {
+  animation-delay: calc(560ms + var(--detail-delay, 0ms));
 }
 .cadence-day-detail-item > span {
   width: 5px;
@@ -1371,6 +1388,12 @@ body.desktop-host.desktop-maximized {
   .cadence-tooltip { transition: none; }
   .cadence-day-detail,
   .cadence-day-detail-item { animation: none; opacity: 1; }
+  .study-cadence.cadence-entering .cadence-day-detail:not(.is-refreshing),
+  .study-cadence.cadence-entering .cadence-day-detail:not(.is-refreshing) .cadence-day-detail-item {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
   .cadence-stats div,
   .cadence-stats strong { transform: none; transition: none; }
   .cadence-stats:hover div:not(:hover) { opacity: 1; }
@@ -2359,10 +2382,6 @@ body.desktop-host.desktop-maximized {
   contain: layout paint style;
 }
 
-body.study-dragging { cursor: grabbing; user-select: none; }
-body.study-dragging .study-task-card { cursor: grabbing; }
-/* 拖拽中让位的卡片提前提升为合成层：FLIP transform 走 GPU，高刷屏(120/144Hz)更顺、不掉帧 */
-body.study-dragging .study-lane-list .study-task-card { will-change: transform; }
 
 /* 高频新增：卡片立即生成，短促而柔和地落入列表。 */
 .study-task-card.quick-enter,
@@ -5184,7 +5203,7 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
   padding-right: 158px;
 }
 
-/* 起步页顶栏操作按钮（打开文件/导入MD/新建画布）与窗口控制按钮之间留呼吸间距 */
+/* 起步页顶栏操作按钮（画布/文件夹/MD 导入与新建）与窗口按钮留呼吸间距 */
 .desktop-title-bar .top-actions {
   margin-right: 6px;
 }
@@ -5997,6 +6016,12 @@ body[data-start-state="recent"] .top-actions {
 }
 
 /* ─── 按钮 ──────────────────────────────────── */
+
+/* Markdown 导入/导出等待重做；即使旧 HTML 片段被合并回来也不展示入口。 */
+[data-action="import-md"],
+[data-action="export-md"] {
+  display: none !important;
+}
 
 .btn,
 .btn-text {
@@ -19665,188 +19690,6 @@ html.dark-semantic-ui {
 .editor-page.immersive-background.immersive-background-dark .editor-ai-btn {
   background: rgba(255, 255, 255, 0.13);
   border-color: rgba(255, 255, 255, 0.14);
-}
-
-.editor-task-export-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  transition: color var(--duration) var(--easing-soft),
-              border-color var(--duration) var(--easing-soft),
-              background var(--duration) var(--easing-soft),
-              padding var(--duration) var(--easing-soft);
-}
-.editor-task-export-btn .task-export-confirm-label {
-  max-width: 0;
-  opacity: 0;
-  margin-left: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  transition: max-width var(--duration) var(--easing-soft),
-              opacity var(--duration) var(--easing-soft),
-              margin var(--duration) var(--easing-soft);
-}
-.editor-task-export-btn.confirming {
-  color: var(--text);
-  border-color: var(--border-strong);
-  background: #f5f4f1;
-}
-.editor-task-export-btn.confirming .task-export-default-label {
-  display: none;
-}
-.editor-task-export-btn.confirming .task-export-confirm-label {
-  max-width: 150px;
-  opacity: 1;
-}
-
-/* 转为任务反馈：替代系统 alert，不阻断画布操作。 */
-.task-export-notice {
-  position: fixed;
-  top: 78px;
-  left: 50%;
-  z-index: 260;
-  width: min(390px, calc(100vw - 40px));
-  min-height: 72px;
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 12px 13px 14px;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(26, 26, 26, 0.09);
-  border-radius: 18px;
-  box-shadow:
-    0 18px 48px rgba(39, 31, 25, 0.14),
-    0 2px 8px rgba(39, 31, 25, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(22px) saturate(1.18);
-  -webkit-backdrop-filter: blur(22px) saturate(1.18);
-  opacity: 0;
-  transform: translate3d(-50%, -12px, 0) scale(0.975);
-  transform-origin: 50% 0;
-  pointer-events: none;
-  transition:
-    opacity 180ms var(--easing-soft),
-    transform 320ms var(--easing-soft);
-}
-.task-export-notice[hidden] { display: none; }
-.task-export-notice.show {
-  opacity: 1;
-  transform: translate3d(-50%, 0, 0) scale(1);
-  pointer-events: auto;
-}
-.task-export-notice::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
-}
-.task-export-notice-icon {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: var(--accent);
-  border-radius: 12px;
-  box-shadow: 0 7px 16px rgba(26, 26, 26, 0.17);
-}
-.task-export-notice-icon svg {
-  width: 20px;
-  height: 20px;
-}
-.task-export-notice[data-tone="warning"] .task-export-notice-icon {
-  background: #8a6538;
-}
-.task-export-notice[data-tone="error"] .task-export-notice-icon {
-  background: #8f4b43;
-}
-.task-export-notice[data-tone="success"] .task-export-notice-icon {
-  background: #426552;
-}
-.task-export-notice-copy {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-.task-export-notice-copy strong {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.35;
-  letter-spacing: 0.01em;
-}
-.task-export-notice-copy > span {
-  color: var(--text-secondary);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-.task-export-notice-close {
-  position: relative;
-  z-index: 1;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  padding: 0 0 2px;
-  border: 0;
-  border-radius: 9px;
-  color: var(--text-tertiary);
-  background: transparent;
-  font: 400 20px/1 var(--font-ui);
-  cursor: pointer;
-  transition:
-    color var(--duration) var(--easing-soft),
-    background var(--duration) var(--easing-soft),
-    transform var(--duration) var(--easing-soft);
-}
-.task-export-notice-close:hover {
-  color: var(--text);
-  background: rgba(26, 26, 26, 0.06);
-}
-.task-export-notice-close:active {
-  transform: scale(var(--press-scale));
-}
-
-.editor-page[data-background-tone="dark"] .task-export-notice {
-  color: rgba(255, 255, 255, 0.94);
-  background: rgba(31, 33, 35, 0.86);
-  border-color: rgba(255, 255, 255, 0.11);
-  box-shadow:
-    0 22px 56px rgba(0, 0, 0, 0.36),
-    0 2px 10px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-.editor-page[data-background-tone="dark"] .task-export-notice::after {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
-}
-.editor-page[data-background-tone="dark"] .task-export-notice-copy strong {
-  color: rgba(255, 255, 255, 0.94);
-}
-.editor-page[data-background-tone="dark"] .task-export-notice-copy > span {
-  color: rgba(255, 255, 255, 0.58);
-}
-.editor-page[data-background-tone="dark"] .task-export-notice-close {
-  color: rgba(255, 255, 255, 0.46);
-}
-.editor-page[data-background-tone="dark"] .task-export-notice-close:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.09);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .task-export-notice {
-    transform: translate3d(-50%, 0, 0);
-    transition: opacity 120ms linear;
-  }
-  .task-export-notice.show {
-    transform: translate3d(-50%, 0, 0);
-  }
 }
 
 /* 归档：顶栏右侧小图标按钮。点一下展开成确认态，再点才执行。 */
@@ -35348,142 +35191,6 @@ body.calendar-flip-clock-open { overflow: hidden; }
 .calendar-delete:active { transform: scale(0.96); }
 .calendar-records { display: grid; gap: 12px; margin-top: 14px; }
 
-/* 月历自由任务便签：覆盖在月历卡上，但不接管空白区域和日期按钮。 */
-.calendar-pin-layer { position: absolute; z-index: 8; inset: 0; pointer-events: none; }
-.calendar-task-pin {
-  position: absolute; box-sizing: border-box;
-  width: var(--calendar-pin-w, 86px); height: var(--calendar-pin-h, 78px); min-height: 0;
-  padding: 11px 20px 20px 11px; overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--pin-accent, #b08968) 24%, var(--border)); border-radius: 13px;
-  background: color-mix(in srgb, var(--pin-paper, #f3dfac) 72%, var(--surface)); color: var(--text);
-  box-shadow: 0 9px 22px rgba(26, 26, 26, 0.13); text-align: left; cursor: grab;
-  pointer-events: auto; transform: none; transform-origin: 50% 50%;
-  transition: box-shadow 180ms var(--easing-soft), transform 220ms var(--easing-soft), opacity 180ms var(--easing-soft);
-}
-.calendar-pin-yellow { --pin-paper: #f3dfac; --pin-accent: #b08968; }
-.calendar-pin-red { --pin-paper: #efc7c2; --pin-accent: #b66f67; }
-.calendar-pin-blue { --pin-paper: #cbdbea; --pin-accent: #708da8; }
-.calendar-pin-green { --pin-paper: #cfe2cf; --pin-accent: #6f9276; }
-.calendar-pin-purple { --pin-paper: #ddd0e8; --pin-accent: #8c76a3; }
-.calendar-pin-orange { --pin-paper: #efd2b5; --pin-accent: #b27e55; }
-.calendar-task-pin::after {
-  content: ""; position: absolute; z-index: 3; top: -1px; right: -1px; width: 19px; height: 19px;
-  background: linear-gradient(225deg,
-    color-mix(in srgb, var(--surface) 90%, transparent) 0 48%,
-    color-mix(in srgb, var(--pin-accent) 36%, var(--pin-paper)) 50% 100%);
-  border-left: 1px solid color-mix(in srgb, var(--pin-accent) 24%, var(--border));
-  border-bottom: 1px solid color-mix(in srgb, var(--pin-accent) 24%, var(--border));
-  border-bottom-left-radius: 4px;
-}
-.calendar-task-pin::before {
-  content: ""; position: absolute; left: 11px; bottom: 9px; width: 4px; height: 4px;
-  border-radius: 50%; background: color-mix(in srgb, var(--pin-accent) 54%, transparent);
-  box-shadow: 8px 0 0 color-mix(in srgb, var(--pin-accent) 34%, transparent),
-              16px 0 0 color-mix(in srgb, var(--pin-accent) 20%, transparent);
-}
-.calendar-task-pin:hover { z-index: 2; transform: translateY(-1px); box-shadow: 0 12px 26px rgba(26,26,26,.15); }
-.calendar-task-pin.is-dragging { z-index: 4; cursor: grabbing; transform: scale(1.018); transition: none; }
-.calendar-task-pin.is-removing {
-  z-index: 9; pointer-events: none;
-  animation: calendarPinRemove 220ms cubic-bezier(0.4, 0, 0.7, 0.2) both;
-}
-@keyframes calendarPinRemove {
-  0% { opacity: 1; transform: translateY(0) scale(1); filter: saturate(1); }
-  35% { opacity: .9; transform: translateY(-3px) scale(1.025); }
-  100% { opacity: 0; transform: translateY(7px) scale(.84) rotate(1.8deg); filter: saturate(.65); }
-}
-.calendar-task-pin > span {
-  position: relative; z-index: 2; display: -webkit-box; overflow: hidden;
-  font-size: 11px; line-height: 1.35; font-weight: 680;
-  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-}
-.calendar-task-pin > small {
-  position: relative; z-index: 2; display: block; margin-top: 5px;
-  color: var(--text-secondary); font-size: 8px;
-}
-.calendar-task-pin > [data-calendar-pin-remove] {
-  position: absolute; z-index: 7; right: 4px; bottom: 3px; display: grid; place-items: center;
-  width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius);
-  background: transparent; color: var(--text-secondary); cursor: pointer; font: normal 15px/1 sans-serif; opacity: 0;
-  pointer-events: auto; touch-action: manipulation;
-  transition: opacity 140ms var(--easing-soft), background 140ms var(--easing-soft), color 140ms var(--easing-soft);
-}
-.calendar-task-pin:hover > [data-calendar-pin-remove],
-.calendar-task-pin:focus-within > [data-calendar-pin-remove] { opacity: 1; }
-.calendar-task-pin > [data-calendar-pin-remove]:hover {
-  background: color-mix(in srgb, var(--text) 11%, transparent); color: var(--text);
-}
-.calendar-task-pin.is-done { opacity: .62; filter: saturate(.55); }
-.calendar-task-pin.is-done > span { text-decoration: line-through; }
-.calendar-month-card.is-pin-target { box-shadow: 0 20px 58px rgba(26,26,26,.09), inset 0 0 0 2px color-mix(in srgb, var(--text) 18%, transparent); }
-
-/* 日历页 Tab 任务抽屉 */
-.calendar-task-panel {
-  position: fixed; z-index: 1450; top: 0; right: 0; display: flex; flex-direction: column;
-  width: min(370px, 92vw); height: 100vh; border-left: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(24px) saturate(1.08);
-  box-shadow: -18px 0 48px rgba(0,0,0,.15); transform: translateX(100%);
-  transition: transform 300ms var(--easing-soft); will-change: transform;
-}
-.calendar-task-panel.open { transform: translateX(0); }
-.calendar-task-panel-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 22px 20px 16px; border-bottom: 1px solid var(--border);
-}
-.calendar-task-panel-head > div { display: grid; gap: 3px; }
-.calendar-task-panel-head strong { font-size: 18px; }
-.calendar-task-panel-body { flex: 1; overflow: auto; padding: 14px; }
-.calendar-task-panel-body section + section { margin-top: 20px; }
-.calendar-task-panel-body section > header { display: flex; justify-content: space-between; padding: 0 5px 8px; color: var(--text-secondary); font-size: 11px; }
-.calendar-drawer-task {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
-  width: 100%; gap: 12px; margin-bottom: 8px; padding: 13px 14px;
-  border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text);
-  text-align: left; cursor: grab; box-shadow: 0 8px 20px rgba(26,26,26,.04);
-  transition: transform 180ms var(--easing-soft), box-shadow 180ms var(--easing-soft);
-}
-.calendar-drawer-task:hover { transform: translateX(-2px); box-shadow: 0 11px 24px rgba(26,26,26,.08); }
-.calendar-drawer-task-copy { display: grid; min-width: 0; gap: 5px; }
-.calendar-drawer-task strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.calendar-drawer-task span { overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.calendar-drawer-colors { display: grid; grid-template-columns: repeat(3, 16px); gap: 6px; }
-.calendar-drawer-color {
-  width: 16px; height: 16px; padding: 0; border: 1px solid color-mix(in srgb, var(--dot-color) 62%, var(--border));
-  border-radius: 50%; background: var(--dot-color); cursor: pointer;
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--text) 15%, transparent);
-  transition: transform 160ms var(--easing-soft), box-shadow 160ms var(--easing-soft);
-}
-.calendar-drawer-color:hover { transform: scale(1.14); }
-.calendar-drawer-color.active { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--text) 23%, transparent); }
-.pin-color-yellow { --dot-color: #e8c979; }
-.pin-color-red { --dot-color: #d99a92; }
-.pin-color-blue { --dot-color: #9dbbd3; }
-.pin-color-green { --dot-color: #9fc49f; }
-.pin-color-purple { --dot-color: #bea4d1; }
-.pin-color-orange { --dot-color: #dda978; }
-.calendar-task-panel > footer { padding: 13px 18px 18px; color: var(--text-secondary); font-size: 10px; }
-.calendar-task-panel-empty { padding: 30px 10px; color: var(--text-secondary); font-size: 12px; text-align: center; }
-.calendar-drawer-task-ghost {
-  position: fixed; z-index: 1700; top: 0; left: 0; margin: 0; pointer-events: none;
-  box-shadow: 0 16px 36px rgba(26,26,26,.18); will-change: transform;
-}
-body.calendar-pin-dragging { cursor: grabbing; user-select: none; }
-.calendar-records-loading article { display: grid; gap: 10px; min-height: 70px; }
-.calendar-records-loading i {
-  display: block; height: 9px; border-radius: 999px;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--text) 5%, transparent),
-    color-mix(in srgb, var(--text) 10%, transparent),
-    color-mix(in srgb, var(--text) 5%, transparent));
-  background-size: 220% 100%;
-  animation: calendarLoadingSweep 1.1s ease-in-out infinite;
-}
-.calendar-records-loading i:nth-child(2) { width: 72%; }
-.calendar-records-loading i:nth-child(3) { width: 48%; }
-@keyframes calendarLoadingSweep {
-  from { background-position: 110% 0; }
-  to { background-position: -110% 0; }
-}
 .calendar-records article { padding: 17px 19px; border-radius: 18px; }
 .calendar-records header {
   display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px;
@@ -40228,6 +39935,1000 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   .task-root-tree-remove {
     transition: none !important;
   }
+}
+
+/* 学习任务 V2：单列单位进度面板。 */
+.study-progress-view { width: min(1100px, 100%); margin: 0 auto; padding: 26px 0 72px; }
+.study-embedded.study-mode-list .study-progress-view { display: none; }
+.study-progress-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.study-progress-head h1 { margin: 0; color: var(--text); font-size: clamp(34px, 4.4vw, 52px); line-height: 1; letter-spacing: -.055em; }
+.study-progress-head h1 span { margin-left: 6px; color: var(--text-tertiary); font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.study-progress-actions { display: flex; align-items: center; gap: 8px; }
+.study-progress-actions button, .study-progress-compose-panel button, .study-completed-archive, .study-milestone-editor header button { border: 0; color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; }
+.study-progress-today { min-height: 34px; padding: 0 12px; border-radius: 999px !important; }
+.study-progress-today:hover { background: var(--surface-soft); color: var(--text); }
+.study-progress-trash, .study-progress-create { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 50%; font-size: 22px !important; transition: background 180ms var(--easing-soft), color 180ms var(--easing-soft), transform 180ms var(--easing-soft); }
+.study-progress-trash { font-size: 18px !important; }
+.study-progress-trash:hover, .study-progress-create:hover, .study-progress-create[aria-expanded="true"] { background: var(--surface-soft); color: var(--text); }
+.study-progress-create[aria-expanded="true"] { transform: rotate(45deg); }
+/* —— 浮窗叠加层：新建任务表单不再挤压卡片布局 —— */
+.study-progress-compose {
+  position: fixed; inset: 0; z-index: 200;
+  display: none;
+  align-items: flex-start; justify-content: center;
+  padding-top: 20vh;
+  background: rgba(0,0,0,.10);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+/* is-open 把 overlay 从 display:none 拉出来，同时 is-opening 让它从 opacity:0 开始 */
+.study-progress-compose.is-open { display: flex; }
+.study-progress-compose.is-opening { opacity: 0; pointer-events: none; }
+.study-progress-compose.is-open:not(.is-opening):not(.is-closing) {
+  opacity: 1; pointer-events: auto;
+  transition: opacity 240ms var(--easing-soft);
+}
+.study-progress-compose.is-closing {
+  opacity: 0; pointer-events: none;
+  transition: opacity 200ms var(--easing-soft);
+}
+
+.study-progress-compose-panel {
+  display: flex; gap: 10px;
+  width: min(92vw, 440px);
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 20px 56px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.04);
+}
+.study-progress-compose.is-opening .study-progress-compose-panel {
+  transform: translateY(14px) scale(0.97);
+}
+.study-progress-compose.is-open:not(.is-opening):not(.is-closing) .study-progress-compose-panel {
+  transform: translateY(0) scale(1);
+  transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.study-progress-compose.is-closing .study-progress-compose-panel {
+  transform: translateY(8px) scale(0.98);
+  transition: transform 200ms var(--easing-soft);
+}
+
+.study-progress-compose-panel input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; }
+.study-progress-compose-panel button { padding: 0 10px; border: 0; color: var(--accent); background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
+
+/* ── 学习任务进度面板：左右分栏（未完成 | 已完成）── */
+.study-progress-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.study-progress-column {
+  min-width: 0;
+  min-height: 160px;
+}
+.study-progress-column[hidden] { display: none; }
+/* 只有未完成列时占满宽度 */
+.study-progress-board:has(.study-progress-column[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.study-progress-column-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.study-progress-column-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+.study-progress-column-count {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.study-progress-column-head .study-completed-archive {
+  margin-left: auto;
+  border: 0; color: var(--text-secondary); background: transparent;
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+
+.study-progress-list, .study-progress-completed-list { display: grid; gap: 12px; }
+.study-progress-empty { margin: 80px 0; color: var(--text-tertiary); text-align: center; }
+.study-progress-card { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto 48px; align-items: center; gap: 12px; min-height: 104px; padding: 17px 17px 17px 18px; border: 1px solid color-mix(in srgb, var(--line) 76%, transparent); border-radius: 18px; background: color-mix(in srgb, var(--surface) 96%, transparent); box-shadow: 0 9px 26px rgba(31, 35, 32, .055); transition: transform 180ms var(--easing-soft), border-color 180ms var(--easing-soft), box-shadow 180ms var(--easing-soft); }
+/* 未完成列的卡片左侧多一列 2x3 点阵拖拽手柄 */
+.study-progress-list .study-progress-card { grid-template-columns: 20px 30px minmax(0, 1fr) auto 48px; }
+.study-progress-card:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); box-shadow: 0 13px 30px rgba(31, 35, 32, .08); }
+/* —— 左侧完成印记：薄环 + 墨绿勾，不用白色图标 —— */
+.study-progress-check {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 34%, transparent);
+  border-radius: 50%;
+  overflow: hidden;
+  color: transparent;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 76%, transparent);
+  cursor: pointer;
+  transition: border-color 200ms var(--easing-soft), background 200ms var(--easing-soft), box-shadow 200ms var(--easing-soft), transform 180ms var(--easing-soft);
+}
+.study-progress-check::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background-color: rgba(111, 158, 121, .24);
+  background-image:
+    radial-gradient(circle at var(--study-check-speck-a-x) var(--study-check-speck-a-y),
+      rgba(86, 143, 99, .21) 0 9%, rgba(101, 157, 113, .105) 24%, transparent 48%),
+    radial-gradient(circle at var(--study-check-speck-b-x) var(--study-check-speck-b-y),
+      rgba(96, 151, 108, .17) 0 7%, rgba(112, 166, 123, .085) 24%, transparent 46%),
+    radial-gradient(circle at var(--study-check-speck-c-x) var(--study-check-speck-c-y),
+      rgba(80, 138, 94, .14) 0 5%, rgba(105, 158, 116, .066) 19%, transparent 36%),
+    radial-gradient(circle at var(--study-check-speck-d-x) var(--study-check-speck-d-y),
+      rgba(106, 158, 116, .12) 0 4%, rgba(126, 177, 136, .057) 17%, transparent 32%),
+    linear-gradient(135deg, rgba(190, 224, 197, .76), rgba(112, 171, 125, .32));
+  clip-path: circle(0% at 50% 50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: clip-path 520ms cubic-bezier(0.22, 1, 0.36, 1), opacity 360ms var(--easing-soft);
+}
+.study-progress-check::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  width: 11px;
+  height: 9px;
+  background: #3f704d;
+  clip-path: polygon(0 49%, 14% 33%, 40% 59%, 86% 9%, 100% 24%, 41% 88%);
+  opacity: 0;
+  transform: translateY(1px) scale(.56);
+  transition: opacity 160ms var(--easing-soft), transform 260ms cubic-bezier(0.34, 1.32, 0.64, 1);
+}
+.study-progress-check:hover {
+  border-color: color-mix(in srgb, var(--text) 56%, transparent);
+  background: color-mix(in srgb, var(--text) 3%, var(--surface));
+}
+.study-progress-check:focus-visible {
+  outline: 2px solid color-mix(in srgb, #547e5f 48%, transparent);
+  outline-offset: 3px;
+}
+.study-progress-card.is-goal-ready .study-progress-check {
+  --study-check-speck-a-x: 28%;
+  --study-check-speck-a-y: 34%;
+  --study-check-speck-b-x: 72%;
+  --study-check-speck-b-y: 68%;
+  --study-check-speck-c-x: 42%;
+  --study-check-speck-c-y: 76%;
+  --study-check-speck-d-x: 62%;
+  --study-check-speck-d-y: 24%;
+  border-color: #6f9e79;
+  transition: border-color 200ms var(--easing-soft), background-color 200ms var(--easing-soft),
+              box-shadow 200ms var(--easing-soft), transform 180ms var(--easing-soft),
+              --study-check-speck-a-x 3200ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-a-y 3200ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-b-x 3600ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-b-y 3600ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-c-x 4200ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-c-y 4200ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-d-x 4800ms cubic-bezier(.42, 0, .58, 1),
+              --study-check-speck-d-y 4800ms cubic-bezier(.42, 0, .58, 1);
+}
+.study-progress-card.is-goal-ready .study-progress-check::before {
+  clip-path: circle(150% at 50% 50%);
+  opacity: 1;
+}
+.study-progress-card.is-goal-ready .study-progress-check:hover {
+  border-color: #5f8f69;
+}
+.study-progress-card.is-goal-ready .study-progress-check:hover::before {
+  filter: brightness(1.04);
+}
+.study-progress-check.on {
+  border-color: #5f9e6c;
+  background: #5f9e6c;
+  box-shadow: none;
+}
+.study-progress-check.on::after {
+  background: #fff;
+  opacity: 1;
+  transform: translateY(1px) scale(1);
+}
+/* 点击打勾 / 取消时的微弹反馈 */
+.study-progress-check.is-check-pop { animation: studyCheckPop 360ms cubic-bezier(0.34, 1.55, 0.64, 1) both; }
+.study-progress-check.is-uncheck-pop { animation: studyUncheckPop 280ms var(--easing-soft) both; }
+@keyframes studyCheckPop {
+  0% { transform: scale(0.88); }
+  55% { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+@keyframes studyUncheckPop {
+  0% { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+/* —— 左侧 2×3 点阵拖拽手柄（hover 浮现，仅在未完成列卡片）—— */
+.study-progress-grip {
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  letter-spacing: -1px;
+  opacity: 0;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  -webkit-user-drag: none;
+  transition: opacity 180ms var(--easing-soft);
+}
+.study-progress-card:hover .study-progress-grip,
+.study-progress-card:focus-within .study-progress-grip {
+  opacity: 0.48;
+}
+.study-progress-grip:hover {
+  opacity: 0.72;
+  color: var(--text);
+}
+
+/* 拖拽中的占位卡：隐形留出空位 */
+.study-progress-card.drag-source {
+  visibility: hidden;
+  opacity: 1;
+  transition: none !important;
+}
+
+/* 拖拽放手后短促接手：幽灵卡的外观暂借给真实卡 */
+.study-progress-card.drag-handoff {
+  visibility: visible;
+  opacity: 1;
+  animation: none !important;
+  transition: none !important;
+}
+
+/* 跟随指针的浮起幽灵卡 */
+.study-progress-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1200;
+  margin: 0;
+  pointer-events: none;
+  cursor: grabbing;
+  animation: none !important;
+  transition: none !important;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  contain: layout paint style;
+}
+
+body.study-progress-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+body.study-progress-dragging .study-progress-card {
+  transition: none !important;
+}
+body.study-progress-dragging .study-progress-list .study-progress-card:not(.drag-source) {
+  will-change: transform;
+}
+
+.study-progress-main { display: grid; min-width: 0; gap: 13px; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; }
+.study-progress-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-width: 0; }
+.study-progress-card-head strong { overflow: hidden; color: var(--text); font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.study-progress-value { display: inline-flex; flex: 0 0 auto; align-items: baseline; justify-content: flex-end; font-size: 12px; white-space: nowrap; }
+.study-progress-goal-label {
+  display: inline-block;
+  margin-right: 6px;
+  color: #718b73;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 720ms var(--easing-soft);
+}
+.study-progress-value-number {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  transition: color 360ms var(--easing-soft);
+}
+.study-progress-card.is-goal-ready .study-progress-goal-label {
+  opacity: .82;
+  transition-delay: 90ms;
+}
+.study-progress-card.is-goal-ready .study-progress-value-number { color: #5f8f69; }
+@property --study-progress-fill-start {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: #729f79;
+}
+@property --study-progress-fill-end {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: #86ae84;
+}
+@property --study-goal-flow-x {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: -24%;
+}
+@property --study-check-speck-a-x {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 28%;
+}
+@property --study-check-speck-a-y {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 34%;
+}
+@property --study-check-speck-b-x {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 72%;
+}
+@property --study-check-speck-b-y {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 68%;
+}
+@property --study-check-speck-c-x {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 42%;
+}
+@property --study-check-speck-c-y {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 76%;
+}
+@property --study-check-speck-d-x {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 62%;
+}
+@property --study-check-speck-d-y {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 24%;
+}
+.study-progress-track-shell {
+  position: relative;
+  display: block;
+  width: min(100%, 520px);
+  height: 16px;
+  isolation: isolate;
+}
+.study-progress-track { position: absolute; z-index: 1; top: 5px; right: 0; left: 0; height: 5px; overflow: visible; border-radius: 999px; background: color-mix(in srgb, var(--text) 9%, transparent); isolation: isolate; }
+.study-progress-fill {
+  --study-progress-fill-start: #729f79;
+  --study-progress-fill-end: #86ae84;
+  position: relative;
+  z-index: 1;
+  display: block;
+  height: 100%;
+  overflow: visible;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--study-progress-fill-start), var(--study-progress-fill-end));
+  isolation: isolate;
+  transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1),
+              --study-progress-fill-start 520ms var(--easing-soft),
+              --study-progress-fill-end 520ms var(--easing-soft);
+}
+.study-progress-fill::before,
+.study-progress-fill::after {
+  content: '';
+  position: absolute;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
+.study-progress-fill::before {
+  --study-goal-flow-x: -24%;
+  --study-goal-aura-core: rgba(255, 241, 171, 1);
+  --study-goal-aura-shoulder: rgba(255, 222, 116, .98);
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background:
+    radial-gradient(ellipse 30% 230% at var(--study-goal-flow-x) 50%,
+      var(--study-goal-aura-core) 0%,
+      var(--study-goal-aura-shoulder) 30%,
+      rgba(226, 165, 37, .56) 64%,
+      transparent 100%),
+    linear-gradient(90deg,
+      rgba(218, 158, 36, .56) 0%,
+      rgba(240, 193, 76, .68) 50%,
+      rgba(224, 169, 45, .54) 100%);
+  filter: blur(8px) saturate(1.16);
+}
+.study-progress-fill::after {
+  --study-goal-flow-x: -24%;
+  --study-goal-sheen-core: rgba(255, 245, 185, 1);
+  --study-goal-sheen-shoulder: rgba(255, 226, 125, .98);
+  z-index: 1;
+  top: -0.5px;
+  right: 0;
+  bottom: -0.5px;
+  left: 0;
+  clip-path: inset(0 100% 0 0 round 999px);
+  background:
+    radial-gradient(ellipse 25% 170% at var(--study-goal-flow-x) 50%,
+      var(--study-goal-sheen-core) 0%,
+      var(--study-goal-sheen-shoulder) 32%,
+      rgba(235, 178, 43, .34) 66%,
+      transparent 100%),
+    linear-gradient(180deg,
+      rgba(255, 250, 222, .28) 0%,
+      rgba(255, 239, 190, .05) 48%,
+      rgba(239, 193, 81, .14) 100%),
+    radial-gradient(circle at 9% 32%, rgba(255, 255, 238, .98) 0 .55px, transparent 1.45px),
+    radial-gradient(circle at 24% 72%, rgba(255, 241, 176, .9) 0 .65px, transparent 1.6px),
+    radial-gradient(circle at 39% 26%, rgba(255, 255, 244, .92) 0 .5px, transparent 1.35px),
+    radial-gradient(circle at 57% 68%, rgba(255, 235, 151, .88) 0 .75px, transparent 1.8px),
+    radial-gradient(circle at 73% 30%, rgba(255, 255, 238, .96) 0 .55px, transparent 1.5px),
+    radial-gradient(circle at 89% 65%, rgba(255, 239, 170, .9) 0 .7px, transparent 1.7px),
+    linear-gradient(90deg,
+      rgba(247, 205, 96, .36) 0%,
+      rgba(253, 221, 130, .44) 18%,
+      rgba(255, 232, 154, .5) 34%,
+      rgba(246, 199, 80, .36) 50%,
+      rgba(253, 220, 127, .46) 68%,
+      rgba(247, 203, 91, .38) 84%,
+      rgba(255, 226, 144, .48) 100%);
+}
+.study-progress-track.is-full { background: rgba(246, 213, 119, .18); }
+.study-progress-track.is-full .study-progress-fill {
+  --study-progress-fill-start: #efcf72;
+  --study-progress-fill-end: #f6e09c;
+}
+
+/* —— 目标达成：真实填充条展开为持久金属材质，光雾从同一几何体自然溶入背景 —— */
+.study-progress-card.is-goal-ready .study-progress-fill::before {
+  opacity: .67;
+  width: 100%;
+  filter: blur(8px) saturate(1.18) brightness(1.05);
+}
+.study-progress-card.is-goal-ready .study-progress-fill::after {
+  opacity: 1;
+  clip-path: inset(0 0 0 0 round 999px);
+  filter: brightness(1.05);
+}
+.study-progress-card.is-goal-pending .study-progress-fill::before,
+.study-progress-card.is-goal-pending .study-progress-fill::after {
+  opacity: 0;
+}
+.study-progress-card.is-goal-pending .study-progress-fill::before {
+  width: 0;
+}
+.study-progress-card.is-goal-pending .study-progress-fill::after {
+  clip-path: inset(0 100% 0 0 round 999px);
+}
+.study-progress-card.is-goal-celebrating .study-progress-fill::before { animation: studyGoalAuraReveal 1300ms 60ms cubic-bezier(0.22, 0.72, 0.2, 1) both; }
+.study-progress-card.is-goal-celebrating .study-progress-fill::after { animation: studyGoalMaterialReveal 1300ms 60ms cubic-bezier(0.22, 0.72, 0.2, 1) both; }
+@keyframes studyGoalMaterialReveal {
+  0% { --study-goal-flow-x: -24%; opacity: .9; clip-path: inset(0 100% 0 0 round 999px); filter: brightness(1); }
+  84% { --study-goal-flow-x: 124%; opacity: 1; clip-path: inset(0 0 0 0 round 999px); filter: brightness(1.12) saturate(1.1); }
+  100% { --study-goal-flow-x: 124%; opacity: 1; clip-path: inset(0 0 0 0 round 999px); filter: brightness(1.05); }
+}
+@keyframes studyGoalAuraReveal {
+  0% { --study-goal-flow-x: -24%; width: 0; opacity: 0; filter: blur(6px) saturate(1.08); }
+  84% { --study-goal-flow-x: 124%; width: 100%; opacity: .76; filter: blur(12px) saturate(1.28); }
+  100% { --study-goal-flow-x: 124%; width: 100%; opacity: .67; filter: blur(8px) saturate(1.18) brightness(1.05); }
+}
+/* 达标后的可见流动由 JS 有限触发；同一光团同时穿过条内光泽与条外光雾。 */
+.study-progress-card.is-goal-ready.is-goal-breathing:not(.is-goal-pending):not(.is-goal-celebrating) .study-progress-fill::before {
+  --study-goal-aura-core: rgba(252, 221, 130, .88);
+  --study-goal-aura-shoulder: rgba(247, 205, 88, .8);
+  animation: studyGoalRestAura 2400ms linear both;
+}
+.study-progress-card.is-goal-ready.is-goal-breathing:not(.is-goal-pending):not(.is-goal-celebrating) .study-progress-fill::after {
+  --study-goal-sheen-core: rgba(255, 228, 143, .86);
+  --study-goal-sheen-shoulder: rgba(250, 210, 96, .78);
+  animation: studyGoalRestSheen 2400ms linear both;
+}
+@keyframes studyGoalRestAura {
+  0% {
+    --study-goal-flow-x: -24%;
+    width: 100%;
+    opacity: .67;
+    filter: blur(8px) saturate(1.18) brightness(1.05);
+  }
+  50% {
+    --study-goal-flow-x: 50%;
+    width: 100%;
+    opacity: .8;
+    filter: blur(12.5px) saturate(1.28);
+  }
+  100% {
+    --study-goal-flow-x: 124%;
+    width: 100%;
+    opacity: .67;
+    filter: blur(8px) saturate(1.18) brightness(1.05);
+  }
+}
+@keyframes studyGoalRestSheen {
+  0% { --study-goal-flow-x: -24%; }
+  50% { --study-goal-flow-x: 50%; }
+  100% { --study-goal-flow-x: 124%; }
+}
+
+/* —— 学习页里程碑标记（可悬停 tooltip + 避让排线）—— */
+.study-progress-milestones {
+  position: absolute;
+  inset: 0;
+}
+.study-progress-milestone {
+  position: absolute;
+  top: 2px;
+  left: var(--milestone-position, 0%);
+  z-index: 2;
+  pointer-events: auto;
+  cursor: default;
+  outline: none;
+}
+.study-progress-milestone-stamp {
+  display: block;
+  width: 11px;
+  height: 11px;
+  margin-left: -5px;
+  transform: translateY(calc(var(--milestone-lane, 0) * -14px));
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: #c8cdca;
+  box-shadow: 0 0 0 1px rgba(39, 49, 43, 0.15);
+  transition: background 180ms var(--easing-soft), transform 180ms var(--easing-soft);
+}
+.study-progress-milestone.is-reached .study-progress-milestone-stamp {
+  background: #79a884;
+}
+.study-progress-milestone:focus-visible .study-progress-milestone-stamp {
+  box-shadow: 0 0 0 1px rgba(39, 49, 43, 0.15), 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.study-progress-milestone-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px - var(--milestone-lane, 0) * 14px);
+  transform: translate(-50%, 0) scale(0.88);
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 88%, var(--surface));
+  color: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms var(--easing-soft), transform 140ms var(--easing-soft);
+}
+.study-progress-milestone.is-edge-start .study-progress-milestone-tip {
+  left: 0;
+  transform: translate(0, 0) scale(0.88);
+}
+.study-progress-milestone.is-edge-end .study-progress-milestone-tip {
+  left: auto;
+  right: 0;
+  transform: translate(0, 0) scale(0.88);
+}
+.study-progress-milestone:hover .study-progress-milestone-tip,
+.study-progress-milestone:focus-visible .study-progress-milestone-tip,
+.study-progress-milestone.is-tip-pinned .study-progress-milestone-tip {
+  opacity: 1;
+  transform: translate(-50%, -2px) scale(1);
+}
+.study-progress-milestone.is-edge-start:hover .study-progress-milestone-tip,
+.study-progress-milestone.is-edge-start:focus-visible .study-progress-milestone-tip,
+.study-progress-milestone.is-edge-start.is-tip-pinned .study-progress-milestone-tip,
+.study-progress-milestone.is-edge-end:hover .study-progress-milestone-tip,
+.study-progress-milestone.is-edge-end:focus-visible .study-progress-milestone-tip,
+.study-progress-milestone.is-edge-end.is-tip-pinned .study-progress-milestone-tip { transform: translate(0, -2px) scale(1); }
+.study-progress-milestone.is-entering { animation: studyMilestoneIn 240ms var(--easing-page) both; }
+.study-progress-milestone.is-leaving { pointer-events: none; animation: studyMilestoneOut 190ms var(--easing-soft) both; }
+.study-progress-milestone.is-just-reached .study-progress-milestone-stamp { animation: studyMilestoneReached 700ms 250ms cubic-bezier(0.4, 0, 0.2, 1) both; }
+@keyframes studyMilestoneIn {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes studyMilestoneOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.5); }
+}
+@keyframes studyMilestoneReached {
+  0% { transform: translateY(calc(var(--milestone-lane, 0) * -14px)) scale(1); box-shadow: 0 0 0 1px rgba(39, 49, 43, 0.15); }
+  38% { transform: translateY(calc(var(--milestone-lane, 0) * -14px)) scale(1.22); box-shadow: 0 0 0 3px rgba(121, 168, 132, 0.10), 0 0 6px rgba(121, 168, 132, 0.10); }
+  55% { transform: translateY(calc(var(--milestone-lane, 0) * -14px)) scale(1.28); box-shadow: 0 0 0 5px rgba(121, 168, 132, 0.12), 0 0 10px rgba(121, 168, 132, 0.10); }
+  76% { transform: translateY(calc(var(--milestone-lane, 0) * -14px)) scale(1.14); box-shadow: 0 0 0 3px rgba(121, 168, 132, 0.07), 0 0 6px rgba(121, 168, 132, 0.06); }
+  100% { transform: translateY(calc(var(--milestone-lane, 0) * -14px)) scale(1); box-shadow: 0 0 0 1px rgba(39, 49, 43, 0.15); }
+}
+
+/* —— 学习页卡片入场 / 退场 / 完成 / 进度跳动 —— */
+.study-progress-card.is-entering { animation: studyCardIn 440ms var(--easing-page) both; }
+.study-progress-card.is-leaving { overflow: hidden; pointer-events: none; animation: studyCardOut 300ms var(--easing-page) forwards; }
+@keyframes studyCardIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes studyCardOut {
+  0% { opacity: 1; transform: translateX(0); max-height: 120px; }
+  55% { opacity: 0; transform: translateX(28px); }
+  100% { opacity: 0; transform: translateX(28px); max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; }
+}
+
+/* —— 学习页整版错峰入场：头 → 列标题 → 逐行卡片 spring stagger（复刻专注页每日视图）——
+   卡片用双动画分离 opacity 与 transform：
+   - fade-in：只设 from { opacity: 0 }，不设 to → 浏览器以元素自身 computed opacity 为终点，
+     已完成卡片自然停在 .68，活跃卡片停在 1。fill: backwards → 结束后不锁定。
+   - spring-in：只做 transform 弹簧，fill: both → 结束后锁定原位。
+   这样就彻底消除「亮→灰 snap」。 */
+.study-progress-view.is-revealing .study-progress-head {
+  animation: study-heading-spring-in 600ms 40ms var(--easing-page) both;
+}
+.study-progress-view.is-revealing .study-progress-column-head {
+  animation: study-support-spring-in 560ms 120ms var(--easing-page) both;
+}
+.study-progress-view.is-revealing .study-progress-card {
+  animation-name: study-card-fade-in, study-card-spring-up;
+  animation-duration: 380ms, 600ms;
+  animation-timing-function: var(--easing-soft), var(--easing-page);
+  animation-delay: calc(150ms + var(--study-row-index, 0) * 64ms), calc(150ms + var(--study-row-index, 0) * 64ms);
+  animation-fill-mode: backwards, both;
+}
+.study-progress-view.is-revealing .study-progress-empty {
+  animation: study-support-spring-in 560ms 280ms var(--easing-page) both;
+}
+@keyframes study-heading-spring-in {
+  0% { opacity: 0; transform: translateY(12px); }
+  68% { opacity: 1; transform: translateY(-2px); }
+  84% { transform: translateY(1px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes study-card-fade-in {
+  from { opacity: 0; }
+  /* 不设 to —— 浏览器以卡片自身 computed opacity 为终点 */
+}
+@keyframes study-card-spring-up {
+  0% { transform: translateY(18px) scale(0.975); }
+  58% { transform: translateY(-3px) scale(1.012); }
+  78% { transform: translateY(1px) scale(0.997); }
+  100% { transform: translateY(0) scale(1); }
+}
+@keyframes study-support-spring-in {
+  0% { opacity: 0; transform: translateY(9px); }
+  72% { opacity: 1; transform: translateY(-1px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.study-progress-card.is-completing::after,
+.study-progress-card.is-reopening::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.study-progress-card.is-completing::after {
+  animation: studyCompleteRing 460ms var(--easing-soft) both;
+}
+.study-progress-card.is-reopening::after {
+  animation: studyReopenRing 360ms var(--easing-soft) both;
+}
+@keyframes studyCompleteRing {
+  0% { opacity: 0; border-color: rgba(121, 168, 132, 0); transform: scale(0.995); }
+  38% { opacity: 1; border-color: rgba(121, 168, 132, 0.48); transform: scale(1.004); }
+  100% { opacity: 0; border-color: rgba(121, 168, 132, 0); transform: scale(1.008); }
+}
+@keyframes studyReopenRing {
+  0% { opacity: 0; border-color: color-mix(in srgb, var(--text) 0%, transparent); }
+  45% { opacity: 0.72; border-color: color-mix(in srgb, var(--text) 18%, transparent); }
+  100% { opacity: 0; border-color: color-mix(in srgb, var(--text) 0%, transparent); }
+}
+.study-progress-card.is-progress-pop { animation: studyProgressPop 360ms var(--easing-soft) both; }
+@keyframes studyProgressPop {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-2px); }
+}
+
+/* —— 学习页 ±1 按钮按压反馈 —— */
+.study-progress-controls button:not(:disabled):active { transform: scale(0.93); transition: transform 80ms var(--easing-soft); }
+
+.study-progress-controls { display: flex; gap: 5px; }
+.study-progress-controls button, .study-progress-detail { height: 30px; min-width: 38px; padding: 0 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--text-secondary); background: var(--surface-soft); font: inherit; font-size: 12px; cursor: pointer; }
+.study-progress-controls button:disabled { opacity: .35; cursor: default; }
+.study-progress-controls button:not(:disabled):hover, .study-progress-detail:hover { border-color: var(--line-strong); color: var(--text); }
+.study-progress-detail { min-width: 28px; padding: 0; border-color: transparent; background: transparent; font-size: 20px; }
+/* —— 右侧提示组：› 图标（悬停绿光）+ ⋯ 菜单按钮 —— */
+.study-progress-detail-group { display: flex; align-items: center; gap: 4px; }
+.study-progress-detail-cue {
+  flex: none; width: 20px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; line-height: 1;
+  color: color-mix(in srgb, var(--text-tertiary) 72%, transparent);
+  opacity: 0.46;
+  transform: translateX(-2px);
+  transition: color 180ms var(--easing-soft), opacity 180ms var(--easing-soft),
+              transform 180ms var(--easing-soft);
+  user-select: none;
+  pointer-events: none;
+}
+.study-progress-card:hover .study-progress-detail-cue,
+.study-progress-card:focus-within .study-progress-detail-cue {
+  color: #5f9e6c;
+  opacity: 1;
+  transform: translateX(1px);
+}
+.study-progress-menu {
+  flex: none; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 7px; font-size: 15px; line-height: 1;
+  background: transparent; color: var(--text-tertiary);
+  border: none; cursor: pointer;
+  opacity: 0;
+  transition: opacity 180ms var(--easing-soft), background 180ms var(--easing-soft),
+              color 180ms var(--easing-soft);
+}
+.study-progress-card:hover .study-progress-menu,
+.study-progress-card:focus-within .study-progress-menu,
+.study-progress-menu[aria-expanded="true"] { opacity: 1; }
+.study-progress-menu:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.study-progress-menu[aria-expanded="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.study-completed-archive { font-size: 12px !important; }
+.study-progress-card.is-completed { min-height: 78px; opacity: .74; }
+.study-progress-card.is-completed .study-progress-card-head strong { text-decoration: line-through; }
+/* —— 三点按钮的锚定浮动设置卡：独立于任务卡片布局 —— */
+.study-progress-settings-popover {
+  position: fixed; z-index: 70;
+  width: min(310px, calc(100vw - 24px));
+  padding: 16px; border: 1px solid var(--border); border-radius: 16px;
+  color: var(--text); background: color-mix(in srgb, var(--surface) 98%, var(--text) 2%);
+  box-shadow: 0 18px 48px rgba(31, 35, 32, .18), 0 0 0 1px rgba(31, 35, 32, .025);
+  opacity: 0; pointer-events: none; transform: translateY(-6px) scale(.985);
+  transform-origin: calc(100% - 18px) 0;
+  transition: opacity 160ms var(--easing-soft), transform 180ms var(--easing-page);
+}
+.study-progress-settings-popover[data-placement="above"] {
+  transform: translateY(6px) scale(.985);
+  transform-origin: calc(100% - 18px) 100%;
+}
+.study-progress-settings-popover.is-open {
+  opacity: 1; pointer-events: auto; transform: translateY(0) scale(1);
+}
+.study-progress-settings-popover.is-closing { pointer-events: none; }
+.study-progress-settings-popover.is-suspended {
+  opacity: 0; pointer-events: none; transform: translateY(-4px) scale(.985);
+}
+.study-progress-settings-title {
+  display: block; margin-bottom: 14px; font-size: 14px; line-height: 1.25;
+}
+.study-progress-settings-target {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  color: var(--text-secondary); font-size: 13px;
+}
+.study-progress-settings-number {
+  width: 92px; height: 36px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); background: var(--surface); font: inherit; font-size: 14px; text-align: center;
+}
+.study-progress-settings-number:focus-visible {
+  outline: none; border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+}
+.study-progress-settings-milestones {
+  width: 100%; min-height: 38px; margin-top: 11px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text-secondary); background: transparent; font: inherit; font-size: 12.5px; cursor: pointer;
+  transition: color 120ms var(--easing-soft), background 120ms var(--easing-soft), border-color 120ms var(--easing-soft);
+}
+.study-progress-settings-milestones:hover:not(:disabled) {
+  color: var(--text); border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.study-progress-settings-milestones:disabled { opacity: .38; cursor: not-allowed; }
+.study-progress-settings-error {
+  min-height: 17px; margin: 7px 0 0; color: #b4533f; font-size: 11.5px; line-height: 1.45;
+}
+.study-progress-settings-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 7px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.study-progress-settings-actions > span { display: flex; align-items: center; gap: 7px; }
+.study-progress-settings-actions button { font: inherit; cursor: pointer; }
+.study-progress-settings-trash {
+  padding: 7px 5px; border: 0; border-radius: 9px;
+  color: #b4533f; background: transparent; font-size: 12.5px !important;
+}
+.study-progress-settings-trash:hover { background: color-mix(in srgb, #b4533f 8%, transparent); }
+.study-progress-settings-cancel,
+.study-progress-settings-save {
+  padding: 7px 13px; border-radius: 9px; background: transparent; font-size: 12.5px !important;
+}
+.study-progress-settings-cancel { border: 1px solid transparent; color: var(--text-tertiary); }
+.study-progress-settings-cancel:hover { color: var(--text); }
+.study-progress-settings-save {
+  border: 1px solid color-mix(in srgb, var(--text) 38%, var(--border));
+  color: var(--text); font-weight: 600 !important;
+}
+.study-progress-settings-save:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+
+/* —— 里程碑弹窗（复刻专注页每日任务的高级设置弹窗）—— */
+.study-milestone-dialog-shell {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(24, 25, 24, 0); opacity: 0;
+  transition: opacity 220ms var(--easing-soft), background 220ms var(--easing-soft);
+}
+.study-milestone-dialog-shell.is-open { opacity: 1; background: rgba(24, 25, 24, 0.28); }
+.study-milestone-dialog-shell.is-closing { animation: studyMilestoneShellOut 210ms var(--easing-soft) both; }
+.study-milestone-dialog {
+  width: min(480px, calc(100vw - 48px)); max-height: calc(100vh - 80px);
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 26px 28px 22px; border-radius: 18px;
+  background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.28), 0 0 0 1px rgba(0,0,0,.08);
+  opacity: 0; transform: translateY(12px) scale(0.97);
+  transition: opacity 280ms var(--easing-page), transform 280ms var(--easing-page);
+}
+.study-milestone-dialog-shell.is-open .study-milestone-dialog { opacity: 1; transform: translateY(0) scale(1); }
+.study-milestone-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.study-milestone-dialog > header span { display: block; margin-bottom: 3px; color: var(--text-tertiary); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.study-milestone-dialog h2 { margin: 0; font-size: 21px; line-height: 1.25; }
+.study-milestone-dialog > header button {
+  flex-shrink: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 12px; background: transparent; color: var(--text-tertiary);
+  font-size: 20px; cursor: pointer; transition: color 120ms var(--easing-soft), background 120ms var(--easing-soft);
+}
+.study-milestone-dialog > header button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.study-milestone-intro { margin: 13px 0 16px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }
+.study-milestone-list { display: grid; gap: 8px; }
+.study-milestone-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 120px 30px; gap: 8px; align-items: center;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 98%, var(--text));
+  transition: border-color 160ms var(--easing-soft);
+}
+.study-milestone-row.is-entering { animation: studyMilestoneRowIn 240ms var(--easing-page) both; }
+.study-milestone-row.is-leaving { pointer-events: none; animation: studyMilestoneRowOut 190ms var(--easing-soft) both; }
+.study-milestone-row.has-error { border-color: color-mix(in srgb, #b4533f 58%, var(--border)); background: color-mix(in srgb, #b4533f 5%, var(--surface)); }
+.study-milestone-row input {
+  height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px;
+  color: var(--text); background: var(--surface); font: inherit;
+}
+.study-milestone-row input:focus-visible { outline: none; border-color: color-mix(in srgb, #5f9e6c 54%, var(--border)); }
+.study-milestone-at-wrap { display: flex; align-items: center; gap: 4px; color: var(--text-tertiary); font-size: 11.5px; }
+.study-milestone-at-wrap input { min-width: 0; }
+.study-milestone-remove {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--text-tertiary); font-size: 16px; cursor: pointer;
+  transition: color 120ms var(--easing-soft), background 120ms var(--easing-soft);
+}
+.study-milestone-remove:hover { color: #b4533f; background: color-mix(in srgb, #b4533f 8%, transparent); }
+.study-milestone-dialog > footer { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; }
+.study-milestone-add {
+  border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer;
+  padding: 6px 0; transition: opacity 120ms var(--easing-soft);
+}
+.study-milestone-add:disabled { opacity: 0.35; cursor: not-allowed; }
+.study-milestone-add:not(:disabled):hover { opacity: 0.8; }
+.study-milestone-dialog > footer > div { display: flex; gap: 10px; }
+.study-milestone-cancel {
+  padding: 8px 16px; border: 1px solid transparent; border-radius: 10px;
+  background: transparent; color: var(--text-tertiary); font: inherit; cursor: pointer;
+}
+.study-milestone-cancel:hover { color: var(--text); }
+.study-milestone-confirm {
+  padding: 8px 20px; border: 1px solid var(--accent); border-radius: 10px;
+  background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  transition: opacity 120ms var(--easing-soft);
+}
+.study-milestone-confirm:hover { opacity: 0.88; }
+.study-milestone-error { margin: 10px 0 0; color: #b4533f; font-size: 12px; min-height: 18px; }
+@keyframes studyMilestoneShellOut {
+  from { opacity: 1; background: rgba(24, 25, 24, 0.28); }
+  to { opacity: 0; background: rgba(24, 25, 24, 0); }
+}
+@keyframes studyMilestoneRowIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes studyMilestoneRowOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(6px); }
+}
+
+/* —— 完整视图双击改名 —— */
+.study-progress-card.renaming .study-progress-card-head strong {
+  cursor: text; outline: none;
+  border-bottom: 1px dashed var(--accent);
+  padding: 2px 4px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+body.start-page[data-start-theme="dark"] .study-progress-card,
+body.start-page[data-start-theme="dark"] .study-progress-compose-panel { border-color: rgba(255, 255, 255, .12); background: rgba(28, 30, 29, .96); box-shadow: 0 20px 56px rgba(0, 0, 0, .36), 0 0 0 1px rgba(255,255,255,.06); }
+body.start-page[data-start-theme="dark"] .study-progress-ghost { background: rgba(36, 38, 37, .98); border-color: rgba(255, 255, 255, .18); }
+body.start-page[data-start-theme="dark"] .study-progress-grip:hover { color: rgba(255, 255, 255, 0.72); }
+body.start-page[data-start-theme="dark"] .study-progress-goal-label { color: #9fb5a0; }
+body.start-page[data-start-theme="dark"] .study-progress-card.is-goal-ready .study-progress-value-number { color: #9bc2a4; }
+body.start-page[data-start-theme="dark"] .study-progress-card.is-goal-ready .study-progress-check { border-color: #90b69a; }
+body.start-page[data-start-theme="dark"] .study-progress-card.is-goal-ready .study-progress-check::before { background-color: rgba(144, 182, 154, .24); }
+body.start-page[data-start-theme="dark"] .study-progress-card.is-goal-ready .study-progress-check:hover { border-color: #a5c9ae; }
+body.start-page[data-start-theme="dark"] .study-progress-card.is-goal-ready .study-progress-check:hover::before { background-color: rgba(144, 182, 154, .3); }
+body.start-page[data-start-theme="dark"] .study-progress-check.on {
+  border-color: #5f9e6c;
+  background: #5f9e6c;
+  box-shadow: none;
+}
+body.start-page[data-start-theme="dark"] .study-progress-check.on::after { background: #fff; }
+body.start-page[data-start-theme="dark"] .study-progress-milestone-stamp { border-color: #1c1e1d; }
+body.start-page[data-start-theme="dark"] .study-progress-milestone.is-reached .study-progress-milestone-stamp { background: #90b69a; }
+body.start-page[data-start-theme="dark"] .study-progress-milestone-tip { background: rgba(230, 228, 224, 0.94); color: #1a1c1a; }
+body.start-page[data-start-theme="dark"] .study-progress-settings-popover {
+  border-color: rgba(255, 255, 255, .12); background: #1e201f;
+  box-shadow: 0 20px 54px rgba(0, 0, 0, .46), 0 0 0 1px rgba(255, 255, 255, .04);
+}
+body.start-page[data-start-theme="dark"] .study-progress-settings-number {
+  border-color: rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .04);
+}
+body.start-page[data-start-theme="dark"] .study-progress-settings-milestones:hover:not(:disabled),
+body.start-page[data-start-theme="dark"] .study-progress-settings-save:hover { background: rgba(255, 255, 255, .06); }
+body.start-page[data-start-theme="dark"] .study-milestone-dialog { background: #1e201f; box-shadow: 0 20px 60px rgba(0,0,0,.48), 0 0 0 1px rgba(255,255,255,.08); }
+body.start-page[data-start-theme="dark"] .study-milestone-dialog-shell.is-open { background: rgba(6, 7, 6, 0.48); }
+body.start-page[data-start-theme="dark"] .study-milestone-row { border-color: rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.03); }
+body.start-page[data-start-theme="dark"] .study-milestone-row input { border-color: rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.04); }
+body.start-page[data-start-theme="dark"] .study-milestone-row input:focus-visible { border-color: color-mix(in srgb, #5f9e6c 54%, rgba(255,255,255,.2)); }
+body.start-page[data-start-theme="dark"] .study-milestone-dialog > header button:hover { background: rgba(255, 255, 255, 0.08); }
+body.start-page[data-start-theme="dark"] .study-milestone-remove:hover { background: color-mix(in srgb, #b4533f 12%, transparent); }
+@media (max-width: 700px) {
+  .study-progress-view { padding-top: 8px; }
+  .study-progress-head { align-items: center; }
+  .study-progress-head h1 { font-size: 32px; }
+  .study-progress-today { padding-inline: 8px; }
+  .study-progress-card,
+  .study-progress-list .study-progress-card { grid-template-columns: 28px minmax(0, 1fr) 40px; gap: 9px; padding: 15px 12px; }
+  .study-progress-grip { display: none; }
+  .study-progress-controls { grid-column: 2 / 4; justify-content: flex-end; }
+  .study-progress-card-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .study-progress-board { grid-template-columns: 1fr; }
+  .study-progress-column { min-height: 80px; }
+  .study-milestone-row { grid-template-columns: minmax(0, 1fr) 82px 28px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .study-progress-card, .study-progress-fill, .study-progress-create,
+  .study-progress-milestone.is-just-reached .study-progress-milestone-stamp,
+  .study-progress-card.is-entering, .study-progress-card.is-leaving,
+  .study-progress-card.is-completing, .study-progress-card.is-reopening,
+  .study-progress-card.is-completing::after, .study-progress-card.is-reopening::after,
+  .study-progress-card.is-progress-pop,
+  .study-progress-goal-label, .study-progress-value-number,
+  .study-progress-card.is-goal-celebrating .study-progress-fill::before,
+  .study-progress-card.is-goal-celebrating .study-progress-fill::after,
+  .study-progress-card.is-goal-breathing .study-progress-fill::before,
+  .study-progress-card.is-goal-breathing .study-progress-fill::after,
+  .study-progress-milestone.is-entering, .study-progress-milestone.is-leaving,
+  .study-progress-settings-popover,
+  .study-milestone-dialog-shell, .study-milestone-dialog,
+  .study-milestone-dialog-shell.is-open, .study-milestone-dialog-shell.is-closing,
+  .study-milestone-row.is-entering, .study-milestone-row.is-leaving,
+  .study-progress-controls button:not(:disabled):active,
+  .study-progress-compose, .study-progress-compose-panel,
+  .study-progress-check, .study-progress-check::before, .study-progress-check::after,
+  .study-progress-check.on::after,
+  .study-progress-check.is-check-pop, .study-progress-check.is-uncheck-pop,
+  .study-progress-view.is-revealing .study-progress-head,
+  .study-progress-view.is-revealing .study-progress-column-head,
+  .study-progress-view.is-revealing .study-progress-card,
+  .study-progress-view.is-revealing .study-progress-empty { transition: none !important; animation: none !important; }
 }
 
 /* ── 任务簿 V2：顶级任务库与独立管理页 ───────────────────────────── */

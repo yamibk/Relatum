@@ -99,8 +99,8 @@ START_STICKY_NOTES_FILE = DATA / "start-sticky-notes.json"   # 起步页跨页�
 FOCUS_FILE = DATA / "focus.json"   # 起步页「专注钟」专注记录（自成一体，不进 .canvas；供活跃页专注镜头汇总）
 CANVAS_ACTIVITY_FILE = DATA / "canvas-activity.json"   # 画布前台使用时长与创建/修改足迹（不写进 .canvas）
 DAILY_FILE = DATA / "daily.json"   # 专注页「每日任务」习惯清单（每天重置勾选，累计天数/分钟；自成一体，不进 .canvas）
+DAILY_BACKUP_FILE = DATA / "daily.backup.json"
 DIARY_DIR = DATA / "diary"   # 起步页「日历」日记：每天一份 Markdown，与学习/速记数据解耦
-CALENDAR_PINS_FILE = DATA / "calendar-pins.json"   # 日历月历上的任务便签（按月份保存自由坐标）
 COUNTDOWN_FILE = DATA / "countdown.json"   # 日历页轻量倒数日：目标事件 + 目标日期
 TEMPLATES_FILE = DATA / "templates.json"   # 「模板」库：常用节点组的可复用快照（全局，所有画布共用，不进 .canvas）
 REVIEW_DB_FILE = DATA / "review.db"   # 独立复习卡片、调度状态与复习事件；不扫描、不改写 .canvas
@@ -597,6 +597,15 @@ def load_recent() -> dict:
 
 class CanvasImportLibraryError(ValueError):
     """A user-facing validation failure for the managed canvas import flow."""
+
+    def __init__(self, message: str, *, code: str = "INVALID_IMPORT", status: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+class ExternalCanvasImportError(ValueError):
+    """A safe, user-facing failure while importing external canvas copies."""
 
     def __init__(self, message: str, *, code: str = "INVALID_IMPORT", status: int = 400):
         super().__init__(message)
@@ -1598,52 +1607,114 @@ def empty_canvas_payload() -> dict:
 
 # ─── 内置学习页：轻量任务板 ─────────────────────────────────
 
-STUDY_STATUSES = {"todo", "doing", "done"}
-CANVAS_TASK_EXPORT_MAX = 20
-CANVAS_TASK_TITLE_MAX = 160
-CANVAS_TASK_MEMO_MAX = 3000
+STUDY_STATUSES = {"active", "done"}
+STUDY_PROGRESS_MAX = 9999
+STUDY_MILESTONES_MAX = 6
+STUDY_TRASH_MAX = 30
 
 
 def _study_now() -> str:
     return datetime.now().replace(microsecond=0).isoformat()
 
 
-def _study_due(value) -> str:
-    due = str(value or "").strip()
-    if not due:
-        return ""
+def _study_int(value: object, *, maximum: int = STUDY_PROGRESS_MAX) -> int:
     try:
-        datetime.strptime(due, "%Y-%m-%d")
-    except ValueError as err:
-        raise ValueError("截止日期需要是 YYYY-MM-DD 格式") from err
-    return due
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(maximum, number))
 
 
-def _study_tags(value) -> list[str]:
-    raw = value if isinstance(value, list) else str(value or "").replace("，", ",").split(",")
-    tags = []
-    for item in raw:
-        tag = str(item).strip().lstrip("#")
-        if tag and tag not in tags:
-            tags.append(tag[:24])
-    return tags[:12]
+def _study_config_int(value: object, label: str, *, strict: bool) -> int:
+    if value in (None, ""):
+        return 0
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        if strict:
+            raise ValueError(f"{label}需要是整数")
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError) as err:
+        if strict:
+            raise ValueError(f"{label}需要是整数") from err
+        return 0
 
 
-def _study_canvas_path(value) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    target = Path(raw)
-    if target.suffix.lower() != ".canvas":
-        raise ValueError("关联文件必须是 .canvas")
-    return _norm(target)
+def _study_milestones(value: object, target: int, *, strict: bool) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        if strict:
+            raise ValueError("任务点需要是数组")
+        return []
+    out = []
+    seen = set()
+    seen_ids = set()
+    for item in value:
+        if not isinstance(item, dict):
+            if strict:
+                raise ValueError("任务点格式不正确")
+            continue
+        raw_name = str(item.get("name") or "").strip()
+        if strict and len(raw_name) > 40:
+            raise ValueError("任务点名称最多 40 字")
+        name = raw_name[:40]
+        at = _study_config_int(item.get("at"), "任务点位置", strict=strict)
+        invalid = not name or target <= 0 or at < 1 or at > target or at in seen
+        if invalid:
+            if strict:
+                raise ValueError("任务点必须有名称，并位于目标范围内且位置不能重复")
+            continue
+        milestone_id = str(item.get("id") or ("sm_" + uuid.uuid4().hex))[:80]
+        if milestone_id in seen_ids:
+            if strict:
+                raise ValueError("任务点标识不能重复")
+            milestone_id = "sm_" + uuid.uuid4().hex
+        seen.add(at)
+        seen_ids.add(milestone_id)
+        out.append({
+            "id": milestone_id,
+            "name": name,
+            "at": at,
+        })
+        if len(out) >= STUDY_MILESTONES_MAX:
+            break
+    if strict and len(value) > STUDY_MILESTONES_MAX:
+        raise ValueError(f"任务点最多 {STUDY_MILESTONES_MAX} 个")
+    out.sort(key=lambda item: item["at"])
+    return out
 
 
-def _study_task(source: dict | None = None, *, existing: dict | None = None, touch: bool = True) -> dict:
+def _study_progress(source: object, existing: object = None, *, strict: bool, allow_current: bool) -> dict:
+    raw = source if isinstance(source, dict) else {}
+    base = existing if isinstance(existing, dict) else {}
+    if strict and source is not None and not isinstance(source, dict):
+        raise ValueError("进度格式不正确")
+    target_raw = raw.get("target", base.get("target", 0))
+    target_number = _study_config_int(target_raw, "目标总量", strict=strict)
+    if strict and not 0 <= target_number <= STUDY_PROGRESS_MAX:
+        raise ValueError(f"目标总量需要在 0–{STUDY_PROGRESS_MAX} 之间")
+    target = max(0, min(STUDY_PROGRESS_MAX, target_number))
+    current = _study_int(raw.get("current", base.get("current", 0)) if allow_current else base.get("current", 0))
+    if strict and target < current:
+        raise ValueError("目标总量不能小于当前进度，请先回退进度")
+    current = min(current, target) if target > 0 else 0
+    milestones_source = raw.get("milestones", base.get("milestones", []))
+    return {
+        "current": current,
+        "target": target,
+        "milestones": _study_milestones(milestones_source, target, strict=strict),
+    }
+
+
+def _study_task(
+    source: dict | None = None, *, existing: dict | None = None,
+    touch: bool = True, strict: bool = True,
+) -> dict:
     raw = source if isinstance(source, dict) else {}
     base = existing if isinstance(existing, dict) else {}
     now = _study_now()
-    status = str(raw.get("status", base.get("status", "todo"))).strip()
+    status = str(raw.get("status", base.get("status", "active"))).strip()
     if status not in STUDY_STATUSES:
         raise ValueError("任务状态不正确")
     title = str(raw.get("title", base.get("title", "未命名任务"))).strip() or "未命名任务"
@@ -1656,11 +1727,10 @@ def _study_task(source: dict | None = None, *, existing: dict | None = None, tou
         "id": str(base.get("id") or raw.get("id") or uuid.uuid4().hex),
         "title": title[:160],
         "status": status,
-        "due": _study_due(raw.get("due", base.get("due", ""))),
-        "focusDay": _study_due(raw.get("focusDay", base.get("focusDay", ""))),  # "今日专注"标记：标记当天的日期，与截止日解耦；隔天自动失效
-        "tags": _study_tags(raw.get("tags", base.get("tags", []))),
-        "memo": str(raw.get("memo", base.get("memo", ""))).strip()[:3000],
-        "linkedCanvas": _study_canvas_path(raw.get("linkedCanvas", base.get("linkedCanvas", ""))),
+        "progress": _study_progress(
+            raw.get("progress") if "progress" in raw else None,
+            base.get("progress"), strict=strict, allow_current=not touch,
+        ),
         "createdAt": str(base.get("createdAt") or raw.get("createdAt") or now),
         "updatedAt": now if touch else str(base.get("updatedAt") or raw.get("updatedAt") or now),
         "completedAt": completed_at,
@@ -1669,15 +1739,17 @@ def _study_task(source: dict | None = None, *, existing: dict | None = None, tou
 
 def load_study() -> dict:
     if not STUDY_FILE.exists():
-        return {"version": 1, "tasks": [], "trash": []}
+        return {"version": 2, "tasks": [], "trash": []}
     try:
         raw = json.loads(STUDY_FILE.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"version": 1, "tasks": [], "trash": []}
+        return {"version": 2, "tasks": [], "trash": []}
+    if not isinstance(raw, dict) or raw.get("version") != 2:
+        return {"version": 2, "tasks": [], "trash": []}
     tasks = []
     for item in raw.get("tasks", []) if isinstance(raw, dict) else []:
         try:
-            tasks.append(_study_task(item, existing=item, touch=False))
+            tasks.append(_study_task(item, existing=item, touch=False, strict=False))
         except ValueError:
             continue
     trash = []
@@ -1686,140 +1758,54 @@ def load_study() -> dict:
             continue
         try:
             trash.append({
-                "task": _study_task(item.get("task"), existing=item.get("task"), touch=False),
+                "task": _study_task(
+                    item.get("task"), existing=item.get("task"), touch=False, strict=False
+                ),
                 "deletedAt": str(item.get("deletedAt") or _study_now()),
             })
         except ValueError:
             continue
-    return {"version": 1, "tasks": tasks, "trash": trash[:30]}
+    return {"version": 2, "tasks": tasks, "trash": trash[:STUDY_TRASH_MAX]}
 
 
 def save_study(data: dict) -> None:
     _atomic_write_json(STUDY_FILE, {
-        "version": 1,
+        "version": 2,
         "tasks": data.get("tasks", []),
-        "trash": data.get("trash", [])[:30],
+        "trash": data.get("trash", [])[:STUDY_TRASH_MAX],
     })
 
 
-# ── 日历任务便签 ────────────────────────────────────────
-CALENDAR_PINS_MAX = 300
-CALENDAR_PIN_COLORS = {"yellow", "red", "blue", "green", "purple", "orange"}
-
-
-def _calendar_pin_month(value: object) -> str:
-    raw = str(value or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}", raw):
-        raise ValueError("月份格式不正确")
-    try:
-        date(int(raw[:4]), int(raw[5:]), 1)
-    except ValueError as err:
-        raise ValueError("月份格式不正确") from err
-    return raw
-
-
-def _sanitize_calendar_pin(item: object) -> dict | None:
-    if not isinstance(item, dict):
-        return None
-    task_id = str(item.get("taskId") or "").strip()
-    color = str(item.get("color") or "").strip()
-    if not task_id or color not in CALENDAR_PIN_COLORS:
-        return None
-    try:
-        x = max(0.0, min(1.0, float(item.get("x", 0))))
-        y = max(0.0, min(1.0, float(item.get("y", 0))))
-    except (TypeError, ValueError):
-        return None
+def change_study_progress(data: dict, task_id: object, delta: object) -> dict:
+    """在已持有学习数据写锁时推进一个单位；调用方负责原子写回。"""
+    target_id = str(task_id or "").strip()
+    if delta not in (-1, 1) or isinstance(delta, bool):
+        raise ValueError("delta 只能是 1 或 -1")
+    index, old = study_find_task(data, target_id)
+    if old.get("status") == "done":
+        raise RuntimeError("请先恢复任务，再调整进度")
+    progress = dict(old.get("progress") or {})
+    target = _study_int(progress.get("target"))
+    if target <= 0:
+        raise RuntimeError("请先设置目标")
+    before = min(_study_int(progress.get("current")), target)
+    current = max(0, min(target, before + delta))
+    progress["current"] = current
+    task = dict(old)
+    task["progress"] = progress
+    task["updatedAt"] = _study_now()
+    crossed = []
+    if delta > 0:
+        crossed = [
+            item["id"] for item in progress.get("milestones", [])
+            if before < _study_int(item.get("at")) <= current
+        ]
+    data["tasks"][index] = task
     return {
-        "id": str(item.get("id") or uuid.uuid4().hex)[:80],
-        "taskId": task_id[:80],
-        "color": color,
-        "x": round(x, 5),
-        "y": round(y, 5),
+        "task": task,
+        "crossedMilestoneIds": crossed,
+        "targetReached": delta > 0 and before < target and current == target,
     }
-
-
-def load_calendar_pins(active_task_ids: set[str] | None = None) -> dict:
-    raw: dict = {}
-    if CALENDAR_PINS_FILE.exists():
-        try:
-            loaded = json.loads(CALENDAR_PINS_FILE.read_text(encoding="utf-8-sig"))
-            if isinstance(loaded, dict):
-                raw = loaded
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            raw = {}
-    months: dict[str, list[dict]] = {}
-    changed = False
-    source = raw.get("months", {}) if isinstance(raw.get("months"), dict) else {}
-    count = 0
-    for month, items in source.items():
-        try:
-            clean_month = _calendar_pin_month(month)
-        except ValueError:
-            changed = True
-            continue
-        clean_items = []
-        seen = set()
-        for item in items if isinstance(items, list) else []:
-            pin = _sanitize_calendar_pin(item)
-            if not pin or pin["taskId"] in seen:
-                changed = True
-                continue
-            if active_task_ids is not None and pin["taskId"] not in active_task_ids:
-                changed = True
-                continue
-            if count >= CALENDAR_PINS_MAX:
-                changed = True
-                break
-            seen.add(pin["taskId"])
-            clean_items.append(pin)
-            count += 1
-        if clean_items:
-            months[clean_month] = clean_items
-    payload = {"version": 2, "months": months}
-    if changed:
-        _atomic_write_json(CALENDAR_PINS_FILE, payload)
-    return payload
-
-
-def save_calendar_month_pins(month_value: object, items: object) -> list[dict]:
-    month = _calendar_pin_month(month_value)
-    study = load_study()
-    active_ids = {str(task.get("id") or "") for task in study.get("tasks", [])}
-    data = load_calendar_pins(active_ids)
-    clean = []
-    seen = set()
-    for item in items if isinstance(items, list) else []:
-        pin = _sanitize_calendar_pin(item)
-        if not pin or pin["taskId"] not in active_ids or pin["taskId"] in seen:
-            continue
-        seen.add(pin["taskId"])
-        clean.append(pin)
-        if len(clean) >= CALENDAR_PINS_MAX:
-            break
-    if clean:
-        data["months"][month] = clean
-    else:
-        data["months"].pop(month, None)
-    _atomic_write_json(CALENDAR_PINS_FILE, data)
-    return clean
-
-
-def remove_calendar_pins_for_tasks(task_ids: set[str]) -> None:
-    if not task_ids or not CALENDAR_PINS_FILE.exists():
-        return
-    data = load_calendar_pins()
-    changed = False
-    for month in list(data["months"]):
-        kept = [pin for pin in data["months"][month] if pin["taskId"] not in task_ids]
-        if len(kept) != len(data["months"][month]):
-            changed = True
-        if kept:
-            data["months"][month] = kept
-        else:
-            data["months"].pop(month, None)
-    if changed:
-        _atomic_write_json(CALENDAR_PINS_FILE, data)
 
 
 # ── 日历倒数日 ──────────────────────────────────────────
@@ -2863,11 +2849,14 @@ def _sanitize_daily_task(item: object) -> dict | None:
     undo = item.get("undo")
     if isinstance(undo, dict):
         u_last = str(undo.get("lastDoneDate") or "")
-        task["undo"] = {
+        clean_undo = {
             "lastDoneDate": u_last if _DAILY_DAY_RE.fullmatch(u_last) else "",
             "streak": _daily_nat(undo.get("streak")),
             "totalDays": _daily_nat(undo.get("totalDays")),
         }
+        if "bestStreak" in undo:
+            clean_undo["bestStreak"] = _daily_nat(undo.get("bestStreak"))
+        task["undo"] = clean_undo
     return task
 
 
@@ -2941,44 +2930,122 @@ def _daily_rollover(data: dict) -> bool:
     return True
 
 
-def load_daily() -> dict:
-    """读每日任务清单；跨天先在内存里重置，发生变化才顺手落盘一次。"""
-    if not DAILY_FILE.exists():
-        return {"version": 3, "date": _today_iso(), "tasks": [], "groups": []}
-    try:
-        raw = json.loads(DAILY_FILE.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"version": 3, "date": _today_iso(), "tasks": [], "groups": []}
+def _daily_payload_from_raw(raw: object) -> dict:
+    """把已解析的每日任务数据收敛为可信结构。"""
+    if not isinstance(raw, dict):
+        raise ValueError("每日任务数据格式不正确")
+    raw_tasks = raw.get("tasks", [])
+    raw_groups = raw.get("groups", [])
+    if not isinstance(raw_tasks, list) or not isinstance(raw_groups, list):
+        raise ValueError("每日任务数据格式不正确")
     tasks = []
-    for item in raw.get("tasks", []) if isinstance(raw, dict) else []:
+    for item in raw_tasks:
         task = _sanitize_daily_task(item)
         if task:
             tasks.append(task)
     groups = []
-    for item in raw.get("groups", []) if isinstance(raw, dict) else []:
+    for item in raw_groups:
         group = _sanitize_daily_group(item)
         if group:
             groups.append(group)
-    raw_date = raw.get("date") if isinstance(raw, dict) else ""
+    raw_date = raw.get("date")
     if not (isinstance(raw_date, str) and _DAILY_DAY_RE.fullmatch(raw_date)):
         raw_date = _today_iso()
-    data = {"version": 3, "date": raw_date, "tasks": tasks[:DAILY_TASKS_MAX], "groups": groups[:DAILY_GROUPS_MAX]}
+    data = {
+        "version": 3,
+        "date": raw_date,
+        "tasks": tasks[:DAILY_TASKS_MAX],
+        "groups": groups[:DAILY_GROUPS_MAX],
+    }
     _daily_fix_refs(data)
-    if _daily_rollover(data):
+    return data
+
+
+def _read_daily_file(path: Path) -> tuple[dict, bytes]:
+    content = path.read_bytes()
+    raw = json.loads(content.decode("utf-8-sig"))
+    return _daily_payload_from_raw(raw), content
+
+
+def _daily_corrupt_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = DAILY_FILE.with_name(f"daily.corrupt-{stamp}.json")
+    if target.exists():
+        target = DAILY_FILE.with_name(f"daily.corrupt-{stamp}-{uuid.uuid4().hex[:6]}.json")
+    return target
+
+
+def _preserve_corrupt_daily(content: bytes) -> None:
+    """隔离损坏的每日任务原件，避免后续正常操作直接覆盖。"""
+    target = _daily_corrupt_path()
+    try:
+        os.replace(DAILY_FILE, target)
+        return
+    except OSError:
+        pass
+    try:
+        _atomic_write_bytes(target, content)
+        DAILY_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _daily_storage_payload(data: dict) -> dict:
+    return {
+        "version": 3,
+        "date": data.get("date") or _today_iso(),
+        "tasks": data.get("tasks", [])[:DAILY_TASKS_MAX],
+        "groups": data.get("groups", [])[:DAILY_GROUPS_MAX],
+    }
+
+
+def _save_daily_unlocked(data: dict, *, backup: bool = True) -> None:
+    payload = _daily_storage_payload(data)
+    backup_written = False
+    if backup and DAILY_FILE.is_file():
         try:
-            _atomic_write_json(DAILY_FILE, data)
+            _current, current_bytes = _read_daily_file(DAILY_FILE)
+            _atomic_write_bytes(DAILY_BACKUP_FILE, current_bytes)
+            backup_written = True
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            pass
+    _atomic_write_json(DAILY_FILE, payload)
+    if not backup_written:
+        try:
+            _read_daily_file(DAILY_BACKUP_FILE)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            try:
+                _atomic_write_json(DAILY_BACKUP_FILE, payload)
+            except OSError:
+                pass
+
+
+def load_daily() -> dict:
+    """读每日任务清单；损坏时隔离原件并尝试恢复上一份有效快照。"""
+    if not DAILY_FILE.exists():
+        return {"version": 3, "date": _today_iso(), "tasks": [], "groups": []}
+    content = b""
+    recovered = False
+    try:
+        data, content = _read_daily_file(DAILY_FILE)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _preserve_corrupt_daily(content)
+        try:
+            data, _backup_content = _read_daily_file(DAILY_BACKUP_FILE)
+            recovered = True
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            data = {"version": 3, "date": _today_iso(), "tasks": [], "groups": []}
+    rolled_over = _daily_rollover(data)
+    if recovered or rolled_over:
+        try:
+            _save_daily_unlocked(data, backup=not recovered)
         except OSError:
             pass
     return data
 
 
 def save_daily(data: dict) -> None:
-    _atomic_write_json(DAILY_FILE, {
-        "version": 3,
-        "date": data.get("date") or _today_iso(),
-        "tasks": data.get("tasks", [])[:DAILY_TASKS_MAX],
-        "groups": data.get("groups", [])[:DAILY_GROUPS_MAX],
-    })
+    _save_daily_unlocked(data)
 
 
 def _daily_find(data: dict, task_id: str) -> dict:
@@ -3122,6 +3189,7 @@ def daily_toggle(body: dict) -> dict:
         task["undo"] = {
             "lastDoneDate": task.get("lastDoneDate") or "",
             "streak": _daily_nat(task.get("streak")),
+            "bestStreak": _daily_nat(task.get("bestStreak")),
             "totalDays": _daily_nat(task.get("totalDays")),
         }
         dates.append(today)
@@ -3148,6 +3216,10 @@ def daily_toggle(body: dict) -> dict:
         else:
             task["lastDoneDate"] = ""
             task["streak"] = 0
+        if isinstance(undo, dict) and "bestStreak" in undo:
+            task["bestStreak"] = _daily_nat(undo.get("bestStreak"))
+        else:
+            task["bestStreak"] = _daily_best_streak(dates)
         task.pop("undo", None)
     save_daily(data)
     return daily_public_payload(data)
@@ -3445,10 +3517,7 @@ def study_canvas_options() -> list[dict]:
 
 
 def study_public_payload() -> dict:
-    data = load_study()
-    data["canvases"] = study_canvas_options()
-    data["focusByTask"], data["focusSessions"] = focus_task_payload()
-    return data
+    return load_study()
 
 
 def _empty_canvas_activity() -> dict:
@@ -4038,7 +4107,7 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
                 if isinstance(payload, dict):
                     for task in payload.get("tasks", []):
                         if isinstance(task, dict):
-                            tally(task)
+                            tally({**task, "kind": "study"})
             taskbook_file = folder / "taskbook.json"
             if not taskbook_file.is_file():
                 continue
@@ -4229,12 +4298,9 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
         raise ValueError("月份格式不正确") from err
     selected = _calendar_day(selected_value, today.isoformat())
     month_prefix = f"{year:04d}-{month:02d}-"
-    study = load_study()
-    active_tasks = study.get("tasks", [])
-    active_task_ids = {str(task.get("id") or "") for task in active_tasks}
-    pin_data = load_calendar_pins(active_task_ids)
     focus = load_focus()
     _, archive_records = study_activity_records()
+    archive_records = [record for record in archive_records if record.get("kind") != "study"]
     diaries = diary_index()
     days: dict[str, dict] = {}
 
@@ -4247,16 +4313,6 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
     for item in diaries:
         if item["date"].startswith(month_prefix):
             bucket(item["date"])["diary"] += 1
-    for task in study.get("tasks", []):
-        due = str(task.get("due") or "")
-        focus_day = str(task.get("focusDay") or "")
-        completed = str(task.get("completedAt") or "")[:10]
-        if due.startswith(month_prefix):
-            bucket(due)["due"] += 1
-        if focus_day.startswith(month_prefix):
-            bucket(focus_day)["focusTask"] += 1
-        if completed.startswith(month_prefix):
-            bucket(completed)["completed"] += 1
     for day, summary in focus.get("days", {}).items():
         if day.startswith(month_prefix):
             target = bucket(day)
@@ -4266,35 +4322,6 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
         if record["day"].startswith(month_prefix):
             bucket(record["day"])["archives"] += 1
 
-    selected_tasks: list[dict] = []
-    for task in study.get("tasks", []):
-        flags = []
-        if task.get("due") == selected:
-            flags.append("截止")
-        if task.get("focusDay") == selected:
-            flags.append("今日专注")
-        if str(task.get("completedAt") or "")[:10] == selected:
-            flags.append("完成")
-        # 与实质标签互斥：有截止/今日专注/完成就不显示“新增”，避免同一天既是新建又有事时把“新增”当成噪音
-        if not flags and str(task.get("createdAt") or "")[:10] == selected:
-            flags.append("新增")
-        if flags:
-            selected_tasks.append({
-                "id": task.get("id"),
-                "title": task.get("title") or "未命名任务",
-                "status": task.get("status"),
-                "tags": task.get("tags") or [],
-                "flags": flags,
-                "createdAt": str(task.get("createdAt") or ""),
-            })
-    overdue = []
-    if selected == today.isoformat():
-        overdue = [{
-            "id": task.get("id"),
-            "title": task.get("title") or "未命名任务",
-            "due": task.get("due"),
-        } for task in study.get("tasks", [])
-            if task.get("status") != "done" and task.get("due") and task["due"] < selected]
     selected_sessions = [
         session for session in focus.get("sessions", [])
         if _focus_day_key(session) == selected
@@ -4311,18 +4338,11 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
         "days": days,
         "diaries": diaries,
         "countdown": load_countdown(),
-        "taskPins": pin_data["months"].get(f"{year:04d}-{month:02d}", []),
-        "pinTasks": [{
-            "id": task.get("id"),
-            "title": task.get("title") or "未命名任务",
-            "status": task.get("status") or "todo",
-            "tags": task.get("tags") or [],
-        } for task in active_tasks],
         "day": {
             "date": selected,
             "diary": load_diary(selected),
-            "tasks": selected_tasks,
-            "overdue": overdue,
+            "tasks": [],
+            "overdue": [],
             "focus": {
                 "count": int(focus_summary.get("count") or 0),
                 "durationSec": int(focus_summary.get("sec") or 0),
@@ -5535,6 +5555,31 @@ try {
 }
 """
 
+_PICK_IMPORT_CANVAS_FILE_SCRIPT = _PICK_CANVAS_FILE_SCRIPT.replace(
+    "$dialog.Title = '打开画布'",
+    "$dialog.Title = '导入画布'",
+).replace(
+    "$dialog.Filter = '画布文件 (*.canvas)|*.canvas|所有文件 (*.*)|*.*'",
+    "$dialog.Filter = '画布文件 (*.canvas)|*.canvas'",
+)
+
+_PICK_IMPORT_CANVAS_FOLDER_SCRIPT = r"""
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '请选择包含顶层 .canvas 与同名 .assets 的画布文件夹。'
+$dialog.ShowNewFolderButton = $false
+$dialog.SelectedPath = [Environment]::GetFolderPath('Desktop')
+try {
+    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        [Console]::Write($dialog.SelectedPath)
+    }
+} finally {
+    $dialog.Dispose()
+}
+"""
+
 _PICK_EXPORT_DIR_SCRIPT = r"""
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -5631,6 +5676,16 @@ def pick_canvas_file() -> str | None:
         return None
 
 
+def pick_canvas_import_file() -> str | None:
+    """选择一张将被复制进资料库的外部画布。"""
+    return _run_picker(_PICK_IMPORT_CANVAS_FILE_SCRIPT, "无法打开画布导入窗口")
+
+
+def pick_canvas_import_folder() -> str | None:
+    """选择一个将被严格预检的外部画布文件夹。"""
+    return _run_picker(_PICK_IMPORT_CANVAS_FOLDER_SCRIPT, "无法打开画布文件夹导入窗口")
+
+
 def pick_export_dir() -> str | None:
     """弹原生 Windows 文件夹选择框，返回导出父目录；取消则返回 None。"""
     return _run_picker(_PICK_EXPORT_DIR_SCRIPT, "无法打开导出文件夹选择窗口")
@@ -5723,6 +5778,418 @@ def _unused_canvas_path(parent: Path, stem: str, *, current: Path | None = None)
         if not candidate.exists() and not canvas_assets_root(candidate).exists():
             return candidate
         index += 1
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    """Reject links/junctions before copying an explicitly selected import source."""
+    try:
+        info = path.lstat()
+    except OSError as err:
+        raise ExternalCanvasImportError(
+            f"无法读取导入来源：{path.name}", code="SOURCE_UNAVAILABLE", status=404,
+        ) from err
+    attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+    return path.is_symlink() or bool(attributes & 0x400)
+
+
+def _external_file_signature(path: Path) -> tuple[int, int]:
+    if _is_link_or_reparse(path) or not path.is_file():
+        raise ExternalCanvasImportError(
+            f"导入来源不是普通文件：{path.name}", code="UNSAFE_SOURCE",
+        )
+    try:
+        info = path.stat()
+    except OSError as err:
+        raise ExternalCanvasImportError(
+            f"无法读取导入来源：{path.name}", code="SOURCE_UNAVAILABLE", status=404,
+        ) from err
+    return int(info.st_size), int(info.st_mtime_ns)
+
+
+def _external_tree_signature(root: Path) -> tuple[tuple[str, str, int, int], ...]:
+    """Return a stable, non-following tree signature and reject special entries."""
+    if _is_link_or_reparse(root) or not root.is_dir():
+        raise ExternalCanvasImportError("请选择普通的画布文件夹", code="UNSAFE_SOURCE")
+    rows: list[tuple[str, str, int, int]] = []
+
+    def visit(folder: Path) -> None:
+        try:
+            entries = sorted(folder.iterdir(), key=lambda item: item.name.casefold())
+        except OSError as err:
+            raise ExternalCanvasImportError(
+                f"无法读取文件夹：{folder.name}", code="SOURCE_UNAVAILABLE", status=404,
+            ) from err
+        for entry in entries:
+            relative = entry.relative_to(root).as_posix()
+            if _is_link_or_reparse(entry):
+                raise ExternalCanvasImportError(
+                    f"文件夹包含链接或重解析点：{relative}", code="UNSAFE_SOURCE",
+                )
+            try:
+                info = entry.stat()
+            except OSError as err:
+                raise ExternalCanvasImportError(
+                    f"无法读取：{relative}", code="SOURCE_UNAVAILABLE", status=404,
+                ) from err
+            if entry.is_dir():
+                rows.append((relative, "dir", 0, int(info.st_mtime_ns)))
+                visit(entry)
+            elif entry.is_file():
+                rows.append((relative, "file", int(info.st_size), int(info.st_mtime_ns)))
+            else:
+                raise ExternalCanvasImportError(
+                    f"文件夹包含不支持的条目：{relative}", code="UNSAFE_SOURCE",
+                )
+
+    visit(root)
+    return tuple(rows)
+
+
+def _read_external_canvas(source: Path, *, strict: bool) -> tuple[bytes, dict]:
+    if source.suffix.lower() != ".canvas":
+        raise ExternalCanvasImportError("只能导入 .canvas 画布文件", code="INVALID_EXTENSION")
+    size, _ = _external_file_signature(source)
+    if size > MAX_JSON_BODY_BYTES:
+        raise ExternalCanvasImportError(
+            f"画布超过 160 MiB：{source.name}", code="SOURCE_TOO_LARGE", status=413,
+        )
+    try:
+        content = source.read_bytes()
+        payload = json.loads(content.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise ExternalCanvasImportError(
+            f"不是有效的 .canvas JSON：{source.name}", code="INVALID_JSON",
+        ) from err
+    if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
+        raise ExternalCanvasImportError(
+            f"画布缺少有效的 nodes 数组：{source.name}", code="INVALID_SOURCE",
+        )
+    if strict:
+        try:
+            _validate_canvas_import_payload(payload)
+        except CanvasImportLibraryError as err:
+            raise ExternalCanvasImportError(
+                f"{source.name}：{err}", code=err.code, status=err.status,
+            ) from err
+    return content, payload
+
+
+def _resolve_external_asset(root: Path, raw_path: str) -> tuple[str, Path]:
+    normalized = str(raw_path or "").replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ExternalCanvasImportError(f"素材路径无效：{normalized}", code="INVALID_ASSET_PATH")
+    target = root.joinpath(*parts)
+    try:
+        target.resolve().relative_to(root.resolve())
+    except (OSError, ValueError) as err:
+        raise ExternalCanvasImportError(f"素材路径越界：{normalized}", code="INVALID_ASSET_PATH") from err
+    return "/".join(parts), target
+
+
+def _validate_annotation_json(path: Path, label: str) -> None:
+    if _is_link_or_reparse(path) or not path.is_file():
+        raise ExternalCanvasImportError(f"批注文件无效：{label}", code="INVALID_ANNOTATION")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise ExternalCanvasImportError(f"批注文件不是有效 JSON：{label}", code="INVALID_ANNOTATION") from err
+    if not isinstance(payload, dict):
+        raise ExternalCanvasImportError(f"批注文件格式无效：{label}", code="INVALID_ANNOTATION")
+
+
+def _external_asset_manifest(
+    source: Path,
+    payload: dict,
+    *,
+    assets_root: Path | None = None,
+    strict: bool,
+) -> tuple[list[tuple[Path, str]], int]:
+    root = assets_root or canvas_assets_root(source)
+    references: list[str] = []
+    seen_references: set[str] = set()
+    for node in payload.get("nodes", []):
+        if not isinstance(node, dict) or not node.get("assetPath"):
+            continue
+        normalized = str(node["assetPath"]).replace("\\", "/")
+        if normalized not in seen_references:
+            seen_references.add(normalized)
+            references.append(normalized)
+
+    if root.exists() and (_is_link_or_reparse(root) or not root.is_dir()):
+        raise ExternalCanvasImportError(
+            f"同名素材路径不是安全文件夹：{root.name}", code="UNSAFE_SOURCE",
+        )
+
+    planned: list[tuple[Path, str]] = []
+    allowed_files: set[str] = set()
+    missing = 0
+    for raw in references:
+        relative, asset = _resolve_external_asset(root, raw)
+        if not root.is_dir() or not asset.exists():
+            if strict:
+                raise ExternalCanvasImportError(f"画布引用的素材不存在：{relative}", code="ASSET_MISSING")
+            missing += 1
+            continue
+        if _is_link_or_reparse(asset) or not asset.is_file():
+            raise ExternalCanvasImportError(f"素材不是普通文件：{relative}", code="UNSAFE_SOURCE")
+        suffix = asset.suffix.lower()
+        if suffix not in CANVAS_ASSET_TYPES:
+            raise ExternalCanvasImportError(f"不支持这种素材：{relative}", code="ASSET_TYPE_UNSUPPORTED")
+        size, _ = _external_file_signature(asset)
+        limit = MAX_CANVAS_IMAGE_BYTES if suffix in BACKGROUND_IMAGE_TYPES else MAX_CANVAS_ATTACHMENT_BYTES
+        if size > limit:
+            raise ExternalCanvasImportError(f"素材过大：{relative}", code="ASSET_TOO_LARGE", status=413)
+        planned.append((asset, relative))
+        allowed_files.add(relative.casefold())
+
+        annotation = asset.with_name(asset.name + ".annot.json")
+        if annotation.exists():
+            annotation_relative = relative + ".annot.json"
+            _validate_annotation_json(annotation, annotation_relative)
+            planned.append((annotation, annotation_relative))
+            allowed_files.add(annotation_relative.casefold())
+
+    node_annotations = root / "node-annotations.json"
+    if node_annotations.exists():
+        _validate_annotation_json(node_annotations, "node-annotations.json")
+        planned.append((node_annotations, "node-annotations.json"))
+        allowed_files.add("node-annotations.json")
+
+    if strict and root.is_dir():
+        for folder, dir_names, file_names in os.walk(root, followlinks=False):
+            folder_path = Path(folder)
+            for name in list(dir_names):
+                child = folder_path / name
+                if _is_link_or_reparse(child):
+                    relative = child.relative_to(root).as_posix()
+                    raise ExternalCanvasImportError(
+                        f"素材目录包含链接或重解析点：{relative}", code="UNSAFE_SOURCE",
+                    )
+            for name in file_names:
+                child = folder_path / name
+                relative = child.relative_to(root).as_posix()
+                if _is_link_or_reparse(child):
+                    raise ExternalCanvasImportError(
+                        f"素材目录包含链接或重解析点：{relative}", code="UNSAFE_SOURCE",
+                    )
+                if relative.casefold() not in allowed_files:
+                    raise ExternalCanvasImportError(
+                        f"素材目录包含未知或未引用文件：{relative}", code="UNKNOWN_ASSET",
+                    )
+    return planned, missing
+
+
+def _prepare_external_canvas(
+    source: Path,
+    *,
+    assets_root: Path | None = None,
+    strict: bool,
+) -> dict:
+    canvas_signature = _external_file_signature(source)
+    content, payload = _read_external_canvas(source, strict=strict)
+    assets, missing = _external_asset_manifest(
+        source, payload, assets_root=assets_root, strict=strict,
+    )
+    return {
+        "source": source,
+        "content": content,
+        "payload": payload,
+        "assets": assets,
+        "missingAssetCount": missing,
+        "canvasSignature": canvas_signature,
+    }
+
+
+def _scan_external_canvas_folder(folder: Path) -> tuple[list[dict], tuple[tuple[str, str, int, int], ...]]:
+    try:
+        if folder.resolve() == CANVASES.resolve():
+            raise ExternalCanvasImportError("不能导入当前项目自己的 canvases 目录", code="SAME_LIBRARY")
+    except OSError as err:
+        raise ExternalCanvasImportError("无法解析所选文件夹", code="SOURCE_UNAVAILABLE", status=404) from err
+    before = _external_tree_signature(folder)
+    try:
+        entries = sorted(folder.iterdir(), key=lambda item: item.name.casefold())
+    except OSError as err:
+        raise ExternalCanvasImportError("无法读取所选文件夹", code="SOURCE_UNAVAILABLE", status=404) from err
+
+    canvases_by_stem: dict[str, Path] = {}
+    assets_by_stem: dict[str, Path] = {}
+    for entry in entries:
+        if entry.name == "回收站":
+            raise ExternalCanvasImportError("所选文件夹包含“回收站”，已拒绝整批导入", code="TRASH_PRESENT")
+        if _is_link_or_reparse(entry):
+            raise ExternalCanvasImportError(f"文件夹包含链接或重解析点：{entry.name}", code="UNSAFE_SOURCE")
+        if entry.is_file() and entry.suffix.lower() == ".canvas":
+            key = entry.stem.casefold()
+            if key in canvases_by_stem:
+                raise ExternalCanvasImportError(f"画布名称冲突：{entry.name}", code="DUPLICATE_SOURCE")
+            canvases_by_stem[key] = entry
+            continue
+        if entry.is_dir() and entry.name.lower().endswith(".assets"):
+            key = entry.name[:-len(".assets")].casefold()
+            if key in assets_by_stem:
+                raise ExternalCanvasImportError(f"素材目录名称冲突：{entry.name}", code="DUPLICATE_SOURCE")
+            assets_by_stem[key] = entry
+            continue
+        raise ExternalCanvasImportError(f"文件夹顶层包含未知内容：{entry.name}", code="UNKNOWN_ENTRY")
+
+    if not canvases_by_stem:
+        raise ExternalCanvasImportError("所选文件夹顶层没有 .canvas 文件", code="EMPTY_SOURCE")
+    orphan_assets = sorted(set(assets_by_stem) - set(canvases_by_stem))
+    if orphan_assets:
+        orphan = assets_by_stem[orphan_assets[0]].name
+        raise ExternalCanvasImportError(f"素材目录没有对应画布：{orphan}", code="ORPHAN_ASSETS")
+
+    plans = [
+        _prepare_external_canvas(
+            canvases_by_stem[key], assets_root=assets_by_stem.get(key), strict=True,
+        )
+        for key in sorted(canvases_by_stem)
+    ]
+    return plans, before
+
+
+def _unused_canvas_path_reserved(parent: Path, stem: str, reserved: set[str]) -> Path:
+    index = 1
+    while True:
+        suffix = "" if index == 1 else f"-{index}"
+        candidate = parent / f"{stem}{suffix}.canvas"
+        key = os.path.normcase(_norm(candidate))
+        assets_key = os.path.normcase(_norm(canvas_assets_root(candidate)))
+        if (
+            key not in reserved
+            and assets_key not in reserved
+            and not candidate.exists()
+            and not canvas_assets_root(candidate).exists()
+        ):
+            reserved.add(key)
+            reserved.add(assets_key)
+            return candidate
+        index += 1
+
+
+def _restore_optional_file(path: Path, content: bytes | None) -> None:
+    if content is None:
+        path.unlink(missing_ok=True)
+    else:
+        _atomic_write_bytes(path, content)
+
+
+def import_external_canvas_copies(
+    sources: list[dict],
+    *,
+    group: object = "",
+    folder_source: Path | None = None,
+    folder_signature: tuple[tuple[str, str, int, int], ...] | None = None,
+) -> dict:
+    """Stage, commit and index one or more validated external canvas copies."""
+    if not sources:
+        raise ExternalCanvasImportError("没有可导入的画布", code="EMPTY_SOURCE")
+    CANVASES.mkdir(parents=True, exist_ok=True)
+    stage_root = CANVASES / f".relatum-import-{uuid.uuid4().hex}"
+    materialized: list[Path] = []
+    try:
+        stage_root.mkdir()
+        for index, plan in enumerate(sources):
+            item_root = stage_root / str(index)
+            item_root.mkdir()
+            stage_canvas = item_root / "source.canvas"
+            _atomic_write_bytes(stage_canvas, plan["content"])
+            stage_assets = item_root / "source.assets"
+            if plan["assets"]:
+                for source_asset, relative in plan["assets"]:
+                    before = _external_file_signature(source_asset)
+                    destination = stage_assets.joinpath(*relative.split("/"))
+                    _atomic_copy_file(source_asset, destination)
+                    if _external_file_signature(source_asset) != before:
+                        raise ExternalCanvasImportError(
+                            f"复制期间来源素材发生变化：{relative}", code="SOURCE_CHANGED", status=409,
+                        )
+            if _external_file_signature(plan["source"]) != plan["canvasSignature"]:
+                raise ExternalCanvasImportError(
+                    f"复制期间来源画布发生变化：{plan['source'].name}", code="SOURCE_CHANGED", status=409,
+                )
+            plan["stageCanvas"] = stage_canvas
+            plan["stageAssets"] = stage_assets
+
+        if folder_source is not None and folder_signature is not None:
+            if _external_tree_signature(folder_source) != folder_signature:
+                raise ExternalCanvasImportError("复制期间所选文件夹发生变化", code="SOURCE_CHANGED", status=409)
+
+        requested_group = str(group or "")
+        with _cross_process_mutation_lock():
+            with CANVAS_FILE_MUTATION_LOCK:
+                with DATA_MUTATION_LOCK:
+                    recent = load_recent()
+                    valid_groups = {str(item.get("id") or "") for item in recent.get("groups", [])}
+                    actual_group = requested_group if requested_group in valid_groups else ""
+                    recent_before = RECENT_FILE.read_bytes() if RECENT_FILE.is_file() else None
+                    recent_backup_before = RECENT_BACKUP_FILE.read_bytes() if RECENT_BACKUP_FILE.is_file() else None
+                    activity_before = CANVAS_ACTIVITY_FILE.read_bytes() if CANVAS_ACTIVITY_FILE.is_file() else None
+                    reserved: set[str] = set()
+                    for plan in sources:
+                        stem = _safe_export_stem(plan["source"].stem, "导入画布")
+                        target = _unused_canvas_path_reserved(CANVASES, stem, reserved)
+                        plan["target"] = target
+                        plan["renamed"] = target.stem != plan["source"].stem
+
+                    try:
+                        for plan in sources:
+                            target = plan["target"]
+                            stage_assets = plan["stageAssets"]
+                            materialized.append(target)
+                            if stage_assets.is_dir():
+                                os.replace(stage_assets, canvas_assets_root(target))
+                            os.replace(plan["stageCanvas"], target)
+                        items = []
+                        for plan in sources:
+                            target = plan["target"]
+                            register_recent(target, target.stem)
+                            if actual_group:
+                                file_set_group(_norm(target), actual_group)
+                            activity = record_canvas_activity_event(target, "created", payload=plan["payload"])
+                            items.append({
+                                "path": _norm(target),
+                                "title": target.stem,
+                                "renamed": bool(plan["renamed"]),
+                                "missingAssetCount": int(plan["missingAssetCount"]),
+                                "canvasActivity": activity,
+                            })
+                    except Exception:
+                        for target in reversed(materialized):
+                            try:
+                                target.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                            try:
+                                shutil.rmtree(canvas_assets_root(target), ignore_errors=True)
+                            except OSError:
+                                pass
+                        _restore_optional_file(RECENT_FILE, recent_before)
+                        _restore_optional_file(RECENT_BACKUP_FILE, recent_backup_before)
+                        _restore_optional_file(CANVAS_ACTIVITY_FILE, activity_before)
+                        raise
+
+        return {
+            "ok": True,
+            "count": len(items),
+            "items": items,
+            "group": actual_group,
+            "assetCount": sum(len(plan["assets"]) for plan in sources),
+            "renamedCount": sum(bool(plan["renamed"]) for plan in sources),
+            "missingAssetCount": sum(int(plan["missingAssetCount"]) for plan in sources),
+        }
+    except ExternalCanvasImportError:
+        raise
+    except OSError as err:
+        raise ExternalCanvasImportError(f"导入失败：{err}", code="IMPORT_FAILED", status=500) from err
+    finally:
+        try:
+            if stage_root.resolve().parent == CANVASES.resolve():
+                shutil.rmtree(stage_root, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def _rename_study_linked_canvas(data: dict, raw_path: str, title: str) -> str:
@@ -6500,6 +6967,8 @@ POST_WITHOUT_DATA_LOCK = {
     "/api/ai-plan",
     "/api/ai-test",
     "/api/pick",
+    "/api/import-canvas-file",
+    "/api/import-canvas-folder",
     "/api/trash-list",
     "/api/reveal",
     "/api/open-external",
@@ -6531,7 +7000,6 @@ CANVAS_AND_DATA_POST_ROUTES = {
     "/api/trash",
     "/api/import-canvas",
     "/api/study-archive-done",
-    "/api/study-task-create-canvas",
     "/api/taskbook-archive",
     "/api/rename",
     "/api/restore",
@@ -6845,6 +7313,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_study_task_create(body)
         if path == "/api/study-task-update":
             return self._api_study_task_update(body)
+        if path == "/api/study-task-progress":
+            return self._api_study_task_progress(body)
         if path == "/api/study-task-trash":
             return self._api_study_task_trash(body)
         if path == "/api/study-task-restore":
@@ -6861,10 +7331,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_archive_canvas(body)
         if path == "/api/taskbook-archive":
             return self._api_taskbook_archive(body)
-        if path == "/api/export-canvas-to-tasks":
-            return self._api_export_canvas_to_tasks(body)
-        if path == "/api/study-task-create-canvas":
-            return self._api_study_task_create_canvas(body)
         if path == "/api/study-reorder":
             return self._api_study_reorder(body)
         if path == "/api/review-card-create":
@@ -6932,15 +7398,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except (ValueError, OSError) as err:
                 return self._send_json(400, {"error": str(err)})
             return self._send_json(200, {"ok": True})
-        if path == "/api/calendar-pins-save":
-            try:
-                pins = save_calendar_month_pins(
-                    body.get("month") if isinstance(body, dict) else None,
-                    body.get("pins") if isinstance(body, dict) else None,
-                )
-            except (ValueError, OSError) as err:
-                return self._send_json(400, {"error": str(err)})
-            return self._send_json(200, {"ok": True, "pins": pins})
         if path == "/api/countdown-save":
             try:
                 countdown = save_countdown(body)
@@ -6959,6 +7416,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_open(body)
         if path == "/api/pick":
             return self._api_pick()
+        if path == "/api/import-canvas-file":
+            return self._api_import_canvas_file(body)
+        if path == "/api/import-canvas-folder":
+            return self._api_import_canvas_folder(body)
         if path == "/api/save":
             return self._api_save(body)
         if path == "/api/clean-assets":
@@ -7355,7 +7816,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_study_task_create(self, body: dict):
         data = load_study()
         try:
-            task = _study_task(body)
+            task = _study_task({"title": body.get("title") if isinstance(body, dict) else ""})
         except ValueError as err:
             return self._send_json(400, {"error": str(err)})
         data["tasks"].append(task)
@@ -7369,23 +7830,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         data = load_study()
         try:
             index, old = study_find_task(data, task_id)
-            task = _study_task(body, existing=old)
+            patch = {
+                key: body[key] for key in ("title", "status", "progress") if key in body
+            }
+            task = _study_task(patch, existing=old)
         except KeyError as err:
             return self._send_json(404, {"error": str(err)})
         except ValueError as err:
             return self._send_json(400, {"error": str(err)})
-        if task["title"] != old.get("title") and task.get("linkedCanvas"):
-            try:
-                task["linkedCanvas"] = _rename_study_linked_canvas(
-                    data, task["linkedCanvas"], task["title"]
-                )
-            except PermissionError as err:
-                return self._send_json(403, {"error": str(err)})
-            except OSError as err:
-                return self._send_json(500, {"error": f"关联画布改名失败：{err}"})
         data["tasks"][index] = task
         save_study(data)
         self._send_json(200, {"task": task})
+
+    def _api_study_task_progress(self, body: dict):
+        task_id = str(body.get("id") or "").strip() if isinstance(body, dict) else ""
+        delta = body.get("delta") if isinstance(body, dict) else None
+        data = load_study()
+        try:
+            result = change_study_progress(data, task_id, delta)
+        except KeyError as err:
+            return self._send_json(404, {"error": str(err)})
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        except RuntimeError as err:
+            return self._send_json(409, {"error": str(err)})
+        save_study(data)
+        self._send_json(200, result)
 
     def _api_study_task_trash(self, body: dict):
         task_id = (body.get("id") or "").strip()
@@ -7396,8 +7866,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(404, {"error": str(err)})
         data["tasks"].pop(index)
         data["trash"].insert(0, {"task": task, "deletedAt": _study_now()})
+        data["trash"] = data["trash"][:STUDY_TRASH_MAX]
         save_study(data)
-        remove_calendar_pins_for_tasks({task_id})
         self._send_json(200, {"ok": True})
 
     def _api_study_task_restore(self, body: dict):
@@ -7423,18 +7893,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if len(data["trash"]) == before:
             return self._send_json(404, {"error": "回收站里没有这个任务"})
         save_study(data)
-        remove_calendar_pins_for_tasks({task_id})
         self._send_json(200, {"ok": True})
 
     def _api_study_trash_empty(self):
         data = load_study()
-        removed_ids = {
-            str(entry.get("task", {}).get("id") or "")
-            for entry in data["trash"]
-        }
         data["trash"] = []
         save_study(data)
-        remove_calendar_pins_for_tasks(removed_ids)
         self._send_json(200, {"ok": True})
 
     def _api_study_archive_done(self):
@@ -7444,33 +7908,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(400, {"error": "已完成这一列还是空的"})
         folder = _study_archive_folder(len(completed))
         archive_file = folder / "tasks.json"
-        linked_paths = []
-        seen_paths = set()
-        for task in completed:
-            linked = str(task.get("linkedCanvas") or "").strip()
-            if linked and linked not in seen_paths:
-                linked_paths.append(linked)
-                seen_paths.add(linked)
-        for linked in linked_paths:
-            src = Path(linked)
-            if not src.is_file():
-                return self._send_json(404, {"error": f"关联画布不存在：{src.name}"})
-            if not is_authorized(src):
-                return self._send_json(403, {"error": f"关联画布路径未授权：{src.name}"})
-        trashed_canvases = []
         try:
-            for linked in linked_paths:
-                src = Path(linked)
-                dst = move_canvas_to_trash(src)
-                trashed_canvases.append({
-                    "from": _norm(src),
-                    "trashedTo": _norm(dst),
-                })
             _atomic_write_json(archive_file, {
-                "version": 1,
+                "version": 2,
+                "kind": "study",
                 "archivedAt": _study_now(),
                 "count": len(completed),
-                "trashedCanvases": trashed_canvases,
                 "tasks": completed,
             })
             completed_ids = {
@@ -7479,15 +7922,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             }
             data["tasks"] = [task for task in data["tasks"] if task.get("id") not in completed_ids]
             save_study(data)
-            remove_calendar_pins_for_tasks(completed_ids)
         except OSError as err:
+            # 归档 marker 与 study.json 是两个文件，后一步失败时撤销前一步，
+            # 避免任务仍在列表里但活跃页已经把同一任务计入归档。
+            try:
+                archive_file.unlink(missing_ok=True)
+                folder.rmdir()
+            except OSError:
+                pass
             return self._send_json(500, {"error": f"归档失败：{err}"})
         self._send_json(200, {
             "ok": True,
             "count": len(completed),
             "folder": folder.name,
             "archivedIds": [task.get("id") for task in completed],
-            "trashedCanvases": trashed_canvases,
         })
 
     def _api_taskbook_archive(self, body: dict):
@@ -7630,153 +8078,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "removedEdges": len(archived_edges),
             "remainingNodes": len(remaining_nodes),
             "protectedSkipped": protected_skipped,
-        })
-
-    def _api_export_canvas_to_tasks(self, body: dict):
-        """把选中的卡片节点批量转为学习页待办任务，成功后移除卡片、相关连线与阅读批注。"""
-        raw = str(body.get("path") or "").strip()
-        if not raw:
-            return self._send_json(400, {"error": "缺少 path"})
-        raw_node_ids = body.get("nodeIds")
-        if not isinstance(raw_node_ids, list):
-            return self._send_json(400, {"error": "缺少选中的卡片节点"})
-        requested_ids = []
-        requested_set = set()
-        for value in raw_node_ids:
-            node_id = str(value or "").strip()
-            if node_id and node_id not in requested_set:
-                requested_ids.append(node_id)
-                requested_set.add(node_id)
-        if not requested_ids:
-            return self._send_json(400, {"error": "请先选中要转为任务的卡片"})
-        if len(requested_ids) > CANVAS_TASK_EXPORT_MAX:
-            return self._send_json(400, {
-                "error": (
-                    f"当前选中了 {len(requested_ids)} 张卡片，一次最多转为 "
-                    f"{CANVAS_TASK_EXPORT_MAX} 个任务，请分批处理"
-                )
-            })
-        src = Path(raw)
-        if not src.is_file():
-            return self._send_json(404, {"error": "文件不存在"})
-        if not is_authorized(src):
-            return self._send_json(403, {"error": "路径未授权"})
-        try:
-            canvas = json.loads(src.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
-            return self._send_json(500, {"error": f"读取画布失败：{err}"})
-
-        managed_task_ids = _taskbook_managed_node_ids(canvas)
-        protected_requested = sorted(requested_set & managed_task_ids)
-        if protected_requested:
-            return self._send_json(409, {
-                "error": "任务簿管理中的任务不能直接转为学习任务，请在顶级任务管理页中调整或删除它们",
-                "protectedNodeIds": protected_requested,
-            })
-
-        nodes_by_id = {}
-        duplicate_ids = set()
-        for node in (canvas.get("nodes") or []):
-            if not isinstance(node, dict) or not node.get("id"):
-                continue
-            node_id = str(node.get("id"))
-            if node_id in nodes_by_id:
-                duplicate_ids.add(node_id)
-            else:
-                nodes_by_id[node_id] = node
-        cards = []
-        for node_id in requested_ids:
-            if node_id in duplicate_ids:
-                return self._send_json(400, {
-                    "error": "选中的卡片节点标识重复，请重新创建这张卡片后再试"
-                })
-            node = nodes_by_id.get(node_id)
-            if not node or node.get("kind") != "card":
-                return self._send_json(400, {
-                    "error": "选中的卡片已经发生变化，请重新选择后再试"
-                })
-            cards.append(node)
-        card_count = len(cards)
-
-        tasks = []
-        removed_ids = set()
-        for index, node in enumerate(cards, start=1):
-            node_id = str(node.get("id") or "").strip()
-            if not node_id or node_id in removed_ids:
-                return self._send_json(400, {
-                    "error": f"第 {index} 张卡片的节点标识异常，请重新创建这张卡片后再试"
-                })
-            title = str(node.get("text") or "").strip() or "未命名任务"
-            memo = str(node.get("body") or "").strip()
-            if len(title) > CANVAS_TASK_TITLE_MAX:
-                return self._send_json(400, {
-                    "error": f"第 {index} 张卡片标题超过 {CANVAS_TASK_TITLE_MAX} 字，请缩短后再试"
-                })
-            if len(memo) > CANVAS_TASK_MEMO_MAX:
-                return self._send_json(400, {
-                    "error": f"第 {index} 张卡片正文超过 {CANVAS_TASK_MEMO_MAX} 字，请精简后再试"
-                })
-            tasks.append(_study_task({
-                "title": title,
-                "memo": memo,
-                "status": "todo",
-            }))
-            removed_ids.add(node_id)
-
-        remaining_nodes = [
-            node for node in (canvas.get("nodes") or [])
-            if not (
-                isinstance(node, dict)
-                and node.get("kind") == "card"
-                and str(node.get("id") or "") in removed_ids
-            )
-        ]
-        remaining_edges = []
-        removed_edges = 0
-        for edge in (canvas.get("edges") or []):
-            if (
-                isinstance(edge, dict)
-                and (
-                    str(edge.get("from") or "") in removed_ids
-                    or str(edge.get("to") or "") in removed_ids
-                )
-            ):
-                removed_edges += 1
-                continue
-            remaining_edges.append(edge)
-
-        study = load_study()
-        original_tasks = list(study["tasks"])
-        study["tasks"].extend(tasks)
-        try:
-            save_study(study)
-            canvas["nodes"] = remaining_nodes
-            canvas["edges"] = remaining_edges
-            canvas["updatedAt"] = _study_now()
-            _atomic_write_json(src, canvas)
-        except OSError as err:
-            study["tasks"] = original_tasks
-            try:
-                save_study(study)
-            except OSError:
-                pass
-            return self._send_json(500, {"error": f"转为任务失败：{err}"})
-
-        annotations_pruned = 0
-        try:
-            annotations_pruned = _prune_node_annotations(src, removed_ids)
-        except OSError:
-            # 任务和画布已经成功落盘；批注残留不应让用户误以为转换失败并再次创建任务。
-            annotations_pruned = 0
-
-        self._send_json(200, {
-            "ok": True,
-            "count": card_count,
-            "taskIds": [task["id"] for task in tasks],
-            "removedNodeIds": sorted(removed_ids),
-            "removedEdges": removed_edges,
-            "annotationsPruned": annotations_pruned,
-            "remainingNodes": len(remaining_nodes),
         })
 
     def _api_study_reorder(self, body: dict):
@@ -8033,30 +8334,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "folder": folder_name,
         })
 
-    def _api_study_task_create_canvas(self, body: dict):
-        task_id = (body.get("id") or "").strip()
-        data = load_study()
-        try:
-            index, task = study_find_task(data, task_id)
-        except KeyError as err:
-            return self._send_json(404, {"error": str(err)})
-        title = _safe_export_stem(task.get("title"), "未命名任务")
-        target = _unused_canvas_path(CANVASES, title)
-        payload = empty_canvas_payload()
-        try:
-            _atomic_write_json(target, payload)
-        except OSError as err:
-            return self._send_json(500, {"error": f"创建画布失败：{err}"})
-        register_recent(target)
-        activity = record_canvas_activity_event(target, "created", payload=payload)
-        task = _study_task({"linkedCanvas": _norm(target)}, existing=task)
-        data["tasks"][index] = task
-        save_study(data)
-        self._send_json(200, {
-            "task": task, "path": _norm(target), "title": target.stem,
-            "canvasActivity": activity,
-        })
-
     def _api_open(self, body: dict):
         raw = (body.get("path") or "").strip()
         if not raw:
@@ -8082,6 +8359,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "path": _norm(target),
             "title": target.stem,
         })
+
+    def _api_import_canvas_file(self, body: dict):
+        """选择外部 .canvas，复制成 canvases/ 下的受管副本。"""
+        try:
+            picked = pick_canvas_import_file()
+        except OSError as err:
+            return self._send_json(500, {"error": f"导入失败：{err}"})
+        if not picked:
+            return self._send_json(200, {"cancelled": True})
+        try:
+            plan = _prepare_external_canvas(Path(picked), strict=False)
+            result = import_external_canvas_copies([plan], group=body.get("group"))
+        except ExternalCanvasImportError as err:
+            return self._send_json(err.status, {"error": str(err), "code": err.code})
+        item = result["items"][0]
+        return self._send_json(200, {
+            "ok": True,
+            "path": item["path"],
+            "title": item["title"],
+            "group": result["group"],
+            "assetsCopied": result["assetCount"] > 0,
+            "assetCount": result["assetCount"],
+            "missingAssetCount": item["missingAssetCount"],
+            "renamed": item["renamed"],
+            "canvasActivity": item["canvasActivity"],
+        })
+
+    def _api_import_canvas_folder(self, body: dict):
+        """严格预检外部画布目录，通过后全有或全无地导入。"""
+        try:
+            picked = pick_canvas_import_folder()
+        except OSError as err:
+            return self._send_json(500, {"error": f"导入失败：{err}"})
+        if not picked:
+            return self._send_json(200, {"cancelled": True})
+        source_folder = Path(picked)
+        try:
+            plans, signature = _scan_external_canvas_folder(source_folder)
+            result = import_external_canvas_copies(
+                plans,
+                group=body.get("group"),
+                folder_source=source_folder,
+                folder_signature=signature,
+            )
+        except ExternalCanvasImportError as err:
+            return self._send_json(err.status, {"error": str(err), "code": err.code})
+        return self._send_json(200, result)
 
     def _api_load(self, raw_path: str):
         if not raw_path:

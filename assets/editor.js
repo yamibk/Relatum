@@ -84,14 +84,8 @@
   const openingCoverEl = document.querySelector('[data-role="editor-opening-cover"]');
   const immersiveBackgroundEl = document.querySelector('[data-role="editor-immersive-background"]');
   const renameNotice = document.querySelector('[data-role="rename-notice"]');
-  const taskExportNotice = document.querySelector('[data-role="task-export-notice"]');
-  const taskExportNoticeTitle = document.querySelector('[data-role="task-export-notice-title"]');
-  const taskExportNoticeDetail = document.querySelector('[data-role="task-export-notice-detail"]');
-  const taskExportNoticeClose = document.querySelector('[data-role="task-export-notice-close"]');
   const toolbarLanguageSelect = document.querySelector('[data-role="toolbar-language"]');
   const toolbarLanguageLabel = document.querySelector('[data-role="toolbar-language-label"]');
-  let taskExportNoticeTimer = null;
-  let taskExportNoticeHideTimer = null;
 
   // 界面语言与起始页共用同一偏好；本文件负责画布特有控件，通用文字由 i18n.js 补齐。
   const TOOLBAR_LANGUAGE_KEY = 'canvas:toolbarLanguage';
@@ -373,14 +367,12 @@
       rulerAngleCustom: '自定义', rulerAngleInput: '自定义尺子角度',
       rulerAngleInvalid: '请输入整数角度', apply: '应用',
       ai: 'AI 助手', graph: '图谱', background: '背景', templates: '模板',
-      exportMd: '导出 MD', exportPng: '导出 PNG', tasks: '转为任务',
-      tasksConfirm: '确认转为任务', archiveConfirm: '确认归档划线节点',
+      exportMd: '导出 MD', exportPng: '导出 PNG', archiveConfirm: '确认归档划线节点',
       backTitle: '返回起步页', aiTitle: 'AI 助手：对话生成 / 整理笔记',
       graphTitle: '查看当前画布的节点关系图谱', backgroundTitle: '设置所有画布共用的背景外观',
       templatesTitle: '我的模板：把常用的一组节点存成模板，拖进画布即可复用',
       exportMdTitle: '把当前画布导出为一组互相关联的 Markdown 文件',
       exportPngTitle: '把整张画布导出为一张高清 PNG 图片（不含 PDF 附件）',
-      tasksTitle: '把选中的卡片节点转为学习页待办任务；成功后移除这些卡片',
       archiveTitle: '归档：收走已划删除线的正文节点，未划线节点保留在当前画布',
       modeGroup: '工作模式', actionGroup: '画布操作', languageLabel: '界面语言',
       settingsTitle: '设置', helpTitle: '快捷键速查（?）', helpAria: '快捷键速查',
@@ -681,15 +673,13 @@
       rulerAngleCustom: 'Custom', rulerAngleInput: 'Custom ruler angle',
       rulerAngleInvalid: 'Enter an integer angle', apply: 'Apply',
       ai: 'AI', graph: 'Graph', background: 'Background', templates: 'Templates',
-      exportMd: 'Markdown', exportPng: 'PNG', tasks: 'Tasks',
-      tasksConfirm: 'Confirm Tasks', archiveConfirm: 'Confirm Archive',
+      exportMd: 'Markdown', exportPng: 'PNG', archiveConfirm: 'Confirm Archive',
       backTitle: 'Back to home', aiTitle: 'AI Assistant: generate and organize notes',
       graphTitle: 'View relationships between nodes on this canvas',
       backgroundTitle: 'Set the background shared by all canvases',
       templatesTitle: 'Reuse saved groups of nodes as templates',
       exportMdTitle: 'Export this canvas as linked Markdown files',
       exportPngTitle: 'Export the full canvas as a high-resolution PNG (PDF attachments excluded)',
-      tasksTitle: 'Turn selected card nodes into study tasks and remove them from this canvas',
       archiveTitle: 'Archive body nodes with strikethrough; keep all other nodes on this canvas',
       modeGroup: 'Workspace mode', actionGroup: 'Canvas actions', languageLabel: 'Interface language',
       settingsTitle: 'Settings', helpTitle: 'Keyboard shortcuts (?)', helpAria: 'Keyboard shortcuts',
@@ -829,8 +819,6 @@
     '选择导出父目录…': 'Choose an export folder…',
     '正在合成图片…': 'Rendering image…',
     '选择保存位置…': 'Choose where to save…',
-    '正在转为任务…': 'Creating tasks…',
-    '任务已创建，正在刷新同步…': 'Tasks created · Syncing…',
     '归档中…': 'Archiving…',
     '已归档，正在刷新同步…': 'Archived · Syncing…',
     '保存失败': 'Save failed',
@@ -945,17 +933,6 @@
     }
     const archiveButton = document.querySelector('[data-action="archive"]');
     if (archiveButton) archiveButton.setAttribute('aria-label', toolbarCopy('archiveTitle'));
-    const tasksButton = document.querySelector('[data-action="export-tasks"]');
-    if (tasksButton) {
-      tasksButton.setAttribute('aria-label', toolbarCopy('tasksTitle'));
-      const confirmCount = Number(tasksButton.dataset.confirmCount) || 0;
-      const confirmLabel = tasksButton.querySelector('.task-export-confirm-label');
-      if (confirmLabel && confirmCount > 0) {
-        confirmLabel.textContent = toolbarLanguage === 'en'
-          ? ('Confirm ' + confirmCount + (confirmCount === 1 ? ' Task' : ' Tasks'))
-          : ('确认转为 ' + confirmCount + ' 个任务');
-      }
-    }
     if (stateEl) stateEl.textContent = translateTopbarStatus(stateEl.dataset.sourceLabel || '');
     refreshModeAccessibility();
     document.dispatchEvent(new CustomEvent('editor:languagechange'));
@@ -968,39 +945,6 @@
     });
   }
   applyToolbarLanguage(toolbarLanguage, false);
-
-  function hideTaskExportNotice() {
-    if (!taskExportNotice) return;
-    if (taskExportNoticeTimer) {
-      clearTimeout(taskExportNoticeTimer);
-      taskExportNoticeTimer = null;
-    }
-    taskExportNotice.classList.remove('show');
-    if (taskExportNoticeHideTimer) clearTimeout(taskExportNoticeHideTimer);
-    taskExportNoticeHideTimer = setTimeout(() => {
-      taskExportNotice.hidden = true;
-      taskExportNoticeHideTimer = null;
-    }, 220);
-  }
-
-  function showTaskExportNotice(title, detail, tone) {
-    if (!taskExportNotice) return;
-    if (taskExportNoticeTimer) clearTimeout(taskExportNoticeTimer);
-    if (taskExportNoticeHideTimer) {
-      clearTimeout(taskExportNoticeHideTimer);
-      taskExportNoticeHideTimer = null;
-    }
-    if (taskExportNoticeTitle) taskExportNoticeTitle.textContent = title || '转为任务';
-    if (taskExportNoticeDetail) taskExportNoticeDetail.textContent = detail || '';
-    taskExportNotice.dataset.tone = tone || 'info';
-    taskExportNotice.hidden = false;
-    requestAnimationFrame(() => taskExportNotice.classList.add('show'));
-    taskExportNoticeTimer = setTimeout(hideTaskExportNotice, tone === 'error' ? 5600 : 4400);
-  }
-
-  if (taskExportNoticeClose) {
-    taskExportNoticeClose.addEventListener('click', hideTaskExportNotice);
-  }
 
   function closeRenameNotice() {
     if (renameNotice) renameNotice.hidden = true;
@@ -10516,7 +10460,6 @@
       });
       const json = await resp.json();
       if (resp.ok) {
-        applyCanvasActivityTotals(json.canvasActivity || {});
         if (dirtyEpoch === savedEpoch) {
           markClean('已保存');             // 保存途中没有新编辑 → 确实干净
         } else {
@@ -10676,156 +10619,6 @@
 
   if (exportPngBtn) {
     exportPngBtn.addEventListener('click', exportPng);
-  }
-
-  // ── 转为任务：只处理当前选中的卡片；全部成功后才从画布移除 ──
-  const taskExportBtn = document.querySelector('[data-action="export-tasks"]');
-  const taskExportLabel = taskExportBtn && taskExportBtn.querySelector('.task-export-confirm-label');
-  let exportingTasks = false;
-  let taskExportConfirmTimer = null;
-  let pendingTaskExportIds = [];
-
-  function selectedCardIds() {
-    const getter = window.CanvasModule && window.CanvasModule.getSelectedCardIds;
-    if (typeof getter !== 'function') return [];
-    const ids = getter();
-    return Array.isArray(ids) ? ids.slice() : [];
-  }
-
-  function exitTaskExportConfirm() {
-    if (taskExportConfirmTimer) {
-      clearTimeout(taskExportConfirmTimer);
-      taskExportConfirmTimer = null;
-    }
-    if (taskExportBtn) {
-      taskExportBtn.classList.remove('confirming');
-      delete taskExportBtn.dataset.confirmCount;
-    }
-    if (taskExportLabel) taskExportLabel.textContent = toolbarCopy('tasksConfirm');
-    pendingTaskExportIds = [];
-    document.removeEventListener('pointerdown', onTaskExportOutside, true);
-    document.removeEventListener('keydown', onTaskExportEsc, true);
-  }
-
-  function onTaskExportOutside(event) {
-    if (taskExportBtn && !taskExportBtn.contains(event.target)) exitTaskExportConfirm();
-  }
-
-  function onTaskExportEsc(event) {
-    if (event.key === 'Escape') {
-      event.stopPropagation();
-      exitTaskExportConfirm();
-    }
-  }
-
-  function enterTaskExportConfirm() {
-    if (!taskExportBtn) return;
-    const ids = selectedCardIds();
-    const count = ids.length;
-    if (count <= 0) {
-      showTaskExportNotice(
-        '还没有选中卡片',
-        '框选卡片，或按住 Shift 逐个多选，再点一次「转为任务」。',
-        'info'
-      );
-      return;
-    }
-    if (count > 20) {
-      showTaskExportNotice(
-        '这次选得有点多',
-        '已选中 ' + count + ' 张卡片，一次最多转换 20 张，请分批处理。',
-        'warning'
-      );
-      return;
-    }
-    pendingTaskExportIds = ids;
-    taskExportBtn.dataset.confirmCount = String(count);
-    if (taskExportLabel) {
-      taskExportLabel.textContent = toolbarLanguage === 'en'
-        ? ('Confirm ' + count + (count === 1 ? ' Task' : ' Tasks'))
-        : ('确认转为 ' + count + ' 个任务');
-    }
-    taskExportBtn.classList.add('confirming');
-    document.addEventListener('pointerdown', onTaskExportOutside, true);
-    document.addEventListener('keydown', onTaskExportEsc, true);
-    taskExportConfirmTimer = setTimeout(exitTaskExportConfirm, 4200);
-  }
-
-  async function exportCanvasToTasks(nodeIds) {
-    if (exportingTasks || canvasData === null || !filePath) return;
-    if (!Array.isArray(nodeIds) || nodeIds.length <= 0) return;
-    exportingTasks = true;
-    if (window.CanvasModule && typeof window.CanvasModule.commitPendingEdits === 'function') {
-      window.CanvasModule.commitPendingEdits();
-    }
-    if (taskExportBtn) taskExportBtn.disabled = true;
-    setState('正在转为任务…');
-    try {
-      if (dirty && !(await save())) {
-        throw new Error('当前画布尚未成功保存，已取消转换');
-      }
-      const resp = await fetch('/api/export-canvas-to-tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: filePath, nodeIds: nodeIds }),
-      });
-      const json = await resp.json();
-      if (!resp.ok) throw new Error(json.error || '转为任务失败');
-
-      dirty = false;
-      if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
-      if (window.CanvasDesktop) window.CanvasDesktop.setDirty(false);
-      document.dispatchEvent(new CustomEvent('canvas:data-changed', {
-        detail: { source: 'study', path: '/api/export-canvas-to-tasks' },
-      }));
-      const remover = window.CanvasModule && window.CanvasModule.removeArchivedNodes;
-      if (typeof remover !== 'function') {
-        setState('任务已创建，正在刷新同步…');
-        setTimeout(() => window.location.reload(), 260);
-        return;
-      }
-      try {
-        remover(json.removedNodeIds || []);
-      } catch (syncError) {
-        console.warn('[画布] 转为任务后原地同步失败，改为刷新同步', syncError);
-        setState('任务已创建，正在刷新同步…');
-        setTimeout(() => window.location.reload(), 260);
-        return;
-      }
-      if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
-      markClean('已创建 ' + (json.count || 0) + ' 个待办任务');
-      showTaskExportNotice(
-        '已转为 ' + (json.count || 0) + ' 个待办任务',
-        '卡片已从画布移除，可以在学习页继续安排。',
-        'success'
-      );
-    } catch (err) {
-      showTaskExportNotice(
-        '没有完成转换',
-        (err && err.message) || String(err || '请稍后再试。'),
-        'error'
-      );
-      setState(dirty ? '未保存' : '已保存');
-    } finally {
-      exportingTasks = false;
-      if (taskExportBtn) taskExportBtn.disabled = false;
-    }
-  }
-
-  if (taskExportBtn) {
-    taskExportBtn.addEventListener('click', () => {
-      if (exportingTasks) return;
-      if (taskExportBtn.classList.contains('confirming')) {
-        const nodeIds = pendingTaskExportIds.slice();
-        exitTaskExportConfirm();
-        exportCanvasToTasks(nodeIds);
-      } else {
-        enterTaskExportConfirm();
-      }
-    });
-    document.addEventListener('editor:selectionchange', () => {
-      if (taskExportBtn.classList.contains('confirming')) exitTaskExportConfirm();
-    });
   }
 
   // ── 归档：收走已划删除线的正文节点 + 写归档记录，未划线节点留在当前画布 ──
