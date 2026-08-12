@@ -205,6 +205,27 @@
       + T('添加') + '">＋</button><button type="button" data-route-action="menu" aria-label="'
       + T('更多') + '">⋯</button></span>';
   }
+  var BRANCH_COLORS = [
+    { value: '', label: '默认' },
+    { value: '#fce2cc', label: '杏橙' },
+    { value: '#e2ece4', label: '薄荷' },
+    { value: '#e8ecf2', label: '天空' },
+    { value: '#f0dee4', label: '蔷薇' },
+    { value: '#ece2ee', label: '丁香' },
+    { value: '#f3ecd8', label: '暖金' },
+    { value: '#f2d9d6', label: '赤霞' },
+  ];
+  function colorPaletteHTML(currentColor) {
+    currentColor = String(currentColor || '').trim();
+    var swatches = BRANCH_COLORS.map(function (item) {
+      var isActive = item.value === currentColor || (!item.value && !currentColor);
+      var style = item.value ? ' style="background:' + item.value + '"' : '';
+      return '<button type="button" data-route-pop="set-color" data-color="' + escapeHtml(item.value)
+        + '" class="study-route-color-swatch' + (isActive ? ' is-active' : '') + '"'
+        + ' aria-label="' + escapeHtml(item.label) + '"' + style + '></button>';
+    }).join('');
+    return '<div class="study-route-color-palette">' + swatches + '</div>';
+  }
   function taskMarkup(placement) {
     var task = findTask(placement.node.taskId) || { title: T('已移除任务'), status: 'done', progress: {} };
     var progress = taskProgress(task), done = task.status === 'done';
@@ -340,6 +361,13 @@
         element.tabIndex = 0;
       }
       element.innerHTML = nodeMarkup(placement);
+      if (placement.kind === 'branch' && placement.node && placement.node.color) {
+        element.style.setProperty('--branch-color', placement.node.color);
+        element.dataset.branchColor = placement.node.color;
+      } else if (placement.kind === 'branch') {
+        element.style.removeProperty('--branch-color');
+        delete element.dataset.branchColor;
+      }
       element.dataset.progress = String(Math.round(((placement.metrics || {}).progress || 0) * 100));
       if (isNew) window.setTimeout(function () { if (element.isConnected) element.classList.remove('is-entering'); }, prefersReduced ? 0 : 420);
     });
@@ -844,6 +872,9 @@
         return command({ command: 'detach-task', taskId: task.id });
       });
     }
+    if (action === 'set-color') {
+      return command({ command: 'update-branch', nodeId: anchor.dataset.nodeId, color: control.dataset.color || '' }).catch(showError);
+    }
     if (action === 'delete-branch') {
       return openConfirm(T('删除这个分支？'), T('整段分支会从路线移除，其中的学习任务仍保留在学习页。'), function () {
         return command({ command: 'delete-branch', nodeId: anchor.dataset.nodeId });
@@ -885,6 +916,27 @@
     var anchor = event.target.closest('.study-route-node');
     if (!anchor || anchor.dataset.kind === 'milestone' || event.target.closest('button')) return;
     formPopover(anchor, 'rename');
+  });
+  overlay.addEventListener('contextmenu', function (event) {
+    event.preventDefault();
+  });
+
+  nodesHost.addEventListener('contextmenu', function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    var anchor = event.target.closest('.study-route-node');
+    if (!anchor || anchor.dataset.kind !== 'branch' || event.target.closest('button')) {
+      closePopover(false);
+      return;
+    }
+    var nodeId = anchor.dataset.nodeId || '';
+    if (!popover.hidden && popover.dataset.anchorId === nodeId) {
+      closePopover(true);
+      return;
+    }
+    var node = state.tree.nodes.find(function (item) { return item.id === nodeId; });
+    var currentColor = (node && node.color) ? node.color : '';
+    openPopover(anchor, colorPaletteHTML(currentColor));
   });
   nodesHost.addEventListener('pointerdown', function (event) {
     var anchor = event.target.closest('.study-route-node');
