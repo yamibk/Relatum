@@ -808,6 +808,12 @@
     layoutFrame = 0;
     summaryFrame = 0;
     closePopover(false); closeConfirm();
+    if (reparentBadge) { reparentBadge.remove(); reparentBadge = null; }
+    if (dropSlot) { dropSlot.remove(); dropSlot = null; }
+    nodeElements.clear();
+    edgeElements.clear();
+    visualPlacements.clear();
+    layout = null;
     overlay.classList.remove('is-visible');
     overlay.classList.add('is-closing');
     overlay.setAttribute('aria-hidden', 'true');
@@ -1210,6 +1216,7 @@
     else closeRoute();
   });
   window.addEventListener('resize', function () { if (open) { closePopover(false); fit(); } });
+  window.addEventListener('pagehide', function () { if (open) closeRoute(); });
   document.querySelectorAll('[data-action="study-goal-tree-open"]').forEach(function (button) {
     button.addEventListener('click', function () { openRoute(button); });
     button.addEventListener('pointerenter', function () { prefetchStudyData(); });
