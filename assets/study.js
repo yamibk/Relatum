@@ -861,7 +861,7 @@
         element.dataset.nodeId = placement.id;
         goalTreeNodes.appendChild(element);
         goalTreeNodeElements.set(placement.id, element);
-        if (!prefersReduced) element.classList.add('is-entering');
+        if (!prefersReduced && !((placement.metrics || {}).complete)) element.classList.add('is-entering');
       }
       var node = placement.node;
       var metrics = placement.metrics || { progress: 0, complete: false };
