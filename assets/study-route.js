@@ -810,6 +810,8 @@
     closePopover(false); closeConfirm();
     if (reparentBadge) { reparentBadge.remove(); reparentBadge = null; }
     if (dropSlot) { dropSlot.remove(); dropSlot = null; }
+    nodesHost.innerHTML = '';
+    edgesHost.innerHTML = '';
     nodeElements.clear();
     edgeElements.clear();
     visualPlacements.clear();

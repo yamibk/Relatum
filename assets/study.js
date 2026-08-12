@@ -1366,6 +1366,8 @@
     if (goalTreeLayoutFrame) cancelAnimationFrame(goalTreeLayoutFrame);
     goalTreeLayoutFrame = 0;
     removeGoalTreeDropElements();
+    if (goalTreeNodes) goalTreeNodes.innerHTML = '';
+    if (goalTreeEdges) goalTreeEdges.innerHTML = '';
     goalTreeNodeElements.clear();
     goalTreeEdgeElements.clear();
     goalTreeVisualPlacements.clear();
