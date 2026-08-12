@@ -2463,6 +2463,9 @@ def _study_goal_normalize_tree(
         }
         if kind == "branch":
             node["title"] = _study_goal_title(raw.get("title"), "未命名分支")
+            raw_color = str(raw.get("color") or "").strip()
+            if raw_color and len(raw_color) <= 7 and raw_color.startswith("#"):
+                node["color"] = raw_color
         else:
             task_id = str(raw.get("taskId") or "").strip()
             if not task_id or task_id not in task_ids or task_id in owned_tasks:
@@ -5825,13 +5828,23 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
         }
         if side:
             node["side"] = side
+        raw_color = str(body.get("color") or "").strip()
+        if raw_color and len(raw_color) <= 7 and raw_color.startswith("#"):
+            node["color"] = raw_color
         tree.setdefault("nodes", []).append(node)
         result["nodeId"] = node["id"]
     elif command == "update-branch":
         node = _study_goal_node(tree, body.get("nodeId"))
         if node.get("kind") != "branch":
             raise ValueError("只能编辑分支")
-        node["title"] = _study_goal_title(body.get("title"), "未命名分支")
+        if "title" in body:
+            node["title"] = _study_goal_title(body.get("title"), "未命名分支")
+        if "color" in body:
+            raw_color = str(body.get("color") or "").strip()
+            if raw_color and len(raw_color) <= 7 and raw_color.startswith("#"):
+                node["color"] = raw_color
+            else:
+                node.pop("color", None)
     elif command == "delete-branch":
         node = _study_goal_node(tree, body.get("nodeId"))
         if node.get("kind") != "branch":

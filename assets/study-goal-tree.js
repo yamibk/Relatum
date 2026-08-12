@@ -75,7 +75,11 @@
         order: Math.max(0, number(raw.order, index)),
         side: rootSide(raw.side),
       };
-      if (kind === 'branch') node.title = text(raw.title).trim() || '未命名分支';
+      if (kind === 'branch') {
+        node.title = text(raw.title).trim() || '未命名分支';
+        var branchColor = text(raw.color).trim();
+        if (branchColor && branchColor.length <= 7 && branchColor.charAt(0) === '#') node.color = branchColor;
+      }
       else {
         node.taskId = text(raw.taskId).trim();
         if (raw.taskSlot && typeof raw.taskSlot === 'object') node.taskSlot = Object.assign({}, raw.taskSlot);

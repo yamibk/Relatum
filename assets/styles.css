@@ -136,6 +136,25 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-node.is-root,
 .study-route-node.is-branch { grid-template-columns: minmax(0, 1fr) auto; width: 196px; min-height: 76px; padding: 14px 12px 13px 16px; }
 .study-route-node.is-root { width: 214px; min-height: 84px; color: #f8f8f3; background: #252a25; border-color: #252a25; border-radius: 18px; }
+
+/* Branch node -- custom color background */
+.study-route-node.is-branch[data-branch-color] {
+  background: var(--branch-color);
+  border-color: color-mix(in srgb, var(--branch-color) 85%, #9ba399);
+}
+.study-route-node.is-branch[data-branch-color]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  background: color-mix(in srgb, var(--branch-color) 62%, #3a4537);
+  border-radius: 0 3px 3px 0;
+  opacity: 0.45;
+  transition: opacity 180ms ease;
+}
+.study-route-node.is-branch[data-branch-color]:hover::before { opacity: 0.70; }
 .study-route-node.is-task { grid-template-columns: 34px minmax(0, 1fr) auto 26px; gap: 10px; width: 284px; min-height: 92px; padding: 13px 11px 13px 12px; }
 .study-route-node.is-milestone {
   grid-template-columns: 16px minmax(0, 1fr);
@@ -356,6 +375,34 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-menu button { color: #3f463f; background: transparent; text-align: left; }
 .study-route-menu button:hover { background: #f0f3ee; }
 .study-route-menu button.is-danger { color: #a14c45; }
+
+/* Color palette swatch grid */
+.study-route-color-palette {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 2px 0;
+}
+.study-route-color-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 34px;
+  border: 2px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.study-route-color-swatch:hover {
+  transform: scale(1.12);
+  box-shadow: 0 3px 12px rgba(26,32,26,.16);
+}
+.study-route-color-swatch.is-active {
+  border-color: #5b6d59;
+  box-shadow: 0 0 0 2px rgba(75,91,79,.18);
+}
+.study-route-color-swatch:not([style]) {
+  background: repeating-linear-gradient(45deg, #eef1eb, #eef1eb 3px, #dce0d9 3px, #dce0d9 6px);
+}
 .study-route-progress-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .study-route-milestone-summary { margin: -2px 0 0; color: #818980; font-size: 10px; line-height: 1.55; }
 .study-route-popover [data-role="route-form-error"] { min-height: 14px; margin: 0; color: #a14c45; font-size: 10px; line-height: 1.4; }
@@ -386,6 +433,20 @@ body.start-page[data-start-theme="dark"] .study-route-task-check.is-done { color
 body.start-page[data-start-theme="dark"] .study-route-node.is-milestone > div span { color: #8e998f; }
 body.start-page[data-start-theme="dark"] .study-route-milestone-dot { background: #252c27; border-color: #6f8875; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-milestone.is-complete .study-route-milestone-dot { background: #78a884; border-color: #78a884; }
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch[data-branch-color] {
+  background: color-mix(in srgb, var(--branch-color) 28%, #1a1f1c);
+  border-color: color-mix(in srgb, var(--branch-color) 18%, #2a302b);
+}
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch[data-branch-color]::before {
+  background: color-mix(in srgb, var(--branch-color) 58%, #1a1f1c);
+  opacity: 0.40;
+}
+body.start-page[data-start-theme="dark"] .study-route-color-swatch:not([style]) {
+  background: repeating-linear-gradient(45deg, #2a302b, #2a302b 3px, #363c37 3px, #363c37 6px);
+}
+body.start-page[data-start-theme="dark"] .study-route-color-swatch.is-active {
+  border-color: #7a8e7c;
+}
 body.start-page[data-start-theme="dark"] .study-route-popover,
 body.start-page[data-start-theme="dark"] .study-route-confirm section { color: #edf0ea; background: #252b27; border-color: rgba(235,242,237,.12); }
 body.start-page[data-start-theme="dark"] .study-route-popover input,
