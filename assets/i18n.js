@@ -71,11 +71,38 @@
     '设置目标': 'Set goal', '目标总量': 'Goal total', '单位': 'Unit', '任务长度': 'Task length',
 '请先设置任务长度': 'Please set a target first',
 '任务点位置必须在 1 到任务长度之间': 'Milestone position must be between 1 and the target',
-'把任务长度拆成最多 6 个有名字的任务点。达成状态会根据当前进度自动点亮。': 'Break the target into up to 6 named milestones. Status lights up automatically as you progress.',
-    '任务点': 'Milestones', '最多 6 个': 'Up to 6', '添加任务点': 'Add milestone',
+'把任务长度拆成有名字的任务点。达成状态会根据当前进度自动点亮。': 'Break the target into named milestones. Status lights up automatically as you progress.',
+    '任务点': 'Milestones', '添加任务点': 'Add milestone',
     '任务点名称': 'Milestone name', '任务点位置': 'Milestone position',
+    '第': 'At', '点': 'units', '已到达': 'Reached',
     '写下一个学习任务…': 'Write a study task…', '添加': 'Add',
-    '今日任务面板将在后续版本开放': 'The Today panel is coming in a later release',
+    '目标树': 'Goal Tree', '打开目标树': 'Open Goal Tree', '我的学习路线': 'My learning route',
+    '目标树是一棵固定的总路线：根目标下面可以建立多级分支，也可以让任务接在另一任务或具体任务点后；进度和完成状态与学习页共用同一份数据。': 'Goal Tree is one master route: build nested branches below the root, or connect a task after another task or a milestone. Progress and completion stay shared with Study.',
+    '节点上的 ＋': 'Node +',
+    '在根目标或分支下新建分支、新建任务或选择已有任务；任务节点上的 ＋ 可建立后续任务。': 'Create a branch or task, or choose an existing task below the root or a branch. Use + on a task to create its next task.',
+    '任务圆点与 − / ＋': 'Task circle and − / +',
+    '圆点负责完成或恢复；− / ＋ 直接推进数值进度，路线上的任务点会随进度点亮。': 'The circle completes or restores a task. − / + changes numeric progress directly, and route milestones light up as you reach them.',
+    '节点「…」': 'Node “…”',
+    '只保留改名、设置进度、接入后续任务、移出路线或删除分支等必要操作。': 'Only essential actions remain: rename, set progress, attach a following task, remove from route, or delete a branch.',
+    '拖动节点': 'Drag nodes',
+    '整棵子树跟随指针移动；松手时才排序。拖到根的左侧或右侧可换边，也可把任务接到分支、任务末尾或具体任务点。': 'The whole subtree follows the pointer and reorders only on release. Drop on either side of the root to switch sides, or attach a task to a branch, another task, or a milestone.',
+    '双击名称': 'Double-click a name',
+    '直接打开轻量改名弹层。': 'Open the lightweight rename popover directly.',
+    '适应 / 滚轮 / 拖动空白': 'Fit / wheel / drag empty space',
+    '路线按左右自由导图排列；适应按钮恢复全景，滚轮连续缩放，拖动空白平移。': 'The route uses a free left/right mind-map layout. Fit restores the overview, the wheel zooms continuously, and dragging empty space pans.',
+    '项任务': 'tasks', '添加': 'Add', '更多': 'More', '适应': 'Fit',
+    '新建分支': 'New branch', '新建任务': 'New task', '选择已有任务': 'Choose an existing task',
+    '新建后续任务': 'New following task', '接入已有任务': 'Attach existing task',
+    '改名': 'Rename', '设置进度': 'Set progress', '移出路线': 'Remove from route', '删除分支': 'Delete branch',
+    '分支名称': 'Branch name', '添加分支': 'Add branch', '任务名称': 'Task name', '创建任务': 'Create task',
+    '加入路线': 'Add to route', '没有可加入的学习任务': 'No available study task', '名称': 'Name',
+    '当前进度': 'Current progress', '请稍候': 'Please wait', '已移除任务': 'Removed task',
+    '从路线移出任务？': 'Remove this task from the route?', '任务仍会保留在学习页。': 'The task will remain on the Study page.',
+    '删除这个分支？': 'Delete this branch?',
+    '整段分支会从路线移除，其中的学习任务仍保留在学习页。': 'The whole branch will leave the route; its study tasks will remain.',
+    '进度需要满足 0 ≤ 当前进度 ≤ 目标总量 ≤ 9999': 'Progress must satisfy 0 ≤ current ≤ target ≤ 9999',
+    '适应目标树；滚轮缩放，拖动画布平移': 'Fit Goal Tree; use the wheel to zoom and drag the canvas to pan',
+    '适应目标树 · 滚轮缩放 · 拖动画布平移': 'Fit Goal Tree · Wheel to zoom · Drag to pan',
     '目标已达': 'Goal reached', '目标已达成，可以手动标记完成': 'Goal reached · You can mark it complete',
     '还没有学习任务，点击右上角的 ＋ 开始。': 'No study tasks yet · use + in the top right to begin.',
     '当前没有未完成任务。': 'There are no active tasks right now.',
@@ -796,7 +823,7 @@
     '累计天数': 'Cumulative days',
     '删除这个小目标': 'Delete this milestone',
     '添加小目标': 'Add milestone',
-    '已达到 6 个上限': 'Limit of 6 reached',
+    '已达到 50 个安全上限': 'Safety limit of 50 reached',
     '关闭高级设置': 'Close advanced settings',
     '确定': 'Done',
     '已达成': 'Reached',
@@ -805,7 +832,7 @@
     '小目标名称不能超过 40 个字符': 'Milestone names can contain at most 40 characters',
     '小目标天数必须在 1 到累计目标之间': 'Milestone days must be between 1 and the cumulative goal',
     '同一天只能设置一个小目标': 'Only one milestone can be set on the same day',
-    '把累计目标拆成最多 6 个有名字的小目标。达成状态会根据累计打卡天数自动点亮。': 'Split the cumulative goal into up to 6 named milestones. Each milestone lights up automatically when its day is reached.',
+    '把累计目标拆成有名字的小目标。达成状态会根据累计打卡天数自动点亮。': 'Split the cumulative goal into named milestones. Each milestone lights up automatically when its day is reached.',
     '分钟 · 可选': 'Minutes · optional',
     '天 · 可选': 'Days · optional',
     '每日任务名称': 'Daily task name',
@@ -925,6 +952,10 @@
     if (match) return `${match[1]} reviewed today ✦ Switch to Free review if you want to keep practicing.`;
     match = source.match(/^专注\s*(\d+)\s*分钟$/);
     if (match) return `${match[1]} min focused`;
+    match = source.match(/^(\d+)\s*项后代任务$/);
+    if (match) return `${match[1]} descendant ${match[1] === '1' ? 'task' : 'tasks'}`;
+    match = source.match(/^(\d+)%\s*·\s*(\d+)\s*项$/);
+    if (match) return `${match[1]}% · ${match[2]} ${match[2] === '1' ? 'task' : 'tasks'}`;
     match = source.match(/^休息\s*(\d+)\s*分钟$/);
     if (match) return `${match[1]} min break`;
     match = source.match(/^今日\s*(\d+)\s*项$/);

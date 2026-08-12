@@ -26,7 +26,12 @@ class StudyProgressTests(unittest.TestCase):
             "version": 1,
             "tasks": [{"id": "old", "title": "旧任务", "status": "todo"}],
         }), encoding="utf-8")
-        self.assertEqual(app.load_study(), {"version": 2, "tasks": [], "trash": []})
+        self.assertEqual(app.load_study(), {
+            "version": 5,
+            "tasks": [],
+            "trash": [],
+            "goalTree": {"version": 1, "title": "我的学习路线", "nodes": []},
+        })
 
     def test_create_defaults_to_unset_progress(self):
         task = app._study_task({"title": "线性代数"})
@@ -85,6 +90,21 @@ class StudyProgressTests(unittest.TestCase):
                 "target": 2,
                 "milestones": [{"at": 1, "name": "x" * 41}],
             }})
+
+    def test_many_milestones_are_supported_with_a_safety_cap(self):
+        milestones = [
+            {"id": f"m{index}", "name": f"step-{index}", "at": index}
+            for index in range(1, 13)
+        ]
+        task = app._study_task({"progress": {"target": 100, "milestones": milestones}})
+        self.assertEqual(len(task["progress"]["milestones"]), 12)
+
+        too_many = [
+            {"id": f"m{index}", "name": f"step-{index}", "at": index}
+            for index in range(1, app.STUDY_MILESTONES_MAX + 2)
+        ]
+        with self.assertRaisesRegex(ValueError, "任务点最多 50 个"):
+            app._study_task({"progress": {"target": 100, "milestones": too_many}})
 
     def test_unit_progress_boundaries_and_milestone_crossing(self):
         task = app._study_task({"title": "书", "progress": {

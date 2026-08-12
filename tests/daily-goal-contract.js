@@ -10,7 +10,7 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
 
 [
   'DAILY_GOAL_DAYS_MAX = 3660',
-  'DAILY_MILESTONES_MAX = 6',
+  'DAILY_MILESTONES_MAX = 50',
   'DAILY_MILESTONE_NAME_MAX = 40',
   'def _sanitize_daily_milestones(value: object, target_days: int)',
   'def _validate_daily_milestones(value: object, target_days: int)',
@@ -24,6 +24,8 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'function dailyGoalState(task)',
   'function dailyMilestoneList(task)',
   'function dailyMilestoneLanes(milestones, target)',
+  "layer.classList.toggle('is-dense', layout.length > 12)",
+  "layer.classList.toggle('is-very-dense', layout.length > 24)",
   'function syncDailyMilestones(shell, task, options)',
   "shell.className = 'focus-daily-goal-shell'",
   "bar.dataset.role = 'daily-goal-track'",

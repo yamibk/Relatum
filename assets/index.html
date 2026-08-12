@@ -291,7 +291,8 @@
               <h1>学习任务 <span data-role="study-task-count">0</span></h1>
             </div>
             <div class="study-progress-actions">
-              <button type="button" class="study-progress-today" data-action="study-today-placeholder">今日任务</button>
+              <button type="button" class="study-progress-today" data-action="study-goal-tree-open"
+                aria-haspopup="dialog" aria-controls="study-goal-tree-panel">目标树</button>
               <button type="button" class="study-progress-trash" data-action="study-trash" aria-label="任务回收站" title="任务回收站">♲</button>
               <button type="button" class="study-progress-create" data-action="study-compose-toggle" aria-label="新建学习任务" aria-expanded="false">＋</button>
             </div>
@@ -318,6 +319,42 @@
         <!-- 极简清单视图：再次点「学」在进度/清单间切换。 -->
         <section class="study-list" data-role="study-list" aria-label="任务清单"></section>
       </section>
+
+      <div class="study-route-overlay" data-role="study-route-overlay" hidden>
+        <button type="button" class="study-route-backdrop" data-route-action="close" aria-label="关闭目标树"></button>
+        <section class="study-route-panel" id="study-goal-tree-panel" role="dialog" aria-modal="true"
+          aria-labelledby="study-goal-tree-title">
+          <header class="study-route-head">
+            <div>
+              <p class="study-eyebrow">GOAL TREE</p>
+              <h2 id="study-goal-tree-title">目标树</h2>
+            </div>
+            <div class="study-route-summary" data-role="study-route-summary"></div>
+            <button type="button" class="study-route-close" data-route-action="close" aria-label="关闭目标树">×</button>
+          </header>
+          <div class="study-route-stage">
+            <div class="study-route-viewport" data-role="study-route-viewport" tabindex="0" aria-label="目标树画布">
+              <div class="study-route-scene" data-role="study-route-scene">
+                <svg class="study-route-edges" data-role="study-route-edges" aria-hidden="true"></svg>
+                <div class="study-route-nodes" data-role="study-route-nodes" role="tree"></div>
+              </div>
+            </div>
+            <button type="button" class="study-route-fit" data-route-action="fit"
+              aria-label="适应目标树；滚轮缩放，拖动画布平移" title="适应目标树 · 滚轮缩放 · 拖动画布平移">适应</button>
+            <div class="study-route-popover" data-role="study-route-popover" hidden></div>
+          </div>
+          <div class="study-route-confirm" data-role="study-route-confirm" hidden>
+            <section role="alertdialog" aria-modal="true" aria-labelledby="study-route-confirm-title">
+              <h3 id="study-route-confirm-title" data-role="study-route-confirm-title"></h3>
+              <p data-role="study-route-confirm-copy"></p>
+              <div>
+                <button type="button" data-route-action="confirm-cancel">取消</button>
+                <button type="button" class="is-danger" data-route-action="confirm-ok">确定</button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </div>
 
       <!-- 活跃热力图 · 独立前置页（与学习页之间可翻页；内容由 study.js 渲染）-->
       <section class="cadence-embedded" data-role="cadence-view" aria-label="活跃热力图页">
@@ -1070,7 +1107,9 @@
   <script src="graph-gl.js" defer></script>
   <script src="graph-engine.js" defer></script>
   <script src="study-graph.js" defer></script>
+  <script src="study-goal-tree.js" defer></script>
   <script src="study.js" defer></script>
+  <script src="study-route.js" defer></script>
   <script src="notes.js" defer></script>
   <script src="mermaid-renderer.js" defer></script>
   <script src="markdown.js" defer></script>
