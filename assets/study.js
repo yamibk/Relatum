@@ -874,7 +874,7 @@
         + (focused ? ' is-current' : '') + (metrics.complete ? ' is-complete' : '')
         + (placement.availability && !placement.availability.available ? ' is-blocked' : '')
         + (dragging ? ' is-dragging' : '')
-        + (element.classList.contains('is-entering') ? ' is-entering' : '');
+        + (element.classList.contains('is-entering') && !metrics.complete ? ' is-entering' : '');
       element.dataset.kind = placement.kind;
       element.dataset.taskId = placement.kind === 'task' ? placement.node.taskId : '';
       element.dataset.draggable = placement.kind === 'root' || placement.kind === 'milestone' || goalTreeArchivePayload ? 'false' : 'true';
