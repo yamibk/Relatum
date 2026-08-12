@@ -770,7 +770,13 @@
     if (studyCache && studyCache.tasks) {
       applyStudyPayload(studyCache, requestId, taskId);
       api('/api/study').then(function (json) {
-        if (json && json.tasks) { studyCache = json; window[STUDY_DATA_CACHE_KEY] = json; }
+        if (!json || !json.tasks) return;
+        studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
+        if (!open || requestId !== routeRequestId) return;
+        state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
+        state.tree = json.goalTree || { version: 1, title: '我的学习路线', nodes: [] };
+        render();
+        if (!restoreView()) fit(true);
       }).catch(function () {});
       return;
     }
