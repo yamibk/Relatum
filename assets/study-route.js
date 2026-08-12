@@ -792,7 +792,6 @@
       overlay.classList.remove('is-closing');
       routeCloseTimer = 0;
     }, prefersReduced ? 0 : 320);
-    if (lastTrigger && lastTrigger.isConnected) lastTrigger.focus();
   }
   function parentForAnchor(anchor) {
     return ['branch', 'task'].includes(anchor.dataset.kind) ? anchor.dataset.nodeId : null;
