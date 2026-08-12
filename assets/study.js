@@ -469,12 +469,21 @@
 
   // 全量刷新 / 回收 / 恢复 / 归档前，先等所有在途 patch 落地：
   // 这些流程会用服务端快照整体替换 state.tasks，若改名/进度 patch 还在排队，
-  // 快照里是旧值，替换后 UI 会把刚提交的改动“打回原形”（改名丢失即由此而来）。
+  // 快照里是旧值，替换后 UI 会把刚提交的改动”打回原形”（改名丢失即由此而来）。
   function flushStudyMutations() {
-    const pending = Array.from(taskMutationChains.values());
-    return pending.length
-      ? Promise.all(pending.map((request) => request.catch(() => undefined)))
-      : Promise.resolve();
+    try {
+      var pending = Array.from(taskMutationChains.values());
+      if (!pending.length) return Promise.resolve();
+      var withTimeout = new Promise(function (_, reject) {
+        setTimeout(function () { reject(new Error('flush timeout')); }, 5000);
+      });
+      var allSettled = Promise.all(pending.map(function (request) {
+        return Promise.resolve(request).catch(function () {});
+      }));
+      return Promise.race([allSettled, withTimeout]).catch(function () {});
+    } catch (_) {
+      return Promise.resolve();
+    }
   }
 
   function scheduleStudyReorder() {
