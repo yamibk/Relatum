@@ -927,6 +927,7 @@
     var anchor = event.target.closest('.study-route-node');
     if (!anchor || event.target.closest('button')) { closePopover(false); return; }
     if (anchor.dataset.kind === 'root') { addMenu(anchor); return; }
+    if (anchor.dataset.kind === 'task') { nodeMenu(anchor); return; }
     if (anchor.dataset.kind !== 'branch') { closePopover(false); return; }
     var nodeId = anchor.dataset.nodeId || '';
     if (!popover.hidden && popover.dataset.anchorId === nodeId) {
