@@ -467,6 +467,16 @@
     return request;
   }
 
+  // 全量刷新 / 回收 / 恢复 / 归档前，先等所有在途 patch 落地：
+  // 这些流程会用服务端快照整体替换 state.tasks，若改名/进度 patch 还在排队，
+  // 快照里是旧值，替换后 UI 会把刚提交的改动“打回原形”（改名丢失即由此而来）。
+  function flushStudyMutations() {
+    const pending = Array.from(taskMutationChains.values());
+    return pending.length
+      ? Promise.all(pending.map((request) => request.catch(() => undefined)))
+      : Promise.resolve();
+  }
+
   function scheduleStudyReorder() {
     clearTimeout(reorderTimer);
     reorderTimer = setTimeout(() => {
@@ -4801,8 +4811,8 @@
     trashChain = trashChain.catch(() => undefined).then(async () => {
       await ensureTaskCreated(task);
       trashedTask.id = task.id; // 刚快速创建又立刻删除时，回收站记录同步后端分配的真实 id
-      const pendingMutation = taskMutationChains.get(task);
-      if (pendingMutation) await pendingMutation.catch(() => undefined);
+      // 等所有任务的在途 patch 落地，避免 trash 响应里的快照把刚改的名字覆盖回去
+      await flushStudyMutations();
       const json = await post('/api/study-task-trash', { id: task.id });
       if (json.study) applyStudyPayload(json.study);
     }).catch((error) => {
@@ -4815,6 +4825,7 @@
   async function restoreTask(id) {
     lockTrashItem(id, true);
     try {
+      await flushStudyMutations();
       const json = await post('/api/study-task-restore', { id });
       animateDetachedExit(document.querySelector('.study-trash-item' + taskSelector(id)), 'study-trash-exit-ghost');
       if (json.study) applyStudyPayload(json.study);
@@ -4898,11 +4909,8 @@
     if (buttons.some((button) => button.disabled)) return;
     buttons.forEach((button) => { button.disabled = true; });
     try {
-      await Promise.all(done.map(async (task) => {
-        await ensureTaskCreated(task);
-        const pendingMutation = taskMutationChains.get(task);
-        if (pendingMutation) await pendingMutation;
-      }));
+      // 等所有任务的在途 patch 落地，避免归档响应的快照把刚改的名字覆盖回去
+      await flushStudyMutations();
       const json = await post('/api/study-archive-done');
       const archivedIds = new Set(json.archivedIds || []);
       buttons.forEach((button) => button.classList.add('archive-success'));
@@ -4947,6 +4955,7 @@
   async function performStudyRefresh() {
     const requestId = ++studyRefreshSeq;
     try {
+      await flushStudyMutations();
       const json = await api('/api/study');
       if (requestId !== studyRefreshSeq) return false;
       applyStudyPayload(json);
