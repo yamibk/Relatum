@@ -131,6 +131,7 @@
       cleanupByClass.set(className, window.setTimeout(function () {
         element.classList.remove(className);
         cleanupByClass.delete(className);
+        if (cleanupByClass.size === 0) replayCleanupTimers.delete(element);
       }, Number(cleanupMs)));
     }
   }
@@ -140,6 +141,7 @@
     if (cleanupByClass) {
       window.clearTimeout(cleanupByClass.get(className));
       cleanupByClass.delete(className);
+      if (cleanupByClass.size === 0) replayCleanupTimers.delete(element);
     }
     element.classList.remove(className);
   }
@@ -305,6 +307,7 @@
   });
   window.addEventListener('pagehide', stopStudyGoalBreath);
   window.addEventListener('pagehide', stopStudyGoalCheckFlow);
+  window.addEventListener('pagehide', function () { if (goalTreeOpen) closeGoalTree(); });
 
   function localDay(date) {
     const d = date || new Date();
@@ -1358,8 +1361,15 @@
     goalTreeConfirmAction = null;
     closeGoalTreeConfirm(true);
     stopGoalTreeViewAnimation();
+    if (goalTreePanInertiaFrame) cancelAnimationFrame(goalTreePanInertiaFrame);
+    goalTreePanInertiaFrame = 0;
     if (goalTreeLayoutFrame) cancelAnimationFrame(goalTreeLayoutFrame);
     goalTreeLayoutFrame = 0;
+    removeGoalTreeDropElements();
+    goalTreeNodeElements.clear();
+    goalTreeEdgeElements.clear();
+    goalTreeVisualPlacements.clear();
+    goalTreeRenderLayout = null;
     goalTreeOverlay.classList.remove('is-visible', 'is-opening');
     goalTreeOverlay.classList.add('is-closing');
     document.body.classList.remove('study-goal-tree-open');
@@ -1711,6 +1721,10 @@
     });
     if (goalTreeDropSlot) goalTreeDropSlot.hidden = true;
     if (goalTreeReparentBadge) goalTreeReparentBadge.hidden = true;
+  }
+  function removeGoalTreeDropElements() {
+    if (goalTreeDropSlot) { goalTreeDropSlot.remove(); goalTreeDropSlot = null; }
+    if (goalTreeReparentBadge) { goalTreeReparentBadge.remove(); goalTreeReparentBadge = null; }
   }
   function beginGoalTreeNodeDrag(event, item) {
     if (event.button !== 0 || goalTreeDrag || goalTreeCommandBusy || item.dataset.draggable !== 'true') return;
