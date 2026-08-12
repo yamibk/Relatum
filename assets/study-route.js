@@ -22,7 +22,11 @@
   var viewTarget = Object.assign({}, view), viewTickAt = 0;
   var pan = null, drag = null, dragEndedAt = 0;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
-  var layoutFrame = 0, summaryFrame = 0, viewFrame = 0, dragFrame = 0, dropSlot = null, reparentBadge = null;
+  var layoutFrame = 0, summaryFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
+  var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
+  var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.goal-tree-route.view';
+  var STUDY_DATA_CACHE_KEY = '_relatumStudyData';
+  var studyCache = null, studyPrefetchId = 0;
   var prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (error) { return false; }
   })();
@@ -52,10 +56,75 @@
   function applyView() {
     scene.style.transform = 'translate3d(' + view.x + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
   }
+  function flushViewSave() {
+    if (!viewSaveTimer) return;
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = 0;
+    try {
+      localStorage.setItem(GOAL_TREE_ROUTE_VIEW_KEY, JSON.stringify({
+        x: Math.round(view.x * 10) / 10,
+        y: Math.round(view.y * 10) / 10,
+        zoom: Math.round(view.zoom * 1000) / 1000,
+      }));
+    } catch (e) {}
+  }
+  function saveViewSoon() {
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = setTimeout(flushViewSave, 220);
+  }
+  function restoreView() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(GOAL_TREE_ROUTE_VIEW_KEY) || 'null');
+      if (!raw || typeof raw !== 'object') return false;
+      var x = Number(raw.x), y = Number(raw.y), zoom = Number(raw.zoom);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) return false;
+      zoom = Math.max(.38, Math.min(1.6, zoom));
+      view = { x: x, y: y, zoom: zoom };
+      viewTarget = Object.assign({}, view);
+      applyView();
+      return true;
+    } catch (e) { return false; }
+  }
   function stopViewAnimation() {
     if (viewFrame) cancelAnimationFrame(viewFrame);
     viewFrame = 0;
     viewTickAt = 0;
+  }
+  function stopPanInertia() {
+    if (panInertiaFrame) cancelAnimationFrame(panInertiaFrame);
+    panInertiaFrame = 0;
+  }
+  function startPanInertia(source) {
+    stopPanInertia();
+    if (prefersReduced || !open || !source || source.velX == null) return;
+    var now = performance.now();
+    if (source.lastMoveT == null || now - source.lastMoveT > 60) return;
+    var vx = source.velX * .15, vy = source.velY * .15;
+    var speed = Math.hypot(vx, vy);
+    if (speed < .06) return;
+    var maxSpeed = 5;
+    if (speed > maxSpeed) {
+      var ratio = maxSpeed / speed;
+      vx *= ratio; vy *= ratio;
+    }
+    stopViewAnimation();
+    var last = now;
+    function step(timestamp) {
+      panInertiaFrame = 0;
+      if (!open || pan) return;
+      var dt = timestamp - last;
+      last = timestamp;
+      if (!(dt > 0)) dt = 16.667;
+      if (dt > 40) dt = 40;
+      view.x += vx * dt;
+      view.y += vy * dt;
+      viewTarget = Object.assign({}, view);
+      applyView();
+      var friction = Math.exp(-.0045 * dt);
+      vx *= friction; vy *= friction;
+      if (Math.hypot(vx, vy) > .015) panInertiaFrame = requestAnimationFrame(step);
+    }
+    panInertiaFrame = requestAnimationFrame(step);
   }
   function requestViewAnimation() {
     if (prefersReduced) {
@@ -85,6 +154,7 @@
     viewFrame = requestAnimationFrame(tickView);
   }
   function setViewTarget(next, immediate) {
+    stopPanInertia();
     viewTarget = {
       x: Number(next.x) || 0,
       y: Number(next.y) || 0,
@@ -95,6 +165,7 @@
       view = Object.assign({}, viewTarget);
       applyView();
     } else requestViewAnimation();
+    saveViewSoon();
   }
   function fit(immediate) {
     if (!layout) return;
@@ -490,11 +561,15 @@
     });
   }
   function addMenu(anchor) {
+    var anchorId = anchor.dataset.nodeId || '';
+    if (!popover.hidden && popover.dataset.anchorId === anchorId) { closePopover(true); return; }
     openPopover(anchor, '<div class="study-route-menu"><button type="button" data-route-pop="new-branch">'
       + T('新建分支') + '</button><button type="button" data-route-pop="new-task">' + T('新建任务')
       + '</button><button type="button" data-route-pop="attach-task">' + T('选择已有任务') + '</button></div>');
   }
   function nodeMenu(anchor) {
+    var anchorId = anchor.dataset.nodeId || '';
+    if (!popover.hidden && popover.dataset.anchorId === anchorId) { closePopover(true); return; }
     var kind = anchor.dataset.kind;
     var html = '<div class="study-route-menu"><button type="button" data-route-pop="rename">' + T('改名') + '</button>';
     if (kind === 'task') html += '<button type="button" data-route-pop="new-task">' + T('新建后续任务')
@@ -625,40 +700,82 @@
     if (immediate || prefersReduced) finish();
     else confirmCloseTimer = window.setTimeout(finish, 210);
   }
+  function showOverlay() {
+    if (open) return;
+    if (routeCloseTimer) clearTimeout(routeCloseTimer);
+    routeCloseTimer = 0;
+    overlay.classList.remove('is-visible', 'is-closing');
+    overlay.hidden = false;
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('study-goal-tree-open');
+    open = true;
+    scene.classList.add('is-loading');
+    void overlay.offsetWidth;
+    overlay.classList.add('is-visible');
+  }
+  function applyStudyPayload(json, requestId, taskId) {
+    if (requestId !== routeRequestId) return;
+    state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
+    state.tree = json.goalTree || { version: 1, title: '我的学习路线', nodes: [] };
+    scene.classList.remove('is-loading');
+    render();
+    if (!restoreView()) fit(true);
+    requestAnimationFrame(function () {
+      if (!open || requestId !== routeRequestId) return;
+      var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
+      var target = owner && nodesHost.querySelector('[data-node-id="' + CSS.escape(owner.node.id) + '"]');
+      (target || viewport).focus();
+    });
+  }
+  function prefetchStudyData() {
+    if (studyCache) return;
+    var id = ++studyPrefetchId;
+    api('/api/study').then(function (json) {
+      if (id !== studyPrefetchId) return;
+      studyCache = json;
+      window[STUDY_DATA_CACHE_KEY] = json;
+    }).catch(function () {});
+  }
   function openRoute(trigger, taskId) {
     var requestId = ++routeRequestId;
     lastTrigger = trigger && trigger.isConnected ? trigger : document.activeElement;
+    showOverlay();
+    if (studyCache && studyCache.tasks) {
+      applyStudyPayload(studyCache, requestId, taskId);
+      api('/api/study').then(function (json) {
+        if (json && json.tasks) { studyCache = json; window[STUDY_DATA_CACHE_KEY] = json; }
+      }).catch(function () {});
+      return;
+    }
+    var shared = window[STUDY_DATA_CACHE_KEY];
+    if (shared && shared.tasks) {
+      studyCache = shared;
+      applyStudyPayload(shared, requestId, taskId);
+      return;
+    }
     api('/api/study').then(function (json) {
+      studyCache = json;
+      window[STUDY_DATA_CACHE_KEY] = json;
+      applyStudyPayload(json, requestId, taskId);
+    }).catch(function (err) {
       if (requestId !== routeRequestId) return;
-      if (routeCloseTimer) clearTimeout(routeCloseTimer);
-      routeCloseTimer = 0;
-      state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
-      state.tree = json.goalTree || { version: 1, title: '我的学习路线', nodes: [] };
-      overlay.classList.remove('is-visible', 'is-closing');
-      overlay.hidden = false;
-      overlay.setAttribute('aria-hidden', 'false');
-      document.body.classList.add('study-goal-tree-open');
-      open = true;
-      render();
-      fit(true);
-      void overlay.offsetWidth;
-      requestAnimationFrame(function () {
-        if (!open || requestId !== routeRequestId) return;
-        overlay.classList.add('is-visible');
-        var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
-        var target = owner && nodesHost.querySelector('[data-node-id="' + CSS.escape(owner.node.id) + '"]');
-        (target || viewport).focus();
-      });
-    }).catch(showError);
+      scene.classList.remove('is-loading');
+      showError(err);
+    });
   }
   function closeRoute() {
     if (!open) return;
+    flushViewSave();
     ++routeRequestId;
     if (routeCloseTimer) clearTimeout(routeCloseTimer);
     if (drag) finishDrag(true);
+    if (pan) {
+      try { viewport.releasePointerCapture(pan.id); } catch (error) {}
+    }
     pan = null;
     viewport.classList.remove('is-panning');
     stopViewAnimation();
+    stopPanInertia();
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
     if (summaryFrame) cancelAnimationFrame(summaryFrame);
     layoutFrame = 0;
@@ -992,14 +1109,31 @@
     setZoom(viewTarget.zoom * Math.exp(-event.deltaY * .00115), event.clientX, event.clientY);
   }, { passive: false });
   viewport.addEventListener('pointerdown', function (event) {
+    if (event.button === 0) stopPanInertia();
     if (event.button !== 0 || event.target.closest('.study-route-node,.study-route-fit,.study-route-popover')) return;
     stopViewAnimation();
-    pan = { id: event.pointerId, x: event.clientX, y: event.clientY, ox: view.x, oy: view.y };
+    var now = performance.now();
+    pan = {
+      id: event.pointerId, x: event.clientX, y: event.clientY, ox: view.x, oy: view.y,
+      lastMoveX: event.clientX, lastMoveY: event.clientY, lastMoveT: now,
+      velX: null, velY: null, moved: false,
+    };
     viewport.setPointerCapture(event.pointerId);
     viewport.classList.add('is-panning');
   });
   viewport.addEventListener('pointermove', function (event) {
     if (!pan || pan.id !== event.pointerId) return;
+    var now = performance.now(), dt = now - pan.lastMoveT;
+    if (dt > 0) {
+      var instantaneousX = (event.clientX - pan.lastMoveX) / dt;
+      var instantaneousY = (event.clientY - pan.lastMoveY) / dt;
+      pan.velX = pan.velX == null ? instantaneousX : pan.velX * .4 + instantaneousX * .6;
+      pan.velY = pan.velY == null ? instantaneousY : pan.velY * .4 + instantaneousY * .6;
+    }
+    pan.lastMoveX = event.clientX;
+    pan.lastMoveY = event.clientY;
+    pan.lastMoveT = now;
+    pan.moved = pan.moved || Math.hypot(event.clientX - pan.x, event.clientY - pan.y) >= 2;
     view.x = pan.ox + event.clientX - pan.x;
     view.y = pan.oy + event.clientY - pan.y;
     viewTarget = Object.assign({}, view);
@@ -1007,7 +1141,10 @@
   });
   function endPan(event) {
     if (!pan || pan.id !== event.pointerId) return;
+    var finished = pan;
     pan = null; viewport.classList.remove('is-panning');
+    try { viewport.releasePointerCapture(event.pointerId); } catch (error) {}
+    if (event.type === 'pointerup' && finished.moved) startPanInertia(finished);
   }
   viewport.addEventListener('pointerup', endPan);
   viewport.addEventListener('pointercancel', endPan);
@@ -1021,9 +1158,10 @@
   window.addEventListener('resize', function () { if (open) { closePopover(false); fit(); } });
   document.querySelectorAll('[data-action="study-goal-tree-open"]').forEach(function (button) {
     button.addEventListener('click', function () { openRoute(button); });
+    button.addEventListener('pointerenter', function () { prefetchStudyData(); });
   });
-  window.StudyRoute = { open: function (taskId, trigger) { openRoute(trigger, taskId); }, close: closeRoute, refresh: function () {
+  window.StudyRoute = { open: function (taskId, trigger) { openRoute(trigger, taskId); }, close: closeRoute, prefetch: prefetchStudyData, refresh: function () {
     if (!open) return Promise.resolve(false);
-    return api('/api/study').then(function (json) { state.tasks = json.tasks || []; state.tree = json.goalTree; render(); return true; });
+    return api('/api/study').then(function (json) { studyCache = json; window[STUDY_DATA_CACHE_KEY] = json; state.tasks = json.tasks || []; state.tree = json.goalTree; render(); return true; });
   } };
 })();

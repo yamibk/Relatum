@@ -3739,6 +3739,8 @@
   let activityLoadPromise = null;
   let activityPreloadHandle = 0;
   let activityPreloadUsesIdle = false;
+  let studyPreloadHandle = 0;
+  let studyPreloadUsesIdle = false;
   let cadenceVisibleSyncFrame = 0;
   let cadenceYearWheelAccum = 0;
   let cadenceYearWheelTimer = 0;
@@ -4610,6 +4612,34 @@
       : window.setTimeout(warmActivity, 600);
   }
 
+  async function preloadStudy() {
+    studyPreloadHandle = 0;
+    studyPreloadUsesIdle = false;
+    if (studyLoaded) return true;
+    try {
+      const json = await api('/api/study');
+      applyStudyPayload(json);
+      studyLoaded = true;
+      window._relatumStudyData = json;
+      return true;
+    } catch (e) {
+      return false;   // 静默失败——用户还没请求，不应弹 toast
+    }
+  }
+
+  function scheduleStudyPreload() {
+    if (studyPreloadHandle || studyLoaded) return;
+    const warm = () => {
+      studyPreloadHandle = 0;
+      studyPreloadUsesIdle = false;
+      preloadStudy().catch(() => undefined);
+    };
+    studyPreloadUsesIdle = typeof window.requestIdleCallback === 'function';
+    studyPreloadHandle = studyPreloadUsesIdle
+      ? window.requestIdleCallback(warm, { timeout: 1500 })
+      : window.setTimeout(warm, 600);
+  }
+
   function cancelCadenceVisibleSync() {
     if (!cadenceVisibleSyncFrame) return;
     window.cancelAnimationFrame(cadenceVisibleSyncFrame);
@@ -4683,6 +4713,7 @@
     },
   };
   scheduleActivityPreload();
+  scheduleStudyPreload();
 
   function moveTask(id, status) {
     var task = findTask(id);
@@ -4904,6 +4935,7 @@
       if (requestId !== studyRefreshSeq) return false;
       applyStudyPayload(json);
       studyLoaded = true;
+      window._relatumStudyData = json;
       render();
       invalidateActivity();   // 顺带刷新一年活跃热力图
       return true;

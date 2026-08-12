@@ -89,6 +89,13 @@
 .study-route-viewport.is-panning { cursor: grabbing; }
 .study-route-scene { position: absolute; left: 0; top: 0; opacity: 0; transform-origin: 0 0; transition: opacity 260ms ease-out; }
 .study-route-overlay.is-visible .study-route-scene { opacity: 1; transition-delay: 60ms; }
+.study-route-scene.is-loading::after {
+  content: ''; position: absolute; top: 50%; left: 50%; transform: translate3d(-50%,-50%,0);
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 3px solid var(--divider, #d9dfd6); border-top-color: var(--accent, #5b8c5a);
+  animation: study-route-spin .7s linear infinite;
+}
+@keyframes study-route-spin { to { transform: translate3d(-50%,-50%,0) rotate(360deg); } }
 .study-route-edges,
 .study-route-nodes { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .study-route-edge { fill: none; stroke: #c8cec5; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
