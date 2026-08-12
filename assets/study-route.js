@@ -20,7 +20,7 @@
   var confirmCloseTimer = 0, confirmMotionId = 0;
   var view = { x: 42, y: 42, zoom: 1 };
   var viewTarget = Object.assign({}, view), viewTickAt = 0;
-  var pan = null, drag = null, dragEndedAt = 0;
+  var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
   var layoutFrame = 0, summaryFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
   var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
@@ -57,9 +57,7 @@
     scene.style.transform = 'translate3d(' + view.x + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
   }
   function flushViewSave() {
-    if (!viewSaveTimer) return;
-    clearTimeout(viewSaveTimer);
-    viewSaveTimer = 0;
+    if (viewSaveTimer) { clearTimeout(viewSaveTimer); viewSaveTimer = 0; }
     try {
       localStorage.setItem(GOAL_TREE_ROUTE_VIEW_KEY, JSON.stringify({
         x: Math.round(view.x * 10) / 10,
@@ -123,6 +121,7 @@
       var friction = Math.exp(-.0045 * dt);
       vx *= friction; vy *= friction;
       if (Math.hypot(vx, vy) > .015) panInertiaFrame = requestAnimationFrame(step);
+      else saveViewSoon();
     }
     panInertiaFrame = requestAnimationFrame(step);
   }
@@ -797,6 +796,9 @@
     return ['branch', 'task'].includes(anchor.dataset.kind) ? anchor.dataset.nodeId : null;
   }
 
+  overlay.addEventListener('pointerdown', function (event) {
+    pointerDownInPopover = !!event.target.closest('.study-route-popover');
+  });
   overlay.addEventListener('click', function (event) {
     if (performance.now() - dragEndedAt < 220) return;
     var actionControl = event.target.closest('[data-route-action]');
@@ -825,7 +827,7 @@
       }
       return;
     }
-    if (!event.target.closest('.study-route-popover')) closePopover(false);
+    if (!event.target.closest('.study-route-popover') && !pointerDownInPopover) closePopover(false);
   });
   popover.addEventListener('click', function (event) {
     event.stopPropagation();
@@ -1143,6 +1145,7 @@
     var finished = pan;
     pan = null; viewport.classList.remove('is-panning');
     try { viewport.releasePointerCapture(event.pointerId); } catch (error) {}
+    saveViewSoon();
     if (event.type === 'pointerup' && finished.moved) startPanInertia(finished);
   }
   viewport.addEventListener('pointerup', endPan);
