@@ -347,7 +347,7 @@
       element.className = 'study-route-node is-' + placement.kind
         + ((placement.metrics || {}).complete && placement.kind !== 'root' ? ' is-complete' : '')
         + (placement.availability && !placement.availability.available ? ' is-blocked' : '')
-        + (isNew && !prefersReduced ? ' is-entering' : '');
+        + (isNew && !prefersReduced && !((placement.metrics || {}).complete && placement.kind !== 'root') ? ' is-entering' : '');
       element.dataset.nodeId = placement.id; element.dataset.kind = placement.kind;
       if (placement.kind === 'task') element.dataset.taskId = placement.node.taskId;
       else delete element.dataset.taskId;
