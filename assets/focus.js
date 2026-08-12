@@ -23,6 +23,7 @@
   const DUR_DEFAULT = { focus: 25, brk: 5, long: 15, rounds: 4 };
   const LOG_MIN_SEC = 60;
   const DAILY_DEPTH_MAX = 12;
+  const DAILY_MILESTONES_MAX = 50;
   const RING_R = 108;
   const RING_C = 2 * Math.PI * RING_R;
   const prefersReduced = (() => {
@@ -1874,7 +1875,7 @@
         seen.add(days);
         return true;
       })
-      .slice(0, 6)
+      .slice(0, DAILY_MILESTONES_MAX)
       .map((item, index) => ({
         id: String(item.id || ('dm_' + item.days + '_' + index)),
         name: item.name.trim(),
@@ -1903,6 +1904,8 @@
     const goal = dailyGoalState(task);
     const crossed = new Set(Array.isArray(opts.milestoneIds) ? opts.milestoneIds : []);
     const layout = dailyMilestoneLanes(dailyMilestoneList(task), goal.target);
+    layer.classList.toggle('is-dense', layout.length > 12);
+    layer.classList.toggle('is-very-dense', layout.length > 24);
     const keep = new Set(layout.map((entry) => entry.milestone.id));
     layer.querySelectorAll('.focus-daily-milestone').forEach((marker) => {
       if (keep.has(marker.dataset.milestoneId)) return;
@@ -2549,7 +2552,7 @@
       advanced.setAttribute('aria-disabled', enabled ? 'false' : 'true');
       advanced.setAttribute('data-ui-tooltip', enabled ? T('设置累计小目标') : T('请先设置累计目标'));
       const count = Array.isArray(dailyEditMilestones) ? dailyEditMilestones.length : 0;
-      advanced.textContent = T('高级设置') + (count ? ' · ' + count + '/6' : '');
+      advanced.textContent = T('高级设置') + (count ? ' · ' + count : '');
     };
     goalIn.addEventListener('input', updateAdvanced);
     goalField.append(goalSpan, goalIn);
@@ -2579,7 +2582,7 @@
     return box;
   }
   function cloneDailyMilestones(items) {
-    return (Array.isArray(items) ? items : []).slice(0, 6).map((item, index) => ({
+    return (Array.isArray(items) ? items : []).slice(0, DAILY_MILESTONES_MAX).map((item, index) => ({
       id: String(item && item.id || ('dm_draft_' + Date.now().toString(36) + '_' + index)),
       name: String(item && item.name || ''),
       days: Number(item && item.days) || 0,
@@ -2604,8 +2607,8 @@
     const count = dailyMilestoneDialog.querySelectorAll('.focus-daily-milestone-row:not(.is-leaving)').length;
     const add = dailyMilestoneDialog.querySelector('[data-action="daily-milestone-add"]');
     if (add) {
-      add.disabled = count >= 6;
-      add.textContent = count >= 6 ? T('已达到 6 个上限') : T('添加小目标') + ' · ' + count + '/6';
+      add.disabled = count >= DAILY_MILESTONES_MAX;
+      add.textContent = count >= DAILY_MILESTONES_MAX ? T('已达到 50 个安全上限') : T('添加小目标') + ' · ' + count;
     }
   }
   function appendDailyMilestoneDraftRow(item, animate) {
@@ -2719,7 +2722,7 @@
     head.append(heading, close);
     const intro = document.createElement('p');
     intro.className = 'focus-daily-milestone-intro';
-    intro.textContent = T('把累计目标拆成最多 6 个有名字的小目标。达成状态会根据累计打卡天数自动点亮。');
+    intro.textContent = T('把累计目标拆成有名字的小目标。达成状态会根据累计打卡天数自动点亮。');
     const list = document.createElement('div');
     list.className = 'focus-daily-milestone-list';
     list.dataset.role = 'daily-milestone-list';
@@ -2774,7 +2777,7 @@
       dailyMilestoneReturnEl = null;
       const row = dailyListEl && dailyListEl.querySelector('.focus-daily-row[data-id="' + dailyEditId + '"]');
       const button = row && row.querySelector('[data-role="daily-edit-advanced"]');
-      if (button) button.textContent = T('高级设置') + (dailyEditMilestones && dailyEditMilestones.length ? ' · ' + dailyEditMilestones.length + '/6' : '');
+      if (button) button.textContent = T('高级设置') + (dailyEditMilestones && dailyEditMilestones.length ? ' · ' + dailyEditMilestones.length : '');
       if (!instant && returnEl && returnEl.isConnected) returnEl.focus();
     };
     if (instant || prefersReduced) { finish(); return; }

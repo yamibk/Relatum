@@ -136,7 +136,7 @@ class DailyGoalTests(unittest.TestCase):
         restored = json.loads(app.DAILY_FILE.read_text(encoding="utf-8"))
         self.assertEqual(restored["tasks"][0]["name"], "backup value")
 
-    def test_create_and_update_six_sorted_milestones_with_stable_ids(self):
+    def test_create_and_update_many_sorted_milestones_with_stable_ids(self):
         source = [
             {"id": "finish", "name": "毕业", "days": 100},
             {"name": "第一周", "days": 7},
@@ -145,9 +145,13 @@ class DailyGoalTests(unittest.TestCase):
             {"name": "起步", "days": 1},
             {"name": "半程", "days": 50},
         ]
+        source.extend({"name": f"step-{day}", "days": day} for day in (2, 3, 14, 21, 75, 90))
         created = app.daily_create({"name": "阅读", "targetDays": 100, "milestones": source})
         task = created["tasks"][0]
-        self.assertEqual([item["days"] for item in task["milestones"]], [1, 7, 30, 50, 60, 100])
+        self.assertEqual(
+            [item["days"] for item in task["milestones"]],
+            [1, 2, 3, 7, 14, 21, 30, 50, 60, 75, 90, 100],
+        )
         self.assertEqual(task["milestones"][-1]["id"], "finish")
         self.assertTrue(all(item["id"] for item in task["milestones"]))
 
@@ -163,25 +167,25 @@ class DailyGoalTests(unittest.TestCase):
     def test_rejects_invalid_milestones_and_target_conflicts_atomically(self):
         created = app.daily_create({
             "name": "运动",
-            "targetDays": 30,
+            "targetDays": 100,
             "milestones": [{"id": "week", "name": "第一周", "days": 7}],
         })
         task_id = created["tasks"][0]["id"]
         invalid_sets = [
-            [{"name": str(index), "days": index + 1} for index in range(7)],
+            [{"name": str(index), "days": index + 1} for index in range(51)],
             [{"name": "", "days": 1}],
             [{"name": "x" * 41, "days": 1}],
             [{"name": "一", "days": 7}, {"name": "二", "days": 7}],
             [{"name": "零", "days": 0}],
             [{"name": "小数", "days": 1.5}],
-            [{"name": "超出", "days": 31}],
+            [{"name": "超出", "days": 101}],
         ]
         for milestones in invalid_sets:
             with self.subTest(milestones=milestones):
                 with self.assertRaises(ValueError):
                     app.daily_update({"id": task_id, "milestones": milestones})
                 current = app.daily_public_payload()["tasks"][0]
-                self.assertEqual(current["targetDays"], 30)
+                self.assertEqual(current["targetDays"], 100)
                 self.assertEqual(current["milestones"][0]["id"], "week")
 
         with self.assertRaises(ValueError):
@@ -189,7 +193,7 @@ class DailyGoalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.daily_update({"id": task_id, "targetDays": 0})
         current = app.daily_public_payload()["tasks"][0]
-        self.assertEqual(current["targetDays"], 30)
+        self.assertEqual(current["targetDays"], 100)
         self.assertEqual(current["milestones"][0]["days"], 7)
 
     def test_load_safely_cleans_corrupt_milestones(self):

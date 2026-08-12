@@ -20,7 +20,8 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-role="study-progress-list"',
   'data-role="study-progress-completed-column"',
   'data-role="study-completed-list"',
-  'data-action="study-today-placeholder"',
+  'data-action="study-goal-tree-open"',
+  'data-role="study-route-overlay"',
 ].forEach((needle) => assert(html.includes(needle), 'missing study progress markup: ' + needle));
 
 [
@@ -70,6 +71,9 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'const taskMutationChains = new WeakMap()',
   'queueTaskMutation(task, function ()',
   'data-role="study-milestone-list"',
+  'const STUDY_MILESTONES_MAX = 50',
+  "layer.classList.toggle('is-dense', layout.length > 12)",
+  "layer.classList.toggle('is-very-dense', layout.length > 24)",
   'state.trash = state.trash.slice(0, STUDY_TRASH_LIMIT)',
 ].forEach((needle) => assert(study.includes(needle), 'missing study progress behavior: ' + needle));
 
@@ -114,6 +118,8 @@ assert(i18n.includes("'目标已达成，可以手动标记完成': 'Goal reache
   'Study goal-ready text must remain translatable in both its compact and accessible forms');
 
 assert(!html.includes('data-role="focus-overlay"'), 'legacy study Today overlay remains');
+assert(!html.includes('study-today-placeholder') && !study.includes('今日任务面板将在后续版本开放'),
+  'legacy Today placeholder remains');
 assert(!html.includes('data-role="canvas-panel"'), 'legacy linked canvas panel remains');
 assert(!html.includes('data-role="calendar-task-panel"'), 'legacy calendar task drawer remains');
 assert(!calendar.includes('学习安排') && !calendar.includes('data-calendar-task="'),
@@ -132,6 +138,12 @@ assert(!backend.includes('if path == "/api/study-task-create-canvas"')
 
 [
   '.study-progress-card {',
+  '.study-progress-view { width: min(1440px, 100%);',
+  'grid-template-columns: minmax(0, 27fr) minmax(0, 23fr);',
+  'gap: 28px;',
+  'min-height: 110px;',
+  '.study-progress-card.is-completed { min-height: 78px;',
+  '@media (max-width: 940px)',
   '.study-progress-settings-popover {',
   '.study-progress-settings-popover.is-suspended {',
   'position: fixed; z-index: 70;',
