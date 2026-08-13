@@ -349,10 +349,20 @@
   }
 
   async function api(path, options) {
-    const response = await fetch(path, options);
-    const json = await response.json();
-    if (!response.ok) throw new Error(json.error || '操作失败');
-    return json;
+    // 本地接口 15s 兜底：服务端挂起时不再让任务 patch 链永久排队（与路线面板 api 对齐）
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(path, Object.assign({}, options, { signal: controller.signal }));
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || '操作失败');
+      return json;
+    } catch (error) {
+      if (error && error.name === 'AbortError') throw new Error(T('请求超时，请重试'));
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function post(path, body) {
@@ -471,12 +481,24 @@
     return request;
   }
 
+  // 树级命令（路线面板 / 设置弹窗）也纳入 flush 落地等待：
+  // 关面板后立即回收/恢复/归档时，避免旧快照把刚删/刚切的树写回主页状态。
+  var treeCommandChains = new Map();
+  var treeCommandSeq = 0;
+  function registerTreeCommand(promise) {
+    var id = ++treeCommandSeq;
+    var settled = Promise.resolve(promise).catch(function () {});
+    treeCommandChains.set(id, settled);
+    settled.then(function () { treeCommandChains.delete(id); });
+  }
+  window.StudyTreeCommands = { register: registerTreeCommand };
+
   // 全量刷新 / 回收 / 恢复 / 归档前，先等所有在途 patch 落地：
   // 这些流程会用服务端快照整体替换 state.tasks，若改名/进度 patch 还在排队，
   // 快照里是旧值，替换后 UI 会把刚提交的改动”打回原形”（改名丢失即由此而来）。
   function flushStudyMutations() {
     try {
-      var pending = Array.from(taskMutationChains.values());
+      var pending = Array.from(taskMutationChains.values()).concat(Array.from(treeCommandChains.values()));
       if (!pending.length) return Promise.resolve();
       var withTimeout = new Promise(function (_, reject) {
         setTimeout(function () { reject(new Error('flush timeout')); }, 5000);
@@ -523,12 +545,27 @@
   function activeGoalTree() {
     return state.goalTree;
   }
+  // 已删除树的折叠状态条目不再有意义：全量同步时清掉，避免 localStorage 缓慢累积
+  function pruneGoalTreeViewStates(trees) {
+    var live = {};
+    trees.forEach(function (tree) { live[tree.id] = true; });
+    var changed = false;
+    Object.keys(goalTreeViewStateByTree).forEach(function (treeId) {
+      if (!live[treeId]) { delete goalTreeViewStateByTree[treeId]; changed = true; }
+    });
+    if (changed) {
+      try { localStorage.setItem(GOAL_TREE_VIEW_KEY, JSON.stringify(goalTreeViewStateByTree)); } catch (e) {}
+    }
+  }
   function applyStudyPayload(payload) {
     if (!payload || typeof payload !== 'object') return;
     state.tasks = payload.tasks || [];
     state.trash = payload.trash || [];
     state.goalTree = payload.goalTree || (Array.isArray(payload.goalTrees) && payload.goalTrees[0]) || { version: 1, title: '我的学习路线', nodes: [] };
-    if (Array.isArray(payload.goalTrees) && payload.goalTrees.length) state.goalTrees = payload.goalTrees;
+    if (Array.isArray(payload.goalTrees) && payload.goalTrees.length) {
+      state.goalTrees = payload.goalTrees;
+      pruneGoalTreeViewStates(state.goalTrees);
+    }
     if (payload.activeTreeId) goalTreeActiveId = payload.activeTreeId;
     if (!state.goalTrees.some(function (tree) { return tree.id === goalTreeActiveId; })) {
       goalTreeActiveId = state.goalTrees[0] ? state.goalTrees[0].id : '';
@@ -541,7 +578,9 @@
     var body = Object.assign({ command: command }, payload || {});
     goalTreeCommandBusy = true;
     var request = goalTreeCommandChain.catch(function () {}).then(function () {
-      return post('/api/study-goal-tree-command', body);
+      var server = post('/api/study-goal-tree-command', body);
+      registerTreeCommand(server);
+      return server;
     }).then(function (json) {
       if (json.goalTree) state.goalTree = json.goalTree;
       if (Array.isArray(json.goalTrees)) state.goalTrees = json.goalTrees;
