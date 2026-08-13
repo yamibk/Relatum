@@ -931,14 +931,14 @@
     flushViewSave();
   }
   // ── 切树过渡（单画布）：旧树原地淡出（只调透明度），完全透明的瞬间换成新树
-  // 并从对侧滑入。屏幕位移 slideX 与摄像机变换在 applyView 单点合成，透明度由
-  // 同一 ticker 按帧写入（滑行期间压掉场景的 CSS opacity 过渡，避免双重缓动）。
-  // 淡出/滑入分设时长（easeOutCubic，帧率无关）。类级淡出机制保留给建树/删树
-  // 与陈旧快照回退路径。
+  // 并固定从屏幕右侧滑入（与切树方向无关）。屏幕位移 slideX 与摄像机变换在
+  // applyView 单点合成，透明度由同一 ticker 按帧写入（滑行期间压掉场景的 CSS
+  // opacity 过渡，避免双重缓动）。淡出/滑入分设时长（easeOutCubic，帧率无关）。
+  // 类级淡出机制保留给建树/删树与陈旧快照回退路径。
   var FADE_OUT_MS = 220;
   var SLIDE_IN_MS = 270;
   var slideX = 0;
-  var slide = null; // { direction, swap, phase: 'out'|'in', from, target, startAt, legMs, frame }
+  var slide = null; // { swap, phase: 'out'|'in', from, target, startAt, legMs, frame }
   function slideTick(timestamp) {
     var s = slide;
     if (!s) return;
@@ -962,12 +962,11 @@
       finishSlide();
     }
   }
-  function beginSlide(direction, swap) {
+  function beginSlide(swap) {
     scene.style.transition = 'none'; // 透明度由 ticker 逐帧写，压掉 CSS opacity 过渡
     if (slide) {
       // 连点换目标：旧树快进到完全透明（眼睛只看到「消失」），透明点立即执行换树，
       // 换树目标替换成新点击的树。
-      slide.direction = direction;
       slide.swap = swap;
       slide.phase = 'out';
       slide.legMs = FADE_OUT_MS;
@@ -977,7 +976,7 @@
       return;
     }
     slide = {
-      direction: direction, swap: swap,
+      swap: swap,
       phase: 'out', from: 0, target: 0, startAt: null, legMs: FADE_OUT_MS, frame: 0,
     };
     slide.frame = requestAnimationFrame(slideTick);
@@ -1029,11 +1028,11 @@
       if (!restoreView(treeId)) fit(true);
       animateRootEntrance();
       // 换树落定进入滑入相位：透明度立即复原（此刻仍在视口外），新场景左缘放到
-      // 对侧视口外（fit 后镜头即终值），滑回 0。
+      // 右侧视口外（fit 后镜头即终值），固定从右往左滑回 0。
       var s = slide;
       if (s) {
         s.phase = 'in';
-        s.from = s.direction * (viewport.clientWidth + 12 + Math.max(0, -view.x));
+        s.from = viewport.clientWidth + 12 + Math.max(0, -view.x);
         s.target = 0;
         s.startAt = null;
         s.legMs = SLIDE_IN_MS;
@@ -1042,12 +1041,9 @@
         applyView();
       }
     };
-    // 方向语义沿用起步页翻页：序号前进 → 新树从右进；后退 → 从左进。旧树原地淡出
-    // 不分方向。减动效直接落位。
-    var toIndex = state.trees.findIndex(function (tree) { return tree.id === treeId; });
-    var fromIndex = state.trees.findIndex(function (tree) { return tree.id === previousTreeId; });
+    // 入场方向固定从右往左，与 rail 序号无关。减动效直接落位。
     if (prefersReduced) performSwap();
-    else beginSlide(toIndex > fromIndex ? 1 : -1, performSwap);
+    else beginSlide(performSwap);
     return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true, optimistic: true }).catch(function (error) {
       if (requestId !== routeRequestId) throw error;
       // 落盘失败：若视觉已换过去，停掉在途过渡，淡出回退原树并恢复其镜头，
@@ -1071,7 +1067,7 @@
         requestAnimationFrame(applyRevert);
         window.setTimeout(endTreeTransition, TURN_OUT_MS);
       } else {
-        // 视觉未换（出滑还在途）：撤销离屏点的换树，场景原样滑回；
+        // 视觉未换（淡出还在途）：撤销透明点的换树，场景原样滑回；
         // 抢跑的 rail 高亮与滑块也一并滑回权威活动树。
         cancelSlideSwap(performSwap);
         renderRail();
