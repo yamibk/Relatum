@@ -912,15 +912,49 @@
     applyView();
     flushViewSave();
   }
+  // 乐观切换的淡出节奏：与 --start-turn-out-fade-ms（99ms）对齐，淡出落定即回淡入，
+  // 让切树动画完全在本地完成，不等落盘往返。
+  var TURN_OUT_MS = 99;
   function switchTree(treeId) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
     settleViewThenSave();
+    var previousTreeId = state.activeTreeId;
+    var requestId = routeRequestId;
+    var target = state.trees.find(function (tree) { return tree.id === treeId; });
     beginTreeTransition();
-    return command({ command: 'switch-tree', treeId: treeId }).then(function () {
-      if (!restoreView(state.activeTreeId)) fit(true);
-      animateRootEntrance();
-    }).finally(endTreeTransition);
+    if (!target) {
+      // 本地没有该树全量数据（快照陈旧）：退回等待服务器回包再渲染。
+      return command({ command: 'switch-tree', treeId: treeId }).then(function () {
+        if (!restoreView(state.activeTreeId)) fit(true);
+        animateRootEntrance();
+      }).finally(endTreeTransition);
+    }
+    // 乐观切换：/api/study 快照已带全部树的节点数据，点击瞬间本地换树，
+    // 落盘请求后台进行。纪元在此推进，作废点击前在途的旧快照（响应落地后
+    // command 还会再推进一次，作废飞行期间取到的旧快照）。
+    treeEpoch++;
+    state.activeTreeId = treeId;
+    state.tree = target;
+    render({ duration: 320 });
+    renderRail();
+    if (!restoreView(treeId)) fit(true);
+    animateRootEntrance();
+    window.setTimeout(endTreeTransition, TURN_OUT_MS);
+    return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true }).catch(function (error) {
+      if (requestId !== routeRequestId) throw error;
+      // 落盘失败：画布回退到原树并恢复其镜头，保持本地与服务端一致；
+      // 错误继续上抛，走 ignoreBusy 的静默/提示规则。
+      state.activeTreeId = previousTreeId;
+      var previous = state.trees.find(function (tree) { return tree.id === previousTreeId; });
+      if (previous) state.tree = previous;
+      beginTreeTransition();
+      render({ duration: 1 });
+      renderRail();
+      restoreView(previousTreeId);
+      window.setTimeout(endTreeTransition, TURN_OUT_MS);
+      throw error;
+    });
   }
   function createTree() {
     if (busy) return Promise.reject(new Error(T('请稍候')));
