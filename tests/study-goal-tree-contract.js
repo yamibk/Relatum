@@ -71,6 +71,10 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'function switchTree(treeId)',
   'function createTree()',
   'function deleteTree()',
+  'function beginTreeTransition()',
+  'function endTreeTransition()',
+  'function animateRootEntrance()',
+  "scene.classList.add('is-fading')",
   'data-route-pop="delete-tree"',
   "state.tree.id !== 'goal_legacy'",
   'var treeAtRequest = state.activeTreeId',
@@ -98,6 +102,10 @@ assert(!route.includes('set-focus') && !route.includes('archive-tree'),
   '.study-route-rail.auto-hide',
   '.study-route-rail-item.is-active',
   '.study-route-rail-add',
+  '.study-route-scene.is-fading',
+  '.study-route-node.is-root.is-entering',
+  '@keyframes studyRouteRootIn',
+  'opacity var(--start-turn-out-fade-ms)',
   'body.start-page[data-start-theme="dark"] .study-route-panel',
   '@media (max-width: 700px)',
   '@media (prefers-reduced-motion: reduce)',
@@ -116,6 +124,9 @@ assert(routeStyles.includes('border-bottom: 0;'), 'route header divider must sta
 assert(routeStyles.includes('width 520ms cubic-bezier(.22,1,.36,1)'),
   'route progress bars must retain forward/reverse easing');
 assert(routeStyles.includes('will-change: transform'), 'active drag must bypass CSS lag');
+const routeReducedBlock = routeStyles.slice(routeStyles.indexOf('@media (prefers-reduced-motion: reduce)'));
+assert(routeReducedBlock.includes('.study-route-rail-orb'),
+  'reduced motion must snap the rail orb instead of sliding');
 
 [
   '"version": 5',

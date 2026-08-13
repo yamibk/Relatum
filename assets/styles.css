@@ -212,6 +212,12 @@
 .study-route-viewport.is-panning { cursor: grabbing; }
 .study-route-scene { position: absolute; left: 0; top: 0; opacity: 0; transform-origin: 0 0; transition: opacity 260ms ease-out; }
 .study-route-overlay.is-visible .study-route-scene { opacity: 1; transition-delay: 60ms; }
+/* 切树瞬间画布快速淡出（复用起步页翻页的出场节奏 token），落定后随新树形变一起淡入 */
+.study-route-overlay.is-visible .study-route-scene.is-fading {
+  opacity: 0;
+  transition: opacity var(--start-turn-out-fade-ms) ease;
+  transition-delay: 0s;
+}
 .study-route-scene.is-loading::after {
   content: ''; position: absolute; top: 50%; left: 50%; transform: translate3d(-50%,-50%,0);
   width: 32px; height: 32px; border-radius: 50%;
@@ -254,6 +260,12 @@
 body.study-route-node-dragging { cursor: grabbing !important; user-select: none; }
 @keyframes studyRouteNodeIn {
   from { opacity: 0; transform: translate3d(-13px, 5px, 0) scale(.975); }
+  to { opacity: 1; transform: none; }
+}
+/* 新树的根卡比普通节点稍强的登场：更大缩放与上浮，作为新树"落地"的锚点 */
+.study-route-node.is-root.is-entering { animation: studyRouteRootIn 390ms var(--easing-soft, cubic-bezier(.22, 1, .36, 1)) both; }
+@keyframes studyRouteRootIn {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.94); }
   to { opacity: 1; transform: none; }
 }
 .study-route-node.is-root,
@@ -599,6 +611,8 @@ body.start-page[data-start-theme="dark"] .study-route-menu button:hover { backgr
   .study-route-panel,
   .study-route-head > *,
   .study-route-scene,
+  .study-route-rail,
+  .study-route-rail-orb,
   .study-route-fit,
   .study-route-popover,
   .study-route-popover.is-swapping > *,
