@@ -18,8 +18,11 @@
   var stageEl = overlay.querySelector('.study-route-stage');
   var T = function (value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; };
   var state = { tasks: [], tree: { version: 1, title: '我的学习路线', nodes: [] }, trees: [], activeTreeId: '' };
-  var open = false, busy = false, layout = null, lastTrigger = null, confirmAction = null;
+  var open = false, busy = false, layout = null, confirmAction = null;
   var routeRequestId = 0, routeCloseTimer = 0;
+  // 树命令纪元：切/建/删树时递增。后台 /api/study 快照若取自纪元变化之前
+  // （即切树前），落地时必须丢弃，否则会把刚完成的切换静默回退。
+  var treeEpoch = 0;
   var popoverCloseTimer = 0, popoverSwapTimer = 0, popoverMotionId = 0;
   var confirmCloseTimer = 0, confirmMotionId = 0;
   var view = { x: 42, y: 42, zoom: 1 };
@@ -833,7 +836,15 @@
     }
     var treeAtRequest = state.activeTreeId;
     var shouldFit = ['create-branch', 'create-task', 'attach-task'].includes(sent.command);
+    var requestId = routeRequestId;
     return post('/api/study-goal-tree-command', sent).then(function (json) {
+      // 响应落地前面板已关闭或重开（代际变化）：不再碰状态与 DOM，
+      // 避免旧响应向隐藏 overlay 重建整棵树、或覆盖重开后新树的渲染；下次打开会全量拉取。
+      if (requestId !== routeRequestId) return json;
+      // 树级命令成功落地才推进纪元，此后在途的旧 /api/study 快照全部失效。
+      if (sent.command === 'switch-tree' || sent.command === 'create-tree' || sent.command === 'delete-tree') {
+        treeEpoch++;
+      }
       if (json.task) state.tasks.push(json.task);
       if (sent.command === 'switch-tree') {
         state.activeTreeId = json.treeId || '';
@@ -888,10 +899,19 @@
       rootEnterTimer = 0;
     }, 420);
   }
+  // 树命令前先把镜头动画停掉、钉到目标值再落盘：
+  // 保存的是用户意图的最终镜头，而不是缓动中间帧（与 closeRoute 同款处理）。
+  function settleViewThenSave() {
+    stopViewAnimation();
+    stopPanInertia();
+    view = Object.assign({}, viewTarget);
+    applyView();
+    flushViewSave();
+  }
   function switchTree(treeId) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
-    flushViewSave();
+    settleViewThenSave();
     beginTreeTransition();
     return command({ command: 'switch-tree', treeId: treeId }).then(function () {
       if (!restoreView(state.activeTreeId)) fit(true);
@@ -900,7 +920,7 @@
   }
   function createTree() {
     if (busy) return Promise.reject(new Error(T('请稍候')));
-    flushViewSave();
+    settleViewThenSave();
     beginTreeTransition();
     return command({ command: 'create-tree' }, { duration: 320 }).then(function () {
       if (!restoreView(state.activeTreeId)) fit(true);
@@ -909,7 +929,7 @@
   }
   function deleteTree() {
     if (busy) return Promise.reject(new Error(T('请稍候')));
-    flushViewSave();
+    settleViewThenSave();
     var removedTreeId = state.activeTreeId;
     beginTreeTransition();
     return command({ command: 'delete-tree', treeId: state.activeTreeId }, { duration: 320 }).then(function () {
@@ -919,9 +939,11 @@
     }).finally(endTreeTransition);
   }
   function showError(error) {
+    var message = error && error.message;
+    if (error && error.name === 'AbortError') message = T('请求超时，请重试');
     var target = popover.querySelector('[data-role="route-form-error"]');
-    if (target) target.textContent = error.message || String(error);
-    else window.alert(error.message || String(error));
+    if (target) target.textContent = message || String(error);
+    else window.alert(message || String(error));
   }
   function updateTask(task, patch, options) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
@@ -1024,14 +1046,16 @@
   }
   function openRoute(trigger, taskId) {
     var requestId = ++routeRequestId;
-    lastTrigger = trigger && trigger.isConnected ? trigger : document.activeElement;
     showOverlay();
     if (studyCache && studyCache.tasks) {
       applyStudyPayload(studyCache, requestId, taskId);
+      var epoch = treeEpoch;
       api('/api/study').then(function (json) {
         if (!json || !json.tasks) return;
+        // 快照取自切树前（纪元已推进）或面板已关/重开：丢弃，避免旧快照回退切换；
+        // 也不更新 studyCache，防止下次打开先把回退态闪出来。
+        if (epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
-        if (!open || requestId !== routeRequestId) return;
         state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
         applyTreePayloadInitial(json);
         render();
@@ -1046,7 +1070,9 @@
       applyStudyPayload(shared, requestId, taskId);
       return;
     }
+    var epoch = treeEpoch;
     api('/api/study').then(function (json) {
+      if (epoch !== treeEpoch) return;
       studyCache = json;
       window[STUDY_DATA_CACHE_KEY] = json;
       applyStudyPayload(json, requestId, taskId);
@@ -1060,6 +1086,7 @@
     if (!open) return;
     setRailVisible(false);
     endTreeTransition();
+    railOrbY = null;  // 滑块位置随画布一起失效，下次打开直接落位，不做跨会话飞行
     ++routeRequestId;
     if (routeCloseTimer) clearTimeout(routeCloseTimer);
     if (drag) finishDrag(true);
@@ -1116,7 +1143,7 @@
       if (action === 'fit') return fit();
       if (action === 'confirm-cancel') return closeConfirm();
       if (action === 'confirm-ok') {
-        var pending = confirmAction; closeConfirm(); if (pending) Promise.resolve(pending()).catch(showError); return;
+        var pending = confirmAction; closeConfirm(); if (pending) Promise.resolve(pending()).catch(ignoreBusy); return;
       }
       var anchor = actionControl.closest('.study-route-node');
       if (!anchor) return;
@@ -1130,7 +1157,7 @@
       }
       if (action === 'complete') {
         var completeTask = findTask(anchor.dataset.taskId);
-        if (completeTask) updateTask(completeTask, { status: completeTask.status === 'done' ? 'active' : 'done' }).catch(showError);
+        if (completeTask) updateTask(completeTask, { status: completeTask.status === 'done' ? 'active' : 'done' }).catch(ignoreBusy);
       }
       return;
     }
@@ -1425,7 +1452,7 @@
           .catch(function (error) {
             state.tree = current.baseTree;
             render({ duration: 260, preserveViewAnchor: 'root' });
-            showError(error);
+            ignoreBusy(error);
           });
       } else {
         state.tree = current.baseTree; render({ duration: 260, preserveViewAnchor: 'root' });
@@ -1521,7 +1548,9 @@
   });
   window.StudyRoute = { open: function (taskId, trigger) { openRoute(trigger, taskId); }, close: closeRoute, prefetch: prefetchStudyData, refresh: function () {
     if (!open) return Promise.resolve(false);
+    var epoch = treeEpoch;
     return api('/api/study').then(function (json) {
+      if (epoch !== treeEpoch) return false;
       studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
       state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
       applyTreePayloadInitial(json);

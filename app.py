@@ -1879,6 +1879,20 @@ def _study_goal_title(value: object, fallback: str) -> str:
     return (str(value or "").strip() or fallback)[:STUDY_GOAL_TREE_TITLE_MAX]
 
 
+def _study_goal_next_title(trees: list) -> str:
+    # 从现有标题里找最大的“目标 N”编号接续，避免删除后重建产生同名树
+    numbers: list[int] = []
+    for item in trees:
+        title = str((item or {}).get("title") or "")
+        match = re.match(r"^目标\s*(\d+)$", title)
+        if match:
+            try:
+                numbers.append(int(match.group(1)))
+            except ValueError:
+                pass
+    return "目标 " + str(max(numbers, default=0) + 1)
+
+
 def _study_goal_note(value: object) -> str:
     return str(value or "")[:STUDY_GOAL_TREE_NOTE_MAX]
 
@@ -5508,7 +5522,7 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
         if len(trees) >= STUDY_GOAL_TREES_MAX:
             raise ValueError("目标树数量已达到安全上限")
         title = _study_goal_title(body.get("title"), "")
-        tree = _study_goal_new_tree(title or "目标 " + str(len(trees) + 1), len(trees))
+        tree = _study_goal_new_tree(title or _study_goal_next_title(trees), len(trees))
         trees.append(tree)
         data["activeTreeId"] = tree["id"]
         data["goalTree"] = tree

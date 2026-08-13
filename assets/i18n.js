@@ -97,6 +97,7 @@
     '分支名称': 'Branch name', '添加分支': 'Add branch', '任务名称': 'Task name', '创建任务': 'Create task',
     '加入路线': 'Add to route', '没有可加入的学习任务': 'No available study task', '名称': 'Name',
     '当前进度': 'Current progress', '请稍候': 'Please wait', '已移除任务': 'Removed task',
+    '请求超时，请重试': 'Request timed out, please retry',
     '从路线移出任务？': 'Remove this task from the route?', '任务仍会保留在学习页。': 'The task will remain on the Study page.',
     '删除这个分支？': 'Delete this branch?',
     '整段分支会从路线移除，其中的学习任务仍保留在学习页。': 'The whole branch will leave the route; its study tasks will remain.',

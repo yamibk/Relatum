@@ -459,7 +459,7 @@
       // 多目标树：请求期间若已切换活动树，丢弃旧树快照，只同步全量与活动树 id
       if (json.goalTree && (!json.activeTreeId || json.activeTreeId === treeAtRequest)) state.goalTree = json.goalTree;
       if (Array.isArray(json.goalTrees)) state.goalTrees = json.goalTrees;
-      if (json.activeTreeId) goalTreeActiveId = json.activeTreeId;
+      if (json.activeTreeId && json.activeTreeId === treeAtRequest) goalTreeActiveId = json.activeTreeId;
       if (taskUpdateSeq.get(task) === seq) Object.assign(task, json.task);
       else {
         task.updatedAt = json.task.updatedAt || task.updatedAt;
@@ -510,7 +510,15 @@
 
   // ── 目标树：现有学习任务之上的可选长期目标组织层 ──────────────
   function goalTreeOwner(taskId) {
-    return GoalTree ? GoalTree.taskOwner(state.goalTree, taskId) : null;
+    if (!GoalTree) return null;
+    // 任务可能挂在多棵树上：逐棵查找，归属显示与移出入口不再只看活动树。
+    var trees = Array.isArray(state.goalTrees) && state.goalTrees.length
+      ? state.goalTrees : (state.goalTree ? [state.goalTree] : []);
+    for (var i = 0; i < trees.length; i++) {
+      var owner = GoalTree.taskOwner(trees[i], taskId);
+      if (owner) return owner;
+    }
+    return null;
   }
   function activeGoalTree() {
     return state.goalTree;
@@ -3700,7 +3708,7 @@
       // 多目标树：请求期间若已切换活动树，丢弃旧树快照
       if (json.goalTree && (!json.activeTreeId || json.activeTreeId === treeAtRequest)) state.goalTree = json.goalTree;
       if (Array.isArray(json.goalTrees)) state.goalTrees = json.goalTrees;
-      if (json.activeTreeId) goalTreeActiveId = json.activeTreeId;
+      if (json.activeTreeId && json.activeTreeId === treeAtRequest) goalTreeActiveId = json.activeTreeId;
       if (taskProgressSeq.get(task) === seq) {
         var serverProgress = taskProgress(json.task || {});
         var needsReconcile = serverProgress.current !== taskProgress(task).current
