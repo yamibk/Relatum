@@ -475,9 +475,23 @@
     }
     return null;
   }
+  function reconcileStudyTaskSnapshots(snapshots) {
+    var currentById = new Map(state.tasks.map(function (task) { return [task.id, task]; }));
+    return (Array.isArray(snapshots) ? snapshots : []).map(function (snapshot) {
+      var current = snapshot && currentById.get(snapshot.id);
+      if (!current) return snapshot;
+      Object.keys(current).forEach(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(snapshot, key)) delete current[key];
+      });
+      Object.assign(current, snapshot);
+      return current;
+    });
+  }
   function applyStudyPayload(payload) {
     if (!payload || typeof payload !== 'object') return;
-    state.tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+    // 卡片 DOM 会跨刷新复用，事件处理器也会继续引用原任务对象。目标树修改进度后
+    // 必须按 id 原地合并服务端快照，否则卡片虽显示新进度，±1 等操作仍会读取旧值。
+    state.tasks = reconcileStudyTaskSnapshots(payload.tasks);
     state.trash = Array.isArray(payload.trash) ? payload.trash : [];
     state.goalTrees = Array.isArray(payload.goalTrees) ? payload.goalTrees : [];
     goalTreeActiveId = payload.activeTreeId || (state.goalTrees[0] && state.goalTrees[0].id) || '';

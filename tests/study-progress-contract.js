@@ -70,6 +70,8 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   "window.addEventListener('pagehide', stopStudyGoalBreath)",
   'const taskMutationChains = new WeakMap()',
   'queueTaskMutation(task, function ()',
+  'function reconcileStudyTaskSnapshots(snapshots)',
+  'state.tasks = reconcileStudyTaskSnapshots(payload.tasks)',
   'data-role="study-milestone-list"',
   'const STUDY_MILESTONES_MAX = 50',
   "layer.classList.toggle('is-dense', layout.length > 12)",
@@ -81,6 +83,27 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
 
 assert(!study.includes('taskProgressChains') && !study.includes('taskUpdateChains'),
   'Study task writes still use independent queues that can race each other');
+
+const studyPayloadSection = study.slice(study.indexOf('function reconcileStudyTaskSnapshots'), study.indexOf('function openGoalTree'));
+assert(studyPayloadSection.includes('currentById.get(snapshot.id)')
+  && studyPayloadSection.includes('Object.assign(current, snapshot)')
+  && !studyPayloadSection.includes('state.tasks = Array.isArray(payload.tasks) ? payload.tasks : []'),
+  'Study snapshots must preserve task object identity for event handlers on reused cards');
+const makeSnapshotReconciler = new Function('state', studyPayloadSection
+  + '\nreturn reconcileStudyTaskSnapshots;');
+const retainedTask = { id: 'task-a', title: '旧标题', progress: { current: 0, target: 10 }, obsolete: true };
+const snapshotState = { tasks: [retainedTask] };
+const reconciledTasks = makeSnapshotReconciler(snapshotState)([
+  { id: 'task-a', title: '新标题', progress: { current: 1, target: 10 } },
+  { id: 'task-b', title: '新任务', progress: { current: 0, target: 3 } },
+]);
+assert.strictEqual(reconciledTasks[0], retainedTask,
+  'a refreshed task must keep the object captured by existing card event handlers');
+assert.strictEqual(retainedTask.progress.current, 1,
+  'the retained task object must receive progress changed from the goal tree');
+assert(!Object.prototype.hasOwnProperty.call(retainedTask, 'obsolete'),
+  'fields absent from an authoritative task snapshot must not linger');
+assert.strictEqual(reconciledTasks[1].id, 'task-b', 'new tasks must still enter the Study snapshot');
 
 const taskRowSection = study.slice(study.indexOf('function taskRow(task)'), study.indexOf('function listQuickAdd()'));
 const progressCardSection = study.slice(study.indexOf('function buildProgressCard(task, completed)'), study.indexOf('function cardProgressStructureOk'));
