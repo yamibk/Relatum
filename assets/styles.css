@@ -582,14 +582,14 @@ button.study-route-task-state:hover { color: #4d5c50; text-decoration: underline
   min-height: 38px;
   padding: 7px 9px;
   color: #282d28;
-  background: #f3f5f1;
-  border: 1px solid transparent;
+  background: #fff;
+  border: 1px solid #dedfdb;
   border-radius: 9px;
   outline: none;
   font: 550 12px/1.4 var(--font-ui);
 }
 .study-route-popover input:focus,
-.study-route-popover select:focus { background: #fff; border-color: #83968a; box-shadow: 0 0 0 3px rgba(93,123,102,.10); }
+.study-route-popover select:focus { background: #fff; border-color: #737b74; box-shadow: 0 0 0 2px rgba(41,48,42,.08); }
 .study-route-popover form > button,
 .study-route-menu button {
   min-height: 38px;
