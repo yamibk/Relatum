@@ -34,6 +34,7 @@
   var confirmCloseTimer = 0, confirmMotionId = 0;
   var view = { x: 42, y: 42, zoom: 1 };
   var viewTarget = Object.assign({}, view), viewTickAt = 0;
+  var viewportSize = { width: 0, height: 0 };
   var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
   var collapseMotion = null;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
@@ -403,6 +404,33 @@
       y: ay - (ay - viewTarget.y) * (zoom / old),
       zoom: zoom,
     });
+  }
+  function readViewportSize() {
+    var rect = viewport.getBoundingClientRect();
+    return { width: Math.max(0, rect.width), height: Math.max(0, rect.height) };
+  }
+  function preserveViewOnResize() {
+    if (!open) return;
+    closePopover(false);
+    var next = readViewportSize();
+    if (!next.width || !next.height) return;
+    if (viewportSize.width && viewportSize.height) {
+      var deltaX = (next.width - viewportSize.width) / 2;
+      var deltaY = (next.height - viewportSize.height) / 2;
+      if (Math.abs(deltaX) > .01 || Math.abs(deltaY) > .01) {
+        view.x += deltaX;
+        view.y += deltaY;
+        viewTarget.x += deltaX;
+        viewTarget.y += deltaY;
+        if (pan) {
+          pan.ox += deltaX;
+          pan.oy += deltaY;
+        }
+        applyView();
+        saveViewSoon();
+      }
+    }
+    viewportSize = next;
   }
   function edgePath(from, to) {
     var reverse = to.x + to.width / 2 < from.x + from.width / 2;
@@ -1498,6 +1526,7 @@
     endTreeTransition();
     void overlay.offsetWidth;
     overlay.classList.add('is-visible');
+    viewportSize = readViewportSize();
   }
   function focusRequestedTask(requestId, taskId) {
     requestAnimationFrame(function () {
@@ -2202,7 +2231,7 @@
     event.preventDefault();
     createTree().catch(ignoreBusy);
   });
-  window.addEventListener('resize', function () { if (open) { closePopover(false); fit(); } });
+  window.addEventListener('resize', preserveViewOnResize);
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);
   });
