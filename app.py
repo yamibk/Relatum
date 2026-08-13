@@ -5545,18 +5545,16 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
         tree = _study_goal_tree(data, body.get("treeId"))
         trees = data["goalTrees"]
         index = next(i for i, candidate in enumerate(trees) if candidate["id"] == tree["id"])
+        # The first (original) tree is immortal: `goal_legacy` for migrated data,
+        # or the auto-created "目标 1" on fresh installs. The list is sorted by
+        # (order, createdAt, id), so position 0 is always the original tree.
+        if index == 0:
+            raise ValueError("第一棵目标树不能删除")
         removed = trees.pop(index)
-        if not trees:
-            replacement = _study_goal_new_tree("目标 1", 0)
-            trees.append(replacement)
-            data["activeTreeId"] = replacement["id"]
-            data["goalTree"] = replacement
-            result.update({"treeId": replacement["id"], "createdTreeId": replacement["id"]})
-        else:
-            active = trees[min(index, len(trees) - 1)]
-            data["activeTreeId"] = active["id"]
-            data["goalTree"] = active
-            result["treeId"] = active["id"]
+        active = trees[min(index, len(trees) - 1)]
+        data["activeTreeId"] = active["id"]
+        data["goalTree"] = active
+        result["treeId"] = active["id"]
         for order, candidate in enumerate(trees):
             candidate["order"] = order
         result["removedTreeId"] = removed["id"]

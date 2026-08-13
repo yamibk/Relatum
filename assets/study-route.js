@@ -788,7 +788,8 @@
       + '</button><button type="button" data-route-pop="settings">' + T('设置进度')
       + '</button><button type="button" class="is-danger" data-route-pop="detach">' + T('移出路线') + '</button>';
     else if (kind === 'branch') html += '<button type="button" class="is-danger" data-route-pop="delete-branch">' + T('删除分支') + '</button>';
-    else if (kind === 'root' && state.tree.id !== 'goal_legacy') html += '<button type="button" class="is-danger" data-route-pop="delete-tree">' + T('删除目标树') + '</button>';
+    // 第一棵（最初）目标树永远不可删除：旧数据是 goal_legacy，全新安装是自动创建的「目标 1」
+    else if (kind === 'root' && state.tree.id !== (state.trees[0] || {}).id) html += '<button type="button" class="is-danger" data-route-pop="delete-tree">' + T('删除目标树') + '</button>';
     html += '</div>';
     openPopover(anchor, html);
   }
