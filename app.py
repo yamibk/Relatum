@@ -8826,14 +8826,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 task["progress"] = _study_progress(
                     body["progress"], old.get("progress"), strict=True, allow_current=True
                 )
+            data["tasks"][index] = task
+            save_study(data)
         except KeyError as err:
             return self._send_json(404, {"error": str(err)})
         except ValueError as err:
-            return self._send_json(400, {"error": str(err)})
+            message = str(err)
+            if message == "前置任务点不存在" and isinstance(body.get("progress"), dict):
+                message = "任务点仍被目标树引用；请先移除对应的解锁条件"
+            return self._send_json(400, {"error": message})
         except RuntimeError as err:
             return self._send_json(409, {"error": str(err)})
-        data["tasks"][index] = task
-        save_study(data)
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存学习任务失败：{err}"})
         self._send_json(200, {
             "task": task,
             "goalTrees": data.get("goalTrees"),
