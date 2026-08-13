@@ -301,6 +301,9 @@
             <div class="study-progress-actions">
               <button type="button" class="study-progress-today" data-action="study-goal-tree-open"
                 aria-haspopup="dialog" aria-controls="study-goal-tree-panel">目标树</button>
+              <button type="button" class="study-route-help-trigger study-goal-tree-help"
+                data-action="study-goal-tree-help" aria-label="目标树使用教程"
+                aria-haspopup="dialog" aria-controls="study-goal-tree-panel" aria-expanded="false">?</button>
               <button type="button" class="study-progress-trash" data-action="study-trash" aria-label="任务回收站" title="任务回收站">♲</button>
               <button type="button" class="study-progress-create" data-action="study-compose-toggle" aria-label="新建学习任务" aria-expanded="false">＋</button>
             </div>
@@ -335,9 +338,7 @@
           <header class="study-route-head">
             <div class="study-route-title-group">
               <p class="study-eyebrow">GOAL TREE</p>
-              <div><h2 id="study-goal-tree-title">目标树</h2>
-                <button type="button" class="study-route-help-trigger" data-route-action="help"
-                  aria-label="目标树使用教程" aria-expanded="false">?</button></div>
+              <h2 id="study-goal-tree-title">目标树</h2>
             </div>
             <div class="study-route-summary" data-role="study-route-summary"></div>
             <button type="button" class="study-route-close" data-route-action="close" aria-label="关闭目标树">×</button>

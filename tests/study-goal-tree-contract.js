@@ -20,6 +20,7 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-role="study-route-rail"',
   'data-role="study-route-guide"',
   'data-role="goal-tree-simple-toggle"',
+  'data-action="study-goal-tree-help"',
 ].forEach((needle) => assert(html.includes(needle), 'missing route markup: ' + needle));
 
 [
@@ -54,10 +55,20 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   "element.classList.remove('is-entering', 'is-expanding')",
   'newNodesAtDestination',
   'function setCollapseControlExpanded(nodeId, expanded)',
+  "title: '一分钟开始使用'",
+  "title: '下一步做什么'",
+  "title: '阶段与进度'",
+  "title: '箭头、解锁与高级编辑'",
+  "document.querySelectorAll('[data-action=\"study-goal-tree-help\"]')",
+  'help: function (trigger)',
   'expandingControlIds: new Set([nodeId])',
   'revealingHiddenCountIds: new Set([motion.nodeId])',
   'hidingHiddenCountById: hidingHiddenCountById',
 ].forEach((needle) => assert(route.includes(needle), 'missing V4 route contract: ' + needle));
+const guideTitles = ['一分钟开始使用', '下一步做什么', '阶段与进度', '箭头、解锁与高级编辑'];
+guideTitles.slice(1).forEach((title, index) => {
+  assert(route.indexOf(guideTitles[index]) < route.indexOf(title), 'guide must put core actions before advanced concepts');
+});
 
 [
   '.study-route-edge.is-requires',
@@ -69,6 +80,7 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   '.study-route-requirements',
   '.study-route-progress-detail',
   '.study-route-guide',
+  '.study-goal-tree-help',
   '.study-route-node.is-collapsing',
   '.study-route-edge.is-collapsing',
   '.study-route-node.is-expanding',

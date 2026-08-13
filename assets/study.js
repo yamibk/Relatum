@@ -844,6 +844,19 @@
         if (window.StudyRoute) window.StudyRoute.open('', treeBtn);
       });
       actions.appendChild(treeBtn);
+      var treeHelpBtn = document.createElement('button');
+      treeHelpBtn.type = 'button';
+      treeHelpBtn.className = 'study-route-help-trigger study-goal-tree-help';
+      treeHelpBtn.dataset.action = 'study-goal-tree-help';
+      treeHelpBtn.setAttribute('aria-label', T('目标树使用教程'));
+      treeHelpBtn.setAttribute('aria-haspopup', 'dialog');
+      treeHelpBtn.setAttribute('aria-expanded', 'false');
+      treeHelpBtn.textContent = '?';
+      treeHelpBtn.addEventListener('click', function (event) {
+        event.stopPropagation();
+        if (window.StudyRoute) window.StudyRoute.help(treeHelpBtn);
+      });
+      actions.appendChild(treeHelpBtn);
       var archiveBtn = document.createElement('button');
       archiveBtn.type = 'button';
       archiveBtn.className = 'study-list-archive';
