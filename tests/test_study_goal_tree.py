@@ -293,7 +293,7 @@ class StudyGoalTreeTests(unittest.TestCase):
         reloaded = app.load_study()
         self.assertNotIn("color", app._study_goal_node(reloaded["goalTree"], node_id))
 
-    def test_create_switch_and_delete_trees_keep_active_invariant(self):
+    def test_first_tree_is_immortal_and_delete_keeps_active_invariant(self):
         app.save_study(self.data())
         data = app.load_study()
         first = data["activeTreeId"]
@@ -302,15 +302,21 @@ class StudyGoalTreeTests(unittest.TestCase):
         self.assertEqual(data["goalTree"]["title"], "目标 2")
         app.apply_study_goal_tree_command(data, {"command": "switch-tree", "treeId": first})
         self.assertEqual(data["activeTreeId"], first)
-        result = app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": first})
-        self.assertEqual(result["removedTreeId"], first)
-        self.assertEqual(data["activeTreeId"], second)
-        self.assertEqual([tree["order"] for tree in data["goalTrees"]], [0])
+        # 第一棵树（无论 goal_legacy 旧数据还是全新安装的「目标 1」）永远不可删除
+        with self.assertRaisesRegex(ValueError, "第一棵目标树不能删除"):
+            app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": first})
+        self.assertEqual(data["activeTreeId"], first)
+        self.assertEqual([tree["title"] for tree in data["goalTrees"]], ["目标 1", "目标 2"])
         result = app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": second})
-        self.assertEqual(result["createdTreeId"], data["activeTreeId"])
+        self.assertEqual(result["removedTreeId"], second)
+        self.assertEqual(data["activeTreeId"], first)
+        self.assertEqual([tree["order"] for tree in data["goalTrees"]], [0])
+        self.assertEqual(data["goalTrees"][0]["id"], first)
+        # 只剩第一棵树时依然不可删除，树列表永远不会被清空
+        with self.assertRaisesRegex(ValueError, "第一棵目标树不能删除"):
+            app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": first})
         self.assertEqual(len(data["goalTrees"]), 1)
-        self.assertEqual(data["goalTree"]["title"], "目标 1")
-        self.assertEqual(data["goalTree"]["nodes"], [])
+        self.assertEqual(data["goalTree"]["id"], first)
 
     def test_create_tree_title_skips_deleted_numbers(self):
         # 删除中间编号的树后新建：编号必须从现有最大值接续，不能重名

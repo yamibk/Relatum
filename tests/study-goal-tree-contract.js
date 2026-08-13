@@ -96,7 +96,7 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'function animateRootEntrance()',
   "scene.classList.add('is-fading')",
   'data-route-pop="delete-tree"',
-  "state.tree.id !== 'goal_legacy'",
+  "state.tree.id !== (state.trees[0] || {}).id",
   'var treeAtRequest = state.activeTreeId',
   'function settleViewThenSave()',
   'settleViewThenSave();',
@@ -175,6 +175,7 @@ assert(routeReducedBlock.includes('.study-route-rail-orb'),
   '这个任务已经在这棵目标树中',
   '这个任务不在当前目标树中',
   '没有找到这棵目标树',
+  '第一棵目标树不能删除',
 ].forEach((needle) => assert(backend.includes(needle), 'missing v5 backend contract: ' + needle));
 assert(!backend.includes('if parsed.path == "/api/study-goal-tree-archive"'),
   'goal-tree archive route must be removed');
