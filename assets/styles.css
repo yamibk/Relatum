@@ -222,6 +222,8 @@
   transition: opacity var(--start-turn-out-fade-ms) ease;
   transition-delay: 0s;
 }
+/* 切树淡入免黑屏停顿：切换场景的淡入走零延迟，面板打开等其余淡入保持原 60ms 节奏 */
+.study-route-overlay.is-visible .study-route-scene.is-revealing { transition-delay: 0s; }
 .study-route-scene.is-loading::after {
   content: ''; position: absolute; top: 50%; left: 50%; transform: translate3d(-50%,-50%,0);
   width: 32px; height: 32px; border-radius: 50%;
