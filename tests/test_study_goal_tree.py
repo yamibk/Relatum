@@ -37,13 +37,18 @@ class StudyGoalTreeTests(unittest.TestCase):
             "goalTree": app._study_goal_empty(),
         }
 
-    def test_empty_payload_uses_v5_single_tree(self):
-        self.assertEqual(app.load_study(), {
-            "version": 5,
-            "tasks": [],
-            "trash": [],
-            "goalTree": {"version": 1, "title": "我的学习路线", "nodes": []},
-        })
+    def test_empty_payload_uses_v5_fresh_tree(self):
+        loaded = app.load_study()
+        self.assertEqual(loaded["version"], 5)
+        self.assertEqual(loaded["tasks"], [])
+        self.assertEqual(loaded["trash"], [])
+        self.assertEqual(len(loaded["goalTrees"]), 1)
+        tree = loaded["goalTrees"][0]
+        self.assertEqual(tree["title"], "目标 1")
+        self.assertEqual(tree["nodes"], [])
+        self.assertEqual(tree["focusTaskIds"], [])
+        self.assertEqual(loaded["activeTreeId"], tree["id"])
+        self.assertIs(loaded["goalTree"], tree)
 
     def test_v4_keeps_tasks_and_restores_first_legacy_tree(self):
         task = self.task("保留任务", progress={
@@ -70,7 +75,9 @@ class StudyGoalTreeTests(unittest.TestCase):
         self.assertEqual(loaded["goalTree"]["title"], "旧树")
         self.assertEqual(loaded["goalTree"]["nodes"][0]["side"], "left")
         self.assertEqual(loaded["goalTree"]["nodes"][1]["parentId"], "left")
-        self.assertNotIn("goalTrees", loaded)
+        self.assertEqual(len(loaded["goalTrees"]), 1)
+        self.assertEqual(loaded["activeTreeId"], "legacy")
+        self.assertIs(loaded["goalTree"], loaded["goalTrees"][0])
 
     def test_commands_create_one_route_with_branch_and_shared_task(self):
         existing = self.task("已有任务", progress={"target": 3})
@@ -91,7 +98,7 @@ class StudyGoalTreeTests(unittest.TestCase):
         self.assertIs(app._study_goal_task_owner(data, existing["id"])[0], tree)
         self.assertEqual(app._study_goal_node(tree, attached["nodeId"])["parentId"], branch_id)
         self.assertEqual(next(task for task in data["tasks"] if task["id"] == created["taskId"])["progress"]["target"], 10)
-        with self.assertRaisesRegex(ValueError, "已经加入"):
+        with self.assertRaisesRegex(ValueError, "已经在这棵目标树中"):
             app.apply_study_goal_tree_command(data, {
                 "command": "attach-task", "taskId": existing["id"],
             })
@@ -223,8 +230,9 @@ class StudyGoalTreeTests(unittest.TestCase):
         app.save_study(data)
         raw = json.loads(app.STUDY_FILE.read_text(encoding="utf-8"))
         self.assertEqual(raw["version"], 5)
-        self.assertIn("goalTree", raw)
-        self.assertNotIn("goalTrees", raw)
+        self.assertIn("goalTrees", raw)
+        self.assertIn("activeTreeId", raw)
+        self.assertNotIn("goalTree", raw)
         self.assertEqual(app.load_study()["goalTree"]["nodes"][0]["taskId"], task["id"])
 
     def test_trash_and_archive_detach_tasks_without_snapshots(self):
@@ -243,7 +251,7 @@ class StudyGoalTreeTests(unittest.TestCase):
         app.Handler._api_study_task_restore(handler, {"id": restored_id})
         self.assertEqual(app.load_study()["goalTree"]["nodes"], [])
 
-    def test_handler_returns_singular_goal_tree(self):
+    def test_handler_returns_active_tree_payload(self):
         app.save_study(self.data())
         handler = DummyHandler()
         app.Handler._api_study_goal_tree_command(handler, {
@@ -251,7 +259,72 @@ class StudyGoalTreeTests(unittest.TestCase):
         })
         self.assertEqual(handler.response[0], 200)
         self.assertIn("goalTree", handler.response[1])
-        self.assertNotIn("goalTrees", handler.response[1])
+        self.assertIn("goalTrees", handler.response[1])
+        self.assertEqual(
+            handler.response[1]["activeTreeId"], handler.response[1]["goalTree"]["id"]
+        )
+        self.assertEqual(
+            handler.response[1]["goalTrees"],
+            app.load_study()["goalTrees"],
+        )
+
+    def test_create_switch_and_delete_trees_keep_active_invariant(self):
+        app.save_study(self.data())
+        data = app.load_study()
+        first = data["activeTreeId"]
+        second = app.apply_study_goal_tree_command(data, {"command": "create-tree"})["treeId"]
+        self.assertEqual(data["activeTreeId"], second)
+        self.assertEqual(data["goalTree"]["title"], "目标 2")
+        app.apply_study_goal_tree_command(data, {"command": "switch-tree", "treeId": first})
+        self.assertEqual(data["activeTreeId"], first)
+        result = app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": first})
+        self.assertEqual(result["removedTreeId"], first)
+        self.assertEqual(data["activeTreeId"], second)
+        self.assertEqual([tree["order"] for tree in data["goalTrees"]], [0])
+        result = app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": second})
+        self.assertEqual(result["createdTreeId"], data["activeTreeId"])
+        self.assertEqual(len(data["goalTrees"]), 1)
+        self.assertEqual(data["goalTree"]["title"], "目标 1")
+        self.assertEqual(data["goalTree"]["nodes"], [])
+
+    def test_task_can_attach_to_multiple_trees_and_detach_is_scoped(self):
+        task = self.task("共享任务")
+        app.save_study(self.data(task))
+        data = app.load_study()
+        first = data["activeTreeId"]
+        branch_a = app.apply_study_goal_tree_command(data, {
+            "command": "create-branch", "title": "甲",
+        })["nodeId"]
+        app.apply_study_goal_tree_command(data, {
+            "command": "attach-task", "parentId": branch_a, "taskId": task["id"],
+        })
+        second = app.apply_study_goal_tree_command(data, {"command": "create-tree"})["treeId"]
+        branch_b = app.apply_study_goal_tree_command(data, {
+            "command": "create-branch", "title": "乙",
+        })["nodeId"]
+        app.apply_study_goal_tree_command(data, {
+            "command": "attach-task", "parentId": branch_b, "taskId": task["id"],
+        })
+        trees = {tree["id"]: tree for tree in data["goalTrees"]}
+        self.assertEqual(
+            len([node for node in trees[first]["nodes"] if node.get("taskId") == task["id"]]), 1
+        )
+        self.assertEqual(
+            len([node for node in trees[second]["nodes"] if node.get("taskId") == task["id"]]), 1
+        )
+        # 同一棵树内不允许重复挂同一个任务
+        with self.assertRaisesRegex(ValueError, "已经在这棵目标树中"):
+            app.apply_study_goal_tree_command(data, {
+                "command": "attach-task", "taskId": task["id"],
+            })
+        # 从当前树摘除不影响另一棵
+        app.apply_study_goal_tree_command(data, {"command": "detach-task", "taskId": task["id"]})
+        self.assertEqual(
+            len([node for node in trees[second]["nodes"] if node.get("taskId") == task["id"]]), 0
+        )
+        self.assertEqual(
+            len([node for node in trees[first]["nodes"] if node.get("taskId") == task["id"]]), 1
+        )
 
 
 if __name__ == "__main__":

@@ -124,7 +124,10 @@
     groups.forEach(function (items) {
       sorted(items).forEach(function (node, index) { node.order = index; });
     });
-    return { version: 1, title: text(tree.title).trim() || '我的学习路线', nodes: nodes };
+    var normalized = { version: 1, title: text(tree.title).trim() || '我的学习路线', nodes: nodes };
+    var treeId = text(tree.id).trim();
+    if (treeId) normalized.id = treeId;
+    return normalized;
   }
   function taskOwner(tree, taskId) {
     var target = text(taskId);

@@ -1913,7 +1913,6 @@ def _study_goal_normalize_trees(
         raise ValueError("目标树数量已达到安全上限")
     task_ids = {str(task.get("id") or "") for task in tasks}
     task_status = {str(task.get("id") or ""): task.get("status") for task in tasks}
-    globally_owned: set[str] = set()
     trees: list[dict] = []
     seen_tree_ids: set[str] = set()
     for tree_index, raw_tree in enumerate(value[:STUDY_GOAL_TREES_MAX]):
@@ -1935,6 +1934,7 @@ def _study_goal_normalize_trees(
             raise ValueError("目标树节点数量已达到安全上限")
         nodes: list[dict] = []
         node_ids: set[str] = set()
+        tree_owned: set[str] = set()
         for node_index, raw_node in enumerate(raw_nodes[:STUDY_GOAL_TREE_NODES_MAX]):
             if not isinstance(raw_node, dict):
                 if strict:
@@ -1967,12 +1967,12 @@ def _study_goal_normalize_trees(
                     node["note"] = note
             elif kind == "task":
                 task_id = str(raw_node.get("taskId") or "")
-                invalid = not task_id or task_id not in task_ids or task_id in globally_owned
+                invalid = not task_id or task_id not in task_ids or task_id in tree_owned
                 if invalid:
                     if strict:
-                        raise ValueError("学习任务不存在或已经属于另一棵目标树")
+                        raise ValueError("学习任务不存在或已经在这棵目标树中")
                     continue
-                globally_owned.add(task_id)
+                tree_owned.add(task_id)
                 node["taskId"] = task_id
             else:
                 node["title"] = _study_goal_title(raw_node.get("title"), "已归档任务")
@@ -2091,10 +2091,47 @@ def _study_goal_normalize_trees(
     return trees
 
 
-def _study_goal_tree(data: dict, tree_id: object) -> dict:
+def _study_goal_new_tree(title: object, order: int = 0) -> dict:
+    now = _study_now()
+    return {
+        "id": "goal_" + uuid.uuid4().hex,
+        "title": _study_goal_title(title, "未命名目标"),
+        "order": _study_goal_order(order),
+        "focusTaskIds": [],
+        "nodes": [],
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
+def _study_goal_sync_active(data: dict) -> dict:
+    """Keep goalTrees/activeTreeId consistent and refresh the `goalTree` alias."""
+    trees = data.get("goalTrees")
+    if not isinstance(trees, list):
+        trees = []
+        data["goalTrees"] = trees
+    if not trees:
+        tree = _study_goal_new_tree("目标 1", 0)
+        trees.append(tree)
+        data["activeTreeId"] = tree["id"]
+        data["goalTree"] = tree
+        return tree
+    target = str(data.get("activeTreeId") or "").strip()
+    active = next((tree for tree in trees if tree.get("id") == target), None)
+    if active is None:
+        active = trees[0]
+        data["activeTreeId"] = active["id"]
+    data["goalTree"] = active
+    return active
+
+
+def _study_goal_tree(data: dict, tree_id: object = None) -> dict:
     target = str(tree_id or "").strip()
+    if not target:
+        return _study_goal_sync_active(data)
     for tree in data.get("goalTrees", []):
         if tree.get("id") == target:
+            data["goalTree"] = tree
             return tree
     raise KeyError("没有找到这棵目标树")
 
@@ -2115,17 +2152,6 @@ def _study_goal_branch(tree: dict, branch_id: object) -> dict | None:
     if node.get("kind") != "branch":
         raise ValueError("父级必须是课程模块")
     return node
-
-
-def _study_goal_parent(tree: dict, parent_id: object, *, for_kind: str) -> dict | None:
-    target = str(parent_id or "").strip()
-    if not target:
-        return None
-    parent = _study_goal_node(tree, target)
-    allowed = {"branch"} if for_kind == "branch" else {"branch", "task", "archive"}
-    if parent.get("kind") not in allowed:
-        raise ValueError("父级类型不支持这次移动")
-    return parent
 
 
 def _study_goal_task_slot(parent: dict | None, value: object) -> dict | None:
@@ -2174,214 +2200,110 @@ def _study_goal_task_owner(data: dict, task_id: object) -> tuple[dict, dict] | N
     return None
 
 
-def _study_goal_reorder(
-    tree: dict, parent_id: object, node_id: str, before_id: object = None,
-    task_slot: object = None, side: object = None,
-) -> None:
-    parent = str(parent_id or "") or None
-    moving = _study_goal_node(tree, node_id)
-    moving["parentId"] = parent
-    parent_node = _study_goal_node(tree, parent) if parent else None
-    slot = _study_goal_task_slot(parent_node, task_slot)
-    if slot:
-        moving["taskSlot"] = slot
-    else:
-        moving.pop("taskSlot", None)
-    if parent is None:
-        moving["side"] = _study_goal_side(side if side is not None else moving.get("side"))
-    else:
-        moving.pop("side", None)
-    moving_slot = _study_goal_slot_key(moving)
-    moving_side = _study_goal_side(moving.get("side")) if parent is None else ""
-    siblings = [
-        node for node in tree.get("nodes", [])
-        if node["id"] != node_id
-        and (node.get("parentId") or None) == parent
-        and _study_goal_slot_key(node) == moving_slot
-        and (parent is not None or _study_goal_side(node.get("side")) == moving_side)
-    ]
-    siblings.sort(key=lambda item: (item.get("order", 0), item["id"]))
-    before = str(before_id or "")
-    index = next((i for i, node in enumerate(siblings) if node["id"] == before), len(siblings))
-    siblings.insert(index, moving)
-    for order, node in enumerate(siblings):
-        node["order"] = order
-
-
-def _study_goal_detach_task(data: dict, task_id: object, *, remember: bool = False) -> dict | None:
-    owner = _study_goal_task_owner(data, task_id)
-    if not owner:
+def _study_goal_detach_task(
+    data: dict, task_id: object, *, tree_id: object = None, remember: bool = False,
+) -> dict | None:
+    """把任务从一棵目标树（tree_id 指定）或全部目标树（缺省）中摘除。"""
+    trees = data.get("goalTrees")
+    if not isinstance(trees, list):
         return None
-    tree, node = owner
-    placement = {
-        "treeId": tree["id"],
-        "parentId": node.get("parentId"),
-        "order": node.get("order", 0),
-        "taskSlot": dict(node["taskSlot"]) if isinstance(node.get("taskSlot"), dict) else None,
-        "side": _study_goal_side(node.get("side")) if not node.get("parentId") else None,
-        "wasFocused": node.get("taskId") in tree.get("focusTaskIds", []),
-    }
-    parent_id = node.get("parentId")
-    parent = next((candidate for candidate in tree["nodes"] if candidate["id"] == parent_id), None)
-    inherited_slot = (
-        dict(node["taskSlot"])
-        if parent and parent.get("kind") in {"task", "archive"} and isinstance(node.get("taskSlot"), dict)
-        else None
-    )
-    source_task = next(
-        (task for task in data.get("tasks", []) if task.get("id") == node.get("taskId")),
-        None,
-    )
-    source_progress = (
-        source_task.get("progress", {})
-        if isinstance(source_task, dict)
-        else node.get("progress", {})
-    )
-    milestone_order = {
-        str(item.get("id") or ""): index
-        for index, item in enumerate(source_progress.get("milestones", []))
-        if isinstance(item, dict)
-    }
+    target = str(task_id or "").strip()
+    if tree_id:
+        wanted = str(tree_id).strip()
+        trees = [tree for tree in trees if tree.get("id") == wanted]
+    placement = None
+    for tree in trees:
+        node = next(
+            (
+                candidate for candidate in tree.get("nodes", [])
+                if candidate.get("kind") == "task" and candidate.get("taskId") == target
+            ),
+            None,
+        )
+        if node is None:
+            continue
+        placement = {
+            "treeId": tree["id"],
+            "parentId": node.get("parentId"),
+            "order": node.get("order", 0),
+            "taskSlot": dict(node["taskSlot"]) if isinstance(node.get("taskSlot"), dict) else None,
+            "side": _study_goal_side(node.get("side")) if not node.get("parentId") else None,
+            "wasFocused": target in tree.get("focusTaskIds", []),
+        }
+        parent_id = node.get("parentId")
+        parent = next((candidate for candidate in tree["nodes"] if candidate["id"] == parent_id), None)
+        inherited_slot = (
+            dict(node["taskSlot"])
+            if parent and parent.get("kind") in {"task", "archive"} and isinstance(node.get("taskSlot"), dict)
+            else None
+        )
+        source_task = next(
+            (task for task in data.get("tasks", []) if task.get("id") == target),
+            None,
+        )
+        source_progress = (
+            source_task.get("progress", {})
+            if isinstance(source_task, dict)
+            else node.get("progress", {})
+        )
+        milestone_order = {
+            str(item.get("id") or ""): index
+            for index, item in enumerate(source_progress.get("milestones", []))
+            if isinstance(item, dict)
+        }
 
-    def child_position(candidate: dict) -> tuple[int, int, str]:
-        slot = candidate.get("taskSlot") if isinstance(candidate.get("taskSlot"), dict) else {}
-        kind = str(slot.get("kind") or "end")
-        if kind == "start":
-            slot_order = -1
-        elif kind == "milestone":
-            slot_order = milestone_order.get(str(slot.get("milestoneId") or ""), len(milestone_order))
-        else:
-            slot_order = len(milestone_order) + 1
-        return slot_order, _study_goal_order(candidate.get("order")), candidate["id"]
+        def child_position(candidate: dict) -> tuple[int, int, str]:
+            slot = candidate.get("taskSlot") if isinstance(candidate.get("taskSlot"), dict) else {}
+            kind = str(slot.get("kind") or "end")
+            if kind == "start":
+                slot_order = -1
+            elif kind == "milestone":
+                slot_order = milestone_order.get(str(slot.get("milestoneId") or ""), len(milestone_order))
+            else:
+                slot_order = len(milestone_order) + 1
+            return slot_order, _study_goal_order(candidate.get("order")), candidate["id"]
 
-    direct_children = sorted(
-        (candidate for candidate in tree["nodes"] if candidate.get("parentId") == node["id"]),
-        key=child_position,
-    )
-    tree["nodes"] = [candidate for candidate in tree["nodes"] if candidate["id"] != node["id"]]
-    for child in direct_children:
-        child["parentId"] = parent_id
-        if inherited_slot:
-            child["taskSlot"] = dict(inherited_slot)
-        else:
-            child.pop("taskSlot", None)
-        if parent_id is None:
-            child["side"] = _study_goal_side(node.get("side"))
-        else:
-            child.pop("side", None)
-    node_slot_key = _study_goal_slot_key(node)
-    promoted_slot_key = _study_goal_slot_key(direct_children[0]) if direct_children else node_slot_key
-    siblings = sorted(
-        (
-            candidate for candidate in tree["nodes"]
-            if candidate not in direct_children
-            and candidate.get("parentId") == parent_id
-            and _study_goal_slot_key(candidate) == promoted_slot_key
-            and (
-                parent_id is not None
-                or _study_goal_side(candidate.get("side")) == _study_goal_side(node.get("side"))
-            )
-        ),
-        key=lambda candidate: (candidate.get("order", 0), candidate["id"]),
-    )
-    position = min(_study_goal_order(node.get("order")), len(siblings))
-    reordered = siblings[:position] + direct_children + siblings[position:]
-    for order, candidate in enumerate(reordered):
-        candidate["order"] = order
-    if placement["wasFocused"]:
-        tree["focusTaskIds"] = [
-            candidate for candidate in tree.get("focusTaskIds", [])
-            if candidate != node.get("taskId")
-        ]
-    tree["updatedAt"] = _study_now()
+        direct_children = sorted(
+            (candidate for candidate in tree["nodes"] if candidate.get("parentId") == node["id"]),
+            key=child_position,
+        )
+        tree["nodes"] = [candidate for candidate in tree["nodes"] if candidate["id"] != node["id"]]
+        for child in direct_children:
+            child["parentId"] = parent_id
+            if inherited_slot:
+                child["taskSlot"] = dict(inherited_slot)
+            else:
+                child.pop("taskSlot", None)
+            if parent_id is None:
+                child["side"] = _study_goal_side(node.get("side"))
+            else:
+                child.pop("side", None)
+        node_slot_key = _study_goal_slot_key(node)
+        promoted_slot_key = _study_goal_slot_key(direct_children[0]) if direct_children else node_slot_key
+        siblings = sorted(
+            (
+                candidate for candidate in tree["nodes"]
+                if candidate not in direct_children
+                and candidate.get("parentId") == parent_id
+                and _study_goal_slot_key(candidate) == promoted_slot_key
+                and (
+                    parent_id is not None
+                    or _study_goal_side(candidate.get("side")) == _study_goal_side(node.get("side"))
+                )
+            ),
+            key=lambda candidate: (candidate.get("order", 0), candidate["id"]),
+        )
+        position = min(_study_goal_order(node.get("order")), len(siblings))
+        reordered = siblings[:position] + direct_children + siblings[position:]
+        for order, candidate in enumerate(reordered):
+            candidate["order"] = order
+        if placement["wasFocused"]:
+            tree["focusTaskIds"] = [
+                candidate for candidate in tree.get("focusTaskIds", [])
+                if candidate != target
+            ]
+        tree["updatedAt"] = _study_now()
     return placement if remember else None
-
-
-def _study_goal_restore_task(data: dict, task_id: str, placement: object) -> None:
-    if not isinstance(placement, dict) or _study_goal_task_owner(data, task_id):
-        return
-    try:
-        tree = _study_goal_tree(data, placement.get("treeId"))
-        parent = _study_goal_parent(tree, placement.get("parentId"), for_kind="task")
-    except (KeyError, ValueError):
-        return
-    node = {
-        "id": "goal_node_" + uuid.uuid4().hex,
-        "kind": "task",
-        "parentId": parent.get("id") if parent else None,
-        "taskId": task_id,
-        "order": _study_goal_order(placement.get("order")),
-    }
-    if parent is None:
-        node["side"] = _study_goal_side(placement.get("side"))
-    slot = _study_goal_task_slot(parent, placement.get("taskSlot"))
-    if slot:
-        node["taskSlot"] = slot
-    tree["nodes"].append(node)
-    siblings = sorted(
-        (
-            candidate for candidate in tree["nodes"]
-            if candidate["id"] != node["id"]
-            and (candidate.get("parentId") or None) == (node.get("parentId") or None)
-            and _study_goal_slot_key(candidate) == _study_goal_slot_key(node)
-            and (
-                node.get("parentId") is not None
-                or _study_goal_side(candidate.get("side")) == _study_goal_side(node.get("side"))
-            )
-        ),
-        key=lambda candidate: (candidate.get("order", 0), candidate["id"]),
-    )
-    position = min(_study_goal_order(placement.get("order")), len(siblings))
-    before_id = siblings[position]["id"] if position < len(siblings) else None
-    _study_goal_reorder(
-        tree, node.get("parentId"), node["id"], before_id,
-        node.get("taskSlot"), node.get("side"),
-    )
-    if placement.get("wasFocused") and task_id not in tree.get("focusTaskIds", []):
-        tree.setdefault("focusTaskIds", []).append(task_id)
-    tree["updatedAt"] = _study_now()
-
-
-def _study_goal_snapshot_tasks(
-    data: dict, tasks: list[dict], *, archived_at: str,
-) -> None:
-    by_id = {str(task.get("id") or ""): task for task in tasks}
-    for tree in data.get("goalTrees", []):
-        changed = False
-        for node in tree.get("nodes", []):
-            task = by_id.get(str(node.get("taskId") or "")) if node.get("kind") == "task" else None
-            if not task:
-                continue
-            task_id = str(task.get("id") or "")
-            node_id = str(node.get("id") or ("goal_node_" + uuid.uuid4().hex))
-            parent_id = node.get("parentId")
-            order = _study_goal_order(node.get("order"))
-            task_slot = dict(node["taskSlot"]) if isinstance(node.get("taskSlot"), dict) else None
-            side = _study_goal_side(node.get("side")) if not parent_id else None
-            node.clear()
-            node.update({
-                "id": node_id,
-                "kind": "archive",
-                "parentId": parent_id,
-                "order": order,
-                "title": str(task.get("title") or "未命名任务")[:STUDY_GOAL_TREE_TITLE_MAX],
-                "completedAt": str(task.get("completedAt") or archived_at)[:40],
-                "archivedAt": archived_at,
-                "sourceTaskId": task_id,
-                "progress": _study_goal_progress_snapshot(task),
-            })
-            if task_slot:
-                node["taskSlot"] = task_slot
-            if side:
-                node["side"] = side
-            changed = True
-            if task_id in tree.get("focusTaskIds", []):
-                tree["focusTaskIds"] = [
-                    candidate for candidate in tree.get("focusTaskIds", [])
-                    if candidate != task_id
-                ]
-        if changed:
-            tree["updatedAt"] = archived_at
 
 
 def _study_goal_tree_metrics(tree: dict, tasks: list[dict]) -> dict:
@@ -2470,7 +2392,7 @@ def _study_goal_normalize_tree(
             task_id = str(raw.get("taskId") or "").strip()
             if not task_id or task_id not in task_ids or task_id in owned_tasks:
                 if strict:
-                    raise ValueError("学习任务不存在或已经加入总路线")
+                    raise ValueError("学习任务不存在或已经在这棵目标树中")
                 continue
             owned_tasks.add(task_id)
             node["taskId"] = task_id
@@ -2554,14 +2476,6 @@ def _study_goal_normalize_tree(
     }
 
 
-def _study_goal_tree(data: dict, tree_id: object = None) -> dict:
-    tree = data.get("goalTree")
-    if not isinstance(tree, dict):
-        tree = _study_goal_empty()
-        data["goalTree"] = tree
-    return tree
-
-
 def _study_goal_parent(tree: dict, parent_id: object, *, for_kind: str = "task") -> dict | None:
     target = str(parent_id or "").strip()
     if not target:
@@ -2571,15 +2485,6 @@ def _study_goal_parent(tree: dict, parent_id: object, *, for_kind: str = "task")
     if parent.get("kind") not in allowed:
         raise ValueError("父级类型不支持这次移动")
     return parent
-
-
-def _study_goal_task_owner(data: dict, task_id: object) -> tuple[dict, dict] | None:
-    target = str(task_id or "").strip()
-    tree = _study_goal_tree(data)
-    for node in tree.get("nodes", []):
-        if node.get("kind") == "task" and node.get("taskId") == target:
-            return tree, node
-    return None
 
 
 def _study_goal_reorder(
@@ -2628,73 +2533,6 @@ def _study_goal_reorder(
         node["order"] = order
 
 
-def _study_goal_detach_task(data: dict, task_id: object, *, remember: bool = False) -> dict | None:
-    owner = _study_goal_task_owner(data, task_id)
-    if not owner:
-        return None
-    tree, node = owner
-    parent_id = node.get("parentId")
-    parent = next((candidate for candidate in tree["nodes"] if candidate["id"] == parent_id), None)
-    inherited_slot = (
-        dict(node["taskSlot"])
-        if parent and parent.get("kind") == "task" and isinstance(node.get("taskSlot"), dict)
-        else None
-    )
-    source_task = next(
-        (task for task in data.get("tasks", []) if task.get("id") == node.get("taskId")),
-        None,
-    )
-    source_progress = source_task.get("progress", {}) if isinstance(source_task, dict) else {}
-    milestone_order = {
-        str(item.get("id") or ""): index
-        for index, item in enumerate(source_progress.get("milestones", []))
-        if isinstance(item, dict)
-    }
-
-    def child_position(candidate: dict) -> tuple[int, int, str]:
-        slot = candidate.get("taskSlot") if isinstance(candidate.get("taskSlot"), dict) else {}
-        kind = str(slot.get("kind") or "end")
-        if kind == "start":
-            slot_order = -1
-        elif kind == "milestone":
-            slot_order = milestone_order.get(
-                str(slot.get("milestoneId") or ""), len(milestone_order)
-            )
-        else:
-            slot_order = len(milestone_order) + 1
-        return slot_order, _study_goal_order(candidate.get("order")), candidate["id"]
-
-    direct_children = sorted(
-        (candidate for candidate in tree["nodes"] if candidate.get("parentId") == node["id"]),
-        key=child_position,
-    )
-    tree["nodes"] = [candidate for candidate in tree.get("nodes", []) if candidate["id"] != node["id"]]
-    for child in direct_children:
-        child["parentId"] = parent_id
-        if inherited_slot:
-            child["taskSlot"] = dict(inherited_slot)
-        else:
-            child.pop("taskSlot", None)
-        if parent_id is None:
-            child["side"] = _study_goal_side(node.get("side"))
-        else:
-            child.pop("side", None)
-    siblings = sorted(
-        (
-            candidate for candidate in tree["nodes"]
-            if candidate not in direct_children
-            and candidate.get("parentId") == parent_id
-            and _study_goal_slot_key(candidate) == (_study_goal_slot_key(direct_children[0]) if direct_children else "")
-            and (parent_id is not None or _study_goal_side(candidate.get("side")) == _study_goal_side(node.get("side")))
-        ),
-        key=lambda candidate: (_study_goal_order(candidate.get("order")), candidate["id"]),
-    )
-    position = min(_study_goal_order(node.get("order")), len(siblings))
-    for order, candidate in enumerate(siblings[:position] + direct_children + siblings[position:]):
-        candidate["order"] = order
-    return None
-
-
 def _study_goal_restore_task(data: dict, task_id: str, placement: object) -> None:
     # Restored tasks return to the learning list and are not silently reattached.
     return None
@@ -2728,15 +2566,27 @@ def _study_goal_tree_metrics(tree: dict, tasks: list[dict]) -> dict:
     }
 
 
+def _study_goal_fresh_study(tasks: list[dict], trash: list[dict]) -> dict:
+    tree = _study_goal_new_tree("目标 1", 0)
+    return {
+        "version": 5,
+        "tasks": tasks,
+        "trash": trash,
+        "goalTrees": [tree],
+        "activeTreeId": tree["id"],
+        "goalTree": tree,
+    }
+
+
 def load_study() -> dict:
     if not STUDY_FILE.exists():
-        return {"version": 5, "tasks": [], "trash": [], "goalTree": _study_goal_empty()}
+        return _study_goal_fresh_study([], [])
     try:
         raw = json.loads(STUDY_FILE.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"version": 5, "tasks": [], "trash": [], "goalTree": _study_goal_empty()}
+        return _study_goal_fresh_study([], [])
     if not isinstance(raw, dict) or raw.get("version") not in {4, 5}:
-        return {"version": 5, "tasks": [], "trash": [], "goalTree": _study_goal_empty()}
+        return _study_goal_fresh_study([], [])
     tasks = []
     for item in raw.get("tasks", []) if isinstance(raw, dict) else []:
         try:
@@ -2757,35 +2607,51 @@ def load_study() -> dict:
             trash.append(entry)
         except ValueError:
             continue
-    if raw.get("version") == 5:
-        tree = _study_goal_normalize_tree(raw.get("goalTree"), tasks, strict=False)
+    trees: list[dict] = []
+    if isinstance(raw.get("goalTrees"), list):
+        trees = _study_goal_normalize_trees(raw["goalTrees"], tasks, strict=False)
+        active_id = str(raw.get("activeTreeId") or "").strip()
+    elif raw.get("version") == 4:
+        # v4 旧树按"一个任务只挂一棵树"存储；任务可多挂后原样保留全部旧树。
+        trees = _study_goal_normalize_trees(raw.get("goalTrees"), tasks, strict=False)
+        active_id = ""
     else:
-        legacy_trees = _study_goal_normalize_trees(raw.get("goalTrees"), tasks, strict=False)
-        legacy = legacy_trees[0] if legacy_trees else None
-        tree = _study_goal_normalize_tree({
-            "version": 1,
-            "title": legacy.get("title") if legacy else "",
-            "nodes": [
-                {
-                    key: value for key, value in node.items()
-                    if key in {"id", "kind", "parentId", "title", "taskId", "order", "side", "taskSlot"}
-                }
-                for node in (legacy.get("nodes", []) if legacy else [])
-                if node.get("kind") in {"branch", "task"}
-            ],
-        }, tasks, strict=False) if legacy else _study_goal_empty()
-    return {"version": 5, "tasks": tasks, "trash": trash[:STUDY_TRASH_MAX], "goalTree": tree}
+        # v5 单树文件：包装成第一棵目标树并给稳定 id，activeTreeId 才能持久化。
+        single = _study_goal_normalize_tree(raw.get("goalTree"), tasks, strict=False)
+        tree = _study_goal_new_tree("目标 1", 0)
+        tree["id"] = "goal_legacy"
+        tree["title"] = single.get("title") or tree["title"]
+        tree["nodes"] = single.get("nodes", [])
+        trees = [tree]
+        active_id = tree["id"]
+    if not trees:
+        trees = [_study_goal_new_tree("目标 1", 0)]
+    if not any(tree.get("id") == active_id for tree in trees):
+        active_id = trees[0]["id"]
+    active = next(tree for tree in trees if tree.get("id") == active_id)
+    return {
+        "version": 5,
+        "tasks": tasks,
+        "trash": trash[:STUDY_TRASH_MAX],
+        "goalTrees": trees,
+        "activeTreeId": active_id,
+        "goalTree": active,
+    }
 
 
 def save_study(data: dict) -> None:
     tasks = data.get("tasks", [])
-    tree = _study_goal_normalize_tree(data.get("goalTree"), tasks, strict=False)
-    data["goalTree"] = tree
+    trees = _study_goal_normalize_trees(data.get("goalTrees"), tasks, strict=False)
+    if not trees:
+        trees = [_study_goal_new_tree("目标 1", 0)]
+    data["goalTrees"] = trees
+    _study_goal_sync_active(data)
     _atomic_write_json(STUDY_FILE, {
         "version": 5,
         "tasks": tasks,
         "trash": data.get("trash", [])[:STUDY_TRASH_MAX],
-        "goalTree": tree,
+        "goalTrees": trees,
+        "activeTreeId": data["activeTreeId"],
     })
 
 
@@ -5628,187 +5494,56 @@ def _study_goal_tree_archive_payload(tree: dict, tasks: list[dict], archive_id: 
     }
 
 
-def _apply_study_goal_tree_command_legacy(data: dict, body: dict) -> dict:
-    if not isinstance(body, dict):
-        raise ValueError("请求格式不正确")
-    command = str(body.get("command") or "").strip()
-    now = _study_now()
-    result: dict = {"command": command}
-    if command == "create-tree":
-        if len(data.get("goalTrees", [])) >= STUDY_GOAL_TREES_MAX:
-            raise ValueError("目标树数量已达到安全上限")
-        tree = {
-            "id": "goal_" + uuid.uuid4().hex,
-            "title": _study_goal_title(body.get("title"), "未命名目标"),
-            "order": len(data.get("goalTrees", [])),
-            "focusTaskIds": [],
-            "nodes": [],
-            "createdAt": now,
-            "updatedAt": now,
-        }
-        note = _study_goal_note(body.get("note"))
-        if note:
-            tree["note"] = note
-        data.setdefault("goalTrees", []).append(tree)
-        result["treeId"] = tree["id"]
-    elif command in {"update-tree", "delete-tree", "create-branch", "update-branch",
-                     "delete-branch", "attach-task", "create-task", "move-node",
-                     "detach-task", "set-focus"}:
-        tree = _study_goal_tree(data, body.get("treeId"))
-        if command == "update-tree":
-            if "title" in body:
-                tree["title"] = _study_goal_title(body.get("title"), "未命名目标")
-            if "note" in body:
-                note = _study_goal_note(body.get("note"))
-                if note:
-                    tree["note"] = note
-                else:
-                    tree.pop("note", None)
-            tree["updatedAt"] = now
-        elif command == "delete-tree":
-            data["goalTrees"] = [candidate for candidate in data["goalTrees"] if candidate["id"] != tree["id"]]
-        elif command == "create-branch":
-            parent = _study_goal_branch(tree, body.get("parentId"))
-            side = _study_goal_side(body.get("side")) if parent is None else None
-            node = {
-                "id": "goal_node_" + uuid.uuid4().hex,
-                "kind": "branch",
-                "parentId": parent.get("id") if parent else None,
-                "title": _study_goal_title(body.get("title"), "未命名分支"),
-                "order": len([
-                    n for n in tree["nodes"]
-                    if (n.get("parentId") or None) == (parent.get("id") if parent else None)
-                    and (parent is not None or _study_goal_side(n.get("side")) == side)
-                ]),
-            }
-            if side:
-                node["side"] = side
-            note = _study_goal_note(body.get("note"))
-            if note:
-                node["note"] = note
-            tree["nodes"].append(node)
-            tree["updatedAt"] = now
-            result["nodeId"] = node["id"]
-        elif command == "update-branch":
-            node = _study_goal_node(tree, body.get("nodeId"))
-            if node.get("kind") != "branch":
-                raise ValueError("只能编辑课程模块")
-            if "title" in body:
-                node["title"] = _study_goal_title(body.get("title"), "未命名分支")
-            if "note" in body:
-                note = _study_goal_note(body.get("note"))
-                if note:
-                    node["note"] = note
-                else:
-                    node.pop("note", None)
-            tree["updatedAt"] = now
-        elif command == "delete-branch":
-            node = _study_goal_node(tree, body.get("nodeId"))
-            if node.get("kind") != "branch":
-                raise ValueError("只能删除课程模块")
-            parent_id = node.get("parentId")
-            tree["nodes"] = [candidate for candidate in tree["nodes"] if candidate["id"] != node["id"]]
-            for child in tree["nodes"]:
-                if child.get("parentId") == node["id"]:
-                    child["parentId"] = parent_id
-                    child.pop("taskSlot", None)
-                    if parent_id is None:
-                        child["side"] = _study_goal_side(node.get("side"))
-                    else:
-                        child.pop("side", None)
-            tree["updatedAt"] = now
-        elif command in {"attach-task", "create-task"}:
-            parent = _study_goal_parent(tree, body.get("parentId"), for_kind="task")
-            side = _study_goal_side(body.get("side")) if parent is None else None
-            if command == "create-task":
-                task = _study_task({"title": body.get("title")})
-                data["tasks"].append(task)
-                task_id = task["id"]
-                result["task"] = task
-            else:
-                task_id = str(body.get("taskId") or "").strip()
-                _index, task = study_find_task(data, task_id)
-            if _study_goal_task_owner(data, task_id):
-                raise ValueError("这个任务已经属于另一棵目标树")
-            slot = _study_goal_task_slot(parent, body.get("taskSlot"))
-            slot_key = ""
-            if slot:
-                slot_key = slot["kind"] + (":" + slot.get("milestoneId", "") if slot["kind"] == "milestone" else "")
-            node = {
-                "id": "goal_node_" + uuid.uuid4().hex,
-                "kind": "task",
-                "parentId": parent.get("id") if parent else None,
-                "taskId": task_id,
-                "order": len([
-                    n for n in tree["nodes"]
-                    if (n.get("parentId") or None) == (parent.get("id") if parent else None)
-                    and _study_goal_slot_key(n) == slot_key
-                    and (parent is not None or _study_goal_side(n.get("side")) == side)
-                ]),
-            }
-            if slot:
-                node["taskSlot"] = slot
-            if side:
-                node["side"] = side
-            tree["nodes"].append(node)
-            tree["updatedAt"] = now
-            result.update({"nodeId": node["id"], "taskId": task_id})
-        elif command == "move-node":
-            node = _study_goal_node(tree, body.get("nodeId"))
-            parent = _study_goal_parent(tree, body.get("parentId"), for_kind=node.get("kind"))
-            parent_id = parent.get("id") if parent else None
-            if parent_id:
-                by_id = {candidate["id"]: candidate for candidate in tree["nodes"]}
-                cursor = parent_id
-                seen: set[str] = set()
-                while cursor:
-                    if cursor == node["id"]:
-                        raise ValueError("不能把节点移动到自己的子分支或子树中")
-                    if cursor in seen:
-                        raise ValueError("目标树不能形成循环")
-                    seen.add(cursor)
-                    cursor = str((by_id.get(cursor) or {}).get("parentId") or "")
-            _study_goal_reorder(
-                tree, parent_id, node["id"], body.get("beforeId"),
-                body.get("taskSlot"), body.get("side"),
-            )
-            tree["updatedAt"] = now
-        elif command == "detach-task":
-            task_id = str(body.get("taskId") or "").strip()
-            owner = _study_goal_task_owner(data, task_id)
-            if not owner or owner[0]["id"] != tree["id"]:
-                raise KeyError("这个任务不在当前目标树中")
-            _study_goal_detach_task(data, task_id)
-        elif command == "set-focus":
-            task_id = str(body.get("taskId") or "").strip()
-            owner = _study_goal_task_owner(data, task_id)
-            _index, task = study_find_task(data, task_id)
-            if not owner or owner[0]["id"] != tree["id"]:
-                raise ValueError("进行中任务必须属于这棵目标树")
-            if task.get("status") == "done":
-                raise ValueError("已完成任务不能设为进行中")
-            focused = bool(body.get("focused"))
-            focus_task_ids = [
-                candidate for candidate in tree.get("focusTaskIds", [])
-                if candidate != task_id
-            ]
-            if focused:
-                focus_task_ids.append(task_id)
-            tree["focusTaskIds"] = focus_task_ids
-            tree["updatedAt"] = now
-    else:
-        raise ValueError("不支持的目标树操作")
-
-    data["goalTrees"] = _study_goal_normalize_trees(data.get("goalTrees"), data.get("tasks", []), strict=True)
-    return result
-
-
 def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ValueError("请求格式不正确")
     command = str(body.get("command") or "").strip()
-    tree = _study_goal_tree(data)
     result: dict = {"command": command}
+
+    if command == "create-tree":
+        trees = data.get("goalTrees")
+        if not isinstance(trees, list):
+            trees = []
+            data["goalTrees"] = trees
+        if len(trees) >= STUDY_GOAL_TREES_MAX:
+            raise ValueError("目标树数量已达到安全上限")
+        title = _study_goal_title(body.get("title"), "")
+        tree = _study_goal_new_tree(title or "目标 " + str(len(trees) + 1), len(trees))
+        trees.append(tree)
+        data["activeTreeId"] = tree["id"]
+        data["goalTree"] = tree
+        result.update({"treeId": tree["id"], "nodeId": tree["id"]})
+        return result
+
+    if command == "switch-tree":
+        tree = _study_goal_tree(data, body.get("treeId"))
+        data["activeTreeId"] = tree["id"]
+        data["goalTree"] = tree
+        result["treeId"] = tree["id"]
+        return result
+
+    if command == "delete-tree":
+        tree = _study_goal_tree(data, body.get("treeId"))
+        trees = data["goalTrees"]
+        index = next(i for i, candidate in enumerate(trees) if candidate["id"] == tree["id"])
+        removed = trees.pop(index)
+        if not trees:
+            replacement = _study_goal_new_tree("目标 1", 0)
+            trees.append(replacement)
+            data["activeTreeId"] = replacement["id"]
+            data["goalTree"] = replacement
+            result.update({"treeId": replacement["id"], "createdTreeId": replacement["id"]})
+        else:
+            active = trees[min(index, len(trees) - 1)]
+            data["activeTreeId"] = active["id"]
+            data["goalTree"] = active
+            result["treeId"] = active["id"]
+        for order, candidate in enumerate(trees):
+            candidate["order"] = order
+        result["removedTreeId"] = removed["id"]
+        return result
+
+    tree = _study_goal_tree(data, body.get("treeId"))
 
     if command == "rename-root":
         tree["title"] = _study_goal_title(body.get("title"), "我的学习路线")
@@ -5879,8 +5614,11 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
         else:
             task_id = str(body.get("taskId") or "").strip()
             _index, task = study_find_task(data, task_id)
-        if _study_goal_task_owner(data, task_id):
-            raise ValueError("这个任务已经加入总路线")
+        if any(
+            candidate.get("kind") == "task" and candidate.get("taskId") == task_id
+            for candidate in tree.get("nodes", [])
+        ):
+            raise ValueError("这个任务已经在这棵目标树中")
         slot = _study_goal_task_slot(parent, body.get("taskSlot"))
         slot_key = slot["kind"] + (":" + slot.get("milestoneId", "") if slot and slot["kind"] == "milestone" else "") if slot else ""
         node = {
@@ -5903,9 +5641,12 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
         result.update({"nodeId": node["id"], "taskId": task_id})
     elif command == "detach-task":
         task_id = str(body.get("taskId") or "").strip()
-        if not _study_goal_task_owner(data, task_id):
-            raise KeyError("这个任务不在总路线中")
-        _study_goal_detach_task(data, task_id)
+        if not any(
+            candidate.get("kind") == "task" and candidate.get("taskId") == task_id
+            for candidate in tree.get("nodes", [])
+        ):
+            raise KeyError("这个任务不在当前目标树中")
+        _study_goal_detach_task(data, task_id, tree_id=tree["id"])
     elif command == "move-node":
         node = _study_goal_node(tree, body.get("nodeId"))
         _study_goal_reorder(
@@ -5915,7 +5656,8 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
     else:
         raise ValueError("不支持的目标树操作")
 
-    data["goalTree"] = _study_goal_normalize_tree(tree, data.get("tasks", []), strict=True)
+    data["goalTrees"] = _study_goal_normalize_trees(data.get("goalTrees"), data.get("tasks", []), strict=True)
+    _study_goal_sync_active(data)
     return result
 
 
@@ -9250,7 +8992,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(400, {"error": str(err)})
         data["tasks"].append(task)
         save_study(data)
-        self._send_json(200, {"task": task, "goalTree": data.get("goalTree")})
+        self._send_json(200, {
+            "task": task,
+            "goalTree": data.get("goalTree"),
+            "goalTrees": data.get("goalTrees"),
+            "activeTreeId": data.get("activeTreeId"),
+        })
 
     def _api_study_task_update(self, body: dict):
         task_id = (body.get("id") or "").strip()
@@ -9273,7 +9020,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(400, {"error": str(err)})
         data["tasks"][index] = task
         save_study(data)
-        self._send_json(200, {"task": task, "goalTree": data.get("goalTree")})
+        self._send_json(200, {
+            "task": task,
+            "goalTree": data.get("goalTree"),
+            "goalTrees": data.get("goalTrees"),
+            "activeTreeId": data.get("activeTreeId"),
+        })
 
     def _api_study_task_progress(self, body: dict):
         task_id = str(body.get("id") or "").strip() if isinstance(body, dict) else ""
@@ -9289,6 +9041,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(409, {"error": str(err)})
         save_study(data)
         result["goalTree"] = data.get("goalTree")
+        result["goalTrees"] = data.get("goalTrees")
+        result["activeTreeId"] = data.get("activeTreeId")
         self._send_json(200, result)
 
     def _api_study_task_trash(self, body: dict):
@@ -9393,6 +9147,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "ok": True,
             **result,
             "goalTree": data.get("goalTree"),
+            "goalTrees": data.get("goalTrees"),
+            "activeTreeId": data.get("activeTreeId"),
         })
 
     def _api_taskbook_archive(self, body: dict):
