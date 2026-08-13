@@ -107,14 +107,16 @@
       }),
     };
   }
-  function renderRail() {
+  // activeId：切树点击瞬间的滑块/高亮抢跑目标；平时缺省用权威活动树。
+  function renderRail(activeId) {
     if (!railList) return;
     // 先让上轮在途 FLIP 落定再取快照，避免量到飞行中的几何。
     clearRailTransients();
     var snap = railSnapshot();
     var fromY = railOrbY;
+    var railActiveId = activeId || state.activeTreeId;
     railList.innerHTML = RAIL_ORB_HTML + state.trees.map(function (tree, index) {
-      return '<button type="button" class="study-route-rail-item' + (tree.id === state.activeTreeId ? ' is-active' : '')
+      return '<button type="button" class="study-route-rail-item' + (tree.id === railActiveId ? ' is-active' : '')
         + '" data-route-tree-id="' + escapeHtml(tree.id) + '" data-tooltip="' + escapeHtml(tree.title || '')
         + '" aria-label="' + escapeHtml(tree.title || '') + '">' + (index + 1) + '</button>';
     }).join('');
@@ -928,55 +930,55 @@
     applyView();
     flushViewSave();
   }
-  // ── 切树横滑（单画布挤压）：旧树整体从一侧滑出，完全离屏的一瞬间换成新树
-  // 并跳到对侧，再滑回原位。屏幕位移 slideX 与摄像机变换在 applyView 单点合成；
-  // 出滑/回滑分设时长（easeOutCubic，帧率无关）。淡出机制保留给建树/删树与陈旧快照回退路径。
-  var SLIDE_OUT_MS = 220;
+  // ── 切树过渡（单画布）：旧树原地淡出（只调透明度），完全透明的瞬间换成新树
+  // 并从对侧滑入。屏幕位移 slideX 与摄像机变换在 applyView 单点合成，透明度由
+  // 同一 ticker 按帧写入（滑行期间压掉场景的 CSS opacity 过渡，避免双重缓动）。
+  // 淡出/滑入分设时长（easeOutCubic，帧率无关）。类级淡出机制保留给建树/删树
+  // 与陈旧快照回退路径。
+  var FADE_OUT_MS = 220;
   var SLIDE_IN_MS = 270;
   var slideX = 0;
-  var slide = null; // { direction, outDist, swap, phase: 'out'|'in', from, target, startAt, legMs, frame }
-  function slideOutDistance() {
-    // 旧场景右缘必须完全移出视口（大树/远镜头也全出），外加一个视口宽做余量。
-    return viewport.clientWidth + Math.max(0, view.x + scene.offsetWidth * view.zoom);
-  }
+  var slide = null; // { direction, swap, phase: 'out'|'in', from, target, startAt, legMs, frame }
   function slideTick(timestamp) {
     var s = slide;
     if (!s) return;
     if (!open) { finishSlide(); return; }
     if (s.startAt == null) s.startAt = timestamp;
     var p = Math.min(1, (timestamp - s.startAt) / s.legMs);
-    slideX = s.from + (s.target - s.from) * (1 - Math.pow(1 - p, 3));
-    applyView();
+    var eased = 1 - Math.pow(1 - p, 3);
+    if (s.phase === 'out') {
+      scene.style.opacity = String(1 - eased); // 原地淡出，不位移
+    } else {
+      slideX = s.from + (s.target - s.from) * eased;
+      applyView();
+    }
     s.frame = requestAnimationFrame(slideTick);
     if (p < 1) return;
-    slideX = s.target;
-    applyView();
     if (s.phase === 'out') {
-      if (s.swap) s.swap(); // 离屏瞬间换新树（swap 内部把相位切到 'in' 并重设 leg 参数）
+      scene.style.opacity = '0';
+      if (s.swap) s.swap(); // 完全透明的瞬间换新树（swap 内部把相位切到 'in' 并重设 leg）
       s.phase = 'in';
     } else {
       finishSlide();
     }
   }
   function beginSlide(direction, swap) {
+    scene.style.transition = 'none'; // 透明度由 ticker 逐帧写，压掉 CSS opacity 过渡
     if (slide) {
-      // 连点换目标：旧树快进到完全离屏（眼睛只看到「挪走了」），下一帧在离屏点
-      // 执行换树，离屏点的换树目标替换成新点击的树。
+      // 连点换目标：旧树快进到完全透明（眼睛只看到「消失」），透明点立即执行换树，
+      // 换树目标替换成新点击的树。
       slide.direction = direction;
       slide.swap = swap;
       slide.phase = 'out';
-      slide.outDist = slideOutDistance();
-      slide.from = 0;
-      slide.target = -direction * slide.outDist;
-      slide.legMs = SLIDE_OUT_MS;
-      slideX = slide.target;
-      applyView();
+      slide.legMs = FADE_OUT_MS;
+      scene.style.opacity = '0';
+      if (swap) swap();
+      slide.phase = 'in';
       return;
     }
-    var outDist = slideOutDistance();
     slide = {
-      direction: direction, outDist: outDist, swap: swap,
-      phase: 'out', from: 0, target: -direction * outDist, startAt: null, legMs: SLIDE_OUT_MS, frame: 0,
+      direction: direction, swap: swap,
+      phase: 'out', from: 0, target: 0, startAt: null, legMs: FADE_OUT_MS, frame: 0,
     };
     slide.frame = requestAnimationFrame(slideTick);
   }
@@ -988,6 +990,8 @@
     if (slide.frame) { cancelAnimationFrame(slide.frame); slide.frame = 0; }
     slide = null;
     slideX = 0;
+    scene.style.opacity = '';
+    scene.style.transition = '';
     applyView();
   }
   // 回退/兜底淡出节奏：与 --start-turn-out-fade-ms（99ms）对齐。
@@ -1011,15 +1015,21 @@
     // （点过即算数，关面板不取消）；纪元在点击时推进，作废点击前在途的旧快照
     // （响应落地后 command 还会再推进一次，作废飞行期间取到的旧快照）。
     treeEpoch++;
+    // 滑块抢跑：点击瞬间 rail 高亮与黑色滑块立刻开滑（与旧树淡出并行）；
+    // 权威活动树状态仍在离屏点切换，落盘失败时随回退一起滑回。
+    renderRail(treeId);
     var performSwap = function () {
       if (!open || requestId !== routeRequestId) return;
       state.activeTreeId = treeId;
       state.tree = target;
       render({ duration: 1 });
-      renderRail();
+      // 滑块已在点击时抢跑；若抢跑未发生才补一次 rail 同步（重建会掐断在途滑块动画）。
+      var activeBtn = railList.querySelector('.study-route-rail-item.is-active');
+      if (!activeBtn || activeBtn.dataset.routeTreeId !== treeId) renderRail();
       if (!restoreView(treeId)) fit(true);
       animateRootEntrance();
-      // 换树落定进入回滑相位：新场景左缘放到对侧视口外（fit 后镜头即终值），滑回 0。
+      // 换树落定进入滑入相位：透明度立即复原（此刻仍在视口外），新场景左缘放到
+      // 对侧视口外（fit 后镜头即终值），滑回 0。
       var s = slide;
       if (s) {
         s.phase = 'in';
@@ -1027,18 +1037,20 @@
         s.target = 0;
         s.startAt = null;
         s.legMs = SLIDE_IN_MS;
+        scene.style.opacity = '1';
         slideX = s.from;
         applyView();
       }
     };
-    // 方向语义沿用起步页翻页：序号前进 → 旧树向左出、新树从右进；后退反之。减动效直接落位。
+    // 方向语义沿用起步页翻页：序号前进 → 新树从右进；后退 → 从左进。旧树原地淡出
+    // 不分方向。减动效直接落位。
     var toIndex = state.trees.findIndex(function (tree) { return tree.id === treeId; });
     var fromIndex = state.trees.findIndex(function (tree) { return tree.id === previousTreeId; });
     if (prefersReduced) performSwap();
     else beginSlide(toIndex > fromIndex ? 1 : -1, performSwap);
     return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true, optimistic: true }).catch(function (error) {
       if (requestId !== routeRequestId) throw error;
-      // 落盘失败：若视觉已换过去，停掉在途横滑，淡出回退原树并恢复其镜头，
+      // 落盘失败：若视觉已换过去，停掉在途过渡，淡出回退原树并恢复其镜头，
       // 保持本地与服务端一致；错误继续上抛，走 ignoreBusy 的规则。
       if (state.activeTreeId === treeId) {
         finishSlide();
@@ -1059,8 +1071,10 @@
         requestAnimationFrame(applyRevert);
         window.setTimeout(endTreeTransition, TURN_OUT_MS);
       } else {
-        // 视觉未换（出滑还在途）：撤销离屏点的换树，场景原样滑回。
+        // 视觉未换（出滑还在途）：撤销离屏点的换树，场景原样滑回；
+        // 抢跑的 rail 高亮与滑块也一并滑回权威活动树。
         cancelSlideSwap(performSwap);
+        renderRail();
       }
       throw error;
     });
