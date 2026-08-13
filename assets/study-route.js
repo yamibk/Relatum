@@ -209,7 +209,8 @@
     rail.classList.toggle('revealed', visible);
   }
   function applyView() {
-    scene.style.transform = 'translate3d(' + view.x + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
+    // slideX 是切树横滑的屏幕位移，与摄像机变换在单点合成（0 = 原位）。
+    scene.style.transform = 'translate3d(' + (view.x + slideX) + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
   }
   function viewKeyFor(treeId) {
     return GOAL_TREE_ROUTE_VIEW_KEY + '.' + (treeId || 'default');
@@ -851,9 +852,15 @@
       }
       if (json.task) state.tasks.push(json.task);
       if (sent.command === 'switch-tree') {
-        state.activeTreeId = json.treeId || '';
-        if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
-        if (json.goalTree) state.tree = json.goalTree;
+        if (options.optimistic) {
+          // 乐观切换的 activeTreeId 与画布已由点击时的本地换树落地，响应只回收
+          // 权威树列表；若响应抢先覆盖活动树，会与延后两帧的换树形成分叉窗口。
+          if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
+        } else {
+          state.activeTreeId = json.treeId || '';
+          if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
+          if (json.goalTree) state.tree = json.goalTree;
+        }
       } else if (sent.command === 'create-tree') {
         state.activeTreeId = json.treeId || '';
         if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
@@ -884,8 +891,17 @@
     if (prefersReduced) return;
     scene.classList.add('is-fading');
   }
+  var revealCleanupTimer = 0;
   function endTreeTransition() {
     scene.classList.remove('is-fading');
+    // 切换淡入走零延迟（.is-revealing 规则）：把淡出后的黑屏停顿从 ~84ms 压到一帧；
+    // 定时摘除，避免影响面板打开等其它淡入的 60ms 节奏。
+    scene.classList.add('is-revealing');
+    if (revealCleanupTimer) { clearTimeout(revealCleanupTimer); revealCleanupTimer = 0; }
+    revealCleanupTimer = window.setTimeout(function () {
+      revealCleanupTimer = 0;
+      scene.classList.remove('is-revealing');
+    }, 420);
   }
   // 新树根卡入场：根卡节点 id 恒为 'root'，跨树复用同一元素，
   // 同步器不会给它打 is-entering，这里在树级命令落定后手动重触发一次。
@@ -912,8 +928,69 @@
     applyView();
     flushViewSave();
   }
-  // 乐观切换的淡出节奏：与 --start-turn-out-fade-ms（99ms）对齐，淡出落定即回淡入，
-  // 让切树动画完全在本地完成，不等落盘往返。
+  // ── 切树横滑（单画布挤压）：旧树整体从一侧滑出，完全离屏的一瞬间换成新树
+  // 并跳到对侧，再滑回原位。屏幕位移 slideX 与摄像机变换在 applyView 单点合成；
+  // 出滑/回滑分设时长（easeOutCubic，帧率无关）。淡出机制保留给建树/删树与陈旧快照回退路径。
+  var SLIDE_OUT_MS = 220;
+  var SLIDE_IN_MS = 270;
+  var slideX = 0;
+  var slide = null; // { direction, outDist, swap, phase: 'out'|'in', from, target, startAt, legMs, frame }
+  function slideOutDistance() {
+    // 旧场景右缘必须完全移出视口（大树/远镜头也全出），外加一个视口宽做余量。
+    return viewport.clientWidth + Math.max(0, view.x + scene.offsetWidth * view.zoom);
+  }
+  function slideTick(timestamp) {
+    var s = slide;
+    if (!s) return;
+    if (!open) { finishSlide(); return; }
+    if (s.startAt == null) s.startAt = timestamp;
+    var p = Math.min(1, (timestamp - s.startAt) / s.legMs);
+    slideX = s.from + (s.target - s.from) * (1 - Math.pow(1 - p, 3));
+    applyView();
+    s.frame = requestAnimationFrame(slideTick);
+    if (p < 1) return;
+    slideX = s.target;
+    applyView();
+    if (s.phase === 'out') {
+      if (s.swap) s.swap(); // 离屏瞬间换新树（swap 内部把相位切到 'in' 并重设 leg 参数）
+      s.phase = 'in';
+    } else {
+      finishSlide();
+    }
+  }
+  function beginSlide(direction, swap) {
+    if (slide) {
+      // 连点换目标：旧树快进到完全离屏（眼睛只看到「挪走了」），下一帧在离屏点
+      // 执行换树，离屏点的换树目标替换成新点击的树。
+      slide.direction = direction;
+      slide.swap = swap;
+      slide.phase = 'out';
+      slide.outDist = slideOutDistance();
+      slide.from = 0;
+      slide.target = -direction * slide.outDist;
+      slide.legMs = SLIDE_OUT_MS;
+      slideX = slide.target;
+      applyView();
+      return;
+    }
+    var outDist = slideOutDistance();
+    slide = {
+      direction: direction, outDist: outDist, swap: swap,
+      phase: 'out', from: 0, target: -direction * outDist, startAt: null, legMs: SLIDE_OUT_MS, frame: 0,
+    };
+    slide.frame = requestAnimationFrame(slideTick);
+  }
+  function cancelSlideSwap(swap) {
+    if (slide && slide.swap === swap) slide.swap = null;
+  }
+  function finishSlide() {
+    if (!slide) return;
+    if (slide.frame) { cancelAnimationFrame(slide.frame); slide.frame = 0; }
+    slide = null;
+    slideX = 0;
+    applyView();
+  }
+  // 回退/兜底淡出节奏：与 --start-turn-out-fade-ms（99ms）对齐。
   var TURN_OUT_MS = 99;
   function switchTree(treeId) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
@@ -922,37 +999,69 @@
     var previousTreeId = state.activeTreeId;
     var requestId = routeRequestId;
     var target = state.trees.find(function (tree) { return tree.id === treeId; });
-    beginTreeTransition();
     if (!target) {
-      // 本地没有该树全量数据（快照陈旧）：退回等待服务器回包再渲染。
+      // 本地没有该树全量数据（快照陈旧）：退回淡出→等服务器回包→淡入。
+      beginTreeTransition();
       return command({ command: 'switch-tree', treeId: treeId }).then(function () {
         if (!restoreView(state.activeTreeId)) fit(true);
         animateRootEntrance();
       }).finally(endTreeTransition);
     }
-    // 乐观切换：/api/study 快照已带全部树的节点数据，点击瞬间本地换树，
-    // 落盘请求后台进行。纪元在此推进，作废点击前在途的旧快照（响应落地后
-    // command 还会再推进一次，作废飞行期间取到的旧快照）。
+    // 乐观切换：/api/study 快照已带全部树的节点数据，落盘请求随点击即刻发出
+    // （点过即算数，关面板不取消）；纪元在点击时推进，作废点击前在途的旧快照
+    // （响应落地后 command 还会再推进一次，作废飞行期间取到的旧快照）。
     treeEpoch++;
-    state.activeTreeId = treeId;
-    state.tree = target;
-    render({ duration: 320 });
-    renderRail();
-    if (!restoreView(treeId)) fit(true);
-    animateRootEntrance();
-    window.setTimeout(endTreeTransition, TURN_OUT_MS);
-    return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true }).catch(function (error) {
-      if (requestId !== routeRequestId) throw error;
-      // 落盘失败：画布回退到原树并恢复其镜头，保持本地与服务端一致；
-      // 错误继续上抛，走 ignoreBusy 的静默/提示规则。
-      state.activeTreeId = previousTreeId;
-      var previous = state.trees.find(function (tree) { return tree.id === previousTreeId; });
-      if (previous) state.tree = previous;
-      beginTreeTransition();
+    var performSwap = function () {
+      if (!open || requestId !== routeRequestId) return;
+      state.activeTreeId = treeId;
+      state.tree = target;
       render({ duration: 1 });
       renderRail();
-      restoreView(previousTreeId);
-      window.setTimeout(endTreeTransition, TURN_OUT_MS);
+      if (!restoreView(treeId)) fit(true);
+      animateRootEntrance();
+      // 换树落定进入回滑相位：新场景左缘放到对侧视口外（fit 后镜头即终值），滑回 0。
+      var s = slide;
+      if (s) {
+        s.phase = 'in';
+        s.from = s.direction * (viewport.clientWidth + 12 + Math.max(0, -view.x));
+        s.target = 0;
+        s.startAt = null;
+        s.legMs = SLIDE_IN_MS;
+        slideX = s.from;
+        applyView();
+      }
+    };
+    // 方向语义沿用起步页翻页：序号前进 → 旧树向左出、新树从右进；后退反之。减动效直接落位。
+    var toIndex = state.trees.findIndex(function (tree) { return tree.id === treeId; });
+    var fromIndex = state.trees.findIndex(function (tree) { return tree.id === previousTreeId; });
+    if (prefersReduced) performSwap();
+    else beginSlide(toIndex > fromIndex ? 1 : -1, performSwap);
+    return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true, optimistic: true }).catch(function (error) {
+      if (requestId !== routeRequestId) throw error;
+      // 落盘失败：若视觉已换过去，停掉在途横滑，淡出回退原树并恢复其镜头，
+      // 保持本地与服务端一致；错误继续上抛，走 ignoreBusy 的规则。
+      if (state.activeTreeId === treeId) {
+        finishSlide();
+        settleViewThenSave();
+        beginTreeTransition();
+        var previous = state.trees.find(function (tree) { return tree.id === previousTreeId; });
+        var revertFrames = 0;
+        var applyRevert = function () {
+          revertFrames++;
+          if (revertFrames < 2) { requestAnimationFrame(applyRevert); return; }
+          if (!open || requestId !== routeRequestId) return;
+          state.activeTreeId = previousTreeId;
+          if (previous) state.tree = previous;
+          render({ duration: 1 });
+          renderRail();
+          restoreView(previousTreeId);
+        };
+        requestAnimationFrame(applyRevert);
+        window.setTimeout(endTreeTransition, TURN_OUT_MS);
+      } else {
+        // 视觉未换（出滑还在途）：撤销离屏点的换树，场景原样滑回。
+        cancelSlideSwap(performSwap);
+      }
       throw error;
     });
   }
@@ -1135,6 +1244,7 @@
     viewport.classList.remove('is-panning');
     stopViewAnimation();
     stopPanInertia();
+    finishSlide();  // 停在半途的切树横滑随面板一起失效，场景复位到原树原位
     // 先停动画并把镜头钉到目标值，再落盘：保存的是用户意图的最终镜头，而不是缓动中间帧。
     view = Object.assign({}, viewTarget);
     applyView();
