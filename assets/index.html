@@ -58,6 +58,9 @@
         document.documentElement.dataset.startTheme === 'dark' ? 'dark' : 'light';
       document.body.dataset.startBackground =
         document.documentElement.dataset.startBackground === 'scenic' ? 'scenic' : 'simple';
+      let librarySearchEnabled = false;
+      try { librarySearchEnabled = localStorage.getItem('canvas:librarySearchEnabled') === '1'; } catch (e) {}
+      document.body.dataset.librarySearchEnabled = librarySearchEnabled ? '1' : '0';
       document.documentElement.classList.add('start-page-mounted');
     })();
   </script>
@@ -120,6 +123,14 @@
                 <small>隐藏高级创建入口，已有路线与解锁关系不受影响</small>
               </span>
               <input type="checkbox" data-role="goal-tree-simple-toggle" checked>
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="start-setting-toggle">
+              <span>
+                <strong>画布名称搜索</strong>
+                <small>在画布列表显示“当前 / 全部”搜索工具</small>
+              </span>
+              <input type="checkbox" data-role="library-search-toggle">
               <i aria-hidden="true"></i>
             </label>
           </div>
@@ -285,15 +296,43 @@
       <div class="book-stage" data-role="book-stage">
         <div class="book-page" data-role="book-page">
           <div class="canvas-library-head">
-            <h1 class="page-title" data-role="panel-title">最近</h1>
-            <button type="button" class="page-refresh recent-sync-button" data-action="recent-sync"
-              aria-label="扫描画布文件夹"
-              title="扫描 canvases 文件夹，补充新画布并清理失效登记" hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
-              </svg>
-            </button>
+            <div class="canvas-library-title-row">
+              <h1 class="page-title" data-role="panel-title" data-i18n-managed>最近</h1>
+              <button type="button" class="page-refresh recent-sync-button" data-action="recent-sync"
+                aria-label="扫描画布文件夹"
+                title="扫描 canvases 文件夹，补充新画布并清理失效登记" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+                </svg>
+              </button>
+            </div>
+            <div class="canvas-library-search" data-role="library-search" aria-hidden="true" inert>
+              <div class="library-search-scope" data-role="library-search-scope"
+                data-scope="current" role="group" aria-label="搜索范围">
+                <span class="library-search-scope-slider" aria-hidden="true"></span>
+                <button type="button" data-search-scope="current" aria-pressed="true">当前</button>
+                <button type="button" data-search-scope="all" aria-pressed="false">全部</button>
+              </div>
+              <div class="library-search-field">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path>
+                </svg>
+                <input type="search" data-role="library-search-input" placeholder="搜索画布名称"
+                  aria-label="搜索画布名称" autocomplete="off" spellcheck="false">
+                <span class="library-search-count" data-role="library-search-count"
+                  aria-hidden="true"></span>
+                <button type="button" class="library-search-clear" data-action="library-search-clear"
+                  aria-label="清除搜索" aria-hidden="true" tabindex="-1">
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="m6.5 6.5 7 7m0-7-7 7"></path>
+                  </svg>
+                </button>
+              </div>
+              <span class="library-search-status" data-role="library-search-status"
+                aria-live="polite" aria-atomic="true"></span>
+            </div>
           </div>
           <ul class="recent-list" data-role="file-list"></ul>
         </div>
