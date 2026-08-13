@@ -394,6 +394,10 @@
     { value: '#ece2ee', label: '丁香' },
     { value: '#f3ecd8', label: '暖金' },
     { value: '#f2d9d6', label: '赤霞' },
+    { value: '#def0ec', label: '青瓷' },
+    { value: '#eae4f2', label: '雾蓝' },
+    { value: '#eaf0dc', label: '新绿' },
+    { value: '#f0efe9', label: '月灰' },
   ];
   function colorPaletteHTML(currentColor) {
     currentColor = String(currentColor || '').trim();
