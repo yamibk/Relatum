@@ -78,6 +78,16 @@ guideTitles.slice(1).forEach((title, index) => {
 const openRouteSection = route.slice(route.indexOf('function openRoute('), route.indexOf('function closeRoute('));
 assert(openRouteSection.indexOf('var epoch = treeEpoch;') < openRouteSection.indexOf('applyStudyPayload(studyCache'),
   'opening a requested tree must invalidate the background snapshot captured before its switch starts');
+const resizeViewSection = route.slice(route.indexOf('function preserveViewOnResize()'), route.indexOf('function edgePath('));
+assert(resizeViewSection.includes('deltaX = (next.width - viewportSize.width) / 2')
+  && resizeViewSection.includes('deltaY = (next.height - viewportSize.height) / 2')
+  && resizeViewSection.includes('view.x += deltaX')
+  && resizeViewSection.includes('viewTarget.x += deltaX')
+  && resizeViewSection.includes('saveViewSoon()')
+  && !resizeViewSection.includes('fit('),
+  'resizing the route viewport must preserve its visual center and zoom instead of fitting the whole tree');
+assert(route.includes("window.addEventListener('resize', preserveViewOnResize)"),
+  'the route resize handler must use center-preserving camera adjustment');
 
 [
   '.study-route-edge.is-requires',
