@@ -21,19 +21,23 @@ class StudyProgressTests(unittest.TestCase):
         app.STUDY_ARCHIVE_DIR = self.original_archive_dir
         self.temp_dir.cleanup()
 
+    def data(self, tasks=None, trash=None):
+        tree = app._study_goal_new_tree("目标 1", 0)
+        return {
+            "version": 6,
+            "tasks": list(tasks or []),
+            "trash": list(trash or []),
+            "goalTrees": [tree],
+            "activeTreeId": tree["id"],
+        }
+
     def test_v1_is_not_migrated(self):
         app.STUDY_FILE.write_text(json.dumps({
             "version": 1,
             "tasks": [{"id": "old", "title": "旧任务", "status": "todo"}],
         }), encoding="utf-8")
-        loaded = app.load_study()
-        self.assertEqual(loaded["version"], 5)
-        self.assertEqual(loaded["tasks"], [])
-        self.assertEqual(loaded["trash"], [])
-        self.assertEqual(len(loaded["goalTrees"]), 1)
-        self.assertEqual(loaded["goalTrees"][0]["title"], "目标 1")
-        self.assertEqual(loaded["activeTreeId"], loaded["goalTrees"][0]["id"])
-        self.assertIs(loaded["goalTree"], loaded["goalTrees"][0])
+        with self.assertRaisesRegex(ValueError, "不兼容"):
+            app.load_study()
 
     def test_create_defaults_to_unset_progress(self):
         task = app._study_task({"title": "线性代数"})
@@ -139,14 +143,14 @@ class StudyProgressTests(unittest.TestCase):
         for index in range(app.STUDY_TRASH_MAX + 5):
             task = app._study_task({"title": f"任务 {index}"})
             trash.append({"task": task, "deletedAt": task["updatedAt"]})
-        app.save_study({"version": 2, "tasks": [], "trash": trash})
+        app.save_study(self.data(trash=trash))
         loaded = app.load_study()
         self.assertEqual(len(loaded["trash"]), app.STUDY_TRASH_MAX)
         self.assertEqual(loaded["trash"][0]["task"]["title"], "任务 0")
 
     def test_archive_rolls_back_marker_when_study_save_fails(self):
         task = app._study_task({"title": "待归档", "status": "done"})
-        app.save_study({"version": 2, "tasks": [task], "trash": []})
+        app.save_study(self.data(tasks=[task]))
 
         class CaptureHandler:
             def __init__(self):

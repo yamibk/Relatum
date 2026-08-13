@@ -174,6 +174,14 @@
               <input type="checkbox" data-role="hide-special-toggle">
               <i aria-hidden="true"></i>
             </label>
+            <label class="start-setting-toggle">
+              <span>
+                <strong>精简目标树编辑</strong>
+                <small>隐藏高级创建入口，已有路线与解锁关系不受影响</small>
+              </span>
+              <input type="checkbox" data-role="goal-tree-simple-toggle" checked>
+              <i aria-hidden="true"></i>
+            </label>
           </div>
         </div>
       </div>
@@ -325,9 +333,11 @@
         <section class="study-route-panel" id="study-goal-tree-panel" role="dialog" aria-modal="true"
           aria-labelledby="study-goal-tree-title">
           <header class="study-route-head">
-            <div>
+            <div class="study-route-title-group">
               <p class="study-eyebrow">GOAL TREE</p>
-              <h2 id="study-goal-tree-title">目标树</h2>
+              <div><h2 id="study-goal-tree-title">目标树</h2>
+                <button type="button" class="study-route-help-trigger" data-route-action="help"
+                  aria-label="目标树使用教程" aria-expanded="false">?</button></div>
             </div>
             <div class="study-route-summary" data-role="study-route-summary"></div>
             <button type="button" class="study-route-close" data-route-action="close" aria-label="关闭目标树">×</button>
@@ -357,6 +367,22 @@
                 <button type="button" data-route-action="confirm-cancel">取消</button>
                 <button type="button" class="is-danger" data-route-action="confirm-ok">确定</button>
               </div>
+            </section>
+          </div>
+          <div class="study-route-guide" data-role="study-route-guide" hidden>
+            <button type="button" class="study-route-guide-backdrop" data-route-action="help-close"
+              aria-label="关闭目标树教程"></button>
+            <section role="dialog" aria-modal="true" aria-labelledby="study-route-guide-title">
+              <header>
+                <div><p>GOAL TREE GUIDE</p><h3 id="study-route-guide-title">读懂目标树</h3></div>
+                <button type="button" data-route-action="help-close" aria-label="关闭">×</button>
+              </header>
+              <div class="study-route-guide-copy" data-role="study-route-guide-copy"></div>
+              <footer>
+                <button type="button" data-route-action="help-prev" aria-label="上一页">‹</button>
+                <span data-role="study-route-guide-position">1 / 4</span>
+                <button type="button" data-route-action="help-next" aria-label="下一页">›</button>
+              </footer>
             </section>
           </div>
         </section>

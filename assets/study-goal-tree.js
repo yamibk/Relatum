@@ -1,4 +1,4 @@
-// Study Goal Tree v3: one lightweight route with the original mind-map structure semantics.
+// Study Goal Tree V4: typed primary route links plus secondary prerequisites.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.RelatumStudyGoalTree = factory();
@@ -11,6 +11,13 @@
     return Number.isFinite(parsed) ? parsed : (fallback || 0);
   }
   function rootSide(value) { return text(value).toLowerCase() === 'left' ? 'left' : 'right'; }
+  function progressForTask(task) {
+    if (!task) return 0;
+    if (task.status === 'done') return 1;
+    var progress = task.progress && typeof task.progress === 'object' ? task.progress : {};
+    var target = Math.max(0, number(progress.target));
+    return target ? Math.max(0, Math.min(1, number(progress.current) / target)) : 0;
+  }
   function milestonesForTask(task) {
     var progress = task && task.progress && typeof task.progress === 'object' ? task.progress : {};
     return (Array.isArray(progress.milestones) ? progress.milestones : []).filter(function (item) {
@@ -19,232 +26,141 @@
       return { id: text(item.id), name: text(item.name).trim() || '任务点', at: number(item.at) };
     }).sort(function (a, b) { return a.at - b.at || a.id.localeCompare(b.id); });
   }
-  function progressForTask(task) {
-    if (!task) return 0;
-    if (task.status === 'done') return 1;
-    var progress = task.progress && typeof task.progress === 'object' ? task.progress : {};
-    var target = Math.max(0, number(progress.target));
-    return target ? Math.max(0, Math.min(1, number(progress.current) / target)) : 0;
+  function milestonePlacementId(nodeId, milestoneId) {
+    return 'milestone::' + text(nodeId) + '::' + text(milestoneId);
   }
-  function sorted(items) {
+  function triggerKey(trigger) {
+    return trigger && trigger.kind === 'milestone'
+      ? 'milestone:' + text(trigger.milestoneId) : 'complete';
+  }
+  function sortedLinks(items) {
     return (items || []).slice().sort(function (a, b) {
       return number(a.order) - number(b.order) || text(a.id).localeCompare(text(b.id));
     });
   }
-  function slotKey(value) {
-    var slot = value && value.taskSlot ? value.taskSlot : value;
-    var kind = slot && text(slot.kind);
-    return kind === 'milestone' ? 'milestone:' + text(slot.milestoneId)
-      : (kind === 'start' ? 'start' : (kind === 'end' ? 'end' : ''));
+  function cloneLink(link) {
+    var copy = Object.assign({}, link);
+    if (link && link.trigger) copy.trigger = Object.assign({}, link.trigger);
+    return copy;
   }
-  function normalizeSlot(parent, rawSlot, byTask) {
-    if (!parent || parent.kind !== 'task') return null;
-    var kind = rawSlot && text(rawSlot.kind);
-    if (kind === 'start') return { kind: 'start' };
-    if (kind === 'milestone') {
-      var milestoneId = text(rawSlot.milestoneId).trim();
-      var source = byTask.get(parent.taskId);
-      if (milestonesForTask(source).some(function (item) { return item.id === milestoneId; })) {
-        return { kind: 'milestone', milestoneId: milestoneId };
-      }
-    }
-    return { kind: 'end' };
-  }
-  function groupKey(node) {
-    var parentId = text(node.parentId);
-    return parentId ? parentId + '|' + slotKey(node) : 'root|' + rootSide(node.side);
-  }
+
   function normalizeTree(value, tasks) {
     var tree = value && typeof value === 'object' ? value : {};
+    if (tree.version !== 2) throw new Error('目标树版本不兼容');
     var byTask = new Map((tasks || []).map(function (task) { return [text(task.id), task]; }));
-    var seenIds = new Set(), seenTasks = new Set(), nodes = [];
-    (Array.isArray(tree.nodes) ? tree.nodes : []).forEach(function (raw, index) {
-      if (!raw || typeof raw !== 'object') return;
-      var kind = text(raw.kind), id = text(raw.id).trim();
-      if (!id || seenIds.has(id) || !['branch', 'task'].includes(kind)) return;
-      if (kind === 'task') {
-        var taskId = text(raw.taskId).trim();
-        if (!taskId || !byTask.has(taskId) || seenTasks.has(taskId)) return;
-        seenTasks.add(taskId);
-      }
-      seenIds.add(id);
-      var node = {
-        id: id,
-        kind: kind,
-        parentId: text(raw.parentId).trim() || null,
-        order: Math.max(0, number(raw.order, index)),
-        side: rootSide(raw.side),
-      };
+    var nodes = [], nodeIds = new Set(), taskIds = new Set();
+    (Array.isArray(tree.nodes) ? tree.nodes : []).forEach(function (raw) {
+      if (!raw || typeof raw !== 'object') throw new Error('目标树节点格式不正确');
+      var id = text(raw.id).trim(), kind = text(raw.kind);
+      if (!id || nodeIds.has(id) || !['branch', 'task'].includes(kind)) throw new Error('目标树节点无效');
+      var node = { id: id, kind: kind };
       if (kind === 'branch') {
-        node.title = text(raw.title).trim() || '未命名分支';
-        var branchColor = text(raw.color).trim();
-        if (branchColor && branchColor.length <= 7 && branchColor.charAt(0) === '#') node.color = branchColor;
+        node.title = text(raw.title).trim() || '未命名阶段';
+        if (text(raw.color).trim()) node.color = text(raw.color).trim();
+      } else {
+        var taskId = text(raw.taskId).trim();
+        if (!taskId || !byTask.has(taskId) || taskIds.has(taskId)) throw new Error('目标树任务无效或重复');
+        taskIds.add(taskId); node.taskId = taskId;
       }
-      else {
-        node.taskId = text(raw.taskId).trim();
-        if (raw.taskSlot && typeof raw.taskSlot === 'object') node.taskSlot = Object.assign({}, raw.taskSlot);
-      }
-      nodes.push(node);
+      nodeIds.add(id); nodes.push(node);
     });
     var byId = new Map(nodes.map(function (node) { return [node.id, node]; }));
-    nodes.forEach(function (node) {
-      var parent = byId.get(text(node.parentId));
-      var valid = parent && parent.id !== node.id
-        && (node.kind === 'branch' ? parent.kind === 'branch' : ['branch', 'task'].includes(parent.kind));
-      if (!valid) node.parentId = null;
-    });
-    nodes.forEach(function (node) {
-      var cursor = node, seen = new Set([node.id]), depth = 0;
-      while (cursor.parentId) {
-        depth += 1;
-        if (seen.has(cursor.parentId) || depth > 32) { node.parentId = null; break; }
-        seen.add(cursor.parentId);
-        cursor = byId.get(cursor.parentId) || {};
+    var links = [], linkIds = new Set(), primaryByTarget = new Map();
+    (Array.isArray(tree.links) ? tree.links : []).forEach(function (raw) {
+      if (!raw || typeof raw !== 'object') throw new Error('目标树连接格式不正确');
+      var id = text(raw.id).trim(), from = text(raw.from).trim() || null, to = text(raw.to).trim();
+      var type = text(raw.type), primary = !!raw.primary;
+      if (!id || linkIds.has(id) || !byId.has(to) || (from && !byId.has(from)) || from === to) throw new Error('目标树连接引用无效');
+      if (!['contains', 'requires'].includes(type)) throw new Error('目标树连接类型无效');
+      if (type === 'contains' && from && byId.get(from).kind !== 'branch') throw new Error('只有阶段可以包含节点');
+      if (type === 'contains' && !primary) throw new Error('包含连接必须属于主路线');
+      if (type === 'requires' && !from) throw new Error('依赖连接缺少来源');
+      var link = { id: id, from: from, to: to, type: type, primary: primary };
+      if (primary) {
+        link.order = Math.max(0, number(raw.order));
+        if (!from) link.side = rootSide(raw.side);
+        if (primaryByTarget.has(to)) throw new Error('节点存在多条主路线');
+        primaryByTarget.set(to, link);
       }
-    });
-    nodes.forEach(function (node) {
-      var parent = byId.get(text(node.parentId));
-      if (!parent) {
-        node.parentId = null;
-        node.side = rootSide(node.side);
-        delete node.taskSlot;
-        return;
+      if (type === 'requires') {
+        var trigger = raw.trigger && typeof raw.trigger === 'object' ? raw.trigger : { kind: 'complete' };
+        link.trigger = trigger.kind === 'milestone'
+          ? { kind: 'milestone', milestoneId: text(trigger.milestoneId) }
+          : { kind: 'complete' };
       }
-      delete node.side;
-      var slot = node.kind === 'task' ? normalizeSlot(parent, node.taskSlot, byTask) : null;
-      if (slot) node.taskSlot = slot;
-      else delete node.taskSlot;
+      linkIds.add(id); links.push(link);
     });
-    var groups = new Map();
     nodes.forEach(function (node) {
-      var key = groupKey(node);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(node);
+      if (!primaryByTarget.has(node.id)) throw new Error('节点没有接入主路线');
     });
-    groups.forEach(function (items) {
-      sorted(items).forEach(function (node, index) { node.order = index; });
-    });
-    var normalized = { version: 1, title: text(tree.title).trim() || '我的学习路线', nodes: nodes };
-    var treeId = text(tree.id).trim();
-    if (treeId) normalized.id = treeId;
+    var normalized = {
+      version: 2,
+      id: text(tree.id),
+      title: text(tree.title).trim() || '我的学习路线',
+      nodes: nodes,
+      links: links,
+    };
+    if (tree.createdAt) normalized.createdAt = text(tree.createdAt);
+    if (tree.updatedAt) normalized.updatedAt = text(tree.updatedAt);
+    if (Number.isFinite(Number(tree.order))) normalized.order = Math.max(0, Number(tree.order));
     return normalized;
   }
+
+  function primaryLink(tree, nodeId) {
+    return (tree && tree.links || []).find(function (link) {
+      return link.primary && link.to === text(nodeId);
+    }) || null;
+  }
+  function primaryChildren(tree) {
+    var result = new Map();
+    (tree && tree.links || []).forEach(function (link) {
+      if (!link.primary) return;
+      var key = text(link.from);
+      if (!result.has(key)) result.set(key, []);
+      result.get(key).push(link);
+    });
+    result.forEach(function (items) { items.sort(function (a, b) { return number(a.order) - number(b.order) || a.id.localeCompare(b.id); }); });
+    return result;
+  }
+  function subtreeIds(tree, nodeId) {
+    var children = primaryChildren(tree), result = new Set();
+    (function visit(id) {
+      if (!id || result.has(id)) return;
+      result.add(id);
+      (children.get(id) || []).forEach(function (link) { visit(link.to); });
+    })(text(nodeId));
+    return result;
+  }
   function taskOwner(tree, taskId) {
-    var target = text(taskId);
     var node = (tree && tree.nodes || []).find(function (item) {
-      return item.kind === 'task' && text(item.taskId) === target;
+      return item.kind === 'task' && text(item.taskId) === text(taskId);
     });
     return node ? { tree: tree, node: node } : null;
   }
-  function subtreeIds(tree, nodeId) {
-    var children = new Map(), result = new Set();
-    (tree && tree.nodes || []).forEach(function (node) {
-      var key = text(node.parentId);
-      if (!children.has(key)) children.set(key, []);
-      children.get(key).push(node.id);
-    });
-    function visit(id) {
-      if (!id || result.has(id)) return;
-      result.add(id);
-      (children.get(id) || []).forEach(visit);
-    }
-    visit(text(nodeId));
-    return result;
-  }
-  function canMove(tree, nodeId, parentId) {
-    var node = (tree && tree.nodes || []).find(function (item) { return item.id === nodeId; });
-    if (!node) return false;
-    if (!parentId) return true;
-    var parent = (tree.nodes || []).find(function (item) { return item.id === parentId; });
-    if (!parent || subtreeIds(tree, nodeId).has(parentId)) return false;
-    return node.kind === 'branch' ? parent.kind === 'branch' : ['branch', 'task'].includes(parent.kind);
-  }
-  function previewMove(tree, nodeId, parentId, beforeId, taskSlot, side) {
-    if (!canMove(tree, nodeId, parentId)) return null;
-    var copy = {
-      version: 1,
-      title: text(tree && tree.title),
-      nodes: (tree && tree.nodes || []).map(function (node) {
-        var clone = Object.assign({}, node);
-        if (node.taskSlot) clone.taskSlot = Object.assign({}, node.taskSlot);
-        return clone;
-      }),
-    };
-    var moving = copy.nodes.find(function (node) { return node.id === nodeId; });
-    var parent = copy.nodes.find(function (node) { return node.id === text(parentId); });
-    if (!moving) return null;
-    moving.parentId = text(parentId).trim() || null;
-    if (!moving.parentId) {
-      moving.side = rootSide(side == null ? moving.side : side);
-      delete moving.taskSlot;
-    } else {
-      delete moving.side;
-      var byTask = new Map();
-      var normalizedSlot = parent && parent.kind === 'task'
-        ? (taskSlot && taskSlot.kind === 'milestone'
-          ? { kind: 'milestone', milestoneId: text(taskSlot.milestoneId) }
-          : { kind: taskSlot && taskSlot.kind === 'start' ? 'start' : 'end' }) : null;
-      if (normalizedSlot) moving.taskSlot = normalizedSlot;
-      else delete moving.taskSlot;
-    }
-    var targetKey = groupKey(moving);
-    var siblings = copy.nodes.filter(function (node) {
-      return node.id !== moving.id && groupKey(node) === targetKey;
-    });
-    siblings = sorted(siblings);
-    var before = text(beforeId), index = siblings.findIndex(function (node) { return node.id === before; });
-    siblings.splice(index < 0 ? siblings.length : index, 0, moving);
-    var groups = new Map();
-    copy.nodes.forEach(function (node) {
-      var key = groupKey(node);
-      if (!groups.has(key)) groups.set(key, []);
-      if (key !== targetKey || node.id !== moving.id) groups.get(key).push(node);
-    });
-    groups.set(targetKey, siblings);
-    groups.forEach(function (items) {
-      sorted(items).forEach(function (node, order) { node.order = order; });
-    });
-    siblings.forEach(function (node, order) { node.order = order; });
-    return copy;
-  }
-  function topSide(tree, nodeId) {
-    var byId = new Map((tree.nodes || []).map(function (node) { return [node.id, node]; }));
-    var cursor = byId.get(nodeId), seen = new Set();
-    while (cursor && cursor.parentId && !seen.has(cursor.id)) {
-      seen.add(cursor.id);
-      cursor = byId.get(cursor.parentId);
-    }
-    return rootSide(cursor && cursor.side);
-  }
-  function milestonePlacementId(nodeId, milestoneId) {
-    return 'milestone::' + text(nodeId) + '::' + text(milestoneId);
-  }
+
   function buildModel(value, tasks) {
     var tree = normalizeTree(value, tasks);
-    var byTask = new Map((tasks || []).map(function (task) { return [text(task.id), task]; }));
     var byId = new Map(tree.nodes.map(function (node) { return [node.id, node]; }));
-    var children = new Map();
-    tree.nodes.forEach(function (node) {
-      var key = text(node.parentId);
-      if (!children.has(key)) children.set(key, []);
-      children.get(key).push(node);
-    });
-    children.forEach(function (items, key) {
-      var parent = byId.get(key);
-      var milestones = parent && parent.kind === 'task' ? milestonesForTask(byTask.get(parent.taskId)) : [];
-      var milestoneOrder = new Map(milestones.map(function (item, index) { return [item.id, index]; }));
-      items.sort(function (a, b) {
-        function rank(node) {
-          if (!parent || parent.kind !== 'task') return 0;
-          var slot = node.taskSlot || { kind: 'end' };
-          if (slot.kind === 'start') return -1;
-          if (slot.kind === 'milestone') return milestoneOrder.has(slot.milestoneId) ? milestoneOrder.get(slot.milestoneId) : milestones.length;
-          return milestones.length + 1;
+    var byTask = new Map((tasks || []).map(function (task) { return [text(task.id), task]; }));
+    var primaryByTarget = new Map(), children = new Map(), containsChildren = new Map(), requirements = new Map();
+    tree.links.forEach(function (link) {
+      if (link.primary) {
+        primaryByTarget.set(link.to, link);
+        var key = text(link.from);
+        if (!children.has(key)) children.set(key, []);
+        children.get(key).push(link);
+        if (link.type === 'contains' && link.from) {
+          if (!containsChildren.has(link.from)) containsChildren.set(link.from, []);
+          containsChildren.get(link.from).push(link.to);
         }
-        return rank(a) - rank(b) || number(a.order) - number(b.order) || a.id.localeCompare(b.id);
-      });
+      }
+      if (link.type === 'requires') {
+        if (!requirements.has(link.to)) requirements.set(link.to, []);
+        requirements.get(link.to).push(link);
+      }
     });
-    var metrics = new Map(), subtreeMetrics = new Map();
+    children.forEach(function (items) { items.sort(function (a, b) { return number(a.order) - number(b.order) || a.id.localeCompare(b.id); }); });
+
     function combine(values) {
       var count = values.reduce(function (sum, item) { return sum + item.count; }, 0);
       return {
@@ -253,109 +169,252 @@
         complete: count > 0 && values.every(function (item) { return item.complete; }),
       };
     }
-    function collectNode(node, active) {
-      if (active.has(node.id)) return { count: 0, progress: 0, complete: false };
-      active.add(node.id);
+    var metrics = new Map();
+    function branchMetrics(nodeId, active) {
+      if (active.has(nodeId)) return { count: 0, progress: 0, complete: false };
+      active.add(nodeId);
       var values = [];
-      if (node.kind === 'task') {
-        var task = byTask.get(node.taskId);
-        var own = { count: 1, progress: progressForTask(task), complete: !!task && task.status === 'done' };
-        metrics.set(node.id, own);
-        values.push(own);
-      }
-      (children.get(node.id) || []).forEach(function (child) { values.push(collectNode(child, active)); });
-      active.delete(node.id);
-      var aggregate = combine(values);
-      subtreeMetrics.set(node.id, aggregate);
-      if (node.kind === 'branch') metrics.set(node.id, aggregate);
-      return aggregate;
+      (containsChildren.get(nodeId) || []).forEach(function (childId) {
+        var child = byId.get(childId);
+        if (!child) return;
+        if (child.kind === 'task') {
+          var task = byTask.get(child.taskId), own = {
+            count: 1, progress: progressForTask(task), complete: !!task && task.status === 'done',
+          };
+          metrics.set(child.id, own); values.push(own);
+        } else values.push(branchMetrics(child.id, active));
+      });
+      active.delete(nodeId);
+      var aggregate = combine(values); metrics.set(nodeId, aggregate); return aggregate;
     }
-    var topValues = (children.get('') || []).map(function (node) { return collectNode(node, new Set()); });
-    var rootMetrics = combine(topValues);
-    metrics.set('root', rootMetrics); subtreeMetrics.set('root', rootMetrics);
-    var availability = new Map();
     tree.nodes.forEach(function (node) {
-      var parent = byId.get(text(node.parentId));
-      if (!parent || parent.kind !== 'task') {
-        availability.set(node.id, { available: true, reason: '' }); return;
+      if (node.kind === 'branch' && !metrics.has(node.id)) branchMetrics(node.id, new Set());
+      if (node.kind === 'task' && !metrics.has(node.id)) {
+        var task = byTask.get(node.taskId);
+        metrics.set(node.id, { count: 1, progress: progressForTask(task), complete: !!task && task.status === 'done' });
       }
-      var task = byTask.get(parent.taskId), slot = node.taskSlot || { kind: 'end' };
-      var progress = task && task.progress || {};
-      var available = true, reason = '';
-      if (slot.kind === 'end') { available = !!task && task.status === 'done'; reason = available ? '' : 'predecessor'; }
-      if (slot.kind === 'milestone') {
-        var milestone = milestonesForTask(task).find(function (item) { return item.id === slot.milestoneId; });
-        available = !!task && (task.status === 'done' || (milestone && number(progress.current) >= milestone.at));
-        reason = available ? '' : 'milestone';
-      }
-      availability.set(node.id, { available: available, reason: reason });
     });
+    var rootValues = tree.nodes.filter(function (node) { return node.kind === 'task'; }).map(function (node) { return metrics.get(node.id); });
+    var rootMetrics = combine(rootValues); metrics.set('root', rootMetrics);
+
+    function sourceSatisfied(link) {
+      var source = byId.get(link.from);
+      if (!source) return false;
+      if (source.kind === 'branch') return !!(metrics.get(source.id) || {}).complete;
+      var task = byTask.get(source.taskId);
+      if (!task) return false;
+      if (task.status === 'done') return true;
+      if ((link.trigger || {}).kind !== 'milestone') return false;
+      var milestone = milestonesForTask(task).find(function (item) { return item.id === link.trigger.milestoneId; });
+      return !!milestone && number((task.progress || {}).current) >= milestone.at;
+    }
+    function sourceTitle(link) {
+      var source = byId.get(link.from);
+      if (!source) return '未知节点';
+      if (source.kind === 'branch') return source.title;
+      return (byTask.get(source.taskId) || {}).title || '未命名任务';
+    }
+    var availability = new Map();
+    function availabilityFor(nodeId, active) {
+      if (availability.has(nodeId)) return availability.get(nodeId);
+      if (active.has(nodeId)) return { available: false, reasons: [{ kind: 'cycle', title: '循环依赖' }] };
+      active.add(nodeId);
+      var blockers = (requirements.get(nodeId) || []).filter(function (link) { return !sourceSatisfied(link); }).map(function (link) {
+        return {
+          linkId: link.id,
+          kind: (link.trigger || {}).kind === 'milestone' ? 'milestone' : 'complete',
+          title: sourceTitle(link),
+          milestoneId: (link.trigger || {}).milestoneId || '',
+          primary: !!link.primary,
+        };
+      });
+      var incoming = primaryByTarget.get(nodeId);
+      if (incoming && incoming.type === 'contains' && incoming.from) {
+        var parentState = availabilityFor(incoming.from, active);
+        if (!parentState.available) blockers = blockers.concat(parentState.reasons.map(function (reason) {
+          return Object.assign({}, reason, { inherited: true });
+        }));
+      }
+      active.delete(nodeId);
+      var state = { available: blockers.length === 0, reasons: blockers };
+      availability.set(nodeId, state); return state;
+    }
+    tree.nodes.forEach(function (node) { availabilityFor(node.id, new Set()); });
     return {
-      tree: tree, byId: byId, byTask: byTask, children: children,
-      metrics: metrics, subtreeMetrics: subtreeMetrics, availability: availability, rootMetrics: rootMetrics,
+      tree: tree, byId: byId, byTask: byTask, primaryByTarget: primaryByTarget,
+      children: children, containsChildren: containsChildren, requirements: requirements,
+      metrics: metrics, availability: availability, rootMetrics: rootMetrics,
     };
   }
+
+  function scopedTaskNodes(model, nodeId) {
+    if (!model) return [];
+    if (!nodeId || nodeId === 'root') {
+      return model.tree.nodes.filter(function (node) { return node.kind === 'task'; });
+    }
+    var root = model.byId.get(text(nodeId));
+    if (!root) return [];
+    if (root.kind === 'task') return [root];
+    var result = [], seen = new Set();
+    (function visit(id) {
+      if (seen.has(id)) return;
+      seen.add(id);
+      (model.children.get(text(id)) || []).forEach(function (link) {
+        if (link.type !== 'contains') return;
+        var child = model.byId.get(link.to);
+        if (!child) return;
+        if (child.kind === 'task') result.push(child);
+        else visit(child.id);
+      });
+    })(root.id);
+    return result;
+  }
+
+  function progressBreakdown(model, nodeId) {
+    var nodes = scopedTaskNodes(model, nodeId);
+    var rows = nodes.map(function (node) {
+      var task = model.byTask.get(node.taskId) || {};
+      var progress = task.progress && typeof task.progress === 'object' ? task.progress : {};
+      var current = Math.max(0, number(progress.current));
+      var target = Math.max(0, number(progress.target));
+      var ratio = progressForTask(task);
+      return {
+        nodeId: node.id,
+        taskId: node.taskId,
+        title: text(task.title).trim() || '未命名任务',
+        current: current,
+        target: target,
+        done: task.status === 'done',
+        progress: ratio,
+        percent: Math.round(ratio * 100),
+      };
+    });
+    var sum = rows.reduce(function (total, row) { return total + row.progress; }, 0);
+    return {
+      nodeId: nodeId || 'root',
+      rows: rows,
+      count: rows.length,
+      progressSum: sum,
+      progress: rows.length ? sum / rows.length : 0,
+      percent: Math.round((rows.length ? sum / rows.length : 0) * 100),
+      completeCount: rows.filter(function (row) { return row.done; }).length,
+    };
+  }
+
+  function requirementCount(model, nodeId) {
+    return (model && model.requirements.get(text(nodeId)) || []).length;
+  }
+
+  function canAddRequirement(model, sourceId, targetId, trigger) {
+    sourceId = text(sourceId); targetId = text(targetId);
+    var source = model && model.byId.get(sourceId), target = model && model.byId.get(targetId);
+    if (!source || !target || sourceId === targetId) return false;
+    var cleanedTrigger = trigger && trigger.kind === 'milestone'
+      ? { kind: 'milestone', milestoneId: text(trigger.milestoneId) }
+      : { kind: 'complete' };
+    if (cleanedTrigger.kind === 'milestone') {
+      if (source.kind !== 'task') return false;
+      var task = model.byTask.get(source.taskId);
+      if (!milestonesForTask(task).some(function (item) { return item.id === cleanedTrigger.milestoneId; })) return false;
+    }
+    var duplicate = (model.requirements.get(targetId) || []).some(function (link) {
+      return link.from === sourceId && triggerKey(link.trigger) === triggerKey(cleanedTrigger);
+    });
+    if (duplicate) return false;
+
+    function containsAncestor(ancestorId, childId) {
+      var cursor = childId, seen = new Set();
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        var incoming = model.primaryByTarget.get(cursor);
+        if (!incoming || incoming.type !== 'contains' || !incoming.from) return false;
+        cursor = incoming.from;
+        if (cursor === ancestorId) return true;
+      }
+      return false;
+    }
+    if (containsAncestor(sourceId, targetId) || containsAncestor(targetId, sourceId)) return false;
+
+    var dependencyChildren = new Map();
+    model.tree.links.forEach(function (link) {
+      if (link.type !== 'requires') return;
+      if (!dependencyChildren.has(link.from)) dependencyChildren.set(link.from, []);
+      dependencyChildren.get(link.from).push(link.to);
+    });
+    var pending = [targetId], visited = new Set();
+    while (pending.length) {
+      var current = pending.pop();
+      if (current === sourceId) return false;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      (dependencyChildren.get(current) || []).forEach(function (next) { pending.push(next); });
+    }
+    return true;
+  }
+
   function layout(value, tasks, options) {
     options = options || {};
-    var model = buildModel(value, tasks);
+    var model = buildModel(value, tasks), collapsed = options.collapsedIds instanceof Set ? options.collapsedIds : new Set();
     var sizes = options.sizes instanceof Map ? options.sizes : new Map();
     var gapX = number(options.gapX, 92), gapY = number(options.gapY, 30);
-    var visualById = new Map(), visualChildren = new Map(), visualParent = new Map();
+    var visualById = new Map(), visualChildren = new Map(), visualParent = new Map(), primaryEdgeByTarget = new Map();
     var rootNode = { id: 'root', kind: 'root', title: model.tree.title };
     visualById.set('root', rootNode); visualChildren.set('root', []);
     model.tree.nodes.forEach(function (node) { visualById.set(node.id, node); visualChildren.set(node.id, []); });
-    (model.children.get('') || []).forEach(function (node) {
-      visualChildren.get('root').push(node.id); visualParent.set(node.id, 'root');
-    });
-    model.tree.nodes.forEach(function (parent) {
-      var direct = model.children.get(parent.id) || [];
-      if (parent.kind !== 'task') {
-        direct.forEach(function (child) { visualChildren.get(parent.id).push(child.id); visualParent.set(child.id, parent.id); });
-        return;
-      }
-      var source = model.byTask.get(parent.taskId), milestones = milestonesForTask(source);
-      var milestoneIds = new Map();
+
+    function includePrimary(sourceId, visualSourceId) {
+      sortedLinks(model.children.get(text(sourceId)) || []).forEach(function (link) {
+        var node = model.byId.get(link.to);
+        if (!node) return;
+        visualChildren.get(visualSourceId).push(node.id); visualParent.set(node.id, visualSourceId);
+        primaryEdgeByTarget.set(node.id, link);
+        if (node.kind === 'branch' && collapsed.has(node.id)) return;
+        if (node.kind === 'task') includeTaskChildren(node, link);
+        else includePrimary(node.id, node.id);
+      });
+    }
+    function includeTaskChildren(node) {
+      var task = model.byTask.get(node.taskId), milestones = milestonesForTask(task), milestoneIds = new Map();
       milestones.forEach(function (milestone) {
-        var id = milestonePlacementId(parent.id, milestone.id);
-        var progress = source && source.progress || {};
-        var virtual = {
-          id: id, kind: 'milestone', parentId: parent.id, parentNodeId: parent.id,
-          taskId: parent.taskId,
-          milestone: Object.assign({}, milestone, { reached: source && (source.status === 'done' || number(progress.current) >= milestone.at) }),
-        };
+        var id = milestonePlacementId(node.id, milestone.id), progress = task && task.progress || {};
+        visualById.set(id, {
+          id: id, kind: 'milestone', parentNodeId: node.id, taskId: node.taskId,
+          milestone: Object.assign({}, milestone, { reached: !!task && (task.status === 'done' || number(progress.current) >= milestone.at) }),
+        });
+        visualChildren.set(id, []); visualChildren.get(node.id).push(id); visualParent.set(id, node.id);
         milestoneIds.set(milestone.id, id);
-        visualById.set(id, virtual); visualChildren.set(id, []);
-        visualChildren.get(parent.id).push(id); visualParent.set(id, parent.id);
       });
-      var start = [], end = [];
-      direct.forEach(function (child) {
-        var slot = child.taskSlot || { kind: 'end' };
-        var milestoneId = slot.kind === 'milestone' && milestoneIds.get(slot.milestoneId);
-        if (milestoneId) {
-          visualChildren.get(milestoneId).push(child.id); visualParent.set(child.id, milestoneId);
-        } else if (slot.kind === 'start') start.push(child);
-        else end.push(child);
+      sortedLinks(model.children.get(node.id) || []).forEach(function (link) {
+        var target = model.byId.get(link.to), visualSource = node.id;
+        if (link.type === 'requires' && (link.trigger || {}).kind === 'milestone') {
+          visualSource = milestoneIds.get(link.trigger.milestoneId) || node.id;
+        }
+        visualChildren.get(visualSource).push(target.id); visualParent.set(target.id, visualSource);
+        primaryEdgeByTarget.set(target.id, link);
+        if (target.kind === 'branch' && collapsed.has(target.id)) return;
+        if (target.kind === 'task') includeTaskChildren(target);
+        else includePrimary(target.id, target.id);
       });
-      start.reverse().forEach(function (child) {
-        visualChildren.get(parent.id).unshift(child.id); visualParent.set(child.id, parent.id);
-      });
-      end.forEach(function (child) { visualChildren.get(parent.id).push(child.id); visualParent.set(child.id, parent.id); });
+    }
+    sortedLinks(model.children.get('') || []).forEach(function (link) {
+      var node = model.byId.get(link.to);
+      visualChildren.get('root').push(node.id); visualParent.set(node.id, 'root'); primaryEdgeByTarget.set(node.id, link);
+      if (node.kind === 'branch' && collapsed.has(node.id)) return;
+      if (node.kind === 'task') includeTaskChildren(node);
+      else includePrimary(node.id, node.id);
     });
+
     function sizeFor(id, kind) {
       var supplied = sizes.get(id) || {};
       var defaults = kind === 'task' ? { width: 270, height: 92 }
         : kind === 'root' ? { width: 196, height: 72 }
           : kind === 'milestone' ? { width: 132, height: 54 } : { width: 180, height: 72 };
-      return {
-        width: Math.max(kind === 'milestone' ? 96 : 120, number(supplied.width, defaults.width)),
-        height: Math.max(kind === 'milestone' ? 44 : 54, number(supplied.height, defaults.height)),
-      };
+      return { width: Math.max(kind === 'milestone' ? 96 : 120, number(supplied.width, defaults.width)), height: Math.max(kind === 'milestone' ? 44 : 54, number(supplied.height, defaults.height)) };
     }
-    var sizeMap = new Map();
-    visualById.forEach(function (node, id) { sizeMap.set(id, sizeFor(id, node.kind)); });
+    var sizeMap = new Map(); visualById.forEach(function (node, id) { sizeMap.set(id, sizeFor(id, node.kind)); });
     var top = visualChildren.get('root') || [];
-    var leftTop = top.filter(function (id) { return rootSide(visualById.get(id).side) === 'left'; });
-    var rightTop = top.filter(function (id) { return rootSide(visualById.get(id).side) !== 'left'; });
+    var leftTop = top.filter(function (id) { return rootSide((primaryEdgeByTarget.get(id) || {}).side) === 'left'; });
+    var rightTop = top.filter(function (id) { return rootSide((primaryEdgeByTarget.get(id) || {}).side) !== 'left'; });
     var centers = new Map([['root', { x: 0, y: 0, side: 'root', depth: 0 }]]);
     function layoutSide(topIds, side) {
       if (!topIds.length) return;
@@ -363,85 +422,96 @@
       function include(id) { if (nodeSet.has(id)) return; nodeSet.add(id); (visualChildren.get(id) || []).forEach(include); }
       topIds.forEach(include);
       var depths = new Map([['root', 0]]);
-      function depthWalk(id, depth) {
-        depths.set(id, depth);
-        (visualChildren.get(id) || []).forEach(function (childId) { if (nodeSet.has(childId)) depthWalk(childId, depth + 1); });
-      }
-      topIds.forEach(function (id) { depthWalk(id, 1); });
+      function walk(id, depth) { depths.set(id, depth); (visualChildren.get(id) || []).forEach(function (child) { if (nodeSet.has(child)) walk(child, depth + 1); }); }
+      topIds.forEach(function (id) { walk(id, 1); });
       var maxByDepth = [];
-      nodeSet.forEach(function (id) {
-        var depth = depths.get(id) || 0;
-        maxByDepth[depth] = Math.max(maxByDepth[depth] || 0, sizeMap.get(id).width);
-      });
+      nodeSet.forEach(function (id) { var depth = depths.get(id) || 0; maxByDepth[depth] = Math.max(maxByDepth[depth] || 0, sizeMap.get(id).width); });
       var depthCenter = [], acc = 0;
-      maxByDepth.forEach(function (width, depth) {
-        depthCenter[depth] = acc + width / 2; acc += width + gapX;
-      });
+      maxByDepth.forEach(function (width, depth) { depthCenter[depth] = acc + width / 2; acc += width + gapX; });
       var spread = new Map(), cursor = 0;
       function place(id) {
         var kids = (id === 'root' ? topIds : (visualChildren.get(id) || [])).filter(function (child) { return nodeSet.has(child); });
-        if (!kids.length) {
-          var height = sizeMap.get(id).height;
-          spread.set(id, cursor + height / 2); cursor += height + gapY;
-        } else {
-          kids.forEach(place);
-          spread.set(id, (spread.get(kids[0]) + spread.get(kids[kids.length - 1])) / 2);
-        }
+        if (!kids.length) { var height = sizeMap.get(id).height; spread.set(id, cursor + height / 2); cursor += height + gapY; }
+        else { kids.forEach(place); spread.set(id, (spread.get(kids[0]) + spread.get(kids[kids.length - 1])) / 2); }
       }
-      place('root');
-      var rootDepth = depthCenter[0], rootSpread = spread.get('root');
+      place('root'); var rootDepth = depthCenter[0], rootSpread = spread.get('root');
       nodeSet.forEach(function (id) {
         if (id === 'root') return;
         var depth = depths.get(id) || 0;
-        centers.set(id, {
-          x: (side === 'left' ? -1 : 1) * (depthCenter[depth] - rootDepth),
-          y: spread.get(id) - rootSpread,
-          side: side, depth: depth,
-        });
+        centers.set(id, { x: (side === 'left' ? -1 : 1) * (depthCenter[depth] - rootDepth), y: spread.get(id) - rootSpread, side: side, depth: depth });
       });
     }
     layoutSide(rightTop, 'right'); layoutSide(leftTop, 'left');
-    var placements = [];
+    var placements = [], visibleIds = new Set();
     visualById.forEach(function (node, id) {
-      var center = centers.get(id) || { x: 0, y: 0, side: 'right', depth: 0 };
-      var size = sizeMap.get(id);
+      var center = centers.get(id); if (!center && id !== 'root') return;
+      center = center || { x: 0, y: 0, side: 'root', depth: 0 };
+      var size = sizeMap.get(id), hiddenCount = 0;
+      if (node.kind === 'branch' && collapsed.has(id)) hiddenCount = Math.max(0, subtreeIds(model.tree, id).size - 1);
       placements.push({
         id: id, kind: node.kind, node: node, depth: center.depth, side: center.side,
         x: center.x - size.width / 2, y: center.y, width: size.width, height: size.height,
-        metrics: node.kind === 'milestone'
-          ? { count: 0, progress: node.milestone.reached ? 1 : 0, complete: node.milestone.reached }
-          : model.metrics.get(id),
-        subtreeMetrics: model.subtreeMetrics.get(id),
-        availability: model.availability.get(id) || { available: true, reason: '' },
-      });
+        metrics: node.kind === 'milestone' ? { count: 0, progress: node.milestone.reached ? 1 : 0, complete: node.milestone.reached } : (model.metrics.get(id) || { count: 0, progress: 0, complete: false }),
+        availability: model.availability.get(id) || { available: true, reasons: [] },
+        collapsed: node.kind === 'branch' && collapsed.has(id), hiddenCount: hiddenCount,
+      }); visibleIds.add(id);
     });
     var edges = [];
-    visualParent.forEach(function (parentId, childId) { edges.push({ from: parentId, to: childId }); });
-    var minX = Math.min.apply(Math, placements.map(function (item) { return item.x; }).concat([0]));
-    var minY = Math.min.apply(Math, placements.map(function (item) { return item.y - item.height / 2; }).concat([0]));
-    var offsetX = 44 - minX, offsetY = 44 - minY;
-    placements.forEach(function (item) { item.x += offsetX; item.y += offsetY; });
-    var width = Math.max.apply(Math, placements.map(function (item) { return item.x + item.width; }).concat([0])) + 44;
-    var height = Math.max.apply(Math, placements.map(function (item) { return item.y + item.height / 2; }).concat([0])) + 44;
-    return {
-      model: model, nodes: placements, edges: edges,
-      visualChildren: visualChildren, visualParent: visualParent,
-      bounds: { x: 0, y: 0, width: width, height: height },
+    visualParent.forEach(function (from, to) {
+      if (!visibleIds.has(from) || !visibleIds.has(to)) return;
+      var link = primaryEdgeByTarget.get(to);
+      edges.push({ id: link ? link.id : from + '>' + to, from: from, to: to, type: link ? link.type : 'contains', primary: true, trigger: link && link.trigger });
+    });
+    model.tree.links.forEach(function (link) {
+      if (link.primary || link.type !== 'requires' || !visibleIds.has(link.to)) return;
+      var from = link.from;
+      if ((link.trigger || {}).kind === 'milestone') from = milestonePlacementId(link.from, link.trigger.milestoneId);
+      if (visibleIds.has(from)) edges.push({ id: link.id, from: from, to: link.to, type: 'requires', primary: false, trigger: link.trigger });
+    });
+    var minX = 0, minY = 0, maxX = 0, maxY = 0;
+    placements.forEach(function (item) { minX = Math.min(minX, item.x); minY = Math.min(minY, item.y - item.height / 2); maxX = Math.max(maxX, item.x + item.width); maxY = Math.max(maxY, item.y + item.height / 2); });
+    var pad = 48;
+    placements.forEach(function (item) { item.x += -minX + pad; item.y += -minY + pad; });
+    return { model: model, nodes: placements, edges: edges, bounds: { x: 0, y: 0, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 } };
+  }
+
+  function canMove(tree, nodeId, sourceId) {
+    if (!(tree && tree.nodes || []).some(function (node) { return node.id === nodeId; })) return false;
+    if (!sourceId) return true;
+    if (!(tree.nodes || []).some(function (node) { return node.id === sourceId; })) return false;
+    return !subtreeIds(tree, nodeId).has(sourceId);
+  }
+  function previewMove(tree, nodeId, primary) {
+    if (!primary || !canMove(tree, nodeId, primary.from)) return null;
+    var copy = {
+      version: 2, id: tree.id, title: tree.title,
+      nodes: (tree.nodes || []).map(function (node) { return Object.assign({}, node); }),
+      links: (tree.links || []).filter(function (link) { return !(link.primary && link.to === nodeId); }).map(cloneLink),
     };
+    var old = primaryLink(tree, nodeId);
+    copy.links.push({
+      id: old ? old.id : 'preview-link', from: primary.from || null, to: nodeId,
+      type: primary.type || 'contains', primary: true, order: number(primary.order, 999999),
+      side: primary.from ? undefined : rootSide(primary.side),
+      trigger: primary.type === 'requires' ? Object.assign({}, primary.trigger || { kind: 'complete' }) : undefined,
+    });
+    return copy;
+  }
+  function topSide(tree, nodeId) {
+    var cursor = text(nodeId), seen = new Set();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor); var link = primaryLink(tree, cursor);
+      if (!link || !link.from) return rootSide(link && link.side);
+      cursor = link.from;
+    }
+    return 'right';
   }
   function prepareDropContext(layoutValue, tree, nodeId) {
     var source = (tree && tree.nodes || []).find(function (node) { return node.id === nodeId; });
     if (!layoutValue || !source) return { valid: false, excluded: new Set() };
-    var excluded = new Set([nodeId]), children = new Map();
-    (layoutValue.edges || []).forEach(function (edge) {
-      if (!children.has(edge.from)) children.set(edge.from, []);
-      children.get(edge.from).push(edge.to);
-    });
-    (function visit(id) { (children.get(id) || []).forEach(function (child) { if (!excluded.has(child)) { excluded.add(child); visit(child); } }); })(nodeId);
+    var incoming = primaryLink(tree, nodeId);
     return {
-      valid: true, source: source, nodeId: nodeId,
-      parentId: text(source.parentId), taskSlot: source.taskSlot ? Object.assign({}, source.taskSlot) : null,
-      side: rootSide(source.side), excluded: excluded,
+      valid: true, source: source, nodeId: nodeId, incoming: incoming,
       structuralExcluded: subtreeIds(tree, nodeId),
       byPlacement: new Map(layoutValue.nodes.map(function (item) { return [item.id, item]; })),
     };
@@ -450,109 +520,94 @@
     hints = hints || {};
     var context = hints.context && hints.context.valid ? hints.context : prepareDropContext(layoutValue, tree, nodeId);
     if (!context.valid || !point) return null;
-    var rowGap = Math.max(8, number(hints.rowGap, 30));
-    var levelGap = Math.max(36, number(hints.levelGap, 92));
     var targetId = text(hints.targetId), targetPlacement = context.byPlacement.get(targetId);
-    var targetNode = targetId === 'root' ? { id: 'root', kind: 'root' }
+    var target = targetId === 'root' ? { id: 'root', kind: 'root' }
       : (tree.nodes || []).find(function (node) { return node.id === targetId; });
-    var taskSlot = null;
-    if (!targetNode && targetPlacement && targetPlacement.kind === 'milestone') {
-      targetNode = (tree.nodes || []).find(function (node) { return node.id === targetPlacement.node.parentNodeId; });
-      taskSlot = { kind: 'milestone', milestoneId: targetPlacement.node.milestone.id };
+    var primary = null;
+    if (!target && targetPlacement && targetPlacement.kind === 'milestone') {
+      primary = { from: targetPlacement.node.parentNodeId, type: 'requires', trigger: { kind: 'milestone', milestoneId: targetPlacement.node.milestone.id } };
+    } else if (target) {
+      if (target.kind === 'root') {
+        var rootCenter = targetPlacement.x + targetPlacement.width / 2;
+        primary = { from: null, type: 'contains', side: point.x < rootCenter ? 'left' : 'right' };
+      } else if (target.kind === 'task') primary = { from: target.id, type: 'requires', trigger: { kind: 'complete' } };
+      else primary = { from: target.id, type: 'contains' };
     }
-    if (targetNode && targetNode.kind === 'task' && context.source.kind === 'task') {
-      var requestedMilestone = text(hints.milestoneId);
-      if (requestedMilestone && milestonesForTask((layoutValue.model && layoutValue.model.byTask.get(targetNode.taskId)) || null)
-          .some(function (item) { return item.id === requestedMilestone; })) {
-        taskSlot = { kind: 'milestone', milestoneId: requestedMilestone };
-      }
-      if (!taskSlot) taskSlot = { kind: 'end' };
-    }
-    var actualTargetId = targetNode && targetNode.kind === 'root' ? '' : (targetNode && targetNode.id || '');
-    var targetSide = targetNode && targetNode.kind === 'root'
-      ? (point.x < (targetPlacement.x + targetPlacement.width / 2) ? 'left' : 'right') : null;
-    var canParent = targetNode && (targetNode.kind === 'root' || targetNode.kind === 'branch'
-      || (targetNode.kind === 'task' && context.source.kind === 'task'));
-    var sameParent = actualTargetId === context.parentId;
-    var sameSlot = slotKey(taskSlot) === slotKey(context.taskSlot);
-    var sameSide = actualTargetId || targetSide === context.side;
-    if (canParent && !context.structuralExcluded.has(actualTargetId) && (!sameParent || !sameSlot || !sameSide)
-        && canMove(tree, nodeId, actualTargetId)) {
+    if (primary && !context.structuralExcluded.has(primary.from) && canMove(tree, nodeId, primary.from)) {
       return {
-        type: 'reparent', targetId: targetId || (actualTargetId || 'root'), parentId: actualTargetId,
-        beforeId: '', taskSlot: taskSlot, side: targetSide,
-        direction: targetSide || (targetPlacement && targetPlacement.side) || topSide(tree, actualTargetId),
+        type: 'reparent', targetId: targetId, primaryLink: primary,
+        parentId: primary.from, side: primary.side || null, beforeId: '',
+        direction: primary.side || (targetPlacement && targetPlacement.side) || topSide(tree, primary.from),
         depthCoord: targetPlacement ? targetPlacement.x + targetPlacement.width / 2 : point.x,
         slotCoord: targetPlacement ? targetPlacement.y : point.y,
       };
     }
-    var parentId = context.parentId;
-    if (!canMove(tree, nodeId, parentId)) return null;
-    var rootPlacement = context.byPlacement.get('root');
-    var side = parentId ? topSide(tree, nodeId)
-      : (point.x < rootPlacement.x + rootPlacement.width / 2 ? 'left' : 'right');
-    var direction = side;
-    var visualParentId = parentId || 'root';
-    if (parentId && slotKey(context.taskSlot).indexOf('milestone:') === 0) {
-      visualParentId = milestonePlacementId(parentId, context.taskSlot.milestoneId);
-    }
-    var parentPlacement = context.byPlacement.get(visualParentId) || context.byPlacement.get(parentId || 'root');
-    var anchorPlacement = context.byPlacement.get(nodeId);
-    if (!parentPlacement || !anchorPlacement) return null;
-    var parentCenterX = parentPlacement.x + parentPlacement.width / 2;
-    if (direction === 'right' && point.x <= parentCenterX + 12) return null;
-    if (direction === 'left' && point.x >= parentCenterX - 12) return null;
+    var incoming = context.incoming;
+    if (!incoming) return null;
     var siblings = layoutValue.nodes.filter(function (placement) {
-      if (placement.kind === 'milestone' || context.excluded.has(placement.id)) return false;
-      var node = placement.node;
-      return text(node.parentId) === parentId && slotKey(node) === slotKey(context.taskSlot)
-        && (parentId || rootSide(node.side) === side);
+      if (placement.kind === 'milestone' || context.structuralExcluded.has(placement.id)) return false;
+      var link = primaryLink(tree, placement.id);
+      return link && text(link.from) === text(incoming.from)
+        && (!incoming.from ? rootSide(link.side) === rootSide(incoming.side) : true);
     }).sort(function (a, b) { return a.y - b.y; });
     var insertIndex = siblings.length;
-    for (var index = 0; index < siblings.length; index += 1) {
-      if (point.y < siblings[index].y) { insertIndex = index; break; }
-    }
-    var order = siblings.map(function (placement) { return placement.id; });
-    order.splice(insertIndex, 0, nodeId);
-    var ownIndex = order.indexOf(nodeId), beforeId = order[ownIndex + 1] || '';
-    var depthCoord, slotCoord;
-    if (siblings.length) {
-      depthCoord = siblings.reduce(function (sum, placement) { return sum + placement.x + placement.width / 2; }, 0) / siblings.length;
-      if (insertIndex === 0) slotCoord = siblings[0].y - siblings[0].height / 2 - rowGap / 2;
-      else if (insertIndex === siblings.length) {
-        var last = siblings[siblings.length - 1]; slotCoord = last.y + last.height / 2 + rowGap / 2;
-      } else {
-        var before = siblings[insertIndex - 1], after = siblings[insertIndex];
-        slotCoord = ((before.y + before.height / 2) + (after.y - after.height / 2)) / 2;
-      }
-    } else {
-      depthCoord = direction === 'left'
-        ? parentPlacement.x - levelGap - anchorPlacement.width / 2
-        : parentPlacement.x + parentPlacement.width + levelGap + anchorPlacement.width / 2;
-      slotCoord = parentPlacement.y;
-    }
+    for (var index = 0; index < siblings.length; index += 1) if (point.y < siblings[index].y) { insertIndex = index; break; }
+    var beforeId = siblings[insertIndex] ? siblings[insertIndex].id : '';
+    var anchor = context.byPlacement.get(nodeId), parentPlacement = context.byPlacement.get(incoming.from || 'root');
     return {
-      type: 'insert', targetId: '', parentId: parentId, beforeId: beforeId,
-      taskSlot: context.taskSlot ? Object.assign({}, context.taskSlot) : null,
-      side: parentId ? null : side, direction: direction, order: order,
-      horizontal: true, depthCoord: depthCoord, slotCoord: slotCoord,
+      type: 'insert', targetId: '', beforeId: beforeId,
+      primaryLink: Object.assign({}, cloneLink(incoming), { beforeId: beforeId }),
+      parentId: incoming.from, side: incoming.side || null, direction: topSide(tree, nodeId),
+      horizontal: true,
+      depthCoord: anchor ? anchor.x + anchor.width / 2 : point.x,
+      slotCoord: siblings.length ? (insertIndex < siblings.length ? siblings[insertIndex].y - siblings[insertIndex].height / 2 - 15 : siblings[siblings.length - 1].y + siblings[siblings.length - 1].height / 2 + 15) : (parentPlacement ? parentPlacement.y : point.y),
     };
+  }
+  function nextTasks(model) {
+    var visualOrder = new Map(), sequence = 0;
+    function walk(sourceId) {
+      (model.children.get(text(sourceId)) || []).forEach(function (link) {
+        if (visualOrder.has(link.to)) return;
+        visualOrder.set(link.to, sequence++);
+        walk(link.to);
+      });
+    }
+    walk('');
+    var candidates = model.tree.nodes.filter(function (node) {
+      if (node.kind !== 'task') return false;
+      var task = model.byTask.get(node.taskId), state = model.availability.get(node.id);
+      return task && task.status !== 'done' && state && state.available;
+    });
+    return candidates.sort(function (a, b) {
+      var taskA = model.byTask.get(a.taskId), taskB = model.byTask.get(b.taskId);
+      var startedA = number((taskA.progress || {}).current) > 0 ? 0 : 1;
+      var startedB = number((taskB.progress || {}).current) > 0 ? 0 : 1;
+      if (startedA !== startedB) return startedA - startedB;
+      return number(visualOrder.get(a.id), 999999) - number(visualOrder.get(b.id), 999999) || a.id.localeCompare(b.id);
+    });
   }
 
   return {
     normalizeTree: normalizeTree,
+    buildModel: buildModel,
+    layout: layout,
     taskOwner: taskOwner,
+    primaryLink: primaryLink,
+    primaryChildren: primaryChildren,
     subtreeIds: subtreeIds,
     canMove: canMove,
     previewMove: previewMove,
     prepareDropContext: prepareDropContext,
     structureDropCandidate: structureDropCandidate,
-    buildModel: buildModel,
-    layout: layout,
+    nextTasks: nextTasks,
+    scopedTaskNodes: scopedTaskNodes,
+    progressBreakdown: progressBreakdown,
+    requirementCount: requirementCount,
+    canAddRequirement: canAddRequirement,
     progressForTask: progressForTask,
     milestonesForTask: milestonesForTask,
     milestonePlacementId: milestonePlacementId,
-    slotKey: slotKey,
+    triggerKey: triggerKey,
     rootSide: rootSide,
     topSide: topSide,
   };

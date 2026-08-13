@@ -15,10 +15,16 @@
   var rail = overlay.querySelector('[data-role="study-route-rail"]');
   var railList = overlay.querySelector('[data-role="study-route-rail-list"]');
   var railAdd = overlay.querySelector('[data-role="study-route-rail-add"]');
+  var guide = overlay.querySelector('[data-role="study-route-guide"]');
+  var guideCopy = overlay.querySelector('[data-role="study-route-guide-copy"]');
+  var guidePosition = overlay.querySelector('[data-role="study-route-guide-position"]');
+  var helpTrigger = overlay.querySelector('[data-route-action="help"]');
   var stageEl = overlay.querySelector('.study-route-stage');
   var T = function (value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; };
-  var state = { tasks: [], tree: { version: 1, title: '我的学习路线', nodes: [] }, trees: [], activeTreeId: '' };
+  var state = { tasks: [], tree: { version: 2, title: '我的学习路线', nodes: [], links: [] }, trees: [], activeTreeId: '' };
   var open = false, busy = false, layout = null, confirmAction = null;
+  var collapsedIds = new Set(), nextTaskIndex = 0, nextCandidates = [];
+  var guidePage = 0;
   var routeRequestId = 0, routeCloseTimer = 0;
   // 树命令纪元：切/建/删树时递增。后台 /api/study 快照若取自纪元变化之前
   // （即切树前），落地时必须丢弃，否则会把刚完成的切换静默回退。
@@ -28,12 +34,14 @@
   var view = { x: 42, y: 42, zoom: 1 };
   var viewTarget = Object.assign({}, view), viewTickAt = 0;
   var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
+  var collapseMotion = null;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
   var layoutFrame = 0, summaryFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
   var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
   var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.goal-tree-route.view';
   var legacyViewClaimed = false;
   var STUDY_DATA_CACHE_KEY = '_relatumStudyData';
+  var GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   var studyCache = null, studyPrefetchId = 0;
   var prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (error) { return false; }
@@ -43,6 +51,9 @@
     return String(value == null ? '' : value).replace(/[&<>'"]/g, function (character) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character];
     });
+  }
+  function simpleModeEnabled() {
+    try { return localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (error) { return true; }
   }
   function api(url, options) {
     // 超时守卫：请求若永不落定，busy 会卡死整个面板；15s 足够本地服务完成任何操作。
@@ -65,18 +76,33 @@
     var target = Math.max(0, Number(progress.target) || 0);
     return { current: Math.max(0, Math.min(target, Number(progress.current) || 0)), target: target };
   }
+  function activeTree(trees, treeId) {
+    return (trees || []).find(function (tree) { return tree.id === treeId; }) || (trees || [])[0] || null;
+  }
   function applyTreePayloadInitial(json) {
     var trees = Array.isArray(json.goalTrees) ? json.goalTrees : [];
-    if (!trees.length && json.goalTree) trees = [json.goalTree];
     state.trees = trees;
     state.activeTreeId = json.activeTreeId || (trees.length ? trees[0].id : '');
-    state.tree = json.goalTree || trees[0] || { version: 1, title: '我的学习路线', nodes: [] };
+    state.tree = activeTree(trees, state.activeTreeId) || { version: 2, title: '我的学习路线', nodes: [], links: [] };
+    nextTaskIndex = 0;
   }
   function applyTreeSnapshot(json, expectedTreeId) {
     // 在途请求守卫：响应快照只属于请求发出时的那棵树，切树后不覆盖当前树。
     if (!expectedTreeId || (json.activeTreeId || '') !== expectedTreeId) return;
     if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
-    if (json.goalTree) state.tree = json.goalTree;
+    state.tree = activeTree(state.trees, expectedTreeId) || state.tree;
+  }
+  function syncStudyCacheFromState() {
+    var previous = studyCache || window[STUDY_DATA_CACHE_KEY] || {};
+    var next = Object.assign({}, previous, {
+      version: 6,
+      tasks: state.tasks,
+      goalTrees: state.trees,
+      activeTreeId: state.activeTreeId,
+    });
+    if (!Array.isArray(next.trash)) next.trash = [];
+    studyCache = next;
+    window[STUDY_DATA_CACHE_KEY] = next;
   }
   var RAIL_ORB_HTML = '<span class="study-route-rail-orb" data-role="rail-active-orb" aria-hidden="true"></span>';
   var railOrbY = null;
@@ -210,9 +236,11 @@
     railVisible = visible;
     rail.classList.toggle('revealed', visible);
   }
+  function sceneTransform(offsetX) {
+    return 'translate3d(' + (view.x + (Number(offsetX) || 0)) + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
+  }
   function applyView() {
-    // slideX 是切树横滑的屏幕位移，与摄像机变换在单点合成（0 = 原位）。
-    scene.style.transform = 'translate3d(' + (view.x + slideX) + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
+    scene.style.transform = sceneTransform(0);
   }
   function viewKeyFor(treeId) {
     return GOAL_TREE_ROUTE_VIEW_KEY + '.' + (treeId || 'default');
@@ -224,6 +252,7 @@
         x: Math.round(view.x * 10) / 10,
         y: Math.round(view.y * 10) / 10,
         zoom: Math.round(view.zoom * 1000) / 1000,
+        collapsedIds: Array.from(collapsedIds),
       }));
     } catch (e) {}
   }
@@ -231,7 +260,7 @@
     clearTimeout(viewSaveTimer);
     // 在调度时刻钉住树 id 与镜头快照：防抖定时器触发时若已切树，也不能把旧镜头写进新树的 key。
     var treeId = state.activeTreeId;
-    var snapshot = { x: view.x, y: view.y, zoom: view.zoom };
+    var snapshot = { x: view.x, y: view.y, zoom: view.zoom, collapsedIds: Array.from(collapsedIds) };
     viewSaveTimer = setTimeout(function () {
       viewSaveTimer = 0;
       try {
@@ -239,6 +268,7 @@
           x: Math.round(snapshot.x * 10) / 10,
           y: Math.round(snapshot.y * 10) / 10,
           zoom: Math.round(snapshot.zoom * 1000) / 1000,
+          collapsedIds: snapshot.collapsedIds,
         }));
       } catch (e) {}
     }, 220);
@@ -253,7 +283,12 @@
         raw = JSON.parse(localStorage.getItem(GOAL_TREE_ROUTE_VIEW_KEY) || 'null');
         if (raw) legacyViewClaimed = true;
       }
+      collapsedIds = new Set();
       if (!raw || typeof raw !== 'object') return false;
+      var validBranches = new Set((state.tree.nodes || []).filter(function (node) { return node.kind === 'branch'; }).map(function (node) { return node.id; }));
+      (Array.isArray(raw.collapsedIds) ? raw.collapsedIds : []).forEach(function (id) {
+        if (validBranches.has(id)) collapsedIds.add(id);
+      });
       var x = Number(raw.x), y = Number(raw.y), zoom = Number(raw.zoom);
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) return false;
       zoom = Math.max(.38, Math.min(1.6, zoom));
@@ -375,13 +410,28 @@
     var middle = x1 + (x2 - x1) * .48;
     return 'M' + x1 + ',' + y1 + ' C' + middle + ',' + y1 + ' ' + middle + ',' + y2 + ' ' + x2 + ',' + y2;
   }
+  function availabilityText(placement) {
+    var reasons = placement && placement.availability && placement.availability.reasons || [];
+    if (!reasons.length) return placement && placement.kind === 'task' && !(placement.metrics || {}).complete ? T('可开始') : '';
+    if (reasons.length > 1) return T('还需') + ' ' + reasons.length + ' ' + T('个条件');
+    var reason = reasons[0];
+    return reason.kind === 'milestone'
+      ? T('等待「') + reason.title + T('」达到任务点')
+      : T('等待「') + reason.title + T('」完成');
+  }
   function branchMarkup(placement) {
     var metrics = placement.metrics || { count: 0, progress: 0 };
     var percent = Math.round(metrics.progress * 100);
+    var children = GoalTree.primaryChildren(state.tree).get(placement.id) || [];
+    var collapse = children.length ? '<button type="button" class="study-route-collapse" data-route-action="collapse" aria-expanded="'
+      + (!placement.collapsed) + '" aria-label="' + (placement.collapsed ? T('展开阶段') : T('收起阶段')) + '">'
+      + '<span aria-hidden="true"></span></button>' : '';
+    var hidden = placement.collapsed ? '<em class="study-route-hidden-count">' + placement.hiddenCount + ' ' + T('项已隐藏') + '</em>' : '';
     return '<div class="study-route-branch-main"><strong data-user-content>' + escapeHtml(placement.node.title)
-      + '</strong><span data-role="route-node-meta">' + percent + '% · ' + metrics.count + ' ' + T('项任务') + '</span>'
-      + '<i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + percent + '" style="width:' + percent + '%"></b></i></div>'
-      + '<span class="study-route-node-actions"><button type="button" data-route-action="add" aria-label="'
+      + '</strong><span class="study-route-branch-meta-row"><button type="button" class="study-route-node-meta" data-role="route-node-meta" data-route-action="progress-breakdown">'
+      + percent + '% · ' + metrics.count + ' ' + T('项任务') + '</button>'
+      + hidden + '</span><i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + percent + '" style="width:' + percent + '%"></b></i></div>'
+      + '<span class="study-route-node-actions">' + collapse + '<button type="button" data-route-action="add" aria-label="'
       + T('添加') + '">＋</button><button type="button" data-route-action="menu" aria-label="'
       + T('更多') + '">⋯</button></span>';
   }
@@ -413,17 +463,23 @@
   function taskMarkup(placement) {
     var task = findTask(placement.node.taskId) || { title: T('已移除任务'), status: 'done', progress: {} };
     var progress = taskProgress(task), done = task.status === 'done';
+    var lockedByConditions = placement.availability && !placement.availability.available;
+    var blocked = !done && lockedByConditions;
     var ready = !done && progress.target > 0 && progress.current >= progress.target;
     var controls = progress.target && !done
       ? '<span class="study-route-task-steps"><button type="button" data-route-action="progress" data-delta="-1" aria-label="进度减一"'
-        + (progress.current <= 0 ? ' disabled' : '') + '>−</button><button type="button" data-route-action="progress" data-delta="1" aria-label="进度加一"'
-        + (progress.current >= progress.target ? ' disabled' : '') + '>＋</button></span>' : '';
+        + (blocked || progress.current <= 0 ? ' disabled' : '') + '>−</button><button type="button" data-route-action="progress" data-delta="1" aria-label="进度加一"'
+        + (blocked || progress.current >= progress.target ? ' disabled' : '') + '>＋</button></span>' : '';
     var value = progress.target ? progress.current + ' / ' + progress.target : T('设置进度');
     var width = progress.target ? Math.round(progress.current / progress.target * 100) : 0;
+    var availability = availabilityText(placement);
     return '<button type="button" class="study-route-task-check' + (done ? ' is-done' : '') + (ready ? ' is-ready' : '')
-      + '" data-route-action="complete" aria-label="' + (done ? T('恢复为未完成') : T('标记完成')) + '"><span>✓</span></button>'
+      + '" data-route-action="complete"' + (blocked ? ' disabled' : '') + ' aria-label="' + (done ? T('恢复为未完成') : T('标记完成')) + '"><span>✓</span></button>'
       + '<div class="study-route-task-main"><strong data-user-content>' + escapeHtml(task.title || T('未命名任务'))
-      + '</strong><button type="button" class="study-route-task-value" data-route-action="settings">' + escapeHtml(value) + '</button>'
+      + '</strong><span class="study-route-task-line"><button type="button" class="study-route-task-value" data-route-action="settings"'
+      + (lockedByConditions ? ' disabled' : '') + '>' + escapeHtml(value) + '</button>'
+      + (availability ? (blocked ? '<button type="button" class="study-route-task-state" data-route-action="blockers">'
+        + escapeHtml(availability) + '</button>' : '<small class="study-route-task-state">' + escapeHtml(availability) + '</small>') : '') + '</span>'
       + (progress.target ? '<i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + width + '" style="width:' + width + '%"></b></i>' : '') + '</div>'
       + controls + '<button type="button" class="study-route-node-menu" data-route-action="menu" aria-label="' + T('更多') + '">⋯</button>';
   }
@@ -441,22 +497,34 @@
   function placementMap(items) {
     return new Map((items || []).map(function (item) { return [item.id, Object.assign({}, item)]; }));
   }
-  function syncEdgeElements(next) {
-    var wanted = new Set(next.edges.map(function (edge) { return edge.from + '>' + edge.to; }));
+  function edgeKey(edge) { return edge.id || edge.from + '>' + edge.to; }
+  function syncEdgeElements(next, options) {
+    options = options || {};
+    if (!edgesHost.querySelector('#study-route-arrow')) {
+      var defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      defs.innerHTML = '<marker id="study-route-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker>';
+      edgesHost.appendChild(defs);
+    }
+    var wanted = new Set(next.edges.map(edgeKey));
     edgeElements.forEach(function (path, id) {
       if (wanted.has(id)) return;
       path.remove(); edgeElements.delete(id);
     });
     next.edges.forEach(function (edge) {
-      var id = edge.from + '>' + edge.to, path = edgeElements.get(id);
+      var id = edgeKey(edge), path = edgeElements.get(id), isNewPath = !path;
       if (!path) {
         path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('class', 'study-route-edge is-entering');
         path.dataset.edgeId = id;
         path.dataset.from = edge.from; path.dataset.to = edge.to;
         edgesHost.appendChild(path); edgeElements.set(id, path);
-        requestAnimationFrame(function () { if (path.isConnected) path.classList.remove('is-entering'); });
+        if (!options.suppressEntrance && !prefersReduced) {
+          requestAnimationFrame(function () { if (path.isConnected) path.classList.remove('is-entering'); });
+        }
       }
+      path.setAttribute('class', 'study-route-edge is-' + edge.type + (edge.primary ? ' is-primary' : ' is-secondary')
+        + (isNewPath && !options.suppressEntrance && !prefersReduced ? ' is-entering' : ''));
+      if (edge.type === 'requires') path.setAttribute('marker-end', 'url(#study-route-arrow)');
+      else path.removeAttribute('marker-end');
     });
   }
   function applyLayoutFrame(next, placements) {
@@ -468,12 +536,12 @@
       element.style.top = (placement.y - placement.height / 2) + 'px';
     });
     next.edges.forEach(function (edge) {
-      var path = edgeElements.get(edge.from + '>' + edge.to);
+      var path = edgeElements.get(edgeKey(edge));
       var from = placements.get(edge.from), to = placements.get(edge.to);
       if (path && from && to) path.setAttribute('d', edgePath(from, to));
     });
   }
-  function animateLayout(previous, next, duration, excluded) {
+  function animateLayout(previous, next, duration, excluded, newNodesAtDestination) {
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
     layoutFrame = 0;
     var toMap = placementMap(next.nodes);
@@ -481,6 +549,10 @@
       : placementMap(previous && previous.nodes);
     next.nodes.forEach(function (item) {
       if (fromMap.has(item.id)) return;
+      if (newNodesAtDestination) {
+        fromMap.set(item.id, Object.assign({}, item));
+        return;
+      }
       var edge = next.edges.find(function (candidate) { return candidate.to === item.id; });
       var parent = edge && (fromMap.get(edge.from) || toMap.get(edge.from));
       fromMap.set(item.id, parent ? Object.assign({}, item, { x: parent.x, y: parent.y }) : item);
@@ -514,6 +586,34 @@
       });
     });
   }
+  function transitionFill(fill, target, from) {
+    if (!fill) return;
+    target = Math.max(0, Math.min(100, Number(target) || 0));
+    fill.dataset.progressTarget = String(target);
+    if (prefersReduced || !Number.isFinite(from) || Math.abs(target - from) < .01) {
+      fill.style.width = target + '%';
+      return;
+    }
+    fill.style.width = Math.max(0, Math.min(100, from)) + '%';
+    void fill.offsetWidth;
+    requestAnimationFrame(function () {
+      if (fill.isConnected) fill.style.width = target + '%';
+    });
+  }
+  function transitionTaskCheck(check, previous) {
+    if (!check || !previous || prefersReduced) return;
+    var nextDone = check.classList.contains('is-done');
+    var nextReady = check.classList.contains('is-ready');
+    if (previous.done === nextDone && previous.ready === nextReady) return;
+    check.classList.toggle('is-done', previous.done);
+    check.classList.toggle('is-ready', previous.ready);
+    void check.offsetWidth;
+    requestAnimationFrame(function () {
+      if (!check.isConnected) return;
+      check.classList.toggle('is-done', nextDone);
+      check.classList.toggle('is-ready', nextReady);
+    });
+  }
   function syncNodeElements(seed, options) {
     options = options || {};
     var wanted = new Set(seed.nodes.map(function (item) { return item.id; })), created = [];
@@ -523,16 +623,34 @@
     });
     seed.nodes.forEach(function (placement) {
       var element = nodeElements.get(placement.id), isNew = !element;
+      var isComplete = !!((placement.metrics || {}).complete && placement.kind !== 'root');
+      var isBlocked = !!(placement.availability && !placement.availability.available);
+      var wasBlocked = !!element && element.classList.contains('is-blocked');
+      var oldFill = element && element.querySelector('[data-route-progress-fill]');
+      var oldFillPercent = oldFill ? Number(oldFill.dataset.progressTarget || 0) : NaN;
+      var oldCheck = element && element.querySelector('.study-route-task-check');
+      var oldCheckState = oldCheck ? {
+        done: oldCheck.classList.contains('is-done'),
+        ready: oldCheck.classList.contains('is-ready'),
+      } : null;
       if (!element) {
         element = document.createElement('article');
         element.setAttribute('role', 'treeitem'); element.tabIndex = 0;
         nodesHost.appendChild(element); nodeElements.set(placement.id, element); created.push(element);
       }
+      var isExpansionEntrance = isNew && options.expandEntrance && !prefersReduced;
       element.className = 'study-route-node is-' + placement.kind
-        + ((placement.metrics || {}).complete && placement.kind !== 'root' ? ' is-complete' : '')
-        + (placement.availability && !placement.availability.available ? ' is-blocked' : '')
-        + (isNew && !prefersReduced && !((placement.metrics || {}).complete && placement.kind !== 'root') ? ' is-entering' : '');
+        + (isComplete ? ' is-complete' : '')
+        + (isBlocked ? ' is-blocked' : '')
+        + (placement.kind === 'task' && !(placement.metrics || {}).complete && placement.availability && placement.availability.available ? ' is-ready' : '')
+        + (placement.collapsed ? ' is-collapsed' : '')
+        + (isExpansionEntrance ? ' is-expanding' : '')
+        + (isNew && !isExpansionEntrance && !options.suppressEntrance && !prefersReduced
+          && !isComplete && !isBlocked ? ' is-entering' : '');
       element.dataset.nodeId = placement.id; element.dataset.kind = placement.kind;
+      var statusText = availabilityText(placement);
+      if (statusText) element.setAttribute('data-tooltip', statusText);
+      else element.removeAttribute('data-tooltip');
       if (placement.kind === 'task') element.dataset.taskId = placement.node.taskId;
       else delete element.dataset.taskId;
       if (placement.kind === 'milestone') {
@@ -545,6 +663,41 @@
         element.tabIndex = 0;
       }
       element.innerHTML = nodeMarkup(placement);
+      if (options.expandingControlIds && options.expandingControlIds.has(placement.id)) {
+        var expandingControl = element.querySelector('.study-route-collapse');
+        if (expandingControl) {
+          expandingControl.classList.add('is-expanding');
+          window.setTimeout(function () {
+            if (expandingControl.isConnected) expandingControl.classList.remove('is-expanding');
+          }, prefersReduced ? 0 : 230);
+        }
+      }
+      if (options.revealingHiddenCountIds && options.revealingHiddenCountIds.has(placement.id)) {
+        var revealingHiddenCount = element.querySelector('.study-route-hidden-count');
+        if (revealingHiddenCount) {
+          revealingHiddenCount.classList.add('is-revealing');
+          window.setTimeout(function () {
+            if (revealingHiddenCount.isConnected) revealingHiddenCount.classList.remove('is-revealing');
+          }, prefersReduced ? 0 : 310);
+        }
+      }
+      if (!prefersReduced && options.hidingHiddenCountById && options.hidingHiddenCountById.has(placement.id)) {
+        var hiddenCountRow = element.querySelector('.study-route-branch-meta-row');
+        if (hiddenCountRow) {
+          var hidingHiddenCount = document.createElement('em');
+          hidingHiddenCount.className = 'study-route-hidden-count is-hiding';
+          hidingHiddenCount.textContent = options.hidingHiddenCountById.get(placement.id);
+          hiddenCountRow.appendChild(hidingHiddenCount);
+          window.setTimeout(function () {
+            if (hidingHiddenCount.isConnected) hidingHiddenCount.remove();
+          }, 210);
+        }
+      }
+      if (!isNew) {
+        var nextFill = element.querySelector('[data-route-progress-fill]');
+        transitionFill(nextFill, nextFill ? Number(nextFill.dataset.progressTarget || 0) : 0, oldFillPercent);
+        transitionTaskCheck(element.querySelector('.study-route-task-check'), oldCheckState);
+      }
       if (placement.kind === 'branch' && placement.node && placement.node.color) {
         element.style.setProperty('--branch-color', placement.node.color);
         element.dataset.branchColor = placement.node.color;
@@ -553,9 +706,17 @@
         delete element.dataset.branchColor;
       }
       element.dataset.progress = String(Math.round(((placement.metrics || {}).progress || 0) * 100));
-      if (isNew) window.setTimeout(function () { if (element.isConnected) element.classList.remove('is-entering'); }, prefersReduced ? 0 : 420);
+      if (wasBlocked && placement.availability && placement.availability.available && !prefersReduced) {
+        element.classList.add('is-unlocking');
+        window.setTimeout(function () { if (element.isConnected) element.classList.remove('is-unlocking'); }, 760);
+      }
+      if (isNew && !options.suppressEntrance) {
+        window.setTimeout(function () {
+          if (element.isConnected) element.classList.remove('is-entering', 'is-expanding');
+        }, prefersReduced ? 0 : 420);
+      }
     });
-    settleNodeFills(created, true);
+    settleNodeFills(created, !options.suppressProgressAnimation);
     return new Set(created);
   }
   function preserveViewAnchor(previous, next, anchorId) {
@@ -579,19 +740,19 @@
     options = options || {};
     state.tree = GoalTree.normalizeTree(state.tree, state.tasks);
     var previous = layout;
-    var first = GoalTree.layout(state.tree, state.tasks);
+    var first = GoalTree.layout(state.tree, state.tasks, { collapsedIds: collapsedIds });
     var createdElements = syncNodeElements(first, options);
     var sizes = new Map();
     nodeElements.forEach(function (element, id) { sizes.set(id, { width: element.offsetWidth, height: element.offsetHeight }); });
-    var next = GoalTree.layout(state.tree, state.tasks, { sizes: sizes });
+    var next = GoalTree.layout(state.tree, state.tasks, { sizes: sizes, collapsedIds: collapsedIds });
     layout = next;
     scene.style.width = next.bounds.width + 'px'; scene.style.height = next.bounds.height + 'px';
     edgesHost.setAttribute('viewBox', '0 0 ' + next.bounds.width + ' ' + next.bounds.height);
-    syncEdgeElements(next);
+    syncEdgeElements(next, options);
     if (options.preserveViewAnchor) preserveViewAnchor(previous, next, options.preserveViewAnchor);
-    syncSummary(next.model.rootMetrics, !!previous);
-    animateLayout(previous, next, Number(options.duration) || 320);
-    settleNodeFills(Array.from(nodeElements.values()).filter(function (element) { return !createdElements.has(element); }), false);
+    syncSummary(next.model.rootMetrics, !!previous && !options.suppressSummaryAnimation);
+    var layoutDuration = options.animateLayout === false ? 0 : (Number(options.duration) || 320);
+    animateLayout(previous, next, layoutDuration, null, !!options.expandEntrance);
     applyView();
   }
   function syncSummary(metrics, animate) {
@@ -604,7 +765,18 @@
     var number = summary.querySelector('strong'), copy = summary.querySelector('span');
     if (!number) { number = document.createElement('strong'); summary.appendChild(number); }
     if (!copy) { copy = document.createElement('span'); summary.appendChild(copy); }
-    copy.textContent = completed + ' / ' + metrics.count + ' ' + T('项任务');
+    var nextButton = summary.querySelector('[data-route-action="next-task"]');
+    if (!nextButton) {
+      nextButton = document.createElement('button');
+      nextButton.type = 'button'; nextButton.dataset.routeAction = 'next-task';
+      nextButton.className = 'study-route-next'; nextButton.textContent = T('下一步');
+      summary.appendChild(nextButton);
+    }
+    nextCandidates = GoalTree.nextTasks(layout ? layout.model : GoalTree.buildModel(state.tree, state.tasks));
+    if (nextTaskIndex >= nextCandidates.length) nextTaskIndex = 0;
+    nextButton.hidden = !nextCandidates.length;
+    nextButton.disabled = !nextCandidates.length;
+    copy.textContent = completed + ' / ' + metrics.count + ' ' + T('已完成');
     var from = Number(number.dataset.value);
     if (!Number.isFinite(from)) from = Number((number.textContent || '').replace('%', '')) || percent;
     if (summaryFrame) cancelAnimationFrame(summaryFrame);
@@ -622,87 +794,29 @@
     }
     summaryFrame = requestAnimationFrame(frame);
   }
-  function setFill(fill, percent, from) {
-    if (!fill) return;
-    fill.dataset.progressTarget = String(percent);
-    if (Number.isFinite(from) && !prefersReduced) {
-      fill.style.width = from + '%'; void fill.offsetWidth;
-      requestAnimationFrame(function () { if (fill.isConnected) fill.style.width = percent + '%'; });
-    } else fill.style.width = percent + '%';
-  }
-  function syncTaskElement(element, placement) {
-    var task = findTask(placement.node.taskId), progress = taskProgress(task), done = task && task.status === 'done';
-    var oldFill = element.querySelector('[data-route-progress-fill]');
-    var oldPercent = oldFill ? Number(oldFill.dataset.progressTarget || 0) : 0;
-    var hasSteps = !!element.querySelector('.study-route-task-steps');
-    var mustRebuild = (!!progress.target !== !!oldFill) || (!!progress.target && !done !== hasSteps);
-    if (mustRebuild) {
-      element.innerHTML = taskMarkup(placement);
-      setFill(element.querySelector('[data-route-progress-fill]'), progress.target ? progress.current / progress.target * 100 : 0, oldPercent);
-      return;
+  function focusNode(nodeId) {
+    if (!layout || !nodeId) return;
+    var placement = layout.nodes.find(function (item) { return item.id === nodeId; });
+    if (!placement) return;
+    var rect = viewport.getBoundingClientRect();
+    setViewTarget({
+      zoom: viewTarget.zoom,
+      x: rect.width / 2 - (placement.x + placement.width / 2) * viewTarget.zoom,
+      y: rect.height / 2 - placement.y * viewTarget.zoom,
+    });
+    var element = nodeElements.get(nodeId);
+    if (element) {
+      element.classList.remove('is-next-focus'); void element.offsetWidth;
+      element.classList.add('is-next-focus');
+      window.setTimeout(function () { if (element.isConnected) element.classList.remove('is-next-focus'); }, prefersReduced ? 0 : 900);
+      element.focus({ preventScroll: true });
     }
-    var check = element.querySelector('.study-route-task-check');
-    var ready = !done && progress.target > 0 && progress.current >= progress.target;
-    if (check) {
-      check.classList.toggle('is-done', !!done); check.classList.toggle('is-ready', !!ready);
-      check.setAttribute('aria-label', done ? T('恢复为未完成') : T('标记完成'));
-    }
-    var value = element.querySelector('.study-route-task-value');
-    if (value) value.textContent = progress.target ? progress.current + ' / ' + progress.target : T('设置进度');
-    setFill(oldFill, progress.target ? progress.current / progress.target * 100 : 0);
-    element.querySelectorAll('[data-route-action="progress"]').forEach(function (button) {
-      var delta = Number(button.dataset.delta || 0);
-      button.disabled = delta < 0 ? progress.current <= 0 : progress.current >= progress.target;
-    });
   }
-  function syncProgress(taskId) {
-    var model = GoalTree.buildModel(state.tree, state.tasks);
-    var owner = GoalTree.taskOwner(state.tree, taskId);
-    if (!owner || !layout) return;
-    layout.model = model;
-    var ids = [owner.node.id], cursor = owner.node.parentId;
-    while (cursor) { ids.push(cursor); cursor = (model.byId.get(cursor) || {}).parentId; }
-    ids.push('root');
-    ids.forEach(function (id) {
-      var element = nodeElements.get(id);
-      var placement = layout.nodes.find(function (item) { return item.id === id; });
-      if (!element || !placement) return;
-      placement.metrics = model.metrics.get(id === 'root' ? 'root' : id);
-      var percent = Math.round(((placement.metrics || {}).progress || 0) * 100);
-      element.dataset.progress = String(percent);
-      element.classList.toggle('is-complete', placement.kind !== 'root' && !!(placement.metrics && placement.metrics.complete));
-      if (placement.kind === 'task') syncTaskElement(element, placement);
-      else {
-        var meta = element.querySelector('[data-role="route-node-meta"]');
-        if (meta) meta.textContent = percent + '% · ' + (placement.metrics || {}).count + ' ' + T('项任务');
-        setFill(element.querySelector('[data-route-progress-fill]'), percent);
-      }
-    });
-    layout.nodes.forEach(function (placement) {
-      if (placement.kind === 'milestone' && placement.node.taskId === taskId) {
-        var liveMilestone = GoalTree.milestonesForTask(findTask(taskId)).find(function (item) {
-          return item.id === placement.node.milestone.id;
-        });
-        if (!liveMilestone) return;
-        var source = findTask(taskId), reached = source.status === 'done'
-          || Number((source.progress || {}).current || 0) >= liveMilestone.at;
-        placement.node.milestone = Object.assign({}, liveMilestone, { reached: reached });
-        placement.metrics = { count: 0, progress: reached ? 1 : 0, complete: reached };
-        var milestoneElement = nodeElements.get(placement.id);
-        if (milestoneElement) {
-          milestoneElement.classList.toggle('is-complete', reached);
-          var milestoneMeta = milestoneElement.querySelector('div > span');
-          if (milestoneMeta) milestoneMeta.textContent = T('第') + ' ' + liveMilestone.at + ' ' + T('点')
-            + (reached ? ' · ' + T('已到达') : '');
-        }
-      }
-      if (placement.kind !== 'milestone') {
-        placement.availability = model.availability.get(placement.id) || { available: true, reason: '' };
-        var routeElement = nodeElements.get(placement.id);
-        if (routeElement) routeElement.classList.toggle('is-blocked', !placement.availability.available);
-      }
-    });
-    syncSummary(model.rootMetrics, true);
+  function focusNextTask() {
+    if (!layout || !nextCandidates.length) return;
+    var node = nextCandidates[nextTaskIndex % nextCandidates.length];
+    nextTaskIndex = (nextTaskIndex + 1) % nextCandidates.length;
+    focusNode(node.id);
   }
   function closePopover(restoreFocus, immediate) {
     var anchorId = popover.dataset.anchorId;
@@ -774,33 +888,55 @@
   function addMenu(anchor) {
     var anchorId = anchor.dataset.nodeId || '';
     if (!popover.hidden && popover.dataset.anchorId === anchorId) { closePopover(true); return; }
-    openPopover(anchor, '<div class="study-route-menu"><button type="button" data-route-pop="new-branch">'
-      + T('新建分支') + '</button><button type="button" data-route-pop="new-task">' + T('新建任务')
+    var allowStage = anchor.dataset.kind !== 'task' || !simpleModeEnabled();
+    openPopover(anchor, '<div class="study-route-menu">' + (allowStage ? '<button type="button" data-route-pop="new-branch">'
+      + T(anchor.dataset.kind === 'task' ? '新建后续阶段' : '新建阶段') + '</button>' : '')
+      + '<button type="button" data-route-pop="new-task">' + T('新建任务')
       + '</button><button type="button" data-route-pop="attach-task">' + T('选择已有任务') + '</button></div>');
   }
   function nodeMenu(anchor) {
     var anchorId = anchor.dataset.nodeId || '';
     if (!popover.hidden && popover.dataset.anchorId === anchorId) { closePopover(true); return; }
     var kind = anchor.dataset.kind;
+    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks);
+    var conditionCount = kind === 'root' ? 0 : GoalTree.requirementCount(model, anchor.dataset.nodeId);
+    var simple = simpleModeEnabled();
+    var menuTask = kind === 'task' ? findTask(anchor.dataset.taskId) : null;
+    var unavailable = !!(menuTask && !(model.availability.get(anchor.dataset.nodeId) || { available: true }).available);
     var html = '<div class="study-route-menu"><button type="button" data-route-pop="rename">' + T('改名') + '</button>';
     if (kind === 'task') html += '<button type="button" data-route-pop="new-task">' + T('新建后续任务')
-      + '</button><button type="button" data-route-pop="attach-task">' + T('接入已有任务')
-      + '</button><button type="button" data-route-pop="settings">' + T('设置进度')
+      + '</button>' + (simple ? '' : '<button type="button" data-route-pop="new-stage">' + T('新建后续阶段') + '</button>')
+      + '<button type="button" data-route-pop="attach-task">' + T('接入已有任务')
+      + '</button>' + (!simple || conditionCount ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
+        + (conditionCount ? ' · ' + conditionCount : '') + '</button>' : '')
+      + '<button type="button" data-route-pop="settings"' + (unavailable ? ' disabled' : '') + '>' + T('设置进度')
       + '</button><button type="button" class="is-danger" data-route-pop="detach">' + T('移出路线') + '</button>';
-    else if (kind === 'branch') html += '<button type="button" class="is-danger" data-route-pop="delete-branch">' + T('删除分支') + '</button>';
+    else if (kind === 'branch') html += (!simple || conditionCount ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
+      + (conditionCount ? ' · ' + conditionCount : '') + '</button>' : '')
+      + '<button type="button" class="is-danger" data-route-pop="delete-branch">' + T('删除阶段') + '</button>';
+    else if (kind === 'root') {
+      html += '<button type="button" data-route-pop="collapse-complete">' + T('收起已完成阶段')
+        + '</button><button type="button" data-route-pop="expand-all">' + T('全部展开') + '</button>';
+      if (state.tree.id !== (state.trees[0] || {}).id) html += '<button type="button" class="is-danger" data-route-pop="delete-tree">' + T('删除目标树') + '</button>';
+    }
     // 第一棵（最初）目标树永远不可删除：旧数据是 goal_legacy，全新安装是自动创建的「目标 1」
-    else if (kind === 'root' && state.tree.id !== (state.trees[0] || {}).id) html += '<button type="button" class="is-danger" data-route-pop="delete-tree">' + T('删除目标树') + '</button>';
     html += '</div>';
     openPopover(anchor, html);
   }
   function formPopover(anchor, kind) {
+    if (kind === 'settings' && !popover.hidden
+        && popover.dataset.anchorId === (anchor.dataset.nodeId || '')
+        && popover.querySelector('form[data-route-form="settings"]')) {
+      closePopover(true);
+      return;
+    }
     var nodeId = anchor.dataset.nodeId;
     var node = nodeId === 'root' ? { title: state.tree.title, kind: 'root' }
       : state.tree.nodes.find(function (item) { return item.id === nodeId; });
     var task = node && node.kind === 'task' ? findTask(node.taskId) : null;
-    if (kind === 'new-branch') {
-      return openPopover(anchor, '<form data-route-form="new-branch"><label>' + T('分支名称')
-        + '<input name="title" maxlength="160" required autofocus></label><button type="submit">' + T('添加分支') + '</button></form>');
+    if (kind === 'new-branch' || kind === 'new-stage') {
+      return openPopover(anchor, '<form data-route-form="' + kind + '"><label>' + T('阶段名称')
+        + '<input name="title" maxlength="160" required autofocus></label><button type="submit">' + T('添加阶段') + '</button></form>');
     }
     if (kind === 'new-task') {
       return openPopover(anchor, '<form data-route-form="new-task"><label>' + T('任务名称')
@@ -834,6 +970,108 @@
         + T('保存') + '</button></form>');
     }
   }
+  function nodeTitle(nodeId) {
+    var node = state.tree.nodes.find(function (item) { return item.id === nodeId; });
+    if (!node) return T('未知节点');
+    return node.kind === 'branch' ? node.title : ((findTask(node.taskId) || {}).title || T('未命名任务'));
+  }
+  function requirementDetail(link) {
+    var trigger = link.trigger || { kind: 'complete' };
+    if (trigger.kind !== 'milestone') return T('完成');
+    var source = state.tree.nodes.find(function (node) { return node.id === link.from; });
+    var task = source && source.kind === 'task' ? findTask(source.taskId) : null;
+    var milestone = GoalTree.milestonesForTask(task).find(function (item) { return item.id === trigger.milestoneId; });
+    return milestone ? T('达到任务点') + '「' + milestone.name + '」' : T('任务点');
+  }
+  function requirementRow(link, action, label) {
+    return '<li><div><button type="button" class="study-route-source-link" data-route-pop="locate-source" data-source-node-id="'
+      + escapeHtml(link.from) + '">' + escapeHtml(nodeTitle(link.from)) + '</button><small>' + escapeHtml(requirementDetail(link))
+      + '</small></div><button type="button" data-route-pop="' + action + '" data-link-id="' + escapeHtml(link.id || '')
+      + '">' + T(label) + '</button></li>';
+  }
+  function requirementsPopover(anchor) {
+    var targetId = anchor.dataset.nodeId;
+    var incoming = (state.tree.links || []).filter(function (link) { return link.type === 'requires' && link.to === targetId; });
+    var primaryRows = incoming.filter(function (link) { return link.primary; }).map(function (link) {
+      return requirementRow(link, 'clear-primary-requirement', '取消');
+    }).join('');
+    var extraRows = incoming.filter(function (link) { return !link.primary; }).map(function (link) {
+      return requirementRow(link, 'remove-requirement', '移除');
+    }).join('');
+    var choices = [];
+    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks);
+    if (!simpleModeEnabled()) state.tree.nodes.forEach(function (node) {
+      var completeTrigger = { kind: 'complete' };
+      if (GoalTree.canAddRequirement(model, node.id, targetId, completeTrigger)) {
+        choices.push('<option value="' + escapeHtml(node.id + '::complete') + '">' + escapeHtml(nodeTitle(node.id) + ' · ' + T('完成')) + '</option>');
+      }
+      if (node.kind === 'task') GoalTree.milestonesForTask(findTask(node.taskId)).forEach(function (milestone) {
+        var trigger = { kind: 'milestone', milestoneId: milestone.id };
+        if (!GoalTree.canAddRequirement(model, node.id, targetId, trigger)) return;
+        choices.push('<option value="' + escapeHtml(node.id + '::milestone::' + milestone.id) + '">' + escapeHtml(nodeTitle(node.id) + ' · ' + milestone.name) + '</option>');
+      });
+    });
+    return openPopover(anchor, '<div class="study-route-requirements"><strong>' + T('解锁条件') + '</strong>'
+      + '<section><h4>' + T('主路线条件') + '</h4>' + (primaryRows ? '<ul>' + primaryRows + '</ul>' : '<p>' + T('无主路线条件') + '</p>') + '</section>'
+      + '<section><h4>' + T('附加条件') + '</h4>' + (extraRows ? '<ul>' + extraRows + '</ul>' : '<p>' + T('无附加条件') + '</p>') + '</section>'
+      + (choices.length ? '<form data-route-form="add-requirement"><label>' + T('添加解锁条件') + '<select name="source">' + choices.join('')
+        + '</select></label><button type="submit">' + T('添加') + '</button><p data-role="route-form-error"></p></form>' : '') + '</div>');
+  }
+  function formatProgressNumber(value) {
+    var rounded = Math.round(Number(value || 0) * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+  function progressBreakdownPopover(anchor) {
+    if (!popover.hidden && popover.dataset.anchorId === (anchor.dataset.nodeId || '')
+        && popover.querySelector('.study-route-progress-detail')) {
+      closePopover(true);
+      return;
+    }
+    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks);
+    var detail = GoalTree.progressBreakdown(model, anchor.dataset.nodeId);
+    var visibleRows = detail.rows.slice(0, 50).map(function (row) {
+      var copy = row.done ? T('已完成') + ' · 100%'
+        : row.target ? row.current + ' / ' + row.target + ' · ' + row.percent + '%'
+          : T('未设置进度') + ' · 0%';
+      return '<li><span data-user-content>' + escapeHtml(row.title) + '</span><small>' + escapeHtml(copy) + '</small></li>';
+    }).join('');
+    var sum = formatProgressNumber(detail.progressSum * 100);
+    var formula = detail.count
+      ? T('任务进度总和') + ' ' + sum + '% ÷ ' + detail.count + ' ' + T('项') + ' = ' + detail.percent + '%'
+      : T('尚无参与统计的任务');
+    return openPopover(anchor, '<div class="study-route-progress-detail"><strong>' + T('进度明细') + '</strong>'
+      + (visibleRows ? '<ul>' + visibleRows + '</ul>' : '<p>' + T('尚无参与统计的任务') + '</p>')
+      + (detail.rows.length > 50 ? '<p>' + T('仅展示前 50 项，公式仍按全部任务计算') + '</p>' : '')
+      + '<p class="study-route-progress-formula">' + escapeHtml(formula) + '</p>'
+      + '<p class="study-route-progress-note">' + T('阶段只汇总包含的任务；解锁关系不会改变进度归属。') + '</p></div>');
+  }
+  function blockersPopover(anchor) {
+    var placement = layout && layout.nodes.find(function (item) { return item.id === anchor.dataset.nodeId; });
+    var reasons = placement && placement.availability && placement.availability.reasons || [];
+    var rows = reasons.map(function (reason) {
+      var link = (state.tree.links || []).find(function (item) { return item.id === reason.linkId; });
+      var copy = reason.kind === 'milestone' && link ? requirementDetail(link) : T('完成');
+      return '<li><div><button type="button" class="study-route-source-link" data-route-pop="locate-source" data-source-node-id="'
+        + escapeHtml(link && link.from || '') + '">' + escapeHtml(reason.title || T('未知节点')) + '</button><small>'
+        + escapeHtml(copy) + (reason.inherited ? ' · ' + T('继承自所属阶段') : '') + '</small></div>'
+        + (link ? '<button type="button" data-route-pop="manage-target-requirements" data-target-node-id="' + escapeHtml(link.to) + '">' + T('管理') + '</button>' : '')
+        + '</li>';
+    }).join('');
+    return openPopover(anchor, '<div class="study-route-blockers"><strong>' + T('解锁条件') + '</strong><p>'
+      + T('全部条件满足后才可推进。') + '</p><ul>' + rows + '</ul></div>');
+  }
+  function primaryLinkForAnchor(anchor) {
+    var kind = anchor.dataset.kind, nodeId = anchor.dataset.nodeId;
+    if (kind === 'root') return { from: null, type: 'contains', side: 'right' };
+    if (kind === 'branch') return { from: nodeId, type: 'contains' };
+    return { from: nodeId, type: 'requires', trigger: { kind: 'complete' } };
+  }
+  function pruneCollapsedIds() {
+    var valid = new Set((state.tree.nodes || []).filter(function (node) { return node.kind === 'branch'; }).map(function (node) { return node.id; }));
+    var changed = false;
+    collapsedIds.forEach(function (id) { if (!valid.has(id)) { collapsedIds.delete(id); changed = true; } });
+    if (changed) saveViewSoon();
+  }
   function command(body, options) {
     options = options || {};
     if (busy) return Promise.reject(new Error(T('请稍候')));
@@ -857,7 +1095,10 @@
       if (sent.command === 'switch-tree' || sent.command === 'create-tree' || sent.command === 'delete-tree') {
         treeEpoch++;
       }
-      if (json.task) state.tasks.push(json.task);
+      if (json.task) {
+        var taskIndex = state.tasks.findIndex(function (task) { return task.id === json.task.id; });
+        if (taskIndex >= 0) state.tasks[taskIndex] = json.task; else state.tasks.push(json.task);
+      }
       if (sent.command === 'switch-tree') {
         if (options.optimistic) {
           // 乐观切换的 activeTreeId 与画布已由点击时的本地换树落地，响应只回收
@@ -866,21 +1107,24 @@
         } else {
           state.activeTreeId = json.treeId || '';
           if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
-          if (json.goalTree) state.tree = json.goalTree;
+          state.tree = activeTree(state.trees, state.activeTreeId) || state.tree;
         }
       } else if (sent.command === 'create-tree') {
         state.activeTreeId = json.treeId || '';
         if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
-        else if (json.goalTree) state.trees = state.trees.concat([json.goalTree]);
-        if (json.goalTree) state.tree = json.goalTree;
+        state.tree = activeTree(state.trees, state.activeTreeId) || state.tree;
+        collapsedIds = new Set();
       } else if (sent.command === 'delete-tree') {
         state.activeTreeId = json.treeId || '';
         if (Array.isArray(json.goalTrees)) state.trees = json.goalTrees;
         else state.trees = state.trees.filter(function (item) { return item.id !== json.removedTreeId; });
-        if (json.goalTree) state.tree = json.goalTree;
+        state.tree = activeTree(state.trees, state.activeTreeId) || state.tree;
+        collapsedIds = new Set();
       } else {
         applyTreeSnapshot(json, treeAtRequest);
       }
+      syncStudyCacheFromState();
+      pruneCollapsedIds();
       closePopover(false);
       if (!options.skipRender) { render({ duration: options.duration || 320 }); renderRail(); }
       if (shouldFit && !options.skipRender) requestAnimationFrame(fit);
@@ -935,77 +1179,108 @@
     applyView();
     flushViewSave();
   }
-  // ── 切树过渡（单画布）：旧树原地淡出（只调透明度），完全透明的瞬间换成新树
-  // 并固定从屏幕右侧滑入（与切树方向无关）。屏幕位移 slideX 与摄像机变换在
-  // applyView 单点合成，透明度由同一 ticker 按帧写入（滑行期间压掉场景的 CSS
-  // opacity 过渡，避免双重缓动）。淡出/滑入分设时长（easeOutCubic，帧率无关）。
-  // 类级淡出机制保留给建树/删树与陈旧快照回退路径。
-  var FADE_OUT_MS = 220;
-  var SLIDE_IN_MS = 270;
-  var slideX = 0;
-  var slide = null; // { swap, phase: 'out'|'in', from, target, startAt, legMs, frame }
-  function slideTick(timestamp) {
-    var s = slide;
-    if (!s) return;
-    if (!open) { finishSlide(); return; }
-    if (s.startAt == null) s.startAt = timestamp;
-    var p = Math.min(1, (timestamp - s.startAt) / s.legMs);
-    var eased = 1 - Math.pow(1 - p, 3);
-    if (s.phase === 'out') {
-      scene.style.opacity = String(1 - eased); // 原地淡出，不位移
-    } else {
-      slideX = s.from + (s.target - s.from) * eased;
-      applyView();
+  // ── 切树过渡（单画布）────────────────────────────────────
+  // 数据切换与视觉切换分离：switchTree 负责乐观状态和失败回滚，本控制器只负责
+  // “短退场 → 透明点换树 → 轻量入场”。位移跟随 rail 顺序，避免整屏飞行；所有
+  // 动画都归属一个可取消句柄，关闭面板、连点和回滚不再分别清理 opacity/transform。
+  var TREE_SWITCH_OUT_MS = 80;
+  var TREE_SWITCH_IN_MS = 180;
+  var TREE_SWITCH_EXIT_PX = 8;
+  var TREE_SWITCH_ENTER_PX = 34;
+  var treeSwitchMotion = null;
+  var treeSwitchMotionId = 0;
+  function finishTreeSwitchMotion(motion, completed) {
+    if (!motion) return;
+    var wasActive = treeSwitchMotion === motion;
+    if (motion.frame) cancelAnimationFrame(motion.frame);
+    motion.frame = 0;
+    motion.cancelled = !completed;
+    if (motion.resolveFinished) {
+      motion.resolveFinished(!!completed);
+      motion.resolveFinished = null;
     }
-    s.frame = requestAnimationFrame(slideTick);
-    if (p < 1) return;
-    if (s.phase === 'out') {
-      scene.style.opacity = '0';
-      if (s.swap) s.swap(); // 完全透明的瞬间换新树（swap 内部把相位切到 'in' 并重设 leg）
-      s.phase = 'in';
-    } else {
-      finishSlide();
-    }
+    if (!wasActive) return;
+    treeSwitchMotion = null;
+    // 先在 transition:none 的保护下恢复最终样式，再摘状态类，避免清理动作自己产生余波。
+    scene.style.opacity = '';
+    applyView();
+    scene.classList.remove('is-tree-switching');
   }
-  function beginSlide(swap) {
-    scene.style.transition = 'none'; // 透明度由 ticker 逐帧写，压掉 CSS opacity 过渡
-    if (slide) {
-      // 连点换目标：旧树快进到完全透明（眼睛只看到「消失」），透明点立即执行换树，
-      // 换树目标替换成新点击的树。
-      slide.swap = swap;
-      slide.phase = 'out';
-      slide.legMs = FADE_OUT_MS;
-      scene.style.opacity = '0';
-      if (swap) swap();
-      slide.phase = 'in';
+  function cancelTreeSwitchMotion(motion) {
+    finishTreeSwitchMotion(motion || treeSwitchMotion, false);
+  }
+  function requestTreeSwitchFrame(motion) {
+    motion.frame = requestAnimationFrame(function (timestamp) { tickTreeSwitchMotion(motion, timestamp); });
+  }
+  function tickTreeSwitchMotion(motion, timestamp) {
+    motion.frame = 0;
+    if (!open || motion.cancelled || treeSwitchMotion !== motion) {
+      finishTreeSwitchMotion(motion, false);
       return;
     }
-    slide = {
+    if (motion.startedAt == null) motion.startedAt = timestamp;
+    var duration = motion.phase === 'out' ? TREE_SWITCH_OUT_MS : TREE_SWITCH_IN_MS;
+    var p = Math.min(1, (timestamp - motion.startedAt) / duration);
+    var eased = motion.phase === 'out' ? p * p : 1 - Math.pow(1 - p, 3);
+    var offset = motion.phase === 'out'
+      ? motion.direction * -TREE_SWITCH_EXIT_PX * eased
+      : motion.direction * TREE_SWITCH_ENTER_PX * (1 - eased);
+    scene.style.opacity = String(motion.phase === 'out' ? 1 - eased : eased);
+    scene.style.transform = sceneTransform(offset);
+    if (p < 1) {
+      requestTreeSwitchFrame(motion);
+      return;
+    }
+    if (motion.phase === 'out') {
+      scene.style.opacity = '0';
+      motion.swapped = motion.swap() !== false;
+      if (!motion.swapped || !open) {
+        finishTreeSwitchMotion(motion, false);
+        return;
+      }
+      motion.phase = 'in';
+      motion.startedAt = null;
+      scene.style.transform = sceneTransform(motion.direction * TREE_SWITCH_ENTER_PX);
+      requestTreeSwitchFrame(motion);
+      return;
+    }
+    finishTreeSwitchMotion(motion, true);
+  }
+  function beginTreeSwitchMotion(swap, direction) {
+    cancelTreeSwitchMotion();
+    direction = direction < 0 ? -1 : 1;
+    var motion = {
+      id: ++treeSwitchMotionId,
+      frame: 0,
+      cancelled: false,
+      swapped: false,
+      phase: 'out',
+      startedAt: null,
+      direction: direction,
       swap: swap,
-      phase: 'out', from: 0, target: 0, startAt: null, legMs: FADE_OUT_MS, frame: 0,
+      resolveFinished: null,
+      finished: null,
     };
-    slide.frame = requestAnimationFrame(slideTick);
+    motion.finished = new Promise(function (resolve) { motion.resolveFinished = resolve; });
+    treeSwitchMotion = motion;
+    if (prefersReduced) {
+      motion.swapped = swap() !== false;
+      finishTreeSwitchMotion(motion, motion.swapped);
+      return motion;
+    }
+    scene.classList.add('is-tree-switching');
+    requestTreeSwitchFrame(motion);
+    return motion;
   }
-  function cancelSlideSwap(swap) {
-    if (slide && slide.swap === swap) slide.swap = null;
-  }
-  function finishSlide() {
-    if (!slide) return;
-    if (slide.frame) { cancelAnimationFrame(slide.frame); slide.frame = 0; }
-    slide = null;
-    slideX = 0;
-    scene.style.opacity = '';
-    scene.style.transition = '';
-    applyView();
-  }
-  // 回退/兜底淡出节奏：与 --start-turn-out-fade-ms（99ms）对齐。
-  var TURN_OUT_MS = 99;
   function switchTree(treeId) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
     settleViewThenSave();
     var previousTreeId = state.activeTreeId;
     var requestId = routeRequestId;
+    var previousTreeIndex = state.trees.findIndex(function (tree) { return tree.id === previousTreeId; });
+    var targetTreeIndex = state.trees.findIndex(function (tree) { return tree.id === treeId; });
+    var direction = targetTreeIndex < previousTreeIndex ? -1 : 1;
     var target = state.trees.find(function (tree) { return tree.id === treeId; });
     if (!target) {
       // 本地没有该树全量数据（快照陈旧）：退回淡出→等服务器回包→淡入。
@@ -1023,58 +1298,41 @@
     // 权威活动树状态仍在离屏点切换，落盘失败时随回退一起滑回。
     renderRail(treeId);
     var performSwap = function () {
-      if (!open || requestId !== routeRequestId) return;
+      if (!open || requestId !== routeRequestId) return false;
       state.activeTreeId = treeId;
       state.tree = target;
-      render({ duration: 1 });
+      var restored = restoreView(treeId);
+      // 切树保留进度条与顶部数字的细腻变化，但不把“已有节点”误演成刚刚创建；
+      // 整棵树只由场景级过渡承载方向和位移，避免节点缩放与横移互相打架。
+      render({ animateLayout: false, suppressEntrance: true });
       // 滑块已在点击时抢跑；若抢跑未发生才补一次 rail 同步（重建会掐断在途滑块动画）。
       var activeBtn = railList.querySelector('.study-route-rail-item.is-active');
       if (!activeBtn || activeBtn.dataset.routeTreeId !== treeId) renderRail();
-      if (!restoreView(treeId)) fit(true);
-      animateRootEntrance();
-      // 换树落定进入滑入相位：透明度立即复原（此刻仍在视口外），新场景左缘放到
-      // 右侧视口外（fit 后镜头即终值），固定从右往左滑回 0。
-      var s = slide;
-      if (s) {
-        s.phase = 'in';
-        s.from = viewport.clientWidth + 12 + Math.max(0, -view.x);
-        s.target = 0;
-        s.startAt = null;
-        s.legMs = SLIDE_IN_MS;
-        scene.style.opacity = '1';
-        slideX = s.from;
-        applyView();
-      }
+      if (!restored) fit(true);
+      return true;
     };
-    // 入场方向固定从右往左，与 rail 序号无关。减动效直接落位。
-    if (prefersReduced) performSwap();
-    else beginSlide(performSwap);
+    var motion = beginTreeSwitchMotion(performSwap, direction);
     return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true, optimistic: true }).catch(function (error) {
       if (requestId !== routeRequestId) throw error;
-      // 落盘失败：若视觉已换过去，停掉在途过渡，淡出回退原树并恢复其镜头，
-      // 保持本地与服务端一致；错误继续上抛，走 ignoreBusy 的规则。
+      // 落盘失败：若视觉已换过去，用同一个可取消控制器反向回退；若仍在退场，
+      // 直接取消并恢复 rail。错误继续上抛，走 ignoreBusy 的规则。
       if (state.activeTreeId === treeId) {
-        finishSlide();
+        cancelTreeSwitchMotion(motion);
         settleViewThenSave();
-        beginTreeTransition();
         var previous = state.trees.find(function (tree) { return tree.id === previousTreeId; });
-        var revertFrames = 0;
         var applyRevert = function () {
-          revertFrames++;
-          if (revertFrames < 2) { requestAnimationFrame(applyRevert); return; }
-          if (!open || requestId !== routeRequestId) return;
+          if (!open || requestId !== routeRequestId) return false;
           state.activeTreeId = previousTreeId;
           if (previous) state.tree = previous;
-          render({ duration: 1 });
+          var restored = restoreView(previousTreeId);
+          render({ animateLayout: false, suppressEntrance: true });
           renderRail();
-          restoreView(previousTreeId);
+          if (!restored) fit(true);
+          return true;
         };
-        requestAnimationFrame(applyRevert);
-        window.setTimeout(endTreeTransition, TURN_OUT_MS);
+        beginTreeSwitchMotion(applyRevert, -direction);
       } else {
-        // 视觉未换（淡出还在途）：撤销透明点的换树，场景原样滑回；
-        // 抢跑的 rail 高亮与滑块也一并滑回权威活动树。
-        cancelSlideSwap(performSwap);
+        cancelTreeSwitchMotion(motion);
         renderRail();
       }
       throw error;
@@ -1111,12 +1369,13 @@
     if (busy) return Promise.reject(new Error(T('请稍候')));
     busy = true;
     var treeAtRequest = state.activeTreeId;
-    return post('/api/study-task-update', Object.assign({ id: task.id }, patch)).then(function (json) {
+    return post('/api/study-task-update', Object.assign({ id: task.id, goalTreeId: state.activeTreeId }, patch)).then(function (json) {
       var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
       if (index >= 0) state.tasks[index] = json.task;
       applyTreeSnapshot(json, treeAtRequest);
+      syncStudyCacheFromState();
       closePopover(false);
-      if (options && options.fullRender) render(); else syncProgress(task.id);
+      render({ duration: 280, preserveViewAnchor: 'root' });
       if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
       return json;
     }).finally(function () { busy = false; });
@@ -1125,11 +1384,12 @@
     if (busy) return;
     busy = true;
     var treeAtRequest = state.activeTreeId;
-    post('/api/study-task-progress', { id: task.id, delta: delta }).then(function (json) {
+    post('/api/study-task-progress', { id: task.id, delta: delta, goalTreeId: state.activeTreeId }).then(function (json) {
       var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
       if (index >= 0) state.tasks[index] = json.task;
       applyTreeSnapshot(json, treeAtRequest);
-      syncProgress(task.id);
+      syncStudyCacheFromState();
+      render({ duration: 280, preserveViewAnchor: 'root' });
       if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
     }).catch(showError).finally(function () { busy = false; });
   }
@@ -1168,6 +1428,58 @@
     if (immediate || prefersReduced) finish();
     else confirmCloseTimer = window.setTimeout(finish, 210);
   }
+  var GUIDE_PAGES = [
+    {
+      title: '目标、阶段、任务与连线',
+      body: '<p>目标是整棵路线；阶段用来收纳一组学习任务，本身没有手动进度。</p><ul><li>浅灰无箭头线：阶段“包含”任务。</li><li>深色箭头线：完成来源后，解锁下一项；虚线表示附加条件。</li></ul>',
+    },
+    {
+      title: '进度怎样计算',
+      body: '<p>所有任务等权：已完成是 100%；有总量时按“当前 ÷ 总量”；未设置总量且未完成是 0%。</p><p>阶段只平均它包含的任务，根目标平均整棵树中的唯一任务。点击阶段或根目标的进度文字，可以查看逐项公式。</p>',
+    },
+    {
+      title: '解锁条件',
+      body: '<p>一个节点有多个条件时采用 AND 规则：必须全部满足才可推进。主路线条件决定树的排版位置；附加条件只增加约束，不改变排版和进度归属。</p><p>被锁定的任务仍可改名、查看条件或移出路线，但不能完成或修改进度。</p>',
+    },
+    {
+      title: '更快地编辑路线',
+      body: '<p>拖动节点可调整主路线；“下一步”会依次定位当前可开始的任务；阶段可折叠，多棵目标树从左侧 Rail 切换。</p><p>起步页齿轮里的“精简目标树编辑”默认开启。关闭后，才显示新建后续阶段、添加解锁条件等高级入口；切换不会改动已有数据。</p>',
+    },
+  ];
+  function renderGuidePage() {
+    if (!guideCopy) return;
+    var page = GUIDE_PAGES[guidePage] || GUIDE_PAGES[0];
+    guideCopy.innerHTML = '<h4>' + T(page.title) + '</h4>' + page.body;
+    guidePosition.textContent = (guidePage + 1) + ' / ' + GUIDE_PAGES.length;
+    var previous = guide.querySelector('[data-route-action="help-prev"]');
+    var next = guide.querySelector('[data-route-action="help-next"]');
+    previous.disabled = guidePage === 0;
+    next.disabled = guidePage === GUIDE_PAGES.length - 1;
+  }
+  function openGuide() {
+    if (!guide) return;
+    closePopover(false);
+    guidePage = 0;
+    renderGuidePage();
+    guide.hidden = false;
+    helpTrigger && helpTrigger.setAttribute('aria-expanded', 'true');
+    requestAnimationFrame(function () {
+      guide.classList.add('is-visible');
+      var close = guide.querySelector('[data-route-action="help-close"]:not(.study-route-guide-backdrop)');
+      if (close) close.focus();
+    });
+  }
+  function closeGuide() {
+    if (!guide || guide.hidden) return;
+    guide.classList.remove('is-visible');
+    guide.hidden = true;
+    helpTrigger && helpTrigger.setAttribute('aria-expanded', 'false');
+    if (helpTrigger) helpTrigger.focus({ preventScroll: true });
+  }
+  function moveGuide(delta) {
+    guidePage = Math.max(0, Math.min(GUIDE_PAGES.length - 1, guidePage + delta));
+    renderGuidePage();
+  }
   function showOverlay() {
     if (open) return;
     if (routeCloseTimer) clearTimeout(routeCloseTimer);
@@ -1187,9 +1499,10 @@
     state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
     applyTreePayloadInitial(json);
     scene.classList.remove('is-loading');
+    var restored = restoreView(state.activeTreeId);
     render();
     renderRail();
-    if (!restoreView(state.activeTreeId)) fit(true);
+    if (!restored) fit(true);
     requestAnimationFrame(function () {
       if (!open || requestId !== routeRequestId) return;
       var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
@@ -1209,6 +1522,8 @@
   function openRoute(trigger, taskId) {
     var requestId = ++routeRequestId;
     showOverlay();
+    var shared = window[STUDY_DATA_CACHE_KEY];
+    if (shared && shared.tasks && shared !== studyCache) studyCache = shared;
     if (studyCache && studyCache.tasks) {
       applyStudyPayload(studyCache, requestId, taskId);
       var epoch = treeEpoch;
@@ -1220,13 +1535,13 @@
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
         state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
         applyTreePayloadInitial(json);
+        var restored = restoreView(state.activeTreeId);
         render();
         renderRail();
-        if (!restoreView(state.activeTreeId)) fit(true);
+        if (!restored) fit(true);
       }).catch(function () {});
       return;
     }
-    var shared = window[STUDY_DATA_CACHE_KEY];
     if (shared && shared.tasks) {
       studyCache = shared;
       applyStudyPayload(shared, requestId, taskId);
@@ -1252,6 +1567,7 @@
     ++routeRequestId;
     if (routeCloseTimer) clearTimeout(routeCloseTimer);
     if (drag) finishDrag(true);
+    cancelCollapseMotion();
     if (pan) {
       try { viewport.releasePointerCapture(pan.id); } catch (error) {}
     }
@@ -1259,7 +1575,7 @@
     viewport.classList.remove('is-panning');
     stopViewAnimation();
     stopPanInertia();
-    finishSlide();  // 停在半途的切树横滑随面板一起失效，场景复位到原树原位
+    cancelTreeSwitchMotion();  // 停在半途的切树过渡随面板一起失效，场景复位到当前树原位
     // 先停动画并把镜头钉到目标值，再落盘：保存的是用户意图的最终镜头，而不是缓动中间帧。
     view = Object.assign({}, viewTarget);
     applyView();
@@ -1268,7 +1584,7 @@
     if (summaryFrame) cancelAnimationFrame(summaryFrame);
     layoutFrame = 0;
     summaryFrame = 0;
-    closePopover(false); closeConfirm();
+    closePopover(false); closeConfirm(); closeGuide();
     if (reparentBadge) { reparentBadge.remove(); reparentBadge = null; }
     if (dropSlot) { dropSlot.remove(); dropSlot = null; }
     nodesHost.innerHTML = '';
@@ -1292,6 +1608,105 @@
   function parentForAnchor(anchor) {
     return ['branch', 'task'].includes(anchor.dataset.kind) ? anchor.dataset.nodeId : null;
   }
+  function collapseVisibleDescendants(nodeId) {
+    var descendants = new Set(), pending = [nodeId];
+    while (pending.length) {
+      var current = pending.pop();
+      (layout && layout.edges || []).forEach(function (edge) {
+        if (!edge.primary || edge.from !== current || descendants.has(edge.to)) return;
+        descendants.add(edge.to);
+        pending.push(edge.to);
+      });
+    }
+    return descendants;
+  }
+  function cleanupCollapseMotion(motion) {
+    if (!motion) return;
+    motion.nodeIds.forEach(function (id) {
+      var element = nodeElements.get(id);
+      if (element) element.classList.remove('is-collapsing');
+    });
+    motion.edgeIds.forEach(function (id) {
+      var path = edgeElements.get(id);
+      if (path) path.classList.remove('is-collapsing');
+    });
+  }
+  function cancelCollapseMotion() {
+    if (!collapseMotion) return;
+    window.clearTimeout(collapseMotion.timer);
+    cleanupCollapseMotion(collapseMotion);
+    collapseMotion = null;
+  }
+  function finishCollapseMotion() {
+    if (!collapseMotion) return;
+    var motion = collapseMotion;
+    window.clearTimeout(motion.timer);
+    cleanupCollapseMotion(motion);
+    collapseMotion = null;
+    collapsedIds.add(motion.nodeId);
+    saveViewSoon();
+    render({
+      duration: 260,
+      preserveViewAnchor: motion.nodeId,
+      revealingHiddenCountIds: new Set([motion.nodeId]),
+    });
+  }
+  function setCollapseControlExpanded(nodeId, expanded) {
+    var element = nodeElements.get(nodeId);
+    var control = element && element.querySelector('.study-route-collapse');
+    if (!control) return;
+    control.setAttribute('aria-expanded', String(!!expanded));
+    control.setAttribute('aria-label', T(expanded ? '收起阶段' : '展开阶段'));
+  }
+  function toggleBranchCollapse(nodeId) {
+    if (collapsedIds.has(nodeId)) {
+      cancelCollapseMotion();
+      var hidingHiddenCountById = new Map();
+      var collapsedElement = nodeElements.get(nodeId);
+      var hiddenCount = collapsedElement && collapsedElement.querySelector('.study-route-hidden-count');
+      if (hiddenCount && !prefersReduced) hidingHiddenCountById.set(nodeId, hiddenCount.textContent || '');
+      collapsedIds.delete(nodeId);
+      saveViewSoon();
+      render({
+        duration: 260,
+        preserveViewAnchor: nodeId,
+        expandEntrance: true,
+        expandingControlIds: new Set([nodeId]),
+        hidingHiddenCountById: hidingHiddenCountById,
+      });
+      return;
+    }
+    if (collapseMotion && collapseMotion.nodeId === nodeId) {
+      cancelCollapseMotion();
+      setCollapseControlExpanded(nodeId, true);
+      return;
+    }
+    if (prefersReduced) {
+      collapsedIds.add(nodeId);
+      saveViewSoon();
+      render({ duration: 0, preserveViewAnchor: nodeId });
+      return;
+    }
+    if (collapseMotion) {
+      finishCollapseMotion();
+    }
+    setCollapseControlExpanded(nodeId, false);
+    var nodeIds = collapseVisibleDescendants(nodeId);
+    var edgeIds = new Set();
+    (layout && layout.edges || []).forEach(function (edge) {
+      if (nodeIds.has(edge.from) || nodeIds.has(edge.to)) edgeIds.add(edgeKey(edge));
+    });
+    nodeIds.forEach(function (id) {
+      var element = nodeElements.get(id);
+      if (element) element.classList.add('is-collapsing');
+    });
+    edgeIds.forEach(function (id) {
+      var path = edgeElements.get(id);
+      if (path) path.classList.add('is-collapsing');
+    });
+    collapseMotion = { nodeId: nodeId, nodeIds: nodeIds, edgeIds: edgeIds, timer: 0 };
+    collapseMotion.timer = window.setTimeout(finishCollapseMotion, 190);
+  }
 
   overlay.addEventListener('pointerdown', function (event) {
     pointerDownInPopover = !!event.target.closest('.study-route-popover');
@@ -1304,6 +1719,11 @@
       var action = actionControl.dataset.routeAction;
       if (action === 'close') return closeRoute();
       if (action === 'fit') return fit();
+      if (action === 'next-task') return focusNextTask();
+      if (action === 'help') return openGuide();
+      if (action === 'help-close') return closeGuide();
+      if (action === 'help-prev') return moveGuide(-1);
+      if (action === 'help-next') return moveGuide(1);
       if (action === 'confirm-cancel') return closeConfirm();
       if (action === 'confirm-ok') {
         var pending = confirmAction; closeConfirm(); if (pending) Promise.resolve(pending()).catch(ignoreBusy); return;
@@ -1312,6 +1732,11 @@
       if (!anchor) return;
       if (action === 'add') return addMenu(anchor);
       if (action === 'menu') return nodeMenu(anchor);
+      if (action === 'progress-breakdown') return progressBreakdownPopover(anchor);
+      if (action === 'blockers') return blockersPopover(anchor);
+      if (action === 'collapse') {
+        toggleBranchCollapse(anchor.dataset.nodeId); return;
+      }
       if (action === 'settings') return formPopover(anchor, 'settings');
       if (action === 'progress') {
         var progressTask = findTask(anchor.dataset.taskId);
@@ -1334,7 +1759,49 @@
     var anchor = nodesHost.querySelector('[data-node-id="' + CSS.escape(popover.dataset.anchorId || '') + '"]');
     if (!anchor) return;
     var action = control.dataset.routePop;
-    if (['new-branch', 'new-task', 'attach-task', 'rename', 'settings'].includes(action)) return formPopover(anchor, action);
+    if (['new-branch', 'new-stage', 'new-task', 'attach-task', 'rename', 'settings'].includes(action)) return formPopover(anchor, action);
+    if (action === 'requirements') return requirementsPopover(anchor);
+    if (action === 'locate-source') {
+      var sourceNodeId = control.dataset.sourceNodeId;
+      closePopover(false);
+      focusNode(sourceNodeId);
+      return;
+    }
+    if (action === 'manage-target-requirements') {
+      var targetAnchor = nodesHost.querySelector('[data-node-id="' + CSS.escape(control.dataset.targetNodeId || '') + '"]');
+      if (targetAnchor) requirementsPopover(targetAnchor);
+      return;
+    }
+    if (action === 'clear-primary-requirement') {
+      return command({ command: 'clear-primary-requirement', nodeId: anchor.dataset.nodeId }).catch(showError);
+    }
+    if (action === 'remove-requirement') {
+      return command({ command: 'remove-requirement', linkId: control.dataset.linkId }).catch(showError);
+    }
+    if (action === 'collapse-complete') {
+      var model = GoalTree.buildModel(state.tree, state.tasks);
+      state.tree.nodes.forEach(function (node) {
+        if (node.kind === 'branch' && (model.metrics.get(node.id) || {}).complete) collapsedIds.add(node.id);
+      });
+      saveViewSoon(); closePopover(false); render({ duration: 260, preserveViewAnchor: 'root' }); return;
+    }
+    if (action === 'expand-all') {
+      var expandingControlIds = new Set(collapsedIds);
+      var hidingHiddenCountById = new Map();
+      if (!prefersReduced) collapsedIds.forEach(function (nodeId) {
+        var element = nodeElements.get(nodeId);
+        var hiddenCount = element && element.querySelector('.study-route-hidden-count');
+        if (hiddenCount) hidingHiddenCountById.set(nodeId, hiddenCount.textContent || '');
+      });
+      collapsedIds.clear(); saveViewSoon(); closePopover(false);
+      render({
+        duration: 260,
+        preserveViewAnchor: 'root',
+        expandEntrance: true,
+        expandingControlIds: expandingControlIds,
+        hidingHiddenCountById: hidingHiddenCountById,
+      }); return;
+    }
     if (action === 'detach') {
       var task = findTask(anchor.dataset.taskId);
       return openConfirm(T('从路线移出任务？'), T('任务仍会保留在学习页。'), function () {
@@ -1345,7 +1812,7 @@
       return command({ command: 'update-branch', nodeId: anchor.dataset.nodeId, color: control.dataset.color || '' }).catch(showError);
     }
     if (action === 'delete-branch') {
-      return openConfirm(T('删除这个分支？'), T('整段分支会从路线移除，其中的学习任务仍保留在学习页。'), function () {
+      return openConfirm(T('删除这个阶段？'), T('整个阶段会从路线移除，其中的学习任务仍保留在学习页。'), function () {
         return command({ command: 'delete-branch', nodeId: anchor.dataset.nodeId });
       });
     }
@@ -1363,12 +1830,15 @@
     var values = new FormData(form), kind = form.dataset.routeForm;
     var anchor = nodesHost.querySelector('[data-node-id="' + CSS.escape(popover.dataset.anchorId || '') + '"]');
     if (!anchor) return;
-    var parentId = parentForAnchor(anchor), nodeId = anchor.dataset.nodeId;
-    if (kind === 'new-branch') return command({ command: 'create-branch', parentId: parentId, title: values.get('title') }).catch(showError);
-    var parentNode = state.tree.nodes.find(function (item) { return item.id === parentId; });
-    var taskSlot = parentNode && parentNode.kind === 'task' ? { kind: 'end' } : null;
-    if (kind === 'new-task') return command({ command: 'create-task', parentId: parentId, taskSlot: taskSlot, title: values.get('title'), target: values.get('target') }).catch(showError);
-    if (kind === 'attach-task') return command({ command: 'attach-task', parentId: parentId, taskSlot: taskSlot, taskId: values.get('taskId') }).catch(showError);
+    var nodeId = anchor.dataset.nodeId, primaryLink = primaryLinkForAnchor(anchor);
+    if (kind === 'new-branch' || kind === 'new-stage') return command({ command: 'create-branch', primaryLink: primaryLink, title: values.get('title') }).catch(showError);
+    if (kind === 'new-task') return command({ command: 'create-task', primaryLink: primaryLink, title: values.get('title'), target: values.get('target') }).catch(showError);
+    if (kind === 'attach-task') return command({ command: 'attach-task', primaryLink: primaryLink, taskId: values.get('taskId') }).catch(showError);
+    if (kind === 'add-requirement') {
+      var parts = String(values.get('source') || '').split('::');
+      var trigger = parts[1] === 'milestone' ? { kind: 'milestone', milestoneId: parts[2] } : { kind: 'complete' };
+      return command({ command: 'add-requirement', fromNodeId: parts[0], toNodeId: nodeId, trigger: trigger }).catch(showError);
+    }
     var node = nodeId === 'root' ? { kind: 'root' } : state.tree.nodes.find(function (item) { return item.id === nodeId; });
     if (kind === 'rename') {
       if (node.kind === 'root') return command({ command: 'rename-root', title: values.get('title') }).catch(showError);
@@ -1488,12 +1958,18 @@
     drag.startPoint = routeScenePoint(drag.x, drag.y);
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
     layoutFrame = 0;
-    drag.baseTree = { version: 1, title: state.tree.title, nodes: state.tree.nodes.map(function (node) { return Object.assign({}, node); }) };
+    drag.baseTree = {
+      version: 2, id: state.tree.id, title: state.tree.title,
+      nodes: state.tree.nodes.map(function (node) { return Object.assign({}, node); }),
+      links: (state.tree.links || []).map(function (link) {
+        return Object.assign({}, link, link.trigger ? { trigger: Object.assign({}, link.trigger) } : {});
+      }),
+    };
     drag.baseLayout = Object.assign({}, layout, {
       nodes: layout.nodes.map(function (placement) { return Object.assign({}, visualPlacements.get(placement.id) || placement); }),
     });
     drag.dropContext = GoalTree.prepareDropContext(drag.baseLayout, drag.baseTree, drag.nodeId);
-    drag.dragIds = new Set(drag.dropContext.excluded);
+    drag.dragIds = new Set(drag.dropContext.structuralExcluded || []);
     drag.livePlacements = placementMap(drag.baseLayout.nodes);
     drag.baseLayout.nodes.forEach(function (placement) {
       if (drag.dragIds.has(placement.id)) drag.starts.set(placement.id, Object.assign({}, placement));
@@ -1532,7 +2008,7 @@
       if (element) element.style.transform = 'translate3d(' + dx + 'px,' + dy + 'px,0)';
     });
     drag.affectedEdges.forEach(function (edge) {
-      var path = edgeElements.get(edge.from + '>' + edge.to);
+      var path = edgeElements.get(edgeKey(edge));
       var from = drag.livePlacements.get(edge.from), to = drag.livePlacements.get(edge.to);
       if (path && from && to) path.setAttribute('d', edgePath(from, to));
     });
@@ -1544,10 +2020,13 @@
       drag.baseLayout, drag.baseTree, drag.nodeId, point,
       { targetId: hitId, rowGap: 30, levelGap: 92, context: drag.dropContext },
     );
+    if (candidate && simpleModeEnabled() && drag.source.dataset.kind === 'branch'
+        && candidate.primaryLink && candidate.primaryLink.type === 'requires') candidate = null;
     var candidateKey = candidate
       ? [candidate.type, candidate.targetId, candidate.parentId, candidate.beforeId,
-        candidate.side, candidate.taskSlot && candidate.taskSlot.kind,
-        candidate.taskSlot && candidate.taskSlot.milestoneId].join('|') : '';
+        candidate.side, candidate.primaryLink && candidate.primaryLink.type,
+        candidate.primaryLink && candidate.primaryLink.trigger && candidate.primaryLink.trigger.kind,
+        candidate.primaryLink && candidate.primaryLink.trigger && candidate.primaryLink.trigger.milestoneId].join('|') : '';
     drag.candidate = candidate;
     if (candidateKey === drag.candidateKey) return;
     drag.candidateKey = candidateKey;
@@ -1602,15 +2081,11 @@
     if (current.active) {
       dragEndedAt = performance.now();
       var preview = !cancelled && current.candidate
-        ? GoalTree.previewMove(
-          current.baseTree, current.nodeId, current.candidate.parentId, current.candidate.beforeId,
-          current.candidate.taskSlot, current.candidate.side,
-        ) : null;
+        ? GoalTree.previewMove(current.baseTree, current.nodeId, current.candidate.primaryLink) : null;
       if (preview) {
         state.tree = preview; render({ duration: 260, preserveViewAnchor: 'root' });
         command({
-          command: 'move-node', nodeId: current.nodeId, parentId: current.candidate.parentId,
-          beforeId: current.candidate.beforeId, taskSlot: current.candidate.taskSlot, side: current.candidate.side,
+          command: 'move-node', nodeId: current.nodeId, primaryLink: current.candidate.primaryLink,
         }, { skipRender: true })
           .catch(function (error) {
             state.tree = current.baseTree;
@@ -1679,9 +2154,13 @@
   viewport.addEventListener('pointerup', endPan);
   viewport.addEventListener('pointercancel', endPan);
   overlay.addEventListener('keydown', function (event) {
+    if (!guide.hidden && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault(); moveGuide(event.key === 'ArrowLeft' ? -1 : 1); return;
+    }
     if (event.key !== 'Escape') return;
     event.preventDefault();
-    if (!confirmBox.hidden) closeConfirm();
+    if (!guide.hidden) closeGuide();
+    else if (!confirmBox.hidden) closeConfirm();
     else if (!popover.hidden) closePopover(true);
     else closeRoute();
   });
@@ -1703,6 +2182,9 @@
     createTree().catch(ignoreBusy);
   });
   window.addEventListener('resize', function () { if (open) { closePopover(false); fit(); } });
+  window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
+    if (open) closePopover(false);
+  });
   window.addEventListener('pagehide', function () { if (open) closeRoute(); });
   window.addEventListener('beforeunload', function () { if (open) flushViewSave(); });
   document.querySelectorAll('[data-action="study-goal-tree-open"]').forEach(function (button) {

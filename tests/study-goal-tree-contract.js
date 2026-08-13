@@ -5,12 +5,11 @@ const path = require('path');
 const assert = require('assert');
 const root = process.cwd();
 const GoalTree = require(path.join(root, 'assets', 'study-goal-tree.js'));
-const read = (name) => fs.readFileSync(path.join(root, 'assets', name), 'utf8');
+const readAsset = (name) => fs.readFileSync(path.join(root, 'assets', name), 'utf8');
 
-const html = read('index.html');
-const route = read('study-route.js');
-const study = read('study.js');
-const styles = read('styles.css');
+const html = readAsset('index.html');
+const route = readAsset('study-route.js');
+const styles = readAsset('styles.css');
 const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
 
 [
@@ -19,303 +18,152 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-role="study-route-summary"',
   'data-role="study-route-popover"',
   'data-role="study-route-rail"',
-  'data-role="study-route-rail-list"',
-  'data-role="study-route-rail-add"',
-  'study-route.js',
+  'data-role="study-route-guide"',
+  'data-role="goal-tree-simple-toggle"',
 ].forEach((needle) => assert(html.includes(needle), 'missing route markup: ' + needle));
-[
-  'data-role="study-goal-tree-detail"',
-  'data-role="study-goal-tree-select"',
-  'study-goal-tree-archives',
-  'study-goal-tree-new',
-].forEach((needle) => assert(!html.includes(needle), 'obsolete panel control remains: ' + needle));
-[
-  'data-route-action="complete"',
-  'data-route-action="progress"',
-  'data-route-action="settings"',
-  'data-route-pop="new-task"',
-  'data-route-pop="attach-task"',
-  "command: 'detach-task'",
-  "command: 'delete-branch'",
-  "command: 'move-node'",
-  'function syncProgress(taskId)',
-  'function animateLayout(previous, next, duration, excluded)',
-  'function positionDraggedSubtree(clientX, clientY)',
-  'function updateDragCandidate(clientX, clientY)',
-  'GoalTree.previewMove',
-  'GoalTree.prepareDropContext',
-  'GoalTree.structureDropCandidate',
-  'candidate.taskSlot',
-  'candidate.side',
-  'function tickView(timestamp)',
-  'setZoom(viewTarget.zoom * Math.exp(-event.deltaY * .00115)',
-  'function startPanInertia(source)',
-  'function stopPanInertia()',
-  'source.velX * .15',
-  'Math.exp(-.0045 * dt)',
-  'pan.velX * .4 + instantaneousX * .6',
-  "event.type === 'pointerup' && finished.moved",
-  'window.StudyRoute',
-  'routeRequestId',
-  "overlay.classList.add('is-closing')",
-  "popover.classList.add('is-closing')",
-  "confirmBox.classList.add('is-closing')",
-  'function applyTreePayloadInitial(json)',
-  'function applyTreeSnapshot(json, expectedTreeId)',
-  'function renderRail(activeId)',
-  'renderRail(treeId)',
-  'var railRevealPx = 84',
-  'function setRailVisible(visible)',
-  'function viewKeyFor(treeId)',
-  'var treeId = state.activeTreeId;',
-  'var removedTreeId = state.activeTreeId;',
-  'function switchTree(treeId)',
-  'var TURN_OUT_MS = 99',
-  'var previousTreeId = state.activeTreeId',
-  'state.trees.find(function (tree) { return tree.id === treeId; })',
-  ', { skipRender: true, optimistic: true }',
-  'window.setTimeout(endTreeTransition, TURN_OUT_MS)',
-  'var slideX = 0',
-  'var FADE_OUT_MS = 220',
-  'var SLIDE_IN_MS = 270',
-  'function beginSlide',
-  'requestAnimationFrame(slideTick)',
-  'function cancelSlideSwap',
-  'function finishSlide',
-  'view.x + slideX',
-  'scene.style.opacity = String(1 - eased)',
-  "scene.style.opacity = '1'",
-  "scene.style.transition = 'none'",
-  's.from = viewport.clientWidth + 12',
-  'beginSlide(performSwap)',
-  'options.optimistic',
-  'function createTree()',
-  'function deleteTree()',
-  'function beginTreeTransition()',
-  'function endTreeTransition()',
-  'function animateRootEntrance()',
-  "scene.classList.add('is-fading')",
-  'data-route-pop="delete-tree"',
-  "state.tree.id !== (state.trees[0] || {}).id",
-  'var treeAtRequest = state.activeTreeId',
-  'function settleViewThenSave()',
-  'settleViewThenSave();',
-  "error.name === 'AbortError'",
-  'railOrbY = null',
-  'window.StudyTreeCommands.register(server)',
-].forEach((needle) => assert(route.includes(needle), 'missing route behavior: ' + needle));
-assert(!route.includes('drag.previewTree') && !route.includes('drag.previewLayout'),
-  'dragging must not live-sort or relayout the route');
-const candidateSource = route.slice(route.indexOf('function updateDragCandidate'), route.indexOf('function flushDragFrame'));
-assert(!candidateSource.includes('animateLayout') && !candidateSource.includes('GoalTree.previewMove'),
-  'candidate updates must only update the frozen-layout hint');
-assert(!route.includes('set-focus') && !route.includes('archive-tree'),
-  'removed focus and tree archive behavior must stay removed');
-[
-  '.study-route-panel',
-  '.study-route-node.is-task',
-  '.study-route-node.is-milestone',
-  '.study-route-milestone-dot',
-  '.study-route-task-check.is-ready',
-  '.study-route-node.is-drag-anchor',
-  '.study-route-drop-slot',
-  '.study-route-reparent-badge',
-  '.study-route-popover',
-  '.study-route-popover.is-visible',
-  '.study-route-confirm.is-visible',
-  '.study-route-overlay.is-closing',
-  '.study-route-rail.auto-hide',
-  '.study-route-rail-item.is-active',
-  '.study-route-rail-add',
-  '.study-route-scene.is-fading',
-  '.study-route-scene.is-revealing',
-  '.study-route-node.is-root.is-entering',
-  '@keyframes studyRouteRootIn',
-  'opacity var(--start-turn-out-fade-ms)',
-  'transition: height var(--start-orb-ms) var(--easing-soft), opacity 220ms ease, transform 220ms ease',
-  'body.start-page[data-start-theme="dark"] .study-route-panel',
-  '@media (max-width: 700px)',
-  '@media (prefers-reduced-motion: reduce)',
-].forEach((needle) => assert(styles.includes(needle), 'missing route style: ' + needle));
-const routeStyles = styles.slice(styles.indexOf('.study-route-overlay'), styles.indexOf('/* /'));
-const railStart = routeStyles.indexOf('.study-route-rail {');
-assert(railStart >= 0, 'rail glass capsule must be present');
-assert(!routeStyles.slice(0, railStart).includes('backdrop-filter'), 'route must not run persistent backdrop blur');
-assert(routeStyles.slice(railStart).includes('backdrop-filter'), 'rail must replicate the canvas-toolbox glass');
-const routeWithoutTransientSpinner = routeStyles
-  .replace(/.study-route-scene\.is-loading::after[^}]*\}\s*/s, '')
-  .replace(/@keyframes study-route-spin[^}]*\}\s*/s, '');
-assert(!routeWithoutTransientSpinner.includes('infinite'), 'route must not use persistent infinite animation');
-assert(routeStyles.includes('background: #fff;'), 'light route surfaces must remain pure white');
-assert(routeStyles.includes('border-bottom: 0;'), 'route header divider must stay removed');
-assert(routeStyles.includes('width 520ms cubic-bezier(.22,1,.36,1)'),
-  'route progress bars must retain forward/reverse easing');
-assert(routeStyles.includes('will-change: transform'), 'active drag must bypass CSS lag');
-const routeReducedBlock = routeStyles.slice(routeStyles.indexOf('@media (prefers-reduced-motion: reduce)'));
-assert(routeReducedBlock.includes('.study-route-rail-orb'),
-  'reduced motion must snap the rail orb instead of sliding');
 
 [
-  '"version": 5',
-  '"goalTree": tree',
-  '"goalTrees"',
-  '"activeTreeId"',
-  'def _study_goal_normalize_tree',
-  'def _study_goal_new_tree',
-  'def _study_goal_sync_active',
-  'def _study_goal_next_title',
-  'def apply_study_goal_tree_command',
-  'if command == "create-tree"',
-  'if command == "switch-tree"',
-  'if command == "delete-tree"',
-  'if command == "rename-root"',
-  'elif command == "delete-branch"',
-  'elif command == "move-node"',
-  '学习任务不存在或已经在这棵目标树中',
-  '这个任务已经在这棵目标树中',
-  '这个任务不在当前目标树中',
-  '没有找到这棵目标树',
-  '第一棵目标树不能删除',
-].forEach((needle) => assert(backend.includes(needle), 'missing v5 backend contract: ' + needle));
-assert(!backend.includes('if parsed.path == "/api/study-goal-tree-archive"'),
-  'goal-tree archive route must be removed');
-assert(study.includes('state.goalTree = payload.goalTree'),
-  'learning page must retain the singular goalTree payload');
-assert(study.includes('state.goalTrees = payload.goalTrees'),
-  'learning page must sync the multi-tree list');
-assert(study.includes('json.activeTreeId === treeAtRequest'),
-  'learning page must guard against stale tree snapshots');
-assert(study.includes('GoalTree.taskOwner(trees[i], taskId)'),
-  'task ownership lookup must search every tree, not just the active one');
-assert(study.includes('Array.from(treeCommandChains.values())'),
-  'tree commands must be awaited by flushStudyMutations before full refreshes');
-assert(study.includes('pruneGoalTreeViewStates'),
-  'deleted-tree view states must be pruned from localStorage');
-assert(study.includes("setTimeout(() => controller.abort(), 15000)"),
-  'study api must have a 15s abort so hung requests cannot block task chains');
+  "data-route-pop=\"new-stage\"",
+  "data-route-pop=\"requirements\"",
+  "command: 'add-requirement'",
+  "command: 'remove-requirement'",
+  "command: 'clear-primary-requirement'",
+  'canvas:studyGoalTreeSimpleMode:v1',
+  "anchor.dataset.kind !== 'task' || !simpleModeEnabled()",
+  'progressBreakdownPopover',
+  'study-route-branch-meta-row',
+  "popover.querySelector('.study-route-progress-detail')",
+  "popover.querySelector('form[data-route-form=\"settings\"]')",
+  'blockersPopover',
+  'goalTreeId: state.activeTreeId',
+  "command: 'move-node', nodeId: current.nodeId, primaryLink:",
+  'GoalTree.nextTasks',
+  'collapsedIds: Array.from(collapsedIds)',
+  "dataset.routeAction = 'next-task'",
+  'function transitionFill',
+  'oldFillPercent',
+  'transitionTaskCheck',
+  '&& !isComplete && !isBlocked',
+  'function syncStudyCacheFromState()',
+  'shared !== studyCache',
+  'function beginTreeSwitchMotion',
+  'var TREE_SWITCH_OUT_MS = 80',
+  'function toggleBranchCollapse(nodeId)',
+  "classList.add('is-collapsing')",
+  'window.setTimeout(finishCollapseMotion, 190)',
+  "element.classList.remove('is-entering', 'is-expanding')",
+  'newNodesAtDestination',
+  'function setCollapseControlExpanded(nodeId, expanded)',
+  'expandingControlIds: new Set([nodeId])',
+  'revealingHiddenCountIds: new Set([motion.nodeId])',
+  'hidingHiddenCountById: hidingHiddenCountById',
+].forEach((needle) => assert(route.includes(needle), 'missing V4 route contract: ' + needle));
+
+[
+  '.study-route-edge.is-requires',
+  '.study-route-edge.is-requires.is-secondary',
+  '.study-route-node.is-ready',
+  '.study-route-node.is-unlocking',
+  'transition: width 520ms',
+  '.study-route-next',
+  '.study-route-requirements',
+  '.study-route-progress-detail',
+  '.study-route-guide',
+  '.study-route-node.is-collapsing',
+  '.study-route-edge.is-collapsing',
+  '.study-route-node.is-expanding',
+  '@keyframes studyRouteNodeExpand',
+  '@keyframes studyRouteCollapseIconExpand',
+  '@keyframes studyRouteHiddenCountIn',
+  '@keyframes studyRouteHiddenCountOut',
+  '@media (prefers-reduced-motion: reduce)',
+].forEach((needle) => assert(styles.includes(needle), 'missing V4 style contract: ' + needle));
+
+[
+  '"version": 6',
+  'raw_tree.get("version") != 2',
+  'STUDY_GOAL_TREE_LINKS_MAX = 6000',
+  'elif command == "add-requirement"',
+  'elif command == "remove-requirement"',
+  'elif command == "clear-primary-requirement"',
+  '_study_goal_assert_task_available',
+  '学习数据版本不兼容',
+].forEach((needle) => assert(backend.includes(needle), 'missing V6 backend contract: ' + needle));
 
 const tasks = [
-  { id: 'a', title: 'A', status: 'active', progress: { current: 2, target: 4, milestones: [{ id: 'm2', name: 'Half', at: 2 }] } },
-  { id: 'b', title: 'B', status: 'done', progress: { current: 0, target: 0 } },
+  { id: 'a', title: 'A', status: 'active', progress: { current: 5, target: 10, milestones: [{ id: 'half', name: '一半', at: 5 }] } },
+  { id: 'b', title: 'B', status: 'active', progress: { current: 0, target: 0, milestones: [] } },
+  { id: 'c', title: 'C', status: 'active', progress: { current: 0, target: 0, milestones: [] } },
 ];
 const tree = {
-  version: 1,
-  title: 'Route',
+  version: 2, id: 'tree', title: '路线',
   nodes: [
-    { id: 'branch', kind: 'branch', parentId: null, order: 0, side: 'right', title: 'Foundation' },
-    { id: 'nested', kind: 'branch', parentId: 'branch', order: 0, title: 'Nested' },
-    { id: 'task-a', kind: 'task', parentId: 'nested', order: 0, taskId: 'a' },
-    { id: 'task-b', kind: 'task', parentId: 'branch', order: 1, taskId: 'b' },
+    { id: 'na', kind: 'task', taskId: 'a' },
+    { id: 'stage', kind: 'branch', title: '阶段' },
+    { id: 'nb', kind: 'task', taskId: 'b' },
+    { id: 'nc', kind: 'task', taskId: 'c' },
+  ],
+  links: [
+    { id: 'l1', from: null, to: 'na', type: 'contains', primary: true, order: 0, side: 'right' },
+    { id: 'l2', from: 'na', to: 'stage', type: 'requires', primary: true, order: 0, trigger: { kind: 'milestone', milestoneId: 'half' } },
+    { id: 'l3', from: 'stage', to: 'nb', type: 'contains', primary: true, order: 0 },
+    { id: 'l4', from: 'stage', to: 'nc', type: 'contains', primary: true, order: 1 },
+    { id: 'l5', from: 'na', to: 'nc', type: 'requires', primary: false, trigger: { kind: 'complete' } },
   ],
 };
-const model = GoalTree.buildModel(tree, tasks);
-assert.strictEqual(model.rootMetrics.count, 2);
-assert.strictEqual(model.metrics.get('nested').progress, .5);
-assert.strictEqual(model.rootMetrics.progress, .75);
-assert.strictEqual(GoalTree.taskOwner(tree, 'a').node.id, 'task-a');
-assert(GoalTree.canMove(tree, 'task-b', 'nested'));
-assert(GoalTree.canMove(tree, 'task-b', 'task-a'), 'tasks can follow tasks');
-assert(!GoalTree.canMove(tree, 'branch', 'task-a'), 'branches cannot be children of tasks');
-assert(!GoalTree.canMove(tree, 'branch', 'nested'), 'a branch cannot move into its own subtree');
 
-const laidOut = GoalTree.layout(tree, tasks);
-const byId = new Map(laidOut.nodes.map((node) => [node.id, node]));
-assert(byId.get('root').x < byId.get('branch').x);
-assert(byId.get('branch').x < byId.get('nested').x);
-assert(byId.get('nested').x < byId.get('task-a').x);
-const milestoneId = GoalTree.milestonePlacementId('task-a', 'm2');
-assert(byId.has(milestoneId), 'task milestones must render as route points');
-assert.strictEqual(laidOut.edges.length, 5);
+let model = GoalTree.buildModel(tree, tasks);
+assert.strictEqual(model.availability.get('stage').available, true, 'milestone should unlock following stage');
+assert.strictEqual(model.availability.get('nb').available, true, 'contained task inherits available stage');
+assert.strictEqual(model.availability.get('nc').available, false, 'all inbound requirements must be satisfied');
+assert.strictEqual(model.availability.get('nc').reasons.length, 1);
+assert.strictEqual(model.metrics.get('stage').count, 2, 'stage only aggregates contained tasks');
+assert.strictEqual(model.rootMetrics.count, 3, 'root counts unique route tasks');
+const stageProgress = GoalTree.progressBreakdown(model, 'stage');
+assert.strictEqual(stageProgress.percent, 0, 'both contained tasks begin at zero');
+const mixedTasks = tasks.map((task) => task.id === 'b' ? { ...task, progress: { current: 5, target: 10, milestones: [] } } : task);
+const mixedModel = GoalTree.buildModel(tree, mixedTasks);
+assert.strictEqual(GoalTree.progressBreakdown(mixedModel, 'stage').percent, 25, '50% and 0% must average to 25%');
+assert.strictEqual(GoalTree.progressBreakdown(mixedModel, 'root').percent, 33, 'root includes all unique route tasks');
+const fourTasks = mixedTasks.concat({ id: 'd', title: 'D', status: 'active', progress: { current: 0, target: 0, milestones: [] } });
+const fourTree = { ...tree, nodes: tree.nodes.concat({ id: 'nd', kind: 'task', taskId: 'd' }), links: tree.links.concat({ id: 'l6', from: null, to: 'nd', type: 'contains', primary: true, order: 2, side: 'right' }) };
+assert.strictEqual(GoalTree.progressBreakdown(GoalTree.buildModel(fourTree, fourTasks), 'root').percent, 25);
+const oneHalfFourTasks = fourTasks.map((task) => task.id === 'a' ? { ...task, progress: { current: 0, target: 0, milestones: [] } } : task);
+assert.strictEqual(GoalTree.progressBreakdown(GoalTree.buildModel(fourTree, oneHalfFourTasks), 'root').percent, 13, '12.5% displays as 13%');
+assert.strictEqual(GoalTree.requirementCount(model, 'nc'), 1);
+assert.strictEqual(GoalTree.canAddRequirement(model, 'na', 'nc', { kind: 'complete' }), false, 'semantic duplicate must be hidden');
+assert.strictEqual(GoalTree.canAddRequirement(model, 'nc', 'na', { kind: 'complete' }), false, 'cycle candidate must be hidden');
 
-const moved = GoalTree.previewMove(tree, 'task-b', 'nested', 'task-a');
-assert(moved, 'valid moves should produce an optimistic preview tree');
-assert.deepStrictEqual(
-  moved.nodes.filter((node) => node.parentId === 'nested').sort((a, b) => a.order - b.order).map((node) => node.id),
-  ['task-b', 'task-a'],
-  'preview move must preserve beforeId ordering',
-);
-assert.strictEqual(GoalTree.previewMove(tree, 'branch', 'nested', ''), null,
-  'preview move must reject subtree cycles');
+const completeTasks = tasks.map((task) => task.id === 'a' ? { ...task, status: 'done' } : task);
+model = GoalTree.buildModel(tree, completeTasks);
+assert.strictEqual(model.availability.get('nc').available, true, 'second prerequisite should unlock after completion');
 
-const nestedPlacement = byId.get('nested');
-const reparent = GoalTree.structureDropCandidate(
-  laidOut, tree, 'task-b',
-  { x: nestedPlacement.x + nestedPlacement.width * .8, y: nestedPlacement.y },
-  { targetId: 'nested', context: GoalTree.prepareDropContext(laidOut, tree, 'task-b') },
-);
-assert.strictEqual(reparent.type, 'reparent');
-assert.strictEqual(reparent.parentId, 'nested');
+const expanded = GoalTree.layout(tree, tasks);
+const collapsed = GoalTree.layout(tree, tasks, { collapsedIds: new Set(['stage']) });
+assert(expanded.nodes.some((node) => node.id === 'nb'));
+assert(!collapsed.nodes.some((node) => node.id === 'nb'));
+assert.strictEqual(collapsed.nodes.find((node) => node.id === 'stage').hiddenCount, 2);
+assert(collapsed.edges.every((edge) => edge.from !== 'stage' || edge.to !== 'nb'));
 
-const taskAPlacement = byId.get('task-a');
-const chainCandidate = GoalTree.structureDropCandidate(
-  laidOut, tree, 'task-b',
-  { x: taskAPlacement.x + taskAPlacement.width * .8, y: taskAPlacement.y },
-  { targetId: 'task-a', context: GoalTree.prepareDropContext(laidOut, tree, 'task-b') },
-);
-assert.strictEqual(chainCandidate.type, 'reparent');
-assert.strictEqual(chainCandidate.parentId, 'task-a');
-assert.deepStrictEqual(chainCandidate.taskSlot, { kind: 'end' });
-const chained = GoalTree.previewMove(tree, 'task-b', 'task-a', '', chainCandidate.taskSlot);
-assert.strictEqual(chained.nodes.find((node) => node.id === 'task-b').parentId, 'task-a');
+const withoutSecondary = { ...tree, links: tree.links.filter((link) => link.primary) };
+const basePositions = new Map(GoalTree.layout(withoutSecondary, tasks).nodes.map((node) => [node.id, [node.x, node.y]]));
+GoalTree.layout(tree, tasks).nodes.forEach((node) => {
+  assert.deepStrictEqual([node.x, node.y], basePositions.get(node.id), 'secondary dependency must not affect layout');
+});
 
-const milestoneCandidate = GoalTree.structureDropCandidate(
-  laidOut, tree, 'task-b', { x: byId.get(milestoneId).x, y: byId.get(milestoneId).y },
-  { targetId: milestoneId, context: GoalTree.prepareDropContext(laidOut, tree, 'task-b') },
-);
-assert.deepStrictEqual(milestoneCandidate.taskSlot, { kind: 'milestone', milestoneId: 'm2' });
+const layout = GoalTree.layout(tree, tasks);
+const context = GoalTree.prepareDropContext(layout, tree, 'nb');
+const taskPlacement = layout.nodes.find((node) => node.id === 'na');
+const taskDrop = GoalTree.structureDropCandidate(layout, tree, 'nb', { x: taskPlacement.x, y: taskPlacement.y }, { targetId: 'na', context });
+assert.strictEqual(taskDrop.primaryLink.type, 'requires');
+assert.strictEqual(taskDrop.primaryLink.trigger.kind, 'complete');
+const milestoneId = GoalTree.milestonePlacementId('na', 'half');
+const milestonePlacement = layout.nodes.find((node) => node.id === milestoneId);
+const pointDrop = GoalTree.structureDropCandidate(layout, tree, 'nb', { x: milestonePlacement.x, y: milestonePlacement.y }, { targetId: milestoneId, context });
+assert.strictEqual(pointDrop.primaryLink.trigger.kind, 'milestone');
+assert.strictEqual(pointDrop.primaryLink.trigger.milestoneId, 'half');
 
-const bothSides = GoalTree.normalizeTree({ version: 1, title: 'Both sides', nodes: [
-  { id: 'left', kind: 'branch', parentId: null, order: 0, side: 'left', title: 'Left' },
-  { id: 'right', kind: 'branch', parentId: null, order: 0, side: 'right', title: 'Right' },
-] }, tasks);
-const bothLayout = GoalTree.layout(bothSides, tasks);
-const bothById = new Map(bothLayout.nodes.map((node) => [node.id, node]));
-assert(bothById.get('left').x + bothById.get('left').width < bothById.get('root').x,
-  'left root branches must stay to the left of the root');
-assert(bothById.get('right').x > bothById.get('root').x + bothById.get('root').width,
-  'right root branches must stay to the right of the root');
+const next = GoalTree.nextTasks(model);
+assert(next.every((node) => model.availability.get(node.id).available));
 
-const orderTasks = tasks.concat([{ id: 'c', title: 'C', status: 'active', progress: {} }]);
-const orderTree = {
-  version: 1, title: 'Order', nodes: [
-    { id: 'order-branch', kind: 'branch', parentId: null, order: 0, title: 'Branch' },
-    { id: 'order-a', kind: 'task', parentId: 'order-branch', order: 0, taskId: 'a' },
-    { id: 'order-b', kind: 'task', parentId: 'order-branch', order: 1, taskId: 'b' },
-    { id: 'order-c', kind: 'task', parentId: 'order-branch', order: 2, taskId: 'c' },
-  ],
-};
-const orderLayout = GoalTree.layout(orderTree, orderTasks);
-const orderById = new Map(orderLayout.nodes.map((node) => [node.id, node]));
-const orderContext = GoalTree.prepareDropContext(orderLayout, orderTree, 'order-b');
-const upward = GoalTree.structureDropCandidate(orderLayout, orderTree, 'order-b', {
-  x: orderById.get('order-a').x,
-  y: orderById.get('order-a').y - 1,
-}, { targetId: '', context: orderContext, rowGap: 30, levelGap: 92 });
-assert.strictEqual(upward.type, 'insert');
-assert.strictEqual(upward.beforeId, 'order-a', 'dragging upward must insert before the first sibling');
-const downward = GoalTree.structureDropCandidate(orderLayout, orderTree, 'order-b', {
-  x: orderById.get('order-c').x,
-  y: orderById.get('order-c').y + 1,
-}, { targetId: '', context: orderContext, rowGap: 30, levelGap: 92 });
-assert.strictEqual(downward.type, 'insert');
-assert.strictEqual(downward.beforeId, '', 'dragging downward must append after the last sibling');
-assert(upward.slotCoord < downward.slotCoord, 'the guide must work in both vertical directions');
-
-const malformed = GoalTree.normalizeTree({
-  title: 'Bad data',
-  nodes: [
-    { id: 'task', kind: 'task', taskId: 'a', parentId: null },
-    { id: 'task-duplicate', kind: 'task', taskId: 'a', parentId: null },
-    { id: 'archive', kind: 'archive', title: 'Legacy snapshot' },
-    { id: 'child', kind: 'branch', parentId: 'task', title: 'Invalid branch parent' },
-  ],
-}, tasks);
-assert.strictEqual(malformed.nodes.length, 2);
-assert.strictEqual(malformed.nodes.find((node) => node.id === 'child').parentId, null);
-assert(!malformed.nodes.some((node) => node.kind === 'archive'));
-
-const legacyTree = GoalTree.normalizeTree({ id: 'goal_legacy', title: 'Legacy', nodes: [] }, tasks);
-assert.strictEqual(legacyTree.id, 'goal_legacy',
-  'normalizeTree must preserve the tree id (delete menu hides for the original tree)');
-
-console.log('study goal-tree v3 contract: ok');
+console.log('study goal tree V4 contract ok');
