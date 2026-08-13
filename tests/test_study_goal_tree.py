@@ -287,6 +287,22 @@ class StudyGoalTreeTests(unittest.TestCase):
         self.assertEqual(data["goalTree"]["title"], "目标 1")
         self.assertEqual(data["goalTree"]["nodes"], [])
 
+    def test_create_tree_title_skips_deleted_numbers(self):
+        # 删除中间编号的树后新建：编号必须从现有最大值接续，不能重名
+        app.save_study(self.data())
+        data = app.load_study()
+        app.apply_study_goal_tree_command(data, {"command": "create-tree"})  # 目标 2
+        second = data["activeTreeId"]
+        app.apply_study_goal_tree_command(data, {"command": "create-tree"})  # 目标 3
+        app.apply_study_goal_tree_command(data, {"command": "switch-tree", "treeId": second})
+        app.apply_study_goal_tree_command(data, {"command": "delete-tree", "treeId": second})
+        created = app.apply_study_goal_tree_command(data, {"command": "create-tree"})["treeId"]
+        self.assertEqual(
+            sorted(tree["title"] for tree in data["goalTrees"]),
+            ["目标 1", "目标 3", "目标 4"],
+        )
+        self.assertEqual(data["activeTreeId"], created)
+
     def test_task_can_attach_to_multiple_trees_and_detach_is_scoped(self):
         task = self.task("共享任务")
         app.save_study(self.data(task))

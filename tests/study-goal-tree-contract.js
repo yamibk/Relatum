@@ -78,6 +78,10 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-route-pop="delete-tree"',
   "state.tree.id !== 'goal_legacy'",
   'var treeAtRequest = state.activeTreeId',
+  'function settleViewThenSave()',
+  'settleViewThenSave();',
+  "error.name === 'AbortError'",
+  'railOrbY = null',
 ].forEach((needle) => assert(route.includes(needle), 'missing route behavior: ' + needle));
 assert(!route.includes('drag.previewTree') && !route.includes('drag.previewLayout'),
   'dragging must not live-sort or relayout the route');
@@ -106,6 +110,7 @@ assert(!route.includes('set-focus') && !route.includes('archive-tree'),
   '.study-route-node.is-root.is-entering',
   '@keyframes studyRouteRootIn',
   'opacity var(--start-turn-out-fade-ms)',
+  'transition: height var(--start-orb-ms) var(--easing-soft), opacity 220ms ease, transform 220ms ease',
   'body.start-page[data-start-theme="dark"] .study-route-panel',
   '@media (max-width: 700px)',
   '@media (prefers-reduced-motion: reduce)',
@@ -136,6 +141,7 @@ assert(routeReducedBlock.includes('.study-route-rail-orb'),
   'def _study_goal_normalize_tree',
   'def _study_goal_new_tree',
   'def _study_goal_sync_active',
+  'def _study_goal_next_title',
   'def apply_study_goal_tree_command',
   'if command == "create-tree"',
   'if command == "switch-tree"',
@@ -156,6 +162,8 @@ assert(study.includes('state.goalTrees = payload.goalTrees'),
   'learning page must sync the multi-tree list');
 assert(study.includes('json.activeTreeId === treeAtRequest'),
   'learning page must guard against stale tree snapshots');
+assert(study.includes('GoalTree.taskOwner(trees[i], taskId)'),
+  'task ownership lookup must search every tree, not just the active one');
 
 const tasks = [
   { id: 'a', title: 'A', status: 'active', progress: { current: 2, target: 4, milestones: [{ id: 'm2', name: 'Half', at: 2 }] } },

@@ -143,7 +143,11 @@
 }
 .study-route-rail-orb.no-transition { transition: none; }
 /* rail FLIP：容器高度、按钮位移、新按钮入场共用书脊节奏；退场按钮变幽灵淡出缩小 */
-.study-route-rail.rail-flipping { transition: height var(--start-orb-ms) var(--easing-soft); }
+/* height 动画期间沿用 auto-hide 的 opacity/transform 过渡，
+   避免 transition 简写吞掉 reveal 动画（悬停边缘切树时淡入会被硬切）。 */
+.study-route-rail.rail-flipping {
+  transition: height var(--start-orb-ms) var(--easing-soft), opacity 220ms ease, transform 220ms ease;
+}
 .study-route-rail.rail-flipping .study-route-rail-list { flex: none; }
 .study-route-rail-item.rail-flip,
 .study-route-rail-add.rail-flip {
