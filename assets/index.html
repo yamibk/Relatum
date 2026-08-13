@@ -79,6 +79,50 @@
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </button>
         <div class="start-speed-pop" id="start-speed-pop" data-role="start-speed-pop" hidden>
+          <div class="start-priority-settings">
+            <div class="start-priority-background">
+              <div class="start-speed-head">
+                <span>主页背景</span>
+              </div>
+              <div class="start-background-switch" data-role="start-background-switch"
+                role="group" aria-label="主页背景风格">
+                <button type="button" data-background-style="simple">简洁</button>
+                <button type="button" data-background-style="scenic">沉浸</button>
+              </div>
+            </div>
+            <label class="start-setting-toggle starmap-motion-toggle">
+              <span>
+                <strong>结束后自动取景</strong>
+                <small>关闭时镜头不再补移动</small>
+              </span>
+              <input type="checkbox" data-role="starmap-motion-toggle" data-setting="finalFitOnConverge">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="start-setting-toggle">
+              <span>
+                <strong>日历倒数日</strong>
+                <small>在日历页显示目标日期</small>
+              </span>
+              <input type="checkbox" data-role="calendar-countdown-toggle" checked>
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="start-setting-toggle">
+              <span>
+                <strong>隐藏特殊页</strong>
+                <small>收起复习/日历/速记/活跃/学习/专注，只留最近·收藏·分组</small>
+              </span>
+              <input type="checkbox" data-role="hide-special-toggle">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="start-setting-toggle">
+              <span>
+                <strong>精简目标树编辑</strong>
+                <small>隐藏高级创建入口，已有路线与解锁关系不受影响</small>
+              </span>
+              <input type="checkbox" data-role="goal-tree-simple-toggle" checked>
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
           <div class="start-speed-head">
             <span>翻页速度</span>
             <output data-role="start-speed-value">260ms</output>
@@ -89,38 +133,33 @@
             <span>快</span>
             <span>慢</span>
           </div>
-          <div class="start-speed-section">
+          <div class="start-speed-section start-note-settings">
             <div class="start-speed-head">
-              <span>速记惯性</span>
-              <output data-role="notes-inertia-value">45%</output>
+              <span>速记页设置</span>
             </div>
-            <input type="range" min="0" max="1.2" step="0.05" value="0.45"
-              data-role="notes-inertia-range" aria-label="速记惯性">
-            <div class="start-speed-scale" aria-hidden="true">
-              <span>稳</span>
-              <span>滑</span>
+            <div class="start-note-setting">
+              <div class="start-speed-head start-speed-subhead">
+                <span>拖拽惯性</span>
+                <output data-role="notes-inertia-value">45%</output>
+              </div>
+              <input type="range" min="0" max="1.2" step="0.05" value="0.45"
+                data-role="notes-inertia-range" aria-label="拖拽惯性">
+              <div class="start-speed-scale" aria-hidden="true">
+                <span>稳</span>
+                <span>滑</span>
+              </div>
             </div>
-          </div>
-          <div class="start-speed-section">
-            <div class="start-speed-head">
-              <span>叠摞展开延迟</span>
-              <output data-role="notes-stack-hover-delay-value">320ms</output>
-            </div>
-            <input type="range" min="0" max="1200" step="20" value="320"
-              data-role="notes-stack-hover-delay-range" aria-label="叠摞展开延迟">
-            <div class="start-speed-scale" aria-hidden="true">
-              <span>瞬发</span>
-              <span>长按</span>
-            </div>
-          </div>
-          <div class="start-speed-section">
-            <div class="start-speed-head">
-              <span>主页背景</span>
-            </div>
-            <div class="start-background-switch" data-role="start-background-switch"
-              role="group" aria-label="主页背景风格">
-              <button type="button" data-background-style="simple">简洁</button>
-              <button type="button" data-background-style="scenic">沉浸</button>
+            <div class="start-note-setting">
+              <div class="start-speed-head start-speed-subhead">
+                <span>叠放展开延迟</span>
+                <output data-role="notes-stack-hover-delay-value">320ms</output>
+              </div>
+              <input type="range" min="0" max="1200" step="20" value="320"
+                data-role="notes-stack-hover-delay-range" aria-label="叠放展开延迟">
+              <div class="start-speed-scale" aria-hidden="true">
+                <span>瞬发</span>
+                <span>长按</span>
+              </div>
             </div>
           </div>
           <div class="start-speed-section">
@@ -149,39 +188,7 @@
                 <span>速度上限 <output data-role="starmap-motion-value" data-setting="introVelocityClamp">10</output></span>
                 <input type="range" min="2" max="60" step="1" data-role="starmap-motion-range" data-setting="introVelocityClamp">
               </label>
-              <label class="start-setting-toggle starmap-motion-toggle">
-                <span>
-                  <strong>结束后自动取景</strong>
-                  <small>关闭时镜头不再补移动</small>
-                </span>
-                <input type="checkbox" data-role="starmap-motion-toggle" data-setting="finalFitOnConverge">
-                <i aria-hidden="true"></i>
-              </label>
             </div>
-            <label class="start-setting-toggle">
-              <span>
-                <strong>日历倒数日</strong>
-                <small>在日历页显示目标日期</small>
-              </span>
-              <input type="checkbox" data-role="calendar-countdown-toggle" checked>
-              <i aria-hidden="true"></i>
-            </label>
-            <label class="start-setting-toggle">
-              <span>
-                <strong>隐藏特殊页</strong>
-                <small>收起复习/日历/速记/活跃/学习/专注，只留最近·收藏·分组</small>
-              </span>
-              <input type="checkbox" data-role="hide-special-toggle">
-              <i aria-hidden="true"></i>
-            </label>
-            <label class="start-setting-toggle">
-              <span>
-                <strong>精简目标树编辑</strong>
-                <small>隐藏高级创建入口，已有路线与解锁关系不受影响</small>
-              </span>
-              <input type="checkbox" data-role="goal-tree-simple-toggle" checked>
-              <i aria-hidden="true"></i>
-            </label>
           </div>
         </div>
       </div>
