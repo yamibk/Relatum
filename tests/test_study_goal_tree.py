@@ -268,6 +268,31 @@ class StudyGoalTreeTests(unittest.TestCase):
             app.load_study()["goalTrees"],
         )
 
+    def test_branch_color_survives_command_and_save_load_roundtrip(self):
+        # 调色盘改色回归：normalizer 白名单漏掉 color 时，改色会随落盘被静默剥掉
+        app.save_study(self.data())
+        handler = DummyHandler()
+        app.Handler._api_study_goal_tree_command(handler, {
+            "command": "create-branch", "title": "分支", "color": "#fce2cc",
+        })
+        node_id = handler.response[1]["nodeId"]
+        branch = app._study_goal_node(handler.response[1]["goalTree"], node_id)
+        self.assertEqual(branch["color"], "#fce2cc")
+        reloaded = app.load_study()
+        self.assertEqual(app._study_goal_node(reloaded["goalTree"], node_id)["color"], "#fce2cc")
+
+        app.Handler._api_study_goal_tree_command(handler, {
+            "command": "update-branch", "nodeId": node_id, "color": "#e2ece4",
+        })
+        reloaded = app.load_study()
+        self.assertEqual(app._study_goal_node(reloaded["goalTree"], node_id)["color"], "#e2ece4")
+        # 非法颜色与空串走"清除"分支，且清除结果同样往返存活
+        app.Handler._api_study_goal_tree_command(handler, {
+            "command": "update-branch", "nodeId": node_id, "color": "red",
+        })
+        reloaded = app.load_study()
+        self.assertNotIn("color", app._study_goal_node(reloaded["goalTree"], node_id))
+
     def test_create_switch_and_delete_trees_keep_active_invariant(self):
         app.save_study(self.data())
         data = app.load_study()

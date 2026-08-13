@@ -1979,6 +1979,11 @@ def _study_goal_normalize_trees(
                 note = _study_goal_note(raw_node.get("note"))
                 if note:
                     node["note"] = note
+                # 分支底色必须在白名单内：漏掉会在每次落盘/加载时被静默剥掉，
+                # 调色盘改色看起来就是"点了一点反应都没有"。
+                raw_color = str(raw_node.get("color") or "").strip()
+                if raw_color and len(raw_color) <= 7 and raw_color.startswith("#"):
+                    node["color"] = raw_color
             elif kind == "task":
                 task_id = str(raw_node.get("taskId") or "")
                 invalid = not task_id or task_id not in task_ids or task_id in tree_owned
