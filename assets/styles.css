@@ -85,6 +85,129 @@
 }
 .study-route-close:hover { color: #262923; background: #f0f1ed; }
 .study-route-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background-color: #fff; background-image: radial-gradient(circle, rgba(61,69,61,.10) .7px, transparent .8px); background-size: 20px 20px; }
+/* 多目标树切换 rail：复刻画布编辑器左侧悬浮工具栏（canvas-toolbox），默认隐藏 */
+.study-route-rail {
+  position: absolute;
+  z-index: 4;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  max-height: calc(100% - 96px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+}
+.study-route-rail.auto-hide {
+  opacity: 0;
+  transform: translate(-12px, -50%);
+  pointer-events: none;
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+.study-route-rail.auto-hide.revealed {
+  opacity: 1;
+  transform: translate(0, -50%);
+  pointer-events: auto;
+}
+.study-route-rail-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.study-route-rail-list::-webkit-scrollbar { display: none; }
+/* 活动树黑色胶囊：独立滑块实体，切换时沿数字滑动（复刻书脊 spine-active-orb 的
+   translate + --easing-soft 模式），按钮本体保持幽灵态不再自带黑底。 */
+.study-route-rail-orb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: #242521;
+  box-shadow: 0 6px 14px rgba(26, 26, 26, 0.16);
+  pointer-events: none;
+  will-change: transform;
+  transition: transform var(--start-orb-ms) var(--easing-soft);
+}
+.study-route-rail-orb.no-transition { transition: none; }
+/* rail FLIP：容器高度、按钮位移、新按钮入场共用书脊节奏；退场按钮变幽灵淡出缩小 */
+.study-route-rail.rail-flipping { transition: height var(--start-orb-ms) var(--easing-soft); }
+.study-route-rail.rail-flipping .study-route-rail-list { flex: none; }
+.study-route-rail-item.rail-flip,
+.study-route-rail-add.rail-flip {
+  transition: transform var(--start-orb-ms) var(--easing-soft), opacity 160ms ease;
+}
+.study-route-rail-item.rail-ghost {
+  position: absolute;
+  left: 8px; /* 幽灵挂在 nav 内，需补 nav 的 8px 内边距 */
+  margin: 0;
+  pointer-events: none;
+  transition: transform var(--start-orb-ms) var(--easing-soft), opacity 160ms ease;
+}
+.study-route-rail-item.rail-ghost.rail-ghost-out { transform: scale(0.6); opacity: 0; }
+.study-route-rail-item,
+.study-route-rail-add {
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: #a2a79e;
+  font: 650 13px/1 var(--font-ui);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.study-route-rail-item:hover,
+.study-route-rail-add:hover { background: rgba(37, 39, 34, 0.06); color: #2f322c; }
+/* 活动树数字压在黑胶囊上：背景交给滑块实体，按钮只切文字色。 */
+.study-route-rail-item.is-active { color: #f8f6ef; }
+.study-route-rail-item.is-active:hover { color: #f8f6ef; }
+.study-route-rail-add { font-size: 16px; font-weight: 500; }
+.study-route-rail-item::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 2;
+  left: calc(100% + 10px);
+  top: 50%;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #4a4d45;
+  box-shadow: 0 8px 22px rgba(26, 26, 26, 0.10);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font: 12px/1.2 var(--font-ui);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-3px, -50%);
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+.study-route-rail-item:hover::after,
+.study-route-rail-item:focus-visible::after {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
 .study-route-viewport { position: absolute; inset: 0; overflow: hidden; outline: 0; cursor: grab; touch-action: none; }
 .study-route-viewport.is-panning { cursor: grabbing; }
 .study-route-scene { position: absolute; left: 0; top: 0; opacity: 0; transform-origin: 0 0; transition: opacity 260ms ease-out; }

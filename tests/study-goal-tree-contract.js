@@ -18,6 +18,9 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-role="study-route-viewport"',
   'data-role="study-route-summary"',
   'data-role="study-route-popover"',
+  'data-role="study-route-rail"',
+  'data-role="study-route-rail-list"',
+  'data-role="study-route-rail-add"',
   'study-route.js',
 ].forEach((needle) => assert(html.includes(needle), 'missing route markup: ' + needle));
 [
@@ -57,6 +60,20 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   "overlay.classList.add('is-closing')",
   "popover.classList.add('is-closing')",
   "confirmBox.classList.add('is-closing')",
+  'function applyTreePayloadInitial(json)',
+  'function applyTreeSnapshot(json, expectedTreeId)',
+  'function renderRail()',
+  'var railRevealPx = 84',
+  'function setRailVisible(visible)',
+  'function viewKeyFor(treeId)',
+  'var treeId = state.activeTreeId;',
+  'var removedTreeId = state.activeTreeId;',
+  'function switchTree(treeId)',
+  'function createTree()',
+  'function deleteTree()',
+  'data-route-pop="delete-tree"',
+  "state.tree.id !== 'goal_legacy'",
+  'var treeAtRequest = state.activeTreeId',
 ].forEach((needle) => assert(route.includes(needle), 'missing route behavior: ' + needle));
 assert(!route.includes('drag.previewTree') && !route.includes('drag.previewLayout'),
   'dragging must not live-sort or relayout the route');
@@ -78,13 +95,22 @@ assert(!route.includes('set-focus') && !route.includes('archive-tree'),
   '.study-route-popover.is-visible',
   '.study-route-confirm.is-visible',
   '.study-route-overlay.is-closing',
+  '.study-route-rail.auto-hide',
+  '.study-route-rail-item.is-active',
+  '.study-route-rail-add',
   'body.start-page[data-start-theme="dark"] .study-route-panel',
   '@media (max-width: 700px)',
   '@media (prefers-reduced-motion: reduce)',
 ].forEach((needle) => assert(styles.includes(needle), 'missing route style: ' + needle));
 const routeStyles = styles.slice(styles.indexOf('.study-route-overlay'), styles.indexOf('/* /'));
-assert(!routeStyles.includes('backdrop-filter'), 'route must not run persistent backdrop blur');
-assert(!routeStyles.includes('infinite'), 'route must not use infinite animation');
+const railStart = routeStyles.indexOf('.study-route-rail {');
+assert(railStart >= 0, 'rail glass capsule must be present');
+assert(!routeStyles.slice(0, railStart).includes('backdrop-filter'), 'route must not run persistent backdrop blur');
+assert(routeStyles.slice(railStart).includes('backdrop-filter'), 'rail must replicate the canvas-toolbox glass');
+const routeWithoutTransientSpinner = routeStyles
+  .replace(/.study-route-scene\.is-loading::after[^}]*\}\s*/s, '')
+  .replace(/@keyframes study-route-spin[^}]*\}\s*/s, '');
+assert(!routeWithoutTransientSpinner.includes('infinite'), 'route must not use persistent infinite animation');
 assert(routeStyles.includes('background: #fff;'), 'light route surfaces must remain pure white');
 assert(routeStyles.includes('border-bottom: 0;'), 'route header divider must stay removed');
 assert(routeStyles.includes('width 520ms cubic-bezier(.22,1,.36,1)'),
@@ -94,16 +120,31 @@ assert(routeStyles.includes('will-change: transform'), 'active drag must bypass 
 [
   '"version": 5',
   '"goalTree": tree',
+  '"goalTrees"',
+  '"activeTreeId"',
   'def _study_goal_normalize_tree',
+  'def _study_goal_new_tree',
+  'def _study_goal_sync_active',
   'def apply_study_goal_tree_command',
+  'if command == "create-tree"',
+  'if command == "switch-tree"',
+  'if command == "delete-tree"',
   'if command == "rename-root"',
   'elif command == "delete-branch"',
   'elif command == "move-node"',
+  '学习任务不存在或已经在这棵目标树中',
+  '这个任务已经在这棵目标树中',
+  '这个任务不在当前目标树中',
+  '没有找到这棵目标树',
 ].forEach((needle) => assert(backend.includes(needle), 'missing v5 backend contract: ' + needle));
 assert(!backend.includes('if parsed.path == "/api/study-goal-tree-archive"'),
   'goal-tree archive route must be removed');
 assert(study.includes('state.goalTree = payload.goalTree'),
   'learning page must retain the singular goalTree payload');
+assert(study.includes('state.goalTrees = payload.goalTrees'),
+  'learning page must sync the multi-tree list');
+assert(study.includes('json.activeTreeId === treeAtRequest'),
+  'learning page must guard against stale tree snapshots');
 
 const tasks = [
   { id: 'a', title: 'A', status: 'active', progress: { current: 2, target: 4, milestones: [{ id: 'm2', name: 'Half', at: 2 }] } },
@@ -224,5 +265,9 @@ const malformed = GoalTree.normalizeTree({
 assert.strictEqual(malformed.nodes.length, 2);
 assert.strictEqual(malformed.nodes.find((node) => node.id === 'child').parentId, null);
 assert(!malformed.nodes.some((node) => node.kind === 'archive'));
+
+const legacyTree = GoalTree.normalizeTree({ id: 'goal_legacy', title: 'Legacy', nodes: [] }, tasks);
+assert.strictEqual(legacyTree.id, 'goal_legacy',
+  'normalizeTree must preserve the tree id (delete menu hides for the original tree)');
 
 console.log('study goal-tree v3 contract: ok');

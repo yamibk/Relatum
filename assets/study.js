@@ -453,9 +453,13 @@
     applyLocalTaskPatch(task, patch);
     const seq = (taskUpdateSeq.get(task) || 0) + 1;
     taskUpdateSeq.set(task, seq);
+    const treeAtRequest = goalTreeActiveId;
     const request = queueTaskMutation(task, async () => {
       const json = await post('/api/study-task-update', Object.assign({ id: task.id }, patch));
-      if (json.goalTree) state.goalTree = json.goalTree;
+      // 多目标树：请求期间若已切换活动树，丢弃旧树快照，只同步全量与活动树 id
+      if (json.goalTree && (!json.activeTreeId || json.activeTreeId === treeAtRequest)) state.goalTree = json.goalTree;
+      if (Array.isArray(json.goalTrees)) state.goalTrees = json.goalTrees;
+      if (json.activeTreeId) goalTreeActiveId = json.activeTreeId;
       if (taskUpdateSeq.get(task) === seq) Object.assign(task, json.task);
       else {
         task.updatedAt = json.task.updatedAt || task.updatedAt;
@@ -515,7 +519,12 @@
     if (!payload || typeof payload !== 'object') return;
     state.tasks = payload.tasks || [];
     state.trash = payload.trash || [];
-    state.goalTree = payload.goalTree || { version: 1, title: '我的学习路线', nodes: [] };
+    state.goalTree = payload.goalTree || (Array.isArray(payload.goalTrees) && payload.goalTrees[0]) || { version: 1, title: '我的学习路线', nodes: [] };
+    if (Array.isArray(payload.goalTrees) && payload.goalTrees.length) state.goalTrees = payload.goalTrees;
+    if (payload.activeTreeId) goalTreeActiveId = payload.activeTreeId;
+    if (!state.goalTrees.some(function (tree) { return tree.id === goalTreeActiveId; })) {
+      goalTreeActiveId = state.goalTrees[0] ? state.goalTrees[0].id : '';
+    }
   }
   function goalTreeCommand(command, payload, options) {
     if (['create-branch', 'delete-branch', 'attach-task', 'create-task', 'move-node', 'detach-task', 'delete-tree'].includes(command)) {
@@ -527,6 +536,8 @@
       return post('/api/study-goal-tree-command', body);
     }).then(function (json) {
       if (json.goalTree) state.goalTree = json.goalTree;
+      if (Array.isArray(json.goalTrees)) state.goalTrees = json.goalTrees;
+      if (json.activeTreeId) goalTreeActiveId = json.activeTreeId;
       if (Array.isArray(json.goalTreeArchives)) state.goalTreeArchives = json.goalTreeArchives;
       if (json.task && !findTask(json.task.id)) state.tasks.push(json.task);
       if (json.treeId) goalTreeActiveId = json.treeId;
@@ -3301,8 +3312,15 @@
     var treeCopy = document.createElement('span');
     treeCopy.innerHTML = '<small>' + escapeHtml(T('目标树')) + '</small>';
     var owner = goalTreeOwner(task.id);
+    var otherOwners = state.goalTrees.filter(function (tree) {
+      return tree.id !== (owner && owner.tree.id);
+    }).map(function (tree) {
+      return GoalTree ? GoalTree.taskOwner(tree, task.id) : null;
+    }).filter(Boolean);
     var treeState = document.createElement('strong');
-    treeState.textContent = owner ? owner.tree.title : T('未加入');
+    treeState.textContent = owner
+      ? (otherOwners.length ? owner.tree.title + ' · 另 ' + otherOwners.length + ' 棵' : owner.tree.title)
+      : T('未加入');
     if (owner) treeState.setAttribute('data-user-content', '');
     treeCopy.appendChild(treeState);
     var treeActions = document.createElement('span');
@@ -3675,10 +3693,14 @@
 
     var seq = (taskProgressSeq.get(task) || 0) + 1;
     taskProgressSeq.set(task, seq);
+    var treeAtRequest = goalTreeActiveId;
     var request = queueTaskMutation(task, function () {
       return post('/api/study-task-progress', { id: task.id, delta: delta });
     }).then(function (json) {
-      if (json.goalTree) state.goalTree = json.goalTree;
+      // 多目标树：请求期间若已切换活动树，丢弃旧树快照
+      if (json.goalTree && (!json.activeTreeId || json.activeTreeId === treeAtRequest)) state.goalTree = json.goalTree;
+      if (Array.isArray(json.goalTrees)) state.goalTrees = json.goalTrees;
+      if (json.activeTreeId) goalTreeActiveId = json.activeTreeId;
       if (taskProgressSeq.get(task) === seq) {
         var serverProgress = taskProgress(json.task || {});
         var needsReconcile = serverProgress.current !== taskProgress(task).current

@@ -26,12 +26,14 @@ class StudyProgressTests(unittest.TestCase):
             "version": 1,
             "tasks": [{"id": "old", "title": "旧任务", "status": "todo"}],
         }), encoding="utf-8")
-        self.assertEqual(app.load_study(), {
-            "version": 5,
-            "tasks": [],
-            "trash": [],
-            "goalTree": {"version": 1, "title": "我的学习路线", "nodes": []},
-        })
+        loaded = app.load_study()
+        self.assertEqual(loaded["version"], 5)
+        self.assertEqual(loaded["tasks"], [])
+        self.assertEqual(loaded["trash"], [])
+        self.assertEqual(len(loaded["goalTrees"]), 1)
+        self.assertEqual(loaded["goalTrees"][0]["title"], "目标 1")
+        self.assertEqual(loaded["activeTreeId"], loaded["goalTrees"][0]["id"])
+        self.assertIs(loaded["goalTree"], loaded["goalTrees"][0])
 
     def test_create_defaults_to_unset_progress(self):
         task = app._study_task({"title": "线性代数"})
