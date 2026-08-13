@@ -40,6 +40,7 @@
   const notesStackHoverDelayValue = document.querySelector('[data-role="notes-stack-hover-delay-value"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
+  const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const initialView = new URLSearchParams(window.location.search).get('view') || '';
   let initialStudy = initialView === 'study';
   let initialCalendar = initialView === 'calendar';
@@ -95,6 +96,7 @@
   const NOTES_STACK_HOVER_DELAY_DEFAULT = 320;
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
+  const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   let startTurnSpeed = START_SPEED_DEFAULT;
   let notesInertia = NOTES_INERTIA_DEFAULT;
   let startViewTransitionTimer = 0;
@@ -283,6 +285,17 @@
     }
   }
 
+  function applyGoalTreeSimpleMode(simple, persist) {
+    const active = simple !== false;
+    if (goalTreeSimpleToggle) goalTreeSimpleToggle.checked = active;
+    if (persist) {
+      try { localStorage.setItem(GOAL_TREE_SIMPLE_KEY, active ? '1' : '0'); } catch (e) {}
+    }
+    window.dispatchEvent(new CustomEvent('relatum:goal-tree-simple-mode-change', {
+      detail: { simple: active },
+    }));
+  }
+
   function startViewCleanupDelay(previous, next) {
     const calendarMotion = previous === 'calendar' || next === 'calendar';
     if (next === 'review') return Math.max(760, startTurnSpeed + 500);
@@ -323,6 +336,9 @@
   let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
   try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
   applyHideSpecialPages(hideSpecialInit, false);
+  let goalTreeSimpleInit = true;
+  try { goalTreeSimpleInit = localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (e) {}
+  applyGoalTreeSimpleMode(goalTreeSimpleInit, false);
   if (startSpeedTrigger && startSpeedPop) {
     startSpeedTrigger.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -357,6 +373,11 @@
   if (hideSpecialToggle) {
     hideSpecialToggle.addEventListener('change', () => {
       applyHideSpecialPages(hideSpecialToggle.checked, true);
+    });
+  }
+  if (goalTreeSimpleToggle) {
+    goalTreeSimpleToggle.addEventListener('change', () => {
+      applyGoalTreeSimpleMode(goalTreeSimpleToggle.checked, true);
     });
   }
 

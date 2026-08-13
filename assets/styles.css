@@ -14,7 +14,7 @@
   font-display: swap;
 }
 
-/* 目标树 v3：单一总路线。常用进度操作直接位于任务节点，低频编辑使用临时弹层。 */
+/* 目标树 V4.1：阶段解锁路线。常用进度操作直接位于任务节点，低频编辑使用临时弹层。 */
 .study-route-overlay {
   position: fixed;
   inset: 0;
@@ -67,6 +67,14 @@
 .study-route-overlay.is-visible .study-route-head > :nth-child(3) { transition-delay: 65ms; }
 .study-route-head p { margin: 0 0 5px; color: #969b92; font-size: 9px; font-weight: 750; letter-spacing: .18em; }
 .study-route-head h2 { margin: 0; font-size: 24px; line-height: 1; letter-spacing: -.045em; }
+.study-route-title-group > div { display: flex; align-items: center; gap: 9px; }
+.study-route-help-trigger {
+  display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  color: #747b73; background: transparent; border: 1px solid #d9ddd6; border-radius: 50%;
+  font: 700 11px/1 var(--font-ui); cursor: pointer;
+}
+.study-route-help-trigger:hover,
+.study-route-help-trigger:focus-visible { color: #29302a; background: #eef1ec; border-color: #aeb7ad; outline: none; }
 .study-route-summary { display: flex; align-items: baseline; justify-content: center; gap: 10px; }
 .study-route-summary strong { font: 730 24px/1 var(--font-ui); letter-spacing: -.05em; }
 .study-route-summary span { color: #92978f; font-size: 11px; white-space: nowrap; }
@@ -216,6 +224,7 @@
 .study-route-viewport.is-panning { cursor: grabbing; }
 .study-route-scene { position: absolute; left: 0; top: 0; opacity: 0; transform-origin: 0 0; transition: opacity 260ms ease-out; }
 .study-route-overlay.is-visible .study-route-scene { opacity: 1; transition-delay: 60ms; }
+.study-route-scene.is-tree-switching { transition: none; }
 /* 切树瞬间画布快速淡出（复用起步页翻页的出场节奏 token），落定后随新树形变一起淡入 */
 .study-route-overlay.is-visible .study-route-scene.is-fading {
   opacity: 0;
@@ -236,7 +245,15 @@
 .study-route-edge { fill: none; stroke: #c8cec5; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .study-route-edge { opacity: 1; transition: opacity 260ms var(--easing-soft, ease), stroke 260ms var(--easing-soft, ease); }
 .study-route-edge.is-entering { opacity: 0; }
+.study-route-edge.is-collapsing {
+  opacity: 0 !important;
+  transition: opacity 180ms cubic-bezier(.4,0,1,1);
+}
+.study-route-edge.is-requires { stroke: #59675d; stroke-width: 1.7; }
+.study-route-edge.is-requires.is-secondary { stroke-width: 1.25; stroke-dasharray: 5 5; opacity: .76; }
+.study-route-edges marker path { fill: #59675d; }
 .study-route-node {
+  --route-node-opacity: 1;
   position: absolute;
   display: grid;
   align-items: center;
@@ -247,12 +264,23 @@
   box-shadow: 0 8px 25px rgba(35,42,35,.07), 0 1px 2px rgba(35,42,35,.04);
   outline: 0;
   cursor: grab;
+  opacity: var(--route-node-opacity);
   transition: border-color 170ms ease, box-shadow 170ms ease, opacity 170ms ease, transform 170ms ease;
 }
 .study-route-node:hover,
 .study-route-node:focus-visible { border-color: #9ba79d; box-shadow: 0 0 0 3px rgba(89,111,94,.10), 0 12px 30px rgba(35,42,35,.09); transform: translateY(-1px); }
 .study-route-node:active { transform: scale(.985); }
-.study-route-node.is-entering { animation: studyRouteNodeIn 390ms var(--easing-soft, cubic-bezier(.22,1,.36,1)) both; }
+.study-route-node.is-entering { animation: studyRouteNodeIn 300ms var(--easing-soft, cubic-bezier(.22,1,.36,1)) both; }
+.study-route-node.is-expanding {
+  animation: studyRouteNodeExpand 300ms var(--easing-soft, cubic-bezier(.22,1,.36,1)) both;
+  transform-origin: center;
+}
+.study-route-node.is-collapsing {
+  opacity: 0 !important;
+  transform: scale(.965) !important;
+  pointer-events: none;
+  transition: opacity 180ms cubic-bezier(.4,0,1,1), transform 180ms cubic-bezier(.4,0,1,1);
+}
 .study-route-node.is-drag-anchor { z-index: 10; opacity: .34; transform: scale(.975); cursor: grabbing; }
 .study-route-node.is-subtree-dragging { z-index: 9; opacity: .90; cursor: grabbing; }
 .study-route-node.is-drag-anchor,
@@ -265,8 +293,12 @@
 .study-route-node.is-reparent-target { border-color: #66836d; box-shadow: 0 0 0 5px rgba(91,127,98,.17), 0 15px 34px rgba(35,42,35,.12); transform: scale(1.018); }
 body.study-route-node-dragging { cursor: grabbing !important; user-select: none; }
 @keyframes studyRouteNodeIn {
-  from { opacity: 0; transform: translate3d(-13px, 5px, 0) scale(.975); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: scale(.965); }
+  to { opacity: var(--route-node-opacity); transform: none; }
+}
+@keyframes studyRouteNodeExpand {
+  from { opacity: 0; transform: scale(.965); }
+  to { opacity: var(--route-node-opacity); transform: none; }
 }
 /* 新树的根卡比普通节点稍强的登场：更大缩放与上浮，作为新树"落地"的锚点 */
 .study-route-node.is-root.is-entering { animation: studyRouteRootIn 390ms var(--easing-soft, cubic-bezier(.22, 1, .36, 1)) both; }
@@ -324,14 +356,39 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   box-shadow: 0 0 0 3px rgba(116,151,124,.10);
 }
 .study-route-node.is-milestone.is-complete .study-route-milestone-dot { background: #83b08d; border-color: #83b08d; }
-.study-route-node.is-blocked:not(.is-complete) { opacity: .56; }
+.study-route-node.is-blocked:not(.is-complete) { --route-node-opacity: .56; }
+.study-route-node.is-ready:not(.is-complete) { border-color: #a7c8ae; box-shadow: 0 0 0 3px rgba(128,177,139,.10), 0 8px 25px rgba(35,42,35,.07); }
+.study-route-node.is-unlocking { animation: studyRouteUnlock 720ms cubic-bezier(.22,1,.36,1) both; }
+.study-route-node.is-next-focus { box-shadow: 0 0 0 5px rgba(199,168,83,.18), 0 14px 34px rgba(35,42,35,.12); }
+@keyframes studyRouteUnlock {
+  0% { box-shadow: 0 0 0 0 rgba(117,177,131,.35); }
+  55% { box-shadow: 0 0 0 8px rgba(117,177,131,.12); }
+  100% { box-shadow: 0 0 0 0 rgba(117,177,131,0); }
+}
 .study-route-branch-main,
 .study-route-task-main { display: grid; gap: 6px; min-width: 0; }
 .study-route-branch-main strong,
 .study-route-task-main strong { overflow: hidden; font-size: 13px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .study-route-node.is-root strong { font-size: 15px; }
-.study-route-branch-main > span { color: #92988f; font-size: 10px; }
-.study-route-node.is-root .study-route-branch-main > span { color: rgba(255,255,255,.60); }
+.study-route-branch-main > span,
+.study-route-node-meta { color: #92988f; font-size: 10px; }
+.study-route-branch-meta-row { display: flex; align-items: center; min-width: 0; gap: 6px; }
+.study-route-node-meta { flex: 1 1 auto; min-width: 0; overflow: hidden; justify-self: start; padding: 0; background: transparent; border: 0; cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.study-route-node-meta:hover,
+.study-route-node-meta:focus-visible { color: #526458; text-decoration: underline; text-underline-offset: 2px; outline: none; }
+.study-route-hidden-count { flex: 0 0 auto; margin-left: auto; color: #687269; font: 600 9px/1.2 var(--font-ui); font-style: normal; white-space: nowrap; }
+.study-route-hidden-count.is-revealing { animation: studyRouteHiddenCountIn 280ms 30ms cubic-bezier(.22,1,.36,1) both; }
+.study-route-hidden-count.is-hiding { pointer-events: none; animation: studyRouteHiddenCountOut 190ms cubic-bezier(.4,0,1,1) both; }
+@keyframes studyRouteHiddenCountIn {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes studyRouteHiddenCountOut {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-3px); }
+}
+.study-route-node.is-root .study-route-branch-main > span,
+.study-route-node.is-root .study-route-node-meta { color: rgba(255,255,255,.60); }
 .study-route-branch-main > i,
 .study-route-task-main > i { display: block; height: 4px; overflow: hidden; background: rgba(75,86,76,.10); border-radius: 99px; }
 .study-route-branch-main > i b,
@@ -356,10 +413,36 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   font: 650 14px/1 var(--font-ui);
   cursor: pointer;
 }
+.study-route-collapse { font-size: 0 !important; }
+.study-route-collapse > span {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transform-origin: center;
+  transition: transform 190ms cubic-bezier(.22,1,.36,1);
+}
+.study-route-collapse[aria-expanded="true"] > span { transform: rotate(45deg); }
+.study-route-collapse.is-expanding > span { animation: studyRouteCollapseIconExpand 210ms cubic-bezier(.22,1,.36,1) both; }
+@keyframes studyRouteCollapseIconExpand {
+  from { transform: rotate(-45deg); }
+  to { transform: rotate(45deg); }
+}
+.study-route-task-line { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.study-route-task-state { overflow: hidden; padding: 0; color: #7f887f; background: transparent; border: 0; font: 500 9px/1.25 var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
+button.study-route-task-state { cursor: pointer; }
+button.study-route-task-state:hover { color: #4d5c50; text-decoration: underline; text-underline-offset: 2px; }
+.study-route-node.is-ready .study-route-task-state { color: #5f8068; }
+.study-route-node.is-blocked .study-route-task-state::before { content: '· '; }
 .study-route-node.is-root .study-route-node-actions button { color: rgba(255,255,255,.72); }
 .study-route-node-actions button:hover,
 .study-route-node-menu:hover,
 .study-route-task-steps button:hover { color: #273029; background: #edf0eb; }
+.study-route-node.is-branch .study-route-node-actions button { color: #a9ada8; transition: color 120ms ease; }
+.study-route-node.is-branch .study-route-node-actions button:hover,
+.study-route-node.is-branch .study-route-node-actions button:focus-visible { color: #000; background: transparent; outline: none; }
 .study-route-node.is-root .study-route-node-actions button:hover { color: #fff; background: rgba(255,255,255,.10); }
 .study-route-task-check {
   display: grid;
@@ -375,18 +458,21 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   transition: color 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 180ms ease, transform 150ms ease;
 }
 .study-route-task-check:hover { transform: scale(1.06); border-color: #78917e; }
+.study-route-task-check:disabled,
+.study-route-task-value:disabled { opacity: .44; cursor: not-allowed; transform: none; }
 .study-route-task-check.is-ready { border-color: #74a080; box-shadow: 0 0 0 4px rgba(112,157,123,.15); }
 .study-route-task-check.is-done { color: #fff; background: #78ad86; border-color: #78ad86; }
 .study-route-task-check span { font-size: 13px; }
 .study-route-task-value { justify-self: start; padding: 0; color: #7d887f; background: transparent; border: 0; font: 650 10px/1 var(--font-ui); cursor: pointer; }
 .study-route-task-value:hover { color: #425c49; }
 .study-route-task-steps { display: flex; gap: 2px; }
-.study-route-task-steps button { background: #f1f3ef; }
+.study-route-task-steps button { color: #707770; background: transparent; }
+.study-route-task-steps button:hover { color: #111; background: transparent; }
 .study-route-task-steps button:disabled { opacity: .28; cursor: default; }
 .study-route-node-menu { color: #9da29b; opacity: .48; }
 .study-route-node:hover .study-route-node-menu,
 .study-route-node:focus-within .study-route-node-menu { opacity: 1; }
-.study-route-node.is-complete:not(.is-root) { opacity: .68; }
+.study-route-node.is-complete:not(.is-root) { --route-node-opacity: .68; }
 .study-route-drop-slot {
   position: absolute;
   z-index: 44;
@@ -515,6 +601,7 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-menu { display: grid; gap: 3px; }
 .study-route-menu button { color: #3f463f; background: transparent; text-align: left; }
 .study-route-menu button:hover { background: #f0f3ee; }
+.study-route-menu button:disabled { opacity: .36; cursor: not-allowed; background: transparent; }
 .study-route-menu button.is-danger { color: #a14c45; }
 
 /* Color palette swatch grid */
@@ -548,6 +635,52 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-milestone-summary { margin: -2px 0 0; color: #818980; font-size: 10px; line-height: 1.55; }
 .study-route-popover [data-role="route-form-error"] { min-height: 14px; margin: 0; color: #a14c45; font-size: 10px; line-height: 1.4; }
 .study-route-popover-empty { margin: 5px; color: #818880; font-size: 11px; line-height: 1.6; }
+.study-route-next { min-height: 27px; padding: 0 10px; color: #4e6254; background: #edf3ec; border: 1px solid #dce7dc; border-radius: 999px; font: 650 10px/1 var(--font-ui); cursor: pointer; }
+.study-route-next:hover { color: #263229; background: #e3eee3; }
+.study-route-popover:has(.study-route-requirements),
+.study-route-popover:has(.study-route-blockers) { color: #111; background: #fff; border-color: #dedede; box-shadow: 0 18px 42px rgba(0,0,0,.13); }
+.study-route-requirements { display: grid; gap: 13px; }
+.study-route-requirements > strong { padding: 2px 2px 0; color: #111; font-size: 13px; }
+.study-route-requirements section { display: grid; gap: 4px; }
+.study-route-requirements section + section { padding-top: 10px; border-top: 1px solid #ededed; }
+.study-route-requirements h4 { margin: 0 2px; color: #666; font-size: 9px; letter-spacing: .08em; }
+.study-route-requirements section > p { margin: 3px 2px 0; color: #999; font-size: 10px; }
+.study-route-requirements ul { display: grid; gap: 0; max-height: 170px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.study-route-requirements li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 7px 2px; background: transparent; border-radius: 0; font-size: 10px; }
+.study-route-requirements li:not(:last-child) { border-bottom: 1px solid #ededed; }
+.study-route-requirements li > div { display: grid; min-width: 0; gap: 3px; }
+.study-route-requirements li small { color: #999; font-size: 9px; }
+.study-route-requirements li > button { flex: 0 0 auto; min-width: 38px; height: 27px; padding: 0 6px; color: #111; background: transparent; border: 0; border-radius: 5px; font: 650 10px/1 var(--font-ui); cursor: pointer; }
+.study-route-requirements li > button[data-route-pop="clear-primary-requirement"] { color: #b34e45; }
+.study-route-requirements li > button:hover,
+.study-route-requirements li > button:focus-visible { color: #fff; background: #111; outline: none; }
+.study-route-requirements li > button[data-route-pop="clear-primary-requirement"]:hover,
+.study-route-requirements li > button[data-route-pop="clear-primary-requirement"]:focus-visible { color: #fff; background: #b34e45; }
+.study-route-requirements form { padding-top: 1px; }
+.study-route-requirements form select { color: #111; background: #fff; border: 1px solid #d9d9d9; box-shadow: none; }
+.study-route-requirements form select:focus { background: #fff; border-color: #111; box-shadow: 0 0 0 2px rgba(0,0,0,.07); }
+.study-route-requirements form > button { color: #fff; background: #111; }
+.study-route-requirements form > button:hover,
+.study-route-requirements form > button:focus-visible { background: #000; outline: none; }
+.study-route-source-link { overflow: hidden; padding: 0; color: #111; background: transparent; border: 0; font: 650 10px/1.25 var(--font-ui); text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.study-route-source-link:hover { color: #111; text-decoration: underline; text-underline-offset: 2px; }
+.study-route-progress-detail,
+.study-route-blockers { display: grid; gap: 10px; }
+.study-route-progress-detail > strong,
+.study-route-blockers > strong { padding: 2px 3px; font-size: 12px; }
+.study-route-progress-detail ul,
+.study-route-blockers ul { display: grid; gap: 4px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.study-route-progress-detail li,
+.study-route-blockers li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; background: #f3f5f1; border-radius: 8px; font-size: 10px; }
+.study-route-progress-detail li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.study-route-progress-detail li small,
+.study-route-blockers li small { flex: 0 0 auto; color: #7d867e; font-size: 9px; }
+.study-route-progress-detail > p,
+.study-route-blockers > p { margin: 0 3px; color: #7d867e; font-size: 10px; line-height: 1.5; }
+.study-route-progress-formula { padding: 9px 10px; color: #344039 !important; background: #edf2eb; border-radius: 9px; font-weight: 650; }
+.study-route-progress-note { color: #899089 !important; }
+.study-route-blockers li > div { display: grid; min-width: 0; gap: 3px; }
+.study-route-blockers li > button { flex: 0 0 auto; min-height: 28px; padding: 0 8px; color: #405347; background: #e8eee6; border: 0; border-radius: 7px; font: 650 9px/1 var(--font-ui); cursor: pointer; }
 .study-route-confirm { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(31,35,31,.22); opacity: 0; transition: opacity 180ms ease-out; }
 .study-route-confirm[hidden] { display: none; }
 .study-route-confirm.is-visible { opacity: 1; }
@@ -559,16 +692,47 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-confirm section > div { display: flex; justify-content: flex-end; gap: 7px; margin-top: 18px; }
 .study-route-confirm button { min-height: 35px; padding: 0 13px; background: #eef0ec; border: 0; border-radius: 9px; cursor: pointer; }
 .study-route-confirm button.is-danger { color: #fff; background: #934940; }
+.study-route-guide { position: absolute; inset: 0; z-index: 24; display: grid; place-items: center; padding: 20px; }
+.study-route-guide[hidden] { display: none; }
+.study-route-guide-backdrop { position: absolute; inset: 0; padding: 0; background: rgba(31,35,31,.28); border: 0; }
+.study-route-guide > section {
+  position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(520px, 92vw); min-height: 360px; max-height: min(620px, 84vh); padding: 22px;
+  color: #292d28; background: #fff; border: 1px solid #dfe3dc; border-radius: 20px;
+  box-shadow: 0 26px 70px rgba(27,33,28,.22); opacity: 0; transform: translateY(9px) scale(.985);
+  transition: opacity 180ms ease-out, transform 230ms cubic-bezier(.22,1,.36,1);
+}
+.study-route-guide.is-visible > section { opacity: 1; transform: none; }
+.study-route-guide header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.study-route-guide header p { margin: 0 0 5px; color: #969b92; font-size: 9px; font-weight: 750; letter-spacing: .16em; }
+.study-route-guide header h3 { margin: 0; font-size: 19px; }
+.study-route-guide header > button { width: 32px; height: 32px; padding: 0; color: #7c837b; background: transparent; border: 0; border-radius: 50%; font-size: 21px; cursor: pointer; }
+.study-route-guide header > button:hover { color: #2c312c; background: #eef0ec; }
+.study-route-guide-copy { align-self: center; padding: 22px 8px; }
+.study-route-guide-copy h4 { margin: 0 0 16px; font-size: 23px; letter-spacing: -.03em; }
+.study-route-guide-copy p,
+.study-route-guide-copy li { color: #626a62; font-size: 12px; line-height: 1.85; }
+.study-route-guide-copy ul { margin: 10px 0 0; padding-left: 20px; }
+.study-route-guide footer { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 10px; }
+.study-route-guide footer span { color: #8c938b; font-size: 10px; text-align: center; }
+.study-route-guide footer button { height: 36px; padding: 0; color: #425047; background: #eef1ec; border: 0; border-radius: 10px; font-size: 20px; cursor: pointer; }
+.study-route-guide footer button:disabled { opacity: .32; cursor: default; }
 
 body.start-page[data-start-theme="dark"] .study-route-panel,
 body.start-page[data-start-theme="dark"] .study-route-head { color: #edf0ea; background: #1d211e; border-color: rgba(235,242,237,.10); }
 body.start-page[data-start-theme="dark"] .study-route-stage { background-color: #171b18; background-image: radial-gradient(circle, rgba(229,238,232,.12) .7px, transparent .8px); }
 body.start-page[data-start-theme="dark"] .study-route-edge { stroke: #4f5951; }
+body.start-page[data-start-theme="dark"] .study-route-edge.is-requires { stroke: #87988c; }
+body.start-page[data-start-theme="dark"] .study-route-edges marker path { fill: #87988c; }
 body.start-page[data-start-theme="dark"] .study-route-node { color: #edf0ea; background: #242a26; border-color: rgba(235,242,237,.13); box-shadow: 0 9px 27px rgba(0,0,0,.20); }
 body.start-page[data-start-theme="dark"] .study-route-node.is-root { color: #20251f; background: #f0eee7; border-color: #f0eee7; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-root .study-route-branch-main > span { color: rgba(28,34,28,.58); }
 body.start-page[data-start-theme="dark"] .study-route-node.is-root .study-route-node-actions button { color: rgba(28,34,28,.68); }
-body.start-page[data-start-theme="dark"] .study-route-task-steps button { color: #dce3dc; background: #303832; border-color: #566259; }
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch .study-route-node-actions button { color: #686d69; }
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch .study-route-node-actions button:hover,
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch .study-route-node-actions button:focus-visible { color: #fff; background: transparent; }
+body.start-page[data-start-theme="dark"] .study-route-task-steps button,
+body.start-page[data-start-theme="dark"] .study-route-task-steps button:hover { color: #dce3dc; background: transparent; border-color: transparent; }
 body.start-page[data-start-theme="dark"] .study-route-task-check { color: transparent; background: #303832; border-color: #566259; }
 body.start-page[data-start-theme="dark"] .study-route-task-check.is-done { color: #fff; background: #6d9c79; border-color: #6d9c79; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-milestone > div span { color: #8e998f; }
@@ -589,11 +753,40 @@ body.start-page[data-start-theme="dark"] .study-route-color-swatch.is-active {
   border-color: #7a8e7c;
 }
 body.start-page[data-start-theme="dark"] .study-route-popover,
-body.start-page[data-start-theme="dark"] .study-route-confirm section { color: #edf0ea; background: #252b27; border-color: rgba(235,242,237,.12); }
+body.start-page[data-start-theme="dark"] .study-route-confirm section,
+body.start-page[data-start-theme="dark"] .study-route-guide > section { color: #edf0ea; background: #252b27; border-color: rgba(235,242,237,.12); }
 body.start-page[data-start-theme="dark"] .study-route-popover input,
 body.start-page[data-start-theme="dark"] .study-route-popover select { color: #edf0ea; background: #1c211e; }
 body.start-page[data-start-theme="dark"] .study-route-menu button { color: #dfe5de; }
 body.start-page[data-start-theme="dark"] .study-route-menu button:hover { background: rgba(235,242,237,.07); }
+body.start-page[data-start-theme="dark"] .study-route-next { color: #d9e5da; background: #2d3930; border-color: #3c4b40; }
+body.start-page[data-start-theme="dark"] .study-route-popover:has(.study-route-requirements),
+body.start-page[data-start-theme="dark"] .study-route-popover:has(.study-route-blockers) { color: #fff; background: #111; border-color: #333; box-shadow: 0 18px 42px rgba(0,0,0,.34); }
+body.start-page[data-start-theme="dark"] .study-route-requirements > strong { color: #fff; }
+body.start-page[data-start-theme="dark"] .study-route-requirements section + section,
+body.start-page[data-start-theme="dark"] .study-route-requirements li:not(:last-child) { background: transparent; border-color: #333; }
+body.start-page[data-start-theme="dark"] .study-route-requirements h4 { color: #aaa; }
+body.start-page[data-start-theme="dark"] .study-route-requirements section > p,
+body.start-page[data-start-theme="dark"] .study-route-requirements li small { color: #888; }
+body.start-page[data-start-theme="dark"] .study-route-requirements li > button { color: #fff; }
+body.start-page[data-start-theme="dark"] .study-route-requirements li > button[data-route-pop="clear-primary-requirement"] { color: #e47d73; }
+body.start-page[data-start-theme="dark"] .study-route-requirements li > button:hover,
+body.start-page[data-start-theme="dark"] .study-route-requirements li > button:focus-visible { color: #111; background: #fff; }
+body.start-page[data-start-theme="dark"] .study-route-requirements li > button[data-route-pop="clear-primary-requirement"]:hover,
+body.start-page[data-start-theme="dark"] .study-route-requirements li > button[data-route-pop="clear-primary-requirement"]:focus-visible { color: #fff; background: #b34e45; }
+body.start-page[data-start-theme="dark"] .study-route-requirements form select,
+body.start-page[data-start-theme="dark"] .study-route-requirements form select:focus { color: #fff; background: #111; border-color: #555; box-shadow: none; }
+body.start-page[data-start-theme="dark"] .study-route-requirements form > button { color: #111; background: #fff; }
+body.start-page[data-start-theme="dark"] .study-route-requirements form > button:hover,
+body.start-page[data-start-theme="dark"] .study-route-requirements form > button:focus-visible { background: #e9e9e9; }
+body.start-page[data-start-theme="dark"] .study-route-progress-detail li,
+body.start-page[data-start-theme="dark"] .study-route-blockers li { background: #1c211e; }
+body.start-page[data-start-theme="dark"] .study-route-source-link,
+body.start-page[data-start-theme="dark"] .study-route-source-link:hover { color: #fff; }
+body.start-page[data-start-theme="dark"] .study-route-progress-formula { color: #dbe7dd !important; background: #2d3930; }
+body.start-page[data-start-theme="dark"] .study-route-guide-copy p,
+body.start-page[data-start-theme="dark"] .study-route-guide-copy li { color: #bdc6be; }
+body.start-page[data-start-theme="dark"] .study-route-guide footer button { color: #dce5dd; background: #303832; }
 
 @media (max-width: 700px) {
   .study-route-overlay { padding: 0; }
@@ -611,6 +804,8 @@ body.start-page[data-start-theme="dark"] .study-route-menu button:hover { backgr
   .study-route-node-actions,
   .study-route-node-menu { opacity: 1; }
   .study-route-popover { position: fixed; left: 12px !important; right: 12px; bottom: 12px; top: auto !important; width: auto; }
+  .study-route-guide { padding: 12px; }
+  .study-route-guide > section { width: 100%; min-height: min(470px, 84vh); padding: 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .study-route-overlay,
@@ -624,16 +819,19 @@ body.start-page[data-start-theme="dark"] .study-route-menu button:hover { backgr
   .study-route-popover.is-swapping > *,
   .study-route-confirm,
   .study-route-confirm section,
+  .study-route-guide > section,
   .study-route-node,
   .study-route-edge,
   .study-route-drop-slot,
   .study-route-reparent-badge,
   .study-route-task-check,
+  .study-route-collapse > span,
+  .study-route-hidden-count,
   .study-route-branch-main > i b,
   .study-route-task-main > i b { transition: none !important; animation: none !important; }
 }
 
-/* /目标树 v3 */
+/* /目标树 V4.1 */
 
 /* ── Shared English interface ─────────────────────────────────────────────
    English pages use a more editorial display face for major ideas and a
