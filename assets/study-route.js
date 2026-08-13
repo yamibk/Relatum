@@ -837,7 +837,11 @@
     var treeAtRequest = state.activeTreeId;
     var shouldFit = ['create-branch', 'create-task', 'attach-task'].includes(sent.command);
     var requestId = routeRequestId;
-    return post('/api/study-goal-tree-command', sent).then(function (json) {
+    var server = post('/api/study-goal-tree-command', sent);
+    // 服务端往返注册进学习页 flush 队列：关面板后立即回收/恢复/归档时，
+    // 全量快照会等本命令落地，不会把刚删/刚切的树写回主页状态。
+    if (window.StudyTreeCommands) window.StudyTreeCommands.register(server);
+    return server.then(function (json) {
       // 响应落地前面板已关闭或重开（代际变化）：不再碰状态与 DOM，
       // 避免旧响应向隐藏 overlay 重建整棵树、或覆盖重开后新树的渲染；下次打开会全量拉取。
       if (requestId !== routeRequestId) return json;

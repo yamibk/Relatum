@@ -82,6 +82,7 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'settleViewThenSave();',
   "error.name === 'AbortError'",
   'railOrbY = null',
+  'window.StudyTreeCommands.register(server)',
 ].forEach((needle) => assert(route.includes(needle), 'missing route behavior: ' + needle));
 assert(!route.includes('drag.previewTree') && !route.includes('drag.previewLayout'),
   'dragging must not live-sort or relayout the route');
@@ -164,6 +165,12 @@ assert(study.includes('json.activeTreeId === treeAtRequest'),
   'learning page must guard against stale tree snapshots');
 assert(study.includes('GoalTree.taskOwner(trees[i], taskId)'),
   'task ownership lookup must search every tree, not just the active one');
+assert(study.includes('Array.from(treeCommandChains.values())'),
+  'tree commands must be awaited by flushStudyMutations before full refreshes');
+assert(study.includes('pruneGoalTreeViewStates'),
+  'deleted-tree view states must be pruned from localStorage');
+assert(study.includes("setTimeout(() => controller.abort(), 15000)"),
+  'study api must have a 15s abort so hung requests cannot block task chains');
 
 const tasks = [
   { id: 'a', title: 'A', status: 'active', progress: { current: 2, target: 4, milestones: [{ id: 'm2', name: 'Half', at: 2 }] } },
