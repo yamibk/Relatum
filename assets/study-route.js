@@ -863,29 +863,60 @@
     if (error && error.message === T('请稍候')) return;
     showError(error);
   }
+  // 树级操作（切树/建树/删树）的画布过渡：点击瞬间场景快速淡出，
+  // 新画布落定后与节点 FLIP / 根卡入场同步淡入，形成"滑块一滑、画面形变"的整体感。
+  function beginTreeTransition() {
+    if (prefersReduced) return;
+    scene.classList.add('is-fading');
+  }
+  function endTreeTransition() {
+    scene.classList.remove('is-fading');
+  }
+  // 新树根卡入场：根卡节点 id 恒为 'root'，跨树复用同一元素，
+  // 同步器不会给它打 is-entering，这里在树级命令落定后手动重触发一次。
+  var rootEnterTimer = 0;
+  function animateRootEntrance() {
+    if (prefersReduced) return;
+    if (rootEnterTimer) { clearTimeout(rootEnterTimer); rootEnterTimer = 0; }
+    var root = nodesHost.querySelector('.study-route-node.is-root');
+    if (!root) return;
+    root.classList.remove('is-entering');
+    void root.offsetWidth;  // 强制重排，连续切树时动画能重新触发
+    root.classList.add('is-entering');
+    rootEnterTimer = window.setTimeout(function () {
+      if (root.isConnected) root.classList.remove('is-entering');
+      rootEnterTimer = 0;
+    }, 420);
+  }
   function switchTree(treeId) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
     flushViewSave();
+    beginTreeTransition();
     return command({ command: 'switch-tree', treeId: treeId }).then(function () {
       if (!restoreView(state.activeTreeId)) fit(true);
-    });
+      animateRootEntrance();
+    }).finally(endTreeTransition);
   }
   function createTree() {
     if (busy) return Promise.reject(new Error(T('请稍候')));
     flushViewSave();
+    beginTreeTransition();
     return command({ command: 'create-tree' }, { duration: 320 }).then(function () {
       if (!restoreView(state.activeTreeId)) fit(true);
-    });
+      animateRootEntrance();
+    }).finally(endTreeTransition);
   }
   function deleteTree() {
     if (busy) return Promise.reject(new Error(T('请稍候')));
     flushViewSave();
     var removedTreeId = state.activeTreeId;
+    beginTreeTransition();
     return command({ command: 'delete-tree', treeId: state.activeTreeId }, { duration: 320 }).then(function () {
       try { localStorage.removeItem(viewKeyFor(removedTreeId)); } catch (e) {}
       if (!restoreView(state.activeTreeId)) fit(true);
-    });
+      animateRootEntrance();
+    }).finally(endTreeTransition);
   }
   function showError(error) {
     var target = popover.querySelector('[data-role="route-form-error"]');
@@ -963,6 +994,7 @@
     document.body.classList.add('study-goal-tree-open');
     open = true;
     scene.classList.add('is-loading');
+    endTreeTransition();
     void overlay.offsetWidth;
     overlay.classList.add('is-visible');
   }
@@ -1027,6 +1059,7 @@
   function closeRoute() {
     if (!open) return;
     setRailVisible(false);
+    endTreeTransition();
     ++routeRequestId;
     if (routeCloseTimer) clearTimeout(routeCloseTimer);
     if (drag) finishDrag(true);
