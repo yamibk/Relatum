@@ -100,6 +100,7 @@ assert(route.includes("window.addEventListener('resize', preserveViewOnResize)")
   '.study-route-progress-detail',
   '.study-route-guide',
   '.study-goal-tree-help',
+  '.study-goal-tree-help.is-list-view',
   '.study-route-node.is-collapsing',
   '.study-route-edge.is-collapsing',
   '.study-route-node.is-expanding',

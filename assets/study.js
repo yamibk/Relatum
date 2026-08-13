@@ -846,7 +846,7 @@
       actions.appendChild(treeBtn);
       var treeHelpBtn = document.createElement('button');
       treeHelpBtn.type = 'button';
-      treeHelpBtn.className = 'study-route-help-trigger study-goal-tree-help';
+      treeHelpBtn.className = 'study-route-help-trigger study-goal-tree-help is-list-view';
       treeHelpBtn.dataset.action = 'study-goal-tree-help';
       treeHelpBtn.setAttribute('aria-label', T('目标树使用教程'));
       treeHelpBtn.setAttribute('aria-haspopup', 'dialog');
