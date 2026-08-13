@@ -26,6 +26,7 @@
   var collapsedIds = new Set(), nextTaskIndex = 0, nextCandidates = [];
   var guidePage = 0;
   var routeRequestId = 0, routeCloseTimer = 0;
+  var routeReturnFocus = null;
   // 树命令纪元：切/建/删树时递增。后台 /api/study 快照若取自纪元变化之前
   // （即切树前），落地时必须丢弃，否则会把刚完成的切换静默回退。
   var treeEpoch = 0;
@@ -1498,7 +1499,15 @@
     void overlay.offsetWidth;
     overlay.classList.add('is-visible');
   }
-  function applyStudyPayload(json, requestId, taskId) {
+  function focusRequestedTask(requestId, taskId) {
+    requestAnimationFrame(function () {
+      if (!open || requestId !== routeRequestId) return;
+      var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
+      var target = owner && nodesHost.querySelector('[data-node-id="' + CSS.escape(owner.node.id) + '"]');
+      if (guide.hidden) (target || viewport).focus();
+    });
+  }
+  function applyStudyPayload(json, requestId, taskId, requestedTreeId) {
     if (requestId !== routeRequestId) return;
     state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
     applyTreePayloadInitial(json);
@@ -1507,12 +1516,17 @@
     render();
     renderRail();
     if (!restored) fit(true);
-    requestAnimationFrame(function () {
-      if (!open || requestId !== routeRequestId) return;
-      var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
-      var target = owner && nodesHost.querySelector('[data-node-id="' + CSS.escape(owner.node.id) + '"]');
-      if (guide.hidden) (target || viewport).focus();
-    });
+    var requestedTree = requestedTreeId && state.trees.find(function (tree) { return tree.id === requestedTreeId; });
+    if (!requestedTree && taskId && !GoalTree.taskOwner(state.tree, taskId)) {
+      requestedTree = state.trees.find(function (tree) { return !!GoalTree.taskOwner(tree, taskId); });
+    }
+    if (requestedTree && requestedTree.id !== state.activeTreeId) {
+      switchTree(requestedTree.id).then(function () {
+        focusRequestedTask(requestId, taskId);
+      }).catch(ignoreBusy);
+      return;
+    }
+    focusRequestedTask(requestId, taskId);
   }
   function prefetchStudyData() {
     if (studyCache) return;
@@ -1523,32 +1537,28 @@
       window[STUDY_DATA_CACHE_KEY] = json;
     }).catch(function () {});
   }
-  function openRoute(trigger, taskId) {
+  function openRoute(trigger, taskId, requestedTreeId) {
     var requestId = ++routeRequestId;
+    if (trigger && typeof trigger.focus === 'function') routeReturnFocus = trigger;
     showOverlay();
     var shared = window[STUDY_DATA_CACHE_KEY];
     if (shared && shared.tasks && shared !== studyCache) studyCache = shared;
     if (studyCache && studyCache.tasks) {
-      applyStudyPayload(studyCache, requestId, taskId);
       var epoch = treeEpoch;
+      applyStudyPayload(studyCache, requestId, taskId, requestedTreeId);
       api('/api/study').then(function (json) {
         if (!json || !json.tasks) return;
         // 快照取自切树前（纪元已推进）或面板已关/重开：丢弃，避免旧快照回退切换；
         // 也不更新 studyCache，防止下次打开先把回退态闪出来。
         if (epoch !== treeEpoch || !open || requestId !== routeRequestId) return;
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
-        state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
-        applyTreePayloadInitial(json);
-        var restored = restoreView(state.activeTreeId);
-        render();
-        renderRail();
-        if (!restored) fit(true);
+        applyStudyPayload(json, requestId, taskId, requestedTreeId);
       }).catch(function () {});
       return;
     }
     if (shared && shared.tasks) {
       studyCache = shared;
-      applyStudyPayload(shared, requestId, taskId);
+      applyStudyPayload(shared, requestId, taskId, requestedTreeId);
       return;
     }
     var epoch = treeEpoch;
@@ -1556,15 +1566,17 @@
       if (epoch !== treeEpoch) return;
       studyCache = json;
       window[STUDY_DATA_CACHE_KEY] = json;
-      applyStudyPayload(json, requestId, taskId);
+      applyStudyPayload(json, requestId, taskId, requestedTreeId);
     }).catch(function (err) {
       if (requestId !== routeRequestId) return;
       scene.classList.remove('is-loading');
       showError(err);
     });
   }
-  function closeRoute() {
+  function closeRoute(restoreFocus) {
     if (!open) return;
+    var returnFocus = routeReturnFocus;
+    routeReturnFocus = null;
     setRailVisible(false);
     endTreeTransition();
     railOrbY = null;  // 滑块位置随画布一起失效，下次打开直接落位，不做跨会话飞行
@@ -1602,6 +1614,11 @@
     overlay.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('study-goal-tree-open');
     open = false;
+    if (restoreFocus !== false && returnFocus && returnFocus.isConnected) {
+      requestAnimationFrame(function () {
+        if (!open && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+      });
+    }
     routeCloseTimer = window.setTimeout(function () {
       if (open) return;
       overlay.hidden = true;
@@ -2189,7 +2206,7 @@
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);
   });
-  window.addEventListener('pagehide', function () { if (open) closeRoute(); });
+  window.addEventListener('pagehide', function () { if (open) closeRoute(false); });
   window.addEventListener('beforeunload', function () { if (open) flushViewSave(); });
   document.querySelectorAll('[data-action="study-goal-tree-open"]').forEach(function (button) {
     button.addEventListener('click', function () { openRoute(button); });
@@ -2200,7 +2217,7 @@
     button.addEventListener('pointerenter', function () { prefetchStudyData(); });
   });
   window.StudyRoute = {
-    open: function (taskId, trigger) { openRoute(trigger, taskId); },
+    open: function (taskId, trigger, treeId) { openRoute(trigger, taskId, treeId); },
     help: function (trigger) { openRoute(trigger); openGuide(trigger); },
     close: closeRoute,
     prefetch: prefetchStudyData,

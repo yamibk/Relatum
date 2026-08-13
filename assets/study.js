@@ -482,8 +482,8 @@
     state.goalTrees = Array.isArray(payload.goalTrees) ? payload.goalTrees : [];
     goalTreeActiveId = payload.activeTreeId || (state.goalTrees[0] && state.goalTrees[0].id) || '';
   }
-  function openGoalTree(trigger, taskId) {
-    if (window.StudyRoute && window.StudyRoute.open) window.StudyRoute.open(taskId || '', trigger);
+  function openGoalTree(trigger, taskId, treeId) {
+    if (window.StudyRoute && window.StudyRoute.open) window.StudyRoute.open(taskId || '', trigger, treeId || '');
   }
 
   // ── 拖拽排序：未完成列卡片左侧 2×3 点阵手柄，只在本容器（progressListEl）内排序 ──
@@ -1767,7 +1767,7 @@
     treeAction.addEventListener('click', function () {
       var origin = progressSettingsTrigger || treeAction;
       closeProgressSettings(false, true);
-      openGoalTree(origin, task.id);
+      openGoalTree(origin, task.id, owner && owner.tree.id);
     });
     treeActions.appendChild(treeAction);
     treeSection.append(treeCopy, treeActions);

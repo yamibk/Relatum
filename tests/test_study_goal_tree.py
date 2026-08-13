@@ -190,6 +190,46 @@ class StudyGoalTreeV4Tests(unittest.TestCase):
         self.assertEqual(handler.response[0], 200)
         self.assertEqual(app.load_study()["tasks"][1]["progress"]["current"], 1)
 
+    def test_task_update_api_rejects_removing_referenced_milestone_without_overwrite(self):
+        source = self.task("A", progress={
+            "target": 10,
+            "milestones": [{"id": "half", "name": "一半", "at": 5}],
+        })
+        target = self.task("B")
+        data = self.data(source, target)
+        source_node = self.attach(data, source)
+        target_node = self.attach(data, target)
+        app.apply_study_goal_tree_command(data, {
+            "command": "add-requirement",
+            "fromNodeId": source_node,
+            "toNodeId": target_node,
+            "trigger": {"kind": "milestone", "milestoneId": "half"},
+        })
+        app.save_study(data)
+
+        class CaptureHandler:
+            def __init__(self):
+                self.response = None
+
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_task_update(handler, {
+            "id": source["id"],
+            "progress": {"target": 10, "milestones": []},
+        })
+
+        self.assertEqual(handler.response[0], 400)
+        self.assertIn("请先移除对应的解锁条件", handler.response[1]["error"])
+        persisted = app.load_study()
+        self.assertEqual(persisted["tasks"][0]["progress"]["milestones"][0]["id"], "half")
+        self.assertTrue(any(
+            link.get("trigger", {}).get("milestoneId") == "half"
+            for link in persisted["goalTrees"][0]["links"]
+        ))
+
     def test_dependency_cycle_is_rejected(self):
         first, second = self.task("A"), self.task("B")
         data = self.data(first, second)

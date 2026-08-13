@@ -46,6 +46,12 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'transitionTaskCheck',
   '&& !isComplete && !isBlocked',
   'function syncStudyCacheFromState()',
+  'function focusRequestedTask(requestId, taskId)',
+  'function applyStudyPayload(json, requestId, taskId, requestedTreeId)',
+  'switchTree(requestedTree.id).then(function ()',
+  'var routeReturnFocus = null',
+  'returnFocus.focus({ preventScroll: true })',
+  "closeRoute(false)",
   'shared !== studyCache',
   'function beginTreeSwitchMotion',
   'var TREE_SWITCH_OUT_MS = 80',
@@ -69,6 +75,9 @@ const guideTitles = ['一分钟开始使用', '下一步做什么', '阶段与�
 guideTitles.slice(1).forEach((title, index) => {
   assert(route.indexOf(guideTitles[index]) < route.indexOf(title), 'guide must put core actions before advanced concepts');
 });
+const openRouteSection = route.slice(route.indexOf('function openRoute('), route.indexOf('function closeRoute('));
+assert(openRouteSection.indexOf('var epoch = treeEpoch;') < openRouteSection.indexOf('applyStudyPayload(studyCache'),
+  'opening a requested tree must invalidate the background snapshot captured before its switch starts');
 
 [
   '.study-route-edge.is-requires',

@@ -75,6 +75,8 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   "layer.classList.toggle('is-dense', layout.length > 12)",
   "layer.classList.toggle('is-very-dense', layout.length > 24)",
   'state.trash = state.trash.slice(0, STUDY_TRASH_LIMIT)',
+  "window.StudyRoute.open(taskId || '', trigger, treeId || '')",
+  'openGoalTree(origin, task.id, owner && owner.tree.id)',
 ].forEach((needle) => assert(study.includes(needle), 'missing study progress behavior: ' + needle));
 
 assert(!study.includes('taskProgressChains') && !study.includes('taskUpdateChains'),
