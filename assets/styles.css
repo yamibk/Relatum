@@ -67,7 +67,6 @@
 .study-route-overlay.is-visible .study-route-head > :nth-child(3) { transition-delay: 65ms; }
 .study-route-head p { margin: 0 0 5px; color: #969b92; font-size: 9px; font-weight: 750; letter-spacing: .18em; }
 .study-route-head h2 { margin: 0; font-size: 24px; line-height: 1; letter-spacing: -.045em; }
-.study-route-title-group > div { display: flex; align-items: center; gap: 9px; }
 .study-route-help-trigger {
   display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
   color: #747b73; background: transparent; border: 1px solid #d9ddd6; border-radius: 50%;
@@ -75,6 +74,7 @@
 }
 .study-route-help-trigger:hover,
 .study-route-help-trigger:focus-visible { color: #29302a; background: #eef1ec; border-color: #aeb7ad; outline: none; }
+.study-goal-tree-help { flex: 0 0 auto; width: 28px; height: 28px; font-size: 12px; }
 .study-route-summary { display: flex; align-items: baseline; justify-content: center; gap: 10px; }
 .study-route-summary strong { font: 730 24px/1 var(--font-ui); letter-spacing: -.05em; }
 .study-route-summary span { color: #92978f; font-size: 11px; white-space: nowrap; }

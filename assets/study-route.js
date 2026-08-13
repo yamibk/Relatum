@@ -18,7 +18,7 @@
   var guide = overlay.querySelector('[data-role="study-route-guide"]');
   var guideCopy = overlay.querySelector('[data-role="study-route-guide-copy"]');
   var guidePosition = overlay.querySelector('[data-role="study-route-guide-position"]');
-  var helpTrigger = overlay.querySelector('[data-route-action="help"]');
+  var guideReturnTrigger = null;
   var stageEl = overlay.querySelector('.study-route-stage');
   var T = function (value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; };
   var state = { tasks: [], tree: { version: 2, title: '我的学习路线', nodes: [], links: [] }, trees: [], activeTreeId: '' };
@@ -1430,20 +1430,20 @@
   }
   var GUIDE_PAGES = [
     {
-      title: '目标、阶段、任务与连线',
-      body: '<p>目标是整棵路线；阶段用来收纳一组学习任务，本身没有手动进度。</p><ul><li>浅灰无箭头线：阶段“包含”任务。</li><li>深色箭头线：完成来源后，解锁下一项；虚线表示附加条件。</li></ul>',
+      title: '一分钟开始使用',
+      body: '<p>目标树最重要的用途，是把学习任务排成一条看得见的路线。</p><ul><li>点击根目标或阶段右侧的“＋”，新建任务或接入已有任务。</li><li>任务与学习页共用数据：在任一处完成或修改进度，另一处会同步。</li><li>先放入当前真正要做的任务，不必一开始就规划完整棵树。</li></ul>',
     },
     {
-      title: '进度怎样计算',
-      body: '<p>所有任务等权：已完成是 100%；有总量时按“当前 ÷ 总量”；未设置总量且未完成是 0%。</p><p>阶段只平均它包含的任务，根目标平均整棵树中的唯一任务。点击阶段或根目标的进度文字，可以查看逐项公式。</p>',
+      title: '下一步做什么',
+      body: '<p>点击顶部的“下一步”，目标树会定位到当前可以开始的任务；再点一次会查看下一个候选。</p><ul><li>点击任务圆点，可以完成或恢复任务。</li><li>有数量目标时，用“− / ＋”推进；“设置进度”可修改当前值和总量。</li><li>拖动卡片可调整路线；阶段右上角的箭头可收起或展开内容。</li></ul>',
     },
     {
-      title: '解锁条件',
-      body: '<p>一个节点有多个条件时采用 AND 规则：必须全部满足才可推进。主路线条件决定树的排版位置；附加条件只增加约束，不改变排版和进度归属。</p><p>被锁定的任务仍可改名、查看条件或移出路线，但不能完成或修改进度。</p>',
+      title: '阶段与进度',
+      body: '<p>阶段只是一组任务的收纳夹，不需要手动设置进度。</p><ul><li>已完成任务记为 100%；有总量时按“当前 ÷ 总量”；未设总量且未完成时记为 0%。</li><li>阶段平均它收纳的任务，根目标平均整棵树中的任务。</li><li>点击进度文字可查看每项任务和计算公式；需要另一套路线时，从左侧编号栏新建目标树。</li></ul>',
     },
     {
-      title: '更快地编辑路线',
-      body: '<p>拖动节点可调整主路线；“下一步”会依次定位当前可开始的任务；阶段可折叠，多棵目标树从左侧 Rail 切换。</p><p>起步页齿轮里的“精简目标树编辑”默认开启。关闭后，才显示新建后续阶段、添加解锁条件等高级入口；切换不会改动已有数据。</p>',
+      title: '箭头、解锁与高级编辑',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才能推进。</li><li>被锁定的任务可改名、查看条件或移出路线，但不能修改进度。</li><li>如需新建后续阶段或添加条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -1456,25 +1456,29 @@
     previous.disabled = guidePage === 0;
     next.disabled = guidePage === GUIDE_PAGES.length - 1;
   }
-  function openGuide() {
+  function openGuide(trigger) {
     if (!guide) return;
+    guideReturnTrigger = trigger || guideReturnTrigger;
     closePopover(false);
     guidePage = 0;
     renderGuidePage();
     guide.hidden = false;
-    helpTrigger && helpTrigger.setAttribute('aria-expanded', 'true');
+    guideReturnTrigger && guideReturnTrigger.setAttribute('aria-expanded', 'true');
     requestAnimationFrame(function () {
       guide.classList.add('is-visible');
       var close = guide.querySelector('[data-route-action="help-close"]:not(.study-route-guide-backdrop)');
       if (close) close.focus();
     });
   }
-  function closeGuide() {
+  function closeGuide(restoreFocus) {
     if (!guide || guide.hidden) return;
     guide.classList.remove('is-visible');
     guide.hidden = true;
-    helpTrigger && helpTrigger.setAttribute('aria-expanded', 'false');
-    if (helpTrigger) helpTrigger.focus({ preventScroll: true });
+    if (guideReturnTrigger) guideReturnTrigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus !== false && guideReturnTrigger && guideReturnTrigger.isConnected) {
+      guideReturnTrigger.focus({ preventScroll: true });
+    }
+    guideReturnTrigger = null;
   }
   function moveGuide(delta) {
     guidePage = Math.max(0, Math.min(GUIDE_PAGES.length - 1, guidePage + delta));
@@ -1507,7 +1511,7 @@
       if (!open || requestId !== routeRequestId) return;
       var owner = taskId && GoalTree.taskOwner(state.tree, taskId);
       var target = owner && nodesHost.querySelector('[data-node-id="' + CSS.escape(owner.node.id) + '"]');
-      (target || viewport).focus();
+      if (guide.hidden) (target || viewport).focus();
     });
   }
   function prefetchStudyData() {
@@ -1584,7 +1588,7 @@
     if (summaryFrame) cancelAnimationFrame(summaryFrame);
     layoutFrame = 0;
     summaryFrame = 0;
-    closePopover(false); closeConfirm(); closeGuide();
+    closePopover(false); closeConfirm(); closeGuide(false);
     if (reparentBadge) { reparentBadge.remove(); reparentBadge = null; }
     if (dropSlot) { dropSlot.remove(); dropSlot = null; }
     nodesHost.innerHTML = '';
@@ -1720,7 +1724,7 @@
       if (action === 'close') return closeRoute();
       if (action === 'fit') return fit();
       if (action === 'next-task') return focusNextTask();
-      if (action === 'help') return openGuide();
+      if (action === 'help') return openGuide(actionControl);
       if (action === 'help-close') return closeGuide();
       if (action === 'help-prev') return moveGuide(-1);
       if (action === 'help-next') return moveGuide(1);
@@ -2191,17 +2195,27 @@
     button.addEventListener('click', function () { openRoute(button); });
     button.addEventListener('pointerenter', function () { prefetchStudyData(); });
   });
-  window.StudyRoute = { open: function (taskId, trigger) { openRoute(trigger, taskId); }, close: closeRoute, prefetch: prefetchStudyData, refresh: function () {
-    if (!open) return Promise.resolve(false);
-    var epoch = treeEpoch;
-    return api('/api/study').then(function (json) {
-      if (epoch !== treeEpoch) return false;
-      studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
-      state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
-      applyTreePayloadInitial(json);
-      render();
-      renderRail();
-      return true;
-    });
-  } };
+  document.querySelectorAll('[data-action="study-goal-tree-help"]').forEach(function (button) {
+    button.addEventListener('click', function () { openRoute(button); openGuide(button); });
+    button.addEventListener('pointerenter', function () { prefetchStudyData(); });
+  });
+  window.StudyRoute = {
+    open: function (taskId, trigger) { openRoute(trigger, taskId); },
+    help: function (trigger) { openRoute(trigger); openGuide(trigger); },
+    close: closeRoute,
+    prefetch: prefetchStudyData,
+    refresh: function () {
+      if (!open) return Promise.resolve(false);
+      var epoch = treeEpoch;
+      return api('/api/study').then(function (json) {
+        if (epoch !== treeEpoch) return false;
+        studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
+        state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
+        applyTreePayloadInitial(json);
+        render();
+        renderRail();
+        return true;
+      });
+    },
+  };
 })();
