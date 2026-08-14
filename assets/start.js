@@ -50,6 +50,11 @@
   const notesInertiaValue = document.querySelector('[data-role="notes-inertia-value"]');
   const notesStackHoverDelayRange = document.querySelector('[data-role="notes-stack-hover-delay-range"]');
   const notesStackHoverDelayValue = document.querySelector('[data-role="notes-stack-hover-delay-value"]');
+  const notesConsole = document.querySelector('[data-role="notes-console"]');
+  const notesConsoleTrigger = document.querySelector('[data-role="notes-console-trigger"]');
+  const notesConsolePanel = document.querySelector('[data-role="notes-console-panel"]');
+  const notesConsoleColors = document.querySelector('[data-role="notes-console-colors"]');
+  const notesConsoleReset = document.querySelector('[data-role="notes-console-reset"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
@@ -427,6 +432,147 @@
   if (notesStackHoverDelayRange) {
     notesStackHoverDelayRange.addEventListener('input', () => applyNotesStackHoverDelay(notesStackHoverDelayRange.value, true));
   }
+  (function setupNotesConsole() {
+    const notesView = document.querySelector('[data-role="notes-view"]');
+    const palette = window.RelatumStickyPalette;
+    if (!notesView || !notesConsole || !notesConsoleTrigger || !notesConsolePanel || !palette) return;
+    let open = false;
+    let nearRight = false;
+    let resetTimer = 0;
+
+    function setRevealed(revealed) {
+      notesConsole.classList.toggle('is-revealed', !!revealed || open);
+    }
+
+    function setOpen(next, restoreFocus) {
+      open = !!next;
+      notesConsole.classList.toggle('is-open', open);
+      notesConsoleTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      notesConsolePanel.hidden = !open;
+      notesConsolePanel.inert = !open;
+      if (open) notesConsolePanel.removeAttribute('inert');
+      else notesConsolePanel.setAttribute('inert', '');
+      setRevealed(open || nearRight || notesConsole.matches(':focus-within'));
+      if (!open && restoreFocus) notesConsoleTrigger.focus({ preventScroll: true });
+    }
+
+    function localizedSwatchLabel(item) {
+      return englishUI() ? item.en : item.zh;
+    }
+
+    function syncPaletteButtons() {
+      const enabled = new Set(palette.getEnabledKeys());
+      notesConsoleColors.querySelectorAll('[data-notes-color]').forEach((button) => {
+        const active = enabled.has(button.dataset.notesColor);
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        const item = palette.byKey(button.dataset.notesColor);
+        if (item) {
+          const label = localizedSwatchLabel(item);
+          button.title = label;
+          button.setAttribute('aria-label', (englishUI() ? 'Use ' : '参与随机生成：') + label);
+        }
+      });
+    }
+
+    palette.swatches.forEach((item) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'notes-console-color';
+      button.dataset.notesColor = item.key;
+      button.style.setProperty('--notes-console-swatch', item.hex);
+      notesConsoleColors.appendChild(button);
+    });
+    syncPaletteButtons();
+
+    notesConsoleColors.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-notes-color]');
+      if (!button) return;
+      const enabled = new Set(palette.getEnabledKeys());
+      const key = button.dataset.notesColor;
+      if (enabled.has(key) && enabled.size === 1) {
+        button.classList.remove('is-last');
+        void button.offsetWidth;
+        button.classList.add('is-last');
+        return;
+      }
+      if (enabled.has(key)) enabled.delete(key); else enabled.add(key);
+      palette.setEnabledKeys(Array.from(enabled));
+    });
+
+    const allColors = notesConsolePanel.querySelector('[data-action="notes-colors-all"]');
+    if (allColors) allColors.addEventListener('click', () => palette.setEnabledKeys(palette.keys));
+    notesConsolePanel.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]');
+      if (!action || !window.CanvasNotes) return;
+      if (action.dataset.action === 'notes-fit-all' && typeof window.CanvasNotes.fitAll === 'function') {
+        window.CanvasNotes.fitAll();
+      } else if (action.dataset.action === 'notes-reset-view' && typeof window.CanvasNotes.resetView === 'function') {
+        window.CanvasNotes.resetView();
+      }
+    });
+
+    if (notesConsoleReset) {
+      notesConsoleReset.addEventListener('click', () => {
+        palette.reset();
+        applyNotesInertia(NOTES_INERTIA_DEFAULT, true);
+        applyNotesStackHoverDelay(NOTES_STACK_HOVER_DELAY_DEFAULT, true);
+        notesConsoleReset.classList.add('is-restored');
+        notesConsoleReset.textContent = englishUI() ? 'Restored' : '已恢复';
+        clearTimeout(resetTimer);
+        resetTimer = window.setTimeout(() => {
+          notesConsoleReset.classList.remove('is-restored');
+          notesConsoleReset.textContent = englishUI() ? 'Reset' : '恢复默认';
+        }, 1200);
+      });
+    }
+
+    notesView.addEventListener('pointermove', (event) => {
+      if (open || notesConsole.contains(event.target)) return;
+      const rect = notesView.getBoundingClientRect();
+      nearRight = event.clientX >= rect.right - 72 && event.clientX <= rect.right;
+      setRevealed(nearRight || notesConsole.matches(':focus-within'));
+    });
+    notesView.addEventListener('pointerleave', () => {
+      nearRight = false;
+      if (!open && !notesConsole.matches(':focus-within')) setRevealed(false);
+    });
+    notesConsoleTrigger.addEventListener('click', (event) => {
+      event.stopPropagation();
+      setOpen(!open, false);
+    });
+    notesConsoleTrigger.addEventListener('focus', () => setRevealed(true));
+    notesConsole.addEventListener('focusout', () => {
+      requestAnimationFrame(() => {
+        if (!open && !nearRight && !notesConsole.matches(':focus-within')) setRevealed(false);
+      });
+    });
+    notesConsolePanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
+    document.addEventListener('pointerdown', (event) => {
+      if (open && !notesConsole.contains(event.target)) setOpen(false, false);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (open && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setOpen(false, true);
+      }
+    }, true);
+    document.addEventListener('relatum:languagechange', () => {
+      syncPaletteButtons();
+      if (notesConsoleReset && !notesConsoleReset.classList.contains('is-restored')) {
+        notesConsoleReset.textContent = englishUI() ? 'Reset' : '恢复默认';
+      }
+    });
+    window.addEventListener('relatum:sticky-palette-change', syncPaletteButtons);
+    document.addEventListener('start:viewchange', (event) => {
+      if (!event.detail || event.detail.current !== 'notes') {
+        nearRight = false;
+        setOpen(false, false);
+        setRevealed(false);
+      }
+    });
+  })();
   if (calendarCountdownToggle) {
     calendarCountdownToggle.addEventListener('change', () => {
       applyCalendarCountdownEnabled(calendarCountdownToggle.checked, true);
@@ -473,8 +619,8 @@
       ['书脊与翻页', '左侧像书脊一样的入口连接不同页面。最顶端是「速记」灵感墙，往下小矩形是活跃热力图，「学」是学习页，黑色圆点是当前画布页，浅色圆点是其它分组，<strong>+</strong> 用来新建分组。', [['鼠标放在左侧书脊滚轮', '在速记、活跃页、学习页、最近和各分组之间循环翻页。'], ['鼠标放在右侧画布列表滚轮', '只滚动当前页里的文件列表，不会误翻页。'], ['点击圆点', '直接进入对应分组。']]],
       ['速记灵感墙', '书脊最顶端的「速记」是一面与画布、学习任务完全独立的无界面灵感墙。便签、连线、视野会自动保存；深色模式下连线会显示为蓝色荧光。', [['双击空白处', '在落点生成一张随机果冻色便签。'], ['双击便签', '进入文字编辑；按 <kbd>Esc</kbd> 或点到别处结束。'], ['拖动便签', '自由摆放；压到另一张上会叠成一摞，悬停时扇形展开，滚轮可翻动最上面一张。'], ['左键在空白处快速划一刀', '划过便签、连线或箭头即可删除。'], ['右键拖动', '拖出自由箭头；端点落在便签上后会跟随便签移动。'], ['<kbd>Alt</kbd> + 拖动便签', '把一张便签连接到另一张便签。']]],
       ['速记创建与关联', '无需寻找按钮，鼠标位置和当前便签就是新内容的落点。新建后会直接进入输入。', [['<kbd>N</kbd>', '在鼠标位置新建便签；鼠标不在墙面时在视野中央新建。'], ['<kbd>Enter</kbd>', '在当前便签右侧续写一张便签。'], ['<kbd>Shift</kbd> + <kbd>Enter</kbd>', '在当前便签下方续写。'], ['<kbd>Tab</kbd>', '在右侧新建便签并自动连接当前便签。'], ['<kbd>Shift</kbd> + <kbd>Tab</kbd>', '在下方新建便签并自动连接。']]],
-      ['速记墙视野', '速记墙可以像画布一样平移、缩放和惯性滑行。左上角齿轮“速记页设置”里的「拖拽惯性」同时控制便签拖动与整面墙拖动的滑行强度。', [['空白处滚轮', '平滑移动整面速记墙。'], ['<kbd>Ctrl</kbd> + 滚轮', '以鼠标所在位置为中心缩放。'], ['<kbd>Shift</kbd> + 滚轮', '横向移动视野。'], ['<kbd>Space</kbd> + 拖动空白处', '抓住整面墙平移，松手后按惯性滑行。'], ['<kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>←</kbd> / <kbd>→</kbd>', '移动视野；按住 <kbd>Shift</kbd> 会更快。'], ['<kbd>0</kbd>', '缩放到可以总览全部便签。'], ['<kbd>F</kbd>', '聚焦当前便签。'], ['再次点击「速记」图标', '回到默认缩放与位置。']]],
-      ['速记搜索与键盘整理', '鼠标悬停、最近操作或键盘轮廓所指的便签会成为当前便签。搜索和浏览都不显示工具栏。', [['<kbd>/</kbd>', '进入搜索并直接输入关键词；左侧速记图标会亮起黄色呼吸光圈。'], ['搜索中 <kbd>Enter</kbd> / <kbd>Shift</kbd> + <kbd>Enter</kbd>', '跳到下一条 / 上一条匹配结果。'], ['搜索中 <kbd>Esc</kbd>', '退出搜索并恢复全部便签。'], ['<kbd>J</kbd> / <kbd>K</kbd>', '切换下一张 / 上一张便签；屏幕外的便签会自动进入视野。'], ['<kbd>Esc</kbd>', '取消当前便签的键盘轮廓。'], ['<kbd>C</kbd>', '切换当前便签颜色。'], ['<kbd>R</kbd> / <kbd>Shift</kbd> + <kbd>R</kbd>', '随机轻旋 / 摆正当前便签。'], ['<kbd>D</kbd>', '复制当前便签。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做速记墙操作。']]],
+      ['速记墙视野', '速记墙可以像画布一样平移、缩放和惯性滑行。鼠标靠近速记页右缘会浮现控制台入口，其中的「拖拽惯性」同时控制便签与整面墙的滑行强度。', [['空白处滚轮', '平滑移动整面速记墙。'], ['<kbd>Ctrl</kbd> + 滚轮', '以鼠标所在位置为中心缩放。'], ['<kbd>Shift</kbd> + 滚轮', '横向移动视野。'], ['<kbd>Space</kbd> + 拖动空白处', '抓住整面墙平移，松手后按惯性滑行。'], ['<kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>←</kbd> / <kbd>→</kbd>', '移动视野；按住 <kbd>Shift</kbd> 会更快。'], ['<kbd>0</kbd>', '缩放到可以总览全部便签。'], ['<kbd>F</kbd>', '聚焦当前便签。'], ['右缘控制台', '选择随机生成颜色、调整手感、总览或重置视野。'], ['再次点击「速记」图标', '回到默认缩放与位置。']]],
+      ['速记搜索与键盘整理', '鼠标悬停、最近操作或键盘轮廓所指的便签会成为当前便签。搜索和浏览都不显示工具栏。', [['<kbd>/</kbd>', '进入搜索并直接输入关键词；左侧速记图标会亮起黄色呼吸光圈。'], ['搜索中 <kbd>Enter</kbd> / <kbd>Shift</kbd> + <kbd>Enter</kbd>', '跳到下一条 / 上一条匹配结果。'], ['搜索中 <kbd>Esc</kbd>', '退出搜索并恢复全部便签。'], ['<kbd>J</kbd> / <kbd>K</kbd>', '切换下一张 / 上一张便签；屏幕外的便签会自动进入视野。'], ['<kbd>Esc</kbd>', '取消当前便签的键盘轮廓。'], ['<kbd>C</kbd>', '从控制台启用的颜色中随机更换当前便签颜色。'], ['<kbd>R</kbd> / <kbd>Shift</kbd> + <kbd>R</kbd>', '随机轻旋 / 摆正当前便签。'], ['<kbd>D</kbd>', '复制当前便签。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做速记墙操作。']]],
       ['分组与文件整理', '画布卡片不仅可以打开，也可以像桌面文件一样整理。', [['拖动画布卡片到圆点', '把文件归入对应分组。'], ['拖到另一张卡片附近', '调整当前分组里的文件顺序。'], ['右键画布卡片', '重命名、在资源管理器中查看、移动到分组、移到回收站或从列表移除。'], ['右键分组圆点', '重命名或删除分组；删除分组不会删除画布文件。'], ['左侧回收站', '恢复误删画布，或手动清空回收站。']]],
       ['键盘整理', '先按方向键选中一张画布，再继续操作。', [['<kbd>↑</kbd> / <kbd>↓</kbd>', '选择上一张 / 下一张画布。'], ['<kbd>Shift</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd>', '把选中的画布向上 / 向下调整顺序（「最近」自动排序）。'], ['<kbd>Enter</kbd>', '打开选中的画布。'], ['<kbd>1</kbd>–<kbd>9</kbd>', '移到第 1–9 个自定义分组。'], ['<kbd>0</kbd> 或 <kbd>Backspace</kbd>', '移到「未分组」。'], ['<kbd>→</kbd> 再按一次 <kbd>→</kbd>', '二次确认后移到回收站。'], ['<kbd>←</kbd> 或 <kbd>Esc</kbd>', '取消待删除状态。']]],
       ['客户端设置', '起始页右下角齿轮用于设置桌面客户端从最大化恢复后的窗口尺寸。可以选择紧凑、均衡、宽敞，也可以填写自定义宽高。设置会按当前显示器可用区域自动约束。'],
