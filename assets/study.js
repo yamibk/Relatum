@@ -565,6 +565,12 @@
     syncTemporaryLayerAvailability();
   }
 
+  function releaseTemporaryTabFocus() {
+    var active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) return;
+    if (typeof active.blur === 'function') active.blur();
+  }
+
   function highlightTemporaryTask(id) {
     if (!temporaryListEl || prefersReduced) return;
     var card = temporaryListEl.querySelector('.study-temporary-card' + taskSelector(id));
@@ -4057,17 +4063,14 @@
     }
     if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
         && studyPageActive && viewMode === 'progress' && !event.defaultPrevented) {
-      var target = event.target;
-      var interactive = target && target.closest
-        ? target.closest('input, textarea, select, button, a, [contenteditable="true"], [tabindex]')
-        : null;
       var blockingLayer = progressSettingsPopover || studyMilestoneDialog
         || (trashPanel && !trashPanel.hidden)
         || document.querySelector('.study-progress-compose.is-open, .study-route-overlay:not([hidden])');
-      if (!interactive && !blockingLayer) {
+      if (!blockingLayer) {
         event.preventDefault();
         event.stopPropagation();
         setTemporaryPanelOpen(!temporaryPanelOpen);
+        releaseTemporaryTabFocus();
         return;
       }
     }
