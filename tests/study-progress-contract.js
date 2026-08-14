@@ -332,7 +332,7 @@ assert(backend.includes('def _study_temporary_task_ids(value: object, tasks: lis
   '@media (max-width: 700px)',
   '--study-temporary-width: calc(100vw - 12px)',
   '.study-temporary-layer.is-open .study-temporary-tab {',
-  '.study-temporary-panel { transform: none; transition: opacity 120ms linear',
+  '.study-temporary-panel { transform: none !important; transition: opacity 120ms linear',
 ].forEach((needle) => assert(styles.includes(needle), 'missing study progress style: ' + needle));
 
 const temporaryTransferSection = study.slice(
@@ -348,6 +348,9 @@ const temporaryHandoffStyle = styles.slice(
   styles.indexOf('.study-temporary-transfer-proxy {'));
 assert(temporaryHandoffStyle.includes('visibility: hidden; opacity: 1'),
   'the hidden target must hand off at full opacity without a blank transition frame');
+const temporaryTabCloseStyle = styles.slice(
+  styles.indexOf('.study-temporary-tab {'),
+  styles.indexOf('.study-temporary-tab span'));
 const temporaryTabOpenStyle = styles.slice(
   styles.indexOf('.study-temporary-layer.is-open .study-temporary-tab {'),
   styles.indexOf('.study-temporary-panel {'));
@@ -355,6 +358,25 @@ assert(temporaryTabOpenStyle.includes('opacity: 0')
   && temporaryTabOpenStyle.includes('pointer-events: none')
   && !temporaryTabOpenStyle.includes('right: var(--study-temporary-width)'),
   'the temporary tab must retreat instead of protruding beside the open panel');
+
+const temporaryPanelCloseStyle = styles.slice(
+  styles.indexOf('.study-temporary-panel {'),
+  styles.indexOf('.study-temporary-layer.is-open .study-temporary-panel {'));
+const temporaryPanelOpenStyle = styles.slice(
+  styles.indexOf('.study-temporary-layer.is-open .study-temporary-panel {'),
+  styles.indexOf('.study-temporary-panel.is-drop-target'));
+assert(temporaryPanelCloseStyle.includes('transform 420ms cubic-bezier(.4,0,.2,1)')
+  && temporaryPanelCloseStyle.includes('opacity 300ms var(--easing-soft) 45ms'),
+  'closing the temporary panel must use the slower smooth exit timing');
+assert(temporaryPanelOpenStyle.includes('transform 310ms cubic-bezier(.22,1,.36,1)')
+  && temporaryPanelOpenStyle.includes('opacity 210ms var(--easing-soft)'),
+  'opening the temporary panel must retain its responsive entrance timing');
+assert(temporaryTabCloseStyle.includes('opacity 200ms var(--easing-soft) 180ms')
+  && temporaryTabCloseStyle.includes('transform 280ms cubic-bezier(.4,0,.2,1) 130ms'),
+  'the temporary tab must return late enough to avoid overlapping the closing panel');
+assert(styles.includes('.study-temporary-panel { transform: none !important; transition: opacity 120ms linear')
+  && styles.includes('transition: opacity 120ms linear !important; transition-delay: 0ms !important;'),
+  'reduced motion must override the full temporary-panel slide with a short fade');
 
 assert(!styles.includes('.study-embedded.temporary-panel-open')
   && !styles.includes('padding-right: calc(var(--study-temporary-width)'),
