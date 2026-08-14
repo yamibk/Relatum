@@ -446,13 +446,18 @@
                 <p>QUICK NOTES</p>
                 <h2 id="notes-console-title">速记控制台</h2>
               </div>
-              <button type="button" class="notes-console-reset" data-role="notes-console-reset">恢复默认</button>
+                <div class="notes-console-head-actions">
+                  <button type="button" class="notes-console-help-trigger" data-role="notes-console-help-trigger"
+                    title="打开速记快捷键说明" aria-label="打开速记快捷键说明" aria-expanded="false"
+                    aria-controls="notes-console-shortcuts">?</button>
+                  <button type="button" class="notes-console-reset" data-role="notes-console-reset">恢复默认</button>
+                </div>
             </header>
             <section class="notes-console-section" aria-labelledby="notes-console-colors-title">
               <div class="notes-console-section-head">
                 <div>
                   <h3 id="notes-console-colors-title">生成颜色</h3>
-                  <p>新建与随机换色从选中色中抽取</p>
+                    <p>新建与随机换色从选中色中抽取；未选中任何颜色时，仍使用全部颜色。</p>
                 </div>
                 <button type="button" data-action="notes-colors-all">全选</button>
               </div>
@@ -484,9 +489,49 @@
                 <button type="button" data-action="notes-fit-all">总览便签</button>
                 <button type="button" data-action="notes-reset-view">重置视野</button>
               </div>
-            </section>
-          </aside>
-        </div>
+              </section>
+            </aside>
+            <aside class="notes-console-shortcuts" id="notes-console-shortcuts" data-role="notes-console-help-panel"
+              role="dialog" aria-modal="false" aria-labelledby="notes-console-shortcuts-title" hidden inert>
+              <header class="notes-console-shortcuts-head">
+                <div>
+                  <p>QUICK NOTES</p>
+                  <h3 id="notes-console-shortcuts-title">速记快捷键</h3>
+                </div>
+                <span aria-hidden="true">?</span>
+              </header>
+              <div class="notes-console-shortcuts-grid">
+                <section><h4>创建与连接</h4><dl>
+                  <div><dt><kbd>N</kbd></dt><dd>在鼠标位置或视野中心新建便签</dd></div>
+                  <div><dt><kbd>Enter</kbd></dt><dd>在当前便签右侧新建</dd></div>
+                  <div><dt><kbd>Shift</kbd> + <kbd>Enter</kbd></dt><dd>在当前便签下方新建</dd></div>
+                  <div><dt><kbd>Tab</kbd></dt><dd>在右侧新建并连线</dd></div>
+                  <div><dt><kbd>Shift</kbd> + <kbd>Tab</kbd></dt><dd>在下方新建并连线</dd></div>
+                </dl></section>
+                <section><h4>浏览与搜索</h4><dl>
+                  <div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>依次切换便签</dd></div>
+                  <div><dt><kbd>/</kbd></dt><dd>搜索便签</dd></div>
+                  <div><dt><kbd>Esc</kbd></dt><dd>退出搜索或取消键盘浏览</dd></div>
+                </dl></section>
+                <section><h4>编辑便签</h4><dl>
+                  <div><dt><kbd>C</kbd></dt><dd>随机换色</dd></div>
+                  <div><dt><kbd>R</kbd></dt><dd>随机旋转</dd></div>
+                  <div><dt><kbd>Shift</kbd> + <kbd>R</kbd></dt><dd>端正当前便签</dd></div>
+                  <div><dt><kbd>D</kbd></dt><dd>复制当前便签</dd></div>
+                </dl></section>
+                <section><h4>视野与历史</h4><dl>
+                  <div><dt><kbd>Space</kbd></dt><dd>按住后拖动视野</dd></div>
+                  <div><dt><kbd>↑ ↓ ← →</kbd></dt><dd>平移视野</dd></div>
+                  <div><dt><kbd>Shift</kbd> + <kbd>↑ ↓ ← →</kbd></dt><dd>快速平移视野</dd></div>
+                  <div><dt><kbd>0</kbd></dt><dd>总览全部便签</dd></div>
+                  <div><dt><kbd>F</kbd></dt><dd>定位当前便签</dd></div>
+                  <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Z</kbd></dt><dd>撤销</dd></div>
+                  <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Y</kbd></dt><dd>重做</dd></div>
+                  <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></dt><dd>重做</dd></div>
+                </dl></section>
+              </div>
+            </aside>
+          </div>
       </section>
 
       <!-- 日历 · 时间视图与独立 Markdown 日记 -->
