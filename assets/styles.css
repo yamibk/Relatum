@@ -7454,7 +7454,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   vector-effect: non-scaling-stroke;
 }
 
-/* 起步页左侧教程入口：放在书脊回收站下方，避免桌面客户端左下角设置按钮遮挡 */
+/* 起步页左侧本地数据说明入口：放在书脊回收站下方，避免桌面客户端左下角设置按钮遮挡 */
 .start-help-trigger {
   position: relative;
   z-index: 1;
@@ -8477,6 +8477,59 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .review-embedded,
 .focus-embedded,
 .start-help-book { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.16) transparent; }
+
+/* 本地数据说明：独立使用更克制的无按钮滚动条，避免 WebView 原生上下三角破坏纸页感。 */
+.start-help-book {
+  scrollbar-color: rgba(26, 26, 26, 0.24) transparent;
+}
+/* Chromium / Edge 新版会让非 auto 的标准 scrollbar-* 覆盖 ::-webkit-scrollbar；
+   在支持 WebKit 伪元素的内核里退回 auto，确保下面的无按钮样式真正接管。 */
+@supports selector(::-webkit-scrollbar) {
+  .start-help-book {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+.start-help-book::-webkit-scrollbar {
+  width: 11px;
+}
+.start-help-book::-webkit-scrollbar-track {
+  margin-block: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+.start-help-book::-webkit-scrollbar-thumb {
+  min-height: 52px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(26, 26, 26, 0.22);
+  background-clip: padding-box;
+}
+.start-help-book::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 26, 26, 0.36);
+  background-clip: padding-box;
+}
+.start-help-book::-webkit-scrollbar-button,
+.start-help-book::-webkit-scrollbar-button:single-button,
+.start-help-book::-webkit-scrollbar-button:vertical:decrement,
+.start-help-book::-webkit-scrollbar-button:vertical:increment,
+.start-help-book::-webkit-scrollbar-button:vertical:start:decrement,
+.start-help-book::-webkit-scrollbar-button:vertical:end:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  -webkit-appearance: none;
+  appearance: none;
+  background: none !important;
+  background-image: none !important;
+  content: none;
+}
+.start-help-book::-webkit-scrollbar-corner {
+  background: transparent;
+}
 .book-page {
   max-width: 760px;
   margin: 0 auto;
@@ -34616,6 +34669,23 @@ body.start-page[data-start-theme="dark"] .start-help-book::-webkit-scrollbar-thu
 body.start-page[data-start-theme="dark"] .cadence-embedded,
 body.start-page[data-start-theme="dark"] .start-help-book {
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+body.start-page[data-start-theme="dark"] .start-help-book {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+  body.start-page[data-start-theme="dark"] .start-help-book {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+body.start-page[data-start-theme="dark"] .start-help-book::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  background-clip: padding-box;
+}
+body.start-page[data-start-theme="dark"] .start-help-book::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+  background-clip: padding-box;
 }
 
 body.start-page[data-start-theme="dark"] .recent-item,
