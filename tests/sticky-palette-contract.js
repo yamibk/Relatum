@@ -102,6 +102,11 @@ assert(!indexHtml.includes('class="start-speed-section start-note-settings"'),
   'Quick Notes controls must not remain duplicated in the global settings popover');
 assert(start.includes("notesConsolePanel.addEventListener('wheel'"),
   'console wheel input must be isolated from the note wall');
+assert(start.includes('const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;')
+  && start.includes('const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;')
+  && start.includes('event.clientY >= centerY - NOTES_CONSOLE_HOTSPOT_HEIGHT / 2')
+  && start.includes('event.clientY <= centerY + NOTES_CONSOLE_HOTSPOT_HEIGHT / 2'),
+  'console reveal must use a compact center-right hotspot instead of the full right edge');
 assert(start.includes("event.key === 'Escape'") && start.includes('setOpen(false, true)'),
   'Escape must close the console and restore focus to its trigger');
 assert(start.includes("event.detail.current !== 'notes'") && start.includes('setOpen(false, false)'),
