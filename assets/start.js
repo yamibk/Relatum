@@ -443,6 +443,7 @@
     let open = false;
     let nearTrigger = false;
     let resetTimer = 0;
+    let consoleCloseTimer = 0;
     let helpCloseTimer = 0;
     let helpOpen = false;
     const allColors = notesConsolePanel.querySelector('[data-action="notes-colors-all"]');
@@ -452,14 +453,35 @@
     }
 
     function setOpen(next, restoreFocus) {
+      if (!next && !open && notesConsolePanel.classList.contains('is-closing')) {
+        if (restoreFocus) notesConsoleTrigger.focus({ preventScroll: true });
+        return;
+      }
+      const shouldAnimateClose = !next && !notesConsolePanel.hidden
+        && !notesConsolePanel.classList.contains('is-closing') && !prefersReduced;
+      clearTimeout(consoleCloseTimer);
       open = !!next;
       if (!open) setHelpOpen(false, false);
       notesConsole.classList.toggle('is-open', open);
       notesConsoleTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-      notesConsolePanel.hidden = !open;
       notesConsolePanel.inert = !open;
-      if (open) notesConsolePanel.removeAttribute('inert');
-      else notesConsolePanel.setAttribute('inert', '');
+      if (open) {
+        notesConsolePanel.classList.remove('is-closing');
+        notesConsolePanel.hidden = false;
+        notesConsolePanel.removeAttribute('inert');
+      } else {
+        notesConsolePanel.setAttribute('inert', '');
+        if (shouldAnimateClose) {
+          notesConsolePanel.classList.add('is-closing');
+          consoleCloseTimer = window.setTimeout(() => {
+            if (open) return;
+            notesConsolePanel.hidden = true;
+            notesConsolePanel.classList.remove('is-closing');
+          }, 160);
+        } else if (!notesConsolePanel.classList.contains('is-closing')) {
+          notesConsolePanel.hidden = true;
+        }
+      }
       setRevealed(open || nearTrigger || notesConsole.matches(':focus-within'));
       if (!open && restoreFocus) notesConsoleTrigger.focus({ preventScroll: true });
     }
