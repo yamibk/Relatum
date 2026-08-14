@@ -42023,7 +42023,11 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
   background: color-mix(in srgb, var(--surface) 98%, transparent);
   box-shadow: -8px 10px 28px rgba(31, 35, 32, .07); opacity: 1;
   transform: translate3d(0,-50%,0); cursor: pointer; pointer-events: auto;
-  transition: opacity 150ms var(--easing-soft), transform 180ms cubic-bezier(.22,1,.36,1), color 180ms var(--easing-soft), background 180ms var(--easing-soft);
+  transition:
+    opacity 200ms var(--easing-soft) 180ms,
+    transform 280ms cubic-bezier(.4,0,.2,1) 130ms,
+    color 180ms var(--easing-soft),
+    background 180ms var(--easing-soft);
 }
 .study-temporary-tab span { writing-mode: vertical-rl; letter-spacing: .08em; font-size: 12px; font-weight: 650; }
 .study-temporary-tab b { min-width: 18px; color: var(--text-tertiary); font-size: 10px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -42034,6 +42038,11 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
 }
 .study-temporary-layer.is-open .study-temporary-tab {
   opacity: 0; pointer-events: none; transform: translate3d(10px,-50%,0);
+  transition:
+    opacity 150ms var(--easing-soft),
+    transform 180ms cubic-bezier(.22,1,.36,1),
+    color 180ms var(--easing-soft),
+    background 180ms var(--easing-soft);
 }
 .study-temporary-panel {
   position: absolute; top: 18px; right: 0; bottom: 18px; z-index: 163;
@@ -42042,17 +42051,29 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
   border-radius: 24px 0 0 24px; color: var(--text);
   background: color-mix(in srgb, var(--surface) 99%, #f4f4ef); box-shadow: -22px 24px 54px rgba(31, 35, 32, .11);
   opacity: 0; pointer-events: none; transform: translate3d(calc(100% + 20px), 0, 0);
-  transition: transform 310ms cubic-bezier(.22,1,.36,1), opacity 210ms var(--easing-soft), border-color 180ms var(--easing-soft);
+  transition:
+    transform 420ms cubic-bezier(.4,0,.2,1),
+    opacity 300ms var(--easing-soft) 45ms,
+    border-color 180ms var(--easing-soft);
 }
-.study-temporary-layer.is-open .study-temporary-panel { opacity: 1; pointer-events: auto; transform: translate3d(0,0,0); }
+.study-temporary-layer.is-open .study-temporary-panel {
+  opacity: 1; pointer-events: auto; transform: translate3d(0,0,0);
+  transition:
+    transform 310ms cubic-bezier(.22,1,.36,1),
+    opacity 210ms var(--easing-soft),
+    border-color 180ms var(--easing-soft);
+}
 .study-temporary-panel.is-drop-target { border-color: color-mix(in srgb, #6f9e79 64%, var(--line)); }
 .study-temporary-head {
   display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;
   min-height: 112px; padding: 26px 26px 20px; border-bottom: 1px solid var(--line);
   opacity: 0; transform: translate3d(10px,0,0);
-  transition: opacity 140ms var(--easing-soft), transform 220ms cubic-bezier(.22,1,.36,1);
+  transition: opacity 210ms var(--easing-soft), transform 300ms cubic-bezier(.4,0,.2,1);
 }
-.study-temporary-layer.is-open .study-temporary-head { opacity: 1; transform: none; transition-delay: 55ms; }
+.study-temporary-layer.is-open .study-temporary-head {
+  opacity: 1; transform: none;
+  transition: opacity 140ms var(--easing-soft) 55ms, transform 220ms cubic-bezier(.22,1,.36,1) 55ms;
+}
 .study-temporary-head h2 { margin: 3px 0 0; font-size: 25px; line-height: 1.05; letter-spacing: -.035em; }
 .study-temporary-head h2 span { margin-left: 5px; color: var(--text-tertiary); font-size: 11px; letter-spacing: 0; }
 .study-temporary-head > button {
@@ -42063,9 +42084,12 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
 .study-temporary-list {
   display: grid; align-content: start; gap: 10px; min-height: 0; padding: 18px 20px 28px; overflow: auto;
   opacity: 0; transform: translate3d(12px,0,0);
-  transition: opacity 150ms var(--easing-soft), transform 230ms cubic-bezier(.22,1,.36,1);
+  transition: opacity 220ms var(--easing-soft), transform 320ms cubic-bezier(.4,0,.2,1);
 }
-.study-temporary-layer.is-open .study-temporary-list { opacity: 1; transform: none; transition-delay: 85ms; }
+.study-temporary-layer.is-open .study-temporary-list {
+  opacity: 1; transform: none;
+  transition: opacity 150ms var(--easing-soft) 85ms, transform 230ms cubic-bezier(.22,1,.36,1) 85ms;
+}
 .study-temporary-empty { margin: 64px 20px; color: var(--text-tertiary); font-size: 12px; line-height: 1.8; text-align: center; }
 .study-temporary-card {
   display: grid; grid-template-columns: 24px minmax(0,1fr) 28px; align-items: center; gap: 12px;
@@ -43126,10 +43150,10 @@ body.start-page[data-start-theme="dark"] .study-milestone-remove:hover { backgro
   .study-progress-view.is-revealing .study-progress-empty,
   .study-temporary-card, .study-temporary-empty,
   .study-temporary-check, .study-temporary-remove { transition: none !important; animation: none !important; }
-  .study-temporary-tab { transition: opacity 120ms linear, color 120ms linear, background 120ms linear; }
-  .study-temporary-panel { transform: none; transition: opacity 120ms linear, border-color 120ms linear; }
+  .study-temporary-tab { transform: translate3d(0,-50%,0) !important; transition: opacity 120ms linear, color 120ms linear, background 120ms linear !important; }
+  .study-temporary-panel { transform: none !important; transition: opacity 120ms linear, border-color 120ms linear !important; }
   .study-temporary-head,
-  .study-temporary-list { transform: none; transition: opacity 120ms linear; transition-delay: 0ms; }
+  .study-temporary-list { transform: none !important; transition: opacity 120ms linear !important; transition-delay: 0ms !important; }
 }
 
 /* ── 任务簿 V2：顶级任务库与独立管理页 ───────────────────────────── */
