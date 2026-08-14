@@ -119,6 +119,8 @@
   const NOTES_INERTIA_DEFAULT = 0.45;
   const NOTES_STACK_HOVER_DELAY_KEY = 'canvas:notesStackHoverDelay';
   const NOTES_STACK_HOVER_DELAY_DEFAULT = 320;
+  const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;
+  const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
@@ -437,7 +439,7 @@
     const palette = window.RelatumStickyPalette;
     if (!notesView || !notesConsole || !notesConsoleTrigger || !notesConsolePanel || !palette) return;
     let open = false;
-    let nearRight = false;
+    let nearTrigger = false;
     let resetTimer = 0;
 
     function setRevealed(revealed) {
@@ -452,7 +454,7 @@
       notesConsolePanel.inert = !open;
       if (open) notesConsolePanel.removeAttribute('inert');
       else notesConsolePanel.setAttribute('inert', '');
-      setRevealed(open || nearRight || notesConsole.matches(':focus-within'));
+      setRevealed(open || nearTrigger || notesConsole.matches(':focus-within'));
       if (!open && restoreFocus) notesConsoleTrigger.focus({ preventScroll: true });
     }
 
@@ -530,11 +532,15 @@
     notesView.addEventListener('pointermove', (event) => {
       if (open || notesConsole.contains(event.target)) return;
       const rect = notesView.getBoundingClientRect();
-      nearRight = event.clientX >= rect.right - 72 && event.clientX <= rect.right;
-      setRevealed(nearRight || notesConsole.matches(':focus-within'));
+      const centerY = rect.top + rect.height / 2;
+      nearTrigger = event.clientX >= rect.right - NOTES_CONSOLE_HOTSPOT_WIDTH
+        && event.clientX <= rect.right
+        && event.clientY >= centerY - NOTES_CONSOLE_HOTSPOT_HEIGHT / 2
+        && event.clientY <= centerY + NOTES_CONSOLE_HOTSPOT_HEIGHT / 2;
+      setRevealed(nearTrigger || notesConsole.matches(':focus-within'));
     });
     notesView.addEventListener('pointerleave', () => {
-      nearRight = false;
+      nearTrigger = false;
       if (!open && !notesConsole.matches(':focus-within')) setRevealed(false);
     });
     notesConsoleTrigger.addEventListener('click', (event) => {
@@ -544,7 +550,7 @@
     notesConsoleTrigger.addEventListener('focus', () => setRevealed(true));
     notesConsole.addEventListener('focusout', () => {
       requestAnimationFrame(() => {
-        if (!open && !nearRight && !notesConsole.matches(':focus-within')) setRevealed(false);
+        if (!open && !nearTrigger && !notesConsole.matches(':focus-within')) setRevealed(false);
       });
     });
     notesConsolePanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
@@ -567,7 +573,7 @@
     window.addEventListener('relatum:sticky-palette-change', syncPaletteButtons);
     document.addEventListener('start:viewchange', (event) => {
       if (!event.detail || event.detail.current !== 'notes') {
-        nearRight = false;
+        nearTrigger = false;
         setOpen(false, false);
         setRevealed(false);
       }
@@ -619,7 +625,7 @@
       ['书脊与翻页', '左侧像书脊一样的入口连接不同页面。最顶端是「速记」灵感墙，往下小矩形是活跃热力图，「学」是学习页，黑色圆点是当前画布页，浅色圆点是其它分组，<strong>+</strong> 用来新建分组。', [['鼠标放在左侧书脊滚轮', '在速记、活跃页、学习页、最近和各分组之间循环翻页。'], ['鼠标放在右侧画布列表滚轮', '只滚动当前页里的文件列表，不会误翻页。'], ['点击圆点', '直接进入对应分组。']]],
       ['速记灵感墙', '书脊最顶端的「速记」是一面与画布、学习任务完全独立的无界面灵感墙。便签、连线、视野会自动保存；深色模式下连线会显示为蓝色荧光。', [['双击空白处', '在落点生成一张随机果冻色便签。'], ['双击便签', '进入文字编辑；按 <kbd>Esc</kbd> 或点到别处结束。'], ['拖动便签', '自由摆放；压到另一张上会叠成一摞，悬停时扇形展开，滚轮可翻动最上面一张。'], ['左键在空白处快速划一刀', '划过便签、连线或箭头即可删除。'], ['右键拖动', '拖出自由箭头；端点落在便签上后会跟随便签移动。'], ['<kbd>Alt</kbd> + 拖动便签', '把一张便签连接到另一张便签。']]],
       ['速记创建与关联', '无需寻找按钮，鼠标位置和当前便签就是新内容的落点。新建后会直接进入输入。', [['<kbd>N</kbd>', '在鼠标位置新建便签；鼠标不在墙面时在视野中央新建。'], ['<kbd>Enter</kbd>', '在当前便签右侧续写一张便签。'], ['<kbd>Shift</kbd> + <kbd>Enter</kbd>', '在当前便签下方续写。'], ['<kbd>Tab</kbd>', '在右侧新建便签并自动连接当前便签。'], ['<kbd>Shift</kbd> + <kbd>Tab</kbd>', '在下方新建便签并自动连接。']]],
-      ['速记墙视野', '速记墙可以像画布一样平移、缩放和惯性滑行。鼠标靠近速记页右缘会浮现控制台入口，其中的「拖拽惯性」同时控制便签与整面墙的滑行强度。', [['空白处滚轮', '平滑移动整面速记墙。'], ['<kbd>Ctrl</kbd> + 滚轮', '以鼠标所在位置为中心缩放。'], ['<kbd>Shift</kbd> + 滚轮', '横向移动视野。'], ['<kbd>Space</kbd> + 拖动空白处', '抓住整面墙平移，松手后按惯性滑行。'], ['<kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>←</kbd> / <kbd>→</kbd>', '移动视野；按住 <kbd>Shift</kbd> 会更快。'], ['<kbd>0</kbd>', '缩放到可以总览全部便签。'], ['<kbd>F</kbd>', '聚焦当前便签。'], ['右缘控制台', '选择随机生成颜色、调整手感、总览或重置视野。'], ['再次点击「速记」图标', '回到默认缩放与位置。']]],
+      ['速记墙视野', '速记墙可以像画布一样平移、缩放和惯性滑行。鼠标移到速记页右缘中央的小签附近才会浮现控制台入口，其中的「拖拽惯性」同时控制便签与整面墙的滑行强度。', [['空白处滚轮', '平滑移动整面速记墙。'], ['<kbd>Ctrl</kbd> + 滚轮', '以鼠标所在位置为中心缩放。'], ['<kbd>Shift</kbd> + 滚轮', '横向移动视野。'], ['<kbd>Space</kbd> + 拖动空白处', '抓住整面墙平移，松手后按惯性滑行。'], ['<kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>←</kbd> / <kbd>→</kbd>', '移动视野；按住 <kbd>Shift</kbd> 会更快。'], ['<kbd>0</kbd>', '缩放到可以总览全部便签。'], ['<kbd>F</kbd>', '聚焦当前便签。'], ['右缘中央小签', '选择随机生成颜色、调整手感、总览或重置视野。'], ['再次点击「速记」图标', '回到默认缩放与位置。']]],
       ['速记搜索与键盘整理', '鼠标悬停、最近操作或键盘轮廓所指的便签会成为当前便签。搜索和浏览都不显示工具栏。', [['<kbd>/</kbd>', '进入搜索并直接输入关键词；左侧速记图标会亮起黄色呼吸光圈。'], ['搜索中 <kbd>Enter</kbd> / <kbd>Shift</kbd> + <kbd>Enter</kbd>', '跳到下一条 / 上一条匹配结果。'], ['搜索中 <kbd>Esc</kbd>', '退出搜索并恢复全部便签。'], ['<kbd>J</kbd> / <kbd>K</kbd>', '切换下一张 / 上一张便签；屏幕外的便签会自动进入视野。'], ['<kbd>Esc</kbd>', '取消当前便签的键盘轮廓。'], ['<kbd>C</kbd>', '从控制台启用的颜色中随机更换当前便签颜色。'], ['<kbd>R</kbd> / <kbd>Shift</kbd> + <kbd>R</kbd>', '随机轻旋 / 摆正当前便签。'], ['<kbd>D</kbd>', '复制当前便签。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做速记墙操作。']]],
       ['分组与文件整理', '画布卡片不仅可以打开，也可以像桌面文件一样整理。', [['拖动画布卡片到圆点', '把文件归入对应分组。'], ['拖到另一张卡片附近', '调整当前分组里的文件顺序。'], ['右键画布卡片', '重命名、在资源管理器中查看、移动到分组、移到回收站或从列表移除。'], ['右键分组圆点', '重命名或删除分组；删除分组不会删除画布文件。'], ['左侧回收站', '恢复误删画布，或手动清空回收站。']]],
       ['键盘整理', '先按方向键选中一张画布，再继续操作。', [['<kbd>↑</kbd> / <kbd>↓</kbd>', '选择上一张 / 下一张画布。'], ['<kbd>Shift</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd>', '把选中的画布向上 / 向下调整顺序（「最近」自动排序）。'], ['<kbd>Enter</kbd>', '打开选中的画布。'], ['<kbd>1</kbd>–<kbd>9</kbd>', '移到第 1–9 个自定义分组。'], ['<kbd>0</kbd> 或 <kbd>Backspace</kbd>', '移到「未分组」。'], ['<kbd>→</kbd> 再按一次 <kbd>→</kbd>', '二次确认后移到回收站。'], ['<kbd>←</kbd> 或 <kbd>Esc</kbd>', '取消待删除状态。']]],
