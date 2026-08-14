@@ -61,24 +61,9 @@
     { id: 'mist', zh: '雾蓝', en: 'Mist Blue', color: '#62849b' },
     { id: 'lavender', zh: '灰紫', en: 'Lavender', color: '#7e7094' },
   ];
-  // 便签创建、节点右键菜单与完整画布单选面板共用同一份果冻色表。
-  // 不在各入口复制颜色，避免以后只改到其中一处。
-  const STICKY_SWATCHES = [
-    { key: 'pink', zh: '粉', en: 'Pink', hex: '#ffbdd6' },
-    { key: 'blue', zh: '蓝', en: 'Blue', hex: '#b4d4ff' },
-    { key: 'purple', zh: '紫', en: 'Purple', hex: '#d0bcff' },
-    { key: 'green', zh: '绿', en: 'Green', hex: '#b2e9cd' },
-    { key: 'yellow', zh: '黄', en: 'Yellow', hex: '#ffe69e' },
-    { key: 'orange', zh: '橙', en: 'Orange', hex: '#ffc7a0' },
-    { key: 'teal', zh: '青绿', en: 'Teal', hex: '#a9e6d8' },
-    { key: 'sky', zh: '天蓝', en: 'Sky Blue', hex: '#b6e2f7' },
-    { key: 'lavender', zh: '薰衣草', en: 'Lavender', hex: '#c8c4f6' },
-    { key: 'coral', zh: '珊瑚', en: 'Coral', hex: '#ffc1b4' },
-    { key: 'lime', zh: '青柠', en: 'Lime', hex: '#d9eca8' },
-    { key: 'rose', zh: '玫瑰', en: 'Rose', hex: '#ffb1c0' },
-    { key: 'mint', zh: '薄荷', en: 'Mint', hex: '#bdeccf' },
-    { key: 'apricot', zh: '杏色', en: 'Apricot', hex: '#ffd6a3' },
-  ];
+  // 便签创建、随机换色、右键菜单与速记页共用同一份离线色库。
+  const STICKY_PALETTE_API = global.RelatumStickyPalette;
+  const STICKY_SWATCHES = STICKY_PALETTE_API ? STICKY_PALETTE_API.swatches : [];
 
   function normalizedFontWeight(value, min, max) {
     if (value == null || value === '') return NaN;
@@ -18660,7 +18645,6 @@
     // ── C1 轮：节点颜色 ─────────────────────
     // 给所有选中节点设颜色（color 为空字符串/null = 恢复默认白底）
     // 右键 6 色点 → 便签的果冻底色映射（便签始终有色，没有"无色"概念）。
-    const STICKY_PALETTE = STICKY_SWATCHES.map((item) => item.hex);
     const STICKY_NAMED = {
       blue: '#b4d4ff', green: '#b2e9cd', yellow: '#ffe69e',
       red: '#ffb1c0', purple: '#d0bcff', gray: '#e3e1db',
@@ -23559,23 +23543,22 @@
     // ── 建节点的公共入口（X 轮抽出）──────
     // x, y 是左上角的 surface 坐标；如 opts.startEditing=true 则立即进编辑态（视为新节点）。
     // history：不在这里 push——commitNodeEdit 时如果内容非空才 push；空内容则连同附带 edge 一起回滚。
-    // 便签节点配色：复用速记墙那 14 种柔和果冻色（取较饱和的一档），创建时随机取一种、
-    // 避开上一张避免相邻撞色。直接把十六进制存进 node.bgColor，自包含、随 .canvas 便携，
+    // 便签节点配色：复用统一的 20 色果冻色库，先均衡抽色系、再抽具体颜色。
+    // 直接把十六进制存进 node.bgColor，自包含、随 .canvas 便携，
     // 不依赖任何色名白名单（与 notes.json 的服务端清洗无关）。
     let lastStickyColor = null;
+    let lastStickyFamily = '';
     function randomStickyColor(exclude) {
-      const avoided = normalizeHexColor(exclude);
-      const pool = avoided
-        ? STICKY_PALETTE.filter((item) => normalizeHexColor(item) !== avoided)
-        : STICKY_PALETTE;
-      const colors = pool.length ? pool : STICKY_PALETTE;
-      let pick = colors[Math.floor(Math.random() * colors.length)];
-      let guard = 0;
-      while (pick === lastStickyColor && guard++ < 8) {
-        pick = colors[Math.floor(Math.random() * colors.length)];
-      }
-      lastStickyColor = pick;
-      return pick;
+      if (!STICKY_PALETTE_API) return '#ffe69e';
+      const avoidedKey = STICKY_PALETTE_API.keyForHex(exclude);
+      const avoided = avoidedKey ? STICKY_PALETTE_API.byKey(avoidedKey) : null;
+      const picked = STICKY_PALETTE_API.pick({
+        excludeKey: avoidedKey || STICKY_PALETTE_API.keyForHex(lastStickyColor),
+        excludeFamily: avoided ? avoided.family : lastStickyFamily,
+      });
+      lastStickyColor = picked.hex;
+      lastStickyFamily = picked.family;
+      return picked.hex;
     }
     function ensureStickyNodeColor(node) {
       if (!isStickyNode(node) || node.bgColor) return false;

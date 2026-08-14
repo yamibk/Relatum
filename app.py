@@ -2556,6 +2556,7 @@ def save_countdown(raw: object) -> dict:
 NOTE_COLORS = {
     "pink", "blue", "purple", "green", "yellow", "orange",
     "teal", "sky", "lavender", "coral", "lime", "rose", "mint", "apricot",
+    "paper", "stone", "sand", "sage", "indigo", "plum",
 }
 NOTE_TEXT_MAX = 2000
 NOTES_MAX = 400   # 上限保护，避免数据无限膨胀
