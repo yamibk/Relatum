@@ -11,7 +11,7 @@
 以后只使用真正的 Relatum Git 仓库开发。它应包含 `.git`、`app.py`、`assets/` 和 `build-desktop.ps1`。
 
 ```text
-Relatum-Opensource\
+Relatum\
 ├─ .git\
 ├─ app.py
 ├─ assets\
@@ -23,7 +23,7 @@ Relatum-Opensource\
 它连接的云端仓库是：
 
 ```text
-https://github.com/yamibk/Relatum-Opensource
+https://github.com/yamibk/Relatum
 ```
 
 不要再把历史工程、GitHub 下载的 ZIP、`Relatum-release` 发布目录当成日常源码继续修改。

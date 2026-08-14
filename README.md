@@ -12,20 +12,20 @@
 
 <p align="center">
   <a href="README_EN.md">English</a> ·
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest/download/Relatum-release.zip"><strong>下载 Windows 版</strong></a> ·
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest">查看最新版本</a> ·
+  <a href="https://github.com/yamibk/Relatum/releases/latest/download/Relatum-release.zip"><strong>下载 Windows 版</strong></a> ·
+  <a href="https://github.com/yamibk/Relatum/releases/latest">查看最新版本</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/yamibk/Relatum-Opensource?style=flat-square"></a>
+  <a href="https://github.com/yamibk/Relatum/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/yamibk/Relatum?style=flat-square"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-111111?style=flat-square"></a>
   <img alt="Windows 10 and 11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-2563eb?style=flat-square">
   <img alt="Local first" src="https://img.shields.io/badge/data-local--first-2f855a?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest">
+  <a href="https://github.com/yamibk/Relatum/releases/latest">
     <img src="https://github.com/user-attachments/assets/fed0dc96-c635-4e79-99c4-fef8f8eb8195" alt="Relatum 自由画布、节点连接与思维导图界面">
   </a>
 </p>
@@ -109,7 +109,7 @@ Relatum 是一款开源、本地优先的自由知识画布和学习工作台。
 
 ### 下载 Windows 桌面版
 
-1. [下载最新版 `Relatum-release.zip`](https://github.com/yamibk/Relatum-Opensource/releases/latest/download/Relatum-release.zip)。
+1. [下载最新版 `Relatum-release.zip`](https://github.com/yamibk/Relatum/releases/latest/download/Relatum-release.zip)。
 2. 将 ZIP 完整解压到一个可写目录。
 3. 双击 `Relatum.exe`。
 

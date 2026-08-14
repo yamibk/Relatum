@@ -4,8 +4,8 @@
 
 严格来说，现在确实有两个 Git 仓库：
 
-- 本地仓库：电脑里的 `Relatum-Opensource\Relatum-Opensource` 文件夹，以及其中隐藏的 `.git` 历史。
-- 远端仓库：GitHub 上的 `yamibk/Relatum-Opensource`。
+- 本地仓库：电脑里的 `Relatum` 文件夹，以及其中隐藏的 `.git` 历史。
+- 远端仓库：GitHub 上的 `yamibk/Relatum`。
 
 但它们不是两个需要人工分别维护的项目，而是同一个项目的本地副本和云端副本。两者通过名为 `origin` 的连接关联。
 
