@@ -14415,6 +14415,10 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
 
 .notes-console-panel::-webkit-scrollbar { display: none; }
 .notes-console-panel[hidden] { display: none; }
+.notes-console-panel.is-closing {
+  pointer-events: none;
+  animation: notes-console-out 160ms cubic-bezier(.4, 0, 1, 1) both;
+}
 
 @keyframes notes-console-in {
   from { opacity: 0; transform: translate3d(10px, -50%, 0) scale(0.985); }
@@ -14994,6 +14998,7 @@ body.start-page[data-start-theme="dark"] .notes-surface:not(.notes-searching) .s
   .notes-console-section-head > button,
   .notes-console-view-actions button { transition: none; }
   .notes-console-panel,
+  .notes-console-panel.is-closing,
   .notes-console-shortcuts,
   .notes-console-shortcuts.is-closing { animation: none; }
   .start-speed-pop,
