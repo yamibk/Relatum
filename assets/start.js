@@ -703,61 +703,90 @@
     });
   }
 
+
+  // 起步页「?」只承担本地数据说明；旧的功能教程留给编辑器内的新手引导。
   const START_HELP_PAGES = [
-    { id: 'start', eyebrow: '01 · START', title: '起始页', sections: [
-      ['开始第一张画布', '右上角可以新建空白画布，也可以把外部 <code>.canvas</code> 或整个画布文件夹复制导入本项目。', [['新建画布', '进入空白画布，在空白处双击创建第一张卡片。'], ['导入画布', '复制一张 <code>.canvas</code> 和同名素材目录，然后打开项目内副本。'], ['导入文件夹', '严格检查并整批导入顶层画布与同名素材。']]],
-      ['书脊与翻页', '左侧像书脊一样的入口连接不同页面。最顶端是「速记」灵感墙，往下小矩形是活跃热力图，「学」是学习页，黑色圆点是当前画布页，浅色圆点是其它分组，<strong>+</strong> 用来新建分组。', [['鼠标放在左侧书脊滚轮', '在速记、活跃页、学习页、最近和各分组之间循环翻页。'], ['鼠标放在右侧画布列表滚轮', '只滚动当前页里的文件列表，不会误翻页。'], ['点击圆点', '直接进入对应分组。']]],
-      ['速记灵感墙', '书脊最顶端的「速记」是一面与画布、学习任务完全独立的无界面灵感墙。便签、连线、视野会自动保存；深色模式下连线会显示为蓝色荧光。', [['双击空白处', '在落点生成一张随机果冻色便签。'], ['双击便签', '进入文字编辑；按 <kbd>Esc</kbd> 或点到别处结束。'], ['拖动便签', '自由摆放；压到另一张上会叠成一摞，悬停时扇形展开，滚轮可翻动最上面一张。'], ['左键在空白处快速划一刀', '划过便签、连线或箭头即可删除。'], ['右键拖动', '拖出自由箭头；端点落在便签上后会跟随便签移动。'], ['<kbd>Alt</kbd> + 拖动便签', '把一张便签连接到另一张便签。']]],
-      ['速记创建与关联', '无需寻找按钮，鼠标位置和当前便签就是新内容的落点。新建后会直接进入输入。', [['<kbd>N</kbd>', '在鼠标位置新建便签；鼠标不在墙面时在视野中央新建。'], ['<kbd>Enter</kbd>', '在当前便签右侧续写一张便签。'], ['<kbd>Shift</kbd> + <kbd>Enter</kbd>', '在当前便签下方续写。'], ['<kbd>Tab</kbd>', '在右侧新建便签并自动连接当前便签。'], ['<kbd>Shift</kbd> + <kbd>Tab</kbd>', '在下方新建便签并自动连接。']]],
-      ['速记墙视野', '速记墙可以像画布一样平移、缩放和惯性滑行。鼠标移到速记页右缘中央的小签附近才会浮现控制台入口，其中的「拖拽惯性」同时控制便签与整面墙的滑行强度。', [['空白处滚轮', '平滑移动整面速记墙。'], ['<kbd>Ctrl</kbd> + 滚轮', '以鼠标所在位置为中心缩放。'], ['<kbd>Shift</kbd> + 滚轮', '横向移动视野。'], ['<kbd>Space</kbd> + 拖动空白处', '抓住整面墙平移，松手后按惯性滑行。'], ['<kbd>↑</kbd> / <kbd>↓</kbd> / <kbd>←</kbd> / <kbd>→</kbd>', '移动视野；按住 <kbd>Shift</kbd> 会更快。'], ['<kbd>0</kbd>', '缩放到可以总览全部便签。'], ['<kbd>F</kbd>', '聚焦当前便签。'], ['右缘中央小签', '选择随机生成颜色、调整手感、总览或重置视野。'], ['再次点击「速记」图标', '回到默认缩放与位置。']]],
-      ['速记搜索与键盘整理', '鼠标悬停、最近操作或键盘轮廓所指的便签会成为当前便签。搜索和浏览都不显示工具栏。', [['<kbd>/</kbd>', '进入搜索并直接输入关键词；左侧速记图标会亮起黄色呼吸光圈。'], ['搜索中 <kbd>Enter</kbd> / <kbd>Shift</kbd> + <kbd>Enter</kbd>', '跳到下一条 / 上一条匹配结果。'], ['搜索中 <kbd>Esc</kbd>', '退出搜索并恢复全部便签。'], ['<kbd>J</kbd> / <kbd>K</kbd>', '切换下一张 / 上一张便签；屏幕外的便签会自动进入视野。'], ['<kbd>Esc</kbd>', '取消当前便签的键盘轮廓。'], ['<kbd>C</kbd>', '从控制台启用的颜色中随机更换当前便签颜色。'], ['<kbd>R</kbd> / <kbd>Shift</kbd> + <kbd>R</kbd>', '随机轻旋 / 摆正当前便签。'], ['<kbd>D</kbd>', '复制当前便签。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做速记墙操作。']]],
-      ['分组与文件整理', '画布卡片不仅可以打开，也可以像桌面文件一样整理。', [['拖动画布卡片到圆点', '把文件归入对应分组。'], ['拖到另一张卡片附近', '调整当前分组里的文件顺序。'], ['右键画布卡片', '重命名、在资源管理器中查看、移动到分组、移到回收站或从列表移除。'], ['右键分组圆点', '重命名或删除分组；删除分组不会删除画布文件。'], ['左侧回收站', '恢复误删画布，或手动清空回收站。']]],
-      ['键盘整理', '先按方向键选中一张画布，再继续操作。', [['<kbd>↑</kbd> / <kbd>↓</kbd>', '选择上一张 / 下一张画布。'], ['<kbd>Shift</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd>', '把选中的画布向上 / 向下调整顺序（「最近」自动排序）。'], ['<kbd>Enter</kbd>', '打开选中的画布。'], ['<kbd>1</kbd>–<kbd>9</kbd>', '移到第 1–9 个自定义分组。'], ['<kbd>0</kbd> 或 <kbd>Backspace</kbd>', '移到「未分组」。'], ['<kbd>→</kbd> 再按一次 <kbd>→</kbd>', '二次确认后移到回收站。'], ['<kbd>←</kbd> 或 <kbd>Esc</kbd>', '取消待删除状态。']]],
-      ['客户端设置', '起始页右下角齿轮用于设置桌面客户端从最大化恢复后的窗口尺寸。可以选择紧凑、均衡、宽敞，也可以填写自定义宽高。设置会按当前显示器可用区域自动约束。'],
-    ]},
-    { id: 'study', eyebrow: '02 · STUDY', title: '学习页', sections: [
-      ['学习页入口', '点击左侧书脊里的「学」进入学习页；再次点击可以在极简清单和单位进度面板之间切换。左侧书脊最上方的小矩形仍可进入活跃热力图。'],
-      ['新建与推进任务', '进度面板右上角的 <strong>+</strong> 可以快速写下任务。设置目标总量后，用卡片或总路线节点上的 −1 / +1 推进；达到目标后仍由你点击圆点确认完成。', [['任务卡「…」', '设置目标总量和任务点。'], ['左侧圆圈', '手动完成或恢复任务。'], ['已完成', '展开完成区后可以归档；归档任务会同时从总路线移出。']]],
-      ['目标树', '目标树是一棵固定的总路线：根目标下面可以建立多级分支，也可以让任务接在另一任务或具体任务点后；进度和完成状态与学习页共用同一份数据。', [['节点上的 ＋', '在根目标或分支下新建分支、新建任务或选择已有任务；任务节点上的 ＋ 可建立后续任务。'], ['任务圆点与 − / ＋', '圆点负责完成或恢复；− / ＋ 直接推进数值进度，路线上的任务点会随进度点亮。'], ['节点「…」', '只保留改名、设置进度、接入后续任务、移出路线或删除分支等必要操作。'], ['拖动节点', '整棵子树跟随指针移动；松手时才排序。拖到根的左侧或右侧可换边，也可把任务接到分支、任务末尾或具体任务点。'], ['双击名称', '直接打开轻量改名弹层。'], ['适应 / 滚轮 / 拖动空白', '路线按左右自由导图排列；适应按钮恢复全景，滚轮连续缩放，拖动空白平移。']]],
-      ['轻量详情', '学习任务只保留标题、目标、单位和任务点。专注钟、日历与画布不再绑定学习任务，让这里保持成一张独立、安静的进度清单。'],
-      ['归档与回收站', '完成区的「归档」会保存完成记录并清空已完成任务；归档仍计入活跃页。任务回收站支持恢复和永久清空。'],
-      ['活跃页与足迹星图', '左侧书脊上方的小矩形进入活跃页：一年完成节奏的热力图，下方还有本月完成、连续推进、累计归档三枚小统计，以及最近归档的任务。再往下是一张「足迹星图」，把已归档的完成任务连成一片个人星空。', [['年份圆点 / 滚轮', '按自然年翻页，分别回看每一年的记录。'], ['正常 / 总览', '正常星图是「我 → 月 → 任务」三层；总览是「我 → 年 → 月 → 任务」四层。'], ['纯回望', '星图只用于回看，不跳转画布——归档后画布已经在回收站里。']]],
-    ]},
-    { id: 'normal', eyebrow: '03 · NORMAL', title: '普通模式', sections: [
-      ['两种普通模式', '新建画布默认进入「简洁普通模式」：顶部只保留最常用入口，让空白更安静。再次点击顶部「普通」，会切换到完整普通模式，显示图谱、脑图、背景、导出 PNG 等按钮。', [['简洁普通模式', '适合专注记录，不被额外控件打扰。'], ['完整普通模式', '适合整理、导出和调用辅助视图。']]],
-      ['创建、连接与移动', '普通模式已经覆盖大多数日常操作。', [['双击空白处', '新建卡片节点。'], ['右侧「卡片 / 便签」小浮窗', '完整普通模式下切换接下来新建卡片还是便签；便签正文常驻显示，适合一小段灵感。'], ['<kbd>N</kbd>', '在鼠标附近或视野中心新建节点。'], ['<kbd>Tab</kbd>', '为当前节点创建子节点。'], ['<kbd>Enter</kbd>', '为当前节点创建兄弟节点。'], ['<kbd>Alt</kbd> + 从节点拖动', '创建连线。'], ['<kbd>Space</kbd> + 拖动', '平移视野；滚轮用于锚点缩放。'], ['方向键', '平移视野。']]],
-      ['编辑、搜索与保存', '卡片标题适合短句，正文可以承接 Markdown、公式和较长笔记。改动默认会自动保存，右下角齿轮里可以关掉、回到纯手动。', [['<kbd>F2</kbd>', '编辑选中节点标题。'], ['<kbd>F</kbd>', '阅读并编辑正文节点（索引 / 预览 / 卡片 / 便签 / 代码）；选中 PDF 时打开阅读批注浮层。'], ['正文阅读浮层里 <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd>', '钢笔 / 盒子 / 橡皮，在正文上做空间批注；独立保存，不进导出。'], ['<kbd>Ctrl</kbd> + <kbd>F</kbd>', '搜索节点。'], ['<kbd>Ctrl</kbd> + <kbd>S</kbd>', '立即保存（自动保存已开时也可随时手动存）。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做。'], ['<kbd>Delete</kbd>', '删除选中的节点、连线或装饰。'], ['顶部「清理附件」', '删除当前画布资源文件夹里没有被任何节点引用的图片 / 附件。']]],
-      ['正文、公式与选区标注', '正文支持轻量 Markdown 和本地数学公式。编辑节点文字或正文时，选中一段文字会浮出工具栏，可以添加高光、字色和字号；这些标记会随画布保存。', [['<code>## 标题</code>', '二级标题；<code>###</code> 是三级标题。'], ['<code>**加粗**</code> / <code>*斜体*</code>', '基础强调。'], ['<code>- 列表项</code> / <code>1. 列表项</code>', '无序与有序列表。'], ['<code>$E=mc^2$</code> / <code>$$…$$</code>', '行内公式与块级公式。'], ['<code>==高光==</code> / <code>{hl:red|文字}</code>', '默认黄色高光；选区工具栏可切换多种颜色。'], ['<code>{tc:red|文字}</code> / <code>{fs:lg|文字}</code>', '字色与字号标记。'], ['右下角 <strong>fx</strong> 面板', '打开公式 / 符号面板，向正在编辑的标题或正文插入 LaTeX 片段；先选中文字再点结构键会包裹选区。'], ['<code>\\label</code> / <code>\\eqref</code>', '同一段正文里点击公式引用，会跳转并闪烁目标公式。']]],
-      ['任务簿节点计时', '任务簿里的叶子任务放到画布后，把鼠标停在节点上，会从节点左侧浮出 <strong>▶</strong>。点击即可开始该节点计时，运行时同一位置显示 <strong>Ⅱ</strong> 用于暂停。'],
-      ['左侧工具栏与右下角设置', '鼠标移到画布左缘，会浮出自由书写、橡皮、文字、三种箭头和三种手绘图形。右下角齿轮可以调节方向键平移速度、滚轮缩放速度和手写笔压感。右下角 <strong>?</strong> 仍保留编辑器快捷键速查。'],
-      ['脑图自动整理', '在完整普通模式里，先选中需要整理的节点，再点顶部「脑图」。可以选择向右树形、向左树形、向下树形或放射星形。中心节点会优先选择连线最多的那个；没有连线的散节点会自动连接到中心。'],
-      ['关系图谱', '顶部「图谱」打开当前画布的只读关系视图。节点会以柔和的力导向动画舒展开，可以拖动、滚轮缩放、双击空白适配视野，也可以点击图谱节点回到原画布位置。顶部还能调透明度、重新舒展或复位。'],
-      ['全局背景', '顶部「背景」设置的是所有画布共用的外观，不会改动节点样式。', [['恢复默认纸白', '回到安静的暖纸白。'], ['柔和纯色与渐变', '快速切换低饱和背景。'], ['本地图片', '可调整展示范围、透明度、缩放和构图中心。'], ['标题栏可读性保护', '全屏沉浸背景下，为顶部工具栏增加极淡保护层。']]],
-      ['导入与导出', '起始页可以从 Markdown 文件夹导入一张新画布；完整普通模式顶部可以把当前画布导出为一组互相关联的 Markdown 文件，或导出为一张 PNG 图片（PDF 附件不进 PNG）。图案、图片和附件不会进入 Markdown 正文导出。'],
-    ]},
-    { id: 'pro', eyebrow: '04 · PRO', title: '专业模式', sections: [
-      ['它适合什么时候', '专业模式用来设置「接下来新建」的节点与连线默认外观。它不会改动已经存在的对象，适合连续制作同一类内容，例如一组课程概念、一套论文线索或一张流程图。'],
-      ['节点类型', '右侧面板可以先选定正文呈现方式。新建节点默认就是卡片。', [['索引', '自动读取相连节点生成目录，适合章节入口与结构导航；按 <kbd>F</kbd> 打开阅读浮层查看目录与正文。'], ['预览', '平时保持简洁，鼠标悬停时展开正文预览；同样支持 <kbd>F</kbd> 阅读。'], ['卡片', '正文常驻显示；适合需要随时扫读的内容。'], ['代码', '直接记录 C / Python / MATLAB 源码，只做语法着色，不解析 Markdown 或公式；节点内、放大浮层、编辑正文都支持 <kbd>Tab</kbd> 缩进、<kbd>Shift</kbd> + <kbd>Tab</kbd> 减少缩进。右下角齿轮可设默认语言。']]],
-      ['节点外观', '可以设置矩形、正方形或圆形，并调整边框颜色、背景颜色、透明度与「隐藏节点背景」。这些选择只会套用到之后新建的节点。', [['隐藏节点背景', '适合把文字轻轻放进背景图或大色块上。'], ['背景透明度', '适合做层级更柔和的辅助信息。']]],
-      ['连线外观', '连线也有自己的新建默认值。', [['线型', '曲线、直线、折线、圆角折线、S 曲线、平滑曲线。'], ['线条样式', '实线、虚线、点线、荧光。'], ['箭头', '无箭头、单向或双向。'], ['线条粗细与箭头大小', '用于区分主干、辅助关系和强调关系。']]],
-      ['一个实用流程', '先在专业模式配好一类节点和连线，再回到画布连续创建。需要修改已经存在的内容时，切到「编辑模式」。面板底部的「全部重置为朴素默认」可以快速回到基础样式。'],
-    ]},
-    { id: 'edit', eyebrow: '05 · EDIT', title: '编辑模式', sections: [
-      ['它适合什么时候', '编辑模式用于精修已经存在的对象。进入后先选中一个或多个节点、连线，再在右侧面板调整。多选时，修改会批量应用。编辑模式不用于新建节点。'],
-      ['调整节点', '选中节点后，可以修改形状、边框颜色、背景颜色、透明度、隐藏背景与整体大小。正文节点还可以在索引、预览、卡片之间转换，标题与正文会保留。', [['普通节点转正文节点', '当前内容会完整保存为正文，首行成为可见标题，可撤销。'], ['正文节点转普通节点', '只保留标题并清除正文；操作前会确认。'], ['代码节点语言', '选中代码节点后，可以在面板里把它改成 C / Python / MATLAB；只影响这一个节点。'], ['阅读（F）', '在面板里也可以直接打开正文阅读窗口。']]],
-      ['调整连线', '选中连线后，可以修改线型、线条样式、颜色、箭头、粗细和箭头大小。', [['在线身上拖动', '为连线增加拐点。'], ['双击拐点', '删除这个拐点。'], ['清除所有拐点', '让连线恢复为不带手动路径的状态。']]],
-      ['批量整理', '先多选同一层级的节点，再统一背景、边框或大小，可以快速建立清晰的信息层级。线条也可以批量统一样式。'],
-      ['与专业模式的区别', '专业模式决定「以后新建什么样」；编辑模式负责「把已经存在的内容改成什么样」。'],
-    ]},
-    { id: 'decor', eyebrow: '06 · DECOR', title: '图案模式', sections: [
-      ['插入图案与图片', '右侧面板可以插入虚线框、手绘圆角矩形、手绘菱形和手绘椭圆，也可以选择本地图片。图片还可以直接从电脑拖进画布。', [['图片默认顶层', '新插入图片默认覆盖在文字节点上方。'], ['跨模式移动图片', '图片在普通、专业、编辑、图案模式都可选中、拖动和删除；精细属性仍在图案模式调整。']]],
-      ['盒子与色块', '两种快捷装饰适合快速划分区域。', [['空白处左键框选', '框选结束后点击浮动的「+ 盒子」，生成带标题的底层盒子。'], ['空白处右键拖动', '直接创建底层纯色色块。'], ['盒子标题', '可以点击改名、拖动盒子；长按标题可以调整配色与字色。']]],
-      ['调整装饰对象', '选中图案或图片后，右侧面板可以调整宽度、高度、旋转角度、透明度和显示图层。图案还能设置边框与填充颜色。', [['底层', '会被文字节点覆盖，适合作为背景分区。'], ['顶层', '覆盖文字节点，适合图片贴纸或需要突出展示的素材。']]],
-      ['插入 PDF 与 Markdown 附件', '右侧「插入 PDF / Markdown 附件」按钮可以选择文件，也可以直接把文件拖进画布。附件会复制到当前画布旁的资源文件夹，同一文档按内容去重。', [['拖标题栏', '移动附件节点。'], ['滚动正文区', '在画布内的小框阅读 PDF 或 Markdown 内容。'], ['图案模式', '调整附件节点大小。'], ['双击附件或选中后按 <kbd>F</kbd>', '打开适合长时间阅读的大版浮层。']]],
-      ['PDF 阅读与批注', 'PDF 大版阅读浮层支持原文划词、手写和便签。批注会自动保存到 PDF 旁的伴生文件，不会触发画布未保存状态。', [['<kbd>1</kbd>', '只读；此时点击已有标注，可以改色或删除。'], ['<kbd>2</kbd>', '压感钢笔。'], ['<kbd>3</kbd>', '荧光笔。'], ['<kbd>4</kbd>', '橡皮擦，整笔擦除。'], ['<kbd>5</kbd>', '划词高光：选中 PDF 原文添加高光。'], ['<kbd>6</kbd>', '便签：点击页面空白处贴一张便签。'], ['<kbd>7</kbd>', '划词下划线。'], ['<kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd>', '撤销 / 重做 PDF 批注。'], ['颜色与粗细', '顶部色点菜单可以调整颜色和笔画大小。'], ['清空本页', '只清除当前页批注。']]],
-      ['Markdown 附件阅读与标注', 'Markdown 附件也支持双击或按 <kbd>F</kbd> 打开大版阅读。选中文字可以添加高光、字色和字号；还可以用钢笔手绘，用橡皮擦掉笔迹或文字标注。批注同样保存到附件旁的伴生文件。', [['外部打开', '可以用系统默认程序打开这份 Markdown 副本编辑。'], ['<kbd>1</kbd>', '只读。'], ['<kbd>2</kbd>', '钢笔。'], ['<kbd>3</kbd>', '橡皮擦。'], ['正文变化', '如果在外部改了正文，旧文字标注会自动失效，避免错位。']]],
-      ['装饰不会改变内容结构', '图案、图片、盒子、色块与附件不会参与 Markdown 导出。盒子只是视觉分区，不会自动绑定框内节点。'],
-    ]},
+    {
+      id: 'safety', eyebrow: '01 · BEFORE DELETING', title: '删除前，先看这里',
+      subtitle: 'Relatum 的内容都保存在用户数据目录里的 <code>canvases</code> 和 <code>data</code> 中。多数文件删掉后不会“释放缓存”，而是会真正丢失内容或记录。',
+      sections: [
+        ['两个文件夹分别装什么', '可以把它们理解成“作品本体”和“配套资料”。', [
+          ['<code>canvases</code>', '保存每张画布及其图片、PDF、Markdown 附件和批注。这里通常最占空间，也是最不能随便拆开删除的部分。'],
+          ['<code>data</code>', '保存画布列表、分组收藏、学习任务、复习卡片、速记、日记、专注记录、背景和各种偏好。这里的 JSON 文件通常很小。'],
+        ]],
+        ['真正容易占空间的地方', '如果只是想腾出磁盘空间，优先检查素材和回收站；不要为了几 KB 的 JSON 文件丢掉长期记录。', [
+          ['<code>*.assets</code>', '画布使用的图片、PDF 和 Markdown 附件。先在对应画布里使用“清理附件”，只删没有被引用的素材。'],
+          ['<code>回收站</code>', '已从起步页删除、但仍可恢复的画布和素材。确认不再需要后，用 Relatum 的回收站页面清空。'],
+          ['<code>data/backgrounds</code>', '自己上传的全局背景图片。先换成内置背景，再删除不再使用的图片。'],
+          ['归档与数据库', '学习归档、画布归档和 <code>review.db</code> 是历史记录，不是缓存；只有确定不再需要这些历史时才删除。'],
+        ]],
+        ['安全整理顺序', '建议按下面的顺序操作，出了问题也更容易恢复。', [
+          ['1. 退出 Relatum', '避免程序正在保存时，文件被删掉、重建或只写入一半。'],
+          ['2. 复制一份备份', '至少备份准备删除的文件；如果拿不准，直接备份整个 <code>canvases</code> 和 <code>data</code>。'],
+          ['3. 优先用应用内功能', '画布重命名、移动、回收、清空回收站和清理附件，尽量在 Relatum 内完成。'],
+          ['4. 再手动删除', '只删除已经确认用途的条目。删除后重新打开 Relatum，检查画布、附件和记录是否正常。'],
+        ]],
+        ['一个重要区别', '“文件会重新出现”不等于“数据会恢复”。很多文件缺失后，Relatum 会创建一份新的空文件或使用默认设置；原来的内容仍然已经丢失。'],
+      ],
+    },
+    {
+      id: 'canvases', eyebrow: '02 · CANVASES', title: 'canvases：画布和附件',
+      subtitle: '这里保存画布正文。画布文件与同名素材文件夹是一对，移动、重命名和删除时应当一起处理。',
+      sections: [
+        ['顶层会看到什么', '每张画布至少有一个 <code>.canvas</code> 文件；使用过图片或附件时，还会出现同名的 <code>.assets</code> 文件夹。', [
+          ['<code>名称.canvas</code>', '画布本体，包含节点、文字、连线、手写、表格、计时器、镜头册、任务簿和笔记坞等内容。删除后，这张画布本身就丢失；起步页可能暂时留下一个打不开的登记项。'],
+          ['<code>名称.assets</code>', '这张画布的素材目录。删除后画布文字和节点仍可能打开，但图片、PDF、Markdown 附件及部分批注会显示缺失。'],
+          ['<code>回收站</code>', '从 Relatum 删除的画布和同名素材会先移到这里。删除其中内容或清空文件夹后，将无法再从应用内恢复。'],
+        ]],
+        ['<code>.assets</code> 里面的文件', '素材目录内部的文件常常比画布 JSON 大得多，但不能仅凭文件名判断是否无用。', [
+          ['图片与背景素材', '删除后，对应图片节点或旧画布背景会缺图；画布结构和文字仍保留。'],
+          ['<code>attachments</code>', '保存插入画布的 PDF、Markdown 等附件副本。删除某个附件后，对应附件节点还在，但正文无法读取。'],
+          ['<code>*.annot.json</code>', '某个 PDF 或 Markdown 附件旁的批注。只删它会清除该附件的高光、下划线、手写和便签，不会删除附件原文。'],
+          ['<code>node-annotations.json</code>', '保存画布正文阅读器里的手写与空间批注。删除后只丢这些批注，节点正文仍在。'],
+        ]],
+        ['不要拆散同名的一对', '例如 <code>课程.canvas</code> 应与 <code>课程.assets</code> 保持同名。手动只改其中一个名字，会让画布找不到素材；手动把画布移出目录，也可能让起步页登记失效。请优先使用 Relatum 的重命名、导入和回收站功能。'],
+        ['想腾空间时怎么做', '先打开目标画布，在顶部使用“清理附件”，它会按实际引用删除孤儿素材。仍需继续清理时，再检查回收站和已经确认不需要的整张画布；不要随意逐个删除素材文件。'],
+      ],
+    },
+    {
+      id: 'data', eyebrow: '03 · DATA', title: 'data：记录、设置和索引',
+      subtitle: '这些文件大多不占多少空间，却决定起步页如何组织画布，以及学习、日历、复习和专注页能看到哪些记录。',
+      sections: [
+        ['画布列表与显示设置', '删除设置文件通常不会删除画布本体，但会让界面恢复默认或失去整理信息。', [
+          ['<code>recent.json</code>', '保存最近画布、分组、收藏和排序。删除后 <code>.canvas</code> 文件仍在，但起步页列表会变空，分组、收藏和顺序丢失；之后可手动扫描重新登记顶层画布。'],
+          ['<code>recent.backup.json</code>', '最近列表的上一份有效快照。删除后界面暂时不变，但失去损坏时的自动恢复来源；它不是手动删除 <code>recent.json</code> 后的自动还原按钮。'],
+          ['<code>recent.corrupt-*.json</code>', '曾损坏而被隔离的旧列表。确认当前列表正常且不需要人工找回旧分组后可以删除。'],
+          ['<code>background.json</code>', '全局背景和辅助底纹设置。删除后恢复出厂背景；上传的图片文件可能仍留在 <code>backgrounds</code> 中。'],
+          ['<code>backgrounds</code>', '自己上传的背景图片。删除正在使用的图片会使背景缺失；先切换到内置背景，再清理不用的图片。'],
+          ['<code>viewport.json</code>', '各画布上次的视野位置和缩放。删除后画布内容不受影响，只会丢失上次观看位置。'],
+          ['<code>window-state.json</code>', '桌面窗口的大小、位置和最大化状态。删除后窗口恢复默认，不影响任何内容。'],
+        ]],
+        ['学习、每日任务与活动足迹', '下面这些都是长期记录，不属于缓存。', [
+          ['<code>study.json</code>', '当前学习任务、任务回收站、进度和多棵目标树。删除后这些当前数据全部重置；已经归档的历史仍单独留在“学习归档”。'],
+          ['<code>学习归档</code>', '已完成学习任务、归档速记和任务簿完成副本。删除后对应历史、活跃统计和星图回顾会减少或消失，当前未完成任务不受影响。'],
+          ['<code>画布归档</code>', '画布归档动作留下的轻量历史记录。删除后原画布通常仍在，但活跃页里的归档足迹和统计会减少。'],
+          ['<code>daily.json</code>', '每日任务、累计打卡天数、分钟和里程碑。删除后每日任务系统从空白开始。'],
+          ['<code>daily.backup.json</code>', '每日任务的上一份有效快照。删除后当前内容不变，但损坏时少一层恢复保障。'],
+          ['<code>daily.corrupt-*.json</code>', '损坏后隔离的旧每日任务。确认当前每日任务正常且不需要人工抢救旧数据后可以删除。'],
+          ['<code>canvas-activity.json</code>', '画布创建、修改和前台使用时长账本。删除后画布仍在，但年度足迹、使用时长和相关活跃统计会丢失并从今重新记录。'],
+        ]],
+        ['速记、日历、专注与复习', '删除哪一项，就会清空对应页面的数据。', [
+          ['<code>notes.json</code>', '速记墙的便签、连线和视野。删除后当前速记墙清空；此前主动归档的速记仍在“学习归档”。'],
+          ['<code>start-sticky-notes.json</code>', '起步页各页面上跨页显示的小便签。删除后这些便签全部消失，不影响速记墙。'],
+          ['<code>focus.json</code>', '专注记录及相关状态。删除后日历和活跃页中的专注历史、累计时长会随之消失。'],
+          ['<code>diary</code>', '日历日记，每天一份 Markdown。删除某一天的文件只丢当天日记；删除整个文件夹会丢全部日记。'],
+          ['<code>countdown.json</code>', '倒数日事件和当前选择。删除后倒数日清空，可重新创建。'],
+          ['<code>review.db</code>', '复习卡片、卡组、标签、复习计划和每次评分的完整数据库。删除后复习系统全部清空，不能从画布自动重建。'],
+          ['<code>review.db-wal / -shm</code>', '数据库运行时可能出现的临时文件。不要单独删除；先正常退出 Relatum，它们通常会自动合并或消失。'],
+        ]],
+        ['其它可能出现的文件', '这些项目不一定每台电脑都有。', [
+          ['<code>templates.json</code>', '所有画布共用的节点模板库。删除后自建模板消失，现有画布不受影响。'],
+          ['<code>ai.json</code>', 'AI 助手的 API Key、模型和接口地址。删除后需要重新配置；已有画布内容不受影响。该文件含密钥，备份或分享时注意保密。'],
+          ['<code>calendar-pins.json</code>', '旧版本遗留的日历任务便签，当前版本已不再读取。确认不需要回旧版本查看后可以备份并删除。'],
+        ]],
+        ['不建议整包删除 <code>data</code>', '整包删除相当于重置 Relatum 除画布正文和画布素材之外的大部分状态：画布文件还在，但列表整理、学习、速记、复习、日记、专注、模板和设置会一起消失。'],
+      ],
+    },
   ];
   let startHelpPageIndex = 0;
   let startHelpFlipping = false;
@@ -863,7 +892,6 @@
     const apply = () => {
       copy.innerHTML = '<div class="start-help-page-intro"><p>' + item.eyebrow + '</p><h3>' + item.title
         + '</h3>' + (item.subtitle ? '<span>' + item.subtitle + '</span>' : '') + '</div>'
-        + helpDemo(item.id)
         + item.sections.map((section) => '<section class="start-help-section"><h4>' + section[0] + '</h4><p>'
           + section[1] + '</p>' + (section[2] ? '<dl class="start-help-list">'
             + section[2].map((row) => '<div><dt>' + row[0] + '</dt><dd>' + row[1] + '</dd></div>').join('')
@@ -908,99 +936,6 @@
     const direction = index > startHelpPageIndex ? 1 : -1;
     startHelpPageIndex = next;
     renderStartHelpPage(startHelpPageIndex, direction);
-  }
-
-  function helpDemo(id) {
-    if (id === 'start') {
-      return '<div class="start-help-demo demo-start" aria-label="示意动画：书脊滚轮翻页">'
-        + '<div class="demo-caption"><strong>左侧滚轮翻页</strong><span>右侧列表仍可独立滚动</span></div>'
-        + '<div class="demo-scene"><div class="demo-book-spine"><i></i><i></i><i></i><i></i></div>'
-        + '<div class="demo-page-stack"><div class="demo-page demo-page-back"></div><div class="demo-page demo-page-front">'
-        + '<b></b><b></b><b></b></div></div><div class="demo-wheel"><em></em></div></div></div>'
-        + '<div class="start-help-demo demo-notes" aria-label="示意动画：速记墙划一刀删除便签">'
-        + '<div class="demo-caption"><strong>速记墙：划一刀删便签</strong><span>想法随手记，划掉就走</span></div>'
-        + '<div class="demo-scene"><div class="demo-note demo-note-a"></div><div class="demo-note demo-note-b"></div>'
-        + '<div class="demo-note demo-note-c"></div><div class="demo-slash"></div></div></div>';
-    }
-    if (id === 'study') {
-      return '<div class="start-help-demo demo-study" aria-label="示意动画：拖动任务卡调整顺序">'
-        + '<div class="demo-caption"><strong>拖动任务排序</strong><span>相邻任务会安静地为它让位</span></div>'
-        + '<div class="demo-scene"><div class="demo-sort-list"><i></i><i></i><i></i></div>'
-        + '<div class="demo-task-card"><b></b><small></small></div></div></div>'
-        + '<div class="start-help-demo demo-starmap" aria-label="示意动画：足迹星图放射展开">'
-        + '<div class="demo-caption"><strong>足迹星图</strong><span>完成的任务连成一片星空</span></div>'
-        + '<div class="demo-scene"><span class="demo-star-link demo-star-link-1"></span>'
-        + '<span class="demo-star-link demo-star-link-2"></span><span class="demo-star-link demo-star-link-3"></span>'
-        + '<div class="demo-star-month demo-star-m1"></div><div class="demo-star-month demo-star-m2"></div>'
-        + '<div class="demo-star-month demo-star-m3"></div>'
-        + '<i class="demo-star-leaf demo-star-leaf-1"></i><i class="demo-star-leaf demo-star-leaf-2"></i>'
-        + '<i class="demo-star-leaf demo-star-leaf-3"></i><i class="demo-star-leaf demo-star-leaf-4"></i>'
-        + '<div class="demo-star-core">我</div></div></div>';
-    }
-    if (id === 'normal') {
-      return '<div class="start-help-demo demo-pan-canvas" aria-label="示意动画：按住空格拖动或用方向键移动画布">'
-        + '<div class="demo-caption"><strong>按住空格拖动，或用方向键移动画布</strong><span>节点会作为参照一起移动</span></div>'
-        + '<div class="demo-scene"><div class="demo-pan-stage">'
-        + '<div class="demo-pan-node demo-pan-a">定义</div><div class="demo-pan-node demo-pan-b">例题</div>'
-        + '<div class="demo-pan-node demo-pan-c">总结</div><i></i><i></i></div>'
-        + '<div class="demo-pan-cursor"></div><div class="demo-pan-space">Space</div>'
-        + '<div class="demo-pan-keys"><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></div></div></div>'
-        + '<div class="start-help-demo demo-normal" aria-label="示意动画：创建卡片并连接子节点">'
-        + '<div class="demo-caption"><strong>双击创建，Alt 拖动连线</strong><span>先记下一点，再把思路连起来</span></div>'
-        + '<div class="demo-scene"><div class="demo-normal-edge" aria-hidden="true"></div>'
-        + '<div class="demo-canvas-node demo-normal-main"><b>课程重点</b><small></small></div>'
-        + '<div class="demo-canvas-node demo-normal-child"><b>补充笔记</b><small></small></div>'
-        + '<div class="demo-normal-cursor"></div><div class="demo-normal-hint">Alt</div></div></div>'
-        + '<div class="start-help-demo demo-node-task" aria-label="示意动画：悬停节点后浮出添加任务入口">'
-        + '<div class="demo-caption"><strong>悬停节点，快速补一条任务</strong><span>不用离开当前思路</span></div>'
-        + '<div class="demo-scene"><div class="demo-task-node"><b>复习线性代数</b><small></small></div>'
-        + '<div class="demo-task-hover">+ 任务</div><div class="demo-task-cursor"></div>'
-        + '<div class="demo-task-added"><i></i><span>整理例题</span></div></div></div>'
-        + '<div class="start-help-demo demo-formula" aria-label="示意动画：fx 面板插入公式">'
-        + '<div class="demo-caption"><strong>fx 面板，插入公式</strong><span>选中文字再点，会包住选区</span></div>'
-        + '<div class="demo-scene"><div class="demo-fx-node"><u></u><span class="demo-fx-eq">E=mc²</span></div>'
-        + '<div class="demo-fx-panel"><b>fx</b><i></i><i></i><i></i></div>'
-        + '<div class="demo-fx-cursor"></div></div></div>';
-    }
-    if (id === 'pro') {
-      return '<div class="start-help-demo demo-pro" aria-label="示意动画：设置样式后连续创建同类节点">'
-        + '<div class="demo-caption"><strong>先定风格，再连续创建</strong><span>新节点会沿用同一套外观</span></div>'
-        + '<div class="demo-scene"><div class="demo-pro-panel"><i></i><i></i><i></i><i></i></div>'
-        + '<div class="demo-pro-arrow">→</div><div class="demo-pro-stage">'
-        + '<div class="demo-pro-node"><b></b><small></small></div><div class="demo-pro-node"><b></b><small></small></div>'
-        + '<div class="demo-pro-node"><b></b><small></small></div></div></div></div>'
-        + '<div class="start-help-demo demo-code" aria-label="示意动画：代码节点逐行着色">'
-        + '<div class="demo-caption"><strong>代码节点，自动着色</strong><span>只高亮语法，不解析 Markdown 或公式</span></div>'
-        + '<div class="demo-scene"><div class="demo-code-card"><span class="demo-code-lang">C</span>'
-        + '<div class="demo-code-body"><u class="demo-code-row"><i></i><i></i><i></i></u>'
-        + '<u class="demo-code-row"><i></i><i></i></u><u class="demo-code-row"><i></i><i></i><i></i></u>'
-        + '<u class="demo-code-row"><i></i></u></div><em class="demo-code-caret"></em></div></div></div>';
-    }
-    if (id === 'edit') {
-      return '<div class="start-help-demo demo-edit" aria-label="示意动画：多选节点后批量调整样式">'
-        + '<div class="demo-caption"><strong>多选后一起精修</strong><span>一次调整，统一同层级信息</span></div>'
-        + '<div class="demo-scene"><div class="demo-edit-select"></div><div class="demo-edit-stage">'
-        + '<div class="demo-edit-node"><b></b></div><div class="demo-edit-node"><b></b></div>'
-        + '<div class="demo-edit-node"><b></b></div></div><div class="demo-edit-panel"><span></span><i></i><i></i><i></i></div>'
-        + '<div class="demo-edit-cursor"></div></div></div>';
-    }
-    if (id === 'decor') {
-      return '<div class="start-help-demo demo-image-drop" aria-label="示意动画：把本地图片拖入画布">'
-        + '<div class="demo-caption"><strong>把本地图片直接拖进画布</strong><span>松手后自动放在鼠标落点</span></div>'
-        + '<div class="demo-scene"><div class="demo-image-file"><i></i><b></b><small>图片</small></div>'
-        + '<div class="demo-image-cursor"></div><div class="demo-image-dropzone"></div>'
-        + '<div class="demo-image-result"><i></i><b></b></div></div></div>'
-        + '<div class="start-help-demo demo-box-create" aria-label="示意动画：框选生成盒子，右键拖出色块">'
-        + '<div class="demo-caption"><strong>框选变盒子，右键拖出色块</strong><span>快速划分一块视觉区域</span></div>'
-        + '<div class="demo-scene"><div class="demo-box-selection"></div><div class="demo-box-button">+ 盒子</div>'
-        + '<div class="demo-box-result"><b>本周重点</b></div><div class="demo-color-block"></div>'
-        + '<div class="demo-box-cursor"></div><div class="demo-box-mouse">右键</div></div></div>'
-        + '<div class="start-help-demo demo-pdf" aria-label="示意动画：PDF 划词高光与便签">'
-        + '<div class="demo-caption"><strong>PDF 划词与便签</strong><span>标注随附件自动保存</span></div>'
-        + '<div class="demo-scene"><div class="demo-pdf-page"><i></i><i></i><i></i><i></i><span></span></div>'
-        + '<div class="demo-pdf-note">下一步</div><div class="demo-pdf-cursor"></div></div></div>';
-    }
-    return '';
   }
 
   // B1：help 浮层进场期只挂 blur(0)（纯 transform 动画最轻），进场动画 start-help-enter 结束后
@@ -1051,7 +986,7 @@
     },
   };
 
-  const START_HELP_SEEN_KEY = 'canvas:startHelpClicked:v1';
+  const START_HELP_SEEN_KEY = 'canvas:dataGuideClicked:v1';
 
   function markStartHelpSeen() {
     try { localStorage.setItem(START_HELP_SEEN_KEY, '1'); } catch (e) {}
@@ -1059,10 +994,6 @@
   }
 
   if (startHelpTrigger) {
-    // TODO: 新手指引已过时暂时禁用，红点也一并屏蔽；后续重做后恢复原逻辑
-    // let startHelpSeen = false;
-    // try { startHelpSeen = localStorage.getItem(START_HELP_SEEN_KEY) === '1'; } catch (e) {}
-    // startHelpTrigger.classList.toggle('has-unread', !startHelpSeen);
     startHelpTrigger.addEventListener('click', () => {
       markStartHelpSeen();
       setStartHelpOpen(true);
@@ -1082,8 +1013,7 @@
     const next = startHelp.querySelector('[data-action="start-help-next"]');
     if (prev) prev.addEventListener('click', () => gotoStartHelpPage(startHelpPageIndex - 1));
     if (next) next.addEventListener('click', () => gotoStartHelpPage(startHelpPageIndex + 1));
-    const helpSpine = startHelp.querySelector('.start-help-spine');
-    if (helpSpine) helpSpine.addEventListener('wheel', (event) => {
+    const queueStartHelpPageWheel = (event) => {
       event.preventDefault();
       if (startHelpFlipping) return;
       startHelpWheelAccum += event.deltaY;
@@ -1093,10 +1023,21 @@
       const direction = startHelpWheelAccum > 0 ? 1 : -1;
       startHelpWheelAccum = 0;
       gotoStartHelpPage(startHelpPageIndex + direction);
-    }, { passive: false });
+    };
+    const helpSpine = startHelp.querySelector('.start-help-spine');
+    if (helpSpine) helpSpine.addEventListener('wheel', queueStartHelpPageWheel, { passive: false });
     const helpBook = startHelp.querySelector('.start-help-book');
     if (helpBook) helpBook.addEventListener('wheel', (event) => {
-      if (prefersReduced || event.ctrlKey) return;
+      if (event.ctrlKey) return;
+      const bounds = helpBook.getBoundingClientRect();
+      // 把正文滚动区左侧的一条宽带也划给翻页：桌面约 88px，窄窗口约 64px。
+      // 书脊圆点仍留在原位，不扩大 DOM 遮罩，避免挡住顶部目录按钮。
+      const pageTurnZone = Math.min(88, Math.max(64, helpBook.clientWidth * 0.1));
+      if (event.clientX - bounds.left <= pageTurnZone) {
+        queueStartHelpPageWheel(event);
+        return;
+      }
+      if (prefersReduced) return;
       event.preventDefault();
       const unit = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? helpBook.clientHeight : 1);
       startHelpScrollVelocity += event.deltaY * unit * 0.2;
@@ -1126,12 +1067,11 @@
       }
       return;
     }
-    // TODO: 新手指引已过时，暂时禁用 ? 快捷键，后续重做后再启用
-    // if (!typing && event.key === '?') {
-    //   event.preventDefault();
-    //   event.stopImmediatePropagation();
-    //   setStartHelpOpen(true);
-    // }
+    if (!typing && event.key === '?') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setStartHelpOpen(true);
+    }
   }, true);
 
   function closeStartNotice() {
