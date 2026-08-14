@@ -21,12 +21,13 @@ class StudyProgressTests(unittest.TestCase):
         app.STUDY_ARCHIVE_DIR = self.original_archive_dir
         self.temp_dir.cleanup()
 
-    def data(self, tasks=None, trash=None):
+    def data(self, tasks=None, trash=None, temporary_task_ids=None):
         tree = app._study_goal_new_tree("目标 1", 0)
         return {
             "version": 6,
             "tasks": list(tasks or []),
             "trash": list(trash or []),
+            "temporaryTaskIds": list(temporary_task_ids or []),
             "goalTrees": [tree],
             "activeTreeId": tree["id"],
         }
@@ -147,6 +148,69 @@ class StudyProgressTests(unittest.TestCase):
         loaded = app.load_study()
         self.assertEqual(len(loaded["trash"]), app.STUDY_TRASH_MAX)
         self.assertEqual(loaded["trash"][0]["task"]["title"], "任务 0")
+
+    def test_v6_without_temporary_shortlist_defaults_to_empty(self):
+        payload = self.data()
+        payload.pop("temporaryTaskIds")
+        app.STUDY_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(app.load_study()["temporaryTaskIds"], [])
+
+    def test_temporary_shortlist_keeps_unique_active_task_references(self):
+        active = app._study_task({"title": "当前任务"})
+        done = app._study_task({"title": "完成任务", "status": "done"})
+        payload = self.data(
+            tasks=[active, done],
+            temporary_task_ids=[active["id"], active["id"], done["id"], "missing"],
+        )
+        app.STUDY_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(app.load_study()["temporaryTaskIds"], [active["id"]])
+
+        loaded = app.load_study()
+        loaded["tasks"][0] = app._study_task({"status": "done"}, existing=loaded["tasks"][0])
+        app.save_study(loaded)
+        self.assertEqual(app.load_study()["temporaryTaskIds"], [])
+
+    def test_temporary_shortlist_api_is_idempotent_and_removable(self):
+        task = app._study_task({"title": "临时关注"})
+        app.save_study(self.data(tasks=[task]))
+
+        class CaptureHandler:
+            def __init__(self):
+                self.response = None
+
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_temporary_update(handler, {"id": task["id"], "included": True})
+        self.assertEqual(handler.response[0], 200)
+        app.Handler._api_study_temporary_update(handler, {"id": task["id"], "included": True})
+        self.assertEqual(app.load_study()["temporaryTaskIds"], [task["id"]])
+        app.Handler._api_study_temporary_update(handler, {"id": task["id"], "included": False})
+        self.assertEqual(app.load_study()["temporaryTaskIds"], [])
+
+    def test_temporary_shortlist_rejects_done_and_preserves_disk_on_save_failure(self):
+        active = app._study_task({"title": "当前任务"})
+        done = app._study_task({"title": "完成任务", "status": "done"})
+        app.save_study(self.data(tasks=[active, done]))
+        before = app.STUDY_FILE.read_text(encoding="utf-8")
+
+        class CaptureHandler:
+            def __init__(self):
+                self.response = None
+
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_temporary_update(handler, {"id": done["id"], "included": True})
+        self.assertEqual(handler.response[0], 409)
+        with mock.patch.object(app, "save_study", side_effect=OSError("disk full")):
+            app.Handler._api_study_temporary_update(handler, {"id": active["id"], "included": True})
+        self.assertEqual(handler.response[0], 500)
+        self.assertEqual(app.STUDY_FILE.read_text(encoding="utf-8"), before)
 
     def test_archive_rolls_back_marker_when_study_save_fails(self):
         task = app._study_task({"title": "待归档", "status": "done"})

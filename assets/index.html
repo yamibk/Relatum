@@ -377,6 +377,21 @@
         <section class="study-list" data-role="study-list" aria-label="任务清单"></section>
       </section>
 
+      <div class="study-temporary-layer" data-role="study-temporary-layer">
+        <button type="button" class="study-temporary-tab" data-action="study-temporary-toggle"
+          aria-controls="study-temporary-panel" aria-expanded="false" aria-label="打开临时任务">
+          <span>临时任务</span><b data-role="study-temporary-tab-count">0</b>
+        </button>
+        <aside class="study-temporary-panel" id="study-temporary-panel" data-role="study-temporary-panel"
+          aria-label="临时任务" aria-hidden="true" inert>
+          <header class="study-temporary-head">
+            <div><p class="study-eyebrow">TEMPORARY</p><h2>临时任务 <span data-role="study-temporary-count">0</span></h2></div>
+            <button type="button" data-action="study-temporary-close" aria-label="收起临时任务">×</button>
+          </header>
+          <div class="study-temporary-list" data-role="study-temporary-list"></div>
+        </aside>
+      </div>
+
       <div class="study-route-overlay" data-role="study-route-overlay" hidden>
         <button type="button" class="study-route-backdrop" data-route-action="close" aria-label="关闭目标树"></button>
         <section class="study-route-panel" id="study-goal-tree-panel" role="dialog" aria-modal="true"
