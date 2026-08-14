@@ -14948,23 +14948,44 @@ body.start-page[data-start-theme="dark"] .notes-surface:not(.notes-searching) .s
   width: 100%;
   min-height: 96px;
   padding-top: 1px;
-  color: inherit;
-  font-family: "Noto Sans SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
-  font-size: 15.5px;
-  font-weight: 480;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.012em;
-  line-height: 1.58;
+  color: color-mix(in srgb, var(--note-ink, #444) 80%, #171717);
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  font-synthesis: none;
+  font-variant-numeric: proportional-nums;
+  letter-spacing: 0;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  text-rendering: optimizeLegibility;
   outline: none;
   cursor: inherit;
   transition: color 180ms var(--easing-soft), opacity 180ms var(--easing-soft);
 }
-.sticky-note:not(.editing) .sticky-note-body { opacity: 0.92; }
+.sticky-note[data-typography="short"] .sticky-note-body {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: 0.012em;
+  line-height: 1.46;
+}
+.sticky-note[data-typography="medium"] .sticky-note-body {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.55;
+}
+.sticky-note[data-typography="long"] .sticky-note-body {
+  font-size: 16.5px;
+  font-weight: 560;
+  letter-spacing: 0;
+  line-height: 1.62;
+}
+.sticky-note:not(.editing) .sticky-note-body { opacity: 0.97; }
 .sticky-note.editing .sticky-note-body {
   opacity: 1;
-  color: color-mix(in srgb, var(--note-ink, #444) 90%, #1a1a1a);
+  color: color-mix(in srgb, var(--note-ink, #444) 72%, #121212);
   -webkit-user-select: text;
   user-select: text;
 }

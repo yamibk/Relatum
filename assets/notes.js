@@ -38,6 +38,9 @@
   const NOTES_BOUNCE = 0.28;
   const STACK_WHEEL_THRESHOLD = 36;
   const STACK_WHEEL_COOLDOWN = 120;
+  const NOTE_TYPOGRAPHY_SHORT_MAX = 18;
+  const NOTE_TYPOGRAPHY_MEDIUM_MAX = 48;
+  const NOTE_TYPOGRAPHY_NEWLINE_WEIGHT = 4;
   const stickyPalette = window.RelatumStickyPalette;
   const prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
@@ -101,6 +104,27 @@
   }
   function genArrowId() {
     return 'arr_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5);
+  }
+  // 以接近实际占宽的单位估算文字密度：全角 / 中文按 1，半角按 0.55，
+  // 空格按 0.25；换行额外增加视觉高度权重。只用于展示，不写入 notes.json。
+  function noteTextVisualLength(value) {
+    let length = 0;
+    Array.from(String(value || '').replace(/\r\n?/g, '\n')).forEach((char) => {
+      if (char === '\n') length += NOTE_TYPOGRAPHY_NEWLINE_WEIGHT;
+      else if (/\s/u.test(char)) length += 0.25;
+      else length += char.codePointAt(0) <= 0x7f ? 0.55 : 1;
+    });
+    return length;
+  }
+  function noteTypographyTier(value) {
+    const length = noteTextVisualLength(value);
+    if (length <= NOTE_TYPOGRAPHY_SHORT_MAX) return 'short';
+    if (length <= NOTE_TYPOGRAPHY_MEDIUM_MAX) return 'medium';
+    return 'long';
+  }
+  function applyNoteTypography(el, value) {
+    if (!el) return;
+    el.dataset.typography = noteTypographyTier(value);
   }
   function hasEdge(a, b) {
     return edges.some((e) => (e.from === a && e.to === b) || (e.from === b && e.to === a));
@@ -773,6 +797,7 @@
     el.style.top = data.y + 'px';
     el.style.setProperty('--note-rot', 'rotate(' + (data.rotate || 0) + 'deg)');
     el.style.setProperty('--note-shift', 'translate(0px,0px)');
+    applyNoteTypography(el, data.text);
 
     const body = document.createElement('div');
     body.className = 'sticky-note-body';
@@ -1238,7 +1263,10 @@
       el.classList.remove('editing');
       if (editingEl === el) editingEl = null;
       const next = body.textContent || '';
+      applyNoteTypography(el, next);
       if (next !== data.text) { commit(pre); data.text = next; scheduleSave(); }
+      // 字号档位或正文换行可能改变卡片高度；等待布局落定后再校准连线中心。
+      requestAnimationFrame(renderEdges);
     };
     body.addEventListener('blur', finish);
     body.addEventListener('keydown', (e) => {

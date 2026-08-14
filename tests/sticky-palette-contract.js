@@ -135,6 +135,27 @@ assert(!canvas.includes('const STICKY_SWATCHES = ['),
   'canvas must not keep a duplicated sticky color table');
 assert(/\.notes-console-panel\s*\{[\s\S]*?backdrop-filter:\s*none;/.test(styles),
   'Quick Notes console must avoid continuous backdrop blur');
+assert(notes.includes('const NOTE_TYPOGRAPHY_SHORT_MAX = 18;')
+  && notes.includes('const NOTE_TYPOGRAPHY_MEDIUM_MAX = 48;')
+  && notes.includes("el.dataset.typography = noteTypographyTier(value);"),
+  'Quick Notes must classify transient short, medium, and long typography without persisting style fields');
+assert(notes.includes('applyNoteTypography(el, data.text);')
+  && notes.includes('applyNoteTypography(el, next);')
+  && notes.includes('requestAnimationFrame(renderEdges);'),
+  'Quick Notes must apply typography on render/edit and realign connected edges after text layout changes');
+[
+  ['short', '20px', '650', '1.46'],
+  ['medium', '18px', '600', '1.55'],
+  ['long', '16.5px', '560', '1.62'],
+].forEach(([tier, size, weight, lineHeight]) => {
+  const pattern = new RegExp('\\.sticky-note\\[data-typography="' + tier + '"\\] \\.sticky-note-body\\s*\\{'
+    + '[\\s\\S]*?font-size:\\s*' + size.replace('.', '\\.') + ';'
+    + '[\\s\\S]*?font-weight:\\s*' + weight + ';'
+    + '[\\s\\S]*?line-height:\\s*' + lineHeight.replace('.', '\\.') + ';');
+  assert(pattern.test(styles), 'missing Quick Notes ' + tier + ' typography tier');
+});
+assert(/\.sticky-note-body\s*\{[\s\S]*?font-family:\s*"Segoe UI Variable Text"[^;]*"Noto Sans SC"[\s\S]*?font-synthesis:\s*none;[\s\S]*?font-variant-numeric:\s*proportional-nums;/.test(styles),
+  'Quick Notes must use the editorial Latin/CJK font stack, real weights, and proportional numerals');
 assert(styles.includes('@media (hover: none), (pointer: coarse)'),
   'touch and non-hover devices must keep the console entry visible');
 ['速记控制台', '生成颜色', '总览便签', '重置视野', '取消全选', '速记快捷键', '创建与连接'].forEach((text) => {
