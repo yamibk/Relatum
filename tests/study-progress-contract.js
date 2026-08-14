@@ -103,6 +103,7 @@ assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(
   'function renderTemporaryPanel()',
   'function resetStudyHorizontalOffset()',
   'function syncTemporaryLayerAvailability()',
+  'function releaseTemporaryTabFocus()',
   "temporaryLayerEl.classList.toggle('is-open', temporaryPanelOpen)",
   'temporaryPanelEl.inert = !temporaryPanelOpen',
   "temporaryToggleEl.focus({ preventScroll: true })",
@@ -125,8 +126,23 @@ assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(
   '{ opacity: 0, offset: 0.68 }',
   'revealLandingCard(liveTemporaryCard || temporaryCard)',
   "event.key === 'Tab' && !event.shiftKey",
-  "target.closest('input, textarea, select, button, a, [contenteditable=\"true\"], [tabindex]')",
 ].forEach((needle) => assert(study.includes(needle), 'missing study progress behavior: ' + needle));
+
+const temporaryTabShortcutSection = study.slice(
+  study.indexOf("if (event.key === 'Tab' && !event.shiftKey"),
+  study.indexOf("if (event.key === 'Escape')", study.indexOf("if (event.key === 'Tab' && !event.shiftKey")));
+assert(temporaryTabShortcutSection.includes('if (!blockingLayer)')
+  && temporaryTabShortcutSection.includes('releaseTemporaryTabFocus()')
+  && !temporaryTabShortcutSection.includes('interactive')
+  && !temporaryTabShortcutSection.includes('target.closest'),
+  'bare Tab must toggle the temporary panel and release the previously focused Study control');
+const temporaryTabFocusReleaseSection = study.slice(
+  study.indexOf('function releaseTemporaryTabFocus()'),
+  study.indexOf('function highlightTemporaryTask'));
+assert(temporaryTabFocusReleaseSection.includes('document.activeElement')
+  && temporaryTabFocusReleaseSection.includes("typeof active.blur === 'function'")
+  && temporaryTabFocusReleaseSection.includes('active.blur()'),
+  'the temporary panel shortcut must return focus to the page without assuming an HTMLElement');
 
 assert(!study.includes('if (progressListRows().length < 2) return;'),
   'a single active task must still be draggable into the temporary panel');
