@@ -337,6 +337,8 @@ assert(backend.includes('def _study_temporary_task_ids(value: object, tasks: lis
   '.study-temporary-layer.is-open .study-temporary-panel',
   '.study-temporary-layer.is-open .study-temporary-head',
   '.study-temporary-layer.is-open .study-temporary-list',
+  '.study-temporary-layer.is-available.is-revealing:not(.is-open) .study-temporary-tab',
+  '@keyframes study-temporary-tab-spring-in',
   '.study-temporary-panel {',
   '.study-temporary-card {',
   '.study-temporary-card.drag-handoff {',
@@ -350,6 +352,10 @@ assert(backend.includes('def _study_temporary_task_ids(value: object, tasks: lis
   '.study-temporary-layer.is-open .study-temporary-tab {',
   '.study-temporary-panel { transform: none !important; transition: opacity 120ms linear',
 ].forEach((needle) => assert(styles.includes(needle), 'missing study progress style: ' + needle));
+
+assert(study.includes("temporaryLayerEl.classList.add('is-revealing')")
+  && study.includes("temporaryLayerEl.classList.remove('is-revealing')"),
+  'the temporary-task tab must join and clean up with each Study page entrance');
 
 const temporaryTransferSection = study.slice(
   study.indexOf('function flyGhostToTemporaryCard'),
