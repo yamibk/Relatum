@@ -41,7 +41,9 @@
     source.forEach((key) => {
       if (typeof key === 'string' && KEY_SET.has(key)) seen.add(key);
     });
-    return seen.size >= KEYS.length ? [] : KEYS.filter((key) => seen.has(key));
+    // 全部禁用是一个有效的「视觉全不选」状态。取色时仍会安全回退到完整色板，
+    // 但控制台需要保留这一状态，才能区分它与「所有色块都点亮」。
+    return KEYS.filter((key) => seen.has(key));
   }
 
   function readDisabled() {
@@ -54,32 +56,39 @@
     }
   }
 
-  function getEnabledKeys() {
+  function getSelectedKeys() {
     const disabled = new Set(readDisabled());
-    const enabled = KEYS.filter((key) => !disabled.has(key));
-    return enabled.length ? enabled : KEYS.slice();
+    return KEYS.filter((key) => !disabled.has(key));
   }
 
-  function dispatchChange(enabledKeys) {
+  function getEnabledKeys() {
+    const selected = getSelectedKeys();
+    return selected.length ? selected : KEYS.slice();
+  }
+
+  function dispatchChange() {
     if (!root.dispatchEvent || typeof root.CustomEvent !== 'function') return;
+    const selectedKeys = getSelectedKeys();
     root.dispatchEvent(new root.CustomEvent('relatum:sticky-palette-change', {
-      detail: { enabledKeys: enabledKeys.slice() },
+      detail: {
+        enabledKeys: selectedKeys.length ? selectedKeys.slice() : KEYS.slice(),
+        selectedKeys: selectedKeys.slice(),
+      },
     }));
   }
 
   function setEnabledKeys(value) {
     const requested = new Set(Array.isArray(value) ? value.filter((key) => KEY_SET.has(key)) : []);
-    const enabled = requested.size ? KEYS.filter((key) => requested.has(key)) : KEYS.slice();
     const disabled = KEYS.filter((key) => !requested.has(key));
     const store = storage();
     if (store) {
       try {
-        if (!disabled.length || !requested.size) store.removeItem(STORAGE_KEY);
+        if (!disabled.length) store.removeItem(STORAGE_KEY);
         else store.setItem(STORAGE_KEY, JSON.stringify({ version: 1, disabled }));
       } catch (e) {}
     }
-    dispatchChange(enabled);
-    return enabled;
+    dispatchChange();
+    return getEnabledKeys();
   }
 
   function reset() {
@@ -87,7 +96,7 @@
     if (store) {
       try { store.removeItem(STORAGE_KEY); } catch (e) {}
     }
-    dispatchChange(KEYS);
+    dispatchChange();
     return KEYS.slice();
   }
 
@@ -129,6 +138,7 @@
       const item = BY_HEX.get(String(value || '').trim().toLowerCase());
       return item ? item.key : '';
     },
+    getSelectedKeys,
     getEnabledKeys,
     setEnabledKeys,
     reset,
@@ -138,7 +148,7 @@
   root.RelatumStickyPalette = api;
   if (root.addEventListener) {
     root.addEventListener('storage', (event) => {
-      if (event && event.key === STORAGE_KEY) dispatchChange(getEnabledKeys());
+      if (event && event.key === STORAGE_KEY) dispatchChange();
     });
   }
 })(typeof window !== 'undefined' ? window : globalThis);

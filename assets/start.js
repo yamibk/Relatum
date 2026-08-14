@@ -55,6 +55,8 @@
   const notesConsolePanel = document.querySelector('[data-role="notes-console-panel"]');
   const notesConsoleColors = document.querySelector('[data-role="notes-console-colors"]');
   const notesConsoleReset = document.querySelector('[data-role="notes-console-reset"]');
+  const notesConsoleHelpTrigger = document.querySelector('[data-role="notes-console-help-trigger"]');
+  const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
@@ -441,6 +443,9 @@
     let open = false;
     let nearTrigger = false;
     let resetTimer = 0;
+    let helpCloseTimer = 0;
+    let helpOpen = false;
+    const allColors = notesConsolePanel.querySelector('[data-action="notes-colors-all"]');
 
     function setRevealed(revealed) {
       notesConsole.classList.toggle('is-revealed', !!revealed || open);
@@ -448,6 +453,7 @@
 
     function setOpen(next, restoreFocus) {
       open = !!next;
+      if (!open) setHelpOpen(false, false);
       notesConsole.classList.toggle('is-open', open);
       notesConsoleTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
       notesConsolePanel.hidden = !open;
@@ -458,14 +464,48 @@
       if (!open && restoreFocus) notesConsoleTrigger.focus({ preventScroll: true });
     }
 
+    function setHelpOpen(next, restoreFocus) {
+      if (!notesConsoleHelpTrigger || !notesConsoleHelpPanel) return;
+      if (!next && !helpOpen && notesConsoleHelpPanel.classList.contains('is-closing')) {
+        if (restoreFocus) notesConsoleHelpTrigger.focus({ preventScroll: true });
+        return;
+      }
+      const shouldAnimateClose = !next && !notesConsoleHelpPanel.hidden
+        && !notesConsoleHelpPanel.classList.contains('is-closing') && !prefersReduced;
+      clearTimeout(helpCloseTimer);
+      helpOpen = !!next;
+      notesConsole.classList.toggle('is-help-open', helpOpen);
+      notesConsoleHelpTrigger.setAttribute('aria-expanded', helpOpen ? 'true' : 'false');
+      notesConsoleHelpPanel.inert = !helpOpen;
+      if (helpOpen) {
+        notesConsoleHelpPanel.classList.remove('is-closing');
+        notesConsoleHelpPanel.hidden = false;
+        notesConsoleHelpPanel.removeAttribute('inert');
+      } else {
+        notesConsoleHelpPanel.setAttribute('inert', '');
+        if (shouldAnimateClose) {
+          notesConsoleHelpPanel.classList.add('is-closing');
+          helpCloseTimer = window.setTimeout(() => {
+            if (helpOpen) return;
+            notesConsoleHelpPanel.hidden = true;
+            notesConsoleHelpPanel.classList.remove('is-closing');
+          }, 160);
+        } else if (!notesConsoleHelpPanel.classList.contains('is-closing')) {
+          notesConsoleHelpPanel.hidden = true;
+        }
+      }
+      if (!helpOpen && restoreFocus) notesConsoleHelpTrigger.focus({ preventScroll: true });
+    }
+
     function localizedSwatchLabel(item) {
       return englishUI() ? item.en : item.zh;
     }
 
     function syncPaletteButtons() {
-      const enabled = new Set(palette.getEnabledKeys());
+      const selected = new Set(typeof palette.getSelectedKeys === 'function'
+        ? palette.getSelectedKeys() : palette.getEnabledKeys());
       notesConsoleColors.querySelectorAll('[data-notes-color]').forEach((button) => {
-        const active = enabled.has(button.dataset.notesColor);
+        const active = selected.has(button.dataset.notesColor);
         button.classList.toggle('active', active);
         button.setAttribute('aria-pressed', active ? 'true' : 'false');
         const item = palette.byKey(button.dataset.notesColor);
@@ -475,6 +515,15 @@
           button.setAttribute('aria-label', (englishUI() ? 'Use ' : '参与随机生成：') + label);
         }
       });
+      if (allColors) {
+        const allSelected = selected.size === palette.keys.length;
+        const label = englishUI()
+          ? (allSelected ? 'Clear all' : 'Select all')
+          : (allSelected ? '取消全选' : '全选');
+        allColors.textContent = label;
+        allColors.title = label;
+        allColors.setAttribute('aria-label', label);
+      }
     }
 
     palette.swatches.forEach((item) => {
@@ -490,20 +539,24 @@
     notesConsoleColors.addEventListener('click', (event) => {
       const button = event.target.closest('[data-notes-color]');
       if (!button) return;
-      const enabled = new Set(palette.getEnabledKeys());
+      const selected = new Set(typeof palette.getSelectedKeys === 'function'
+        ? palette.getSelectedKeys() : palette.getEnabledKeys());
       const key = button.dataset.notesColor;
-      if (enabled.has(key) && enabled.size === 1) {
-        button.classList.remove('is-last');
-        void button.offsetWidth;
-        button.classList.add('is-last');
-        return;
-      }
-      if (enabled.has(key)) enabled.delete(key); else enabled.add(key);
-      palette.setEnabledKeys(Array.from(enabled));
+      if (selected.has(key)) selected.delete(key); else selected.add(key);
+      palette.setEnabledKeys(Array.from(selected));
     });
 
-    const allColors = notesConsolePanel.querySelector('[data-action="notes-colors-all"]');
-    if (allColors) allColors.addEventListener('click', () => palette.setEnabledKeys(palette.keys));
+    if (allColors) allColors.addEventListener('click', () => {
+      const selected = typeof palette.getSelectedKeys === 'function'
+        ? palette.getSelectedKeys() : palette.getEnabledKeys();
+      palette.setEnabledKeys(selected.length === palette.keys.length ? [] : palette.keys);
+    });
+    if (notesConsoleHelpTrigger && notesConsoleHelpPanel) {
+      notesConsoleHelpTrigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setHelpOpen(!helpOpen, false);
+      });
+    }
     notesConsolePanel.addEventListener('click', (event) => {
       const action = event.target.closest('[data-action]');
       if (!action || !window.CanvasNotes) return;
@@ -555,10 +608,18 @@
     });
     notesConsolePanel.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
     document.addEventListener('pointerdown', (event) => {
+      if (helpOpen && !notesConsoleHelpPanel.contains(event.target)
+        && !notesConsoleHelpTrigger.contains(event.target)) {
+        setHelpOpen(false, false);
+      }
       if (open && !notesConsole.contains(event.target)) setOpen(false, false);
     });
     document.addEventListener('keydown', (event) => {
-      if (open && event.key === 'Escape') {
+      if (helpOpen && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setHelpOpen(false, true);
+      } else if (open && event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
         setOpen(false, true);
@@ -574,6 +635,7 @@
     document.addEventListener('start:viewchange', (event) => {
       if (!event.detail || event.detail.current !== 'notes') {
         nearTrigger = false;
+        setHelpOpen(false, false);
         setOpen(false, false);
         setRevealed(false);
       }

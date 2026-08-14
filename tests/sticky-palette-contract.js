@@ -44,6 +44,8 @@ assert.deepStrictEqual(new Set(palette.swatches.map((item) => item.family)),
 
 assert.deepStrictEqual(palette.getEnabledKeys(), palette.keys,
   'missing preference must enable all colors');
+assert.deepStrictEqual(palette.getSelectedKeys(), palette.keys,
+  'missing preference must visually select all colors');
 palette.setEnabledKeys(['pink', 'paper', 'not-a-color']);
 assert.deepStrictEqual(palette.getEnabledKeys(), ['pink', 'paper'],
   'enabled colors must be normalized to known palette order');
@@ -61,11 +63,19 @@ values.set(palette.storageKey, JSON.stringify({
   disabled: palette.keys.concat(['future-color']),
 }));
 assert.deepStrictEqual(palette.getEnabledKeys(), palette.keys,
-  'invalid or all-disabled preferences must safely fall back to all colors');
+  'all-disabled preferences must safely fall back to all colors for generation');
+assert.deepStrictEqual(palette.getSelectedKeys(), [],
+  'all-disabled preferences must preserve the visual none-selected state');
 palette.setEnabledKeys([]);
 assert.deepStrictEqual(palette.getEnabledKeys(), palette.keys,
   'the public setter must never leave random generation without a candidate');
-assert(!values.has(palette.storageKey), 'all-enabled state should use the missing-key default');
+assert.deepStrictEqual(palette.getSelectedKeys(), [],
+  'the public setter must preserve an explicit none-selected state');
+const noneSelectedStored = JSON.parse(values.get(palette.storageKey));
+assert.strictEqual(noneSelectedStored.disabled.length, 20,
+  'the none-selected state must persist every color as disabled');
+palette.setEnabledKeys(palette.keys);
+assert(!values.has(palette.storageKey), 'all-selected state should use the missing-key default');
 
 const withoutRose = palette.pick({ random: () => 0, excludeFamily: 'rose' });
 assert.notStrictEqual(withoutRose.family, 'rose',
@@ -94,6 +104,8 @@ assertBefore(dualHtml, '<script src="sticky-palette.js" defer></script>', '<scri
   'data-role="notes-console-trigger"',
   'data-role="notes-console-panel"',
   'data-role="notes-console-colors"',
+  'data-role="notes-console-help-trigger"',
+  'data-role="notes-console-help-panel"',
   'data-action="notes-fit-all"',
   'data-action="notes-reset-view"',
   'hidden inert',
@@ -109,6 +121,10 @@ assert(start.includes('const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;')
   'console reveal must use a compact center-right hotspot instead of the full right edge');
 assert(start.includes("event.key === 'Escape'") && start.includes('setOpen(false, true)'),
   'Escape must close the console and restore focus to its trigger');
+assert(start.includes('setHelpOpen(false, true)'),
+  'Escape must close the shortcut card before closing the console');
+assert(start.includes('palette.getSelectedKeys') && start.includes("'取消全选'"),
+  'console must distinguish a visual none-selected state and toggle Select all / Clear all');
 assert(start.includes("event.detail.current !== 'notes'") && start.includes('setOpen(false, false)'),
   'leaving Quick Notes must close the console');
 assert(notes.includes('const stickyPalette = window.RelatumStickyPalette')
@@ -121,7 +137,7 @@ assert(/\.notes-console-panel\s*\{[\s\S]*?backdrop-filter:\s*none;/.test(styles)
   'Quick Notes console must avoid continuous backdrop blur');
 assert(styles.includes('@media (hover: none), (pointer: coarse)'),
   'touch and non-hover devices must keep the console entry visible');
-['速记控制台', '生成颜色', '总览便签', '重置视野'].forEach((text) => {
+['速记控制台', '生成颜色', '总览便签', '重置视野', '取消全选', '速记快捷键', '创建与连接'].forEach((text) => {
   assert(i18n.includes("'" + text + "':"), 'missing Quick Notes console translation: ' + text);
 });
 
