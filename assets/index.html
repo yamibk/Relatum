@@ -254,11 +254,10 @@
             <path d="M8 7h8m-7.25 0 .55 11h5.4l.55-11M10 4.75h4M6.75 7h10.5" />
           </svg>
         </button>
-        <!-- 起步页教程入口：放在回收站下方，避免桌面客户端左下角设置按钮遮挡 -->
-        <!-- TODO: 新手指引已过时，暂时禁用，后续重做后再启用 -->
+        <!-- 本地数据说明入口：放在回收站下方，避免桌面客户端左下角设置按钮遮挡 -->
         <button type="button" class="start-help-trigger" data-action="start-help-open"
-          aria-label="新手指引暂不可用" aria-expanded="false"
-          aria-controls="start-help-panel" disabled>?</button>
+          aria-label="查看本地数据与空间管理说明" aria-expanded="false"
+          aria-controls="start-help-panel">?</button>
         <button type="button" class="start-theme-toggle" data-action="start-theme-toggle"
           aria-label="切换深色起始页" aria-pressed="false">
           <span class="start-theme-toggle-icon" aria-hidden="true"></span>
@@ -1122,38 +1121,32 @@
     </section>
   </main>
 
-  <!-- 起步页教程：内容比编辑器内的快捷键速查更偏完整上手指引 -->
+  <!-- 本地数据说明：解释 canvases / data 中的文件用途与删除后果 -->
   <div class="start-help-overlay" data-role="start-help" hidden>
     <button type="button" class="start-help-backdrop" data-action="start-help-close"
-      aria-label="关闭使用指引"></button>
+      aria-label="关闭本地数据说明"></button>
     <aside class="start-help-panel" id="start-help-panel" role="dialog" aria-modal="true"
       aria-labelledby="start-help-title">
-      <nav class="start-help-spine" aria-label="教程翻页">
+      <nav class="start-help-spine" aria-label="数据说明翻页">
         <span class="start-help-spine-slider" data-role="start-help-spine-slider" aria-hidden="true"></span>
-        <button type="button" class="active" data-help-page="start" title="起始页"><span></span></button>
-        <button type="button" data-help-page="study" title="学习页"><span></span></button>
-        <button type="button" data-help-page="normal" title="普通模式"><span></span></button>
-        <button type="button" data-help-page="pro" title="专业模式"><span></span></button>
-        <button type="button" data-help-page="edit" title="编辑模式"><span></span></button>
-        <button type="button" data-help-page="decor" title="图案模式"><span></span></button>
+        <button type="button" class="active" data-help-page="safety" title="删除前先看"><span></span></button>
+        <button type="button" data-help-page="canvases" title="canvases 文件夹"><span></span></button>
+        <button type="button" data-help-page="data" title="data 文件夹"><span></span></button>
       </nav>
       <header class="start-help-head">
         <div>
-          <p class="start-help-eyebrow">RELATUM GUIDE</p>
-          <h2 id="start-help-title">Relatum · 起步指引</h2>
+          <p class="start-help-eyebrow">LOCAL DATA GUIDE</p>
+          <h2 id="start-help-title">Relatum · 本地数据说明</h2>
         </div>
         <button type="button" class="start-help-close" data-action="start-help-close"
           aria-label="关闭">×</button>
       </header>
 
-      <nav class="start-help-nav" aria-label="教程目录">
+      <nav class="start-help-nav" aria-label="数据说明目录">
         <span class="start-help-nav-slider" data-role="start-help-nav-slider" aria-hidden="true"></span>
-        <button type="button" class="active" data-help-page="start">起始页</button>
-        <button type="button" data-help-page="study">学习页</button>
-        <button type="button" data-help-page="normal">普通</button>
-        <button type="button" data-help-page="pro">专业</button>
-        <button type="button" data-help-page="edit">编辑</button>
-        <button type="button" data-help-page="decor">图案</button>
+        <button type="button" class="active" data-help-page="safety">删除前先看</button>
+        <button type="button" data-help-page="canvases">canvases 文件夹</button>
+        <button type="button" data-help-page="data">data 文件夹</button>
       </nav>
 
       <div class="start-help-book">
@@ -1163,10 +1156,10 @@
       </div>
 
       <footer class="start-help-foot">
-        <span>左侧圆点滚轮或 <kbd>←</kbd> <kbd>→</kbd> 翻页 · 按 <kbd>?</kbd> 或 <kbd>Esc</kbd> 关闭</span>
+        <span>先退出 Relatum，再在资源管理器中整理文件 · 按 <kbd>?</kbd> 或 <kbd>Esc</kbd> 关闭</span>
         <div class="start-help-pager">
           <button type="button" data-action="start-help-prev" aria-label="上一页">‹</button>
-          <span data-role="start-help-position">01 / 06</span>
+          <span data-role="start-help-position">01 / 03</span>
           <button type="button" data-action="start-help-next" aria-label="下一页">›</button>
         </div>
       </footer>
