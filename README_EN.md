@@ -12,20 +12,20 @@
 
 <p align="center">
   <a href="README.md">简体中文</a> ·
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest/download/Relatum-release.zip"><strong>Download for Windows</strong></a> ·
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest">Latest release</a> ·
+  <a href="https://github.com/yamibk/Relatum/releases/latest/download/Relatum-release.zip"><strong>Download for Windows</strong></a> ·
+  <a href="https://github.com/yamibk/Relatum/releases/latest">Latest release</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/yamibk/Relatum-Opensource?style=flat-square"></a>
+  <a href="https://github.com/yamibk/Relatum/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/yamibk/Relatum?style=flat-square"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-111111?style=flat-square"></a>
   <img alt="Windows 10 and 11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-2563eb?style=flat-square">
   <img alt="Local first" src="https://img.shields.io/badge/data-local--first-2f855a?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="https://github.com/yamibk/Relatum-Opensource/releases/latest">
+  <a href="https://github.com/yamibk/Relatum/releases/latest">
     <img src="https://github.com/user-attachments/assets/fed0dc96-c635-4e79-99c4-fef8f8eb8195" alt="Relatum freeform canvas with connected notes and mind maps">
   </a>
 </p>
@@ -109,7 +109,7 @@ No account is required. Canvases, preferences, and optional AI credentials stay 
 
 ### Download the Windows app
 
-1. [Download the latest `Relatum-release.zip`](https://github.com/yamibk/Relatum-Opensource/releases/latest/download/Relatum-release.zip).
+1. [Download the latest `Relatum-release.zip`](https://github.com/yamibk/Relatum/releases/latest/download/Relatum-release.zip).
 2. Fully extract the ZIP into a writable folder.
 3. Run `Relatum.exe`.
 

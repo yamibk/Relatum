@@ -35,6 +35,7 @@ if defined RELATUM_REPO (
     )
 )
 if not defined REPO call :try_repo "%~dp0.."
+if not defined REPO call :try_repo "%~dp0..\Relatum"
 if not defined REPO call :try_repo "%~dp0..\Relatum-Opensource"
 if not defined REPO for /d %%D in ("%~dp0..\*") do if not defined REPO call :try_repo "%%~fD"
 
