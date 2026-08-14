@@ -42519,9 +42519,11 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
 .study-temporary-head > button:hover { color: var(--text); background: var(--surface-soft); }
 .study-temporary-list {
   display: grid; align-content: start; gap: 10px; min-height: 0; padding: 18px 20px 28px; overflow: auto;
+  -ms-overflow-style: none; scrollbar-width: none;
   opacity: 0; transform: translate3d(12px,0,0);
   transition: opacity 220ms var(--easing-soft), transform 320ms cubic-bezier(.4,0,.2,1);
 }
+.study-temporary-list::-webkit-scrollbar { display: none; }
 .study-temporary-layer.is-open .study-temporary-list {
   opacity: 1; transform: none;
   transition: opacity 150ms var(--easing-soft) 85ms, transform 230ms cubic-bezier(.22,1,.36,1) 85ms;
