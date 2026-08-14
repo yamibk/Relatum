@@ -2314,9 +2314,27 @@ def _study_goal_fresh_study(tasks: list[dict], trash: list[dict]) -> dict:
         "version": 6,
         "tasks": tasks,
         "trash": trash[:STUDY_TRASH_MAX],
+        "temporaryTaskIds": [],
         "goalTrees": [tree],
         "activeTreeId": tree["id"],
     }
+
+
+def _study_temporary_task_ids(value: object, tasks: list[dict]) -> list[str]:
+    """Normalize the temporary shortlist as ordered references to active tasks."""
+    active_ids = {
+        str(task.get("id") or "") for task in tasks
+        if isinstance(task, dict) and task.get("status") == "active"
+    }
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value if isinstance(value, list) else []:
+        task_id = str(item or "").strip()
+        if not task_id or task_id in seen or task_id not in active_ids:
+            continue
+        result.append(task_id)
+        seen.add(task_id)
+    return result
 
 
 def load_study() -> dict:
@@ -2349,6 +2367,7 @@ def load_study() -> dict:
         "version": 6,
         "tasks": tasks,
         "trash": trash[:STUDY_TRASH_MAX],
+        "temporaryTaskIds": _study_temporary_task_ids(raw.get("temporaryTaskIds"), tasks),
         "goalTrees": trees,
         "activeTreeId": active_id,
     }
@@ -2363,10 +2382,13 @@ def save_study(data: dict) -> None:
         trees = [_study_goal_new_tree("目标 1", 0)]
     data["goalTrees"] = trees
     _study_goal_sync_active(data)
+    temporary_task_ids = _study_temporary_task_ids(data.get("temporaryTaskIds"), tasks)
+    data["temporaryTaskIds"] = temporary_task_ids
     payload = {
         "version": 6,
         "tasks": tasks,
         "trash": data.get("trash", [])[:STUDY_TRASH_MAX],
+        "temporaryTaskIds": temporary_task_ids,
         "goalTrees": trees,
         "activeTreeId": data["activeTreeId"],
     }
@@ -8278,6 +8300,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_study_task_update(body)
         if path == "/api/study-task-progress":
             return self._api_study_task_progress(body)
+        if path == "/api/study-temporary-update":
+            return self._api_study_temporary_update(body)
         if path == "/api/study-task-trash":
             return self._api_study_task_trash(body)
         if path == "/api/study-task-restore":
@@ -8791,6 +8815,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         })
 
     # ── 内置学习页 ──
+    def _api_study_temporary_update(self, body: dict):
+        if not isinstance(body, dict):
+            return self._send_json(400, {"error": "请求格式不正确"})
+        task_id = str(body.get("id") or "").strip()
+        included = body.get("included")
+        if not task_id:
+            return self._send_json(400, {"error": "缺少 id"})
+        if not isinstance(included, bool):
+            return self._send_json(400, {"error": "included 必须是布尔值"})
+
+        data = load_study()
+        ids = _study_temporary_task_ids(data.get("temporaryTaskIds"), data.get("tasks", []))
+        if included:
+            try:
+                _index, task = study_find_task(data, task_id)
+            except KeyError as err:
+                return self._send_json(404, {"error": str(err)})
+            if task.get("status") != "active":
+                return self._send_json(409, {"error": "只有未完成任务可以加入临时任务"})
+            if task_id not in ids:
+                ids.append(task_id)
+        else:
+            ids = [item for item in ids if item != task_id]
+        data["temporaryTaskIds"] = ids
+        try:
+            save_study(data)
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存临时任务失败：{err}"})
+        self._send_json(200, {
+            "ok": True,
+            "temporaryTaskIds": data["temporaryTaskIds"],
+        })
+
     def _api_study_task_create(self, body: dict):
         data = load_study()
         try:

@@ -22,7 +22,19 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-role="study-completed-list"',
   'data-action="study-goal-tree-open"',
   'data-role="study-route-overlay"',
+  'data-action="study-temporary-toggle"',
+  'data-role="study-temporary-layer"',
+  'data-role="study-temporary-panel"',
+  'data-role="study-temporary-list"',
 ].forEach((needle) => assert(html.includes(needle), 'missing study progress markup: ' + needle));
+
+const studyListMarker = html.indexOf('data-role="study-list"');
+const studyContainerEnd = html.indexOf('</section>', studyListMarker);
+const temporaryLayerMarker = html.indexOf('data-role="study-temporary-layer"');
+assert(studyListMarker >= 0 && studyContainerEnd >= 0 && temporaryLayerMarker > studyContainerEnd,
+  'the temporary task layer must be a sibling outside the scrolling Study container');
+assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(html),
+  'the closed temporary panel must start inert and hidden from assistive technology');
 
 [
   "const VIEW_MODE_KEY = 'study:viewMode:v2'",
@@ -79,7 +91,56 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'state.trash = state.trash.slice(0, STUDY_TRASH_LIMIT)',
   "window.StudyRoute.open(taskId || '', trigger, treeId || '')",
   'openGoalTree(origin, task.id, owner && owner.tree.id)',
+  'const TEMPORARY_EDGE_DWELL_MS = 120',
+  'const TEMPORARY_EDGE_ZONE_PX = 36',
+  'function setTemporaryMembership(task, included, options)',
+  'function removeTemporaryTask(task, card)',
+  'function animateTemporaryCardReflow(beforeRects)',
+  "card.classList.add('is-removing')",
+  "replayClass(restored, 'is-restoring', 240)",
+  'removeTemporaryTask(task, temporaryCard)',
+  "post('/api/study-temporary-update'",
+  'function renderTemporaryPanel()',
+  'function resetStudyHorizontalOffset()',
+  'function syncTemporaryLayerAvailability()',
+  "temporaryLayerEl.classList.toggle('is-open', temporaryPanelOpen)",
+  'temporaryPanelEl.inert = !temporaryPanelOpen',
+  "temporaryToggleEl.focus({ preventScroll: true })",
+  'event.detail > 0 && document.activeElement === temporaryToggleEl',
+  'temporaryToggleEl.blur()',
+  "closeButton.focus({ preventScroll: true })",
+  "event.target.closest('[data-action=\"study-goal-tree-open\"]')",
+  "function openTrash() {\n    setTemporaryPanelOpen(false)",
+  "function openStudyMilestoneDialog(targetValue, returnElement) {\n    if (!targetValue) { showToast('请先设置任务长度'); return; }\n    setTemporaryPanelOpen(false)",
+  'function updateTemporaryDragTarget(clientX, clientY)',
+  'var wasTemporaryAttempt = drag.overTemporaryPanel || drag.edgeHovering || drag.edgeArmed',
+  'restoreProgressOrder(drag)',
+  'options.temporaryDrop',
+  "temporaryCard.classList.add('drag-handoff')",
+  'function temporaryLandingRect(card)',
+  'function flyGhostToTemporaryCard(ghost, row, done, targetRect)',
+  "proxy.classList.add('study-temporary-transfer-proxy')",
+  'var scaleX = source.width / target.width',
+  'scale3d(',
+  '{ opacity: 0, offset: 0.68 }',
+  'revealLandingCard(liveTemporaryCard || temporaryCard)',
+  "event.key === 'Tab' && !event.shiftKey",
+  "target.closest('input, textarea, select, button, a, [contenteditable=\"true\"], [tabindex]')",
 ].forEach((needle) => assert(study.includes(needle), 'missing study progress behavior: ' + needle));
+
+assert(!study.includes('if (progressListRows().length < 2) return;'),
+  'a single active task must still be draggable into the temporary panel');
+assert(!study.includes("studyViewEl.classList.toggle('temporary-panel-open'"),
+  'opening the temporary panel must never mutate the Study layout container');
+assert(i18n.includes("'临时任务': 'Temporary tasks'")
+  && i18n.includes("'加入临时任务': 'Add to temporary tasks'")
+  && i18n.includes("'移出临时任务': 'Remove from temporary tasks'"),
+  'temporary-task interface text must remain bilingual');
+assert(!html.includes('study-temporary-drop-cue')
+  && !html.includes('松手加入临时任务')
+  && !study.includes('temporaryDropCueEl')
+  && !styles.includes('.study-temporary-drop-cue'),
+  'the edge drop gesture must not render a separate release prompt');
 
 assert(!study.includes('taskProgressChains') && !study.includes('taskUpdateChains'),
   'Study task writes still use independent queues that can race each other');
@@ -160,6 +221,11 @@ assert(!backend.includes('if path == "/api/study-task-create-canvas"')
   && !backend.includes('if path == "/api/export-canvas-to-tasks"')
   && !backend.includes('if path == "/api/calendar-pins-save"'),
   'removed Study integration routes remain reachable');
+assert(backend.includes('def _study_temporary_task_ids(value: object, tasks: list[dict])')
+  && backend.includes('"temporaryTaskIds": temporary_task_ids')
+  && backend.includes('if path == "/api/study-temporary-update"')
+  && backend.includes('def _api_study_temporary_update(self, body: dict):'),
+  'temporary-task references must be normalized and persisted through the Study API');
 
 [
   '.study-progress-card {',
@@ -249,7 +315,54 @@ assert(!backend.includes('if path == "/api/study-task-create-canvas"')
   '.study-progress-milestone.is-just-reached .study-progress-milestone-stamp',
   'body.start-page[data-start-theme="dark"] .study-progress-card',
   '@media (prefers-reduced-motion: reduce)',
+  '--study-temporary-width: clamp(400px, 26vw, 480px)',
+  '.study-temporary-layer {',
+  '.study-temporary-layer.is-available { visibility: visible; }',
+  '.study-temporary-layer.is-open .study-temporary-panel',
+  '.study-temporary-layer.is-open .study-temporary-head',
+  '.study-temporary-layer.is-open .study-temporary-list',
+  '.study-temporary-panel {',
+  '.study-temporary-card {',
+  '.study-temporary-card.drag-handoff {',
+  '.study-temporary-transfer-proxy {',
+  '.study-temporary-card.is-removing {',
+  '@keyframes studyTemporaryRemove',
+  '.study-temporary-card.is-restoring',
+  '.study-temporary-card.is-completing {',
+  '@media (max-width: 700px)',
+  '--study-temporary-width: calc(100vw - 12px)',
+  '.study-temporary-layer.is-open .study-temporary-tab {',
+  '.study-temporary-panel { transform: none; transition: opacity 120ms linear',
 ].forEach((needle) => assert(styles.includes(needle), 'missing study progress style: ' + needle));
+
+const temporaryTransferSection = study.slice(
+  study.indexOf('function flyGhostToTemporaryCard'),
+  study.indexOf('function flyGhostToCard'));
+assert(!temporaryTransferSection.includes('fromFrame.width')
+  && !temporaryTransferSection.includes('toFrame.width'),
+  'temporary-task transfer must not animate width or height through layout');
+assert(study.includes('flyGhostToCard(drag.ghost, landingCard'),
+  'the existing in-list Study landing path must remain separate');
+const temporaryHandoffStyle = styles.slice(
+  styles.indexOf('.study-temporary-card.drag-handoff {'),
+  styles.indexOf('.study-temporary-transfer-proxy {'));
+assert(temporaryHandoffStyle.includes('visibility: hidden; opacity: 1'),
+  'the hidden target must hand off at full opacity without a blank transition frame');
+const temporaryTabOpenStyle = styles.slice(
+  styles.indexOf('.study-temporary-layer.is-open .study-temporary-tab {'),
+  styles.indexOf('.study-temporary-panel {'));
+assert(temporaryTabOpenStyle.includes('opacity: 0')
+  && temporaryTabOpenStyle.includes('pointer-events: none')
+  && !temporaryTabOpenStyle.includes('right: var(--study-temporary-width)'),
+  'the temporary tab must retreat instead of protruding beside the open panel');
+
+assert(!styles.includes('.study-embedded.temporary-panel-open')
+  && !styles.includes('padding-right: calc(var(--study-temporary-width)'),
+  'the floating temporary panel must not resize or re-layer the Study layout');
+
+const temporaryStyleSection = styles.slice(styles.indexOf('/* 临时任务：'), styles.indexOf('/* —— 浮窗叠加层'));
+assert(temporaryStyleSection && !temporaryStyleSection.includes('backdrop-filter'),
+  'the temporary panel must use an opaque surface without continuous backdrop blur');
 
 const studyStyleSection = styles.slice(styles.indexOf('.study-progress-card {'), styles.indexOf('/* ── 任务簿 V2'));
 const goalLabelStyleSection = styles.slice(styles.indexOf('.study-progress-goal-label {'), styles.indexOf('.study-progress-value-number {'));
