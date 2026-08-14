@@ -42788,6 +42788,9 @@ body.study-progress-dragging .study-progress-list .study-progress-card:not(.drag
 .study-progress-view.is-revealing .study-progress-empty {
   animation: study-support-spring-in 560ms 280ms var(--easing-page) both;
 }
+.study-temporary-layer.is-available.is-revealing:not(.is-open) .study-temporary-tab {
+  animation: study-temporary-tab-spring-in 600ms 260ms var(--easing-page) both;
+}
 @keyframes study-heading-spring-in {
   0% { opacity: 0; transform: translateY(12px); }
   68% { opacity: 1; transform: translateY(-2px); }
@@ -42808,6 +42811,12 @@ body.study-progress-dragging .study-progress-list .study-progress-card:not(.drag
   0% { opacity: 0; transform: translateY(9px); }
   72% { opacity: 1; transform: translateY(-1px); }
   100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes study-temporary-tab-spring-in {
+  0% { opacity: 0; transform: translate3d(24px,-50%,0) scale(.96); }
+  64% { opacity: 1; transform: translate3d(-3px,-50%,0) scale(1.01); }
+  82% { transform: translate3d(1px,-50%,0) scale(.997); }
+  100% { opacity: 1; transform: translate3d(0,-50%,0) scale(1); }
 }
 .study-progress-card.is-completing::after,
 .study-progress-card.is-reopening::after {
@@ -43148,6 +43157,7 @@ body.start-page[data-start-theme="dark"] .study-milestone-remove:hover { backgro
   .study-progress-view.is-revealing .study-progress-column-head,
   .study-progress-view.is-revealing .study-progress-card,
   .study-progress-view.is-revealing .study-progress-empty,
+  .study-temporary-layer.is-revealing .study-temporary-tab,
   .study-temporary-card, .study-temporary-empty,
   .study-temporary-check, .study-temporary-remove { transition: none !important; animation: none !important; }
   .study-temporary-tab { transform: translate3d(0,-50%,0) !important; transition: opacity 120ms linear, color 120ms linear, background 120ms linear !important; }

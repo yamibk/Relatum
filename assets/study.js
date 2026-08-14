@@ -100,6 +100,7 @@
     studyRevealTimer = window.setTimeout(function () {
       var view = document.querySelector('[data-role="study-progress-view"]');
       if (view) view.classList.remove('is-revealing');
+      if (temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
       studyRevealTimer = 0;
     }, 1450);
   }
@@ -111,8 +112,10 @@
     studyRevealKey = revealKey;
     window.clearTimeout(studyRevealTimer);
     view.classList.remove('is-revealing');
+    if (temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
     void view.offsetWidth;
     view.classList.add('is-revealing');
+    if (temporaryLayerEl) temporaryLayerEl.classList.add('is-revealing');
     armStudyEntranceCleanup();
   }
 
@@ -248,6 +251,7 @@
       studyRevealTimer = 0;
       var view = document.querySelector('[data-role="study-progress-view"]');
       if (view) view.classList.remove('is-revealing');
+      if (temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
     }
   });
   document.addEventListener('visibilitychange', function () {
@@ -548,6 +552,7 @@
     options = options || {};
     temporaryPanelOpen = !!open && studyPageActive && viewMode === 'progress';
     resetStudyHorizontalOffset();
+    if (temporaryPanelOpen && temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
     if (temporaryLayerEl) temporaryLayerEl.classList.toggle('is-open', temporaryPanelOpen);
     if (temporaryPanelEl) {
       temporaryPanelEl.setAttribute('aria-hidden', temporaryPanelOpen ? 'false' : 'true');
