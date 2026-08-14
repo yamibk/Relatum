@@ -18,8 +18,7 @@
     focus: document.querySelector('[data-role="focus-view"]'),
   };
   const scopes = new Set(Object.keys(hosts));
-  const colors = ['pink', 'blue', 'purple', 'green', 'yellow', 'orange',
-    'teal', 'sky', 'lavender', 'coral', 'lime', 'rose', 'mint', 'apricot'];
+  const stickyPalette = window.RelatumStickyPalette;
   const NOTE_W = 180;
   const NOTE_H = 132;
   const EDGE = 12;
@@ -54,6 +53,7 @@
   let saveTimer = 0;
   let saveChain = Promise.resolve();
   let lastColor = '';
+  let lastColorFamily = '';
   let suppressClickUntil = 0;
 
   function tr(text) {
@@ -66,17 +66,26 @@
   }
 
   function nextColor() {
-    const pool = lastColor ? colors.filter((color) => color !== lastColor) : colors;
-    lastColor = pool[Math.floor(Math.random() * pool.length)] || 'yellow';
-    return lastColor;
+    if (!stickyPalette) return 'yellow';
+    const picked = stickyPalette.pick({
+      excludeKey: lastColor,
+      excludeFamily: lastColorFamily,
+    });
+    lastColor = picked.key;
+    lastColorFamily = picked.family;
+    return picked.key;
   }
 
   function recolorNote(data, el) {
-    const pool = colors.filter((color) => color !== data.color);
-    const next = pool[Math.floor(Math.random() * pool.length)] || 'yellow';
-    data.color = next;
-    lastColor = next;
-    el.dataset.color = next;
+    const current = stickyPalette && stickyPalette.byKey(data.color);
+    const picked = stickyPalette && stickyPalette.pick({
+      excludeKey: data.color,
+      excludeFamily: current ? current.family : '',
+    });
+    data.color = picked ? picked.key : 'yellow';
+    lastColor = data.color;
+    lastColorFamily = picked ? picked.family : '';
+    el.dataset.color = data.color;
     scheduleSave();
   }
 

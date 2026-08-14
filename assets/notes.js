@@ -38,8 +38,7 @@
   const NOTES_BOUNCE = 0.28;
   const STACK_WHEEL_THRESHOLD = 36;
   const STACK_WHEEL_COOLDOWN = 120;
-  const COLORS = ['pink', 'blue', 'purple', 'green', 'yellow', 'orange',
-    'teal', 'sky', 'lavender', 'coral', 'lime', 'rose', 'mint', 'apricot'];
+  const stickyPalette = window.RelatumStickyPalette;
   const prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
   })();
@@ -50,7 +49,8 @@
   let loaded = false;
   let loading = null;
   let touched = false;         // 用户是否已改动过墙面（防异步 load 回来覆盖新建/编辑）
-  let lastColor = null;        // 上一次用过的颜色，仅用于避免连续两张撞色
+  let lastColor = null;        // 上一次用过的颜色与色系，用于避免视觉近似的连续色
+  let lastColorFamily = '';
   let expandedStack = null;    // 当前悬停展开的摞 id
   let collapseTimer = null;
   let expandTimer = null;
@@ -114,14 +114,16 @@
     const ids = new Set(notes.map((n) => n.id));
     arrows = arrows.filter((a) => (!a.fromNote || ids.has(a.fromNote)) && (!a.toNote || ids.has(a.toNote)));
   }
-  // 每次创建都纯随机选色；仅排除上一次的颜色，避免相邻两张撞色
+  // 先均衡抽色系、再抽色系内颜色；候选范围由共享便签偏好控制。
   function nextColor() {
-    const pool = (lastColor && COLORS.length > 1)
-      ? COLORS.filter((c) => c !== lastColor)
-      : COLORS;
-    const c = pool[Math.floor(Math.random() * pool.length)];
-    lastColor = c;
-    return c;
+    if (!stickyPalette) return 'yellow';
+    const picked = stickyPalette.pick({
+      excludeKey: lastColor,
+      excludeFamily: lastColorFamily,
+    });
+    lastColor = picked.key;
+    lastColorFamily = picked.family;
+    return picked.key;
   }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(v, hi)); }
   function clampNoteInertia(value) {
@@ -1898,6 +1900,7 @@
     if (!loaded || !notesPageActive()) return;
     if (searchInput) return;                          // 搜索输入自身接管文字、回车与退出
     if (editingEl) return;                            // 写字时让浏览器做字符级撤销
+    if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, [contenteditable], [role="dialog"]')) return;
     if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (stopKeyboardBrowse()) {
         e.preventDefault();
@@ -1964,9 +1967,14 @@
       if (!data) return;
       e.preventDefault();
       const pre = snapshot();
-      const pool = COLORS.filter((color) => color !== data.color);
-      data.color = pool[Math.floor(Math.random() * pool.length)];
+      const current = stickyPalette && stickyPalette.byKey(data.color);
+      const picked = stickyPalette && stickyPalette.pick({
+        excludeKey: data.color,
+        excludeFamily: current ? current.family : '',
+      });
+      data.color = picked ? picked.key : 'yellow';
       lastColor = data.color;
+      lastColorFamily = picked ? picked.family : '';
       const el = elById(data.id);
       if (el) {
         el.dataset.color = data.color;
@@ -2136,6 +2144,7 @@
       return stackHoverDelay;
     },
     getStackHoverDelay() { return stackHoverDelay; },
+    fitAll: fitAllNotes,
     resetView,
   };
 

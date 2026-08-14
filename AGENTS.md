@@ -97,6 +97,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、引用式临时任务侧栏、回收站与完成归档；任务数据与总路线共用。 |
 | `assets/study-goal-tree.js`、`assets/study-route.js` | 学习页“目标树”V4 的无 DOM 链接模型与交互层；阶段用 `contains` 汇总内部任务，任务/阶段用 `requires` 解锁后续，多个入站依赖按 AND 判定。主链接驱动双向自由布局和整棵子树拖动，附加依赖不影响排版；还负责阻塞原因、“下一步”定位、阶段折叠和每树独立镜头。 |
 | `assets/study-graph.js` | 活跃页/学习页星图，可视化学习活动和任务结构。 |
+| `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
 | `assets/calendar.js` | 日历、日记、专注记录、非学习归档与倒数日。 |
@@ -166,7 +167,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 很多 UI 偏好存在 `localStorage` / `sessionStorage`，不进 `.canvas`：
 
-- 起步页：当前分组、主题、背景风格（`canvas:startBackgroundStyle`，unset 时默认“简洁”）、翻页速度、速记页拖拽惯性、叠放展开延迟、日历倒数日开关、画布名称搜索开关（`canvas:librarySearchEnabled`，**默认关闭**：只有显式存为 `'1'` 才在画布列表标题旁显示搜索工具）、隐藏特殊页开关（`canvas:hideSpecialPages`，**默认关闭**：只有显式存为 `'1'` 才隐藏，unset 或其他值都正常显示全部页面；开启后书脊只留最近/收藏/分组，滚轮翻页与点击都不进 6 张前置页）、帮助看过状态。
+- 起步页：当前分组、主题、背景风格（`canvas:startBackgroundStyle`，unset 时默认“简洁”）、翻页速度、速记页拖拽惯性、叠放展开延迟、日历倒数日开关、画布名称搜索开关（`canvas:librarySearchEnabled`，**默认关闭**：只有显式存为 `'1'` 才在画布列表标题旁显示搜索工具）、隐藏特殊页开关（`canvas:hideSpecialPages`，**默认关闭**：只有显式存为 `'1'` 才隐藏，unset 或其他值都正常显示全部页面；开启后书脊只留最近/收藏/分组，滚轮翻页与点击都不进 6 张前置页）、帮助看过状态。三类便签共用 `canvas:stickyPalette:v1`，以 `{version:1,disabled:[]}` 只保存不参与随机生成/换色的色名；缺失、非法或全禁用时启用全部20色，新颜色未来默认加入，不写 `.canvas` 或便签数据。
 - 编辑器：顶栏“画布 / 导图 / 图案”（内部 `canvas:mode` 仍只支持 `normal` / `mindmap` / `decor`；旧 `pro` / `edit` 读取时迁移为 `normal`）以及不持久化为模式的临时“工具”入口、节点矩阵上次成功使用的结构设置 `canvas:nodeMatrixDefaults:v1`（行列、类型、内容模式、编号、间距和宽度，不保存粘贴正文）、笔记坞导图上次使用的样式与布局 `canvas:notebookMindmapDefaults:v1`、任务簿归档完成副本开关 `canvas:taskbookArchiveSnapshotEnabled`（默认开启，仅显式 `'0'` 关闭）、AI 助手宽度 `canvas:ai-panel-width:v1`（桌面默认 520px、从左边缘拖动并记住，窄窗口仅临时夹紧且不覆盖偏好，≤640px 改为全屏侧栏）、全应用中英语言偏好 `canvas:toolbarLanguage`（由 `i18n.js` 在起始页、学习、活跃、日历、复习、专注与编辑器间共用；只翻译界面，不翻译文件名、任务名、便签、日记和画布内容）、首次语言确认 `canvas:initialLanguageChosen:v1`（只在全新用户第一次打开新画布且既无语言偏好也无引导状态时写入 `zh-CN` / `en`）、新手引导状态 `canvas:editorOnboarding:v2`（`in-progress` / `completed` / `skipped`）、三种模式各自的 `canvas:normalSubmode` / `canvas:mindmapSubmode` / `canvas:decorSubmode` 双模式偏好、右侧面板最后一次 Tab 收放选择 `canvas:sidePanelsCollapsed`（主编辑器全局共用，内嵌编辑器不读取也不改写）、镜头册浮窗位置 `canvas:sceneBookPanelPosition:v1`（仅桌面宽屏读取和更新；固定尺寸不随镜头数量变化，窗口尺寸变化时夹回可视区）、底部文字属性带的全局收起偏好 `canvas:textToolbarCollapsed`（未设置时默认收起；显式 `'0'` 展开、`'1'` 收起）、普通画布属性检查器开关 `canvas:inspectorEnabled`、导图属性检查器开关 `canvas:mindmapInspectorEnabled`、图案属性检查器开关 `canvas:decorInspectorEnabled`（三个独立偏好；画布与图案默认开启，导图默认关闭）、文本框拖动自动对齐开关 `canvas:textSnapEnabled`（默认关闭，仅显式 `'1'` 开启）、完整画布模式的 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults` 与简洁画布模式独立的 `canvas:cleanNodeDefaults` / `canvas:cleanEdgeDefaults` 新建默认、文本框新建默认 `canvas:textDefaults` 以及共享柔和色栏镜像保存的高光/字色 `canvas:textHighlightColor` / `canvas:textInlineColor`、自动保存、暗色连线优化、平移/缩放/读者透明度、索引/脑图悬停延迟等。右下角设置面板标题栏提供常驻的小型黑白“恢复默认”入口，确认步骤使用不占面板高度的悬浮卡；操作只清除该面板负责的显式偏好并即时恢复出厂值，界面语言、画布内容、新手引导和其他编辑器偏好不受影响。设置面板会拦截自身的滚轮事件冒泡，面板内滚动不得触发底层画布缩放。
 - 双屏画布的打开状态、右侧来源、结构化剪贴板和拖拽宽度只存在当前编辑器会话里，不写 `localStorage`、`sessionStorage` 或 `.canvas`；关闭双屏后主画布恢复正常 flex 宽度。
 - 双屏与“导入画布”共用当前编辑器会话内的受管画布目录缓存和进行中请求；主画布就绪后只在浏览器空闲时预读标题元数据，不预读完整画布。参考列表每次打开先立即复用缓存与既有 DOM，再静默刷新；响应签名没有变化时不重绘，快速开关也不重复请求。列表每次打开仍重播约 300ms、总尾长约 450ms 的 opacity/transform 错峰动画，低动态模式关闭动画。关闭双屏继续保留当前参考 iframe，切换来源只在交叉过渡期间同时保留新旧两帧，结束后删除旧帧，禁止常驻预载多张完整画布。
@@ -267,7 +268,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 完整画布“新建样式”和节点/连线属性检查器共用普通画布快速配色：节点预设是一组“较深边框 + 柔和浅背景”，连线预设只改颜色；无选择时写入 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults`，单选或多选时只改所选对象，且一次预设点击只产生一条历史。节点配色不夹带形状、透明度、文字或类型；脑图节点使用快速配色后转为手工配色，仍可恢复所属分支预设。普通节点支持分别恢复配色、形状与缩放、文字与轮廓；“应用当前新建样式”只复制外观字段，绝不修改节点类型、内容、位置和连接，脑图对象会跳过。整套恢复明确称为“恢复内置朴素外观/连线”，普通对象回程序内置值，脑图对象仍回自己的脑图预设。画布属性面板不再提供加入复习、复习问题或答案入口；复习卡片只在起步页独立管理。
 - 右下角齿轮面板的全部数值滑条、完整画布“新建样式”的七个数值滑条、简洁画布“样式”的背景透明度/圆角/字重/文字比例/线条粗细滑条，以及思维导图的三档节点尺寸滑条，都在轨道上显示内置默认值提示线；完整画布的“整体缩放”位于“文字与轮廓”，范围为 50%–200%，无选择时写入 `canvas:proNodeDefaults.scale` 并作用于之后新建的节点，单选时读取并实时修改当前节点的 `scale`，释放后只产生一条历史；“恢复形状与缩放”仍负责恢复它。普通原生滑条的提示线按滑块中心实际可移动范围定位；字重复用离散滑条自己的整百主刻度，默认提示线随节点类型或脑图预设移动。所有默认提示线都只是无交互的视觉装饰，不跟随已保存偏好移动，也不修改画布或本地偏好；不能再给字重外包会参与 flex 布局的普通滑条容器。
-- 完整画布“新建样式”在无选择且类型为便签时，以及单选已有便签时，“快速配色”都改用与节点右键菜单相同的 14 种果冻色，第一格统一为白底黑色粗体“？”。无选择时“？”是会高亮的未来新建随机色状态，固定色分别保存为 `canvas:proNodeDefaults` 内的 `stickyColorMode` / `stickyBgColor`，不覆盖卡片等类型继续使用的普通 `bgColor`；单选已有便签时“？”执行一次随机换色，随后高亮实际抽中的固定色。三处入口共用 `canvas.js` 的 `STICKY_SWATCHES`，不能复制出另一份色表。卡片等节点转为便签且原来没有底色时必须立即写入随机果冻色；便签执行“恢复配色”或“恢复内置朴素外观”时仍重新随机取色。便签缺少 `bgColor` 时的基础兜底是白色，不再是旧黄色；普通配色面板混选多种节点后应用“黑框白底”时，便签必须显式保存白色，不能因普通节点的默认字段清理逻辑退回另一种颜色。单行便签进入与退出文字编辑时必须保持相同外框尺寸：编辑区最小高度不能把默认 `64px` 便签撑高；多行内容仍按文字自然增长，手动正文高度仍优先。便签选中态不得使用向外扩散的多层粗焦点环，避免在高画布缩放下造成外框膨胀错觉；以原边界内的深色细边、内高光和尺寸手柄表达选择。
+- 完整画布“新建样式”在无选择且类型为便签时，以及单选已有便签时，“快速配色”都改用与节点右键菜单相同的20种果冻色，第一格统一为白底黑色粗体“？”。无选择时“？”是会高亮的未来新建随机色状态，固定色分别保存为 `canvas:proNodeDefaults` 内的 `stickyColorMode` / `stickyBgColor`，不覆盖卡片等类型继续使用的普通 `bgColor`；单选已有便签时“？”执行一次随机换色，随后高亮实际抽中的固定色。速记墙、起步页跨页便签、画布创建与两处画布调色入口统一读取 `assets/sticky-palette.js`，不得再复制色表；随机动作遵守全局候选偏好并先均衡抽色系，显式调色板始终展示全部20色。卡片等节点转为便签且原来没有底色时必须立即写入随机果冻色；便签执行“恢复配色”或“恢复内置朴素外观”时仍重新随机取色。便签缺少 `bgColor` 时的基础兜底是白色，不再是旧黄色；普通配色面板混选多种节点后应用“黑框白底”时，便签必须显式保存白色，不能因普通节点的默认字段清理逻辑退回另一种颜色。单行便签进入与退出文字编辑时必须保持相同外框尺寸：编辑区最小高度不能把默认 `64px` 便签撑高；多行内容仍按文字自然增长，手动正文高度仍优先。便签选中态不得使用向外扩散的多层粗焦点环，避免在高画布缩放下造成外框膨胀错觉；以原边界内的深色细边、内高光和尺寸手柄表达选择。
 - 语义分组复用 `kind:"shape"` + `shapeType:"group-box"`，普通盒子与分组共用同一套图案默认和右栏预设；新建盒子/分组的默认标题固定为 `Untitled`，与界面语言无关。没有选中盒子/分组时，分组预设写入 `canvas:decorShapeDefaults` 的 `group-box` 项并跨画布影响后续新建；选中一个或多个盒子/分组时，同一组预设和“标题文字语义”只修改选中对象并写入一条画布历史，不得反向污染新建预设。拖拽矩形仍决定实际尺寸；浅色标题字用于较深标题底，深色字适合柠檬黄等明亮标题底。空白框选生成盒子与框选节点生成分组的门槛统一为盒子实际最小尺寸 `20×8`，不得再另设更大的旧阈值。成员 ID 保存在 `groupMemberIds`，折叠状态和展开高度分别保存在 `groupCollapsed` / `groupExpandedHeight`。建立分组不能修改成员坐标；拖动分组标题必须让分组与全部成员使用同一屏幕增量，折叠隐藏成员及其相邻连线，展开恢复原高度。分组框视觉层可高于内容，但框体必须 `pointer-events:none`，只让标题、折叠按钮和尺寸手柄命中，不能挡住成员节点；脑图模式选中内容或分组时由对应属性检查器替换脑图面板，清选后再恢复脑图面板。
 
 - 完整画布右栏的“新建样式”标题与选中节点类型标题属于动态界面文案，切换 `canvas:toolbarLanguage` 时必须立即按当前语言刷新，不能缓存初始标题或依赖重新打开画布。
@@ -419,6 +420,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 速记墙是独立数据 `data/notes.json`，不是 `.canvas`。
 - 支持双击空白建便签、拖拽、堆叠/扇形预览、右键/快捷删除、便签间连线、箭头、搜索、键盘浏览、缩放和平移。
+- 鼠标进入速记页右侧72px时浮现控制台入口；非模态面板提供20色随机候选、拖拽惯性、叠放展开延迟、总览与视野复位，触屏入口常驻。面板使用高不透明度表面且不运行 `backdrop-filter`，滚轮不得传到底层速记墙；原左上角总齿轮不再重复放速记设置。
+- 20色按玫瑰、琥珀、叶绿、水青、蓝、紫和自然中性七组先均衡抽色系、再抽具体颜色；存在多个候选色系时避开上一次色系。候选偏好只影响之后的新建和随机换色，已有便签不批量改写。
 - 归档速记会写入学习归档目录下的 `notes.json`。
 - 离开速记页或进入 BFCache 时会取消惯性、缩放、滚轮/方向键 RAF、悬停展开与堆叠滚轮计时器，并按“先停交互、后落盘”的顺序保存。
 
@@ -540,6 +543,8 @@ node .\tests\ai-panel-v2-contract.js
 
 ```powershell
 node --check .\assets\canvas.js
+node --check .\assets\sticky-palette.js
+node --check .\assets\notes.js
 node --check .\assets\ai.js
 node --check .\assets\ai-canvas-plan.js
 node --check .\assets\editor.js
@@ -549,6 +554,8 @@ node --check .\assets\canvas-import.js
 node --check .\assets\node-matrix.js
 node --check .\assets\canvas-timer.js
 node --check .\assets\start.js
+node .\tests\sticky-palette-contract.js
+python -m unittest .\tests\test_sticky_palette.py
 node --check .\assets\start-sticky-notes.js
 node --check .\assets\countdown.js
 node --check .\assets\review.js
