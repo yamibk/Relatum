@@ -144,35 +144,6 @@
             <span>快</span>
             <span>慢</span>
           </div>
-          <div class="start-speed-section start-note-settings">
-            <div class="start-speed-head">
-              <span>速记页设置</span>
-            </div>
-            <div class="start-note-setting">
-              <div class="start-speed-head start-speed-subhead">
-                <span>拖拽惯性</span>
-                <output data-role="notes-inertia-value">45%</output>
-              </div>
-              <input type="range" min="0" max="1.2" step="0.05" value="0.45"
-                data-role="notes-inertia-range" aria-label="拖拽惯性">
-              <div class="start-speed-scale" aria-hidden="true">
-                <span>稳</span>
-                <span>滑</span>
-              </div>
-            </div>
-            <div class="start-note-setting">
-              <div class="start-speed-head start-speed-subhead">
-                <span>叠放展开延迟</span>
-                <output data-role="notes-stack-hover-delay-value">320ms</output>
-              </div>
-              <input type="range" min="0" max="1200" step="20" value="320"
-                data-role="notes-stack-hover-delay-range" aria-label="叠放展开延迟">
-              <div class="start-speed-scale" aria-hidden="true">
-                <span>瞬发</span>
-                <span>长按</span>
-              </div>
-            </div>
-          </div>
           <div class="start-speed-section">
             <div class="start-speed-section starmap-motion-pop" data-role="starmap-motion-settings">
               <div class="start-speed-head">
@@ -455,10 +426,67 @@
         <section class="study-cadence" data-role="study-cadence" aria-label="年度足迹与画布活跃"></section>
       </section>
 
-      <!-- 速记 · 便签墙独立前置页（活跃更左一格；便签由 notes.js 创建/渲染/存盘）。
-           页面本身保持一面干净的墙，不放任何文字 / 提示 / 按钮。 -->
+      <!-- 速记 · 便签墙独立前置页（活跃更左一格；便签由 notes.js 创建/渲染/存盘）。 -->
       <section class="notes-embedded" data-role="notes-view" aria-label="速记便签墙页">
         <div class="notes-surface" data-role="notes-surface"></div>
+        <div class="notes-console" data-role="notes-console">
+          <button type="button" class="notes-console-trigger" data-role="notes-console-trigger"
+            title="速记控制台" aria-label="打开速记控制台" aria-expanded="false"
+            aria-controls="notes-console-panel">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <path d="M4 7h7M15 7h5M4 17h3M11 17h9"/>
+              <circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>
+            </svg>
+          </button>
+          <aside class="notes-console-panel" id="notes-console-panel" data-role="notes-console-panel"
+            role="dialog" aria-modal="false" aria-labelledby="notes-console-title" hidden inert>
+            <header class="notes-console-head">
+              <div>
+                <p>QUICK NOTES</p>
+                <h2 id="notes-console-title">速记控制台</h2>
+              </div>
+              <button type="button" class="notes-console-reset" data-role="notes-console-reset">恢复默认</button>
+            </header>
+            <section class="notes-console-section" aria-labelledby="notes-console-colors-title">
+              <div class="notes-console-section-head">
+                <div>
+                  <h3 id="notes-console-colors-title">生成颜色</h3>
+                  <p>新建与随机换色从选中色中抽取</p>
+                </div>
+                <button type="button" data-action="notes-colors-all">全选</button>
+              </div>
+              <div class="notes-console-colors" data-role="notes-console-colors"
+                role="group" aria-label="参与随机生成的便签颜色"></div>
+            </section>
+            <section class="notes-console-section" aria-labelledby="notes-console-feel-title">
+              <div class="notes-console-section-head">
+                <h3 id="notes-console-feel-title">交互手感</h3>
+              </div>
+              <label class="notes-console-slider">
+                <span><strong>拖拽惯性</strong><output data-role="notes-inertia-value">45%</output></span>
+                <input type="range" min="0" max="1.2" step="0.05" value="0.45"
+                  data-role="notes-inertia-range" aria-label="拖拽惯性">
+                <small aria-hidden="true"><i>稳</i><i>滑</i></small>
+              </label>
+              <label class="notes-console-slider">
+                <span><strong>叠放展开延迟</strong><output data-role="notes-stack-hover-delay-value">320ms</output></span>
+                <input type="range" min="0" max="1200" step="20" value="320"
+                  data-role="notes-stack-hover-delay-range" aria-label="叠放展开延迟">
+                <small aria-hidden="true"><i>瞬发</i><i>长按</i></small>
+              </label>
+            </section>
+            <section class="notes-console-section" aria-labelledby="notes-console-view-title">
+              <div class="notes-console-section-head">
+                <h3 id="notes-console-view-title">视野</h3>
+              </div>
+              <div class="notes-console-view-actions">
+                <button type="button" data-action="notes-fit-all">总览便签</button>
+                <button type="button" data-action="notes-reset-view">重置视野</button>
+              </div>
+            </section>
+          </aside>
+        </div>
       </section>
 
       <!-- 日历 · 时间视图与独立 Markdown 日记 -->
@@ -1196,6 +1224,7 @@
 
   <script src="i18n.js" defer></script>
   <script src="desktop-shell.js" defer></script>
+  <script src="sticky-palette.js" defer></script>
   <script src="start.js" defer></script>
   <script src="start-sticky-notes.js" defer></script>
   <script src="graph-gl.js" defer></script>
