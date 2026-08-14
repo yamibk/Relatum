@@ -20,6 +20,12 @@
   const spineHoverRail = document.querySelector('[data-role="spine-hover-rail"]');
   const spineHoverOrb = document.querySelector('[data-role="spine-hover-orb"]');
   let spineBreatheTimer = 0;
+  let spineMarkerSettleTimer = 0;
+  let spineMarkerTransitionFrame = 0;
+  let spinePreviewTarget = null;
+  let spineMarkerState = 'hidden';
+  let spineMarkerTargetKey = '';
+  let spineMarkerReady = false;
   const fileList = document.querySelector('[data-role="file-list"]');
   const panelTitle = document.querySelector('[data-role="panel-title"]');
   const recentSyncButton = document.querySelector('[data-action="recent-sync"]');
@@ -1264,10 +1270,63 @@
     return SPINE_GROUP_COLORS[hash % SPINE_GROUP_COLORS.length];
   }
 
-  function placeSpineHover(target) {
+  function activeSpineTarget() {
+    return document.querySelector('.study-spine-tab.active')
+      || (!studyActive && !cadenceActive && !notesActive && !calendarActive
+        && !reviewActive && !focusActive ? dots.querySelector('.page-dot.active') : null);
+  }
+
+  function spineTargetKey(target) {
+    if (!target) return '';
+    if (target.classList.contains('page-dot')) return 'page:' + (target.dataset.groupId || 'recent');
+    return 'tab:' + (target.dataset.action || spineHoverKind(target));
+  }
+
+  function clearSpineMarkerSettle() {
+    if (!spineMarkerSettleTimer) return;
+    clearTimeout(spineMarkerSettleTimer);
+    spineMarkerSettleTimer = 0;
+  }
+
+  function setSpineMarkerTransition(spine, animate) {
+    if (spineMarkerTransitionFrame) cancelAnimationFrame(spineMarkerTransitionFrame);
+    spineMarkerTransitionFrame = 0;
+    spine.classList.remove('spine-marker-no-transition');
+    if (animate && spineMarkerReady && spine.classList.contains('spine-marker-visible')) return;
+    spine.classList.add('spine-marker-no-transition');
+    spineMarkerTransitionFrame = requestAnimationFrame(() => {
+      spineMarkerTransitionFrame = 0;
+      spine.classList.remove('spine-marker-no-transition');
+    });
+  }
+
+  function setSpineMarkerState(spine, state, target) {
+    spineMarkerState = state;
+    spine.classList.add('spine-marker-visible');
+    spine.classList.toggle('spine-hovering', state === 'preview');
+    spine.classList.toggle('spine-marker-previewing', state === 'preview');
+    spine.classList.toggle('spine-marker-returning', state === 'returning');
+    spine.classList.toggle('spine-marker-resting', state === 'resting');
+    spine.classList.toggle('spine-hover-current', target.classList.contains('active') || state !== 'preview');
+  }
+
+  function hideSpineMarker() {
+    clearSpineMarkerSettle();
+    spineMarkerState = 'hidden';
+    spineMarkerTargetKey = '';
+    spineMarkerReady = false;
+    const spine = document.querySelector('.left-spine');
+    if (!spine) return;
+    spine.classList.remove('spine-marker-visible', 'spine-hovering', 'spine-marker-previewing',
+      'spine-marker-returning', 'spine-marker-resting', 'spine-hover-current');
+  }
+
+  function placeSpineHover(target, options) {
     if (!target) return;
+    const opts = options || {};
+    const state = opts.state || 'preview';
     const bubble = target.querySelector('.dot-bubble');
-    if (bubble) {
+    if (bubble && state === 'preview') {
       const targetRect = target.getBoundingClientRect();
       bubble.style.left = Math.round(targetRect.right + 8) + 'px';
       bubble.style.top = Math.round(targetRect.top + targetRect.height / 2) + 'px';
@@ -1285,9 +1344,11 @@
     const kind = spineHoverKind(target);
     const color = spineHoverColor(target, kind);
 
+    clearSpineMarkerSettle();
+    setSpineMarkerTransition(spine, opts.animate !== false);
     spine.style.setProperty('--spine-hover-color', color[0]);
     spine.style.setProperty('--spine-hover-glow', color[1]);
-    spine.classList.toggle('spine-hover-current', target.classList.contains('active'));
+    setSpineMarkerState(spine, state, target);
     if (spineBreatheTimer) clearTimeout(spineBreatheTimer);
     spineBreatheTimer = 0;
     if (spineActiveOrb) spineActiveOrb.classList.remove('orb-breathing');
@@ -1298,13 +1359,45 @@
     spineHoverOrb.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
     spineHoverRail.style.transform = 'translate3d(0,'
       + (rect.top - spineRect.top + spine.scrollTop + rect.height / 2 - 9) + 'px,0)';
-    spine.classList.add('spine-hovering');
+    spineMarkerTargetKey = spineTargetKey(target);
+    spineMarkerReady = true;
   }
 
-  function clearSpineHover() {
+  function finishSpineMarkerReturn(expectedKey) {
+    spineMarkerSettleTimer = 0;
     const spine = document.querySelector('.left-spine');
-    if (spine) spine.classList.remove('spine-hovering', 'spine-hover-current');
+    if (!spine || spinePreviewTarget || spineMarkerState !== 'returning'
+      || spineMarkerTargetKey !== expectedKey) return;
+    const active = activeSpineTarget();
+    if (!active || spineTargetKey(active) !== expectedKey) return;
+    setSpineMarkerState(spine, 'resting', active);
     scheduleSpineBreathe();
+  }
+
+  function returnSpineHover(options) {
+    const opts = options || {};
+    spinePreviewTarget = null;
+    const active = activeSpineTarget();
+    if (!active) {
+      hideSpineMarker();
+      return;
+    }
+    const key = spineTargetKey(active);
+    const alreadyResting = spineMarkerState === 'resting' && spineMarkerTargetKey === key;
+    const reducedMotion = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const animate = opts.animate !== false && !reducedMotion && !alreadyResting;
+    const state = animate ? 'returning' : 'resting';
+    placeSpineHover(active, { state, animate });
+    if (state === 'resting') {
+      scheduleSpineBreathe();
+      return;
+    }
+    spineMarkerSettleTimer = window.setTimeout(() => finishSpineMarkerReturn(key), 360);
+  }
+
+  function clearSpineHover(options) {
+    returnSpineHover(options);
   }
 
   function scheduleSpineBreathe() {
@@ -1314,7 +1407,7 @@
     spineBreatheTimer = window.setTimeout(() => {
       spineBreatheTimer = 0;
       const spine = spineActiveOrb.closest('.left-spine');
-      if (!spine || spine.classList.contains('spine-hovering')) return;
+      if (!spine || spineMarkerState !== 'resting') return;
       spineActiveOrb.classList.add('orb-breathing');
     }, 2800);
   }
@@ -1322,24 +1415,35 @@
   function bindSpineHoverTarget(target) {
     if (!target || target.dataset.spineHoverBound === '1') return;
     target.dataset.spineHoverBound = '1';
-    target.addEventListener('pointerenter', () => placeSpineHover(target));
-    target.addEventListener('focus', () => placeSpineHover(target));
+    target.addEventListener('pointerenter', () => {
+      if (target.classList.contains('dot-add')) {
+        placeSpineHover(target);
+        return;
+      }
+      spinePreviewTarget = target;
+      placeSpineHover(target, { state: 'preview', animate: true });
+    });
+    target.addEventListener('focus', () => {
+      if (target.classList.contains('dot-add')) return;
+      spinePreviewTarget = target;
+      placeSpineHover(target, { state: 'preview', animate: true });
+    });
   }
 
   function bindStaticSpineHoverTargets() {
     document.querySelectorAll('.left-spine .study-spine-tab').forEach(bindSpineHoverTarget);
   }
 
-  function syncActiveSpineOrb() {
+  function syncActiveSpineOrb(options) {
     if (!spineActiveOrb) return;
+    const opts = options || {};
     if (spineBreatheTimer) clearTimeout(spineBreatheTimer);
     spineBreatheTimer = 0;
     spineActiveOrb.classList.remove('orb-breathing');
-    const active = document.querySelector('.study-spine-tab.active')
-      || (!studyActive && !cadenceActive && !notesActive && !calendarActive
-        && !reviewActive && !focusActive ? dots.querySelector('.page-dot.active') : null);
+    const active = activeSpineTarget();
     if (!active) {
       spineActiveOrb.classList.remove('show');
+      hideSpineMarker();
       return;
     }
     const spine = active.closest('.left-spine');
@@ -1363,7 +1467,13 @@
       + (rect.left - spineRect.left + (rect.width - size) / 2) + 'px,'
       + (rect.top - spineRect.top + spine.scrollTop + (rect.height - size) / 2) + 'px,0)';
     spineActiveOrb.classList.add('show');
-    scheduleSpineBreathe();
+    if (spinePreviewTarget && spinePreviewTarget.isConnected
+      && spinePreviewTarget.closest('.left-spine') === spine) {
+      placeSpineHover(spinePreviewTarget, { state: 'preview', animate: opts.animate !== false });
+    } else {
+      spinePreviewTarget = null;
+      returnSpineHover({ animate: opts.animate !== false });
+    }
   }
 
   // 桌面客户端最大化 / 还原会改变书脊的垂直居中位置。
@@ -1373,7 +1483,7 @@
     if (spineOrbResizeFrame) cancelAnimationFrame(spineOrbResizeFrame);
     spineOrbResizeFrame = requestAnimationFrame(() => {
       spineOrbResizeFrame = 0;
-      syncActiveSpineOrb();
+      syncActiveSpineOrb({ animate: false });
     });
   });
 
@@ -3803,8 +3913,8 @@
   if (spineEl) {
     spineEl.addEventListener('pointerleave', clearSpineHover);
     spineEl.addEventListener('scroll', () => {
-      clearSpineHover();
-      syncActiveSpineOrb();
+      clearSpineHover({ animate: false });
+      syncActiveSpineOrb({ animate: false });
     }, { passive: true });
     spineEl.addEventListener('focusout', (event) => {
       if (!spineEl.contains(event.relatedTarget)) clearSpineHover();

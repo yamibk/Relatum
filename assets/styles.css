@@ -7114,7 +7114,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   background: var(--accent);
   box-shadow: 0 8px 20px rgba(26, 26, 26, 0.14);
   pointer-events: none;
-  will-change: transform, width, height, border-radius, clip-path;
+  will-change: transform;
   transition: transform var(--start-orb-ms) var(--easing-soft),
               width var(--start-orb-shape-ms) var(--easing-soft),
               height var(--start-orb-shape-ms) var(--easing-soft),
@@ -7172,7 +7172,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   top: 0;
   pointer-events: none;
   opacity: 0;
-  will-change: transform, width, height, border-radius, clip-path;
+  will-change: transform;
 }
 
 .spine-hover-rail {
@@ -7185,10 +7185,10 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
     color-mix(in srgb, var(--spine-hover-color, #c39a3e), white 26%),
     var(--spine-hover-color, #c39a3e));
   box-shadow: 0 0 9px var(--spine-hover-glow, rgba(195, 154, 62, 0.3));
-  transition: transform 410ms cubic-bezier(0.22, 1, 0.36, 1),
-              background 220ms ease,
-              box-shadow 220ms ease,
-              opacity 150ms ease;
+  transition: transform 330ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 180ms ease,
+              box-shadow 190ms ease,
+              opacity 140ms ease;
 }
 
 .spine-hover-orb {
@@ -7199,23 +7199,30 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
     color-mix(in srgb, var(--spine-hover-color, #c39a3e), white 52%));
   box-shadow: 0 7px 18px var(--spine-hover-glow, rgba(195, 154, 62, 0.3)),
               inset 0 1px 0 rgba(255, 255, 255, 0.78);
-  transition: transform 410ms cubic-bezier(0.22, 1, 0.36, 1),
-              width 300ms cubic-bezier(0.22, 1, 0.36, 1),
-              height 300ms cubic-bezier(0.22, 1, 0.36, 1),
-              border-radius 250ms cubic-bezier(0.22, 1, 0.36, 1),
-              clip-path 280ms cubic-bezier(0.22, 1, 0.36, 1),
-              background 220ms ease,
-              border-color 220ms ease,
-              box-shadow 220ms ease,
-              opacity 150ms ease;
+  transition: transform 330ms cubic-bezier(0.22, 1, 0.36, 1),
+              width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+              height 240ms cubic-bezier(0.22, 1, 0.36, 1),
+              border-radius 210ms cubic-bezier(0.22, 1, 0.36, 1),
+              clip-path 230ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 180ms ease,
+              border-width 180ms ease,
+              border-color 180ms ease,
+              box-shadow 190ms ease,
+              opacity 140ms ease;
 }
 
-.left-spine.spine-hovering .spine-hover-rail { opacity: 0.92; }
-.left-spine.spine-hovering .spine-hover-orb { opacity: 0.78; }
+.left-spine.spine-marker-no-transition .spine-hover-rail,
+.left-spine.spine-marker-no-transition .spine-hover-orb { transition: none; }
+
+/* 静止时彩色游标仍停在当前页：细条保持方向感，色块只留克制轮廓。 */
+.left-spine.spine-marker-visible .spine-hover-rail { opacity: 0.72; }
+.left-spine.spine-marker-visible .spine-hover-orb { opacity: 0.46; }
+.left-spine.spine-marker-previewing .spine-hover-rail { opacity: 0.92; }
+.left-spine.spine-marker-previewing .spine-hover-orb { opacity: 0.78; }
+.left-spine.spine-marker-returning .spine-hover-orb { opacity: 0.58; }
 
 /* 悬停当前页时，彩色层退成细边与微光，不再叠成第二块实体。 */
 .left-spine.spine-hover-current .spine-hover-orb {
-  opacity: 0.94;
   border-width: 1.5px;
   border-color: color-mix(in srgb, var(--spine-hover-color), white 18%);
   background: transparent;
@@ -7223,7 +7230,8 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
               0 0 13px var(--spine-hover-glow);
 }
 
-.left-spine.spine-hover-current .spine-hover-rail { opacity: 0.58; }
+.left-spine.spine-marker-previewing.spine-hover-current .spine-hover-orb { opacity: 0.9; }
+.left-spine.spine-marker-previewing.spine-hover-current .spine-hover-rail { opacity: 0.58; }
 
 .left-spine.spine-hovering .study-spine-tab:hover,
 .left-spine.spine-hovering .page-dot:hover {
@@ -15151,7 +15159,7 @@ body.start-page[data-start-theme="dark"] .recent-sync-button:hover {
       0 0 16px rgba(250, 202, 86, 0.66);
   }
   .spine-hover-rail,
-  .spine-hover-orb { transition: opacity 100ms linear; }
+  .spine-hover-orb { transition: none; }
   .start-theme-toggle.is-switching,
   .book-stage.view-entering,
   .study-embedded.view-entering,
@@ -34192,6 +34200,14 @@ body.start-page[data-start-theme="dark"] .spine-hover-orb {
 
 body.start-page[data-start-theme="dark"] .left-spine.spine-hovering .spine-hover-orb {
   opacity: 0.64;
+}
+
+body.start-page[data-start-theme="dark"] .left-spine.spine-marker-visible:not(.spine-marker-previewing) .spine-hover-orb {
+  opacity: 0.4;
+}
+
+body.start-page[data-start-theme="dark"] .left-spine.spine-marker-returning .spine-hover-orb {
+  opacity: 0.52;
 }
 
 body.start-page[data-start-theme="dark"] .left-spine.spine-hovering .study-spine-tab:hover,
