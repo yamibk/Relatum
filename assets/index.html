@@ -64,10 +64,14 @@
       document.documentElement.classList.add('start-page-mounted');
     })();
   </script>
-  <!-- 深色起始页背景：静态照片 + 遮罩；浅色和简洁背景模式由 CSS 隐藏。 -->
-  <div class="start-sky" aria-hidden="true">
-    <div class="sky-photo"></div>
-    <div class="sky-scrim"></div>
+  <!-- 主页“沉浸”背景：浅深主题共用五层程序化流场；简洁模式与低动态偏好由 CSS 降级。 -->
+  <div class="start-ambient" aria-hidden="true">
+    <div class="start-ambient-layer start-ambient-layer-a"></div>
+    <div class="start-ambient-layer start-ambient-layer-b"></div>
+    <div class="start-ambient-layer start-ambient-layer-c"></div>
+    <div class="start-ambient-layer start-ambient-layer-d"></div>
+    <div class="start-ambient-layer start-ambient-layer-e"></div>
+    <div class="start-ambient-wash"></div>
   </div>
   <header class="top-bar">
     <div class="brand-wrap">
