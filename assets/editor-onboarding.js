@@ -663,8 +663,9 @@
     window.setTimeout(function () { current.el.remove(); }, reduceMotion ? 0 : 220);
   }
 
-  document.addEventListener('editor:ready', function (event) {
-    readyState = event.detail || {};
+  function handleEditorReady(detail) {
+    if (readyState) return;
+    readyState = detail || {};
     if (!readyState.fresh || readyState.embed) return;
     let state = '';
     let initialLanguage = '';
@@ -680,7 +681,14 @@
       if (!initialLanguage && !savedLanguage) openLanguagePicker();
       else openGuide({ page: 0 });
     }, reduceMotion ? 180 : 620);
+  }
+
+  document.addEventListener('editor:ready', function (event) {
+    handleEditorReady(event.detail);
   });
+  if (window.__relatumEditorReadyDetail) {
+    handleEditorReady(window.__relatumEditorReadyDetail);
+  }
 
   document.addEventListener('relatum:languagechange', function () {
     renderReplayEntry();

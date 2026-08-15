@@ -1028,9 +1028,14 @@
         if (openingCoverEl) {
           openingCoverEl.addEventListener('transitionend', () => openingCoverEl.remove(), { once: true });
         }
-        document.dispatchEvent(new CustomEvent('editor:ready', {
-          detail: { fresh: FRESH, embed: EMBED, nodes: canvasData && Array.isArray(canvasData.nodes) ? canvasData.nodes.length : 0 },
-        }));
+        const readyDetail = {
+          fresh: FRESH,
+          embed: EMBED,
+          nodes: canvasData && Array.isArray(canvasData.nodes) ? canvasData.nodes.length : 0,
+        };
+        // 延迟加载的新手引导可能在 editor:ready 派发后才执行；保留一份只读启动摘要供它补接。
+        window.__relatumEditorReadyDetail = readyDetail;
+        document.dispatchEvent(new CustomEvent('editor:ready', { detail: readyDetail }));
       });
     });
   }
@@ -9864,7 +9869,8 @@
         viewportEl.style.setProperty('--canvas-background-opacity', String(value));
       }
     };
-    setLayerOpacity(initial ? fadeTarget : 0);
+    // 图片不再阻塞画布揭幕：始终从透明开始，加载完成后在已就绪的画布背后淡入。
+    setLayerOpacity(0);
     return new Promise((resolve) => {
       const probe = new Image();
       probe.addEventListener('load', () => {
@@ -9873,11 +9879,6 @@
           return;
         }
         applyLoadedImage(source, bg);
-        if (initial) {
-          setLayerOpacity(fadeTarget);
-          resolve();
-          return;
-        }
         requestAnimationFrame(() => {
           if (version === backgroundProbeVersion) setLayerOpacity(fadeTarget);
           resolve();
@@ -10224,12 +10225,21 @@
   }
 
   // ── 加载（并行请求画布数据 + 全局背景偏好）───────
-  Promise.all([
-    fetch('/api/load?path=' + encodeURIComponent(filePath))
-      .then((r) => r.json().then((j) => ({ ok: r.ok, json: j }))),
-    fetch('/api/background-preference')
+  const openingRequests = window.__relatumOpeningRequests;
+  const canvasOpeningRequest = openingRequests
+    && openingRequests.file === filePath
+    && openingRequests.canvas
+    ? openingRequests.canvas
+    : fetch('/api/load?path=' + encodeURIComponent(filePath))
+      .then((r) => r.json().then((j) => ({ ok: r.ok, json: j })));
+  const backgroundOpeningRequest = openingRequests && openingRequests.background
+    ? openingRequests.background
+    : fetch('/api/background-preference')
       .then((r) => r.ok ? r.json() : null)
-      .catch(() => null),
+      .catch(() => null);
+  Promise.all([
+    canvasOpeningRequest,
+    backgroundOpeningRequest,
   ])
     .then(async ([{ ok, json }, bgJson]) => {
       if (!ok) {
@@ -10248,6 +10258,10 @@
       canvasData = json.data || { version: 2, nodes: [], edges: [] };
       if (!Array.isArray(canvasData.nodes)) canvasData.nodes = [];
       if (!Array.isArray(canvasData.edges)) canvasData.edges = [];
+      const typographyReady = window.RelatumFontLoader
+        && typeof window.RelatumFontLoader.prepareCanvas === 'function'
+        ? window.RelatumFontLoader.prepareCanvas(canvasData)
+        : Promise.resolve();
       if (titleEl) titleEl.textContent = json.title || '画布';
       // 数据已加载成功：立即启用标题改名。早于画布渲染绑定，确保即便后续渲染 / 桥接出意外，
       // 标题改名也始终可用（此前它排在渲染之后，渲染一抛错就被整段跳过 → 改不了名）。
@@ -10268,6 +10282,10 @@
       setupBackgroundPanel();
       const backgroundReady = renderBackground({ initial: true });
       renderGuide();
+
+      // 只有确实包含手写文字/文字框的旧画布才等待对应字体，避免字体后到导致内容跳位。
+      // 普通画布直接越过这一步，12MB 手写字体留到首屏完成后的空闲期补齐。
+      await typographyReady;
 
       // 启动画布交互（canvas.js 直接 mutate canvasData.nodes）
       if (window.CanvasModule) {
@@ -10351,8 +10369,8 @@
             cleanBtn.hidden = true;
           }
         }
-      // 背景、画布和标题都已是最终状态，再统一揭开开场遮罩。
-      await backgroundReady;
+      // 标题、画布和背景底色已是最终状态即可揭幕；位图背景继续在背后加载并淡入。
+      backgroundReady.catch((error) => console.warn('[画布] 背景恢复失败', error));
       finishEditorOpening();
     })
     .catch((err) => {
@@ -10743,6 +10761,7 @@
       graphView.open(canvasData, titleEl ? titleEl.textContent : '画布');
     });
   }
+  document.addEventListener('editor:graph-runtime-ready', setupGraphPanel);
 
   // 脑图：顶栏按钮弹出布局菜单 → 调 CanvasModule.applyMindmap(layout)
   if (mindmapBtn && mindmapMenu) {

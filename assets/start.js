@@ -146,16 +146,12 @@
       source = '/sky-dark.png';
     }
     if (!source) return;
-    const preload = () => {
-      const image = new Image();
-      image.decoding = 'async';
-      image.src = source;
-    };
-    if ('requestIdleCallback' in window) {
-      window.requestIdleCallback(preload, { timeout: 1000 });
-    } else {
-      window.setTimeout(preload, 0);
-    }
+    // 背景偏好返回后立即以低优先级预热。此前放进 requestIdleCallback，用户在
+    // 一秒内打开画布时导航往往先发生，预热还没开始；现在配合 ETag 缓存可跨页复用。
+    const image = new Image();
+    image.decoding = 'async';
+    try { image.fetchPriority = 'low'; } catch (e) {}
+    image.src = source;
   }
 
   // 编辑器首帧需要在 /api/load 返回前选好深浅等待底色。起步页提前同步语义，
