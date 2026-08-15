@@ -1792,7 +1792,14 @@
     }
     if (resetClass) {
       const cadence = document.querySelector('[data-role="study-cadence"]');
-      if (cadence) cadence.classList.remove('cadence-entering', 'cadence-staging');
+      if (cadence) {
+        cadence.classList.remove('cadence-entering', 'cadence-staging');
+        // 镜头或日期切换会留下局部刷新动画类，它在当前页内用来避免
+        // 整页与局部动画重叠；离页或重新武装入场时必须清掉，否则详情栏会被
+        // .cadence-entering ... :not(.is-refreshing) 永久排除。
+        const detail = cadence.querySelector('[data-role="cadence-day-detail"]');
+        if (detail) detail.classList.remove('is-refreshing');
+      }
     }
   }
   function stageCadenceEntrance() {
