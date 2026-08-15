@@ -6923,133 +6923,52 @@ body[data-start-state="recent"] .top-actions {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-/* ─── 起步页 · 程序化沉浸流场 ────────────────────────────────
-   浅深主题使用完全相同的几何与节奏，仅替换底色、光色与内容保护层。
-   五个超出视口的柔边渐变层只改变 transform / opacity，避免持续重绘大面积模糊；
-   紫、蓝、海绿、灰粉各自在一个固定象限内由多个不同长宽的小光斑拼出不规则色域，
-   第五层只补齐各色域的柔边。层间错速缓行，但不会把某一色系带到其他区域。 */
-.start-page {
-  --start-ambient-base:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.34), rgba(248, 247, 245, 0.12)),
-    #f8f8f7;
-  --start-ambient-purple: rgba(136, 113, 214, 0.50);
-  --start-ambient-blue: rgba(86, 145, 214, 0.46);
-  --start-ambient-pink: rgba(205, 128, 169, 0.40);
-  --start-ambient-mint: rgba(82, 178, 155, 0.40);
-  --start-ambient-purple-soft: rgba(162, 139, 216, 0.24);
-  --start-ambient-blue-soft: rgba(108, 172, 206, 0.23);
-  --start-ambient-pink-soft: rgba(204, 151, 169, 0.20);
-  --start-ambient-mint-soft: rgba(104, 180, 162, 0.21);
-  --start-ambient-wash:
-    linear-gradient(180deg, rgba(251, 251, 250, 0.30) 0%, rgba(251, 251, 250, 0.06) 22%, transparent 48%),
-    linear-gradient(90deg, rgba(251, 251, 250, 0.08) 0%, transparent 54%);
-}
-
-.start-ambient {
+/* ─── 起步页 · 微软风毛玻璃/液态玻璃背景 ───
+   仅 index（start.js 设 data-start-state；trash 不设，故回收站不受影响）。
+   底层几团低饱和粉彩光晕（Copilot 丝带感）+ 顶层暖白薄纱压住饱和度（Mica 的克制）。
+   两个超低速合成层轻轻错向漂移：正常使用时安静，停下来观察才会感觉背景在呼吸。 */
+.start-page[data-start-state]::before {
+  content: "";
   position: fixed;
-  inset: 0;
+  inset: -8%;
   z-index: -1;
-  overflow: hidden;
   pointer-events: none;
-  visibility: hidden;
-  opacity: 0;
-  background: var(--start-ambient-base);
-  transition: opacity 560ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 560ms;
+  background:
+    linear-gradient(rgba(251, 251, 250, 0.32), rgba(251, 251, 250, 0.32)),
+    radial-gradient(62% 52% at 14% 8%, rgba(146, 126, 222, 0.30), transparent 72%),
+    radial-gradient(56% 48% at 88% 14%, rgba(118, 166, 230, 0.24), transparent 72%),
+    radial-gradient(54% 54% at 80% 88%, rgba(238, 150, 184, 0.24), transparent 72%),
+    radial-gradient(50% 50% at 8% 92%, rgba(140, 212, 190, 0.22), transparent 72%);
+  transform: translate3d(-1.2%, -0.8%, 0) scale(1.025);
+  will-change: transform;
+  animation: startAmbientDriftA 76s var(--easing-soft) infinite alternate;
 }
 
-.start-page[data-start-state][data-start-background="scenic"] .start-ambient {
-  visibility: visible;
-  opacity: 1;
-  transition-delay: 0s;
-}
-
-.start-ambient-layer {
-  position: absolute;
-  inset: -24%;
+.start-page[data-start-state]::after {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
   pointer-events: none;
-  backface-visibility: hidden;
-}
-
-.start-page[data-start-state][data-start-background="scenic"] .start-ambient-layer {
-  will-change: transform, opacity;
-  animation-play-state: running;
-}
-
-.start-ambient-layer-a {
-  transform-origin: 22% 24%;
   background:
-    radial-gradient(29% 32% at 4% 8%, var(--start-ambient-purple), transparent 66%),
-    radial-gradient(20% 17% at 22% 5%, var(--start-ambient-purple-soft), transparent 63%),
-    radial-gradient(17% 24% at 11% 29%, var(--start-ambient-purple-soft), transparent 64%),
-    radial-gradient(14% 18% at 31% 21%, var(--start-ambient-purple-soft), transparent 62%),
-    radial-gradient(18% 13% at 39% 8%, var(--start-ambient-purple-soft), transparent 63%),
-    radial-gradient(13% 21% at 4% 43%, var(--start-ambient-purple-soft), transparent 64%),
-    radial-gradient(12% 14% at 29% 39%, var(--start-ambient-purple-soft), transparent 62%);
-  animation: startAmbientFlowA 28s cubic-bezier(0.45, 0.08, 0.55, 0.92) infinite alternate;
+    radial-gradient(44% 42% at 68% 22%, rgba(178, 154, 224, 0.10), transparent 76%),
+    radial-gradient(48% 44% at 30% 78%, rgba(130, 194, 204, 0.10), transparent 76%),
+    radial-gradient(42% 38% at 76% 82%, rgba(236, 184, 168, 0.08), transparent 76%);
+  transform: translate3d(1.4%, -0.7%, 0) scale(1.035);
+  will-change: transform;
+  animation: startAmbientDriftB 94s var(--easing-soft) infinite alternate;
 }
 
-.start-ambient-layer-b {
-  transform-origin: 78% 24%;
-  background:
-    radial-gradient(29% 31% at 96% 9%, var(--start-ambient-blue), transparent 66%),
-    radial-gradient(21% 16% at 77% 5%, var(--start-ambient-blue-soft), transparent 63%),
-    radial-gradient(16% 25% at 88% 30%, var(--start-ambient-blue-soft), transparent 64%),
-    radial-gradient(14% 18% at 68% 22%, var(--start-ambient-blue-soft), transparent 62%),
-    radial-gradient(19% 13% at 59% 8%, var(--start-ambient-blue-soft), transparent 63%),
-    radial-gradient(13% 21% at 97% 44%, var(--start-ambient-blue-soft), transparent 64%),
-    radial-gradient(12% 15% at 70% 40%, var(--start-ambient-blue-soft), transparent 62%);
-  animation: startAmbientFlowB 34s cubic-bezier(0.42, 0.08, 0.58, 0.92) infinite alternate;
+/* 简洁档只收起装饰背景，主页结构、主题色与所有内容保持不变。沉浸档沿用
+   原有浅色渐变；深色模式则继续使用下方的极光照片与星空。 */
+.start-page[data-start-background="simple"][data-start-state]::before,
+.start-page[data-start-background="simple"][data-start-state]::after {
+  content: none;
+  animation: none;
 }
 
-.start-ambient-layer-c {
-  transform-origin: 22% 76%;
-  background:
-    radial-gradient(30% 33% at 4% 93%, var(--start-ambient-mint), transparent 66%),
-    radial-gradient(21% 17% at 23% 96%, var(--start-ambient-mint-soft), transparent 63%),
-    radial-gradient(17% 25% at 11% 70%, var(--start-ambient-mint-soft), transparent 64%),
-    radial-gradient(15% 18% at 32% 79%, var(--start-ambient-mint-soft), transparent 62%),
-    radial-gradient(19% 14% at 40% 93%, var(--start-ambient-mint-soft), transparent 63%),
-    radial-gradient(13% 21% at 3% 57%, var(--start-ambient-mint-soft), transparent 64%),
-    radial-gradient(12% 15% at 29% 60%, var(--start-ambient-mint-soft), transparent 62%);
-  animation: startAmbientFlowC 41s cubic-bezier(0.4, 0.08, 0.6, 0.92) infinite alternate;
-}
-
-.start-ambient-layer-d {
-  transform-origin: 78% 76%;
-  background:
-    radial-gradient(30% 32% at 96% 93%, var(--start-ambient-pink), transparent 66%),
-    radial-gradient(21% 17% at 76% 96%, var(--start-ambient-pink-soft), transparent 63%),
-    radial-gradient(17% 25% at 89% 69%, var(--start-ambient-pink-soft), transparent 64%),
-    radial-gradient(15% 18% at 68% 79%, var(--start-ambient-pink-soft), transparent 62%),
-    radial-gradient(19% 14% at 59% 93%, var(--start-ambient-pink-soft), transparent 63%),
-    radial-gradient(13% 21% at 97% 56%, var(--start-ambient-pink-soft), transparent 64%),
-    radial-gradient(12% 15% at 71% 60%, var(--start-ambient-pink-soft), transparent 62%);
-  animation: startAmbientFlowD 31s cubic-bezier(0.44, 0.08, 0.56, 0.92) infinite alternate;
-}
-
-.start-ambient-layer-e {
-  transform-origin: 50% 50%;
-  background:
-    radial-gradient(16% 12% at 21% 18%, var(--start-ambient-purple-soft), transparent 64%),
-    radial-gradient(12% 18% at 8% 37%, var(--start-ambient-purple-soft), transparent 63%),
-    radial-gradient(16% 12% at 79% 17%, var(--start-ambient-blue-soft), transparent 64%),
-    radial-gradient(12% 18% at 92% 36%, var(--start-ambient-blue-soft), transparent 63%),
-    radial-gradient(16% 12% at 20% 82%, var(--start-ambient-mint-soft), transparent 64%),
-    radial-gradient(12% 18% at 37% 93%, var(--start-ambient-mint-soft), transparent 63%),
-    radial-gradient(16% 12% at 79% 83%, var(--start-ambient-pink-soft), transparent 64%),
-    radial-gradient(12% 18% at 92% 66%, var(--start-ambient-pink-soft), transparent 63%);
-  animation: startAmbientFlowE 47s cubic-bezier(0.43, 0.08, 0.57, 0.92) infinite alternate;
-}
-
-/* animation 简写会重置 play-state，因此统一在三层简写之后暂停；沉浸选择器凭
-   更高优先级恢复 running，简洁模式则不会在不可见处继续占用合成资源。 */
-.start-ambient-layer { animation-play-state: paused; }
-
-.start-ambient-wash {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: var(--start-ambient-wash);
+.start-page[data-start-background="simple"] .start-sky {
+  display: none !important;
 }
 
 .start-page[data-start-state] {
@@ -7066,54 +6985,16 @@ body.start-page.theme-instant *::after {
   transition: none !important;
 }
 
-@keyframes startAmbientFlowA {
-  0%   { opacity: 0.78; transform: translate3d(-4%, -3%, 0) rotate(-1.5deg) scale(1.08); }
-  24%  { opacity: 0.86; transform: translate3d(1%, -2%, 0) rotate(-0.3deg) scale(1.10); }
-  51%  { opacity: 0.94; transform: translate3d(5%, 1%, 0) rotate(1deg) scale(1.13); }
-  76%  { opacity: 0.98; transform: translate3d(3%, 5%, 0) rotate(1.7deg) scale(1.15); }
-  100% { opacity: 0.84; transform: translate3d(-2%, 4%, 0) rotate(-1deg) scale(1.10); }
+@keyframes startAmbientDriftA {
+  0%   { transform: translate3d(-1.2%, -0.8%, 0) scale(1.025); }
+  48%  { transform: translate3d(1.0%, 0.9%, 0) scale(1.055); }
+  100% { transform: translate3d(-0.3%, 1.5%, 0) scale(1.035); }
 }
 
-@keyframes startAmbientFlowB {
-  0%   { opacity: 0.78; transform: translate3d(5%, -3%, 0) rotate(1.4deg) scale(1.09); }
-  25%  { opacity: 0.86; transform: translate3d(3%, 1%, 0) rotate(0.5deg) scale(1.11); }
-  50%  { opacity: 0.94; transform: translate3d(-1%, 5%, 0) rotate(-0.7deg) scale(1.13); }
-  75%  { opacity: 0.98; transform: translate3d(-5%, 3%, 0) rotate(-1.6deg) scale(1.15); }
-  100% { opacity: 0.82; transform: translate3d(3%, -5%, 0) rotate(1deg) scale(1.10); }
-}
-
-@keyframes startAmbientFlowC {
-  0%   { opacity: 0.68; transform: translate3d(-3%, 5%, 0) rotate(-1.2deg) scale(1.08); }
-  23%  { opacity: 0.77; transform: translate3d(1%, 3%, 0) rotate(0deg) scale(1.10); }
-  49%  { opacity: 0.86; transform: translate3d(5%, 0%, 0) rotate(1deg) scale(1.13); }
-  74%  { opacity: 0.93; transform: translate3d(3%, -4%, 0) rotate(1.6deg) scale(1.15); }
-  100% { opacity: 0.74; transform: translate3d(-5%, 1%, 0) rotate(-1deg) scale(1.10); }
-}
-
-@keyframes startAmbientFlowD {
-  0%   { opacity: 0.65; transform: translate3d(-5%, 3%, 0) rotate(-1.7deg) scale(1.07); }
-  24%  { opacity: 0.74; transform: translate3d(-2%, -2%, 0) rotate(-0.5deg) scale(1.09); }
-  50%  { opacity: 0.84; transform: translate3d(3%, -5%, 0) rotate(1deg) scale(1.12); }
-  76%  { opacity: 0.92; transform: translate3d(5%, 0%, 0) rotate(1.8deg) scale(1.14); }
-  100% { opacity: 0.71; transform: translate3d(-3%, 5%, 0) rotate(-1.2deg) scale(1.09); }
-}
-
-@keyframes startAmbientFlowE {
-  0%   { opacity: 0.42; transform: translate3d(3%, 3%, 0) rotate(0.8deg) scale(1.06); }
-  25%  { opacity: 0.50; transform: translate3d(2%, 0%, 0) rotate(0.3deg) scale(1.08); }
-  52%  { opacity: 0.59; transform: translate3d(-2%, -3%, 0) rotate(-0.7deg) scale(1.10); }
-  77%  { opacity: 0.66; transform: translate3d(-3%, -1%, 0) rotate(-1deg) scale(1.12); }
-  100% { opacity: 0.48; transform: translate3d(3%, -3%, 0) rotate(0.8deg) scale(1.08); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .start-ambient { transition: none; }
-  .start-ambient-layer { animation: none !important; will-change: auto !important; }
-  .start-ambient-layer-a { opacity: 0.88; transform: translate3d(-3%, -2%, 0) scale(1.10); }
-  .start-ambient-layer-b { opacity: 0.86; transform: translate3d(3%, 2%, 0) scale(1.10); }
-  .start-ambient-layer-c { opacity: 0.68; transform: scale(1.08); }
-  .start-ambient-layer-d { opacity: 0.54; transform: translate3d(-2%, 2%, 0) scale(1.06); }
-  .start-ambient-layer-e { opacity: 0.52; transform: translate3d(2%, -2%, 0) scale(1.06); }
+@keyframes startAmbientDriftB {
+  0%   { transform: translate3d(1.4%, -0.7%, 0) scale(1.035); }
+  52%  { transform: translate3d(-1.1%, 1.2%, 0) scale(1.06); }
+  100% { transform: translate3d(0.2%, -1.4%, 0) scale(1.045); }
 }
 
 /* 顶栏：亚克力毛玻璃。本体透明（文字清晰），磨砂放在向下渐隐的伪元素上，
@@ -34523,7 +34404,7 @@ html.dark-semantic-ui {
 }
 
 body.start-page[data-start-theme="dark"] {
-  --bg: #151617;
+  --bg: #111213;
   --surface: rgba(31, 32, 34, 0.86);
   --border: rgba(255, 255, 255, 0.10);
   --border-strong: rgba(255, 255, 255, 0.18);
@@ -34540,23 +34421,25 @@ body.start-page[data-start-theme="dark"] {
     0 1px 2px rgba(0, 0, 0, 0.34),
     0 6px 12px rgba(0, 0, 0, 0.30),
     0 16px 32px rgba(0, 0, 0, 0.26);
-  --start-ambient-base:
-    linear-gradient(145deg, rgba(39, 36, 45, 0.22), rgba(18, 23, 24, 0.08)),
-    #151617;
-  --start-ambient-purple: rgba(150, 130, 205, 0.34);
-  --start-ambient-blue: rgba(93, 146, 192, 0.32);
-  --start-ambient-pink: rgba(187, 117, 147, 0.28);
-  --start-ambient-mint: rgba(82, 157, 136, 0.28);
-  --start-ambient-purple-soft: rgba(160, 145, 202, 0.16);
-  --start-ambient-blue-soft: rgba(112, 157, 189, 0.15);
-  --start-ambient-pink-soft: rgba(180, 135, 151, 0.13);
-  --start-ambient-mint-soft: rgba(103, 163, 146, 0.13);
-  --start-ambient-wash:
-    linear-gradient(180deg, rgba(12, 13, 14, 0.18) 0%, rgba(12, 13, 14, 0.04) 24%, transparent 48%),
-    linear-gradient(90deg, rgba(12, 13, 14, 0.08) 0%, rgba(12, 13, 14, 0.015) 44%, transparent 66%),
-    linear-gradient(0deg, rgba(12, 13, 14, 0.07) 0%, transparent 30%);
   background: var(--bg);
   color: var(--text);
+}
+
+body.start-page[data-start-theme="dark"][data-start-state]::before {
+  background:
+    linear-gradient(rgba(13, 14, 15, 0.60), rgba(13, 14, 15, 0.60)),
+    radial-gradient(58% 48% at 14% 8%, rgba(107, 92, 166, 0.24), transparent 74%),
+    radial-gradient(54% 46% at 88% 14%, rgba(88, 125, 172, 0.18), transparent 74%),
+    radial-gradient(54% 54% at 80% 88%, rgba(164, 83, 110, 0.18), transparent 74%),
+    radial-gradient(50% 50% at 8% 92%, rgba(72, 136, 120, 0.15), transparent 74%),
+    linear-gradient(180deg, #111213 0%, #171615 100%);
+}
+
+body.start-page[data-start-theme="dark"][data-start-state]::after {
+  background:
+    radial-gradient(42% 40% at 68% 22%, rgba(186, 166, 222, 0.07), transparent 76%),
+    radial-gradient(46% 42% at 30% 78%, rgba(139, 203, 206, 0.06), transparent 76%),
+    radial-gradient(42% 38% at 76% 82%, rgba(226, 168, 149, 0.06), transparent 76%);
 }
 
 body.start-page[data-start-theme="dark"][data-start-state] .top-bar::before {
@@ -35103,7 +34986,63 @@ body.start-page[data-start-theme="dark"] .ai-btn-secondary {
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* 深色模式二次精修：更清楚的书脊、更安静的暗场、更柔和的活跃页光效。 */
+/* 深色模式二次精修：更清楚的书脊、更安静的暗场、更柔和的活跃页光效 */
+body.start-page[data-start-theme="dark"][data-start-state]::before {
+  background:
+    radial-gradient(120% 78% at 50% -6%, rgba(22, 27, 28, 0.62), transparent 60%),
+    radial-gradient(82% 52% at 50% 110%, rgba(64, 116, 92, 0.10), transparent 72%),
+    linear-gradient(180deg, #0c0e0f 0%, #101212 52%, #0d0f0e 100%);
+  animation-duration: 168s;
+}
+
+/* 深色夜空的星星与极光改由独立 .start-sky 层承载，这里清掉旧的静态星点伪元素 */
+body.start-page[data-start-theme="dark"][data-start-state]::after {
+  background: none;
+  opacity: 0;
+  filter: none;
+  transform: translate3d(0, 0, 0);
+  animation: none;
+  will-change: auto;
+}
+
+/* ─── 深色起始页夜空层（.start-sky）──────────────────────────
+   浅色模式整层隐藏；仅 data-start-theme=dark + 有 data-start-state 时显示。
+   低饱和光带 + 透明帘幕 + 少量微闪星星。极光只在独立 SVG 层里慢速流动，
+   不牵动画布布局；整体沉进黑底，只留一条薄亮边。 */
+.start-sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  display: none;
+}
+body.start-page[data-start-theme="dark"][data-start-state] .start-sky { display: block; }
+
+/* ── 深色背景 = 静态极光照片（assets/sky-dark.jpg）──
+   彻底停用旧的动画 feTurbulence 极光（满屏噪声+位移+模糊一直重算，是深色卡顿的元凶），
+   改为一张静态照片：零动画开销。UI 可读性由 .sky-scrim 一层压暗渐变承载。 */
+.start-sky .sky-photo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("sky-dark.png");
+  background-size: cover;
+  background-position: 50% 42%;
+  /* 压暗 + 略降饱和，让极光“化进黑底”、白色 UI 文字始终清晰 */
+  filter: brightness(0.6) saturate(0.94);
+}
+/* 内容区（顶栏 / 左书脊 / 大标题 / 文件卡）所在的上方与左侧再压一层暗，
+   亮绿极光集中在右下，正好不挡信息层级 */
+.start-sky .sky-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(5, 7, 9, 0.62) 0%, rgba(5, 7, 9, 0.14) 18%, rgba(5, 7, 9, 0) 40%),
+    linear-gradient(90deg, rgba(5, 7, 9, 0.50) 0%, rgba(5, 7, 9, 0.08) 42%, rgba(5, 7, 9, 0) 64%),
+    linear-gradient(0deg, rgba(5, 7, 9, 0.50) 0%, rgba(5, 7, 9, 0) 32%);
+}
 
 body.start-page[data-start-theme="dark"] .left-spine::before {
   content: "";
