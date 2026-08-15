@@ -8082,21 +8082,41 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             raise RequestBodyError(400, "请求 JSON 顶层必须是对象")
         return payload
 
-    def _send_local_file(self, target: Path, media_type: str, error_prefix: str) -> None:
+    def _send_local_file(
+        self,
+        target: Path,
+        media_type: str,
+        error_prefix: str,
+        *,
+        cache_control: str = "no-store",
+    ) -> None:
         """Stream a local asset with single-range support and bounded memory."""
         fh = None
         try:
             fh = target.open("rb")
-            size = os.fstat(fh.fileno()).st_size
+            stat = os.fstat(fh.fileno())
+            size = stat.st_size
         except OSError as err:
             if fh is not None:
                 fh.close()
             return self._send_json(500, {"error": f"{error_prefix}：{err}"})
 
+        etag = f'"{stat.st_mtime_ns:x}-{size:x}"'
+        range_header = str(self.headers.get("Range") or "").strip()
+        if cache_control != "no-store" and not range_header:
+            if str(self.headers.get("If-None-Match") or "").strip() == etag:
+                fh.close()
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", cache_control)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
         start = 0
         end = max(0, size - 1)
         partial = False
-        range_header = str(self.headers.get("Range") or "").strip()
         if range_header:
             match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
             if not match or (not match.group(1) and not match.group(2)):
@@ -8134,9 +8154,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Content-Type", media_type)
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(length))
+            if cache_control != "no-store":
+                self.send_header("ETag", etag)
             if partial:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache_control)
             self.end_headers()
             if length:
                 fh.seek(start)
@@ -10040,7 +10062,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(413, {"error": "背景图片太大（上限 40MB）"})
         except OSError as err:
             return self._send_json(500, {"error": f"读取背景图片失败：{err}"})
-        return self._send_local_file(target, media_type, "读取背景图片失败")
+        # 背景页会在起步页预热、编辑器复用。允许浏览器保存字节，但每次用 ETag
+        # 向本地服务确认文件未变化，兼顾外部原图可能被用户替换的情况。
+        return self._send_local_file(
+            target,
+            media_type,
+            "读取背景图片失败",
+            cache_control="private, no-cache",
+        )
 
     def _api_canvas_asset(self, raw_path: str, asset_path: str):
         """向页面提供某张画布伴生目录内的装饰图片。"""

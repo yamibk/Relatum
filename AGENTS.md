@@ -70,6 +70,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `trash.html` | 回收站管理页。 |
 | `assets/start.js` | 起步页状态、最近/分组/收藏、页面切换、主题/背景/翻页速度。 |
 | `assets/editor.js` | 编辑器页面编排：加载/保存、模式切换、模板、导出、背景、AI/图谱入口和参考画布父页协调。 |
+| `assets/editor-lazy.js` | 编辑器非首屏运行时协调：AI/图谱首次交互可立即抢先加载，未交互时在揭幕后空闲补载；新手引导/说明框揭幕后补载，并在揭幕后空闲触发 KoseFont 补齐；不得让这些资源重新进入首屏阻塞链。 |
+| `assets/font-loader.js` | 主编辑器与双屏参考查看器共用的大字体按需注册层；只有真实手写文字/文字框画布或编辑器揭幕后空闲补齐时才注册并加载 KoseFont。 |
 | `assets/editor-onboarding.js` | 编辑器首次使用引导：十一页 CSS 演示浮窗、翻页/重播、中英文案和真实画布四步练习。 |
 | `assets/i18n.js` | 起始页与编辑器共用的界面语言层；保存语言偏好、翻译静态/动态 UI，并保护用户内容区。 |
 | `assets/tooltip.js` | 全局自定义说明框层；接管静态与动态 `title`，同步中英文文案，并处理悬停/键盘焦点与视口避让。 |
@@ -148,6 +150,10 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 桌面窗口状态 | `data/window-state.json` |
 
 全新用户尚无 `data/background.json` 且当前画布也没有旧版背景字段时，编辑器出厂默认使用“月灰”纯色、横线纸底纹、全屏沉浸、浅色背景语义，并关闭标题栏可读性保护；首次加载后会把这组全局背景偏好写入 `data/background.json`。辅助底纹是独立的全局可选偏好；新用户缺省为横线纸，迁移只有旧版背景字段的画布时仍保持无底纹；可选无底纹、横线、点格、方格或主次方格，与原背景共存而不写入 `.canvas`。
+
+起步页拿到全局背景偏好后会立即用低请求优先级预热图片背景并同步深浅语义。`/api/background-image` 允许浏览器私有保存响应字节，但每次通过基于文件修改时间与大小的 ETag 向本地服务复检；画布附件仍保持 `no-store`。编辑器揭幕只等待最终背景底色、画布与标题，不等待位图下载；图片完成后在背景层淡入。纯色背景不产生图片请求。
+
+`editor.html` 在 `<head>` 里声明首屏核心 `defer` 脚本，使下载与大型编辑器 DOM 解析重叠；同一阶段通过 `window.__relatumOpeningRequests` 提前并行启动 `/api/load` 与 `/api/background-preference`，`editor.js` 必须复用这两个 Promise，不能重复请求。AI、图谱、新手引导、说明框与 KoseFont 不属于普通画布揭幕的阻塞链；AI 与图谱在揭幕后空闲补载，首次交互可抢先复用同一个加载 Promise。
 
 ### `.canvas` 和 `.assets`
 
@@ -679,6 +685,12 @@ node .\tests\node-resize-contract.js
 ```powershell
 node .\tests\canvas-performance-contract.js
 python .\tests\generate-performance-fixtures.py <隔离的 Relatum 运行目录>
+```
+
+改动编辑器首屏脚本、延迟运行时、手写字体或背景揭幕/缓存时，还要运行：
+
+```powershell
+node .\tests\editor-opening-performance-contract.js
 ```
 
 性能夹具只能写入一次性隔离运行目录，禁止指向仓库真实 `canvases/` 或 `data/`。`?perf=1` 才会暴露 `window.__relatumPerfSnapshot()` 与隐藏的 `#relatum-perf-snapshot`；正常页面不得创建调试全局、采样循环或输出节点。
