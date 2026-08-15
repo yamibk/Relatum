@@ -24,7 +24,6 @@
     html[data-editor-background-tone="dark"] { background: #101214; }
   </style>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="editor-onboarding.css">
   <!-- MathJax 3 — 本地化（X 轮）
        脚本由 canvas.js 在初始画布绘制完成后、浏览器空闲时加载。
        配置成不自动 typeset 整页——由 canvas.js 按节点显式调 typesetPromise，
@@ -43,6 +42,47 @@
       startup: { typeset: false }
     };
   </script>
+  <!-- URL 在 HTML 解析初期已经可用。先并行读取画布与背景，让本地 I/O 与 235KB 壳层解析、
+       核心脚本下载重叠；editor.js 会复用这些 Promise，不重复请求。 -->
+  <script>
+    (function () {
+      var file = '';
+      try { file = new URLSearchParams(location.search).get('file') || ''; } catch (e) {}
+      window.__relatumOpeningRequests = {
+        file: file,
+        canvas: file ? fetch('/api/load?path=' + encodeURIComponent(file))
+          .then(function (response) {
+            return response.json().then(function (json) { return { ok: response.ok, json: json }; });
+          })
+          .catch(function () { return { ok: false, json: { error: '读取失败' } }; }) : null,
+        background: fetch('/api/background-preference')
+          .then(function (response) { return response.ok ? response.json() : null; })
+          .catch(function () { return null; })
+      };
+    })();
+  </script>
+  <!-- 首屏核心使用 defer：浏览器在解析大型编辑器 DOM 时即可并行下载，仍严格按声明顺序执行。 -->
+  <script src="i18n.js" defer></script>
+  <script src="desktop-shell.js" defer></script>
+  <script src="sticky-palette.js" defer></script>
+  <script src="mermaid-renderer.js" defer></script>
+  <script src="richtext.js" defer></script>
+  <script src="markdown-table.js" defer></script>
+  <script src="markdown.js" defer></script>
+  <script src="table-editor.js" defer></script>
+  <script src="ruler.js" defer></script>
+  <script src="canvas-import.js" defer></script>
+  <script src="node-matrix.js" defer></script>
+  <script src="canvas-timer.js" defer></script>
+  <script src="markdown-notebook.js" defer></script>
+  <script src="canvas-scenes.js" defer></script>
+  <script src="canvas-taskbook.js" defer></script>
+  <script src="ai-canvas-plan.js" defer></script>
+  <script src="dual-clipboard.js" defer></script>
+  <script src="font-loader.js" defer></script>
+  <script src="canvas.js" defer></script>
+  <script src="editor-lazy.js" defer></script>
+  <script src="editor.js" defer></script>
 </head>
 <body class="editor-page">
   <!-- 首屏前同步设定模式 / 子模式，避免新建画布先闪一下完整顶栏再收起（editor.js 后续会再校准一次） -->
@@ -3634,30 +3674,5 @@
     </form>
   </aside>
 
-  <script src="i18n.js" defer></script>
-  <script src="desktop-shell.js" defer></script>
-  <script src="sticky-palette.js" defer></script>
-  <script src="mermaid-renderer.js" defer></script>
-  <script src="richtext.js" defer></script>
-  <script src="markdown-table.js" defer></script>
-  <script src="markdown.js" defer></script>
-  <script src="table-editor.js" defer></script>
-  <script src="ruler.js" defer></script>
-  <script src="canvas-import.js" defer></script>
-  <script src="node-matrix.js" defer></script>
-  <script src="canvas-timer.js" defer></script>
-  <script src="markdown-notebook.js" defer></script>
-  <script src="canvas-scenes.js" defer></script>
-  <script src="canvas-taskbook.js" defer></script>
-  <script src="ai-canvas-plan.js" defer></script>
-  <script src="dual-clipboard.js" defer></script>
-  <script src="canvas.js" defer></script>
-  <script src="graph-gl.js" defer></script>
-  <script src="graph-engine.js" defer></script>
-  <script src="graph-view.js" defer></script>
-  <script src="editor.js" defer></script>
-  <script src="editor-onboarding.js" defer></script>
-  <script src="ai.js" defer></script>
-  <script src="tooltip.js" defer></script>
 </body>
 </html>
