@@ -6,14 +6,6 @@
    - hairline 边框 + 极轻阴影
 */
 
-@font-face {
-  font-family: 'KoseFont';
-  src: url('fonts/kose-font.woff2') format('woff2');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-
 /* 目标树 V4.1：阶段解锁路线。常用进度操作直接位于任务节点，低频编辑使用临时弹层。 */
 .study-route-overlay {
   position: fixed;

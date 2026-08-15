@@ -882,6 +882,12 @@
     // 当前 .canvas 文件所在目录（去掉最后一段文件名）
     const baseDir = filePath.replace(/[\\/][^\\/]*$/, '');
     const data = opts.data;
+    function ensureKoseFont() {
+      const loader = global.RelatumFontLoader;
+      return loader && typeof loader.ensureKose === 'function'
+        ? loader.ensureKose()
+        : Promise.resolve();
+    }
     const Ruler = global.RelatumRuler || null;
     const Timer = global.RelatumCanvasTimer || null;
     const Taskbooks = global.RelatumCanvasTaskbooks || null;
@@ -1527,6 +1533,7 @@
 
     function setDrawTool(tool) {
       const nextTool = tool || 'select';
+      if (nextTool === 'text') ensureKoseFont();
       if (drawTool === 'edge-anchor' && nextTool !== 'edge-anchor') {
         let clearedAnchorSelection = false;
         selectedNodeIds.forEach((id) => {
@@ -6108,6 +6115,7 @@
         el.appendChild(content);
       }
       if (isTextBoxNode(node)) {
+        ensureKoseFont();
         renderTextBox(content, node);
       } else if (isImageNode(node)) {
         renderCanvasImage(content, el, node);
@@ -6123,6 +6131,7 @@
       }
       let title = el.querySelector('.decor-box-title');
       if (isGroupBoxNode(node)) {
+        ensureKoseFont();
         if (!title) {
           title = document.createElement('div');
           title.className = 'decor-box-title';
@@ -8832,6 +8841,7 @@
     window.setTimeout(retryTaskbookFocusLogs, 0);
 
     function createNodeEl(node) {
+      if (node && node.handText) ensureKoseFont();
       const el = document.createElement('div');
       el.className = 'node';
       el.dataset.id = node.id;
@@ -16757,6 +16767,7 @@
     }
 
     function createHandTextAt(e) {
+      ensureKoseFont();
       const p = clientToSurface(e.clientX, e.clientY);
       const node = createNode(p.x - NODE_DEFAULT_HALF_W, p.y - NODE_DEFAULT_HALF_H, '', {
         startEditing: true,
@@ -16766,6 +16777,7 @@
     }
 
     function addTextBoxAt(point, text, options) {
+      ensureKoseFont();
       const opts = options || {};
       const label = String(text == null ? '' : text);
       const wide = label.length > 3;
@@ -22950,6 +22962,7 @@
     function updateFormulaDragGhost(e) {
       if (!formulaDrag) return;
       if (!formulaDrag.ghost) {
+        ensureKoseFont();
         const ghost = document.createElement('div');
         ghost.className = 'formula-drag-ghost';
         ghost.textContent = formulaDrag.text;
