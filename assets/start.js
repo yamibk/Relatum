@@ -705,7 +705,7 @@
 
 
   // 起步页「?」只承担本地数据说明；旧的功能教程留给编辑器内的新手引导。
-  const START_HELP_PAGES = [
+  const START_HELP_PAGES_ZH = [
     {
       id: 'safety', eyebrow: '01 · BEFORE DELETING', title: '删除前，先看这里',
       subtitle: 'Relatum 的内容都保存在用户数据目录里的 <code>canvases</code> 和 <code>data</code> 中。多数文件删掉后不会“释放缓存”，而是会真正丢失内容或记录。',
@@ -788,6 +788,94 @@
       ],
     },
   ];
+
+  const START_HELP_PAGES_EN = [
+    {
+      id: 'safety', eyebrow: '01 · BEFORE DELETING', title: 'Before deleting, read this',
+      subtitle: 'Relatum stores its content in the <code>canvases</code> and <code>data</code> folders inside your user data directory. Deleting most of these files does not “clear a cache”; it permanently removes content or history.',
+      sections: [
+        ['What the two folders contain', 'Think of them as “your work” and “supporting data”.', [
+          ['<code>canvases</code>', 'Stores every canvas together with its images, PDFs, Markdown attachments, and annotations. This folder usually uses the most space and should not be split up or cleaned blindly.'],
+          ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, review cards, quick notes, journals, focus history, backgrounds, and preferences. Its JSON files are usually very small.'],
+        ]],
+        ['What actually uses disk space', 'If you only want to free disk space, inspect assets and Trash first. Do not sacrifice long-term records to save a few KB of JSON.', [
+          ['<code>*.assets</code>', 'Images, PDFs, and Markdown attachments used by a canvas. Use “Clean attachments” inside that canvas first so only unreferenced files are removed.'],
+          ['<code>Trash</code>', 'Canvases and assets removed from Home but still recoverable. Once you are sure, empty them from Relatum’s Trash page.'],
+          ['<code>data/backgrounds</code>', 'Global background images you uploaded. Switch to a built-in background before deleting images you no longer use.'],
+          ['Archives and databases', 'Study archives, canvas archives, and <code>review.db</code> are history, not cache. Delete them only when you no longer need that history.'],
+        ]],
+        ['A safer cleanup order', 'Follow this order so a mistake is easier to recover from.', [
+          ['1. Quit Relatum', 'This prevents files from being deleted, recreated, or only partly written while the app is saving.'],
+          ['2. Make a backup', 'Back up at least the items you plan to delete. If you are unsure, copy the entire <code>canvases</code> and <code>data</code> folders.'],
+          ['3. Prefer in-app actions', 'Rename, move, recycle, empty Trash, and clean attachments from inside Relatum whenever possible.'],
+          ['4. Delete manually only after that', 'Delete only items whose purpose you have confirmed. Reopen Relatum afterward and check canvases, attachments, and records.'],
+        ]],
+        ['One important distinction', 'A file being recreated does not mean its data was recovered. When a file is missing, Relatum may create a new empty file or use defaults; the original content is still gone.'],
+      ],
+    },
+    {
+      id: 'canvases', eyebrow: '02 · CANVASES', title: 'canvases: canvases and attachments',
+      subtitle: 'This folder holds the canvas content. A canvas file and its matching asset folder are a pair and should be moved, renamed, or deleted together.',
+      sections: [
+        ['What appears at the top level', 'Every canvas has a <code>.canvas</code> file. If it uses images or attachments, it also has a matching <code>.assets</code> folder.', [
+          ['<code>Name.canvas</code>', 'The canvas itself: nodes, text, edges, ink, tables, timers, scenes, taskbooks, notebooks, and more. Deleting it loses that canvas; Home may temporarily keep an entry that can no longer open.'],
+          ['<code>Name.assets</code>', 'The asset folder for that canvas. If deleted, text and nodes may still open, but images, PDFs, Markdown attachments, and some annotations will be missing.'],
+          ['<code>Trash</code>', 'Canvases deleted in Relatum, with matching assets, are moved here first. Deleting its contents or emptying the folder prevents recovery from inside the app.'],
+        ]],
+        ['Files inside <code>.assets</code>', 'These files are often much larger than the canvas JSON, but a filename alone cannot tell you whether a file is unused.', [
+          ['Images and background assets', 'Deleting one makes the matching image node or an older canvas background go missing; the canvas structure and text remain.'],
+          ['<code>attachments</code>', 'Copies of PDFs, Markdown, and other attachments inserted into the canvas. If one is deleted, its node remains but its content cannot be read.'],
+          ['<code>*.annot.json</code>', 'Annotations beside a PDF or Markdown attachment. Deleting only this file removes that attachment’s highlights, underlines, ink, and notes, but not its source content.'],
+          ['<code>node-annotations.json</code>', 'Ink and spatial annotations made in the canvas text reader. Deleting it removes only those annotations; node text remains.'],
+        ]],
+        ['Keep matching names together', 'For example, <code>Course.canvas</code> must stay paired with <code>Course.assets</code>. Renaming only one breaks asset links, and moving a canvas out manually can invalidate its Home entry. Prefer Relatum’s rename, import, and Trash actions.'],
+        ['How to free space', 'Open the target canvas and use “Clean attachments” from the top bar; it removes orphaned assets according to actual references. If you still need space, inspect Trash and entire canvases you no longer need. Do not delete asset files one by one at random.'],
+      ],
+    },
+    {
+      id: 'data', eyebrow: '03 · DATA', title: 'data: records, settings, and indexes',
+      subtitle: 'Most of these files use little space, but they determine how Home organizes canvases and which records appear in Study, Calendar, Review, and Focus.',
+      sections: [
+        ['Canvas library and display settings', 'Deleting a settings file usually leaves the canvas itself intact, but resets the interface or removes organization data.', [
+          ['<code>recent.json</code>', 'Recent canvases, groups, favorites, and ordering. The <code>.canvas</code> files remain after deletion, but Home becomes empty and organization is lost; you can later scan the top-level canvases folder to register files again.'],
+          ['<code>recent.backup.json</code>', 'The previous valid library snapshot. Deleting it changes nothing immediately, but removes an automatic recovery source if the library becomes corrupt. It is not an undo button for manually deleting <code>recent.json</code>.'],
+          ['<code>recent.corrupt-*.json</code>', 'Old library files quarantined after corruption. They can be deleted after you confirm the current library is healthy and you do not need to recover old groups manually.'],
+          ['<code>background.json</code>', 'Global background and guide-pattern settings. Deleting it restores factory defaults; uploaded image files may remain in <code>backgrounds</code>.'],
+          ['<code>backgrounds</code>', 'Background images you uploaded. Deleting an image still in use makes the background disappear; switch to a built-in background first.'],
+          ['<code>viewport.json</code>', 'The last position and zoom for each canvas. Deleting it does not affect content, only the last viewing position.'],
+          ['<code>window-state.json</code>', 'Desktop window size, position, and maximized state. Deleting it restores the default window without affecting content.'],
+        ]],
+        ['Study, daily tasks, and activity', 'These are long-term records, not cache files.', [
+          ['<code>study.json</code>', 'Current study tasks, task Trash, progress, and Goal Trees. Deleting it resets all current study data; previously archived history remains separately in the Study archive.'],
+          ['<code>Study archive</code>', 'Completed study tasks, archived quick notes, and completed taskbook snapshots. Deleting it removes that history and reduces or removes related activity statistics and constellation history; current active tasks remain.'],
+          ['<code>Canvas archive</code>', 'Lightweight history created by canvas archive actions. Deleting it usually leaves original canvases intact, but removes related archive events and statistics from Activity.'],
+          ['<code>daily.json</code>', 'Daily tasks, streak days, minutes, and milestones. Deleting it starts the daily-task system from empty.'],
+          ['<code>daily.backup.json</code>', 'The previous valid daily-task snapshot. Deleting it leaves current content unchanged but removes one recovery layer.'],
+          ['<code>daily.corrupt-*.json</code>', 'Old daily-task data quarantined after corruption. Delete it only after confirming current data is healthy and no manual recovery is needed.'],
+          ['<code>canvas-activity.json</code>', 'Canvas creation, editing, and foreground-usage history. Deleting it leaves canvases intact, but removes yearly activity, usage time, and related statistics; recording then starts over.'],
+        ]],
+        ['Quick notes, Calendar, Focus, and Review', 'Deleting an item clears the data for its corresponding page.', [
+          ['<code>notes.json</code>', 'Quick Notes cards, connections, and viewport. Deleting it clears the current wall; notes you explicitly archived remain in the Study archive.'],
+          ['<code>start-sticky-notes.json</code>', 'Small sticky notes shown across Home pages. Deleting it removes all of them without affecting Quick Notes.'],
+          ['<code>focus.json</code>', 'Focus sessions and related state. Deleting it removes focus history and accumulated time from Calendar and Activity.'],
+          ['<code>diary</code>', 'Calendar journals, one Markdown file per day. Deleting one file loses only that day; deleting the folder loses every journal entry.'],
+          ['<code>countdown.json</code>', 'Countdown events and the selected event. Deleting it clears Countdown; events can be created again.'],
+          ['<code>review.db</code>', 'The complete database of review cards, decks, tags, schedules, and every rating. Deleting it empties Review and it cannot be rebuilt automatically from canvases.'],
+          ['<code>review.db-wal / -shm</code>', 'Temporary files that may appear while the database is in use. Do not delete them separately; quit Relatum normally and they will usually merge or disappear.'],
+        ]],
+        ['Other files you may see', 'Not every computer will have all of these.', [
+          ['<code>templates.json</code>', 'The node template library shared by all canvases. Deleting it removes custom templates without changing existing canvases.'],
+          ['<code>ai.json</code>', 'The AI assistant API key, model, and endpoint. Deleting it requires configuration again but does not affect canvas content. It contains a secret, so keep backups and shared copies private.'],
+          ['<code>calendar-pins.json</code>', 'Calendar task notes left by older versions and no longer read by the current version. Back it up before deleting if you may return to an older version.'],
+        ]],
+        ['Do not delete the whole <code>data</code> folder', 'Deleting it resets almost everything except canvas bodies and their assets: the files still exist, but library organization, Study, Quick Notes, Review, journals, Focus, templates, and settings disappear together.'],
+      ],
+    },
+  ];
+
+  function startHelpPages() {
+    return englishUI() ? START_HELP_PAGES_EN : START_HELP_PAGES_ZH;
+  }
   let startHelpPageIndex = 0;
   let startHelpFlipping = false;
   let startHelpDemoObserver = null;
@@ -814,10 +902,11 @@
   let startHelpScrollVelocity = 0;
   let startHelpScrollFrame = 0;
   let startHelpScrollLastAt = 0;
+  let startHelpCloseTimer = 0;
 
   function syncStartHelpNav(index, animate) {
     if (!startHelp) return;
-    const item = START_HELP_PAGES[index];
+    const item = startHelpPages()[index];
     const nav = startHelp.querySelector('.start-help-nav');
     const slider = startHelp.querySelector('[data-role="start-help-nav-slider"]');
     const spine = startHelp.querySelector('.start-help-spine');
@@ -883,11 +972,12 @@
 
   function renderStartHelpPage(index, direction) {
     if (!startHelp) return;
+    const pages = startHelpPages();
     const page = startHelp.querySelector('[data-role="start-help-page"]');
     const copy = startHelp.querySelector('[data-role="start-help-page-copy"]');
     const position = startHelp.querySelector('[data-role="start-help-position"]');
     const book = startHelp.querySelector('.start-help-book');
-    const item = START_HELP_PAGES[index];
+    const item = pages[index];
     if (!page || !copy || !item) return;
     const apply = () => {
       copy.innerHTML = '<div class="start-help-page-intro"><p>' + item.eyebrow + '</p><h3>' + item.title
@@ -897,7 +987,7 @@
             + section[2].map((row) => '<div><dt>' + row[0] + '</dt><dd>' + row[1] + '</dd></div>').join('')
             + '</dl>' : '') + '</section>').join('');
       if (position) position.textContent = String(index + 1).padStart(2, '0') + ' / '
-        + String(START_HELP_PAGES.length).padStart(2, '0');
+        + String(pages.length).padStart(2, '0');
       if (book) {
         stopStartHelpInertia();
         book.scrollTop = 0;
@@ -930,7 +1020,7 @@
 
   function gotoStartHelpPage(index) {
     if (startHelpFlipping || index === startHelpPageIndex) return;
-    const total = START_HELP_PAGES.length;
+    const total = startHelpPages().length;
     const next = ((index % total) + total) % total;
     if (next === startHelpPageIndex) return;
     const direction = index > startHelpPageIndex ? 1 : -1;
@@ -959,12 +1049,25 @@
     panel.__blurTimer = setTimeout(reveal, 520);
   }
 
+  function finishStartHelpClose() {
+    if (!startHelp) return;
+    if (startHelpCloseTimer) clearTimeout(startHelpCloseTimer);
+    startHelpCloseTimer = 0;
+    startHelp.classList.remove('is-closing');
+    startHelp.hidden = true;
+    document.body.classList.remove('start-help-open');
+    if (startHelpTrigger) startHelpTrigger.focus({ preventScroll: true });
+  }
+
   function setStartHelpOpen(open) {
     if (!startHelp) return;
-    startHelp.hidden = !open;
-    if (startHelpTrigger) startHelpTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-    document.body.classList.toggle('start-help-open', open);
     if (open) {
+      if (startHelpCloseTimer) clearTimeout(startHelpCloseTimer);
+      startHelpCloseTimer = 0;
+      startHelp.classList.remove('is-closing');
+      startHelp.hidden = false;
+      if (startHelpTrigger) startHelpTrigger.setAttribute('aria-expanded', 'true');
+      document.body.classList.add('start-help-open');
       closeContextMenu();
       startHelpNavReady = false;
       renderStartHelpPage(startHelpPageIndex);
@@ -972,15 +1075,22 @@
       const close = startHelp.querySelector('[data-action="start-help-close"]');
       if (close) close.focus();
     } else {
+      if (startHelp.hidden || startHelp.classList.contains('is-closing')) return;
+      if (startHelpTrigger) startHelpTrigger.setAttribute('aria-expanded', 'false');
       stopStartHelpInertia();
       if (startHelpDemoObserver) { startHelpDemoObserver.disconnect(); startHelpDemoObserver = null; }
-      if (startHelpTrigger) startHelpTrigger.focus();
+      if (prefersReduced) {
+        finishStartHelpClose();
+        return;
+      }
+      startHelp.classList.add('is-closing');
+      startHelpCloseTimer = window.setTimeout(finishStartHelpClose, 260);
     }
   }
 
   window.CanvasStartHelp = {
     open(pageId) {
-      const index = START_HELP_PAGES.findIndex((item) => item.id === pageId);
+      const index = startHelpPages().findIndex((item) => item.id === pageId);
       if (index >= 0) startHelpPageIndex = index;
       setStartHelpOpen(true);
     },
@@ -1005,7 +1115,7 @@
     });
     startHelp.querySelectorAll('[data-help-page]').forEach((button) => {
       button.addEventListener('click', () => {
-        const index = START_HELP_PAGES.findIndex((item) => item.id === button.dataset.helpPage);
+        const index = startHelpPages().findIndex((item) => item.id === button.dataset.helpPage);
         if (index >= 0) gotoStartHelpPage(index);
       });
     });
