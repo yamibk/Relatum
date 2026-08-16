@@ -96,7 +96,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/graph-engine.js` | 通用关系图引擎，Canvas2D + 可选 WebGL 几何后端。 |
 | `assets/graph-gl.js` | WebGL2 实例化渲染后端，暴露 `window.GraphGL`；只画节点/边几何，文字仍走 2D/DOM。 |
 | `assets/graph-view.js` | 当前画布关系图浮层。 |
-| `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、引用式临时任务侧栏、回收站与完成归档；任务数据与总路线共用。 |
+| `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、自适应数字任务页、每页可选说明、引用式临时任务侧栏、回收站与完成归档；任务数据与总路线共用。 |
 | `assets/study-goal-tree.js`、`assets/study-route.js` | 学习页“目标树”V4 的无 DOM 链接模型与交互层；阶段用 `contains` 汇总内部任务，任务/阶段用 `requires` 解锁后续，多个入站依赖按 AND 判定。主链接驱动双向自由布局和整棵子树拖动，附加依赖不影响排版；还负责阻塞原因、“下一步”定位、阶段折叠和每树独立镜头。 |
 | `assets/study-graph.js` | 活跃页/学习页星图，可视化学习活动和任务结构。 |
 | `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
@@ -132,7 +132,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 最近、分组、收藏 | `data/recent.json`（v3）；上一次有效快照为 `data/recent.backup.json`，损坏原件隔离成 `data/recent.corrupt-<时间>.json` |
 | 背景偏好、辅助底纹与上传背景 | `data/background.json`（v2：`background` + 可选 `guide`）、`data/backgrounds/` |
 | 画布视口 | `data/viewport.json` |
-| 学习任务 | `data/study.json`（v6）；任务含标题、`active/done` 状态、单位进度、任务点与时间戳；可选 `temporaryTaskIds[]` 按加入顺序引用临时任务侧栏中的未完成任务，完成、回收、归档或悬空引用在规范化时自动清理；`goalTrees[]` 保存多棵 `{version:2,id,title,nodes[],links[]}` 路线，`activeTreeId` 保存当前树。每个节点恰有一条主链接，附加解锁条件使用非主 `requires`；不再写入 `goalTree` 兼容镜像。v6 不迁移旧学习数据，读到旧版本只报不兼容且不覆盖原文件。 |
+| 学习任务 | `data/study.json`（v6）；任务含标题、`active/done` 状态、单位进度、任务点、时间戳与 `taskPage`（1–99，旧 v6 缺失时归入第 1 页）；可选 `taskPageNotes` 按页码保存非空的单行说明。`temporaryTaskIds[]` 按加入顺序全局引用临时任务侧栏中的未完成任务，完成、回收、归档或悬空引用在规范化时自动清理；`goalTrees[]` 保存多棵 `{version:2,id,title,nodes[],links[]}` 路线，`activeTreeId` 保存当前树。数字任务页只分组显示与排序，临时任务、回收站、活跃统计和目标树继续跨页共享，归档只处理当前页。每个目标树节点恰有一条主链接，附加解锁条件使用非主 `requires`；不再写入 `goalTree` 兼容镜像。v6 不迁移旧学习数据，读到旧版本只报不兼容且不覆盖原文件。 |
 | 学习归档 | `data/学习归档/`；学习任务使用 `tasks.json`、速记使用 `notes.json`、任务簿完成归档使用单条 `taskbook.json` marker。 |
 | 画布归档轻量记录 | `data/画布归档/` |
 | 速记墙 | `data/notes.json` |
@@ -182,6 +182,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 笔记坞顶栏快捷入口偏好使用 `canvas:notebookTopbarShortcut`，未设置时默认关闭；开启后在“工具 / Tools”右侧显示“笔记 / Notes”，取消后立即隐藏。它只是一项全局编辑器 UI 偏好，不写入 `.canvas`。
 - 任务簿顶栏快捷入口偏好使用 `canvas:taskbookTopbarShortcut`，未设置时默认关闭；开启后显示“任务 / Tasks”，取消后立即隐藏。叶子任务悬停计时按钮偏好使用 `canvas:taskbookLeafTimerButtonsEnabled`，默认开启，仅显式 `'0'` 隐藏画布节点左侧的 `▶ / Ⅱ`，不影响顶级任务卡片、计时状态或任务数据。两者与任务簿归档副本偏好相互独立，均不写入 `.canvas`。
 - 空白框选创建盒子与框选节点创建分组分别由 `canvas:boxCreateEnabled` / `canvas:groupCreateEnabled` 控制，两个开关默认开启且彼此独立；`canvas:genIndexEnabled` 也必须独立判断，不能因关闭盒子或分组而隐藏框选生成索引入口。
+- 学习页两种视图共用 `study:taskPage:v1` 记住当前数字任务页，缺失或非法时为第 1 页。右侧页栏按可用高度提供虚拟空页，有内容或当前选中的高编号页在缩窗后仍可通过隐藏滚动条的滚动区访问；完整进度标题右侧空白可双击编辑当前页的可选单行说明，空说明不显示提示或占位。
 - 速记、学习、复习、专注各自有视图偏好和临时运行状态；专注页使用 `focus:viewMode` 记住 `timer` / `daily`，未保存偏好或偏好值无效时默认 `daily`（每日任务）。学习页使用 `study:viewMode:v2` 记住 `list` / `progress`，未保存偏好或偏好值无效时默认 `list`（极简清单）；再次点击“学”切换视图。极简清单按 `To Do / Done` 分组，保留快速新建、改名、完成、回收、同状态拖拽排序和归档。完整进度视图为未完成/已完成双列，并提供不复制任务数据、始终覆盖显示且不参与主布局的非模态临时任务浮层；浮层开合只存在当前会话，成员引用跨重启保存在 `temporaryTaskIds[]`。两种学习视图都能打开同一套多目标树路线；从任务设置点击“在树中查看”会切换并持久化到实际包含该任务的目标树，关闭路线面板后把键盘焦点还给原入口。活动树由 `data/study.json` 的 `activeTreeId` 持久化，每棵树的相机与折叠阶段 ID 通过 `relatum.goal-tree-route.view.<treeId>` 独立保存在 `localStorage`；路线面板打开期间窗口尺寸变化只按新旧视口尺寸差补偿平移，以保持原画面中心和缩放，不自动执行全树适配。弹层、拖拽和“下一步”循环位置只存在当前会话。任务点若仍被任一目标树解锁条件引用，学习任务更新接口会拒绝删除并保留原任务与依赖。`canvas:studyGoalTreeSimpleMode:v1` 控制目标树高级编辑入口，未设置时默认精简，仅显式 `'0'` 显示新建后续阶段、添加解锁条件和阶段到任务/任务点的高级拖放；切换不改目标树数据。每日任务完成页另用 `focus:dailyReviewedDate` 记住当天是否已经点击“回顾今日”（本地日期变化或当天撤销任一任务后失效）。起始文档解析时会预载 `focus.js`，并行读取 `/api/daily` 与 `/api/focus`；`focus.js` 不读取学习任务，先填好隐藏 DOM，再发布 `CanvasFocus` 和 `canvasfocus:ready`。年度足迹使用 `canvas:cadenceLens:v2` 记住 `canvas` / `complete` / `focus`，没有 v2 偏好时默认“画布”；复习方式使用 `canvas:reviewMode:v1` 记住 `scheduled` / `free`。
 - `sessionStorage` 的 `canvas:route-from-start` 用于从起步页进入编辑器后的返回/过渡体验。
 

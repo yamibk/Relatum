@@ -310,9 +310,12 @@
       <section class="study-main study-embedded study-mode-list" data-role="study-view" aria-label="学习页">
         <section class="study-progress-view" data-role="study-progress-view" aria-label="学习任务进度">
           <header class="study-progress-head">
-            <div>
+            <div class="study-progress-title">
               <p class="study-eyebrow">STUDY</p>
-              <h1>学习任务 <span data-role="study-task-count">0</span></h1>
+              <div class="study-progress-heading-row" data-role="study-task-page-note-trigger">
+                <h1>学习任务 <span data-role="study-task-count">0</span></h1>
+                <span class="study-task-page-note" data-role="study-task-page-note"></span>
+              </div>
             </div>
             <div class="study-progress-actions">
               <button type="button" class="study-progress-today" data-action="study-goal-tree-open"
@@ -346,6 +349,18 @@
         <!-- 极简清单视图：再次点「学」在进度/清单间切换。 -->
         <section class="study-list" data-role="study-list" aria-label="任务清单"></section>
       </section>
+
+      <nav class="study-task-page-rail auto-hide" data-role="study-task-page-rail"
+        aria-label="学习任务页切换">
+        <span class="study-task-page-orb" data-role="study-task-page-orb" aria-hidden="true"></span>
+        <div class="study-task-page-scroll" data-role="study-task-page-top">
+          <div class="study-task-page-list" data-role="study-task-page-top-list"></div>
+        </div>
+        <span class="study-task-page-gap" aria-hidden="true"></span>
+        <div class="study-task-page-scroll" data-role="study-task-page-bottom">
+          <div class="study-task-page-list" data-role="study-task-page-bottom-list"></div>
+        </div>
+      </nav>
 
       <div class="study-temporary-layer" data-role="study-temporary-layer">
         <button type="button" class="study-temporary-tab" data-action="study-temporary-toggle"

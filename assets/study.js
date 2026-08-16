@@ -4,7 +4,7 @@
   const STATUS = ['active', 'done'];
   const STATUS_LABEL = { active: '未完成', done: '已完成' };
   const state = {
-    tasks: [], trash: [], goalTrees: [], temporaryTaskIds: [],
+    tasks: [], trash: [], goalTrees: [], temporaryTaskIds: [], taskPageNotes: {},
     selectedId: '',
   };
   const GoalTree = window.RelatumStudyGoalTree || null;
@@ -32,11 +32,19 @@
   const temporaryPanelEl = document.querySelector('[data-role="study-temporary-panel"]');
   const temporaryListEl = document.querySelector('[data-role="study-temporary-list"]');
   const temporaryToggleEl = document.querySelector('[data-action="study-temporary-toggle"]');
+  const taskPageRailEl = document.querySelector('[data-role="study-task-page-rail"]');
+  const taskPageOrbEl = document.querySelector('[data-role="study-task-page-orb"]');
+  const taskPageTopScrollEl = document.querySelector('[data-role="study-task-page-top"]');
+  const taskPageBottomScrollEl = document.querySelector('[data-role="study-task-page-bottom"]');
+  const taskPageTopListEl = document.querySelector('[data-role="study-task-page-top-list"]');
+  const taskPageBottomListEl = document.querySelector('[data-role="study-task-page-bottom-list"]');
+  const taskPageNoteTriggerEl = document.querySelector('[data-role="study-task-page-note-trigger"]');
+  const taskPageNoteEl = document.querySelector('[data-role="study-task-page-note"]');
   let goalTreeActiveId = '';
   let toastTimer = null;
   let optimisticTaskSeq = 0;
-  let reorderTimer = null;
-  let reorderChain = Promise.resolve();
+  const reorderTimers = new Map();
+  const reorderChains = new Map();
   let progressDrag = null;            // 进度面板拖拽排序状态
   let progressFlipAnims = new Map();  // 拖拽让位 FLIP 动画
   let progressDragClickGuard = '';    // 拖拽松手后吞掉紧随的 click
@@ -48,6 +56,11 @@
   let isEmptyingTrash = false;
   const STUDY_TRASH_LIMIT = 30;
   const STUDY_MILESTONES_MAX = 50;
+  const STUDY_TASK_PAGE_MAX = 99;
+  const STUDY_TASK_PAGE_KEY = 'study:taskPage:v1';
+  const STUDY_TASK_PAGE_EDGE_PX = 84;
+  // 切页动画：整体淡出彻底结束后才替换内容并淡入，避免旧卡片退场/新卡片入场叠加成残影。
+  const STUDY_TASK_PAGE_SWITCH_MS = 150;
   const taskCreatePromises = new WeakMap(); // 临时任务先动起来，后端随后认领真实 id
   const taskMutationChains = new WeakMap(); // 同一任务的新建后修改、进度与状态统一按顺序落盘
   const taskUpdateSeq = new WeakMap();
@@ -127,6 +140,305 @@
     catch (e) { return 'list'; }
   }
   let viewMode = readViewMode();
+  function normalizeTaskPage(value) {
+    var page = Number(value);
+    return Number.isInteger(page) && page >= 1 && page <= STUDY_TASK_PAGE_MAX ? page : 1;
+  }
+  function readTaskPage() {
+    try { return normalizeTaskPage(Number(localStorage.getItem(STUDY_TASK_PAGE_KEY))); }
+    catch (error) { return 1; }
+  }
+  let currentTaskPage = readTaskPage();
+  let taskPageRailVisible = false;
+  let taskPageRailOver = false;
+  let taskPageSwitchTimer = 0;
+  let taskPageSwitchSeq = 0;
+  let taskPageOrbSettleUntil = 0;
+  let taskPageEntranceTimer = 0;
+  let taskPageResizeFrame = 0;
+  let taskPageNoteEdit = null;
+  let taskPageNoteMutation = Promise.resolve();
+  const taskPageNoteSeq = new Map();
+
+  function taskPageOf(task) {
+    return normalizeTaskPage(task && task.taskPage);
+  }
+  function tasksForPage(page) {
+    var target = normalizeTaskPage(page);
+    return state.tasks.filter(function (task) { return taskPageOf(task) === target; });
+  }
+  function currentPageTasks() {
+    return tasksForPage(currentTaskPage);
+  }
+  function highestTaskPage() {
+    var highestTask = state.tasks.reduce(function (highest, task) {
+      return Math.max(highest, taskPageOf(task));
+    }, 1);
+    return Object.keys(state.taskPageNotes).reduce(function (highest, page) {
+      return Math.max(highest, normalizeTaskPage(Number(page)));
+    }, highestTask);
+  }
+  function currentTaskPageNote() {
+    return String(state.taskPageNotes[String(currentTaskPage)] || '');
+  }
+  function renderTaskPageNote() {
+    if (!taskPageNoteEl || (taskPageNoteEdit && taskPageNoteEdit.page === currentTaskPage)) return;
+    var note = currentTaskPageNote();
+    taskPageNoteEl.textContent = note;
+    taskPageNoteEl.classList.remove('is-editing');
+    taskPageNoteEl.classList.toggle('has-note', !!note);
+  }
+  function closeTaskPageNoteEdit(cancel) {
+    var edit = taskPageNoteEdit;
+    if (!edit) return;
+    taskPageNoteEdit = null;
+    var next = cancel ? edit.previous : edit.input.value.trim().slice(0, 240);
+    if (!cancel && next !== edit.previous) {
+      var seq = (taskPageNoteSeq.get(edit.page) || 0) + 1;
+      taskPageNoteSeq.set(edit.page, seq);
+      if (next) state.taskPageNotes[String(edit.page)] = next;
+      else delete state.taskPageNotes[String(edit.page)];
+      var request = taskPageNoteMutation.catch(function () {}).then(function () {
+        return post('/api/study-task-page-note', { taskPage: edit.page, note: next });
+      });
+      taskPageNoteMutation = request.catch(function () {});
+      request.then(function (json) {
+        if (taskPageNoteSeq.get(edit.page) !== seq) return;
+        if (json.note) state.taskPageNotes[String(edit.page)] = json.note;
+        else delete state.taskPageNotes[String(edit.page)];
+        renderTaskPageNote();
+      }).catch(function (error) {
+        if (taskPageNoteSeq.get(edit.page) !== seq) return;
+        if (edit.previous) state.taskPageNotes[String(edit.page)] = edit.previous;
+        else delete state.taskPageNotes[String(edit.page)];
+        renderTaskPageNote();
+        showToast(error.message);
+      });
+    }
+    renderTaskPageNote();
+  }
+  function beginTaskPageNoteEdit(event) {
+    if (!taskPageNoteEl || taskPageNoteEdit
+        || (event && event.target.closest('h1, button, input'))) return;
+    var page = currentTaskPage;
+    var previous = currentTaskPageNote();
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'study-task-page-note-input';
+    input.maxLength = 240;
+    input.value = previous;
+    setStudyAriaLabel(input, '学习任务页说明');
+    taskPageNoteEl.textContent = '';
+    taskPageNoteEl.classList.add('is-editing');
+    taskPageNoteEl.appendChild(input);
+    taskPageNoteEdit = { page: page, previous: previous, input: input };
+    input.addEventListener('keydown', function (keyEvent) {
+      if (keyEvent.key === 'Enter') {
+        keyEvent.preventDefault();
+        closeTaskPageNoteEdit(false);
+      } else if (keyEvent.key === 'Escape') {
+        keyEvent.preventDefault();
+        closeTaskPageNoteEdit(true);
+      }
+    });
+    input.addEventListener('blur', function () { closeTaskPageNoteEdit(false); }, { once: true });
+    input.focus({ preventScroll: true });
+    input.select();
+  }
+  function taskPageStackCapacity(scrollEl) {
+    if (!scrollEl) return 1;
+    return Math.max(1, Math.floor((scrollEl.clientHeight + 6) / 40));
+  }
+  function taskPageCapacity() {
+    return Math.max(2,
+      taskPageStackCapacity(taskPageTopScrollEl) + taskPageStackCapacity(taskPageBottomScrollEl));
+  }
+  function createTaskPageButton(page) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'study-task-page-button' + (page === currentTaskPage ? ' is-active' : '');
+    button.dataset.taskPage = String(page);
+    button.textContent = String(page);
+    setStudyAriaLabel(button, '学习任务第 ' + page + ' 页');
+    if (page === currentTaskPage) button.setAttribute('aria-current', 'page');
+    return button;
+  }
+  function fillTaskPageList(host, first, last) {
+    if (!host) return;
+    var fragment = document.createDocumentFragment();
+    for (var page = first; page <= last; page += 1) fragment.appendChild(createTaskPageButton(page));
+    host.replaceChildren(fragment);
+  }
+  function scrollTaskPageButtonIntoView(button) {
+    if (!button) return;
+    var scroller = button.closest('.study-task-page-scroll');
+    if (!scroller) return;
+    var top = button.offsetTop;
+    var bottom = top + button.offsetHeight;
+    if (top < scroller.scrollTop) scroller.scrollTop = top;
+    else if (bottom > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = bottom - scroller.clientHeight;
+    }
+  }
+  function positionTaskPageOrb(fromScroll) {
+    if (!taskPageRailEl || !taskPageOrbEl) return;
+    // 切页滑行期间由 scroll 逐帧覆盖 transform 会打断过渡，锁定到滑行结束
+    if (fromScroll && performance.now() < taskPageOrbSettleUntil) return;
+    var active = taskPageRailEl.querySelector('.study-task-page-button.is-active');
+    if (!active) { taskPageOrbEl.style.opacity = '0'; return; }
+    var railRect = taskPageRailEl.getBoundingClientRect();
+    var buttonRect = active.getBoundingClientRect();
+    var visible = buttonRect.bottom > railRect.top && buttonRect.top < railRect.bottom;
+    taskPageOrbEl.style.opacity = visible ? '1' : '0';
+    taskPageOrbEl.style.transform = 'translate3d(0,' + (buttonRect.top - railRect.top) + 'px,0)';
+  }
+  function renderTaskPageRail() {
+    if (!taskPageRailEl) return;
+    var focusedPage = taskPageRailEl.contains(document.activeElement)
+      && document.activeElement.dataset ? document.activeElement.dataset.taskPage : '';
+    var total = Math.min(STUDY_TASK_PAGE_MAX,
+      Math.max(taskPageCapacity(), currentTaskPage, highestTaskPage()));
+    var topCount = Math.ceil(total / 2);
+    fillTaskPageList(taskPageTopListEl, 1, topCount);
+    fillTaskPageList(taskPageBottomListEl, topCount + 1, total);
+    var active = taskPageRailEl.querySelector('.study-task-page-button.is-active');
+    scrollTaskPageButtonIntoView(active);
+    if (focusedPage) {
+      var focusTarget = taskPageRailEl.querySelector('[data-task-page="' + focusedPage + '"]') || active;
+      if (focusTarget) focusTarget.focus({ preventScroll: true });
+    }
+    requestAnimationFrame(function () {
+      taskPageOrbSettleUntil = performance.now() + STUDY_TASK_PAGE_SWITCH_MS + 10;
+      positionTaskPageOrb(false);
+      // 锁到期补位：若滑行期间用户滚动页栏并停下，锁内被跳过的定位在到期后补一次
+      window.setTimeout(function () { positionTaskPageOrb(false); }, STUDY_TASK_PAGE_SWITCH_MS + 20);
+    });
+  }
+  function setTaskPageRailVisible(visible) {
+    if (!taskPageRailEl) return;
+    taskPageRailVisible = !!visible && studyPageActive && !temporaryPanelOpen;
+    taskPageRailEl.classList.toggle('revealed', taskPageRailVisible);
+  }
+  // —— 切页错峰入场：复用整版 spring stagger（头 → 列标题 → 逐行卡片），
+  //    只作用于进度视图容器，不走 studyRevealKey 去重，也不连带临时任务层 ——
+  function startTaskPageEntrance() {
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    if (!view || prefersReduced || viewMode !== 'progress') return;
+    window.clearTimeout(taskPageEntranceTimer);
+    void view.offsetWidth;
+    view.classList.add('is-revealing');
+    taskPageEntranceTimer = window.setTimeout(function () {
+      view.classList.remove('is-revealing');
+      taskPageEntranceTimer = 0;
+    }, 1450);
+  }
+  function stopTaskPageEntrance() {
+    window.clearTimeout(taskPageEntranceTimer);
+    taskPageEntranceTimer = 0;
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    if (view) view.classList.remove('is-revealing');
+  }
+  function setCurrentTaskPage(page, options) {
+    options = options || {};
+    var next = normalizeTaskPage(page);
+    if (next === currentTaskPage) {
+      renderTaskPageRail();
+      return;
+    }
+    if (taskPageNoteEdit) closeTaskPageNoteEdit(false);
+    stopTaskPageEntrance();
+    if (progressDrag) finishProgressDrag({ cancel: true, immediate: true });
+    closeProgressSettings(false, true);
+    setTemporaryPanelOpen(false);
+    currentTaskPage = next;
+    state.selectedId = '';
+    try { localStorage.setItem(STUDY_TASK_PAGE_KEY, String(next)); } catch (error) {}
+    renderTaskPageRail();
+    window.clearTimeout(taskPageSwitchTimer);
+    if (prefersReduced || options.immediate || !studyViewEl) {
+      render({ pageSwitch: true });
+      return;
+    }
+    taskPageSwitchSeq += 1;
+    var switchSeq = taskPageSwitchSeq;
+    studyViewEl.classList.add('study-task-page-switching');
+    taskPageSwitchTimer = window.setTimeout(function () {
+      taskPageSwitchTimer = 0;
+      // 快速连点时旧切换作废，只让最后一次换内容
+      if (switchSeq !== taskPageSwitchSeq) return;
+      render({ pageSwitch: true });
+      requestAnimationFrame(function () {
+        if (switchSeq !== taskPageSwitchSeq) return;
+        if (viewMode === 'progress') {
+          // 完整视图：去掉整体淡入——容器先禁过渡瞬跳回不透明，再直接播整版错峰入场
+          var view = document.querySelector('[data-role="study-progress-view"]');
+          if (view) {
+            view.style.transition = 'none';
+            view.style.opacity = '1';
+            view.style.transform = 'none';
+            studyViewEl.classList.remove('study-task-page-switching');
+            startTaskPageEntrance();
+            // 下一帧恢复：过渡与 inline 值一并清掉，避免 inline 覆盖下次切页的淡出类
+            requestAnimationFrame(function () {
+              view.style.transition = '';
+              view.style.opacity = '';
+              view.style.transform = '';
+            });
+            return;
+          }
+        }
+        studyViewEl.classList.remove('study-task-page-switching');
+      });
+    }, STUDY_TASK_PAGE_SWITCH_MS);
+  }
+  if (taskPageRailEl) {
+    taskPageRailEl.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-task-page]');
+      if (!button) return;
+      event.preventDefault();
+      setCurrentTaskPage(Number(button.dataset.taskPage));
+    });
+    taskPageRailEl.addEventListener('pointerenter', function () {
+      taskPageRailOver = true;
+      setTaskPageRailVisible(true);
+    });
+    taskPageRailEl.addEventListener('pointerleave', function () {
+      taskPageRailOver = false;
+      setTaskPageRailVisible(false);
+    });
+    taskPageRailEl.addEventListener('focusin', function () { setTaskPageRailVisible(true); });
+    taskPageRailEl.addEventListener('focusout', function (event) {
+      if (!taskPageRailEl.contains(event.relatedTarget)) setTaskPageRailVisible(taskPageRailOver);
+    });
+  }
+  [taskPageTopScrollEl, taskPageBottomScrollEl].forEach(function (scroller) {
+    if (scroller) scroller.addEventListener('scroll', function () { positionTaskPageOrb(true); }, { passive: true });
+  });
+  if (studyViewEl) {
+    studyViewEl.addEventListener('pointermove', function (event) {
+      if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+      var rect = studyViewEl.getBoundingClientRect();
+      setTaskPageRailVisible(rect.right - event.clientX <= STUDY_TASK_PAGE_EDGE_PX || taskPageRailOver);
+    }, { passive: true });
+    studyViewEl.addEventListener('pointerleave', function () {
+      if (!taskPageRailOver) setTaskPageRailVisible(false);
+    });
+  }
+  if (taskPageNoteTriggerEl) {
+    taskPageNoteTriggerEl.addEventListener('dblclick', beginTaskPageNoteEdit);
+  }
+  function scheduleTaskPageRailLayout() {
+    window.cancelAnimationFrame(taskPageResizeFrame);
+    taskPageResizeFrame = requestAnimationFrame(function () {
+      taskPageResizeFrame = 0;
+      renderTaskPageRail();
+    });
+  }
+  if (window.ResizeObserver && taskPageRailEl) {
+    new ResizeObserver(scheduleTaskPageRailLayout).observe(taskPageRailEl);
+  } else {
+    window.addEventListener('resize', scheduleTaskPageRailLayout, { passive: true });
+  }
   function stopStudyGoalBreath() {
     window.clearTimeout(studyGoalBreathTimer);
     studyGoalBreathTimer = 0;
@@ -186,6 +498,7 @@
   function applyViewMode() {
     if (studyViewEl) studyViewEl.classList.toggle('study-mode-list', viewMode === 'list');
     syncTemporaryLayerAvailability();
+    renderTaskPageRail();
   }
   function setViewMode(mode, animate) {
     const next = mode === 'list' ? 'list' : 'progress';
@@ -224,6 +537,7 @@
     studyPageActive = true;
     resetStudyHorizontalOffset();
     syncTemporaryLayerAvailability();
+    renderTaskPageRail();
     scheduleStudyGoalBreath(1400);
     scheduleStudyGoalCheckFlow(500);
     if (studyLoaded) {
@@ -235,12 +549,18 @@
       if (loaded) { render(); replayStudyEntrance('activate'); }
     });
   }
-  window.StudyView = { toggleMode: toggleViewMode, activate: activateStudyView };
+  window.StudyView = {
+    toggleMode: toggleViewMode,
+    activate: activateStudyView,
+    currentTaskPage: function () { return currentTaskPage; },
+  };
 
   // 离开学习页时重置错峰入场状态，确保再次进入时重播动画
   document.addEventListener('start:viewchange', function (event) {
     if (event.detail && event.detail.previous === 'study') {
       studyPageActive = false;
+      if (taskPageNoteEdit) closeTaskPageNoteEdit(false);
+      setTaskPageRailVisible(false);
       setTemporaryPanelOpen(false);
       if (progressDrag) finishProgressDrag({ cancel: true, immediate: true });
       stopStudyGoalBreath();
@@ -345,6 +665,7 @@
       id: 'tmp_' + Date.now().toString(36) + '_' + (++optimisticTaskSeq).toString(36),
       title: payload.title || '未命名任务',
       status: STATUS.includes(payload.status) ? payload.status : 'active',
+      taskPage: normalizeTaskPage(payload.taskPage),
       progress: { current: 0, target: 0, milestones: [] },
       createdAt: now,
       updatedAt: now,
@@ -469,18 +790,28 @@
     }
   }
 
-  function scheduleStudyReorder() {
-    clearTimeout(reorderTimer);
-    reorderTimer = setTimeout(() => {
-      reorderTimer = null;
-      reorderChain = reorderChain.catch(() => undefined).then(async () => {
-        await Promise.all(state.tasks.map((task) => ensureTaskCreated(task)));
-        await post('/api/study-reorder', { ids: state.tasks.map((task) => task.id) });
-      }).catch((error) => {
+  function scheduleStudyReorder(page) {
+    var taskPage = normalizeTaskPage(page || currentTaskPage);
+    window.clearTimeout(reorderTimers.get(taskPage));
+    reorderTimers.set(taskPage, window.setTimeout(function () {
+      reorderTimers.delete(taskPage);
+      var pageTasks = tasksForPage(taskPage);
+      var previous = reorderChains.get(taskPage) || Promise.resolve();
+      var request = previous.catch(function () {}).then(async function () {
+        await Promise.all(pageTasks.map(function (task) { return ensureTaskCreated(task); }));
+        await post('/api/study-reorder', {
+          taskPage: taskPage,
+          ids: pageTasks.map(function (task) { return task.id; }),
+        });
+      }).catch(function (error) {
         showToast(error.message);
         refresh();
       });
-    }, 110);
+      reorderChains.set(taskPage, request);
+      request.finally(function () {
+        if (reorderChains.get(taskPage) === request) reorderChains.delete(taskPage);
+      }).catch(function () {});
+    }, 110));
   }
 
   function findTask(id) {
@@ -513,12 +844,17 @@
     // 卡片 DOM 会跨刷新复用，事件处理器也会继续引用原任务对象。目标树修改进度后
     // 必须按 id 原地合并服务端快照，否则卡片虽显示新进度，±1 等操作仍会读取旧值。
     state.tasks = reconcileStudyTaskSnapshots(payload.tasks);
+    state.tasks.forEach(function (task) { task.taskPage = taskPageOf(task); });
     state.trash = Array.isArray(payload.trash) ? payload.trash : [];
     state.goalTrees = Array.isArray(payload.goalTrees) ? payload.goalTrees : [];
     state.temporaryTaskIds = Array.isArray(payload.temporaryTaskIds)
       ? payload.temporaryTaskIds.map(String)
       : [];
+    state.taskPageNotes = payload.taskPageNotes && typeof payload.taskPageNotes === 'object'
+      ? Object.assign({}, payload.taskPageNotes)
+      : {};
     goalTreeActiveId = payload.activeTreeId || (state.goalTrees[0] && state.goalTrees[0].id) || '';
+    renderTaskPageRail();
   }
   function openGoalTree(trigger, taskId, treeId) {
     setTemporaryPanelOpen(false);
@@ -563,6 +899,16 @@
     if (temporaryToggleEl) {
       temporaryToggleEl.setAttribute('aria-expanded', temporaryPanelOpen ? 'true' : 'false');
       setStudyAriaLabel(temporaryToggleEl, temporaryPanelOpen ? '收起临时任务' : '打开临时任务');
+    }
+    if (taskPageRailEl) {
+      taskPageRailEl.classList.toggle('is-obscured', temporaryPanelOpen);
+      taskPageRailEl.inert = temporaryPanelOpen;
+      if (temporaryPanelOpen) {
+        taskPageRailEl.setAttribute('inert', '');
+        setTaskPageRailVisible(false);
+      } else {
+        taskPageRailEl.removeAttribute('inert');
+      }
     }
     if (!temporaryPanelOpen && options.restoreFocus && temporaryToggleEl) {
       requestAnimationFrame(function () { temporaryToggleEl.focus({ preventScroll: true }); });
@@ -1415,12 +1761,13 @@
   function renderList() {
     var host = document.querySelector('[data-role="study-list"]');
     if (!host) return;
+    var pageTasks = currentPageTasks();
     var groups = [
       { status: 'active', label: 'To Do', match: function (t) { return t.status === 'active'; }, add: true },
       { status: 'done', label: 'Done', match: function (t) { return t.status === 'done'; } },
     ];
     groups.forEach(function (group) {
-      var tasks = state.tasks.filter(group.match);
+      var tasks = pageTasks.filter(group.match);
       if (!tasks.length && !group.add) {
         var emptySection = host.querySelector('.study-list-group[data-status="' + group.status + '"]');
         if (emptySection) emptySection.remove();
@@ -1483,7 +1830,7 @@
       ensureStudyLoaded().then(function (loaded) { if (loaded) listQuickAdd(); });
       return;
     }
-    var task = createOptimisticTask({ title: '未命名', status: 'active' });
+    var task = createOptimisticTask({ title: '未命名', status: 'active', taskPage: currentTaskPage });
     render();
     scheduleStudyReorder();
     var row = document.querySelector('.study-list ' + taskSelector(task.id));
@@ -2423,7 +2770,7 @@
       ensureStudyLoaded().then(function (loaded) { if (loaded) progressQuickAdd(); });
       return;
     }
-    var task = createOptimisticTask({ title: '未命名', status: 'active' });
+    var task = createOptimisticTask({ title: '未命名', status: 'active', taskPage: currentTaskPage });
     render();
     scheduleStudyReorder();
     var card = document.querySelector('.study-progress-card' + taskSelector(task.id));
@@ -2487,8 +2834,10 @@
   }
 
   // —— 增量同步：不销毁卡片，只更新 / 移动 / 新增 / 移除 ——
-  function incrementalSyncCardList(container, tasks, completed, emptyMessage) {
+  function incrementalSyncCardList(container, tasks, completed, emptyMessage, options) {
     if (!container) return;
+    // 切页静音：整版淡出淡入期间不叠加卡片级退场/入场动画，旧卡片直接移除、新卡片直接就位
+    var silent = !!(options && options.pageSwitch);
 
     // 收集现有卡片
     var existing = {};
@@ -2503,7 +2852,7 @@
     // 移除不在目标集合中的卡片（带退场动画）
     cardList.forEach(function (card) {
       if (!desiredIds[card.dataset.id]) {
-        if (!prefersReduced) {
+        if (!silent && !prefersReduced) {
           card.classList.add('is-leaving');
           setTimeout(function () { if (card.parentNode) card.parentNode.removeChild(card); }, 280);
         } else {
@@ -2539,7 +2888,7 @@
       } else {
         if (card && card.parentNode) card.parentNode.removeChild(card);
         card = buildProgressCard(task, completed);
-        if (!prefersReduced && !completed) card.classList.add('is-entering');
+        if (!silent && !prefersReduced && !completed) card.classList.add('is-entering');
         fragment.appendChild(card);
       }
     });
@@ -2561,7 +2910,7 @@
     leavingCards.forEach(function (card) { container.appendChild(card); });
 
     // 清除入场类（动画播完后）
-    if (!prefersReduced) {
+    if (!silent && !prefersReduced) {
       var enteringCards = container.querySelectorAll('.study-progress-card.is-entering');
       setTimeout(function () {
         enteringCards.forEach(function (el) { el.classList.remove('is-entering'); });
@@ -2643,44 +2992,49 @@
     });
   }
 
-  function renderProgress() {
+  function renderProgress(options) {
     if (!progressListEl || !completedListEl || !completedSectionEl) return;
     // 拖拽排序期间不重建卡片列表，避免掐断幽灵卡与 FLIP 动画
     if (progressDrag && progressDrag.active) return;
-    var active = state.tasks.filter(function (t) { return t.status === 'active'; });
-    var done = state.tasks.filter(function (t) { return t.status === 'done'; });
+    var pageTasks = currentPageTasks();
+    var active = pageTasks.filter(function (t) { return t.status === 'active'; });
+    var done = pageTasks.filter(function (t) { return t.status === 'done'; });
     var count = document.querySelector('[data-role="study-task-count"]');
     var activeCount = document.querySelector('[data-role="study-active-count"]');
     var doneCount = document.querySelector('[data-role="study-completed-count"]');
-    if (count) count.textContent = String(state.tasks.length);
+    if (count) count.textContent = String(pageTasks.length);
     if (activeCount) activeCount.textContent = String(active.length);
     if (doneCount) doneCount.textContent = String(done.length);
 
     // 增量同步：保留已有卡片 DOM，只更新内容与顺序
     var emptyMsg = done.length ? '当前没有未完成任务。' : '还没有学习任务，点击右上角的 ＋ 开始。';
-    incrementalSyncCardList(progressListEl, active, false, emptyMsg);
+    incrementalSyncCardList(progressListEl, active, false, emptyMsg, options);
 
     // 已完成列始终可见，保持双列布局避免未完成卡片被拉长
     completedSectionEl.hidden = false;
-    incrementalSyncCardList(completedListEl, done, true, '还没有已完成的任务。');
+    incrementalSyncCardList(completedListEl, done, true, '还没有已完成的任务。', options);
   }
 
   function render(options) {
     applyViewMode();
+    renderTaskPageNote();
     if (viewMode === 'list') {
       var listHost = document.querySelector('[data-role="study-list"]');
       var prevListRects = captureListRects(listHost, '.study-list-row');
       renderList();
       requestAnimationFrame(function () { animateListMoves(listHost, '.study-list-row', prevListRects); });
     } else {
-      renderProgress();
+      renderProgress(options);
     }
-    renderTemporaryPanel();
+    // 切页时回收站与临时面板跨页共享、内容未变，跳过全量重建
+    if (!(options && options.pageSwitch)) {
+      renderTemporaryPanel();
+      renderTrash();
+    }
     if (progressSettingsPopover
         && (viewMode !== 'progress' || !progressSettingsTrigger || !progressSettingsTrigger.isConnected)) {
       closeProgressSettings(false, true);
     }
-    renderTrash();
   }
 
   // —— 一年活跃热力图（已完成任务，按完成日；含归档历史，数据来自 /api/study-activity）——
@@ -3761,8 +4115,9 @@
         state.trash = state.trash.filter((entry) => entry.task.id !== id);
         state.tasks.push(json.task);
       }
+      setCurrentTaskPage(taskPageOf(json.task), { immediate: true });
       render();
-      const restored = document.querySelector('.study-lane-list ' + taskSelector(json.task.id));
+      const restored = document.querySelector('[data-role="study-view"] ' + taskSelector(json.task.id));
       if (restored && !prefersReduced) {
         restored.classList.add('quick-enter');
         setTimeout(() => restored.classList.remove('quick-enter'), 300);
@@ -3829,7 +4184,8 @@
 
   async function archiveDone() {
     if (!studyLoaded && !(await ensureStudyLoaded())) return;
-    const done = state.tasks.filter((task) => task.status === 'done');
+    const taskPage = currentTaskPage;
+    const done = tasksForPage(taskPage).filter((task) => task.status === 'done');
     if (!done.length) {
       showToast('已完成这一列还是空的');
       return;
@@ -3840,10 +4196,10 @@
     try {
       // 等所有任务的在途 patch 落地，避免归档响应的快照把刚改的名字覆盖回去
       await flushStudyMutations();
-      const json = await post('/api/study-archive-done');
+      const json = await post('/api/study-archive-done', { taskPage: taskPage });
       const archivedIds = new Set(json.archivedIds || []);
       buttons.forEach((button) => button.classList.add('archive-success'));
-      if (viewMode === 'list') {
+      if (viewMode === 'list' && currentTaskPage === taskPage) {
         const doneGroup = document.querySelector('.study-list-group[data-status="done"]');
         await animateArchiveRows(doneGroup);
       }
@@ -3873,6 +4229,8 @@
       return true;
     }
     if (!findTask(id)) return false;
+    var task = findTask(id);
+    if (taskPageOf(task) !== currentTaskPage) setCurrentTaskPage(taskPageOf(task), { immediate: true });
     state.selectedId = id;
     if (viewMode !== 'progress') setViewMode('progress', false);
     else render();

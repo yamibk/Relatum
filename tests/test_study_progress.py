@@ -21,13 +21,14 @@ class StudyProgressTests(unittest.TestCase):
         app.STUDY_ARCHIVE_DIR = self.original_archive_dir
         self.temp_dir.cleanup()
 
-    def data(self, tasks=None, trash=None, temporary_task_ids=None):
+    def data(self, tasks=None, trash=None, temporary_task_ids=None, task_page_notes=None):
         tree = app._study_goal_new_tree("目标 1", 0)
         return {
             "version": 6,
             "tasks": list(tasks or []),
             "trash": list(trash or []),
             "temporaryTaskIds": list(temporary_task_ids or []),
+            "taskPageNotes": dict(task_page_notes or {}),
             "goalTrees": [tree],
             "activeTreeId": tree["id"],
         }
@@ -48,6 +49,24 @@ class StudyProgressTests(unittest.TestCase):
         })
         self.assertNotIn("due", task)
         self.assertNotIn("linkedCanvas", task)
+
+    def test_existing_v6_tasks_default_to_first_task_page(self):
+        task = app._study_task({"title": "旧任务"})
+        task.pop("taskPage")
+        app.STUDY_FILE.write_text(json.dumps(self.data(tasks=[task]), ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(app.load_study()["tasks"][0]["taskPage"], 1)
+
+    def test_task_page_is_validated_and_preserved_by_updates(self):
+        task = app._study_task({"title": "分页任务", "taskPage": 7})
+        updated = app._study_task({"status": "done"}, existing=task)
+        self.assertEqual(updated["taskPage"], 7)
+        for invalid in (0, 100, True, 1.5, "2"):
+            with self.assertRaisesRegex(ValueError, "任务页码"):
+                app._study_task({"title": "非法页码", "taskPage": invalid})
+
+    def test_task_page_notes_are_optional_and_normalized(self):
+        app.save_study(self.data(task_page_notes={"2": "  第二页说明  ", "3": ""}))
+        self.assertEqual(app.load_study()["taskPageNotes"], {"2": "第二页说明"})
 
     def test_progress_config_is_validated(self):
         task = app._study_task({"title": "刷题"})
@@ -231,6 +250,75 @@ class StudyProgressTests(unittest.TestCase):
         self.assertEqual(handler.response[0], 500)
         self.assertEqual(list(app.STUDY_ARCHIVE_DIR.iterdir()), [])
         self.assertEqual(app.load_study()["tasks"][0]["id"], task["id"])
+
+    def test_reorder_only_changes_the_requested_task_page(self):
+        first = app._study_task({"title": "一", "taskPage": 1})
+        other_first = app._study_task({"title": "二-A", "taskPage": 2})
+        second = app._study_task({"title": "三", "taskPage": 1})
+        other_second = app._study_task({"title": "二-B", "taskPage": 2})
+        app.save_study(self.data(tasks=[first, other_first, second, other_second]))
+
+        class CaptureHandler:
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_reorder(handler, {
+            "taskPage": 1,
+            "ids": [second["id"], first["id"]],
+        })
+        self.assertEqual(handler.response[0], 200)
+        loaded = app.load_study()["tasks"]
+        self.assertEqual([task["id"] for task in loaded], [
+            second["id"], other_first["id"], first["id"], other_second["id"],
+        ])
+
+    def test_archive_done_only_archives_the_requested_task_page(self):
+        first = app._study_task({"title": "第一页", "status": "done", "taskPage": 1})
+        second = app._study_task({"title": "第二页", "status": "done", "taskPage": 2})
+        app.save_study(self.data(tasks=[first, second]))
+
+        class CaptureHandler:
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_archive_done(handler, {"taskPage": 2})
+        self.assertEqual(handler.response[0], 200)
+        self.assertEqual([task["id"] for task in app.load_study()["tasks"]], [first["id"]])
+        archive = json.loads(next(app.STUDY_ARCHIVE_DIR.glob("*/tasks.json")).read_text(encoding="utf-8"))
+        self.assertEqual([task["id"] for task in archive["tasks"]], [second["id"]])
+
+    def test_restore_preserves_original_task_page(self):
+        task = app._study_task({"title": "恢复", "taskPage": 8})
+        app.save_study(self.data(trash=[{"task": task, "deletedAt": task["updatedAt"]}]))
+
+        class CaptureHandler:
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_task_restore(handler, {"id": task["id"]})
+        self.assertEqual(handler.response[0], 200)
+        self.assertEqual(app.load_study()["tasks"][0]["taskPage"], 8)
+
+    def test_task_page_note_api_saves_and_clears_without_extra_page_state(self):
+        app.save_study(self.data())
+
+        class CaptureHandler:
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_study_task_page_note(handler, {"taskPage": 4, "note": "  冲刺阶段  "})
+        self.assertEqual(handler.response[0], 200)
+        self.assertEqual(app.load_study()["taskPageNotes"], {"4": "冲刺阶段"})
+        app.Handler._api_study_task_page_note(handler, {"taskPage": 4, "note": ""})
+        self.assertEqual(app.load_study()["taskPageNotes"], {})
 
 
 if __name__ == "__main__":

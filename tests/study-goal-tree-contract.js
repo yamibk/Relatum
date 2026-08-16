@@ -27,6 +27,7 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   "data-route-pop=\"new-stage\"",
   "data-route-pop=\"requirements\"",
   "command: 'add-requirement'",
+  "sent.taskPage = window.StudyView.currentTaskPage()",
   "command: 'remove-requirement'",
   "command: 'clear-primary-requirement'",
   'canvas:studyGoalTreeSimpleMode:v1',

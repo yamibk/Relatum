@@ -1734,6 +1734,7 @@ def empty_canvas_payload() -> dict:
 
 STUDY_STATUSES = {"active", "done"}
 STUDY_PROGRESS_MAX = 9999
+STUDY_TASK_PAGE_MAX = 99
 # Product UI does not impose a small milestone count. Keep a generous hard cap
 # so corrupt or hostile payloads cannot create an unbounded amount of UI work.
 STUDY_MILESTONES_MAX = 50
@@ -1839,6 +1840,54 @@ def _study_progress(source: object, existing: object = None, *, strict: bool, al
     }
 
 
+def _study_task_page(value: object, *, strict: bool = True) -> int:
+    """Normalize a task page while keeping existing version-6 data on page 1."""
+    if value is None or value == "":
+        return 1
+    if isinstance(value, bool):
+        if strict:
+            raise ValueError(f"任务页码需要是 1–{STUDY_TASK_PAGE_MAX} 之间的整数")
+        return 1
+    try:
+        page = int(value)
+    except (TypeError, ValueError):
+        if strict:
+            raise ValueError(f"任务页码需要是 1–{STUDY_TASK_PAGE_MAX} 之间的整数")
+        return 1
+    if strict and (not isinstance(value, int) or not 1 <= page <= STUDY_TASK_PAGE_MAX):
+        raise ValueError(f"任务页码需要是 1–{STUDY_TASK_PAGE_MAX} 之间的整数")
+    return max(1, min(STUDY_TASK_PAGE_MAX, page))
+
+
+def _study_task_page_notes(value: object, *, strict: bool = True) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        if strict:
+            raise ValueError("学习任务页说明格式不正确")
+        return {}
+    notes: dict[str, str] = {}
+    for raw_page, raw_note in value.items():
+        try:
+            page = int(raw_page)
+        except (TypeError, ValueError):
+            if strict:
+                raise ValueError("学习任务页说明页码不正确")
+            continue
+        if not 1 <= page <= STUDY_TASK_PAGE_MAX or isinstance(raw_page, bool):
+            if strict:
+                raise ValueError("学习任务页说明页码不正确")
+            continue
+        if not isinstance(raw_note, str):
+            if strict:
+                raise ValueError("学习任务页说明需要是文字")
+            continue
+        note = raw_note.strip()[:240]
+        if note:
+            notes[str(page)] = note
+    return notes
+
+
 def _study_task(
     source: dict | None = None, *, existing: dict | None = None,
     touch: bool = True, strict: bool = True,
@@ -1859,6 +1908,10 @@ def _study_task(
         "id": str(base.get("id") or raw.get("id") or uuid.uuid4().hex),
         "title": title[:160],
         "status": status,
+        "taskPage": _study_task_page(
+            raw.get("taskPage") if "taskPage" in raw else base.get("taskPage"),
+            strict=strict,
+        ),
         "progress": _study_progress(
             raw.get("progress") if "progress" in raw else None,
             base.get("progress"), strict=strict, allow_current=not touch,
@@ -2315,6 +2368,7 @@ def _study_goal_fresh_study(tasks: list[dict], trash: list[dict]) -> dict:
         "tasks": tasks,
         "trash": trash[:STUDY_TRASH_MAX],
         "temporaryTaskIds": [],
+        "taskPageNotes": {},
         "goalTrees": [tree],
         "activeTreeId": tree["id"],
     }
@@ -2368,6 +2422,7 @@ def load_study() -> dict:
         "tasks": tasks,
         "trash": trash[:STUDY_TRASH_MAX],
         "temporaryTaskIds": _study_temporary_task_ids(raw.get("temporaryTaskIds"), tasks),
+        "taskPageNotes": _study_task_page_notes(raw.get("taskPageNotes"), strict=True),
         "goalTrees": trees,
         "activeTreeId": active_id,
     }
@@ -2384,11 +2439,14 @@ def save_study(data: dict) -> None:
     _study_goal_sync_active(data)
     temporary_task_ids = _study_temporary_task_ids(data.get("temporaryTaskIds"), tasks)
     data["temporaryTaskIds"] = temporary_task_ids
+    task_page_notes = _study_task_page_notes(data.get("taskPageNotes"), strict=True)
+    data["taskPageNotes"] = task_page_notes
     payload = {
         "version": 6,
         "tasks": tasks,
         "trash": data.get("trash", [])[:STUDY_TRASH_MAX],
         "temporaryTaskIds": temporary_task_ids,
+        "taskPageNotes": task_page_notes,
         "goalTrees": trees,
         "activeTreeId": data["activeTreeId"],
     }
@@ -5345,7 +5403,7 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
 
     elif command in {"create-task", "attach-task"}:
         if command == "create-task":
-            source = {"title": body.get("title")}
+            source = {"title": body.get("title"), "taskPage": body.get("taskPage")}
             if body.get("target") not in (None, ""):
                 source["progress"] = {"target": body.get("target"), "milestones": []}
             task = _study_task(source)
@@ -8325,6 +8383,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_study_task_progress(body)
         if path == "/api/study-temporary-update":
             return self._api_study_temporary_update(body)
+        if path == "/api/study-task-page-note":
+            return self._api_study_task_page_note(body)
         if path == "/api/study-task-trash":
             return self._api_study_task_trash(body)
         if path == "/api/study-task-restore":
@@ -8334,7 +8394,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/study-trash-empty":
             return self._api_study_trash_empty()
         if path == "/api/study-archive-done":
-            return self._api_study_archive_done()
+            return self._api_study_archive_done(body)
         if path == "/api/study-goal-tree-command":
             return self._api_study_goal_tree_command(body)
         if path == "/api/canvas-activity":
@@ -8838,6 +8898,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         })
 
     # ── 内置学习页 ──
+    def _api_study_task_page_note(self, body: dict):
+        if not isinstance(body, dict):
+            return self._send_json(400, {"error": "请求格式不正确"})
+        try:
+            task_page = _study_task_page(body.get("taskPage"), strict=True)
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        note = body.get("note")
+        if not isinstance(note, str):
+            return self._send_json(400, {"error": "学习任务页说明需要是文字"})
+        data = load_study()
+        notes = _study_task_page_notes(data.get("taskPageNotes"), strict=True)
+        clean = note.strip()[:240]
+        if clean:
+            notes[str(task_page)] = clean
+        else:
+            notes.pop(str(task_page), None)
+        data["taskPageNotes"] = notes
+        try:
+            save_study(data)
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存学习任务页说明失败：{err}"})
+        self._send_json(200, {"ok": True, "taskPage": task_page, "note": clean})
+
     def _api_study_temporary_update(self, body: dict):
         if not isinstance(body, dict):
             return self._send_json(400, {"error": "请求格式不正确"})
@@ -8874,7 +8958,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_study_task_create(self, body: dict):
         data = load_study()
         try:
-            task = _study_task({"title": body.get("title") if isinstance(body, dict) else ""})
+            source = body if isinstance(body, dict) else {}
+            task = _study_task({
+                "title": source.get("title"),
+                "taskPage": source.get("taskPage"),
+            })
         except ValueError as err:
             return self._send_json(400, {"error": str(err)})
         data["tasks"].append(task)
@@ -8990,9 +9078,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         save_study(data)
         self._send_json(200, {"ok": True})
 
-    def _api_study_archive_done(self):
+    def _api_study_archive_done(self, body: dict | None = None):
         data = load_study()
-        completed = [task for task in data["tasks"] if task.get("status") == "done"]
+        try:
+            task_page = _study_task_page(
+                body.get("taskPage") if isinstance(body, dict) else None,
+                strict=True,
+            )
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        completed = [
+            task for task in data["tasks"]
+            if task.get("status") == "done" and task.get("taskPage", 1) == task_page
+        ]
         if not completed:
             return self._send_json(400, {"error": "已完成这一列还是空的"})
         folder = _study_archive_folder(len(completed))
@@ -9192,23 +9290,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         })
 
     def _api_study_reorder(self, body: dict):
-        """按 ids（任务 id 列表）重排 tasks 数组：数组顺序即显示/存盘顺序。
-        未列出的 id 容错地保持原相对顺序追加在后；未知 id 忽略。只重排、不改任何字段。"""
+        """Reorder one task page without disturbing any other page."""
         ids = body.get("ids")
         if not isinstance(ids, list):
             return self._send_json(400, {"error": "缺少 ids 数组"})
+        try:
+            task_page = _study_task_page(body.get("taskPage"), strict=True)
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
         data = load_study()
         tasks = data.get("tasks", [])
-        by_id = {t.get("id"): t for t in tasks}
+        page_tasks = [task for task in tasks if task.get("taskPage", 1) == task_page]
+        by_id = {task.get("id"): task for task in page_tasks}
         seen = set()
-        new_list = []
+        ordered_page = []
         for tid in ids:
             if tid in by_id and tid not in seen:
-                new_list.append(by_id[tid])
+                ordered_page.append(by_id[tid])
                 seen.add(tid)
-        for t in tasks:                       # 补回未提到的（容错，不丢任务）
-            if t.get("id") not in seen:
-                new_list.append(t)
+        for task in page_tasks:
+            if task.get("id") not in seen:
+                ordered_page.append(task)
+        page_iter = iter(ordered_page)
+        new_list = [
+            next(page_iter) if task.get("taskPage", 1) == task_page else task
+            for task in tasks
+        ]
         data["tasks"] = new_list
         save_study(data)
         self._send_json(200, {"ok": True})

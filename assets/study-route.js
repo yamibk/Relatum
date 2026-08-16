@@ -1106,6 +1106,10 @@
     if (busy) return Promise.reject(new Error(T('请稍候')));
     busy = true;
     var sent = Object.assign({}, body);
+    if (sent.command === 'create-task' && !sent.taskPage
+        && window.StudyView && typeof window.StudyView.currentTaskPage === 'function') {
+      sent.taskPage = window.StudyView.currentTaskPage();
+    }
     if (!['create-tree', 'switch-tree', 'delete-tree'].includes(sent.command) && !sent.treeId) {
       sent.treeId = state.activeTreeId;
     }

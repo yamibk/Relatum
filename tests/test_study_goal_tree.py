@@ -66,6 +66,17 @@ class StudyGoalTreeV4Tests(unittest.TestCase):
         loaded = app.load_study()
         self.assertEqual(loaded, fresh)
 
+    def test_task_created_inside_goal_tree_keeps_current_task_page(self):
+        data = self.data()
+        result = app.apply_study_goal_tree_command(data, {
+            "command": "create-task",
+            "title": "路线内新建",
+            "taskPage": 9,
+            "primaryLink": self.primary(side="right"),
+        })
+        task = next(item for item in data["tasks"] if item["id"] == result["taskId"])
+        self.assertEqual(task["taskPage"], 9)
+
     def test_old_version_is_rejected_without_overwrite(self):
         original = json.dumps({"version": 5, "tasks": [], "trash": []}, ensure_ascii=False)
         app.STUDY_FILE.write_text(original, encoding="utf-8")
