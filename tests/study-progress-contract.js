@@ -26,6 +26,11 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   'data-role="study-temporary-layer"',
   'data-role="study-temporary-panel"',
   'data-role="study-temporary-list"',
+  'data-role="study-task-page-rail"',
+  'data-role="study-task-page-top-list"',
+  'data-role="study-task-page-bottom-list"',
+  'data-role="study-task-page-note-trigger"',
+  'data-role="study-task-page-note"',
 ].forEach((needle) => assert(html.includes(needle), 'missing study progress markup: ' + needle));
 
 const studyListMarker = html.indexOf('data-role="study-list"');
@@ -38,6 +43,25 @@ assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(
 
 [
   "const VIEW_MODE_KEY = 'study:viewMode:v2'",
+  "const STUDY_TASK_PAGE_KEY = 'study:taskPage:v1'",
+  'const STUDY_TASK_PAGE_MAX = 99',
+  'function tasksForPage(page)',
+  'function taskPageCapacity()',
+  'Math.max(taskPageCapacity(), currentTaskPage, highestTaskPage())',
+  'var topCount = Math.ceil(total / 2)',
+  'function setCurrentTaskPage(page, options)',
+  "localStorage.setItem(STUDY_TASK_PAGE_KEY, String(next))",
+  'const STUDY_TASK_PAGE_SWITCH_MS = 150',
+  'taskPageSwitchSeq',
+  'render({ pageSwitch: true })',
+  'function startTaskPageEntrance()',
+  'function stopTaskPageEntrance()',
+  "view.style.transition = 'none'",
+  'function incrementalSyncCardList(container, tasks, completed, emptyMessage, options)',
+  'silent = !!(options && options.pageSwitch)',
+  'if (!(options && options.pageSwitch)) {',
+  'function beginTaskPageNoteEdit(event)',
+  "post('/api/study-task-page-note'",
   "viewMode === 'list' ? 'progress' : 'list'",
   "post('/api/study-task-progress'",
   'function buildProgressCard(task, completed)',
@@ -47,7 +71,7 @@ assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(
   "menu.setAttribute('aria-expanded', progressSettingsId === task.id ? 'true' : 'false')",
   'function positionProgressSettings()',
   'function commitProgressSettings(id, box)',
-  'function renderProgress()',
+  'function renderProgress(options)',
   'function studyGoalReady(task, progress)',
   'function buildStudyProgressValue(progress, goalReady)',
   'function syncStudyProgressValue(value, progress, goalReady)',
@@ -188,7 +212,7 @@ const listQuickAddSection = study.slice(study.indexOf('function listQuickAdd()')
 const progressQuickAddSection = study.slice(study.indexOf('function progressQuickAdd()'), study.indexOf('function syncProgressCardFromTask'));
 const progressSyncSection = study.slice(study.indexOf('function syncProgressCardFromTask'), study.indexOf('function incrementalSyncCardList'));
 const settingsCommitSection = study.slice(study.indexOf('function commitProgressSettings(id, box)'), study.indexOf('function progressQuickAdd()'));
-const progressMutationSection = study.slice(study.indexOf('function changeTaskProgress(task, delta)'), study.indexOf('function renderProgress()'));
+const progressMutationSection = study.slice(study.indexOf('function changeTaskProgress(task, delta)'), study.indexOf('function renderProgress(options)'));
 assert(taskRowSection.includes("titleEl.addEventListener('dblclick'")
   && !taskRowSection.includes("row.addEventListener('dblclick'"),
   'compact Study rename must only start from the task title');
@@ -242,6 +266,23 @@ assert(backend.includes('def _study_temporary_task_ids(value: object, tasks: lis
   && backend.includes('if path == "/api/study-temporary-update"')
   && backend.includes('def _api_study_temporary_update(self, body: dict):'),
   'temporary-task references must be normalized and persisted through the Study API');
+assert(backend.includes('STUDY_TASK_PAGE_MAX = 99')
+  && backend.includes('"taskPage": _study_task_page(')
+  && backend.includes('def _study_task_page_notes(value: object')
+  && backend.includes('def _api_study_task_page_note(self, body: dict):')
+  && backend.includes('def _api_study_archive_done(self, body: dict | None = None):'),
+  'task pages and optional page notes must remain part of the version-6 Study contract');
+assert(study.includes("post('/api/study-reorder', {\n          taskPage: taskPage")
+  && study.includes("post('/api/study-archive-done', { taskPage: taskPage })")
+  && study.includes("taskPage: currentTaskPage"),
+  'create, reorder, and archive requests must retain their task-page scope');
+assert(styles.includes('.study-task-page-scroll::-webkit-scrollbar { display: none; }')
+  && styles.includes('grid-template-rows: minmax(0, 1fr) 142px minmax(0, 1fr)')
+  && styles.includes('.study-task-page-rail.auto-hide.revealed'),
+  'the task-page rail must remain symmetric, auto-hidden, and scrollbar-free');
+assert(styles.includes('.study-task-page-orb {\n  position: absolute; left: 8px; top: 0; z-index: 0; width: 34px; height: 34px;')
+  && styles.includes('transition: transform 150ms var(--easing-soft), opacity 120ms var(--easing-soft);'),
+  'the task-page orb must slide in sync with the page-switch fade instead of the shared start-page timing');
 
 [
   '.study-progress-card {',

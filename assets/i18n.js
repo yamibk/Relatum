@@ -100,6 +100,7 @@
     '添加今日任务': 'Add today’s task', '开始专注': 'Start focus', '专注投入': 'Focus time',
     '尚无记录': 'No sessions yet', '状态': 'Status', '标题': 'Title', '备注': 'Notes',
     '学习任务': 'Study tasks', '学习任务进度': 'Study task progress', '任务清单': 'Task list',
+    '学习任务页切换': 'Switch study task page', '学习任务页说明': 'Study task page note',
     '临时任务': 'Temporary tasks', '打开临时任务': 'Open temporary tasks', '收起临时任务': 'Close temporary tasks',
     '加入临时任务': 'Add to temporary tasks', '移出临时任务': 'Remove from temporary tasks',
     '把未完成任务拖到屏幕最右侧，或从任务设置中加入。': 'Drag an active task to the far right, or add it from task settings.',
@@ -1317,6 +1318,8 @@
     if (match) return 'Expand group · ' + match[1];
     match = source.match(/^折叠分组\s*·\s*(.+)$/);
     if (match) return 'Collapse group · ' + match[1];
+    match = source.match(/^学习任务第\s*(\d+)\s*页$/);
+    if (match) return 'Study task page ' + match[1];
 
     return source;
   }
