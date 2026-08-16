@@ -155,6 +155,8 @@
   let taskPageSwitchSeq = 0;
   let taskPageOrbSettleUntil = 0;
   let taskPageEntranceTimer = 0;
+  let taskPageWheelAccum = 0;
+  let taskPageWheelTimer = 0;
   let taskPageResizeFrame = 0;
   let taskPageNoteEdit = null;
   let taskPageNoteMutation = Promise.resolve();
@@ -292,6 +294,11 @@
     taskPageOrbEl.style.opacity = visible ? '1' : '0';
     taskPageOrbEl.style.transform = 'translate3d(0,' + (buttonRect.top - railRect.top) + 'px,0)';
   }
+  function currentOrbMs() {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue('--start-orb-ms');
+    var ms = parseFloat(raw);
+    return Number.isFinite(ms) && ms > 0 ? ms : 239;
+  }
   function renderTaskPageRail() {
     if (!taskPageRailEl) return;
     var focusedPage = taskPageRailEl.contains(document.activeElement)
@@ -307,11 +314,12 @@
       var focusTarget = taskPageRailEl.querySelector('[data-task-page="' + focusedPage + '"]') || active;
       if (focusTarget) focusTarget.focus({ preventScroll: true });
     }
+    var orbMs = currentOrbMs();
     requestAnimationFrame(function () {
-      taskPageOrbSettleUntil = performance.now() + STUDY_TASK_PAGE_SWITCH_MS + 10;
+      taskPageOrbSettleUntil = performance.now() + orbMs + 10;
       positionTaskPageOrb(false);
       // 锁到期补位：若滑行期间用户滚动页栏并停下，锁内被跳过的定位在到期后补一次
-      window.setTimeout(function () { positionTaskPageOrb(false); }, STUDY_TASK_PAGE_SWITCH_MS + 20);
+      window.setTimeout(function () { positionTaskPageOrb(false); }, orbMs + 20);
     });
   }
   function setTaskPageRailVisible(visible) {
@@ -398,6 +406,31 @@
       event.preventDefault();
       setCurrentTaskPage(Number(button.dataset.taskPage));
     });
+    // 滚轮切页：页栏上向下滚 → 下一页，向上滚 → 上一页；
+    // 列表本方向仍可滚动时先滚动列表，滚到边缘后再滚才切页
+    taskPageRailEl.addEventListener('wheel', function (event) {
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      var direction = event.deltaY > 0 ? 1 : -1;
+      var scroller = event.target.closest ? event.target.closest('.study-task-page-scroll') : null;
+      if (scroller) {
+        var maxScroll = scroller.scrollHeight - scroller.clientHeight;
+        var atEdge = direction > 0 ? scroller.scrollTop >= maxScroll - 1 : scroller.scrollTop <= 1;
+        if (!atEdge) {
+          // 列表仍可滚动：只拦冒泡，滚动留在页栏内，页面不响应
+          event.stopPropagation();
+          return;
+        }
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      taskPageWheelAccum += event.deltaY;
+      window.clearTimeout(taskPageWheelTimer);
+      taskPageWheelTimer = window.setTimeout(function () { taskPageWheelAccum = 0; }, 200);
+      if (Math.abs(taskPageWheelAccum) < 24) return;   // 阈值，触控板友好、防误触
+      var dir = taskPageWheelAccum > 0 ? 1 : -1;
+      taskPageWheelAccum = 0;
+      setCurrentTaskPage(currentTaskPage + dir);
+    }, { passive: false });
     taskPageRailEl.addEventListener('pointerenter', function () {
       taskPageRailOver = true;
       setTaskPageRailVisible(true);
