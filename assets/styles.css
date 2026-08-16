@@ -42604,8 +42604,8 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
   position: absolute; left: 8px; top: 0; z-index: 0; width: 34px; height: 34px;
   border-radius: 11px; background: #242521; box-shadow: 0 6px 14px rgba(26,26,26,.16);
   pointer-events: none; will-change: transform;
-  /* 与切页整体淡出淡入节奏对齐（不使用起步页共用的 --start-orb-ms） */
-  transition: transform 150ms var(--easing-soft), opacity 120ms var(--easing-soft);
+  /* 与书脊胶囊同款节奏（--start-orb-ms 跟随翻页速度偏好） */
+  transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft);
 }
 .study-progress-view,
 .study-list { transition: opacity 150ms var(--easing-soft), transform 180ms var(--easing-soft); }

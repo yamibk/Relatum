@@ -57,6 +57,8 @@ assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(
   'function startTaskPageEntrance()',
   'function stopTaskPageEntrance()',
   "view.style.transition = 'none'",
+  "taskPageRailEl.addEventListener('wheel'",
+  "setCurrentTaskPage(currentTaskPage + dir)",
   'function incrementalSyncCardList(container, tasks, completed, emptyMessage, options)',
   'silent = !!(options && options.pageSwitch)',
   'if (!(options && options.pageSwitch)) {',
@@ -281,8 +283,12 @@ assert(styles.includes('.study-task-page-scroll::-webkit-scrollbar { display: no
   && styles.includes('.study-task-page-rail.auto-hide.revealed'),
   'the task-page rail must remain symmetric, auto-hidden, and scrollbar-free');
 assert(styles.includes('.study-task-page-orb {\n  position: absolute; left: 8px; top: 0; z-index: 0; width: 34px; height: 34px;')
-  && styles.includes('transition: transform 150ms var(--easing-soft), opacity 120ms var(--easing-soft);'),
-  'the task-page orb must slide in sync with the page-switch fade instead of the shared start-page timing');
+  && styles.includes('transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft);'),
+  'the task-page orb must slide with the shared start-page orb timing');
+assert(study.includes('function currentOrbMs()')
+  && !study.includes("taskPageOrbEl.style.width = '")
+  && study.includes('taskPageOrbSettleUntil = performance.now() + orbMs + 10'),
+  'the task-page orb must keep its scroll-lock in sync with the orb duration without stretching');
 
 [
   '.study-progress-card {',
