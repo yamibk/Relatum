@@ -893,6 +893,9 @@ html[data-ui-language="en"] .study-progress-head h1 span,
 html[data-ui-language="en"] .focus-daily-view .focus-daily-head h1 span {
   font-family: var(--font-interface-en);
 }
+html[data-ui-language="en"] .study-task-page-note {
+  font-family: var(--font-display-en);
+}
 html[data-ui-language="en"] .page-title { font-size: clamp(42px, 5vw, 72px); }
 html[data-ui-language="en"] .study-hero h1,
 html[data-ui-language="en"] .study-cadence-head h2,
@@ -42539,13 +42542,13 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
 .study-progress-head h1 span { margin-left: 6px; color: var(--text-tertiary); font-size: 14px; font-weight: 600; letter-spacing: 0; }
 .study-task-page-note {
   display: block; flex: 1; min-width: 72px; min-height: 42px; margin-left: 18px;
-  overflow: hidden; color: var(--text-secondary); font-size: 13px; line-height: 42px;
+  overflow: hidden; color: #000; font-size: 22px; font-weight: 600; line-height: 42px;
   text-overflow: ellipsis; white-space: nowrap; cursor: text;
 }
 .study-task-page-note-input {
   width: min(100%, 560px); height: 34px; padding: 0 2px;
   border: 0; border-bottom: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
-  outline: 0; color: var(--text-secondary); background: transparent; font: inherit;
+  outline: 0; color: #000; background: transparent; font: inherit;
 }
 .study-task-page-note-input:focus { border-bottom-color: color-mix(in srgb, var(--accent) 48%, var(--text)); }
 .study-progress-actions { display: flex; align-items: center; gap: 8px; }
@@ -43685,6 +43688,8 @@ body.start-page[data-start-theme="dark"] .study-task-page-button {
 body.start-page[data-start-theme="dark"] .study-task-page-button:hover { color: #f8f6ef; background: #242725; }
 body.start-page[data-start-theme="dark"] .study-task-page-button.is-active { color: #1d201d; background: transparent; }
 body.start-page[data-start-theme="dark"] .study-task-page-orb { background: #f3f0e7; box-shadow: 0 6px 16px rgba(0,0,0,.3); }
+body.start-page[data-start-theme="dark"] .study-task-page-note,
+body.start-page[data-start-theme="dark"] .study-task-page-note-input { color: #f8f6ef; }
 body.start-page[data-start-theme="dark"] .study-temporary-card { border-color: rgba(255,255,255,.1); background: #242725; box-shadow: 0 8px 22px rgba(0,0,0,.19); }
 body.start-page[data-start-theme="dark"] .study-progress-ghost { background: rgba(36, 38, 37, .98); border-color: rgba(255, 255, 255, .18); }
 body.start-page[data-start-theme="dark"] .study-progress-grip:hover { color: rgba(255, 255, 255, 0.72); }
