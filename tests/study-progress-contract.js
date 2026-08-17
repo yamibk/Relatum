@@ -282,9 +282,12 @@ assert(styles.includes('.study-task-page-scroll::-webkit-scrollbar { display: no
   && styles.includes('grid-template-rows: minmax(0, 1fr) 142px minmax(0, 1fr)')
   && styles.includes('.study-task-page-rail.auto-hide.revealed'),
   'the task-page rail must remain symmetric, auto-hidden, and scrollbar-free');
-assert(styles.includes('.study-task-page-orb {\n  position: absolute; left: 8px; top: 0; z-index: 0; width: 34px; height: 34px;')
+assert(styles.includes('.study-task-page-orb {\n  position: absolute; left: 8px; top: 0; z-index: 2; width: 34px; height: 34px;')
   && styles.includes('transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft);'),
   'the task-page orb must slide with the shared start-page orb timing');
+assert(styles.includes('.study-task-page-button.is-active,\n.study-task-page-button.is-active:hover {\n  color: #f8f6ef; background: transparent;')
+  && styles.includes('z-index: 3;'),
+  'the active page button must keep its white digit above the orb so the slider never fades under translucent buttons');
 assert(study.includes('function currentOrbMs()')
   && !study.includes("taskPageOrbEl.style.width = '")
   && study.includes('taskPageOrbSettleUntil = performance.now() + orbMs + 10'),
