@@ -464,20 +464,9 @@
       + T('添加') + '">＋</button><button type="button" data-route-action="menu" aria-label="'
       + T('更多') + '">⋯</button></span>';
   }
-  var BRANCH_COLORS = [
-    { value: '', label: '默认' },
-    { value: '#fce2cc', label: '杏橙' },
-    { value: '#e2ece4', label: '薄荷' },
-    { value: '#e8ecf2', label: '天空' },
-    { value: '#f0dee4', label: '蔷薇' },
-    { value: '#ece2ee', label: '丁香' },
-    { value: '#f3ecd8', label: '暖金' },
-    { value: '#f2d9d6', label: '赤霞' },
-    { value: '#def0ec', label: '青瓷' },
-    { value: '#eae4f2', label: '雾蓝' },
-    { value: '#eaf0dc', label: '新绿' },
-    { value: '#f0efe9', label: '月灰' },
-  ];
+  var BRANCH_COLORS = window.RelatumStudyPalette && window.RelatumStudyPalette.COLORS
+    ? window.RelatumStudyPalette.COLORS
+    : [{ value: '', label: '默认' }];
   function colorPaletteHTML(currentColor) {
     currentColor = String(currentColor || '').trim();
     var swatches = BRANCH_COLORS.map(function (item) {
@@ -727,10 +716,15 @@
         transitionFill(nextFill, nextFill ? Number(nextFill.dataset.progressTarget || 0) : 0, oldFillPercent);
         transitionTaskCheck(element.querySelector('.study-route-task-check'), oldCheckState);
       }
-      if (placement.kind === 'branch' && placement.node && placement.node.color) {
-        element.style.setProperty('--branch-color', placement.node.color);
-        element.dataset.branchColor = placement.node.color;
-      } else if (placement.kind === 'branch') {
+      var routeNodeColor = placement.kind === 'branch'
+        ? (placement.node && placement.node.color) || ''
+        : (placement.kind === 'task'
+          ? ((findTask(placement.node.taskId) || {}).color) || ''
+          : '');
+      if (routeNodeColor) {
+        element.style.setProperty('--branch-color', routeNodeColor);
+        element.dataset.branchColor = routeNodeColor;
+      } else if (placement.kind === 'branch' || placement.kind === 'task') {
         element.style.removeProperty('--branch-color');
         delete element.dataset.branchColor;
       }
@@ -933,7 +927,8 @@
     var menuTask = kind === 'task' ? findTask(anchor.dataset.taskId) : null;
     var unavailable = !!(menuTask && !(model.availability.get(anchor.dataset.nodeId) || { available: true }).available);
     var html = '<div class="study-route-menu"><button type="button" data-route-pop="rename">' + T('改名') + '</button>';
-    if (kind === 'task') html += '<button type="button" data-route-pop="new-task">' + T('新建后续任务')
+    if (kind === 'task') html += '<button type="button" data-route-pop="color">' + T('颜色')
+      + '</button><button type="button" data-route-pop="new-task">' + T('新建后续任务')
       + '</button>' + (simple ? '' : '<button type="button" data-route-pop="new-stage">' + T('新建后续阶段') + '</button>')
       + '<button type="button" data-route-pop="attach-task">' + T('接入已有任务')
       + '</button>' + (!simple || conditionCount ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
@@ -1862,7 +1857,18 @@
         return command({ command: 'detach-task', taskId: task.id });
       });
     }
+    if (action === 'color') {
+      var colorTask = anchor.dataset.kind === 'task' ? findTask(anchor.dataset.taskId) : null;
+      if (!colorTask) return;
+      openPopover(anchor, colorPaletteHTML(colorTask.color || ''));
+      return;
+    }
     if (action === 'set-color') {
+      if (anchor.dataset.kind === 'task') {
+        var taskColorTarget = findTask(anchor.dataset.taskId);
+        if (taskColorTarget) updateTask(taskColorTarget, { color: control.dataset.color || '' }).catch(showError);
+        return;
+      }
       return command({ command: 'update-branch', nodeId: anchor.dataset.nodeId, color: control.dataset.color || '' }).catch(showError);
     }
     if (action === 'delete-branch') {

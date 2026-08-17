@@ -720,6 +720,7 @@
       title: payload.title || '未命名任务',
       status: STATUS.includes(payload.status) ? payload.status : 'active',
       taskPage: normalizeTaskPage(payload.taskPage),
+      color: '',
       progress: { current: 0, target: 0, milestones: [] },
       createdAt: now,
       updatedAt: now,
@@ -1027,6 +1028,7 @@
     setStudyAriaLabel(remove, '移出临时任务');
     remove.addEventListener('click', function () { removeTemporaryTask(task, card); });
     card.append(check, main, remove);
+    applyTaskColor(card, task);
     return card;
   }
 
@@ -1714,6 +1716,7 @@
     }
     var title = row.querySelector('.study-list-title');
     if (title) title.textContent = task.title || '未命名';
+    applyTaskColor(row, task);
   }
 
   function buildListGroupHead(group, tasks) {
@@ -1876,6 +1879,7 @@
       if (row.classList.contains('renaming')) return;
       beginRename(row, task, titleEl);
     });
+    applyTaskColor(row, task);
     return row;
   }
 
@@ -2224,6 +2228,20 @@
     return shell;
   }
 
+  // 任务卡片着色：颜色值来自目标树同款 12 色粉彩家族（study-palette.js），
+  // 通过 --task-color 变量与 data-task-color 属性驱动 CSS 底色与左侧色条。
+  function applyTaskColor(el, task) {
+    if (!el) return;
+    var color = task && task.color ? String(task.color).trim() : '';
+    if (color) {
+      el.style.setProperty('--task-color', color);
+      el.setAttribute('data-task-color', color);
+    } else {
+      el.style.removeProperty('--task-color');
+      el.removeAttribute('data-task-color');
+    }
+  }
+
   function buildProgressCard(task, completed) {
     const progress = taskProgress(task);
     const goalReady = !completed && studyGoalReady(task, progress);
@@ -2309,6 +2327,7 @@
     detailGroup.appendChild(menu);
 
     card.appendChild(detailGroup);
+    applyTaskColor(card, task);
     return card;
   }
 
@@ -2778,6 +2797,113 @@
     window.setTimeout(finish, 190);
   }
 
+  // —— 调色盘浮层：右键任务卡片 / 图例色块弹出，与目标树阶段同款 12 色 ——
+  let studyColorPopover = null;
+  let studyColorTrigger = null;
+  let studyColorPositionFrame = 0;
+  let studyColorAnchorX = 0;
+  let studyColorAnchorY = 0;
+  let studyColorPick = null;
+
+  function buildStudyColorPalette(currentColor) {
+    var colors = (window.RelatumStudyPalette && window.RelatumStudyPalette.COLORS) || [];
+    currentColor = String(currentColor || '').trim();
+    var swatches = colors.map(function (item) {
+      var isActive = item.value === currentColor || (!item.value && !currentColor);
+      var style = item.value ? ' style="background:' + item.value + '"' : '';
+      return '<button type="button" class="study-route-color-swatch' + (isActive ? ' is-active' : '') + '"'
+        + ' data-color="' + escapeHtml(item.value) + '"'
+        + ' aria-label="' + escapeHtml(item.label) + '"' + style + '></button>';
+    }).join('');
+    return '<div class="study-route-color-palette">' + swatches + '</div>';
+  }
+
+  function positionStudyColorPopover() {
+    if (!studyColorPopover) return;
+    var box = studyColorPopover.getBoundingClientRect();
+    var edge = 12;
+    var left = studyColorAnchorX + 10;
+    if (left + box.width > window.innerWidth - edge) left = studyColorAnchorX - box.width - 10;
+    left = Math.max(edge, left);
+    var top = studyColorAnchorY + 10;
+    if (top + box.height > window.innerHeight - edge) top = studyColorAnchorY - box.height - 10;
+    top = Math.max(edge, top);
+    studyColorPopover.style.left = Math.round(left) + 'px';
+    studyColorPopover.style.top = Math.round(top) + 'px';
+  }
+
+  function scheduleStudyColorPosition() {
+    if (!studyColorPopover || studyColorPositionFrame) return;
+    studyColorPositionFrame = requestAnimationFrame(function () {
+      studyColorPositionFrame = 0;
+      if (!studyColorTrigger || !studyColorTrigger.isConnected) {
+        closeStudyColorPopover(false, true);
+        return;
+      }
+      positionStudyColorPopover();
+    });
+  }
+
+  function openStudyColorPopover(trigger, clientX, clientY, options) {
+    options = options || {};
+    if (!trigger) return;
+    if (studyColorPopover) closeStudyColorPopover(false, true);
+    studyColorTrigger = trigger;
+    studyColorAnchorX = clientX;
+    studyColorAnchorY = clientY;
+    studyColorPick = typeof options.pick === 'function' ? options.pick : null;
+    var box = document.createElement('section');
+    box.className = 'study-color-popover';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', options.label || T('选择颜色'));
+    box.innerHTML = buildStudyColorPalette(options.currentColor || '');
+    box.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+    box.addEventListener('click', function (event) {
+      var swatch = event.target.closest('button[data-color]');
+      if (!swatch) return;
+      var value = swatch.dataset.color || '';
+      var pick = studyColorPick;
+      closeStudyColorPopover(false, true);
+      if (pick) pick(value);
+    });
+    studyColorPopover = box;
+    document.body.appendChild(box);
+    positionStudyColorPopover();
+    requestAnimationFrame(function () {
+      if (!studyColorPopover) return;
+      studyColorPopover.classList.add('is-open');
+      positionStudyColorPopover();
+    });
+    window.setTimeout(function () {
+      if (!studyColorPopover) return;
+      var active = studyColorPopover.querySelector('.study-route-color-swatch.is-active');
+      var target = active || studyColorPopover.querySelector('.study-route-color-swatch');
+      if (target) target.focus();
+    }, prefersReduced ? 0 : 80);
+  }
+
+  function closeStudyColorPopover(restoreFocus, instant) {
+    var popover = studyColorPopover;
+    var trigger = studyColorTrigger;
+    if (!popover) return;
+    if (studyColorPositionFrame) cancelAnimationFrame(studyColorPositionFrame);
+    studyColorPositionFrame = 0;
+    studyColorPopover = null;
+    studyColorTrigger = null;
+    studyColorPick = null;
+    var finish = function () {
+      if (popover.isConnected) popover.remove();
+      if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+    };
+    if (instant || prefersReduced) {
+      finish();
+      return;
+    }
+    popover.classList.remove('is-open');
+    popover.classList.add('is-closing');
+    window.setTimeout(finish, 160);
+  }
+
   function commitProgressSettings(id, box) {
     var task = findTask(id);
     if (!task || box !== progressSettingsPopover) return;
@@ -2885,6 +3011,9 @@
         if (btns[1]) btns[1].disabled = progress.current >= progress.target;
       }
     }
+
+    // 颜色（增量同步时也要跟随）
+    applyTaskColor(card, task);
   }
 
   // —— 增量同步：不销毁卡片，只更新 / 移动 / 新增 / 移除 ——
@@ -3070,6 +3199,7 @@
   }
 
   function render(options) {
+    closeStudyColorPopover(false, true);
     applyViewMode();
     renderTaskPageNote();
     if (viewMode === 'list') {
@@ -4433,6 +4563,128 @@
     });
   }
 
+  // 右键任务卡片 → 调色盘（进度卡 / 清单行 / 临时侧栏共用；按钮与表单控件不拦截）。
+  // 与目标树一致：同一卡片再次右键 = 关闭。
+  if (studyViewEl) {
+    studyViewEl.addEventListener('contextmenu', function (event) {
+      var card = event.target.closest('.study-progress-card, .study-list-row, .study-temporary-card');
+      if (!card || event.target.closest('button, input, select, textarea, a')) return;
+      var task = findTask(card.dataset.id);
+      if (!task) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (studyColorPopover && studyColorTrigger === card) {
+        closeStudyColorPopover(true);
+        return;
+      }
+      openStudyColorPopover(card, event.clientX, event.clientY, {
+        currentColor: task.color || '',
+        label: T('选择颜色'),
+        pick: function (value) {
+          queueTaskPatch(task, { color: value }).then(function () {
+            render();
+          }).catch(function (error) {
+            showToast(error.message);
+            return refresh();
+          });
+          // 乐观 DOM 上色：queueTaskPatch 已同步打好数据补丁，这里不等 POST 往返
+          // 立即刷新所有可见卡片，消除偶发网络/落盘延迟造成的变色滞后。
+          document.querySelectorAll(
+            '.study-progress-card[data-id], .study-list-row[data-id], .study-temporary-card[data-id]'
+          ).forEach(function (el) {
+            if (el.dataset.id === task.id) applyTaskColor(el, task);
+          });
+        },
+      });
+    });
+  }
+
+  // —— 完整视图右上角颜色图例：4 个圆角色块，右键调色，localStorage 持久化 ——
+  const STUDY_LEGEND_KEY = 'study:legend:v1';
+  const STUDY_LEGEND_COUNT = 4;
+  const STUDY_LEGEND_DEFAULT = ['', '', '', ''];
+  const studyLegendEl = document.querySelector('[data-role="study-legend"]');
+  let legendColors = loadStudyLegend();
+
+  function isLegendColor(value) {
+    return typeof value === 'string' && (value === '' || /^#[0-9a-fA-F]{6}$/.test(value));
+  }
+
+  function loadStudyLegend() {
+    var colors = STUDY_LEGEND_DEFAULT.slice();
+    try {
+      var raw = JSON.parse(localStorage.getItem(STUDY_LEGEND_KEY) || 'null');
+      if (raw && Array.isArray(raw.colors) && raw.colors.length === STUDY_LEGEND_COUNT) {
+        var next = [];
+        for (var i = 0; i < STUDY_LEGEND_COUNT; i += 1) {
+          next.push(isLegendColor(raw.colors[i]) ? raw.colors[i] : '');
+        }
+        colors = next;
+      }
+    } catch (e) { /* 损坏回退默认 */ }
+    return colors;
+  }
+
+  function saveStudyLegend() {
+    try {
+      localStorage.setItem(STUDY_LEGEND_KEY, JSON.stringify({ version: 1, colors: legendColors }));
+    } catch (e) { /* 存储不可用（隐私模式/配额）时静默，仅本次会话生效 */ }
+  }
+
+  function setLegendColor(index, value) {
+    if (index < 0 || index >= STUDY_LEGEND_COUNT) return;
+    legendColors[index] = isLegendColor(value) ? value : '';
+    saveStudyLegend();
+    applyStudyLegend();
+  }
+
+  function applyStudyLegend() {
+    if (!studyLegendEl) return;
+    var chips = studyLegendEl.querySelectorAll('.study-legend-chip');
+    chips.forEach(function (chip) {
+      var index = Number(chip.dataset.legendIndex);
+      var color = legendColors[index] || '';
+      chip.classList.toggle('is-default', !color);
+      if (color) chip.style.background = color;
+      else chip.style.removeProperty('background');
+      chip.setAttribute('aria-label', T('图例色') + ' ' + (index + 1));
+    });
+    studyLegendEl.setAttribute('aria-label', T('颜色图例'));
+  }
+
+  if (studyLegendEl) {
+    studyLegendEl.addEventListener('contextmenu', function (event) {
+      var chip = event.target.closest('.study-legend-chip');
+      if (!chip) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (studyColorPopover && studyColorTrigger === chip) {
+        closeStudyColorPopover(true);
+        return;
+      }
+      var index = Number(chip.dataset.legendIndex);
+      openStudyColorPopover(chip, event.clientX, event.clientY, {
+        currentColor: legendColors[index] || '',
+        label: T('选择颜色'),
+        pick: function (value) { setLegendColor(index, value); },
+      });
+    });
+    studyLegendEl.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      var chip = event.target.closest('.study-legend-chip');
+      if (!chip) return;
+      event.preventDefault();
+      var rect = chip.getBoundingClientRect();
+      var index = Number(chip.dataset.legendIndex);
+      openStudyColorPopover(chip, rect.left + rect.width / 2, rect.bottom, {
+        currentColor: legendColors[index] || '',
+        label: T('选择颜色'),
+        pick: function (value) { setLegendColor(index, value); },
+      });
+    });
+  }
+  applyStudyLegend();
+
   // 全局点击：关闭已固定的里程碑 tooltip、取消浮动设置卡；点击弹窗遮罩关闭
   document.addEventListener('click', function (event) {
     if (!event.target.closest('.study-progress-milestone')) {
@@ -4444,6 +4696,11 @@
       closeStudyMilestoneDialog(false);
       return;
     }
+    if (studyColorPopover
+        && !studyColorPopover.contains(event.target)
+        && !(studyColorTrigger && studyColorTrigger.contains(event.target))) {
+      closeStudyColorPopover(true);
+    }
     if (!studyMilestoneDialog && progressSettingsPopover
         && !progressSettingsPopover.contains(event.target)
         && !(progressSettingsTrigger && progressSettingsTrigger.contains(event.target))) {
@@ -4453,6 +4710,8 @@
 
   window.addEventListener('resize', scheduleProgressSettingsPosition);
   window.addEventListener('scroll', scheduleProgressSettingsPosition, true);
+  window.addEventListener('resize', scheduleStudyColorPosition);
+  window.addEventListener('scroll', scheduleStudyColorPosition, true);
 
   document.addEventListener('keydown', (event) => {
     if (progressDrag && event.key === 'Escape') {
@@ -4480,7 +4739,7 @@
     }
     if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
         && studyPageActive && viewMode === 'progress' && !event.defaultPrevented) {
-      var blockingLayer = progressSettingsPopover || studyMilestoneDialog
+      var blockingLayer = studyColorPopover || progressSettingsPopover || studyMilestoneDialog
         || (trashPanel && !trashPanel.hidden)
         || document.querySelector('.study-progress-compose.is-open, .study-route-overlay:not([hidden])');
       if (!blockingLayer) {
@@ -4492,7 +4751,10 @@
       }
     }
     if (event.key === 'Escape') {
-      if (progressSettingsPopover) {
+      if (studyColorPopover) {
+        event.preventDefault();
+        closeStudyColorPopover(true);
+      } else if (progressSettingsPopover) {
         event.preventDefault();
         closeProgressSettings(true);
       } else if (!trashPanel.hidden) {
@@ -4515,6 +4777,7 @@
       if (task) syncProgressCardFromTask(card, task);
     });
     renderTemporaryPanel();
+    applyStudyLegend();
     if (!activityPayload) return;
     const host = document.querySelector('[data-role="study-cadence"]');
     if (host) renderCadence(activityPayload, { intro: false });

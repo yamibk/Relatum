@@ -765,6 +765,7 @@
     '胶囊标签': 'Pill Label', '角标框': 'Corner Frame', '括号标记': 'Bracket',
     '问号': 'Question', '重点便签': 'Emphasis Note', '旁注框': 'Side Note',
     '文字框': 'Text Box', '图片': 'Image', '颜色': 'Color', '预设': 'Preset',
+    '选择颜色': 'Choose a color', '图例色': 'Legend color', '颜色图例': 'Color legend',
     '插入图案': 'Insert Shapes', '插入本地图片': 'Insert Local Image',
     '插入 PDF / Markdown 附件': 'Insert PDF / Markdown',
     '盒子 / 分组预设': 'Box / Group Presets', '全局默认': 'Global Default',
