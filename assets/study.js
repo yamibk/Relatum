@@ -151,6 +151,8 @@
   let currentTaskPage = readTaskPage();
   let taskPageRailVisible = false;
   let taskPageRailOver = false;
+  let taskPagePointerX = -1;
+  let taskPagePointerY = -1;
   let taskPageSwitchTimer = 0;
   let taskPageSwitchSeq = 0;
   let taskPageOrbSettleUntil = 0;
@@ -322,8 +324,19 @@
       window.setTimeout(function () { positionTaskPageOrb(false); }, orbMs + 20);
     });
   }
-  function setTaskPageRailVisible(visible) {
+  // 临时任务标签带（标签矩形上下各扩 20px）：带内任何位置都不显示页栏，
+  // 无论鼠标在带内往左还是往右移动。只做硬拦截，不参与显示来源判定。
+  function taskPagePointerInTabBlock() {
+    if (taskPagePointerX < 0 || taskPagePointerY < 0) return false;
+    var tab = document.querySelector('.study-temporary-tab');
+    if (!tab) return false;
+    var tabRect = tab.getBoundingClientRect();
+    return taskPagePointerY >= tabRect.top - 20 && taskPagePointerY <= tabRect.bottom + 20;
+  }
+  function setTaskPageRailVisible(visible, options) {
     if (!taskPageRailEl) return;
+    // 鼠标触发的显示一律过带内拦截；键盘聚焦（ignorePointer）不受影响
+    if (visible && !(options && options.ignorePointer) && taskPagePointerInTabBlock()) visible = false;
     taskPageRailVisible = !!visible && studyPageActive && !temporaryPanelOpen;
     taskPageRailEl.classList.toggle('revealed', taskPageRailVisible);
   }
@@ -439,7 +452,9 @@
       taskPageRailOver = false;
       setTaskPageRailVisible(false);
     });
-    taskPageRailEl.addEventListener('focusin', function () { setTaskPageRailVisible(true); });
+    taskPageRailEl.addEventListener('focusin', function () {
+      setTaskPageRailVisible(true, { ignorePointer: true });
+    });
     taskPageRailEl.addEventListener('focusout', function (event) {
       if (!taskPageRailEl.contains(event.relatedTarget)) setTaskPageRailVisible(taskPageRailOver);
     });
@@ -457,6 +472,12 @@
       if (!taskPageRailOver) setTaskPageRailVisible(false);
     });
   }
+  // 全局记录最近鼠标位置，供带内硬拦截使用；不参与显示来源判定
+  window.addEventListener('pointermove', function (event) {
+    if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+    taskPagePointerX = event.clientX;
+    taskPagePointerY = event.clientY;
+  }, { passive: true });
   if (taskPageNoteTriggerEl) {
     taskPageNoteTriggerEl.addEventListener('dblclick', beginTaskPageNoteEdit);
   }
