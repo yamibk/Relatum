@@ -1888,6 +1888,15 @@ def _study_task_page_notes(value: object, *, strict: bool = True) -> dict[str, s
     return notes
 
 
+_STUDY_TASK_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _study_task_color(value: object) -> str:
+    """学习任务卡片颜色：只接受严格 #rrggbb，空值表示默认色。"""
+    raw = str(value or "").strip()
+    return raw if _STUDY_TASK_COLOR_RE.match(raw) else ""
+
+
 def _study_task(
     source: dict | None = None, *, existing: dict | None = None,
     touch: bool = True, strict: bool = True,
@@ -1907,6 +1916,7 @@ def _study_task(
     return {
         "id": str(base.get("id") or raw.get("id") or uuid.uuid4().hex),
         "title": title[:160],
+        "color": _study_task_color(raw.get("color", base.get("color", ""))),
         "status": status,
         "taskPage": _study_task_page(
             raw.get("taskPage") if "taskPage" in raw else base.get("taskPage"),
@@ -8981,7 +8991,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             index, old = study_find_task(data, task_id)
             patch = {
-                key: body[key] for key in ("title", "status", "progress") if key in body
+                key: body[key] for key in ("title", "status", "progress", "color") if key in body
             }
             route_tree_id = str(body.get("goalTreeId") or "").strip()
             locks_route_action = "progress" in patch or (
