@@ -42596,12 +42596,16 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
 }
 .study-task-page-button:hover { color: var(--text); background: var(--surface); }
 .study-task-page-button.is-active,
-.study-task-page-button.is-active:hover { color: #f8f6ef; background: transparent; }
+.study-task-page-button.is-active:hover {
+  color: #f8f6ef; background: transparent;
+  /* 与书脊同款层叠：白字数字抬到滑块(z-index:2)之上，滑块滑过时不被半透明底罩住变浅 */
+  z-index: 3;
+}
 .study-task-page-button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 48%, var(--text)); outline-offset: 2px;
 }
 .study-task-page-orb {
-  position: absolute; left: 8px; top: 0; z-index: 0; width: 34px; height: 34px;
+  position: absolute; left: 8px; top: 0; z-index: 2; width: 34px; height: 34px;
   border-radius: 11px; background: #242521; box-shadow: 0 6px 14px rgba(26,26,26,.16);
   pointer-events: none; will-change: transform;
   /* 与书脊胶囊同款节奏（--start-orb-ms 跟随翻页速度偏好） */
