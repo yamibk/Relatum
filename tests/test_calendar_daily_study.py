@@ -63,6 +63,15 @@ class CalendarDailySummaryTests(unittest.TestCase):
         data = self.payload(daily={"tasks": []})
         self.assertEqual(data["day"]["daily"], {"checkedCount": 0, "totalCount": 0, "items": []})
 
+    def test_month_bucket_marks_daily_checked_days(self):
+        data = self.payload(daily={"tasks": [
+            {"id": "a", "name": "背单词", "doneDates": ["2026-08-18", "2026-08-16"], "totalDays": 3},
+        ]})
+        days = data["days"]
+        self.assertEqual(days["2026-08-18"]["daily"], 1)
+        self.assertEqual(days["2026-08-16"]["daily"], 1)
+        self.assertNotIn("2026-08-17", days)
+
 
 class CalendarStudyCompletedTests(unittest.TestCase):
     """日历页「学习任务」栏：day.studyCompleted 只读学习归档（kind=study）落在选中日的条目。"""
@@ -114,6 +123,19 @@ class CalendarStudyCompletedTests(unittest.TestCase):
             {"kind": "canvas", "title": "画布归档", "completedAt": "2026-08-18T10:00:00", "day": "2026-08-18"},
         ])
         self.assertEqual(data["day"]["studyCompleted"], {"count": 0, "items": []})
+
+    def test_month_bucket_marks_study_archive_days(self):
+        data = self.payload([
+            {"kind": "study", "title": "线性代数", "completedAt": "2026-08-18T09:30:00", "day": "2026-08-18"},
+            {"kind": "study", "title": "英语阅读", "completedAt": "2026-08-16T21:00:00", "day": "2026-08-16"},
+            {"kind": "canvas", "title": "画布归档", "completedAt": "2026-08-17T10:00:00", "day": "2026-08-17"},
+        ])
+        days = data["days"]
+        self.assertEqual(days["2026-08-18"]["study"], 1)
+        self.assertEqual(days["2026-08-16"]["study"], 1)
+        # 非学习归档不点亮 study 标记（archives 桶仍正常计数）
+        self.assertEqual(days["2026-08-17"]["study"], 0)
+        self.assertEqual(days["2026-08-17"]["archives"], 1)
 
 
 if __name__ == "__main__":

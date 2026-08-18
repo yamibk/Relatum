@@ -4983,9 +4983,9 @@ def diary_index() -> list[dict]:
     return entries
 
 
-def _calendar_canvas_activity(day: str) -> dict:
+def _calendar_canvas_activity(day: str, data: dict | None = None) -> dict:
     """当天画布活动：每张画布的前台工作时长与新建/修改标记，按时长降序。"""
-    data = canvas_activity_snapshot()
+    data = data if isinstance(data, dict) else canvas_activity_snapshot()
     canvases = data.get("canvases", {})
     if not isinstance(canvases, dict):
         canvases = {}
@@ -5019,12 +5019,13 @@ def _calendar_canvas_activity(day: str) -> dict:
     }
 
 
-def _calendar_daily_summary(day: str) -> dict:
+def _calendar_daily_summary(day: str, data: dict | None = None) -> dict:
     """选中日期的每日任务打卡摘要：只记录已打卡的任务（不展示未打卡/偷懒项）。"""
-    try:
-        data = load_daily()
-    except (ValueError, OSError):
-        data = {}
+    if not isinstance(data, dict):
+        try:
+            data = load_daily()
+        except (ValueError, OSError):
+            data = {}
     total_count = 0
     items = []
     for task in data.get("tasks", []):
@@ -5083,6 +5084,8 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
     _, all_archive_records = study_activity_records()
     archive_records = [record for record in all_archive_records if record.get("kind") != "study"]
     diaries = diary_index()
+    canvas_data = canvas_activity_snapshot()
+    daily_data = load_daily()
 
     days: dict[str, dict] = {}
 
@@ -5090,6 +5093,7 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
         return days.setdefault(day, {
             "diary": 0, "due": 0, "focusTask": 0, "completed": 0,
             "focusSessions": 0, "focusSeconds": 0, "archives": 0,
+            "canvas": 0, "daily": 0, "study": 0,
         })
 
     for item in diaries:
@@ -5103,6 +5107,28 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
     for record in archive_records:
         if record["day"].startswith(month_prefix):
             bucket(record["day"])["archives"] += 1
+    # 月网格圆点与右侧三栏一一对应：画布活动 / 每日打卡 / 学习归档
+    for day, entries in (canvas_data.get("days") or {}).items():
+        if not day.startswith(month_prefix) or not isinstance(entries, dict):
+            continue
+        for entry in entries.values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("seconds") or entry.get("created") or entry.get("modified"):
+                bucket(day)["canvas"] = 1
+                break
+    for task in daily_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        for done_day in _daily_date_list(task.get("doneDates")):
+            if done_day.startswith(month_prefix):
+                bucket(done_day)["daily"] = 1
+    for record in all_archive_records:
+        if record.get("kind") != "study":
+            continue
+        record_day = str(record.get("day") or "")
+        if record_day.startswith(month_prefix):
+            bucket(record_day)["study"] = 1
 
     selected_sessions = [
         session for session in focus.get("sessions", [])
@@ -5131,8 +5157,8 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
                 "sessions": selected_sessions,
             },
             "archives": selected_archives,
-            "canvasActivity": _calendar_canvas_activity(selected),
-            "daily": _calendar_daily_summary(selected),
+            "canvasActivity": _calendar_canvas_activity(selected, canvas_data),
+            "daily": _calendar_daily_summary(selected, daily_data),
             "studyCompleted": _calendar_study_completed(selected, all_archive_records),
         },
     }

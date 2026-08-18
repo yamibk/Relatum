@@ -432,10 +432,9 @@
 
   function renderCalendarDots(marks) {
     return [
-      marks.diary ? '<i class="diary"></i>' : '',
-      (marks.due || marks.focusTask) ? '<i class="task"></i>' : '',
-      marks.focusSessions ? '<i class="focus"></i>' : '',
-      (marks.completed || marks.archives) ? '<i class="done"></i>' : '',
+      marks.canvas ? '<i class="canvas"></i>' : '',
+      marks.daily ? '<i class="daily"></i>' : '',
+      marks.study ? '<i class="study"></i>' : '',
     ].join('');
   }
 
@@ -469,8 +468,8 @@
       + '<button type="button" class="calendar-today" data-calendar-today>今天</button>'
       + '</header><div class="calendar-weekdays">' + weekdays + '</div>'
       + '<div class="calendar-grid">' + cells + '</div>'
-      + '<footer class="calendar-legend"><span><i class="diary"></i>日记</span>'
-      + '<span><i class="focus"></i>专注</span><span><i class="done"></i>完成</span></footer></section>';
+      + '<footer class="calendar-legend"><span><i class="canvas"></i>画布活动</span>'
+      + '<span><i class="daily"></i>每日打卡</span><span><i class="study"></i>学习任务</span></footer></section>';
   }
 
   function countdownDistance() {
