@@ -2519,7 +2519,14 @@ def _sanitize_countdown_event(raw: object, fallback: dict, index: int) -> dict |
     event_id = str(raw.get("id") or "").strip()[:64]
     if not event_id:
         event_id = f"event-{index + 1}"
-    return {"id": event_id, "event": event, "date": target.isoformat()}
+    clean = {"id": event_id, "event": event, "date": target.isoformat()}
+    # 可选进度窗口长度（天）：日历页进度条使用；只接受 1–9999 的整数，非法即丢弃。
+    length_days = raw.get("lengthDays")
+    if isinstance(length_days, bool) or not isinstance(length_days, int) or not (1 <= length_days <= 9999):
+        length_days = None
+    if length_days is not None:
+        clean["lengthDays"] = length_days
+    return clean
 
 
 def _sanitize_countdown(raw: object) -> dict:

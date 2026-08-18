@@ -103,7 +103,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
-| `assets/calendar.js` | 日历、日记、专注记录、非学习归档与倒数日。 |
+| `assets/calendar.js` | 日历、日记、专注记录、非学习归档、倒数日与日历页倒数日进度条（每事件可选 `lengthDays` 窗口长度，已过事件显示学习页同款金色达成态）。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。 |
 | `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。 |
@@ -144,7 +144,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、命名里程碑 `milestones[]`（用户侧不设小额限制，异常数据安全上限 50）与逐日历史 `doneDates` / `minutesByDate`；上一份有效快照为 `data/daily.backup.json`，损坏原件隔离成 `data/daily.corrupt-<时间>.json` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
-| 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移 |
+| 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移。每个事件可选保存 `lengthDays`（1–9999 整数），是日历页倒数日进度条的窗口长度（天），缺省即未设置，非法值在净化时丢弃 |
 | 模板库 | `data/templates.json` |
 | 复习卡片 | `data/review.db`，SQLite；`review_cards` 保存内容、卡组关联与调度，`review_decks` / `review_tags` / `review_card_tags` 管理组织关系，`review_events` 保存每次评分，`review_settings` 保存复习范围与会话偏好 |
 | AI 配置 | `data/ai.json`，含 Key、模型、baseUrl |
@@ -448,6 +448,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 倒数日保存在 `data/countdown.json`，起步页可开关显示。
 - 倒数日数据 v2 支持最多 100 个事件，也支持真正的零事件空状态：删除最后一条后后端删除 `data/countdown.json`，GET 返回空的 v2 结构；旧版 `{event,date}` 读取时仍作为第一条事件迁移。事件选择会持久化 `selectedId`，前端不使用 `localStorage` 存事件。
 - 日历右上角显示当前倒数摘要或“创建第一个倒数日”入口；单击时钟图标（空状态时点击创建入口）导航到独立 `countdown.html`，返回统一落到 `index.html?view=calendar`，由起步页恢复日历视图。摘要中的事件名和日期/剩余天数区域支持双击就地编辑，Enter 保存、Esc 取消、失焦保存，键盘聚焦后也可用 Enter/F2；编辑时隐藏摘要标签和其余句子，让输入框独占卡片剩余宽度，不能把固定宽输入框塞进原句导致右侧裁切。倒数日页面不依附日历 DOM，不使用全屏 `backdrop-filter`，也不使用原生 Fullscreen API。
+- “日历”大标题同一行（`.calendar-title-row`，h1 右侧，随剩余空间拉长至最多 700px）还有一条“倒数日进度条”（复用学习页 `.study-progress-track-shell/track/fill` 结构与金色达成态），右侧是「⋯」按钮，点击展开、再点同一按钮收回（toggle），弹出与学习页同款锚定设置卡，只设置当前选中事件的窗口长度 `lengthDays`（1–9999 天，输入留空保存 = 移除长度）。进度 = `(长度 − 剩余天数) / 长度`，钳制 0–100%，标签只显示百分比；剩余 ≤ 0（含“就是今天”）时满条并进入金色达成态，光雾由 JS 每 ~2.8s 有限重播（`.is-overdue.is-breathing` 复用 `studyGoalRestAura/Sheen` keyframes），页面未激活、隐藏或 `prefers-reduced-motion` 时停止。进度条**常驻占位**（只跟随“日历倒数日”开关显隐）：没有事件或未设长度时显示 0% 空轨道、无事件时「⋯」禁用（title 提示先创建），首次数据到达只改变 fill 宽度（520ms 过渡），不改变标题行高度，避免入场动画期间布局跳变；进度条也参与 `.calendar-page-head-enter` 错峰入场。切换选中事件、就地编辑日期、增删改事件后行内更新（保留 DOM 让 fill 的 width 过渡生效）。布局上 `.calendar-head-main` 必须用 `flex: 1 1 auto; min-width: 0` 由 flex 分配宽度，不能靠内容固有宽度反推（进度条轨道 `width: 100%` 在固有宽度递归里被当作 auto，容器会被算窄而把进度条挤到 h1 下方）。`countdown.js` 的 `normalize` 与 `app.py` 的 `_sanitize_countdown_event` 都必须保留合法 `lengthDays`，否则在独立倒数日页保存后会丢失。
 - 独立倒数日页使用不透明深色表面，左侧管理事件、右侧显示当前时钟；新建/编辑共用页面内对话框，删除需短时间内二次确认，最后一条允许删除。当前事件标题和日期支持双击就地编辑（键盘聚焦后也可按 Enter/F2），输入框内 Enter 保存、Esc 取消、失焦保存；保存先轻量更新当前标题、日期与左侧条目，再异步落盘，不重建页面。“放大”进入页面内专注视图：顶栏上移退场、左侧事件栏收至零宽、标题与底部提示淡出，四栏数字卡按同一页面布局连续放大；右上角只留低透明度退出按钮，悬停展开文字。页面未在文字输入或编辑状态时，`F` 在普通视图与专注视图之间切换，快捷键退出后不把键盘焦点锁到“放大”按钮；Esc 仍优先退出专注视图。该模式不调用原生 Fullscreen、不重建时钟 DOM、不持久化，使用 `--easing-page` / `--easing-soft` 和有限 transition，低动态模式下静态切换。计时器按真实整秒对齐，用一次性 timeout 调度。翻页内核复用 `daoshu` 参考项目的固定四层结构：静态上下页和旧上/新下叶片从建页起常驻，每次只更新文字并重启 `.go` 类，不创建或删除合成层；旧上叶片按 `280ms ease-in` 折走，新下叶片延迟 `280ms` 后按 `300ms cubic-bezier(0.37,0,0.63,1)` 落下，600ms 后提交静态底页。为严格保持参考效果，单个变化单位允许读取一次自身 `offsetWidth` 重启动画；不复制参考项目的 200ms 轮询、`drop-shadow` 滤镜、毛玻璃或 Electron 外壳。页面隐藏或离开时必须停止计时器，`prefers-reduced-motion` 下直接换值。
 - 桌面 EXE 中，倒数日页可把当前事件固定为本次进程的主屏动态桌面背景；按钮按当前绑定显示“设为 / 替换 / 取消”。`wallpaper=1&event=<id>&lang=<language>` 是同一页面的只读渲染模式，只显示标题、日期、状态和四栏翻页时钟，不修改 `selectedId`，每 3 秒从既有 `/api/countdown` 同步固定事件的名称和日期；固定事件删除后自动停止。该专用 WebView 即使被 Chromium 报告为后台文档也必须继续整秒调度和轻量同步，普通倒数日页仍在隐藏时暂停。浏览器模式不显示入口，不新增 HTTP 控制接口或持久化字段。
 - 放大/退出按钮使用 `aria-label` 和自身文字，不设置会触发浏览器原生提示的 `title`；退出按钮在悬停与键盘聚焦时都展开文字。倒数页从浏览器前进/后退缓存恢复时，`pageshow` 必须重启并重新对齐计时。
