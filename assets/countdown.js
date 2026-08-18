@@ -88,9 +88,15 @@
 
   function normalize(payload, preferredId) {
     const events = Array.isArray(payload && payload.events) ? payload.events.filter((item) =>
-      item && item.id && item.event && item.date).slice(0, 100).map((item) => ({
-      id: String(item.id), event: String(item.event), date: String(item.date),
-    })) : [];
+      item && item.id && item.event && item.date).slice(0, 100).map((item) => {
+      const clean = { id: String(item.id), event: String(item.event), date: String(item.date) };
+      // 日历页进度条的可选窗口长度（天）：保留合法整数，非法即视为未设置。
+      const lengthDays = Number(item.lengthDays);
+      if (Number.isInteger(lengthDays) && lengthDays >= 1 && lengthDays <= 9999) {
+        clean.lengthDays = lengthDays;
+      }
+      return clean;
+    }) : [];
     const selected = events.find((item) => item.id === String(preferredId || ''))
       || events.find((item) => item.id === String(payload && payload.selectedId || '')) || events[0] || null;
     return {

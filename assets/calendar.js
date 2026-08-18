@@ -43,6 +43,10 @@
     countdownClockTimer: 0,
     countdownClockCloseTimer: 0,
     countdownClockUnits: {},
+    countdownProgressPopover: null,
+    countdownProgressTrigger: null,
+    countdownProgressPositionFrame: 0,
+    countdownProgressBreathTimer: 0,
     resumeAfterPageShow: false,
     expandedDays: new Set(),  // 当天任务超过 10 条时，记录哪些天被展开过；换天自动收起
   };
@@ -511,6 +515,329 @@
       + line + '</div></section>';
   }
 
+  // —— 倒数日进度条：跟随当前选中事件，进度 = (长度 − 剩余天数) / 长度；事件已过则金色达成态 ——
+  function selectedCountdownLengthDays() {
+    const events = Array.isArray(state.countdown && state.countdown.events)
+      ? state.countdown.events : [];
+    const selected = events.find((item) => item.id === state.countdown.selectedId) || events[0] || null;
+    const value = selected ? Number(selected.lengthDays) : NaN;
+    return Number.isInteger(value) && value >= 1 && value <= 9999 ? value : 0;
+  }
+
+  function countdownProgressValue() {
+    const lengthDays = selectedCountdownLengthDays();
+    const distance = countdownDistance();
+    if (!lengthDays || distance == null) return null;
+    const overdue = distance <= 0;
+    const percent = overdue ? 100
+      : distance >= lengthDays ? 0
+      : (lengthDays - distance) / lengthDays * 100;
+    return { length: lengthDays, remaining: distance, percent, overdue };
+  }
+
+  function renderCountdownProgress() {
+    // 常驻占位：只跟随“日历倒数日”开关显隐；没有事件/长度时显示 0% 空轨道，
+    // 避免首次数据到达时把标题行挤高造成布局跳变。
+    const hidden = !state.countdownEnabled;
+    const label = escapeHtml(uiText('倒数日进度'));
+    return '<section class="calendar-countdown-progress" data-calendar-countdown-progress'
+      + (hidden ? ' hidden' : '') + '>'
+      + '<div class="study-progress-track-shell" data-countdown-progress-bar role="progressbar"'
+      + ' aria-label="' + label + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"'
+      + ' title="' + label + '">'
+      + '<div class="study-progress-track"><div class="study-progress-fill"></div></div></div>'
+      + '<span class="calendar-countdown-progress-value" data-countdown-progress-value>0%</span>'
+      + '<button type="button" class="calendar-countdown-progress-menu" data-countdown-progress-settings'
+      + ' aria-label="' + escapeHtml(uiText('设置倒数日进度长度')) + '" aria-expanded="false"'
+      + ' title="' + escapeHtml(uiText('设置倒数日进度长度')) + '">⋯</button>'
+      + '</section>';
+  }
+
+  function applyCountdownProgressState(section) {
+    if (!section || section.hidden) return;
+    const hasCountdown = !!(state.countdown && state.countdown.event && state.countdown.date);
+    const progress = countdownProgressValue();
+    const bar = section.querySelector('[data-countdown-progress-bar]');
+    const track = section.querySelector('.study-progress-track');
+    const fill = section.querySelector('.study-progress-fill');
+    const valueEl = section.querySelector('[data-countdown-progress-value]');
+    const menu = section.querySelector('[data-countdown-progress-settings]');
+    const percent = progress ? Math.min(100, Math.max(0, progress.percent)) : 0;
+    const overdue = !!(progress && progress.overdue);
+    section.classList.toggle('is-overdue', overdue);
+    if (track) track.classList.toggle('is-full', overdue);
+    if (fill) fill.style.width = percent.toFixed(2) + '%';
+    if (bar) bar.setAttribute('aria-valuenow', String(Math.round(percent)));
+    if (valueEl) valueEl.textContent = Math.round(percent) + '%';
+    if (menu) {
+      // 没有任何倒数日事件时长度无处可设，「⋯」禁用并提示先创建。
+      menu.disabled = !hasCountdown;
+      menu.setAttribute('aria-disabled', hasCountdown ? 'false' : 'true');
+      menu.title = hasCountdown ? uiText('设置倒数日进度长度') : uiText('请先创建倒数日');
+    }
+  }
+
+  // 行内更新（保留 DOM 以让 fill 的 width 过渡动画生效）；行不存在时才插入。
+  function syncCountdownProgress() {
+    let section = root.querySelector('[data-calendar-countdown-progress]');
+    if (!section) {
+      const holder = document.createElement('div');
+      holder.innerHTML = renderCountdownProgress();
+      section = holder.firstElementChild;
+      if (!section) return;
+      const titleRow = root.querySelector('.calendar-title-row');
+      if (titleRow) {
+        titleRow.appendChild(section);
+      } else {
+        const tools = root.querySelector('.calendar-head-tools');
+        if (tools) tools.insertBefore(section, tools.firstChild);
+      }
+      bindCountdownProgressControls(section);
+    }
+    section.hidden = !state.countdownEnabled;
+    if (section.hidden) {
+      stopCountdownProgressBreath();
+      return;
+    }
+    applyCountdownProgressState(section);
+    // 只有存在已过事件时才启动金色呼吸链；未过期时不产生轮询。
+    if (section.classList.contains('is-overdue')) scheduleCountdownProgressBreath();
+  }
+
+  function bindCountdownProgressControls(scope) {
+    const host = scope || root;
+    host.querySelectorAll('[data-countdown-progress-settings]').forEach((button) => {
+      button.addEventListener('click', () => openCountdownProgressSettings(button));
+    });
+  }
+
+  // —— 金色达成态的流动光雾：与学习页一致，JS 有限重播，页面不可见/低动态时停 ——
+  function visibleCountdownProgressBar() {
+    const section = root.querySelector('[data-calendar-countdown-progress]');
+    if (!section || section.hidden || !section.classList.contains('is-overdue')) return null;
+    const rect = section.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= window.innerHeight
+      || rect.right <= 0 || rect.left >= window.innerWidth) return null;
+    return section;
+  }
+
+  function scheduleCountdownProgressBreath(delay) {
+    clearTimeout(state.countdownProgressBreathTimer);
+    state.countdownProgressBreathTimer = 0;
+    if (prefersReduced || !state.active || document.hidden) return;
+    state.countdownProgressBreathTimer = window.setTimeout(() => {
+      state.countdownProgressBreathTimer = 0;
+      if (prefersReduced || !state.active || document.hidden) return;
+      const section = visibleCountdownProgressBar();
+      if (!section) {
+        // 已过事件存在但暂不可见（如滚出视口）时稍后重试；未过期或整行隐藏则停止轮询。
+        const overdue = root.querySelector('[data-calendar-countdown-progress].is-overdue');
+        if (overdue && !overdue.hidden) scheduleCountdownProgressBreath(1200);
+        return;
+      }
+      section.classList.remove('is-breathing');
+      void section.offsetWidth;
+      section.classList.add('is-breathing');
+      window.setTimeout(() => {
+        if (section.isConnected) section.classList.remove('is-breathing');
+      }, 2540);
+      scheduleCountdownProgressBreath(2800);
+    }, Math.max(0, Number(delay) || 900));
+  }
+
+  function stopCountdownProgressBreath() {
+    clearTimeout(state.countdownProgressBreathTimer);
+    state.countdownProgressBreathTimer = 0;
+    const section = root.querySelector('[data-calendar-countdown-progress]');
+    if (section) section.classList.remove('is-breathing');
+  }
+
+  // —— 「⋯」锚定的设置弹层：只设置当前选中事件的窗口长度（天）——
+  function buildCountdownProgressSettings() {
+    const box = document.createElement('section');
+    box.className = 'study-progress-settings-popover';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'false');
+    box.setAttribute('aria-labelledby', 'calendar-countdown-progress-title');
+
+    const title = document.createElement('strong');
+    title.id = 'calendar-countdown-progress-title';
+    title.className = 'study-progress-settings-title';
+    title.textContent = uiText('倒数日进度');
+    box.appendChild(title);
+
+    const wrap = document.createElement('label');
+    wrap.className = 'study-progress-settings-target';
+    const label = document.createElement('span');
+    label.textContent = uiText('长度');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '1';
+    input.max = '9999';
+    input.step = '1';
+    input.inputMode = 'numeric';
+    input.className = 'study-progress-settings-number';
+    input.dataset.role = 'countdown-progress-length';
+    input.value = String(selectedCountdownLengthDays() || '');
+    input.setAttribute('aria-label', uiText('长度'));
+    wrap.append(label, input);
+    box.appendChild(wrap);
+
+    const error = document.createElement('p');
+    error.className = 'study-progress-settings-error';
+    error.dataset.role = 'countdown-progress-error';
+    error.setAttribute('aria-live', 'polite');
+    box.appendChild(error);
+
+    const actions = document.createElement('div');
+    actions.className = 'study-progress-settings-actions';
+    const group = document.createElement('span');
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'study-progress-settings-cancel';
+    cancelBtn.textContent = uiText('取消');
+    cancelBtn.addEventListener('click', () => closeCountdownProgressSettings(true));
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'study-progress-settings-save';
+    saveBtn.textContent = uiText('保存');
+    saveBtn.addEventListener('click', () => commitCountdownProgressSettings(box));
+    group.append(cancelBtn, saveBtn);
+    actions.appendChild(group);
+    box.appendChild(actions);
+
+    input.addEventListener('keydown', (event) => {
+      if (event.isComposing) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commitCountdownProgressSettings(box);
+      }
+    });
+
+    state.countdownProgressPopover = box;
+    return box;
+  }
+
+  function commitCountdownProgressSettings(box) {
+    if (!box || !box.isConnected) return;
+    const input = box.querySelector('[data-role="countdown-progress-length"]');
+    const error = box.querySelector('[data-role="countdown-progress-error"]');
+    const raw = String(input && input.value != null ? input.value : '').trim();
+    const current = selectedCountdownLengthDays();
+    if (raw !== '') {
+      const next = Number(raw);
+      if (!Number.isInteger(next) || next < 1 || next > 9999) {
+        if (error) error.textContent = uiText('长度需要是 1 到 9999 之间的整数');
+        return;
+      }
+      if (next === current) {
+        closeCountdownProgressSettings(false, true);
+        return;
+      }
+    } else if (!current) {
+      closeCountdownProgressSettings(false, true);
+      return;
+    }
+    const previous = cloneCountdown(state.countdown);
+    const events = ensureCountdownEvents();
+    const selected = events.find((item) => item.id === state.countdown.selectedId) || events[0] || null;
+    if (!selected) {
+      closeCountdownProgressSettings(false, true);
+      return;
+    }
+    if (raw === '') {
+      if (Object.prototype.hasOwnProperty.call(selected, 'lengthDays')) delete selected.lengthDays;
+    } else {
+      selected.lengthDays = Number(raw);
+    }
+    closeCountdownProgressSettings(false, true);
+    updateCountdownEverywhere(previous, true);
+  }
+
+  function openCountdownProgressSettings(trigger) {
+    if (!trigger || !state.countdown) return;
+    if (state.countdownProgressPopover) {
+      if (state.countdownProgressTrigger === trigger) {
+        closeCountdownProgressSettings(true);
+        return;
+      }
+      closeCountdownProgressSettings(false, true);
+    }
+    state.countdownProgressTrigger = trigger;
+    const box = buildCountdownProgressSettings();
+    trigger.setAttribute('aria-expanded', 'true');
+    document.body.appendChild(box);
+    positionCountdownProgressSettings();
+    requestAnimationFrame(() => {
+      if (!state.countdownProgressPopover) return;
+      state.countdownProgressPopover.classList.add('is-open');
+      positionCountdownProgressSettings();
+    });
+    window.setTimeout(() => {
+      const input = state.countdownProgressPopover
+        && state.countdownProgressPopover.querySelector('[data-role="countdown-progress-length"]');
+      if (input) { input.focus(); input.select(); }
+    }, prefersReduced ? 0 : 80);
+  }
+
+  function closeCountdownProgressSettings(restoreFocus, instant) {
+    const popover = state.countdownProgressPopover;
+    const trigger = state.countdownProgressTrigger;
+    if (!popover) return;
+    if (state.countdownProgressPositionFrame) cancelAnimationFrame(state.countdownProgressPositionFrame);
+    state.countdownProgressPositionFrame = 0;
+    state.countdownProgressPopover = null;
+    state.countdownProgressTrigger = null;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    const finish = () => {
+      if (popover.isConnected) popover.remove();
+      if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+    };
+    if (instant || prefersReduced) {
+      finish();
+      return;
+    }
+    popover.classList.remove('is-open');
+    popover.classList.add('is-closing');
+    window.setTimeout(finish, 190);
+  }
+
+  function positionCountdownProgressSettings() {
+    const popover = state.countdownProgressPopover;
+    const trigger = state.countdownProgressTrigger;
+    if (!popover || !trigger || !trigger.isConnected) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const gap = 8;
+    const edge = 12;
+    let left = triggerRect.right - popoverRect.width;
+    left = Math.max(edge, Math.min(left, window.innerWidth - popoverRect.width - edge));
+    let top = triggerRect.bottom + gap;
+    let placement = 'below';
+    if (top + popoverRect.height > window.innerHeight - edge
+        && triggerRect.top - popoverRect.height - gap >= edge) {
+      top = triggerRect.top - popoverRect.height - gap;
+      placement = 'above';
+    } else {
+      top = Math.max(edge, Math.min(top, window.innerHeight - popoverRect.height - edge));
+    }
+    popover.style.left = Math.round(left) + 'px';
+    popover.style.top = Math.round(top) + 'px';
+    popover.dataset.placement = placement;
+  }
+
+  function scheduleCountdownProgressPosition() {
+    if (!state.countdownProgressPopover || state.countdownProgressPositionFrame) return;
+    state.countdownProgressPositionFrame = requestAnimationFrame(() => {
+      state.countdownProgressPositionFrame = 0;
+      if (!state.countdownProgressTrigger || !state.countdownProgressTrigger.isConnected) {
+        closeCountdownProgressSettings(false, true);
+        return;
+      }
+      positionCountdownProgressSettings();
+    });
+  }
+
   function countdownClockParts() {
     if (!state.countdown || !state.countdown.date) return null;
     const target = new Date(state.countdown.date + 'T00:00:00').getTime();
@@ -620,6 +947,7 @@
   function updateCountdownEverywhere(previous, updated) {
     if (state.payload) state.payload.countdown = state.countdown;
     syncCountdownCard({ updated: updated !== false });
+    syncCountdownProgress();
     refreshCountdownClock();
     saveCountdown(previous);
   }
@@ -807,6 +1135,7 @@
       state.countdown = previous;
       if (state.payload) state.payload.countdown = state.countdown;
       syncCountdownCard();
+      syncCountdownProgress();
       showToast(uiText('保存失败') + ' · ' + error.message);
     }
   }
@@ -844,6 +1173,7 @@
           && !Number.isNaN(new Date(value + 'T00:00:00').getTime());
       if (!commit || !valid || value === original) {
         syncCountdownCard();
+        syncCountdownProgress();
         return;
       }
       const previous = cloneCountdown(state.countdown);
@@ -852,6 +1182,7 @@
       state.countdown[field] = nextValue;
       if (state.payload) state.payload.countdown = state.countdown;
       syncCountdownCard({ updated: true });
+      syncCountdownProgress();
       saveCountdown(previous);
     };
     input.addEventListener('keydown', (event) => {
@@ -993,8 +1324,10 @@
   }
 
   function render(motion) {
-    root.innerHTML = '<div class="calendar-page-head"><div><p class="study-eyebrow">CALENDAR</p>'
-      + '<h1>日历</h1><span>把临时想法、学习过程和完成的事，放回它们发生的那一天。</span></div>'
+    root.innerHTML = '<div class="calendar-page-head"><div class="calendar-head-main">'
+      + '<p class="study-eyebrow">CALENDAR</p>'
+      + '<div class="calendar-title-row"><h1>日历</h1>' + renderCountdownProgress() + '</div>'
+      + '<span>把临时想法、学习过程和完成的事，放回它们发生的那一天。</span></div>'
       + '<div class="calendar-head-tools">' + renderCountdown() + renderSearch() + renderRefresh()
       + '</div></div><div class="calendar-layout"><div>' + renderCalendar()
       + '</div><div class="calendar-day-column">' + renderDiary() + renderDayRecords(true) + '</div></div>';
@@ -1094,6 +1427,7 @@
     });
     syncCalendarSelection();
     syncCountdownCard({ reveal: revealCountdown });
+    syncCountdownProgress();
     restoreKeyboardDayFocus();
   }
 
@@ -1648,6 +1982,7 @@
   function bindCalendarControls() {
     bindMonthControls(root);
     bindCountdownControls(root);
+    bindCountdownProgressControls(root);
     const refresh = root.querySelector('[data-calendar-refresh]');
     if (refresh) refresh.addEventListener('click', () => refreshCalendar(refresh));
     const search = root.querySelector('[data-calendar-search]');
@@ -1907,15 +2242,31 @@
     state.countdownEnabled = !(event.detail && event.detail.enabled === false);
     if (!state.loaded) return;
     syncCountdownCard({ reveal: state.countdownEnabled });
+    syncCountdownProgress();
   });
 
   document.addEventListener('pointerdown', (event) => {
+    if (state.countdownProgressPopover
+      && !state.countdownProgressPopover.contains(event.target)
+      && !(state.countdownProgressTrigger && state.countdownProgressTrigger.contains(event.target))) {
+      closeCountdownProgressSettings(true);
+    }
     if (event.target.closest && event.target.closest('.calendar-search-wrap')) return;
     closeSearch(root.querySelector('[data-calendar-search-results]'));
   });
 
+  window.addEventListener('resize', scheduleCountdownProgressPosition);
+  window.addEventListener('scroll', scheduleCountdownProgressPosition, true);
+
   document.addEventListener('keydown', (event) => {
     if (!state.active || event.defaultPrevented) return;
+    if (state.countdownProgressPopover) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCountdownProgressSettings(true);
+      }
+      return;
+    }
     const flipClock = document.querySelector('[data-calendar-flip-clock]');
     if (flipClock) {
       if (event.key === 'Escape') {
@@ -1964,6 +2315,8 @@
   window.addEventListener('pagehide', () => {
     state.resumeAfterPageShow = state.active;
     state.active = false;
+    stopCountdownProgressBreath();
+    closeCountdownProgressSettings(false, true);
     cancelCalendarNetworkWork();
     captureCurrentDraft();
     state.drafts.forEach((draft) => {
@@ -1989,12 +2342,15 @@
       } else {
         replayEntranceMotion();
       }
+      scheduleCountdownProgressBreath(900);
     },
     deactivate() {
       state.active = false;
       state.resumeAfterPageShow = false;
       cancelCalendarNetworkWork();
       closeCountdownClock();
+      stopCountdownProgressBreath();
+      closeCountdownProgressSettings(false, true);
       clearEntranceMotion();
       captureCurrentDraft();
       state.drafts.forEach((draft) => {
