@@ -62,12 +62,27 @@ assert(calendar.includes('!skeleton || !skeleton.animate'));
 assert(appPy.includes('def _calendar_canvas_activity'));
 assert(appPy.includes('def _calendar_daily_summary'));
 assert(appPy.includes('def _calendar_study_completed'));
-assert(appPy.includes('"canvasActivity": _calendar_canvas_activity(selected)'));
-assert(appPy.includes('"daily": _calendar_daily_summary(selected)'));
+assert(appPy.includes('"canvasActivity": _calendar_canvas_activity(selected, canvas_data)'));
+assert(appPy.includes('"daily": _calendar_daily_summary(selected, daily_data)'));
 assert(appPy.includes('_calendar_study_completed(selected, all_archive_records)'));
 // 学习任务栏只读归档（kind=study），archive_records 仍排除 study
 assert(appPy.includes('record.get("kind") != "study"'));
 assert(appPy.includes('record.get("kind") != "study" or record.get("day") != day'));
+
+// —— 月历圆点与图例：与右侧三栏一一对应（画布活动 / 每日打卡 / 学习任务）——
+assert(calendar.includes("marks.canvas ? '<i class=\"canvas\"></i>'"));
+assert(calendar.includes("marks.daily ? '<i class=\"daily\"></i>'"));
+assert(calendar.includes("marks.study ? '<i class=\"study\"></i>'"));
+assert(calendar.includes('<i class="canvas"></i>画布活动'));
+assert(calendar.includes('<i class="daily"></i>每日打卡'));
+assert(calendar.includes('<i class="study"></i>学习任务'));
+assert(styles.includes('.calendar-day i.canvas, .calendar-legend i.canvas'));
+assert(styles.includes('.calendar-day i.daily, .calendar-legend i.daily'));
+assert(styles.includes('.calendar-day i.study, .calendar-legend i.study'));
+assert(appPy.includes('"canvas": 0, "daily": 0, "study": 0,'));
+assert(appPy.includes('bucket(day)["canvas"] = 1'));
+assert(appPy.includes('bucket(done_day)["daily"] = 1'));
+assert(appPy.includes('bucket(record_day)["study"] = 1'));
 
 // —— 文案键 ——
 assert(i18n.includes("'画布活动': 'Canvas activity'"));

@@ -36953,10 +36953,10 @@ body.calendar-flip-clock-open { overflow: hidden; }
 }
 .calendar-day i,
 .calendar-legend i { display: inline-block; width: 5px; height: 5px; border-radius: 50%; }
-.calendar-day i.diary, .calendar-legend i.diary { background: #c47c5e; }
-.calendar-day i.task, .calendar-legend i.task { background: #8d76b5; }
-.calendar-day i.focus, .calendar-legend i.focus { background: #b08968; }
-.calendar-day i.done, .calendar-legend i.done { background: #719a86; }
+/* 月历圆点与右侧三栏一一对应：画布活动 / 每日打卡 / 学习任务 */
+.calendar-day i.canvas, .calendar-legend i.canvas { background: #6d8fa8; }
+.calendar-day i.daily, .calendar-legend i.daily { background: #c99a5b; }
+.calendar-day i.study, .calendar-legend i.study { background: #719a86; }
 .calendar-day.selected i { box-shadow: 0 0 0 1px rgba(255,255,255,0.48); }
 .calendar-day.selected > b { gap: 3.5px; transform: translateY(-1px); }
 .calendar-legend {

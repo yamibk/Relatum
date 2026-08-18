@@ -15,6 +15,7 @@ class CalendarCanvasActivityTests(unittest.TestCase):
             mock.patch.object(app, "diary_index", return_value=[]),
             mock.patch.object(app, "load_diary", return_value=None),
             mock.patch.object(app, "load_countdown", return_value=app._default_countdown()),
+            mock.patch.object(app, "load_daily", return_value={"tasks": []}),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -78,6 +79,19 @@ class CalendarCanvasActivityTests(unittest.TestCase):
             "days": {"2026-08-18": {"a": {"seconds": 0, "created": False, "modified": False}}},
         })
         self.assertEqual(data["day"]["canvasActivity"]["items"], [])
+
+    def test_month_bucket_marks_canvas_days(self):
+        data = self.payload({
+            "canvases": {"a": {"title": "复盘"}, "b": {"title": "空"}},
+            "days": {
+                "2026-08-18": {"a": {"seconds": 600, "created": False, "modified": True}},
+                "2026-08-17": {"b": {"seconds": 0, "created": False, "modified": False}},
+            },
+        })
+        days = data["days"]
+        self.assertEqual(days["2026-08-18"]["canvas"], 1)
+        # 无实际活动（无时长无标记）的日期不点亮
+        self.assertNotIn("2026-08-17", days)
 
 
 if __name__ == "__main__":
