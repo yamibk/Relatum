@@ -103,7 +103,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
-| `assets/calendar.js` | 日历、日记、专注记录、非学习归档、倒数日与日历页倒数日进度条（每事件可选 `lengthDays` 窗口长度，已过事件显示学习页同款金色达成态）。 |
+| `assets/calendar.js` | 日历、日记、右侧三栏（画布活动 / 每日打卡 / 学习任务，替换原专注记录与归档成果）、倒数日与日历页倒数日进度条（每事件可选 `lengthDays` 窗口长度，已过事件显示学习页同款金色达成态）。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。 |
 | `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。 |
@@ -444,7 +444,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ### 日历 `calendar.js`
 
 - 日记是每天一个 Markdown 文件，带 frontmatter：`title/date/tags/updatedAt`。
-- 日历聚合日记、专注记录、非学习归档记录和倒数日；不读取学习任务或 `data/calendar-pins.json`，也不展示 `kind:"study"` 的学习归档。
+- 日历聚合日记、画布活动、每日任务打卡、学习任务完成与倒数日；不读取 `data/calendar-pins.json`。`/api/calendar` 的 day 返回 `canvasActivity`（当天画布活动：标题/秒数/新建/修改标记，按时长降序）、`daily`（当天每日任务打卡摘要：**只记录已打卡的任务**——按 doneDates 判定，未打卡项不返回、不参与入场动画；`checkedCount`/`totalCount`/`items[{name,checked,totalDays}]`，条目按名称排序）、`studyCompleted`（当天**归档**的学习任务：学习归档记录中 kind=study 且落在该日的条目，按时间升序；不读未归档的 study.json）。月网格圆点仍来自日记/专注/归档桶。右侧三栏在数据未到时**完全隐藏**（不渲染加载骨架白块），数据到达后整列入场动画揭示；每次翻进日历页（activate）都完整重播错峰入场——页头（含进度条）与月历卡片用 CSS 类，右侧整列（日记 + 三栏卡片错峰/条目上滑）由 `animateDayColumn({kind:'enter'})` 走 WAAPI。**非 stale 重进**走 `replayEntranceMotion`（rAF）；**stale 刷新**（用户在他页改过数据）走 `enterAfterRefresh`——数据渲染与入场动画同帧生效（同步加类、不经过 rAF），避免「新内容先完整显示一帧、再闪回动画起点」；首次进入由 render 的 initial 入场负责、不双播。倒数日卡片在数据未到时也**隐藏**（`hidden = !countdownEnabled || !countdown`，不渲染"创建第一个倒数日"占位按钮），数据到达后由 `syncCountdownCard` 以 reveal 动画淡入，避免「占位 → 重建」闪现。
 - 倒数日保存在 `data/countdown.json`，起步页可开关显示。
 - 倒数日数据 v2 支持最多 100 个事件，也支持真正的零事件空状态：删除最后一条后后端删除 `data/countdown.json`，GET 返回空的 v2 结构；旧版 `{event,date}` 读取时仍作为第一条事件迁移。事件选择会持久化 `selectedId`，前端不使用 `localStorage` 存事件。
 - 日历右上角显示当前倒数摘要或“创建第一个倒数日”入口；单击时钟图标（空状态时点击创建入口）导航到独立 `countdown.html`，返回统一落到 `index.html?view=calendar`，由起步页恢复日历视图。摘要中的事件名和日期/剩余天数区域支持双击就地编辑，Enter 保存、Esc 取消、失焦保存，键盘聚焦后也可用 Enter/F2；编辑时隐藏摘要标签和其余句子，让输入框独占卡片剩余宽度，不能把固定宽输入框塞进原句导致右侧裁切。倒数日页面不依附日历 DOM，不使用全屏 `backdrop-filter`，也不使用原生 Fullscreen API。

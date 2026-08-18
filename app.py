@@ -4983,6 +4983,92 @@ def diary_index() -> list[dict]:
     return entries
 
 
+def _calendar_canvas_activity(day: str) -> dict:
+    """当天画布活动：每张画布的前台工作时长与新建/修改标记，按时长降序。"""
+    data = canvas_activity_snapshot()
+    canvases = data.get("canvases", {})
+    if not isinstance(canvases, dict):
+        canvases = {}
+    entries = (data.get("days") or {}).get(day, {})
+    items = []
+    if isinstance(entries, dict):
+        for canvas_id, entry in entries.items():
+            if not isinstance(entry, dict):
+                continue
+            seconds = max(0, int(entry.get("seconds") or 0))
+            created = bool(entry.get("created"))
+            modified = bool(entry.get("modified"))
+            if not seconds and not created and not modified:
+                continue
+            meta = canvases.get(canvas_id)
+            if not isinstance(meta, dict):
+                meta = {}
+            path = str(meta.get("path") or "")
+            title = str(meta.get("title") or (Path(path).stem if path else "") or "未命名")
+            items.append({
+                "title": title[:240],
+                "seconds": seconds,
+                "created": created,
+                "modified": modified,
+            })
+    items.sort(key=lambda item: (-item["seconds"], item["title"]))
+    return {
+        "count": len(items),
+        "durationSec": sum(item["seconds"] for item in items),
+        "items": items,
+    }
+
+
+def _calendar_daily_summary(day: str) -> dict:
+    """选中日期的每日任务打卡摘要：只记录已打卡的任务（不展示未打卡/偷懒项）。"""
+    try:
+        data = load_daily()
+    except (ValueError, OSError):
+        data = {}
+    total_count = 0
+    items = []
+    for task in data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        name = str(task.get("name") or "").strip()[:80]
+        if not name:
+            continue
+        done_dates = _daily_date_list(task.get("doneDates"))
+        total_count += 1
+        if day not in done_dates:
+            continue
+        items.append({
+            "id": str(task.get("id") or ""),
+            "name": name,
+            "checked": True,
+            "totalDays": _daily_nat(task.get("totalDays")),
+        })
+    items.sort(key=lambda item: item["name"])
+    return {
+        "checkedCount": len(items),
+        "totalCount": total_count,
+        "items": items,
+    }
+
+
+def _calendar_study_completed(day: str, records: list | None = None) -> dict:
+    """选中日期归档的学习任务：学习归档记录（kind=study）落在该日的条目。"""
+    if records is None:
+        _, records = study_activity_records()
+    items = []
+    for record in records:
+        if record.get("kind") != "study" or record.get("day") != day:
+            continue
+        completed = str(record.get("completedAt") or "")
+        items.append({
+            "id": str(record.get("snapshotRootNodeId") or record.get("title") or ""),
+            "title": str(record.get("title") or "未命名任务").strip()[:160],
+            "time": completed[11:16] if len(completed) >= 16 else "",
+        })
+    items.sort(key=lambda item: item["time"])
+    return {"count": len(items), "items": items}
+
+
 def calendar_payload(year_value: object, month_value: object, selected_value: object) -> dict:
     today = date.today()
     try:
@@ -4994,9 +5080,10 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
     selected = _calendar_day(selected_value, today.isoformat())
     month_prefix = f"{year:04d}-{month:02d}-"
     focus = load_focus()
-    _, archive_records = study_activity_records()
-    archive_records = [record for record in archive_records if record.get("kind") != "study"]
+    _, all_archive_records = study_activity_records()
+    archive_records = [record for record in all_archive_records if record.get("kind") != "study"]
     diaries = diary_index()
+
     days: dict[str, dict] = {}
 
     def bucket(day: str) -> dict:
@@ -5044,6 +5131,9 @@ def calendar_payload(year_value: object, month_value: object, selected_value: ob
                 "sessions": selected_sessions,
             },
             "archives": selected_archives,
+            "canvasActivity": _calendar_canvas_activity(selected),
+            "daily": _calendar_daily_summary(selected),
+            "studyCompleted": _calendar_study_completed(selected, all_archive_records),
         },
     }
 
