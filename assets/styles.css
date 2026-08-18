@@ -36271,6 +36271,11 @@ body.trash-page[data-start-theme="dark"] .context-menu {
   display: grid; align-content: end; width: min(360px, 38vw); min-height: 145px; gap: 9px;
 }
 .calendar-head-tools .calendar-search-wrap { width: 100%; }
+/* stale 刷新等待期：整个日历内容区透明隐藏（保留布局），数据到达后同帧解除并播放入场 */
+.calendar-refreshing .calendar-page-head,
+.calendar-refreshing .calendar-layout {
+  opacity: 0;
+}
 /* —— “日历”大标题同一行：标题 + 倒数日进度条 ——
    calendar-head-main 用 flex:1 分配剩余宽度（不能靠内容固有宽度反推，
    否则进度条 100% 轨道在固有宽度计算里被当作 auto，容器被算窄而换行）。 */

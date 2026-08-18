@@ -486,7 +486,9 @@
   function renderCountdown() {
     const countdown = state.countdown;
     const hasCountdown = !!(countdown && countdown.event && countdown.date);
-    const hidden = !state.countdownEnabled;
+    // 数据未到时也隐藏（不渲染占位按钮）：避免「占位 → 数据到达重建」造成的闪现；
+    // 数据到达后由 syncCountdownCard 以 reveal 动画淡入。
+    const hidden = !state.countdownEnabled || !countdown;
     const distance = countdownDistance();
     let line = '';
     if (!hasCountdown) {
@@ -1254,53 +1256,63 @@
       + (draft.exists ? '' : 'hidden') + '>删除这篇</button></footer></section>';
   }
 
-  function renderFocusItems() {
-    const focus = state.payload.day.focus || {};
-    const sessions = focus.sessions || [];
-    if (!sessions.length) return '<p class="calendar-empty-line">这一天还没有专注记录。</p>';
-    return sessions.map((session, index) => {
-      const note = session.outcome
-        ? '<em>成果：' + escapeHtml(session.outcome) + '</em>'
-        : (session.goal ? '<em>目标：' + escapeHtml(session.goal) + '</em>' : '');
-      return '<button type="button" class="calendar-record-item calendar-record-link calendar-focus-record"'
-        + ' style="--calendar-item-delay:' + (Math.min(index, 4) * 18) + 'ms"'
-        + ' data-calendar-record-key="focus:' + escapeHtml(session.id) + '"'
-        + ' data-calendar-focus="' + escapeHtml(session.id) + '" data-calendar-focus-day="' + state.day + '"><div><strong>'
-        + escapeHtml(session.taskTitle || '自由专注') + '</strong><span>'
-        + escapeHtml(formatSessionTime(session.endedAt)) + '</span>' + note + '</div><b>'
-        + formatDuration(session.durationSec) + '</b></button>';
+  function renderCanvasActivity() {
+    const canvas = state.payload.day.canvasActivity || {};
+    const items = Array.isArray(canvas.items) ? canvas.items : [];
+    if (!items.length) return '<p class="calendar-empty-line">这一天还没有画布活动。</p>';
+    return items.map((item, index) => {
+      const mark = item.created && item.modified ? '新建 · 修改'
+        : item.created ? '新建' : item.modified ? '修改' : '工作';
+      const duration = Number(item.seconds) > 0 ? formatDuration(item.seconds) : '—';
+      return '<div class="calendar-record-item" style="--calendar-item-delay:'
+        + (Math.min(index, 4) * 14) + 'ms" data-calendar-record-key="canvas:'
+        + escapeHtml(String(item.title || '未命名') + ':' + index) + '"><div><strong>'
+        + escapeHtml(item.title || '未命名') + '</strong><span>' + mark
+        + '</span></div><b>' + duration + '</b></div>';
     }).join('');
   }
 
-  function formatSessionTime(value) {
-    const parsed = new Date(value || '');
-    if (Number.isNaN(parsed.getTime())) return '';
-    return String(parsed.getHours()).padStart(2, '0') + ':'
-      + String(parsed.getMinutes()).padStart(2, '0');
+  function renderDailySummary() {
+    const daily = state.payload.day.daily || {};
+    const items = Array.isArray(daily.items) ? daily.items : [];
+    if (!items.length) return '<p class="calendar-empty-line">这一天还没有打卡。</p>';
+    return items.map((item, index) => '<div class="calendar-record-item" style="--calendar-item-delay:'
+      + (Math.min(index, 4) * 14) + 'ms" data-calendar-record-key="daily:'
+      + escapeHtml(String(item.id || item.name || index)) + '"><div><strong>'
+      + escapeHtml(item.name) + '</strong><span>' + uiText('已打卡')
+      + '</span></div><b>' + (Number(item.totalDays) || 0) + ' 天</b></div>').join('');
   }
 
-  function renderArchives() {
-    const archives = state.payload.day.archives || [];
-    if (!archives.length) return '<p class="calendar-empty-line">这一天没有归档成果。</p>';
-    return archives.map((item, index) => '<div class="calendar-record-item" style="--calendar-item-delay:'
-      + (Math.min(index, 3) * 12) + 'ms" data-calendar-record-key="archive:'
-      + escapeHtml(item.id || item.path || item.at || item.title + ':' + index) + '"><div><strong>'
-      + escapeHtml(item.title) + '</strong><span>已沉淀进活跃足迹</span></div><b>完成</b></div>').join('');
+  function renderStudyCompleted() {
+    const study = state.payload.day.studyCompleted || {};
+    const items = Array.isArray(study.items) ? study.items : [];
+    if (!items.length) return '<p class="calendar-empty-line">这一天没有完成学习任务。</p>';
+    return items.map((item, index) => '<div class="calendar-record-item" style="--calendar-item-delay:'
+      + (Math.min(index, 4) * 14) + 'ms" data-calendar-record-key="study:'
+      + escapeHtml(String(item.id || item.title || index)) + '"><div><strong>'
+      + escapeHtml(item.title) + '</strong><span>'
+      + (item.time ? uiText('完成于') + ' ' + escapeHtml(item.time) : uiText('已完成'))
+      + '</span></div><b>完成</b></div>').join('');
   }
 
   function renderDayRecords(animateEntrance) {
     if (state.payload.day.loading) {
-      return '<section class="calendar-records calendar-records-loading" aria-label="正在同步当天档案">'
-        + '<article><i></i><i></i></article>'
-        + '<article><i></i><i></i></article></section>';
+      // 数据未到时完全隐藏右侧三栏（不渲染骨架白块），数据到达后整列入场动画揭示。
+      return '';
     }
-    const focus = state.payload.day.focus || {};
+    const canvas = state.payload.day.canvasActivity || {};
+    const daily = state.payload.day.daily || {};
+    const study = state.payload.day.studyCompleted || {};
     return '<section class="calendar-records' + (animateEntrance ? ' calendar-records-enter' : '') + '">'
-      + '<article style="--calendar-card-delay:16ms"><header><div><p>FOCUS</p><h3>专注记录</h3></div>'
-      + '<span>' + (focus.count || 0) + ' 段 · ' + formatDuration(focus.durationSec) + '</span></header>'
-      + renderFocusItems() + '</article>'
-      + '<article style="--calendar-card-delay:38ms"><header><div><p>ARCHIVE</p><h3>当天成果</h3></div>'
-      + '<button type="button" data-calendar-go="cadence">查看活跃</button></header>' + renderArchives() + '</article>'
+      + '<article style="--calendar-card-delay:8ms"><header><div><p>CANVAS</p><h3>画布活动</h3></div>'
+      + '<span>' + (canvas.count || 0) + ' 张 · ' + formatDuration(canvas.durationSec) + '</span></header>'
+      + renderCanvasActivity() + '</article>'
+      + '<article style="--calendar-card-delay:16ms"><header><div><p>DAILY</p><h3>每日打卡</h3></div>'
+      + '<span>' + (daily.checkedCount || 0) + ' 项打卡</span></header>'
+      + renderDailySummary() + '</article>'
+      + '<article style="--calendar-card-delay:38ms"><header><div><p>STUDY</p><h3>学习任务</h3></div>'
+      + '<span>' + (study.count || 0) + ' 项完成</span></header>'
+      + renderStudyCompleted() + '</article>'
       + '</section>';
   }
 
@@ -1356,10 +1368,14 @@
   function clearEntranceMotion() {
     const head = root.querySelector('.calendar-page-head');
     const card = root.querySelector('.calendar-month-card');
+    const records = root.querySelector('.calendar-records');
     if (head) head.classList.remove('calendar-page-head-enter');
     if (card) card.classList.remove('calendar-card-enter');
+    if (records) records.classList.remove('calendar-records-enter');
   }
 
+  // 每次翻进日历页都完整重播错峰入场：页头（含倒数日进度条）、月历卡片、右侧整列
+  // （日记 + 三栏：卡片错峰与条目上滑是 WAAPI 动画，由 animateDayColumn/revealDayColumnEnter 重播）。
   function replayEntranceMotion() {
     if (prefersReduced || !state.loaded) return;
     clearEntranceMotion();
@@ -1371,6 +1387,8 @@
       const card = root.querySelector('.calendar-month-card');
       if (head) head.classList.add('calendar-page-head-enter');
       if (card) card.classList.add('calendar-card-enter');
+      const column = root.querySelector('.calendar-day-column');
+      if (column) animateDayColumn(column, { kind: 'enter', direction: 0 });
     });
   }
 
@@ -2334,11 +2352,37 @@
     state.resumeAfterPageShow = false;
     window.CanvasCalendar.activate();
   });
+  // stale 刷新完成：先解除「等待期隐藏」，再与数据渲染同帧启动入场
+  // （同步加类 + 直接创建 WAAPI 动画，不经过 rAF）——内容从第一帧就以动画起点呈现，
+  // 不会出现「先完整显示 → 消失 → 再入场」。
+  function enterAfterRefresh() {
+    if (!state.active) return;
+    root.classList.remove('calendar-refreshing');
+    if (prefersReduced) return;
+    const head = root.querySelector('.calendar-page-head');
+    const card = root.querySelector('.calendar-month-card');
+    if (head) head.classList.add('calendar-page-head-enter');
+    if (card) card.classList.add('calendar-card-enter');
+    const column = root.querySelector('.calendar-day-column');
+    if (column) animateDayColumn(column, { kind: 'enter', direction: 0 });
+  }
+
   window.CanvasCalendar = {
     activate() {
       state.active = true;
       if (!state.loaded || state.stale) {
-        load(state.day, { kind: state.loaded ? 'refresh' : 'initial', direction: 0 });
+        // 首次进入由 render 的 initial 入场负责；非首次（stale 刷新）时：
+        // 等待数据期间先隐藏整个日历内容区（calendar-refreshing），
+        // 禁止旧内容无动画生硬展示；数据到达后同帧解除隐藏并启动入场。
+        const isFirst = !state.loaded;
+        if (!isFirst) root.classList.add('calendar-refreshing');
+        Promise.resolve(load(state.day, { kind: state.loaded ? 'refresh' : 'initial', direction: 0 }))
+          .then(() => {
+            if (!state.active) return;
+            if (isFirst) return;
+            enterAfterRefresh();
+          })
+          .catch(() => {});
       } else {
         replayEntranceMotion();
       }
