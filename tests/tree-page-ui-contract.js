@@ -1,0 +1,188 @@
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const root = path.resolve(__dirname, '..');
+const readAsset = (name) => fs.readFileSync(path.join(root, 'assets', name), 'utf8');
+const html = readAsset('index.html');
+const route = readAsset('study-route.js');
+const tree = readAsset('tree-page.js');
+const css = readAsset('styles.css');
+
+[
+  'study-route-panel tree-page-route-panel', 'study-route-stage tree-page-route-stage',
+  'data-role="study-route-viewport"', 'data-role="study-route-scene"',
+  'data-role="study-route-edges"', 'data-role="study-route-nodes"',
+  'data-role="study-route-rail"', 'data-role="rail-active-orb"',
+  'data-role="study-route-popover"', 'data-role="study-route-confirm"',
+  'data-role="study-route-guide"',
+].forEach((needle) => assert(html.includes(needle), 'missing cloned goal-tree DOM: ' + needle));
+
+assert(!html.includes('tree-page-head'), 'tree page must not render a visible title header');
+assert(!html.includes('data-tree-action="next"'), 'tree page must not render a Next button');
+assert(!html.includes('tree-page-model.js'), 'the discarded generic model must not load');
+
+function functionSource(source, name) {
+  const start = source.indexOf('  function ' + name + '(');
+  assert(start >= 0, 'missing function ' + name);
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  let quote = '';
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (lineComment) {
+      if (char === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (char === '*' && next === '/') { blockComment = false; index += 1; }
+      continue;
+    }
+    if (quote) {
+      if (char === '\\') { index += 1; continue; }
+      if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '/' && next === '/') { lineComment = true; index += 1; continue; }
+    if (char === '/' && next === '*') { blockComment = true; index += 1; continue; }
+    if (char === "'" || char === '"' || char === '`') { quote = char; continue; }
+    if (char === '{') depth += 1;
+    if (char === '}' && --depth === 0) return source.slice(start, index + 1).trim();
+  }
+  throw new Error('unterminated function ' + name);
+}
+
+const declaredFunctions = (source) => new Set(
+  Array.from(source.matchAll(/^  function ([A-Za-z0-9_]+)\(/gm), (match) => match[1]),
+);
+const routeFunctions = declaredFunctions(route);
+const treeFunctions = declaredFunctions(tree);
+routeFunctions.forEach((name) => {
+  assert(treeFunctions.has(name), 'cloned runtime omitted goal-tree function: ' + name);
+});
+
+[
+  'clearRailTransients', 'railSnapshot', 'renderRail', 'animateRailChange', 'setRailVisible',
+  'sceneTransform', 'applyView', 'stopViewAnimation', 'stopPanInertia', 'startPanInertia',
+  'requestViewAnimation', 'tickView', 'setViewTarget', 'fit', 'setZoom',
+  'preserveViewOnResize', 'edgePath', 'animateLayout', 'settleNodeFills',
+  'transitionFill', 'transitionTaskCheck', 'preserveViewAnchor', 'positionPopover',
+  'beginTreeTransition', 'endTreeTransition', 'animateRootEntrance', 'settleViewThenSave',
+  'finishTreeSwitchMotion', 'cancelTreeSwitchMotion', 'requestTreeSwitchFrame',
+  'tickTreeSwitchMotion', 'beginTreeSwitchMotion', 'collapseVisibleDescendants',
+  'cleanupCollapseMotion', 'cancelCollapseMotion', 'finishCollapseMotion',
+  'setCollapseControlExpanded', 'toggleBranchCollapse', 'clearDropPreview', 'showDropPreview',
+  'dragHitId', 'activateDrag', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
+  'onDragMove', 'onDragEnd', 'onDragCancel', 'endPan',
+].forEach((name) => {
+  assert.strictEqual(functionSource(tree, name), functionSource(route, name),
+    'goal-tree runtime drifted in critical function: ' + name);
+});
+
+[
+  "GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1'",
+  "post('/api/tree-page-command'", "api('/api/tree-page')",
+  "anchor.setPointerCapture(event.pointerId)", "lostpointercapture", "onDragLostCapture",
+  "window.addEventListener('blur', cancelActivePointerGestures)",
+  "command: 'delete-task'", "body.command = 'update-root-appearance'",
+  "window.CanvasTreePage =", 'activate: function', 'deactivate: function',
+  'TREE_PAGE_SHAPES',
+  'function createOptimistically(body)', "createClientId('tree_task_')",
+  'function deleteTaskOptimistically(taskId)', "return deleteTaskOptimistically(task.id)",
+  'progressCommandQueue', 'function drainProgressCommands()', 'function applyProgressCommandPayload(json, context)',
+  'appearanceCommandQueue', 'function drainAppearanceCommands()', 'function updateAppearanceOptimistically(anchor, patch)',
+  "createClientId('goal_node_')", "createClientId('goal_link_')",
+  "command: 'create-task', primaryLink: primaryLinkForAnchor(anchor)",
+  "command: 'create-branch', primaryLink: primaryLinkForAnchor(anchor)",
+  'function finishRouteCloseVisuals()', "overlay.classList.contains('view-leaving')",
+  "overlay.addEventListener('animationend', routeCloseAnimationHandler)",
+  'function ensureTreePageData()', 'if (studyPrefetchPromise) return studyPrefetchPromise',
+  'function scheduleTreePagePreload()', 'window.requestIdleCallback(warmTreePage, { timeout: 1500 })',
+  'scheduleTreePagePreload();',
+].forEach((needle) => assert(tree.includes(needle), 'missing tree runtime contract: ' + needle));
+
+[
+  'if (event.altKey)', "command: 'create-reference'", "command: 'delete-reference'",
+  'referenceDrag', 'referencePreview', 'referenceElements', 'tree-page-reference',
+].forEach((needle) => assert(!tree.includes(needle), 'removed Alt-reference feature leaked into tree runtime: ' + needle));
+assert(!css.includes('.tree-page-reference'), 'removed Alt-reference styles must not remain');
+assert(tree.includes("window.addEventListener('mouseup', onDragMouseUp, true)"),
+  'task drag must capture on pointerdown and keep a mouseup fallback');
+assert(!functionSource(tree, 'activateDrag').includes('setPointerCapture'),
+  'task drag activation must not recapture the pointer after movement has begun');
+const gestureCancelSource = functionSource(tree, 'cancelActivePointerGestures');
+assert(gestureCancelSource.includes('finishDrag(true)'),
+  'window blur and backgrounding must cancel task dragging');
+const treeDataSource = functionSource(tree, 'ensureTreePageData');
+assert(treeDataSource.indexOf('if (studyPrefetchPromise) return studyPrefetchPromise')
+  < treeDataSource.indexOf("api('/api/tree-page')"),
+  'Tree entry must reuse an idle prefetch already in flight');
+
+const progressSource = functionSource(tree, 'changeProgress');
+assert(progressSource.indexOf('state.tasks = state.tasks.map') < progressSource.indexOf('progressCommandQueue.push'),
+  'progress controls must update local task state before enqueueing the server command');
+assert(progressSource.includes('if (busy && !joiningQueue) return;'),
+  'progress controls must accept consecutive clicks only while their own queue is active');
+[
+  'study-progress-track-shell tree-page-task-progress', 'study-progress-track', 'study-progress-fill',
+  'is-goal-pending', 'is-goal-celebrating', 'is-goal-breathing',
+  'function scheduleTreeGoalBreath(delay)', "replayClass(node, 'is-goal-celebrating', 1480)",
+  'scheduleTreeGoalBreath(1560)', 'function syncExistingTaskMarkup(element, placement)',
+  "currentTrack.classList.toggle('is-full'", 'currentFill.style.width = nextFill.style.width',
+  'tree-page-root-progress-track', 'function syncExistingRootMarkup(element, placement)',
+].forEach((needle) => assert(tree.includes(needle), 'missing copied study progress motion: ' + needle));
+assert(!tree.includes('nextProgressShell.replaceWith(oldProgressShell)'),
+  'the progress fill must never be detached and reattached during +/- updates');
+[
+  '.tree-page-route-panel .study-route-node.is-task.is-goal-ready .study-progress-fill::before',
+  '.tree-page-route-panel .study-route-node.is-task.is-goal-celebrating .study-progress-fill::after',
+  '.tree-page-route-panel .study-route-node.is-task.is-goal-ready.is-goal-breathing',
+  '.tree-page-route-panel .tree-page-task-progress .study-progress-track',
+  '.tree-page-route-panel .study-route-node.is-root.is-goal-ready .study-progress-fill::before',
+  '.tree-page-route-panel .tree-page-root-progress-track .study-progress-track',
+].forEach((needle) => assert(css.includes(needle), 'missing copied study progress style: ' + needle));
+
+const appearanceSource = functionSource(tree, 'updateAppearanceOptimistically');
+assert(appearanceSource.indexOf('syncAppearancePaletteSelection(patch)') < appearanceSource.indexOf('appearanceCommandQueue.push'),
+  'appearance controls must update local visuals before enqueueing the server command');
+assert(tree.includes("return updateAppearanceOptimistically(anchor, { color: control.dataset.color || '' })"),
+  'color controls must use optimistic appearance updates');
+assert(tree.includes('return updateAppearanceOptimistically(anchor, { shape: shape })'),
+  'shape controls must use optimistic appearance updates');
+assert(!tree.includes('data-route-form="new-task"') && !tree.includes('data-route-form="new-branch"')
+  && !tree.includes('data-route-form="new-stage"'),
+  'new tasks and branches must not open naming forms');
+assert(/command: 'create-task'[\s\S]{0,180}title: T\('未命名'\), target: 1/.test(tree),
+  'one-click task creation must use an untitled 0/1 task');
+assert(/command: 'create-branch'[\s\S]{0,180}title: T\('未命名'\)/.test(tree),
+  'one-click branch creation must use an untitled branch');
+
+assert(!tree.includes("data-route-pop=\"attach\""), 'Select existing task must be absent');
+assert(!tree.includes("command: 'attach-task'"), 'attach-task must be absent');
+assert(!tree.includes("command: 'detach-task'"), 'detach-task must be absent');
+assert(!tree.includes('选择已有任务'), 'existing-task copy must be absent');
+assert(!tree.includes('移出路线'), 'detach copy must be absent');
+
+['rounded', 'rectangle', 'pill', 'diamond', 'circle'].forEach((shape) => {
+  assert(tree.includes("value: '" + shape + "'"), 'missing shape option: ' + shape);
+  assert(shape === 'rounded' ? css.includes('.study-route-node {') : css.includes('.tree-page-shape-' + shape),
+    'missing shape CSS: ' + shape);
+});
+assert(css.includes('.tree-page-route-panel') && css.includes('border-radius: 0')
+  && css.includes('.tree-page-route-stage'), 'tree page must use the fullscreen modifier');
+assert(css.includes('body.start-page[data-start-theme="dark"] .tree-page-route-stage'),
+  'tree page needs dark theme styling');
+assert(css.includes('--tree-diamond-fill') && css.includes('--tree-diamond-stroke')
+  && css.includes('.study-route-node.tree-page-shape-diamond::after'),
+  'diamond nodes need independent fill and outline layers');
+assert(!/^\.tree-page-shape-diamond i \{/m.test(css)
+  && css.includes('.tree-page-shape-choice.tree-page-shape-diamond i {'),
+  'shape-picker icon rules must not transform node content');
+assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.tree-page-embedded/.test(css),
+  'tree page needs reduced-motion fallback');
+
+console.log('tree page cloned-runtime UI contract passed');
