@@ -58,6 +58,7 @@
   const STUDY_MILESTONES_MAX = 50;
   const STUDY_TASK_PAGE_MAX = 99;
   const STUDY_TASK_PAGE_KEY = 'study:taskPage:v1';
+  const STUDY_TASK_PAGE_COLORS_KEY = 'study:taskPageColors:v1';
   const STUDY_TASK_PAGE_EDGE_PX = 84;
   // 切页动画：整体淡出彻底结束后才替换内容并淡入，避免旧卡片退场/新卡片入场叠加成残影。
   const STUDY_TASK_PAGE_SWITCH_MS = 150;
@@ -163,6 +164,59 @@
   let taskPageNoteEdit = null;
   let taskPageNoteMutation = Promise.resolve();
   const taskPageNoteSeq = new Map();
+  let studyColorPopover = null;
+  let studyColorTrigger = null;
+  let studyColorPositionFrame = 0;
+  let studyColorAnchorX = 0;
+  let studyColorAnchorY = 0;
+  let studyColorPick = null;
+
+  function studyTaskPagePaletteValues() {
+    var colors = (window.RelatumStudyPalette && window.RelatumStudyPalette.COLORS) || [];
+    return new Set(colors.map(function (item) { return String(item && item.value || '').trim(); }));
+  }
+  function loadTaskPageColors() {
+    var result = {};
+    try {
+      var raw = JSON.parse(localStorage.getItem(STUDY_TASK_PAGE_COLORS_KEY) || 'null');
+      if (!raw || raw.version !== 1 || !raw.colors || typeof raw.colors !== 'object'
+          || Array.isArray(raw.colors)) return result;
+      var allowed = studyTaskPagePaletteValues();
+      Object.keys(raw.colors).forEach(function (rawPage) {
+        if (!/^[1-9]\d?$/.test(rawPage)) return;
+        var page = Number(rawPage);
+        var color = typeof raw.colors[rawPage] === 'string' ? raw.colors[rawPage].trim() : '';
+        if (page <= STUDY_TASK_PAGE_MAX && color && allowed.has(color)) result[String(page)] = color;
+      });
+    } catch (error) { /* 损坏偏好回退为无页号颜色 */ }
+    return result;
+  }
+  let taskPageColors = loadTaskPageColors();
+
+  function taskPageColor(page) {
+    return String(taskPageColors[String(normalizeTaskPage(page))] || '');
+  }
+  function saveTaskPageColors() {
+    try {
+      localStorage.setItem(STUDY_TASK_PAGE_COLORS_KEY, JSON.stringify({
+        version: 1,
+        colors: taskPageColors,
+      }));
+    } catch (error) { /* 存储不可用时保留本次会话颜色 */ }
+  }
+  function setTaskPageColor(page, value) {
+    var target = normalizeTaskPage(page);
+    var color = typeof value === 'string' ? value.trim() : '';
+    var allowed = studyTaskPagePaletteValues();
+    if (color && allowed.has(color)) taskPageColors[String(target)] = color;
+    else delete taskPageColors[String(target)];
+    saveTaskPageColors();
+    renderTaskPageRail();
+  }
+  function taskPageColorPopoverOpen() {
+    return !!(studyColorPopover && studyColorTrigger
+      && studyColorTrigger.matches && studyColorTrigger.matches('[data-task-page]'));
+  }
 
   function taskPageOf(task) {
     return normalizeTaskPage(task && task.taskPage);
@@ -178,9 +232,12 @@
     var highestTask = state.tasks.reduce(function (highest, task) {
       return Math.max(highest, taskPageOf(task));
     }, 1);
-    return Object.keys(state.taskPageNotes).reduce(function (highest, page) {
+    var highestNote = Object.keys(state.taskPageNotes).reduce(function (highest, page) {
       return Math.max(highest, normalizeTaskPage(Number(page)));
     }, highestTask);
+    return Object.keys(taskPageColors).reduce(function (highest, page) {
+      return Math.max(highest, normalizeTaskPage(Number(page)));
+    }, highestNote);
   }
   function currentTaskPageNote() {
     return String(state.taskPageNotes[String(currentTaskPage)] || '');
@@ -263,6 +320,11 @@
     button.className = 'study-task-page-button' + (page === currentTaskPage ? ' is-active' : '');
     button.dataset.taskPage = String(page);
     button.textContent = String(page);
+    var color = taskPageColor(page);
+    if (color) {
+      button.dataset.taskPageColor = color;
+      button.style.setProperty('--task-page-color', color);
+    }
     setStudyAriaLabel(button, '学习任务第 ' + page + ' 页');
     if (page === currentTaskPage) button.setAttribute('aria-current', 'page');
     return button;
@@ -290,6 +352,14 @@
     if (fromScroll && performance.now() < taskPageOrbSettleUntil) return;
     var active = taskPageRailEl.querySelector('.study-task-page-button.is-active');
     if (!active) { taskPageOrbEl.style.opacity = '0'; return; }
+    var color = active.dataset.taskPageColor || '';
+    if (color) {
+      taskPageOrbEl.dataset.taskPageColor = color;
+      taskPageOrbEl.style.setProperty('--task-page-color', color);
+    } else {
+      delete taskPageOrbEl.dataset.taskPageColor;
+      taskPageOrbEl.style.removeProperty('--task-page-color');
+    }
     var railRect = taskPageRailEl.getBoundingClientRect();
     var buttonRect = active.getBoundingClientRect();
     var visible = buttonRect.bottom > railRect.top && buttonRect.top < railRect.bottom;
@@ -337,7 +407,8 @@
     if (!taskPageRailEl) return;
     // 鼠标触发的显示一律过带内拦截；键盘聚焦（ignorePointer）不受影响
     if (visible && !(options && options.ignorePointer) && taskPagePointerInTabBlock()) visible = false;
-    taskPageRailVisible = !!visible && studyPageActive && !temporaryPanelOpen;
+    taskPageRailVisible = (!!visible || taskPageColorPopoverOpen())
+      && studyPageActive && !temporaryPanelOpen;
     taskPageRailEl.classList.toggle('revealed', taskPageRailVisible);
   }
   // —— 切页错峰入场：复用整版 spring stagger（头 → 列标题 → 逐行卡片），
@@ -418,6 +489,25 @@
       if (!button) return;
       event.preventDefault();
       setCurrentTaskPage(Number(button.dataset.taskPage));
+    });
+    taskPageRailEl.addEventListener('contextmenu', function (event) {
+      var button = event.target.closest('[data-task-page]');
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (studyColorPopover && studyColorTrigger === button) {
+        closeStudyColorPopover(true);
+        return;
+      }
+      var rect = button.getBoundingClientRect();
+      var anchorX = event.clientX || (rect.left + rect.width / 2);
+      var anchorY = event.clientY || rect.bottom;
+      var page = normalizeTaskPage(Number(button.dataset.taskPage));
+      openStudyColorPopover(button, anchorX, anchorY, {
+        currentColor: taskPageColor(page),
+        label: T('选择颜色'),
+        pick: function (value) { setTaskPageColor(page, value); },
+      });
     });
     // 滚轮切页：页栏上向下滚 → 下一页，向上滚 → 上一页；
     // 列表本方向仍可滚动时先滚动列表，滚到边缘后再滚才切页
@@ -2798,13 +2888,6 @@
   }
 
   // —— 调色盘浮层：右键任务卡片 / 图例色块弹出，与目标树阶段同款 12 色 ——
-  let studyColorPopover = null;
-  let studyColorTrigger = null;
-  let studyColorPositionFrame = 0;
-  let studyColorAnchorX = 0;
-  let studyColorAnchorY = 0;
-  let studyColorPick = null;
-
   function buildStudyColorPalette(currentColor) {
     var colors = (window.RelatumStudyPalette && window.RelatumStudyPalette.COLORS) || [];
     currentColor = String(currentColor || '').trim();
@@ -2868,6 +2951,7 @@
     });
     studyColorPopover = box;
     document.body.appendChild(box);
+    if (trigger.matches && trigger.matches('[data-task-page]')) setTaskPageRailVisible(true);
     positionStudyColorPopover();
     requestAnimationFrame(function () {
       if (!studyColorPopover) return;
@@ -2886,11 +2970,13 @@
     var popover = studyColorPopover;
     var trigger = studyColorTrigger;
     if (!popover) return;
+    var wasTaskPageTrigger = !!(trigger && trigger.matches && trigger.matches('[data-task-page]'));
     if (studyColorPositionFrame) cancelAnimationFrame(studyColorPositionFrame);
     studyColorPositionFrame = 0;
     studyColorPopover = null;
     studyColorTrigger = null;
     studyColorPick = null;
+    if (wasTaskPageTrigger) setTaskPageRailVisible(taskPageRailOver);
     var finish = function () {
       if (popover.isConnected) popover.remove();
       if (restoreFocus && trigger && trigger.isConnected) trigger.focus();

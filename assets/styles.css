@@ -42790,12 +42790,23 @@ body.start-page[data-start-theme="dark"] .study-legend-chip.is-default {
   transition: color 160ms var(--easing-soft), background 160ms var(--easing-soft);
 }
 .study-task-page-button:hover { color: var(--text); background: var(--surface); }
+.study-task-page-button[data-task-page-color]:not(.is-active) {
+  color: #3b403a;
+  background: var(--task-page-color);
+  border-color: color-mix(in srgb, var(--task-page-color) 72%, #a8ada5);
+}
+.study-task-page-button[data-task-page-color]:not(.is-active):hover {
+  color: #242824;
+  background: color-mix(in srgb, var(--task-page-color) 88%, #fff);
+}
 .study-task-page-button.is-active,
 .study-task-page-button.is-active:hover {
   color: #f8f6ef; background: transparent;
   /* 与书脊同款层叠：白字数字抬到滑块(z-index:2)之上，滑块滑过时不被半透明底罩住变浅 */
   z-index: 3;
 }
+.study-task-page-button.is-active[data-task-page-color],
+.study-task-page-button.is-active[data-task-page-color]:hover { color: #292d28; }
 .study-task-page-button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 48%, var(--text)); outline-offset: 2px;
 }
@@ -42804,8 +42815,10 @@ body.start-page[data-start-theme="dark"] .study-legend-chip.is-default {
   border-radius: 11px; background: #242521; box-shadow: 0 6px 14px rgba(26,26,26,.16);
   pointer-events: none; will-change: transform;
   /* 与书脊胶囊同款节奏（--start-orb-ms 跟随翻页速度偏好） */
-  transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft);
+  transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft),
+    background 160ms var(--easing-soft);
 }
+.study-task-page-orb[data-task-page-color] { background: var(--task-page-color); }
 .study-progress-view,
 .study-list { transition: opacity 150ms var(--easing-soft), transform 180ms var(--easing-soft); }
 .study-task-page-switching .study-progress-view,
@@ -43887,7 +43900,17 @@ body.start-page[data-start-theme="dark"] .study-task-page-button {
 }
 body.start-page[data-start-theme="dark"] .study-task-page-button:hover { color: #f8f6ef; background: #242725; }
 body.start-page[data-start-theme="dark"] .study-task-page-button.is-active { color: #1d201d; background: transparent; }
+body.start-page[data-start-theme="dark"] .study-task-page-button[data-task-page-color]:not(.is-active) {
+  color: #f3f0e8;
+  background: color-mix(in srgb, var(--task-page-color) 34%, #242725);
+  border-color: color-mix(in srgb, var(--task-page-color) 30%, #343936);
+}
+body.start-page[data-start-theme="dark"] .study-task-page-button[data-task-page-color]:not(.is-active):hover {
+  color: #fffdf7;
+  background: color-mix(in srgb, var(--task-page-color) 44%, #292d2a);
+}
 body.start-page[data-start-theme="dark"] .study-task-page-orb { background: #f3f0e7; box-shadow: 0 6px 16px rgba(0,0,0,.3); }
+body.start-page[data-start-theme="dark"] .study-task-page-orb[data-task-page-color] { background: var(--task-page-color); }
 body.start-page[data-start-theme="dark"] .study-task-page-note,
 body.start-page[data-start-theme="dark"] .study-task-page-note-input { color: #f8f6ef; }
 body.start-page[data-start-theme="dark"] .study-temporary-card { border-color: rgba(255,255,255,.1); background: #242725; box-shadow: 0 8px 22px rgba(0,0,0,.19); }
