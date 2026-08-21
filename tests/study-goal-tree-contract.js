@@ -31,12 +31,11 @@ const backend = fs.readFileSync(path.join(root, 'app.py'), 'utf8');
   "command: 'remove-requirement'",
   "command: 'clear-primary-requirement'",
   'canvas:studyGoalTreeSimpleMode:v1',
-  "anchor.dataset.kind !== 'task' || !simpleModeEnabled()",
+  'if (!simpleModeEnabled()) state.tree.nodes.forEach',
   'progressBreakdownPopover',
   'study-route-branch-meta-row',
   "popover.querySelector('.study-route-progress-detail')",
   "popover.querySelector('form[data-route-form=\"settings\"]')",
-  'blockersPopover',
   'goalTreeId: state.activeTreeId',
   "command: 'move-node', nodeId: current.nodeId, primaryLink:",
   'GoalTree.nextTasks',
@@ -155,6 +154,7 @@ assert.strictEqual(model.metrics.get('stage').count, 2, 'stage only aggregates c
 assert.strictEqual(model.rootMetrics.count, 3, 'root counts unique route tasks');
 const stageProgress = GoalTree.progressBreakdown(model, 'stage');
 assert.strictEqual(stageProgress.percent, 0, 'both contained tasks begin at zero');
+assert.strictEqual(stageProgress.rows.length, 2, 'secondary requirements must not duplicate stage detail rows');
 const mixedTasks = tasks.map((task) => task.id === 'b' ? { ...task, progress: { current: 5, target: 10, milestones: [] } } : task);
 const mixedModel = GoalTree.buildModel(tree, mixedTasks);
 assert.strictEqual(GoalTree.progressBreakdown(mixedModel, 'stage').percent, 25, '50% and 0% must average to 25%');
@@ -167,6 +167,59 @@ assert.strictEqual(GoalTree.progressBreakdown(GoalTree.buildModel(fourTree, oneH
 assert.strictEqual(GoalTree.requirementCount(model, 'nc'), 1);
 assert.strictEqual(GoalTree.canAddRequirement(model, 'na', 'nc', { kind: 'complete' }), false, 'semantic duplicate must be hidden');
 assert.strictEqual(GoalTree.canAddRequirement(model, 'nc', 'na', { kind: 'complete' }), false, 'cycle candidate must be hidden');
+
+const nestedTasks = [
+  { id: 'n1', title: '完成但保留原始 0/1', status: 'done', progress: { current: 0, target: 1, milestones: [] } },
+  { id: 'n2', title: '完成', status: 'done', progress: { current: 1, target: 1, milestones: [] } },
+  { id: 'n3', title: '未完成 1', status: 'active', progress: { current: 0, target: 1, milestones: [] } },
+  { id: 'n4', title: '未完成 2', status: 'active', progress: { current: 0, target: 1, milestones: [] } },
+  { id: 'n5', title: '未完成 3', status: 'active', progress: { current: 0, target: 1, milestones: [] } },
+];
+const nestedTree = {
+  version: 2, id: 'nested-tree', title: '复杂路线',
+  nodes: [
+    { id: 'stage1', kind: 'branch', title: '阶段 1' },
+    { id: 'nn1', kind: 'task', taskId: 'n1' },
+    { id: 'nn2', kind: 'task', taskId: 'n2' },
+    { id: 'stage2', kind: 'branch', title: '阶段 2' },
+    { id: 'nn3', kind: 'task', taskId: 'n3' },
+    { id: 'nn4', kind: 'task', taskId: 'n4' },
+    { id: 'nn5', kind: 'task', taskId: 'n5' },
+  ],
+  links: [
+    { id: 'nl1', from: null, to: 'stage1', type: 'contains', primary: true, order: 0, side: 'right' },
+    { id: 'nl2', from: 'stage1', to: 'nn1', type: 'contains', primary: true, order: 0 },
+    { id: 'nl3', from: 'stage1', to: 'nn2', type: 'contains', primary: true, order: 1 },
+    { id: 'nl4', from: 'nn1', to: 'stage2', type: 'requires', primary: true, order: 0, trigger: { kind: 'complete' } },
+    { id: 'nl5', from: 'stage2', to: 'nn3', type: 'contains', primary: true, order: 0 },
+    { id: 'nl6', from: 'stage2', to: 'nn4', type: 'contains', primary: true, order: 1 },
+    { id: 'nl7', from: 'nn2', to: 'nn5', type: 'requires', primary: true, order: 0, trigger: { kind: 'complete' } },
+  ],
+};
+const nestedModel = GoalTree.buildModel(nestedTree, nestedTasks);
+assert.strictEqual(nestedModel.metrics.get('stage1').count, 5, 'parent stage recursively counts the full primary descendant route');
+assert.strictEqual(GoalTree.progressBreakdown(nestedModel, 'stage1').percent, 40, 'two of five equal-weight tasks produce 40%');
+assert.strictEqual(nestedModel.metrics.get('stage2').count, 2, 'nested stage keeps its own recursive scope');
+assert.strictEqual(GoalTree.progressBreakdown(nestedModel, 'stage2').percent, 0);
+assert.strictEqual(GoalTree.progressBreakdown(nestedModel, 'root').percent, 40, 'root still counts every unique task once');
+
+const boundaryTree = {
+  version: 2, id: 'boundary-tree', title: '阶段边界',
+  nodes: [
+    { id: 'boundary-stage', kind: 'branch', title: '当前阶段' },
+    { id: 'boundary-inside', kind: 'task', taskId: 'n1' },
+    { id: 'boundary-after', kind: 'task', taskId: 'n3' },
+  ],
+  links: [
+    { id: 'bl1', from: null, to: 'boundary-stage', type: 'contains', primary: true, order: 0, side: 'right' },
+    { id: 'bl2', from: 'boundary-stage', to: 'boundary-inside', type: 'contains', primary: true, order: 0 },
+    { id: 'bl3', from: 'boundary-stage', to: 'boundary-after', type: 'requires', primary: true, order: 0, trigger: { kind: 'complete' } },
+  ],
+};
+const boundaryModel = GoalTree.buildModel(boundaryTree, nestedTasks);
+assert.strictEqual(boundaryModel.metrics.get('boundary-stage').count, 1, 'a branch gated by the stage is outside that stage metric');
+assert.strictEqual(boundaryModel.metrics.get('boundary-stage').complete, true, 'done status contributes 100% even when raw progress remains 0/1');
+assert.strictEqual(boundaryModel.availability.get('boundary-after').available, true, 'excluded follow-up unlocks instead of self-locking');
 
 const completeTasks = tasks.map((task) => task.id === 'a' ? { ...task, status: 'done' } : task);
 model = GoalTree.buildModel(tree, completeTasks);
