@@ -27,6 +27,7 @@ assert(html.includes('01 / 03'));
   '名称.canvas',
   '名称.assets',
   'recent.json',
+  'tree-page.json',
   'review.db',
   '删除哪一项，就会清空对应页面的数据',
   "canvas:dataGuideClicked:v1",
@@ -38,6 +39,7 @@ assert(html.includes('01 / 03'));
   'Before deleting, read this',
   'canvases: canvases and attachments',
   'data: records, settings, and indexes',
+  'It is completely separate from Study Goal Trees.',
   'Do not delete the whole <code>data</code> folder',
 ].forEach((token) => assert(start.includes(token), 'missing English local data guide token: ' + token));
 assert(i18n.includes("'Relatum · 本地数据说明': 'Relatum · Local Data Guide'"));

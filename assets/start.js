@@ -91,14 +91,15 @@
   let pendingDeleteIndex = -1; // 右方向键：待确认删除（再按一次右键执行）
   const trashingPaths = new Set(); // 防止右键菜单与键盘对同一画布重复提交
   let studyActive = false;
-  let cadenceActive = false;   // 活跃热力图前置页（在学习页更左一格）是否展开
-  let notesActive = false;     // 速记便签墙前置页（在活跃页更左一格）是否展开
-  let calendarActive = false;  // 日历与日记前置页（在复习与速记之间）是否展开
+  let cadenceActive = false;   // 活跃热力图前置页（位于日历与速记之间）是否展开
+  let treePageActive = false;  // 独立树状页（位于速记与学习之间；不读取目标树数据）
+  let notesActive = false;     // 速记便签墙前置页（位于活跃与树状之间）是否展开
+  let calendarActive = false;  // 日历与日记前置页（在复习与活跃之间）是否展开
   let reviewActive = false;    // 复习卡片前置页（最左一格）是否展开
   let focusActive = false;     // 专注钟前置页（学习更右一格、紧邻书页）是否展开
   let pendingFocusActivation = null;
   let pendingFocusReadyActions = [];
-  let specialPagesHidden = false; // 「隐藏特殊页」开启：书脊只留普通书页，6 张前置页既不显示也不可翻入
+  let specialPagesHidden = false; // 「隐藏特殊页」开启：书脊只留普通书页，7 张前置页既不显示也不可翻入
   const FAVORITES_PAGE = '__favorites__';
   const INBOX_PAGE = '__inbox__';
   const LARGE_LIST_THRESHOLD = 80;
@@ -130,7 +131,7 @@
   let startTurnSpeed = START_SPEED_DEFAULT;
   let notesInertia = NOTES_INERTIA_DEFAULT;
   let startViewTransitionTimer = 0;
-  const START_VIEW_ORDER = { review: 0, calendar: 1, notes: 2, cadence: 3, study: 4, focus: 5, recent: 6, empty: 6, loading: 6 };
+  const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
 
   function englishUI() {
@@ -296,7 +297,7 @@
   }
 
   // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
-  // 6 张前置页（复习/日历/速记/活跃/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
+  // 7 张前置页（复习/日历/活跃/速记/树状/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
   function applyHideSpecialPages(hidden, persist) {
     specialPagesHidden = !!hidden;
     if (hideSpecialToggle) hideSpecialToggle.checked = specialPagesHidden;
@@ -305,7 +306,7 @@
       try { localStorage.setItem(HIDE_SPECIAL_KEY, specialPagesHidden ? '1' : '0'); } catch (e) {}
     }
     // 若开启时正停在某张特殊页，立刻退回「最近」，避免卡在已被隐藏、又翻不动的页面上。
-    if (specialPagesHidden && (studyActive || cadenceActive || notesActive
+    if (specialPagesHidden && (studyActive || cadenceActive || treePageActive || notesActive
         || calendarActive || reviewActive || focusActive)) {
       navigateTo('');
     }
@@ -708,7 +709,7 @@
       sections: [
         ['两个文件夹分别装什么', '可以把它们理解成“作品本体”和“配套资料”。', [
           ['<code>canvases</code>', '保存每张画布及其图片、PDF、Markdown 附件和批注。这里通常最占空间，也是最不能随便拆开删除的部分。'],
-          ['<code>data</code>', '保存画布列表、分组收藏、学习任务、复习卡片、速记、日记、专注记录、背景和各种偏好。这里的 JSON 文件通常很小。'],
+          ['<code>data</code>', '保存画布列表、分组收藏、学习任务、独立树状页、复习卡片、速记、日记、专注记录、背景和各种偏好。这里的 JSON 文件通常很小。'],
         ]],
         ['真正容易占空间的地方', '如果只是想腾出磁盘空间，优先检查素材和回收站；不要为了几 KB 的 JSON 文件丢掉长期记录。', [
           ['<code>*.assets</code>', '画布使用的图片、PDF 和 Markdown 附件。先在对应画布里使用“清理附件”，只删没有被引用的素材。'],
@@ -746,7 +747,7 @@
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: 'data：记录、设置和索引',
-      subtitle: '这些文件大多不占多少空间，却决定起步页如何组织画布，以及学习、日历、复习和专注页能看到哪些记录。',
+      subtitle: '这些文件大多不占多少空间，却决定起步页如何组织画布，以及树状、学习、日历、复习和专注页能看到哪些记录。',
       sections: [
         ['画布列表与显示设置', '删除设置文件通常不会删除画布本体，但会让界面恢复默认或失去整理信息。', [
           ['<code>recent.json</code>', '保存最近画布、分组、收藏和排序。删除后 <code>.canvas</code> 文件仍在，但起步页列表会变空，分组、收藏和顺序丢失；之后可手动扫描重新登记顶层画布。'],
@@ -757,7 +758,8 @@
           ['<code>viewport.json</code>', '各画布上次的视野位置和缩放。删除后画布内容不受影响，只会丢失上次观看位置。'],
           ['<code>window-state.json</code>', '桌面窗口的大小、位置和最大化状态。删除后窗口恢复默认，不影响任何内容。'],
         ]],
-        ['学习、每日任务与活动足迹', '下面这些都是长期记录，不属于缓存。', [
+        ['树状页、学习、每日任务与活动足迹', '下面这些都是长期记录，不属于缓存。', [
+          ['<code>tree-page.json</code>', '独立树状页的任务、阶段、连接、外观和当前树。它与学习页的目标树完全分开；删除后树状页会从空白重新开始，不影响 <code>study.json</code>、画布或学习页，也不能从学习页自动恢复。'],
           ['<code>study.json</code>', '当前学习任务、任务回收站、进度和多棵目标树。删除后这些当前数据全部重置；已经归档的历史仍单独留在“学习归档”。'],
           ['<code>学习归档</code>', '已完成学习任务、归档速记和任务簿完成副本。删除后对应历史、活跃统计和星图回顾会减少或消失，当前未完成任务不受影响。'],
           ['<code>画布归档</code>', '画布归档动作留下的轻量历史记录。删除后原画布通常仍在，但活跃页里的归档足迹和统计会减少。'],
@@ -792,7 +794,7 @@
       sections: [
         ['What the two folders contain', 'Think of them as “your work” and “supporting data”.', [
           ['<code>canvases</code>', 'Stores every canvas together with its images, PDFs, Markdown attachments, and annotations. This folder usually uses the most space and should not be split up or cleaned blindly.'],
-          ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, review cards, quick notes, journals, focus history, backgrounds, and preferences. Its JSON files are usually very small.'],
+          ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, the independent Tree page, review cards, quick notes, journals, focus history, backgrounds, and preferences. Its JSON files are usually very small.'],
         ]],
         ['What actually uses disk space', 'If you only want to free disk space, inspect assets and Trash first. Do not sacrifice long-term records to save a few KB of JSON.', [
           ['<code>*.assets</code>', 'Images, PDFs, and Markdown attachments used by a canvas. Use “Clean attachments” inside that canvas first so only unreferenced files are removed.'],
@@ -830,7 +832,7 @@
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: 'data: records, settings, and indexes',
-      subtitle: 'Most of these files use little space, but they determine how Home organizes canvases and which records appear in Study, Calendar, Review, and Focus.',
+      subtitle: 'Most of these files use little space, but they determine how Home organizes canvases and which records appear in Tree, Study, Calendar, Review, and Focus.',
       sections: [
         ['Canvas library and display settings', 'Deleting a settings file usually leaves the canvas itself intact, but resets the interface or removes organization data.', [
           ['<code>recent.json</code>', 'Recent canvases, groups, favorites, and ordering. The <code>.canvas</code> files remain after deletion, but Home becomes empty and organization is lost; you can later scan the top-level canvases folder to register files again.'],
@@ -841,7 +843,8 @@
           ['<code>viewport.json</code>', 'The last position and zoom for each canvas. Deleting it does not affect content, only the last viewing position.'],
           ['<code>window-state.json</code>', 'Desktop window size, position, and maximized state. Deleting it restores the default window without affecting content.'],
         ]],
-        ['Study, daily tasks, and activity', 'These are long-term records, not cache files.', [
+        ['Tree, Study, daily tasks, and activity', 'These are long-term records, not cache files.', [
+          ['<code>tree-page.json</code>', 'Tasks, stages, links, appearance, and the active tree for the independent Tree page. It is completely separate from Study Goal Trees. Deleting it starts Tree from blank without affecting <code>study.json</code>, canvases, or Study, and it cannot be rebuilt automatically from Study.'],
           ['<code>study.json</code>', 'Current study tasks, task Trash, progress, and Goal Trees. Deleting it resets all current study data; previously archived history remains separately in the Study archive.'],
           ['<code>Study archive</code>', 'Completed study tasks, archived quick notes, and completed taskbook snapshots. Deleting it removes that history and reduces or removes related activity statistics and constellation history; current active tasks remain.'],
           ['<code>Canvas archive</code>', 'Lightweight history created by canvas archive actions. Deleting it usually leaves original canvases intact, but removes related archive events and statistics from Activity.'],
@@ -1372,6 +1375,7 @@
     if (name === 'focus') return document.querySelector('.focus-embedded');
     if (name === 'study') return document.querySelector('.study-embedded');
     if (name === 'cadence') return document.querySelector('.cadence-embedded');
+    if (name === 'tree') return document.querySelector('.tree-page-embedded');
     if (name === 'notes') return document.querySelector('.notes-embedded');
     return bookStage;
   }
@@ -1381,6 +1385,7 @@
       ['recent', bookStage],
       ['study', document.querySelector('.study-embedded')],
       ['cadence', document.querySelector('.cadence-embedded')],
+      ['tree', document.querySelector('.tree-page-embedded')],
       ['notes', document.querySelector('.notes-embedded')],
       ['calendar', document.querySelector('.calendar-embedded')],
       ['review', document.querySelector('.review-embedded')],
@@ -1402,7 +1407,7 @@
   }
 
   function clearStartViewMotion() {
-    [bookStage, document.querySelector('.study-embedded'), document.querySelector('.cadence-embedded'),
+    [bookStage, document.querySelector('.study-embedded'), document.querySelector('.cadence-embedded'), document.querySelector('.tree-page-embedded'),
       document.querySelector('.notes-embedded'), document.querySelector('.calendar-embedded'),
       document.querySelector('.review-embedded'),
       document.querySelector('.focus-embedded')].forEach((el) => {
@@ -1449,7 +1454,7 @@
       && window.CanvasFocus && typeof window.CanvasFocus.deactivate === 'function') {
       window.CanvasFocus.deactivate();
     }
-    const layout = (name === 'cadence' || name === 'notes' || name === 'calendar'
+    const layout = (name === 'cadence' || name === 'tree' || name === 'notes' || name === 'calendar'
       || name === 'review' || name === 'focus') ? 'study' : name;
     main.dataset.state = layout;
     document.body.dataset.startState = layout;   // 顶部常驻操作条按视图显隐（CSS 控制）
@@ -1460,12 +1465,13 @@
       markStartViewTransition(name);
       bookView.classList.toggle('study-active', name === 'study');
       bookView.classList.toggle('cadence-active', name === 'cadence');
+      bookView.classList.toggle('tree-page-active', name === 'tree');
       bookView.classList.toggle('notes-active', name === 'notes');
       bookView.classList.toggle('calendar-active', name === 'calendar');
       bookView.classList.toggle('review-active', name === 'review');
       bookView.classList.toggle('focus-active', name === 'focus');
     }
-    document.querySelectorAll('.study-spine-tab:not(.cadence-spine-tab):not(.notes-spine-tab):not(.calendar-spine-tab):not(.review-spine-tab):not(.focus-spine-tab)').forEach((button) => {
+    document.querySelectorAll('.study-spine-tab:not(.cadence-spine-tab):not(.tree-page-spine-tab):not(.notes-spine-tab):not(.calendar-spine-tab):not(.review-spine-tab):not(.focus-spine-tab)').forEach((button) => {
       button.classList.toggle('active', name === 'study');
     });
     document.querySelectorAll('.focus-spine-tab').forEach((button) => {
@@ -1473,6 +1479,9 @@
     });
     document.querySelectorAll('.cadence-spine-tab').forEach((button) => {
       button.classList.toggle('active', name === 'cadence');
+    });
+    document.querySelectorAll('.tree-page-spine-tab').forEach((button) => {
+      button.classList.toggle('active', name === 'tree');
     });
     document.querySelectorAll('.notes-spine-tab').forEach((button) => {
       button.classList.toggle('active', name === 'notes');
@@ -1484,7 +1493,7 @@
       button.classList.toggle('active', name === 'review');
     });
     dots.querySelectorAll('.page-dot:not(.dot-add)').forEach((dot) => {
-      dot.classList.toggle('active', name !== 'study' && name !== 'cadence' && name !== 'notes'
+      dot.classList.toggle('active', name !== 'study' && name !== 'cadence' && name !== 'tree' && name !== 'notes'
         && name !== 'calendar' && name !== 'review'
         && name !== 'focus' && dot.dataset.groupId === activeGroup);
     });
@@ -1499,6 +1508,9 @@
     }
     if (name !== 'calendar' && window.CanvasCalendar && window.CanvasCalendar.deactivate) {
       window.CanvasCalendar.deactivate();
+    }
+    if (name !== 'tree' && window.CanvasTreePage && window.CanvasTreePage.deactivate) {
+      window.CanvasTreePage.deactivate();
     }
     syncStartViewLifecycle(name, previous);
   }
@@ -1515,6 +1527,7 @@
     calendar: ['#b6814d', 'rgba(182, 129, 77, 0.3)'],
     notes: ['#c4a143', 'rgba(196, 161, 67, 0.3)'],
     cadence: ['#6f987a', 'rgba(111, 152, 122, 0.3)'],
+    tree: ['#4f8b76', 'rgba(79, 139, 118, 0.3)'],
     study: ['#8b74ad', 'rgba(139, 116, 173, 0.3)'],
     focus: ['#87915b', 'rgba(135, 145, 91, 0.3)'],
     recent: ['#847a71', 'rgba(132, 122, 113, 0.3)'],
@@ -1534,6 +1547,7 @@
     if (target.classList.contains('calendar-spine-tab')) return 'calendar';
     if (target.classList.contains('notes-spine-tab')) return 'notes';
     if (target.classList.contains('cadence-spine-tab')) return 'cadence';
+    if (target.classList.contains('tree-page-spine-tab')) return 'tree';
     if (target.classList.contains('focus-spine-tab')) return 'focus';
     if (target.classList.contains('study-spine-tab')) return 'study';
     if (target.dataset.groupId === FAVORITES_PAGE) return 'favorite';
@@ -1554,7 +1568,7 @@
 
   function activeSpineTarget() {
     return document.querySelector('.study-spine-tab.active')
-      || (!studyActive && !cadenceActive && !notesActive && !calendarActive
+      || (!studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
         && !reviewActive && !focusActive ? dots.querySelector('.page-dot.active') : null);
   }
 
@@ -1865,6 +1879,7 @@
     studyActive = !!active;
     if (studyActive) {
       cadenceActive = false;
+      treePageActive = false;
       notesActive = false;
       calendarActive = false;
       reviewActive = false;
@@ -1885,6 +1900,7 @@
     cadenceActive = !!active;
     if (cadenceActive) {
       studyActive = false;
+      treePageActive = false;
       notesActive = false;
       calendarActive = false;
       reviewActive = false;
@@ -1902,11 +1918,36 @@
     if (bookStage) bookStage.scrollTop = 0;
   }
 
+  function setTreePageActive(active) {
+    treePageActive = !!active;
+    if (treePageActive) {
+      studyActive = false;
+      cadenceActive = false;
+      notesActive = false;
+      calendarActive = false;
+      reviewActive = false;
+      focusActive = false;
+      cancelPendingDelete();
+      closeContextMenu();
+      showView('tree');
+      if (window.CanvasTreePage && typeof window.CanvasTreePage.activate === 'function') {
+        window.CanvasTreePage.activate();
+      }
+      return;
+    }
+    if (window.CanvasTreePage && typeof window.CanvasTreePage.deactivate === 'function') {
+      window.CanvasTreePage.deactivate();
+    }
+    showView(listViewName());
+    if (bookStage) bookStage.scrollTop = 0;
+  }
+
   function setNotesActive(active) {
     notesActive = !!active;
     if (notesActive) {
       studyActive = false;
       cadenceActive = false;
+      treePageActive = false;
       calendarActive = false;
       reviewActive = false;
       focusActive = false;
@@ -1926,6 +1967,7 @@
     if (reviewActive) {
       studyActive = false;
       cadenceActive = false;
+      treePageActive = false;
       notesActive = false;
       calendarActive = false;
       focusActive = false;
@@ -1944,6 +1986,7 @@
     if (calendarActive) {
       studyActive = false;
       cadenceActive = false;
+      treePageActive = false;
       notesActive = false;
       reviewActive = false;
       focusActive = false;
@@ -1964,6 +2007,7 @@
     if (focusActive) {
       studyActive = false;
       cadenceActive = false;
+      treePageActive = false;
       notesActive = false;
       calendarActive = false;
       reviewActive = false;
@@ -2390,7 +2434,7 @@
       const dot = document.createElement('button');
       dot.type = 'button';
       dot.className = 'page-dot';
-      if (!studyActive && !cadenceActive && !notesActive && !calendarActive
+      if (!studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
         && !reviewActive && !focusActive && g.id === activeGroup) dot.classList.add('active');
       dot.dataset.groupId = g.id;
       if (g.id !== '' && g.id !== FAVORITES_PAGE && g.id !== INBOX_PAGE) {
@@ -3978,6 +4022,9 @@
   document.querySelectorAll('[data-action="cadence-view"]').forEach((btn) => {
     btn.addEventListener('click', () => { setCadenceActive(true); });
   });
+  document.querySelectorAll('[data-action="tree-page-view"]').forEach((btn) => {
+    btn.addEventListener('click', () => { setTreePageActive(true); });
+  });
   document.querySelectorAll('[data-action="review-view"]').forEach((btn) => {
     btn.addEventListener('click', () => { setReviewActive(true); });
   });
@@ -4061,7 +4108,7 @@
   });
 
   // ── 翻书式翻页 ────────────────────────────────
-  // 「页」= [复习, 日历, 速记, 活跃, 学习, 专注, 最近, 收藏, ...自定义分组]。
+  // 「页」= [复习, 日历, 活跃, 速记, 树状, 学习, 专注, 最近, 收藏, ...自定义分组]。
   let flipping = false;
   let wheelAccum = 0;
   let wheelResetTimer = null;
@@ -4081,10 +4128,11 @@
   // 翻到某页（带整页横滑 + 淡入淡出；方向由页序决定，循环翻页时由 forwardHint 指定）
   function navigateTo(gid, forwardHint) {
     if (librarySearchActive()) librarySearchRestoreScroll = 0;
-    if (studyActive || cadenceActive || notesActive || calendarActive || reviewActive || focusActive) {
+    if (studyActive || cadenceActive || treePageActive || notesActive || calendarActive || reviewActive || focusActive) {
       activeGroup = gid; saveActive(); selectedIndex = -1;
       studyActive = false;
       cadenceActive = false;
+      treePageActive = false;
       notesActive = false;
       calendarActive = false;
       reviewActive = false;
@@ -4134,7 +4182,7 @@
       navigateTo(order[next], delta > 0);
       return;
     }
-    // 页序（左→右）：复习 ← 日历 ← 速记 ← 活跃热力图 ← 学习 ← 专注 ← 最近 ← 自定义分组…
+    // 页序（左→右）：复习 ← 日历 ← 活跃热力图 ← 速记 ← 树状 ← 学习 ← 专注 ← 最近 ← 自定义分组…
     if (reviewActive) {
       if (delta > 0) {
         setCalendarActive(true);             // 复习 → 日历
@@ -4144,6 +4192,7 @@
         calendarActive = false;
         notesActive = false;
         cadenceActive = false;
+        treePageActive = false;
         studyActive = false;
         focusActive = false;
         activeGroup = order[order.length - 1] || '';
@@ -4156,23 +4205,28 @@
       return;
     }
     if (calendarActive) {
-      if (delta > 0) setNotesActive(true);   // 日历 → 速记
+      if (delta > 0) setCadenceActive(true); // 日历 → 活跃热力图
       else setReviewActive(true);            // 日历 → 复习
       return;
     }
-    if (notesActive) {
-      if (delta > 0) setCadenceActive(true); // 速记 → 活跃热力图
-      else setCalendarActive(true);          // 速记 → 日历
+    if (cadenceActive) {
+      if (delta > 0) setNotesActive(true);   // 活跃热力图 → 速记
+      else setCalendarActive(true);          // 活跃热力图 → 日历
       return;
     }
-    if (cadenceActive) {
-      if (delta > 0) setStudyActive(true);   // 热力图 → 学习
-      else setNotesActive(true);             // 热力图 → 速记
+    if (notesActive) {
+      if (delta > 0) setTreePageActive(true); // 速记 → 树状
+      else setCadenceActive(true);            // 速记 → 活跃热力图
+      return;
+    }
+    if (treePageActive) {
+      if (delta > 0) setStudyActive(true);   // 树状 → 学习
+      else setNotesActive(true);             // 树状 → 速记
       return;
     }
     if (studyActive) {
       if (delta > 0) setFocusActive(true);   // 学习 → 专注
-      else setCadenceActive(true);           // 学习 → 活跃热力图
+      else setTreePageActive(true);          // 学习 → 树状
       return;
     }
     if (focusActive) {
@@ -4257,6 +4311,7 @@
       if (shouldShowCalendar) {
         studyActive = false;
         cadenceActive = false;
+        treePageActive = false;
         notesActive = false;
         reviewActive = false;
         focusActive = false;
@@ -4273,6 +4328,7 @@
         : shouldShowCalendar ? 'calendar'
         : notesActive ? 'notes'
         : cadenceActive ? 'cadence'
+        : treePageActive ? 'tree'
         : focusActive ? 'focus'
         : shouldShowStudy ? 'study'
         : listViewName());
@@ -4296,7 +4352,7 @@
   // 拖到书脊的分组圆点 → 导入那个组（圆点 drop 会 stopPropagation，不会被这里重复处理）。
   // 内部组间/组内调序拖动用 text/plain，dtHasFiles 为假，完全不受影响。
   function startPageAcceptsCanvasDrop() {
-    return !studyActive && !cadenceActive && !notesActive && !calendarActive
+    return !studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
       && !reviewActive && !focusActive;   // 仅在「最近/分组」列表视图接收
   }
   function setCanvasDropHint(on) {

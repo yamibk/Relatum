@@ -2,7 +2,7 @@
   'use strict';
 
   var GoalTree = window.RelatumStudyGoalTree;
-  var overlay = document.querySelector('[data-role="study-route-overlay"]');
+  var overlay = document.querySelector('[data-role="tree-page-view"]');
   if (!GoalTree || !overlay) return;
   var panel = overlay.querySelector('.study-route-panel');
   var viewport = overlay.querySelector('[data-role="study-route-viewport"]');
@@ -21,13 +21,15 @@
   var guideReturnTrigger = null;
   var stageEl = overlay.querySelector('.study-route-stage');
   var T = function (value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; };
-  var state = { tasks: [], tree: { version: 2, title: '我的学习路线', nodes: [], links: [] }, trees: [], activeTreeId: '' };
+  var state = { tasks: [], tree: { version: 2, title: '树 1', nodes: [], links: [] }, trees: [], activeTreeId: '' };
   var open = false, busy = false, layout = null, confirmAction = null;
+  var progressCommandQueue = [], progressCommandContext = null;
+  var appearanceCommandQueue = [], appearanceCommandContext = null;
   var collapsedIds = new Set(), nextTaskIndex = 0, nextCandidates = [];
   var guidePage = 0;
-  var routeRequestId = 0, routeCloseTimer = 0;
+  var routeRequestId = 0, routeCloseTimer = 0, routeCloseAnimationHandler = null;
   var routeReturnFocus = null;
-  // 树命令纪元：切/建/删树时递增。后台 /api/study 快照若取自纪元变化之前
+  // 树命令纪元：切/建/删树时递增。后台 /api/tree-page 快照若取自纪元变化之前
   // （即切树前），落地时必须丢弃，否则会把刚完成的切换静默回退。
   var treeEpoch = 0;
   var popoverCloseTimer = 0, popoverSwapTimer = 0, popoverMotionId = 0;
@@ -38,13 +40,16 @@
   var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
   var collapseMotion = null;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
-  var layoutFrame = 0, summaryFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
+  var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
   var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
-  var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.goal-tree-route.view';
+  var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.tree-page.view';
   var legacyViewClaimed = false;
-  var STUDY_DATA_CACHE_KEY = '_relatumStudyData';
+  var STUDY_DATA_CACHE_KEY = '_relatumTreePageData';
   var GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
-  var studyCache = null, studyPrefetchId = 0;
+  var studyCache = null, studyPrefetchId = 0, studyPrefetchPromise = null;
+  var treePagePreloadHandle = 0, treePagePreloadUsesIdle = false;
+  var treeGoalBreathTimer = 0;
+  var replayCleanupTimers = new WeakMap();
   var prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (error) { return false; }
   })();
@@ -78,6 +83,61 @@
     var target = Math.max(0, Number(progress.target) || 0);
     return { current: Math.max(0, Math.min(target, Number(progress.current) || 0)), target: target };
   }
+  function replayClass(element, className, cleanupMs) {
+    if (!element || prefersReduced) return;
+    var cleanupByClass = replayCleanupTimers.get(element) || new Map();
+    window.clearTimeout(cleanupByClass.get(className));
+    cleanupByClass.delete(className);
+    replayCleanupTimers.set(element, cleanupByClass);
+    element.classList.remove(className);
+    void element.offsetWidth;
+    element.classList.add(className);
+    if (Number(cleanupMs) > 0) {
+      cleanupByClass.set(className, window.setTimeout(function () {
+        element.classList.remove(className);
+        cleanupByClass.delete(className);
+        if (cleanupByClass.size === 0) replayCleanupTimers.delete(element);
+      }, Number(cleanupMs)));
+    }
+  }
+  function cancelReplayClass(element, className) {
+    if (!element) return;
+    var cleanupByClass = replayCleanupTimers.get(element);
+    if (cleanupByClass) {
+      window.clearTimeout(cleanupByClass.get(className));
+      cleanupByClass.delete(className);
+      if (cleanupByClass.size === 0) replayCleanupTimers.delete(element);
+    }
+    element.classList.remove(className);
+  }
+  function stopTreeGoalBreath() {
+    window.clearTimeout(treeGoalBreathTimer);
+    treeGoalBreathTimer = 0;
+    nodesHost.querySelectorAll('.study-route-node.is-goal-breathing').forEach(function (node) {
+      cancelReplayClass(node, 'is-goal-breathing');
+    });
+  }
+  function visibleTreeGoalNodes() {
+    return Array.prototype.filter.call(nodesHost.querySelectorAll(
+      '.study-route-node:is(.is-task, .is-root).is-goal-ready:not(.is-goal-pending):not(.is-goal-celebrating)'
+    ), function (node) {
+      var rect = node.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
+    });
+  }
+  function scheduleTreeGoalBreath(delay) {
+    window.clearTimeout(treeGoalBreathTimer);
+    treeGoalBreathTimer = 0;
+    if (prefersReduced || !open || document.hidden) return;
+    treeGoalBreathTimer = window.setTimeout(function () {
+      treeGoalBreathTimer = 0;
+      if (prefersReduced || !open || document.hidden) return;
+      visibleTreeGoalNodes().forEach(function (node) {
+        replayClass(node, 'is-goal-breathing', 2540);
+      });
+      scheduleTreeGoalBreath(2800);
+    }, Math.max(0, Number(delay) || 1400));
+  }
   function activeTree(trees, treeId) {
     return (trees || []).find(function (tree) { return tree.id === treeId; }) || (trees || [])[0] || null;
   }
@@ -85,7 +145,7 @@
     var trees = Array.isArray(json.goalTrees) ? json.goalTrees : [];
     state.trees = trees;
     state.activeTreeId = json.activeTreeId || (trees.length ? trees[0].id : '');
-    state.tree = activeTree(trees, state.activeTreeId) || { version: 2, title: '我的学习路线', nodes: [], links: [] };
+    state.tree = activeTree(trees, state.activeTreeId) || { version: 2, title: '树 1', nodes: [], links: [] };
     nextTaskIndex = 0;
   }
   function applyTreeSnapshot(json, expectedTreeId) {
@@ -97,12 +157,11 @@
   function syncStudyCacheFromState() {
     var previous = studyCache || window[STUDY_DATA_CACHE_KEY] || {};
     var next = Object.assign({}, previous, {
-      version: 6,
+      version: 2,
       tasks: state.tasks,
       goalTrees: state.trees,
       activeTreeId: state.activeTreeId,
     });
-    if (!Array.isArray(next.trash)) next.trash = [];
     studyCache = next;
     window[STUDY_DATA_CACHE_KEY] = next;
   }
@@ -452,10 +511,22 @@
       + (hasChildren ? !placement.collapsed : true) + '" aria-label="' + (hasChildren && placement.collapsed ? T('展开阶段') : T('收起阶段')) + '"'
       + (!hasChildren ? ' disabled aria-disabled="true"' : '') + '><span aria-hidden="true"></span></button>' : '';
     var hidden = hasChildren && placement.collapsed ? '<em class="study-route-hidden-count">' + placement.hiddenCount + ' ' + T('项已隐藏') + '</em>' : '';
-    return '<div class="study-route-branch-main"><strong data-user-content>' + escapeHtml(placement.node.title)
-      + '</strong><span class="study-route-branch-meta-row"><button type="button" class="study-route-node-meta" data-role="route-node-meta" data-route-action="progress-breakdown">'
+    var heading = placement.kind === 'root'
+      ? '<strong class="tree-page-root-progress" aria-label="' + percent + '%">' + percent + '%</strong>'
+      : '<strong data-user-content>' + escapeHtml(placement.node.title) + '</strong>';
+    var progressBar = placement.kind === 'root'
+      ? '<span class="study-progress-track-shell tree-page-root-progress-track"><span class="study-progress-track'
+        + (metrics.count > 0 && percent >= 100 ? ' is-full' : '')
+        + '" role="progressbar" aria-label="' + escapeHtml(T('根节点进度'))
+        + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + percent
+        + '" aria-valuetext="' + percent + '%"><span class="study-progress-fill" data-route-progress-fill'
+        + ' data-progress-target="' + percent + '" style="width:' + percent + '%"></span></span></span>'
+      : '<i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + percent
+        + '" style="width:' + percent + '%"></b></i>';
+    return '<div class="study-route-branch-main">' + heading
+      + '<span class="study-route-branch-meta-row"><button type="button" class="study-route-node-meta" data-role="route-node-meta" data-route-action="progress-breakdown">'
       + percent + '% · ' + metrics.count + ' ' + T('项任务') + '</button>'
-      + hidden + '</span><i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + percent + '" style="width:' + percent + '%"></b></i></div>'
+      + hidden + '</span>' + progressBar + '</div>'
       + '<span class="study-route-node-actions">' + collapse + '<button type="button" data-route-action="add" aria-label="'
       + T('添加') + '">＋</button><button type="button" data-route-action="menu" aria-label="'
       + T('更多') + '">⋯</button></span>';
@@ -474,26 +545,226 @@
     }).join('');
     return '<div class="study-route-color-palette">' + swatches + '</div>';
   }
+  var TREE_PAGE_SHAPES = [
+    { value: 'rounded', label: '圆角卡' },
+    { value: 'rectangle', label: '矩形' },
+    { value: 'pill', label: '胶囊' },
+    { value: 'diamond', label: '菱形' },
+    { value: 'circle', label: '圆形' },
+  ];
+  function appearancePaletteHTML(currentColor, currentShape) {
+    currentShape = String(currentShape || 'rounded');
+    var shapeButtons = TREE_PAGE_SHAPES.map(function (item) {
+      return '<button type="button" class="tree-page-shape-choice tree-page-shape-' + item.value
+        + (item.value === currentShape ? ' is-active' : '') + '" data-route-pop="set-shape" data-shape="'
+        + item.value + '" aria-label="' + T(item.label) + '"><i aria-hidden="true"></i><span>'
+        + T(item.label) + '</span></button>';
+    }).join('');
+    return '<div class="tree-page-appearance-panel"><div class="tree-page-appearance-colors">'
+      + colorPaletteHTML(currentColor) + '</div><div class="tree-page-appearance-shapes">'
+      + shapeButtons + '</div></div>';
+  }
+  function nodeAppearance(anchor) {
+    if (!anchor) return { color: '', shape: 'rounded' };
+    if (anchor.dataset.kind === 'root') return {
+      color: state.tree.color || '', shape: state.tree.shape || 'rounded',
+    };
+    var node = state.tree.nodes.find(function (item) { return item.id === anchor.dataset.nodeId; }) || {};
+    if (anchor.dataset.kind === 'task') {
+      var task = findTask(node.taskId) || {};
+      return { color: task.color || '', shape: task.shape || 'rounded' };
+    }
+    return { color: node.color || '', shape: node.shape || 'rounded' };
+  }
   function taskMarkup(placement) {
     var task = findTask(placement.node.taskId) || { title: T('已移除任务'), status: 'done', progress: {} };
     var progress = taskProgress(task), done = task.status === 'done';
     var lockedByConditions = placement.availability && !placement.availability.available;
     var blocked = !done && lockedByConditions;
     var ready = !done && progress.target > 0 && progress.current >= progress.target;
-    var controls = progress.target && !done
-      ? '<span class="study-route-task-steps"><button type="button" data-route-action="progress" data-delta="-1" aria-label="进度减一"'
-        + (blocked || progress.current <= 0 ? ' disabled' : '') + '>−</button><button type="button" data-route-action="progress" data-delta="1" aria-label="进度加一"'
-        + (blocked || progress.current >= progress.target ? ' disabled' : '') + '>＋</button></span>' : '';
-    var value = progress.target ? progress.current + ' / ' + progress.target : T('设置进度');
-    var width = progress.target ? Math.round(progress.current / progress.target * 100) : 0;
+    var controls = progress.target
+      ? (done
+        ? '<span class="study-route-task-steps is-placeholder" aria-hidden="true"></span>'
+        : '<span class="study-route-task-steps"><button type="button" data-route-action="progress" data-delta="-1" aria-label="进度减一"'
+          + (blocked || progress.current <= 0 ? ' disabled' : '') + '>−</button><button type="button" data-route-action="progress" data-delta="1" aria-label="进度加一"'
+          + (blocked || progress.current >= progress.target ? ' disabled' : '') + '>＋</button></span>')
+      : '';
+    var value = progress.target ? progress.current + ' / ' + progress.target : '';
+    var width = progress.target
+      ? Math.min(100, progress.current / progress.target * 100).toFixed(2)
+      : '0.00';
+    var completionScale = (Number(width) / 100).toFixed(4);
+    var atTarget = progress.target > 0 && progress.current >= progress.target;
+    var progressBar = progress.target
+      ? '<span class="study-progress-track-shell tree-page-task-progress"><span class="study-progress-track'
+        + (atTarget ? ' is-full' : '') + '" role="progressbar" aria-label="' + escapeHtml(T('任务进度'))
+        + '" aria-valuemin="0" aria-valuemax="' + progress.target + '" aria-valuenow="' + progress.current
+        + '" aria-valuetext="' + escapeHtml(atTarget ? T('目标已达成，可以手动标记完成') : value)
+        + '"><span class="study-progress-fill" data-route-progress-fill data-progress-target="' + width
+        + '" style="width:' + width + '%"></span><span class="study-progress-fill tree-page-task-completion-fill"'
+        + ' aria-hidden="true" data-completion-start-scale="' + completionScale
+        + '" style="--tree-page-completion-start-scale:' + completionScale + '"></span></span></span>'
+      : '';
+    var progressValueMarkup = progress.target
+      ? '<button type="button" class="study-route-task-value" data-route-action="settings"'
+        + (lockedByConditions ? ' disabled' : '') + '>' + escapeHtml(value) + '</button>'
+      : '';
+    var taskLine = progressValueMarkup
+      ? '<span class="study-route-task-line">' + progressValueMarkup + '</span>'
+      : '';
     return '<button type="button" class="study-route-task-check' + (done ? ' is-done' : '') + (ready ? ' is-ready' : '')
       + '" data-route-action="complete"' + (blocked ? ' disabled' : '') + ' aria-label="' + (done ? T('恢复为未完成') : T('标记完成')) + '"><span>✓</span></button>'
       + '<div class="study-route-task-main"><strong data-user-content>' + escapeHtml(task.title || T('未命名任务'))
-      + '</strong><span class="study-route-task-line"><button type="button" class="study-route-task-value" data-route-action="settings"'
-      + (lockedByConditions ? ' disabled' : '') + '>' + escapeHtml(value) + '</button>'
-      + '</span>'
-      + (progress.target ? '<i aria-hidden="true"><b data-route-progress-fill data-progress-target="' + width + '" style="width:' + width + '%"></b></i>' : '') + '</div>'
+      + '</strong>' + taskLine
+      + progressBar + '</div>'
       + controls + '<button type="button" class="study-route-node-menu" data-route-action="menu" aria-label="' + T('更多') + '">⋯</button>';
+  }
+  function syncExistingTaskMarkup(element, placement) {
+    var template = document.createElement('div');
+    template.innerHTML = taskMarkup(placement);
+    var currentMain = element.querySelector('.study-route-task-main');
+    var nextMain = template.querySelector('.study-route-task-main');
+    if (!currentMain || !nextMain) return false;
+
+    var currentTitle = currentMain.querySelector('strong');
+    var nextTitle = nextMain.querySelector('strong');
+    if (currentTitle && nextTitle) currentTitle.textContent = nextTitle.textContent;
+
+    var currentShell = currentMain.querySelector('.tree-page-task-progress');
+    var nextShell = nextMain.querySelector('.tree-page-task-progress');
+    var currentLine = currentMain.querySelector('.study-route-task-line');
+    var nextLine = nextMain.querySelector('.study-route-task-line');
+    if (currentLine && nextLine) currentLine.replaceWith(nextLine);
+    else if (currentLine) currentLine.remove();
+    else if (nextLine) currentMain.insertBefore(nextLine, currentShell || null);
+
+    if (currentShell && nextShell) {
+      var currentTrack = currentShell.querySelector('.study-progress-track');
+      var nextTrack = nextShell.querySelector('.study-progress-track');
+      var currentFill = currentShell.querySelector('[data-route-progress-fill]');
+      var nextFill = nextShell.querySelector('[data-route-progress-fill]');
+      if (currentTrack && nextTrack && currentFill && nextFill) {
+        // 这里与学习任务 syncStudyProgressBar 一样：进度条始终在 DOM 中，
+        // 只切换满值状态与同一根 fill 的 width，让 CSS transition 从当前插值继续。
+        currentTrack.classList.toggle('is-full', nextTrack.classList.contains('is-full'));
+        ['aria-label', 'aria-valuemin', 'aria-valuemax', 'aria-valuenow', 'aria-valuetext'].forEach(function (name) {
+          var value = nextTrack.getAttribute(name);
+          if (value == null) currentTrack.removeAttribute(name);
+          else currentTrack.setAttribute(name, value);
+        });
+        currentFill.dataset.progressTarget = nextFill.dataset.progressTarget;
+        currentFill.style.width = nextFill.style.width;
+      }
+      var currentCompletionFill = currentShell.querySelector('.tree-page-task-completion-fill');
+      var nextCompletionFill = nextShell.querySelector('.tree-page-task-completion-fill');
+      if (currentCompletionFill && nextCompletionFill) {
+        var completionScale = nextCompletionFill.dataset.completionStartScale || '0';
+        currentCompletionFill.dataset.completionStartScale = completionScale;
+        currentCompletionFill.style.setProperty('--tree-page-completion-start-scale', completionScale);
+      } else if (currentCompletionFill) {
+        currentCompletionFill.remove();
+      } else if (nextCompletionFill && currentTrack) {
+        currentTrack.appendChild(nextCompletionFill);
+      }
+    } else if (currentShell) {
+      currentShell.remove();
+    } else if (nextShell) {
+      currentMain.appendChild(nextShell);
+    }
+
+    var currentCheck = element.querySelector('.study-route-task-check');
+    var nextCheck = template.querySelector('.study-route-task-check');
+    if (currentCheck && nextCheck) currentCheck.replaceWith(nextCheck);
+
+    var currentSteps = element.querySelector('.study-route-task-steps');
+    var nextSteps = template.querySelector('.study-route-task-steps');
+    var currentMenu = element.querySelector('.study-route-node-menu');
+    if (currentSteps && nextSteps) currentSteps.replaceWith(nextSteps);
+    else if (currentSteps) currentSteps.remove();
+    else if (nextSteps) element.insertBefore(nextSteps, currentMenu || null);
+
+    var nextMenu = template.querySelector('.study-route-node-menu');
+    if (currentMenu && nextMenu) currentMenu.replaceWith(nextMenu);
+    return true;
+  }
+  function syncRootProgressHeading(currentHeading, nextHeading) {
+    var nextText = nextHeading.textContent || '0%';
+    var percent = Number(nextText.replace('%', ''));
+    currentHeading.setAttribute('aria-label', nextHeading.getAttribute('aria-label') || nextText);
+    if (rootProgressFrame) cancelAnimationFrame(rootProgressFrame);
+    rootProgressFrame = 0;
+    if (!Number.isFinite(percent)) {
+      currentHeading.textContent = nextText;
+      delete currentHeading.dataset.value;
+      return;
+    }
+    var from = Number(currentHeading.dataset.value);
+    if (!Number.isFinite(from)) from = Number((currentHeading.textContent || '').replace('%', ''));
+    if (!Number.isFinite(from)) from = percent;
+    if (prefersReduced || Math.abs(percent - from) < .1) {
+      currentHeading.textContent = Math.round(percent) + '%';
+      currentHeading.dataset.value = String(percent);
+      return;
+    }
+    var started = performance.now();
+    function frame(now) {
+      if (!currentHeading.isConnected) { rootProgressFrame = 0; return; }
+      var t = Math.min(1, (now - started) / 520), eased = 1 - Math.pow(1 - t, 3);
+      var value = from + (percent - from) * eased;
+      currentHeading.textContent = Math.round(value) + '%';
+      currentHeading.dataset.value = String(value);
+      if (t < 1) rootProgressFrame = requestAnimationFrame(frame);
+      else {
+        rootProgressFrame = 0;
+        currentHeading.textContent = Math.round(percent) + '%';
+        currentHeading.dataset.value = String(percent);
+      }
+    }
+    rootProgressFrame = requestAnimationFrame(frame);
+  }
+  function syncExistingRootMarkup(element, placement) {
+    var template = document.createElement('div');
+    template.innerHTML = branchMarkup(placement);
+    var currentMain = element.querySelector('.study-route-branch-main');
+    var nextMain = template.querySelector('.study-route-branch-main');
+    if (!currentMain || !nextMain) return false;
+
+    var currentHeading = currentMain.querySelector('.tree-page-root-progress');
+    var nextHeading = nextMain.querySelector('.tree-page-root-progress');
+    if (currentHeading && nextHeading) {
+      syncRootProgressHeading(currentHeading, nextHeading);
+    }
+    var currentMeta = currentMain.querySelector('.study-route-branch-meta-row');
+    var nextMeta = nextMain.querySelector('.study-route-branch-meta-row');
+    if (currentMeta && nextMeta) currentMeta.replaceWith(nextMeta);
+
+    var currentShell = currentMain.querySelector('.tree-page-root-progress-track');
+    var nextShell = nextMain.querySelector('.tree-page-root-progress-track');
+    if (currentShell && nextShell) {
+      var currentTrack = currentShell.querySelector('.study-progress-track');
+      var nextTrack = nextShell.querySelector('.study-progress-track');
+      var currentFill = currentShell.querySelector('.study-progress-fill');
+      var nextFill = nextShell.querySelector('.study-progress-fill');
+      if (currentTrack && nextTrack && currentFill && nextFill) {
+        currentTrack.classList.toggle('is-full', nextTrack.classList.contains('is-full'));
+        ['aria-label', 'aria-valuemin', 'aria-valuemax', 'aria-valuenow', 'aria-valuetext'].forEach(function (name) {
+          var value = nextTrack.getAttribute(name);
+          if (value == null) currentTrack.removeAttribute(name);
+          else currentTrack.setAttribute(name, value);
+        });
+        currentFill.dataset.progressTarget = nextFill.dataset.progressTarget;
+        currentFill.style.width = nextFill.style.width;
+      }
+    } else if (nextShell) {
+      var legacyTrack = currentMain.querySelector(':scope > i');
+      if (legacyTrack) legacyTrack.remove();
+      currentMain.appendChild(nextShell);
+    }
+
+    var currentActions = element.querySelector('.study-route-node-actions');
+    var nextActions = template.querySelector('.study-route-node-actions');
+    if (currentActions && nextActions) currentActions.replaceWith(nextActions);
+    return true;
   }
   function milestoneMarkup(placement) {
     var milestone = placement.node.milestone || {};
@@ -505,6 +776,32 @@
     if (placement.kind === 'task') return taskMarkup(placement);
     if (placement.kind === 'milestone') return milestoneMarkup(placement);
     return branchMarkup(placement);
+  }
+  function appearanceForPlacement(placement) {
+    if (!placement) return { color: '', shape: 'rounded' };
+    if (placement.kind === 'root') return {
+      color: String(state.tree.color || ''), shape: String(state.tree.shape || 'rounded'),
+    };
+    if (placement.kind === 'task') {
+      var task = findTask(placement.node.taskId) || {};
+      return { color: String(task.color || ''), shape: String(task.shape || 'rounded') };
+    }
+    return {
+      color: String((placement.node && placement.node.color) || ''),
+      shape: String((placement.node && placement.node.shape) || 'rounded'),
+    };
+  }
+  function preserveTreeExtensions(source, target) {
+    source = source || {};
+    target = target || {};
+    target.shape = source.shape || 'rounded';
+    target.color = source.color || '';
+    var shapes = new Map((source.nodes || []).filter(function (node) { return node.kind === 'branch'; })
+      .map(function (node) { return [node.id, node.shape || 'rounded']; }));
+    (target.nodes || []).forEach(function (node) {
+      if (node.kind === 'branch') node.shape = shapes.get(node.id) || 'rounded';
+    });
+    return target;
   }
   function placementMap(items) {
     return new Map((items || []).map(function (item) { return [item.id, Object.assign({}, item)]; }));
@@ -635,6 +932,8 @@
     });
     seed.nodes.forEach(function (placement) {
       var element = nodeElements.get(placement.id), isNew = !element;
+      var wasExistingTask = !!element && element.dataset.kind === 'task';
+      var wasExistingRoot = !!element && element.dataset.kind === 'root';
       var isComplete = !!((placement.metrics || {}).complete && placement.kind !== 'root');
       var isBlocked = !!(placement.availability && !placement.availability.available);
       var wasBlocked = !!element && element.classList.contains('is-blocked');
@@ -645,16 +944,37 @@
         done: oldCheck.classList.contains('is-done'),
         ready: oldCheck.classList.contains('is-ready'),
       } : null;
+      var oldGoalState = element ? {
+        ready: element.classList.contains('is-goal-ready'),
+        pending: element.classList.contains('is-goal-pending'),
+        celebrating: element.classList.contains('is-goal-celebrating'),
+        breathing: element.classList.contains('is-goal-breathing'),
+      } : { ready: false, pending: false, celebrating: false, breathing: false };
+      var oldCompletionCelebrating = !!element && element.classList.contains('is-completion-celebrating');
       if (!element) {
         element = document.createElement('article');
         element.setAttribute('role', 'treeitem'); element.tabIndex = 0;
         nodesHost.appendChild(element); nodeElements.set(placement.id, element); created.push(element);
       }
       var isExpansionEntrance = isNew && options.expandEntrance && !prefersReduced;
-      element.className = 'study-route-node is-' + placement.kind
+      var appearance = appearanceForPlacement(placement);
+      var taskForGoal = placement.kind === 'task' ? findTask(placement.node.taskId) : null;
+      var taskGoalProgress = taskProgress(taskForGoal);
+      var isGoalReady = !!(
+        (taskForGoal && taskForGoal.status !== 'done' && taskGoalProgress.target > 0
+          && taskGoalProgress.current >= taskGoalProgress.target)
+        || (placement.kind === 'root' && (placement.metrics || {}).count > 0
+          && (placement.metrics || {}).progress >= .999999)
+      );
+      element.className = 'study-route-node is-' + placement.kind + ' tree-page-shape-' + appearance.shape
         + (isComplete ? ' is-complete' : '')
         + (isBlocked ? ' is-blocked' : '')
         + (placement.kind === 'task' && !(placement.metrics || {}).complete && placement.availability && placement.availability.available ? ' is-ready' : '')
+        + (isGoalReady ? ' is-goal-ready' : '')
+        + (isGoalReady && oldGoalState.pending ? ' is-goal-pending' : '')
+        + (isGoalReady && oldGoalState.celebrating ? ' is-goal-celebrating' : '')
+        + (isGoalReady && oldGoalState.breathing ? ' is-goal-breathing' : '')
+        + (isComplete && oldCompletionCelebrating ? ' is-completion-celebrating' : '')
         + (placement.collapsed ? ' is-collapsed' : '')
         + (isExpansionEntrance ? ' is-expanding' : '')
         + (isNew && !isExpansionEntrance && !options.suppressEntrance && !prefersReduced
@@ -672,7 +992,11 @@
         delete element.dataset.parentTaskNodeId;
         element.tabIndex = 0;
       }
-      element.innerHTML = nodeMarkup(placement);
+      var taskMarkupSynced = !isNew && wasExistingTask && placement.kind === 'task'
+        && syncExistingTaskMarkup(element, placement);
+      var rootMarkupSynced = !isNew && wasExistingRoot && placement.kind === 'root'
+        && syncExistingRootMarkup(element, placement);
+      if (!taskMarkupSynced && !rootMarkupSynced) element.innerHTML = nodeMarkup(placement);
       if (options.expandingControlIds && options.expandingControlIds.has(placement.id)) {
         var expandingControl = element.querySelector('.study-route-collapse');
         if (expandingControl) {
@@ -705,22 +1029,44 @@
       }
       if (!isNew) {
         var nextFill = element.querySelector('[data-route-progress-fill]');
-        transitionFill(nextFill, nextFill ? Number(nextFill.dataset.progressTarget || 0) : 0, oldFillPercent);
-        transitionTaskCheck(element.querySelector('.study-route-task-check'), oldCheckState);
+        var nextFillPercent = nextFill ? Number(nextFill.dataset.progressTarget || 0) : 0;
+        if (!taskMarkupSynced && !rootMarkupSynced) {
+          transitionFill(nextFill, nextFillPercent, oldFillPercent);
+        }
+        var nextCheck = element.querySelector('.study-route-task-check');
+        transitionTaskCheck(nextCheck, oldCheckState);
+        var nextCheckDone = !!nextCheck && nextCheck.classList.contains('is-done');
+        if (oldCheckState && !oldCheckState.done && nextCheckDone && !prefersReduced) {
+          cancelReplayClass(element, 'is-goal-breathing');
+          cancelReplayClass(element, 'is-goal-celebrating');
+          replayClass(element, 'is-completion-celebrating', 1480);
+        } else if (oldCheckState && oldCheckState.done && !nextCheckDone) {
+          cancelReplayClass(element, 'is-completion-celebrating');
+        }
       }
-      var routeNodeColor = placement.kind === 'branch'
+      var routeNodeColor = placement.kind === 'root'
+        ? String(state.tree.color || '')
+        : (placement.kind === 'branch'
         ? (placement.node && placement.node.color) || ''
         : (placement.kind === 'task'
           ? ((findTask(placement.node.taskId) || {}).color) || ''
-          : '');
+          : ''));
       if (routeNodeColor) {
         element.style.setProperty('--branch-color', routeNodeColor);
         element.dataset.branchColor = routeNodeColor;
-      } else if (placement.kind === 'branch' || placement.kind === 'task') {
+      } else if (placement.kind === 'root' || placement.kind === 'branch' || placement.kind === 'task') {
         element.style.removeProperty('--branch-color');
         delete element.dataset.branchColor;
       }
       element.dataset.progress = String(Math.round(((placement.metrics || {}).progress || 0) * 100));
+      if (placement.kind === 'root' && isGoalReady && !oldGoalState.ready && !isNew && !prefersReduced) {
+        cancelReplayClass(element, 'is-goal-breathing');
+        replayClass(element, 'is-goal-celebrating', 1480);
+        scheduleTreeGoalBreath(1560);
+      } else if (placement.kind === 'root' && !isGoalReady && oldGoalState.ready) {
+        cancelReplayClass(element, 'is-goal-breathing');
+        cancelReplayClass(element, 'is-goal-celebrating');
+      }
       if (wasBlocked && placement.availability && placement.availability.available && !prefersReduced) {
         element.classList.add('is-unlocking');
         window.setTimeout(function () { if (element.isConnected) element.classList.remove('is-unlocking'); }, 760);
@@ -753,7 +1099,7 @@
   }
   function render(options) {
     options = options || {};
-    state.tree = GoalTree.normalizeTree(state.tree, state.tasks);
+    state.tree = preserveTreeExtensions(state.tree, GoalTree.normalizeTree(state.tree, state.tasks));
     var previous = layout;
     var first = GoalTree.layout(state.tree, state.tasks, { collapsedIds: collapsedIds });
     var createdElements = syncNodeElements(first, options);
@@ -780,17 +1126,8 @@
     var number = summary.querySelector('strong'), copy = summary.querySelector('span');
     if (!number) { number = document.createElement('strong'); summary.appendChild(number); }
     if (!copy) { copy = document.createElement('span'); summary.appendChild(copy); }
-    var nextButton = summary.querySelector('[data-route-action="next-task"]');
-    if (!nextButton) {
-      nextButton = document.createElement('button');
-      nextButton.type = 'button'; nextButton.dataset.routeAction = 'next-task';
-      nextButton.className = 'study-route-next'; nextButton.textContent = T('下一步');
-      summary.appendChild(nextButton);
-    }
     nextCandidates = GoalTree.nextTasks(layout ? layout.model : GoalTree.buildModel(state.tree, state.tasks));
     if (nextTaskIndex >= nextCandidates.length) nextTaskIndex = 0;
-    nextButton.hidden = !nextCandidates.length;
-    nextButton.disabled = !nextCandidates.length;
     copy.textContent = completed + ' / ' + metrics.count + ' ' + T('已完成');
     var from = Number(number.dataset.value);
     if (!Number.isFinite(from)) from = Number((number.textContent || '').replace('%', '')) || percent;
@@ -905,8 +1242,7 @@
     if (!popover.hidden && popover.dataset.anchorId === anchorId) { closePopover(true); return; }
     openPopover(anchor, '<div class="study-route-menu"><button type="button" data-route-pop="new-branch">'
       + T(anchor.dataset.kind === 'task' ? '新建后续阶段' : '新建阶段') + '</button>'
-      + '<button type="button" data-route-pop="new-task">' + T('新建任务')
-      + '</button><button type="button" data-route-pop="attach-task">' + T('选择已有任务') + '</button></div>');
+      + '<button type="button" data-route-pop="new-task">' + T('新建任务') + '</button></div>');
   }
   function nodeMenu(anchor) {
     var anchorId = anchor.dataset.nodeId || '';
@@ -921,11 +1257,10 @@
     if (kind === 'task') html += '<button type="button" data-route-pop="color">' + T('颜色')
       + '</button><button type="button" data-route-pop="new-task">' + T('新建后续任务')
       + '</button><button type="button" data-route-pop="new-stage">' + T('新建后续阶段') + '</button>'
-      + '<button type="button" data-route-pop="attach-task">' + T('接入已有任务')
-      + '</button>' + (!simple ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
+      + (!simple ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
         + (conditionCount ? ' · ' + conditionCount : '') + '</button>' : '')
       + '<button type="button" data-route-pop="settings"' + (unavailable ? ' disabled' : '') + '>' + T('设置进度')
-      + '</button><button type="button" class="is-danger" data-route-pop="detach">' + T('移出路线') + '</button>';
+      + '</button><button type="button" class="is-danger" data-route-pop="delete-task">' + T('删除任务') + '</button>';
     else if (kind === 'branch') html += (!simple ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
       + (conditionCount ? ' · ' + conditionCount : '') + '</button>' : '')
       + '<button type="button" class="is-danger" data-route-pop="delete-branch">' + T('删除阶段') + '</button>';
@@ -949,25 +1284,6 @@
     var node = nodeId === 'root' ? { title: state.tree.title, kind: 'root' }
       : state.tree.nodes.find(function (item) { return item.id === nodeId; });
     var task = node && node.kind === 'task' ? findTask(node.taskId) : null;
-    if (kind === 'new-branch' || kind === 'new-stage') {
-      return openPopover(anchor, '<form data-route-form="' + kind + '"><label>' + T('阶段名称')
-        + '<input name="title" maxlength="160" required autofocus></label><button type="submit">' + T('添加阶段') + '</button></form>');
-    }
-    if (kind === 'new-task') {
-      return openPopover(anchor, '<form data-route-form="new-task"><label>' + T('任务名称')
-        + '<input name="title" maxlength="160" required autofocus></label><label>' + T('目标总量')
-        + '<input name="target" type="number" min="0" max="9999" inputmode="numeric" placeholder="可选"></label><button type="submit">'
-        + T('创建任务') + '</button></form>');
-    }
-    if (kind === 'attach-task') {
-      var owned = new Set(state.tree.nodes.filter(function (item) { return item.kind === 'task'; }).map(function (item) { return item.taskId; }));
-      var options = state.tasks.filter(function (item) { return !owned.has(item.id); }).map(function (item) {
-        return '<option value="' + escapeHtml(item.id) + '" data-user-content>' + escapeHtml(item.title) + '</option>';
-      }).join('');
-      return openPopover(anchor, options ? '<form data-route-form="attach-task"><label>' + T('选择已有任务')
-        + '<select name="taskId">' + options + '</select></label><button type="submit">' + T('加入路线') + '</button></form>'
-        : '<p class="study-route-popover-empty">' + T('没有可加入的学习任务') + '</p>');
-    }
     if (kind === 'rename') {
       var title = task ? task.title : node && node.title;
       return openPopover(anchor, '<form data-route-form="rename"><label>' + T('名称') + '<input name="title" maxlength="160" required value="'
@@ -1075,34 +1391,175 @@
     collapsedIds.forEach(function (id) { if (!valid.has(id)) { collapsedIds.delete(id); changed = true; } });
     if (changed) saveViewSoon();
   }
+  function createClientId(prefix) {
+    var token = '';
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        token = window.crypto.randomUUID().replace(/-/g, '');
+      }
+    } catch (error) {}
+    if (!token) token = Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
+    return prefix + token;
+  }
+  function cloneOptimisticValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+  function optimisticPrimaryLink(primary, nodeId, linkId) {
+    primary = primary && typeof primary === 'object' ? primary : {};
+    var sourceId = String(primary.from || '').trim() || null;
+    var type = sourceId ? (primary.type || 'contains') : 'contains';
+    var link = {
+      id: linkId,
+      from: sourceId,
+      to: nodeId,
+      type: type,
+      primary: true,
+      order: 999999,
+    };
+    if (!sourceId) link.side = primary.side === 'left' ? 'left' : 'right';
+    if (type === 'requires') link.trigger = Object.assign({}, primary.trigger || { kind: 'complete' });
+    return link;
+  }
+  function createOptimistically(body) {
+    if (busy) return Promise.reject(new Error(T('请稍候')));
+    var requestGeneration = routeRequestId;
+    var rollback = {
+      tasks: cloneOptimisticValue(state.tasks),
+      trees: cloneOptimisticValue(state.trees),
+      tree: cloneOptimisticValue(state.tree),
+    };
+    var sent = Object.assign({}, body, {
+      clientNodeId: createClientId('goal_node_'),
+      clientLinkId: createClientId('goal_link_'),
+    });
+    if (sent.command === 'create-task') sent.clientTaskId = createClientId('tree_task_');
+
+    var tree = cloneOptimisticValue(state.tree);
+    var node;
+    if (sent.command === 'create-task') {
+      var target = Number(sent.target || 0);
+      var now = new Date().toISOString();
+      state.tasks = state.tasks.slice();
+      state.tasks.push({
+        id: sent.clientTaskId,
+        title: String(sent.title || '').trim() || T('未命名任务'),
+        color: '',
+        status: 'active',
+        taskPage: 1,
+        progress: { current: 0, target: Number.isInteger(target) && target >= 0 ? target : 0, milestones: [] },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: '',
+        shape: 'rounded',
+      });
+      node = { id: sent.clientNodeId, kind: 'task', taskId: sent.clientTaskId };
+    } else {
+      node = {
+        id: sent.clientNodeId,
+        kind: 'branch',
+        title: String(sent.title || '').trim() || T('未命名阶段'),
+        shape: 'rounded',
+      };
+    }
+    tree.nodes = (tree.nodes || []).concat(node);
+    tree.links = (tree.links || []).concat(optimisticPrimaryLink(sent.primaryLink, sent.clientNodeId, sent.clientLinkId));
+    state.tree = tree;
+    state.trees = state.trees.map(function (item) { return item.id === tree.id ? tree : item; });
+    syncStudyCacheFromState();
+    closePopover(false, true);
+    render({ duration: 320 });
+
+    return command(sent).catch(function (error) {
+      if (requestGeneration === routeRequestId) {
+        state.tasks = rollback.tasks;
+        state.trees = rollback.trees;
+        state.tree = rollback.tree;
+        syncStudyCacheFromState();
+        render({ duration: 220 });
+        renderRail();
+      }
+      throw error;
+    });
+  }
+  function deleteTaskOptimistically(taskId) {
+    if (busy) return Promise.reject(new Error(T('请稍候')));
+    taskId = String(taskId || '').trim();
+    var requestGeneration = routeRequestId;
+    var rollback = {
+      tasks: cloneOptimisticValue(state.tasks),
+      trees: cloneOptimisticValue(state.trees),
+      tree: cloneOptimisticValue(state.tree),
+    };
+    var tree = cloneOptimisticValue(state.tree);
+    var owner = (tree.nodes || []).find(function (node) {
+      return node.kind === 'task' && node.taskId === taskId;
+    });
+    if (!owner) return Promise.reject(new Error(T('没有找到这个任务')));
+
+    // 对齐后端 _study_goal_detach_task：删掉任务节点时，它的主路线子项
+    // 接到原父级，并清理与该节点相关的附加依赖。
+    var incoming = (tree.links || []).find(function (link) {
+      return link.primary && link.to === owner.id;
+    });
+    if (!incoming) return Promise.reject(new Error(T('任务结构不完整')));
+    var children = (tree.links || []).filter(function (link) {
+      return link.primary && link.from === owner.id;
+    }).sort(function (a, b) { return Number(a.order || 0) - Number(b.order || 0); });
+    var childIds = new Set(children.map(function (link) { return link.id; }));
+    children.forEach(function (child, offset) {
+      child.from = incoming.from || null;
+      child.type = incoming.type;
+      child.order = Number(incoming.order || 0) + offset;
+      if (incoming.type === 'requires') child.trigger = Object.assign({}, incoming.trigger || { kind: 'complete' });
+      else delete child.trigger;
+      if (!incoming.from) child.side = incoming.side === 'left' ? 'left' : 'right';
+      else delete child.side;
+    });
+    tree.nodes = (tree.nodes || []).filter(function (node) { return node.id !== owner.id; });
+    tree.links = (tree.links || []).filter(function (link) {
+      return childIds.has(link.id) || (link.from !== owner.id && link.to !== owner.id);
+    });
+    state.tasks = state.tasks.filter(function (task) { return task.id !== taskId; });
+    state.tree = tree;
+    state.trees = state.trees.map(function (item) { return item.id === tree.id ? tree : item; });
+    syncStudyCacheFromState();
+    closePopover(false, true);
+    render({ duration: 320, preserveViewAnchor: incoming.from || 'root', suppressEntrance: true });
+
+    return command({ command: 'delete-task', taskId: taskId }).catch(function (error) {
+      if (requestGeneration === routeRequestId) {
+        state.tasks = rollback.tasks;
+        state.trees = rollback.trees;
+        state.tree = rollback.tree;
+        syncStudyCacheFromState();
+        render({ duration: 220, suppressEntrance: true });
+        renderRail();
+      }
+      throw error;
+    });
+  }
   function command(body, options) {
     options = options || {};
     if (busy) return Promise.reject(new Error(T('请稍候')));
     busy = true;
     var sent = Object.assign({}, body);
-    if (sent.command === 'create-task' && !sent.taskPage
-        && window.StudyView && typeof window.StudyView.currentTaskPage === 'function') {
-      sent.taskPage = window.StudyView.currentTaskPage();
-    }
     if (!['create-tree', 'switch-tree', 'delete-tree'].includes(sent.command) && !sent.treeId) {
       sent.treeId = state.activeTreeId;
     }
     var treeAtRequest = state.activeTreeId;
-    var shouldFit = sent.command === 'attach-task';
     var requestId = routeRequestId;
-    var server = post('/api/study-goal-tree-command', sent);
-    // 服务端往返注册进学习页 flush 队列：关面板后立即回收/恢复/归档时，
-    // 全量快照会等本命令落地，不会把刚删/刚切的树写回主页状态。
-    if (window.StudyTreeCommands) window.StudyTreeCommands.register(server);
+    var server = post('/api/tree-page-command', sent);
     return server.then(function (json) {
       // 响应落地前面板已关闭或重开（代际变化）：不再碰状态与 DOM，
       // 避免旧响应向隐藏 overlay 重建整棵树、或覆盖重开后新树的渲染；下次打开会全量拉取。
       if (requestId !== routeRequestId) return json;
-      // 树级命令成功落地才推进纪元，此后在途的旧 /api/study 快照全部失效。
+      // 树级命令成功落地才推进纪元，此后在途的旧 /api/tree-page 快照全部失效。
       if (sent.command === 'switch-tree' || sent.command === 'create-tree' || sent.command === 'delete-tree') {
         treeEpoch++;
       }
-      if (json.task) {
+      if (Array.isArray(json.tasks)) {
+        state.tasks = json.tasks;
+      } else if (json.task) {
         var taskIndex = state.tasks.findIndex(function (task) { return task.id === json.task.id; });
         if (taskIndex >= 0) state.tasks[taskIndex] = json.task; else state.tasks.push(json.task);
       }
@@ -1134,8 +1591,6 @@
       pruneCollapsedIds();
       closePopover(false);
       if (!options.skipRender) { render({ duration: options.duration || 320 }); renderRail(); }
-      if (shouldFit && !options.skipRender) requestAnimationFrame(fit);
-      if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
       return json;
     }).finally(function () { busy = false; });
   }
@@ -1297,7 +1752,7 @@
         animateRootEntrance();
       }).finally(endTreeTransition);
     }
-    // 乐观切换：/api/study 快照已带全部树的节点数据，落盘请求随点击即刻发出
+    // 乐观切换：/api/tree-page 快照已带全部树的节点数据，落盘请求随点击即刻发出
     // （点过即算数，关面板不取消）；纪元在点击时推进，作废点击前在途的旧快照
     // （响应落地后 command 还会再推进一次，作废飞行期间取到的旧快照）。
     treeEpoch++;
@@ -1374,31 +1829,320 @@
   }
   function updateTask(task, patch, options) {
     if (busy) return Promise.reject(new Error(T('请稍候')));
+    options = options || {};
     busy = true;
     var treeAtRequest = state.activeTreeId;
-    return post('/api/study-task-update', Object.assign({ id: task.id, goalTreeId: state.activeTreeId }, patch)).then(function (json) {
-      var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
-      if (index >= 0) state.tasks[index] = json.task;
+    var requestGeneration = routeRequestId;
+    var rollback = null;
+    if (options.optimistic) {
+      rollback = {
+        tasks: cloneOptimisticValue(state.tasks),
+        trees: cloneOptimisticValue(state.trees),
+        tree: cloneOptimisticValue(state.tree),
+      };
+      state.tasks = state.tasks.map(function (item) {
+        if (item.id !== task.id) return item;
+        var next = Object.assign({}, item, cloneOptimisticValue(patch));
+        if (Object.prototype.hasOwnProperty.call(patch, 'status')) {
+          next.completedAt = patch.status === 'done' ? (item.completedAt || new Date().toISOString()) : '';
+        }
+        return next;
+      });
+      syncStudyCacheFromState();
+      closePopover(false);
+      render({ duration: 280, preserveViewAnchor: 'root', suppressEntrance: true });
+    }
+    return post('/api/tree-page-command', Object.assign({
+      command: 'update-task', taskId: task.id, treeId: state.activeTreeId,
+    }, patch)).then(function (json) {
+      if (requestGeneration !== routeRequestId) return json;
+      if (Array.isArray(json.tasks)) state.tasks = json.tasks;
+      else {
+        var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
+        if (index >= 0) state.tasks[index] = json.task;
+      }
       applyTreeSnapshot(json, treeAtRequest);
       syncStudyCacheFromState();
       closePopover(false);
-      render({ duration: 280, preserveViewAnchor: 'root' });
-      if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
+      if (!options.optimistic) render({ duration: 280, preserveViewAnchor: 'root' });
       return json;
+    }).catch(function (error) {
+      if (rollback && requestGeneration === routeRequestId) {
+        state.tasks = rollback.tasks;
+        state.trees = rollback.trees;
+        state.tree = rollback.tree;
+        syncStudyCacheFromState();
+        render({ duration: 220, preserveViewAnchor: 'root', suppressEntrance: true });
+      }
+      throw error;
     }).finally(function () { busy = false; });
   }
+  function applyProgressCommandPayload(json, context) {
+    if (Array.isArray(json.tasks)) {
+      state.tasks = json.tasks;
+    } else if (json.task) {
+      state.tasks = state.tasks.map(function (item) { return item.id === json.task.id ? json.task : item; });
+    }
+    applyTreeSnapshot(json, context.treeId);
+    syncStudyCacheFromState();
+    render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
+  }
+  function finishProgressCommands(error) {
+    var context = progressCommandContext;
+    progressCommandQueue = [];
+    progressCommandContext = null;
+    busy = false;
+    if (!context) return;
+    var authority = context.lastJson;
+    if (context.requestId === routeRequestId) {
+      if (authority) applyProgressCommandPayload(authority, context);
+      else if (error) {
+        state.tasks = context.rollback.tasks;
+        state.trees = context.rollback.trees;
+        state.tree = context.rollback.tree;
+        syncStudyCacheFromState();
+        render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
+      }
+      context.pendingTaskIds.forEach(function (taskId) {
+        var node = nodesHost.querySelector('[data-task-id="' + CSS.escape(taskId) + '"]');
+        if (node) node.classList.remove('is-goal-pending');
+      });
+      if (!error) context.reachedTaskIds.forEach(function (taskId) {
+        var task = findTask(taskId);
+        var progress = taskProgress(task);
+        if (!task || task.status === 'done' || !progress.target || progress.current < progress.target) return;
+        var node = nodesHost.querySelector('[data-task-id="' + CSS.escape(taskId) + '"]');
+        if (!node) return;
+        cancelReplayClass(node, 'is-goal-breathing');
+        replayClass(node, 'is-goal-celebrating', 1480);
+      });
+      if (!error && context.reachedTaskIds.size) scheduleTreeGoalBreath(1560);
+      if (error) showError(error);
+      return;
+    }
+    // 翻页后不再碰隐藏页的 DOM，但保留最后一份权威快照，
+    // 避免下次打开先闪回未提交的乐观数值。
+    if (authority) {
+      studyCache = authority;
+      window[STUDY_DATA_CACHE_KEY] = authority;
+    } else if (error) {
+      studyCache = null;
+      window[STUDY_DATA_CACHE_KEY] = null;
+    }
+  }
+  function drainProgressCommands() {
+    var context = progressCommandContext;
+    if (!context || context.sending) return;
+    var item = progressCommandQueue.shift();
+    if (!item) { finishProgressCommands(); return; }
+    context.sending = true;
+    post('/api/tree-page-command', {
+      command: 'progress-task', taskId: item.taskId, delta: item.delta, treeId: context.treeId,
+    }).then(function (json) {
+      if (context !== progressCommandContext) return;
+      context.sending = false;
+      context.lastJson = json;
+      drainProgressCommands();
+    }).catch(function (error) {
+      if (context !== progressCommandContext) return;
+      context.sending = false;
+      finishProgressCommands(error);
+    });
+  }
   function changeProgress(task, delta) {
-    if (busy) return;
-    busy = true;
-    var treeAtRequest = state.activeTreeId;
-    post('/api/study-task-progress', { id: task.id, delta: delta, goalTreeId: state.activeTreeId }).then(function (json) {
-      var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
-      if (index >= 0) state.tasks[index] = json.task;
-      applyTreeSnapshot(json, treeAtRequest);
-      syncStudyCacheFromState();
-      render({ duration: 280, preserveViewAnchor: 'root' });
-      if (window.StudyView && window.StudyView.refresh) window.StudyView.refresh();
-    }).catch(showError).finally(function () { busy = false; });
+    delta = Number(delta);
+    if (delta !== -1 && delta !== 1) return;
+    var joiningQueue = !!progressCommandContext;
+    if (busy && !joiningQueue) return;
+    if (joiningQueue && (progressCommandContext.treeId !== state.activeTreeId
+      || progressCommandContext.requestId !== routeRequestId)) return;
+    var latest = findTask(task && task.id);
+    if (!latest || latest.status === 'done') return;
+    var progress = taskProgress(latest);
+    if (!progress.target) return;
+    var nextCurrent = Math.max(0, Math.min(progress.target, progress.current + delta));
+    if (nextCurrent === progress.current) return;
+
+    if (!joiningQueue) {
+      progressCommandContext = {
+        treeId: state.activeTreeId,
+        requestId: routeRequestId,
+        sending: false,
+        lastJson: null,
+        pendingTaskIds: new Set(),
+        reachedTaskIds: new Set(),
+        rollback: {
+          tasks: cloneOptimisticValue(state.tasks),
+          trees: cloneOptimisticValue(state.trees),
+          tree: cloneOptimisticValue(state.tree),
+        },
+      };
+      busy = true;
+    }
+    var taskNode = nodesHost.querySelector('[data-task-id="' + CSS.escape(latest.id) + '"]');
+    if (progress.current < progress.target && nextCurrent >= progress.target) {
+      progressCommandContext.pendingTaskIds.add(latest.id);
+      progressCommandContext.reachedTaskIds.add(latest.id);
+      if (taskNode && !prefersReduced) {
+        cancelReplayClass(taskNode, 'is-goal-breathing');
+        taskNode.classList.add('is-goal-pending');
+      }
+    } else if (progress.current >= progress.target && nextCurrent < progress.target) {
+      progressCommandContext.pendingTaskIds.delete(latest.id);
+      progressCommandContext.reachedTaskIds.delete(latest.id);
+      if (taskNode) {
+        cancelReplayClass(taskNode, 'is-goal-breathing');
+        cancelReplayClass(taskNode, 'is-goal-celebrating');
+        taskNode.classList.remove('is-goal-pending');
+      }
+    }
+    var updated = Object.assign({}, latest, {
+      progress: Object.assign({}, latest.progress || {}, { current: nextCurrent }),
+    });
+    state.tasks = state.tasks.map(function (item) { return item.id === updated.id ? updated : item; });
+    syncStudyCacheFromState();
+    render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
+    progressCommandQueue.push({ taskId: updated.id, delta: delta });
+    drainProgressCommands();
+  }
+  function applyAppearanceCommandPayload(json, context) {
+    if (Array.isArray(json.tasks)) {
+      state.tasks = json.tasks;
+    } else if (json.task) {
+      state.tasks = state.tasks.map(function (item) { return item.id === json.task.id ? json.task : item; });
+    }
+    applyTreeSnapshot(json, context.treeId);
+    syncStudyCacheFromState();
+    closePopover(false);
+    render({ duration: 220, preserveViewAnchor: context.anchorId || 'root', suppressEntrance: true });
+  }
+  function finishAppearanceCommands(error) {
+    var context = appearanceCommandContext;
+    appearanceCommandQueue = [];
+    appearanceCommandContext = null;
+    busy = false;
+    if (!context) return;
+    var authority = context.lastJson;
+    if (context.requestId === routeRequestId) {
+      if (authority) applyAppearanceCommandPayload(authority, context);
+      else if (error) {
+        state.tasks = context.rollback.tasks;
+        state.trees = context.rollback.trees;
+        state.tree = context.rollback.tree;
+        syncStudyCacheFromState();
+        render({ duration: 220, preserveViewAnchor: context.anchorId || 'root', suppressEntrance: true });
+      }
+      if (error) showError(error);
+      return;
+    }
+    if (authority) {
+      studyCache = authority;
+      window[STUDY_DATA_CACHE_KEY] = authority;
+    } else if (error) {
+      studyCache = null;
+      window[STUDY_DATA_CACHE_KEY] = null;
+    }
+  }
+  function drainAppearanceCommands() {
+    var context = appearanceCommandContext;
+    if (!context || context.sending) return;
+    var item = appearanceCommandQueue.shift();
+    if (!item) { finishAppearanceCommands(); return; }
+    context.sending = true;
+    post('/api/tree-page-command', item.body).then(function (json) {
+      if (context !== appearanceCommandContext) return;
+      context.sending = false;
+      context.lastJson = json;
+      drainAppearanceCommands();
+    }).catch(function (error) {
+      if (context !== appearanceCommandContext) return;
+      context.sending = false;
+      finishAppearanceCommands(error);
+    });
+  }
+  function syncAppearancePaletteSelection(patch) {
+    if (Object.prototype.hasOwnProperty.call(patch, 'color')) {
+      var color = String(patch.color || '');
+      popover.querySelectorAll('[data-route-pop="set-color"]').forEach(function (control) {
+        control.classList.toggle('is-active', String(control.dataset.color || '') === color);
+      });
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'shape')) {
+      var shape = String(patch.shape || 'rounded');
+      popover.querySelectorAll('[data-route-pop="set-shape"]').forEach(function (control) {
+        control.classList.toggle('is-active', String(control.dataset.shape || 'rounded') === shape);
+      });
+    }
+  }
+  function updateAppearanceOptimistically(anchor, patch) {
+    if (!anchor || !patch) return;
+    var joiningQueue = !!appearanceCommandContext;
+    if (busy && !joiningQueue) return;
+    if (joiningQueue && (appearanceCommandContext.treeId !== state.activeTreeId
+      || appearanceCommandContext.requestId !== routeRequestId)) return;
+    var kind = anchor.dataset.kind;
+    var nodeId = anchor.dataset.nodeId;
+    var taskId = anchor.dataset.taskId;
+    var body = { treeId: state.activeTreeId };
+    var tree = cloneOptimisticValue(state.tree);
+    if (kind === 'root') {
+      body.command = 'update-root-appearance';
+      if (Object.prototype.hasOwnProperty.call(patch, 'color')) tree.color = patch.color;
+      if (Object.prototype.hasOwnProperty.call(patch, 'shape')) tree.shape = patch.shape;
+    } else if (kind === 'task') {
+      var task = findTask(taskId);
+      if (!task) return;
+      body.command = 'update-task';
+      body.taskId = taskId;
+      var updatedTask = Object.assign({}, task, patch);
+      state.tasks = state.tasks.map(function (item) { return item.id === taskId ? updatedTask : item; });
+    } else {
+      var branch = (tree.nodes || []).find(function (node) { return node.id === nodeId && node.kind === 'branch'; });
+      if (!branch) return;
+      body.command = 'update-branch';
+      body.nodeId = nodeId;
+      Object.assign(branch, patch);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'color')) body.color = patch.color;
+    if (Object.prototype.hasOwnProperty.call(patch, 'shape')) body.shape = patch.shape;
+
+    if (!joiningQueue) {
+      appearanceCommandContext = {
+        treeId: state.activeTreeId,
+        requestId: routeRequestId,
+        anchorId: nodeId,
+        sending: false,
+        lastJson: null,
+        rollback: {
+          tasks: cloneOptimisticValue(state.tasks),
+          trees: cloneOptimisticValue(state.trees),
+          tree: cloneOptimisticValue(state.tree),
+        },
+      };
+      // 任务外观已在上方修改，回滚快照需要还原修改前的任务。
+      if (kind === 'task') appearanceCommandContext.rollback.tasks = appearanceCommandContext.rollback.tasks.map(function (item) {
+        return item.id === taskId ? cloneOptimisticValue(task) : item;
+      });
+      busy = true;
+    }
+    if (kind !== 'task') {
+      state.tree = tree;
+      state.trees = state.trees.map(function (item) { return item.id === tree.id ? tree : item; });
+    }
+    appearanceCommandContext.anchorId = nodeId;
+    syncStudyCacheFromState();
+    syncAppearancePaletteSelection(patch);
+    render({ duration: 220, preserveViewAnchor: nodeId || 'root', suppressEntrance: true });
+    var liveAnchor = nodeElements.get(nodeId);
+    if (liveAnchor && !popover.hidden) {
+      positionPopover(liveAnchor);
+      window.setTimeout(function () {
+        var currentAnchor = nodeElements.get(nodeId);
+        if (currentAnchor && !popover.hidden && popover.dataset.anchorId === nodeId) positionPopover(currentAnchor);
+      }, prefersReduced ? 0 : 230);
+    }
+    appearanceCommandQueue.push({ body: body });
+    drainAppearanceCommands();
   }
   function openConfirm(title, copy, action) {
     ++confirmMotionId;
@@ -1438,11 +2182,11 @@
   var GUIDE_PAGES = [
     {
       title: '一分钟开始使用',
-      body: '<p>目标树最重要的用途，是把学习任务排成一条看得见的路线。</p><ul><li>点击根目标或阶段右侧的“＋”，新建任务或接入已有任务。</li><li>任务与学习页共用数据：在任一处完成或修改进度，另一处会同步。</li><li>先放入当前真正要做的任务，不必一开始就规划完整棵树。</li></ul>',
+      body: '<p>树状页最重要的用途，是把任务排成一条看得见的路线。</p><ul><li>点击根节点或阶段右侧的“＋”新建任务。</li><li>这里的任务只属于当前树状页，不与学习页联动。</li><li>先放入当前真正要做的任务，不必一开始就规划完整棵树。</li></ul>',
     },
     {
-      title: '下一步做什么',
-      body: '<p>点击顶部的“下一步”，目标树会定位到当前可以开始的任务；再点一次会查看下一个候选。</p><ul><li>点击任务圆点，可以完成或恢复任务。</li><li>有数量目标时，用“− / ＋”推进；“设置进度”可修改当前值和总量。</li><li>拖动卡片可调整路线；阶段右上角的箭头可收起或展开内容。</li></ul>',
+      title: '推进与整理',
+      body: '<p>任务会根据阶段与解锁条件提示当前是否可以开始。</p><ul><li>点击任务圆点，可以完成或恢复任务。</li><li>有数量目标时，用“− / ＋”推进；“设置进度”可修改当前值和总量。</li><li>拖动卡片可调整路线；阶段右上角的箭头可收起或展开内容。</li></ul>',
     },
     {
       title: '阶段与进度',
@@ -1450,7 +2194,7 @@
     },
     {
       title: '箭头、解锁与高级编辑',
-      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才能推进。</li><li>被锁定的任务可改名、查看条件或移出路线，但不能修改进度。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才能推进。</li><li>被锁定的任务可改名、查看条件或删除，但不能修改进度。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -1493,18 +2237,37 @@
   }
   function showOverlay() {
     if (open) return;
-    if (routeCloseTimer) clearTimeout(routeCloseTimer);
-    routeCloseTimer = 0;
+    cancelRouteCloseWait();
     overlay.classList.remove('is-visible', 'is-closing');
     overlay.hidden = false;
     overlay.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('study-goal-tree-open');
+    overlay.dataset.active = '1';
     open = true;
     scene.classList.add('is-loading');
     endTreeTransition();
     void overlay.offsetWidth;
     overlay.classList.add('is-visible');
     viewportSize = readViewportSize();
+  }
+  function cancelRouteCloseWait() {
+    if (routeCloseTimer) clearTimeout(routeCloseTimer);
+    routeCloseTimer = 0;
+    if (routeCloseAnimationHandler) {
+      overlay.removeEventListener('animationend', routeCloseAnimationHandler);
+      routeCloseAnimationHandler = null;
+    }
+  }
+  function finishRouteCloseVisuals() {
+    cancelRouteCloseWait();
+    if (open) return;
+    nodesHost.innerHTML = '';
+    edgesHost.innerHTML = '';
+    nodeElements.clear();
+    edgeElements.clear();
+    visualPlacements.clear();
+    layout = null;
+    overlay.hidden = true;
+    overlay.classList.remove('is-visible', 'is-closing');
   }
   function focusRequestedTask(requestId, taskId) {
     requestAnimationFrame(function () {
@@ -1522,6 +2285,7 @@
     var restored = restoreView(state.activeTreeId);
     render();
     renderRail();
+    scheduleTreeGoalBreath(1400);
     if (!restored) fit(true);
     var requestedTree = requestedTreeId && state.trees.find(function (tree) { return tree.id === requestedTreeId; });
     if (!requestedTree && taskId && !GoalTree.taskOwner(state.tree, taskId)) {
@@ -1535,17 +2299,64 @@
     }
     focusRequestedTask(requestId, taskId);
   }
-  function prefetchStudyData() {
-    if (studyCache) return;
+  function ensureTreePageData() {
+    if (studyCache) return Promise.resolve(studyCache);
+    if (studyPrefetchPromise) return studyPrefetchPromise;
     var id = ++studyPrefetchId;
-    api('/api/study').then(function (json) {
-      if (id !== studyPrefetchId) return;
+    var promise = api('/api/tree-page').then(function (json) {
+      if (id !== studyPrefetchId) return studyCache || json;
       studyCache = json;
       window[STUDY_DATA_CACHE_KEY] = json;
+      return json;
+    });
+    studyPrefetchPromise = promise;
+    promise.finally(function () {
+      if (studyPrefetchPromise === promise) studyPrefetchPromise = null;
     }).catch(function () {});
+    return promise;
+  }
+  function prefetchStudyData() {
+    return ensureTreePageData().then(function () { return true; });
+  }
+  function cancelTreePagePreload() {
+    if (!treePagePreloadHandle) return;
+    if (treePagePreloadUsesIdle && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(treePagePreloadHandle);
+    } else {
+      window.clearTimeout(treePagePreloadHandle);
+    }
+    treePagePreloadHandle = 0;
+    treePagePreloadUsesIdle = false;
+  }
+  function scheduleTreePagePreload() {
+    if (treePagePreloadHandle || studyCache || studyPrefetchPromise) return;
+    var warmTreePage = function () {
+      treePagePreloadHandle = 0;
+      treePagePreloadUsesIdle = false;
+      prefetchStudyData().catch(function () {});
+    };
+    treePagePreloadUsesIdle = typeof window.requestIdleCallback === 'function';
+    treePagePreloadHandle = treePagePreloadUsesIdle
+      ? window.requestIdleCallback(warmTreePage, { timeout: 1500 })
+      : window.setTimeout(warmTreePage, 600);
+  }
+  function loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, allowRetry) {
+    ensureTreePageData().then(function (json) {
+      if (epoch !== treeEpoch) return;
+      applyStudyPayload(json, requestId, taskId, requestedTreeId);
+    }).catch(function (err) {
+      if (allowRetry && open && requestId === routeRequestId && !studyCache) {
+        loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, false);
+        return;
+      }
+      if (requestId !== routeRequestId) return;
+      scene.classList.remove('is-loading');
+      showError(err);
+    });
   }
   function openRoute(trigger, taskId, requestedTreeId) {
     var requestId = ++routeRequestId;
+    cancelTreePagePreload();
     if (trigger && typeof trigger.focus === 'function') routeReturnFocus = trigger;
     showOverlay();
     var shared = window[STUDY_DATA_CACHE_KEY];
@@ -1553,7 +2364,7 @@
     if (studyCache && studyCache.tasks) {
       var epoch = treeEpoch;
       applyStudyPayload(studyCache, requestId, taskId, requestedTreeId);
-      api('/api/study').then(function (json) {
+      api('/api/tree-page').then(function (json) {
         if (!json || !json.tasks) return;
         // 快照取自切树前（纪元已推进）或面板已关/重开：丢弃，避免旧快照回退切换；
         // 也不更新 studyCache，防止下次打开先把回退态闪出来。
@@ -1569,26 +2380,18 @@
       return;
     }
     var epoch = treeEpoch;
-    api('/api/study').then(function (json) {
-      if (epoch !== treeEpoch) return;
-      studyCache = json;
-      window[STUDY_DATA_CACHE_KEY] = json;
-      applyStudyPayload(json, requestId, taskId, requestedTreeId);
-    }).catch(function (err) {
-      if (requestId !== routeRequestId) return;
-      scene.classList.remove('is-loading');
-      showError(err);
-    });
+    loadTreePageForOpen(epoch, requestId, taskId, requestedTreeId, true);
   }
   function closeRoute(restoreFocus) {
     if (!open) return;
     var returnFocus = routeReturnFocus;
     routeReturnFocus = null;
+    stopTreeGoalBreath();
     setRailVisible(false);
     endTreeTransition();
     railOrbY = null;  // 滑块位置随画布一起失效，下次打开直接落位，不做跨会话飞行
     ++routeRequestId;
-    if (routeCloseTimer) clearTimeout(routeCloseTimer);
+    cancelRouteCloseWait();
     if (drag) finishDrag(true);
     cancelCollapseMotion();
     if (pan) {
@@ -1605,33 +2408,37 @@
     flushViewSave();
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
     if (summaryFrame) cancelAnimationFrame(summaryFrame);
+    if (rootProgressFrame) cancelAnimationFrame(rootProgressFrame);
     layoutFrame = 0;
     summaryFrame = 0;
+    rootProgressFrame = 0;
     closePopover(false); closeConfirm(); closeGuide(false);
     if (reparentBadge) { reparentBadge.remove(); reparentBadge = null; }
     if (dropSlot) { dropSlot.remove(); dropSlot = null; }
-    nodesHost.innerHTML = '';
-    edgesHost.innerHTML = '';
-    nodeElements.clear();
-    edgeElements.clear();
-    visualPlacements.clear();
-    layout = null;
-    overlay.classList.remove('is-visible');
-    overlay.classList.add('is-closing');
     overlay.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('study-goal-tree-open');
+    delete overlay.dataset.active;
     open = false;
     if (restoreFocus !== false && returnFocus && returnFocus.isConnected) {
       requestAnimationFrame(function () {
         if (!open && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
       });
     }
-    routeCloseTimer = window.setTimeout(function () {
-      if (open) return;
-      overlay.hidden = true;
-      overlay.classList.remove('is-closing');
-      routeCloseTimer = 0;
-    }, prefersReduced ? 0 : 320);
+    // 起步页已经给树状页根层添加了 view-leaving：退场期间保留现有节点、连线和
+    // 镜头画面，只停止运行时工作；横移淡出结束后再释放 DOM，避免只剩空背景退场。
+    if (!prefersReduced && overlay.classList.contains('view-leaving')) {
+      routeCloseAnimationHandler = function (event) {
+        if (event.target !== overlay) return;
+        finishRouteCloseVisuals();
+      };
+      overlay.addEventListener('animationend', routeCloseAnimationHandler);
+      routeCloseTimer = window.setTimeout(finishRouteCloseVisuals, 720);
+    } else if (prefersReduced) {
+      finishRouteCloseVisuals();
+    } else {
+      overlay.classList.remove('is-visible');
+      overlay.classList.add('is-closing');
+      routeCloseTimer = window.setTimeout(finishRouteCloseVisuals, 320);
+    }
   }
   function parentForAnchor(anchor) {
     return ['branch', 'task'].includes(anchor.dataset.kind) ? anchor.dataset.nodeId : null;
@@ -1772,7 +2579,11 @@
       }
       if (action === 'complete') {
         var completeTask = findTask(anchor.dataset.taskId);
-        if (completeTask) updateTask(completeTask, { status: completeTask.status === 'done' ? 'active' : 'done' }).catch(ignoreBusy);
+        if (completeTask) updateTask(
+          completeTask,
+          { status: completeTask.status === 'done' ? 'active' : 'done' },
+          { optimistic: true },
+        ).catch(ignoreBusy);
       }
       return;
     }
@@ -1786,7 +2597,17 @@
     var anchor = nodesHost.querySelector('[data-node-id="' + CSS.escape(popover.dataset.anchorId || '') + '"]');
     if (!anchor) return;
     var action = control.dataset.routePop;
-    if (['new-branch', 'new-stage', 'new-task', 'attach-task', 'rename', 'settings'].includes(action)) return formPopover(anchor, action);
+    if (action === 'new-branch' || action === 'new-stage') {
+      return createOptimistically({
+        command: 'create-branch', primaryLink: primaryLinkForAnchor(anchor), title: T('未命名'),
+      }).catch(showError);
+    }
+    if (action === 'new-task') {
+      return createOptimistically({
+        command: 'create-task', primaryLink: primaryLinkForAnchor(anchor), title: T('未命名'), target: 1,
+      }).catch(showError);
+    }
+    if (action === 'rename' || action === 'settings') return formPopover(anchor, action);
     if (action === 'requirements') return requirementsPopover(anchor);
     if (action === 'locate-source') {
       var sourceNodeId = control.dataset.sourceNodeId;
@@ -1829,10 +2650,10 @@
         hidingHiddenCountById: hidingHiddenCountById,
       }); return;
     }
-    if (action === 'detach') {
+    if (action === 'delete-task') {
       var task = findTask(anchor.dataset.taskId);
-      return openConfirm(T('从路线移出任务？'), T('任务仍会保留在学习页。'), function () {
-        return command({ command: 'detach-task', taskId: task.id });
+      return openConfirm(T('删除这个任务？'), T('任务及相关解锁条件都会永久删除。'), function () {
+        return deleteTaskOptimistically(task.id);
       });
     }
     if (action === 'color') {
@@ -1842,21 +2663,20 @@
       return;
     }
     if (action === 'set-color') {
-      if (anchor.dataset.kind === 'task') {
-        var taskColorTarget = findTask(anchor.dataset.taskId);
-        if (taskColorTarget) updateTask(taskColorTarget, { color: control.dataset.color || '' }).catch(showError);
-        return;
-      }
-      return command({ command: 'update-branch', nodeId: anchor.dataset.nodeId, color: control.dataset.color || '' }).catch(showError);
+      return updateAppearanceOptimistically(anchor, { color: control.dataset.color || '' });
+    }
+    if (action === 'set-shape') {
+      var shape = control.dataset.shape || 'rounded';
+      return updateAppearanceOptimistically(anchor, { shape: shape });
     }
     if (action === 'delete-branch') {
-      return openConfirm(T('删除这个阶段？'), T('整个阶段会从路线移除，其中的学习任务仍保留在学习页。'), function () {
+      return openConfirm(T('删除这个阶段？'), T('阶段、其中的全部任务与解锁条件都会永久删除。'), function () {
         return command({ command: 'delete-branch', nodeId: anchor.dataset.nodeId });
       });
     }
     if (action === 'delete-tree') {
       var tree = state.trees.find(function (item) { return item.id === state.activeTreeId; }) || state.tree;
-      return openConfirm(T('删除目标树？'), T('「') + (tree.title || T('未命名目标')) + T('」会被删除，其中的学习任务仍保留在学习页。'), function () {
+      return openConfirm(T('删除这棵树？'), T('其中的全部阶段、任务与解锁条件都会永久删除。'), function () {
         return deleteTree();
       });
     }
@@ -1868,10 +2688,7 @@
     var values = new FormData(form), kind = form.dataset.routeForm;
     var anchor = nodesHost.querySelector('[data-node-id="' + CSS.escape(popover.dataset.anchorId || '') + '"]');
     if (!anchor) return;
-    var nodeId = anchor.dataset.nodeId, primaryLink = primaryLinkForAnchor(anchor);
-    if (kind === 'new-branch' || kind === 'new-stage') return command({ command: 'create-branch', primaryLink: primaryLink, title: values.get('title') }).catch(showError);
-    if (kind === 'new-task') return command({ command: 'create-task', primaryLink: primaryLink, title: values.get('title'), target: values.get('target') }).catch(showError);
-    if (kind === 'attach-task') return command({ command: 'attach-task', primaryLink: primaryLink, taskId: values.get('taskId') }).catch(showError);
+    var nodeId = anchor.dataset.nodeId;
     if (kind === 'add-requirement') {
       var parts = String(values.get('source') || '').split('::');
       var trigger = parts[1] === 'milestone' ? { kind: 'milestone', milestoneId: parts[2] } : { kind: 'complete' };
@@ -1908,22 +2725,20 @@
     event.preventDefault();
     event.stopPropagation();
     var anchor = event.target.closest('.study-route-node');
-    if (!anchor || event.target.closest('button')) { closePopover(false); return; }
-    if (anchor.dataset.kind === 'root') { addMenu(anchor); return; }
-    if (anchor.dataset.kind === 'task') { nodeMenu(anchor); return; }
-    if (anchor.dataset.kind !== 'branch') { closePopover(false); return; }
+    if (!anchor) { closePopover(false); return; }
+    if (anchor.dataset.kind === 'milestone') { closePopover(false); return; }
     var nodeId = anchor.dataset.nodeId || '';
     if (!popover.hidden && popover.dataset.anchorId === nodeId) {
       closePopover(true);
       return;
     }
-    var node = state.tree.nodes.find(function (item) { return item.id === nodeId; });
-    var currentColor = (node && node.color) ? node.color : '';
-    openPopover(anchor, colorPaletteHTML(currentColor));
+    var appearance = nodeAppearance(anchor);
+    openPopover(anchor, appearancePaletteHTML(appearance.color, appearance.shape));
   });
   nodesHost.addEventListener('pointerdown', function (event) {
     var anchor = event.target.closest('.study-route-node');
-    if (event.button !== 0 || drag || !anchor || ['root', 'milestone'].includes(anchor.dataset.kind) || event.target.closest('button')) return;
+    if (event.button !== 0 || drag || !anchor || anchor.dataset.kind === 'milestone' || event.target.closest('button')) return;
+    if (anchor.dataset.kind === 'root') return;
     drag = {
       id: event.pointerId, source: anchor, nodeId: anchor.dataset.nodeId,
       x: event.clientX, y: event.clientY,
@@ -1940,6 +2755,15 @@
   function routeScenePoint(clientX, clientY) {
     var rect = viewport.getBoundingClientRect(), zoom = Math.max(.001, view.zoom);
     return { x: (clientX - rect.left - view.x) / zoom, y: (clientY - rect.top - view.y) / zoom };
+  }
+  function cancelActivePointerGestures() {
+    if (drag) finishDrag(true);
+    if (pan) {
+      try { viewport.releasePointerCapture(pan.id); } catch (error) {}
+      pan = null;
+      viewport.classList.remove('is-panning');
+      stopPanInertia();
+    }
   }
   function clearDropPreview() {
     nodesHost.querySelectorAll('.is-drop-target,.is-drop-parent,.is-reparent-target').forEach(function (item) {
@@ -2127,7 +2951,8 @@
     if (current.active) {
       dragEndedAt = performance.now();
       var preview = !cancelled && current.candidate
-        ? GoalTree.previewMove(current.baseTree, current.nodeId, current.candidate.primaryLink) : null;
+        ? preserveTreeExtensions(current.baseTree,
+          GoalTree.previewMove(current.baseTree, current.nodeId, current.candidate.primaryLink)) : null;
       if (preview) {
         state.tree = preview; render({ duration: 260, preserveViewAnchor: 'root' });
         command({
@@ -2217,11 +3042,11 @@
     if (!guide.hidden) closeGuide();
     else if (!confirmBox.hidden) closeConfirm();
     else if (!popover.hidden) closePopover(true);
-    else closeRoute();
+    else viewport.focus({ preventScroll: true });
   });
   stageEl.addEventListener('mousemove', function (event) {
     var rect = stageEl.getBoundingClientRect();
-    setRailVisible(event.clientX - rect.left <= railRevealPx || railOver);
+    setRailVisible(rect.right - event.clientX <= railRevealPx || railOver);
   }, { passive: true });
   rail.addEventListener('pointerenter', function () { railOver = true; setRailVisible(true); });
   rail.addEventListener('pointerleave', function () { railOver = false; setRailVisible(false); });
@@ -2237,20 +3062,22 @@
     createTree().catch(ignoreBusy);
   });
   window.addEventListener('resize', preserveViewOnResize);
+  window.addEventListener('blur', cancelActivePointerGestures);
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);
   });
   window.addEventListener('pagehide', function () { if (open) closeRoute(false); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      cancelActivePointerGestures();
+      stopTreeGoalBreath();
+    }
+    else if (open) scheduleTreeGoalBreath(1400);
+  });
   window.addEventListener('beforeunload', function () { if (open) flushViewSave(); });
-  document.querySelectorAll('[data-action="study-goal-tree-open"]').forEach(function (button) {
-    button.addEventListener('click', function () { openRoute(button); });
-    button.addEventListener('pointerenter', function () { prefetchStudyData(); });
-  });
-  document.querySelectorAll('[data-action="study-goal-tree-help"]').forEach(function (button) {
-    button.addEventListener('click', function () { openRoute(button); openGuide(button); });
-    button.addEventListener('pointerenter', function () { prefetchStudyData(); });
-  });
-  window.StudyRoute = {
+  window.CanvasTreePage = {
+    activate: function () { if (!open) openRoute(); },
+    deactivate: function () { if (open) closeRoute(false); },
     open: function (taskId, trigger, treeId) { openRoute(trigger, taskId, treeId); },
     help: function (trigger) { openRoute(trigger); openGuide(trigger); },
     close: closeRoute,
@@ -2258,7 +3085,7 @@
     refresh: function () {
       if (!open) return Promise.resolve(false);
       var epoch = treeEpoch;
-      return api('/api/study').then(function (json) {
+      return api('/api/tree-page').then(function (json) {
         if (epoch !== treeEpoch) return false;
         studyCache = json; window[STUDY_DATA_CACHE_KEY] = json;
         state.tasks = Array.isArray(json.tasks) ? json.tasks : [];
@@ -2269,4 +3096,5 @@
       });
     },
   };
+  scheduleTreePagePreload();
 })();
