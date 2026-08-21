@@ -112,7 +112,7 @@
             <label class="start-setting-toggle">
               <span>
                 <strong>隐藏特殊页</strong>
-                <small>收起复习/日历/速记/活跃/学习/专注，只留最近·收藏·分组</small>
+                <small>收起复习/日历/活跃/速记/树状/学习/专注，只留最近·收藏·分组</small>
               </span>
               <input type="checkbox" data-role="hide-special-toggle">
               <i aria-hidden="true"></i>
@@ -120,7 +120,7 @@
             <label class="start-setting-toggle">
               <span>
                 <strong>精简目标树编辑</strong>
-                <small>隐藏高级创建入口，已有路线与解锁关系不受影响</small>
+                <small>隐藏高级解锁编辑，已有路线与解锁关系不受影响</small>
               </span>
               <input type="checkbox" data-role="goal-tree-simple-toggle" checked>
               <i aria-hidden="true"></i>
@@ -226,15 +226,26 @@
           <span class="calendar-spine-glyph" aria-hidden="true" data-i18n="spineCalendarGlyph" data-i18n-zh="日">日</span>
           <span class="dot-bubble">日历</span>
         </button>
-        <!-- 速记便签墙：书脊最顶端的一张前置页（在活跃之上）。速记↔活跃可翻页。 -->
+        <!-- 活跃热力图：位于日历与速记之间（图标=小矩形）。 -->
+        <button type="button" class="study-spine-tab cadence-spine-tab" data-action="cadence-view" aria-label="活跃热力图">
+          <span class="cadence-spine-glyph" aria-hidden="true"></span>
+          <span class="dot-bubble">活跃</span>
+        </button>
+        <!-- 速记便签墙：位于活跃与树状之间；从树状页往上翻会进入这里。 -->
         <button type="button" class="study-spine-tab notes-spine-tab" data-action="notes-view" aria-label="速记便签墙">
           <span class="notes-spine-glyph" aria-hidden="true"><i></i><i></i></span>
           <span class="dot-bubble">速记</span>
         </button>
-        <!-- 活跃热力图：学习页之前的一张前置页（图标=小矩形）。学习↔热力图可翻页。 -->
-        <button type="button" class="study-spine-tab cadence-spine-tab" data-action="cadence-view" aria-label="活跃热力图">
-          <span class="cadence-spine-glyph" aria-hidden="true"></span>
-          <span class="dot-bubble">活跃</span>
+        <!-- 独立树状页：位于速记与学习之间，不读取学习任务或目标树数据。 -->
+        <button type="button" class="study-spine-tab tree-page-spine-tab" data-action="tree-page-view" aria-label="树状页">
+          <span class="tree-page-spine-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="12" r="2"/>
+            <path d="M9 12h2.3c2.5 0 3.4-1.6 3.4-3.6M11.3 12h2.5c2.1 0 3.7 1.5 3.7 3.5"/>
+            <path d="M14.8 8.5c.1-2.5 1.6-4 4.1-4.2.2 2.6-1.2 4.2-4.1 4.2Z"/>
+            <path d="M17.5 15.4c2.4.1 3.7 1.4 3.8 3.7-2.4.2-3.8-1-3.8-3.7Z"/>
+          </svg></span>
+          <span class="dot-bubble">树状</span>
         </button>
         <!-- 学习页是画布书页之前的一张前置页：点击，或在「最近」继续向上滚动进入 -->
         <button type="button" class="study-spine-tab" data-action="study-view" aria-label="学习">
@@ -441,12 +452,61 @@
         </section>
       </div>
 
-      <!-- 活跃热力图 · 独立前置页（与学习页之间可翻页；内容由 study.js 渲染）-->
+      <!-- 活跃热力图 · 独立前置页（位于日历与速记之间；内容由 study.js 渲染）-->
       <section class="cadence-embedded" data-role="cadence-view" aria-label="活跃热力图页">
         <section class="study-cadence" data-role="study-cadence" aria-label="年度足迹与画布活跃"></section>
       </section>
 
-      <!-- 速记 · 便签墙独立前置页（活跃更左一格；便签由 notes.js 创建/渲染/存盘）。 -->
+      <section class="tree-page-embedded" data-role="tree-page-view" aria-label="树状页">
+        <section class="study-route-panel tree-page-route-panel" aria-label="独立树状页">
+          <div class="study-route-summary tree-page-hidden-summary" data-role="study-route-summary" aria-live="polite"></div>
+          <div class="study-route-stage tree-page-route-stage">
+            <div class="study-route-viewport" data-role="study-route-viewport" tabindex="0" aria-label="树状页画布">
+              <div class="study-route-scene" data-role="study-route-scene">
+                <svg class="study-route-edges" data-role="study-route-edges" aria-label="树连接"></svg>
+                <div class="study-route-nodes" data-role="study-route-nodes" role="tree"></div>
+              </div>
+            </div>
+            <nav class="study-route-rail tree-page-route-rail auto-hide" data-role="study-route-rail" aria-label="树切换">
+              <div class="study-route-rail-list" data-role="study-route-rail-list">
+                <span class="study-route-rail-orb" data-role="rail-active-orb" aria-hidden="true"></span>
+              </div>
+              <button type="button" class="study-route-rail-add" data-role="study-route-rail-add" aria-label="新建树">＋</button>
+            </nav>
+            <button type="button" class="study-route-fit" data-route-action="fit"
+              aria-label="适应树状页；滚轮缩放，拖动画布平移" title="适应树状页 · 滚轮缩放 · 拖动画布平移">适应</button>
+            <div class="study-route-popover" data-role="study-route-popover" hidden></div>
+          </div>
+          <div class="study-route-confirm" data-role="study-route-confirm" hidden>
+            <section role="alertdialog" aria-modal="true" aria-labelledby="tree-page-confirm-title">
+              <h3 id="tree-page-confirm-title" data-role="study-route-confirm-title"></h3>
+              <p data-role="study-route-confirm-copy"></p>
+              <div>
+                <button type="button" data-route-action="confirm-cancel">取消</button>
+                <button type="button" class="is-danger" data-route-action="confirm-ok">确定</button>
+              </div>
+            </section>
+          </div>
+          <div class="study-route-guide" data-role="study-route-guide" hidden>
+            <button type="button" class="study-route-guide-backdrop" data-route-action="help-close"
+              aria-label="关闭树状页教程"></button>
+            <section role="dialog" aria-modal="true" aria-labelledby="tree-page-guide-title">
+              <header>
+                <div><p>TREE GUIDE</p><h3 id="tree-page-guide-title">读懂树状页</h3></div>
+                <button type="button" data-route-action="help-close" aria-label="关闭">×</button>
+              </header>
+              <div class="study-route-guide-copy" data-role="study-route-guide-copy"></div>
+              <footer>
+                <button type="button" data-route-action="help-prev" aria-label="上一页">‹</button>
+                <span data-role="study-route-guide-position">1 / 4</span>
+                <button type="button" data-route-action="help-next" aria-label="下一页">›</button>
+              </footer>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <!-- 速记 · 便签墙独立前置页（位于活跃与树状之间；便签由 notes.js 创建/渲染/存盘）。 -->
       <section class="notes-embedded" data-role="notes-view" aria-label="速记便签墙页">
         <div class="notes-surface" data-role="notes-surface"></div>
         <div class="notes-console" data-role="notes-console">
@@ -1291,6 +1351,7 @@
   <script src="study-graph.js" defer></script>
   <script src="study-goal-tree.js" defer></script>
   <script src="study-palette.js" defer></script>
+  <script src="tree-page.js" defer></script>
   <script src="study.js" defer></script>
   <script src="study-route.js" defer></script>
   <script src="notes.js" defer></script>

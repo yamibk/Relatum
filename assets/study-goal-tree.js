@@ -111,6 +111,22 @@
       return link.primary && link.to === text(nodeId);
     }) || null;
   }
+  function primaryGroup(link) {
+    var source = text(link && link.from).trim();
+    return source || 'root|' + rootSide(link && link.side);
+  }
+  function reorderPrimary(tree, moving, beforeId) {
+    var group = primaryGroup(moving);
+    var siblings = (tree && tree.links || []).filter(function (link) {
+      return link.primary && link.id !== moving.id && primaryGroup(link) === group;
+    }).sort(function (a, b) {
+      return number(a.order) - number(b.order) || text(a.id).localeCompare(text(b.id));
+    });
+    var before = text(beforeId);
+    var index = siblings.findIndex(function (link) { return text(link.to) === before; });
+    siblings.splice(index < 0 ? siblings.length : index, 0, moving);
+    siblings.forEach(function (link, order) { link.order = order; });
+  }
   function primaryChildren(tree) {
     var result = new Map();
     (tree && tree.links || []).forEach(function (link) {
@@ -142,7 +158,8 @@
     var tree = normalizeTree(value, tasks);
     var byId = new Map(tree.nodes.map(function (node) { return [node.id, node]; }));
     var byTask = new Map((tasks || []).map(function (task) { return [text(task.id), task]; }));
-    var primaryByTarget = new Map(), children = new Map(), containsChildren = new Map(), requirements = new Map();
+    var primaryByTarget = new Map(), children = new Map(), containsChildren = new Map();
+    var requirements = new Map(), requirementChildren = new Map();
     tree.links.forEach(function (link) {
       if (link.primary) {
         primaryByTarget.set(link.to, link);
@@ -157,6 +174,8 @@
       if (link.type === 'requires') {
         if (!requirements.has(link.to)) requirements.set(link.to, []);
         requirements.get(link.to).push(link);
+        if (!requirementChildren.has(link.from)) requirementChildren.set(link.from, []);
+        requirementChildren.get(link.from).push(link.to);
       }
     });
     children.forEach(function (items) { items.sort(function (a, b) { return number(a.order) - number(b.order) || a.id.localeCompare(b.id); }); });
@@ -169,30 +188,47 @@
         complete: count > 0 && values.every(function (item) { return item.complete; }),
       };
     }
-    var metrics = new Map();
-    function branchMetrics(nodeId, active) {
-      if (active.has(nodeId)) return { count: 0, progress: 0, complete: false };
-      active.add(nodeId);
-      var values = [];
-      (containsChildren.get(nodeId) || []).forEach(function (childId) {
-        var child = byId.get(childId);
-        if (!child) return;
-        if (child.kind === 'task') {
-          var task = byTask.get(child.taskId), own = {
-            count: 1, progress: progressForTask(task), complete: !!task && task.status === 'done',
-          };
-          metrics.set(child.id, own); values.push(own);
-        } else values.push(branchMetrics(child.id, active));
-      });
-      active.delete(nodeId);
-      var aggregate = combine(values); metrics.set(nodeId, aggregate); return aggregate;
-    }
+    var metrics = new Map(), stageTasks = new Map(), requirementReachableCache = new Map();
     tree.nodes.forEach(function (node) {
-      if (node.kind === 'branch' && !metrics.has(node.id)) branchMetrics(node.id, new Set());
-      if (node.kind === 'task' && !metrics.has(node.id)) {
+      if (node.kind === 'task') {
         var task = byTask.get(node.taskId);
         metrics.set(node.id, { count: 1, progress: progressForTask(task), complete: !!task && task.status === 'done' });
       }
+    });
+    function requirementReachableFrom(nodeId) {
+      if (requirementReachableCache.has(nodeId)) return requirementReachableCache.get(nodeId);
+      var reachable = new Set(), pending = (requirementChildren.get(nodeId) || []).slice();
+      while (pending.length) {
+        var current = pending.pop();
+        if (!current || reachable.has(current)) continue;
+        reachable.add(current);
+        (requirementChildren.get(current) || []).forEach(function (childId) { pending.push(childId); });
+      }
+      requirementReachableCache.set(nodeId, reachable);
+      return reachable;
+    }
+    function taskNodesForStage(nodeId) {
+      var gated = requirementReachableFrom(nodeId), result = [], seen = new Set();
+      (function visit(parentId) {
+        (children.get(parentId) || []).forEach(function (link) {
+          var childId = link.to;
+          // A branch that waits for this stage to complete belongs after the stage,
+          // so it must not feed back into the stage's own completion metric.
+          if (gated.has(childId) || seen.has(childId)) return;
+          seen.add(childId);
+          var child = byId.get(childId);
+          if (!child) return;
+          if (child.kind === 'task') result.push(child);
+          visit(childId);
+        });
+      })(nodeId);
+      return result;
+    }
+    tree.nodes.forEach(function (node) {
+      if (node.kind !== 'branch') return;
+      var scoped = taskNodesForStage(node.id);
+      stageTasks.set(node.id, scoped);
+      metrics.set(node.id, combine(scoped.map(function (taskNode) { return metrics.get(taskNode.id); })));
     });
     var rootValues = tree.nodes.filter(function (node) { return node.kind === 'task'; }).map(function (node) { return metrics.get(node.id); });
     var rootMetrics = combine(rootValues); metrics.set('root', rootMetrics);
@@ -243,6 +279,7 @@
     return {
       tree: tree, byId: byId, byTask: byTask, primaryByTarget: primaryByTarget,
       children: children, containsChildren: containsChildren, requirements: requirements,
+      requirementChildren: requirementChildren, stageTasks: stageTasks,
       metrics: metrics, availability: availability, rootMetrics: rootMetrics,
     };
   }
@@ -255,19 +292,7 @@
     var root = model.byId.get(text(nodeId));
     if (!root) return [];
     if (root.kind === 'task') return [root];
-    var result = [], seen = new Set();
-    (function visit(id) {
-      if (seen.has(id)) return;
-      seen.add(id);
-      (model.children.get(text(id)) || []).forEach(function (link) {
-        if (link.type !== 'contains') return;
-        var child = model.byId.get(link.to);
-        if (!child) return;
-        if (child.kind === 'task') result.push(child);
-        else visit(child.id);
-      });
-    })(root.id);
-    return result;
+    return (model.stageTasks.get(root.id) || []).slice();
   }
 
   function progressBreakdown(model, nodeId) {
@@ -489,12 +514,16 @@
       links: (tree.links || []).filter(function (link) { return !(link.primary && link.to === nodeId); }).map(cloneLink),
     };
     var old = primaryLink(tree, nodeId);
-    copy.links.push({
+    var moving = {
       id: old ? old.id : 'preview-link', from: primary.from || null, to: nodeId,
       type: primary.type || 'contains', primary: true, order: number(primary.order, 999999),
       side: primary.from ? undefined : rootSide(primary.side),
       trigger: primary.type === 'requires' ? Object.assign({}, primary.trigger || { kind: 'complete' }) : undefined,
-    });
+    };
+    copy.links.push(moving);
+    // 拖放预览必须与后端 _study_goal_reorder_primary 使用同一顺序语义。
+    // 否则首次放下只会保存到服务端，当前画面仍按旧 order 回排，直到下一次交互才显现。
+    reorderPrimary(copy, moving, primary.beforeId);
     return copy;
   }
   function topSide(tree, nodeId) {
@@ -523,6 +552,7 @@
     var targetId = text(hints.targetId), targetPlacement = context.byPlacement.get(targetId);
     var target = targetId === 'root' ? { id: 'root', kind: 'root' }
       : (tree.nodes || []).find(function (node) { return node.id === targetId; });
+    var incoming = context.incoming;
     var primary = null;
     if (!target && targetPlacement && targetPlacement.kind === 'milestone') {
       primary = { from: targetPlacement.node.parentNodeId, type: 'requires', trigger: { kind: 'milestone', milestoneId: targetPlacement.node.milestone.id } };
@@ -533,6 +563,21 @@
       } else if (target.kind === 'task') primary = { from: target.id, type: 'requires', trigger: { kind: 'complete' } };
       else primary = { from: target.id, type: 'contains' };
     }
+    // 根节点两侧本身就是顶级放置区：拖到空白处并跨过根节点中线时，
+    // 直接切换到对应侧，而不是仍按原侧的同级排序处理。这样无需精确命中
+    // 黑色根卡，树状页与目标树都保持同一套双向自由拖放手感。
+    if (!target && !targetPlacement && incoming) {
+      var rootPlacement = context.byPlacement.get('root');
+      if (rootPlacement) {
+        var requestedSide = point.x < rootPlacement.x + rootPlacement.width / 2 ? 'left' : 'right';
+        if (requestedSide !== topSide(tree, nodeId)) {
+          targetId = 'root';
+          targetPlacement = rootPlacement;
+          target = { id: 'root', kind: 'root' };
+          primary = { from: null, type: 'contains', side: requestedSide };
+        }
+      }
+    }
     if (primary && !context.structuralExcluded.has(primary.from) && canMove(tree, nodeId, primary.from)) {
       return {
         type: 'reparent', targetId: targetId, primaryLink: primary,
@@ -542,7 +587,6 @@
         slotCoord: targetPlacement ? targetPlacement.y : point.y,
       };
     }
-    var incoming = context.incoming;
     if (!incoming) return null;
     var siblings = layoutValue.nodes.filter(function (placement) {
       if (placement.kind === 'milestone' || context.structuralExcluded.has(placement.id)) return false;

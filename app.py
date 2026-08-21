@@ -92,6 +92,7 @@ BACKGROUND_PREF_FILE = DATA / "background.json"
 BACKGROUND_UPLOAD_DIR = DATA / "backgrounds"
 VIEWPORT_STATE_FILE = DATA / "viewport.json"
 STUDY_FILE = DATA / "study.json"
+TREE_PAGE_FILE = DATA / "tree-page.json"   # 起步页独立「树状页」；不读取、不写入学习目标树
 STUDY_ARCHIVE_DIR = DATA / "学习归档"
 CANVAS_ARCHIVE_DIR = DATA / "画布归档"   # 编辑器顶栏「归档」：移走划线节点 + 这里留轻量记录
 NOTES_FILE = DATA / "notes.json"   # 起步页「速记」便签墙（独立数据，不进 .canvas）
@@ -5339,62 +5340,81 @@ def _study_goal_availability(data: dict, tree: dict) -> dict[str, dict]:
     primary_by_target = {
         str(link.get("to") or ""): link for link in links if link.get("primary")
     }
-    contains_children: dict[str, list[str]] = {}
+    primary_children: dict[str, list[str]] = {}
     requirements: dict[str, list[dict]] = {}
+    requirement_children: dict[str, list[str]] = {}
     for link in links:
         target_id = str(link.get("to") or "")
         source_id = str(link.get("from") or "")
-        if link.get("primary") and link.get("type") == "contains" and source_id:
-            contains_children.setdefault(source_id, []).append(target_id)
+        if link.get("primary") and source_id:
+            primary_children.setdefault(source_id, []).append(target_id)
         if link.get("type") == "requires":
             requirements.setdefault(target_id, []).append(link)
+            requirement_children.setdefault(source_id, []).append(target_id)
 
     metrics: dict[str, dict] = {}
 
-    def branch_metrics(node_id: str, active: set[str]) -> dict:
-        if node_id in active:
-            return {"count": 0, "progress": 0.0, "complete": False}
-        active.add(node_id)
-        values: list[dict] = []
-        for child_id in contains_children.get(node_id, []):
-            child = by_id.get(child_id)
-            if not child:
-                continue
-            if child.get("kind") == "task":
-                task = by_task.get(str(child.get("taskId") or ""))
-                value = {
-                    "count": 1,
-                    "progress": _study_goal_task_progress_value(task),
-                    "complete": bool(task and task.get("status") == "done"),
-                }
-                metrics[child_id] = value
-                values.append(value)
-            else:
-                values.append(branch_metrics(child_id, active))
-        active.remove(node_id)
-        count = sum(int(value["count"]) for value in values)
-        aggregate = {
-            "count": count,
-            "progress": (
-                sum(float(value["progress"]) * int(value["count"]) for value in values) / count
-                if count else 0.0
-            ),
-            "complete": bool(count and all(value["complete"] for value in values)),
-        }
-        metrics[node_id] = aggregate
-        return aggregate
-
     for node in nodes:
         node_id = str(node.get("id") or "")
-        if node.get("kind") == "branch" and node_id not in metrics:
-            branch_metrics(node_id, set())
-        elif node.get("kind") == "task" and node_id not in metrics:
+        if node.get("kind") == "task":
             task = by_task.get(str(node.get("taskId") or ""))
             metrics[node_id] = {
                 "count": 1,
                 "progress": _study_goal_task_progress_value(task),
                 "complete": bool(task and task.get("status") == "done"),
             }
+
+    requirement_reachable_cache: dict[str, set[str]] = {}
+
+    def requirement_reachable_from(node_id: str) -> set[str]:
+        if node_id in requirement_reachable_cache:
+            return requirement_reachable_cache[node_id]
+        reachable: set[str] = set()
+        pending = list(requirement_children.get(node_id, []))
+        while pending:
+            current = pending.pop()
+            if not current or current in reachable:
+                continue
+            reachable.add(current)
+            pending.extend(requirement_children.get(current, []))
+        requirement_reachable_cache[node_id] = reachable
+        return reachable
+
+    def task_nodes_for_stage(node_id: str) -> list[dict]:
+        gated = requirement_reachable_from(node_id)
+        result: list[dict] = []
+        seen: set[str] = set()
+        pending = list(reversed(primary_children.get(node_id, [])))
+        while pending:
+            child_id = pending.pop()
+            if child_id in gated or child_id in seen:
+                continue
+            seen.add(child_id)
+            child = by_id.get(child_id)
+            if not child:
+                continue
+            if child.get("kind") == "task":
+                result.append(child)
+            pending.extend(reversed(primary_children.get(child_id, [])))
+        return result
+
+    for node in nodes:
+        if node.get("kind") != "branch":
+            continue
+        node_id = str(node.get("id") or "")
+        values = [
+            metrics[str(task_node.get("id") or "")]
+            for task_node in task_nodes_for_stage(node_id)
+        ]
+        count = len(values)
+        metrics[node_id] = {
+            "count": count,
+            "progress": (
+                sum(float(value["progress"]) for value in values) / count
+                if count else 0.0
+            ),
+            "complete": bool(count and all(value["complete"] for value in values)),
+        }
 
     def source_satisfied(link: dict) -> bool:
         source = by_id.get(str(link.get("from") or ""))
@@ -5678,6 +5698,354 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
     _study_goal_sync_active(data)
     return result
 
+
+# ─── 起步页独立树状页（目标树运行时的独立数据副本） ────────────────
+
+TREE_PAGE_VERSION = 2
+TREE_PAGE_TASKS_MAX = STUDY_GOAL_TREE_NODES_MAX
+TREE_PAGE_SHAPES = {"rounded", "rectangle", "pill", "diamond", "circle"}
+
+
+def _tree_page_stored_id(value: object, label: str) -> str:
+    value = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", value):
+        raise ValueError(f"{label}不正确")
+    return value
+
+
+def _tree_page_shape(value: object) -> str:
+    shape = str(value or "rounded").strip().lower()
+    if shape not in TREE_PAGE_SHAPES:
+        raise ValueError("卡片形状不正确")
+    return shape
+
+
+def _tree_page_color(value: object) -> str:
+    color = str(value or "").strip().lower()
+    if color and not re.fullmatch(r"#[0-9a-f]{6}", color):
+        raise ValueError("卡片颜色不正确")
+    return color
+
+
+def _tree_page_client_id(value: object, prefix: str, label: str) -> str:
+    client_id = _tree_page_stored_id(value, label)
+    if not client_id.startswith(prefix) or len(client_id) <= len(prefix):
+        raise ValueError(f"{label}不正确")
+    return client_id
+
+
+def _tree_page_fresh() -> dict:
+    tree = _study_goal_new_tree("树 1", 0)
+    # 文件缺失或旧 v1 被废弃时，GET 不落盘；使用稳定标识，确保随后第一次
+    # POST 仍能命中同一棵内存空白树，而不会因每次生成随机 id 被误判为已删除。
+    tree["id"] = "goal_default"
+    tree.update({"shape": "rounded", "color": ""})
+    return {
+        "version": TREE_PAGE_VERSION,
+        "activeTreeId": tree["id"],
+        "tasks": [],
+        "goalTrees": [tree],
+    }
+
+
+def _tree_page_primary_subtree_ids(tree: dict, node_id: str) -> set[str]:
+    children: dict[str, list[str]] = {}
+    for link in tree.get("links", []):
+        if link.get("primary") and link.get("from"):
+            children.setdefault(str(link["from"]), []).append(str(link["to"]))
+    removed: set[str] = set()
+    stack = [node_id]
+    while stack:
+        current = stack.pop()
+        if current in removed:
+            continue
+        removed.add(current)
+        stack.extend(children.get(current, []))
+    return removed
+
+
+def _tree_page_capture_extras(data: dict) -> dict:
+    return {
+        "taskShapes": {
+            str(task.get("id") or ""): _tree_page_shape(task.get("shape"))
+            for task in data.get("tasks", [])
+        },
+        "trees": {
+            str(tree.get("id") or ""): {
+                "shape": _tree_page_shape(tree.get("shape")),
+                "color": _tree_page_color(tree.get("color")),
+                "nodeShapes": {
+                    str(node.get("id") or ""): _tree_page_shape(node.get("shape"))
+                    for node in tree.get("nodes", []) if node.get("kind") == "branch"
+                },
+            }
+            for tree in data.get("goalTrees", [])
+        },
+    }
+
+
+def _tree_page_restore_extras(data: dict, extras: dict) -> None:
+    task_shapes = extras.get("taskShapes", {})
+    for task in data.get("tasks", []):
+        task["shape"] = _tree_page_shape(task_shapes.get(str(task.get("id") or ""), "rounded"))
+    for tree in data.get("goalTrees", []):
+        saved = extras.get("trees", {}).get(str(tree.get("id") or ""), {})
+        tree["shape"] = _tree_page_shape(saved.get("shape"))
+        tree["color"] = _tree_page_color(saved.get("color"))
+        node_shapes = saved.get("nodeShapes", {})
+        for node in tree.get("nodes", []):
+            if node.get("kind") == "branch":
+                node["shape"] = _tree_page_shape(node_shapes.get(str(node.get("id") or ""), "rounded"))
+
+
+def _tree_page_normalize(data: object) -> dict:
+    if not isinstance(data, dict) or data.get("version") != TREE_PAGE_VERSION:
+        raise ValueError("树状页数据版本不兼容")
+    raw_tasks = data.get("tasks")
+    raw_trees = data.get("goalTrees")
+    if not isinstance(raw_tasks, list) or not isinstance(raw_trees, list):
+        raise ValueError("树状页数据格式不正确")
+    if len(raw_tasks) > TREE_PAGE_TASKS_MAX:
+        raise ValueError("树状页任务数量已达到安全上限")
+    if not raw_trees:
+        raise ValueError("树状页至少需要一棵树")
+
+    tasks: list[dict] = []
+    task_ids: set[str] = set()
+    for raw_task in raw_tasks:
+        if not isinstance(raw_task, dict):
+            raise ValueError("树状页任务格式不正确")
+        task_id = _tree_page_stored_id(raw_task.get("id"), "任务标识")
+        if task_id in task_ids:
+            raise ValueError("任务标识不能重复")
+        task_ids.add(task_id)
+        source = dict(raw_task)
+        source["id"] = task_id
+        source["color"] = _tree_page_color(raw_task.get("color"))
+        task = _study_task(source, touch=False, strict=True)
+        task["shape"] = _tree_page_shape(raw_task.get("shape"))
+        tasks.append(task)
+
+    raw_by_tree: dict[str, dict] = {}
+    for raw_tree in raw_trees:
+        if not isinstance(raw_tree, dict):
+            raise ValueError("目标树格式不正确")
+        tree_id = _tree_page_stored_id(raw_tree.get("id"), "树标识")
+        if tree_id in raw_by_tree:
+            raise ValueError("树标识不能重复")
+        raw_by_tree[tree_id] = raw_tree
+        raw_nodes = raw_tree.get("nodes")
+        raw_links = raw_tree.get("links")
+        if not isinstance(raw_nodes, list) or not isinstance(raw_links, list):
+            raise ValueError("目标树节点或连接格式不正确")
+        for raw_node in raw_nodes:
+            if not isinstance(raw_node, dict):
+                raise ValueError("目标树节点格式不正确")
+            _tree_page_stored_id(raw_node.get("id"), "树节点标识")
+            if raw_node.get("kind") == "branch":
+                _tree_page_color(raw_node.get("color"))
+                _tree_page_shape(raw_node.get("shape"))
+        for raw_link in raw_links:
+            if not isinstance(raw_link, dict):
+                raise ValueError("目标树连接格式不正确")
+            _tree_page_stored_id(raw_link.get("id"), "树连接标识")
+
+    trees = _study_goal_normalize_trees(raw_trees, tasks, strict=True)
+    globally_owned: set[str] = set()
+    for tree in trees:
+        raw_tree = raw_by_tree[tree["id"]]
+        tree["shape"] = _tree_page_shape(raw_tree.get("shape"))
+        tree["color"] = _tree_page_color(raw_tree.get("color"))
+        raw_nodes = {
+            str(node.get("id") or ""): node
+            for node in raw_tree.get("nodes", []) if isinstance(node, dict)
+        }
+        for node in tree["nodes"]:
+            if node.get("kind") == "branch":
+                node["shape"] = _tree_page_shape((raw_nodes.get(node["id"]) or {}).get("shape"))
+            elif node["taskId"] in globally_owned:
+                raise ValueError("每个任务只能属于一棵树并出现一次")
+            else:
+                globally_owned.add(node["taskId"])
+
+    if globally_owned != task_ids:
+        raise ValueError("每个树状页任务都必须且只能属于一棵树")
+    active_id = str(data.get("activeTreeId") or "").strip()
+    if active_id not in {tree["id"] for tree in trees}:
+        raise ValueError("当前树标识不正确")
+    return {
+        "version": TREE_PAGE_VERSION,
+        "activeTreeId": active_id,
+        "tasks": tasks,
+        "goalTrees": trees,
+    }
+
+
+def load_tree_page() -> dict:
+    if not TREE_PAGE_FILE.exists():
+        return _tree_page_fresh()
+    try:
+        raw = json.loads(TREE_PAGE_FILE.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        raise ValueError(f"树状页数据无法读取：{err}") from err
+    if isinstance(raw, dict) and raw.get("version") == 1:
+        return _tree_page_fresh()
+    return _tree_page_normalize(raw)
+
+
+def save_tree_page(data: dict) -> dict:
+    clean = _tree_page_normalize(data)
+    _atomic_write_json(TREE_PAGE_FILE, clean)
+    return clean
+
+
+def _tree_page_tree(data: dict, tree_id: object = None) -> dict:
+    return _study_goal_tree(data, tree_id)
+
+
+def apply_tree_page_command(data: dict, body: dict) -> dict:
+    if not isinstance(body, dict):
+        raise ValueError("请求格式不正确")
+    clean = _tree_page_normalize(data)
+    data.clear()
+    data.update(clean)
+    command = str(body.get("command") or "").strip()
+    if command in {"attach-task", "detach-task"}:
+        raise ValueError("树状页不提供已有任务接入或移出路线")
+    result: dict = {"command": command}
+    extras = _tree_page_capture_extras(data)
+
+    if command in {"create-branch", "create-task"} and any(
+        key in body for key in ("clientTaskId", "clientNodeId", "clientLinkId")
+    ):
+        tree = _tree_page_tree(data, body.get("treeId"))
+        node_id = _tree_page_client_id(body.get("clientNodeId"), "goal_node_", "节点标识")
+        link_id = _tree_page_client_id(body.get("clientLinkId"), "goal_link_", "连接标识")
+        if any(node.get("id") == node_id for item in data.get("goalTrees", []) for node in item.get("nodes", [])):
+            raise ValueError("节点标识不能重复")
+        if any(link.get("id") == link_id for item in data.get("goalTrees", []) for link in item.get("links", [])):
+            raise ValueError("连接标识不能重复")
+
+        if command == "create-branch":
+            node = {
+                "id": node_id,
+                "kind": "branch",
+                "title": _study_goal_title(body.get("title"), "未命名阶段"),
+                "shape": "rounded",
+            }
+            color = _tree_page_color(body.get("color"))
+            if color:
+                node["color"] = color
+            tree["nodes"].append(node)
+            result["nodeId"] = node_id
+        else:
+            task_id = _tree_page_client_id(body.get("clientTaskId"), "tree_task_", "任务标识")
+            if any(task.get("id") == task_id for task in data.get("tasks", [])):
+                raise ValueError("任务标识不能重复")
+            source = {"id": task_id, "title": body.get("title"), "taskPage": body.get("taskPage")}
+            if body.get("target") not in (None, ""):
+                source["progress"] = {"target": body.get("target"), "milestones": []}
+            task = _study_task(source)
+            task["shape"] = "rounded"
+            data["tasks"].append(task)
+            node = {"id": node_id, "kind": "task", "taskId": task_id}
+            tree["nodes"].append(node)
+            result.update({"task": task, "taskId": task_id, "nodeId": node_id})
+
+        link = _study_goal_link_from_input(
+            tree, node_id, body.get("primaryLink"), link_id=link_id,
+        )
+        tree["links"].append(link)
+        before_id = (body.get("primaryLink") or {}).get("beforeId") if isinstance(body.get("primaryLink"), dict) else None
+        _study_goal_reorder_primary(tree, link, before_id)
+        tree["updatedAt"] = _study_now()
+        result["linkId"] = link_id
+
+    elif command == "update-task":
+        task_id = str(body.get("taskId") or body.get("id") or "").strip()
+        index, old = study_find_task(data, task_id)
+        tree_id = str(body.get("treeId") or "").strip()
+        patch = {key: body[key] for key in ("title", "status", "progress", "color") if key in body}
+        if "color" in patch:
+            patch["color"] = _tree_page_color(patch["color"])
+        locks_route_action = "progress" in patch or (
+            patch.get("status") == "done" and old.get("status") != "done"
+        )
+        if tree_id and locks_route_action:
+            _study_goal_assert_task_available(data, tree_id, task_id)
+        task = _study_task(patch, existing=old)
+        if isinstance(body.get("progress"), dict) and "current" in body["progress"]:
+            task["progress"] = _study_progress(
+                body["progress"], old.get("progress"), strict=True, allow_current=True,
+            )
+        task["shape"] = _tree_page_shape(body.get("shape", old.get("shape")))
+        data["tasks"][index] = task
+        result["task"] = task
+
+    elif command == "progress-task":
+        task_id = str(body.get("taskId") or body.get("id") or "").strip()
+        _study_goal_assert_task_available(data, body.get("treeId"), task_id)
+        result.update(change_study_progress(data, task_id, body.get("delta")))
+        task_index, changed_task = study_find_task(data, task_id)
+        changed_task["shape"] = _tree_page_shape(extras["taskShapes"].get(task_id))
+        data["tasks"][task_index] = changed_task
+        result["task"] = changed_task
+
+    elif command == "delete-task":
+        task_id = str(body.get("taskId") or "").strip()
+        tree = _tree_page_tree(data, body.get("treeId"))
+        owner = next((
+            node for node in tree.get("nodes", [])
+            if node.get("kind") == "task" and node.get("taskId") == task_id
+        ), None)
+        if not owner:
+            raise KeyError("这个任务不在当前树中")
+        removed = _study_goal_detach_task(data, task_id, tree_id=tree["id"])
+        data["tasks"] = [task for task in data["tasks"] if task.get("id") != task_id]
+        result.update({"removedTaskId": task_id, **(removed or {})})
+
+    elif command == "update-root-appearance":
+        tree = _tree_page_tree(data, body.get("treeId"))
+        if "shape" in body:
+            tree["shape"] = _tree_page_shape(body.get("shape"))
+        if "color" in body:
+            tree["color"] = _tree_page_color(body.get("color"))
+        tree["updatedAt"] = _study_now()
+
+    else:
+        removed_task_ids: set[str] = set()
+        removed_node_ids: set[str] = set()
+        if command == "delete-tree":
+            doomed = _tree_page_tree(data, body.get("treeId"))
+            removed_task_ids = {
+                node["taskId"] for node in doomed.get("nodes", [])
+                if node.get("kind") == "task"
+            }
+        elif command == "delete-branch":
+            doomed_tree = _tree_page_tree(data, body.get("treeId"))
+            doomed_node = _study_goal_node(doomed_tree, body.get("nodeId"))
+            removed_node_ids = _tree_page_primary_subtree_ids(doomed_tree, doomed_node["id"])
+            removed_task_ids = {
+                node["taskId"] for node in doomed_tree.get("nodes", [])
+                if node.get("id") in removed_node_ids and node.get("kind") == "task"
+            }
+
+        result = apply_study_goal_tree_command(data, body)
+        _tree_page_restore_extras(data, extras)
+
+        if removed_task_ids:
+            data["tasks"] = [
+                task for task in data.get("tasks", [])
+                if task.get("id") not in removed_task_ids
+            ]
+        if command == "update-branch" and "shape" in body:
+            node = _study_goal_node(_tree_page_tree(data, body.get("treeId")), body.get("nodeId"))
+            node["shape"] = _tree_page_shape(body.get("shape"))
+
+    normalized = _tree_page_normalize(data)
+    data.clear()
+    data.update(normalized)
+    return result
 
 def _study_archive_folder(task_count: int) -> Path:
     """返回易读且不覆盖旧归档的目录：日期+任务数量，重名时追加序号。"""
@@ -8385,6 +8753,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(200, study_public_payload())
             except ValueError as err:
                 return self._send_json(409, {"error": str(err), "incompatible": True})
+        if parsed.path == "/api/tree-page":
+            try:
+                return self._send_json(200, load_tree_page())
+            except ValueError as err:
+                return self._send_json(409, {"error": str(err), "incompatible": True})
         if parsed.path == "/api/study-activity":
             q = urllib.parse.parse_qs(parsed.query)
             return self._send_json(200, study_activity_payload(q.get("year", [None])[0]))
@@ -8530,6 +8903,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_study_archive_done(body)
         if path == "/api/study-goal-tree-command":
             return self._api_study_goal_tree_command(body)
+        if path == "/api/tree-page-command":
+            return self._api_tree_page_command(body)
         if path == "/api/canvas-activity":
             return self._api_canvas_activity(body)
         if path == "/api/archive-canvas":
@@ -9279,6 +9654,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "goalTrees": data.get("goalTrees"),
             "activeTreeId": data.get("activeTreeId"),
         })
+
+    def _api_tree_page_command(self, body: dict):
+        try:
+            data = load_tree_page()
+            result = apply_tree_page_command(data, body)
+            data = save_tree_page(data)
+        except KeyError as err:
+            return self._send_json(404, {"error": str(err)})
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        except RuntimeError as err:
+            return self._send_json(409, {"error": str(err)})
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存树状页失败：{err}"})
+        return self._send_json(200, {"ok": True, **result, **data})
 
     def _api_taskbook_archive(self, body: dict):
         """归档一个已完成顶级任务，并用稳定 archiveId 保证重复请求幂等。"""

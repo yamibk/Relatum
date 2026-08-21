@@ -174,6 +174,27 @@ class StudyGoalTreeV4Tests(unittest.TestCase):
         # 普通学习清单不携带目标树 ID，因此不会被某一棵共享路线锁死。
         app._study_goal_assert_task_available(data, "", second["id"])
 
+    def test_nested_stage_progress_and_stage_followup_boundary_share_server_semantics(self):
+        first = self.task("阶段内已完成", status="done", progress={"current": 0, "target": 1})
+        nested = self.task("嵌套阶段任务", progress={"target": 1})
+        after = self.task("阶段完成后的任务", progress={"target": 1})
+        data = self.data(first, nested, after)
+        stage = self.branch(data, "父阶段")
+        first_node = self.attach(data, first, self.primary(stage))
+        child_stage = self.branch(data, "子阶段", self.primary(first_node, "requires"))
+        self.attach(data, nested, self.primary(child_stage))
+        after_node = self.attach(data, after, self.primary(stage, "requires"))
+
+        availability = app._study_goal_availability(data, data["goalTrees"][0])
+        self.assertFalse(availability[after_node]["available"])
+        nested["status"] = "done"
+        availability = app._study_goal_availability(data, data["goalTrees"][0])
+        self.assertTrue(availability[after_node]["available"])
+
+        # The follow-up task itself is cut from the parent stage metric; otherwise
+        # the parent could never complete and the task would remain self-locked.
+        app._study_goal_assert_task_available(data, data["activeTreeId"], after["id"])
+
     def test_route_api_rejects_locked_progress_but_plain_list_can_update(self):
         first = self.task("A")
         second = self.task("B", progress={"target": 10})
