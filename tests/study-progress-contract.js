@@ -44,9 +44,15 @@ assert(/data-role="study-temporary-panel"[\s\S]*?aria-hidden="true" inert/.test(
 [
   "const VIEW_MODE_KEY = 'study:viewMode:v2'",
   "const STUDY_TASK_PAGE_KEY = 'study:taskPage:v1'",
+  "const STUDY_TASK_PAGE_COLORS_KEY = 'study:taskPageColors:v1'",
   'const STUDY_TASK_PAGE_MAX = 99',
   'function tasksForPage(page)',
   'function taskPageCapacity()',
+  'function loadTaskPageColors()',
+  'function setTaskPageColor(page, value)',
+  'function taskPageColorPopoverOpen()',
+  "taskPageRailEl.addEventListener('contextmenu'",
+  "currentColor: taskPageColor(page)",
   'Math.max(taskPageCapacity(), currentTaskPage, highestTaskPage())',
   'var topCount = Math.ceil(total / 2)',
   'function setCurrentTaskPage(page, options)',
@@ -287,7 +293,8 @@ assert(styles.includes('.study-task-page-scroll::-webkit-scrollbar { display: no
   && styles.includes('.study-task-page-rail.auto-hide.revealed'),
   'the task-page rail must remain symmetric, auto-hidden, and scrollbar-free');
 assert(styles.includes('.study-task-page-orb {\n  position: absolute; left: 8px; top: 0; z-index: 2; width: 34px; height: 34px;')
-  && styles.includes('transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft);'),
+  && styles.includes('transition: transform var(--start-orb-ms) var(--easing-soft), opacity 120ms var(--easing-soft),')
+  && styles.includes('.study-task-page-orb[data-task-page-color] { background: var(--task-page-color); }'),
   'the task-page orb must slide with the shared start-page orb timing');
 assert(styles.includes('.study-task-page-button.is-active,\n.study-task-page-button.is-active:hover {\n  color: #f8f6ef; background: transparent;')
   && styles.includes('z-index: 3;'),
@@ -296,6 +303,16 @@ assert(study.includes('function currentOrbMs()')
   && !study.includes("taskPageOrbEl.style.width = '")
   && study.includes('taskPageOrbSettleUntil = performance.now() + orbMs + 10'),
   'the task-page orb must keep its scroll-lock in sync with the orb duration without stretching');
+assert(study.includes("localStorage.setItem(STUDY_TASK_PAGE_COLORS_KEY, JSON.stringify({")
+  && study.includes('raw.version !== 1')
+  && study.includes('allowed.has(color)')
+  && study.includes('Object.keys(taskPageColors).reduce(function (highest, page)')
+  && !backend.includes('taskPageColors'),
+  'task-page colors must stay palette-validated local preferences and keep colored high pages reachable');
+assert(styles.includes('.study-task-page-button[data-task-page-color]:not(.is-active)')
+  && styles.includes('.study-task-page-button.is-active[data-task-page-color]')
+  && styles.includes('body.start-page[data-start-theme="dark"] .study-task-page-orb[data-task-page-color]'),
+  'colored task pages must style inactive tabs and the active orb in both themes');
 
 [
   '.study-progress-card {',
