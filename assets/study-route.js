@@ -569,6 +569,18 @@
       var parent = edge && (fromMap.get(edge.from) || toMap.get(edge.from));
       fromMap.set(item.id, parent ? Object.assign({}, item, { x: parent.x, y: parent.y }) : item);
     });
+    var geometryChanged = fromMap.size !== toMap.size;
+    if (!geometryChanged && !(excluded && excluded.size)) {
+      toMap.forEach(function (to, id) {
+        if (geometryChanged) return;
+        var from = fromMap.get(id);
+        if (!from || Math.abs(from.x - to.x) > .01 || Math.abs(from.y - to.y) > .01
+          || Math.abs(from.width - to.width) > .01 || Math.abs(from.height - to.height) > .01) {
+          geometryChanged = true;
+        }
+      });
+    }
+    if (!geometryChanged && !(excluded && excluded.size)) { applyLayoutFrame(next, toMap); return; }
     if (prefersReduced || !previous || !duration) { applyLayoutFrame(next, toMap); return; }
     var started = performance.now();
     function frame(now) {
