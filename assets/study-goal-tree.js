@@ -44,7 +44,8 @@
     return copy;
   }
 
-  function normalizeTree(value, tasks) {
+  function normalizeTree(value, tasks, options) {
+    options = options || {};
     var tree = value && typeof value === 'object' ? value : {};
     if (tree.version !== 2) throw new Error('目标树版本不兼容');
     var byTask = new Map((tasks || []).map(function (task) { return [text(task.id), task]; }));
@@ -96,7 +97,7 @@
     var normalized = {
       version: 2,
       id: text(tree.id),
-      title: text(tree.title).trim() || '我的学习路线',
+      title: options.allowBlankTitle ? text(tree.title).trim() : (text(tree.title).trim() || '我的学习路线'),
       nodes: nodes,
       links: links,
     };
@@ -154,8 +155,8 @@
     return node ? { tree: tree, node: node } : null;
   }
 
-  function buildModel(value, tasks) {
-    var tree = normalizeTree(value, tasks);
+  function buildModel(value, tasks, options) {
+    var tree = normalizeTree(value, tasks, options);
     var byId = new Map(tree.nodes.map(function (node) { return [node.id, node]; }));
     var byTask = new Map((tasks || []).map(function (task) { return [text(task.id), task]; }));
     var primaryByTarget = new Map(), children = new Map(), containsChildren = new Map();

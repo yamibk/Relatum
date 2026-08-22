@@ -43,12 +43,16 @@
   // DOM 尺寸只在节点内容或响应式样式真正变化时更新。普通进度点击可直接
   // 复用上次几何，避免每次都用两轮完整树模型和布局来确认相同尺寸。
   var nodeSizeCache = new Map();
-  var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
+  var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, rootTitleSizeFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
   var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
   var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.tree-page.view';
+  var TREE_MODEL_OPTIONS = { allowBlankTitle: true };
   var legacyViewClaimed = false;
   var STUDY_DATA_CACHE_KEY = '_relatumTreePageData';
   var GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
+  var ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1';
+  var rootTitleHidden = false;
+  try { rootTitleHidden = localStorage.getItem(ROOT_TITLE_HIDDEN_KEY) === '1'; } catch (error) {}
   var studyCache = null, studyPrefetchId = 0, studyPrefetchPromise = null;
   var treePagePreloadHandle = 0, treePagePreloadUsesIdle = false;
   var treeGoalBreathTimer = 0;
@@ -514,8 +518,15 @@
       + (hasChildren ? !placement.collapsed : true) + '" aria-label="' + (hasChildren && placement.collapsed ? T('展开阶段') : T('收起阶段')) + '"'
       + (!hasChildren ? ' disabled aria-disabled="true"' : '') + '><span aria-hidden="true"></span></button>' : '';
     var hidden = hasChildren && placement.collapsed ? '<em class="study-route-hidden-count">' + placement.hiddenCount + ' ' + T('项已隐藏') + '</em>' : '';
+    var rootTreeTitle = String(state.tree.title || '').trim();
+    var rootTitle = placement.kind === 'root' && !rootTitleHidden && rootTreeTitle
+      ? '<span class="tree-page-root-title" data-user-content>' + escapeHtml(rootTreeTitle) + '</span>'
+      : '';
     var heading = placement.kind === 'root'
-      ? '<strong class="tree-page-root-progress" aria-label="' + percent + '%">' + percent + '%</strong>'
+      ? '<strong class="tree-page-root-progress" aria-label="' + escapeHtml(percent + '%'
+        + (rootTitle ? ' ' + rootTreeTitle : '')) + '"><span class="tree-page-root-progress-value" data-value="'
+        + percent + '">' + percent + '%</span>'
+        + rootTitle + '</strong>'
       : '<strong data-user-content>' + escapeHtml(placement.node.title) + '</strong>';
     var progressBar = placement.kind === 'root'
       ? '<span class="study-progress-track-shell tree-page-root-progress-track"><span class="study-progress-track'
@@ -691,36 +702,44 @@
     return true;
   }
   function syncRootProgressHeading(currentHeading, nextHeading) {
-    var nextText = nextHeading.textContent || '0%';
+    var currentValue = currentHeading.querySelector('.tree-page-root-progress-value');
+    var nextValue = nextHeading.querySelector('.tree-page-root-progress-value');
+    if (!currentValue || !nextValue) return;
+    var currentTitle = currentHeading.querySelector('.tree-page-root-title');
+    var nextTitle = nextHeading.querySelector('.tree-page-root-title');
+    if (currentTitle && nextTitle) currentTitle.textContent = nextTitle.textContent;
+    else if (currentTitle) currentTitle.remove();
+    else if (nextTitle) currentHeading.appendChild(nextTitle.cloneNode(true));
+    var nextText = nextValue.textContent || '0%';
     var percent = Number(nextText.replace('%', ''));
     currentHeading.setAttribute('aria-label', nextHeading.getAttribute('aria-label') || nextText);
     if (rootProgressFrame) cancelAnimationFrame(rootProgressFrame);
     rootProgressFrame = 0;
     if (!Number.isFinite(percent)) {
-      currentHeading.textContent = nextText;
-      delete currentHeading.dataset.value;
+      currentValue.textContent = nextText;
+      delete currentValue.dataset.value;
       return;
     }
-    var from = Number(currentHeading.dataset.value);
-    if (!Number.isFinite(from)) from = Number((currentHeading.textContent || '').replace('%', ''));
+    var from = Number(currentValue.dataset.value);
+    if (!Number.isFinite(from)) from = Number((currentValue.textContent || '').replace('%', ''));
     if (!Number.isFinite(from)) from = percent;
     if (prefersReduced || Math.abs(percent - from) < .1) {
-      currentHeading.textContent = Math.round(percent) + '%';
-      currentHeading.dataset.value = String(percent);
+      currentValue.textContent = Math.round(percent) + '%';
+      currentValue.dataset.value = String(percent);
       return;
     }
     var started = performance.now();
     function frame(now) {
-      if (!currentHeading.isConnected) { rootProgressFrame = 0; return; }
+      if (!currentValue.isConnected) { rootProgressFrame = 0; return; }
       var t = Math.min(1, (now - started) / 520), eased = 1 - Math.pow(1 - t, 3);
       var value = from + (percent - from) * eased;
-      currentHeading.textContent = Math.round(value) + '%';
-      currentHeading.dataset.value = String(value);
+      currentValue.textContent = Math.round(value) + '%';
+      currentValue.dataset.value = String(value);
       if (t < 1) rootProgressFrame = requestAnimationFrame(frame);
       else {
         rootProgressFrame = 0;
-        currentHeading.textContent = Math.round(percent) + '%';
-        currentHeading.dataset.value = String(percent);
+        currentValue.textContent = Math.round(percent) + '%';
+        currentValue.dataset.value = String(percent);
       }
     }
     rootProgressFrame = requestAnimationFrame(frame);
@@ -1114,9 +1133,9 @@
   }
   function render(options) {
     options = options || {};
-    state.tree = preserveTreeExtensions(state.tree, GoalTree.normalizeTree(state.tree, state.tasks));
+    state.tree = preserveTreeExtensions(state.tree, GoalTree.normalizeTree(state.tree, state.tasks, TREE_MODEL_OPTIONS));
     var previous = layout;
-    var model = GoalTree.buildModel(state.tree, state.tasks);
+    var model = GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS);
     var first = GoalTree.layout(state.tree, state.tasks, {
       model: model, sizes: nodeSizeCache, collapsedIds: collapsedIds,
     });
@@ -1157,7 +1176,7 @@
     var number = summary.querySelector('strong'), copy = summary.querySelector('span');
     if (!number) { number = document.createElement('strong'); summary.appendChild(number); }
     if (!copy) { copy = document.createElement('span'); summary.appendChild(copy); }
-    nextCandidates = GoalTree.nextTasks(layout ? layout.model : GoalTree.buildModel(state.tree, state.tasks));
+    nextCandidates = GoalTree.nextTasks(layout ? layout.model : GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS));
     if (nextTaskIndex >= nextCandidates.length) nextTaskIndex = 0;
     copy.textContent = completed + ' / ' + metrics.count + ' ' + T('已完成');
     var from = Number(number.dataset.value);
@@ -1279,7 +1298,7 @@
     var anchorId = anchor.dataset.nodeId || '';
     if (!popover.hidden && popover.dataset.anchorId === anchorId) { closePopover(true); return; }
     var kind = anchor.dataset.kind;
-    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks);
+    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS);
     var conditionCount = kind === 'root' ? 0 : GoalTree.requirementCount(model, anchor.dataset.nodeId);
     var simple = simpleModeEnabled();
     var menuTask = kind === 'task' ? findTask(anchor.dataset.taskId) : null;
@@ -1320,7 +1339,8 @@
     var task = node && node.kind === 'task' ? findTask(node.taskId) : null;
     if (kind === 'rename') {
       var title = task ? task.title : node && node.title;
-      return openPopover(anchor, '<form data-route-form="rename"><label>' + T('名称') + '<input name="title" maxlength="160" required value="'
+      var required = node && node.kind === 'root' ? '' : ' required';
+      return openPopover(anchor, '<form data-route-form="rename"><label>' + T('名称') + '<input name="title" maxlength="160"' + required + ' value="'
         + escapeHtml(title || '') + '"></label><button type="submit">' + T('保存') + '</button></form>');
     }
     if (kind === 'settings' && task) {
@@ -1364,7 +1384,7 @@
       return requirementRow(link, 'remove-requirement', '移除');
     }).join('');
     var choices = [];
-    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks);
+    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS);
     if (!simpleModeEnabled()) state.tree.nodes.forEach(function (node) {
       var completeTrigger = { kind: 'complete' };
       if (GoalTree.canAddRequirement(model, node.id, targetId, completeTrigger)) {
@@ -1392,7 +1412,7 @@
       closePopover(true);
       return;
     }
-    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks);
+    var model = layout && layout.model ? layout.model : GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS);
     var detail = GoalTree.progressBreakdown(model, anchor.dataset.nodeId);
     var visibleRows = detail.rows.slice(0, 50).map(function (row) {
       var copy = row.done ? T('已完成') + ' · 100%'
@@ -2762,7 +2782,7 @@
       return command({ command: 'remove-requirement', linkId: control.dataset.linkId }).catch(showError);
     }
     if (action === 'collapse-complete') {
-      var model = GoalTree.buildModel(state.tree, state.tasks);
+      var model = GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS);
       state.tree.nodes.forEach(function (node) {
         if (node.kind === 'branch' && (model.metrics.get(node.id) || {}).complete) collapsedIds.add(node.id);
       });
@@ -3200,6 +3220,17 @@
   window.addEventListener('blur', cancelActivePointerGestures);
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);
+  });
+  window.addEventListener('relatum:tree-page-root-title-change', function (event) {
+    rootTitleHidden = !!(event.detail && event.detail.hidden);
+    if (open) render({ animateLayout: false, suppressEntrance: true });
+  });
+  window.addEventListener('relatum:tree-page-root-title-size-change', function () {
+    if (!open || rootTitleSizeFrame) return;
+    rootTitleSizeFrame = requestAnimationFrame(function () {
+      rootTitleSizeFrame = 0;
+      if (open) render({ animateLayout: false, suppressEntrance: true });
+    });
   });
   window.addEventListener('pagehide', function () { if (open) closeRoute(false); });
   document.addEventListener('visibilitychange', function () {

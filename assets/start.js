@@ -60,6 +60,9 @@
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
+  const treePageRootTitleToggle = document.querySelector('[data-role="tree-page-root-title-toggle"]');
+  const treePageRootTitleSizeRange = document.querySelector('[data-role="tree-page-root-title-size-range"]');
+  const treePageRootTitleSizeValue = document.querySelector('[data-role="tree-page-root-title-size-value"]');
   const librarySearchToggle = document.querySelector('[data-role="library-search-toggle"]');
   const initialView = new URLSearchParams(window.location.search).get('view') || '';
   let initialStudy = initialView === 'study';
@@ -127,6 +130,11 @@
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
+  const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1';
+  const TREE_PAGE_ROOT_TITLE_SIZE_KEY = 'canvas:treePageRootTitleSize:v1';
+  const TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT = 25;
+  const TREE_PAGE_ROOT_TITLE_SIZE_MIN = 16;
+  const TREE_PAGE_ROOT_TITLE_SIZE_MAX = 36;
   const LIBRARY_SEARCH_ENABLED_KEY = 'canvas:librarySearchEnabled';
   let startTurnSpeed = START_SPEED_DEFAULT;
   let notesInertia = NOTES_INERTIA_DEFAULT;
@@ -323,6 +331,36 @@
     }));
   }
 
+  function applyTreePageRootTitleHidden(hidden, persist) {
+    const active = hidden === true;
+    if (treePageRootTitleToggle) treePageRootTitleToggle.checked = active;
+    if (persist) {
+      try { localStorage.setItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY, active ? '1' : '0'); } catch (e) {}
+    }
+    window.dispatchEvent(new CustomEvent('relatum:tree-page-root-title-change', {
+      detail: { hidden: active },
+    }));
+  }
+
+  function clampTreePageRootTitleSize(value) {
+    const size = Math.round(Number(value));
+    if (!Number.isFinite(size)) return TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT;
+    return Math.max(TREE_PAGE_ROOT_TITLE_SIZE_MIN, Math.min(TREE_PAGE_ROOT_TITLE_SIZE_MAX, size));
+  }
+
+  function applyTreePageRootTitleSize(value, persist) {
+    const size = clampTreePageRootTitleSize(value);
+    if (treePageRootTitleSizeRange) treePageRootTitleSizeRange.value = String(size);
+    if (treePageRootTitleSizeValue) treePageRootTitleSizeValue.textContent = size + 'px';
+    document.documentElement.style.setProperty('--tree-page-root-title-size', size + 'px');
+    if (persist) {
+      try { localStorage.setItem(TREE_PAGE_ROOT_TITLE_SIZE_KEY, String(size)); } catch (e) {}
+    }
+    window.dispatchEvent(new CustomEvent('relatum:tree-page-root-title-size-change', {
+      detail: { size: size },
+    }));
+  }
+
   function applyLibrarySearchEnabled(enabled, persist) {
     const active = enabled === true;
     const wasEnabled = librarySearchEnabled;
@@ -404,6 +442,12 @@
   let goalTreeSimpleInit = true;
   try { goalTreeSimpleInit = localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (e) {}
   applyGoalTreeSimpleMode(goalTreeSimpleInit, false);
+  let treePageRootTitleHiddenInit = false;
+  try { treePageRootTitleHiddenInit = localStorage.getItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY) === '1'; } catch (e) {}
+  applyTreePageRootTitleHidden(treePageRootTitleHiddenInit, false);
+  let treePageRootTitleSizeInit = TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT;
+  try { treePageRootTitleSizeInit = localStorage.getItem(TREE_PAGE_ROOT_TITLE_SIZE_KEY) || TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT; } catch (e) {}
+  applyTreePageRootTitleSize(treePageRootTitleSizeInit, false);
   let librarySearchEnabledInit = false;
   try { librarySearchEnabledInit = localStorage.getItem(LIBRARY_SEARCH_ENABLED_KEY) === '1'; } catch (e) {}
   applyLibrarySearchEnabled(librarySearchEnabledInit, false);
@@ -673,6 +717,16 @@
   if (goalTreeSimpleToggle) {
     goalTreeSimpleToggle.addEventListener('change', () => {
       applyGoalTreeSimpleMode(goalTreeSimpleToggle.checked, true);
+    });
+  }
+  if (treePageRootTitleToggle) {
+    treePageRootTitleToggle.addEventListener('change', () => {
+      applyTreePageRootTitleHidden(treePageRootTitleToggle.checked, true);
+    });
+  }
+  if (treePageRootTitleSizeRange) {
+    treePageRootTitleSizeRange.addEventListener('input', () => {
+      applyTreePageRootTitleSize(treePageRootTitleSizeRange.value, true);
     });
   }
   if (librarySearchToggle) {

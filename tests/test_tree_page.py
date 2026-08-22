@@ -54,6 +54,26 @@ class TreePageTests(unittest.TestCase):
         self.assertTrue(app.TREE_PAGE_FILE.exists())
         self.assertEqual(app.load_tree_page(), saved)
 
+    def test_root_title_can_be_blank_and_roundtrips(self):
+        self.command("rename-root", title="   ")
+        self.assertEqual(self.active_tree()["title"], "")
+        self.branch("空标题下继续编辑")
+        self.assertEqual(self.active_tree()["title"], "")
+        saved = app.save_tree_page(self.data)
+        self.assertEqual(saved["goalTrees"][0]["title"], "")
+        self.assertEqual(app.load_tree_page()["goalTrees"][0]["title"], "")
+
+    def test_root_title_stays_blank_through_normalized_api_path(self):
+        app.apply_tree_page_command(self.data, {
+            "command": "rename-root",
+            "treeId": self.data["activeTreeId"],
+            "title": "",
+        }, normalized=True)
+        saved = app.save_tree_page(self.data, normalized=True)
+        self.assertEqual(self.active_tree()["title"], "")
+        self.assertEqual(saved["goalTrees"][0]["title"], "")
+        self.assertEqual(app.load_tree_page()["goalTrees"][0]["title"], "")
+
     def test_v1_is_discarded_without_writing_until_first_change(self):
         old = {"version": 1, "activeTreeId": "tree_old", "trees": [{"id": "tree_old"}]}
         original = json.dumps(old, ensure_ascii=False)
