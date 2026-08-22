@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import app
 
@@ -77,6 +78,18 @@ class TreePageTests(unittest.TestCase):
                     app.load_tree_page()
                 self.assertEqual(app.TREE_PAGE_FILE.read_text(encoding="utf-8"), original)
 
+    def test_total_node_and_link_limits_cover_all_trees(self):
+        self.branch("第一棵阶段")
+        self.command("create-tree", title="第二棵")
+        self.branch("第二棵阶段一")
+        self.branch("第二棵阶段二")
+        with mock.patch.object(app, "TREE_PAGE_TOTAL_NODES_MAX", 2):
+            with self.assertRaisesRegex(ValueError, "节点总量"):
+                app._tree_page_normalize(copy.deepcopy(self.data))
+        with mock.patch.object(app, "TREE_PAGE_TOTAL_LINKS_MAX", 2):
+            with self.assertRaisesRegex(ValueError, "连接总量"):
+                app._tree_page_normalize(copy.deepcopy(self.data))
+
     def test_task_is_unique_and_attach_detach_are_rejected(self):
         task_id = self.task("唯一任务")["taskId"]
         second = self.command("create-tree")["treeId"]
@@ -109,6 +122,19 @@ class TreePageTests(unittest.TestCase):
         self.assertEqual(task["color"], "#f0caca")
         self.command("update-task", taskId=task_id, status="done")
         self.assertEqual(self.data["tasks"][0]["status"], "done")
+
+    def test_progress_command_accepts_coalesced_delta(self):
+        task_id = self.task("连点", target=10)["taskId"]
+        self.command("update-task", taskId=task_id, progress={
+            "current": 2,
+            "target": 10,
+            "milestones": [{"id": "sm_mid", "name": "中点", "at": 5}],
+        })
+        result = self.command("progress-task", taskId=task_id, delta=5)
+        self.assertEqual(result["task"]["progress"]["current"], 7)
+        self.assertEqual(result["crossedMilestoneIds"], ["sm_mid"])
+        with self.assertRaisesRegex(ValueError, "安全范围"):
+            self.command("progress-task", taskId=task_id, delta=10000)
 
     def test_client_ids_make_task_and_branch_creation_optimistic(self):
         task_result = self.command(
@@ -180,6 +206,30 @@ class TreePageTests(unittest.TestCase):
         self.assertNotIn(first["taskId"], {task["id"] for task in self.data["tasks"]})
         self.assertNotIn(first["nodeId"], {node["id"] for node in self.active_tree()["nodes"]})
         self.assertIn(child["nodeId"], {node["id"] for node in self.active_tree()["nodes"]})
+
+    def test_delete_task_promotes_children_without_reordering_following_siblings(self):
+        doomed = self.task("待删")
+        following = self.task("原后续")
+        first_child = self.task("子项一")
+        second_child = self.task("子项二")
+        for child in (first_child, second_child):
+            self.command("move-node", nodeId=child["nodeId"], primaryLink={
+                "from": doomed["nodeId"], "type": "requires", "trigger": {"kind": "complete"},
+            })
+        self.command("delete-task", taskId=doomed["taskId"])
+        tree = self.active_tree()
+        task_by_node = {
+            node["id"]: next(task for task in self.data["tasks"] if task["id"] == node["taskId"])
+            for node in tree["nodes"] if node["kind"] == "task"
+        }
+        root_tasks = [
+            task_by_node[link["to"]]["title"]
+            for link in sorted(
+                (link for link in tree["links"] if link.get("primary") and link.get("from") is None),
+                key=lambda link: link["order"],
+            )
+        ]
+        self.assertEqual(root_tasks, ["子项一", "子项二", "原后续"])
 
     def test_delete_branch_cascades_tasks_and_dependencies(self):
         branch = self.branch()

@@ -127,6 +127,22 @@ assert(progressSource.indexOf('state.tasks = state.tasks.map') < progressSource.
   'progress controls must update local task state before enqueueing the server command');
 assert(progressSource.includes('if (busy && !joiningQueue) return;'),
   'progress controls must accept consecutive clicks only while their own queue is active');
+assert(progressSource.includes('queuedProgress.delta += delta')
+  && progressSource.includes('if (!queuedProgress.delta) progressCommandQueue.pop()'),
+  'rapid progress clicks must coalesce instead of accumulating one full POST per click');
+const commandSource = functionSource(tree, 'command');
+assert(commandSource.includes('applyAuthorityAfterGenerationChange(json)')
+  && commandSource.includes('refreshAuthorityAfterGenerationChange()'),
+  'commands completed after close/reopen must reconcile authoritative state');
+const renderSource = functionSource(tree, 'render');
+assert(tree.includes('var nodeSizeCache = new Map()')
+  && renderSource.includes('var model = GoalTree.buildModel(state.tree, state.tasks)')
+  && renderSource.includes('model: model, sizes: nodeSizeCache')
+  && renderSource.includes('var next = sizesChanged ? GoalTree.layout'),
+  'Tree renders must reuse one model and cached DOM geometry until a node size changes');
+assert(functionSource(tree, 'animateLayout').includes('if (!geometryChanged')
+  && functionSource(route, 'animateLayout').includes('if (!geometryChanged'),
+  'unchanged geometry must not run a full FLIP animation on every data-only update');
 [
   'study-progress-track-shell tree-page-task-progress', 'study-progress-track', 'study-progress-fill',
   'is-goal-pending', 'is-goal-celebrating', 'is-goal-breathing',
@@ -149,6 +165,8 @@ assert(!tree.includes('nextProgressShell.replaceWith(oldProgressShell)'),
 const appearanceSource = functionSource(tree, 'updateAppearanceOptimistically');
 assert(appearanceSource.indexOf('syncAppearancePaletteSelection(patch)') < appearanceSource.indexOf('appearanceCommandQueue.push'),
   'appearance controls must update local visuals before enqueueing the server command');
+assert(appearanceSource.includes('Object.assign(queuedBody, body)'),
+  'rapid appearance changes for one node must coalesce in the pending queue');
 assert(tree.includes("return updateAppearanceOptimistically(anchor, { color: control.dataset.color || '' })"),
   'color controls must use optimistic appearance updates');
 assert(tree.includes('return updateAppearanceOptimistically(anchor, { shape: shape })'),
@@ -166,6 +184,12 @@ assert(!tree.includes("command: 'attach-task'"), 'attach-task must be absent');
 assert(!tree.includes("command: 'detach-task'"), 'detach-task must be absent');
 assert(!tree.includes('选择已有任务'), 'existing-task copy must be absent');
 assert(!tree.includes('移出路线'), 'detach copy must be absent');
+assert(tree.includes('return deleteTaskOptimistically(task.id).catch(ignoreBusy)')
+  && !tree.includes("openConfirm(T('删除这个任务？')"),
+  'task deletion must start immediately without a second confirmation dialog');
+assert(functionSource(tree, 'deleteTaskOptimistically').includes('createTaskDeleteGhost(owner.id)')
+  && css.includes('@keyframes studyRouteNodeDelete'),
+  'task deletion must leave a short non-interactive fade ghost');
 
 ['rounded', 'rectangle', 'pill', 'diamond', 'circle'].forEach((shape) => {
   assert(tree.includes("value: '" + shape + "'"), 'missing shape option: ' + shape);

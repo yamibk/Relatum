@@ -379,7 +379,8 @@
 
   function layout(value, tasks, options) {
     options = options || {};
-    var model = buildModel(value, tasks), collapsed = options.collapsedIds instanceof Set ? options.collapsedIds : new Set();
+    var model = options.model && options.model.tree ? options.model : buildModel(value, tasks);
+    var collapsed = options.collapsedIds instanceof Set ? options.collapsedIds : new Set();
     var sizes = options.sizes instanceof Map ? options.sizes : new Map();
     var gapX = number(options.gapX, 92), gapY = number(options.gapY, 30);
     var visualById = new Map(), visualChildren = new Map(), visualParent = new Map(), primaryEdgeByTarget = new Map();

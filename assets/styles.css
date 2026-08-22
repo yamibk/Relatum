@@ -270,6 +270,11 @@
   animation: studyRouteNodeExpand 300ms var(--easing-soft, cubic-bezier(.22,1,.36,1)) both;
   transform-origin: center;
 }
+.study-route-node.is-deleting {
+  z-index: 12;
+  pointer-events: none !important;
+  animation: studyRouteNodeDelete 220ms cubic-bezier(.4,0,1,1) both;
+}
 .study-route-node.is-collapsing {
   opacity: 0 !important;
   transform: scale(.965) !important;
@@ -294,6 +299,10 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 @keyframes studyRouteNodeExpand {
   from { opacity: 0; transform: scale(.965); }
   to { opacity: var(--route-node-opacity); transform: none; }
+}
+@keyframes studyRouteNodeDelete {
+  from { opacity: var(--route-node-opacity); }
+  to { opacity: 0; }
 }
 /* 新树的根卡比普通节点稍强的登场：更大缩放与上浮，作为新树"落地"的锚点 */
 .study-route-node.is-root.is-entering { animation: studyRouteRootIn 390ms var(--easing-soft, cubic-bezier(.22, 1, .36, 1)) both; }
