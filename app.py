@@ -2324,10 +2324,24 @@ def _study_goal_detach_task(
             link for link in tree.get("links", [])
             if link.get("primary") and link.get("from") == node["id"]
         ]
-        for offset, child in enumerate(sorted(children, key=lambda item: item.get("order", 0))):
+        children.sort(key=lambda item: (_study_goal_order(item.get("order")), item["id"]))
+        incoming_group = _study_goal_primary_group(incoming)
+        promoted_siblings = sorted(
+            (
+                link for link in tree.get("links", [])
+                if link.get("primary") and _study_goal_primary_group(link) == incoming_group
+            ),
+            key=lambda item: (_study_goal_order(item.get("order")), item["id"]),
+        )
+        promoted_order: list[dict] = []
+        for sibling in promoted_siblings:
+            if sibling["id"] == incoming["id"]:
+                promoted_order.extend(children)
+            else:
+                promoted_order.append(sibling)
+        for child in children:
             child["from"] = incoming.get("from")
             child["type"] = incoming["type"]
-            child["order"] = _study_goal_order(incoming.get("order")) + offset
             if incoming["type"] == "requires":
                 child["trigger"] = dict(incoming.get("trigger") or {"kind": "complete"})
             else:
@@ -2336,6 +2350,8 @@ def _study_goal_detach_task(
                 child["side"] = _study_goal_side(incoming.get("side"))
             else:
                 child.pop("side", None)
+        for order, sibling in enumerate(promoted_order):
+            sibling["order"] = order
         tree["nodes"] = [item for item in tree.get("nodes", []) if item["id"] != node["id"]]
         child_ids = {link["id"] for link in children}
         tree["links"] = [
@@ -2464,10 +2480,20 @@ def save_study(data: dict) -> None:
     _atomic_write_json(STUDY_FILE, payload)
 
 
-def change_study_progress(data: dict, task_id: object, delta: object) -> dict:
-    """在已持有学习数据写锁时推进一个单位；调用方负责原子写回。"""
+def change_study_progress(
+    data: dict, task_id: object, delta: object, *, allow_aggregate: bool = False,
+) -> dict:
+    """在已持有学习数据写锁时推进进度；调用方负责原子写回。"""
     target_id = str(task_id or "").strip()
-    if delta not in (-1, 1) or isinstance(delta, bool):
+    if allow_aggregate:
+        if (
+            isinstance(delta, bool)
+            or not isinstance(delta, int)
+            or delta == 0
+            or abs(delta) > STUDY_PROGRESS_MAX
+        ):
+            raise ValueError("delta 必须是安全范围内的非零整数")
+    elif delta not in (-1, 1) or isinstance(delta, bool):
         raise ValueError("delta 只能是 1 或 -1")
     index, old = study_find_task(data, target_id)
     if old.get("status") == "done":
@@ -5703,6 +5729,10 @@ def apply_study_goal_tree_command(data: dict, body: dict) -> dict:
 
 TREE_PAGE_VERSION = 2
 TREE_PAGE_TASKS_MAX = STUDY_GOAL_TREE_NODES_MAX
+# 单树上限之外再约束整个独立页面，避免 100 棵各自接近上限的树把每次
+# 原子读写、规范化和 HTTP 权威快照放大到数十 MiB。
+TREE_PAGE_TOTAL_NODES_MAX = 6000
+TREE_PAGE_TOTAL_LINKS_MAX = 18000
 TREE_PAGE_SHAPES = {"rounded", "rectangle", "pill", "diamond", "circle"}
 
 
@@ -5827,6 +5857,8 @@ def _tree_page_normalize(data: object) -> dict:
         tasks.append(task)
 
     raw_by_tree: dict[str, dict] = {}
+    total_nodes = 0
+    total_links = 0
     for raw_tree in raw_trees:
         if not isinstance(raw_tree, dict):
             raise ValueError("目标树格式不正确")
@@ -5838,6 +5870,12 @@ def _tree_page_normalize(data: object) -> dict:
         raw_links = raw_tree.get("links")
         if not isinstance(raw_nodes, list) or not isinstance(raw_links, list):
             raise ValueError("目标树节点或连接格式不正确")
+        total_nodes += len(raw_nodes)
+        total_links += len(raw_links)
+        if total_nodes > TREE_PAGE_TOTAL_NODES_MAX:
+            raise ValueError("树状页节点总量已达到安全上限")
+        if total_links > TREE_PAGE_TOTAL_LINKS_MAX:
+            raise ValueError("树状页连接总量已达到安全上限")
         for raw_node in raw_nodes:
             if not isinstance(raw_node, dict):
                 raise ValueError("目标树节点格式不正确")
@@ -5893,8 +5931,8 @@ def load_tree_page() -> dict:
     return _tree_page_normalize(raw)
 
 
-def save_tree_page(data: dict) -> dict:
-    clean = _tree_page_normalize(data)
+def save_tree_page(data: dict, *, normalized: bool = False) -> dict:
+    clean = data if normalized else _tree_page_normalize(data)
     _atomic_write_json(TREE_PAGE_FILE, clean)
     return clean
 
@@ -5903,12 +5941,13 @@ def _tree_page_tree(data: dict, tree_id: object = None) -> dict:
     return _study_goal_tree(data, tree_id)
 
 
-def apply_tree_page_command(data: dict, body: dict) -> dict:
+def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False) -> dict:
     if not isinstance(body, dict):
         raise ValueError("请求格式不正确")
-    clean = _tree_page_normalize(data)
-    data.clear()
-    data.update(clean)
+    if not normalized:
+        clean = _tree_page_normalize(data)
+        data.clear()
+        data.update(clean)
     command = str(body.get("command") or "").strip()
     if command in {"attach-task", "detach-task"}:
         raise ValueError("树状页不提供已有任务接入或移出路线")
@@ -5985,7 +6024,9 @@ def apply_tree_page_command(data: dict, body: dict) -> dict:
     elif command == "progress-task":
         task_id = str(body.get("taskId") or body.get("id") or "").strip()
         _study_goal_assert_task_available(data, body.get("treeId"), task_id)
-        result.update(change_study_progress(data, task_id, body.get("delta")))
+        result.update(change_study_progress(
+            data, task_id, body.get("delta"), allow_aggregate=True,
+        ))
         task_index, changed_task = study_find_task(data, task_id)
         changed_task["shape"] = _tree_page_shape(extras["taskShapes"].get(task_id))
         data["tasks"][task_index] = changed_task
@@ -9658,8 +9699,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_tree_page_command(self, body: dict):
         try:
             data = load_tree_page()
-            result = apply_tree_page_command(data, body)
-            data = save_tree_page(data)
+            result = apply_tree_page_command(data, body, normalized=True)
+            data = save_tree_page(data, normalized=True)
         except KeyError as err:
             return self._send_json(404, {"error": str(err)})
         except ValueError as err:

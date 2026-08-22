@@ -479,7 +479,10 @@ const temporaryStyleSection = styles.slice(styles.indexOf('/* 临时任务：'),
 assert(temporaryStyleSection && !temporaryStyleSection.includes('backdrop-filter'),
   'the temporary panel must use an opaque surface without continuous backdrop blur');
 
-const studyStyleSection = styles.slice(styles.indexOf('.study-progress-card {'), styles.indexOf('/* ── 任务簿 V2'));
+const studyStyleSection = styles.slice(
+  styles.indexOf('.study-progress-card {'),
+  styles.indexOf('.tree-page-route-panel .tree-page-task-completion-fill'),
+);
 const goalLabelStyleSection = styles.slice(styles.indexOf('.study-progress-goal-label {'), styles.indexOf('.study-progress-value-number {'));
 assert(!studyStyleSection.includes('studyTargetGlow')
   && !studyStyleSection.includes('.study-progress-card.is-target-reached')
