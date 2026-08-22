@@ -7,12 +7,14 @@ const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'assets', 'index.html'), 'utf8');
 const start = fs.readFileSync(path.join(root, 'assets', 'start.js'), 'utf8');
 const study = fs.readFileSync(path.join(root, 'assets', 'study.js'), 'utf8');
+const css = fs.readFileSync(path.join(root, 'assets', 'styles.css'), 'utf8');
 
 [
   'data-action="tree-page-view"',
   'data-role="tree-page-view"',
   'data-role="tree-page-root-title-toggle"',
   'data-role="tree-page-root-title-size-range"',
+  'class="start-root-title-size-range" style="--default-pos:45%;"',
   'src="study-goal-tree.js"',
   'src="tree-page.js"',
 ].forEach((needle) => assert(html.includes(needle), 'missing tree page shell: ' + needle));
@@ -50,6 +52,17 @@ assert(start.includes("const TREE_PAGE_ROOT_TITLE_SIZE_KEY = 'canvas:treePageRoo
   && start.includes('const TREE_PAGE_ROOT_TITLE_SIZE_MAX = 36')
   && start.includes("new CustomEvent('relatum:tree-page-root-title-size-change'"),
   'Tree root title size must use a clamped persistent Home slider and notify the open Tree page');
+assert(html.includes('class="start-root-title-size-range" style="--default-pos:45%;"'),
+  'Tree root title size must mark the 25px default at 45% of its 16–36px range');
+assert(html.includes('class="notes-console-range" style="--default-pos:37.5%;"')
+  && html.includes('class="notes-console-range" style="--default-pos:26.6667%;"'),
+  'Notes preference sliders must expose their stable default positions');
+assert(html.includes('class="start-speed-range-wrap" style="--default-pos:25%;"')
+  && html.includes('class="focus-noise-volume-range" style="--default-pos:50%;"')
+  && css.includes('.start-speed-range-wrap::after,')
+  && css.includes('.notes-console-range::after,')
+  && css.includes('.focus-noise-volume-range::after'),
+  'persistent start-page sliders with stable defaults must expose their gray default markers');
 assert(start.includes('e.clientX > spineRect.right + reach')
   && start.includes("bookView.addEventListener('wheel'"),
   'far-left wheel hot zone must remain available');
