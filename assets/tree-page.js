@@ -1607,7 +1607,7 @@
     ghost.addEventListener('animationend', function (event) {
       if (event.target === ghost && event.animationName === 'studyRouteNodeDelete') removeGhost();
     });
-    window.setTimeout(removeGhost, 130);
+    window.setTimeout(removeGhost, 170);
   }
   function command(body, options) {
     options = options || {};
