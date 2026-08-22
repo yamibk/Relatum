@@ -150,6 +150,10 @@ assert(tree.includes('tree-page-root-progress-value')
   && tree.includes("ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1'")
   && tree.includes("window.addEventListener('relatum:tree-page-root-title-change'"),
   'Tree roots must render a preference-controlled title beside the animated percentage');
+assert(tree.includes("GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1'")
+  && tree.includes('enforceGoalTreeUnlock: unlockEnforcementEnabled()')
+  && tree.includes("window.addEventListener('relatum:goal-tree-unlock-enforcement-change'"),
+  'Tree-page locking must be optional, shared, and included in protected mutations');
 assert(css.includes('display: inline-block;')
   && css.includes('flex: 0 0 4ch;')
   && css.includes('inline-size: 4ch;')

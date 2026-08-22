@@ -6019,7 +6019,7 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
         locks_route_action = "progress" in patch or (
             patch.get("status") == "done" and old.get("status") != "done"
         )
-        if tree_id and locks_route_action:
+        if body.get("enforceGoalTreeUnlock") is True and tree_id and locks_route_action:
             _study_goal_assert_task_available(data, tree_id, task_id)
         progress_patch = patch.pop("progress", None)
         task = _study_task(patch, existing=old)
@@ -6034,7 +6034,8 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
 
     elif command == "progress-task":
         task_id = str(body.get("taskId") or body.get("id") or "").strip()
-        _study_goal_assert_task_available(data, body.get("treeId"), task_id)
+        if body.get("enforceGoalTreeUnlock") is True:
+            _study_goal_assert_task_available(data, body.get("treeId"), task_id)
         result.update(change_study_progress(
             data, task_id, body.get("delta"), allow_aggregate=True,
         ))
@@ -9552,7 +9553,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             locks_route_action = "progress" in patch or (
                 patch.get("status") == "done" and old.get("status") != "done"
             )
-            if route_tree_id and locks_route_action:
+            if body.get("enforceGoalTreeUnlock") is True and route_tree_id and locks_route_action:
                 _study_goal_assert_task_available(data, route_tree_id, task_id)
             task = _study_task(patch, existing=old)
             if isinstance(body.get("progress"), dict) and "current" in body["progress"]:
@@ -9584,7 +9585,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         route_tree_id = str(body.get("goalTreeId") or "").strip() if isinstance(body, dict) else ""
         data = load_study()
         try:
-            _study_goal_assert_task_available(data, route_tree_id, task_id)
+            if body.get("enforceGoalTreeUnlock") is True:
+                _study_goal_assert_task_available(data, route_tree_id, task_id)
             result = change_study_progress(data, task_id, delta)
         except KeyError as err:
             return self._send_json(404, {"error": str(err)})

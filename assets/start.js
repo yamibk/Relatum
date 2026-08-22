@@ -60,6 +60,7 @@
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
+  const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
   const treePageRootTitleToggle = document.querySelector('[data-role="tree-page-root-title-toggle"]');
   const treePageRootTitleSizeRange = document.querySelector('[data-role="tree-page-root-title-size-range"]');
   const treePageRootTitleSizeValue = document.querySelector('[data-role="tree-page-root-title-size-value"]');
@@ -130,6 +131,7 @@
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
+  const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
   const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1';
   const TREE_PAGE_ROOT_TITLE_SIZE_KEY = 'canvas:treePageRootTitleSize:v1';
   const TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT = 25;
@@ -331,6 +333,17 @@
     }));
   }
 
+  function applyGoalTreeUnlockEnforcement(enforced, persist) {
+    const active = enforced === true;
+    if (goalTreeUnlockToggle) goalTreeUnlockToggle.checked = active;
+    if (persist) {
+      try { localStorage.setItem(GOAL_TREE_ENFORCE_UNLOCK_KEY, active ? '1' : '0'); } catch (e) {}
+    }
+    window.dispatchEvent(new CustomEvent('relatum:goal-tree-unlock-enforcement-change', {
+      detail: { enforced: active },
+    }));
+  }
+
   function applyTreePageRootTitleHidden(hidden, persist) {
     const active = hidden === true;
     if (treePageRootTitleToggle) treePageRootTitleToggle.checked = active;
@@ -442,6 +455,9 @@
   let goalTreeSimpleInit = true;
   try { goalTreeSimpleInit = localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (e) {}
   applyGoalTreeSimpleMode(goalTreeSimpleInit, false);
+  let goalTreeUnlockEnforcedInit = false;
+  try { goalTreeUnlockEnforcedInit = localStorage.getItem(GOAL_TREE_ENFORCE_UNLOCK_KEY) === '1'; } catch (e) {}
+  applyGoalTreeUnlockEnforcement(goalTreeUnlockEnforcedInit, false);
   let treePageRootTitleHiddenInit = false;
   try { treePageRootTitleHiddenInit = localStorage.getItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY) === '1'; } catch (e) {}
   applyTreePageRootTitleHidden(treePageRootTitleHiddenInit, false);
@@ -717,6 +733,11 @@
   if (goalTreeSimpleToggle) {
     goalTreeSimpleToggle.addEventListener('change', () => {
       applyGoalTreeSimpleMode(goalTreeSimpleToggle.checked, true);
+    });
+  }
+  if (goalTreeUnlockToggle) {
+    goalTreeUnlockToggle.addEventListener('change', () => {
+      applyGoalTreeUnlockEnforcement(goalTreeUnlockToggle.checked, true);
     });
   }
   if (treePageRootTitleToggle) {

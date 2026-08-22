@@ -46,6 +46,11 @@ assert(start.includes("const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageR
   && start.includes("localStorage.getItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY) === '1'")
   && start.includes("new CustomEvent('relatum:tree-page-root-title-change'"),
   'Tree root titles must be visible by default and controlled by a persistent Home setting');
+assert(start.includes("const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1'")
+  && start.includes("localStorage.getItem(GOAL_TREE_ENFORCE_UNLOCK_KEY) === '1'")
+  && start.includes("new CustomEvent('relatum:goal-tree-unlock-enforcement-change'")
+  && html.includes('data-role="goal-tree-unlock-toggle"'),
+  'Goal-tree unlock enforcement must default off and be controlled by a shared Home setting');
 assert(start.includes("const TREE_PAGE_ROOT_TITLE_SIZE_KEY = 'canvas:treePageRootTitleSize:v1'")
   && start.includes('const TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT = 25')
   && start.includes('const TREE_PAGE_ROOT_TITLE_SIZE_MIN = 16')
