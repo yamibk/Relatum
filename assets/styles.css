@@ -273,7 +273,7 @@
 .study-route-node.is-deleting {
   z-index: 12;
   pointer-events: none !important;
-  animation: studyRouteNodeDelete 140ms cubic-bezier(.4,0,1,1) both;
+  animation: studyRouteNodeDelete 90ms cubic-bezier(.4,0,1,1) both;
 }
 .study-route-node.is-collapsing {
   opacity: 0 !important;
