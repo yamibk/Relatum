@@ -11,6 +11,8 @@ const study = fs.readFileSync(path.join(root, 'assets', 'study.js'), 'utf8');
 [
   'data-action="tree-page-view"',
   'data-role="tree-page-view"',
+  'data-role="tree-page-root-title-toggle"',
+  'data-role="tree-page-root-title-size-range"',
   'src="study-goal-tree.js"',
   'src="tree-page.js"',
 ].forEach((needle) => assert(html.includes(needle), 'missing tree page shell: ' + needle));
@@ -38,6 +40,16 @@ assert(start.includes("['tree', document.querySelector('.tree-page-embedded')]")
   && start.includes('window.CanvasTreePage.activate()')
   && start.includes('window.CanvasTreePage.deactivate()'),
   'Tree must participate in inert and lifecycle management');
+assert(start.includes("const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1'")
+  && start.includes("localStorage.getItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY) === '1'")
+  && start.includes("new CustomEvent('relatum:tree-page-root-title-change'"),
+  'Tree root titles must be visible by default and controlled by a persistent Home setting');
+assert(start.includes("const TREE_PAGE_ROOT_TITLE_SIZE_KEY = 'canvas:treePageRootTitleSize:v1'")
+  && start.includes('const TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT = 25')
+  && start.includes('const TREE_PAGE_ROOT_TITLE_SIZE_MIN = 16')
+  && start.includes('const TREE_PAGE_ROOT_TITLE_SIZE_MAX = 36')
+  && start.includes("new CustomEvent('relatum:tree-page-root-title-size-change'"),
+  'Tree root title size must use a clamped persistent Home slider and notify the open Tree page');
 assert(start.includes('e.clientX > spineRect.right + reach')
   && start.includes("bookView.addEventListener('wheel'"),
   'far-left wheel hot zone must remain available');

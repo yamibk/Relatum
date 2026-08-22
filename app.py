@@ -5757,6 +5757,11 @@ def _tree_page_color(value: object) -> str:
     return color
 
 
+def _tree_page_title(value: object) -> str:
+    """树状页的树名允许留空；其他目标树标题仍沿用非空规则。"""
+    return str(value or "").strip()[:STUDY_GOAL_TREE_TITLE_MAX]
+
+
 def _tree_page_client_id(value: object, prefix: str, label: str) -> str:
     client_id = _tree_page_stored_id(value, label)
     if not client_id.startswith(prefix) or len(client_id) <= len(prefix):
@@ -5802,6 +5807,7 @@ def _tree_page_capture_extras(data: dict) -> dict:
         },
         "trees": {
             str(tree.get("id") or ""): {
+                "title": _tree_page_title(tree.get("title")),
                 "shape": _tree_page_shape(tree.get("shape")),
                 "color": _tree_page_color(tree.get("color")),
                 "nodeShapes": {
@@ -5820,6 +5826,8 @@ def _tree_page_restore_extras(data: dict, extras: dict) -> None:
         task["shape"] = _tree_page_shape(task_shapes.get(str(task.get("id") or ""), "rounded"))
     for tree in data.get("goalTrees", []):
         saved = extras.get("trees", {}).get(str(tree.get("id") or ""), {})
+        if "title" in saved:
+            tree["title"] = _tree_page_title(saved.get("title"))
         tree["shape"] = _tree_page_shape(saved.get("shape"))
         tree["color"] = _tree_page_color(saved.get("color"))
         node_shapes = saved.get("nodeShapes", {})
@@ -5892,6 +5900,7 @@ def _tree_page_normalize(data: object) -> dict:
     globally_owned: set[str] = set()
     for tree in trees:
         raw_tree = raw_by_tree[tree["id"]]
+        tree["title"] = _tree_page_title(raw_tree.get("title"))
         tree["shape"] = _tree_page_shape(raw_tree.get("shape"))
         tree["color"] = _tree_page_color(raw_tree.get("color"))
         raw_nodes = {
@@ -6053,6 +6062,11 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
             tree["shape"] = _tree_page_shape(body.get("shape"))
         if "color" in body:
             tree["color"] = _tree_page_color(body.get("color"))
+        tree["updatedAt"] = _study_now()
+
+    elif command == "rename-root":
+        tree = _tree_page_tree(data, body.get("treeId"))
+        tree["title"] = _tree_page_title(body.get("title"))
         tree["updatedAt"] = _study_now()
 
     else:

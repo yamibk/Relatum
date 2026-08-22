@@ -21,6 +21,14 @@ const tree = {
   ],
 };
 
+const blankTitleTree = Object.assign({}, tree, { title: '' });
+assert.strictEqual(GoalTree.normalizeTree(blankTitleTree, tasks).title, '我的学习路线',
+  'shared Study normalization must keep its non-empty fallback');
+assert.strictEqual(GoalTree.normalizeTree(blankTitleTree, tasks, { allowBlankTitle: true }).title, '',
+  'Tree page normalization must preserve an intentionally blank root title');
+assert.strictEqual(GoalTree.buildModel(blankTitleTree, tasks, { allowBlankTitle: true }).tree.title, '',
+  'Tree page model construction must not reintroduce the shared Study fallback');
+
 const model = GoalTree.buildModel(tree, tasks);
 assert(model.byId.has('stage') && model.byId.has('nb'));
 assert.strictEqual(model.metrics.get('stage').count, 2, 'tree page stage recursively aggregates primary descendant tasks');

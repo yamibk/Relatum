@@ -136,13 +136,36 @@ assert(commandSource.includes('applyAuthorityAfterGenerationChange(json)')
   'commands completed after close/reopen must reconcile authoritative state');
 const renderSource = functionSource(tree, 'render');
 assert(tree.includes('var nodeSizeCache = new Map()')
-  && renderSource.includes('var model = GoalTree.buildModel(state.tree, state.tasks)')
+  && tree.includes('var TREE_MODEL_OPTIONS = { allowBlankTitle: true };')
+  && renderSource.includes('GoalTree.normalizeTree(state.tree, state.tasks, TREE_MODEL_OPTIONS)')
+  && renderSource.includes('var model = GoalTree.buildModel(state.tree, state.tasks, TREE_MODEL_OPTIONS)')
   && renderSource.includes('model: model, sizes: nodeSizeCache')
   && renderSource.includes('var next = sizesChanged ? GoalTree.layout'),
   'Tree renders must reuse one model and cached DOM geometry until a node size changes');
 assert(functionSource(tree, 'animateLayout').includes('if (!geometryChanged')
   && functionSource(route, 'animateLayout').includes('if (!geometryChanged'),
   'unchanged geometry must not run a full FLIP animation on every data-only update');
+assert(tree.includes('tree-page-root-progress-value')
+  && tree.includes('tree-page-root-title')
+  && tree.includes("ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1'")
+  && tree.includes("window.addEventListener('relatum:tree-page-root-title-change'"),
+  'Tree roots must render a preference-controlled title beside the animated percentage');
+assert(css.includes('display: inline-block;')
+  && css.includes('flex: 0 0 4ch;')
+  && css.includes('inline-size: 4ch;')
+  && css.includes('text-align: left;')
+  && css.includes('.tree-page-root-title {')
+  && css.includes('font-size: var(--tree-page-root-title-size, 25px);')
+  && css.includes('text-overflow: ellipsis;'),
+  'Tree root titles must stay fixed while the percentage grows into its reserved slot on the right');
+assert(tree.includes("window.addEventListener('relatum:tree-page-root-title-size-change'")
+  && tree.includes('if (!open || rootTitleSizeFrame) return;')
+  && tree.includes('rootTitleSizeFrame = requestAnimationFrame(function ()')
+  && tree.includes('render({ animateLayout: false, suppressEntrance: true })'),
+  'root title slider input must remeasure the open tree at most once per animation frame');
+assert(tree.includes("var required = node && node.kind === 'root' ? '' : ' required';")
+  && tree.includes("!rootTitleHidden && rootTreeTitle"),
+  'only Tree root titles may be blank, and blank titles must not render a fallback beside the percentage');
 [
   'study-progress-track-shell tree-page-task-progress', 'study-progress-track', 'study-progress-fill',
   'is-goal-pending', 'is-goal-celebrating', 'is-goal-breathing',

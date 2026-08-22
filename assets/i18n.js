@@ -96,6 +96,9 @@
     '收起复习/日历/速记/活跃/树状/学习/专注，只留最近·收藏·分组': 'Hide Review, Calendar, Notes, Activity, Tree, Study, and Focus; keep Recent, Favorites, and Groups.',
     '精简目标树编辑': 'Simplify Goal Tree editing',
     '隐藏高级解锁编辑，已有路线与解锁关系不受影响': 'Hide advanced unlock editing without changing existing routes or unlock relationships.',
+    '隐藏根节点标题': 'Hide root title',
+    '树状页黑色根节点只显示进度百分比': 'Show only the progress percentage on the black Tree root node.',
+    '根节点标题字号': 'Root title size', '小': 'Small', '大': 'Large',
 
     '新建任务': 'New task', '任务': 'Tasks', '任务详情': 'Task details', '任务画布': 'Task canvas',
     '今日': 'Today', '今日任务': 'Today tasks', '待办': 'To do', '进行中': 'In progress',
