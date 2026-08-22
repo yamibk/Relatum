@@ -44,6 +44,7 @@
   var legacyViewClaimed = false;
   var STUDY_DATA_CACHE_KEY = '_relatumStudyData';
   var GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
+  var GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
   var studyCache = null, studyPrefetchId = 0;
   var prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (error) { return false; }
@@ -56,6 +57,9 @@
   }
   function simpleModeEnabled() {
     try { return localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (error) { return true; }
+  }
+  function unlockEnforcementEnabled() {
+    try { return localStorage.getItem(GOAL_TREE_ENFORCE_UNLOCK_KEY) === '1'; } catch (error) { return false; }
   }
   function api(url, options) {
     // 超时守卫：请求若永不落定，busy 会卡死整个面板；15s 足够本地服务完成任何操作。
@@ -477,7 +481,8 @@
   function taskMarkup(placement) {
     var task = findTask(placement.node.taskId) || { title: T('已移除任务'), status: 'done', progress: {} };
     var progress = taskProgress(task), done = task.status === 'done';
-    var lockedByConditions = placement.availability && !placement.availability.available;
+    var lockedByConditions = unlockEnforcementEnabled()
+      && placement.availability && !placement.availability.available;
     var blocked = !done && lockedByConditions;
     var ready = !done && progress.target > 0 && progress.current >= progress.target;
     var controls = progress.target && !done
@@ -648,7 +653,8 @@
     seed.nodes.forEach(function (placement) {
       var element = nodeElements.get(placement.id), isNew = !element;
       var isComplete = !!((placement.metrics || {}).complete && placement.kind !== 'root');
-      var isBlocked = !!(placement.availability && !placement.availability.available);
+      var isBlocked = !!(unlockEnforcementEnabled()
+        && placement.availability && !placement.availability.available);
       var wasBlocked = !!element && element.classList.contains('is-blocked');
       var oldFill = element && element.querySelector('[data-route-progress-fill]');
       var oldFillPercent = oldFill ? Number(oldFill.dataset.progressTarget || 0) : NaN;
@@ -928,7 +934,8 @@
     var conditionCount = kind === 'root' ? 0 : GoalTree.requirementCount(model, anchor.dataset.nodeId);
     var simple = simpleModeEnabled();
     var menuTask = kind === 'task' ? findTask(anchor.dataset.taskId) : null;
-    var unavailable = !!(menuTask && !(model.availability.get(anchor.dataset.nodeId) || { available: true }).available);
+    var unavailable = !!(unlockEnforcementEnabled() && menuTask
+      && !(model.availability.get(anchor.dataset.nodeId) || { available: true }).available);
     var html = '<div class="study-route-menu"><button type="button" data-route-pop="rename">' + T('改名') + '</button>';
     if (kind === 'task') html += '<button type="button" data-route-pop="color">' + T('颜色')
       + '</button><button type="button" data-route-pop="new-task">' + T('新建后续任务')
@@ -1388,7 +1395,10 @@
     if (busy) return Promise.reject(new Error(T('请稍候')));
     busy = true;
     var treeAtRequest = state.activeTreeId;
-    return post('/api/study-task-update', Object.assign({ id: task.id, goalTreeId: state.activeTreeId }, patch)).then(function (json) {
+    return post('/api/study-task-update', Object.assign({
+      id: task.id, goalTreeId: state.activeTreeId,
+      enforceGoalTreeUnlock: unlockEnforcementEnabled(),
+    }, patch)).then(function (json) {
       var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
       if (index >= 0) state.tasks[index] = json.task;
       applyTreeSnapshot(json, treeAtRequest);
@@ -1403,7 +1413,10 @@
     if (busy) return;
     busy = true;
     var treeAtRequest = state.activeTreeId;
-    post('/api/study-task-progress', { id: task.id, delta: delta, goalTreeId: state.activeTreeId }).then(function (json) {
+    post('/api/study-task-progress', {
+      id: task.id, delta: delta, goalTreeId: state.activeTreeId,
+      enforceGoalTreeUnlock: unlockEnforcementEnabled(),
+    }).then(function (json) {
       var index = state.tasks.findIndex(function (item) { return item.id === task.id; });
       if (index >= 0) state.tasks[index] = json.task;
       applyTreeSnapshot(json, treeAtRequest);
@@ -1462,7 +1475,7 @@
     },
     {
       title: '箭头、解锁与高级编辑',
-      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才能推进。</li><li>被锁定的任务可改名、查看条件或移出路线，但不能修改进度。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -2251,6 +2264,11 @@
   window.addEventListener('resize', preserveViewOnResize);
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);
+  });
+  window.addEventListener('relatum:goal-tree-unlock-enforcement-change', function () {
+    if (!open) return;
+    closePopover(false);
+    render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
   });
   window.addEventListener('pagehide', function () { if (open) closeRoute(false); });
   window.addEventListener('beforeunload', function () { if (open) flushViewSave(); });

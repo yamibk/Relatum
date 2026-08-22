@@ -222,8 +222,11 @@ class TreePageTests(unittest.TestCase):
         link = self.command("add-requirement", fromNodeId=first, toNodeId=second,
                             trigger={"kind": "complete"})
         self.assertTrue(link["linkId"].startswith("goal_link_"))
+        self.command("update-task", taskId=second_result["taskId"], status="done")
+        self.command("update-task", taskId=second_result["taskId"], status="active")
         with self.assertRaisesRegex(RuntimeError, "解锁条件"):
-            self.command("update-task", taskId=second_result["taskId"], status="done")
+            self.command("update-task", taskId=second_result["taskId"], status="done",
+                         enforceGoalTreeUnlock=True)
         self.command("remove-requirement", linkId=link["linkId"])
         self.command("move-node", nodeId=second, primaryLink={
             "from": first, "type": "requires", "trigger": {"kind": "complete"},

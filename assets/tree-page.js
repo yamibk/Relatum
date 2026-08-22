@@ -50,6 +50,7 @@
   var legacyViewClaimed = false;
   var STUDY_DATA_CACHE_KEY = '_relatumTreePageData';
   var GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
+  var GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
   var ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1';
   var rootTitleHidden = false;
   try { rootTitleHidden = localStorage.getItem(ROOT_TITLE_HIDDEN_KEY) === '1'; } catch (error) {}
@@ -68,6 +69,9 @@
   }
   function simpleModeEnabled() {
     try { return localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (error) { return true; }
+  }
+  function unlockEnforcementEnabled() {
+    try { return localStorage.getItem(GOAL_TREE_ENFORCE_UNLOCK_KEY) === '1'; } catch (error) { return false; }
   }
   function api(url, options) {
     // 超时守卫：请求若永不落定，busy 会卡死整个面板；15s 足够本地服务完成任何操作。
@@ -593,7 +597,8 @@
   function taskMarkup(placement) {
     var task = findTask(placement.node.taskId) || { title: T('已移除任务'), status: 'done', progress: {} };
     var progress = taskProgress(task), done = task.status === 'done';
-    var lockedByConditions = placement.availability && !placement.availability.available;
+    var lockedByConditions = unlockEnforcementEnabled()
+      && placement.availability && !placement.availability.available;
     var blocked = !done && lockedByConditions;
     var ready = !done && progress.target > 0 && progress.current >= progress.target;
     var controls = progress.target
@@ -969,7 +974,8 @@
       var wasExistingTask = !!element && element.dataset.kind === 'task';
       var wasExistingRoot = !!element && element.dataset.kind === 'root';
       var isComplete = !!((placement.metrics || {}).complete && placement.kind !== 'root');
-      var isBlocked = !!(placement.availability && !placement.availability.available);
+      var isBlocked = !!(unlockEnforcementEnabled()
+        && placement.availability && !placement.availability.available);
       var wasBlocked = !!element && element.classList.contains('is-blocked');
       var oldFill = element && element.querySelector('[data-route-progress-fill]');
       var oldFillPercent = oldFill ? Number(oldFill.dataset.progressTarget || 0) : NaN;
@@ -1302,7 +1308,8 @@
     var conditionCount = kind === 'root' ? 0 : GoalTree.requirementCount(model, anchor.dataset.nodeId);
     var simple = simpleModeEnabled();
     var menuTask = kind === 'task' ? findTask(anchor.dataset.taskId) : null;
-    var unavailable = !!(menuTask && !(model.availability.get(anchor.dataset.nodeId) || { available: true }).available);
+    var unavailable = !!(unlockEnforcementEnabled() && menuTask
+      && !(model.availability.get(anchor.dataset.nodeId) || { available: true }).available);
     var html = '<div class="study-route-menu"><button type="button" data-route-pop="rename">' + T('改名') + '</button>';
     if (kind === 'task') html += '<button type="button" data-route-pop="color">' + T('颜色')
       + '</button><button type="button" data-route-pop="new-task">' + T('新建后续任务')
@@ -1952,6 +1959,7 @@
     }
     return post('/api/tree-page-command', Object.assign({
       command: 'update-task', taskId: task.id, treeId: state.activeTreeId,
+      enforceGoalTreeUnlock: unlockEnforcementEnabled(),
     }, patch)).then(function (json) {
       treeEpoch++;
       if (requestGeneration !== routeRequestId) {
@@ -2041,6 +2049,7 @@
     context.sending = true;
     post('/api/tree-page-command', {
       command: 'progress-task', taskId: item.taskId, delta: item.delta, treeId: context.treeId,
+      enforceGoalTreeUnlock: unlockEnforcementEnabled(),
     }).then(function (json) {
       if (context !== progressCommandContext) return;
       context.sending = false;
@@ -2315,7 +2324,7 @@
     },
     {
       title: '箭头、解锁与高级编辑',
-      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才能推进。</li><li>被锁定的任务可改名、查看条件或删除，但不能修改进度。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -3220,6 +3229,11 @@
   window.addEventListener('blur', cancelActivePointerGestures);
   window.addEventListener('relatum:goal-tree-simple-mode-change', function () {
     if (open) closePopover(false);
+  });
+  window.addEventListener('relatum:goal-tree-unlock-enforcement-change', function () {
+    if (!open) return;
+    closePopover(false);
+    render({ duration: 180, preserveViewAnchor: 'root', suppressEntrance: true });
   });
   window.addEventListener('relatum:tree-page-root-title-change', function (event) {
     rootTitleHidden = !!(event.detail && event.detail.hidden);

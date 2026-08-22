@@ -195,7 +195,7 @@ class StudyGoalTreeV4Tests(unittest.TestCase):
         # the parent could never complete and the task would remain self-locked.
         app._study_goal_assert_task_available(data, data["activeTreeId"], after["id"])
 
-    def test_route_api_rejects_locked_progress_but_plain_list_can_update(self):
+    def test_route_api_only_rejects_locked_progress_when_enforcement_is_enabled(self):
         first = self.task("A")
         second = self.task("B", progress={"target": 10})
         data = self.data(first, second)
@@ -214,6 +214,16 @@ class StudyGoalTreeV4Tests(unittest.TestCase):
         handler = CaptureHandler()
         app.Handler._api_study_task_progress(handler, {
             "id": second["id"], "delta": 1, "goalTreeId": data["activeTreeId"],
+        })
+        self.assertEqual(handler.response[0], 200)
+        self.assertEqual(app.load_study()["tasks"][1]["progress"]["current"], 1)
+
+        app.Handler._api_study_task_progress(handler, {
+            "id": second["id"], "delta": -1, "goalTreeId": data["activeTreeId"],
+        })
+        app.Handler._api_study_task_progress(handler, {
+            "id": second["id"], "delta": 1, "goalTreeId": data["activeTreeId"],
+            "enforceGoalTreeUnlock": True,
         })
         self.assertEqual(handler.response[0], 409)
         self.assertEqual(app.load_study()["tasks"][1]["progress"]["current"], 0)
