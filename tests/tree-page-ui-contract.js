@@ -171,6 +171,15 @@ assert(tree.includes("return updateAppearanceOptimistically(anchor, { color: con
   'color controls must use optimistic appearance updates');
 assert(tree.includes('return updateAppearanceOptimistically(anchor, { shape: shape })'),
   'shape controls must use optimistic appearance updates');
+assert(tree.includes('data-route-pop="clear-progress"')
+  && tree.includes("T('取消进度条')")
+  && tree.includes('progress: { current: 0, target: 0, milestones: [] }')
+  && tree.includes('}, { optimistic: true }).catch(showError)'),
+  'tasks with numeric progress must offer an immediate, rollback-safe way to remove the progress bar');
+assert(tree.includes('current = Math.min(current, target)')
+  && tree.includes("T('当前进度和目标总量都需要是 0–9999 的整数')")
+  && !tree.includes("return showError(new Error(T('进度需要满足 0 ≤ 当前进度 ≤ 目标总量 ≤ 9999')))"),
+  'lowering a goal total must clamp current progress instead of warning');
 assert(!tree.includes('data-route-form="new-task"') && !tree.includes('data-route-form="new-branch"')
   && !tree.includes('data-route-form="new-stage"'),
   'new tasks and branches must not open naming forms');
