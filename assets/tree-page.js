@@ -1291,7 +1291,10 @@
       + (!simple ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
         + (conditionCount ? ' · ' + conditionCount : '') + '</button>' : '')
       + '<button type="button" data-route-pop="settings"' + (unavailable ? ' disabled' : '') + '>' + T('设置进度')
-      + '</button><button type="button" class="is-danger" data-route-pop="delete-task">' + T('删除任务') + '</button>';
+      + '</button>'
+      + (taskProgress(menuTask).target ? '<button type="button" data-route-pop="clear-progress"'
+        + (unavailable ? ' disabled' : '') + '>' + T('取消进度条') + '</button>' : '')
+      + '<button type="button" class="is-danger" data-route-pop="delete-task">' + T('删除任务') + '</button>';
     else if (kind === 'branch') html += (!simple ? '<button type="button" data-route-pop="requirements">' + T('解锁条件')
       + (conditionCount ? ' · ' + conditionCount : '') + '</button>' : '')
       + '<button type="button" class="is-danger" data-route-pop="delete-branch">' + T('删除阶段') + '</button>';
@@ -2733,6 +2736,13 @@
       }).catch(showError);
     }
     if (action === 'rename' || action === 'settings') return formPopover(anchor, action);
+    if (action === 'clear-progress') {
+      var clearProgressTask = findTask(anchor.dataset.taskId);
+      if (!clearProgressTask || !taskProgress(clearProgressTask).target) return;
+      return updateTask(clearProgressTask, {
+        progress: { current: 0, target: 0, milestones: [] },
+      }, { optimistic: true }).catch(showError);
+    }
     if (action === 'requirements') return requirementsPopover(anchor);
     if (action === 'locate-source') {
       var sourceNodeId = control.dataset.sourceNodeId;
@@ -2826,9 +2836,11 @@
     }
     if (kind === 'settings') {
       var settingsTask = findTask(node.taskId), current = Number(values.get('current') || 0), target = Number(values.get('target') || 0);
-      if (!Number.isInteger(current) || !Number.isInteger(target) || current < 0 || target < current || target > 9999) {
-        return showError(new Error(T('进度需要满足 0 ≤ 当前进度 ≤ 目标总量 ≤ 9999')));
+      if (!Number.isInteger(current) || !Number.isInteger(target)
+        || current < 0 || current > 9999 || target < 0 || target > 9999) {
+        return showError(new Error(T('当前进度和目标总量都需要是 0–9999 的整数')));
       }
+      current = Math.min(current, target);
       var oldMilestones = settingsTask.progress && Array.isArray(settingsTask.progress.milestones) ? settingsTask.progress.milestones : [];
       var milestones = target ? oldMilestones.filter(function (item) { return Number(item.at) <= target; }) : [];
       return updateTask(settingsTask, { progress: { current: current, target: target, milestones: milestones } }, { fullRender: true }).catch(showError);

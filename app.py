@@ -6012,10 +6012,12 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
         )
         if tree_id and locks_route_action:
             _study_goal_assert_task_available(data, tree_id, task_id)
+        progress_patch = patch.pop("progress", None)
         task = _study_task(patch, existing=old)
-        if isinstance(body.get("progress"), dict) and "current" in body["progress"]:
+        if isinstance(progress_patch, dict):
             task["progress"] = _study_progress(
-                body["progress"], old.get("progress"), strict=True, allow_current=True,
+                progress_patch, old.get("progress"), strict=True,
+                allow_current="current" in progress_patch,
             )
         task["shape"] = _tree_page_shape(body.get("shape", old.get("shape")))
         data["tasks"][index] = task

@@ -136,6 +136,31 @@ class TreePageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "安全范围"):
             self.command("progress-task", taskId=task_id, delta=10000)
 
+    def test_zero_target_removes_numeric_progress_state(self):
+        task_id = self.task("取消量化", target=10)["taskId"]
+        self.command("update-task", taskId=task_id, progress={
+            "current": 6,
+            "target": 10,
+            "milestones": [{"id": "sm_clear", "name": "中点", "at": 5}],
+        })
+        result = self.command("update-task", taskId=task_id, progress={
+            "current": 0, "target": 0, "milestones": [],
+        })
+        self.assertEqual(result["task"]["progress"], {
+            "current": 0, "target": 0, "milestones": [],
+        })
+
+    def test_lower_target_accepts_the_clamped_current_value(self):
+        task_id = self.task("缩短目标", target=10)["taskId"]
+        self.command("update-task", taskId=task_id, progress={
+            "current": 6, "target": 10, "milestones": [],
+        })
+        result = self.command("update-task", taskId=task_id, progress={
+            "current": 4, "target": 4, "milestones": [],
+        })
+        self.assertEqual(result["task"]["progress"]["current"], 4)
+        self.assertEqual(result["task"]["progress"]["target"], 4)
+
     def test_client_ids_make_task_and_branch_creation_optimistic(self):
         task_result = self.command(
             "create-task",
