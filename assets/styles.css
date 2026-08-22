@@ -6678,27 +6678,29 @@ body.desktop-window-transitioning .desktop-window-btn[data-window-action="maximi
 
 .start-speed-pop input[type="range"] {
   width: 100%;
-  margin: 13px 0 4px;
+  margin: 0;
   accent-color: var(--accent);
 }
 
-.start-speed-pop input[data-role="start-speed-range"] {
-  --default-pos: 25%;
+.start-speed-range-wrap {
+  position: relative;
+  display: block;
+  margin: 13px 0 4px;
 }
 
-.start-speed-pop input[data-role="notes-inertia-range"] {
-  --default-pos: 37.5%;
-}
-
-.start-speed-pop input[data-role="start-speed-range"],
-.start-speed-pop input[data-role="notes-inertia-range"] {
-  background:
-    linear-gradient(90deg,
-      transparent calc(var(--default-pos) - 1px),
-      rgba(26, 26, 26, 0.18) calc(var(--default-pos) - 1px),
-      rgba(26, 26, 26, 0.18) calc(var(--default-pos) + 1px),
-      transparent calc(var(--default-pos) + 1px))
-    center / 100% 18px no-repeat;
+.start-speed-range-wrap::after,
+.notes-console-range::after,
+.focus-noise-volume-range::after {
+  content: "";
+  position: absolute;
+  left: var(--default-pos, 50%);
+  bottom: 2px;
+  width: 2px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(26, 26, 26, 0.18);
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 .starmap-motion-pop {
@@ -6864,6 +6866,22 @@ body.desktop-window-transitioning .desktop-window-btn[data-window-action="maximi
   width: 100%;
   margin: 2px 0 0;
   accent-color: var(--accent);
+}
+.start-root-title-size-setting > .start-root-title-size-range {
+  position: relative;
+  display: block;
+}
+.start-root-title-size-range::after {
+  content: "";
+  position: absolute;
+  left: var(--default-pos, 50%);
+  bottom: 2px;
+  width: 2px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(26, 26, 26, 0.18);
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 .start-root-title-size-setting > small { color: var(--text-tertiary); font-size: 9px; }
 .start-root-title-size-setting > small i { font-style: normal; }
@@ -9526,10 +9544,16 @@ body.start-page[data-start-theme="dark"] .focus-overlay-card {
 .focus-settings-noise-vol[hidden] { display: none; }
 .focus-settings-noise-vol span { flex: none; }
 .focus-settings-noise-vol input[type="range"] {
-  flex: 1;
+  width: 100%;
   min-width: 0;
+  margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
+}
+.focus-settings-noise-vol .focus-noise-volume-range {
+  position: relative;
+  flex: 1;
+  min-width: 0;
 }
 
 .focus-help-pop {
@@ -14756,6 +14780,10 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
   height: 16px;
   margin: 7px 0 0;
   accent-color: #181818;
+}
+.notes-console-slider > .notes-console-range {
+  position: relative;
+  display: block;
 }
 .notes-console-slider > small { color: #aaaaa7; font-size: 8px; font-style: normal; }
 .notes-console-slider > small i { font-style: normal; }
