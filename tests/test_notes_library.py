@@ -106,6 +106,30 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertTrue((self.root / "New.assets" / "images").is_dir())
         self.assertFalse((self.root / "Old.assets").exists())
 
+    def test_note_move_between_folders_keeps_companion_image_resolvable(self):
+        self.store.create("", "old", "folder")
+        self.store.create("", "new", "folder")
+        self.store.create("old", "Picture", "note")
+        image = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        uploaded = self.store.upload_image("old/Picture.md", "diagram.png", image, "image/png")
+        loaded = self.store.load("old/Picture.md")
+        self.store.save(
+            "old/Picture.md",
+            f"![diagram]({uploaded['path']})",
+            loaded["revision"],
+        )
+
+        moved = self.store.move("old/Picture.md", "new/Picture.md")
+
+        self.assertEqual(moved["path"], "new/Picture.md")
+        moved_note = self.store.load("new/Picture.md")
+        self.assertIn(uploaded["path"], moved_note["content"])
+        target, media_type = self.store.resolve_image("new/Picture.md", uploaded["path"])
+        self.assertEqual(media_type, "image/png")
+        self.assertEqual(target.read_bytes(), image)
+        self.assertEqual(target.parent, self.root / "new" / "Picture.assets" / "images")
+        self.assertFalse((self.root / "old" / "Picture.assets").exists())
+
     def test_folder_move_rewrites_qualified_link(self):
         self.store.create("", "Index", "note", content="[[old/Topic]]")
         self.store.create("old", "Topic", "note", create_parents=True)

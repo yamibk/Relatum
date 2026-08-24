@@ -7,7 +7,7 @@ dependency graph and registry integrity values used for this vendor snapshot.
 ## Snapshot
 
 - `relatum-codemirror.min.js`
-  - SHA-256: `C3E5C12C0B287BCABE5684FC39EB00D3059B8EC068D309A31373353AE012D726`
+  - SHA-256: `E5E52F1EA20BC947938CCC86EB2F7AC1DB2131C0710571B02774F33B35A2AA02`
   - Direct packages: `@codemirror/state@6.7.1`, `@codemirror/view@6.43.9`,
     `@codemirror/language@6.12.4`, `@codemirror/lang-markdown@6.5.2`,
     `@codemirror/lang-cpp@6.0.3`, `@codemirror/lang-python@6.2.1`,
@@ -15,6 +15,7 @@ dependency graph and registry integrity values used for this vendor snapshot.
     `@codemirror/lang-html@6.4.12`, `@codemirror/lang-css@6.3.1`,
     `@codemirror/lang-java@6.0.2`, `@codemirror/legacy-modes@6.5.3`,
     `@codemirror/commands@6.11.0`, `@codemirror/search@6.7.1`,
+    `@codemirror/autocomplete@6.20.3`,
     `@lezer/markdown@1.7.2`, `@lezer/common@1.5.2`,
     `@lezer/highlight@1.2.3`.
 - `../mermaid/mermaid.min.js`

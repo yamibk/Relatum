@@ -73,7 +73,8 @@ const sandbox = {
       ViewPlugin: {}, keymap: {}, drawSelection() {}, dropCursor() {}, highlightSpecialChars() {},
       rectangularSelection() {}, crosshairCursor() {}, placeholder() {}, highlightActiveLine() {},
       syntaxTree: fakeSyntaxTree, forceParsing() { return true; }, indentOnInput() {},
-      bracketMatching() {}, markdown() {}, markdownLanguage: {}, markdownKeymap: [], history() {},
+      bracketMatching() {}, closeBrackets() {}, closeBracketsKeymap: [],
+      markdown() {}, markdownLanguage: {}, markdownKeymap: [], history() {},
       historyKeymap: [], defaultKeymap: [], indentWithTab: {}, searchKeymap: [], highlightSelectionMatches() {},
       relatumCodeLanguages: [], relatumCodeHighlighting: [],
     },
@@ -98,7 +99,7 @@ function loadLiveDecorationProbe() {
   context.document = {};
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, exitEmptyQuoteMarkup };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -112,6 +113,29 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+function runEmptyQuoteExit(source, cursor = source.length) {
+  let state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: source,
+    selection: { anchor: cursor },
+  });
+  const view = {
+    get state() { return state; },
+    dispatch(spec) { state = state.update(spec).state; },
+  };
+  const handled = liveProbe.__relatumLiveTest.exitEmptyQuoteMarkup(view);
+  return { handled, state };
+}
+
+const calloutExit = runEmptyQuoteExit('> [!example] Example\n> ');
+assert.strictEqual(calloutExit.handled, true, 'a second Enter on an empty callout quote line must be handled');
+assert.strictEqual(calloutExit.state.doc.toString(), '> [!example] Example\n', 'the empty quote marker must be removed immediately');
+assert.strictEqual(calloutExit.state.selection.main.head, calloutExit.state.doc.length);
+const nestedQuoteExit = runEmptyQuoteExit('> > ');
+assert.strictEqual(nestedQuoteExit.handled, true, 'nested empty quotes must exit one level at a time');
+assert.strictEqual(nestedQuoteExit.state.doc.toString(), '> ');
+assert.strictEqual(runEmptyQuoteExit('> body').handled, false, 'non-empty quotes must keep the Markdown continuation behavior');
+assert.strictEqual(runEmptyQuoteExit('- ').handled, false, 'list continuation must not be intercepted');
+
 const segmentedSource = [
   '当自增运算符出现在表达式中，前缀和后缀的执行时机不同。',
   '',
@@ -253,6 +277,11 @@ assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading ma
 assert(stylesSource.includes('.cm-line.note-live-code-line.cm-activeLine'), 'the active code line must retain its block background');
 assert(stylesSource.includes('note-live-code-first') && stylesSource.includes('note-live-code-last'), 'code block corners must use explicit first/last line roles');
 assert(vendor && typeof vendor.forceParsing === 'function', 'the offline CodeMirror bundle must expose forceParsing');
+assert.strictEqual(typeof vendor.closeBrackets, 'function', 'the offline CodeMirror bundle must expose native bracket pairing');
+assert(Array.isArray(vendor.closeBracketsKeymap) && vendor.closeBracketsKeymap.some((binding) => binding.key === 'Backspace'),
+  'the offline CodeMirror bundle must expose paired Backspace handling');
+assert(editorSource.indexOf('Array.isArray(closeBracketsKeymap)') < editorSource.indexOf('markdownKeymap, defaultKeymap'),
+  'paired Backspace must run before generic Markdown and character deletion');
 assert(vendor.relatumCodeHighlighting && vendor.relatumCodeLanguages.some((language) => language.name === 'C'), 'the offline CodeMirror bundle must include scoped code highlighting and C support');
 
 const fence = '`'.repeat(3);
@@ -275,6 +304,7 @@ const directVendorDependencies = vendorLock.packages[''].dependencies;
 assert.strictEqual(directVendorDependencies['@codemirror/lang-cpp'], '6.0.3');
 assert.strictEqual(directVendorDependencies['@codemirror/lang-python'], '6.2.1');
 assert.strictEqual(directVendorDependencies['@codemirror/legacy-modes'], '6.5.3');
+assert.strictEqual(directVendorDependencies['@codemirror/autocomplete'], '6.20.3');
 const vendorHash = crypto.createHash('sha256').update(vendorSource).digest('hex').toUpperCase();
 assert(vendorNotices.includes(vendorHash), 'the checked-in CodeMirror SHA-256 must match its vendor notice');
 

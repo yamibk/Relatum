@@ -4,7 +4,7 @@
 //        ``` / ~~~ 围栏代码块（带轻量语法高亮）、$$…$$ 块级公式、> 引用、
 //        > [!type] Obsidian Callout、| | 表格、--- 分隔线
 //   行内：**加粗** *斜体* _斜体_ __加粗__ `代码`、$…$ 公式、链接、高光、文字颜色、字号
-//   不支持：图片
+//   图片：仅在调用方显式传入 localImages:true 时生成受控的本地图片占位。
 //
 // 安全：所有用户文本经 escapeHtml 再进 DOM，杜绝 HTML 注入。
 //
@@ -469,28 +469,30 @@
 
   // ── Obsidian Callout 图标（功能性小图标）──────────
   const CALLOUT_ICONS = {
-    note: 'M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6z|M9 2v4h4|M6 9h4M6 11h3',
+    note: 'M10.5 2.5l3 3L6 13H3v-3z|M9 4l3 3',
+    abstract: 'M5 3h6v11H3V3h2|M6 2h4v3H6z|M6 8h3M6 11h3',
     info: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z|M8 7v4|M8 5h0.01',
+    todo: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z|M5 8l2 2 4-4',
     tip: 'M8 1.5a4.5 4.5 0 0 1 2.7 8.1V11a1 1 0 0 1-1 1H6.3a1 1 0 0 1-1-1V9.6A4.5 4.5 0 0 1 8 1.5z|M6.5 14h3',
     warning: 'M8 2 1.5 13.5h13L8 2z|M8 6.5v3.5|M8 12h0.01',
-    danger: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z|M5.5 5.5l5 5M10.5 5.5l-5 5',
+    failure: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z|M5.5 5.5l5 5M10.5 5.5l-5 5',
+    danger: 'M9 1.5 3.5 9H8l-1 5.5L12.5 7H8z',
     success: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z|M5 8l2 2 4-4',
     question: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z|M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.5-.7 1.1|M8 11.5h0.01',
     quote: 'M5 5H3.5A1.5 1.5 0 0 0 2 6.5v3A1.5 1.5 0 0 0 3.5 11H5l-1.5 2.5|M12.5 5H11a1.5 1.5 0 0 0-1.5 1.5v3A1.5 1.5 0 0 0 11 11h1.5L11 13.5',
-    example: 'M4 2h6l3 3v9H4z|M10 2v3h3|M6 8.5h5M6 11h5',
+    example: 'M6.5 4h6M6.5 8h6M6.5 12h6|M3.5 4h0.01M3.5 8h0.01M3.5 12h0.01',
     bug: 'M5 6a3 3 0 0 1 6 0v3a3 3 0 0 1-6 0z|M8 3.5V2M2.5 7H5M11 7h2.5M2.5 11H5M11 11h2.5',
-    abstract: 'M4 2h8v12H4z|M6 5.5h4M6 8h4M6 10.5h2.5',
   };
   // Obsidian 别名 → 标准类型
   const CALLOUT_ALIAS = {
     summary: 'abstract', tldr: 'abstract', hint: 'tip', important: 'tip', faq: 'question',
     help: 'question', check: 'success', done: 'success', caution: 'warning', attention: 'warning',
-    fail: 'danger', failure: 'danger', missing: 'danger', error: 'danger', cite: 'quote',
-    todo: 'info', infobox: 'info',
+    fail: 'failure', missing: 'failure', error: 'danger', cite: 'quote', infobox: 'info',
   };
   const CALLOUT_LABEL = {
-    note: '笔记', info: '信息', tip: '提示', warning: '注意', danger: '危险', success: '成功',
-    question: '疑问', quote: '引用', example: '示例', bug: '缺陷', abstract: '摘要',
+    note: '笔记', abstract: '摘要', info: '信息', todo: '待办', tip: '提示', success: '成功',
+    question: '疑问', warning: '注意', failure: '失败', danger: '危险', bug: '缺陷',
+    example: '示例', quote: '引用',
   };
   function calloutIcon(type) {
     const paths = (CALLOUT_ICONS[type] || CALLOUT_ICONS.note).split('|');

@@ -16,6 +16,7 @@ vm.runInThisContext(
 
 const Markdown = global.MarkdownMini;
 const Notebook = global.RelatumMarkdownNotebook;
+const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'styles.css'), 'utf8');
 assert(Markdown && Markdown.structure && typeof Markdown.renderResult === 'function');
 
 ['- ', '* ', '+ ', '1. ', '1) ', '- [ ] ', '- [x] '].forEach((source) => {
@@ -59,7 +60,24 @@ const guardedRemoteImage = Markdown.render('![remote](https://example.com/a.png)
 assert(guardedRemoteImage.includes('data-note-image="https://example.com/a.png"'));
 assert(!guardedRemoteImage.includes('src='));
 assert(Markdown.render('$$').includes('$$'));
-assert(Markdown.render('> [!note] Title\n> Body').includes('class="md-callout"'));
+const noteCallout = Markdown.render('> [!note] Title\n> Body');
+assert(noteCallout.includes('class="md-callout"'));
+assert(noteCallout.includes('data-callout="note"'));
+assert(noteCallout.includes('M10.5 2.5l3 3L6 13H3v-3z'), 'Note callouts must use the pencil icon');
+const exampleCallout = Markdown.render('> [!example] Example');
+assert(exampleCallout.includes('data-callout="example"'));
+assert(exampleCallout.includes('M6.5 4h6'), 'Example callouts must use the list icon');
+assert(Markdown.render('> [!todo] Todo').includes('data-callout="todo"'), 'Todo must keep its own semantic type');
+assert(Markdown.render('> [!failure] Failure').includes('data-callout="failure"'), 'Failure must keep its own semantic type');
+assert(Markdown.render('> [!fail] Fail').includes('data-callout="failure"'), 'Fail must alias to Failure');
+assert(Markdown.render('> [!missing] Missing').includes('data-callout="failure"'), 'Missing must alias to Failure');
+assert(Markdown.render('> [!error] Error').includes('data-callout="danger"'), 'Error must alias to Danger');
+assert(Markdown.render('> [!custom] Custom').includes('data-callout="note"'), 'unknown callouts must safely fall back to Note');
+['note', 'todo', 'failure', 'example'].forEach((type) => {
+  assert(stylesSource.includes(`.md-callout[data-callout="${type}"]`), `missing shared ${type} callout palette`);
+  assert(stylesSource.includes(`.note-live-rich-block.is-callout .md-callout[data-callout="${type}"]`),
+    `missing Live Preview ${type} callout palette`);
+});
 assert(Markdown.render('| A | B |\n| --- | --- |\n| 1 | 2 |').includes('class="md-table"'));
 assert(Markdown.render('[Open](https://example.com)').includes('data-href="https://example.com"'));
 
