@@ -3,7 +3,7 @@
 # Bundles the pywebview/WebView2 shell (desktop.py) + local server (app.py) +
 # assets/ into a standalone exe.
 # Output: sibling folder "Relatum-release\" containing Relatum.exe + _internal\.
-# Clean distribution: NO user data is packaged (canvases\ / data\ are created by
+# Clean distribution: NO user data is packaged (canvases\ / notes\ / data\ are created by
 # the exe next to itself on first run), so the release is safe to share / upload.
 #
 #   First run / reinstall deps:  powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
@@ -159,7 +159,9 @@ if (-not (Test-Path -LiteralPath $BuiltDir)) { throw ('Build output missing: ' +
 # -- 5. Replace the release folder. Refuse to erase local user data by accident. --
 $ReleaseCanvases = Join-Path $Release 'canvases'
 $ReleaseData = Join-Path $Release 'data'
-if (((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData)) -and
+$ReleaseNotes = Join-Path $Release 'notes'
+if (((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData) -or
+     (Test-Path -LiteralPath $ReleaseNotes)) -and
     -not $ForceReplaceUserData) {
     throw ('Release folder contains user data. Back it up or move it first; use -ForceReplaceUserData only intentionally: ' + $Release)
 }
@@ -177,7 +179,8 @@ if (-not (Test-Path -LiteralPath $ReleaseExe)) { throw ('Release exe missing: ' 
 if (-not (Test-Path -LiteralPath $ReleaseConfig)) { throw ('Runtime config missing from release: ' + $ReleaseConfig) }
 if (-not (Test-Path -LiteralPath $ReleaseAssets)) { throw ('Release assets missing: ' + $ReleaseAssets) }
 if (Test-Path -LiteralPath $ReleaseTtf) { throw ('Build-only TTF leaked into release: ' + $ReleaseTtf) }
-if ((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData)) {
+if ((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData) -or
+    (Test-Path -LiteralPath $ReleaseNotes)) {
     throw ('User data leaked into release: ' + $Release)
 }
 if (-not $KeepBuildArtifacts) { Remove-TreeInside $BuildRoot $BuildParent }
@@ -186,4 +189,4 @@ Write-Host ''
 Write-Host ('Build complete: ' + $Release)
 Write-Host ('Double-click ' + $ExeName + '.exe to launch. Keep ' + $ExeName + '.exe.config beside it when sharing.')
 Write-Host 'Zip the whole release folder to share (no Python needed on the target machine).'
-Write-Host 'Contains no canvas/preference data - safe to share or upload.'
+Write-Host 'Contains no canvas/note/preference data - safe to share or upload.'

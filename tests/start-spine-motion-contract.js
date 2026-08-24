@@ -35,6 +35,8 @@ assert(styles.includes('.left-spine.spine-marker-no-transition .spine-hover-orb 
 
 assert(start.includes('bindSpineHoverTarget(dot)'));
 assert(start.includes('requestAnimationFrame(syncActiveSpineOrb)'));
+assert(start.includes('syncCanvasWorkspaceSpineAfterReveal()'), 'revealing Canvas must remeasure its previously hidden spine');
+assert(start.includes("if (activeStartWorkspace !== 'canvas') return;\n      syncActiveSpineOrb({ animate: false });"), 'hidden-workspace geometry must never survive a Canvas reveal');
 assert(start.includes('spinePreviewTarget && spinePreviewTarget.isConnected'));
 assert(start.includes('hideSpineMarker();'));
 

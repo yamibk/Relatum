@@ -15,12 +15,12 @@
 
   var CONFIG = {
     startOnLoad: false,
-    securityLevel: 'loose',
+    securityLevel: 'strict',
     suppressErrorRendering: true,
     theme: 'base',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
     flowchart: {
-      htmlLabels: true,
+      htmlLabels: false,
       useMaxWidth: false,
       curve: 'basis',
       nodeSpacing: 44,
@@ -291,6 +291,62 @@
     }
   }
 
+  // Mermaid 已运行在 strict 模式；这里再对生成物做一层输出边界收紧，避免
+  // 后续版本或图表扩展把可执行 HTML、事件属性或外部 URL 带入本地页面。
+  function sanitizeSvg(stage) {
+    if (!stage) return;
+    // Mermaid 11 的 flowchart 标签即使关闭 htmlLabels 仍可能产生
+    // foreignObject。只提取其纯文本并转成原生 SVG text，最终 DOM 不保留 HTML。
+    stage.querySelectorAll('foreignObject').forEach(function (node) {
+      var rawLines = [];
+      var paragraphs = node.querySelectorAll('p');
+      if (paragraphs.length) {
+        for (var p = 0; p < paragraphs.length; p++) rawLines.push(paragraphs[p].textContent || '');
+      } else {
+        rawLines.push(node.textContent || '');
+      }
+      var lines = rawLines.map(function (line) { return line.replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+      if (!lines.length) {
+        node.remove();
+        return;
+      }
+      var x = parseFloat(node.getAttribute('x')) || 0;
+      var y = parseFloat(node.getAttribute('y')) || 0;
+      var width = parseFloat(node.getAttribute('width')) || 0;
+      var height = parseFloat(node.getAttribute('height')) || 0;
+      var centerX = x + width / 2;
+      var centerY = y + height / 2;
+      var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('class', 'nodeLabel relatum-mermaid-safe-label');
+      text.setAttribute('x', String(centerX));
+      text.setAttribute('y', String(centerY));
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('dominant-baseline', 'middle');
+      text.setAttribute('aria-hidden', 'true');
+      for (var i = 0; i < lines.length; i++) {
+        var tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        tspan.setAttribute('x', String(centerX));
+        tspan.setAttribute('dy', i === 0 ? String(-(lines.length - 1) * 0.6) + 'em' : '1.2em');
+        tspan.textContent = lines[i];
+        text.appendChild(tspan);
+      }
+      if (node.parentNode) node.parentNode.replaceChild(text, node);
+    });
+    stage.querySelectorAll('script, foreignObject, iframe, object, embed, image, audio, video').forEach(function (node) { node.remove(); });
+    stage.querySelectorAll('*').forEach(function (node) {
+      Array.from(node.attributes || []).forEach(function (attribute) {
+        var name = String(attribute.name || '').toLowerCase();
+        var value = String(attribute.value || '').trim();
+        if (name.indexOf('on') === 0) node.removeAttribute(attribute.name);
+        else if (name === 'src' || name === 'srcset') node.removeAttribute(attribute.name);
+        else if (name === 'style' && /(?:url\s*\(|@import|expression\s*\()/i.test(value)) node.removeAttribute(attribute.name);
+        else if ((name === 'href' || name === 'xlink:href') && value && value.charAt(0) !== '#') {
+          node.removeAttribute(attribute.name);
+        }
+      });
+    });
+  }
+
   function naturalSize(el, svg) {
     if (!svg || !svg.viewBox || !svg.viewBox.baseVal) return;
     var box = svg.viewBox.baseVal;
@@ -328,13 +384,11 @@
           var stage = document.createElement('div');
           stage.className = 'mermaid-stage';
           stage.innerHTML = result.svg;
+          sanitizeSvg(stage);
           el.appendChild(stage);
           var svg = stage.querySelector('svg');
           polishSvg(svg);
           naturalSize(el, svg);
-          if (result.bindFunctions) {
-            try { result.bindFunctions(stage); } catch (e) {}
-          }
           el.classList.remove('is-loading', 'is-error');
           el.classList.add('is-rendered');
           el.removeAttribute('aria-busy');

@@ -40,7 +40,7 @@ foreach ($entry in $files) {
     $full = Join-Path $Root ($relative.Replace('/', '\'))
     if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
 
-    if ($relative -match '^(data|canvases)/' -or
+    if ($relative -match '^(data|canvases|notes)/' -or
         $relative -match '(^|/)\.assets/' -or
         $relative -match '(^|/)__pycache__/' -or
         $relative -match '(^|/)\.claude/settings\.local\.json$' -or

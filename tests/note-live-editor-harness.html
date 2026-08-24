@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="../assets/">
+  <title>Relatum Note Live Preview Harness</title>
+  <script>
+    window.__noteLiveErrors = [];
+    window.addEventListener('error', function (event) { var text = String(event.error && event.error.stack || event.message); window.__noteLiveErrors.push(text); document.documentElement.dataset.noteLiveError = text; });
+    window.addEventListener('unhandledrejection', function (event) { var text = String(event.reason && event.reason.stack || event.reason); window.__noteLiveErrors.push(text); document.documentElement.dataset.noteLiveError = text; });
+  </script>
+  <link rel="stylesheet" href="styles.css?live-preview-finish">
+  <style>
+    :root {
+      --bg: #fbfbfa;
+      --text: #222220;
+      --text-secondary: #777772;
+      --text-tertiary: #aaa9a4;
+    }
+    body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg); }
+    .harness-shell { box-sizing: border-box; width: min(100%, 1040px); min-height: 100vh; margin: auto; padding: 28px 34px; }
+    .harness-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .harness-head h1 { margin: 0; font: 650 18px/1.3 system-ui, sans-serif; }
+    .harness-status { color: var(--text-secondary); font: 12px/1.4 system-ui, sans-serif; }
+    .harness-controls { display: flex; gap: 6px; margin: -10px 0 10px; }
+    .harness-controls textarea { width: 180px; height: 24px; }
+    .harness-controls button { border: 1px solid #ddd; border-radius: 4px; background: #fff; color: #666; font: 11px/1 system-ui; }
+    .note-live-editor-host { height: calc(100vh - 100px); }
+  </style>
+</head>
+<body class="start-page">
+  <main class="harness-shell">
+    <header class="harness-head">
+      <h1>Markdown Live Preview 独立测试页</h1>
+      <output class="harness-status" data-role="status">未修改</output>
+    </header>
+    <section class="harness-controls" aria-label="测试控制">
+      <textarea data-role="control-source"></textarea>
+      <button type="button" data-role="control-set">set</button>
+      <button type="button" data-role="control-snapshot">snapshot</button>
+      <button type="button" data-role="control-ime">ime</button>
+      <button type="button" data-role="control-performance">performance</button>
+      <button type="button" data-role="control-dark">dark</button>
+      <output data-role="control-result"></output>
+    </section>
+    <div class="note-live-editor-host" data-role="editor"></div>
+  </main>
+  <script src="markdown.js"></script>
+  <script src="mermaid-renderer.js"></script>
+  <script src="vendor/codemirror/relatum-codemirror.min.js"></script>
+  <script src="note-live-editor.js?live-preview-finish-10"></script>
+  <script>
+    (function () {
+      'use strict';
+      var status = document.querySelector('[data-role="status"]');
+      var changeCount = 0;
+      var sample = [
+        '# Relatum Live Preview',
+        '',
+        'Setext 标题',
+        '---',
+        '',
+        '这是 **粗体**、*斜体*、==高亮==、[[双链]] 和 $x^2$ 的测试。',
+        '复杂链接：[文档](https://example.com/a_(b))，代码 `[[不应识别]] $x$`。',
+        '',
+        '- [ ] 点击任务框',
+        '- 列表项',
+        '',
+        '> [!note] Callout 标题',
+        '> 正文支持 **Markdown**。',
+        '',
+        '> [!warning]- 折叠提示',
+        '> 默认不显示这行。',
+        '',
+        '| 功能 | 状态 |',
+        '| --- | --- |',
+        '| 单表面 | 可用 |',
+        '',
+        '```mermaid',
+        'flowchart LR',
+        '  A[源码] --> B[视觉投影]',
+        '```',
+        '',
+        '<svg onload="alert(1)">HTML/SVG 只显示源码</svg>'
+      ].join('\n');
+      var editor = window.RelatumNoteLiveEditor.create(document.querySelector('[data-role="editor"]'), {
+        value: sample,
+        notePath: 'harness.md',
+        imageUrl: function () { return 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; },
+        onDocChanged: function () { changeCount += 1; document.documentElement.dataset.noteLiveChanges = String(changeCount); status.textContent = '文档已修改'; },
+        onSaveRequest: function () { status.textContent = '已收到保存快捷键'; },
+        onOpenWiki: function (target) { status.textContent = '双链：' + target; },
+        onOpenExternal: function (target) { status.textContent = '外链：' + target; }
+      });
+      window.__relatumNoteLiveHarness = editor;
+      document.querySelector('[data-role="control-set"]').addEventListener('click', function () {
+        var source = document.querySelector('[data-role="control-source"]').value;
+        editor.setDocument({ value: source, notePath: 'performance.md', anchor: source.length, head: source.length, scrollTop: 0 });
+      });
+      document.querySelector('[data-role="control-snapshot"]').addEventListener('click', function () {
+        var snapshot = editor.snapshot();
+        document.querySelector('[data-role="control-result"]').value = JSON.stringify({ length: snapshot.value.length, anchor: snapshot.anchor, head: snapshot.head });
+      });
+      document.querySelector('[data-role="control-ime"]').addEventListener('click', function () {
+        var before = changeCount;
+        editor.view.contentDOM.dispatchEvent(new Event('compositionstart', { bubbles: true }));
+        editor.replaceSelection('中');
+        var during = changeCount - before;
+        editor.view.contentDOM.dispatchEvent(new Event('compositionend', { bubbles: true }));
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          document.documentElement.dataset.noteLiveIme = JSON.stringify({ during: during, after: changeCount - before });
+        }); });
+      });
+      document.querySelector('[data-role="control-performance"]').addEventListener('click', function () {
+        var line = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '.repeat(2) + '\n\n';
+        var source = line.repeat(Math.ceil((4 * 1024 * 1024) / line.length)).slice(0, 4 * 1024 * 1024);
+        var loadStarted = performance.now();
+        editor.setDocument({ value: source, notePath: 'performance.md', anchor: 0, head: 0, scrollTop: 0 });
+        var loadMs = performance.now() - loadStarted;
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          var samples = [];
+          for (var index = 0; index < 30; index += 1) {
+            var started = performance.now();
+            editor.replaceSelection('x');
+            samples.push(performance.now() - started);
+          }
+          samples.sort(function (a, b) { return a - b; });
+          document.documentElement.dataset.noteLivePerformance = JSON.stringify({
+            bytes: source.length, loadMs: loadMs, visibleRanges: editor.view.visibleRanges, p95: samples[Math.floor(samples.length * .95) - 1], max: samples[samples.length - 1], samples: samples
+          });
+        }); });
+      });
+      document.querySelector('[data-role="control-dark"]').addEventListener('click', function () {
+        document.body.dataset.startTheme = document.body.dataset.startTheme === 'dark' ? '' : 'dark';
+      });
+      document.documentElement.dataset.noteLiveCreated = '1';
+      document.documentElement.dataset.noteLiveTree = window.RelatumCodeMirror.syntaxTree(editor.view.state).toString();
+    })();
+  </script>
+</body>
+</html>

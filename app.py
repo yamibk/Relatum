@@ -41,6 +41,7 @@ from ai_plan import (
     build_repair_instruction,
     parse_plan,
 )
+from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, NotesStore
 
 # 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
 # 旁边；具有 MSIX 包身份时改用 %LOCALAPPDATA%\Relatum，避免写只读安装目录。
@@ -85,7 +86,9 @@ ROOT = _resolve_user_root(packaged=PACKAGED)
 ASSETS = RESOURCE_ROOT / "assets"
 CANVASES = ROOT / "canvases"
 TRASH = CANVASES / "回收站"   # 右键删除 = 移到这里（用户自己管理，可恢复）
+NOTES = ROOT / "notes"   # 托管 Markdown 笔记库；正文与伴生素材均保持普通文件
 DATA = ROOT / "data"
+NOTE_RECOVERY = DATA / "note-recovery"
 RECENT_FILE = DATA / "recent.json"
 RECENT_BACKUP_FILE = DATA / "recent.backup.json"
 BACKGROUND_PREF_FILE = DATA / "background.json"
@@ -166,6 +169,7 @@ CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
 # use separate locks so a large attachment cannot stall unrelated task updates.
 DATA_MUTATION_LOCK = threading.RLock()
 CANVAS_FILE_MUTATION_LOCK = threading.RLock()
+NOTES_MUTATION_LOCK = threading.RLock()
 LARGE_JSON_BODY_LOCK = threading.Lock()
 CANVAS_STATS_CACHE_LOCK = threading.Lock()
 _CANVAS_STATS_CACHE: dict[str, tuple[tuple[int, int, int, int], int | None]] = {}
@@ -319,8 +323,12 @@ def move_canvas_to_trash(src: Path) -> Path:
 
 def ensure_dirs() -> None:
     """首次启动时确保用户数据目录存在。"""
-    CANVASES.mkdir(exist_ok=True)
-    DATA.mkdir(exist_ok=True)
+    # RELATUM_DATA_ROOT 可指向一个尚未创建的隔离目录；源码、
+    # 便携版和 MSIX 的 ROOT 本来已存在，这里也不改变它们的行为。
+    ROOT.mkdir(parents=True, exist_ok=True)
+    CANVASES.mkdir(parents=True, exist_ok=True)
+    NOTES.mkdir(parents=True, exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     cleanup_unused_background_uploads()
 
 
@@ -400,6 +408,14 @@ def _atomic_copy_file(source: Path, target: Path) -> None:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+NOTES_STORE = NotesStore(
+    NOTES,
+    recovery_root=NOTE_RECOVERY,
+    atomic_text=_atomic_write_text,
+    atomic_bytes=_atomic_write_bytes,
+)
 
 
 def _base64_too_large(encoded: str, decoded_limit: int) -> bool:
@@ -1059,6 +1075,40 @@ def _norm(p: Path | str) -> str:
 def _explorer_select_args(target: Path | str) -> list[str]:
     """构造 Explorer 定位参数；`/select,` 与路径必须分开，避免带空格路径解析失败。"""
     return ["explorer.exe", "/select,", _norm(target)]
+
+
+def _move_paths_to_recycle_bin(paths: list[Path]) -> None:
+    """Move explicit validated Windows paths to the system Recycle Bin."""
+    if sys.platform != "win32":
+        raise OSError("系统回收站功能目前仅支持 Windows")
+    if not paths:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", wintypes.UINT),
+            ("pFrom", wintypes.LPCWSTR),
+            ("pTo", wintypes.LPCWSTR),
+            ("fFlags", wintypes.WORD),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID),
+            ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+
+    source = "\0".join(_norm(path) for path in paths) + "\0\0"
+    operation = SHFILEOPSTRUCTW()
+    operation.wFunc = 3  # FO_DELETE
+    operation.pFrom = source
+    operation.fFlags = 0x0040 | 0x0010 | 0x0004 | 0x0400  # ALLOWUNDO, NOCONFIRMATION, SILENT, NOERRORUI
+    shell32 = ctypes.windll.shell32
+    shell32.SHFileOperationW.argtypes = [ctypes.POINTER(SHFILEOPSTRUCTW)]
+    shell32.SHFileOperationW.restype = ctypes.c_int
+    result = shell32.SHFileOperationW(ctypes.byref(operation))
+    if result != 0 or operation.fAnyOperationsAborted:
+        raise OSError(f"系统回收站操作失败（{result}）")
 
 
 def _viewport_key(path: Path | str) -> str:
@@ -8575,6 +8625,8 @@ POST_WITHOUT_DATA_LOCK = {
     "/api/import-markdown",
     "/api/pick-background-image",
     "/api/import-canvas-image",
+    "/api/note-reveal",
+    "/api/note-reveal-assets",
 }
 
 # File lifecycle operations serialize with each other, but not with unrelated
@@ -8601,6 +8653,18 @@ CANVAS_AND_DATA_POST_ROUTES = {
     "/api/taskbook-archive",
     "/api/rename",
     "/api/restore",
+}
+NOTES_POST_ROUTES = {
+    "/api/note-create",
+    "/api/note-save",
+    "/api/note-move",
+    "/api/note-trash",
+    "/api/note-upload-image",
+    "/api/note-history-restore",
+    "/api/note-import-begin",
+    "/api/note-import-upload",
+    "/api/note-import-commit",
+    "/api/note-import-abort",
 }
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -8802,6 +8866,48 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "root": _norm(ROOT),
                 "pid": os.getpid(),
             })
+        if parsed.path == "/api/notes-tree":
+            try:
+                with NOTES_MUTATION_LOCK:
+                    return self._send_json(200, NOTES_STORE.tree())
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+        if parsed.path == "/api/note":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                with NOTES_MUTATION_LOCK:
+                    return self._send_json(200, NOTES_STORE.load(q.get("path", [""])[0]))
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+        if parsed.path == "/api/note-links":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                with NOTES_MUTATION_LOCK:
+                    return self._send_json(200, NOTES_STORE.links(q.get("path", [""])[0]))
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+        if parsed.path == "/api/note-history":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                with NOTES_MUTATION_LOCK:
+                    version_id = q.get("version", [""])[0]
+                    result = NOTES_STORE.history_version(q.get("path", [""])[0], version_id) \
+                        if version_id else NOTES_STORE.history(q.get("path", [""])[0])
+                    return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+        if parsed.path == "/api/note-asset":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                with NOTES_MUTATION_LOCK:
+                    target, media_type = NOTES_STORE.resolve_image(
+                        q.get("note", [""])[0], q.get("src", [""])[0],
+                    )
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+            return self._send_local_file(
+                target, media_type, "读取笔记图片失败", cache_control="private, no-cache",
+            )
         if parsed.path == "/api/recent":
             return self._api_recent()
         if parsed.path == "/api/ai-config":
@@ -8931,10 +9037,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if path in CANVAS_FILE_POST_ROUTES:
                 with CANVAS_FILE_MUTATION_LOCK:
                     return self._dispatch_POST(path, body)
+            if path in NOTES_POST_ROUTES:
+                with NOTES_MUTATION_LOCK:
+                    return self._dispatch_POST(path, body)
             with DATA_MUTATION_LOCK:
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
+        if path == "/api/note-create":
+            return self._api_note_create(body)
+        if path == "/api/note-save":
+            return self._api_note_save(body)
+        if path == "/api/note-move":
+            return self._api_note_move(body)
+        if path == "/api/note-trash":
+            return self._api_note_trash(body)
+        if path == "/api/note-upload-image":
+            return self._api_note_upload_image(body)
+        if path == "/api/note-history-restore":
+            return self._api_note_history_restore(body)
+        if path == "/api/note-import-begin":
+            return self._api_note_import_begin(body)
+        if path == "/api/note-import-upload":
+            return self._api_note_import_upload(body)
+        if path == "/api/note-import-commit":
+            return self._api_note_import_commit(body)
+        if path == "/api/note-import-abort":
+            return self._api_note_import_abort(body)
+        if path == "/api/note-reveal":
+            return self._api_note_reveal(body)
+        if path == "/api/note-reveal-assets":
+            return self._api_note_reveal_assets(body)
         if path == "/api/new":
             return self._api_new()
         if path == "/api/recent-sync":
@@ -9127,6 +9260,176 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(404, {"error": "未知接口"})
 
     # ── API 实现 ──
+    def _send_notes_error(self, err: NotesError):
+        return self._send_json(err.status, {"error": str(err), "code": err.code})
+
+    def _api_note_create(self, body: dict):
+        try:
+            if body.get("autoName") == "timestamp" and body.get("kind", "note") == "note":
+                result = NOTES_STORE.create_timestamp_note(
+                    body.get("parent", ""), content=body.get("content", ""),
+                )
+            elif body.get("autoName") == "folder" and body.get("kind") == "folder":
+                result = NOTES_STORE.create_untitled_folder(
+                    body.get("parent", ""),
+                    base_name="New folder" if body.get("language") == "en" else "新建文件夹",
+                )
+            else:
+                result = NOTES_STORE.create(
+                    body.get("parent", ""),
+                    body.get("name", ""),
+                    body.get("kind", "note"),
+                    content=body.get("content", ""),
+                    create_parents=body.get("createParents") is True,
+                )
+            if result.get("kind") == "note":
+                # 新建后的首帧直接带回空白正文与修订号，前端无需再做一次
+                # GET；这也让“创建并开始输入”不受后台保存队列影响。
+                result.update(NOTES_STORE.load(result["path"]))
+            result["tree"] = NOTES_STORE.tree()
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"创建笔记项目失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_save(self, body: dict):
+        try:
+            result = NOTES_STORE.save(
+                body.get("path", ""),
+                body.get("content"),
+                body.get("revision"),
+            )
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存笔记失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_move(self, body: dict):
+        try:
+            result = NOTES_STORE.move(body.get("path", ""), body.get("destination", ""))
+            result["tree"] = NOTES_STORE.tree()
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"移动笔记项目失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_trash(self, body: dict):
+        try:
+            normalized, targets = NOTES_STORE.trash_targets(body.get("path", ""))
+            _move_paths_to_recycle_bin(targets)
+            NOTES_STORE.invalidate()
+            result = {"ok": True, "path": normalized, "tree": NOTES_STORE.tree()}
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"移到系统回收站失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_history_restore(self, body: dict):
+        try:
+            result = NOTES_STORE.restore_history(body.get("path", ""), body.get("version", ""))
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"恢复历史版本失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_import_begin(self, body: dict):
+        try:
+            result = NOTES_STORE.begin_import(body.get("destination", ""))
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"开始导入失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_import_upload(self, body: dict):
+        encoded = body.get("data")
+        if not isinstance(encoded, str) or not encoded:
+            return self._send_json(400, {"error": "缺少导入内容"})
+        suffix = Path(str(body.get("path") or "")).suffix.casefold()
+        limit = MAX_NOTE_BYTES if suffix == ".md" else MAX_NOTE_IMAGE_BYTES
+        if _base64_too_large(encoded, limit):
+            return self._send_json(413, {"error": "导入文件过大"})
+        try:
+            content = base64.b64decode(encoded, validate=True)
+            result = NOTES_STORE.upload_import_file(
+                body.get("token", ""), body.get("path", ""), content, body.get("mediaType", ""),
+            )
+        except (binascii.Error, ValueError):
+            return self._send_json(400, {"error": "导入内容无效"})
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"导入文件失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_import_commit(self, body: dict):
+        try:
+            result = NOTES_STORE.commit_import(body.get("token", ""))
+            result["tree"] = NOTES_STORE.tree()
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"提交导入失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_import_abort(self, body: dict):
+        try:
+            result = NOTES_STORE.abort_import(body.get("token", ""))
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"清理导入失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_upload_image(self, body: dict):
+        encoded = body.get("data")
+        if not isinstance(encoded, str) or not encoded:
+            return self._send_json(400, {"error": "缺少图片数据"})
+        if _base64_too_large(encoded, MAX_NOTE_IMAGE_BYTES):
+            return self._send_json(413, {"error": "图片过大（上限 40MB）"})
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            return self._send_json(400, {"error": "图片数据无效"})
+        try:
+            result = NOTES_STORE.upload_image(
+                body.get("path", ""),
+                body.get("name", ""),
+                content,
+                body.get("mediaType", ""),
+            )
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存笔记图片失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_reveal(self, body: dict):
+        try:
+            target = NOTES_STORE.reveal_target(body.get("path", ""))
+            args = _explorer_select_args(target) if target.is_file() else ["explorer.exe", _norm(target)]
+            subprocess.Popen(args, close_fds=True)
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"在资源管理器中显示失败：{err}"})
+        return self._send_json(200, {"ok": True})
+
+    def _api_note_reveal_assets(self, body: dict):
+        try:
+            target = NOTES_STORE.assets_directory(body.get("path", ""))
+            subprocess.Popen(["explorer.exe", _norm(target)], close_fds=True)
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"打开素材目录失败：{err}"})
+        return self._send_json(200, {"ok": True})
+
     def _api_recent(self):
         data = load_recent()
         activity = canvas_activity_snapshot()

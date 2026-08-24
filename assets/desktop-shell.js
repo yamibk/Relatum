@@ -27,6 +27,7 @@
   bar.classList.add('desktop-title-bar', 'pywebview-drag-region');
 
   let pendingDirty = false;
+  let beforeCloseHandler = null;
   const apiWaiters = [];
 
   // pywebview 桥接「真正就绪」的判定：EXE 冷启动有一小段 window.pywebview.api 已存在、
@@ -73,6 +74,12 @@
       // 冷启动期间 dirty 会高频变化，只保留最终值；pywebviewready 处理器会统一同步。
       // 否则每次键入都排一个闭包，桥接就绪时又集中发出数百次重复调用。
       if (bridgeReady()) withApi((api) => api.set_dirty(pendingDirty));
+    },
+    setBeforeCloseHandler(handler) {
+      beforeCloseHandler = typeof handler === 'function' ? handler : null;
+    },
+    setNoteWorkspaceActive(value) {
+      withApi((api) => api.set_note_workspace_active(!!value));
     },
     getRestoredSize() {
       return callApi('get_restored_size');
@@ -142,13 +149,23 @@
     });
   }
 
-  controls.addEventListener('click', (event) => {
+  controls.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-window-action]');
     if (!button) return;
     const action = button.dataset.windowAction;
     if (action === 'minimize') withApi((api) => api.minimize());
     else if (action === 'maximize') toggleMaximize();
-    else if (action === 'close') withApi((api) => api.close_window());
+    else if (action === 'close') {
+      if (beforeCloseHandler) {
+        try {
+          const canClose = await beforeCloseHandler();
+          if (canClose === false) return;
+        } catch (error) {
+          return;
+        }
+      }
+      withApi((api) => api.close_window());
+    }
   });
 
   bar.addEventListener('dblclick', (event) => {

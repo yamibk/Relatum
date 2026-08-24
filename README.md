@@ -54,6 +54,10 @@ Relatum 是一款开源、本地优先的自由知识画布和学习工作台。
 
 ### 笔记、阅读与资料整理
 
+- 起步页可在“画布 / 笔记 / 博客”工作区之间切换；画布和笔记的当前状态会保留。
+- 内置 Obsidian 式 Markdown 笔记库：任意层级文件夹、多文档标签、可编辑文件标题、单表面 Live Preview、Callout、双链、反向链接、本地图片、词数/字符数和 350ms 无感自动保存；字体比例可在本机设置中调整。
+- 文件树支持右键、内部拖动和 Windows Explorer 直接拖入；笔记与文件夹可在系统资源管理器中显示，删除走系统回收站。
+- 外部改写在空闲时静默载入，与正在编辑的内容碰撞时会先写入 `data/note-recovery/` 恢复历史，不显示冲突弹窗。
 - 支持 Markdown、公式、Mermaid 图表、代码、图片、PDF 和 Markdown 附件。
 - 提供长文阅读、PDF/Markdown 批注、画布搜索、小地图和关系图谱。
 - 支持 Markdown 文件夹导入、画布内容导出和 PNG 导出。
@@ -115,7 +119,7 @@ Relatum 是一款开源、本地优先的自由知识画布和学习工作台。
 
 支持 Windows 10/11。目标电脑需要 Microsoft Edge WebView2 Runtime，Windows 10/11 通常已经安装。
 
-> 请不要在旧版本目录中直接覆盖更新。建议先保留旧目录中的 `data/` 和 `canvases/`，确认新版正常后再迁移个人数据。
+> 请不要在旧版本目录中直接覆盖更新。建议先保留旧目录中的 `data/`、`canvases/` 和 `notes/`，确认新版正常后再迁移个人数据。
 
 ### 从源码运行
 
@@ -134,9 +138,10 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 首次启动后会在应用目录创建：
 
 - `canvases/`：用户的 `.canvas` 文件及附件。
+- `notes/`：笔记工作区的 `.md` 文件、子文件夹及本地图片。
 - `data/`：最近列表、学习记录、日历、窗口状态和 AI 配置等本地数据。
 
-这两个目录已被 `.gitignore` 排除，不会进入源码仓库。完整数据边界请阅读 [隐私说明](docs/PRIVACY.md)。
+这三个目录已被 `.gitignore` 排除，不会进入源码仓库。完整数据边界请阅读 [隐私说明](docs/PRIVACY.md)。
 
 ## 构建 Windows 桌面版
 
@@ -146,7 +151,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
-输出位于项目同级的 `Relatum-release/`。构建脚本不会把 `data/` 或 `canvases/` 打进发布包。
+输出位于项目同级的 `Relatum-release/`。构建脚本不会把 `data/`、`canvases/` 或 `notes/` 打进发布包。
 
 ### 构建 Microsoft Store 包
 
@@ -165,6 +170,7 @@ powershell -ExecutionPolicy Bypass -File .\build-msix.ps1
 ```text
 Relatum/
 ├─ app.py                    本地 HTTP 服务与数据 API
+├─ notes_library.py          Markdown 笔记库、双链索引与路径安全层
 ├─ desktop.py                Windows 桌面外壳
 ├─ windows_wallpaper.py      隔离的倒数日动态背景子进程、WorkerW 挂载与托盘生命周期
 ├─ assets/                   HTML、CSS、JavaScript 与运行资源

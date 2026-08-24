@@ -54,6 +54,10 @@ No account is required. Canvases, preferences, and optional AI credentials stay 
 
 ### Notes, documents, and visual research
 
+- Switch among Canvas, Notes, and Blog workspaces from Home while preserving the current canvas and note state.
+- An Obsidian-style Markdown library with nested folders, multi-document tabs, editable file titles, single-surface Live Preview, Callouts, wikilinks, backlinks, local images, word/character counts, quiet 350ms autosave, and a local font-scale preference.
+- The file tree supports context menus, internal moves, and direct Windows Explorer drops. Notes and folders can be revealed in Explorer, and removal uses the Windows Recycle Bin.
+- Idle external edits load silently. If an external edit collides with active typing, Relatum first preserves the disk version in `data/note-recovery/` instead of showing a conflict dialog.
 - Markdown, math, Mermaid diagrams, code, images, PDF files, and Markdown attachments.
 - Long-form reading, PDF/Markdown annotations, canvas search, minimap, and relationship graph.
 - Import Markdown folders and export canvas content or PNG images.
@@ -115,7 +119,7 @@ No account is required. Canvases, preferences, and optional AI credentials stay 
 
 Relatum supports Windows 10/11 and requires Microsoft Edge WebView2 Runtime, which is normally included with modern Windows installations.
 
-> Do not overwrite an old installation in place. Keep the old `data/` and `canvases/` folders until you have confirmed that the new version works, then migrate your personal data.
+> Do not overwrite an old installation in place. Keep the old `data/`, `canvases/`, and `notes/` folders until you have confirmed that the new version works, then migrate your personal data.
 
 ### Run from source
 
@@ -134,9 +138,10 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 On first launch, Relatum creates:
 
 - `canvases/` for `.canvas` files and their attachments.
+- `notes/` for Notes-workspace `.md` files, nested folders, and local images.
 - `data/` for recent items, study records, calendar data, window state, and AI configuration.
 
-Both directories are excluded by `.gitignore` and are not part of the source repository. See the [privacy documentation](docs/PRIVACY.md) for the complete data boundary.
+All three directories are excluded by `.gitignore` and are not part of the source repository. See the [privacy documentation](docs/PRIVACY.md) for the complete data boundary.
 
 ## Build the Windows desktop app
 
@@ -146,7 +151,7 @@ Desktop builds support Python 3.9–3.12. The build script creates a temporary e
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
-The output is placed in the sibling `Relatum-release/` directory. User `data/` and `canvases/` are never bundled into the release.
+The output is placed in the sibling `Relatum-release/` directory. User `data/`, `canvases/`, and `notes/` are never bundled into the release.
 
 ### Build the Microsoft Store package
 
@@ -166,6 +171,7 @@ GitHub portable build retain their existing data locations.
 ```text
 Relatum/
 ├─ app.py                    Local HTTP service and data API
+├─ notes_library.py          Markdown library, wikilink index, and path-safety layer
 ├─ desktop.py                Windows desktop shell
 ├─ assets/                   HTML, CSS, JavaScript, and runtime assets
 ├─ packaging/                Icon, font, and desktop build helpers
