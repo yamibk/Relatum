@@ -13,6 +13,7 @@
   const inlineTitleShell = $('[data-role="note-inline-title-shell"]');
   const inlineTitleEl = $('[data-role="note-inline-title"]');
   const focusToggle = $('[data-note-action="toggle-focus"]');
+  const expandAllButton = $('[data-note-action="toggle-all-folders"]');
   const documentStatusEl = $('[data-role="note-document-status"]');
   const wordCountEl = $('[data-role="note-word-count"]');
   const characterCountEl = $('[data-role="note-character-count"]');
@@ -60,6 +61,7 @@
       unresolvedTitle: '创建这篇笔记？', unresolvedCopy: '“[[{target}]]”尚不存在。', cancel: '取消', create: '创建',
       versionUnavailable: '历史版本无法读取', externalOpenFailed: '无法打开外部链接',
       expandFolder: '展开文件夹', collapseFolder: '收起文件夹', duplicateTitle: '已经存在一个同名文件',
+      expandAll: '全部展开', collapseAll: '全部折叠',
       titleRequired: '文件名不能为空', words: '{count} 个词', characters: '{count} 个字符', closeTab: '关闭标签页',
       enterFocus: '隐藏顶部栏', exitFocus: '显示顶部栏',
       livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
@@ -79,6 +81,7 @@
       unresolvedCopy: '“[[{target}]]” does not exist yet.', cancel: 'Cancel', create: 'Create', versionUnavailable: 'Could not read this version',
       externalOpenFailed: 'Could not open external link',
       expandFolder: 'Expand folder', collapseFolder: 'Collapse folder', duplicateTitle: 'A file with the same name already exists',
+      expandAll: 'Expand all', collapseAll: 'Collapse all',
       titleRequired: 'A filename is required', words: '{count} words', characters: '{count} characters', closeTab: 'Close tab',
       enterFocus: 'Hide top bar', exitFocus: 'Show top bar',
       livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
@@ -410,6 +413,27 @@
     return changed;
   }
   function flattenEntries(entries, output) { (entries || []).forEach((entry) => { output.push(entry); if (entry.kind === 'folder') flattenEntries(entry.children, output); }); return output; }
+  function folderPaths() { return flattenEntries(state.entries, []).filter((entry) => entry.kind === 'folder').map((entry) => entry.path); }
+  function updateExpandAllButton() {
+    if (!expandAllButton) return;
+    const paths = folderPaths();
+    const allExpanded = paths.length > 0 && paths.every((path) => state.expanded.has(path));
+    const label = tr(allExpanded ? 'collapseAll' : 'expandAll');
+    expandAllButton.disabled = !paths.length;
+    expandAllButton.dataset.allExpanded = allExpanded ? 'true' : 'false';
+    expandAllButton.dataset.uiTooltip = label;
+    expandAllButton.setAttribute('aria-label', label);
+    expandAllButton.setAttribute('aria-pressed', allExpanded ? 'true' : 'false');
+  }
+  function toggleAllFolders() {
+    const paths = folderPaths();
+    if (!paths.length) return false;
+    const expand = paths.some((path) => !state.expanded.has(path));
+    if (expand) paths.forEach((path) => state.expanded.add(path));
+    else state.expanded.clear();
+    persistExpanded(); renderTree();
+    return true;
+  }
   function rebuildEntryIndex() { state.entryIndex = new Map(flattenEntries(state.entries, []).map((entry) => [entry.path, entry])); }
   function findEntry(path) { return state.entryIndex.get(path) || null; }
   function folderTarget() { return state.selectedFolder && findEntry(state.selectedFolder) ? state.selectedFolder : state.current ? parentPath(state.current.path) : ''; }
@@ -698,6 +722,7 @@
       if (!row) return;
       if (expanded) state.expanded.add(path); else state.expanded.delete(path);
       persistExpanded(); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded));
+      updateExpandAllButton();
       row.classList.toggle('is-expanding', expanded); window.setTimeout(() => row.classList.remove('is-expanding'), TREE_MOTION_MS + 40);
       let shell = directChild(wrapper, 'note-tree-children-shell');
       if (expanded) {
@@ -748,7 +773,7 @@
     }); }
     renderLevel(state.entries, 0, fragment);
     if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-tree-empty'; message.textContent = tr('emptyTree'); fragment.appendChild(message); }
-    treeEl.replaceChildren(fragment); updateTreeSelection();
+    treeEl.replaceChildren(fragment); updateTreeSelection(); updateExpandAllButton();
   }
   async function refreshTree(announce) {
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
@@ -985,6 +1010,7 @@
     if (name === 'new-note' || name === 'new-tab') createEntry('note');
     else if (name === 'new-folder') createEntry('folder');
     else if (name === 'refresh') checkExternalChanges(true);
+    else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
     else if (name === 'current-menu' && state.current) {

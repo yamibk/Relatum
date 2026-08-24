@@ -76,6 +76,12 @@ assert(html.includes('data-role="note-reading-view"'), 'Notes needs a safe read-
 assert(html.includes('data-role="note-tabs"') && html.includes('data-note-action="new-tab"'), 'Notes needs a persistent multi-document tab strip');
 assert(html.includes('data-role="note-inline-title"'), 'the active Markdown filename needs an editable inline title');
 assert(html.includes('data-note-action="toggle-focus"'), 'the Notes library header needs a top-bar focus toggle');
+assert(html.includes('data-note-action="toggle-all-folders"'), 'the Notes library header needs an expand-all control');
+assert(notes.includes("expandAll: '全部展开'") && notes.includes("collapseAll: '全部折叠'"),
+  'the folder-wide toggle must be localized');
+assert(notes.includes('function toggleAllFolders()') && notes.includes('paths.some((path) => !state.expanded.has(path))'),
+  'the folder-wide toggle must expand partial trees and collapse fully expanded trees');
+assert(notes.includes('persistExpanded(); renderTree();'), 'expand-all state must reuse the persistent folder state');
 assert(html.includes('data-role="note-word-count"') && html.includes('data-role="note-character-count"'), 'the document footer needs word and character counts');
 assert(html.includes('data-role="note-font-scale"'), 'the start-page gear needs a Markdown font scale control');
 assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create the Live Preview adapter');
@@ -124,6 +130,8 @@ assert(css.includes('.note-tree-children'), 'nested folders need visible hierarc
 assert(css.includes('.note-tree-row[aria-expanded] .note-tree-toggle::before'), 'folder disclosure needs a geometric CSS icon');
 assert(css.includes('.note-tree-children-shell.is-open'), 'nested folders need a height and opacity transition');
 assert(css.includes('.note-tree-icon.is-folder { opacity:'), 'folder icons need the unified SVG treatment');
+assert(css.includes('.note-expand-all[data-all-expanded="true"] .note-expand-icon-close'),
+  'the expand-all control needs a distinct collapse state');
 assert(css.includes('.note-path-crumb.is-file'), 'the active note header needs a folder breadcrumb');
 assert(css.includes('body.start-page[data-start-workspace="notes"].note-focus-mode > .top-bar'), 'Notes focus mode needs an animated top-bar collapse');
 assert(css.includes('--note-content-width: 1040px'), 'the Markdown body needs the wider long-form measure');

@@ -25,7 +25,8 @@
     syntaxTree, forceParsing, indentOnInput,
     bracketMatching, markdown, markdownLanguage, markdownKeymap, history,
     historyKeymap, defaultKeymap, indentWithTab, searchKeymap,
-    highlightSelectionMatches, relatumCodeLanguages, relatumCodeHighlighting,
+    highlightSelectionMatches, closeBrackets, closeBracketsKeymap,
+    relatumCodeLanguages, relatumCodeHighlighting,
   } = CM;
   const focusEffect = StateEffect.define();
   const compositionEffect = StateEffect.define();
@@ -1086,6 +1087,28 @@
     return true;
   }
 
+  function exitEmptyQuoteMarkup(view) {
+    if (!view || !view.state || view.state.selection.ranges.length !== 1) return false;
+    const range = view.state.selection.main;
+    if (!range.empty) return false;
+    const line = view.state.doc.lineAt(range.head);
+    const text = line.text;
+    const match = /^([ \t]{0,3})((?:>[ \t]*)+)$/.exec(text);
+    if (!match || text.slice(range.head - line.from).trim()) return false;
+    const markerStart = match[1].length;
+    const finalMarker = text.lastIndexOf('>');
+    if (finalMarker < markerStart) return false;
+    const replacement = finalMarker === markerStart
+      ? ''
+      : text.slice(0, finalMarker).replace(/[ \t]*$/, ' ');
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert: replacement },
+      selection: EditorSelection.cursor(line.from + replacement.length),
+      userEvent: 'input',
+    });
+    return true;
+  }
+
   function linkAt(state, position) {
     const line = state.doc.lineAt(position);
     const wiki = /\[\[([^\]\n]+)\]\]/g;
@@ -1128,6 +1151,7 @@
     const viewportParsePlugin = createViewportParsePlugin();
 
     const customKeys = [
+      { key: 'Enter', run: exitEmptyQuoteMarkup },
       { key: 'Mod-s', preventDefault: true, run() { safeOptions.onSaveRequest(); return true; } },
       { key: 'Mod-b', preventDefault: true, run(view) { return wrapSelection(view, '**', '**', '粗体'); } },
       { key: 'Mod-i', preventDefault: true, run(view) { return wrapSelection(view, '*', '*', '斜体'); } },
@@ -1154,12 +1178,14 @@
     function makeState(value, selection) {
       const extensions = [
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
-        indentOnInput(), bracketMatching(),
+        indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
         markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
         relatumCodeHighlighting || [],
         sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin],
-        keymap.of(customKeys.concat(markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
+        keymap.of(customKeys.concat(
+          Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : [],
+          markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
         placeholder(languagePlaceholder()), EditorView.lineWrapping,
         EditorView.exceptionSink.of((error) => {
           host.dataset.livePreviewError = String(error && error.message || error);
