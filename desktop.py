@@ -404,12 +404,18 @@ class DesktopBridge:
         self.restored_height = restored_height
         self.maximized = False
         self.dirty = False
+        self.note_workspace_active = False
         self.wallpaper: WallpaperController | None = None
+        self._quit_callback = None
         self._lock = threading.Lock()
 
     def set_dirty(self, value: bool) -> None:
         with self._lock:
             self.dirty = bool(value)
+
+    def set_note_workspace_active(self, value: bool) -> None:
+        with self._lock:
+            self.note_workspace_active = bool(value)
 
     def minimize(self) -> None:
         # 走原生 ShowWindow，保留最小化到任务栏的过渡动画。
@@ -461,6 +467,11 @@ class DesktopBridge:
     def close_window(self) -> None:
         if self._window is not None:
             self._window.destroy()
+
+    def quit_application(self) -> None:
+        callback = self._quit_callback
+        if callable(callback):
+            callback()
 
     def get_countdown_wallpaper_state(self) -> dict:
         if self.wallpaper is None:
@@ -829,7 +840,7 @@ def main() -> int:
         if not dirty:
             return True
         result = _message_box(
-            "当前画布还有未保存的修改。\n\n确定关闭窗口并放弃这些修改吗？",
+            "当前工作区还有未保存的修改。\n\n确定关闭窗口并放弃这些修改吗？",
             0x131,  # MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2
         )
         return result != 2
@@ -840,8 +851,20 @@ def main() -> int:
                 return
         with bridge._lock:
             dirty = bridge.dirty
+            note_workspace_active = bridge.note_workspace_active
         if dirty:
             show_main_window()
+            if note_workspace_active:
+                try:
+                    window.evaluate_js(
+                        "Promise.resolve(window.CanvasNoteWorkspace && "
+                        "window.CanvasNoteWorkspace.flushSave()).then(function(ok){"
+                        "if(ok !== false && window.pywebview && window.pywebview.api){"
+                        "window.pywebview.api.quit_application();}});"
+                    )
+                except Exception:
+                    pass
+                return
             if not confirm_discard_changes():
                 return
         with lifecycle_lock:
@@ -852,6 +875,8 @@ def main() -> int:
             window.destroy()
         except Exception:
             stop_server()
+
+    bridge._quit_callback = request_quit_from_tray
 
     def wallpaper_fatal_error(message: str) -> None:
         show_main_window()
@@ -912,6 +937,22 @@ def main() -> int:
             return False
         if quitting:
             return None
+        with bridge._lock:
+            note_workspace_active = bridge.note_workspace_active
+            dirty = bridge.dirty
+        if note_workspace_active and dirty:
+            # Alt+F4 / 系统关闭不绕过笔记保存链。首次关闭被拦下，
+            # 前端冲刷成功后再调 close_window；写盘失败则窗口保持打开。
+            try:
+                window.evaluate_js(
+                    "Promise.resolve(window.CanvasNoteWorkspace && "
+                    "window.CanvasNoteWorkspace.flushSave()).then(function(ok){"
+                    "if(ok !== false && window.pywebview && window.pywebview.api){"
+                    "window.pywebview.api.close_window();}});"
+                )
+            except Exception:
+                pass
+            return False
         return None if confirm_discard_changes() else False
 
     window.events.shown += on_shown

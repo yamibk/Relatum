@@ -7,14 +7,16 @@ Relatum 是本地优先应用。源码仓库与用户数据严格分离。
 应用运行后会在项目或桌面发布包旁创建：
 
 - `canvases/`：画布正文、回收站以及每张画布的 `.assets/` 图片和附件。
+- `notes/`：笔记工作区的 Markdown 正文、任意层级文件夹，以及每篇笔记的 `<stem>.assets/images/` 本地图片。
 - `data/recent.json`：最近画布和分组，其中可能包含绝对文件路径。
 - `data/viewport.json`、`data/window-state.json`：视口和窗口状态。
 - `data/study.json`、`data/notes.json`、`data/daily.json`、`data/focus.json`：学习与个人记录。
 - `data/diary/`、`data/学习归档/`、`data/画布归档/`：日记和历史归档。
+- `data/note-recovery/`：笔记的本地恢复快照，用于外部改写碰撞或主动恢复历史。
 - `data/ai.json`：用户配置的 AI 地址、模型与 API Key。
 - `data/backgrounds/`：用户导入的背景图片。
 
-这些内容都不属于源码，已在 `.gitignore` 中整体排除。
+这些内容都不属于源码，已在 `.gitignore` 中整体排除。`notes/` 是真实用户正文而非缓存；可用普通备份工具复制。应用内的删除会移入 Windows 系统回收站，在 Explorer 中手工更改文件后则可返回 Relatum 或手动刷新以重新同步。
 
 Windows 桌面版还会在 `%LOCALAPPDATA%\Canvas\WebView2` 保存 WebView2 配置和前端 `localStorage`。
 它位于仓库之外，不会被 Git 收集；进行“全新用户”测试时，需要使用隔离的本地配置目录或先备份后清理该目录。

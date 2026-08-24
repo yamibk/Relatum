@@ -405,6 +405,43 @@
     });
   }
 
+  // 笔记工作区显式启用的本地图片占位。这里绝不写入 src，也不解析远程 URL；
+  // 调用方必须把 data-note-image 交给受后端路径沙箱保护的本地图片接口。
+  // 其它 Markdown 消费者不传 localImages，继续保持原先“不生成 img”的安全行为。
+  function protectLocalImages(src, enabled) {
+    const images = [];
+    if (!enabled) return { protected: src, images: images };
+    let s = src.replace(/!\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (_, target, alias) {
+      images.push({ target: target.trim(), alt: (alias || '').trim() });
+      return '\x00NIMAGE' + (images.length - 1) + '\x00';
+    });
+    s = s.replace(/!\[([^\]\n]*)\]\(([^)\n]+)\)/g, function (_, alt, rawTarget) {
+      let target = rawTarget.trim();
+      if (target.charAt(0) === '<' && target.charAt(target.length - 1) === '>') {
+        target = target.slice(1, -1).trim();
+      }
+      // 当前笔记上传器生成不含空格的相对路径；兼容常见的可选图片 title。
+      const titled = /^(\S+)[ \t]+(?:"[^"]*"|'[^']*')$/.exec(target);
+      if (titled) target = titled[1];
+      images.push({ target: target, alt: alt.trim() });
+      return '\x00NIMAGE' + (images.length - 1) + '\x00';
+    });
+    return { protected: s, images: images };
+  }
+
+  function restoreLocalImages(html, images) {
+    if (!images.length) return html;
+    return html.replace(/\x00NIMAGE(\d+)\x00/g, function (_, idx) {
+      const item = images[+idx];
+      if (!item) return '';
+      const target = escapeHtml(item.target);
+      const alt = escapeHtml(item.alt || item.target.split('/').pop() || '');
+      return '<span class="md-local-image" data-note-image-wrap="' + target + '">'
+        + '<img data-note-image="' + target + '" alt="' + alt + '" loading="lazy" decoding="async">'
+        + '<span class="md-local-image-fallback">' + alt + '</span></span>';
+    });
+  }
+
   // ── 双链 [[名字]] / [[名字|别名]]：画布内跳转（实际解析在 canvas.js，这里只渲染成可点链接）──
   const LINK_ICON_WIKI = '<svg class="node-link-icon" viewBox="0 0 16 16" width="11" height="11"'
     + ' fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"'
@@ -712,9 +749,12 @@
     const source = normalizeSource(src);
     if (!source) return { html: '', features: { math: false, mermaid: false }, error: false };
     const features = scanFeatures(source);
+    const options = arguments.length > 1 ? arguments[1] : null;
+    const opts = options && typeof options === 'object' ? options : {};
     try {
       const codeGuard = protectCode(source);
-      const wikiGuard = protectWikiLinks(codeGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
+      const imageGuard = protectLocalImages(codeGuard.protected, opts.localImages === true);
+      const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
       const linkGuard = protectLinks(wikiGuard.protected);
       const mathGuard = protectMath(linkGuard.protected);
       const escapeGuard = protectEscapes(mathGuard.protected);
@@ -722,6 +762,7 @@
       html = restoreMath(html, mathGuard.maths);
       html = restoreLinks(html, linkGuard.links);
       html = restoreWikiLinks(html, wikiGuard.wikis);
+      html = restoreLocalImages(html, imageGuard.images);
       html = restoreEscapes(html, escapeGuard.chars);
       html = restoreCode(html, codeGuard.codes);
       return { html: html, features: features, error: false };
@@ -734,8 +775,8 @@
     }
   }
 
-  function render(src) {
-    return renderResult(src).html;
+  function render(src, options) {
+    return renderResult(src, options).html;
   }
 
   // ── Y2 轮：标记符号区间（给编辑态实时高亮用）────────────

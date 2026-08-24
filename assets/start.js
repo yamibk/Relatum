@@ -8,6 +8,8 @@
   'use strict';
 
   const main = document.querySelector('.start-main');
+  const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
+  const workspaceButtons = Array.from(document.querySelectorAll('button[data-start-workspace]'));
   const loadingView = document.querySelector('[data-view="loading"]');
   const emptyView = document.querySelector('[data-view="empty"]');
   const recentView = document.querySelector('[data-view="recent"]');
@@ -139,6 +141,14 @@
   const TREE_PAGE_ROOT_TITLE_SIZE_MAX = 36;
   const LIBRARY_SEARCH_ENABLED_KEY = 'canvas:librarySearchEnabled';
   let startTurnSpeed = START_SPEED_DEFAULT;
+  const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
+  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, blog: 2 };
+  let activeStartWorkspace = document.body.dataset.startWorkspace === 'notes' ? 'notes' : 'canvas';
+  let workspaceSwitchPromise = Promise.resolve(true);
+  let noteWorkspaceLoader = null;
+  let noteWorkspaceWarmupHandle = 0;
+  let noteWorkspaceWarmupScheduled = false;
+  let workspaceTransitionTimer = 0;
   let notesInertia = NOTES_INERTIA_DEFAULT;
   let startViewTransitionTimer = 0;
   const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
@@ -147,6 +157,175 @@
   function englishUI() {
     return !!(window.RelatumI18n && window.RelatumI18n.language === 'en');
   }
+
+  function loadNoteWorkspace() {
+    if (window.CanvasNoteWorkspace) return Promise.resolve(window.CanvasNoteWorkspace);
+    if (noteWorkspaceLoader) return noteWorkspaceLoader;
+    const loadScript = (src, ready) => {
+      if (ready()) return Promise.resolve(true);
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = () => ready() ? resolve(true) : reject(new Error(src + ' 没有完成初始化'));
+        script.onerror = () => reject(new Error(src + ' 加载失败'));
+        document.head.appendChild(script);
+      });
+    };
+    noteWorkspaceLoader = loadScript('vendor/codemirror/relatum-codemirror.min.js', () => !!window.RelatumCodeMirror)
+      .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
+      .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
+      .then(() => window.CanvasNoteWorkspace);
+    return noteWorkspaceLoader;
+  }
+
+  function scheduleNoteWorkspaceIdleWarmup() {
+    if (activeStartWorkspace !== 'canvas' || noteWorkspaceWarmupScheduled || window.CanvasNoteWorkspace) return;
+    noteWorkspaceWarmupScheduled = true;
+    const warmup = () => {
+      noteWorkspaceWarmupHandle = 0;
+      if (activeStartWorkspace !== 'canvas') return;
+      loadNoteWorkspace()
+        .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
+        .catch(() => {});
+    };
+    const queueWarmup = () => {
+      if (typeof window.requestIdleCallback === 'function') {
+        noteWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 2400 });
+      } else {
+        noteWorkspaceWarmupHandle = window.setTimeout(warmup, 900);
+      }
+    };
+    if (document.readyState === 'complete') queueWarmup();
+    else window.addEventListener('load', queueWarmup, { once: true });
+  }
+
+  function syncWorkspaceControls(name) {
+    document.documentElement.dataset.startWorkspace = name;
+    document.body.dataset.startWorkspace = name;
+    if (name !== 'notes') {
+      document.documentElement.classList.remove('note-boot-pending');
+      if (window.RelatumBoot && window.RelatumBoot.noteRevealTimer) {
+        clearTimeout(window.RelatumBoot.noteRevealTimer);
+        window.RelatumBoot.noteRevealTimer = 0;
+      }
+    }
+    workspaceButtons.forEach((button) => {
+      const active = button.dataset.startWorkspace === name;
+      button.classList.toggle('active', active);
+      if (button.getAttribute('role') === 'tab') {
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+        button.tabIndex = active ? 0 : -1;
+      }
+    });
+  }
+
+  function showWorkspacePanel(name, previous, animate) {
+    clearTimeout(workspaceTransitionTimer);
+    const nextPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === name);
+    const previousPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === previous);
+    if (!nextPanel) return;
+    workspacePanels.forEach((panel) => {
+      if (panel !== nextPanel && panel !== previousPanel) {
+        panel.hidden = true;
+        panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      }
+    });
+    nextPanel.hidden = false;
+    nextPanel.inert = false;
+    if (!animate || !previousPanel || previousPanel === nextPanel
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (previousPanel && previousPanel !== nextPanel) previousPanel.hidden = true;
+      nextPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
+      return;
+    }
+    const forward = START_WORKSPACE_ORDER[name] > START_WORKSPACE_ORDER[previous];
+    const directionClass = forward ? 'workspace-forward' : 'workspace-back';
+    previousPanel.hidden = false;
+    previousPanel.inert = true;
+    previousPanel.classList.add('workspace-leaving', directionClass);
+    nextPanel.classList.add('workspace-entering', directionClass);
+    requestAnimationFrame(() => document.body.classList.add('start-workspace-turning'));
+    workspaceTransitionTimer = window.setTimeout(() => {
+      previousPanel.hidden = true;
+      previousPanel.inert = false;
+      previousPanel.classList.remove('workspace-leaving', directionClass);
+      nextPanel.classList.remove('workspace-entering', directionClass);
+      document.body.classList.remove('start-workspace-turning');
+      if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
+    }, Math.max(180, startTurnSpeed) + 60);
+    if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
+  }
+
+  // 画布工作区隐藏时，书脊目标的 DOMRect 会退化为零尺寸；此时留下的游标形状
+  // 不能复用于再次进入画布。等待共享网格完成两帧布局后，重新同步黑色游标与
+  // 彩色跟随层；动画收尾处还会再校准一次，避免过渡结束后出现一帧跳位。
+  function syncCanvasWorkspaceSpineAfterReveal() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (activeStartWorkspace !== 'canvas') return;
+      syncActiveSpineOrb({ animate: false });
+    }));
+  }
+
+  async function performStartWorkspace(next, options = {}) {
+    const name = Object.prototype.hasOwnProperty.call(START_WORKSPACE_ORDER, next) ? next : 'canvas';
+    const previous = activeStartWorkspace;
+    if (name !== previous && previous === 'notes' && window.CanvasNoteWorkspace
+      && typeof window.CanvasNoteWorkspace.deactivate === 'function') {
+      const canLeave = await window.CanvasNoteWorkspace.deactivate();
+      if (canLeave === false) return false;
+    }
+    activeStartWorkspace = name;
+    syncWorkspaceControls(name);
+    showWorkspacePanel(name, previous, options.animate !== false && name !== previous);
+    if (options.persist !== false && (name === 'canvas' || name === 'notes')) {
+      try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
+    }
+    if (name === 'notes') {
+      try {
+        const notesWorkspace = await loadNoteWorkspace();
+        if (activeStartWorkspace === 'notes') await notesWorkspace.activate();
+      } catch (error) {
+        if (activeStartWorkspace === 'notes') {
+          activeStartWorkspace = 'canvas';
+          syncWorkspaceControls('canvas');
+          showWorkspacePanel('canvas', 'notes', false);
+          showNotice(englishUI() ? 'Notes unavailable' : '笔记工作区暂时无法打开', error.message || String(error));
+        }
+        return false;
+      }
+    } else if (name === 'canvas') {
+      scheduleNoteWorkspaceIdleWarmup();
+    }
+    document.dispatchEvent(new CustomEvent('relatum:start-workspacechange', {
+      detail: { workspace: name, previous },
+    }));
+    return true;
+  }
+
+  function setStartWorkspace(next, options = {}) {
+    workspaceSwitchPromise = workspaceSwitchPromise
+      .catch(() => false)
+      .then(() => performStartWorkspace(next, options));
+    return workspaceSwitchPromise;
+  }
+
+  workspaceButtons.forEach((button) => {
+    button.addEventListener('click', () => setStartWorkspace(button.dataset.startWorkspace));
+  });
+  syncWorkspaceControls(activeStartWorkspace);
+  workspacePanels.forEach((panel) => {
+    const active = panel.dataset.startWorkspacePanel === activeStartWorkspace;
+    panel.hidden = !active;
+    panel.inert = !active;
+  });
+  window.RelatumStartWorkspace = {
+    get current() { return activeStartWorkspace; },
+    set: setStartWorkspace,
+  };
+  if (activeStartWorkspace === 'notes') setStartWorkspace('notes', { animate: false, persist: false });
+  else scheduleNoteWorkspaceIdleWarmup();
 
   function preloadEditorBackground(background) {
     if (!background || typeof background !== 'object') return;
@@ -780,10 +959,11 @@
   const START_HELP_PAGES_ZH = [
     {
       id: 'safety', eyebrow: '01 · BEFORE DELETING', title: '删除前，先看这里',
-      subtitle: 'Relatum 的内容都保存在用户数据目录里的 <code>canvases</code> 和 <code>data</code> 中。多数文件删掉后不会“释放缓存”，而是会真正丢失内容或记录。',
+      subtitle: 'Relatum 的内容都保存在用户数据目录里的 <code>canvases</code>、<code>notes</code> 和 <code>data</code> 中。多数文件删掉后不会“释放缓存”，而是会真正丢失内容或记录。',
       sections: [
-        ['两个文件夹分别装什么', '可以把它们理解成“作品本体”和“配套资料”。', [
+        ['三个文件夹分别装什么', '它们分别保存画布、Markdown 笔记库和应用记录。', [
           ['<code>canvases</code>', '保存每张画布及其图片、PDF、Markdown 附件和批注。这里通常最占空间，也是最不能随便拆开删除的部分。'],
+          ['<code>notes</code>', '保存笔记工作区的 <code>.md</code> 正文、任意层级文件夹和 <code>&lt;笔记名&gt;.assets</code> 图片。它是可直接备份的真实笔记库，不是缓存。'],
           ['<code>data</code>', '保存画布列表、分组收藏、学习任务、独立树状页、复习卡片、速记、日记、专注记录、背景和各种偏好。这里的 JSON 文件通常很小。'],
         ]],
         ['真正容易占空间的地方', '如果只是想腾出磁盘空间，优先检查素材和回收站；不要为了几 KB 的 JSON 文件丢掉长期记录。', [
@@ -794,16 +974,16 @@
         ]],
         ['安全整理顺序', '建议按下面的顺序操作，出了问题也更容易恢复。', [
           ['1. 退出 Relatum', '避免程序正在保存时，文件被删掉、重建或只写入一半。'],
-          ['2. 复制一份备份', '至少备份准备删除的文件；如果拿不准，直接备份整个 <code>canvases</code> 和 <code>data</code>。'],
-          ['3. 优先用应用内功能', '画布重命名、移动、回收、清空回收站和清理附件，尽量在 Relatum 内完成。'],
+          ['2. 复制一份备份', '至少备份准备删除的文件；如果拿不准，直接备份整个 <code>canvases</code>、<code>notes</code> 和 <code>data</code>。'],
+          ['3. 优先用应用内功能', '画布重命名、回收和清理附件，以及笔记重命名、移动与删除，尽量在 Relatum 内完成。'],
           ['4. 再手动删除', '只删除已经确认用途的条目。删除后重新打开 Relatum，检查画布、附件和记录是否正常。'],
         ]],
         ['一个重要区别', '“文件会重新出现”不等于“数据会恢复”。很多文件缺失后，Relatum 会创建一份新的空文件或使用默认设置；原来的内容仍然已经丢失。'],
       ],
     },
     {
-      id: 'canvases', eyebrow: '02 · CANVASES', title: 'canvases：画布和附件',
-      subtitle: '这里保存画布正文。画布文件与同名素材文件夹是一对，移动、重命名和删除时应当一起处理。',
+      id: 'canvases', eyebrow: '02 · CONTENT', title: 'canvases 与 notes：作品正文',
+      subtitle: '<code>canvases</code> 保存画布，<code>notes</code> 保存普通 Markdown 笔记库；两者都是用户正文。',
       sections: [
         ['顶层会看到什么', '每张画布至少有一个 <code>.canvas</code> 文件；使用过图片或附件时，还会出现同名的 <code>.assets</code> 文件夹。', [
           ['<code>名称.canvas</code>', '画布本体，包含节点、文字、连线、手写、表格、计时器、镜头册、任务簿和笔记坞等内容。删除后，这张画布本身就丢失；起步页可能暂时留下一个打不开的登记项。'],
@@ -818,6 +998,7 @@
         ]],
         ['不要拆散同名的一对', '例如 <code>课程.canvas</code> 应与 <code>课程.assets</code> 保持同名。手动只改其中一个名字，会让画布找不到素材；手动把画布移出目录，也可能让起步页登记失效。请优先使用 Relatum 的重命名、导入和回收站功能。'],
         ['想腾空间时怎么做', '先打开目标画布，在顶部使用“清理附件”，它会按实际引用删除孤儿素材。仍需继续清理时，再检查回收站和已经确认不需要的整张画布；不要随意逐个删除素材文件。'],
+        ['<code>notes</code> 笔记库', '每篇笔记是普通 <code>.md</code> 文件，可在文件树右键选择“在系统资源管理器中显示”后复制进来，也可从 Explorer 直接拖入。粘贴图片保存在同层 <code>&lt;笔记名&gt;.assets/images</code> 中，会随应用内重命名、移动或移入 Windows 系统回收站。手工改动后回到 Relatum 即会静默同步，也可点击刷新。'],
       ],
     },
     {
@@ -832,6 +1013,7 @@
           ['<code>backgrounds</code>', '自己上传的背景图片。删除正在使用的图片会使背景缺失；先切换到内置背景，再清理不用的图片。'],
           ['<code>viewport.json</code>', '各画布上次的视野位置和缩放。删除后画布内容不受影响，只会丢失上次观看位置。'],
           ['<code>window-state.json</code>', '桌面窗口的大小、位置和最大化状态。删除后窗口恢复默认，不影响任何内容。'],
+          ['<code>note-recovery</code>', '笔记的本地恢复快照；外部改写与正在输入的内容碰撞、或恢复历史前会强制保留一份。普通快照最短间隔 5 分钟，保留 7 天。'],
         ]],
         ['树状页、学习、每日任务与活动足迹', '下面这些都是长期记录，不属于缓存。', [
           ['<code>tree-page.json</code>', '独立树状页的任务、阶段、连接、外观和当前树。它与学习页的目标树完全分开；删除后树状页会从空白重新开始，不影响 <code>study.json</code>、画布或学习页，也不能从学习页自动恢复。'],
@@ -865,10 +1047,11 @@
   const START_HELP_PAGES_EN = [
     {
       id: 'safety', eyebrow: '01 · BEFORE DELETING', title: 'Before deleting, read this',
-      subtitle: 'Relatum stores its content in the <code>canvases</code> and <code>data</code> folders inside your user data directory. Deleting most of these files does not “clear a cache”; it permanently removes content or history.',
+      subtitle: 'Relatum stores its content in the <code>canvases</code>, <code>notes</code>, and <code>data</code> folders inside your user data directory. Deleting most of these files does not “clear a cache”; it permanently removes content or history.',
       sections: [
-        ['What the two folders contain', 'Think of them as “your work” and “supporting data”.', [
+        ['What the three folders contain', 'They hold canvases, the Markdown notes library, and application records.', [
           ['<code>canvases</code>', 'Stores every canvas together with its images, PDFs, Markdown attachments, and annotations. This folder usually uses the most space and should not be split up or cleaned blindly.'],
+          ['<code>notes</code>', 'Stores the Notes workspace as ordinary <code>.md</code> files, nested folders, and <code>&lt;note name&gt;.assets</code> images. It is your real, directly backupable notes library, not a cache.'],
           ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, the independent Tree page, review cards, quick notes, journals, focus history, backgrounds, and preferences. Its JSON files are usually very small.'],
         ]],
         ['What actually uses disk space', 'If you only want to free disk space, inspect assets and Trash first. Do not sacrifice long-term records to save a few KB of JSON.', [
@@ -879,16 +1062,16 @@
         ]],
         ['A safer cleanup order', 'Follow this order so a mistake is easier to recover from.', [
           ['1. Quit Relatum', 'This prevents files from being deleted, recreated, or only partly written while the app is saving.'],
-          ['2. Make a backup', 'Back up at least the items you plan to delete. If you are unsure, copy the entire <code>canvases</code> and <code>data</code> folders.'],
-          ['3. Prefer in-app actions', 'Rename, move, recycle, empty Trash, and clean attachments from inside Relatum whenever possible.'],
+          ['2. Make a backup', 'Back up at least the items you plan to delete. If you are unsure, copy the entire <code>canvases</code>, <code>notes</code>, and <code>data</code> folders.'],
+          ['3. Prefer in-app actions', 'Use Relatum for canvas renaming, Trash, and asset cleanup, and for note renaming, moving, and deletion whenever possible.'],
           ['4. Delete manually only after that', 'Delete only items whose purpose you have confirmed. Reopen Relatum afterward and check canvases, attachments, and records.'],
         ]],
         ['One important distinction', 'A file being recreated does not mean its data was recovered. When a file is missing, Relatum may create a new empty file or use defaults; the original content is still gone.'],
       ],
     },
     {
-      id: 'canvases', eyebrow: '02 · CANVASES', title: 'canvases: canvases and attachments',
-      subtitle: 'This folder holds the canvas content. A canvas file and its matching asset folder are a pair and should be moved, renamed, or deleted together.',
+      id: 'canvases', eyebrow: '02 · CONTENT', title: 'canvases and notes: your content',
+      subtitle: '<code>canvases</code> stores canvases and <code>notes</code> is an ordinary Markdown library. Both folders contain user-authored content.',
       sections: [
         ['What appears at the top level', 'Every canvas has a <code>.canvas</code> file. If it uses images or attachments, it also has a matching <code>.assets</code> folder.', [
           ['<code>Name.canvas</code>', 'The canvas itself: nodes, text, edges, ink, tables, timers, scenes, taskbooks, notebooks, and more. Deleting it loses that canvas; Home may temporarily keep an entry that can no longer open.'],
@@ -903,6 +1086,7 @@
         ]],
         ['Keep matching names together', 'For example, <code>Course.canvas</code> must stay paired with <code>Course.assets</code>. Renaming only one breaks asset links, and moving a canvas out manually can invalidate its Home entry. Prefer Relatum’s rename, import, and Trash actions.'],
         ['How to free space', 'Open the target canvas and use “Clean attachments” from the top bar; it removes orphaned assets according to actual references. If you still need space, inspect Trash and entire canvases you no longer need. Do not delete asset files one by one at random.'],
+        ['The <code>notes</code> library', 'Each note is an ordinary <code>.md</code> file. Right-click it and choose “Show in File Explorer”, or drag files and folders directly from Explorer. Pasted images live under <code>&lt;note name&gt;.assets/images</code>; Relatum moves that folder with the note and sends both to the Windows Recycle Bin together. Returning to Relatum after a manual file change silently refreshes it.'],
       ],
     },
     {
@@ -917,6 +1101,7 @@
           ['<code>backgrounds</code>', 'Background images you uploaded. Deleting an image still in use makes the background disappear; switch to a built-in background first.'],
           ['<code>viewport.json</code>', 'The last position and zoom for each canvas. Deleting it does not affect content, only the last viewing position.'],
           ['<code>window-state.json</code>', 'Desktop window size, position, and maximized state. Deleting it restores the default window without affecting content.'],
+          ['<code>note-recovery</code>', 'Local note recovery snapshots. Relatum forces one before an external edit collides with active typing and before restoring history. Ordinary snapshots are at least five minutes apart and are kept for seven days.'],
         ]],
         ['Tree, Study, daily tasks, and activity', 'These are long-term records, not cache files.', [
           ['<code>tree-page.json</code>', 'Tasks, stages, links, appearance, and the active tree for the independent Tree page. It is completely separate from Study Goal Trees. Deleting it starts Tree from blank without affecting <code>study.json</code>, canvases, or Study, and it cannot be rebuilt automatically from Study.'],
@@ -1289,6 +1474,8 @@
 
   const desktopSettings = document.querySelector('[data-role="desktop-settings"]');
   const desktopSettingsOpen = document.querySelector('[data-action="desktop-settings-open"]');
+  const noteFontScaleRange = document.querySelector('[data-role="note-font-scale"]');
+  const noteFontScaleValue = document.querySelector('[data-role="note-font-scale-value"]');
   const desktopSizeForm = document.querySelector('[data-role="desktop-size-form"]');
   const desktopSizeHint = document.querySelector('[data-role="desktop-size-hint"]');
   const desktopPresetButtons = Array.from(document.querySelectorAll('[data-role="desktop-size-presets"] button'));
@@ -1297,6 +1484,7 @@
   const starmapMotionResets = Array.from(document.querySelectorAll('[data-action="starmap-motion-reset"]'));
   const starmapMotionValues = Array.from(document.querySelectorAll('[data-role="starmap-motion-value"]'));
   const STARMAP_MOTION_KEY = 'canvas:starmapMotion:v1';
+  const NOTE_FONT_SCALE_KEY = 'canvas:noteFontScale:v1';
   const STARMAP_MOTION_DEFAULTS = Object.freeze({
     introMs: 1080,
     introStagger: 60,
@@ -1306,6 +1494,23 @@
     finalFitOnConverge: false,
   });
   let starmapMotionNotifyTimer = 0;
+
+  function readNoteFontScale() {
+    let value = 100;
+    try { value = Number(localStorage.getItem(NOTE_FONT_SCALE_KEY) || 100); } catch (e) {}
+    return Math.max(80, Math.min(140, Math.round(value / 5) * 5 || 100));
+  }
+
+  function applyNoteFontScale(value, persist) {
+    const scale = Math.max(80, Math.min(140, Math.round(Number(value) / 5) * 5 || 100));
+    document.documentElement.style.setProperty('--note-font-scale', String(scale / 100));
+    if (noteFontScaleRange) noteFontScaleRange.value = String(scale);
+    if (noteFontScaleValue) noteFontScaleValue.textContent = scale + '%';
+    if (persist) {
+      try { localStorage.setItem(NOTE_FONT_SCALE_KEY, String(scale)); } catch (e) {}
+    }
+    return scale;
+  }
 
   function readStarmapMotionSettings() {
     let raw = null;
@@ -1389,12 +1594,13 @@
   }
 
   async function openDesktopSettings() {
-    if (!desktopSettings || !window.CanvasDesktop) return;
+    if (!desktopSettings) return;
     desktopSettings.hidden = false;
+    applyNoteFontScale(readNoteFontScale(), false);
     syncStarmapMotionForm();
-    try {
-      syncDesktopSizeForm(await window.CanvasDesktop.getRestoredSize());
-    } catch (e) {}
+    if (window.CanvasDesktop) {
+      try { syncDesktopSizeForm(await window.CanvasDesktop.getRestoredSize()); } catch (e) {}
+    }
   }
 
   function closeDesktopSettings() {
@@ -1402,6 +1608,8 @@
   }
 
   if (desktopSettingsOpen) desktopSettingsOpen.addEventListener('click', openDesktopSettings);
+  applyNoteFontScale(readNoteFontScale(), false);
+  if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
   document.querySelectorAll('[data-action="desktop-settings-close"]').forEach((button) => {
     button.addEventListener('click', closeDesktopSettings);
   });
@@ -4427,7 +4635,8 @@
   // 拖到书脊的分组圆点 → 导入那个组（圆点 drop 会 stopPropagation，不会被这里重复处理）。
   // 内部组间/组内调序拖动用 text/plain，dtHasFiles 为假，完全不受影响。
   function startPageAcceptsCanvasDrop() {
-    return !studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
+    return activeStartWorkspace === 'canvas'
+      && !studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
       && !reviewActive && !focusActive;   // 仅在「最近/分组」列表视图接收
   }
   function setCanvasDropHint(on) {

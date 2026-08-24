@@ -14,12 +14,23 @@
           ? 'scenic' : 'simple';
         document.documentElement.dataset.startTheme = theme;
         document.documentElement.dataset.startBackground = backgroundStyle;
+        var workspace = localStorage.getItem('canvas:startWorkspace:v1') === 'notes'
+          ? 'notes' : 'canvas';
+        document.documentElement.dataset.startWorkspace = workspace;
+        if (workspace === 'notes') {
+          document.documentElement.classList.add('note-boot-pending');
+          window.RelatumBoot = window.RelatumBoot || {};
+          window.RelatumBoot.noteRevealTimer = window.setTimeout(function () {
+            document.documentElement.classList.remove('note-boot-pending');
+          }, 4000);
+        }
         var language = localStorage.getItem('canvas:toolbarLanguage') === 'en' ? 'en' : 'zh-CN';
         document.documentElement.dataset.uiLanguage = language;
         document.documentElement.lang = language;
       } catch (e) {
         document.documentElement.dataset.startTheme = 'light';
         document.documentElement.dataset.startBackground = 'simple';
+        document.documentElement.dataset.startWorkspace = 'canvas';
         document.documentElement.dataset.uiLanguage = 'zh-CN';
       }
     })();
@@ -27,6 +38,11 @@
   <style>
     html { background: #fbfbfa; }
     html[data-start-theme="dark"] { background: #111213; color-scheme: dark; }
+    /* 上次停在笔记时，不展示尚未读取磁盘的静态空状态。顶栏和最终两栏几何照常
+       挂载，笔记运行时取得文件树与上次文档后再一次性揭示。 */
+    html.note-boot-pending body[data-start-workspace="notes"] .note-workspace {
+      visibility: hidden !important;
+    }
   </style>
   <link rel="preload" href="focus.js" as="script">
   <script>
@@ -58,6 +74,8 @@
         document.documentElement.dataset.startTheme === 'dark' ? 'dark' : 'light';
       document.body.dataset.startBackground =
         document.documentElement.dataset.startBackground === 'scenic' ? 'scenic' : 'simple';
+      document.body.dataset.startWorkspace =
+        document.documentElement.dataset.startWorkspace === 'notes' ? 'notes' : 'canvas';
       let librarySearchEnabled = false;
       try { librarySearchEnabled = localStorage.getItem('canvas:librarySearchEnabled') === '1'; } catch (e) {}
       document.body.dataset.librarySearchEnabled = librarySearchEnabled ? '1' : '0';
@@ -93,6 +111,14 @@
                 <button type="button" data-background-style="scenic">沉浸</button>
               </div>
             </div>
+            <label class="start-root-title-size-setting start-note-font-setting">
+              <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
+              <span class="start-note-font-range" style="--default-pos:33.333%;">
+                <input type="range" min="80" max="140" step="5" value="100"
+                  data-role="note-font-scale" aria-label="笔记正文字号缩放比例">
+              </span>
+              <small aria-hidden="true"><i>80%</i><i>100% = 16px</i><i>140%</i></small>
+            </label>
             <label class="start-setting-toggle starmap-motion-toggle">
               <span>
                 <strong>结束后自动取景</strong>
@@ -200,6 +226,16 @@
           </div>
         </div>
       </div>
+      <nav class="start-workspace-switch" data-role="start-workspace-switch"
+        role="tablist" aria-label="工作区">
+        <span class="start-workspace-slider" aria-hidden="true"></span>
+        <button type="button" role="tab" data-start-workspace="canvas"
+          aria-controls="start-canvas-workspace">画布</button>
+        <button type="button" role="tab" data-start-workspace="notes"
+          aria-controls="start-notes-workspace">笔记</button>
+        <button type="button" role="tab" data-start-workspace="blog"
+          aria-controls="start-blog-workspace">博客</button>
+      </nav>
     </div>
     <!-- 常驻操作条：仅在画布列表视图显示（空状态由 hero 区承担操作）-->
     <div class="top-actions">
@@ -210,7 +246,9 @@
     </div>
   </header>
 
-  <main class="start-main" data-state="loading">
+  <div class="start-workspace-stage">
+  <main class="start-main start-workspace-panel" id="start-canvas-workspace"
+    data-start-workspace-panel="canvas" data-state="loading">
     <!-- 加载占位：默认显示，等 /api/recent 返回后才切到 empty 或 recent
          避免"先看到空状态再闪到列表"以及按钮在切换瞬间消失的时序问题 -->
     <section class="loading-state" data-view="loading">加载中…</section>
@@ -1234,7 +1272,120 @@
     </section>
   </main>
 
-  <!-- 本地数据说明：解释 canvases / data 中的文件用途与删除后果 -->
+  <section class="note-workspace start-workspace-panel" id="start-notes-workspace"
+    data-start-workspace-panel="notes" aria-label="Markdown 笔记库" hidden>
+    <aside class="note-tree-pane" aria-label="笔记文件树">
+      <header class="note-pane-head">
+        <div class="note-library-heading">
+          <h1>笔记库</h1>
+          <button type="button" class="note-library-focus-button" data-note-action="toggle-focus"
+            title="隐藏顶部栏" aria-label="隐藏顶部栏" aria-pressed="false">
+            <svg class="note-focus-icon note-focus-icon-expand" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.25 3.25h-4v4M12.75 3.25h4v4M7.25 16.75h-4v-4M12.75 16.75h4v-4"/></svg>
+            <svg class="note-focus-icon note-focus-icon-restore" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.25 7.25h4v-4M16.75 7.25h-4v-4M3.25 12.75h4v4M16.75 12.75h-4v4"/></svg>
+          </button>
+        </div>
+        <div class="note-head-actions">
+          <button type="button" class="note-icon-button" data-note-action="new-note"
+            title="新建笔记" aria-label="新建笔记"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.25 2.75h6l3.5 3.5v11H5.25v-14.5Zm6 0v3.5h3.5M7.5 11h5M10 8.5v5"/></svg></button>
+          <button type="button" class="note-icon-button note-folder-add" data-note-action="new-folder"
+            title="新建文件夹" aria-label="新建文件夹"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 7V5.25c0-.83.67-1.5 1.5-1.5h3l2 2h6.5c.83 0 1.5.67 1.5 1.5v8c0 .83-.67 1.5-1.5 1.5H4.25c-.83 0-1.5-.67-1.5-1.5V7Z"/><path d="M10 9v5M7.5 11.5h5"/></svg></button>
+          <button type="button" class="note-icon-button note-refresh" data-note-action="refresh"
+            title="刷新笔记库" aria-label="刷新笔记库"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.15A6.25 6.25 0 1 0 16 12.5"/><path d="M15.85 3.75v3.4h-3.4"/></svg></button>
+        </div>
+      </header>
+      <div class="note-tree-scroll" data-role="note-tree" tabindex="0">
+        <p class="note-tree-loading">正在读取笔记库…</p>
+      </div>
+      <footer class="note-tree-foot">
+        <span>本地目录 · notes/</span>
+        <button type="button" data-note-action="reveal-root">在资源管理器中打开</button>
+      </footer>
+    </aside>
+
+    <section class="note-document-pane">
+      <nav class="note-tab-bar" aria-label="打开的笔记">
+        <div class="note-tab-list" data-role="note-tabs" role="tablist"></div>
+        <button type="button" class="note-tab-new" data-note-action="new-tab"
+          aria-label="新建并打开笔记">+</button>
+      </nav>
+      <header class="note-document-head">
+        <div class="note-current-copy">
+          <button type="button" class="note-mobile-pane-button" data-note-action="toggle-tree"
+            aria-label="显示笔记目录">☰</button>
+          <p class="note-current-path" data-role="note-current-path">选择一篇笔记</p>
+        </div>
+        <div class="note-document-tools">
+          <button type="button" class="note-side-button" data-note-action="toggle-links"
+            aria-label="显示链接面板">⇄</button>
+          <button type="button" class="note-more-button" data-note-action="current-menu"
+            aria-label="当前笔记菜单">•••</button>
+        </div>
+      </header>
+      <div class="note-document-body">
+        <div class="note-error-bar" data-role="note-error" role="status" hidden></div>
+        <div class="note-inline-title-shell" data-role="note-inline-title-shell" hidden>
+          <input class="note-inline-title" data-role="note-inline-title" type="text"
+            autocomplete="off" spellcheck="false" aria-label="笔记文件名" />
+        </div>
+        <div class="note-empty-state" data-role="note-empty">
+          <h2>从第一行开始</h2>
+          <p>笔记就是 notes/ 里的 Markdown 文件。</p>
+          <button type="button" class="btn btn-primary" data-note-action="new-note">新建笔记</button>
+        </div>
+        <div class="note-live-editor-host" data-role="note-editor" hidden></div>
+        <textarea class="note-source-editor note-editor-fallback" data-role="note-editor-fallback" hidden
+          spellcheck="false" aria-label="Markdown 源码降级编辑器"
+          placeholder="开始书写 Markdown…"></textarea>
+      </div>
+      <footer class="note-document-status" data-role="note-document-status" hidden>
+        <span data-role="note-word-count">0 个词</span>
+        <span data-role="note-character-count">0 个字符</span>
+      </footer>
+    </section>
+
+    <aside class="note-links-pane" aria-label="笔记链接">
+      <header class="note-pane-head note-links-head">
+        <h2 data-role="note-side-title">链接</h2>
+        <button type="button" class="note-side-button" data-note-action="close-links"
+          aria-label="关闭链接面板">×</button>
+      </header>
+      <div class="note-links-content" data-role="note-links-content">
+        <section class="note-link-section">
+          <h3>链接到的笔记 <span data-role="note-outgoing-count">0</span></h3>
+          <div class="note-link-list" data-role="note-outgoing"></div>
+        </section>
+        <section class="note-link-section note-backlink-section">
+          <h3>反向链接 <span data-role="note-backlink-count">0</span></h3>
+          <div class="note-link-list" data-role="note-backlinks"></div>
+        </section>
+      </div>
+      <div class="note-history-content" data-role="note-history-content" hidden>
+        <div class="note-history-list" data-role="note-history-list"></div>
+        <pre class="note-history-preview" data-role="note-history-preview"></pre>
+        <footer class="note-history-actions">
+          <button type="button" data-note-action="history-copy" disabled>复制内容</button>
+          <button type="button" data-note-action="history-restore" disabled>恢复此版本</button>
+        </footer>
+      </div>
+    </aside>
+  </section>
+
+  <section class="blog-workspace start-workspace-panel" id="start-blog-workspace"
+    data-start-workspace-panel="blog" aria-label="博客工作区" hidden>
+    <div class="blog-placeholder-paper">
+      <p class="note-eyebrow">BLOG · COMING NEXT</p>
+      <h1>博客工作区</h1>
+      <p>这里已经成为独立工作区入口。下一轮会在笔记库稳定后接入静态博客与发布联动。</p>
+      <button type="button" class="btn btn-primary" data-start-workspace="notes">先整理笔记</button>
+    </div>
+  </section>
+  </div>
+
+  <div class="note-context-menu" data-role="note-context-menu" hidden></div>
+  <div class="note-toast" data-role="note-toast" aria-live="polite"></div>
+  <div class="note-modal-host" data-role="note-modal-host"></div>
+
+  <!-- 本地数据说明：解释 canvases / notes / data 中的文件用途与删除后果 -->
   <div class="start-help-overlay" data-role="start-help" hidden>
     <button type="button" class="start-help-backdrop" data-action="start-help-close"
       aria-label="关闭本地数据说明"></button>
@@ -1243,7 +1394,7 @@
       <nav class="start-help-spine" aria-label="数据说明翻页">
         <span class="start-help-spine-slider" data-role="start-help-spine-slider" aria-hidden="true"></span>
         <button type="button" class="active" data-help-page="safety" title="删除前先看"><span></span></button>
-        <button type="button" data-help-page="canvases" title="canvases 文件夹"><span></span></button>
+        <button type="button" data-help-page="canvases" title="canvases 与 notes"><span></span></button>
         <button type="button" data-help-page="data" title="data 文件夹"><span></span></button>
       </nav>
       <header class="start-help-head">

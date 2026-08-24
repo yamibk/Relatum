@@ -81,6 +81,7 @@ if (-not (Test-Path -LiteralPath $ReleaseExe)) {
     throw ('Portable build output is missing: ' + $ReleaseExe)
 }
 if ((Test-Path -LiteralPath (Join-Path $PortableRelease 'canvases')) -or
+    (Test-Path -LiteralPath (Join-Path $PortableRelease 'notes')) -or
     (Test-Path -LiteralPath (Join-Path $PortableRelease 'data'))) {
     throw ('Portable build contains user data and cannot be packaged: ' + $PortableRelease)
 }
