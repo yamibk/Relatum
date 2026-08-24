@@ -40,6 +40,8 @@
       <button type="button" data-role="control-set">set</button>
       <button type="button" data-role="control-snapshot">snapshot</button>
       <button type="button" data-role="control-ime">ime</button>
+      <button type="button" data-role="control-long">long document</button>
+      <button type="button" data-role="control-mixed">table + code</button>
       <button type="button" data-role="control-performance">performance</button>
       <button type="button" data-role="control-dark">dark</button>
       <output data-role="control-result"></output>
@@ -49,7 +51,7 @@
   <script src="markdown.js"></script>
   <script src="mermaid-renderer.js"></script>
   <script src="vendor/codemirror/relatum-codemirror.min.js"></script>
-  <script src="note-live-editor.js?live-preview-finish-10"></script>
+  <script src="note-live-editor.js?live-preview-finish-11"></script>
   <script>
     (function () {
       'use strict';
@@ -72,6 +74,13 @@
         '',
         '> [!warning]- 折叠提示',
         '> 默认不显示这行。',
+        '',
+        '$$x^2+1$$',
+        '',
+        '```c',
+        '#include <stdio.h>',
+        'int main(void) { return 0; }',
+        '```',
         '',
         '| 功能 | 状态 |',
         '| --- | --- |',
@@ -111,6 +120,171 @@
         requestAnimationFrame(function () { requestAnimationFrame(function () {
           document.documentElement.dataset.noteLiveIme = JSON.stringify({ during: during, after: changeCount - before });
         }); });
+      });
+      function runLongPreviewProbe() {
+        var filler = [];
+        for (var index = 0; index < 280; index += 1) filler.push('普通段落 ' + index + '：用于跨过 CodeMirror 初始语法树范围。', '');
+        var late = [
+          '#### 视口后段标题',
+          '',
+          '```c',
+          '#include <stdio.h>',
+          'int main(void) {',
+          '  int value = 5;',
+          '  return value;',
+          '}',
+          '```',
+          '',
+          '| 功能 | 状态 |',
+          '| --- | --- |',
+          '| 长文档 | 已渲染 |',
+          '',
+          '$$x^2+1$$'
+        ].join('\n');
+        var source = filler.join('\n') + '\n' + late;
+        var target = source.indexOf('#### 视口后段标题');
+        editor.setDocument({ value: source, notePath: 'long-preview.md', anchor: 0, head: 0, scrollTop: 0 });
+        return new Promise(function (resolve) {
+          requestAnimationFrame(function () { requestAnimationFrame(function () {
+            editor.view.dispatch({ effects: window.RelatumCodeMirror.EditorView.scrollIntoView(target, { y: 'start', yMargin: 24 }) });
+            var attempts = 0;
+            function inspect() {
+              attempts += 1;
+              var lines = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line'));
+              var heading = lines.find(function (line) { return line.textContent.includes('视口后段标题'); });
+              var code = lines.find(function (line) { return line.textContent.includes('int main'); });
+              var result = {
+                sourceLength: source.length,
+                target: target,
+                treeLength: window.RelatumCodeMirror.syntaxTree(editor.view.state).length,
+                heading: !!(heading && heading.classList.contains('note-live-heading')),
+                codeLine: !!(code && code.classList.contains('note-live-code-line')),
+                codeToken: !!(code && code.querySelector('[class*="note-live-code-"]:not(.note-live-code-line)')),
+                codeBackground: code ? getComputedStyle(code).backgroundColor : '',
+                table: !!editor.view.contentDOM.querySelector('.note-live-rich-block.is-table'),
+                math: !!editor.view.contentDOM.querySelector('.note-live-rich-block.is-math'),
+                attempts: attempts
+              };
+              result.complete = result.target > 3000 && result.treeLength > result.target && result.heading && result.codeLine && result.codeToken && result.table && result.math && result.codeBackground !== 'rgba(0, 0, 0, 0)';
+              if (!result.complete && attempts < 60) { setTimeout(inspect, 50); return; }
+              document.documentElement.dataset.noteLiveLong = JSON.stringify(result);
+              resolve(result);
+            }
+            inspect();
+          }); });
+        });
+      }
+      window.__relatumRunLongPreviewProbe = runLongPreviewProbe;
+      document.querySelector('[data-role="control-long"]').addEventListener('click', function () {
+        runLongPreviewProbe().then(function (result) {
+          document.querySelector('[data-role="control-result"]').value = JSON.stringify(result);
+        });
+      });
+      function runMixedPreviewProbe() {
+        var filler = [];
+        for (var index = 0; index < 220; index += 1) filler.push('普通段落 ' + index + '：表格与代码块混合渲染回归。', '');
+        var mixed = [
+          '当自增运算符出现在表达式中，前缀和后缀的执行时机不同。',
+          '',
+          '| 形式 | 执行逻辑 | 表达式结果 | 变量最终值 |',
+          '| --- | --- | --- | --- |',
+          '| 前缀自增 `++c` | 先让 `x` 加 1 | 加 1 后的新值 | 原 value +1 |',
+          '| 后缀自增 `c++` | 先使用 `x` 当前值 | 加 1 前的原始值 | 原 value +1 |',
+          '| | | | |',
+          '',
+          '#### 示例 1：赋值表达式中',
+          '',
+          '```c',
+          'int a = 5, b = 5;',
+          'int c, d;',
+          '',
+          'c = a++;',
+          'd = ++b;',
+          '```',
+          '',
+          '#### 示例 2：打印语句中',
+          '',
+          '```c',
+          'int x = 3;',
+          'printf("%d\\n", x++);',
+          '```'
+        ].join('\n');
+        var trailing = [];
+        for (var tail = 0; tail < 40; tail += 1) trailing.push('后续段落 ' + tail + '：确保目标代码块不是文档末尾。', '');
+        var source = filler.join('\n') + '\n' + mixed + '\n\n' + trailing.join('\n');
+        var target = source.indexOf('#### 示例 1');
+        editor.view.dom.parentElement.style.height = '900px';
+        editor.view.requestMeasure();
+        editor.setDocument({ value: source, notePath: 'mixed-preview.md', anchor: 0, head: 0, scrollTop: 0 });
+        return new Promise(function (resolve) {
+          requestAnimationFrame(function () { requestAnimationFrame(function () {
+            editor.view.dispatch({ effects: window.RelatumCodeMirror.EditorView.scrollIntoView(target, { y: 'center' }) });
+            setTimeout(function () {
+              editor.view.dispatch({ effects: window.RelatumCodeMirror.EditorView.scrollIntoView(target, { y: 'center' }) });
+              setTimeout(function () {
+              var tableRenderedBeforeRestore = !!editor.view.contentDOM.querySelector('.note-live-rich-block.is-table');
+              var restoredScroll = editor.view.scrollDOM.scrollTop;
+              editor.setDocument({ value: source, notePath: 'mixed-preview.md', anchor: 0, head: 0, scrollTop: restoredScroll });
+              var attempts = 0;
+              function inspect() {
+                attempts += 1;
+                var table = editor.view.contentDOM.querySelector('.note-live-rich-block.is-table');
+                var codeLines = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line.note-live-code-line'));
+                var codeTokens = editor.view.contentDOM.querySelectorAll('[class*="note-live-code-"]:not(.note-live-code-line)').length;
+                var headings = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line.note-live-heading'));
+                var rawFences = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line')).filter(function (line) {
+                  return /^```/.test(line.textContent.trim());
+                });
+                var result = {
+                  sourceLength: source.length,
+                  target: target,
+                  restoredScroll: restoredScroll,
+                  tableRenderedBeforeRestore: tableRenderedBeforeRestore,
+                  table: !!table,
+                  codeLines: codeLines.length,
+                  codeTokens: codeTokens,
+                  headings: headings.length,
+                  rawFences: rawFences.length,
+                  viewport: { from: editor.view.viewport.from, to: editor.view.viewport.to },
+                  visibleRanges: editor.view.visibleRanges.map(function (range) { return { from: range.from, to: range.to }; }),
+                  treeLength: window.RelatumCodeMirror.syntaxTree(editor.view.state).length,
+                  attempts: attempts
+                };
+                result.complete = result.tableRenderedBeforeRestore && result.table && result.headings >= 1
+                  && result.rawFences === 0 && result.codeLines >= 4 && result.codeTokens > 0;
+                if (!result.complete && attempts < 80) { setTimeout(inspect, 50); return; }
+                if (!result.complete || !table) {
+                  document.documentElement.dataset.noteLiveMixed = JSON.stringify(result);
+                  resolve(result);
+                  return;
+                }
+                table.click();
+                setTimeout(function () {
+                  result.tableRevealed = !editor.view.contentDOM.querySelector('.note-live-rich-block.is-table');
+                  result.codeLinesAfterTableReveal = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-code-line').length;
+                  result.codeTokensAfterTableReveal = editor.view.contentDOM.querySelectorAll('[class*="note-live-code-"]:not(.note-live-code-line)').length;
+                  result.headingsAfterTableReveal = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-heading').length;
+                  result.rawFencesAfterTableReveal = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line')).filter(function (line) {
+                    return /^```/.test(line.textContent.trim());
+                  }).length;
+                  result.complete = result.complete && result.tableRevealed && result.headingsAfterTableReveal >= 1
+                    && result.rawFencesAfterTableReveal === 0 && result.codeLinesAfterTableReveal >= 4
+                    && result.codeTokensAfterTableReveal > 0;
+                  document.documentElement.dataset.noteLiveMixed = JSON.stringify(result);
+                  resolve(result);
+                }, 120);
+              }
+              inspect();
+              }, 250);
+            }, 500);
+          }); });
+        });
+      }
+      window.__relatumRunMixedPreviewProbe = runMixedPreviewProbe;
+      document.querySelector('[data-role="control-mixed"]').addEventListener('click', function () {
+        runMixedPreviewProbe().then(function (result) {
+          document.querySelector('[data-role="control-result"]').value = JSON.stringify(result);
+        });
       });
       document.querySelector('[data-role="control-performance"]').addEventListener('click', function () {
         var line = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '.repeat(2) + '\n\n';

@@ -8,6 +8,7 @@
   const tabsEl = $('[data-role="note-tabs"]');
   const editorHost = $('[data-role="note-editor"]');
   const fallbackEditor = $('[data-role="note-editor-fallback"]');
+  const readingHost = $('[data-role="note-reading-view"]');
   const empty = $('[data-role="note-empty"]');
   const inlineTitleShell = $('[data-role="note-inline-title-shell"]');
   const inlineTitleEl = $('[data-role="note-inline-title"]');
@@ -37,6 +38,7 @@
   const OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1';
   const EXPANDED_KEY = 'canvas:noteExpandedFolders:v1';
   const LINKS_OPEN_KEY = 'canvas:noteLinksOpen:v1';
+  const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const SAVE_DELAY = 350;
   const RETRY_DELAY = 2200;
   const TREE_MOTION_MS = 220;
@@ -60,6 +62,7 @@
       expandFolder: '展开文件夹', collapseFolder: '收起文件夹', duplicateTitle: '已经存在一个同名文件',
       titleRequired: '文件名不能为空', words: '{count} 个词', characters: '{count} 个字符', closeTab: '关闭标签页',
       enterFocus: '隐藏顶部栏', exitFocus: '显示顶部栏',
+      livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
     },
     en: {
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
@@ -78,6 +81,7 @@
       expandFolder: 'Expand folder', collapseFolder: 'Collapse folder', duplicateTitle: 'A file with the same name already exists',
       titleRequired: 'A filename is required', words: '{count} words', characters: '{count} characters', closeTab: 'Close tab',
       enterFocus: 'Hide top bar', exitFocus: 'Show top bar',
+      livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
     },
   };
   const state = {
@@ -88,12 +92,22 @@
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
+    viewMode: 'live',
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
   try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = stored.filter((path) => typeof path === 'string'); } catch (error) {}
   try { if (localStorage.getItem(LINKS_OPEN_KEY) === '1') root.classList.add('links-overlay-open'); } catch (error) {}
+  try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
 
   function editorSnapshot() {
+    if (state.viewMode === 'reading' && state.current) {
+      return {
+        value: state.current.content || '',
+        anchor: state.current.selectionStart || 0,
+        head: state.current.selectionEnd || state.current.selectionStart || 0,
+        scrollTop: readingHost && readingHost.scrollTop || 0,
+      };
+    }
     if (liveEditor) return liveEditor.snapshot();
     return {
       value: fallbackEditor.value,
@@ -104,7 +118,9 @@
   }
 
   function editorScrollElement() {
-    return liveEditor && liveEditor.view && liveEditor.view.scrollDOM || fallbackEditor;
+    if (state.viewMode === 'reading' && readingHost) return readingHost;
+    if (!liveEditor) return fallbackEditor;
+    return liveEditor.view && liveEditor.view.scrollDOM || fallbackEditor;
   }
 
   function syncInlineTitleScroll(scrollTop) {
@@ -161,15 +177,18 @@
     }
     syncInlineTitleScroll(payload.scrollTop);
     if (liveEditor) liveEditor.setDocument(payload);
-    else {
-      fallbackEditor.value = payload.value;
-      fallbackEditor.scrollTop = payload.scrollTop;
-      requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
-    }
+    fallbackEditor.value = payload.value;
+    fallbackEditor.scrollTop = payload.scrollTop;
+    requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
+    if (state.viewMode === 'reading') renderReadingDocument(payload);
     requestAnimationFrame(() => requestAnimationFrame(scheduleInlineTitleScroll));
   }
 
-  function focusEditor() { if (liveEditor) liveEditor.focus(); else fallbackEditor.focus(); }
+  function focusEditor() {
+    if (state.viewMode === 'reading' && readingHost) readingHost.focus();
+    else if (!liveEditor) fallbackEditor.focus();
+    else liveEditor.focus();
+  }
   function focusInlineTitle() {
     if (!inlineTitleEl || !state.current) { focusEditor(); return; }
     inlineTitleEl.focus();
@@ -189,11 +208,67 @@
     confirmCreateWiki(rawTarget);
   }
 
+  function normalizeViewMode(mode) {
+    return mode === 'source' || mode === 'reading' ? mode : 'live';
+  }
+
+  function readingPayload(documentState) {
+    const target = documentState || state.current;
+    return {
+      value: target && target.content || '',
+      notePath: target && target.path || '',
+      anchor: target && target.selectionStart || 0,
+      head: target && (target.selectionEnd || target.selectionStart) || 0,
+      scrollTop: target && target.scrollTop || 0,
+    };
+  }
+
+  function renderReadingDocument(payload) {
+    if (!readingHost) return;
+    const documentState = payload || readingPayload();
+    if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
+      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '');
+    } else {
+      const result = window.MarkdownMini && window.MarkdownMini.renderResult
+        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true })
+        : { html: '' };
+      readingHost.innerHTML = '<article class="note-reading-content node-text">' + (result.html || '') + '</article>';
+    }
+    requestAnimationFrame(() => { readingHost.scrollTop = Math.max(0, Number(documentState.scrollTop) || 0); });
+  }
+
+  function setViewMode(mode) {
+    const next = normalizeViewMode(mode);
+    if (next === state.viewMode) return;
+    if (state.current) rememberEditorState(state.current);
+    if (next === 'reading' && state.current) flushSave(state.current);
+    state.viewMode = next;
+    try { localStorage.setItem(NOTE_VIEW_KEY, next); } catch (error) {}
+    if (liveEditor) liveEditor.setSourceMode(next === 'source');
+    if (state.current) {
+      const payload = readingPayload(state.current);
+      if (next === 'source' && !liveEditor) {
+        fallbackEditor.value = payload.value;
+        fallbackEditor.scrollTop = payload.scrollTop;
+        requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
+      } else if (next === 'reading') {
+        renderReadingDocument(payload);
+      } else if (liveEditor) {
+        requestAnimationFrame(() => {
+          liveEditor.view.scrollDOM.scrollTop = payload.scrollTop;
+          liveEditor.view.requestMeasure();
+        });
+      }
+    }
+    updateEditorVisibility();
+    scheduleInlineTitleScroll();
+  }
+
   function initializeEditor() {
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.create === 'function') {
       try {
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
-          value: '', notePath: '',
+          value: '', notePath: '', sourceMode: state.viewMode === 'source',
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
           onOpenWiki: (target) => openWikiFromEditor(target),
@@ -207,6 +282,18 @@
       }
     }
     fallbackEditor.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
+    if (readingHost) {
+      readingHost.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
+      readingHost.addEventListener('click', (event) => {
+        const wiki = event.target.closest('[data-wikilink]');
+        if (wiki) { event.preventDefault(); openWikiFromEditor(wiki.dataset.wikilink || ''); return; }
+        const link = event.target.closest('[data-href]');
+        if (link) {
+          event.preventDefault();
+          post('/api/open-external', { kind: 'url', target: link.dataset.href || '' }).catch(() => showToast(tr('externalOpenFailed'), 'error'));
+        }
+      });
+    }
     if (inlineTitleShell && window.ResizeObserver) {
       state.titleResizeObserver = new ResizeObserver(scheduleInlineTitleScroll);
       state.titleResizeObserver.observe(inlineTitleShell);
@@ -700,8 +787,9 @@
     empty.hidden = hasNote;
     if (inlineTitleShell) inlineTitleShell.hidden = !hasNote;
     if (documentStatusEl) documentStatusEl.hidden = !hasNote;
-    editorHost.hidden = !hasNote || !liveEditor;
-    fallbackEditor.hidden = !hasNote || !!liveEditor;
+    editorHost.hidden = !hasNote || !liveEditor || state.viewMode === 'reading';
+    fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
+    if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
   }
 
   function applyDocument(data) {
@@ -831,12 +919,28 @@
   async function reveal(path, assets) { try { await post(assets ? '/api/note-reveal-assets' : '/api/note-reveal', { path: path || '' }); } catch (error) { showToast(assets && error.status === 404 ? tr('noAssets') : error.message || tr('revealFailed'), 'error'); } }
   async function copyText(value) { try { await navigator.clipboard.writeText(value); } catch (error) { const area = document.createElement('textarea'); area.value = value; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); } showToast(tr('copied')); }
   function contextButton(label, action, danger) { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; if (danger) button.className = 'danger'; button.addEventListener('click', () => { closeContextMenu(); action(); }); return button; }
+  function viewModeButton(mode, label) {
+    const button = contextButton(label, () => setViewMode(mode));
+    const active = state.viewMode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('role', 'menuitemradio');
+    button.setAttribute('aria-checked', active ? 'true' : 'false');
+    return button;
+  }
   function separator() { const line = document.createElement('span'); line.className = 'note-context-separator'; return line; }
   function showContext(items, x, y) { contextMenu.replaceChildren(...items); contextMenu.hidden = false; contextMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 250)) + 'px'; contextMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - contextMenu.offsetHeight - 8)) + 'px'; }
-  function openContextMenu(entry, x, y) {
+  function openContextMenu(entry, x, y, options) {
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: '' })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: '' })), separator(), contextButton(tr('refresh'), () => checkExternalChanges(true)), contextButton(tr('openLibrary'), () => reveal('', false))], x, y); return; }
     state.selectedPath = entry.path;
     const items = [];
+    if (entry.kind === 'note' && options && options.viewModes) {
+      items.push(
+        viewModeButton('live', tr('livePreview')),
+        viewModeButton('source', tr('sourceMode')),
+        viewModeButton('reading', tr('readingMode')),
+        separator(),
+      );
+    }
     if (entry.kind === 'folder') items.push(contextButton(tr('createHere'), () => createEntry('note', { parent: entry.path })), contextButton(tr('createFolderHere'), () => createEntry('folder', { parent: entry.path })), separator()); else items.push(contextButton(tr('open'), () => openNote(entry.path)));
     items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path))); if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path))); items.push(contextButton(tr('explorer'), () => reveal(entry.path, false))); if (entry.kind === 'note') items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), contextButton(tr('history'), () => openHistory(entry.path))); items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true)); showContext(items, x, y);
   }
@@ -886,7 +990,7 @@
     else if (name === 'current-menu' && state.current) {
       const entry = findEntry(state.current.path) || { kind: 'note', path: state.current.path, name: noteTitle(state.current.path) };
       const rect = action.getBoundingClientRect();
-      openContextMenu(entry, rect.right - 220, rect.bottom + 6);
+      openContextMenu(entry, rect.right - 220, rect.bottom + 6, { viewModes: true });
     } else if (name === 'toggle-tree') root.classList.toggle('tree-overlay-open');
     else if (name === 'toggle-links') {
       if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') {
