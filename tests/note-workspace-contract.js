@@ -71,8 +71,8 @@ assert(notes.includes("shell.className = 'note-tree-children-shell'"), 'folder c
 for (const obsolete of ['revision_conflict', '磁盘版本已变化', '加载磁盘版本', '另存为副本', '尚未打开笔记', 'note-save-state']) {
   assert(!notes.includes(obsolete) && !html.includes(obsolete), `obsolete note state remains: ${obsolete}`);
 }
-assert(!html.includes('data-note-mode') && !html.includes('data-role="note-preview"'), 'write/read mode surfaces must be removed');
-assert(html.includes('note-live-editor-host') && html.includes('note-editor-fallback'), 'single-surface Live Preview needs a source fallback');
+assert(html.includes('note-live-editor-host') && html.includes('note-editor-fallback'), 'Live Preview and source mode need shared Markdown editing surfaces');
+assert(html.includes('data-role="note-reading-view"'), 'Notes needs a safe read-only Markdown surface');
 assert(html.includes('data-role="note-tabs"') && html.includes('data-note-action="new-tab"'), 'Notes needs a persistent multi-document tab strip');
 assert(html.includes('data-role="note-inline-title"'), 'the active Markdown filename needs an editable inline title');
 assert(html.includes('data-note-action="toggle-focus"'), 'the Notes library header needs a top-bar focus toggle');
@@ -84,6 +84,15 @@ assert(notes.includes('onDocChanged: (meta) => markChanged(meta)'), 'Live Previe
 assert(notes.includes("OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1'"), 'open Markdown tabs must survive a local restart');
 assert(notes.includes('function renderTabs()') && notes.includes('async function closeTab'), 'tabs need open, close, reorder, and switch behavior');
 assert(notes.includes('RelatumNoteLiveEditor.create(editorHost'), 'all Markdown tabs must reuse one CodeMirror surface');
+assert(notes.includes("viewModeButton('live'") && notes.includes("viewModeButton('source'") && notes.includes("viewModeButton('reading'"),
+  'the current-note menu must expose Live Preview, source, and reading modes');
+assert(notes.includes("NOTE_VIEW_KEY = 'canvas:noteView:v1'"), 'the selected Markdown view mode must persist locally');
+assert(notes.includes('function setViewMode(mode)') && notes.includes('function renderReadingDocument(payload)'),
+  'view switching must keep one Markdown source and render reading mode on demand');
+assert(live.includes('function setSourceMode(active)') && live.includes('sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin]'),
+  'source mode must keep CodeMirror while removing Live Preview projections');
+assert(live.includes('function renderMarkdown(host, source, notePath, options)'),
+  'reading mode must reuse the Live Preview safe renderer and lazy offline assets');
 assert(notes.includes('function commitInlineTitle()') && notes.includes("rawValue + '.md'"), 'the inline title must rename the backing Markdown file');
 assert(notes.includes("state.lastMoveCode === 'exists' ? tr('duplicateTitle')"), 'duplicate inline titles need the Obsidian-style floating warning');
 assert(notes.includes("document.body.classList.toggle('note-focus-mode'"), 'the Notes focus toggle must collapse the global top bar without replacing the workspace');
@@ -108,7 +117,6 @@ assert(mermaid.includes("querySelectorAll('script, foreignObject")
   'Mermaid output must convert safe labels to SVG text and remove foreignObject');
 assert(markdown.includes('localImages'), 'MarkdownMini local image rendering must remain opt-in');
 assert(markdown.includes('data-note-image'), 'MarkdownMini must not emit an eager remote image src');
-assert(!notes.includes('MODE_KEY') && !notes.includes('state.mode'), 'obsolete note mode state must be removed');
 assert(desktop.includes('setBeforeCloseHandler'), 'desktop shell needs an async pre-close hook');
 assert(css.includes('.start-workspace-panel[hidden]'), 'hidden workspace panels must never overlap');
 assert(css.includes('.start-workspace-stage'), 'workspace panels need a geometry-stable shared stage');

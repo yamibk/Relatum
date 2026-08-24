@@ -11,6 +11,7 @@
   const MERMAID_LIMIT = 64 * 1024;
   const RICH_BLOCK_LIMIT = 256 * 1024;
   const MAX_RICH_LINE = 64 * 1024;
+  const VIEWPORT_PARSE_SLICE = 12;
   const MERMAID_LANGS = new Set([
     'mermaid', 'flowchart', 'graph', 'flow', 'sequence', 'sequencediagram',
     'timeline', 'gantt', 'class', 'classdiagram', 'state', 'statediagram',
@@ -21,14 +22,16 @@
     EditorState, EditorSelection, StateEffect, StateField, EditorView, Decoration, WidgetType,
     ViewPlugin, keymap, drawSelection, dropCursor, highlightSpecialChars,
     rectangularSelection, crosshairCursor, placeholder, highlightActiveLine,
-    syntaxTree, indentOnInput,
+    syntaxTree, forceParsing, indentOnInput,
     bracketMatching, markdown, markdownLanguage, markdownKeymap, history,
     historyKeymap, defaultKeymap, indentWithTab, searchKeymap,
-    highlightSelectionMatches,
+    highlightSelectionMatches, relatumCodeLanguages, relatumCodeHighlighting,
   } = CM;
   const focusEffect = StateEffect.define();
   const compositionEffect = StateEffect.define();
   const notePathEffect = StateEffect.define();
+  const viewportScanEffect = StateEffect.define();
+  const viewportParseRequestEffect = StateEffect.define();
   let nextBlockSpecId = 1;
 
   function clamp(value, min, max) {
@@ -114,6 +117,18 @@
     return !!match && match[1][0] === opener.marker[0] && match[1].length >= opener.marker.length;
   }
 
+  function sameLineBlockMath(text) {
+    const source = String(text || '').trim();
+    if (source.length <= 4 || !source.startsWith('$$')) return null;
+    for (let index = 2; index < source.length - 1; index += 1) {
+      if (source[index] !== '$' || source[index + 1] !== '$' || escapedAt(source, index)) continue;
+      if (source.slice(index + 2).trim()) return null;
+      const body = source.slice(2, index);
+      return body.trim() ? { source, body } : null;
+    }
+    return null;
+  }
+
   function parseCalloutSource(source) {
     const first = String(source || '').split(/\r?\n/, 1)[0];
     const match = /^\s*(?:>\s*)+\[!([A-Za-z][\w-]*)\]([+-]?)\s*(.*)$/.exec(first);
@@ -160,7 +175,8 @@
       seen.add(key); raw.push(spec);
     };
 
-    syntaxTree(state).iterate({
+    const tree = syntaxTree(state);
+    tree.iterate({
       from: start, to: end,
       enter(node) {
         if (node.name === 'Table') {
@@ -209,12 +225,22 @@
     // $$ is a Relatum extension rather than a Lezer Markdown block. Its search is
     // deliberately bounded, so an edit can never walk an entire large document.
     const mathFrom = Math.max(0, start - BLOCK_MATH_LIMIT);
-    const mathTo = Math.min(doc.length, end + BLOCK_MATH_LIMIT);
+    const parsedTo = typeof tree.length === 'number' ? tree.length : doc.length;
+    const mathTo = Math.min(doc.length, parsedTo, end + BLOCK_MATH_LIMIT);
     let number = doc.lineAt(mathFrom).number;
     const finalLine = doc.lineAt(mathTo).number;
     while (number <= finalLine) {
       const line = doc.line(number);
       if (line.length > MAX_RICH_LINE) { number += 1; continue; }
+      const singleLine = sameLineBlockMath(line.text);
+      if (singleLine) {
+        const protectedSource = protectedBlocks.some((range) => range.from < line.to && range.to > line.from);
+        if (!protectedSource && line.length <= BLOCK_MATH_LIMIT && line.to >= start && line.from <= end) {
+          push({ from: line.from, to: line.to, kind: 'math', source: line.text });
+        }
+        number += 1;
+        continue;
+      }
       if (line.text.trim() !== '$$') { number += 1; continue; }
       let close = number + 1;
       while (close <= doc.lines && doc.line(close).from - line.from <= BLOCK_MATH_LIMIT && doc.line(close).text.trim() !== '$$') close += 1;
@@ -315,6 +341,25 @@
     return kept.concat(rescanned).sort((a, b) => a.from - b.from || a.to - b.to);
   }
 
+  function refreshVisibleBlockSpecs(previous, state, ranges) {
+    const visible = Array.isArray(ranges) && ranges.length
+      ? ranges
+      : [{ from: 0, to: Math.min(state.doc.length, 1) }];
+    let from = state.doc.length;
+    let to = 0;
+    visible.forEach((range) => {
+      from = Math.min(from, clamp(range.from, 0, state.doc.length));
+      to = Math.max(to, clamp(range.to, 0, state.doc.length));
+    });
+    const expanded = expandScanRange(state, from, to);
+    const reusable = previous.filter((spec) => spec.from <= expanded.to && spec.to >= expanded.from);
+    const rescanned = scanBlockSpecs(state, expanded.from, expanded.to, reusable);
+    const replaceFrom = rescanned.reduce((value, spec) => Math.min(value, spec.from), expanded.from);
+    const replaceTo = rescanned.reduce((value, spec) => Math.max(value, spec.to), expanded.to);
+    const kept = previous.filter((spec) => spec.to < replaceFrom || spec.from > replaceTo);
+    return kept.concat(rescanned).sort((a, b) => a.from - b.from || a.to - b.to);
+  }
+
   let mathLoadPromise = null;
   function ensureMathJax() {
     if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') return Promise.resolve(window.MathJax);
@@ -406,8 +451,48 @@
 
   function safeIsolatedResult(source) {
     const markdownMini = window.MarkdownMini;
-    if (!markdownMini || typeof markdownMini.renderResult !== 'function') return { html: '', hasMath: false, hasMermaid: false };
+    if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
+      return { html: '', features: { math: false, mermaid: false }, error: true };
+    }
     return markdownMini.renderResult(source, { localImages: true });
+  }
+
+  function renderMarkdown(host, source, notePath, options) {
+    if (!host) throw new Error('Markdown reading host is required');
+    const safeOptions = Object.assign({
+      imageUrl(path, target) {
+        return '/api/note-asset?note=' + encodeURIComponent(path || '') + '&src=' + encodeURIComponent(target || '');
+      },
+    }, options || {});
+    const epoch = String((Number(host.dataset.noteReadingEpoch) || 0) + 1);
+    host.dataset.noteReadingEpoch = epoch;
+    if (window.MathJax && typeof window.MathJax.typesetClear === 'function') {
+      try { window.MathJax.typesetClear([host]); } catch (error) {}
+    }
+    const result = safeIsolatedResult(String(source || ''));
+    const content = document.createElement('article');
+    content.className = 'note-reading-content node-text';
+    content.innerHTML = result.html;
+    content.querySelectorAll('[data-note-image]').forEach((image) => {
+      image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '');
+      image.addEventListener('error', () => image.removeAttribute('src'), { once: true });
+    });
+    content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
+    host.replaceChildren(content);
+    host.classList.toggle('is-failed', !!result.error);
+    const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
+    if (result.features && result.features.mermaid && window.MermaidRenderer) {
+      window.MermaidRenderer.renderAll(content).catch(() => {
+        if (current()) host.classList.add('is-failed');
+      });
+    }
+    if (result.features && result.features.math) {
+      ensureMathJax().then((math) => {
+        if (!current()) return;
+        return math.typesetPromise([content]);
+      }).catch(() => { if (current()) host.classList.add('is-failed'); });
+    }
+    return result;
   }
 
   class RichBlockWidget extends WidgetType {
@@ -499,7 +584,9 @@
   function createBlockField(notePath, options, coordinator) {
     const field = StateField.define({
       create(state) {
-        const specs = scanBlockSpecs(state, 0, state.doc.length);
+        const tree = syntaxTree(state);
+        const parsedTo = typeof tree.length === 'number' ? Math.min(state.doc.length, tree.length) : state.doc.length;
+        const specs = scanBlockSpecs(state, 0, parsedTo);
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const decorations = Decoration.set(specs.map((spec) => Decoration.replace({
           widget: new RichBlockWidget(spec, notePath(), options, coordinator), block: true, inclusive: false, blockId: spec.id,
@@ -507,14 +594,20 @@
         return { specs, byId, activeIds: new Set(), focused: false, composing: false, decorations };
       },
       update(value, transaction) {
-        const specs = updateBlockSpecs(value.specs, transaction);
+        let specs = updateBlockSpecs(value.specs, transaction);
+        let viewportRefreshed = false;
+        transaction.effects.forEach((effect) => {
+          if (!effect.is(viewportScanEffect)) return;
+          specs = refreshVisibleBlockSpecs(specs, transaction.state, effect.value);
+          viewportRefreshed = true;
+        });
         let focused = value.focused;
         let composing = value.composing;
         transaction.effects.forEach((effect) => { if (effect.is(focusEffect)) focused = !!effect.value; });
         transaction.effects.forEach((effect) => { if (effect.is(compositionEffect)) composing = !!effect.value; });
         const notePathChanged = transaction.effects.some((effect) => effect.is(notePathEffect));
         const selectionChanged = !!transaction.selection;
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && composing === value.composing && !notePathChanged) return value;
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && composing === value.composing && !notePathChanged && !viewportRefreshed) return value;
 
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, composing);
@@ -552,15 +645,36 @@
 
   function lineProtectedRanges(state, from, to) {
     const ranges = [];
-    syntaxTree(state).iterate({
+    const seen = new Set();
+    const tree = syntaxTree(state);
+    const add = (node) => {
+      if (!node || !/^(?:FencedCode|CodeBlock|IndentedCode|InlineCode|HTMLBlock|HTMLTag|URL)$/.test(node.name)) return;
+      const key = node.name + ':' + node.from + ':' + node.to;
+      if (seen.has(key)) return;
+      seen.add(key);
+      ranges.push({ from: node.from, to: node.to, kind: node.name });
+    };
+    tree.iterate({
       from, to,
       enter(node) {
         if (/^(?:FencedCode|CodeBlock|IndentedCode|InlineCode|HTMLBlock|HTMLTag|URL)$/.test(node.name)) {
-          ranges.push({ from: node.from, to: node.to, kind: node.name });
+          add(node);
           return false;
         }
         return undefined;
       },
+    });
+    // A viewport may begin in the middle of a fenced code block after a table,
+    // formula, or image widget changes document geometry. Tree iteration bounded
+    // to that viewport does not necessarily visit ancestors that start above it.
+    // Resolve both boundaries explicitly so the visible middle lines still know
+    // that they belong to code/raw HTML and cannot be mistaken for Markdown.
+    [from, Math.max(from, to - 1)].forEach((position) => {
+      let node = tree.resolveInner(clamp(position, 0, state.doc.length), position >= state.doc.length ? -1 : 1);
+      while (node) {
+        add(node);
+        node = node.parent;
+      }
     });
     return ranges;
   }
@@ -629,12 +743,34 @@
       const last = view.state.doc.lineAt(visible.to);
       const protectedRanges = lineProtectedRanges(view.state, first.from, last.to);
       const tree = syntaxTree(view.state);
+      protectedRanges.forEach((range) => {
+        if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
+          const blockFirst = view.state.doc.lineAt(range.from).number;
+          const blockLast = view.state.doc.lineAt(Math.max(range.from, range.to - 1)).number;
+          const visibleFirst = Math.max(first.number, blockFirst);
+          const visibleLast = Math.min(last.number, blockLast);
+          for (let number = visibleFirst; number <= visibleLast; number += 1) {
+            let className = 'note-live-code-line';
+            if (number === blockFirst) className += ' note-live-code-first';
+            if (number === blockLast) className += ' note-live-code-last';
+            lineClass(view.state.doc.line(number).from, className);
+          }
+        } else if (/^HTML/.test(range.kind)) {
+          const blockFirst = view.state.doc.lineAt(range.from).number;
+          const blockLast = view.state.doc.lineAt(Math.max(range.from, range.to - 1)).number;
+          for (let number = Math.max(first.number, blockFirst); number <= Math.min(last.number, blockLast); number += 1) {
+            lineClass(view.state.doc.line(number).from, 'note-live-raw-html-line');
+          }
+        }
+      });
       tree.iterate({
         from: first.from, to: last.to,
         enter(nodeRef) {
           const node = syntaxNodeForRef(tree, nodeRef);
           const key = nodeRef.name + ':' + nodeRef.from + ':' + nodeRef.to;
-          if (decoratedSyntax.has(key)) return false;
+          // Rich block replacements split visibleRanges. An ancestor already seen
+          // in an earlier segment can still contain unseen nodes in this segment.
+          if (decoratedSyntax.has(key)) return undefined;
           decoratedSyntax.add(key);
           if (nodeRef.name !== 'Document' && view.state.doc.lineAt(nodeRef.from).length > MAX_RICH_LINE) return false;
           if (inactiveBlockContains(nodeRef.from, nodeRef.to)) return false;
@@ -740,7 +876,12 @@
           } else if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(nodeRef.name)) {
             const startLine = view.state.doc.lineAt(nodeRef.from).number;
             const endLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1)).number;
-            for (let number = startLine; number <= endLine; number += 1) lineClass(view.state.doc.line(number).from, 'note-live-code-line');
+            for (let number = startLine; number <= endLine; number += 1) {
+              let className = 'note-live-code-line';
+              if (number === startLine) className += ' note-live-code-first';
+              if (number === endLine) className += ' note-live-code-last';
+              lineClass(view.state.doc.line(number).from, className);
+            }
           } else if (/^(?:HTMLBlock|HTMLTag)$/.test(nodeRef.name)) {
             const startLine = view.state.doc.lineAt(nodeRef.from).number;
             const endLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1)).number;
@@ -761,6 +902,11 @@
           continue;
         }
         if (inactiveBlockAt(line.from, Math.max(line.from + 1, line.to))) continue;
+        const lineIsBlockMath = blockSpecs.some((spec) => spec.kind === 'math' && spec.from <= line.to && spec.to >= line.from);
+        if (lineIsBlockMath) {
+          lineClass(line.from, 'note-live-math-source');
+          continue;
+        }
         const text = line.text;
         const lineIsCode = protectedRanges.some((range) => /^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind) && range.from <= line.from && range.to >= line.to);
         const lineIsHtml = protectedRanges.some((range) => /^HTML/.test(range.kind) && range.from <= line.from && range.to >= line.to);
@@ -805,6 +951,7 @@
         });
 
         matches(/\$([^$\n]+)\$/g, (match, from, to) => {
+          if (text[match.index - 1] === '$' || text[match.index + match[0].length] === '$' || escapedAt(text, match.index + match[0].length - 1)) return;
           if (match[0].length > INLINE_MATH_LIMIT) return;
           protect(from, to);
           if (!constructActive(view, from, to)) add(from, to, Decoration.replace({ widget: new InlineMathWidget(match[0], options.coordinator) }));
@@ -843,13 +990,87 @@
     return ViewPlugin.fromClass(class {
       constructor(view) { this.decorations = createInlineDecorations(view, blockField, notePath, options); }
       update(update) {
-        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(compositionEffect) || effect.is(focusEffect) || effect.is(notePathEffect)));
+        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(compositionEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect)));
         const syntaxChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
         if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || update.view.composing || lifecycleChanged || syntaxChanged) {
           this.decorations = createInlineDecorations(update.view, blockField, notePath, options);
         }
       }
     }, { decorations: (value) => value.decorations });
+  }
+
+  function createViewportParsePlugin() {
+    return ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.view = view;
+        this.frame = 0;
+        this.stopped = false;
+        this.rerun = false;
+        this.settlePasses = 0;
+        this.onScroll = () => this.schedule();
+        view.scrollDOM.addEventListener('scroll', this.onScroll, { passive: true });
+        this.resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.schedule()) : null;
+        if (this.resizeObserver) {
+          this.resizeObserver.observe(view.dom);
+          this.resizeObserver.observe(view.contentDOM);
+        }
+        this.schedule();
+      }
+      update(update) {
+        const explicitlyRequested = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(viewportParseRequestEffect)));
+        if (update.docChanged || update.viewportChanged || explicitlyRequested) this.schedule();
+      }
+      schedule() {
+        if (this.stopped) return;
+        // Replacing a source table/formula with a widget can move the blocks below
+        // it into the viewport after this pass has already chosen visibleRanges.
+        // Always take one bounded follow-up pass against the settled geometry.
+        this.settlePasses = Math.max(this.settlePasses, 1);
+        this.queueFrame();
+      }
+      queueFrame() {
+        if (this.stopped) return;
+        if (this.frame) {
+          this.rerun = true;
+          return;
+        }
+        this.frame = requestAnimationFrame(() => {
+          this.frame = 0;
+          this.rerun = false;
+          this.parseViewport();
+          if (this.rerun) this.queueFrame();
+        });
+      }
+      parseViewport() {
+        const view = this.view;
+        if (this.stopped || !view.dom.isConnected) return;
+        const target = Math.min(view.state.doc.length, view.viewport.to + BLOCK_MATH_LIMIT);
+        const complete = typeof forceParsing !== 'function' || forceParsing(view, target, VIEWPORT_PARSE_SLICE);
+        if (!complete) {
+          this.rerun = true;
+          return;
+        }
+        const ranges = (view.visibleRanges && view.visibleRanges.length ? view.visibleRanges : [view.viewport])
+          .map((range) => ({
+            from: Math.max(0, range.from - BLOCK_MATH_LIMIT),
+            to: Math.min(view.state.doc.length, range.to + BLOCK_MATH_LIMIT),
+          }));
+        view.dispatch({ effects: viewportScanEffect.of(ranges) });
+        if (this.settlePasses > 0) {
+          this.settlePasses -= 1;
+          this.rerun = true;
+        }
+      }
+      destroy() {
+        this.stopped = true;
+        this.view.scrollDOM.removeEventListener('scroll', this.onScroll);
+        if (this.resizeObserver) this.resizeObserver.disconnect();
+        if (this.frame) cancelAnimationFrame(this.frame);
+        this.frame = 0;
+        this.rerun = false;
+        this.settlePasses = 0;
+      }
+    });
   }
 
   function wrapSelection(view, before, after, placeholderText) {
@@ -892,6 +1113,7 @@
     let documentSetSeq = 0;
     let destroyed = false;
     let compositionDirty = false;
+    let sourceMode = !!options.sourceMode;
     const coordinator = { epoch: 1, field: null, spec() { return null; } };
     const safeOptions = Object.assign({
       imageUrl(notePath, target) {
@@ -903,6 +1125,7 @@
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
+    const viewportParsePlugin = createViewportParsePlugin();
 
     const customKeys = [
       { key: 'Mod-s', preventDefault: true, run() { safeOptions.onSaveRequest(); return true; } },
@@ -929,76 +1152,78 @@
     }
 
     function makeState(value, selection) {
+      const extensions = [
+        highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
+        indentOnInput(), bracketMatching(),
+        rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
+        markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
+        relatumCodeHighlighting || [],
+        sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin],
+        keymap.of(customKeys.concat(markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
+        placeholder(languagePlaceholder()), EditorView.lineWrapping,
+        EditorView.exceptionSink.of((error) => {
+          host.dataset.livePreviewError = String(error && error.message || error);
+          console.error('Relatum Live Preview:', error);
+        }),
+        EditorView.contentAttributes.of({ spellcheck: 'false', 'aria-label': sourceMode ? languageSourceLabel() : languageLabel() }),
+        EditorView.updateListener.of((update) => {
+          if (!update.docChanged || suppressChanges) return;
+          if (update.view.composing || update.view.__relatumCompositionActive) { compositionDirty = true; return; }
+          notifyDocChanged(update.view);
+        }),
+        EditorView.domEventHandlers({
+          focus(event, view) { view.dispatch({ effects: focusEffect.of(true) }); return false; },
+          blur(event, view) { view.dispatch({ effects: focusEffect.of(false) }); return false; },
+          compositionstart(event, view) {
+            view.__relatumCompositionActive = true;
+            view.dispatch({ effects: compositionEffect.of(true) });
+            return false;
+          },
+          compositionend(event, view) {
+            requestAnimationFrame(() => {
+              if (destroyed || !view.dom.isConnected) return;
+              view.__relatumCompositionActive = false;
+              view.dispatch({ effects: compositionEffect.of(false) });
+              if (compositionDirty) { compositionDirty = false; notifyDocChanged(view); }
+            });
+            return false;
+          },
+          mousedown(event, view) {
+            if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return false;
+            const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (position == null) return false;
+            const link = linkAt(view.state, position);
+            if (!link) return false;
+            event.preventDefault();
+            if (link.kind === 'url' && isDangerousTarget(link.target)) return true;
+            if (link.kind === 'wiki') safeOptions.onOpenWiki(link.target);
+            else safeOptions.onOpenExternal(normalizedImageTarget(link.target));
+            return true;
+          },
+          paste(event) {
+            const files = Array.from(event.clipboardData && event.clipboardData.items || [])
+              .filter((item) => item.kind === 'file' && /^image\//i.test(item.type || ''))
+              .map((item) => item.getAsFile()).filter(Boolean);
+            if (!files.length) return false;
+            event.preventDefault(); safeOptions.onImageFiles(files); return true;
+          },
+          dragover(event) {
+            const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);
+            if (!files.some((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''))) return false;
+            event.preventDefault(); return true;
+          },
+          drop(event) {
+            const files = Array.from(event.dataTransfer && event.dataTransfer.files || [])
+              .filter((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''));
+            if (!files.length) return false;
+            event.preventDefault(); safeOptions.onImageFiles(files); return true;
+          },
+        }),
+      ];
       return EditorState.create({
         doc: String(value || ''),
         selection: selection || EditorSelection.cursor(0),
-        extensions: [
-          highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
-          indentOnInput(), bracketMatching(),
-          rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
-          markdown({ base: markdownLanguage }),
-          keymap.of(customKeys.concat(markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
-          placeholder(languagePlaceholder()), EditorView.lineWrapping,
-          EditorView.exceptionSink.of((error) => {
-            host.dataset.livePreviewError = String(error && error.message || error);
-            console.error('Relatum Live Preview:', error);
-          }),
-          blockField, inlinePlugin,
-          EditorView.contentAttributes.of({ spellcheck: 'false', 'aria-label': languageLabel() }),
-          EditorView.updateListener.of((update) => {
-            if (!update.docChanged || suppressChanges) return;
-            if (update.view.composing || update.view.__relatumCompositionActive) { compositionDirty = true; return; }
-            notifyDocChanged(update.view);
-          }),
-          EditorView.domEventHandlers({
-            focus(event, view) { view.dispatch({ effects: focusEffect.of(true) }); return false; },
-            blur(event, view) { view.dispatch({ effects: focusEffect.of(false) }); return false; },
-            compositionstart(event, view) {
-              view.__relatumCompositionActive = true;
-              view.dispatch({ effects: compositionEffect.of(true) });
-              return false;
-            },
-            compositionend(event, view) {
-              requestAnimationFrame(() => {
-                if (destroyed || !view.dom.isConnected) return;
-                view.__relatumCompositionActive = false;
-                view.dispatch({ effects: compositionEffect.of(false) });
-                if (compositionDirty) { compositionDirty = false; notifyDocChanged(view); }
-              });
-              return false;
-            },
-            mousedown(event, view) {
-              if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return false;
-              const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
-              if (position == null) return false;
-              const link = linkAt(view.state, position);
-              if (!link) return false;
-              event.preventDefault();
-              if (link.kind === 'url' && isDangerousTarget(link.target)) return true;
-              if (link.kind === 'wiki') safeOptions.onOpenWiki(link.target);
-              else safeOptions.onOpenExternal(normalizedImageTarget(link.target));
-              return true;
-            },
-            paste(event) {
-              const files = Array.from(event.clipboardData && event.clipboardData.items || [])
-                .filter((item) => item.kind === 'file' && /^image\//i.test(item.type || ''))
-                .map((item) => item.getAsFile()).filter(Boolean);
-              if (!files.length) return false;
-              event.preventDefault(); safeOptions.onImageFiles(files); return true;
-            },
-            dragover(event) {
-              const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);
-              if (!files.some((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''))) return false;
-              event.preventDefault(); return true;
-            },
-            drop(event) {
-              const files = Array.from(event.dataTransfer && event.dataTransfer.files || [])
-                .filter((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''));
-              if (!files.length) return false;
-              event.preventDefault(); safeOptions.onImageFiles(files); return true;
-            },
-          }),
-        ],
+        extensions,
       });
     }
 
@@ -1008,8 +1233,12 @@
     function languageLabel() {
       return document.documentElement.lang === 'en' ? 'Markdown Live Preview editor' : 'Markdown 实时预览编辑器';
     }
+    function languageSourceLabel() {
+      return document.documentElement.lang === 'en' ? 'Markdown source editor' : 'Markdown 源码编辑器';
+    }
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
+    host.classList.toggle('is-source-mode', sourceMode);
 
     function setDocument(documentState) {
       const seq = ++documentSetSeq;
@@ -1023,11 +1252,16 @@
       suppressChanges = true;
       try { view.setState(makeState(value, EditorSelection.range(anchor, head))); }
       finally { suppressChanges = false; }
+      host.classList.toggle('is-source-mode', sourceMode);
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
       requestAnimationFrame(() => {
         if (seq !== documentSetSeq) return;
         view.scrollDOM.scrollTop = Math.max(0, Number(documentState && documentState.scrollTop) || 0);
         view.requestMeasure();
+        requestAnimationFrame(() => {
+          if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
+          view.dispatch({ effects: viewportParseRequestEffect.of(true) });
+        });
       });
     }
 
@@ -1035,6 +1269,14 @@
       currentPath = String(path || '');
       coordinator.epoch += 1;
       view.dispatch({ effects: notePathEffect.of(currentPath) });
+    }
+
+    function setSourceMode(active) {
+      const next = !!active;
+      if (next === sourceMode) return;
+      const current = snapshot();
+      sourceMode = next;
+      setDocument(Object.assign({ notePath: currentPath }, current));
     }
 
     function snapshot() {
@@ -1050,7 +1292,7 @@
     }
 
     return {
-      setDocument, setNotePath, snapshot, replaceSelection,
+      setDocument, setNotePath, setSourceMode, snapshot, replaceSelection,
       focus() { view.focus(); },
       destroy() { destroyed = true; coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
       get view() { return view; },
@@ -1068,5 +1310,5 @@
     isDangerousTarget,
     headingMarkerProjectionEnd,
   };
-  window.RelatumNoteLiveEditor = { create };
+  window.RelatumNoteLiveEditor = { create, renderMarkdown };
 })();
