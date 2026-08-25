@@ -3377,11 +3377,38 @@
     return '<div><strong>' + f.num + '<small> ' + f.unit + '</small></strong><span>' + label + '</span></div>';
   }
 
-  function canvasStatCell(sec, label) {
-    if (Number(sec) > 0 && Number(sec) < 60) {
-      return '<div><strong>&lt;1<small> 分钟</small></strong><span>' + label + '</span></div>';
-    }
-    return focusStatCell(sec, label);
+  function fmtCanvasStat(sec) {
+    if (Number(sec) > 0 && Number(sec) < 60) return { num: '&lt;1', unit: '分钟' };
+    return fmtFocusStat(sec);
+  }
+
+  function cadenceStatMeasure(format, extra) {
+    const f = format || { num: '0', unit: '' };
+    const className = extra ? ' cadence-stat-addon' : '';
+    const attrs = extra
+      ? ' tabindex="0" title="学习、树状、速记合计" aria-label="学习、树状、速记合计"'
+      : '';
+    return '<span class="cadence-stat-measure' + className + '"' + attrs + '><b>'
+      + (extra ? '+' : '') + f.num + '</b>'
+      + (f.unit ? '<small> ' + f.unit + '</small>' : '') + '</span>';
+  }
+
+  function splitCanvasStatCell(primary, extra, label) {
+    return '<div><strong class="cadence-stat-pair">' + cadenceStatMeasure(primary, false)
+      + (extra ? cadenceStatMeasure(extra, true) : '') + '</strong>'
+      + '<span class="cadence-stat-label">' + label + '</span></div>';
+  }
+
+  function canvasPageTimeStatCell(canvasSec, pageSec, label) {
+    return splitCanvasStatCell(fmtCanvasStat(canvasSec), fmtCanvasStat(pageSec), label);
+  }
+
+  function canvasPageCountStatCell(canvasValue, pageValue, unit, label) {
+    return splitCanvasStatCell(
+      { num: String(Math.max(0, Number(canvasValue) || 0)), unit: unit || '' },
+      { num: String(Math.max(0, Number(pageValue) || 0)), unit: unit || '' },
+      label
+    );
   }
 
   function fmtCanvasDuration(sec) {
@@ -3615,6 +3642,7 @@
     const canvasDays = payload.canvasDays || {};
     const canvasEntries = payload.canvasEntries || [];
     const canvasStats = payload.canvasStats || {};
+    const startPageStats = payload.startPageStats || {};
     const C = CADENCE;
     const step = C.cell + C.gap;
     const now = new Date();
@@ -3732,7 +3760,7 @@
         + '<span class="cadence-legend-cell cadence-l7"></span>'
         + '</span><span>丰</span></div>'
         + '<button type="button" class="page-refresh" data-cadence-refresh'
-        + ' aria-label="重新读取活跃数据" title="重新统计一年活跃热力图（画布计时、完成任务或专注后想立刻看到，点这里）">'
+        + ' aria-label="重新读取活跃数据" title="手动重新读取活跃数据（包括画布、学习、树状、速记、完成任务和专注）">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>'
         + '<span>更新</span></button>'
         + '</div>'
@@ -3759,12 +3787,15 @@
             : cadenceDayDetailHtml(initialDay, entries, days[initialDay] || 0, todayKey))
       + '</section>'
       + '<div class="cadence-stats cadence-stats-canvas" aria-label="画布时间统计">'
-        + canvasStatCell(currentYear ? canvasStats.monthSec : canvasStats.yearSec,
+        + canvasPageTimeStatCell(currentYear ? canvasStats.monthSec : canvasStats.yearSec,
+          currentYear ? startPageStats.monthSec : startPageStats.yearSec,
           currentYear ? '本月画布时间' : '当年画布时间')
-        + '<div><strong>' + (currentYear ? (canvasStats.streak || 0) : (canvasStats.longestStreak || 0))
-          + '<small> 天</small></strong><span>' + (currentYear ? '连续活跃' : '最长连续') + '</span></div>'
-        + '<div><strong>' + (canvasStats.activeCanvasCount || 0) + '</strong><span>活跃画布</span></div>'
-        + canvasStatCell(canvasStats.totalSec, '累计画布时间')
+        + canvasPageCountStatCell(
+          currentYear ? canvasStats.streak : canvasStats.longestStreak,
+          currentYear ? startPageStats.streak : startPageStats.longestStreak,
+          '天', currentYear ? '连续活跃' : '最长连续')
+        + canvasPageCountStatCell(canvasStats.activeCanvasCount, startPageStats.activePageCount, '', '活跃画布')
+        + canvasPageTimeStatCell(canvasStats.totalSec, startPageStats.totalSec, '累计画布时间')
       + '</div>'
       + '<div class="cadence-stats cadence-stats-complete" aria-label="活跃统计">'
         + '<div><strong>' + statOne + '</strong><span>' + statOneLabel + '</span></div>'
@@ -4260,6 +4291,10 @@
   async function refreshCadence(btn) {
     if (btn) btn.classList.add('is-refreshing');
     try {
+      const startPageActivity = window.RelatumStartPageActivity;
+      if (startPageActivity && typeof startPageActivity.waitForIdle === 'function') {
+        try { await startPageActivity.waitForIdle(); } catch (e) {}
+      }
       activityDirty = true;
       await queueActivityLoad();
     } catch (e) {

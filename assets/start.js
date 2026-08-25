@@ -60,6 +60,7 @@
   const notesConsoleHelpTrigger = document.querySelector('[data-role="notes-console-help-trigger"]');
   const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
+  const startPageActivityToggle = document.querySelector('[data-role="start-page-activity-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
@@ -131,6 +132,7 @@
   const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;
   const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
+  const START_PAGE_ACTIVITY_ENABLED_KEY = 'canvas:startPageActivityEnabled:v1';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
@@ -153,6 +155,18 @@
   let startViewTransitionTimer = 0;
   const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
+  const START_PAGE_ACTIVITY_VIEWS = new Set(['study', 'tree', 'notes']);
+  let startPageActivityEnabled = false;
+  let startPageActivityActive = false;
+  let startPageActivityPage = '';
+  let startPageActivityLastCapturedAt = 0;
+  let startPageActivityHeartbeat = 0;
+  let startPageActivitySending = null;
+  const startPageActivityPending = [];
+  const startPageActivityIdleWaiters = new Set();
+  const startPageActivitySessionId = (window.crypto && typeof window.crypto.randomUUID === 'function')
+    ? window.crypto.randomUUID()
+    : 'start-page-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 
   function englishUI() {
     return !!(window.RelatumI18n && window.RelatumI18n.language === 'en');
@@ -278,6 +292,7 @@
     }
     activeStartWorkspace = name;
     syncWorkspaceControls(name);
+    syncStartPageActivity();
     showWorkspacePanel(name, previous, options.animate !== false && name !== previous);
     if (options.persist !== false && (name === 'canvas' || name === 'notes')) {
       try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
@@ -290,6 +305,7 @@
         if (activeStartWorkspace === 'notes') {
           activeStartWorkspace = 'canvas';
           syncWorkspaceControls('canvas');
+          syncStartPageActivity();
           showWorkspacePanel('canvas', 'notes', false);
           showNotice(englishUI() ? 'Notes unavailable' : '笔记工作区暂时无法打开', error.message || String(error));
         }
@@ -485,6 +501,18 @@
     }));
   }
 
+  function applyStartPageActivityEnabled(enabled, persist) {
+    startPageActivityEnabled = enabled !== false;
+    if (startPageActivityToggle) startPageActivityToggle.checked = startPageActivityEnabled;
+    document.body.dataset.startPageActivityEnabled = startPageActivityEnabled ? '1' : '0';
+    if (persist) {
+      try {
+        localStorage.setItem(START_PAGE_ACTIVITY_ENABLED_KEY, startPageActivityEnabled ? '1' : '0');
+      } catch (e) {}
+    }
+    syncStartPageActivity();
+  }
+
   // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
   // 7 张前置页（复习/日历/活跃/速记/树状/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
   function applyHideSpecialPages(hidden, persist) {
@@ -628,6 +656,9 @@
   let calendarCountdownEnabled = true;
   try { calendarCountdownEnabled = localStorage.getItem(CALENDAR_COUNTDOWN_KEY) !== '0'; } catch (e) {}
   applyCalendarCountdownEnabled(calendarCountdownEnabled, false);
+  let startPageActivityEnabledInit = false;
+  try { startPageActivityEnabledInit = localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY) === '1'; } catch (e) {}
+  applyStartPageActivityEnabled(startPageActivityEnabledInit, false);
   let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
   try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
   applyHideSpecialPages(hideSpecialInit, false);
@@ -904,6 +935,11 @@
       applyCalendarCountdownEnabled(calendarCountdownToggle.checked, true);
     });
   }
+  if (startPageActivityToggle) {
+    startPageActivityToggle.addEventListener('change', () => {
+      applyStartPageActivityEnabled(startPageActivityToggle.checked, true);
+    });
+  }
   if (hideSpecialToggle) {
     hideSpecialToggle.addEventListener('change', () => {
       applyHideSpecialPages(hideSpecialToggle.checked, true);
@@ -1024,6 +1060,7 @@
           ['<code>daily.backup.json</code>', '每日任务的上一份有效快照。删除后当前内容不变，但损坏时少一层恢复保障。'],
           ['<code>daily.corrupt-*.json</code>', '损坏后隔离的旧每日任务。确认当前每日任务正常且不需要人工抢救旧数据后可以删除。'],
           ['<code>canvas-activity.json</code>', '画布创建、修改和前台使用时长账本。删除后画布仍在，但年度足迹、使用时长和相关活跃统计会丢失并从今重新记录。'],
+          ['<code>start-page-activity.json</code>', '学习、树状和速记三页的前台使用时长账本。删除后页面内容不受影响，但活跃页中的绿色附加统计会清空并从今重新记录。'],
         ]],
         ['速记、日历、专注与复习', '删除哪一项，就会清空对应页面的数据。', [
           ['<code>notes.json</code>', '速记墙的便签、连线和视野。删除后当前速记墙清空；此前主动归档的速记仍在“学习归档”。'],
@@ -1112,6 +1149,7 @@
           ['<code>daily.backup.json</code>', 'The previous valid daily-task snapshot. Deleting it leaves current content unchanged but removes one recovery layer.'],
           ['<code>daily.corrupt-*.json</code>', 'Old daily-task data quarantined after corruption. Delete it only after confirming current data is healthy and no manual recovery is needed.'],
           ['<code>canvas-activity.json</code>', 'Canvas creation, editing, and foreground-usage history. Deleting it leaves canvases intact, but removes yearly activity, usage time, and related statistics; recording then starts over.'],
+          ['<code>start-page-activity.json</code>', 'Foreground-usage history for Study, Tree, and Quick Notes. Deleting it leaves page content intact, but clears the green add-on statistics in Activity and starts recording over.'],
         ]],
         ['Quick notes, Calendar, Focus, and Review', 'Deleting an item clears the data for its corresponding page.', [
           ['<code>notes.json</code>', 'Quick Notes cards, connections, and viewport. Deleting it clears the current wall; notes you explicitly archived remain in the Study archive.'],
@@ -1688,6 +1726,162 @@
       }));
     }
   }
+
+  function currentStartPageActivityTarget() {
+    if (!startPageActivityEnabled || activeStartWorkspace !== 'canvas') return '';
+    const view = bookView ? String(bookView.dataset.viewName || '') : '';
+    return START_PAGE_ACTIVITY_VIEWS.has(view) ? view : '';
+  }
+
+  function captureStartPageActivity(endAt) {
+    if (!startPageActivityActive || !startPageActivityPage || !startPageActivityLastCapturedAt) return;
+    const endedAt = Math.max(startPageActivityLastCapturedAt, Number(endAt) || Date.now());
+    let cursor = startPageActivityLastCapturedAt;
+    while (endedAt - cursor >= 250) {
+      const chunkEnd = Math.min(endedAt, cursor + 9 * 60 * 1000);
+      startPageActivityPending.push({
+        page: startPageActivityPage,
+        startedAt: cursor,
+        endedAt: chunkEnd,
+      });
+      cursor = chunkEnd;
+    }
+    startPageActivityLastCapturedAt = endedAt;
+  }
+
+  function postStartPageActivity(interval, keepalive) {
+    return fetch('/api/start-page-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: !!keepalive,
+      body: JSON.stringify({
+        page: interval.page,
+        sessionId: startPageActivitySessionId,
+        startedAt: new Date(interval.startedAt).toISOString(),
+        endedAt: new Date(interval.endedAt).toISOString(),
+      }),
+    }).then((response) => response.json().then((json) => ({ response, json })));
+  }
+
+  function resolveStartPageActivityIdleWaiters() {
+    if (startPageActivitySending || startPageActivityPending.length) return;
+    startPageActivityIdleWaiters.forEach((resolve) => resolve(true));
+    startPageActivityIdleWaiters.clear();
+  }
+
+  function waitForStartPageActivityIdle(timeoutMs) {
+    sendNextStartPageActivity(false);
+    if (!startPageActivitySending && !startPageActivityPending.length) return Promise.resolve(true);
+    const wait = Math.max(0, Number(timeoutMs) || 0);
+    return new Promise((resolve) => {
+      let done = false;
+      let timer = 0;
+      const finish = (idle) => {
+        if (done) return;
+        done = true;
+        if (timer) window.clearTimeout(timer);
+        startPageActivityIdleWaiters.delete(finish);
+        resolve(!!idle);
+      };
+      startPageActivityIdleWaiters.add(finish);
+      timer = window.setTimeout(() => finish(false), wait);
+      resolveStartPageActivityIdleWaiters();
+    });
+  }
+
+  function sendNextStartPageActivity(keepalive) {
+    if (startPageActivitySending || !startPageActivityPending.length) return;
+    const interval = startPageActivityPending[0];
+    startPageActivitySending = interval;
+    postStartPageActivity(interval, keepalive)
+      .then(({ response, json }) => {
+        if (!response.ok) throw new Error(json.error || 'start page activity failed');
+        const index = startPageActivityPending.indexOf(interval);
+        if (index >= 0) startPageActivityPending.splice(index, 1);
+      })
+      .catch((error) => {
+        console.warn('[起步页] 前台时间暂未写入，将稍后重试', error);
+      })
+      .finally(() => {
+        if (startPageActivitySending === interval) startPageActivitySending = null;
+        if (startPageActivityPending.length) {
+          window.setTimeout(() => sendNextStartPageActivity(false), 1200);
+        } else {
+          resolveStartPageActivityIdleWaiters();
+        }
+      });
+  }
+
+  function flushStartPageActivityKeepalive() {
+    startPageActivityPending.slice().forEach((interval) => {
+      postStartPageActivity(interval, true)
+        .then(({ response, json }) => {
+          if (!response.ok) throw new Error(json.error || 'start page activity failed');
+          const index = startPageActivityPending.indexOf(interval);
+          if (index >= 0) startPageActivityPending.splice(index, 1);
+        })
+        .catch(() => {})
+        .finally(resolveStartPageActivityIdleWaiters);
+    });
+  }
+
+  function pauseStartPageActivity(keepalive) {
+    if (!startPageActivityActive) return;
+    captureStartPageActivity(Date.now());
+    startPageActivityActive = false;
+    startPageActivityPage = '';
+    startPageActivityLastCapturedAt = 0;
+    if (startPageActivityHeartbeat) window.clearInterval(startPageActivityHeartbeat);
+    startPageActivityHeartbeat = 0;
+    if (keepalive) flushStartPageActivityKeepalive();
+    else sendNextStartPageActivity(false);
+  }
+
+  function resumeStartPageActivity() {
+    const target = currentStartPageActivityTarget();
+    if (!target || document.hidden || !document.hasFocus()) {
+      pauseStartPageActivity(false);
+      return;
+    }
+    if (startPageActivityActive && startPageActivityPage === target) return;
+    if (startPageActivityActive) pauseStartPageActivity(false);
+    startPageActivityActive = true;
+    startPageActivityPage = target;
+    startPageActivityLastCapturedAt = Date.now();
+    if (startPageActivityHeartbeat) window.clearInterval(startPageActivityHeartbeat);
+    startPageActivityHeartbeat = window.setInterval(() => {
+      captureStartPageActivity(Date.now());
+      sendNextStartPageActivity(false);
+    }, 30000);
+    sendNextStartPageActivity(false);
+  }
+
+  function syncStartPageActivity() {
+    const target = currentStartPageActivityTarget();
+    if (!target) {
+      pauseStartPageActivity(false);
+      return;
+    }
+    resumeStartPageActivity();
+  }
+
+  function setupStartPageActivityTracker() {
+    document.addEventListener('start:viewchange', syncStartPageActivity);
+    document.addEventListener('relatum:start-workspacechange', syncStartPageActivity);
+    window.addEventListener('focus', resumeStartPageActivity);
+    window.addEventListener('blur', () => pauseStartPageActivity(true));
+    window.addEventListener('pagehide', () => pauseStartPageActivity(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) pauseStartPageActivity(true);
+      else resumeStartPageActivity();
+    });
+  }
+
+  window.RelatumStartPageActivity = Object.freeze({
+    waitForIdle() {
+      return waitForStartPageActivityIdle(3000);
+    },
+  });
 
   function clearStartViewMotion() {
     [bookStage, document.querySelector('.study-embedded'), document.querySelector('.cadence-embedded'), document.querySelector('.tree-page-embedded'),
@@ -4707,5 +4901,6 @@
   });
 
   verifyRuntimeCompatibility();
+  setupStartPageActivityTracker();
   refresh();
 })();
