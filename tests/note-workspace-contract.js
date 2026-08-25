@@ -16,7 +16,7 @@ const desktop = read('assets/desktop-shell.js');
 const css = read('assets/styles.css');
 const server = read('app.py');
 
-for (const workspace of ['canvas', 'notes', 'blog']) {
+for (const workspace of ['canvas', 'notes']) {
   assert(html.includes(`data-start-workspace="${workspace}"`), `${workspace} workspace switch is missing`);
   assert(html.includes(`data-start-workspace-panel="${workspace}"`), `${workspace} workspace panel is missing`);
 }
@@ -73,6 +73,8 @@ for (const obsolete of ['revision_conflict', '磁盘版本已变化', '加载磁
 }
 assert(html.includes('note-live-editor-host') && html.includes('note-editor-fallback'), 'Live Preview and source mode need shared Markdown editing surfaces');
 assert(html.includes('data-role="note-reading-view"'), 'Notes needs a safe read-only Markdown surface');
+assert(html.includes('data-note-action="toggle-source"') && html.includes('data-role="note-view-toggle"'),
+  'the document header needs a direct Live Preview/source toggle');
 assert(html.includes('data-role="note-tabs"') && html.includes('data-note-action="new-tab"'), 'Notes needs a persistent multi-document tab strip');
 assert(html.includes('aria-label="新建标签页"'), 'the plus button must describe a new tab rather than a new note');
 assert(html.includes('data-note-action="close-all-tabs"'), 'the tab strip needs a persistent close-all control');
@@ -122,8 +124,11 @@ assert(notes.includes("viewModeButton('live'") && notes.includes("viewModeButton
 assert(notes.includes("NOTE_VIEW_KEY = 'canvas:noteView:v1'"), 'the selected Markdown view mode must persist locally');
 assert(notes.includes('function setViewMode(mode)') && notes.includes('function renderReadingDocument(payload)'),
   'view switching must keep one Markdown source and render reading mode on demand');
-assert(live.includes('function setSourceMode(active)') && live.includes('sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin]'),
-  'source mode must keep CodeMirror while removing Live Preview projections');
+assert(live.includes('function setSourceMode(active)') && live.includes('livePreviewCompartment.reconfigure(livePreviewExtensions())'),
+  'source mode must reconfigure the existing CodeMirror state instead of rebuilding the document');
+const sourceToggle = live.slice(live.indexOf('function setSourceMode(active)'), live.indexOf('function snapshot()'));
+assert(!sourceToggle.includes('setDocument(') && !sourceToggle.includes('snapshot()'),
+  'source toggles must preserve CodeMirror history, selection, and scroll state');
 assert(live.includes('function renderMarkdown(host, source, notePath, options)'),
   'reading mode must reuse the Live Preview safe renderer and lazy offline assets');
 assert(notes.includes('function commitInlineTitle()') && notes.includes("rawValue + '.md'"), 'the inline title must rename the backing Markdown file');

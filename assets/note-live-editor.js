@@ -19,7 +19,7 @@
   ]);
 
   const {
-    EditorState, EditorSelection, StateEffect, StateField, EditorView, Decoration, WidgetType, Prec,
+    EditorState, EditorSelection, StateEffect, StateField, EditorView, Decoration, WidgetType, Prec, Compartment,
     ViewPlugin, keymap, drawSelection, dropCursor, highlightSpecialChars,
     rectangularSelection, crosshairCursor, placeholder, highlightActiveLine,
     syntaxTree, forceParsing, indentOnInput,
@@ -1330,6 +1330,16 @@
     const blockField = createBlockField(notePath, safeOptions, coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
     const viewportParsePlugin = createViewportParsePlugin();
+    const livePreviewCompartment = new Compartment();
+    const editorLabelCompartment = new Compartment();
+
+    function livePreviewExtensions() {
+      return sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin];
+    }
+
+    function editorLabelExtension() {
+      return EditorView.contentAttributes.of({ spellcheck: 'false', 'aria-label': sourceMode ? languageSourceLabel() : languageLabel() });
+    }
 
     const customKeys = [
       { key: 'Mod-s', preventDefault: true, run() { safeOptions.onSaveRequest(); return true; } },
@@ -1363,7 +1373,7 @@
         rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
         markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
         relatumCodeHighlighting || [],
-        sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin],
+        livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }])),
         keymap.of(customKeys.concat(
           Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : [],
@@ -1373,7 +1383,7 @@
           host.dataset.livePreviewError = String(error && error.message || error);
           console.error('Relatum Live Preview:', error);
         }),
-        EditorView.contentAttributes.of({ spellcheck: 'false', 'aria-label': sourceMode ? languageSourceLabel() : languageLabel() }),
+        editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || suppressChanges) return;
           if (update.view.composing || update.view.__relatumCompositionActive) { compositionDirty = true; return; }
@@ -1482,9 +1492,14 @@
     function setSourceMode(active) {
       const next = !!active;
       if (next === sourceMode) return;
-      const current = snapshot();
       sourceMode = next;
-      setDocument(Object.assign({ notePath: currentPath }, current));
+      coordinator.epoch += 1;
+      view.dispatch({ effects: [
+        livePreviewCompartment.reconfigure(livePreviewExtensions()),
+        editorLabelCompartment.reconfigure(editorLabelExtension()),
+      ] });
+      host.classList.toggle('is-source-mode', sourceMode);
+      view.requestMeasure();
     }
 
     function snapshot() {

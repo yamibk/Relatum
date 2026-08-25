@@ -16,6 +16,7 @@
   const inlineTitleEl = $('[data-role="note-inline-title"]');
   const focusToggle = $('[data-note-action="toggle-focus"]');
   const expandAllButton = $('[data-note-action="toggle-all-folders"]');
+  const viewToggle = $('[data-role="note-view-toggle"]');
   const documentStatusEl = $('[data-role="note-document-status"]');
   const wordCountEl = $('[data-role="note-word-count"]');
   const characterCountEl = $('[data-role="note-character-count"]');
@@ -69,6 +70,7 @@
       titleRequired: '文件名不能为空', words: '{count} 个词', characters: '{count} 个字符', newTab: '新标签页', closeTab: '关闭标签页', closeAllTabs: '关闭所有笔记标签',
       enterFocus: '隐藏顶部栏', exitFocus: '显示顶部栏',
       livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
+      switchToSource: '切换到源码模式', switchToLive: '切换到实时预览',
     },
     en: {
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
@@ -89,6 +91,7 @@
       titleRequired: 'A filename is required', words: '{count} words', characters: '{count} characters', newTab: 'New tab', closeTab: 'Close tab', closeAllTabs: 'Close all note tabs',
       enterFocus: 'Hide top bar', exitFocus: 'Show top bar',
       livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
+      switchToSource: 'Switch to source mode', switchToLive: 'Switch to Live Preview',
     },
   };
   const state = {
@@ -220,6 +223,16 @@
     return mode === 'source' || mode === 'reading' ? mode : 'live';
   }
 
+  function updateViewToggle() {
+    if (!viewToggle) return;
+    const sourceMode = state.viewMode === 'source';
+    const label = tr(sourceMode ? 'switchToLive' : 'switchToSource');
+    viewToggle.disabled = !state.current;
+    viewToggle.setAttribute('aria-pressed', sourceMode ? 'true' : 'false');
+    viewToggle.setAttribute('aria-label', label);
+    viewToggle.setAttribute('data-ui-tooltip', label);
+  }
+
   function readingPayload(documentState) {
     const target = documentState || state.current;
     return {
@@ -269,6 +282,7 @@
       }
     }
     updateEditorVisibility();
+    updateViewToggle();
     scheduleInlineTitleScroll();
   }
 
@@ -895,6 +909,7 @@
     editorHost.hidden = !hasNote || !liveEditor || state.viewMode === 'reading';
     fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
+    updateViewToggle();
   }
   function setDocumentSwitchPending(active) {
     root.classList.toggle('note-document-switch-pending', !!active);
@@ -1109,6 +1124,7 @@
     else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
+    else if (name === 'toggle-source' && state.current) setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'current-menu' && state.current) {
       const entry = findEntry(state.current.path) || { kind: 'note', path: state.current.path, name: noteTitle(state.current.path) };
       const rect = action.getBoundingClientRect();
@@ -1173,7 +1189,7 @@
   window.addEventListener('blur', () => { if (state.active) flushSave(); });
   window.addEventListener('focus', () => { if (state.active) checkExternalChanges(false); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && state.active) flushSave(); });
-  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(() => state.active ? flushSave() : true);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: checkExternalChanges, get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
