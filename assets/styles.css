@@ -10081,6 +10081,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 body.start-page .book-view.study-active .book-stage,
 body.start-page .book-view.cadence-active .book-stage,
 body.start-page .book-view.calendar-active .book-stage,
+body.start-page[data-start-state] .book-view .study-embedded,
 body.start-page[data-start-state] .book-view .cadence-embedded,
 body.start-page[data-start-state] .book-view .calendar-embedded {
   scrollbar-width: none;
@@ -10089,6 +10090,7 @@ body.start-page[data-start-state] .book-view .calendar-embedded {
 body.start-page .book-view.study-active .book-stage::-webkit-scrollbar,
 body.start-page .book-view.cadence-active .book-stage::-webkit-scrollbar,
 body.start-page .book-view.calendar-active .book-stage::-webkit-scrollbar,
+body.start-page[data-start-state] .book-view .study-embedded::-webkit-scrollbar,
 body.start-page[data-start-state] .book-view .cadence-embedded::-webkit-scrollbar,
 body.start-page[data-start-state] .book-view .calendar-embedded::-webkit-scrollbar {
   display: none;
