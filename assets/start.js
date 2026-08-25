@@ -61,6 +61,7 @@
   const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const startPageActivityToggle = document.querySelector('[data-role="start-page-activity-toggle"]');
+  const startPageActivityStatsToggle = document.querySelector('[data-role="start-page-activity-stats-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
@@ -133,6 +134,7 @@
   const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
   const START_PAGE_ACTIVITY_ENABLED_KEY = 'canvas:startPageActivityEnabled:v1';
+  const START_PAGE_ACTIVITY_STATS_VISIBLE_KEY = 'canvas:startPageActivityStatsVisible:v1';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
@@ -157,6 +159,7 @@
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
   const START_PAGE_ACTIVITY_VIEWS = new Set(['study', 'tree', 'notes']);
   let startPageActivityEnabled = false;
+  let startPageActivityStatsVisible = false;
   let startPageActivityActive = false;
   let startPageActivityPage = '';
   let startPageActivityLastCapturedAt = 0;
@@ -513,6 +516,17 @@
     syncStartPageActivity();
   }
 
+  function applyStartPageActivityStatsVisible(visible, persist) {
+    startPageActivityStatsVisible = visible === true;
+    if (startPageActivityStatsToggle) startPageActivityStatsToggle.checked = startPageActivityStatsVisible;
+    document.body.dataset.startPageActivityStatsVisible = startPageActivityStatsVisible ? '1' : '0';
+    if (persist) {
+      try {
+        localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisible ? '1' : '0');
+      } catch (e) {}
+    }
+  }
+
   // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
   // 7 张前置页（复习/日历/活跃/速记/树状/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
   function applyHideSpecialPages(hidden, persist) {
@@ -659,6 +673,16 @@
   let startPageActivityEnabledInit = false;
   try { startPageActivityEnabledInit = localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY) === '1'; } catch (e) {}
   applyStartPageActivityEnabled(startPageActivityEnabledInit, false);
+  let startPageActivityStatsVisibleInit = startPageActivityEnabledInit;
+  try {
+    const storedStartPageActivityStatsVisible = localStorage.getItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY);
+    if (storedStartPageActivityStatsVisible === '1' || storedStartPageActivityStatsVisible === '0') {
+      startPageActivityStatsVisibleInit = storedStartPageActivityStatsVisible === '1';
+    } else {
+      localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisibleInit ? '1' : '0');
+    }
+  } catch (e) {}
+  applyStartPageActivityStatsVisible(startPageActivityStatsVisibleInit, false);
   let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
   try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
   applyHideSpecialPages(hideSpecialInit, false);
@@ -938,6 +962,11 @@
   if (startPageActivityToggle) {
     startPageActivityToggle.addEventListener('change', () => {
       applyStartPageActivityEnabled(startPageActivityToggle.checked, true);
+    });
+  }
+  if (startPageActivityStatsToggle) {
+    startPageActivityStatsToggle.addEventListener('change', () => {
+      applyStartPageActivityStatsVisible(startPageActivityStatsToggle.checked, true);
     });
   }
   if (hideSpecialToggle) {
