@@ -54,7 +54,7 @@ No account is required. Canvases, preferences, and optional AI credentials stay 
 
 ### Notes, documents, and visual research
 
-- Switch among Canvas, Notes, and Blog workspaces from Home while preserving the current canvas and note state.
+- Switch between Canvas and Notes workspaces from Home while preserving the current state on both sides.
 - An Obsidian-style Markdown library with nested folders, multi-document tabs, editable file titles, single-surface Live Preview, Callouts, wikilinks, backlinks, local images, word/character counts, quiet 350ms autosave, and a local font-scale preference.
 - The file tree supports context menus, internal moves, and direct Windows Explorer drops. Notes and folders can be revealed in Explorer, and removal uses the Windows Recycle Bin.
 - Idle external edits load silently. If an external edit collides with active typing, Relatum first preserves the disk version in `data/note-recovery/` instead of showing a conflict dialog.

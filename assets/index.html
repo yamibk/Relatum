@@ -233,8 +233,6 @@
           aria-controls="start-canvas-workspace">画布</button>
         <button type="button" role="tab" data-start-workspace="notes"
           aria-controls="start-notes-workspace">笔记</button>
-        <button type="button" role="tab" data-start-workspace="blog"
-          aria-controls="start-blog-workspace">博客</button>
       </nav>
     </div>
     <!-- 常驻操作条：仅在画布列表视图显示（空状态由 hero 区承担操作）-->
@@ -1324,6 +1322,13 @@
           <p class="note-current-path" data-role="note-current-path">选择一篇笔记</p>
         </div>
         <div class="note-document-tools">
+          <button type="button" class="note-side-button note-view-toggle" data-note-action="toggle-source"
+            data-role="note-view-toggle" aria-label="切换到源码模式" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <g class="note-view-icon note-view-icon-source"><path d="m7 5-4 5 4 5M13 5l4 5-4 5M11.5 3.5l-3 13"/></g>
+              <g class="note-view-icon note-view-icon-live"><path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.5 9h5M7.5 12h5"/></g>
+            </svg>
+          </button>
           <button type="button" class="note-side-button" data-note-action="toggle-links"
             aria-label="显示链接面板">⇄</button>
           <button type="button" class="note-more-button" data-note-action="current-menu"

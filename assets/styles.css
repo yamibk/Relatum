@@ -1021,6 +1021,26 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   border-radius: 5px; color: var(--text-secondary); background: transparent; font: 600 15px/1 inherit; cursor: pointer;
 }
 .note-side-button:hover { color: var(--text); background: rgba(25, 25, 23, .045); }
+.note-view-toggle svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.note-view-toggle .note-view-icon-live { display: none; }
+.note-view-toggle[aria-pressed="true"] {
+  color: var(--text);
+  background: rgba(25, 25, 23, .065);
+}
+.note-view-toggle[aria-pressed="true"] .note-view-icon-source { display: none; }
+.note-view-toggle[aria-pressed="true"] .note-view-icon-live { display: inline; }
+.note-view-toggle:focus-visible { outline: 1px solid rgba(70, 88, 65, .42); outline-offset: 1px; }
+.note-view-toggle:disabled { opacity: .3; cursor: default; }
+.note-view-toggle:disabled:hover { color: var(--text-secondary); background: transparent; }
 .note-document-body {
   --note-inline-title-top: clamp(8px, 1.2vh, 12px);
   --note-inline-title-line: calc(38.4px * var(--note-font-scale, 1));
@@ -1329,6 +1349,81 @@ body.start-page[data-start-theme="dark"] .note-reading-content pre.md-code {
 }
 body.start-page[data-start-theme="dark"] .note-reading-content pre.md-code code { color: #dce5da; }
 body.start-page[data-start-theme="dark"] .note-reading-content .md-local-image-fallback { color: #8f948d; }
+
+/* 主页背景为“沉浸”时，笔记工作区不再用整块实色纸面遮住环境背景。
+   正文仍保持高不透明度以保证长文阅读，树、标签栏与工具栏用更轻的纸张层次；
+   常驻表面不使用 backdrop-filter，避免编辑长文时产生持续全屏模糊开销。 */
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace {
+  --note-scenic-shell: rgba(250, 250, 247, .48);
+  --note-scenic-tree: rgba(248, 248, 244, .74);
+  --note-scenic-paper: rgba(255, 255, 252, .80);
+  --note-scenic-chrome: rgba(252, 252, 249, .70);
+  --note-scenic-overlay: rgba(253, 253, 250, .92);
+  --note-scenic-line: rgba(37, 39, 35, .11);
+  height: calc(100% - 16px);
+  margin: 0 16px 16px;
+  border: 1px solid var(--note-scenic-line);
+  border-radius: 18px;
+  background: var(--note-scenic-shell);
+  box-shadow:
+    0 24px 64px rgba(50, 48, 43, .12),
+    inset 0 1px 0 rgba(255, 255, 255, .68);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tree-pane {
+  border-right-color: var(--note-scenic-line);
+  background: var(--note-scenic-tree);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-pane,
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-body {
+  background: var(--note-scenic-paper);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-pane-head,
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-head,
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tab-bar {
+  background: var(--note-scenic-chrome);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tab-bar {
+  border-bottom-color: var(--note-scenic-line);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tab.active {
+  border-color: var(--note-scenic-line);
+  background: var(--note-scenic-paper);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-links-pane {
+  border-left-color: var(--note-scenic-line);
+  background: var(--note-scenic-overlay);
+  box-shadow: -18px 0 42px rgba(43, 42, 38, .10);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-status {
+  border-color: var(--note-scenic-line);
+  background: var(--note-scenic-overlay);
+}
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace.workspace-entering,
+body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace.workspace-leaving {
+  background: var(--note-scenic-shell);
+}
+
+body.start-page[data-start-theme="dark"][data-start-workspace="notes"][data-start-background="scenic"] .note-workspace {
+  --note-scenic-shell: rgba(13, 17, 15, .66);
+  --note-scenic-tree: rgba(24, 28, 25, .78);
+  --note-scenic-paper: rgba(20, 23, 21, .84);
+  --note-scenic-chrome: rgba(22, 26, 23, .76);
+  --note-scenic-overlay: rgba(25, 29, 26, .94);
+  --note-scenic-line: rgba(235, 240, 235, .11);
+  box-shadow:
+    0 26px 72px rgba(0, 0, 0, .36),
+    inset 0 1px 0 rgba(255, 255, 255, .045);
+}
+
+@media (max-width: 760px) {
+  body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace {
+    height: 100%;
+    margin: 0;
+    border-width: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .start-workspace-slider,
