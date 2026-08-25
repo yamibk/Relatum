@@ -1698,6 +1698,13 @@
     });
   }
 
+  function finalizeDeferredStartViewExitMotion() {
+    finalizeCadenceEntranceExit(false);
+    if (window.CanvasCalendar && typeof window.CanvasCalendar.finalizeExitMotion === 'function') {
+      window.CanvasCalendar.finalizeExitMotion();
+    }
+  }
+
   function markStartViewTransition(name) {
     if (!bookView) return;
     const previous = bookView.dataset.viewName || '';
@@ -1708,6 +1715,7 @@
     if (previousOrder === nextOrder) return;
     bookView.classList.remove('view-switching', 'view-forward', 'view-back');
     clearStartViewMotion();
+    finalizeDeferredStartViewExitMotion();
     const directionClass = nextOrder < previousOrder ? 'view-back' : 'view-forward';
     const motionClass = nextOrder < previousOrder ? 'view-motion-back' : 'view-motion-forward';
     const previousEl = getStartViewElement(previous);
@@ -1719,6 +1727,7 @@
     startViewTransitionTimer = window.setTimeout(() => {
       bookView.classList.remove('view-switching', 'view-forward', 'view-back');
       clearStartViewMotion();
+      finalizeDeferredStartViewExitMotion();
       startViewTransitionTimer = 0;
     }, startViewCleanupDelay(previous, name));
   }
@@ -1787,7 +1796,7 @@
     }
     if (name !== 'cadence') {
       cadenceEntranceSeq++;
-      clearCadenceEntrance(true);
+      if (previous === 'cadence') freezeCadenceEntranceForExit();
     }
     if (name !== 'calendar' && window.CanvasCalendar && window.CanvasCalendar.deactivate) {
       window.CanvasCalendar.deactivate();
@@ -2074,6 +2083,42 @@
   let cadenceEnterDelayTimer = 0;
   let cadenceEnterFrame = 0;
   let cadenceEntranceSeq = 0;
+  let cadenceEntranceExitFrozen = false;
+  let cadenceEntranceExitAnimations = [];
+
+  function releaseCadenceEntranceExitAnimations() {
+    cadenceEntranceExitAnimations.forEach((animation) => {
+      try { animation.cancel(); } catch (error) {}
+    });
+    cadenceEntranceExitAnimations = [];
+    cadenceEntranceExitFrozen = false;
+  }
+
+  function freezeCadenceEntranceForExit() {
+    clearCadenceEntrance(false);
+    if (cadenceEntranceExitFrozen) return;
+    const cadence = document.querySelector('[data-role="study-cadence"]');
+    if (!cadence) return;
+    cadenceEntranceExitFrozen = true;
+    if (typeof cadence.getAnimations !== 'function') return;
+    try {
+      cadenceEntranceExitAnimations = cadence.getAnimations({ subtree: true }).filter((animation) => {
+        return animation.playState === 'running' || animation.playState === 'pending';
+      });
+      cadenceEntranceExitAnimations.forEach((animation) => {
+        try { animation.pause(); } catch (error) {}
+      });
+    } catch (error) {
+      cadenceEntranceExitAnimations = [];
+    }
+  }
+
+  function finalizeCadenceEntranceExit(force) {
+    if (!cadenceEntranceExitFrozen || (!force && cadenceActive)) return;
+    clearCadenceEntrance(true);
+    releaseCadenceEntranceExitAnimations();
+  }
+
   function clearCadenceEntrance(resetClass) {
     if (cadenceEnterDelayTimer) {
       clearTimeout(cadenceEnterDelayTimer);
@@ -2100,6 +2145,7 @@
     }
   }
   function stageCadenceEntrance() {
+    finalizeCadenceEntranceExit(true);
     clearCadenceEntrance(true);
     const cadence = document.querySelector('[data-role="study-cadence"]');
     if (cadence) cadence.classList.add('cadence-staging');
@@ -2195,8 +2241,6 @@
       armCadenceEntrance();
       return;
     }
-    cadenceEntranceSeq++;
-    clearCadenceEntrance(true);
     showView(listViewName());
     if (bookStage) bookStage.scrollTop = 0;
   }
