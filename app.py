@@ -6330,6 +6330,10 @@ REVIEW_DECK_NAME_MAX = 80
 REVIEW_TAG_NAME_MAX = 32
 REVIEW_TAGS_PER_CARD_MAX = 12
 REVIEW_BATCH_MAX = 500
+REVIEW_EVENTS_DAY_COUNT_SQL = (
+    "SELECT COUNT(*) FROM review_events "
+    "WHERE reviewed_at >= ? AND reviewed_at < ?"
+)
 
 
 def _review_maturity_for_level(level: int) -> str:
@@ -6451,6 +6455,16 @@ def _review_connect() -> sqlite3.Connection:
         conn.execute(f"PRAGMA user_version = {REVIEW_SCHEMA_VERSION}")
     conn.commit()
     return conn
+
+
+def _review_event_count_for_day(conn: sqlite3.Connection, target_day: date) -> int:
+    """Count one local calendar day through the reviewed_at range index."""
+    day_start = f"{target_day.isoformat()}T00:00:00"
+    next_day_start = f"{(target_day + timedelta(days=1)).isoformat()}T00:00:00"
+    return int(conn.execute(
+        REVIEW_EVENTS_DAY_COUNT_SQL,
+        (day_start, next_day_start),
+    ).fetchone()[0])
 
 
 def _review_text(value: object, *, label: str, limit: int, required: bool = False) -> str:
@@ -6774,7 +6788,8 @@ def _review_scope_options(conn: sqlite3.Connection, today: str) -> list[dict]:
 
 def review_pool_payload() -> dict:
     """Return active standalone cards without opening any .canvas file."""
-    today = date.today().isoformat()
+    today_date = date.today()
+    today = today_date.isoformat()
     conn = _review_connect()
     try:
         settings = _review_settings_payload(conn)
@@ -6807,10 +6822,7 @@ def review_pool_payload() -> dict:
                  WHERE c.status = 'active' AND (c.due_on = '' OR c.due_on <= ?){scope_sql}""",
             [today, *scope_params],
         ).fetchone()[0])
-        reviewed_today = int(conn.execute(
-            "SELECT COUNT(*) FROM review_events WHERE substr(reviewed_at, 1, 10) = ?",
-            (today,),
-        ).fetchone()[0])
+        reviewed_today = _review_event_count_for_day(conn, today_date)
         tags_by_card = _review_tags_by_card(conn, [str(row["id"]) for row in rows])
         return {
             "version": 3,
