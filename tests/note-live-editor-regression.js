@@ -70,6 +70,7 @@ const sandbox = {
     RelatumCodeMirror: {
       EditorState: { create: ({ doc }) => ({ doc: new TextDoc(doc) }) },
       EditorSelection: {}, StateEffect: { define: () => ({}) }, StateField: {}, EditorView: {}, Decoration: {}, WidgetType,
+      Prec: { highest(value) { return value; } },
       ViewPlugin: {}, keymap: {}, drawSelection() {}, dropCursor() {}, highlightSpecialChars() {},
       rectangularSelection() {}, crosshairCursor() {}, placeholder() {}, highlightActiveLine() {},
       syntaxTree: fakeSyntaxTree, forceParsing() { return true; }, indentOnInput() {},
@@ -99,7 +100,7 @@ function loadLiveDecorationProbe() {
   context.document = {};
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, exitEmptyQuoteMarkup };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -135,6 +136,39 @@ assert.strictEqual(nestedQuoteExit.handled, true, 'nested empty quotes must exit
 assert.strictEqual(nestedQuoteExit.state.doc.toString(), '> ');
 assert.strictEqual(runEmptyQuoteExit('> body').handled, false, 'non-empty quotes must keep the Markdown continuation behavior');
 assert.strictEqual(runEmptyQuoteExit('- ').handled, false, 'list continuation must not be intercepted');
+
+function runEditCommand(command, source, anchor, head) {
+  let state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: source,
+    selection: { anchor, head: head == null ? anchor : head },
+  });
+  const view = {
+    get state() { return state; },
+    dispatch(spec) { state = state.update(spec).state; },
+  };
+  assert.strictEqual(command(view), true);
+  return state;
+}
+
+const boldState = runEditCommand(
+  (view) => liveProbe.__relatumLiveTest.wrapSelection(view, '**', '**', '粗体'),
+  'alpha', 0, 5,
+);
+assert.strictEqual(boldState.doc.toString(), '**alpha**', 'Ctrl+B must wrap selected text in strong markers');
+assert.deepStrictEqual(
+  [boldState.selection.main.from, boldState.selection.main.to],
+  [2, 7],
+  'wrapped bold text must remain selected',
+);
+const codeSelectionState = runEditCommand(liveProbe.__relatumLiveTest.wrapCodeBlock, 'alpha', 0, 5);
+assert.strictEqual(codeSelectionState.doc.toString(), '```\nalpha\n```', 'Ctrl+Shift+K must fence selected text');
+assert.strictEqual(codeSelectionState.doc.sliceString(
+  codeSelectionState.selection.main.from,
+  codeSelectionState.selection.main.to,
+), 'alpha', 'the fenced source must remain selected');
+const emptyCodeState = runEditCommand(liveProbe.__relatumLiveTest.wrapCodeBlock, '', 0);
+assert.strictEqual(emptyCodeState.doc.toString(), '```\n\n```', 'Ctrl+Shift+K must insert an empty fenced block');
+assert.strictEqual(emptyCodeState.selection.main.head, 4, 'an empty fenced block must place the caret inside');
 
 const segmentedSource = [
   '当自增运算符出现在表达式中，前缀和后缀的执行时机不同。',
@@ -179,6 +213,7 @@ const segmentedDecorations = decorationRecords(
 );
 const segmentedHeading = segmentedState.doc.lineAt(segmentedSource.indexOf('#### 示例 1')).from;
 const openingFence = segmentedSource.indexOf('```c');
+const openingFenceEnd = openingFence + 4;
 const closingFence = segmentedSource.lastIndexOf('```');
 assert(segmentedDecorations.some((item) => item.from === segmentedHeading
   && /(?:^|\s)note-live-heading(?:\s|$)/.test(item.spec.class || '')),
@@ -187,6 +222,39 @@ assert(segmentedDecorations.some((item) => item.from === openingFence && item.to
   'a table replacement must not leave the following opening code fence visible');
 assert(segmentedDecorations.some((item) => item.from === closingFence && item.to === closingFence + 3 && !item.spec.class),
   'a table replacement must not leave the following closing code fence visible');
+const codeLanguageDecoration = segmentedDecorations.find((item) => item.from === openingFenceEnd
+  && item.to === openingFenceEnd && item.spec.widget instanceof liveProbe.__relatumLiveTest.CodeLanguageWidget);
+assert(codeLanguageDecoration, 'an inactive fenced block must expose its exact language label as a non-layout widget');
+assert.strictEqual(codeLanguageDecoration.spec.widget.label, 'c');
+assert.strictEqual(codeLanguageDecoration.spec.widget.code, 'int a = 5, b = 5;\nint c, d;',
+  'copying the language badge must copy only code, without either fence');
+
+const escapeSource = '\\==123==\n\\a\n`\\*`\n```text\n\\*\n```';
+const escapeCoordinator = { field: null, spec() { return null; } };
+const escapeOptions = { coordinator: escapeCoordinator, imageUrl() { return ''; } };
+const escapeBlockField = liveProbe.__relatumLiveTest.createBlockField(() => 'escapes.md', escapeOptions, escapeCoordinator);
+const escapeState = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: escapeSource,
+  extensions: [
+    liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }),
+    escapeBlockField,
+  ],
+});
+const escapeView = {
+  state: escapeState,
+  visibleRanges: [{ from: 0, to: escapeState.doc.length }],
+  composing: false,
+  __relatumCompositionActive: false,
+  hasFocus: false,
+};
+const escapeDecorations = decorationRecords(
+  liveProbe.__relatumLiveTest.createInlineDecorations(escapeView, escapeBlockField, () => 'escapes.md', escapeOptions),
+  escapeState.doc.length,
+).filter((item) => /(?:^|\s)is-escape(?:\s|$)/.test(item.spec.class || ''));
+assert(escapeDecorations.some((item) => item.from === 0 && item.to === 1),
+  'a valid Markdown escape must gray only its backslash marker');
+assert.strictEqual(escapeDecorations.length, 1,
+  'invalid escapes, inline code, and fenced code must not receive Markdown escape styling');
 
 const syntax = sandbox.window.RelatumNoteLiveSyntax;
 assert(syntax, 'Live Preview syntax probe must be exported');
@@ -216,6 +284,9 @@ const callout = syntax.scanBlockSpecsFromString('> [!warning]- 只显示标题\n
 assert.strictEqual(callout.kind, 'callout');
 assert.strictEqual(callout.collapsed, true);
 assert.strictEqual(syntax.parseCalloutSource('> [!unknown]+ 自定义').type, 'unknown');
+assert.strictEqual(syntax.fenceStart('```Py').label, 'Py', 'the displayed fence language must preserve the author\'s spelling');
+assert.strictEqual(syntax.fenceStart('```Py').language, 'py', 'language lookup must remain case-insensitive');
+assert.strictEqual(syntax.fencedCodeBody('```C\nint main(void) {}\n```'), 'int main(void) {}');
 assert.strictEqual(syntax.scanBlockSpecsFromString('```mermaid\ngraph TD; A-->B').length, 0, 'unclosed fences must remain source');
 assert.strictEqual(syntax.scanBlockSpecsFromString('```text\n$$\nx+1\n$$\n```').length, 0, 'custom math must not project inside code fences');
 assert.strictEqual(syntax.scanBlockSpecsFromString('$$\nx+1').length, 0, 'unclosed math must remain source');
@@ -273,10 +344,31 @@ assert(editorSource.includes('function renderMarkdown(host, source, notePath, op
   'reading mode must reuse the safe Markdown renderer and authorized local image path');
 assert(editorSource.includes('compositionstart') && editorSource.includes('compositionend'), 'explicit IME lifecycle is required');
 assert(editorSource.includes('note-live-source-mark'), 'source marker roles must be emitted by Relatum decorations');
+assert(editorSource.includes("{ key: 'Mod-b'") && editorSource.includes("{ key: 'Mod-Shift-k'"),
+  'bold and fenced-code shortcuts must be registered');
+assert(editorSource.includes("Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }]))"),
+  'empty quote exit must outrank the Markdown continuation keymap');
 assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading markers must include their separator whitespace');
 assert(stylesSource.includes('.cm-line.note-live-code-line.cm-activeLine'), 'the active code line must retain its block background');
 assert(stylesSource.includes('note-live-code-first') && stylesSource.includes('note-live-code-last'), 'code block corners must use explicit first/last line roles');
+assert(stylesSource.includes('.note-live-source-mark.is-escape'), 'effective escape markers must have an explicit muted style');
+assert(editorSource.includes("return spec && spec.kind !== 'callout'"),
+  'Live Preview callouts must remain CodeMirror-owned lines instead of block replacements');
+assert(stylesSource.includes('.note-live-callout-first') && stylesSource.includes('.note-live-callout-last'),
+  'line-native Live Preview callouts must keep explicit continuous-card corners');
+assert(!stylesSource.includes('.cm-line:has(+ .note-live-rich-block.is-callout)'),
+  'Callout spacing must never rewrite CodeMirror-managed line heights and corrupt pointer hit testing');
+assert(!/\.note-live-setext-marker-line\.is-hidden\s*\{[^}]*(?:height|line-height)\s*:\s*0/s.test(stylesSource),
+  'hidden source projections must not collapse CodeMirror-managed line boxes');
+assert(!/\.cm-line\.note-live-code-line[^}]*\bfont\s*:/s.test(stylesSource),
+  'code blocks must not replace CodeMirror line metrics with a font shorthand');
+assert(/\.note-live-rich-block\s*\{[^}]*margin:\s*0 auto/s.test(stylesSource),
+  'block widgets must not use unmeasured vertical margins that desynchronize pointer coordinates');
+assert(/\.note-live-rich-block\.is-rule\s*\{[^}]*width:\s*100%/s.test(stylesSource),
+  'Live Preview horizontal rules must span the normal note text column');
+assert(stylesSource.includes('.note-live-code-language'), 'fenced code language/copy controls must have a stable visual target');
 assert(vendor && typeof vendor.forceParsing === 'function', 'the offline CodeMirror bundle must expose forceParsing');
+assert(vendor.Prec && typeof vendor.Prec.highest === 'function', 'the offline CodeMirror bundle must expose highest keymap precedence');
 assert.strictEqual(typeof vendor.closeBrackets, 'function', 'the offline CodeMirror bundle must expose native bracket pairing');
 assert(Array.isArray(vendor.closeBracketsKeymap) && vendor.closeBracketsKeymap.some((binding) => binding.key === 'Backspace'),
   'the offline CodeMirror bundle must expose paired Backspace handling');

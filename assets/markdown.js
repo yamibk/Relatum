@@ -285,6 +285,22 @@
     });
   }
 
+  function protectInlineCode(src) {
+    const codes = [];
+    const protectedSource = String(src || '').replace(/`([^`\n]+)`/g, function (_, code) {
+      codes.push(code);
+      return '\x00ICODE' + (codes.length - 1) + '\x00';
+    });
+    return { protected: protectedSource, codes: codes };
+  }
+
+  function restoreInlineCode(html, codes) {
+    if (!codes.length) return html;
+    return html.replace(/\x00ICODE(\d+)\x00/g, function (_, idx) {
+      return '<code>' + escapeHtml(codes[+idx] || '') + '</code>';
+    });
+  }
+
   // 推导链 ```derive：每行「公式 || 说明」（分隔符认 || 或 ‖），渲染成竖排——
   // 左侧步号、中间公式（\displaystyle 行内公式，由节点 typesetMath 排版）、右侧步骤说明，步骤间 ↓ 连接。
   // 是纯渲染层语法：源码仍是普通 Markdown 围栏块，可正常导出、向后兼容（旧版当代码块显示也不崩）。
@@ -351,9 +367,12 @@
     });
   }
 
+  const COMMONMARK_ESCAPABLE = new Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".split(''));
+
   function protectEscapes(src) {
     const chars = [];
-    const protectedSource = String(src || '').replace(/\\([\\`*${}\[\]()#+\-.!_>~|])/g, function (_, char) {
+    const protectedSource = String(src || '').replace(/\\([^\r\n])/g, function (match, char) {
+      if (!COMMONMARK_ESCAPABLE.has(char)) return match;
       chars.push(char);
       return '\x00ESC' + (chars.length - 1) + '\x00';
     });
@@ -755,7 +774,8 @@
     const opts = options && typeof options === 'object' ? options : {};
     try {
       const codeGuard = protectCode(source);
-      const imageGuard = protectLocalImages(codeGuard.protected, opts.localImages === true);
+      const inlineCodeGuard = protectInlineCode(codeGuard.protected);
+      const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
       const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
       const linkGuard = protectLinks(wikiGuard.protected);
       const mathGuard = protectMath(linkGuard.protected);
@@ -766,6 +786,7 @@
       html = restoreWikiLinks(html, wikiGuard.wikis);
       html = restoreLocalImages(html, imageGuard.images);
       html = restoreEscapes(html, escapeGuard.chars);
+      html = restoreInlineCode(html, inlineCodeGuard.codes);
       html = restoreCode(html, codeGuard.codes);
       return { html: html, features: features, error: false };
     } catch (error) {

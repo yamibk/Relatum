@@ -6,6 +6,8 @@
   const $ = (selector, scope) => (scope || root).querySelector(selector);
   const treeEl = $('[data-role="note-tree"]');
   const tabsEl = $('[data-role="note-tabs"]');
+  const newTabButton = $('[data-note-action="new-tab"]');
+  const closeAllTabsButton = $('[data-note-action="close-all-tabs"]');
   const editorHost = $('[data-role="note-editor"]');
   const fallbackEditor = $('[data-role="note-editor-fallback"]');
   const readingHost = $('[data-role="note-reading-view"]');
@@ -36,6 +38,7 @@
   let liveEditor = null;
 
   const ACTIVE_PATH_KEY = 'canvas:noteActivePath:v1';
+  const ACTIVE_TAB_KEY = 'canvas:noteActiveTab:v1';
   const OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1';
   const EXPANDED_KEY = 'canvas:noteExpandedFolders:v1';
   const LINKS_OPEN_KEY = 'canvas:noteLinksOpen:v1';
@@ -45,6 +48,7 @@
   const TREE_MOTION_MS = 220;
   const FOCUS_MOTION_MS = 320;
   const DOCUMENT_CACHE_LIMIT = 24;
+  const BLANK_TAB_PREFIX = 'relatum:blank-tab:';
   const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
   const COPY = {
     'zh-CN': {
@@ -61,8 +65,8 @@
       unresolvedTitle: '创建这篇笔记？', unresolvedCopy: '“[[{target}]]”尚不存在。', cancel: '取消', create: '创建',
       versionUnavailable: '历史版本无法读取', externalOpenFailed: '无法打开外部链接',
       expandFolder: '展开文件夹', collapseFolder: '收起文件夹', duplicateTitle: '已经存在一个同名文件',
-      expandAll: '全部展开', collapseAll: '全部折叠',
-      titleRequired: '文件名不能为空', words: '{count} 个词', characters: '{count} 个字符', closeTab: '关闭标签页',
+      expandAll: '全部展开', collapseAll: '全部收起',
+      titleRequired: '文件名不能为空', words: '{count} 个词', characters: '{count} 个字符', newTab: '新标签页', closeTab: '关闭标签页', closeAllTabs: '关闭所有笔记标签',
       enterFocus: '隐藏顶部栏', exitFocus: '显示顶部栏',
       livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
     },
@@ -82,7 +86,7 @@
       externalOpenFailed: 'Could not open external link',
       expandFolder: 'Expand folder', collapseFolder: 'Collapse folder', duplicateTitle: 'A file with the same name already exists',
       expandAll: 'Expand all', collapseAll: 'Collapse all',
-      titleRequired: 'A filename is required', words: '{count} words', characters: '{count} characters', closeTab: 'Close tab',
+      titleRequired: 'A filename is required', words: '{count} words', characters: '{count} characters', newTab: 'New tab', closeTab: 'Close tab', closeAllTabs: 'Close all note tabs',
       enterFocus: 'Hide top bar', exitFocus: 'Show top bar',
       livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
     },
@@ -93,12 +97,13 @@
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, draggedPath: '', renamePath: '', renameOriginal: '',
     historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
-    initializePromise: null, tabs: [], draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
+    initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live',
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
   try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = stored.filter((path) => typeof path === 'string'); } catch (error) {}
+  try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { if (localStorage.getItem(LINKS_OPEN_KEY) === '1') root.classList.add('links-overlay-open'); } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
 
@@ -417,20 +422,20 @@
   function updateExpandAllButton() {
     if (!expandAllButton) return;
     const paths = folderPaths();
-    const allExpanded = paths.length > 0 && paths.every((path) => state.expanded.has(path));
-    const label = tr(allExpanded ? 'collapseAll' : 'expandAll');
+    const anyExpanded = paths.some((path) => state.expanded.has(path));
+    const label = tr(anyExpanded ? 'collapseAll' : 'expandAll');
     expandAllButton.disabled = !paths.length;
-    expandAllButton.dataset.allExpanded = allExpanded ? 'true' : 'false';
+    expandAllButton.dataset.allExpanded = anyExpanded ? 'true' : 'false';
     expandAllButton.dataset.uiTooltip = label;
     expandAllButton.setAttribute('aria-label', label);
-    expandAllButton.setAttribute('aria-pressed', allExpanded ? 'true' : 'false');
+    expandAllButton.setAttribute('aria-pressed', anyExpanded ? 'true' : 'false');
   }
   function toggleAllFolders() {
     const paths = folderPaths();
     if (!paths.length) return false;
-    const expand = paths.some((path) => !state.expanded.has(path));
-    if (expand) paths.forEach((path) => state.expanded.add(path));
-    else state.expanded.clear();
+    const collapse = paths.some((path) => state.expanded.has(path));
+    if (collapse) state.expanded.clear();
+    else paths.forEach((path) => state.expanded.add(path));
     persistExpanded(); renderTree();
     return true;
   }
@@ -504,44 +509,77 @@
     });
   }
   function persistTabs() {
-    try { localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs)); } catch (error) {}
+    try {
+      localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(state.tabs));
+      if (state.activeTab && state.tabs.includes(state.activeTab)) localStorage.setItem(ACTIVE_TAB_KEY, state.activeTab);
+      else localStorage.removeItem(ACTIVE_TAB_KEY);
+    } catch (error) {}
   }
-  function ensureTab(path) {
-    if (!path || state.tabs.includes(path)) return false;
-    state.tabs.push(path);
+  function isBlankTab(tab) { return String(tab || '').startsWith(BLANK_TAB_PREFIX); }
+  function newBlankTabToken() { return BLANK_TAB_PREFIX + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+  function selectNoteTab(path, reuseActive) {
+    if (!path) return false;
+    const existing = state.tabs.indexOf(path);
+    if (existing >= 0) {
+      if (state.activeTab !== path) { state.activeTab = path; persistTabs(); }
+      return false;
+    }
+    const activeIndex = state.tabs.indexOf(state.activeTab);
+    if (reuseActive && activeIndex >= 0) state.tabs.splice(activeIndex, 1, path);
+    else state.tabs.push(path);
+    state.activeTab = path;
     persistTabs();
     return true;
   }
   function renderTabs() {
     if (!tabsEl) return;
-    const activePath = state.openingPath || (state.current && state.current.path) || '';
-    const fragment = document.createDocumentFragment();
-    state.tabs.forEach((path) => {
-      const tab = document.createElement('div');
-      tab.className = 'note-tab' + (path === activePath ? ' active' : '');
-      tab.dataset.noteTabPath = path;
+    const activeTab = state.activeTab || state.openingPath || (state.current && state.current.path) || '';
+    const existing = new Map(Array.from(tabsEl.children).map((tab) => [tab.dataset.noteTabPath || '', tab]));
+    state.tabs.forEach((tabPath, index) => {
+      const blank = isBlankTab(tabPath);
+      let tab = existing.get(tabPath);
+      if (!tab) {
+        tab = document.createElement('div');
+        const label = document.createElement('span');
+        label.className = 'note-tab-label';
+        const close = document.createElement('button');
+        close.type = 'button'; close.className = 'note-tab-close'; close.textContent = '×';
+        tab.append(label, close);
+      }
+      existing.delete(tabPath);
+      tab.className = 'note-tab' + (tabPath === activeTab ? ' active' : '') + (blank ? ' is-blank' : '');
+      tab.dataset.noteTabPath = tabPath;
       tab.setAttribute('role', 'tab');
-      tab.setAttribute('aria-selected', path === activePath ? 'true' : 'false');
-      tab.tabIndex = path === activePath ? 0 : -1;
+      tab.setAttribute('aria-selected', tabPath === activeTab ? 'true' : 'false');
+      tab.tabIndex = tabPath === activeTab ? 0 : -1;
       tab.draggable = true;
-      const label = document.createElement('span');
-      label.className = 'note-tab-label';
-      label.textContent = noteTitle(path);
-      const close = document.createElement('button');
-      close.type = 'button';
-      close.className = 'note-tab-close';
-      close.dataset.noteTabClose = path;
-      close.setAttribute('aria-label', tr('closeTab') + ' · ' + noteTitle(path));
-      close.textContent = '×';
-      tab.append(label, close);
-      fragment.appendChild(tab);
+      const label = tab.querySelector('.note-tab-label');
+      label.textContent = blank ? tr('newTab') : noteTitle(tabPath);
+      const close = tab.querySelector('.note-tab-close');
+      close.dataset.noteTabClose = tabPath;
+      close.setAttribute('aria-label', tr('closeTab') + ' · ' + (blank ? tr('newTab') : noteTitle(tabPath)));
+      const current = tabsEl.children[index];
+      if (current !== tab) tabsEl.insertBefore(tab, current || null);
     });
-    tabsEl.replaceChildren(fragment);
+    existing.forEach((tab) => tab.remove());
+    if (newTabButton) {
+      const label = tr('newTab');
+      newTabButton.dataset.uiTooltip = label;
+      newTabButton.setAttribute('aria-label', label);
+    }
+    if (closeAllTabsButton) {
+      const label = tr('closeAllTabs');
+      closeAllTabsButton.disabled = !state.tabs.length;
+      closeAllTabsButton.dataset.uiTooltip = label;
+      closeAllTabsButton.setAttribute('aria-label', label);
+    }
     const active = tabsEl.querySelector('.note-tab.active');
-    if (active) requestAnimationFrame(() => active.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    if (active && state.renderedActiveTab !== activeTab) requestAnimationFrame(() => active.isConnected && active.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    state.renderedActiveTab = activeTab;
   }
   function remapTabs(source, destination) {
-    state.tabs = Array.from(new Set(state.tabs.map((path) => mapPath(path, source, destination))));
+    state.tabs = Array.from(new Set(state.tabs.map((path) => isBlankTab(path) ? path : mapPath(path, source, destination))));
+    state.activeTab = isBlankTab(state.activeTab) ? state.activeTab : mapPath(state.activeTab, source, destination);
     state.openingPath = mapPath(state.openingPath, source, destination);
     persistTabs();
     renderTabs();
@@ -602,26 +640,66 @@
     if (inlineTitleEl && document.activeElement === inlineTitleEl) return commitInlineTitle();
     return true;
   }
-  async function closeTab(path, options) {
-    const index = state.tabs.indexOf(path);
+  async function openBlankTab(options) {
+    const previous = state.current;
+    rememberEditorState(previous);
+    if (previous && !(options && options.skipSave)) flushSave(previous);
+    const tabPath = newBlankTabToken();
+    state.tabs.push(tabPath);
+    state.activeTab = tabPath;
+    persistTabs();
+    clearCurrent({ keepTabs: true, keepActiveTab: true, keepCache: true });
+    if (!(options && options.noFocus)) requestAnimationFrame(() => tabsEl && tabsEl.querySelector('.note-tab.active')?.focus());
+    return true;
+  }
+  async function activateTab(tabPath, options) {
+    if (!tabPath || !state.tabs.includes(tabPath)) return false;
+    if (isBlankTab(tabPath)) {
+      const previous = state.current;
+      rememberEditorState(previous);
+      if (previous && !(options && options.skipSave)) flushSave(previous);
+      state.activeTab = tabPath;
+      persistTabs();
+      clearCurrent({ keepTabs: true, keepActiveTab: true, keepCache: true });
+      return true;
+    }
+    return openNote(tabPath, { reuseActiveTab: false, skipSave: !!(options && options.skipSave), noFocus: !!(options && options.noFocus) });
+  }
+  async function closeTab(tabPath, options) {
+    const index = state.tabs.indexOf(tabPath);
     if (index < 0) return false;
-    const active = state.current && state.current.path === path;
-    const cached = state.documentCache.get(path);
+    const active = state.activeTab === tabPath;
+    const cached = isBlankTab(tabPath) ? null : state.documentCache.get(tabPath);
     if (!(options && options.skipSave) && cached) flushSave(cached);
     state.tabs.splice(index, 1);
     persistTabs();
     if (!active) { renderTabs(); return true; }
     const nextPath = state.tabs[Math.min(index, state.tabs.length - 1)] || state.tabs[index - 1] || '';
-    if (nextPath) return openNote(nextPath, { noFocus: !!(options && options.noFocus) });
+    if (nextPath) return activateTab(nextPath, { noFocus: !!(options && options.noFocus) });
+    state.activeTab = '';
+    clearCurrent({ keepTabs: true });
+    return true;
+  }
+  async function closeAllTabs() {
+    if (!state.tabs.length) return false;
+    const current = state.current;
+    if (current && !(await flushSave(current))) return false;
+    for (const path of state.tabs) {
+      if (isBlankTab(path)) continue;
+      const cached = state.documentCache.get(path);
+      if (cached && cached !== current && !(await flushSave(cached))) return false;
+    }
+    state.tabs = [];
+    state.activeTab = '';
+    persistTabs();
     clearCurrent({ keepTabs: true });
     return true;
   }
   function switchTab(offset) {
     if (!state.tabs.length) return;
-    const currentPath = state.current && state.current.path;
-    const index = Math.max(0, state.tabs.indexOf(currentPath));
+    const index = Math.max(0, state.tabs.indexOf(state.activeTab));
     const next = state.tabs[(index + offset + state.tabs.length) % state.tabs.length];
-    if (next) openNote(next);
+    if (next) activateTab(next);
   }
   function updateTreeSelection() {
     const activePath = state.openingPath || (state.current && state.current.path) || '';
@@ -782,7 +860,9 @@
       state.entries = Array.isArray(result.entries) ? result.entries : [];
       const flat = flattenEntries(state.entries, []); rebuildEntryIndex();
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
-      state.tabs = state.tabs.filter((path) => !!findEntry(path) || !!(state.current && state.current.path === path)); persistTabs(); renderTabs();
+      state.tabs = state.tabs.filter((path) => isBlankTab(path) || !!findEntry(path) || !!(state.current && state.current.path === path));
+      if (!state.tabs.includes(state.activeTab)) state.activeTab = '';
+      persistTabs(); renderTabs();
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
@@ -816,11 +896,20 @@
     fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
   }
+  function setDocumentSwitchPending(active) {
+    root.classList.toggle('note-document-switch-pending', !!active);
+    if (editorHost) editorHost.toggleAttribute('inert', !!active);
+    if (fallbackEditor) fallbackEditor.toggleAttribute('inert', !!active);
+    if (readingHost) readingHost.toggleAttribute('inert', !!active);
+  }
 
   function applyDocument(data) {
     clearTimeout(state.saveTimer); clearTimeout(state.retryTimer); state.editGeneration += 1;
     const documentState = typeof data.editGeneration === 'number' ? data : makeDocument(data);
-    state.current = documentState; cacheDocument(documentState); state.openingPath = ''; ensureTab(documentState.path);
+    setDocumentSwitchPending(false);
+    state.current = documentState; cacheDocument(documentState); state.openingPath = '';
+    if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, true);
+    else if (state.activeTab !== documentState.path) { state.activeTab = documentState.path; persistTabs(); }
     setEditorDocument(documentState);
     renderCurrentPath(documentState.path); state.selectedPath = documentState.path; state.selectedFolder = parentPath(documentState.path);
     renderInlineTitle(documentState.path, true); updateDocumentStats(null, documentState.content.length, documentState.wordCount); renderTabs();
@@ -830,7 +919,7 @@
     if (treeExpanded) renderTree(); else updateTreeSelection(); renderLinks(); updateEditorVisibility();
     if (root.classList.contains('links-overlay-open')) ensureLinks();
   }
-  function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; state.current = null; if (oldPath) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
+  function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
   function hasPendingEdits(documentState) { const target = documentState || state.current; return !!target && target.persistedGeneration < target.editGeneration; }
   function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(), typeof delay === 'number' ? delay : SAVE_DELAY); }
   function markChanged(meta) { if (!state.current) return; const changeMeta = meta || {}; state.editGeneration += 1; state.current.editGeneration = ++state.documentGeneration; if (typeof changeMeta.value === 'string') { state.current.content = changeMeta.value; state.current.wordCount = wordCount(changeMeta.value); state.current.countedGeneration = state.current.editGeneration; } if (Number.isFinite(changeMeta.anchor)) state.current.selectionStart = changeMeta.anchor; if (Number.isFinite(changeMeta.head)) state.current.selectionEnd = changeMeta.head; else if (Number.isFinite(changeMeta.anchor)) state.current.selectionEnd = changeMeta.anchor; if (Number.isFinite(changeMeta.scrollTop)) state.current.scrollTop = changeMeta.scrollTop; cacheDocument(state.current); if (typeof changeMeta.value === 'string') updateDocumentStats(null, changeMeta.value.length, state.current.wordCount); else if (Number.isFinite(changeMeta.length)) updateDocumentStats(null, changeMeta.length); desktopDirty(true); scheduleSave(); }
@@ -850,8 +939,8 @@
   }
   async function openNote(path, options) {
     if (!path) return false;
-    ensureTab(path);
-    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; updateTreeSelection(); renderTabs(); return true; }
+    selectNoteTab(path, !(options && options.reuseActiveTab === false));
+    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); return true; }
     const previous = state.current; rememberEditorState(previous);
     const seq = ++state.openSeq; state.openingPath = path; state.selectedPath = path; state.selectedFolder = parentPath(path);
     renderTabs();
@@ -864,17 +953,18 @@
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current === cached) focusEditor(); });
       return true;
     }
+    setDocumentSwitchPending(true);
     const loadPromise = fetchDocument(path);
     if (!(options && options.skipSave) && previous) flushSave(previous);
     try {
       const data = await loadPromise; if (seq !== state.openSeq) return false;
       const shown = state.current && state.current.path === path ? state.current : null;
       if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) applyDocument(data);
-      else { state.openingPath = ''; updateTreeSelection(); }
+      else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); }
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
       return true;
     } catch (error) {
-      if (seq === state.openSeq) { state.openingPath = ''; updateTreeSelection(); renderTabs(); if (error.code !== 'aborted') showToast(error.message || tr('readFailed'), 'error'); }
+      if (seq === state.openSeq) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); if (error.code !== 'aborted') showToast(error.message || tr('readFailed'), 'error'); }
       if (error.code !== 'aborted') await refreshTree(false); return false;
     }
   }
@@ -918,7 +1008,7 @@
   async function movePath(source, destination, quiet) {
     if (!source || !destination || source === destination) return true;
     state.lastMoveError = ''; state.lastMoveCode = '';
-    const entriesSnapshot = JSON.parse(JSON.stringify(state.entries)); const oldTabs = state.tabs.slice(); const oldSelectedPath = state.selectedPath; const oldSelectedFolder = state.selectedFolder; const flushPromise = flushSave();
+    const entriesSnapshot = JSON.parse(JSON.stringify(state.entries)); const oldTabs = state.tabs.slice(); const oldActiveTab = state.activeTab; const oldSelectedPath = state.selectedPath; const oldSelectedFolder = state.selectedFolder; const flushPromise = flushSave();
     if (!optimisticMove(source, destination)) { state.lastMoveError = language() === 'en' ? 'A folder cannot be moved into itself' : '文件夹不能移入自己'; return false; }
     remapCachedPaths(source, destination);
     remapTabs(source, destination);
@@ -929,7 +1019,7 @@
     if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
     renderTree();
     const rollback = () => {
-      state.entries = entriesSnapshot; state.tabs = oldTabs; state.selectedPath = oldSelectedPath; state.selectedFolder = oldSelectedFolder;
+      state.entries = entriesSnapshot; state.tabs = oldTabs; state.activeTab = oldActiveTab; state.selectedPath = oldSelectedPath; state.selectedFolder = oldSelectedFolder;
       remapCachedPaths(destination, source); state.openingPath = mapPath(state.openingPath, destination, source);
       if (liveEditor && typeof liveEditor.setNotePath === 'function' && state.current) liveEditor.setNotePath(state.current.path);
       persistTabs(); if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
@@ -940,7 +1030,7 @@
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
   }
   function moveEntry(source, folder) { const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
-  async function recycleEntry(entry) { const affects = state.current && (state.current.path === entry.path || state.current.path.startsWith(entry.path + '/')); if (affects && !(await flushSave())) return; try { const result = await post('/api/note-trash', { path: entry.path }); state.entries = result.tree && result.tree.entries || state.entries; const removed = (path) => path === entry.path || path.startsWith(entry.path + '/'); Array.from(state.documentCache.keys()).forEach((path) => { if (removed(path)) state.documentCache.delete(path); }); state.tabs = state.tabs.filter((path) => !removed(path)); persistTabs(); if (affects) { const next = state.tabs[0] || ''; if (next) await openNote(next, { skipSave: true }); else clearCurrent({ keepTabs: true }); } else { renderTabs(); renderTree(); } showToast(tr('recycled')); } catch (error) { showToast(error.message || tr('recycle'), 'error'); } }
+  async function recycleEntry(entry) { const affects = state.current && (state.current.path === entry.path || state.current.path.startsWith(entry.path + '/')); if (affects && !(await flushSave())) return; try { const result = await post('/api/note-trash', { path: entry.path }); state.entries = result.tree && result.tree.entries || state.entries; const removed = (path) => !isBlankTab(path) && (path === entry.path || path.startsWith(entry.path + '/')); Array.from(state.documentCache.keys()).forEach((path) => { if (removed(path)) state.documentCache.delete(path); }); state.tabs = state.tabs.filter((path) => !removed(path)); if (!state.tabs.includes(state.activeTab)) state.activeTab = ''; persistTabs(); if (affects) { const next = state.tabs[0] || ''; if (next) await activateTab(next, { skipSave: true }); else clearCurrent({ keepTabs: true }); } else { renderTabs(); renderTree(); } showToast(tr('recycled')); } catch (error) { showToast(error.message || tr('recycle'), 'error'); } }
   async function reveal(path, assets) { try { await post(assets ? '/api/note-reveal-assets' : '/api/note-reveal', { path: path || '' }); } catch (error) { showToast(assets && error.status === 404 ? tr('noAssets') : error.message || tr('revealFailed'), 'error'); } }
   async function copyText(value) { try { await navigator.clipboard.writeText(value); } catch (error) { const area = document.createElement('textarea'); area.value = value; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); } showToast(tr('copied')); }
   function contextButton(label, action, danger) { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; if (danger) button.className = 'danger'; button.addEventListener('click', () => { closeContextMenu(); action(); }); return button; }
@@ -992,8 +1082,12 @@
       if (!(await refreshTree(false))) return false;
       state.initialized = true;
       let path = ''; try { path = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
-      if (!path || !findEntry(path)) path = state.tabs.find((tabPath) => !!findEntry(tabPath)) || '';
-      if (path) await openNote(path, { skipSave: true, noFocus: true }); else { renderTabs(); updateEditorVisibility(); }
+      let activeTab = state.tabs.includes(state.activeTab) ? state.activeTab : '';
+      if (!activeTab && path && findEntry(path) && state.tabs.includes(path)) activeTab = path;
+      if (!activeTab) activeTab = state.tabs.find((tabPath) => isBlankTab(tabPath) || !!findEntry(tabPath)) || '';
+      if (activeTab && isBlankTab(activeTab)) { state.activeTab = activeTab; persistTabs(); renderTabs(); updateEditorVisibility(); }
+      else if (activeTab) await openNote(activeTab, { reuseActiveTab: false, skipSave: true, noFocus: true });
+      else { renderTabs(); updateEditorVisibility(); }
       return true;
     })();
     state.initializePromise = initialize.finally(() => { state.initializePromise = null; });
@@ -1003,11 +1097,13 @@
   async function activate() { const wasInitialized = state.initialized; state.active = true; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true); root.classList.add('active'); const initialized = await initializeWorkspace(); revealColdBoot(); if (!initialized) return false; if (wasInitialized) await checkExternalChanges(false); return true; }
   async function deactivate() { if (!(await flushSave())) return false; state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
-  root.addEventListener('click', (event) => {
+  root.addEventListener('click', async (event) => {
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
     const name = action.dataset.noteAction;
-    if (name === 'new-note' || name === 'new-tab') createEntry('note');
+    if (name === 'new-note') createEntry('note');
+    else if (name === 'new-tab') openBlankTab();
+    else if (name === 'close-all-tabs') { if (await finishInlineTitle()) await closeAllTabs(); }
     else if (name === 'new-folder') createEntry('folder');
     else if (name === 'refresh') checkExternalChanges(true);
     else if (name === 'toggle-all-folders') toggleAllFolders();
@@ -1042,7 +1138,7 @@
       const close = event.target.closest('[data-note-tab-close]');
       if (close) { event.preventDefault(); event.stopPropagation(); if (await finishInlineTitle()) closeTab(close.dataset.noteTabClose); return; }
       const tab = event.target.closest('[data-note-tab-path]');
-      if (tab && await finishInlineTitle()) openNote(tab.dataset.noteTabPath);
+      if (tab && await finishInlineTitle()) activateTab(tab.dataset.noteTabPath);
     });
     tabsEl.addEventListener('dragstart', (event) => {
       const tab = event.target.closest('[data-note-tab-path]'); if (!tab) return;
@@ -1066,10 +1162,11 @@
   document.addEventListener('keydown', (event) => {
     if (!state.active) return;
     const mod = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
-    if (mod && (key === 'n' || key === 't')) { event.preventDefault(); createEntry('note'); }
-    else if (mod && key === 'w' && state.current) { event.preventDefault(); closeTab(state.current.path); }
+    if (mod && key === 'n') { event.preventDefault(); createEntry('note'); }
+    else if (mod && key === 't') { event.preventDefault(); openBlankTab(); }
+    else if (mod && key === 'w' && state.activeTab) { event.preventDefault(); closeTab(state.activeTab); }
     else if (event.ctrlKey && event.key === 'Tab') { event.preventDefault(); switchTab(event.shiftKey ? -1 : 1); }
-    else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); openNote(state.tabs[index]); }
+    else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); activateTab(state.tabs[index]); }
     else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); beginInlineRename(state.selectedPath || state.current.path); }
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });

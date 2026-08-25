@@ -44,6 +44,15 @@ assert(!unfinishedFence.includes('<pre class="md-code"'));
 
 assert(Markdown.render('\\*literal\\*').includes('*literal*'));
 assert(!Markdown.render('\\*literal\\*').includes('<em>'));
+const escapedHighlight = Markdown.render('\\==123==');
+assert(escapedHighlight.includes('==123=='), 'escaped highlight punctuation must remain literal text');
+assert(!escapedHighlight.includes('<mark'), 'an escaped opening highlight marker must not render a highlight');
+assert(Markdown.render('\\a').includes('\\a'), 'a non-punctuation escape must preserve its backslash');
+assert(Markdown.render('`\\*`').includes('\\*'), 'Markdown escapes must not be interpreted inside inline code');
+assert(Markdown.render('`**literal**`').includes('<code>**literal**</code>'), 'inline code must remain isolated from emphasis rendering');
+const escapedCalloutHighlight = Markdown.render('> [!note] 1\\==2==');
+assert(escapedCalloutHighlight.includes('1==2=='), 'effective escapes must survive the Callout title pipeline');
+assert(!escapedCalloutHighlight.includes('<mark'), 'escaped highlight punctuation in a Callout title must not highlight');
 const escapedDollar = Markdown.renderResult('\\$literal\\$');
 assert.strictEqual(escapedDollar.features.math, false);
 assert(escapedDollar.html.includes('$literal$'));

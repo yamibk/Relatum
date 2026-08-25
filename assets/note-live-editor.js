@@ -19,7 +19,7 @@
   ]);
 
   const {
-    EditorState, EditorSelection, StateEffect, StateField, EditorView, Decoration, WidgetType,
+    EditorState, EditorSelection, StateEffect, StateField, EditorView, Decoration, WidgetType, Prec,
     ViewPlugin, keymap, drawSelection, dropCursor, highlightSpecialChars,
     rectangularSelection, crosshairCursor, placeholder, highlightActiveLine,
     syntaxTree, forceParsing, indentOnInput,
@@ -110,7 +110,11 @@
 
   function fenceStart(text) {
     const match = /^\s{0,3}(`{3,}|~{3,})\s*([^\s`]*)[^\n]*$/.exec(text);
-    return match ? { marker: match[1], language: String(match[2] || '').toLowerCase() } : null;
+    return match ? {
+      marker: match[1],
+      label: String(match[2] || ''),
+      language: String(match[2] || '').toLowerCase(),
+    } : null;
   }
 
   function isFenceEnd(text, opener) {
@@ -575,11 +579,128 @@
     ignoreEvent() { return false; }
   }
 
+  class CalloutTitleWidget extends WidgetType {
+    constructor(spec, sourceOffset, coordinator) {
+      super();
+      this.spec = spec;
+      this.sourceOffset = sourceOffset;
+      this.coordinator = coordinator;
+    }
+    eq(other) {
+      return other.spec.id === this.spec.id
+        && other.spec.fingerprint === this.spec.fingerprint
+        && other.sourceOffset === this.sourceOffset;
+    }
+    reveal(view, event) {
+      if (event) { event.preventDefault(); event.stopPropagation(); }
+      const current = this.coordinator.spec(view, this.spec.id);
+      if (!current) return;
+      view.dispatch({
+        selection: EditorSelection.cursor(Math.min(current.to, current.from + this.sourceOffset)),
+        scrollIntoView: true,
+      });
+      view.focus();
+    }
+    toDOM(view) {
+      const wrap = document.createElement('span');
+      wrap.className = 'note-live-callout-title-widget';
+      wrap.dataset.callout = this.spec.type || 'note';
+      wrap.tabIndex = 0;
+      wrap.setAttribute('aria-label', '点击编辑 Callout 源码');
+      const rendered = document.createElement('span');
+      rendered.innerHTML = safeIsolatedResult(this.spec.source).html;
+      const title = rendered.querySelector('.md-callout-title');
+      if (title) {
+        Array.from(title.childNodes).forEach((node) => wrap.appendChild(node.cloneNode(true)));
+      } else {
+        wrap.textContent = this.spec.title || this.spec.type || 'Note';
+      }
+      wrap.addEventListener('mousedown', (event) => this.reveal(view, event));
+      wrap.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event);
+      });
+      return wrap;
+    }
+    ignoreEvent() { return true; }
+  }
+
+  function fencedCodeBody(source) {
+    const lines = String(source || '').split('\n');
+    return lines.length >= 2 ? lines.slice(1, -1).join('\n') : '';
+  }
+
+  async function copyPlainText(value) {
+    const text = String(value == null ? '' : value);
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw new Error('Clipboard API unavailable');
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      const active = document.activeElement;
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.readOnly = true;
+      area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none';
+      document.body.appendChild(area);
+      area.select();
+      let copied = false;
+      try { copied = !!document.execCommand('copy'); } catch (copyError) {}
+      area.remove();
+      if (active && typeof active.focus === 'function') {
+        try { active.focus({ preventScroll: true }); } catch (focusError) { active.focus(); }
+      }
+      return copied;
+    }
+  }
+
+  class CodeLanguageWidget extends WidgetType {
+    constructor(label, code) {
+      super(); this.label = String(label || ''); this.code = String(code || ''); this.timer = 0;
+    }
+    eq(other) { return other.label === this.label && other.code === this.code; }
+    toDOM() {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'note-live-code-language';
+      button.textContent = this.label;
+      const copyLabel = (document.documentElement.lang === 'en' ? 'Copy ' : '复制 ') + this.label + (document.documentElement.lang === 'en' ? ' code' : ' 代码');
+      button.title = copyLabel;
+      button.setAttribute('aria-label', copyLabel);
+      button.addEventListener('mousedown', (event) => { event.preventDefault(); event.stopPropagation(); });
+      button.addEventListener('click', async (event) => {
+        event.preventDefault(); event.stopPropagation();
+        const copied = await copyPlainText(this.code);
+        clearTimeout(this.timer);
+        button.classList.toggle('is-copied', copied);
+        button.classList.toggle('is-copy-failed', !copied);
+        button.dataset.copyState = copied
+          ? (document.documentElement.lang === 'en' ? 'Copied' : '已复制')
+          : (document.documentElement.lang === 'en' ? 'Copy failed' : '复制失败');
+        button.setAttribute('aria-label', button.dataset.copyState);
+        this.timer = setTimeout(() => {
+          button.classList.remove('is-copied', 'is-copy-failed');
+          delete button.dataset.copyState;
+          button.setAttribute('aria-label', copyLabel);
+        }, 1200);
+      });
+      return button;
+    }
+    destroy() { clearTimeout(this.timer); }
+    ignoreEvent() { return true; }
+  }
+
   function activeBlockIds(specs, state, focused, composing) {
     const active = new Set();
     if (!focused && !composing) return active;
     specs.forEach((spec) => { if (selectionTouches(state.selection, spec.from, spec.to)) active.add(spec.id); });
     return active;
+  }
+
+  function usesBlockReplacement(spec) {
+    // Callouts deliberately remain CodeMirror-owned lines. Replacing the whole
+    // block makes the source range collapse into a widget boundary, so clicks on
+    // the neighbouring visual lines can resolve inside the Callout instead.
+    return spec && spec.kind !== 'callout';
   }
 
   function createBlockField(notePath, options, coordinator) {
@@ -589,7 +710,7 @@
         const parsedTo = typeof tree.length === 'number' ? Math.min(state.doc.length, tree.length) : state.doc.length;
         const specs = scanBlockSpecs(state, 0, parsedTo);
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
-        const decorations = Decoration.set(specs.map((spec) => Decoration.replace({
+        const decorations = Decoration.set(specs.filter(usesBlockReplacement).map((spec) => Decoration.replace({
           widget: new RichBlockWidget(spec, notePath(), options, coordinator), block: true, inclusive: false, blockId: spec.id,
         }).range(spec.from, spec.to)), true);
         return { specs, byId, activeIds: new Set(), focused: false, composing: false, decorations };
@@ -626,7 +747,7 @@
         if (refresh.size) {
           decorations = decorations.update({
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
-            add: specs.filter((spec) => refresh.has(spec.id) && !activeIds.has(spec.id)).map((spec) => Decoration.replace({
+            add: specs.filter((spec) => usesBlockReplacement(spec) && refresh.has(spec.id) && !activeIds.has(spec.id)).map((spec) => Decoration.replace({
               widget: new RichBlockWidget(spec, notePath(), options, coordinator), block: true, inclusive: false, blockId: spec.id,
             }).range(spec.from, spec.to)),
             sort: true,
@@ -731,8 +852,8 @@
     const replace = (from, to) => { if (to > from) add(from, to, Decoration.replace({ inclusive: false })); };
     const mark = (from, to, name) => { if (to > from) add(from, to, Decoration.mark({ class: name })); };
     const lineClass = (position, name) => add(position, position, Decoration.line({ class: name }));
-    const inactiveBlockAt = (from, to) => blockSpecs.some((spec) => !blockValue.activeIds.has(spec.id) && spec.from < to && spec.to > from);
-    const inactiveBlockContains = (from, to) => blockSpecs.some((spec) => !blockValue.activeIds.has(spec.id) && spec.from <= from && spec.to >= to);
+    const inactiveBlockAt = (from, to) => blockSpecs.some((spec) => usesBlockReplacement(spec) && !blockValue.activeIds.has(spec.id) && spec.from < to && spec.to > from);
+    const inactiveBlockContains = (from, to) => blockSpecs.some((spec) => usesBlockReplacement(spec) && !blockValue.activeIds.has(spec.id) && spec.from <= from && spec.to >= to);
     const sourceMark = (from, to, unitFrom, unitTo, role) => {
       if (constructActive(view, unitFrom, unitTo)) mark(from, to, 'note-live-source-mark' + (role ? ' is-' + role : ''));
       else replace(from, to);
@@ -744,6 +865,31 @@
       const last = view.state.doc.lineAt(visible.to);
       const protectedRanges = lineProtectedRanges(view.state, first.from, last.to);
       const tree = syntaxTree(view.state);
+      const inactiveCalloutHeaders = [];
+      blockSpecs.forEach((spec) => {
+        if (spec.kind !== 'callout' || spec.to < first.from || spec.from > last.to) return;
+        const startLine = view.state.doc.lineAt(spec.from);
+        const endLine = view.state.doc.lineAt(Math.max(spec.from, spec.to - 1));
+        const active = blockValue.activeIds.has(spec.id) || constructActive(view, spec.from, spec.to);
+        const type = String(spec.type || 'note').replace(/[^a-z0-9-]/g, '') || 'note';
+        for (let number = Math.max(first.number, startLine.number); number <= Math.min(last.number, endLine.number); number += 1) {
+          let className = 'note-live-callout-line is-callout-' + type;
+          if (number === startLine.number) className += ' note-live-callout-first';
+          if (number === endLine.number) className += ' note-live-callout-last';
+          lineClass(view.state.doc.line(number).from, className);
+        }
+        if (!active && startLine.number >= first.number && startLine.number <= last.number) {
+          const header = /^(\s*(?:>\s*)+)(\[![A-Za-z][\w-]*\][+-]?\s*.*)$/.exec(startLine.text);
+          if (header) {
+            const from = startLine.from + header[1].length;
+            inactiveCalloutHeaders.push({ from, to: startLine.to });
+            add(from, startLine.to, Decoration.replace({
+              widget: new CalloutTitleWidget(spec, from - spec.from, options.coordinator),
+              inclusive: false,
+            }));
+          }
+        }
+      });
       protectedRanges.forEach((range) => {
         if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind)) {
           const blockFirst = view.state.doc.lineAt(range.from).number;
@@ -755,6 +901,16 @@
             if (number === blockFirst) className += ' note-live-code-first';
             if (number === blockLast) className += ' note-live-code-last';
             lineClass(view.state.doc.line(number).from, className);
+          }
+          if (range.kind === 'FencedCode' && !constructActive(view, range.from, range.to)) {
+            const openingLine = view.state.doc.line(blockFirst);
+            const opener = fenceStart(openingLine.text);
+            if (opener && opener.label && openingLine.from >= first.from && openingLine.to <= last.to) {
+              add(openingLine.to, openingLine.to, Decoration.widget({
+                widget: new CodeLanguageWidget(opener.label, fencedCodeBody(view.state.doc.sliceString(range.from, range.to))),
+                side: 1,
+              }));
+            }
           }
         } else if (/^HTML/.test(range.kind)) {
           const blockFirst = view.state.doc.lineAt(range.from).number;
@@ -775,6 +931,7 @@
           decoratedSyntax.add(key);
           if (nodeRef.name !== 'Document' && view.state.doc.lineAt(nodeRef.from).length > MAX_RICH_LINE) return false;
           if (inactiveBlockContains(nodeRef.from, nodeRef.to)) return false;
+          if (inactiveCalloutHeaders.some((range) => range.from <= nodeRef.from && range.to >= nodeRef.to)) return false;
 
           const heading = /^ATXHeading([1-6])$/.exec(nodeRef.name) || /^SetextHeading([12])$/.exec(nodeRef.name);
           if (heading) {
@@ -792,6 +949,10 @@
             mark(nodeRef.from, nodeRef.to, 'note-live-strike');
           } else if (nodeRef.name === 'InlineCode') {
             mark(nodeRef.from, nodeRef.to, 'note-live-inline-code');
+          } else if (nodeRef.name === 'Escape') {
+            // Lezer only emits Escape for punctuation that Markdown can actually
+            // escape. Mark just the backslash; invalid escapes and code stay raw.
+            mark(nodeRef.from, Math.min(nodeRef.to, nodeRef.from + 1), 'note-live-source-mark is-escape');
           } else if (nodeRef.name === 'Link') {
             const url = node && node.getChild('URL');
             if (url && isDangerousTarget(view.state.doc.sliceString(url.from, url.to))) {
@@ -869,7 +1030,7 @@
             const unit = ancestorOf(node, /^Blockquote$/) || node;
             const line = view.state.doc.lineAt(nodeRef.from);
             const spec = blockSpecs.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
-            lineClass(line.from, spec ? 'note-live-callout-line' : 'note-live-quote-line');
+            if (!spec) lineClass(line.from, 'note-live-quote-line');
             sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, spec ? 'callout' : 'quote');
           } else if (nodeRef.name === 'TableDelimiter') {
             const unit = ancestorOf(node, /^Table$/) || node;
@@ -1075,15 +1236,35 @@
   }
 
   function wrapSelection(view, before, after, placeholderText) {
-    const changes = [];
-    const ranges = [];
-    view.state.selection.ranges.forEach((range) => {
+    const transaction = view.state.changeByRange((range) => {
       const selected = view.state.doc.sliceString(range.from, range.to);
       const body = selected || placeholderText || '';
-      changes.push({ from: range.from, to: range.to, insert: before + body + after });
-      ranges.push(EditorSelection.range(range.from + before.length, range.from + before.length + body.length));
+      return {
+        changes: { from: range.from, to: range.to, insert: before + body + after },
+        range: EditorSelection.range(range.from + before.length, range.from + before.length + body.length),
+      };
     });
-    view.dispatch({ changes, selection: EditorSelection.create(ranges), userEvent: 'input' });
+    view.dispatch(Object.assign({}, transaction, { userEvent: 'input' }));
+    return true;
+  }
+
+  function wrapCodeBlock(view) {
+    const transaction = view.state.changeByRange((range) => {
+      const doc = view.state.doc;
+      const selected = doc.sliceString(range.from, range.to);
+      const leadingBreak = range.from > 0 && doc.sliceString(range.from - 1, range.from) !== '\n' ? '\n' : '';
+      const trailingBreak = range.to < doc.length && doc.sliceString(range.to, range.to + 1) !== '\n' ? '\n' : '';
+      const bodyBreak = selected ? (selected.endsWith('\n') ? '' : '\n') : '\n';
+      const insert = leadingBreak + '```\n' + selected + bodyBreak + '```' + trailingBreak;
+      const contentFrom = range.from + leadingBreak.length + 4;
+      return {
+        changes: { from: range.from, to: range.to, insert },
+        range: selected
+          ? EditorSelection.range(contentFrom, contentFrom + selected.length)
+          : EditorSelection.cursor(contentFrom),
+      };
+    });
+    view.dispatch(Object.assign({}, transaction, { userEvent: 'input' }));
     return true;
   }
 
@@ -1151,11 +1332,11 @@
     const viewportParsePlugin = createViewportParsePlugin();
 
     const customKeys = [
-      { key: 'Enter', run: exitEmptyQuoteMarkup },
       { key: 'Mod-s', preventDefault: true, run() { safeOptions.onSaveRequest(); return true; } },
       { key: 'Mod-b', preventDefault: true, run(view) { return wrapSelection(view, '**', '**', '粗体'); } },
       { key: 'Mod-i', preventDefault: true, run(view) { return wrapSelection(view, '*', '*', '斜体'); } },
       { key: 'Mod-`', preventDefault: true, run(view) { return wrapSelection(view, '`', '`', '代码'); } },
+      { key: 'Mod-Shift-k', preventDefault: true, run: wrapCodeBlock },
       { key: 'Mod-k', preventDefault: true, run(view) {
         const range = view.state.selection.main;
         const selected = view.state.doc.sliceString(range.from, range.to) || '链接文字';
@@ -1183,6 +1364,7 @@
         markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
         relatumCodeHighlighting || [],
         sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin],
+        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }])),
         keymap.of(customKeys.concat(
           Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : [],
           markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
@@ -1332,6 +1514,8 @@
     },
     parseStandaloneImage,
     parseCalloutSource,
+    fenceStart,
+    fencedCodeBody,
     isRemoteTarget,
     isDangerousTarget,
     headingMarkerProjectionEnd,
