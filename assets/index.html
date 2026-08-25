@@ -1311,7 +1311,11 @@
       <nav class="note-tab-bar" aria-label="打开的笔记">
         <div class="note-tab-list" data-role="note-tabs" role="tablist"></div>
         <button type="button" class="note-tab-new" data-note-action="new-tab"
-          aria-label="新建并打开笔记">+</button>
+          aria-label="新建标签页" data-ui-tooltip="新建标签页">+</button>
+        <button type="button" class="note-tab-close-all" data-note-action="close-all-tabs"
+          aria-label="关闭所有笔记标签" data-ui-tooltip="关闭所有笔记标签" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5.5h8M3.5 10h6M3.5 14.5h6m3-2.5 3 3m0-3-3 3"/></svg>
+        </button>
       </nav>
       <header class="note-document-head">
         <div class="note-current-copy">

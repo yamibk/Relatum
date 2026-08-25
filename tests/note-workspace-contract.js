@@ -74,13 +74,17 @@ for (const obsolete of ['revision_conflict', '磁盘版本已变化', '加载磁
 assert(html.includes('note-live-editor-host') && html.includes('note-editor-fallback'), 'Live Preview and source mode need shared Markdown editing surfaces');
 assert(html.includes('data-role="note-reading-view"'), 'Notes needs a safe read-only Markdown surface');
 assert(html.includes('data-role="note-tabs"') && html.includes('data-note-action="new-tab"'), 'Notes needs a persistent multi-document tab strip');
+assert(html.includes('aria-label="新建标签页"'), 'the plus button must describe a new tab rather than a new note');
+assert(html.includes('data-note-action="close-all-tabs"'), 'the tab strip needs a persistent close-all control');
 assert(html.includes('data-role="note-inline-title"'), 'the active Markdown filename needs an editable inline title');
 assert(html.includes('data-note-action="toggle-focus"'), 'the Notes library header needs a top-bar focus toggle');
 assert(html.includes('data-note-action="toggle-all-folders"'), 'the Notes library header needs an expand-all control');
-assert(notes.includes("expandAll: '全部展开'") && notes.includes("collapseAll: '全部折叠'"),
+assert(notes.includes("expandAll: '全部展开'") && notes.includes("collapseAll: '全部收起'"),
   'the folder-wide toggle must be localized');
-assert(notes.includes('function toggleAllFolders()') && notes.includes('paths.some((path) => !state.expanded.has(path))'),
-  'the folder-wide toggle must expand partial trees and collapse fully expanded trees');
+assert(notes.includes('function toggleAllFolders()') && notes.includes('const collapse = paths.some((path) => state.expanded.has(path))'),
+  'the folder-wide toggle must collapse partial trees and expand fully collapsed trees');
+assert(notes.includes("const label = tr(anyExpanded ? 'collapseAll' : 'expandAll')"),
+  'the folder-wide toggle must advertise collapse whenever any folder is expanded');
 assert(notes.includes('persistExpanded(); renderTree();'), 'expand-all state must reuse the persistent folder state');
 assert(html.includes('data-role="note-word-count"') && html.includes('data-role="note-character-count"'), 'the document footer needs word and character counts');
 assert(html.includes('data-role="note-font-scale"'), 'the start-page gear needs a Markdown font scale control');
@@ -89,6 +93,29 @@ assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument')
 assert(notes.includes('onDocChanged: (meta) => markChanged(meta)'), 'Live Preview edits must report metadata rather than cloning the full document');
 assert(notes.includes("OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1'"), 'open Markdown tabs must survive a local restart');
 assert(notes.includes('function renderTabs()') && notes.includes('async function closeTab'), 'tabs need open, close, reorder, and switch behavior');
+const renderTabsSource = notes.slice(notes.indexOf('function renderTabs()'), notes.indexOf('function remapTabs'));
+assert(renderTabsSource.includes('const existing = new Map') && renderTabsSource.includes('tabsEl.insertBefore(tab, current || null)'),
+  'tab rendering must reuse keyed DOM nodes instead of rebuilding the whole strip');
+assert(!renderTabsSource.includes('tabsEl.replaceChildren'), 'ordinary tab updates must not replace the complete tab strip');
+assert(notes.includes('setDocumentSwitchPending(true)') && notes.includes("toggleAttribute('inert'"),
+  'uncached note switches must immediately guard the stale editor while the local service catches up');
+assert(!css.includes('.note-tab.is-entering') && css.includes('.note-document-switch-pending .note-document-body'),
+  'tab titles must switch without a flashing entrance animation while uncached documents retain lightweight feedback');
+assert(notes.includes('async function openBlankTab') && notes.includes("const BLANK_TAB_PREFIX = 'relatum:blank-tab:'"),
+  'the plus button must create a persistent blank tab without creating a Markdown file');
+assert(notes.includes("if (name === 'new-note') createEntry('note');") && notes.includes("else if (name === 'new-tab') openBlankTab();"),
+  'new-note and new-tab actions must remain separate');
+assert(notes.includes("selectNoteTab(path, !(options && options.reuseActiveTab === false))"),
+  'ordinary note opens must reuse the active tab');
+assert(notes.includes("return openNote(tabPath, { reuseActiveTab: false"),
+  'selecting an existing tab must activate it without replacing it');
+assert(notes.includes("if (mod && key === 'n')") && notes.includes("else if (mod && key === 't')"),
+  'Ctrl/Cmd+N and Ctrl/Cmd+T must keep distinct note and tab behavior');
+assert(notes.includes('async function closeAllTabs()') && notes.includes('if (current && !(await flushSave(current))) return false;'),
+  'closing all tabs must wait for the active document to save');
+assert(notes.includes('cached && cached !== current && !(await flushSave(cached))'),
+  'closing all tabs must save pending cached documents before clearing the tab list');
+assert(notes.includes('closeAllTabsButton.disabled = !state.tabs.length'), 'the close-all control must be disabled for an empty tab strip');
 assert(notes.includes('RelatumNoteLiveEditor.create(editorHost'), 'all Markdown tabs must reuse one CodeMirror surface');
 assert(notes.includes("viewModeButton('live'") && notes.includes("viewModeButton('source'") && notes.includes("viewModeButton('reading'"),
   'the current-note menu must expose Live Preview, source, and reading modes');
