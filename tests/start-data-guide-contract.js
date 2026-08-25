@@ -31,6 +31,7 @@ assert(html.includes('01 / 03'));
   '在系统资源管理器中显示',
   'recent.json',
   'tree-page.json',
+  'start-page-activity.json',
   'review.db',
   '删除哪一项，就会清空对应页面的数据',
   "canvas:dataGuideClicked:v1",

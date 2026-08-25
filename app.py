@@ -102,6 +102,7 @@ NOTES_FILE = DATA / "notes.json"   # 起步页「速记」便签墙（独立数�
 START_STICKY_NOTES_FILE = DATA / "start-sticky-notes.json"   # 起步页跨页便签（不含「速记」页）
 FOCUS_FILE = DATA / "focus.json"   # 起步页「专注钟」专注记录（自成一体，不进 .canvas；供活跃页专注镜头汇总）
 CANVAS_ACTIVITY_FILE = DATA / "canvas-activity.json"   # 画布前台使用时长与创建/修改足迹（不写进 .canvas）
+START_PAGE_ACTIVITY_FILE = DATA / "start-page-activity.json"   # 起步页学习/树状/速记的前台使用时长
 DAILY_FILE = DATA / "daily.json"   # 专注页「每日任务」习惯清单（每天重置勾选，累计天数/分钟；自成一体，不进 .canvas）
 DAILY_BACKUP_FILE = DATA / "daily.backup.json"
 DIARY_DIR = DATA / "diary"   # 起步页「日历」日记：每天一份 Markdown，与学习/速记数据解耦
@@ -161,6 +162,8 @@ VIEWPORT_STATE_LIMIT = 500
 CANVAS_STATS_CACHE_LIMIT = 512
 CANVAS_ACTIVITY_SCHEMA = 1
 CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
+START_PAGE_ACTIVITY_SCHEMA = 1
+START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes")
 # 画布伴生素材统一可被 /api/canvas-asset 读取的类型（图片 + 附件）。
 CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
 
@@ -4812,6 +4815,163 @@ def _canvas_activity_overview_graph(data: dict) -> dict:
     return {"kind": "canvas", "years": result}
 
 
+def _empty_start_page_activity() -> dict:
+    return {"version": START_PAGE_ACTIVITY_SCHEMA, "days": {}}
+
+
+def _normalize_start_page_activity(raw: object) -> dict:
+    source = raw if isinstance(raw, dict) else {}
+    payload = _empty_start_page_activity()
+    days = source.get("days")
+    if not isinstance(days, dict):
+        return payload
+    for day, entries in days.items():
+        day_key = str(day or "")
+        try:
+            date.fromisoformat(day_key)
+        except ValueError:
+            continue
+        if not isinstance(entries, dict):
+            continue
+        clean_entries = {}
+        for page in START_PAGE_ACTIVITY_PAGES:
+            item = entries.get(page)
+            if not isinstance(item, dict):
+                continue
+            spans = []
+            for span in item.get("spans", []):
+                if not isinstance(span, list) or len(span) != 2:
+                    continue
+                try:
+                    start = max(0.0, min(86400.0, float(span[0])))
+                    end = max(start, min(86400.0, float(span[1])))
+                except (TypeError, ValueError):
+                    continue
+                if end > start:
+                    spans.append([start, end])
+            merged = _merge_canvas_activity_spans(spans)
+            if merged:
+                clean_entries[page] = {
+                    "spans": merged,
+                    "seconds": int(round(sum(end - start for start, end in merged))),
+                }
+        if clean_entries:
+            payload["days"][day_key] = clean_entries
+    return payload
+
+
+def _load_start_page_activity_unlocked() -> dict:
+    if not START_PAGE_ACTIVITY_FILE.is_file():
+        return _empty_start_page_activity()
+    try:
+        raw = json.loads(START_PAGE_ACTIVITY_FILE.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return _empty_start_page_activity()
+    return _normalize_start_page_activity(raw)
+
+
+def _save_start_page_activity_unlocked(data: dict) -> None:
+    data["version"] = START_PAGE_ACTIVITY_SCHEMA
+    _atomic_write_json(START_PAGE_ACTIVITY_FILE, data)
+
+
+def _start_page_activity_totals(data: dict, page: str) -> dict:
+    today = date.today().isoformat()
+    total = 0
+    today_total = 0
+    for day, entries in data.get("days", {}).items():
+        item = entries.get(page) if isinstance(entries, dict) else None
+        if not isinstance(item, dict):
+            continue
+        seconds = max(0, int(item.get("seconds") or 0))
+        total += seconds
+        if day == today:
+            today_total = seconds
+    return {"page": page, "todaySec": today_total, "totalSec": total}
+
+
+@_serialized_data
+def record_start_page_activity_interval(body: dict) -> dict:
+    page = str(body.get("page") or "").strip()
+    if page not in START_PAGE_ACTIVITY_PAGES:
+        raise ValueError("计时页面无效")
+    session_id = str(body.get("sessionId") or "").strip()
+    if not session_id or len(session_id) > 160:
+        raise ValueError("计时会话标识无效")
+    start = _parse_canvas_activity_time(body.get("startedAt"))
+    end = _parse_canvas_activity_time(body.get("endedAt"))
+    duration = (end - start).total_seconds()
+    if duration <= 0 or duration > CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC:
+        raise ValueError("计时时段长度无效")
+    if end > datetime.now() + timedelta(minutes=2):
+        raise ValueError("计时时段不能位于未来")
+    data = _load_start_page_activity_unlocked()
+    for day, start_sec, end_sec in _split_canvas_activity_interval(start, end):
+        entries = data.setdefault("days", {}).setdefault(day, {})
+        item = entries.setdefault(page, {"spans": [], "seconds": 0})
+        item["spans"] = _merge_canvas_activity_spans(
+            list(item.get("spans") or []) + [[start_sec, end_sec]]
+        )
+        item["seconds"] = int(round(sum(b - a for a, b in item["spans"])))
+    _save_start_page_activity_unlocked(data)
+    return _start_page_activity_totals(data, page)
+
+
+@_serialized_data
+def start_page_activity_snapshot() -> dict:
+    return _load_start_page_activity_unlocked()
+
+
+def _start_page_activity_stats(data: dict, year: int) -> dict:
+    year_prefix = f"{year:04d}-"
+    month_key = date.today().strftime("%Y-%m")
+    active_days_all: dict[str, int] = {}
+    active_days_year: dict[str, int] = {}
+    active_pages: set[str] = set()
+    month_sec = 0
+    year_sec = 0
+    total_sec = 0
+    for day, entries in data.get("days", {}).items():
+        if not isinstance(entries, dict):
+            continue
+        day_sec = 0
+        for page in START_PAGE_ACTIVITY_PAGES:
+            item = entries.get(page)
+            if not isinstance(item, dict):
+                continue
+            seconds = max(0, int(item.get("seconds") or 0))
+            if not seconds:
+                continue
+            day_sec += seconds
+            total_sec += seconds
+            if day.startswith(year_prefix):
+                active_pages.add(page)
+        if not day_sec:
+            continue
+        active_days_all[day] = 1
+        if day.startswith(year_prefix):
+            active_days_year[day] = 1
+            year_sec += day_sec
+        if day.startswith(month_key):
+            month_sec += day_sec
+
+    cursor = date.today()
+    if not active_days_all.get(cursor.isoformat()):
+        cursor -= timedelta(days=1)
+    streak = 0
+    while active_days_all.get(cursor.isoformat()):
+        streak += 1
+        cursor -= timedelta(days=1)
+    return {
+        "monthSec": month_sec,
+        "yearSec": year_sec,
+        "totalSec": total_sec,
+        "streak": streak,
+        "longestStreak": _study_longest_streak(active_days_year),
+        "activePageCount": len(active_pages),
+    }
+
+
 def study_activity_records() -> tuple[dict[str, int], list[dict]]:
     """按归档日期汇总学习任务、速记、画布节点和任务簿完成记录。
 
@@ -5281,6 +5441,7 @@ def study_activity_payload(selected_year: str | int | None = None) -> dict:
     days, records = study_activity_records()
     focus_days_all = load_focus()["days"]
     canvas_activity = canvas_activity_snapshot()
+    start_page_activity = start_page_activity_snapshot()
     today = date.today()
     archive_years = {
         int(day[:4]) for day in days
@@ -5294,7 +5455,14 @@ def study_activity_payload(selected_year: str | int | None = None) -> dict:
         int(day[:4]) for day in canvas_activity.get("days", {})
         if len(day) >= 4 and day[:4].isdigit()
     }
-    years = sorted(archive_years | focus_years | canvas_years | {today.year}, reverse=True)
+    start_page_years = {
+        int(day[:4]) for day in start_page_activity.get("days", {})
+        if len(day) >= 4 and day[:4].isdigit()
+    }
+    years = sorted(
+        archive_years | focus_years | canvas_years | start_page_years | {today.year},
+        reverse=True,
+    )
     try:
         year = int(selected_year) if selected_year is not None else today.year
     except (TypeError, ValueError):
@@ -5379,6 +5547,7 @@ def study_activity_payload(selected_year: str | int | None = None) -> dict:
         "canvasStats": canvas_year["stats"],
         "canvasGraph": canvas_year["graph"],
         "canvasOverviewGraph": _canvas_activity_overview_graph(canvas_activity),
+        "startPageStats": _start_page_activity_stats(start_page_activity, year),
         "focusDays": focus_year,
         "focusStats": {
             "today": focus_days_all.get(today.isoformat(), {}).get("sec", 0),
@@ -9110,6 +9279,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_tree_page_command(body)
         if path == "/api/canvas-activity":
             return self._api_canvas_activity(body)
+        if path == "/api/start-page-activity":
+            return self._api_start_page_activity(body)
         if path == "/api/archive-canvas":
             return self._api_archive_canvas(body)
         if path == "/api/taskbook-archive":
@@ -9492,6 +9663,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(400, {"error": str(err)})
         except OSError as err:
             return self._send_json(500, {"error": f"保存画布时间失败：{err}"})
+        self._send_json(200, {"ok": True, **totals})
+
+    def _api_start_page_activity(self, body: dict):
+        try:
+            totals = record_start_page_activity_interval(body if isinstance(body, dict) else {})
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存起步页时间失败：{err}"})
         self._send_json(200, {"ok": True, **totals})
 
     def _api_new(self):

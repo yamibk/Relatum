@@ -69,7 +69,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `index.html` | 起步页壳，书脊导航、最近画布、树状/学习/速记/日历/复习/专注入口。 |
 | `editor.html` | 画布编辑器壳，工具栏、各模式面板、读者浮层、AI 面板、图谱浮层。 |
 | `trash.html` | 回收站管理页。 |
-| `assets/start.js` | 起步页状态、顶层“画布 / 笔记”工作区切换、最近/分组/收藏、页面切换、主题/背景/翻页速度；笔记运行时只在首次进入时加载。活跃页在内部错峰入场未完成时离页，会先冻结当前内部动画帧，等外层退场隐藏后再清理，避免元素瞬间补齐。 |
+| `assets/start.js` | 起步页状态、顶层“画布 / 笔记”工作区切换、最近/分组/收藏、页面切换、主题/背景/翻页速度，以及学习/树状/速记三页的可选前台计时；笔记运行时只在首次进入时加载。活跃页在内部错峰入场未完成时离页，会先冻结当前内部动画帧，等外层退场隐藏后再清理，避免元素瞬间补齐。 |
 | `assets/note-workspace.js` | 起步页多标签笔记工作区适配层；与顶栏同底色的两栏、右侧覆盖式链接/历史栏、带持久化全部展开/收起入口的文件树（只要任一文件夹已展开，入口即显示并执行“全部收起”；仅全部收起时显示“全部展开”）、共享实时预览/源码编辑表面、右上角实时预览/源码一键切换、按需安全阅读面、350ms 串行自动保存、外部修订、拖放导入、图片粘贴和系统资源管理器/回收站操作。主页背景为“沉浸”时，笔记壳、文件树、标签栏和正文使用分层的高不透明度纸面露出环境背景，常驻表面不使用 `backdrop-filter`；“简洁”保持全窗口实色纸面。文件树普通单击在当前标签中切换笔记；标签栏 `+` 只创建可恢复的空白标签，不创建 `.md`，用户随后点击文件才在该标签打开；`Ctrl/Cmd+N` 新建笔记，`Ctrl/Cmd+T` 新建标签。标签栏按路径复用常驻 DOM，只增删和移动真实变化的标签；切换文件时标签标题立即更新，不使用淡入或位移动画。未命中正文缓存时先更新树、路径与标签反馈，再暂时淡化并锁住旧编辑表面，等本地读取完成立即恢复。标签栏提供常驻的一键关闭全部入口，必须等待当前及缓存待保存文档沿既有保存链落盘，失败时保留全部标签。“笔记库”旁的专注按钮只在当前会话收起全局顶栏并保留可恢复入口。每篇正文上方的行内标题直接编辑 `.md` 文件名，重名由非遮挡警告提示；标题及其占位随正文滚走，不能固定挤占视口。词数/字符数以正文右下角悬浮层显示，不独占布局行。文件创建或恢复当前文档时必须自动展开完整父级路径；行内改名提交不得吞掉紧接的一次树点击。 |
 | `assets/note-live-editor.js` | 基于离线 CodeMirror 6 / Lezer 的源码保真 Markdown Live Preview；负责分帧补齐当前视口语法树、可见富块增量重扫、Obsidian 式源码标记染色、围栏代码语言高亮与语言标签复制、当前语法单元显露、Callout/任务/双链/图片/行内与块公式/Mermaid/表格/derive 组件、IME、括号自动闭合、最高优先级空引用退出、加粗/围栏代码等快捷键与编辑器快照接口，并向阅读模式提供同一安全 Markdown/本地资源渲染入口。实时预览与源码模式通过 CodeMirror `Compartment` 原位重配置，不能重建文档状态或清空撤销历史。Markdown 字符串始终是唯一真源，原始 HTML/SVG 只显示源码。 |
 | `assets/vendor/codemirror/` | 固定版本的 CodeMirror 6 / Lezer 离线浏览器 bundle、完整依赖锁和第三方许可证；只在笔记工作区首次交互或空闲预热时加载，运行和桌面打包均不需要 Node/npm 或网络。 |
@@ -149,6 +149,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 速记归档 | `data/学习归档/<时间>-速记归档/notes.json` |
 | 专注记录 | `data/focus.json` |
 | 画布活动账本 | `data/canvas-activity.json`（v1）；独立保存稳定画布 ID、受管路径变更、创建/修改历史标记和按本地日期拆分并合并去重的前台使用时间段，不写入 `.canvas`。首次建立时只从 `createdAt` / `updatedAt` 或文件时间回填事件，不伪造历史时长。 |
+| 起步页活动账本 | `data/start-page-activity.json`（v1）；只保存学习、树状、速记三页按本地日期拆分并合并去重的前台时间段，不回填历史，不读取或改写三页各自的内容文件。 |
 | 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、命名里程碑 `milestones[]`（用户侧不设小额限制，异常数据安全上限 50）与逐日历史 `doneDates` / `minutesByDate`；上一份有效快照为 `data/daily.backup.json`，损坏原件隔离成 `data/daily.corrupt-<时间>.json` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
@@ -201,7 +202,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 以“画布”启动时，首屏和画布数据完成竞争后才用 `requestIdleCallback`（无支持时短延时降级）加载笔记运行时，并预取文件树与上次文档；不得把笔记脚本或 `/api/notes-tree` 放回画布首屏阻塞链。用户在空闲预热完成后首次切入“笔记”应直接看到文件树与正文，不出现一次额外的加载页。
 - 以上次“笔记”工作区冷启动时，`index.html` 在首帧同步添加 `note-boot-pending`，只隐藏尚未初始化的笔记面板，不缓存或伪造正文；`note-workspace.js` 完成文件树与上次文档的真实磁盘读取后一次性揭示。揭示门最长 4 秒，读取失败或用户中途切回画布时必须解除，不能形成永久空白页。
 
-- 起步页：当前分组、主题、背景风格（`canvas:startBackgroundStyle`，unset 时默认“简洁”）、翻页速度、速记页拖拽惯性、叠放展开延迟、日历倒数日开关、画布名称搜索开关（`canvas:librarySearchEnabled`，**默认关闭**：只有显式存为 `'1'` 才在画布列表标题旁显示搜索工具）、树状页根标题隐藏开关（`canvas:treePageRootTitleHidden:v1`，**默认关闭**：仅显式 `'1'` 隐藏）与根标题字号（`canvas:treePageRootTitleSize:v1`，16–36px，默认 25px；滑条在 45% 位置显示灰色默认值提示线）、隐藏特殊页开关（`canvas:hideSpecialPages`，**默认关闭**：只有显式存为 `'1'` 才隐藏，unset 或其他值都正常显示全部页面；开启后书脊只留最近/收藏/分组，滚轮翻页与点击都不进 7 张前置页）、本地数据说明看过状态 `canvas:dataGuideClicked:v1`。左下角 `?` 打开中英文各三页的本地数据说明，解释 `canvases/`、`notes/`、`data/` 中各类文件的用途、删除后果与安全清理顺序；其中将独立树状页的 `tree-page.json` 与学习页的 `study.json` 明确区分。它不再承载旧版功能教程。说明浮层打开和关闭都使用一次有限过渡，低动态偏好下立即完成；除了细书脊本身，还把正文滚动区最左侧约 64–88px 作为滚轮翻页热区，右侧其余区域继续纵向惯性滚动，且不通过扩大书脊 DOM 遮罩阻挡顶部目录按钮。右侧正文滚动条使用无原生上下按钮的细圆角滑块，深浅主题分别控制对比度。三类便签共用 `canvas:stickyPalette:v1`，以 `{version:1,disabled:[]}` 只保存不参与随机生成/换色的色名；缺失或非法值启用全部20色。全部禁用会保留为控制台“视觉全不选”状态，但随机生成/换色仍安全使用全部20色；新颜色未来默认加入，不写 `.canvas` 或便签数据。
+- 起步页：当前分组、主题、背景风格（`canvas:startBackgroundStyle`，unset 时默认“简洁”）、翻页速度、速记页拖拽惯性、叠放展开延迟、日历倒数日开关、学习/树状/速记前台计时开关（`canvas:startPageActivityEnabled:v1`，**默认关闭**：只有显式存为 `'1'` 才开始记录，用户每次切换都会保存 `'1'` / `'0'`）、画布名称搜索开关（`canvas:librarySearchEnabled`，**默认关闭**：只有显式存为 `'1'` 才在画布列表标题旁显示搜索工具）、树状页根标题隐藏开关（`canvas:treePageRootTitleHidden:v1`，**默认关闭**：仅显式 `'1'` 隐藏）与根标题字号（`canvas:treePageRootTitleSize:v1`，16–36px，默认 25px；滑条在 45% 位置显示灰色默认值提示线）、隐藏特殊页开关（`canvas:hideSpecialPages`，**默认关闭**：只有显式存为 `'1'` 才隐藏，unset 或其他值都正常显示全部页面；开启后书脊只留最近/收藏/分组，滚轮翻页与点击都不进 7 张前置页）、本地数据说明看过状态 `canvas:dataGuideClicked:v1`。左下角 `?` 打开中英文各三页的本地数据说明，解释 `canvases/`、`notes/`、`data/` 中各类文件的用途、删除后果与安全清理顺序；其中将独立树状页的 `tree-page.json` 与学习页的 `study.json` 明确区分。它不再承载旧版功能教程。说明浮层打开和关闭都使用一次有限过渡，低动态偏好下立即完成；除了细书脊本身，还把正文滚动区最左侧约 64–88px 作为滚轮翻页热区，右侧其余区域继续纵向惯性滚动，且不通过扩大书脊 DOM 遮罩阻挡顶部目录按钮。右侧正文滚动条使用无原生上下按钮的细圆角滑块，深浅主题分别控制对比度。三类便签共用 `canvas:stickyPalette:v1`，以 `{version:1,disabled:[]}` 只保存不参与随机生成/换色的色名；缺失或非法值启用全部20色。全部禁用会保留为控制台“视觉全不选”状态，但随机生成/换色仍安全使用全部20色；新颜色未来默认加入，不写 `.canvas` 或便签数据。
 - 编辑器：顶栏“画布 / 导图 / 图案”（内部 `canvas:mode` 仍只支持 `normal` / `mindmap` / `decor`；旧 `pro` / `edit` 读取时迁移为 `normal`）以及不持久化为模式的临时“工具”入口、节点矩阵上次成功使用的结构设置 `canvas:nodeMatrixDefaults:v1`（行列、类型、内容模式、编号、间距和宽度，不保存粘贴正文）、笔记坞导图上次使用的样式与布局 `canvas:notebookMindmapDefaults:v1`、任务簿归档完成副本开关 `canvas:taskbookArchiveSnapshotEnabled`（默认开启，仅显式 `'0'` 关闭）、AI 助手宽度 `canvas:ai-panel-width:v1`（桌面默认 520px、从左边缘拖动并记住，窄窗口仅临时夹紧且不覆盖偏好，≤640px 改为全屏侧栏）、全应用中英语言偏好 `canvas:toolbarLanguage`（由 `i18n.js` 在起始页、学习、活跃、日历、复习、专注与编辑器间共用；只翻译界面，不翻译文件名、任务名、便签、日记和画布内容）、首次语言确认 `canvas:initialLanguageChosen:v1`（只在全新用户第一次打开新画布且既无语言偏好也无引导状态时写入 `zh-CN` / `en`）、新手引导状态 `canvas:editorOnboarding:v2`（`in-progress` / `completed` / `skipped`）、三种模式各自的 `canvas:normalSubmode` / `canvas:mindmapSubmode` / `canvas:decorSubmode` 双模式偏好、右侧面板最后一次 Tab 收放选择 `canvas:sidePanelsCollapsed`（主编辑器全局共用，内嵌编辑器不读取也不改写）、镜头册浮窗位置 `canvas:sceneBookPanelPosition:v1`（仅桌面宽屏读取和更新；固定尺寸不随镜头数量变化，窗口尺寸变化时夹回可视区）、底部文字属性带的全局收起偏好 `canvas:textToolbarCollapsed`（未设置时默认收起；显式 `'0'` 展开、`'1'` 收起）、普通画布属性检查器开关 `canvas:inspectorEnabled`、导图属性检查器开关 `canvas:mindmapInspectorEnabled`、图案属性检查器开关 `canvas:decorInspectorEnabled`（三个独立偏好；画布与图案默认开启，导图默认关闭）、文本框拖动自动对齐开关 `canvas:textSnapEnabled`（默认关闭，仅显式 `'1'` 开启）、完整画布模式的 `canvas:proNodeDefaults` / `canvas:proEdgeDefaults` 与简洁画布模式独立的 `canvas:cleanNodeDefaults` / `canvas:cleanEdgeDefaults` 新建默认、文本框新建默认 `canvas:textDefaults` 以及共享柔和色栏镜像保存的高光/字色 `canvas:textHighlightColor` / `canvas:textInlineColor`、自动保存、暗色连线优化、平移/缩放/读者透明度、索引/脑图悬停延迟等。右下角设置面板标题栏提供常驻的小型黑白“恢复默认”入口，确认步骤使用不占面板高度的悬浮卡；操作只清除该面板负责的显式偏好并即时恢复出厂值，界面语言、画布内容、新手引导和其他编辑器偏好不受影响。设置面板会拦截自身的滚轮事件冒泡，面板内滚动不得触发底层画布缩放。
 - 双屏画布的打开状态、右侧来源、结构化剪贴板和拖拽宽度只存在当前编辑器会话里，不写 `localStorage`、`sessionStorage` 或 `.canvas`；关闭双屏后主画布恢复正常 flex 宽度。
 - 双屏与“导入画布”共用当前编辑器会话内的受管画布目录缓存和进行中请求；主画布就绪后只在浏览器空闲时预读标题元数据，不预读完整画布。参考列表每次打开先立即复用缓存与既有 DOM，再静默刷新；响应签名没有变化时不重绘，快速开关也不重复请求。列表每次打开仍重播约 300ms、总尾长约 450ms 的 opacity/transform 错峰动画，低动态模式关闭动画。关闭双屏继续保留当前参考 iframe，切换来源只在交叉过渡期间同时保留新旧两帧，结束后删除旧帧，禁止常驻预载多张完整画布。
@@ -224,7 +225,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 运行时与首页：`/api/runtime`、`/api/recent`
 - Markdown 笔记库：`/api/notes-tree` 返回隐藏伴生目录的嵌套树；`/api/note?path=` 只返回正文与强修订号；`/api/note-links?path=` 按需返回出链/反链；`/api/note-history?path=&version=` 读取恢复历史；`/api/note-asset?note=&src=` 只流式返回库内授权栅格图片。
 - AI 配置安全视图：`/api/ai-config`
-- 学习/活跃：`/api/study`、`/api/study-activity`；`/api/study` 只返回 v6 学习任务、回收站、`goalTrees[]` 与 `activeTreeId`，不再返回单树 `goalTree` 别名或读取目标树归档；活跃接口保留完成/专注数据，并返回 `canvasDays`、`canvasEntries`、`canvasStats`、`canvasGraph` 与 `canvasOverviewGraph`，年份是画布、完成归档和专注记录的并集。
+- 学习/活跃：`/api/study`、`/api/study-activity`；`/api/study` 只返回 v6 学习任务、回收站、`goalTrees[]` 与 `activeTreeId`，不再返回单树 `goalTree` 别名或读取目标树归档；活跃接口保留完成/专注数据，并返回 `canvasDays`、`canvasEntries`、`canvasStats`、`canvasGraph`、`canvasOverviewGraph` 与三页汇总 `startPageStats`，年份是画布、三页计时、完成归档和专注记录的并集。
 - 独立树状页：`/api/tree-page`；缺失文件或旧实验 v1 返回稳定 ID 的未落盘空白 v2，损坏或其他非 v2 文件返回明确错误且不覆盖原件。
 - 复习：`/api/review-pool`、`/api/review-cards`
 - 速记/跨页便签/专注/每日任务：`/api/notes`、`/api/start-sticky-notes`、`/api/focus`、`/api/daily`
@@ -250,6 +251,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 速记、跨页便签和模板：`/api/notes-save`、`/api/notes-archive`、`/api/start-sticky-notes-save`、`/api/templates-save`
 - 专注：`/api/focus-log`、`/api/focus-session-update`、`/api/focus-session-delete`
 - 画布活动：`/api/canvas-activity` 接收已授权画布、会话 ID 与前台时间段；校验后按本地午夜拆分、与既有区间取并集，再返回本画布今日及累计秒数。
+- 起步页活动：`/api/start-page-activity` 只接受 `study` / `tree` / `notes`、会话 ID 与前台时间段；按画布计时相同的时长上限、本地午夜拆分和区间合并规则写入独立账本，再返回该页今日及累计秒数。
 - 每日任务：`/api/daily-create`、`/api/daily-update`、`/api/daily-delete`、`/api/daily-toggle`、`/api/daily-add-minutes`、`/api/daily-reorder`、`/api/daily-group-create`、`/api/daily-group-update`、`/api/daily-group-delete`、`/api/daily-tree`
 - 日历：`/api/diary-save`、`/api/diary-delete`、`/api/countdown-save`
 - AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
@@ -421,6 +423,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 - 首页是书本式工作台，不是营销页。
 - 顶栏“画布 / 笔记”只切换现有起步页壳中的直属工作区面板；画布工作区 DOM 不卸载，所以当前特殊页、分组、书脊位置和滚动状态必须保留。切换使用同一 `--start-turn-*` 速度变量与低动态降级；笔记脚本由首次进入或画布首屏后的空闲预热二者中先发生的一项动态加载。离开笔记前必须等待其保存链，按钮选择器只能命中 `button[data-start-workspace]`，不能把带当前状态的 `body[data-start-workspace]` 误绑为点击入口。
+- 学习、树状、速记三页在画布工作区可见且窗口有焦点时，由 `start.js` 共用一个 30 秒前台计时器写入 `/api/start-page-activity`；切页、切到笔记/博客工作区、失焦、隐藏或 `pagehide` 时立即结算，不设键鼠闲置超时。齿轮开关默认关闭，只有用户显式开启后才记录并持久记住选择；关闭会先结算当前片段再停用，并隐藏四张卡片的绿色附加值，但保留既有三页账本，重新开启后恢复显示。三页计时写入后不得自动重绘活跃页；已有缓存保持到用户点击右上角“更新”，按钮先等待计时队列至多 3 秒再统一读取最新活跃数据，避免翻页时二次渲染闪烁。活跃页画布镜头的热力图、当天明细和星图仍只表示真实画布；四张统计卡以同字号绿色 `+值` 单独显示三页的月/年时长、统一连续天数、当年使用页面数和累计时长，时长两边各用自己的自然单位。
 - 主要页面顺序包括复习、日历、节奏/活跃、速记、树状、学习、专注、最近、收藏、自定义分组和固定在其后的未分组；另有回收站、帮助、主题/背景设置。
 - 左侧书脊保留两层游标：黑白实体表示真实当前页，彩色细条与柔光层负责悬停预览；彩色层初载直接落在当前页，悬停时连续改道，离开书脊、焦点离开或滚动后回到当前页并常驻为细条 + 微光轮廓，不得重新改成淡出消失。动态分组重建和窗口缩放必须无飞入地校准，低动态模式立即完成位置与形状切换。
 - `recent.json` v3 的文件项有稳定 `id`、`groupId`、`groupRank`，收藏项另有 `favoriteRank`；最近页只展示具有真实 `lastOpenedAt` 的条目并按该字段计算（最多展示 30 项），收藏与分组顺序互不覆盖。旧版 `group` 字段自动迁移，内置页保留 id 不得用作自定义分组 id。
@@ -631,6 +634,13 @@ node .\tests\start-spine-motion-contract.js
 ```powershell
 python -m unittest .\tests\test_canvas_activity.py
 node .\tests\canvas-activity-contract.js
+```
+
+改动学习/树状/速记三页前台计时、绿色附加统计或起步页活动账本时，还要运行：
+
+```powershell
+python -m unittest .\tests\test_start_page_activity.py
+node .\tests\start-page-activity-contract.js
 ```
 
 并使用隔离的 `RELATUM_DATA_ROOT` 启动本地服务，实际验证编辑器前台计时、失焦暂停、活动页默认镜头、镜头记忆、热力日详情和画布星图；结束后关闭测试服务，不得读写真实用户账本。

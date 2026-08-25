@@ -3340,7 +3340,7 @@ body.desktop-host.desktop-maximized {
   font-weight: 620;
   letter-spacing: 0.02em;
 }
-.cadence-stats span {
+.cadence-stats > div > span {
   display: block;
   margin-top: 9px;
   color: var(--text-tertiary);
@@ -3357,6 +3357,48 @@ body.desktop-host.desktop-maximized {
 .cadence-lens-canvas .cadence-stats-canvas { display: grid; }
 .cadence-stats-focus strong small { font-size: 12px; }
 .cadence-stats-canvas strong small { font-size: 12px; }
+.cadence-stats-canvas .cadence-stat-pair {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 0.32em;
+  row-gap: 5px;
+  min-width: 0;
+}
+.cadence-stat-measure {
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+}
+.cadence-stat-measure b {
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+.cadence-stat-addon {
+  color: var(--cadence-page-addon, #337a6b);
+  border-radius: 4px;
+  outline: none;
+}
+.cadence-stat-addon small {
+  color: color-mix(in srgb, var(--cadence-page-addon, #337a6b) 78%, var(--text-secondary));
+}
+.cadence-stat-addon:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cadence-page-addon, #337a6b) 48%, transparent);
+  outline-offset: 3px;
+}
+
+body.start-page[data-start-page-activity-enabled="0"] .cadence-stat-addon {
+  display: none;
+}
 
 .cadence-canvas-meta {
   display: flex;
@@ -3759,7 +3801,7 @@ body.desktop-host.desktop-maximized {
   }
   .cadence-stats div { padding: 13px 8px 12px; }
   .cadence-stats strong { font-size: 30px; }
-  .cadence-stats span {
+  .cadence-stats > div > span {
     font-size: 10px;
     white-space: nowrap;
   }
@@ -36870,7 +36912,7 @@ body.start-page[data-start-theme="dark"] .cadence-stats small {
   color: rgba(248, 247, 241, 0.64);
 }
 
-body.start-page[data-start-theme="dark"] .cadence-stats span {
+body.start-page[data-start-theme="dark"] .cadence-stats > div > span {
   color: rgba(248, 247, 241, 0.48);
 }
 
@@ -37513,6 +37555,7 @@ body.start-page[data-start-theme="dark"] .star-tooltip {
   --cadence-deep: var(--cadence-7);
   --cadence-ink: #397f70;
   --cadence-glow: rgba(79, 157, 138, 0.08);
+  --cadence-page-addon: #337a6b;
 }
 
 .study-cadence {
@@ -37642,7 +37685,7 @@ body.start-page[data-start-theme="dark"] .star-tooltip {
   transform: none;
 }
 .cadence-stats div:hover strong { letter-spacing: -0.045em; }
-.cadence-stats span {
+.cadence-stats > div > span {
   margin-top: 8px;
   font-size: 11px;
   font-weight: 560;
@@ -37701,6 +37744,7 @@ body.start-page[data-start-theme="dark"] {
   --cadence-7: #91adc2;
   --cadence-ink: #a8bfce;
   --cadence-glow: rgba(145, 173, 194, 0.08);
+  --cadence-page-addon: #70b9a6;
   --focus-cadence-empty: #26282b;
   --focus-cadence-1: #2f3337;
   --focus-cadence-2: #394047;
