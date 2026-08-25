@@ -2424,8 +2424,7 @@ html[data-ui-language="en"] .study-cadence-head h2 {
 }
 html[data-ui-language="en"] .study-hero,
 html[data-ui-language="en"] .review-head,
-html[data-ui-language="en"] .focus-head,
-html[data-ui-language="en"] .calendar-page-head {
+html[data-ui-language="en"] .focus-head {
   align-items: flex-end;
 }
 html[data-ui-language="en"] .study-section-head h2,
@@ -2435,8 +2434,7 @@ html[data-ui-language="en"] .calendar-records h3 {
   letter-spacing: -.03em;
 }
 html[data-ui-language="en"] .focus-phase,
-html[data-ui-language="en"] .focus-mode-caption,
-html[data-ui-language="en"] .calendar-page-head > div > span {
+html[data-ui-language="en"] .focus-mode-caption {
   letter-spacing: -.015em;
 }
 html[data-ui-language="en"] .editor-mode-btn,
@@ -10313,7 +10311,7 @@ body.start-page[data-start-state] .book-view .calendar-embedded::-webkit-scrollb
   inset: 0;
   z-index: 10;
   overflow-y: auto;
-  padding: 28px clamp(24px, 4vw, 68px) 68px max(78px, 5vw);
+  padding: 0 clamp(24px, 4vw, 68px) 68px max(78px, 5vw);
   opacity: 0;
   pointer-events: none;
   transform: translate3d(-42px, 0, 0) scale(0.992);
@@ -37853,19 +37851,27 @@ body.trash-page[data-start-theme="dark"] .context-menu {
   width: min(1380px, 100%); margin: 0 auto; color: var(--text);
 }
 .calendar-page-head {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 28px; margin-bottom: 24px;
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 28px; margin-bottom: 4px;
 }
 .calendar-page-head h1 {
-  margin: 4px 0; font-size: clamp(34px, 4vw, 54px); letter-spacing: -0.045em;
+  margin: 0; font-size: clamp(30px, 3.3vw, 46px); line-height: 1; letter-spacing: -0.045em;
 }
-.calendar-page-head > div > span { color: var(--text-secondary); font-size: 13px; }
 .calendar-head-tools {
-  /* 倒数日随首次 /api/calendar 响应才确定；提前保留完整三行工具区高度，
-     避免它出现时把左侧月历卡片整体向下推一截。 */
-  display: grid; align-content: end; width: min(360px, 38vw); min-height: 145px; gap: 9px;
+  /* 倒数日在首次 /api/calendar 响应后才确定；固定两行工具区高度，
+     让搜索行在有无倒数日时都保持位置，不推动下方月历。 */
+  display: grid; align-content: end; width: min(360px, 38vw); min-height: 82px; gap: 4px;
 }
-.calendar-head-tools .calendar-search-wrap { width: 100%; }
+.calendar-search-row {
+  display: flex; align-items: stretch; width: 100%; gap: 4px;
+}
+.calendar-search-row .calendar-search-wrap {
+  flex: 1 1 auto; min-width: 0; width: auto;
+}
+.calendar-search-row .page-refresh {
+  flex: 0 0 36px; width: 36px; height: 36px; justify-content: center;
+  padding: 0; border-radius: 14px;
+}
 /* stale 刷新等待期：整个日历内容区透明隐藏（保留布局），数据到达后同帧解除并播放入场 */
 .calendar-refreshing .calendar-page-head,
 .calendar-refreshing .calendar-layout {
@@ -37878,9 +37884,20 @@ body.trash-page[data-start-theme="dark"] .context-menu {
 .calendar-title-row {
   display: flex; align-items: center; gap: 14px 22px; flex-wrap: wrap; width: 100%;
 }
+.calendar-title-stack {
+  display: grid; flex: none; gap: 2px;
+}
+.calendar-title-stack .study-eyebrow {
+  margin: 0 0 0 6px; font-size: 9px; line-height: 1; letter-spacing: .16em;
+}
+/* 中文标题参照活跃页 8px 的眉标—标题视觉间距；只移动绘制位置，不改变页头或月历的布局尺寸。 */
+html:not([data-ui-language="en"]) .calendar-title-stack h1,
+html:not([data-ui-language="en"]) .calendar-title-row .calendar-countdown-progress {
+  position: relative; top: 6px;
+}
 .calendar-title-row h1 { margin: 0; }
 .calendar-title-row .calendar-countdown-progress {
-  flex: 1 1 260px; max-width: 700px; min-width: 0;
+  flex: 1 1 260px; max-width: 700px; min-width: 0; margin-top: 12px;
 }
 /* —— 日历页倒数日进度条：复用学习页进度条轨道与金色达成态；长度由「⋯」按钮设置 —— */
 .calendar-countdown-progress {
@@ -37929,7 +37946,7 @@ body.trash-page[data-start-theme="dark"] .context-menu {
 }
 .calendar-countdown {
   display: grid; grid-template-columns: 30px auto minmax(0, 1fr); align-items: center;
-  min-height: 48px; box-sizing: border-box; gap: 11px; padding: 8px 13px 8px 9px;
+  min-height: 42px; box-sizing: border-box; gap: 8px; padding: 5px 10px 5px 6px;
   border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   border-radius: 15px;
   background:
@@ -38402,7 +38419,7 @@ body.calendar-flip-clock-open { overflow: hidden; }
   transition: border-color var(--duration) var(--easing-soft), box-shadow var(--duration) var(--easing-soft);
 }
 .calendar-search-wrap input {
-  height: 42px; padding: 0 15px; border-radius: 14px;
+  height: 36px; padding: 0 13px; border-radius: 13px;
   box-shadow: 0 10px 28px rgba(26, 26, 26, 0.045);
 }
 .calendar-search-wrap input:focus,
@@ -38828,11 +38845,10 @@ body.calendar-flip-clock-open { overflow: hidden; }
 /* 首次进日历页的整页入场：页头 → 月历卡（头部 / 星期 / 格子错峰 / 图例）一道缓缓铺开，
    放慢、强减速，与右栏「缓缓写入」交叠成贯穿整页的一道波（仅 kind:'initial' 由 JS 触发）。
    翻月仍走更快的 calendarCellSettle，互不影响。 */
-.calendar-page-head-enter .study-eyebrow { animation: calendarHeadIn 640ms 40ms var(--easing-page) both; }
+.calendar-page-head-enter .calendar-title-stack .study-eyebrow { animation: calendarHeadIn 640ms 40ms var(--easing-page) both; }
 .calendar-page-head-enter h1 { animation: calendarHeadIn 760ms 120ms var(--easing-page) both; }
 .calendar-page-head-enter .calendar-countdown-progress { animation: calendarHeadIn 720ms 200ms var(--easing-page) both; }
-.calendar-page-head-enter > div > span { animation: calendarHeadIn 720ms 240ms var(--easing-page) both; }
-.calendar-page-head-enter .calendar-search-wrap { animation: calendarHeadIn 720ms 380ms var(--easing-page) both; }
+.calendar-page-head-enter .calendar-search-row { animation: calendarHeadIn 720ms 300ms var(--easing-page) both; }
 .calendar-card-enter .calendar-month-head { animation: calendarHeadIn 660ms 260ms var(--easing-page) both; }
 .calendar-card-enter .calendar-weekdays { animation: calendarHeadIn 640ms 340ms var(--easing-page) both; }
 .calendar-card-enter .calendar-day {
@@ -38936,11 +38952,10 @@ body.start-page[data-start-theme="dark"] .start-setting-toggle input:checked + i
   .calendar-card-enter .calendar-weekdays,
   .calendar-card-enter .calendar-day,
   .calendar-card-enter .calendar-legend,
-  .calendar-page-head-enter .study-eyebrow,
+  .calendar-page-head-enter .calendar-title-stack .study-eyebrow,
   .calendar-page-head-enter h1,
   .calendar-page-head-enter .calendar-countdown-progress,
-  .calendar-page-head-enter > div > span,
-  .calendar-page-head-enter .calendar-search-wrap,
+  .calendar-page-head-enter .calendar-search-row,
   .calendar-countdown-revealing,
   .calendar-countdown-updated,
   .calendar-countdown-input,

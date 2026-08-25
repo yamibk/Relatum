@@ -890,7 +890,6 @@
     '这一天没有完成学习任务。': 'No study tasks were completed this day.',
     '这一天还没有专注记录。': 'No focus sessions were recorded this day.',
     '这一天没有归档成果。': 'No outcomes were archived this day.',
-    '把临时想法、学习过程和完成的事，放回它们发生的那一天。': 'Return ideas, learning, and finished work to the day they happened.',
     '搜索日记标题、标签或正文摘要': 'Search journal titles, tags, or excerpts',
     'weekdayMon': 'Mon', 'weekdayTue': 'Tue', 'weekdayWed': 'Wed', 'weekdayThu': 'Thu',
     'weekdayFri': 'Fri', 'weekdaySat': 'Sat', 'weekdaySun': 'Sun',

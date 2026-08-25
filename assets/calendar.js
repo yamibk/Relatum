@@ -1553,12 +1553,12 @@
       + '</section>';
   }
 
-  // 「更新」按钮 HTML：放在头部工具区末尾。平时翻进日历用缓存，不重读；点它才强制重读当前月。
+  // 环形箭头更新按钮：与搜索框同行。平时翻进日历用缓存，点它才强制重读当前月。
   function renderRefresh() {
     return '<button type="button" class="page-refresh" data-calendar-refresh'
       + ' aria-label="重新读取日历" title="重新读取日历数据（平时翻进来用上次结果；在别处改了任务/日记，点这里才更新）">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>'
-      + '<span>更新</span></button>';
+      + '</button>';
   }
   async function refreshCalendar(btn) {
     if (btn) btn.classList.add('is-refreshing');
@@ -1574,10 +1574,11 @@
 
   function render(motion) {
     root.innerHTML = '<div class="calendar-page-head"><div class="calendar-head-main">'
-      + '<p class="study-eyebrow">CALENDAR</p>'
-      + '<div class="calendar-title-row"><h1>日历</h1>' + renderCountdownProgress() + '</div>'
-      + '<span>把临时想法、学习过程和完成的事，放回它们发生的那一天。</span></div>'
-      + '<div class="calendar-head-tools">' + renderCountdown() + renderSearch() + renderRefresh()
+      + '<div class="calendar-title-row"><div class="calendar-title-stack">'
+      + '<p class="study-eyebrow">CALENDAR</p><h1>日历</h1></div>'
+      + renderCountdownProgress() + '</div>'
+      + '</div><div class="calendar-head-tools">' + renderCountdown()
+      + '<div class="calendar-search-row">' + renderSearch() + renderRefresh() + '</div>'
       + '</div></div><div class="calendar-layout"><div>' + renderCalendar()
       + '</div><div class="calendar-day-column">' + renderDiary() + renderDayRecords(true) + '</div></div>';
     bindCalendarControls();
