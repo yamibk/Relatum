@@ -10076,16 +10076,21 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .focus-embedded,
 .start-help-book { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.16) transparent; }
 
-/* 学习 / 活跃页保留滚动能力，只在视觉上收起最右侧滚动条。 */
+/* 学习 / 活跃 / 日历页保留滚动能力，只在视觉上收起最右侧滚动条。
+   活跃与日历容器在进退场动画期间也保持隐藏，避免状态类切换时闪现。 */
 body.start-page .book-view.study-active .book-stage,
 body.start-page .book-view.cadence-active .book-stage,
-body.start-page .book-view.cadence-active .cadence-embedded {
+body.start-page .book-view.calendar-active .book-stage,
+body.start-page[data-start-state] .book-view .cadence-embedded,
+body.start-page[data-start-state] .book-view .calendar-embedded {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 body.start-page .book-view.study-active .book-stage::-webkit-scrollbar,
 body.start-page .book-view.cadence-active .book-stage::-webkit-scrollbar,
-body.start-page .book-view.cadence-active .cadence-embedded::-webkit-scrollbar {
+body.start-page .book-view.calendar-active .book-stage::-webkit-scrollbar,
+body.start-page[data-start-state] .book-view .cadence-embedded::-webkit-scrollbar,
+body.start-page[data-start-state] .book-view .calendar-embedded::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;

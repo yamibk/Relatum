@@ -50,6 +50,8 @@
     resumeAfterPageShow: false,
     expandedDays: new Set(),  // 当天任务超过 10 条时，记录哪些天被展开过；换天自动收起
   };
+  let entranceExitFrozen = false;
+  let entranceExitAnimations = [];
   const prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
@@ -1373,6 +1375,32 @@
     if (records) records.classList.remove('calendar-records-enter');
   }
 
+  function freezeEntranceMotionForExit() {
+    if (entranceExitFrozen) return;
+    entranceExitFrozen = true;
+    if (typeof root.getAnimations !== 'function') return;
+    try {
+      entranceExitAnimations = root.getAnimations({ subtree: true }).filter((animation) => {
+        return animation.playState === 'running' || animation.playState === 'pending';
+      });
+      entranceExitAnimations.forEach((animation) => {
+        try { animation.pause(); } catch (error) {}
+      });
+    } catch (error) {
+      entranceExitAnimations = [];
+    }
+  }
+
+  function finalizeEntranceExit(force) {
+    if (!entranceExitFrozen || (!force && state.active)) return;
+    clearEntranceMotion();
+    entranceExitAnimations.forEach((animation) => {
+      try { animation.cancel(); } catch (error) {}
+    });
+    entranceExitAnimations = [];
+    entranceExitFrozen = false;
+  }
+
   // 每次翻进日历页都完整重播错峰入场：页头（含倒数日进度条）、月历卡片、右侧整列
   // （日记 + 三栏：卡片错峰与条目上滑是 WAAPI 动画，由 animateDayColumn/revealDayColumnEnter 重播）。
   function replayEntranceMotion() {
@@ -2368,6 +2396,7 @@
 
   window.CanvasCalendar = {
     activate() {
+      finalizeEntranceExit(true);
       state.active = true;
       if (!state.loaded || state.stale) {
         // 首次进入由 render 的 initial 入场负责；非首次（stale 刷新）时：
@@ -2389,16 +2418,19 @@
     },
     deactivate() {
       state.active = false;
+      freezeEntranceMotionForExit();
       state.resumeAfterPageShow = false;
       cancelCalendarNetworkWork();
       closeCountdownClock();
       stopCountdownProgressBreath();
       closeCountdownProgressSettings(false, true);
-      clearEntranceMotion();
       captureCurrentDraft();
       state.drafts.forEach((draft) => {
         if (!draft.deleting && draft.version > draft.savedVersion) queueDiarySave(draft.day, true);
       });
+    },
+    finalizeExitMotion() {
+      finalizeEntranceExit(false);
     },
     reload() {
       state.stale = true;
