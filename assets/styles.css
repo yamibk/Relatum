@@ -3396,7 +3396,7 @@ body.desktop-host.desktop-maximized {
   outline-offset: 3px;
 }
 
-body.start-page[data-start-page-activity-enabled="0"] .cadence-stat-addon {
+body.start-page[data-start-page-activity-stats-visible="0"] .cadence-stat-addon {
   display: none;
 }
 

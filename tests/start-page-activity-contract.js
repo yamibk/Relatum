@@ -16,12 +16,20 @@ const backend = read('app.py');
 assert(html.includes('data-role="start-page-activity-toggle"')
   && !html.includes('data-role="start-page-activity-toggle" checked')
   && html.includes('学习、树状、速记计时'), 'the settings toggle must be visible and off by default');
+assert(html.includes('data-role="start-page-activity-stats-toggle"')
+  && html.includes('显示三页统计数字'), 'the green statistics need an independent visibility toggle');
 assert(start.includes("localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY) === '1'"),
   'timing must remain off until the user explicitly enables it');
 assert(start.includes("localStorage.setItem(START_PAGE_ACTIVITY_ENABLED_KEY, startPageActivityEnabled ? '1' : '0')"),
   'both user choices must persist locally');
 assert(start.includes("document.body.dataset.startPageActivityEnabled = startPageActivityEnabled ? '1' : '0'"),
-  'the timer preference must also control whether add-on values are shown');
+  'the timer preference must be exposed independently');
+assert(start.includes("localStorage.getItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY)")
+  && start.includes("localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisible ? '1' : '0')")
+  && start.includes("document.body.dataset.startPageActivityStatsVisible = startPageActivityStatsVisible ? '1' : '0'"),
+  'the add-on visibility preference must persist independently');
+assert(start.includes('let startPageActivityStatsVisibleInit = startPageActivityEnabledInit;'),
+  'the new visibility preference must inherit the old combined state once');
 [
   "new Set(['study', 'tree', 'notes'])",
   "fetch('/api/start-page-activity'",
@@ -55,8 +63,8 @@ assert(study.includes('await startPageActivity.waitForIdle()')
   'cadence-stat-addon',
   '学习、树状、速记合计',
 ].forEach((needle) => assert(study.includes(needle), 'missing split-stat UI contract: ' + needle));
-assert(styles.includes('body.start-page[data-start-page-activity-enabled="0"] .cadence-stat-addon'),
-  'disabling the timer must hide all green add-on values');
+assert(styles.includes('body.start-page[data-start-page-activity-stats-visible="0"] .cadence-stat-addon'),
+  'the dedicated visibility toggle must hide all green add-on values');
 assert(study.includes("return { num: '&lt;1', unit: '分钟' }"),
   'positive durations below one minute must retain the existing natural unit');
 assert(styles.includes('--cadence-page-addon: #337a6b')
@@ -67,6 +75,8 @@ assert(/\.cadence-stat-measure\s*\{[\s\S]*?white-space:\s*nowrap/.test(styles),
   'each value-unit measure must stay intact');
 assert(i18n.includes("'学习、树状、速记合计': 'Study, Tree, and Quick Notes combined'"));
 assert(i18n.includes("'开启后记录这三页的前台使用时长': 'When enabled, foreground time on these three pages is recorded.'"));
+assert(i18n.includes("'显示三页统计数字': 'Show three-page statistics'")
+  && i18n.includes("'在活跃页显示绿色附加统计': 'Show the green add-on statistics in Activity.'"));
 assert(i18n.includes("'手动重新读取活跃数据（包括画布、学习、树状、速记、完成任务和专注）'"),
   'manual refresh guidance must be translated');
 

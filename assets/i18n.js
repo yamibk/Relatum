@@ -97,6 +97,8 @@
     '日历倒数日': 'Calendar countdown', '在日历页显示目标日期': 'Show target dates on Calendar.',
     '学习、树状、速记计时': 'Study, Tree, and Quick Notes timing',
     '开启后记录这三页的前台使用时长': 'When enabled, foreground time on these three pages is recorded.',
+    '显示三页统计数字': 'Show three-page statistics',
+    '在活跃页显示绿色附加统计': 'Show the green add-on statistics in Activity.',
     '打开翻页时钟': 'Open flip clock', '翻页时钟': 'Flip clock',
     '关闭翻页时钟': 'Close flip clock', '倒数事件列表': 'Countdown events',
     '倒数事件': 'Countdown events', '关闭事件列表': 'Close event list',
