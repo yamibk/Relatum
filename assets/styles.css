@@ -45395,6 +45395,108 @@ body.study-progress-dragging .study-progress-list .study-progress-card:not(.drag
 }
 .study-progress-settings-save:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
 
+/* 日历倒数日进度：长度 / 开始日期二选一，另一项始终是只读联动结果。 */
+.calendar-countdown-progress-settings {
+  width: min(360px, calc(100vw - 24px));
+}
+.calendar-countdown-progress-modes {
+  display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0;
+}
+.calendar-countdown-progress-mode-legend {
+  width: 100%; margin: 0 0 2px; padding: 0;
+  color: var(--text-secondary); font-size: 11.5px; line-height: 1.4;
+}
+.calendar-countdown-progress-setting-row {
+  display: grid; grid-template-columns: 18px 76px minmax(0, 1fr); align-items: center;
+  gap: 10px; min-height: 50px; padding: 6px 9px;
+  border: 1px solid transparent; border-radius: 12px; cursor: pointer;
+  background: transparent;
+  transition: color 180ms var(--easing-soft), border-color 180ms var(--easing-soft),
+              background 180ms var(--easing-soft), box-shadow 180ms var(--easing-soft);
+}
+.calendar-countdown-progress-setting-row.is-active {
+  border-color: color-mix(in srgb, var(--text) 15%, var(--border));
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+  box-shadow: 0 5px 15px rgba(31, 35, 32, .035);
+}
+.calendar-countdown-progress-setting-row.is-inactive:hover {
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+}
+.calendar-countdown-progress-mode-radio {
+  appearance: none; width: 16px; height: 16px; display: grid; place-items: center;
+  margin: 0; border: 1.5px solid color-mix(in srgb, var(--text) 34%, var(--border));
+  border-radius: 50%; background: var(--surface); cursor: pointer;
+  transition: border-color 160ms var(--easing-soft), background 160ms var(--easing-soft),
+              box-shadow 160ms var(--easing-soft), transform 160ms var(--easing-page);
+}
+.calendar-countdown-progress-mode-radio::after {
+  content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--text);
+  opacity: 0; transform: scale(.35);
+  transition: opacity 140ms var(--easing-soft), transform 160ms var(--easing-page);
+}
+.calendar-countdown-progress-mode-radio:checked {
+  border-color: color-mix(in srgb, var(--text) 72%, var(--border));
+  transform: scale(1.04);
+}
+.calendar-countdown-progress-mode-radio:checked::after { opacity: 1; transform: scale(1); }
+.calendar-countdown-progress-mode-radio:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.calendar-countdown-progress-mode-label {
+  color: var(--text); font-size: 12.5px; font-weight: 590; cursor: pointer;
+  transition: color 180ms var(--easing-soft), opacity 180ms var(--easing-soft);
+}
+.calendar-countdown-progress-field-shell {
+  display: flex; align-items: center; justify-content: flex-end; gap: 7px; min-width: 0;
+  color: var(--text-tertiary); font-size: 12px;
+  transition: color 180ms var(--easing-soft), opacity 180ms var(--easing-soft),
+              transform 180ms var(--easing-page);
+}
+.calendar-countdown-progress-field {
+  width: 100%; min-width: 0; height: 36px; box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+  transition: color 180ms var(--easing-soft), background 180ms var(--easing-soft),
+              border-color 180ms var(--easing-soft), opacity 180ms var(--easing-soft),
+              transform 180ms var(--easing-page);
+}
+.calendar-countdown-progress-field[type="number"] { max-width: 112px; }
+.calendar-countdown-progress-field[type="date"] { max-width: 164px; text-align: left; }
+.calendar-countdown-progress-setting-row.is-inactive .calendar-countdown-progress-mode-label,
+.calendar-countdown-progress-setting-row.is-inactive .calendar-countdown-progress-field-shell {
+  color: var(--text-tertiary); opacity: .46;
+}
+.calendar-countdown-progress-setting-row.is-inactive .calendar-countdown-progress-field-shell {
+  transform: translateX(-2px);
+}
+.calendar-countdown-progress-field:disabled {
+  pointer-events: none; color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--surface) 93%, var(--text) 7%);
+}
+.calendar-countdown-progress-field[aria-invalid="true"] {
+  border-color: color-mix(in srgb, #b4533f 62%, var(--border));
+}
+.calendar-countdown-progress-summary {
+  min-height: 18px; margin: 12px 0 0; padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent); border-radius: 10px;
+  color: var(--text-secondary); background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  font-size: 11.5px; line-height: 1.5; font-variant-numeric: tabular-nums;
+}
+.calendar-countdown-progress-summary.is-updating,
+.calendar-countdown-progress-field.is-derived-updating {
+  animation: calendarCountdownProgressValueIn 180ms var(--easing-page) both;
+}
+@keyframes calendarCountdownProgressValueIn {
+  from { opacity: .38; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.calendar-countdown-progress-settings .study-progress-settings-error { margin-top: 5px; }
+.calendar-countdown-progress-settings .study-progress-settings-save:disabled {
+  opacity: .38; cursor: not-allowed; background: transparent;
+}
+.calendar-countdown-progress-settings .study-progress-settings-actions button:not(:disabled):active {
+  transform: translateY(1px) scale(.98);
+}
+
 /* —— 里程碑弹窗（复刻专注页每日任务的高级设置弹窗）—— */
 .study-milestone-dialog-shell {
   position: fixed; inset: 0; z-index: 80;
@@ -45900,6 +46002,29 @@ body.start-page[data-start-theme="dark"] .study-progress-settings-popover {
 body.start-page[data-start-theme="dark"] .study-progress-settings-number {
   border-color: rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .04);
 }
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-setting-row.is-active {
+  border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .045);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, .12);
+}
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-setting-row.is-inactive:hover,
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-summary {
+  background: rgba(255, 255, 255, .035);
+}
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-mode-radio {
+  border-color: rgba(255, 255, 255, .3); background: #1e201f;
+}
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-mode-radio:checked {
+  border-color: rgba(255, 255, 255, .72);
+}
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-mode-radio::after {
+  background: #f1efe8;
+}
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-field:disabled {
+  background: rgba(255, 255, 255, .025);
+}
+body.start-page[data-start-theme="dark"] .calendar-countdown-progress-summary {
+  border-color: rgba(255, 255, 255, .09);
+}
 body.start-page[data-start-theme="dark"] .study-progress-settings-milestones:hover:not(:disabled),
 body.start-page[data-start-theme="dark"] .study-progress-settings-temporary:hover,
 body.start-page[data-start-theme="dark"] .study-progress-settings-save:hover { background: rgba(255, 255, 255, .06); }
@@ -45914,6 +46039,12 @@ body.start-page[data-start-theme="dark"] .study-milestone-remove:hover { backgro
   .study-progress-board { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 700px) {
+  .calendar-countdown-progress-setting-row {
+    grid-template-columns: 18px minmax(0, 1fr); gap: 7px 10px; padding-block: 9px;
+  }
+  .calendar-countdown-progress-field-shell { grid-column: 2; justify-content: flex-start; }
+  .calendar-countdown-progress-field[type="number"],
+  .calendar-countdown-progress-field[type="date"] { max-width: none; }
   .study-progress-view { padding-top: 8px; }
   .study-progress-head { align-items: center; }
   .study-progress-head h1 { font-size: 32px; }
@@ -45946,6 +46077,13 @@ body.start-page[data-start-theme="dark"] .study-milestone-remove:hover { backgro
   .study-progress-card.is-goal-breathing .study-progress-fill::after,
   .study-progress-milestone.is-entering, .study-progress-milestone.is-leaving,
   .study-progress-settings-popover,
+  .calendar-countdown-progress-setting-row,
+  .calendar-countdown-progress-mode-radio,
+  .calendar-countdown-progress-mode-radio::after,
+  .calendar-countdown-progress-mode-label,
+  .calendar-countdown-progress-field-shell,
+  .calendar-countdown-progress-field,
+  .calendar-countdown-progress-summary,
   .study-milestone-dialog-shell, .study-milestone-dialog,
   .study-milestone-dialog-shell.is-open, .study-milestone-dialog-shell.is-closing,
   .study-milestone-row.is-entering, .study-milestone-row.is-leaving,
@@ -45961,6 +46099,9 @@ body.start-page[data-start-theme="dark"] .study-milestone-remove:hover { backgro
   .study-temporary-layer.is-revealing .study-temporary-tab,
   .study-temporary-card, .study-temporary-empty,
   .study-temporary-check, .study-temporary-remove { transition: none !important; animation: none !important; }
+  .calendar-countdown-progress-setting-row.is-inactive .calendar-countdown-progress-field-shell {
+    transform: none !important;
+  }
   .study-temporary-tab { transform: translate3d(0,-50%,0) !important; transition: opacity 120ms linear, color 120ms linear, background 120ms linear !important; }
   .study-temporary-panel { transform: none !important; transition: opacity 120ms linear, border-color 120ms linear !important; }
   .study-temporary-head,
