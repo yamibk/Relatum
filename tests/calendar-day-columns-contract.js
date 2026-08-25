@@ -54,6 +54,26 @@ assert(calendar.includes("records.classList.remove('calendar-records-enter')"));
 // 倒数日数据未到时卡片隐藏（不渲染占位按钮），避免占位→重建闪现
 assert(calendar.includes('const hidden = !state.countdownEnabled || !countdown;'));
 
+// —— 紧凑页头：说明句已移除，搜索与纯图标更新按钮同行 ——
+assert(!calendar.includes('把临时想法、学习过程和完成的事'));
+assert(!i18n.includes('把临时想法、学习过程和完成的事'));
+assert(calendar.includes('<div class="calendar-title-stack">'));
+assert(calendar.includes('<p class="study-eyebrow">CALENDAR</p><h1>日历</h1></div>'));
+assert(calendar.includes('<div class="calendar-search-row">'));
+assert(calendar.includes('data-calendar-refresh'));
+assert(!calendar.includes('<span>更新</span>'));
+assert(styles.includes('.calendar-search-row .page-refresh'));
+assert(calendar.includes("+ '</div><div class=\"calendar-head-tools\">' + renderCountdown()"));
+assert(!calendar.includes("+ '</div></div><div class=\"calendar-head-tools\">' + renderCountdown()"));
+assert(styles.includes('padding: 0 clamp(24px, 4vw, 68px) 68px max(78px, 5vw);'));
+assert(styles.includes('gap: 28px; margin-bottom: 4px;'));
+assert(styles.includes('min-height: 82px; gap: 4px;'));
+assert(styles.includes('font-size: clamp(30px, 3.3vw, 46px);'));
+assert(styles.includes('margin: 0 0 0 6px; font-size: 9px;'));
+assert(styles.includes('min-width: 0; margin-top: 12px;'));
+assert(styles.includes('html:not([data-ui-language="en"]) .calendar-title-stack h1,'));
+assert(styles.includes('position: relative; top: 6px;'));
+
 // —— 加载期完全隐藏右侧三栏（不渲染骨架白块）；旧骨架淡出逻辑保留 null 兜底 ——
 assert(!calendar.includes("'<article><i></i><i></i></article>'"));
 assert(calendar.includes('!skeleton || !skeleton.animate'));
