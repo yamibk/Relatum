@@ -31,13 +31,9 @@
   const NOTES_VIEW_KEY = 'canvas:notesView';
   const NOTES_VIEW_MIN = 0.45;
   const NOTES_VIEW_MAX = 2.35;
-  const NOTES_WHEEL_PAN = 0.72;
-  const NOTES_WHEEL_EASE = 0.24;   // 滚轮平移每帧（60fps基准）朝目标逼近的比例，越小越绵长
-  const NOTES_ZOOM_EASE = 0.32;    // Ctrl+滚轮缩放缓动，贴近主画布滚轮手感
+  const NOTES_ZOOM_EASE = 0.32;    // 滚轮缩放缓动，贴近主画布滚轮手感
   const NOTES_KEY_PAN = 8;
   const NOTES_BOUNCE = 0.28;
-  const STACK_WHEEL_THRESHOLD = 36;
-  const STACK_WHEEL_COOLDOWN = 120;
   const NOTE_TYPOGRAPHY_SHORT_MAX = 18;
   const NOTE_TYPOGRAPHY_MEDIUM_MAX = 48;
   const NOTE_TYPOGRAPHY_NEWLINE_WEIGHT = 4;
@@ -76,13 +72,6 @@
   let viewArrowShift = false;
   let viewArrowRaf = null;
   let viewArrowTs = 0;
-  let stackWheelAccum = 0;
-  let stackWheelResetTimer = null;
-  let stackWheelLastTs = 0;
-  let wheelPanRaf = null;          // 滚轮平移缓动 RAF
-  let wheelPanTs = 0;              // 上一帧时间戳（帧率归一化）
-  let wheelTargetX = 0;            // 滚轮平移目标偏移
-  let wheelTargetY = 0;
   let viewPanInertiaRaf = null;    // 空格拖动画布松手后的惯性循环
   let lastPointer = null;          // N 新建时优先使用最近一次位于速记台面的鼠标位置
   let searchInput = null;          // 无可见 UI 的搜索输入捕获（支持中文输入法）
@@ -293,14 +282,6 @@
       targetViewScale = viewScale;
     }
   }
-  // ── 滚轮平移缓动：累加到目标偏移，逐帧朝目标逼近，消除机械滚轮一格一跳的台阶感 ──
-  function cancelWheelPan() {
-    if (wheelPanRaf != null) {
-      cancelAnimationFrame(wheelPanRaf);
-      wheelPanRaf = null;
-    }
-    wheelPanTs = 0;
-  }
   function cancelViewPanInertia() {
     if (viewPanInertiaRaf != null) {
       cancelAnimationFrame(viewPanInertiaRaf);
@@ -345,43 +326,8 @@
     };
     viewPanInertiaRaf = requestAnimationFrame(step);
   }
-  function wheelPanBy(dx, dy) {
-    cancelViewPanInertia();
-    if (prefersReduced) { panViewBy(dx, dy, true); return; }
-    if (wheelPanRaf == null) {       // 启动时把目标同步到当前实际位置，避免与其它交互残留打架
-      wheelTargetX = viewX;
-      wheelTargetY = viewY;
-    }
-    wheelTargetX += dx;
-    wheelTargetY += dy;
-    if (wheelPanRaf == null) {
-      wheelPanTs = 0;
-      wheelPanRaf = requestAnimationFrame(wheelPanTick);
-    }
-  }
-  function wheelPanTick(ts) {
-    wheelPanRaf = null;
-    if (typeof ts !== 'number') ts = performance.now();
-    let frames = wheelPanTs ? (ts - wheelPanTs) / (1000 / 60) : 1;
-    wheelPanTs = ts;
-    if (!(frames > 0)) frames = 1;
-    frames = Math.max(0.35, Math.min(3, frames));
-    const ease = 1 - Math.pow(1 - NOTES_WHEEL_EASE, frames);
-    viewX += (wheelTargetX - viewX) * ease;
-    viewY += (wheelTargetY - viewY) * ease;
-    if (Math.abs(wheelTargetX - viewX) < 0.5 && Math.abs(wheelTargetY - viewY) < 0.5) {
-      viewX = wheelTargetX;
-      viewY = wheelTargetY;
-      applyView(true);
-      wheelPanTs = 0;
-      return;
-    }
-    applyView(true);
-    wheelPanRaf = requestAnimationFrame(wheelPanTick);
-  }
   function zoomViewTo(nextScale, clientX, clientY) {
     cancelViewPanInertia();
-    cancelWheelPan();
     if (prefersReduced) cancelZoom(true);
     const rect = surface.getBoundingClientRect();
     const localX = clientX - rect.left;
@@ -434,7 +380,6 @@
   }
   function resetView() {
     cancelNoteInertia(true);
-    cancelWheelPan();
     cancelZoom();
     viewX = 0;
     viewY = 0;
@@ -447,7 +392,6 @@
   function animateViewTo(scale, panX, panY) {
     cancelNoteInertia(true);
     cancelViewPanInertia();
-    cancelWheelPan();
     cancelZoom();
     targetViewScale = clampViewScale(scale);
     targetViewX = panX;
@@ -1100,27 +1044,6 @@
     scheduleSave();
   }
 
-  function flipStack(stackId, direction) {
-    if (!stackId) return;
-    const members = notes.filter((n) => n.stack === stackId);
-    if (members.length < 2) return;
-    const reordered = members.slice();
-    if (direction > 0) reordered.unshift(reordered.pop());
-    else reordered.push(reordered.shift());
-    const firstIndex = notes.reduce((best, note, index) => (
-      note.stack === stackId ? Math.min(best, index) : best
-    ), notes.length);
-    const rest = notes.filter((n) => n.stack !== stackId);
-    const insertAt = Math.min(firstIndex, rest.length);
-    const pre = snapshot();
-    notes = rest.slice(0, insertAt).concat(reordered, rest.slice(insertAt));
-    setActiveNote(reordered[reordered.length - 1]);
-    expandedStack = stackId;
-    commit(pre);
-    relayout();
-    scheduleSave();
-  }
-
   // ── 创建 ──
   function noteOverlap(x, y, data) {
     const dx = Math.max(0, Math.min(x + NOTE_W, data.x + NOTE_W) - Math.max(x, data.x));
@@ -1721,7 +1644,6 @@
     if (e.target.closest('.sticky-note')) return;
     if (spaceHeld) {
       e.preventDefault();
-      cancelWheelPan();
       interacting = true;
       cancelCollapse();
       cancelExpand();
@@ -1835,7 +1757,6 @@
   }
   function startViewArrowPan() {
     if (viewArrowRaf == null) {
-      cancelWheelPan();
       viewArrowRaf = requestAnimationFrame(viewArrowTick);
     }
   }
@@ -1878,49 +1799,16 @@
   }
 
   surface.addEventListener('wheel', (e) => {
-    if (!loaded || !notesPageActive() || editingEl) return;
+    if (!loaded || !notesPageActive()) return;
     const delta = wheelPixels(e);
-    const noteEl = e.target.closest('.sticky-note');
-    if (noteEl && !(e.ctrlKey || e.metaKey)) {
-      const data = notes.find((note) => note.id === noteEl.dataset.id);
-      if (!data || !isMultiPile(data)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      cancelNoteInertia(true);
-      cancelWheelPan();
-      cancelCollapse();
-      setExpanded(data.stack);
-      stackWheelAccum += Math.abs(delta.y) >= Math.abs(delta.x) ? delta.y : delta.x;
-      clearTimeout(stackWheelResetTimer);
-      stackWheelResetTimer = setTimeout(() => { stackWheelAccum = 0; }, 220);
-      if (Math.abs(stackWheelAccum) < STACK_WHEEL_THRESHOLD) return;
-      const now = performance.now();
-      if (now - stackWheelLastTs < STACK_WHEEL_COOLDOWN) return;
-      const direction = stackWheelAccum > 0 ? 1 : -1;
-      stackWheelAccum = 0;
-      stackWheelLastTs = now;
-      flipStack(data.stack, direction);
-      return;
-    }
     e.preventDefault();
     e.stopPropagation();
     cancelNoteInertia(true);
-    if (e.ctrlKey || e.metaKey) {
-      if (!delta.y) return;
-      const step = Math.abs(delta.y);
-      const dir = delta.y > 0 ? -1 : 1;
-      const factor = Math.exp(dir * Math.min(step, 220) / 220 * Math.log(1.12));
-      zoomViewTo(targetViewScale * factor, e.clientX, e.clientY);
-      return;
-    }
-    let dx = -delta.x * NOTES_WHEEL_PAN;
-    let dy = -delta.y * NOTES_WHEEL_PAN;
-    if (e.shiftKey && Math.abs(delta.y) > Math.abs(delta.x)) {
-      dx = -delta.y * NOTES_WHEEL_PAN;
-      dy = 0;
-    }
-    if (!dx && !dy) return;
-    wheelPanBy(dx, dy);
+    if (!delta.y) return;
+    const step = Math.abs(delta.y);
+    const dir = delta.y > 0 ? -1 : 1;
+    const factor = Math.exp(dir * Math.min(step, 220) / 220 * Math.log(1.12));
+    zoomViewTo(targetViewScale * factor, e.clientX, e.clientY);
   }, { passive: false });
 
   // ── 键盘：无 UI 创建 / 续写 / 定位，以及原有编辑快捷键 ──
@@ -2143,14 +2031,10 @@
   function deactivate() {
     cancelNoteInertia(true);
     cancelViewPanInertia();
-    cancelWheelPan();
     cancelZoom(true);
     clearViewArrowKeys();
     cancelCollapse();
     cancelExpand();
-    clearTimeout(stackWheelResetTimer);
-    stackWheelResetTimer = null;
-    stackWheelAccum = 0;
     closeNoteSearch();
     interacting = false;
     spaceHeld = false;

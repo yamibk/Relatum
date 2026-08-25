@@ -1,6 +1,6 @@
 'use strict';
 
-// 日历页倒数日进度条合约：进度条 + 「⋯」长度设置 + 已过事件金色达成态。
+// 日历页倒数日进度条合约：进度条 + 长度/开始日期设置 + 已过事件金色达成态。
 // 只做源码级静态断言，避免耦合 DOM 运行时细节。
 
 const assert = require('assert');
@@ -28,14 +28,30 @@ assert(calendar.includes("(lengthDays - distance) / lengthDays * 100"));  // 60 
 assert(calendar.includes('is-overdue'));
 assert(calendar.includes("track.classList.toggle('is-full', overdue)"));
 
-// —— 设置弹层：复用学习页样式，只保留长度输入 ——
-assert(calendar.includes("box.className = 'study-progress-settings-popover'"));
+// —— 设置弹层：长度 / 开始日期二选一，只保存 lengthDays ——
+assert(calendar.includes("calendar-countdown-progress-settings'"));
 assert(calendar.includes("dataset.role = 'countdown-progress-length'"));
+assert(calendar.includes("dataset.role = 'countdown-progress-start-date'"));
+assert(calendar.includes("radio.type = 'radio'"));
+assert(calendar.includes("appendModeRow('length'"));
+assert(calendar.includes("appendModeRow('startDate'"));
+assert(calendar.includes('syncCountdownProgressDraft'));
+assert(calendar.includes('countdownProgressSummary'));
 assert(calendar.includes("uiText('长度')"));
 assert(calendar.includes("uiText('长度需要是 1 到 9999 之间的整数')"));
+assert(calendar.includes("uiText('开始日期必须早于截止日期')"));
+assert(calendar.includes('Date.UTC(year, month - 1, day)'));  // 纯日历日期，不受夏令时影响
+assert(calendar.includes('shiftCalendarDate(targetDay, -length)'));
+assert(calendar.includes('calendarDateDistance(startDay, targetDay)'));
 assert(calendar.includes("delete selected.lengthDays"));  // 清空输入 = 移除长度
 assert(calendar.includes('commitCountdownProgressSettings(box)'));
 assert(calendar.includes('closeCountdownProgressSettings(true)'));
+
+// 编辑模式是用户级本地偏好，非事件字段；非法值回退 length。
+assert(calendar.includes("const COUNTDOWN_PROGRESS_MODE_KEY = 'canvas:calendarCountdownProgressMode'"));
+assert(calendar.includes("let initialCountdownProgressMode = 'length'"));
+assert(calendar.includes("storedProgressMode === 'length' || storedProgressMode === 'startDate'"));
+assert(calendar.includes('localStorage.setItem(COUNTDOWN_PROGRESS_MODE_KEY, mode)'));
 
 // —— 金色达成态：复用学习页有限重播的光雾动画 ——
 assert(calendar.includes("classList.add('is-breathing')"));
@@ -68,6 +84,10 @@ assert(styles.includes('.calendar-title-row {'));
 assert(styles.includes('.calendar-countdown-progress {'));
 assert(styles.includes('.calendar-countdown-progress.is-overdue .study-progress-fill::before'));
 assert(styles.includes('.calendar-countdown-progress.is-overdue.is-breathing .study-progress-fill::before'));
+assert(styles.includes('.calendar-countdown-progress-setting-row.is-active'));
+assert(styles.includes('.calendar-countdown-progress-mode-radio:checked::after'));
+assert(styles.includes('.calendar-countdown-progress-summary.is-updating'));
+assert(styles.includes('@keyframes calendarCountdownProgressValueIn'));
 assert(styles.includes('animation: studyGoalRestAura 2400ms linear both;'));
 assert(styles.includes('.calendar-countdown-progress .study-progress-fill { transition: none; }'));
 assert(styles.includes('.calendar-page-head-enter .calendar-countdown-progress { animation: calendarHeadIn'));
@@ -75,8 +95,10 @@ assert(styles.includes('body.start-page[data-start-theme="dark"] .calendar-count
 
 // —— 文案键（中英文）——
 assert(i18n.includes("'倒数日进度': 'Countdown progress'"));
-assert(i18n.includes("'设置倒数日进度长度': 'Set countdown progress length'"));
+assert(i18n.includes("'设置倒数日进度区间': 'Set countdown progress range'"));
 assert(i18n.includes("'长度': 'Length'"));
+assert(i18n.includes("'开始日期': 'Start date'"));
+assert(i18n.includes("'尚未设置进度区间': 'Progress range not set'"));
 assert(i18n.includes("'长度需要是 1 到 9999 之间的整数': 'Length must be an integer from 1 to 9999'"));
 
 console.log('calendar countdown progress contract passed');

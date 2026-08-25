@@ -4,11 +4,19 @@
   const root = document.querySelector('[data-role="calendar-shell"]');
   if (!root) return;
   const COUNTDOWN_ENABLED_KEY = 'canvas:calendarCountdownEnabled';
+  const COUNTDOWN_PROGRESS_MODE_KEY = 'canvas:calendarCountdownProgressMode';
   const MONTH_CACHE_MAX = 24;
   const DAY_CACHE_MAX = 96;
   const DRAFT_CACHE_MAX = 96;
   let initialCountdownEnabled = true;
   try { initialCountdownEnabled = localStorage.getItem(COUNTDOWN_ENABLED_KEY) !== '0'; } catch (e) {}
+  let initialCountdownProgressMode = 'length';
+  try {
+    const storedProgressMode = localStorage.getItem(COUNTDOWN_PROGRESS_MODE_KEY);
+    if (storedProgressMode === 'length' || storedProgressMode === 'startDate') {
+      initialCountdownProgressMode = storedProgressMode;
+    }
+  } catch (e) {}
 
   const state = {
     active: false,
@@ -45,6 +53,7 @@
     countdownClockUnits: {},
     countdownProgressPopover: null,
     countdownProgressTrigger: null,
+    countdownProgressMode: initialCountdownProgressMode,
     countdownProgressPositionFrame: 0,
     countdownProgressBreathTimer: 0,
     resumeAfterPageShow: false,
@@ -527,6 +536,67 @@
     return Number.isInteger(value) && value >= 1 && value <= 9999 ? value : 0;
   }
 
+  function parseCalendarDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    // Date.UTC 会把 0–99 年解释为 1900–1999，手动恢复 HTML date 的四位年语义。
+    if (year < 100) date.setUTCFullYear(year);
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1
+        || date.getUTCDate() !== day) return null;
+    const time = date.getTime();
+    return { year, month, day, time };
+  }
+
+  function shiftCalendarDate(value, offsetDays) {
+    const parsed = parseCalendarDate(value);
+    if (!parsed || !Number.isInteger(offsetDays)) return '';
+    const shifted = new Date(parsed.time + offsetDays * 86400000);
+    return String(shifted.getUTCFullYear()).padStart(4, '0') + '-'
+      + String(shifted.getUTCMonth() + 1).padStart(2, '0') + '-'
+      + String(shifted.getUTCDate()).padStart(2, '0');
+  }
+
+  function calendarDateDistance(startDay, endDay) {
+    const start = parseCalendarDate(startDay);
+    const end = parseCalendarDate(endDay);
+    if (!start || !end) return NaN;
+    return Math.round((end.time - start.time) / 86400000);
+  }
+
+  function formatCountdownProgressDate(value) {
+    const parsed = parseCalendarDate(value);
+    if (!parsed) return '';
+    const language = window.RelatumI18n && window.RelatumI18n.language === 'en' ? 'en-US' : 'zh-CN';
+    if (language === 'zh-CN') {
+      return parsed.year + '年' + parsed.month + '月' + parsed.day + '日';
+    }
+    try {
+      return new Intl.DateTimeFormat(language, {
+        year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
+      }).format(new Date(parsed.time));
+    } catch (error) {
+      return value;
+    }
+  }
+
+  function countdownProgressSummary(startDay, targetDay, lengthDays) {
+    const start = formatCountdownProgressDate(startDay);
+    const target = formatCountdownProgressDate(targetDay);
+    const english = window.RelatumI18n && window.RelatumI18n.language === 'en';
+    if (!start || !target || !lengthDays) {
+      return english
+        ? uiText('截止') + ': ' + (target || targetDay) + ', ' + uiText('尚未设置进度区间')
+        : uiText('截止') + '：' + (target || targetDay) + '，' + uiText('尚未设置进度区间');
+    }
+    return english
+      ? start + ' — ' + target + ', ' + uiText('长度') + ': ' + lengthDays + uiText('天')
+      : start + '—' + target + '，' + uiText('长度') + '：' + lengthDays + uiText('天');
+  }
+
   function countdownProgressValue() {
     const lengthDays = selectedCountdownLengthDays();
     const distance = countdownDistance();
@@ -551,8 +621,8 @@
       + '<div class="study-progress-track"><div class="study-progress-fill"></div></div></div>'
       + '<span class="calendar-countdown-progress-value" data-countdown-progress-value>0%</span>'
       + '<button type="button" class="calendar-countdown-progress-menu" data-countdown-progress-settings'
-      + ' aria-label="' + escapeHtml(uiText('设置倒数日进度长度')) + '" aria-expanded="false"'
-      + ' title="' + escapeHtml(uiText('设置倒数日进度长度')) + '">⋯</button>'
+      + ' aria-label="' + escapeHtml(uiText('设置倒数日进度区间')) + '" aria-expanded="false"'
+      + ' title="' + escapeHtml(uiText('设置倒数日进度区间')) + '">⋯</button>'
       + '</section>';
   }
 
@@ -576,7 +646,7 @@
       // 没有任何倒数日事件时长度无处可设，「⋯」禁用并提示先创建。
       menu.disabled = !hasCountdown;
       menu.setAttribute('aria-disabled', hasCountdown ? 'false' : 'true');
-      menu.title = hasCountdown ? uiText('设置倒数日进度长度') : uiText('请先创建倒数日');
+      menu.title = hasCountdown ? uiText('设置倒数日进度区间') : uiText('请先创建倒数日');
     }
   }
 
@@ -655,13 +725,18 @@
     if (section) section.classList.remove('is-breathing');
   }
 
-  // —— 「⋯」锚定的设置弹层：只设置当前选中事件的窗口长度（天）——
+  // —— 「⋯」锚定的设置弹层：可用长度或开始日期编辑同一个进度区间 ——
   function buildCountdownProgressSettings() {
+    const selected = selectedCountdownEvent();
+    const targetDay = selected && selected.date ? selected.date : '';
+    const initialLength = selectedCountdownLengthDays();
+    const initialStartDay = initialLength ? shiftCalendarDate(targetDay, -initialLength) : '';
     const box = document.createElement('section');
-    box.className = 'study-progress-settings-popover';
+    box.className = 'study-progress-settings-popover calendar-countdown-progress-settings';
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'false');
     box.setAttribute('aria-labelledby', 'calendar-countdown-progress-title');
+    box.dataset.targetDay = targetDay;
 
     const title = document.createElement('strong');
     title.id = 'calendar-countdown-progress-title';
@@ -669,22 +744,79 @@
     title.textContent = uiText('倒数日进度');
     box.appendChild(title);
 
-    const wrap = document.createElement('label');
-    wrap.className = 'study-progress-settings-target';
-    const label = document.createElement('span');
-    label.textContent = uiText('长度');
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.min = '1';
-    input.max = '9999';
-    input.step = '1';
-    input.inputMode = 'numeric';
-    input.className = 'study-progress-settings-number';
-    input.dataset.role = 'countdown-progress-length';
-    input.value = String(selectedCountdownLengthDays() || '');
-    input.setAttribute('aria-label', uiText('长度'));
-    wrap.append(label, input);
-    box.appendChild(wrap);
+    const modes = document.createElement('fieldset');
+    modes.className = 'calendar-countdown-progress-modes';
+    const legend = document.createElement('legend');
+    legend.className = 'calendar-countdown-progress-mode-legend';
+    legend.textContent = uiText('编辑倒数日进度的方式');
+    modes.appendChild(legend);
+
+    function appendModeRow(mode, labelText, field) {
+      const row = document.createElement('div');
+      row.className = 'calendar-countdown-progress-setting-row';
+      row.dataset.progressModeRow = mode;
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'calendar-countdown-progress-mode';
+      radio.value = mode;
+      radio.id = 'calendar-countdown-progress-mode-' + mode;
+      radio.className = 'calendar-countdown-progress-mode-radio';
+      radio.dataset.progressMode = mode;
+      const label = document.createElement('label');
+      label.htmlFor = radio.id;
+      label.className = 'calendar-countdown-progress-mode-label';
+      label.textContent = uiText(labelText);
+      const shell = document.createElement('div');
+      shell.className = 'calendar-countdown-progress-field-shell';
+      shell.appendChild(field);
+      if (mode === 'length') {
+        const unit = document.createElement('span');
+        unit.textContent = uiText('天').trim();
+        shell.appendChild(unit);
+      }
+      row.append(radio, label, shell);
+      row.addEventListener('click', (event) => {
+        if (event.target === radio || (event.target === field && !field.disabled)) return;
+        event.preventDefault();
+        setCountdownProgressMode(box, mode, true, true);
+      });
+      radio.addEventListener('change', () => {
+        if (radio.checked) setCountdownProgressMode(box, mode, true, true);
+      });
+      modes.appendChild(row);
+    }
+
+    const lengthInput = document.createElement('input');
+    lengthInput.type = 'number';
+    lengthInput.min = '1';
+    lengthInput.max = '9999';
+    lengthInput.step = '1';
+    lengthInput.inputMode = 'numeric';
+    lengthInput.className = 'study-progress-settings-number calendar-countdown-progress-field';
+    lengthInput.dataset.role = 'countdown-progress-length';
+    lengthInput.value = String(initialLength || '');
+    lengthInput.setAttribute('aria-label', uiText('长度'));
+
+    const startInput = document.createElement('input');
+    startInput.type = 'date';
+    startInput.className = 'study-progress-settings-number calendar-countdown-progress-field';
+    startInput.dataset.role = 'countdown-progress-start-date';
+    startInput.value = initialStartDay;
+    startInput.setAttribute('aria-label', uiText('开始日期'));
+    if (targetDay) {
+      startInput.min = shiftCalendarDate(targetDay, -9999);
+      startInput.max = shiftCalendarDate(targetDay, -1);
+    }
+
+    appendModeRow('length', '长度', lengthInput);
+    appendModeRow('startDate', '开始日期', startInput);
+    box.appendChild(modes);
+
+    const summary = document.createElement('p');
+    summary.className = 'calendar-countdown-progress-summary';
+    summary.dataset.role = 'countdown-progress-summary';
+    summary.setAttribute('aria-live', 'polite');
+    box.appendChild(summary);
 
     const error = document.createElement('p');
     error.className = 'study-progress-settings-error';
@@ -703,41 +835,142 @@
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'study-progress-settings-save';
+    saveBtn.dataset.role = 'countdown-progress-save';
     saveBtn.textContent = uiText('保存');
     saveBtn.addEventListener('click', () => commitCountdownProgressSettings(box));
     group.append(cancelBtn, saveBtn);
     actions.appendChild(group);
     box.appendChild(actions);
 
-    input.addEventListener('keydown', (event) => {
+    lengthInput.addEventListener('input', () => syncCountdownProgressDraft(box, 'length', true));
+    startInput.addEventListener('input', () => syncCountdownProgressDraft(box, 'startDate', true));
+    box.addEventListener('keydown', (event) => {
       if (event.isComposing) return;
-      if (event.key === 'Enter') {
+      if (event.key === 'Enter' && !event.target.closest('button')) {
         event.preventDefault();
         commitCountdownProgressSettings(box);
       }
     });
 
+    setCountdownProgressMode(box, state.countdownProgressMode, false, false);
+    syncCountdownProgressDraft(box, state.countdownProgressMode, false);
     state.countdownProgressPopover = box;
     return box;
   }
 
+  function setCountdownProgressMode(box, mode, focusField, remember) {
+    if (!box || (mode !== 'length' && mode !== 'startDate')) return;
+    state.countdownProgressMode = mode;
+    if (remember) {
+      try { localStorage.setItem(COUNTDOWN_PROGRESS_MODE_KEY, mode); } catch (error) {}
+    }
+    box.querySelectorAll('[data-progress-mode-row]').forEach((row) => {
+      const active = row.dataset.progressModeRow === mode;
+      row.classList.toggle('is-active', active);
+      row.classList.toggle('is-inactive', !active);
+      const radio = row.querySelector('[data-progress-mode]');
+      const field = row.querySelector('.calendar-countdown-progress-field');
+      if (radio) radio.checked = active;
+      if (field) {
+        field.disabled = !active;
+        field.setAttribute('aria-disabled', active ? 'false' : 'true');
+      }
+    });
+    syncCountdownProgressDraft(box, mode, false);
+    if (focusField) {
+      const activeInput = box.querySelector('[data-progress-mode-row="' + mode
+        + '"] .calendar-countdown-progress-field');
+      if (activeInput) window.setTimeout(() => activeInput.focus(), prefersReduced ? 0 : 90);
+    }
+  }
+
+  function animateCountdownProgressValue(element, className) {
+    if (!element || prefersReduced) return;
+    element.classList.remove(className);
+    void element.offsetWidth;
+    element.classList.add(className);
+    window.setTimeout(() => {
+      if (element.isConnected) element.classList.remove(className);
+    }, 190);
+  }
+
+  function syncCountdownProgressDraft(box, source, animate) {
+    if (!box) return { valid: false, empty: true, length: 0, startDay: '' };
+    const targetDay = box.dataset.targetDay || '';
+    const lengthInput = box.querySelector('[data-role="countdown-progress-length"]');
+    const startInput = box.querySelector('[data-role="countdown-progress-start-date"]');
+    const error = box.querySelector('[data-role="countdown-progress-error"]');
+    const summary = box.querySelector('[data-role="countdown-progress-summary"]');
+    const save = box.querySelector('[data-role="countdown-progress-save"]');
+    const activeInput = source === 'startDate' ? startInput : lengthInput;
+    const raw = String(activeInput && activeInput.value != null ? activeInput.value : '').trim();
+    let length = 0;
+    let startDay = '';
+    let message = '';
+    const empty = raw === '';
+
+    if (!empty && source === 'length') {
+      length = Number(raw);
+      if (!Number.isInteger(length) || length < 1 || length > 9999) {
+        message = uiText('长度需要是 1 到 9999 之间的整数');
+      } else {
+        startDay = shiftCalendarDate(targetDay, -length);
+        if (startInput && startInput.value !== startDay) {
+          startInput.value = startDay;
+          if (animate) animateCountdownProgressValue(startInput, 'is-derived-updating');
+        }
+      }
+    } else if (!empty && source === 'startDate') {
+      startDay = raw;
+      length = calendarDateDistance(startDay, targetDay);
+      if (!parseCalendarDate(startDay) || !Number.isFinite(length)) {
+        message = uiText('请选择有效的开始日期');
+      } else if (length < 1) {
+        message = uiText('开始日期必须早于截止日期');
+      } else if (length > 9999) {
+        message = uiText('进度区间最多为 9999 天');
+      } else if (lengthInput && lengthInput.value !== String(length)) {
+        lengthInput.value = String(length);
+        if (animate) animateCountdownProgressValue(lengthInput, 'is-derived-updating');
+      }
+    } else {
+      if (source === 'length' && startInput) startInput.value = '';
+      if (source === 'startDate' && lengthInput) lengthInput.value = '';
+    }
+
+    const valid = empty || !message;
+    if (error) error.textContent = message;
+    if (activeInput) activeInput.setAttribute('aria-invalid', message ? 'true' : 'false');
+    if (save) save.disabled = !valid;
+    if (summary) {
+      const nextSummary = valid && !empty
+        ? countdownProgressSummary(startDay, targetDay, length)
+        : countdownProgressSummary('', targetDay, 0);
+      if (summary.textContent !== nextSummary) {
+        summary.textContent = nextSummary;
+        if (animate) animateCountdownProgressValue(summary, 'is-updating');
+      }
+    }
+    return { valid, empty, length: valid && !empty ? length : 0,
+      startDay: valid && !empty ? startDay : '' };
+  }
+
   function commitCountdownProgressSettings(box) {
     if (!box || !box.isConnected) return;
-    const input = box.querySelector('[data-role="countdown-progress-length"]');
-    const error = box.querySelector('[data-role="countdown-progress-error"]');
-    const raw = String(input && input.value != null ? input.value : '').trim();
+    const mode = state.countdownProgressMode === 'startDate' ? 'startDate' : 'length';
+    const result = syncCountdownProgressDraft(box, mode, false);
+    const input = box.querySelector(mode === 'startDate'
+      ? '[data-role="countdown-progress-start-date"]' : '[data-role="countdown-progress-length"]');
+    if (!result.valid) {
+      if (input) input.focus();
+      return;
+    }
     const current = selectedCountdownLengthDays();
-    if (raw !== '') {
-      const next = Number(raw);
-      if (!Number.isInteger(next) || next < 1 || next > 9999) {
-        if (error) error.textContent = uiText('长度需要是 1 到 9999 之间的整数');
-        return;
-      }
-      if (next === current) {
-        closeCountdownProgressSettings(false, true);
-        return;
-      }
-    } else if (!current) {
+    if (!result.empty && result.length === current) {
+      closeCountdownProgressSettings(false, true);
+      return;
+    }
+    if (result.empty && !current) {
       closeCountdownProgressSettings(false, true);
       return;
     }
@@ -748,10 +981,10 @@
       closeCountdownProgressSettings(false, true);
       return;
     }
-    if (raw === '') {
+    if (result.empty) {
       if (Object.prototype.hasOwnProperty.call(selected, 'lengthDays')) delete selected.lengthDays;
     } else {
-      selected.lengthDays = Number(raw);
+      selected.lengthDays = result.length;
     }
     closeCountdownProgressSettings(false, true);
     updateCountdownEverywhere(previous, true);
@@ -778,8 +1011,11 @@
     });
     window.setTimeout(() => {
       const input = state.countdownProgressPopover
-        && state.countdownProgressPopover.querySelector('[data-role="countdown-progress-length"]');
-      if (input) { input.focus(); input.select(); }
+        && state.countdownProgressPopover.querySelector('.calendar-countdown-progress-field:not(:disabled)');
+      if (input) {
+        input.focus();
+        if (input.type === 'number') input.select();
+      }
     }, prefersReduced ? 0 : 80);
   }
 
