@@ -10076,6 +10076,21 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .focus-embedded,
 .start-help-book { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.16) transparent; }
 
+/* 学习 / 活跃页保留滚动能力，只在视觉上收起最右侧滚动条。 */
+body.start-page .book-view.study-active .book-stage,
+body.start-page .book-view.cadence-active .book-stage,
+body.start-page .book-view.cadence-active .cadence-embedded {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+body.start-page .book-view.study-active .book-stage::-webkit-scrollbar,
+body.start-page .book-view.cadence-active .book-stage::-webkit-scrollbar,
+body.start-page .book-view.cadence-active .cadence-embedded::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* 本地数据说明：独立使用更克制的无按钮滚动条，避免 WebView 原生上下三角破坏纸页感。 */
 .start-help-book {
   scrollbar-color: rgba(26, 26, 26, 0.24) transparent;
