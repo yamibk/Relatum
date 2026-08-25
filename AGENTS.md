@@ -154,7 +154,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移。每个事件可选保存 `lengthDays`（1–9999 整数），是日历页倒数日进度条的窗口长度（天），缺省即未设置，非法值在净化时丢弃 |
 | 模板库 | `data/templates.json` |
-| 复习卡片 | `data/review.db`，SQLite；`review_cards` 保存内容、卡组关联与调度，`review_decks` / `review_tags` / `review_card_tags` 管理组织关系，`review_events` 保存每次评分，`review_settings` 保存复习范围与会话偏好 |
+| 复习卡片 | `data/review.db`，SQLite；`review_cards` 保存内容、卡组关联与调度，`review_decks` / `review_tags` / `review_card_tags` 管理组织关系，`review_events` 保存每次评分，`review_settings` 保存复习范围与会话偏好。“今日已复习”必须使用 `reviewed_at` 的半开时间范围查询，保持命中时间索引，不得对整列使用 `substr` 等函数 |
 | AI 配置 | `data/ai.json`，含 Key、模型、baseUrl |
 | 桌面窗口状态 | `data/window-state.json` |
 
