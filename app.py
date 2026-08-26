@@ -109,6 +109,7 @@ DIARY_DIR = DATA / "diary"   # 起步页「日历」日记：每天一份 Markdo
 COUNTDOWN_FILE = DATA / "countdown.json"   # 日历页轻量倒数日：目标事件 + 目标日期
 TEMPLATES_FILE = DATA / "templates.json"   # 「模板」库：常用节点组的可复用快照（全局，所有画布共用，不进 .canvas）
 REVIEW_DB_FILE = DATA / "review.db"   # 独立复习卡片、调度状态与复习事件；不扫描、不改写 .canvas
+CAREER_REPORT_FILE = DATA / "career-report.json"   # 「生涯」使用报告的冻结本地快照
 
 DEFAULT_PORT = 8765
 PORT_ATTEMPTS = 20
@@ -164,6 +165,7 @@ CANVAS_ACTIVITY_SCHEMA = 1
 CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
 START_PAGE_ACTIVITY_SCHEMA = 1
 START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes")
+CAREER_REPORT_SCHEMA = 1
 # 画布伴生素材统一可被 /api/canvas-asset 读取的类型（图片 + 附件）。
 CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
 
@@ -7364,6 +7366,624 @@ def _archive_folder_count() -> int:
     return total
 
 
+# ─── 「生涯」冻结使用报告 ─────────────────────────────────
+
+def _career_json(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _career_json_source_status(path: Path, has_data: bool) -> str:
+    if not path.is_file():
+        return "empty"
+    return ("available" if has_data else "empty") if isinstance(_career_json(path), dict) else "unavailable"
+
+
+def _career_aggregate_status(count: int, skipped_count: int) -> str:
+    if skipped_count:
+        return "partial" if count else "unavailable"
+    return "available" if count else "empty"
+
+
+def _career_day(value: object) -> str:
+    raw = str(value or "").strip()[:10]
+    try:
+        return date.fromisoformat(raw).isoformat()
+    except ValueError:
+        return ""
+
+
+def _career_longest_streak(days: list[str]) -> int:
+    longest = 0
+    current = 0
+    previous: date | None = None
+    for raw in sorted(set(days)):
+        try:
+            item = date.fromisoformat(raw)
+        except ValueError:
+            continue
+        current = current + 1 if previous and item == previous + timedelta(days=1) else 1
+        longest = max(longest, current)
+        previous = item
+    return longest
+
+
+def _career_canvas_candidates() -> list[Path]:
+    candidates: dict[str, Path] = {}
+    if CANVASES.exists():
+        for path in CANVASES.glob("*.canvas"):
+            if path.is_file() and not path.is_symlink():
+                candidates[os.path.normcase(_norm(path))] = path
+    try:
+        recent = load_recent()
+    except (OSError, ValueError):
+        recent = {}
+    for item in recent.get("files", []) if isinstance(recent, dict) else []:
+        raw = str(item.get("path") or "") if isinstance(item, dict) else ""
+        if not raw:
+            continue
+        path = Path(raw)
+        try:
+            available = (
+                path.is_file() and path.suffix.casefold() == ".canvas"
+                and is_authorized(path) and not is_in_trash(path)
+                and not path.is_symlink()
+            )
+        except OSError:
+            available = False
+        if available:
+            candidates[os.path.normcase(_norm(path))] = path
+    return sorted(candidates.values(), key=lambda item: item.stem.casefold())
+
+
+def _career_canvas_inventory() -> dict:
+    kind_counts: dict[str, int] = {}
+    node_count = 0
+    edge_count = 0
+    ink_count = 0
+    character_count = 0
+    valid_count = 0
+    skipped_count = 0
+    created_days: list[str] = []
+    updated_days: list[str] = []
+    for path in _career_canvas_candidates():
+        payload = _career_json(path)
+        if not isinstance(payload, dict):
+            skipped_count += 1
+            continue
+        nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
+        edges = payload.get("edges") if isinstance(payload.get("edges"), list) else []
+        ink = payload.get("ink") if isinstance(payload.get("ink"), dict) else {}
+        valid_count += 1
+        node_count += len(nodes)
+        edge_count += len(edges)
+        ink_count += len(ink.get("strokes") or []) + len(ink.get("arrows") or [])
+        created = _career_day(payload.get("createdAt"))
+        updated = _career_day(payload.get("updatedAt"))
+        if created:
+            created_days.append(created)
+        if updated:
+            updated_days.append(updated)
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            kind = str(node.get("kind") or "card").strip().casefold()
+            if kind == "text":
+                kind = "index"
+            if kind not in {
+                "card", "preview", "index", "sticky", "code", "table",
+                "task-root", "image", "attachment", "group", "shape",
+            }:
+                kind = "other"
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+            character_count += len(str(node.get("text") or ""))
+            character_count += len(str(node.get("body") or ""))
+        notebook = payload.get("markdownNotebook")
+        if isinstance(notebook, dict):
+            for note in notebook.get("notes") or []:
+                if isinstance(note, dict):
+                    character_count += len(str(note.get("markdown") or ""))
+    return {
+        "count": valid_count,
+        "skippedCount": skipped_count,
+        "nodeCount": node_count,
+        "edgeCount": edge_count,
+        "inkCount": ink_count,
+        "characterCount": character_count,
+        "kinds": [
+            {"key": key, "count": kind_counts[key]}
+            for key in sorted(kind_counts, key=lambda key: (-kind_counts[key], key))
+        ],
+        "createdDays": sorted(set(created_days)),
+        "updatedDays": sorted(set(updated_days)),
+    }
+
+
+def _career_canvas_activity() -> dict:
+    data = _load_canvas_activity_unlocked()
+    totals = _canvas_activity_total_seconds_by_id(data)
+    canvases = data.get("canvases") if isinstance(data.get("canvases"), dict) else {}
+    top = []
+    for canvas_id, seconds in totals.items():
+        meta = canvases.get(canvas_id) if isinstance(canvases.get(canvas_id), dict) else {}
+        top.append({
+            "id": canvas_id,
+            "title": str(meta.get("title") or "未命名画布")[:160],
+            "seconds": max(0, int(seconds or 0)),
+        })
+    top.sort(key=lambda item: (item["seconds"], item["title"].casefold()), reverse=True)
+    days: dict[str, dict] = {}
+    month_canvases: dict[str, dict[str, int]] = {}
+    span_count = 0
+    for raw_day, entries in data.get("days", {}).items():
+        day = _career_day(raw_day)
+        if not day or not isinstance(entries, dict):
+            continue
+        seconds = 0
+        events = 0
+        inferred_events = 0
+        for canvas_id, entry in entries.items():
+            if not isinstance(entry, dict):
+                continue
+            value = max(0, int(entry.get("seconds") or 0))
+            seconds += value
+            entry_events = int(bool(entry.get("created"))) + int(bool(entry.get("modified")))
+            if entry.get("inferred"):
+                inferred_events += entry_events
+            else:
+                events += entry_events
+            span_count += len(entry.get("spans") or [])
+            if value:
+                bucket = month_canvases.setdefault(day[:7], {})
+                bucket[canvas_id] = bucket.get(canvas_id, 0) + value
+        if seconds or events or inferred_events:
+            days[day] = {
+                "seconds": seconds,
+                "events": events,
+                "inferredEvents": inferred_events,
+            }
+    months = []
+    for month in sorted(month_canvases):
+        items = []
+        for canvas_id, seconds in month_canvases[month].items():
+            meta = canvases.get(canvas_id) if isinstance(canvases.get(canvas_id), dict) else {}
+            items.append({
+                "title": str(meta.get("title") or "未命名画布")[:100],
+                "seconds": seconds,
+            })
+        items.sort(key=lambda item: (item["seconds"], item["title"].casefold()), reverse=True)
+        months.append({"month": month, "items": items[:8]})
+    return {
+        "days": days,
+        "top": top[:8],
+        "months": months,
+        "totalSec": sum(totals.values()),
+        "spanCount": span_count,
+    }
+
+
+def _career_page_activity() -> dict:
+    data = _load_start_page_activity_unlocked()
+    totals = {page: 0 for page in START_PAGE_ACTIVITY_PAGES}
+    days: dict[str, dict] = {}
+    for raw_day, entries in data.get("days", {}).items():
+        day = _career_day(raw_day)
+        if not day or not isinstance(entries, dict):
+            continue
+        item = {}
+        for page in START_PAGE_ACTIVITY_PAGES:
+            entry = entries.get(page)
+            seconds = max(0, int(entry.get("seconds") or 0)) if isinstance(entry, dict) else 0
+            if seconds:
+                totals[page] += seconds
+                item[page] = seconds
+        if item:
+            days[day] = item
+    return {"days": days, "totals": totals, "totalSec": sum(totals.values())}
+
+
+def _career_archives() -> dict:
+    records: list[dict] = []
+    skipped_count = 0
+
+    def add(kind: str, title: object, when: object) -> None:
+        day = _career_day(when)
+        if not day:
+            return
+        records.append({
+            "kind": kind,
+            "title": str(title or "").strip()[:160],
+            "day": day,
+        })
+
+    if STUDY_ARCHIVE_DIR.exists():
+        for folder in STUDY_ARCHIVE_DIR.iterdir():
+            if not folder.is_dir():
+                continue
+            marker = folder / "tasks.json"
+            if marker.is_file():
+                payload = _career_json(marker)
+                if isinstance(payload, dict):
+                    for task in payload.get("tasks") or []:
+                        if isinstance(task, dict):
+                            add("study", task.get("title"), task.get("completedAt") or payload.get("archivedAt"))
+                else:
+                    skipped_count += 1
+            marker = folder / "notes.json"
+            if marker.is_file():
+                payload = _career_json(marker)
+                if isinstance(payload, dict):
+                    # Quick notes have no separate title; their `text` is the body and
+                    # must never be copied into the frozen report.
+                    for _note in payload.get("notes") or []:
+                        add("quick", "", payload.get("archivedAt"))
+                else:
+                    skipped_count += 1
+            marker = folder / "taskbook.json"
+            if marker.is_file():
+                payload = _career_json(marker)
+                if isinstance(payload, dict):
+                    add("taskbook", payload.get("title"), payload.get("archivedAt"))
+                else:
+                    skipped_count += 1
+    if CANVAS_ARCHIVE_DIR.exists():
+        for folder in CANVAS_ARCHIVE_DIR.iterdir():
+            if not folder.is_dir():
+                continue
+            marker = folder / "canvas.json"
+            if not marker.is_file():
+                continue
+            payload = _career_json(marker)
+            if not isinstance(payload, dict):
+                skipped_count += 1
+                continue
+            nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
+            if nodes:
+                for node in nodes:
+                    add("canvas", node.get("title") if isinstance(node, dict) else node, payload.get("archivedAt"))
+            else:
+                count = max(1, int(payload.get("count") or 1))
+                for _ in range(min(count, 5000)):
+                    add("canvas", payload.get("name"), payload.get("archivedAt"))
+    counts = {kind: 0 for kind in ("study", "quick", "taskbook", "canvas")}
+    months: dict[str, dict[str, int]] = {}
+    for item in records:
+        counts[item["kind"]] += 1
+        bucket = months.setdefault(item["day"][:7], {kind: 0 for kind in counts})
+        bucket[item["kind"]] += 1
+    records.sort(key=lambda item: (item["day"], item["title"]), reverse=True)
+    return {
+        "count": len(records),
+        "counts": counts,
+        "months": [{"month": month, **months[month]} for month in sorted(months)],
+        "recent": records[:8],
+        "days": [item["day"] for item in records],
+        "skippedCount": skipped_count,
+    }
+
+
+def _career_review_stats() -> dict:
+    empty = {
+        "cardCount": 0, "deckCount": 0, "eventCount": 0,
+        "ratings": {"remembered": 0, "vague": 0, "forgot": 0},
+        "days": {}, "status": "empty",
+    }
+    if not REVIEW_DB_FILE.is_file():
+        return empty
+    uri_path = urllib.parse.quote(REVIEW_DB_FILE.resolve().as_posix(), safe="/:")
+    conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, timeout=2.0)
+    try:
+        tables = {
+            str(row[0]) for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        required = {"review_cards", "review_decks", "review_events"}
+        if not required.issubset(tables):
+            return empty
+        card_count = int(conn.execute("SELECT COUNT(*) FROM review_cards").fetchone()[0])
+        deck_count = int(conn.execute("SELECT COUNT(*) FROM review_decks").fetchone()[0])
+        rows = conn.execute(
+            "SELECT rating, reviewed_at FROM review_events ORDER BY reviewed_at"
+        ).fetchall()
+        ratings = {"remembered": 0, "vague": 0, "forgot": 0}
+        days: dict[str, int] = {}
+        for rating, reviewed_at in rows:
+            key = str(rating or "")
+            if key in ratings:
+                ratings[key] += 1
+            day = _career_day(reviewed_at)
+            if day:
+                days[day] = days.get(day, 0) + 1
+        return {
+            "cardCount": card_count,
+            "deckCount": deck_count,
+            "eventCount": len(rows),
+            "ratings": ratings,
+            "days": days,
+            "status": "available",
+        }
+    finally:
+        conn.close()
+
+
+def _career_daily_stats() -> dict:
+    raw = _career_json(DAILY_FILE)
+    tasks = raw.get("tasks") if isinstance(raw, dict) and isinstance(raw.get("tasks"), list) else []
+    done_days: set[str] = set()
+    checkins = 0
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for raw_day in task.get("doneDates") or []:
+            day = _career_day(raw_day)
+            if day:
+                done_days.add(day)
+                checkins += 1
+    return {"taskCount": len(tasks), "checkinCount": checkins, "days": sorted(done_days)}
+
+
+def _career_diary_stats() -> dict:
+    days = []
+    if DIARY_DIR.exists():
+        for path in DIARY_DIR.glob("*.md"):
+            day = _career_day(path.stem)
+            if day and path.is_file() and not path.is_symlink():
+                days.append(day)
+    return {"count": len(set(days)), "days": sorted(set(days))}
+
+
+def _career_learning_stats() -> tuple[dict, list[dict]]:
+    coverage: list[dict] = []
+    learning = {
+        "activeTasks": 0, "doneTasks": 0, "goalTreeCount": 0,
+        "goalNodeCount": 0, "treeTasks": 0, "treeCount": 0,
+    }
+    try:
+        study = load_study()
+        tasks = study.get("tasks") if isinstance(study.get("tasks"), list) else []
+        learning["activeTasks"] = sum(1 for task in tasks if isinstance(task, dict) and task.get("status") == "active")
+        learning["doneTasks"] = sum(1 for task in tasks if isinstance(task, dict) and task.get("status") == "done")
+        trees = study.get("goalTrees") if isinstance(study.get("goalTrees"), list) else []
+        learning["goalTreeCount"] = len(trees)
+        learning["goalNodeCount"] = sum(len(tree.get("nodes") or []) for tree in trees if isinstance(tree, dict))
+        coverage.append({"id": "study", "status": "available" if tasks or trees else "empty"})
+    except (OSError, ValueError):
+        coverage.append({"id": "study", "status": "unavailable"})
+    try:
+        tree_page = load_tree_page()
+        learning["treeTasks"] = len(tree_page.get("tasks") or [])
+        learning["treeCount"] = len(tree_page.get("goalTrees") or [])
+        coverage.append({
+            "id": "tree", "status": "available" if learning["treeTasks"] else "empty",
+        })
+    except (OSError, ValueError):
+        coverage.append({"id": "tree", "status": "unavailable"})
+    return learning, coverage
+
+
+def _career_build_report() -> dict:
+    generated_at = _study_now()
+    canvas_inventory = _career_canvas_inventory()
+    canvas_activity = _career_canvas_activity()
+    page_activity = _career_page_activity()
+    archives = _career_archives()
+    focus = load_focus()
+    focus_days = {
+        day: {
+            "seconds": max(0, int(value.get("sec") or 0)),
+            "count": max(0, int(value.get("count") or 0)),
+        }
+        for day, value in focus.get("days", {}).items()
+        if _career_day(day) and isinstance(value, dict)
+    }
+    focus_months: dict[str, dict[str, int]] = {}
+    for day, value in focus_days.items():
+        bucket = focus_months.setdefault(day[:7], {"seconds": 0, "count": 0})
+        bucket["seconds"] += value["seconds"]
+        bucket["count"] += value["count"]
+
+    coverage = [{
+        "id": "canvases",
+        "status": _career_aggregate_status(canvas_inventory["count"], canvas_inventory["skippedCount"]),
+        "skippedCount": canvas_inventory["skippedCount"],
+    }, {
+        "id": "canvasActivity",
+        "status": _career_json_source_status(
+            CANVAS_ACTIVITY_FILE,
+            bool(canvas_activity["days"] or canvas_activity["totalSec"]),
+        ),
+    }, {
+        "id": "pageActivity",
+        "status": _career_json_source_status(
+            START_PAGE_ACTIVITY_FILE,
+            bool(page_activity["days"] or page_activity["totalSec"]),
+        ),
+    }]
+    try:
+        with NOTES_MUTATION_LOCK:
+            note_stats = NOTES_STORE.report_statistics()
+        coverage.append({
+            "id": "notes", "status": _career_aggregate_status(note_stats["count"], note_stats["skippedCount"]),
+            "skippedCount": note_stats["skippedCount"],
+        })
+    except (NotesError, OSError, ValueError):
+        note_stats = {
+            "count": 0, "skippedCount": 0, "folderCount": 0, "wordCount": 0,
+            "characterCount": 0, "linkCount": 0, "orphanCount": 0,
+            "lengthBuckets": {"short": 0, "medium": 0, "long": 0},
+            "top": [], "inferredModifiedMonths": [], "network": {"nodes": [], "edges": []},
+        }
+        coverage.append({"id": "notes", "status": "unavailable", "skippedCount": 0})
+    learning, learning_coverage = _career_learning_stats()
+    coverage.extend(learning_coverage)
+    try:
+        review = _career_review_stats()
+        coverage.append({"id": "review", "status": review.pop("status")})
+    except (OSError, sqlite3.DatabaseError):
+        review = {
+            "cardCount": 0, "deckCount": 0, "eventCount": 0,
+            "ratings": {"remembered": 0, "vague": 0, "forgot": 0}, "days": {},
+        }
+        coverage.append({"id": "review", "status": "unavailable"})
+    daily = _career_daily_stats()
+    diaries = _career_diary_stats()
+    coverage.extend([{
+        "id": "focus",
+        "status": _career_json_source_status(FOCUS_FILE, bool(focus_days)),
+    }, {
+        "id": "daily",
+        "status": _career_json_source_status(DAILY_FILE, bool(daily["taskCount"] or daily["checkinCount"])),
+    }, {
+        "id": "diary",
+        "status": "available" if diaries["count"] else "empty",
+    }, {
+        "id": "archives",
+        "status": _career_aggregate_status(archives["count"], archives["skippedCount"]),
+        "skippedCount": archives["skippedCount"],
+    }])
+
+    day_map: dict[str, dict] = {}
+
+    def bucket(day: str) -> dict:
+        return day_map.setdefault(day, {
+            "day": day, "canvasSec": 0, "focusSec": 0, "pageSec": 0,
+            "completed": 0, "reviewed": 0, "daily": 0, "diary": 0, "events": 0,
+        })
+
+    inferred_days = []
+    for day, value in canvas_activity["days"].items():
+        if value["seconds"] or value["events"]:
+            target = bucket(day)
+            target["canvasSec"] += value["seconds"]
+            target["events"] += value["events"]
+        if value.get("inferredEvents"):
+            inferred_days.append({"day": day, "events": value["inferredEvents"]})
+    for day, values in page_activity["days"].items():
+        bucket(day)["pageSec"] += sum(values.values())
+    for day, value in focus_days.items():
+        bucket(day)["focusSec"] += value["seconds"]
+        bucket(day)["events"] += value["count"]
+    for day in archives["days"]:
+        target = bucket(day)
+        target["completed"] += 1
+        target["events"] += 1
+    for day, count in review["days"].items():
+        target = bucket(day)
+        target["reviewed"] += count
+        target["events"] += count
+    for day in daily["days"]:
+        target = bucket(day)
+        target["daily"] = 1
+        target["events"] += 1
+    for day in diaries["days"]:
+        target = bucket(day)
+        target["diary"] = 1
+        target["events"] += 1
+
+    active_day_keys = sorted(day_map)
+    days = [day_map[key] for key in active_day_keys]
+    months: dict[str, dict] = {}
+    weekdays = [{"weekday": index, "activeDays": 0, "events": 0} for index in range(7)]
+    for item in days:
+        month = item["day"][:7]
+        target = months.setdefault(month, {
+            "month": month, "activeDays": 0, "canvasSec": 0, "focusSec": 0,
+            "pageSec": 0, "completed": 0, "reviewed": 0, "events": 0,
+        })
+        target["activeDays"] += 1
+        for key in ("canvasSec", "focusSec", "pageSec", "completed", "reviewed", "events"):
+            target[key] += item[key]
+        weekday = date.fromisoformat(item["day"]).weekday()
+        weekdays[weekday]["activeDays"] += 1
+        weekdays[weekday]["events"] += item["events"]
+    month_list = [months[key] for key in sorted(months)]
+    best_month = max(month_list, key=lambda item: (item["events"], item["activeDays"]), default=None)
+    best_weekday = max(weekdays, key=lambda item: (item["activeDays"], item["events"]), default=None)
+    first_day = active_day_keys[0] if active_day_keys else ""
+    # The overview uses sparse active days, while the barcode needs real calendar
+    # spacing. Keep only the latest 365 calendar days so long histories do not
+    # inflate the frozen snapshot with thousands of empty rows.
+    report_days: list[dict] = []
+    if active_day_keys:
+        report_end = date.fromisoformat(generated_at[:10])
+        report_start = max(date.fromisoformat(first_day), report_end - timedelta(days=364))
+        current = report_start
+        while current <= report_end:
+            key = current.isoformat()
+            report_days.append(day_map.get(key, {
+                "day": key, "canvasSec": 0, "focusSec": 0, "pageSec": 0,
+                "completed": 0, "reviewed": 0, "daily": 0, "diary": 0, "events": 0,
+            }))
+            current += timedelta(days=1)
+
+    return {
+        "version": CAREER_REPORT_SCHEMA,
+        "generatedAt": generated_at,
+        "period": {
+            "kind": "all",
+            "firstDay": first_day,
+            "lastDay": generated_at[:10],
+        },
+        "coverage": coverage,
+        "overview": {
+            "activeDays": len(active_day_keys),
+            "longestStreak": _career_longest_streak(active_day_keys),
+            "canvasSec": canvas_activity["totalSec"],
+            "focusSec": sum(value["seconds"] for value in focus_days.values()),
+            "pageSec": page_activity["totalSec"],
+            "archiveCount": archives["count"],
+            "noteWords": note_stats["wordCount"],
+        },
+        "activity": {
+            "days": report_days,
+            "months": month_list,
+            "weekdays": weekdays,
+            "inferredDays": inferred_days,
+        },
+        "canvases": {
+            **{key: value for key, value in canvas_inventory.items() if key not in {"createdDays", "updatedDays"}},
+            "totalSec": canvas_activity["totalSec"],
+            "spanCount": canvas_activity["spanCount"],
+            "top": canvas_activity["top"],
+            "months": canvas_activity["months"],
+        },
+        "notes": note_stats,
+        "learning": {
+            **learning,
+            "archives": archives,
+            "pageSeconds": page_activity["totals"],
+        },
+        "focus": {
+            "totalSec": sum(value["seconds"] for value in focus_days.values()),
+            "sessionCount": sum(value["count"] for value in focus_days.values()),
+            "months": [{"month": month, **focus_months[month]} for month in sorted(focus_months)],
+        },
+        "habits": {"daily": daily, "diaries": diaries, "review": review},
+        "reflection": {
+            "bestMonth": best_month["month"] if best_month else "",
+            "bestMonthEvents": best_month["events"] if best_month else 0,
+            "bestWeekday": best_weekday["weekday"] if best_weekday else -1,
+        },
+    }
+
+
+def load_career_report() -> dict:
+    raw = _career_json(CAREER_REPORT_FILE)
+    if not isinstance(raw, dict) or raw.get("version") != CAREER_REPORT_SCHEMA:
+        return {"version": CAREER_REPORT_SCHEMA, "exists": False}
+    return {"version": CAREER_REPORT_SCHEMA, "exists": True, "report": raw}
+
+
+@_serialized_data
+def generate_career_report() -> dict:
+    report = _career_build_report()
+    _atomic_write_json(CAREER_REPORT_FILE, report)
+    return report
+
+
 # ─── Windows 文件对话框（隐藏子进程，桌面版不闪终端）──────
 
 _PICK_CANVAS_FILE_SCRIPT = r"""
@@ -9091,6 +9711,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
         if parsed.path == "/api/recent":
             return self._api_recent()
+        if parsed.path == "/api/career-report":
+            return self._send_json(200, load_career_report())
         if parsed.path == "/api/ai-config":
             return self._send_json(200, ai_public_config())
         if parsed.path == "/api/study":
@@ -9225,6 +9847,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
+        if path == "/api/career-report-generate":
+            try:
+                report = generate_career_report()
+            except Exception as err:  # noqa: BLE001 - keep the old atomic snapshot on every failure
+                return self._send_json(500, {
+                    "error": f"生成使用报告失败（{type(err).__name__}）",
+                })
+            return self._send_json(200, {
+                "version": CAREER_REPORT_SCHEMA, "exists": True, "report": report,
+            })
         if path == "/api/note-create":
             return self._api_note_create(body)
         if path == "/api/note-save":

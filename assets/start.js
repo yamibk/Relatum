@@ -146,12 +146,17 @@
   const LIBRARY_SEARCH_ENABLED_KEY = 'canvas:librarySearchEnabled';
   let startTurnSpeed = START_SPEED_DEFAULT;
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
-  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, blog: 2 };
-  let activeStartWorkspace = document.body.dataset.startWorkspace === 'notes' ? 'notes' : 'canvas';
+  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, career: 2 };
+  let activeStartWorkspace = Object.prototype.hasOwnProperty.call(
+    START_WORKSPACE_ORDER, document.body.dataset.startWorkspace,
+  ) ? document.body.dataset.startWorkspace : 'canvas';
   let workspaceSwitchPromise = Promise.resolve(true);
   let noteWorkspaceLoader = null;
+  let careerWorkspaceLoader = null;
   let noteWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false;
+  let careerWorkspaceWarmupHandle = 0;
+  let careerWorkspaceWarmupScheduled = false;
   let workspaceTransitionTimer = 0;
   let notesInertia = NOTES_INERTIA_DEFAULT;
   let startViewTransitionTimer = 0;
@@ -196,6 +201,22 @@
     return noteWorkspaceLoader;
   }
 
+  function loadCareerWorkspace() {
+    if (window.RelatumCareerReport) return Promise.resolve(window.RelatumCareerReport);
+    if (careerWorkspaceLoader) return careerWorkspaceLoader;
+    careerWorkspaceLoader = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'career-report.js';
+      script.async = true;
+      script.onload = () => window.RelatumCareerReport
+        ? resolve(window.RelatumCareerReport)
+        : reject(new Error('career-report.js 没有完成初始化'));
+      script.onerror = () => reject(new Error('career-report.js 加载失败'));
+      document.head.appendChild(script);
+    });
+    return careerWorkspaceLoader;
+  }
+
   function scheduleNoteWorkspaceIdleWarmup() {
     if (activeStartWorkspace !== 'canvas' || noteWorkspaceWarmupScheduled || window.CanvasNoteWorkspace) return;
     noteWorkspaceWarmupScheduled = true;
@@ -211,6 +232,28 @@
         noteWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 2400 });
       } else {
         noteWorkspaceWarmupHandle = window.setTimeout(warmup, 900);
+      }
+    };
+    if (document.readyState === 'complete') queueWarmup();
+    else window.addEventListener('load', queueWarmup, { once: true });
+  }
+
+  // 生涯报告本身已经是冻结磁盘快照。首屏稳定后在空闲时间提前加载轻量运行时
+  // 和快照，避免用户第一次切换到第三工作区时再看到本地读取占位。
+  function scheduleCareerWorkspaceIdleWarmup() {
+    if (careerWorkspaceWarmupScheduled || (window.RelatumCareerReport && window.RelatumCareerReport.report)) return;
+    careerWorkspaceWarmupScheduled = true;
+    const warmup = () => {
+      careerWorkspaceWarmupHandle = 0;
+      loadCareerWorkspace()
+        .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
+        .catch(() => { careerWorkspaceWarmupScheduled = false; });
+    };
+    const queueWarmup = () => {
+      if (typeof window.requestIdleCallback === 'function') {
+        careerWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 1600 });
+      } else {
+        careerWorkspaceWarmupHandle = window.setTimeout(warmup, 700);
       }
     };
     if (document.readyState === 'complete') queueWarmup();
@@ -297,7 +340,7 @@
     syncWorkspaceControls(name);
     syncStartPageActivity();
     showWorkspacePanel(name, previous, options.animate !== false && name !== previous);
-    if (options.persist !== false && (name === 'canvas' || name === 'notes')) {
+    if (options.persist !== false) {
       try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
     }
     if (name === 'notes') {
@@ -314,7 +357,22 @@
         }
         return false;
       }
+    } else if (name === 'career') {
+      try {
+        const careerWorkspace = await loadCareerWorkspace();
+        if (activeStartWorkspace === 'career') await careerWorkspace.activate();
+      } catch (error) {
+        if (activeStartWorkspace === 'career') {
+          activeStartWorkspace = 'canvas';
+          syncWorkspaceControls('canvas');
+          syncStartPageActivity();
+          showWorkspacePanel('canvas', 'career', false);
+          showNotice(englishUI() ? 'Career report unavailable' : '生涯报告暂时无法打开', error.message || String(error));
+        }
+        return false;
+      }
     } else if (name === 'canvas') {
+      scheduleCareerWorkspaceIdleWarmup();
       scheduleNoteWorkspaceIdleWarmup();
     }
     document.dispatchEvent(new CustomEvent('relatum:start-workspacechange', {
@@ -343,8 +401,14 @@
     get current() { return activeStartWorkspace; },
     set: setStartWorkspace,
   };
-  if (activeStartWorkspace === 'notes') setStartWorkspace('notes', { animate: false, persist: false });
-  else scheduleNoteWorkspaceIdleWarmup();
+  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'career') {
+    setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
+  }
+  else {
+    scheduleCareerWorkspaceIdleWarmup();
+    scheduleNoteWorkspaceIdleWarmup();
+  }
+  if (activeStartWorkspace === 'notes') scheduleCareerWorkspaceIdleWarmup();
 
   function preloadEditorBackground(background) {
     if (!background || typeof background !== 'object') return;
@@ -1099,6 +1163,7 @@
           ['<code>countdown.json</code>', '倒数日事件和当前选择。删除后倒数日清空，可重新创建。'],
           ['<code>review.db</code>', '复习卡片、卡组、标签、复习计划和每次评分的完整数据库。删除后复习系统全部清空，不能从画布自动重建。'],
           ['<code>review.db-wal / -shm</code>', '数据库运行时可能出现的临时文件。不要单独删除；先正常退出 Relatum，它们通常会自动合并或消失。'],
+          ['<code>career-report.json</code>', '“生涯”页最近一次手动生成的冻结统计快照。删除后只会清除报告，不会删除画布、笔记或其它原始记录；下次生成会重新读取当时可用的数据。'],
         ]],
         ['其它可能出现的文件', '这些项目不一定每台电脑都有。', [
           ['<code>templates.json</code>', '所有画布共用的节点模板库。删除后自建模板消失，现有画布不受影响。'],
@@ -1188,6 +1253,7 @@
           ['<code>countdown.json</code>', 'Countdown events and the selected event. Deleting it clears Countdown; events can be created again.'],
           ['<code>review.db</code>', 'The complete database of review cards, decks, tags, schedules, and every rating. Deleting it empties Review and it cannot be rebuilt automatically from canvases.'],
           ['<code>review.db-wal / -shm</code>', 'Temporary files that may appear while the database is in use. Do not delete them separately; quit Relatum normally and they will usually merge or disappear.'],
+          ['<code>career-report.json</code>', 'The frozen snapshot from the most recent manual Career report generation. Deleting it removes only the report, not canvases, notes, or source records; generating again reads the data available at that time.'],
         ]],
         ['Other files you may see', 'Not every computer will have all of these.', [
           ['<code>templates.json</code>', 'The node template library shared by all canvases. Deleting it removes custom templates without changing existing canvases.'],

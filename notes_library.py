@@ -63,6 +63,56 @@ _FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)$")
 _INLINE_CODE_RE = re.compile(r"(`+)(.*?)\1")
 
 
+def _is_cjk_code_point(code_point: int) -> bool:
+    """Match the Notes workspace's CJK-per-character word-count contract."""
+    return (
+        0x3400 <= code_point <= 0x4DBF
+        or 0x4E00 <= code_point <= 0x9FFF
+        or 0xF900 <= code_point <= 0xFAFF
+        or 0x20000 <= code_point <= 0x2FA1F
+        or 0x3040 <= code_point <= 0x30FF
+        or 0x31F0 <= code_point <= 0x31FF
+        or 0xFF66 <= code_point <= 0xFF9D
+        or 0x1100 <= code_point <= 0x11FF
+        or 0x3130 <= code_point <= 0x318F
+        or 0xA960 <= code_point <= 0xA97F
+        or 0xAC00 <= code_point <= 0xD7FF
+    )
+
+
+def note_word_count(value: object) -> int:
+    """Count words exactly like the browser Notes status bar.
+
+    CJK characters count individually. Other letters and numbers form runs;
+    apostrophes, hyphens and underscores may join a run but never create one.
+    """
+    count = 0
+    in_word = False
+    pending_joiner = False
+    for character in str(value or ""):
+        code_point = ord(character)
+        if _is_cjk_code_point(code_point):
+            if in_word:
+                count += 1
+            count += 1
+            in_word = False
+            pending_joiner = False
+            continue
+        is_word = unicodedata.category(character)[:1] in {"L", "N"}
+        is_joiner = character in {"'", "\u2019", "-", "_"}
+        if is_word:
+            in_word = True
+            pending_joiner = False
+        elif is_joiner and in_word and not pending_joiner:
+            pending_joiner = True
+        else:
+            if in_word:
+                count += 1
+            in_word = False
+            pending_joiner = False
+    return count + int(in_word)
+
+
 class NotesError(ValueError):
     """可安全回传给本地前端的笔记错误。"""
 
@@ -487,6 +537,116 @@ class NotesStore:
             "revision": _revision(raw),
             "outgoing": outgoing,
             "backlinks": backlinks,
+        }
+
+    def report_statistics(self) -> dict:
+        """Return content-free aggregates for the frozen Career report.
+
+        The result intentionally contains only counts and a small set of note
+        names. Markdown bodies, excerpts and absolute paths never leave this
+        data layer.
+        """
+        paths = self._note_paths()
+        documents = self._documents()
+        exact, stems = self._resolver(list(documents))
+        lengths: list[dict] = []
+        folder_names: set[str] = set()
+        modified_months: dict[str, int] = {}
+        for relative, document in documents.items():
+            text = str(document.get("text") or "")
+            words = note_word_count(text)
+            lengths.append({
+                "path": relative,
+                "title": PurePosixPath(relative).stem[:160],
+                "words": words,
+                "characters": len(text),
+            })
+            parent = PurePosixPath(relative).parent
+            if str(parent) != ".":
+                parts: list[str] = []
+                for part in parent.parts:
+                    parts.append(part)
+                    folder_names.add("/".join(parts))
+            signature = document.get("signature")
+            try:
+                modified = datetime.fromtimestamp(
+                    int(signature[0]) / 1_000_000_000,
+                ).strftime("%Y-%m")
+            except (IndexError, TypeError, ValueError, OSError):
+                modified = ""
+            if modified:
+                modified_months[modified] = modified_months.get(modified, 0) + 1
+
+        edges: set[tuple[str, str]] = set()
+        degree = {relative: 0 for relative in documents}
+        for source, document in documents.items():
+            for mention in document.get("mentions", []):
+                target, state = self._resolve_wiki(mention.get("base", ""), exact, stems)
+                if state != "resolved" or not target or target == source:
+                    continue
+                edge = (source, target)
+                if edge in edges:
+                    continue
+                edges.add(edge)
+                degree[source] = degree.get(source, 0) + 1
+                degree[target] = degree.get(target, 0) + 1
+
+        by_path = {item["path"]: item for item in lengths}
+        ranked_paths = sorted(
+            documents,
+            key=lambda relative: (
+                degree.get(relative, 0),
+                by_path.get(relative, {}).get("words", 0),
+                relative.casefold(),
+            ),
+            reverse=True,
+        )[:24]
+        selected = set(ranked_paths)
+        report_ids = {relative: f"note-{index + 1}" for index, relative in enumerate(ranked_paths)}
+        network_nodes = [{
+            "id": report_ids[relative],
+            "title": PurePosixPath(relative).stem[:80],
+            "degree": degree.get(relative, 0),
+            "words": by_path.get(relative, {}).get("words", 0),
+        } for relative in ranked_paths]
+        network_edges = [
+            {"from": report_ids[source], "to": report_ids[target]}
+            for source, target in sorted(edges)
+            if source in selected and target in selected
+        ][:80]
+
+        buckets = {"short": 0, "medium": 0, "long": 0}
+        for item in lengths:
+            if item["words"] < 500:
+                buckets["short"] += 1
+            elif item["words"] < 2000:
+                buckets["medium"] += 1
+            else:
+                buckets["long"] += 1
+        top = sorted(
+            lengths,
+            key=lambda item: (item["words"], item["characters"], item["title"].casefold()),
+            reverse=True,
+        )[:5]
+        return {
+            "count": len(documents),
+            "skippedCount": max(0, len(paths) - len(documents)),
+            "folderCount": len(folder_names),
+            "wordCount": sum(item["words"] for item in lengths),
+            "characterCount": sum(item["characters"] for item in lengths),
+            "linkCount": len(edges),
+            "orphanCount": sum(1 for value in degree.values() if value == 0),
+            "lengthBuckets": buckets,
+            "top": [{
+                "title": item["title"],
+                "words": item["words"],
+                "characters": item["characters"],
+            } for item in top],
+            "inferredModifiedMonths": [
+                {"month": month, "count": modified_months[month]}
+                for month in sorted(modified_months)
+            ],
+            "network": {"nodes": network_nodes, "edges": network_edges},
         }
 
     def _history_bucket(self, relative: str) -> Path:
