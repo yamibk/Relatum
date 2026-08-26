@@ -9,7 +9,7 @@
   const loading = root.querySelector('[data-role="career-loading"]');
   const reportHost = root.querySelector('[data-role="career-report"]');
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const SCROLL_IDLE_MS = 120;
+  const SCROLL_IDLE_MS = 80;
   const SCROLL_REVEAL_WINDOW_MS = 240;
   const NUMBER_TICK_MS = 50;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -575,7 +575,10 @@
     append(strip, stat(tr('currentCanvases'), data.count), stat(tr('edges'), data.edgeCount), stat(tr('ink'), data.inkCount));
     structure.appendChild(strip);
     const kinds = panel(tr('nodeKinds'), tr('nodeKinds'), tr('nodeKindsCopy'));
-    kinds.appendChild(dotMatrix((data.kinds || []).map((item) => ({ label: kindLabel(item.key), count: item.count }))));
+    kinds.appendChild(dotMatrix(
+      (data.kinds || []).map((item) => ({ label: kindLabel(item.key), count: item.count })),
+      { staggered: true },
+    ));
     const months = panel(tr('canvasMonths'), tr('canvasMonths'), tr('canvasMonthsCopy'), 'is-wide');
     months.appendChild(canvasMonthMatrix(data.months || []));
     append(grid, top, structure, kinds, months); chapter.appendChild(grid); shell.appendChild(chapter); return shell;
@@ -796,7 +799,7 @@
         else state.pendingReveals.delete(item.target);
       });
       scheduleRevealFlush();
-    }, { root: scroll, rootMargin: '0px 0px -8% 0px', threshold: .12 });
+    }, { root: scroll, rootMargin: '0px 0px -8% 0px', threshold: .06 });
     targets.forEach((target) => state.observer.observe(target));
   }
 

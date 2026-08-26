@@ -43605,7 +43605,7 @@ body.start-page[data-start-theme="dark"] .career-regenerate { color: #171816; }
 .career-reveal[data-visible="1"] { opacity: 1; transform: translate3d(0,0,0); }
 /* 快速滚动停稳后，可视卡片一起轻快落位；首次进入仍保留完整错峰。 */
 .career-reveal[data-career-scroll-reveal="1"] {
-  transition-duration: 240ms, 340ms;
+  transition-duration: 180ms, 260ms;
   transition-delay: 0ms;
 }
 .career-section-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 420px); gap: 60px; align-items: end; margin-bottom: clamp(44px, 7vw, 78px); }
@@ -43627,6 +43627,12 @@ body.start-page[data-start-theme="dark"] .career-regenerate { color: #171816; }
 .career-panel[data-visible="1"] > h3 { opacity: 1; transform: none; transition-delay: 150ms; }
 .career-section-head[data-visible="1"] > p,
 .career-panel[data-visible="1"] > .career-panel-copy { opacity: 1; transform: none; transition-delay: 230ms; }
+.career-section-head[data-career-scroll-reveal="1"][data-visible="1"] .career-section-kicker,
+.career-panel[data-career-scroll-reveal="1"][data-visible="1"] > .career-panel-kicker { transition-delay: 20ms; }
+.career-section-head[data-career-scroll-reveal="1"][data-visible="1"] h2,
+.career-panel[data-career-scroll-reveal="1"][data-visible="1"] > h3 { transition-delay: 45ms; }
+.career-section-head[data-career-scroll-reveal="1"][data-visible="1"] > p,
+.career-panel[data-career-scroll-reveal="1"][data-visible="1"] > .career-panel-copy { transition-delay: 75ms; }
 .career-editorial-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
 .career-panel {
   position: relative;
