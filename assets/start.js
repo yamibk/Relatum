@@ -1088,12 +1088,13 @@
   const START_HELP_PAGES_ZH = [
     {
       id: 'safety', eyebrow: '01 · BEFORE DELETING', title: '删除前，先看这里',
-      subtitle: 'Relatum 的内容都保存在用户数据目录里的 <code>canvases</code>、<code>notes</code> 和 <code>data</code> 中。多数文件删掉后不会“释放缓存”，而是会真正丢失内容或记录。',
+      subtitle: 'Relatum 的画布、笔记和长期记录保存在用户数据目录里的 <code>canvases</code>、<code>notes</code> 和 <code>data</code> 中；界面偏好和部分临时运行态另存在本机浏览器存储中。',
       sections: [
-        ['三个文件夹分别装什么', '它们分别保存画布、Markdown 笔记库和应用记录。', [
+        ['三个文件夹与一组本机偏好', '前三项保存用户内容和长期记录；本机偏好记住界面与当前会话状态。', [
           ['<code>canvases</code>', '保存每张画布及其图片、PDF、Markdown 附件和批注。这里通常最占空间，也是最不能随便拆开删除的部分。'],
           ['<code>notes</code>', '保存笔记工作区的 <code>.md</code> 正文、任意层级文件夹和 <code>&lt;笔记名&gt;.assets</code> 图片。它是可直接备份的真实笔记库，不是缓存。'],
-          ['<code>data</code>', '保存画布列表、分组收藏、学习任务、独立树状页、复习卡片、速记、日记、专注记录、背景和各种偏好。这里的 JSON 文件通常很小。'],
+          ['<code>data</code>', '保存画布列表、分组收藏、学习任务、独立树状页、复习卡片、速记、日记、专注记录、背景和少量文件型设置。这里的 JSON 文件通常很小。'],
+          ['本机偏好', '保存主题、工作区、视图、镜头、工具默认和运行中的专注计时等状态。它不在 <code>data</code> 文件夹中，删除后主要表现为界面重置。'],
         ]],
         ['真正容易占空间的地方', '如果只是想腾出磁盘空间，优先检查素材和回收站；不要为了几 KB 的 JSON 文件丢掉长期记录。', [
           ['<code>*.assets</code>', '画布使用的图片、PDF 和 Markdown 附件。先在对应画布里使用“清理附件”，只删没有被引用的素材。'],
@@ -1132,7 +1133,7 @@
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: 'data：记录、设置和索引',
-      subtitle: '这些文件大多不占多少空间，却决定起步页如何组织画布，以及树状、学习、日历、复习和专注页能看到哪些记录。',
+      subtitle: '这些文件大多不占多少空间，却决定起步页如何组织画布，以及树状、学习、日历、复习和专注页能看到哪些长期记录。界面偏好另见“本机偏好”。',
       sections: [
         ['画布列表与显示设置', '删除设置文件通常不会删除画布本体，但会让界面恢复默认或失去整理信息。', [
           ['<code>recent.json</code>', '保存最近画布、分组、收藏和排序。删除后 <code>.canvas</code> 文件仍在，但起步页列表会变空，分组、收藏和顺序丢失；之后可手动扫描重新登记顶层画布。'],
@@ -1173,17 +1174,38 @@
         ['不建议整包删除 <code>data</code>', '整包删除相当于重置 Relatum 除画布正文和画布素材之外的大部分状态：画布文件还在，但列表整理、学习、速记、复习、日记、专注、模板和设置会一起消失。'],
       ],
     },
+    {
+      id: 'storage', eyebrow: '04 · ON-DEVICE', title: '本机存储：偏好、视图与运行态',
+      subtitle: '这些状态保存在 Relatum 的 WebView2 用户数据或浏览器的网站数据中，不在 <code>canvases</code>、<code>notes</code> 或 <code>data</code> 文件夹里。实际位置会随电脑、安装方式和浏览器而变。',
+      sections: [
+        ['起步页、语言与笔记工作区', '这一组主要记住你上次看到的界面，不代替真正的内容文件。', [
+          ['主题与工作区', '<code>canvas:startTheme</code>、<code>canvas:startWorkspace:v1</code> 和 <code>canvas:toolbarLanguage</code> 等保存主题、上次工作区、界面语言、搜索与页面显示偏好。删除后恢复默认，不删画布或记录。'],
+          ['笔记工作区', '<code>canvas:note*</code> 记住打开标签、当前笔记、文件夹展开状态、视图和字号。删除后工作区会重置，<code>.md</code> 正文和笔记图片仍在。'],
+        ]],
+        ['学习、树状、速记与复习', '这些页面的长期内容在 <code>data</code> 中，但一些“怎么看”只存在本机。', [
+          ['视图与镜头', '<code>study:*</code>、<code>canvas:notesView</code>、<code>canvas:cadenceLens:v2</code>、<code>canvas:reviewMode:v1</code> 和 <code>relatum.*.view.&lt;树 ID&gt;</code> 记住页面、复习模式、镜头与折叠状态。删除后任务、树和便签仍在，但视图会回到默认。'],
+          ['任务页颜色与图例', '<code>study:taskPageColors:v1</code> 和 <code>study:legend:v1</code> 只存在本机。删除后颜色恢复默认，不能从 <code>study.json</code> 自动恢复，只能重新设置。'],
+        ]],
+        ['画布编辑器', '模式、面板位置、工具参数、新建节点/连线的默认样式、自动保存和引导状态等以 <code>canvas:*</code> 偏好保存。删除后已有 <code>.canvas</code> 内容不会改变，但编辑器偏好与新建默认会重置，首次引导也可能再次出现。'],
+        ['专注钟与当前会话', '两者都不应当作已完成的长期记录。', [
+          ['<code>canvas:focus*</code>', '保存未完成计时的恢复状态、模式、时长、声音、噪音和任务绑定。删除后这些状态丢失；已写入 <code>data/focus.json</code> 的专注历史仍保留。'],
+          ['<code>sessionStorage</code>', '只保存本次会话的桌面识别和返回路径标记。关闭会话或清除它，不会删除用户内容。'],
+        ]],
+        ['如果要整理这部分', '先退出 Relatum，不要逐个删除 WebView2 内部的数据库文件。清除整个应用或网站存储会重置所有本机偏好，但不会删除 <code>canvases</code>、<code>notes</code> 或 <code>data</code>。AI 助手的 API Key 另存在 <code>data/ai.json</code>，不属于浏览器存储。'],
+      ],
+    },
   ];
 
   const START_HELP_PAGES_EN = [
     {
       id: 'safety', eyebrow: '01 · BEFORE DELETING', title: 'Before deleting, read this',
-      subtitle: 'Relatum stores its content in the <code>canvases</code>, <code>notes</code>, and <code>data</code> folders inside your user data directory. Deleting most of these files does not “clear a cache”; it permanently removes content or history.',
+      subtitle: 'Relatum stores canvases, notes, and long-term records in the <code>canvases</code>, <code>notes</code>, and <code>data</code> folders inside the user data directory. Interface preferences and some temporary runtime state live separately in on-device browser storage.',
       sections: [
-        ['What the three folders contain', 'They hold canvases, the Markdown notes library, and application records.', [
+        ['Three folders and one set of on-device preferences', 'The folders hold user content and long-term records; on-device preferences remember the interface and current-session state.', [
           ['<code>canvases</code>', 'Stores every canvas together with its images, PDFs, Markdown attachments, and annotations. This folder usually uses the most space and should not be split up or cleaned blindly.'],
           ['<code>notes</code>', 'Stores the Notes workspace as ordinary <code>.md</code> files, nested folders, and <code>&lt;note name&gt;.assets</code> images. It is your real, directly backupable notes library, not a cache.'],
-          ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, the independent Tree page, review cards, quick notes, journals, focus history, backgrounds, and preferences. Its JSON files are usually very small.'],
+          ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, the independent Tree page, review cards, quick notes, journals, focus history, backgrounds, and a small set of file-backed settings. Its JSON files are usually very small.'],
+          ['On-device preferences', 'Stores themes, workspaces, views, cameras, tool defaults, and runtime state such as an unfinished focus timer. It is outside the <code>data</code> folder, and deleting it mainly resets the interface.'],
         ]],
         ['What actually uses disk space', 'If you only want to free disk space, inspect assets and Trash first. Do not sacrifice long-term records to save a few KB of JSON.', [
           ['<code>*.assets</code>', 'Images, PDFs, and Markdown attachments used by a canvas. Use “Clean attachments” inside that canvas first so only unreferenced files are removed.'],
@@ -1222,7 +1244,7 @@
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: 'data: records, settings, and indexes',
-      subtitle: 'Most of these files use little space, but they determine how Home organizes canvases and which records appear in Tree, Study, Calendar, Review, and Focus.',
+      subtitle: 'Most of these files use little space, but they determine how Home organizes canvases and which long-term records appear in Tree, Study, Calendar, Review, and Focus. See On-device preferences for interface settings.',
       sections: [
         ['Canvas library and display settings', 'Deleting a settings file usually leaves the canvas itself intact, but resets the interface or removes organization data.', [
           ['<code>recent.json</code>', 'Recent canvases, groups, favorites, and ordering. The <code>.canvas</code> files remain after deletion, but Home becomes empty and organization is lost; you can later scan the top-level canvases folder to register files again.'],
@@ -1261,6 +1283,26 @@
           ['<code>calendar-pins.json</code>', 'Calendar task notes left by older versions and no longer read by the current version. Back it up before deleting if you may return to an older version.'],
         ]],
         ['Do not delete the whole <code>data</code> folder', 'Deleting it resets almost everything except canvas bodies and their assets: the files still exist, but library organization, Study, Quick Notes, Review, journals, Focus, templates, and settings disappear together.'],
+      ],
+    },
+    {
+      id: 'storage', eyebrow: '04 · ON-DEVICE', title: 'On-device storage: preferences, views, and runtime state',
+      subtitle: 'This state lives in Relatum’s WebView2 user data or in the browser’s site data, outside the <code>canvases</code>, <code>notes</code>, and <code>data</code> folders. Its actual location varies by computer, installation method, and browser.',
+      sections: [
+        ['Home, language, and the Notes workspace', 'These settings mainly remember the interface you last saw; they do not replace the real content files.', [
+          ['Theme and workspace', '<code>canvas:startTheme</code>, <code>canvas:startWorkspace:v1</code>, <code>canvas:toolbarLanguage</code>, and related keys store the theme, last workspace, interface language, search, and page-display preferences. Deleting them restores defaults without deleting canvases or records.'],
+          ['Notes workspace', '<code>canvas:note*</code> remembers open tabs, the current note, expanded folders, the view, and text size. Deleting it resets the workspace, while <code>.md</code> files and note images remain.'],
+        ]],
+        ['Study, Tree, Quick Notes, and Review', 'Long-term content for these pages lives in <code>data</code>, but some details about how it is viewed exist only on this device.', [
+          ['Views and cameras', '<code>study:*</code>, <code>canvas:notesView</code>, <code>canvas:cadenceLens:v2</code>, <code>canvas:reviewMode:v1</code>, and <code>relatum.*.view.&lt;tree ID&gt;</code> remember pages, review mode, cameras, and collapsed branches. Tasks, trees, and notes remain after deletion, but their views return to defaults.'],
+          ['Task-page colors and legend', '<code>study:taskPageColors:v1</code> and <code>study:legend:v1</code> exist only on this device. Deleting them restores default colors; they cannot be recovered automatically from <code>study.json</code> and must be set again.'],
+        ]],
+        ['Canvas editor', 'Modes, panel positions, tool parameters, default styles for new nodes and edges, autosave, and onboarding state are stored as <code>canvas:*</code> preferences. Deleting them does not change existing <code>.canvas</code> content, but editor preferences and creation defaults reset, and onboarding may appear again.'],
+        ['Focus and the current session', 'Neither should be confused with completed long-term records.', [
+          ['<code>canvas:focus*</code>', 'Stores recovery state for an unfinished timer, mode, durations, sound, noise, and task binding. Deleting it loses those settings and the unfinished timer state; completed history already written to <code>data/focus.json</code> remains.'],
+          ['<code>sessionStorage</code>', 'Stores only current-session desktop detection and return-route markers. Closing the session or clearing it does not delete user content.'],
+        ]],
+        ['If you need to manage this storage', 'Quit Relatum first, and do not delete individual database files inside WebView2 user data. Clearing all app or site storage resets every on-device preference but does not delete <code>canvases</code>, <code>notes</code>, or <code>data</code>. The AI assistant API key lives separately in <code>data/ai.json</code>, not in browser storage.'],
       ],
     },
   ];
