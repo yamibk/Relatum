@@ -43497,6 +43497,120 @@ body.start-page[data-start-theme="dark"] .career-workspace {
     linear-gradient(90deg, transparent 0, transparent calc(50% - .5px), var(--career-soft-line) 50%, transparent calc(50% + .5px)) 50% 0 / min(1180px, 100%) 100% no-repeat,
     var(--career-bg);
 }
+/* 生涯报告右侧正文滚动条：与本地数据说明同款无上下按钮的细圆角滑块，深浅主题分别控制对比度。 */
+.career-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 26, 26, 0.24) transparent;
+}
+/* Chromium / Edge 新版会让非 auto 的标准 scrollbar-* 覆盖 ::-webkit-scrollbar；
+   在支持 WebKit 伪元素的内核里退回 auto，确保下面的无按钮样式真正接管。 */
+@supports selector(::-webkit-scrollbar) {
+  .career-scroll {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+.career-scroll::-webkit-scrollbar {
+  width: 11px;
+}
+.career-scroll::-webkit-scrollbar-track {
+  margin-block: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+.career-scroll::-webkit-scrollbar-thumb {
+  min-height: 52px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(26, 26, 26, 0.22);
+  background-clip: padding-box;
+}
+.career-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 26, 26, 0.36);
+  background-clip: padding-box;
+}
+.career-scroll::-webkit-scrollbar-button,
+.career-scroll::-webkit-scrollbar-button:single-button,
+.career-scroll::-webkit-scrollbar-button:vertical:decrement,
+.career-scroll::-webkit-scrollbar-button:vertical:increment,
+.career-scroll::-webkit-scrollbar-button:vertical:start:decrement,
+.career-scroll::-webkit-scrollbar-button:vertical:end:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  -webkit-appearance: none;
+  appearance: none;
+  background: none !important;
+  background-image: none !important;
+  content: none;
+}
+.career-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+body.start-page[data-start-theme="dark"] .career-scroll {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+  body.start-page[data-start-theme="dark"] .career-scroll {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+body.start-page[data-start-theme="dark"] .career-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  background-clip: padding-box;
+}
+body.start-page[data-start-theme="dark"] .career-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+  background-clip: padding-box;
+}
+/* 月度矩阵的横向滚动条沿用同款细胶囊，避免页面内混搭原生横条。 */
+.career-month-matrix-chart {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 26, 26, 0.16) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+  .career-month-matrix-chart {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+.career-month-matrix-chart::-webkit-scrollbar {
+  height: 10px;
+}
+.career-month-matrix-chart::-webkit-scrollbar-track {
+  background: transparent;
+}
+.career-month-matrix-chart::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(26, 26, 26, 0.16);
+  background-clip: padding-box;
+}
+.career-month-matrix-chart::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 26, 26, 0.3);
+  background-clip: padding-box;
+}
+body.start-page[data-start-theme="dark"] .career-month-matrix-chart {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+  body.start-page[data-start-theme="dark"] .career-month-matrix-chart {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+body.start-page[data-start-theme="dark"] .career-month-matrix-chart::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: padding-box;
+}
+body.start-page[data-start-theme="dark"] .career-month-matrix-chart::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  background-clip: padding-box;
+}
 .career-entry,
 .career-loading {
   min-height: 100%;
