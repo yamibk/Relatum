@@ -9,7 +9,7 @@
   const loading = root.querySelector('[data-role="career-loading"]');
   const reportHost = root.querySelector('[data-role="career-report"]');
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const SCROLL_IDLE_MS = 80;
+  const SCROLL_IDLE_MS = 40;
   const SCROLL_REVEAL_WINDOW_MS = 240;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -753,7 +753,7 @@
   function targetStillVisible(target, rootBox) {
     if (!target.isConnected || target.dataset.visible === '1') return false;
     const box = target.getBoundingClientRect();
-    const revealBottom = rootBox.bottom - rootBox.height * .08;
+    const revealBottom = rootBox.bottom - rootBox.height * .04;
     return box.bottom > rootBox.top && box.top < revealBottom;
   }
 
@@ -798,7 +798,7 @@
         else state.pendingReveals.delete(item.target);
       });
       scheduleRevealFlush();
-    }, { root: scroll, rootMargin: '0px 0px -8% 0px', threshold: .06 });
+    }, { root: scroll, rootMargin: '0px 0px -4% 0px', threshold: .04 });
     targets.forEach((target) => state.observer.observe(target));
   }
 
