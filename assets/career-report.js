@@ -9,6 +9,8 @@
   const loading = root.querySelector('[data-role="career-loading"]');
   const reportHost = root.querySelector('[data-role="career-report"]');
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  const SCROLL_IDLE_MS = 120;
+  const NUMBER_TICK_MS = 50;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const KIND_ZH = {
@@ -112,7 +114,23 @@
     },
   };
 
-  const state = { initialized: false, initializePromise: null, loading: false, active: false, report: null, observer: null, error: '' };
+  const state = {
+    initialized: false,
+    initializePromise: null,
+    loading: false,
+    active: false,
+    report: null,
+    observer: null,
+    error: '',
+    scrolling: false,
+    scrollIdleTimer: 0,
+    revealFrame: 0,
+    pendingReveals: new Set(),
+    numberFrame: 0,
+    numberLastFrame: 0,
+    numberJobs: new Map(),
+  };
+  function reducedMotion() { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
   function language() { return window.RelatumI18n && window.RelatumI18n.language === 'en' ? 'en' : 'zh'; }
   function tr(key, vars) {
     let value = COPY[language()][key] || COPY.zh[key] || key;
@@ -255,6 +273,7 @@
     const max = Math.max(1, ...items.map((item) => Math.max(number(item.canvasSec), number(item.focusSec), number(item.pageSec))));
     const svg = svgElement('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': tr('daily') });
     svg.appendChild(svgElement('line', { x1: pad, x2: width - pad, y1: baseline, y2: baseline, class: 'career-chart-grid' }));
+    const series = svgElement('g', { class: 'career-daily-series' });
     const step = (width - pad * 2) / Math.max(1, items.length);
     const tip = chartTooltip(container);
     items.forEach((item, index) => {
@@ -262,7 +281,6 @@
       const x = pad + step * index + step / 2;
       const barHeight = total ? 12 + 150 * total / max : 3;
       const group = svgElement('g', { tabindex: 0, class: 'career-chart-focus career-daily-mark' });
-      group.style.setProperty('--career-index', String(Math.round(index / Math.max(1, items.length - 1) * 70)));
       group.appendChild(svgElement('line', { x1: x, x2: x, y1: baseline, y2: baseline - barHeight, stroke: 'currentColor', 'stroke-width': Math.max(1, Math.min(3.2, step * .54)), 'stroke-linecap': 'round', opacity: total ? .82 : .14 }));
       if (number(item.events) || number(item.completed) || number(item.reviewed) || number(item.daily) || number(item.diary)) {
         group.appendChild(svgElement('circle', { cx: x, cy: baseline - barHeight - 7, r: 2.6, fill: 'var(--career-accent)' }));
@@ -270,8 +288,9 @@
       const label = `${formatDate(item.day)} · ${tr('recordedCanvas')} ${formatDuration(item.canvasSec)} · ${tr('recordedFocus')} ${formatDuration(item.focusSec)} · ${tr('recordedPages')} ${formatDuration(item.pageSec)} · ${formatNumber(item.events)} ${tr('items')}`;
       group.setAttribute('aria-label', label);
       bindTooltip(group, tip, container, label);
-      svg.appendChild(group);
+      series.appendChild(group);
     });
+    svg.appendChild(series);
     container.appendChild(svg);
     return container;
   }
@@ -282,7 +301,7 @@
     const max = Math.max(1, ...items.map(options.value));
     items.forEach((item, index) => {
       const row = element('div', 'career-bar-row');
-      row.style.setProperty('--career-index', String(index));
+      row.style.setProperty('--career-index', String(Math.min(index, 12)));
       const label = element('span', 'career-bar-label', options.label(item));
       label.title = options.label(item);
       const track = element('span', 'career-bar-track');
@@ -305,7 +324,6 @@
     if (!total) { chart.appendChild(element('p', 'career-panel-copy', tr('noData'))); return chart; }
     const cap = 120;
     const scale = Math.max(1, Math.ceil(total / cap));
-    let index = 0;
     const legend = element('div', 'career-dot-legend');
     safeGroups.forEach((group, groupIndex) => {
       const colorIndex = safeGroups.length === 1
@@ -315,7 +333,6 @@
       const amount = Math.max(1, Math.ceil(number(group.count) / scale));
       for (let count = 0; count < amount; count += 1) {
         const dot = element('span', 'career-dot active');
-        dot.style.setProperty('--career-index', index++);
         dot.style.setProperty('--career-dot-color', color);
         dot.title = `${group.label}: ${formatNumber(group.count)}`;
         matrix.appendChild(dot);
@@ -355,7 +372,7 @@
         if (seconds) {
           const dot = element('i', 'career-month-matrix-dot');
           dot.style.setProperty('--career-dot-scale', String(.38 + .62 * Math.sqrt(seconds / max)));
-          dot.style.setProperty('--career-index', String(dotIndex++));
+          dot.style.setProperty('--career-index', String(Math.min(dotIndex++, 24)));
           dot.tabIndex = 0;
           dot.title = `${formatMonth(month.month)} · ${title} · ${formatDuration(seconds)}`;
           dot.setAttribute('aria-label', dot.title);
@@ -419,7 +436,7 @@
       const from = positions.get(edge.from), to = positions.get(edge.to);
       if (from && to) {
         const line = svgElement('line', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, class: 'career-network-line career-network-line-fade' });
-        line.style.setProperty('--career-index', String(index));
+        line.style.setProperty('--career-index', String(Math.min(index, 24)));
         svg.appendChild(line);
       }
     });
@@ -427,7 +444,7 @@
     nodes.forEach((node, index) => {
       const point = positions.get(node.id);
       const circle = svgElement('circle', { cx: point.x, cy: point.y, r: 4 + 10 * number(node.degree) / maxDegree, class: 'career-network-node career-chart-focus', tabindex: 0 });
-      circle.style.setProperty('--career-index', String(index));
+      circle.style.setProperty('--career-index', String(Math.min(index, 24)));
       const label = `${node.title} · ${formatNumber(node.words)} ${tr('noteWords')}`;
       circle.setAttribute('aria-label', label);
       bindTooltip(circle, tip, chart, label);
@@ -452,7 +469,7 @@
       const total = keys.reduce((sum, key) => sum + number(month[key]), 0);
       let y = height - padY;
       const group = svgElement('g', { tabindex: 0, class: 'career-chart-focus career-stack-bar' });
-      group.style.setProperty('--career-index', String(index));
+      group.style.setProperty('--career-index', String(Math.min(index, 12)));
       keys.forEach((key, keyIndex) => {
         const value = number(month[key]);
         const part = (height - padY * 2) * value / max;
@@ -482,7 +499,6 @@
       const cell = element('span', 'career-heat-cell');
       const level = value ? Math.max(1, Math.min(4, Math.ceil(value / max * 4))) : 0;
       cell.dataset.level = String(level);
-      if (level) cell.style.setProperty('--career-index', String(Math.round(index / 370 * 70)));
       cell.title = `${formatDate(key)} · ${formatNumber(value)}`;
       grid.appendChild(cell);
     }
@@ -609,7 +625,7 @@
     if (!(archives.recent || []).length) timeline.appendChild(element('p', 'career-panel-copy', tr('noCompleted')));
     (archives.recent || []).forEach((item, index) => {
       const row = element('div', 'career-timeline-row');
-      row.style.setProperty('--career-index', String(index));
+      row.style.setProperty('--career-index', String(Math.min(index, 12)));
       append(row, element('time', '', item.day), element('i', 'career-timeline-dot'), element('span', 'career-timeline-title', item.title || archiveKind(item.kind)), element('span', 'career-timeline-kind', archiveKind(item.kind)));
       timeline.appendChild(row);
     });
@@ -688,7 +704,7 @@
     };
     (report.coverage || []).forEach((item, index) => {
       const row = element('div', 'career-coverage-row');
-      row.style.setProperty('--career-index', String(index));
+      row.style.setProperty('--career-index', String(Math.min(index, 12)));
       const suffix = number(item.skippedCount) ? ` · ${formatNumber(item.skippedCount)} ${tr('skipped')}` : '';
       append(row, element('span', '', sourceNames[item.id] || item.id), element('span', '', tr(item.status || 'unavailable') + suffix));
       coverage.appendChild(row);
@@ -707,6 +723,7 @@
   }
 
   function render(report) {
+    stopRuntime({ finishNumbers: false });
     state.report = report;
     reportHost.replaceChildren();
     append(reportHost, buildHero(report), buildOverview(report), buildCanvas(report), buildNotes(report), buildLearning(report), buildHabits(report), buildRange(report), buildEnd(report));
@@ -717,26 +734,128 @@
     });
     entry.hidden = true; loading.hidden = true; reportHost.hidden = false;
     bindActions(reportHost);
-    startReveals();
+    if (state.active) startReveals();
+  }
+
+  function cancelRevealFrame() {
+    if (!state.revealFrame) return;
+    cancelAnimationFrame(state.revealFrame);
+    state.revealFrame = 0;
+  }
+
+  function targetStillVisible(target, rootBox) {
+    if (!target.isConnected || target.dataset.visible === '1') return false;
+    const box = target.getBoundingClientRect();
+    const revealBottom = rootBox.bottom - rootBox.height * .08;
+    return box.bottom > rootBox.top && box.top < revealBottom;
+  }
+
+  function revealPendingTargets() {
+    state.revealFrame = 0;
+    if (!state.active || state.scrolling || !state.pendingReveals.size) return;
+    const targets = Array.from(state.pendingReveals);
+    const rootBox = scroll.getBoundingClientRect();
+    const visibleTargets = targets.filter((target) => targetStillVisible(target, rootBox));
+    targets.forEach((target) => {
+      if (!target.isConnected || target.dataset.visible === '1') state.pendingReveals.delete(target);
+    });
+    visibleTargets.forEach((target) => {
+      state.pendingReveals.delete(target);
+      target.dataset.visible = '1';
+      animateNumbers(target);
+      if (state.observer) state.observer.unobserve(target);
+    });
+  }
+
+  function scheduleRevealFlush() {
+    if (state.revealFrame || state.scrolling || !state.active || !state.pendingReveals.size) return;
+    state.revealFrame = requestAnimationFrame(revealPendingTargets);
   }
 
   function startReveals() {
     if (state.observer) state.observer.disconnect();
-    const targets = reportHost.querySelectorAll('.career-reveal');
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
+    state.pendingReveals.clear();
+    cancelRevealFrame();
+    const targets = reportHost.querySelectorAll('.career-reveal:not([data-visible="1"])');
+    if (reducedMotion() || !('IntersectionObserver' in window)) {
       targets.forEach((target) => target.dataset.visible = '1');
       animateNumbers(reportHost);
       return;
     }
     state.observer = new IntersectionObserver((entries) => {
       entries.forEach((item) => {
-        if (!item.isIntersecting) return;
-        item.target.dataset.visible = '1';
-        animateNumbers(item.target);
-        state.observer.unobserve(item.target);
+        if (item.isIntersecting) state.pendingReveals.add(item.target);
+        else state.pendingReveals.delete(item.target);
       });
+      scheduleRevealFlush();
     }, { root: scroll, rootMargin: '0px 0px -8% 0px', threshold: .12 });
     targets.forEach((target) => state.observer.observe(target));
+  }
+
+  function renderNumberValue(job, value) {
+    if (job.target === 0 && job.zeroText) return job.zeroText;
+    return job.format === 'duration' ? formatDuration(value) : formatNumber(value) + job.suffix;
+  }
+
+  function finishNumberJob(node, job) {
+    if (node.isConnected) {
+      node.textContent = renderNumberValue(job, job.target);
+      node.classList.remove('is-counting');
+      node.classList.add('is-counted');
+    }
+    state.numberJobs.delete(node);
+  }
+
+  function stopNumberFrame() {
+    if (state.numberFrame) cancelAnimationFrame(state.numberFrame);
+    state.numberFrame = 0;
+    state.numberLastFrame = 0;
+  }
+
+  function runNumberFrame(now) {
+    state.numberFrame = 0;
+    if (!state.active || state.scrolling || !state.numberJobs.size) {
+      state.numberLastFrame = 0;
+      return;
+    }
+    const delta = state.numberLastFrame ? Math.min(64, now - state.numberLastFrame) : 0;
+    state.numberLastFrame = now;
+    state.numberJobs.forEach((job, node) => {
+      if (!node.isConnected) {
+        state.numberJobs.delete(node);
+        return;
+      }
+      job.elapsed += delta;
+      job.sinceWrite += delta;
+      const progress = Math.min(1, job.elapsed / job.duration);
+      if (job.sinceWrite >= NUMBER_TICK_MS || progress >= 1) {
+        const eased = 1 - Math.pow(1 - progress, 4);
+        const text = renderNumberValue(job, job.target * eased);
+        if (text !== job.lastText) {
+          node.textContent = text;
+          job.lastText = text;
+        }
+        job.sinceWrite = 0;
+      }
+      if (progress >= 1) finishNumberJob(node, job);
+    });
+    if (state.numberJobs.size) state.numberFrame = requestAnimationFrame(runNumberFrame);
+    else state.numberLastFrame = 0;
+  }
+
+  function scheduleNumberFrame() {
+    if (state.numberFrame || !state.active || state.scrolling || !state.numberJobs.size) return;
+    state.numberLastFrame = 0;
+    state.numberFrame = requestAnimationFrame(runNumberFrame);
+  }
+
+  function clearNumberJobs(finish) {
+    stopNumberFrame();
+    state.numberJobs.forEach((job, node) => {
+      if (finish) finishNumberJob(node, job);
+      else if (node.isConnected) node.classList.remove('is-counting');
+    });
+    state.numberJobs.clear();
   }
 
   function animateNumbers(scope) {
@@ -746,32 +865,54 @@
       const suffix = node.dataset.careerSuffix || '';
       const format = node.dataset.careerFormat || 'number';
       const zeroText = node.dataset.careerZeroText || '';
-      const renderValue = (value) => {
-        if (target === 0 && zeroText) return zeroText;
-        return format === 'duration' ? formatDuration(value) : formatNumber(value) + suffix;
+      const job = {
+        target,
+        suffix,
+        format,
+        zeroText,
+        duration: Math.min(1480, 900 + Math.log10(target + 1) * 105),
+        elapsed: 0,
+        sinceWrite: NUMBER_TICK_MS,
+        lastText: '',
       };
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || target === 0) {
-        node.textContent = renderValue(target);
+      if (reducedMotion() || target === 0) {
+        node.textContent = renderNumberValue(job, target);
+        node.classList.add('is-counted');
         return;
       }
-      const start = performance.now();
-      const duration = Math.min(1480, 900 + Math.log10(target + 1) * 105);
-      let lastText = '';
       node.classList.add('is-counting');
-      const frame = (now) => {
-        const progress = Math.min(1, (now - start) / duration);
-        const eased = 1 - Math.pow(1 - progress, 4);
-        const text = renderValue(target * eased);
-        if (text !== lastText) { node.textContent = text; lastText = text; }
-        if (progress < 1) requestAnimationFrame(frame);
-        else {
-          node.textContent = renderValue(target);
-          node.classList.remove('is-counting');
-          node.classList.add('is-counted');
-        }
-      };
-      requestAnimationFrame(frame);
+      state.numberJobs.set(node, job);
     });
+    scheduleNumberFrame();
+  }
+
+  function finishScroll() {
+    state.scrollIdleTimer = 0;
+    state.scrolling = false;
+    scheduleRevealFlush();
+    scheduleNumberFrame();
+  }
+
+  function handleScroll() {
+    if (!state.active) return;
+    if (!state.scrolling) {
+      state.scrolling = true;
+      stopNumberFrame();
+    }
+    if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
+    state.scrollIdleTimer = window.setTimeout(finishScroll, SCROLL_IDLE_MS);
+  }
+
+  function stopRuntime(options) {
+    const finishNumbers = !options || options.finishNumbers !== false;
+    if (state.observer) state.observer.disconnect();
+    state.observer = null;
+    state.pendingReveals.clear();
+    cancelRevealFrame();
+    if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
+    state.scrollIdleTimer = 0;
+    state.scrolling = false;
+    clearNumberJobs(finishNumbers);
   }
 
   function showEntry() {
@@ -853,8 +994,17 @@
   }
 
   async function preload() { await initialize(); }
-  async function activate() { state.active = true; await initialize(); }
-  document.addEventListener('relatum:start-workspacechange', (event) => { state.active = event.detail && event.detail.workspace === 'career'; });
+  async function activate() {
+    state.active = true;
+    await initialize();
+    if (state.report && !state.observer) startReveals();
+  }
+  scroll.addEventListener('scroll', handleScroll, { passive: true });
+  document.addEventListener('relatum:start-workspacechange', (event) => {
+    const active = !!(event.detail && event.detail.workspace === 'career');
+    state.active = active;
+    if (!active) stopRuntime({ finishNumbers: true });
+  });
   document.addEventListener('relatum:languagechange', () => {
     if (state.report) {
       const top = scroll.scrollTop;

@@ -39,6 +39,18 @@ assert(server.includes('_atomic_write_json(CAREER_REPORT_FILE, report)'), 'repor
 
 assert(career.includes("createElementNS(SVG_NS"), 'charts must use native SVG');
 assert(career.includes('IntersectionObserver'), 'scroll reveal must be viewport-driven');
+assert(career.includes('const SCROLL_IDLE_MS = 120'), 'scroll reveals need an explicit idle window');
+assert(career.includes("scroll.addEventListener('scroll', handleScroll, { passive: true })"), 'Career scrolling must stay passive');
+assert(career.includes('pendingReveals: new Set()'), 'scroll-time reveals must be queued and coalesced');
+assert(career.includes('const NUMBER_TICK_MS = 50'), 'number text updates must be rate-limited');
+assert(career.includes('numberJobs: new Map()'), 'visible numbers must share one scheduler');
+assert(career.includes('requestAnimationFrame(runNumberFrame)'), 'number updates must use the shared animation frame');
+assert(!career.includes('requestAnimationFrame(frame)'), 'per-number animation frame loops must not return');
+assert(career.includes("class: 'career-daily-series'"), 'dense daily marks must animate as one series');
+assert(!career.includes("cell.style.setProperty('--career-index'"), 'heatmap cells must not each schedule a reveal transition');
+assert(css.includes('contain: layout paint style'), 'Career panels must isolate layout and paint invalidation');
+assert(css.includes('[data-visible="1"] .career-dot-matrix'), 'dot matrices must reveal as one visual group');
+assert(css.includes('[data-visible="1"] .career-heatmap'), 'heatmaps must reveal as one visual group');
 assert(career.includes("prefers-reduced-motion: reduce"), 'runtime must respect reduced motion');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'), 'Career CSS needs a reduced-motion fallback');
 assert(css.includes('.career-workspace [hidden]'), 'Career entry/loading/report states must honor the hidden attribute');
