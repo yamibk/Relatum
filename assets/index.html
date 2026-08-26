@@ -243,17 +243,41 @@
               </label>
             </div>
           </div>
-          <div class="start-speed-head">
-            <span>生涯揭示等待</span>
-            <output data-role="career-scroll-idle-value">50ms</output>
-          </div>
-          <span class="start-speed-range-wrap" style="--default-pos:23.2%;">
-            <input type="range" min="20" max="160" step="10" value="50"
-              data-role="career-scroll-idle-range" aria-label="生涯揭示等待">
-          </span>
-          <div class="start-speed-scale" aria-hidden="true">
-            <span>快</span>
-            <span>慢</span>
+          <div class="start-speed-section starmap-motion-pop" data-role="career-scroll-feel-settings">
+            <div class="start-speed-head">
+              <span>生涯滚动手感</span>
+              <button type="button" class="starmap-motion-reset" data-action="career-scroll-feel-reset">重置</button>
+            </div>
+            <label class="starmap-motion-row" style="--default-pos:34.36%;">
+              <span>滚轮力度 <output data-role="career-scroll-feel-value" data-setting="strength">100%</output></span>
+              <input type="range" min="50" max="200" step="5" value="100"
+                data-role="career-scroll-feel-range" data-setting="strength" aria-label="生涯滚轮力度">
+            </label>
+            <label class="starmap-motion-row" style="--default-pos:45.31%;">
+              <span>惯性滑行 <output data-role="career-scroll-feel-value" data-setting="inertia">45%</output></span>
+              <input type="range" min="0" max="100" step="5" value="45"
+                data-role="career-scroll-feel-range" data-setting="inertia" aria-label="生涯惯性滑行">
+            </label>
+            <label class="starmap-motion-row" style="--default-pos:59.38%;">
+              <span>连滚加速 <output data-role="career-scroll-feel-value" data-setting="acceleration">60%</output></span>
+              <input type="range" min="0" max="100" step="5" value="60"
+                data-role="career-scroll-feel-range" data-setting="acceleration" aria-label="生涯连滚加速">
+            </label>
+            <label class="starmap-motion-row" style="--default-pos:59.38%;">
+              <span>速度上限 <output data-role="career-scroll-feel-value" data-setting="maxSpeed">2400px/s</output></span>
+              <input type="range" min="600" max="3600" step="100" value="2400"
+                data-role="career-scroll-feel-range" data-setting="maxSpeed" aria-label="生涯滚动速度上限">
+            </label>
+            <label class="starmap-motion-row" style="--default-pos:23.2%;">
+              <span>揭示等待 <output data-role="career-scroll-feel-value" data-setting="idleMs">50ms</output></span>
+              <input type="range" min="20" max="160" step="10" value="50"
+                data-role="career-scroll-feel-range" data-setting="idleMs" aria-label="生涯揭示等待">
+            </label>
+            <label class="start-setting-toggle career-scroll-reveal-toggle">
+              <span><strong>滚动时暂停揭示</strong></span>
+              <input type="checkbox" data-role="career-scroll-reveal-toggle">
+              <i aria-hidden="true"></i>
+            </label>
           </div>
         </div>
       </div>
