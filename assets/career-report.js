@@ -9,7 +9,9 @@
   const loading = root.querySelector('[data-role="career-loading"]');
   const reportHost = root.querySelector('[data-role="career-report"]');
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const SCROLL_IDLE_MS = 40;
+  const SCROLL_IDLE_MS = 50;
+  const SCROLL_IDLE_MIN = 20;
+  const SCROLL_IDLE_MAX = 160;
   const SCROLL_REVEAL_WINDOW_MS = 240;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -132,6 +134,15 @@
     numberJobs: new Map(),
   };
   function reducedMotion() { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function readScrollIdleMs() {
+    let ms = SCROLL_IDLE_MS;
+    try {
+      const stored = Number(window.localStorage.getItem('canvas:careerScrollIdleMs:v1'));
+      if (Number.isFinite(stored)) ms = Math.max(SCROLL_IDLE_MIN, Math.min(SCROLL_IDLE_MAX, Math.round(stored / 10) * 10));
+    } catch (e) {}
+    return ms;
+  }
+  let scrollIdleMs = readScrollIdleMs();
   function language() { return window.RelatumI18n && window.RelatumI18n.language === 'en' ? 'en' : 'zh'; }
   function tr(key, vars) {
     let value = COPY[language()][key] || COPY.zh[key] || key;
@@ -906,7 +917,7 @@
       stopNumberFrame();
     }
     if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
-    state.scrollIdleTimer = window.setTimeout(finishScroll, SCROLL_IDLE_MS);
+    state.scrollIdleTimer = window.setTimeout(finishScroll, scrollIdleMs);
   }
 
   function stopRuntime(options) {
@@ -1011,6 +1022,10 @@
     const active = !!(event.detail && event.detail.workspace === 'career');
     state.active = active;
     if (!active) stopRuntime({ finishNumbers: true });
+  });
+  document.addEventListener('relatum:career-scroll-idle', (event) => {
+    const ms = Number(event.detail && event.detail.ms);
+    if (Number.isFinite(ms)) scrollIdleMs = Math.max(SCROLL_IDLE_MIN, Math.min(SCROLL_IDLE_MAX, Math.round(ms / 10) * 10));
   });
   document.addEventListener('relatum:languagechange', () => {
     if (state.report) {

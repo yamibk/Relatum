@@ -48,6 +48,8 @@
   const startSpeedPop = document.querySelector('[data-role="start-speed-pop"]');
   const startSpeedRange = document.querySelector('[data-role="start-speed-range"]');
   const startSpeedValue = document.querySelector('[data-role="start-speed-value"]');
+  const careerScrollIdleRange = document.querySelector('[data-role="career-scroll-idle-range"]');
+  const careerScrollIdleValue = document.querySelector('[data-role="career-scroll-idle-value"]');
   const notesInertiaRange = document.querySelector('[data-role="notes-inertia-range"]');
   const notesInertiaValue = document.querySelector('[data-role="notes-inertia-value"]');
   const notesStackHoverDelayRange = document.querySelector('[data-role="notes-stack-hover-delay-range"]');
@@ -125,6 +127,10 @@
   const START_SPEED_MIN = 180;
   const START_SPEED_MAX = 500;
   const START_SPEED_DEFAULT = 260;
+  const CAREER_SCROLL_IDLE_KEY = 'canvas:careerScrollIdleMs:v1';
+  const CAREER_SCROLL_IDLE_MIN = 20;
+  const CAREER_SCROLL_IDLE_MAX = 160;
+  const CAREER_SCROLL_IDLE_DEFAULT = 50;
   const EXPECTED_RUNTIME_SCHEMA = 3;
   const NOTES_INERTIA_KEY = 'canvas:notesInertia';
   const NOTES_INERTIA_DEFAULT = 0.45;
@@ -525,6 +531,24 @@
     }
   }
 
+  function clampCareerScrollIdle(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return CAREER_SCROLL_IDLE_DEFAULT;
+    const rounded = Math.round(n / 10) * 10;
+    return Math.max(CAREER_SCROLL_IDLE_MIN, Math.min(CAREER_SCROLL_IDLE_MAX, rounded));
+  }
+
+  function applyCareerScrollIdle(value, persist) {
+    const ms = clampCareerScrollIdle(value);
+    if (careerScrollIdleRange && careerScrollIdleRange.value !== String(ms)) careerScrollIdleRange.value = String(ms);
+    if (careerScrollIdleValue) careerScrollIdleValue.textContent = ms + 'ms';
+    if (careerScrollIdleRange) careerScrollIdleRange.setAttribute('aria-valuetext', ms + 'ms');
+    if (persist) {
+      try { localStorage.setItem(CAREER_SCROLL_IDLE_KEY, String(ms)); } catch (e) {}
+    }
+    document.dispatchEvent(new CustomEvent('relatum:career-scroll-idle', { detail: { ms } }));
+  }
+
   function clampNotesInertia(value) {
     const n = Number(value);
     if (!Number.isFinite(n)) return NOTES_INERTIA_DEFAULT;
@@ -729,6 +753,11 @@
     startTurnSpeed = START_SPEED_DEFAULT;
   }
   applyStartSpeed(startTurnSpeed, false);
+  let careerScrollIdleMs = CAREER_SCROLL_IDLE_DEFAULT;
+  try { careerScrollIdleMs = clampCareerScrollIdle(localStorage.getItem(CAREER_SCROLL_IDLE_KEY) || CAREER_SCROLL_IDLE_DEFAULT); } catch (e) {
+    careerScrollIdleMs = CAREER_SCROLL_IDLE_DEFAULT;
+  }
+  applyCareerScrollIdle(careerScrollIdleMs, false);
   try { notesInertia = clampNotesInertia(localStorage.getItem(NOTES_INERTIA_KEY) || NOTES_INERTIA_DEFAULT); } catch (e) {
     notesInertia = NOTES_INERTIA_DEFAULT;
   }
@@ -791,6 +820,9 @@
   }
   if (startSpeedRange) {
     startSpeedRange.addEventListener('input', () => applyStartSpeed(startSpeedRange.value, true));
+  }
+  if (careerScrollIdleRange) {
+    careerScrollIdleRange.addEventListener('input', () => applyCareerScrollIdle(careerScrollIdleRange.value, true));
   }
   if (notesInertiaRange) {
     notesInertiaRange.addEventListener('input', () => applyNotesInertia(notesInertiaRange.value, true));
