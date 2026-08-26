@@ -15,15 +15,16 @@ assert(trigger, 'the local data guide trigger must exist');
 assert(!/\sdisabled(?:\s|>|=)/.test(trigger[0]), 'the local data guide trigger must be enabled');
 assert(trigger[0].includes('查看本地数据与空间管理说明'));
 
-assert.strictEqual((html.match(/data-help-page="(?:safety|canvases|data)"/g) || []).length, 6);
+assert.strictEqual((html.match(/data-help-page="(?:safety|canvases|data|storage)"/g) || []).length, 8);
 assert(!html.includes('data-help-page="study"'));
 assert(html.includes('Relatum · 本地数据说明'));
-assert(html.includes('01 / 03'));
+assert(html.includes('01 / 04'));
 
 [
   "id: 'safety'",
   "id: 'canvases'",
   "id: 'data'",
+  "id: 'storage'",
   '名称.canvas',
   '名称.assets',
   '<code>notes</code>',
@@ -33,6 +34,12 @@ assert(html.includes('01 / 03'));
   'tree-page.json',
   'start-page-activity.json',
   'review.db',
+  '本机存储：偏好、视图与运行态',
+  'study:taskPageColors:v1',
+  '不能从 <code>study.json</code> 自动恢复',
+  '<code>canvas:focus*</code>',
+  '已写入 <code>data/focus.json</code> 的专注历史仍保留',
+  'API Key 另存在 <code>data/ai.json</code>',
   '删除哪一项，就会清空对应页面的数据',
   "canvas:dataGuideClicked:v1",
 ].forEach((token) => assert(start.includes(token), 'missing local data guide token: ' + token));
@@ -44,11 +51,20 @@ assert(html.includes('01 / 03'));
   'canvases and notes: your content',
   'Show in File Explorer',
   'data: records, settings, and indexes',
+  'On-device storage: preferences, views, and runtime state',
+  'they cannot be recovered automatically from <code>study.json</code>',
+  'completed history already written to <code>data/focus.json</code> remains',
   'It is completely separate from Study Goal Trees.',
   'Do not delete the whole <code>data</code> folder',
 ].forEach((token) => assert(start.includes(token), 'missing English local data guide token: ' + token));
 assert(i18n.includes("'Relatum · 本地数据说明': 'Relatum · Local Data Guide'"));
 assert(i18n.includes("'查看本地数据与空间管理说明': 'View the local data and storage guide'"));
+assert(i18n.includes("'canvases 文件夹': 'canvases folder'"));
+assert(i18n.includes("'本机偏好': 'On-device preferences'"));
+const helpCopy = start.slice(start.indexOf('const START_HELP_PAGES_ZH'), start.indexOf('function startHelpPages()'));
+assert(!/[A-Za-z]:[\\/]/.test(helpCopy), 'help copy must not contain a machine-specific drive path');
+assert(!helpCopy.includes('%LOCALAPPDATA%'), 'help copy must not expose an installation-specific storage path');
+assert(!helpCopy.includes('/Users/'), 'help copy must not contain a machine-specific user path');
 assert(!start.includes('开始第一张画布'), 'the retired start tutorial content must be removed');
 assert(!start.includes('function helpDemo('), 'the retired tutorial demos must be removed');
 
