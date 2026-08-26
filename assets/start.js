@@ -3182,12 +3182,12 @@
 
   // ── 渲染：左栏 + 右栏 ─────────────────────────
   function render(options) {
+    rebuildFileIndex();
     // 选中的用户组若已被删 → 回到最近。
     if (activeGroup && activeGroup !== FAVORITES_PAGE && activeGroup !== INBOX_PAGE
       && !validIds().has(activeGroup)) {
       activeGroup = '';
     }
-    rebuildFileIndex();
     renderDots();
     renderPanel(options);
   }

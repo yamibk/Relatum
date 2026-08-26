@@ -296,9 +296,13 @@
     return out;
   }
 
-  // 折线箭头（左侧工具栏「直线箭头」）：直线创建，选中后可加无限转折点。
+  // 直线 / 折线工具：创建时可选无箭头纯直线或终点箭头，选中后可加无限转折点。
   // 老的自由箭头无 kind，按二次贝塞尔曲线渲染，向后兼容。
   function isPolyArrow(a) { return !!(a && a.kind === 'poly'); }
+
+  function inkArrowHasHead(arrow) {
+    return !isPolyArrow(arrow) || arrow.arrowhead === 'end';
+  }
 
   function cloneInk(ink) {
     const source = ink && typeof ink === 'object' ? ink : {};
@@ -1674,7 +1678,7 @@
       if (tool === 'arrow' || tool === 'arrow-cw') {
         return { color: '#1a1a1a', width: 2.2, bend: 0.18 };
       }
-      return { color: '#1a1a1a', width: 2.2, curve: 'straight' };
+      return { color: '#1a1a1a', width: 2.2, curve: 'straight', arrowhead: 'end' };
     }
     function readToolDefaults(tool) {
       let raw = {};
@@ -1720,6 +1724,7 @@
         color: typeof raw.color === 'string' ? raw.color : '#1a1a1a',
         width: clampNum(raw.width, 1, 10, 2.2),
         curve: raw.curve === 'smooth' ? 'smooth' : 'straight',
+        arrowhead: raw.arrowhead === 'none' ? 'none' : 'end',
       };
     }
     function writeToolDefaults(tool, obj) {
@@ -1733,7 +1738,7 @@
         rebuildToolConfig(toolConfigFor);
       }
       playToolResetDone(btn);
-      const labels = { pen: '画笔', text: '文字', arrow: '逆时针箭头', 'arrow-cw': '顺时针箭头', 'arrow-line': '直线箭头' };
+      const labels = { pen: '画笔', text: '文字', arrow: '逆时针箭头', 'arrow-cw': '顺时针箭头', 'arrow-line': '直线 / 箭头' };
       showCanvasToast((labels[tool] || '工具') + '已恢复默认设置');
     }
     function beginToolResetPress(event) {
@@ -1960,11 +1965,15 @@
           + '<label class="tc-row"><span>粗细</span><input type="range" data-tc="width" min="1" max="10" step="0.5" value="' + d.width + '"></label>'
           + '<label class="tc-row"><span>弯曲幅度</span><input type="range" data-tc="bend" min="0.02" max="0.45" step="0.01" value="' + d.bend + '"></label>';
       } else {
-        title = '直线箭头';
-        const seg = (val, label) => '<button type="button" class="tc-seg' + (d.curve === val ? ' active' : '')
+        title = '直线 / 箭头';
+        const typeSeg = (val, label) => '<button type="button" class="tc-seg' + (d.arrowhead === val ? ' active' : '')
+          + '" data-tc-arrowhead="' + val + '">' + label + '</button>';
+        const curveSeg = (val, label) => '<button type="button" class="tc-seg' + (d.curve === val ? ' active' : '')
           + '" data-tc-curve="' + val + '">' + label + '</button>';
-        body = '<div class="tc-row"><span>转折</span><div class="tc-segs">'
-          + seg('straight', '直线转折') + seg('smooth', '曲线转折') + '</div></div>'
+        body = '<div class="tc-row"><span>类型</span><div class="tc-segs">'
+          + typeSeg('none', '纯直线') + typeSeg('end', '直线箭头') + '</div></div>'
+          + '<div class="tc-row"><span>转折</span><div class="tc-segs">'
+          + curveSeg('straight', '直线转折') + curveSeg('smooth', '曲线转折') + '</div></div>'
           + colorRow
           + '<label class="tc-row"><span>粗细</span><input type="range" data-tc="width" min="1" max="10" step="0.5" value="' + d.width + '"></label>';
       }
@@ -2013,20 +2022,25 @@
         ));
         path.style.stroke = d.color; path.style.strokeWidth = d.width;
       } else {
-        const dd = d.curve === 'smooth'
-          ? previewArrowPath(
-              'M 16 27 C 56 27 72 10 102 12 C 126 13 141 24 160 17',
+        const shaftD = d.curve === 'smooth'
+          ? 'M 16 27 C 56 27 72 10 102 12 C 126 13 141 24 160 17'
+          : 'M 16 28 L 70 12 L 110 26 L 162 14';
+        const dd = d.arrowhead === 'end'
+          ? (d.curve === 'smooth'
+            ? previewArrowPath(
+              shaftD,
               160, 17,
               160 - 141, 17 - 24,
               d.width,
               1.16
             )
-          : previewArrowPath(
-              'M 16 28 L 70 12 L 110 26 L 162 14',
+            : previewArrowPath(
+              shaftD,
               162, 14,
               162 - 110, 14 - 26,
               d.width
-            );
+            ))
+          : shaftD;
         path.setAttribute('d', dd);
         path.style.stroke = d.color; path.style.strokeWidth = d.width;
       }
@@ -2094,6 +2108,14 @@
         btn.addEventListener('click', () => {
           const cur = readToolDefaults('arrow-line');
           cur.curve = btn.dataset.tcCurve === 'smooth' ? 'smooth' : 'straight';
+          writeToolDefaults('arrow-line', cur);
+          rebuildToolConfig(tool);
+        });
+      });
+      pop.querySelectorAll('[data-tc-arrowhead]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const cur = readToolDefaults('arrow-line');
+          cur.arrowhead = btn.dataset.tcArrowhead === 'none' ? 'none' : 'end';
           writeToolDefaults('arrow-line', cur);
           rebuildToolConfig(tool);
         });
@@ -3423,7 +3445,7 @@
       path.setAttribute('class', 'canvas-free-arrow' + (isPolyArrow(arrow) ? ' canvas-free-arrow-poly' : ''));
       path.dataset.id = arrow.id || '';
       path.setAttribute('d', arrowPath(arrow));
-      path.setAttribute('marker-end', 'url(#ink-arrow-marker)');
+      if (inkArrowHasHead(arrow)) path.setAttribute('marker-end', 'url(#ink-arrow-marker)');
       path.style.stroke = arrow.color || '#1a1a1a';
       path.style.strokeWidth = arrow.width || 2.2;
       path.style.opacity = arrow.opacity == null ? 1 : arrow.opacity;
@@ -16580,7 +16602,7 @@
       };
     }
 
-    // 直线箭头：以直线创建（无拐点）；进入编辑模式后可加无限转折点
+    // 直线 / 直线箭头：以直线创建（无拐点）；进入编辑模式后可加无限转折点
     function startPolyArrowCreate(e) {
       if (!inkLayer) return;
       ensureInkDefs();
@@ -16596,12 +16618,13 @@
         width: d.width,
         opacity: 1,
         curve: d.curve,
+        arrowhead: d.arrowhead,
         seed: Math.round(Math.random() * 100000) / 100,
       };
       // 创建期间只挂可见路径，不挂命中条（命中条等提交后由 renderInk 统一生成，取消时无残留）
       const path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('class', 'canvas-free-arrow canvas-free-arrow-poly');
-      path.setAttribute('marker-end', 'url(#ink-arrow-marker)');
+      if (inkArrowHasHead(arrow)) path.setAttribute('marker-end', 'url(#ink-arrow-marker)');
       path.style.stroke = arrow.color;
       path.style.strokeWidth = arrow.width;
       path.setAttribute('d', arrowPath(arrow));
