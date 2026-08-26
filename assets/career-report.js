@@ -11,7 +11,6 @@
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const SCROLL_IDLE_MS = 80;
   const SCROLL_REVEAL_WINDOW_MS = 240;
-  const NUMBER_TICK_MS = 50;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const KIND_ZH = {
@@ -837,16 +836,12 @@
         return;
       }
       job.elapsed += delta;
-      job.sinceWrite += delta;
       const progress = Math.min(1, job.elapsed / job.duration);
-      if (job.sinceWrite >= NUMBER_TICK_MS || progress >= 1) {
-        const eased = 1 - Math.pow(1 - progress, 4);
-        const text = renderNumberValue(job, job.target * eased);
-        if (text !== job.lastText) {
-          node.textContent = text;
-          job.lastText = text;
-        }
-        job.sinceWrite = 0;
+      const eased = 1 - Math.pow(1 - progress, 4);
+      const text = renderNumberValue(job, job.target * eased);
+      if (text !== job.lastText) {
+        node.textContent = text;
+        job.lastText = text;
       }
       if (progress >= 1) finishNumberJob(node, job);
     });
@@ -883,7 +878,6 @@
         zeroText,
         duration: Math.min(1480, 900 + Math.log10(target + 1) * 105),
         elapsed: 0,
-        sinceWrite: NUMBER_TICK_MS,
         lastText: '',
       };
       if (reducedMotion() || target === 0) {
