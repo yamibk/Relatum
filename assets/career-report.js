@@ -10,6 +10,7 @@
   const reportHost = root.querySelector('[data-role="career-report"]');
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const SCROLL_IDLE_MS = 120;
+  const SCROLL_REVEAL_WINDOW_MS = 240;
   const NUMBER_TICK_MS = 50;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -124,6 +125,7 @@
     error: '',
     scrolling: false,
     scrollIdleTimer: 0,
+    scrollSettledAt: 0,
     revealFrame: 0,
     pendingReveals: new Set(),
     numberFrame: 0,
@@ -315,15 +317,17 @@
     return chart;
   }
 
-  function dotMatrix(groups) {
+  function dotMatrix(groups, options) {
     const chart = element('div', 'career-chart');
     const visual = element('div', 'career-dot-visual');
-    const matrix = element('div', 'career-dot-matrix');
+    const staggered = !!(options && options.staggered);
+    const matrix = element('div', 'career-dot-matrix' + (staggered ? ' is-staggered' : ''));
     const safeGroups = groups.filter((item) => number(item.count) > 0);
     const total = safeGroups.reduce((sum, item) => sum + number(item.count), 0);
     if (!total) { chart.appendChild(element('p', 'career-panel-copy', tr('noData'))); return chart; }
     const cap = 120;
     const scale = Math.max(1, Math.ceil(total / cap));
+    let dotIndex = 0;
     const legend = element('div', 'career-dot-legend');
     safeGroups.forEach((group, groupIndex) => {
       const colorIndex = safeGroups.length === 1
@@ -333,6 +337,7 @@
       const amount = Math.max(1, Math.ceil(number(group.count) / scale));
       for (let count = 0; count < amount; count += 1) {
         const dot = element('span', 'career-dot active');
+        if (staggered) dot.style.setProperty('--career-index', String(dotIndex++));
         dot.style.setProperty('--career-dot-color', color);
         dot.title = `${group.label}: ${formatNumber(group.count)}`;
         matrix.appendChild(dot);
@@ -534,14 +539,14 @@
     const grid = element('div', 'career-editorial-grid');
     const daily = panel(tr('daily'), tr('daily'), tr('dailyCopy'), 'is-wide');
     daily.appendChild(dailyBarcode(report.activity.days || []));
-    const monthly = panel(tr('monthly'), tr('monthly'), tr('monthlyCopy'), 'is-dark');
+    const monthly = panel(tr('monthly'), tr('monthly'), tr('monthlyCopy'));
     monthly.appendChild(lineChart(report.activity.months || [], {
       value: (item) => number(item.activeDays),
       label: (item, value) => `${formatMonth(item.month)} · ${formatNumber(value)} ${tr('days')}`,
     }));
     const weekday = panel(tr('weekday'), tr('weekday'), tr('weekdayCopy'));
     const weekdayGroups = (report.activity.weekdays || []).map((item) => ({ label: (language() === 'en' ? WEEKDAYS_EN : WEEKDAYS_ZH)[item.weekday], count: item.activeDays }));
-    weekday.appendChild(dotMatrix(weekdayGroups));
+    weekday.appendChild(dotMatrix(weekdayGroups, { staggered: true }));
     const strip = element('div', 'career-stat-strip');
     append(strip,
       stat(tr('recordedCanvas'), report.overview.canvasSec, 'duration'),
@@ -558,7 +563,7 @@
     const chapter = element('section', 'career-chapter');
     chapter.appendChild(sectionHeader('02', tr('canvas'), tr('canvasCopy')));
     const grid = element('div', 'career-editorial-grid');
-    const top = panel(tr('topCanvas'), tr('topCanvas'), '', 'is-wide is-dark');
+    const top = panel(tr('topCanvas'), tr('topCanvas'), '', 'is-wide');
     top.appendChild(barList(data.top || [], {
       label: (item) => item.title, value: (item) => number(item.seconds),
       numberFormat: 'duration', empty: tr('topCanvasEmpty'),
@@ -592,7 +597,7 @@
     const buckets = data.lengthBuckets || {};
     lengths.appendChild(dotMatrix([
       { label: tr('long'), count: buckets.long }, { label: tr('medium'), count: buckets.medium }, { label: tr('short'), count: buckets.short },
-    ]));
+    ], { staggered: true }));
     const longest = panel(tr('longestNotes'), tr('longestNotes'), '', 'is-wide');
     longest.appendChild(barList(data.top || [], {
       label: (item) => item.title, value: (item) => number(item.words), format: (item) => formatNumber(item.words),
@@ -756,11 +761,14 @@
     const targets = Array.from(state.pendingReveals);
     const rootBox = scroll.getBoundingClientRect();
     const visibleTargets = targets.filter((target) => targetStillVisible(target, rootBox));
+    const scrollReveal = state.scrollSettledAt > 0
+      && performance.now() - state.scrollSettledAt <= SCROLL_REVEAL_WINDOW_MS;
     targets.forEach((target) => {
       if (!target.isConnected || target.dataset.visible === '1') state.pendingReveals.delete(target);
     });
     visibleTargets.forEach((target) => {
       state.pendingReveals.delete(target);
+      if (scrollReveal) target.dataset.careerScrollReveal = '1';
       target.dataset.visible = '1';
       animateNumbers(target);
       if (state.observer) state.observer.unobserve(target);
@@ -889,6 +897,7 @@
   function finishScroll() {
     state.scrollIdleTimer = 0;
     state.scrolling = false;
+    state.scrollSettledAt = performance.now();
     scheduleRevealFlush();
     scheduleNumberFrame();
   }
@@ -912,6 +921,7 @@
     if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
     state.scrollIdleTimer = 0;
     state.scrolling = false;
+    state.scrollSettledAt = 0;
     clearNumberJobs(finishNumbers);
   }
 

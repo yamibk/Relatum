@@ -43603,6 +43603,11 @@ body.start-page[data-start-theme="dark"] .career-regenerate { color: #171816; }
 .career-editorial-grid > .career-reveal:nth-child(even) { --career-enter-x: 12px; }
 .career-editorial-grid > .career-reveal:nth-child(odd) { --career-enter-x: -12px; }
 .career-reveal[data-visible="1"] { opacity: 1; transform: translate3d(0,0,0); }
+/* 快速滚动停稳后，可视卡片一起轻快落位；首次进入仍保留完整错峰。 */
+.career-reveal[data-career-scroll-reveal="1"] {
+  transition-duration: 240ms, 340ms;
+  transition-delay: 0ms;
+}
 .career-section-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 420px); gap: 60px; align-items: end; margin-bottom: clamp(44px, 7vw, 78px); }
 .career-section-head h2 { margin: 0; font: 700 clamp(38px, 5.5vw, 72px)/.94 inherit; letter-spacing: -.06em; }
 .career-section-head p { margin: 0; color: var(--career-muted); font-size: 13px; line-height: 1.75; }
@@ -43709,6 +43714,13 @@ body.start-page[data-start-theme="dark"] .career-panel.is-dark .career-bar-track
 .career-dot { aspect-ratio: 1; width: 100%; max-width: 18px; justify-self: center; border: 1px solid var(--career-dot-color, currentColor); border-radius: 50%; opacity: .08; }
 .career-dot.active { background: var(--career-dot-color, currentColor); opacity: .88; }
 [data-visible="1"] .career-dot-matrix { opacity: 1; transform: none; clip-path: inset(0); }
+.career-dot-matrix.is-staggered { opacity: 1; transform: none; clip-path: inset(0); transition: none; }
+.career-dot-matrix.is-staggered .career-dot {
+  transform: translateY(5px) scale(.16);
+  transition: transform 520ms cubic-bezier(.16,1.45,.35,1), opacity 360ms ease;
+  transition-delay: calc(160ms + var(--career-index, 0) * 11ms);
+}
+[data-visible="1"] .career-dot-matrix.is-staggered .career-dot { transform: translateY(0) scale(1); }
 .career-dot-legend { display: grid; gap: 8px; align-content: center; }
 .career-dot-legend-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 9px; align-items: center; min-height: 22px; color: var(--career-muted); font-size: 10px; }
 .career-dot-legend-swatch { width: 7px; height: 7px; border-radius: 50%; background: var(--career-dot-color, currentColor); }

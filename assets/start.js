@@ -389,7 +389,14 @@
   }
 
   workspaceButtons.forEach((button) => {
-    button.addEventListener('click', () => setStartWorkspace(button.dataset.startWorkspace));
+    button.addEventListener('click', (event) => {
+      const workspace = button.dataset.startWorkspace;
+      setStartWorkspace(workspace);
+      // 鼠标 / 触控点击进入生涯后释放按钮焦点，否则 :focus-visible 会让
+      // 带全宽模糊层的顶栏持续展开。键盘激活的 click.detail 为 0，继续
+      // 保留焦点，供键盘用户通过顶栏切换工作区。
+      if (workspace === 'career' && event.detail > 0) button.blur();
+    });
   });
   syncWorkspaceControls(activeStartWorkspace);
   workspacePanels.forEach((panel) => {
