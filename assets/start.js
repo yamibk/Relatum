@@ -4573,7 +4573,12 @@
     btn.addEventListener('click', () => { setCadenceActive(true); });
   });
   document.querySelectorAll('[data-action="tree-page-view"]').forEach((btn) => {
-    btn.addEventListener('click', () => { setTreePageActive(true); });
+    btn.addEventListener('click', () => {
+      if (treePageActive && window.CanvasTreePage && typeof window.CanvasTreePage.resetView === 'function') {
+        window.CanvasTreePage.resetView();
+      }
+      setTreePageActive(true);
+    });
   });
   document.querySelectorAll('[data-action="review-view"]').forEach((btn) => {
     btn.addEventListener('click', () => { setReviewActive(true); });

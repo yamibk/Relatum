@@ -42,6 +42,9 @@ assert(start.includes("['tree', document.querySelector('.tree-page-embedded')]")
   && start.includes('window.CanvasTreePage.activate()')
   && start.includes('window.CanvasTreePage.deactivate()'),
   'Tree must participate in inert and lifecycle management');
+assert(start.includes("if (treePageActive && window.CanvasTreePage && typeof window.CanvasTreePage.resetView === 'function')")
+  && start.includes('window.CanvasTreePage.resetView();'),
+  'clicking the active Tree spine must fit the current tree without changing first-entry restoration');
 assert(start.includes("const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1'")
   && start.includes("localStorage.getItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY) === '1'")
   && start.includes("new CustomEvent('relatum:tree-page-root-title-change'"),

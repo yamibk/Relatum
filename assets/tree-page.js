@@ -23,6 +23,7 @@
   var T = function (value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; };
   var state = { tasks: [], tree: { version: 2, title: '树 1', nodes: [], links: [] }, trees: [], activeTreeId: '' };
   var open = false, busy = false, layout = null, confirmAction = null;
+  var resetViewPending = false;
   var progressCommandQueue = [], progressCommandContext = null;
   var appearanceCommandQueue = [], appearanceCommandContext = null;
   var collapsedIds = new Set(), nextTaskIndex = 0, nextCandidates = [];
@@ -466,6 +467,22 @@
       x: (rect.width - bounds.width * zoom) / 2 - (Number(bounds.x) || 0) * zoom,
       y: (rect.height - bounds.height * zoom) / 2 - (Number(bounds.y) || 0) * zoom,
     }, immediate === true);
+  }
+  function resetView() {
+    if (!open) return false;
+    if (!layout || scene.classList.contains('is-loading')) {
+      resetViewPending = true;
+      return true;
+    }
+    resetViewPending = false;
+    fit();
+    return true;
+  }
+  function consumePendingViewReset() {
+    if (!resetViewPending || !layout) return false;
+    resetViewPending = false;
+    fit();
+    return true;
   }
   function setZoom(next, anchorX, anchorY) {
     var rect = viewport.getBoundingClientRect(), old = viewTarget.zoom;
@@ -2422,7 +2439,7 @@
     render({ duration: 220, suppressEntrance: true });
     renderRail();
     scheduleTreeGoalBreath(1400);
-    if (changedTree && !restored) fit(true);
+    if (!consumePendingViewReset() && changedTree && !restored) fit(true);
     return true;
   }
   function refreshAuthorityAfterGenerationChange() {
@@ -2443,7 +2460,7 @@
     render();
     renderRail();
     scheduleTreeGoalBreath(1400);
-    if (!restored) fit(true);
+    if (!consumePendingViewReset() && !restored) fit(true);
     var requestedTree = requestedTreeId && state.trees.find(function (tree) { return tree.id === requestedTreeId; });
     if (!requestedTree && taskId && !GoalTree.taskOwner(state.tree, taskId)) {
       requestedTree = state.trees.find(function (tree) { return !!GoalTree.taskOwner(tree, taskId); });
@@ -2558,6 +2575,7 @@
     viewport.classList.remove('is-panning');
     stopViewAnimation();
     stopPanInertia();
+    resetViewPending = false;
     cancelTreeSwitchMotion();  // 停在半途的切树过渡随面板一起失效，场景复位到当前树原位
     // 先停动画并把镜头钉到目标值，再落盘：保存的是用户意图的最终镜头，而不是缓动中间帧。
     view = Object.assign({}, viewTarget);
@@ -3262,6 +3280,7 @@
     help: function (trigger) { openRoute(trigger); openGuide(trigger); },
     close: closeRoute,
     prefetch: prefetchStudyData,
+    resetView: resetView,
     refresh: function () {
       if (!open) return Promise.resolve(false);
       var epoch = treeEpoch;

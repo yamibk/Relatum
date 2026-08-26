@@ -90,6 +90,7 @@ routeFunctions.forEach((name) => {
   "window.addEventListener('blur', cancelActivePointerGestures)",
   "command: 'delete-task'", "body.command = 'update-root-appearance'",
   "window.CanvasTreePage =", 'activate: function', 'deactivate: function',
+  'resetView: resetView',
   'TREE_PAGE_SHAPES',
   'function createOptimistically(body)', "createClientId('tree_task_')",
   'function deleteTaskOptimistically(taskId)', "return deleteTaskOptimistically(task.id)",
@@ -104,6 +105,15 @@ routeFunctions.forEach((name) => {
   'function scheduleTreePagePreload()', 'window.requestIdleCallback(warmTreePage, { timeout: 1500 })',
   'scheduleTreePagePreload();',
 ].forEach((needle) => assert(tree.includes(needle), 'missing tree runtime contract: ' + needle));
+const resetViewSource = functionSource(tree, 'resetView');
+assert(resetViewSource.includes("scene.classList.contains('is-loading')")
+  && resetViewSource.includes('resetViewPending = true')
+  && resetViewSource.includes('fit();'),
+  'Tree camera reset must fit immediately when ready and defer while the first layout is loading');
+assert(functionSource(tree, 'consumePendingViewReset').includes('resetViewPending = false')
+  && tree.includes('if (!consumePendingViewReset() && !restored) fit(true);')
+  && functionSource(tree, 'closeRoute').includes('resetViewPending = false'),
+  'a deferred Tree camera reset must run once after layout and be discarded when leaving the page');
 
 [
   'if (event.altKey)', "command: 'create-reference'", "command: 'delete-reference'",
