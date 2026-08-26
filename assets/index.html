@@ -14,8 +14,9 @@
           ? 'scenic' : 'simple';
         document.documentElement.dataset.startTheme = theme;
         document.documentElement.dataset.startBackground = backgroundStyle;
-        var workspace = localStorage.getItem('canvas:startWorkspace:v1') === 'notes'
-          ? 'notes' : 'canvas';
+        var storedWorkspace = localStorage.getItem('canvas:startWorkspace:v1');
+        var workspace = storedWorkspace === 'notes' || storedWorkspace === 'career'
+          ? storedWorkspace : 'canvas';
         document.documentElement.dataset.startWorkspace = workspace;
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
@@ -75,7 +76,9 @@
       document.body.dataset.startBackground =
         document.documentElement.dataset.startBackground === 'scenic' ? 'scenic' : 'simple';
       document.body.dataset.startWorkspace =
-        document.documentElement.dataset.startWorkspace === 'notes' ? 'notes' : 'canvas';
+        document.documentElement.dataset.startWorkspace === 'notes'
+          || document.documentElement.dataset.startWorkspace === 'career'
+          ? document.documentElement.dataset.startWorkspace : 'canvas';
       let librarySearchEnabled = false;
       try { librarySearchEnabled = localStorage.getItem('canvas:librarySearchEnabled') === '1'; } catch (e) {}
       document.body.dataset.librarySearchEnabled = librarySearchEnabled ? '1' : '0';
@@ -249,6 +252,8 @@
           aria-controls="start-canvas-workspace">画布</button>
         <button type="button" role="tab" data-start-workspace="notes"
           aria-controls="start-notes-workspace">笔记</button>
+        <button type="button" role="tab" data-start-workspace="career"
+          aria-controls="start-career-workspace">生涯</button>
       </nav>
     </div>
     <!-- 常驻操作条：仅在画布列表视图显示（空状态由 hero 区承担操作）-->
@@ -1403,13 +1408,21 @@
     </aside>
   </section>
 
-  <section class="blog-workspace start-workspace-panel" id="start-blog-workspace"
-    data-start-workspace-panel="blog" aria-label="博客工作区" hidden>
-    <div class="blog-placeholder-paper">
-      <p class="note-eyebrow">BLOG · COMING NEXT</p>
-      <h1>博客工作区</h1>
-      <p>这里已经成为独立工作区入口。下一轮会在笔记库稳定后接入静态博客与发布联动。</p>
-      <button type="button" class="btn btn-primary" data-start-workspace="notes">先整理笔记</button>
+  <section class="career-workspace start-workspace-panel" id="start-career-workspace"
+    data-start-workspace-panel="career" aria-label="生涯使用报告" hidden>
+    <div class="career-scroll" data-role="career-scroll">
+      <section class="career-entry" data-role="career-entry">
+        <p class="career-kicker">RELATUM · CAREER</p>
+        <h1>查看我的使用报告</h1>
+        <p>统计画布、笔记、学习、专注与完成记录。<br>全部计算在本机完成。</p>
+        <button type="button" class="career-generate" data-career-action="generate">查看我的使用报告</button>
+      </section>
+      <section class="career-loading" data-role="career-loading" aria-live="polite" hidden>
+        <span class="career-loading-mark" aria-hidden="true"></span>
+        <strong>正在生成报告</strong>
+        <p>正在读取本地记录…</p>
+      </section>
+      <article class="career-report" data-role="career-report" hidden></article>
     </div>
   </section>
   </div>
