@@ -41,7 +41,26 @@ assert(career.includes("createElementNS(SVG_NS"), 'charts must use native SVG');
 assert(career.includes('IntersectionObserver'), 'scroll reveal must be viewport-driven');
 assert(career.includes('const SCROLL_IDLE_MS = 50'), 'scroll reveals need an explicit idle window');
 assert(start.includes('CAREER_SCROLL_IDLE_KEY') && career.includes('canvas:careerScrollIdleMs:v1'), 'career scroll idle must be a tunable start-page preference');
-assert(career.includes("scroll.addEventListener('scroll', handleScroll, { passive: true })"), 'Career scrolling must stay passive');
+assert(career.includes("scroll.addEventListener('scroll', handleScroll, { passive: true })"), 'Career scroll observation must stay passive');
+assert(html.match(/data-role="career-scroll-feel-range"/g).length === 5, 'Career scroll feel must expose four motion controls plus reveal delay');
+assert(html.includes('data-action="career-scroll-feel-reset"'), 'Career scroll feel needs a one-click reset');
+assert(html.includes('data-role="career-scroll-reveal-toggle"'), 'Career reveal pausing must be optional');
+assert(start.includes("CAREER_SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1'"), 'Career scroll feel must persist locally');
+assert(start.includes('strength: 100') && start.includes('inertia: 45')
+  && start.includes('acceleration: 60') && start.includes('maxSpeed: 2400')
+  && start.includes('pauseReveal: false'), 'Career scroll feel defaults must remain stable');
+assert(start.includes("new CustomEvent('relatum:career-scroll-feel'"), 'Career scroll feel changes must update the lazy runtime live');
+assert(career.includes("scroll.addEventListener('wheel', handleWheel, { passive: false })"), 'discrete mouse-wheel inertia must be able to prevent native scrolling');
+assert(career.includes('function isDiscreteMouseWheel(event)'), 'Career inertia must distinguish coarse wheels from precise input');
+assert(career.includes('event.wheelDeltaY || event.wheelDelta'), 'Chromium/WebView2 wheel notches must drive coarse-wheel detection');
+assert(career.includes('event.ctrlKey || event.metaKey') && career.includes('Math.abs(event.deltaX) > Math.abs(event.deltaY)'), 'zoom and horizontal gestures must keep native behavior');
+assert(career.includes('const impulse = event.deltaY * unit * 0.16'), 'wheel strength must use the agreed impulse model');
+assert(career.includes('0.80 + 0.16 * (scrollFeel.inertia / 100)'), 'inertia must use time-normalized configurable retention');
+assert(career.includes('sameDirection ? scrollFeel.acceleration / 100 : 0.15'), 'repeat acceleration and reverse braking must stay distinct');
+assert(career.includes('const maxVelocity = scrollFeel.maxSpeed / 60'), 'wheel velocity must honor the configured px/s cap');
+assert(career.includes('function revealPausedForScroll()'), 'scroll-time reveal pausing must be controlled by one runtime predicate');
+assert(career.includes('if (state.wheelFrame) {') && career.includes('scheduleScrollFinish();'), 'reveals must not settle while wheel inertia is active');
+assert(career.includes('stopWheelInertia(false);') && career.includes("window.addEventListener('pagehide'"), 'Career inertia must be cancelled by runtime cleanup');
 assert(career.includes('pendingReveals: new Set()'), 'scroll-time reveals must be queued and coalesced');
 assert(!career.includes('NUMBER_TICK_MS'), 'number text updates must not be rate-limited below display refresh');
 assert(career.includes('numberJobs: new Map()'), 'visible numbers must share one scheduler');

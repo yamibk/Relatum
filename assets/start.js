@@ -48,8 +48,10 @@
   const startSpeedPop = document.querySelector('[data-role="start-speed-pop"]');
   const startSpeedRange = document.querySelector('[data-role="start-speed-range"]');
   const startSpeedValue = document.querySelector('[data-role="start-speed-value"]');
-  const careerScrollIdleRange = document.querySelector('[data-role="career-scroll-idle-range"]');
-  const careerScrollIdleValue = document.querySelector('[data-role="career-scroll-idle-value"]');
+  const careerScrollFeelRanges = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-range"]'));
+  const careerScrollFeelValues = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-value"]'));
+  const careerScrollFeelReset = document.querySelector('[data-action="career-scroll-feel-reset"]');
+  const careerScrollRevealToggle = document.querySelector('[data-role="career-scroll-reveal-toggle"]');
   const notesInertiaRange = document.querySelector('[data-role="notes-inertia-range"]');
   const notesInertiaValue = document.querySelector('[data-role="notes-inertia-value"]');
   const notesStackHoverDelayRange = document.querySelector('[data-role="notes-stack-hover-delay-range"]');
@@ -127,10 +129,18 @@
   const START_SPEED_MIN = 180;
   const START_SPEED_MAX = 500;
   const START_SPEED_DEFAULT = 260;
+  const CAREER_SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1';
   const CAREER_SCROLL_IDLE_KEY = 'canvas:careerScrollIdleMs:v1';
   const CAREER_SCROLL_IDLE_MIN = 20;
   const CAREER_SCROLL_IDLE_MAX = 160;
   const CAREER_SCROLL_IDLE_DEFAULT = 50;
+  const CAREER_SCROLL_FEEL_DEFAULTS = Object.freeze({
+    strength: 100,
+    inertia: 45,
+    acceleration: 60,
+    maxSpeed: 2400,
+    pauseReveal: false,
+  });
   const EXPECTED_RUNTIME_SCHEMA = 3;
   const NOTES_INERTIA_KEY = 'canvas:notesInertia';
   const NOTES_INERTIA_DEFAULT = 0.45;
@@ -538,15 +548,61 @@
     return Math.max(CAREER_SCROLL_IDLE_MIN, Math.min(CAREER_SCROLL_IDLE_MAX, rounded));
   }
 
-  function applyCareerScrollIdle(value, persist) {
-    const ms = clampCareerScrollIdle(value);
-    if (careerScrollIdleRange && careerScrollIdleRange.value !== String(ms)) careerScrollIdleRange.value = String(ms);
-    if (careerScrollIdleValue) careerScrollIdleValue.textContent = ms + 'ms';
-    if (careerScrollIdleRange) careerScrollIdleRange.setAttribute('aria-valuetext', ms + 'ms');
+  function clampCareerScrollFeel(key, value) {
+    if (key === 'pauseReveal') return value !== false;
+    const n = Number(value);
+    if (key === 'idleMs') return clampCareerScrollIdle(n);
+    const fallback = CAREER_SCROLL_FEEL_DEFAULTS[key];
+    if (!Number.isFinite(n) || fallback == null) return fallback;
+    if (key === 'strength') return Math.max(50, Math.min(200, Math.round(n / 5) * 5));
+    if (key === 'inertia' || key === 'acceleration') return Math.max(0, Math.min(100, Math.round(n / 5) * 5));
+    if (key === 'maxSpeed') return Math.max(600, Math.min(3600, Math.round(n / 100) * 100));
+    return fallback;
+  }
+
+  function readCareerScrollFeel() {
+    let raw = null;
+    let idleMs = CAREER_SCROLL_IDLE_DEFAULT;
+    try { raw = JSON.parse(localStorage.getItem(CAREER_SCROLL_FEEL_KEY) || 'null'); } catch (e) {}
+    try { idleMs = clampCareerScrollIdle(localStorage.getItem(CAREER_SCROLL_IDLE_KEY) || CAREER_SCROLL_IDLE_DEFAULT); } catch (e) {}
+    const next = Object.assign({}, CAREER_SCROLL_FEEL_DEFAULTS, raw || {});
+    Object.keys(CAREER_SCROLL_FEEL_DEFAULTS).forEach((key) => { next[key] = clampCareerScrollFeel(key, next[key]); });
+    next.idleMs = idleMs;
+    return next;
+  }
+
+  function careerScrollFeelLabel(key, value) {
+    if (key === 'idleMs') return value + 'ms';
+    if (key === 'maxSpeed') return value + 'px/s';
+    return value + '%';
+  }
+
+  function applyCareerScrollFeel(settings, persist) {
+    const next = Object.assign({}, CAREER_SCROLL_FEEL_DEFAULTS, settings || {});
+    Object.keys(CAREER_SCROLL_FEEL_DEFAULTS).forEach((key) => { next[key] = clampCareerScrollFeel(key, next[key]); });
+    next.idleMs = clampCareerScrollIdle(settings && settings.idleMs);
+    careerScrollFeelRanges.forEach((input) => {
+      const key = input.dataset.setting;
+      if (!key || next[key] == null) return;
+      input.value = String(next[key]);
+      input.setAttribute('aria-valuetext', careerScrollFeelLabel(key, next[key]));
+    });
+    careerScrollFeelValues.forEach((output) => {
+      const key = output.dataset.setting;
+      if (key && next[key] != null) output.textContent = careerScrollFeelLabel(key, next[key]);
+    });
+    if (careerScrollRevealToggle) careerScrollRevealToggle.checked = next.pauseReveal;
     if (persist) {
-      try { localStorage.setItem(CAREER_SCROLL_IDLE_KEY, String(ms)); } catch (e) {}
+      try {
+        const stored = {};
+        Object.keys(CAREER_SCROLL_FEEL_DEFAULTS).forEach((key) => { stored[key] = next[key]; });
+        localStorage.setItem(CAREER_SCROLL_FEEL_KEY, JSON.stringify(stored));
+        localStorage.setItem(CAREER_SCROLL_IDLE_KEY, String(next.idleMs));
+      } catch (e) {}
     }
-    document.dispatchEvent(new CustomEvent('relatum:career-scroll-idle', { detail: { ms } }));
+    document.dispatchEvent(new CustomEvent('relatum:career-scroll-feel', { detail: next }));
+    document.dispatchEvent(new CustomEvent('relatum:career-scroll-idle', { detail: { ms: next.idleMs } }));
+    return next;
   }
 
   function clampNotesInertia(value) {
@@ -753,11 +809,7 @@
     startTurnSpeed = START_SPEED_DEFAULT;
   }
   applyStartSpeed(startTurnSpeed, false);
-  let careerScrollIdleMs = CAREER_SCROLL_IDLE_DEFAULT;
-  try { careerScrollIdleMs = clampCareerScrollIdle(localStorage.getItem(CAREER_SCROLL_IDLE_KEY) || CAREER_SCROLL_IDLE_DEFAULT); } catch (e) {
-    careerScrollIdleMs = CAREER_SCROLL_IDLE_DEFAULT;
-  }
-  applyCareerScrollIdle(careerScrollIdleMs, false);
+  applyCareerScrollFeel(readCareerScrollFeel(), false);
   try { notesInertia = clampNotesInertia(localStorage.getItem(NOTES_INERTIA_KEY) || NOTES_INERTIA_DEFAULT); } catch (e) {
     notesInertia = NOTES_INERTIA_DEFAULT;
   }
@@ -821,8 +873,25 @@
   if (startSpeedRange) {
     startSpeedRange.addEventListener('input', () => applyStartSpeed(startSpeedRange.value, true));
   }
-  if (careerScrollIdleRange) {
-    careerScrollIdleRange.addEventListener('input', () => applyCareerScrollIdle(careerScrollIdleRange.value, true));
+  careerScrollFeelRanges.forEach((input) => {
+    input.addEventListener('input', () => {
+      const next = readCareerScrollFeel();
+      next[input.dataset.setting] = input.value;
+      applyCareerScrollFeel(next, true);
+    });
+  });
+  if (careerScrollRevealToggle) {
+    careerScrollRevealToggle.addEventListener('change', () => {
+      const next = readCareerScrollFeel();
+      next.pauseReveal = careerScrollRevealToggle.checked;
+      applyCareerScrollFeel(next, true);
+    });
+  }
+  if (careerScrollFeelReset) {
+    careerScrollFeelReset.addEventListener('click', () => applyCareerScrollFeel({
+      ...CAREER_SCROLL_FEEL_DEFAULTS,
+      idleMs: CAREER_SCROLL_IDLE_DEFAULT,
+    }, true));
   }
   if (notesInertiaRange) {
     notesInertiaRange.addEventListener('input', () => applyNotesInertia(notesInertiaRange.value, true));

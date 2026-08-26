@@ -8211,6 +8211,11 @@ body.desktop-window-transitioning .desktop-window-btn[data-window-action="maximi
 
 .starmap-motion-toggle { margin-top: 2px; }
 
+.career-scroll-reveal-toggle {
+  margin-top: 2px;
+  min-height: 36px;
+}
+
 .start-priority-settings {
   display: grid;
   gap: 6px;

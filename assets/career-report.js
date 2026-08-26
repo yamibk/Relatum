@@ -13,6 +13,15 @@
   const SCROLL_IDLE_MIN = 20;
   const SCROLL_IDLE_MAX = 160;
   const SCROLL_REVEAL_WINDOW_MS = 240;
+  const SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1';
+  const SCROLL_FEEL_DEFAULTS = Object.freeze({
+    strength: 100,
+    inertia: 45,
+    acceleration: 60,
+    maxSpeed: 2400,
+    pauseReveal: false,
+  });
+  const WHEEL_STOP_SPEED = 0.08;
   const WEEKDAYS_ZH = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const KIND_ZH = {
@@ -132,8 +141,31 @@
     numberFrame: 0,
     numberLastFrame: 0,
     numberJobs: new Map(),
+    wheelFrame: 0,
+    wheelLastFrame: 0,
+    wheelVelocity: 0,
   };
   function reducedMotion() { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function clampScrollFeel(key, value) {
+    if (key === 'pauseReveal') return value !== false;
+    const n = Number(value);
+    const fallback = SCROLL_FEEL_DEFAULTS[key];
+    if (!Number.isFinite(n) || fallback == null) return fallback;
+    if (key === 'strength') return Math.max(50, Math.min(200, Math.round(n / 5) * 5));
+    if (key === 'inertia' || key === 'acceleration') return Math.max(0, Math.min(100, Math.round(n / 5) * 5));
+    if (key === 'maxSpeed') return Math.max(600, Math.min(3600, Math.round(n / 100) * 100));
+    return fallback;
+  }
+  function normalizeScrollFeel(raw) {
+    const next = Object.assign({}, SCROLL_FEEL_DEFAULTS, raw || {});
+    Object.keys(SCROLL_FEEL_DEFAULTS).forEach((key) => { next[key] = clampScrollFeel(key, next[key]); });
+    return next;
+  }
+  function readScrollFeel() {
+    try { return normalizeScrollFeel(JSON.parse(window.localStorage.getItem(SCROLL_FEEL_KEY) || 'null')); } catch (e) {
+      return normalizeScrollFeel(null);
+    }
+  }
   function readScrollIdleMs() {
     let ms = SCROLL_IDLE_MS;
     try {
@@ -143,6 +175,8 @@
     return ms;
   }
   let scrollIdleMs = readScrollIdleMs();
+  let scrollFeel = readScrollFeel();
+  function revealPausedForScroll() { return scrollFeel.pauseReveal && state.scrolling; }
   function language() { return window.RelatumI18n && window.RelatumI18n.language === 'en' ? 'en' : 'zh'; }
   function tr(key, vars) {
     let value = COPY[language()][key] || COPY.zh[key] || key;
@@ -770,7 +804,7 @@
 
   function revealPendingTargets() {
     state.revealFrame = 0;
-    if (!state.active || state.scrolling || !state.pendingReveals.size) return;
+    if (!state.active || revealPausedForScroll() || !state.pendingReveals.size) return;
     const targets = Array.from(state.pendingReveals);
     const rootBox = scroll.getBoundingClientRect();
     const visibleTargets = targets.filter((target) => targetStillVisible(target, rootBox));
@@ -789,7 +823,7 @@
   }
 
   function scheduleRevealFlush() {
-    if (state.revealFrame || state.scrolling || !state.active || !state.pendingReveals.size) return;
+    if (state.revealFrame || revealPausedForScroll() || !state.active || !state.pendingReveals.size) return;
     state.revealFrame = requestAnimationFrame(revealPendingTargets);
   }
 
@@ -835,7 +869,7 @@
 
   function runNumberFrame(now) {
     state.numberFrame = 0;
-    if (!state.active || state.scrolling || !state.numberJobs.size) {
+    if (!state.active || revealPausedForScroll() || !state.numberJobs.size) {
       state.numberLastFrame = 0;
       return;
     }
@@ -861,7 +895,7 @@
   }
 
   function scheduleNumberFrame() {
-    if (state.numberFrame || !state.active || state.scrolling || !state.numberJobs.size) return;
+    if (state.numberFrame || !state.active || revealPausedForScroll() || !state.numberJobs.size) return;
     state.numberLastFrame = 0;
     state.numberFrame = requestAnimationFrame(runNumberFrame);
   }
@@ -902,7 +936,79 @@
     scheduleNumberFrame();
   }
 
+  function scheduleScrollFinish() {
+    if (!state.active || !state.scrolling) return;
+    if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
+    state.scrollIdleTimer = window.setTimeout(finishScroll, scrollIdleMs);
+  }
+
+  function stopWheelInertia(settle) {
+    if (state.wheelFrame) cancelAnimationFrame(state.wheelFrame);
+    state.wheelFrame = 0;
+    state.wheelLastFrame = 0;
+    state.wheelVelocity = 0;
+    if (settle) scheduleScrollFinish();
+  }
+
+  function runWheelInertia(now) {
+    state.wheelFrame = 0;
+    if (!state.active || reducedMotion() || !(scrollFeel.inertia > 0)
+        || Math.abs(state.wheelVelocity) < WHEEL_STOP_SPEED) {
+      stopWheelInertia(true);
+      return;
+    }
+    const dt = state.wheelLastFrame
+      ? Math.max(0.45, Math.min(2.4, (now - state.wheelLastFrame) / 16.667))
+      : 1;
+    state.wheelLastFrame = now;
+    const before = scroll.scrollTop;
+    const maxTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const next = Math.max(0, Math.min(maxTop, before + state.wheelVelocity * dt));
+    scroll.scrollTop = next;
+    if (next === before || (next <= 0 && state.wheelVelocity < 0)
+        || (next >= maxTop && state.wheelVelocity > 0)) {
+      stopWheelInertia(true);
+      return;
+    }
+    const retention = 0.80 + 0.16 * (scrollFeel.inertia / 100);
+    state.wheelVelocity *= Math.pow(retention, dt);
+    state.wheelFrame = requestAnimationFrame(runWheelInertia);
+  }
+
+  function isDiscreteMouseWheel(event) {
+    if (!event || !event.deltaY || event.ctrlKey || event.metaKey
+        || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
+    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE || event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return true;
+    if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return false;
+    const legacyDelta = Number(event.wheelDeltaY || event.wheelDelta || 0);
+    if (!legacyDelta || Math.abs(legacyDelta) < 120) return false;
+    const notches = Math.abs(legacyDelta) / 120;
+    return Math.abs(notches - Math.round(notches)) < 0.001;
+  }
+
+  function handleWheel(event) {
+    if (!state.active || reducedMotion() || !(scrollFeel.inertia > 0) || !isDiscreteMouseWheel(event)) return;
+    event.preventDefault();
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : (event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? scroll.clientHeight : 1);
+    const impulse = event.deltaY * unit * 0.16 * (scrollFeel.strength / 100);
+    const sameDirection = !state.wheelVelocity || Math.sign(state.wheelVelocity) === Math.sign(impulse);
+    state.wheelVelocity = impulse + state.wheelVelocity
+      * (sameDirection ? scrollFeel.acceleration / 100 : 0.15);
+    const maxVelocity = scrollFeel.maxSpeed / 60;
+    state.wheelVelocity = Math.max(-maxVelocity, Math.min(maxVelocity, state.wheelVelocity));
+    if (!state.wheelFrame) {
+      state.wheelLastFrame = 0;
+      state.wheelFrame = requestAnimationFrame(runWheelInertia);
+    }
+  }
+
   function finishScroll() {
+    if (state.wheelFrame) {
+      scheduleScrollFinish();
+      return;
+    }
     state.scrollIdleTimer = 0;
     state.scrolling = false;
     state.scrollSettledAt = performance.now();
@@ -914,10 +1020,9 @@
     if (!state.active) return;
     if (!state.scrolling) {
       state.scrolling = true;
-      stopNumberFrame();
+      if (scrollFeel.pauseReveal) stopNumberFrame();
     }
-    if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
-    state.scrollIdleTimer = window.setTimeout(finishScroll, scrollIdleMs);
+    scheduleScrollFinish();
   }
 
   function stopRuntime(options) {
@@ -930,6 +1035,7 @@
     state.scrollIdleTimer = 0;
     state.scrolling = false;
     state.scrollSettledAt = 0;
+    stopWheelInertia(false);
     clearNumberJobs(finishNumbers);
   }
 
@@ -1018,6 +1124,7 @@
     if (state.report && !state.observer) startReveals();
   }
   scroll.addEventListener('scroll', handleScroll, { passive: true });
+  scroll.addEventListener('wheel', handleWheel, { passive: false });
   document.addEventListener('relatum:start-workspacechange', (event) => {
     const active = !!(event.detail && event.detail.workspace === 'career');
     state.active = active;
@@ -1027,12 +1134,26 @@
     const ms = Number(event.detail && event.detail.ms);
     if (Number.isFinite(ms)) scrollIdleMs = Math.max(SCROLL_IDLE_MIN, Math.min(SCROLL_IDLE_MAX, Math.round(ms / 10) * 10));
   });
+  document.addEventListener('relatum:career-scroll-feel', (event) => {
+    scrollFeel = normalizeScrollFeel(event.detail);
+    if (!(scrollFeel.inertia > 0)) stopWheelInertia(true);
+    if (state.scrolling && scrollFeel.pauseReveal) stopNumberFrame();
+    else {
+      scheduleRevealFlush();
+      scheduleNumberFrame();
+    }
+  });
   document.addEventListener('relatum:languagechange', () => {
+    stopWheelInertia(false);
     if (state.report) {
       const top = scroll.scrollTop;
       render(state.report);
       scroll.scrollTop = top;
     } else showEntry();
+  });
+  window.addEventListener('pagehide', () => stopWheelInertia(false));
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopWheelInertia(false);
   });
 
   window.RelatumCareerReport = { activate, preload, generate, get report() { return state.report; } };
