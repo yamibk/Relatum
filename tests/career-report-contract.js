@@ -39,7 +39,8 @@ assert(server.includes('_atomic_write_json(CAREER_REPORT_FILE, report)'), 'repor
 
 assert(career.includes("createElementNS(SVG_NS"), 'charts must use native SVG');
 assert(career.includes('IntersectionObserver'), 'scroll reveal must be viewport-driven');
-assert(career.includes('const SCROLL_IDLE_MS = 40'), 'scroll reveals need an explicit idle window');
+assert(career.includes('const SCROLL_IDLE_MS = 50'), 'scroll reveals need an explicit idle window');
+assert(start.includes('CAREER_SCROLL_IDLE_KEY') && career.includes('canvas:careerScrollIdleMs:v1'), 'career scroll idle must be a tunable start-page preference');
 assert(career.includes("scroll.addEventListener('scroll', handleScroll, { passive: true })"), 'Career scrolling must stay passive');
 assert(career.includes('pendingReveals: new Set()'), 'scroll-time reveals must be queued and coalesced');
 assert(!career.includes('NUMBER_TICK_MS'), 'number text updates must not be rate-limited below display refresh');

@@ -67,7 +67,7 @@
     '界面语言': 'Interface language', '中文': 'Chinese', '英文': 'English',
     '笔记正文字号': 'Note text size', '100% 对应 16px，只缩放 Markdown 正文与行内标题': '100% equals 16px and scales only Markdown text and the inline title',
     '起始页、专注、学习与画布使用同一种语言': 'Use one language across Home, Focus, Study, and Canvas.',
-    '翻页速度': 'Page motion', '快': 'Fast', '慢': 'Slow', '速记页设置': 'Quick Notes settings',
+    '翻页速度': 'Page motion', '快': 'Fast', '慢': 'Slow', '生涯揭示等待': 'Career reveal delay', '速记页设置': 'Quick Notes settings',
     '拖拽惯性': 'Drag inertia', '稳': 'Steady', '滑': 'Fluid',
     '叠放展开延迟': 'Stack expansion delay', '瞬发': 'Instant', '长按': 'Long press',
     '速记控制台': 'Quick Notes controls', '打开速记控制台': 'Open Quick Notes controls',
