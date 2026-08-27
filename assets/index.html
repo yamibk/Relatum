@@ -584,7 +584,54 @@
               <div class="study-route-scene" data-role="study-route-scene">
                 <svg class="study-route-edges" data-role="study-route-edges" aria-label="树连接"></svg>
                 <div class="study-route-nodes" data-role="study-route-nodes" role="tree"></div>
+                <div class="tree-page-free-items" data-role="tree-page-free-items" aria-label="树状页自由文字与便签"></div>
               </div>
+            </div>
+            <div class="tree-page-item-dock is-collapsed" data-role="tree-page-item-dock" data-collapsed="1">
+              <div class="tree-page-item-dock-row" id="tree-page-item-dock-row" role="toolbar" aria-label="文本框与便签">
+                <div class="tree-page-item-create-group" role="group" aria-label="新建对象">
+                  <button type="button" class="tree-page-item-create" data-tree-item-create="note"
+                          title="便签 · 拖到树状页创建，或点击后在树状页放置" aria-label="新建便签">
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5H16v8.7l-4.2 4.3H4Z"/><path d="M11.8 16.5v-4.3H16"/><path d="M6.4 7h6.4M6.4 9.8h4.4"/></svg>
+                    <span>便签</span>
+                  </button>
+                  <button type="button" class="tree-page-item-create" data-tree-item-create="text"
+                          title="文本框 · 拖到树状页创建，或点击后在树状页放置" aria-label="新建文本框">
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5h10M10 5v11M7 16h6"/></svg>
+                    <span>文本框</span>
+                  </button>
+                </div>
+                <span class="tree-page-item-dock-sep" aria-hidden="true"></span>
+                <div class="tree-page-item-colors" data-role="tree-page-item-colors" role="group" aria-label="对象颜色">
+                  <button type="button" data-tree-item-tone="yellow" title="柔和黄" aria-label="柔和黄"></button>
+                  <button type="button" data-tree-item-tone="orange" title="柔和橙" aria-label="柔和橙"></button>
+                  <button type="button" data-tree-item-tone="red" title="柔和红" aria-label="柔和红"></button>
+                  <button type="button" data-tree-item-tone="purple" title="柔和紫" aria-label="柔和紫"></button>
+                  <button type="button" data-tree-item-tone="blue" title="柔和蓝" aria-label="柔和蓝"></button>
+                  <button type="button" data-tree-item-tone="cyan" title="柔和青" aria-label="柔和青"></button>
+                  <button type="button" data-tree-item-tone="green" title="柔和绿" aria-label="柔和绿"></button>
+                  <button type="button" data-tree-item-tone="gray" title="柔和灰" aria-label="柔和灰"></button>
+                  <button type="button" data-tree-item-tone="white" title="暖白" aria-label="暖白"></button>
+                  <button type="button" data-tree-item-tone="black" title="黑色" aria-label="黑色"></button>
+                </div>
+                <span class="tree-page-item-dock-sep" aria-hidden="true"></span>
+                <div class="tree-page-item-sizes" role="group" aria-label="对象字号">
+                  <button type="button" data-tree-item-size="22" title="小字号"><span class="tree-page-item-size-sm">A</span></button>
+                  <button type="button" data-tree-item-size="34" title="默认字号"><span class="tree-page-item-size-md">A</span></button>
+                  <button type="button" data-tree-item-size="48" title="大字号"><span class="tree-page-item-size-lg">A</span></button>
+                  <button type="button" data-tree-item-size="64" title="特大字号"><span class="tree-page-item-size-xl">A</span></button>
+                </div>
+                <span class="tree-page-item-dock-sep" aria-hidden="true"></span>
+                <button type="button" class="tree-page-item-clear-empty" data-tree-item-clear-empty
+                        title="清除空白对象" aria-label="清除空白对象">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6.5v9h8v-9M4.5 5h11M8 5V3.5h4V5M8.5 8.5V13M11.5 8.5V13"/></svg>
+                </button>
+              </div>
+              <button type="button" class="tree-page-item-dock-collapse" data-role="tree-page-item-dock-collapse"
+                       title="展开工具栏" aria-label="展开工具栏" aria-expanded="false"
+                      aria-controls="tree-page-item-dock-row">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
+              </button>
             </div>
             <nav class="study-route-rail tree-page-route-rail auto-hide" data-role="study-route-rail" aria-label="树切换">
               <div class="study-route-rail-list" data-role="study-route-rail-list">
@@ -1618,6 +1665,7 @@
   <script src="study-graph.js" defer></script>
   <script src="study-goal-tree.js" defer></script>
   <script src="study-palette.js" defer></script>
+  <script src="font-loader.js" defer></script>
   <script src="tree-page.js" defer></script>
   <script src="study.js" defer></script>
   <script src="study-route.js" defer></script>

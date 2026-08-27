@@ -42,17 +42,121 @@ class TreePageTests(unittest.TestCase):
     def active_tree(self):
         return app._study_goal_tree(self.data, self.data["activeTreeId"])
 
+    def free_item(self, item_id="tree_free_test", *, note=False, **overrides):
+        item = {
+            "id": item_id,
+            "kind": "textBox",
+            "x": 120,
+            "y": -30,
+            "width": 290 if note else 118,
+            "height": 200 if note else 54,
+            "text": "",
+            "fontSize": 21 if note else 34,
+            "color": "#383225" if note else "#69716d",
+        }
+        if note:
+            item.update({
+                "boxStyle": "emphasis-card",
+                "fillColor": "#f6eab8",
+                "borderColor": "#b99a48",
+            })
+        item.update(overrides)
+        return item
+
     def test_fresh_v2_is_lazy_and_roundtrips(self):
         self.assertEqual(self.data["version"], 2)
         self.assertEqual(self.data["tasks"], [])
         self.assertEqual(len(self.data["goalTrees"]), 1)
         self.assertEqual(self.data["activeTreeId"], "goal_default")
+        self.assertEqual(self.active_tree()["freeItems"], [])
         self.assertEqual(app.load_tree_page()["activeTreeId"], self.data["activeTreeId"])
         self.assertFalse(app.TREE_PAGE_FILE.exists())
         self.task("第一项")
         saved = app.save_tree_page(self.data)
         self.assertTrue(app.TREE_PAGE_FILE.exists())
         self.assertEqual(app.load_tree_page(), saved)
+
+    def test_old_v2_without_free_items_normalizes_to_an_empty_list(self):
+        legacy = copy.deepcopy(self.data)
+        legacy["goalTrees"][0].pop("freeItems", None)
+        normalized = app._tree_page_normalize(legacy)
+        self.assertEqual(normalized["goalTrees"][0]["freeItems"], [])
+
+    def test_free_items_create_update_delete_and_stay_in_their_tree(self):
+        first_tree_id = self.data["activeTreeId"]
+        text = self.free_item()
+        created = self.command("create-free-item", item=text)
+        self.assertEqual(created["item"]["id"], text["id"])
+        self.assertNotIn("boxStyle", created["item"])
+
+        note = self.free_item(
+            "tree_free_note", note=True,
+            fillColor="#f2e0d5", borderColor="#ae826b", color="#ae692c",
+        )
+        created_note = self.command("create-free-item", item=note)["item"]
+        self.assertEqual(created_note["boxStyle"], "emphasis-card")
+        self.assertEqual(created_note["fillColor"], app.TREE_PAGE_NOTE_FILL)
+        self.assertEqual(created_note["borderColor"], app.TREE_PAGE_NOTE_BORDER)
+        self.assertEqual(created_note["color"], "#ae692c")
+        self.assertEqual(created_note["borderWidth"], 2.5)
+        self.assertEqual(created_note["borderStyle"], "solid")
+
+        updated = self.command("update-free-item", itemId=text["id"], patch={
+            "x": 248, "width": 360, "text": "多行\n纯文本", "fontSize": 48, "color": "#356ca8",
+        })["item"]
+        self.assertEqual(updated["x"], 248)
+        self.assertEqual(updated["text"], "多行\n纯文本")
+        self.assertEqual(updated["fontSize"], 48)
+
+        second_tree_id = self.command("create-tree", title="第二棵")["treeId"]
+        self.assertEqual(self.active_tree()["freeItems"], [])
+        self.command("create-free-item", item=self.free_item("tree_free_second"))
+        first_tree = app._study_goal_tree(self.data, first_tree_id)
+        second_tree = app._study_goal_tree(self.data, second_tree_id)
+        self.assertEqual({item["id"] for item in first_tree["freeItems"]}, {text["id"], note["id"]})
+        self.assertEqual([item["id"] for item in second_tree["freeItems"]], ["tree_free_second"])
+
+        self.command("delete-free-item", itemId="tree_free_second")
+        self.assertEqual(app._study_goal_tree(self.data, second_tree_id)["freeItems"], [])
+        self.command("switch-tree", treeId=first_tree_id)
+        self.command("delete-free-item", itemId=text["id"])
+        self.assertEqual([item["id"] for item in self.active_tree()["freeItems"]], [note["id"]])
+
+    def test_free_item_validation_and_limits(self):
+        invalid_cases = [
+            ({"id": "bad id"}, "标识"),
+            ({"kind": "sticky"}, "类型"),
+            ({"boxStyle": "note-bubble"}, "样式"),
+            ({"color": "red"}, "颜色"),
+            ({"x": float("inf")}, "横坐标"),
+            ({"width": 19}, "宽度"),
+            ({"height": 6001}, "高度"),
+            ({"fontSize": 121}, "字号"),
+            ({"text": "x" * 2001}, "文字"),
+        ]
+        for index, (patch, message) in enumerate(invalid_cases):
+            with self.subTest(patch=patch):
+                item = self.free_item(f"tree_free_invalid_{index}")
+                item.update(patch)
+                with self.assertRaisesRegex(ValueError, message):
+                    self.command("create-free-item", item=item)
+
+        self.command("create-free-item", item=self.free_item("tree_free_limit_one"))
+        with mock.patch.object(app, "TREE_PAGE_FREE_ITEMS_MAX", 1):
+            with self.assertRaisesRegex(ValueError, "单棵树"):
+                self.command("create-free-item", item=self.free_item("tree_free_limit_two"))
+        second_tree = self.command("create-tree")["treeId"]
+        with mock.patch.object(app, "TREE_PAGE_TOTAL_FREE_ITEMS_MAX", 1):
+            with self.assertRaisesRegex(ValueError, "总量"):
+                self.command("create-free-item", treeId=second_tree, item=self.free_item("tree_free_total"))
+
+    def test_deleting_a_tree_cascades_its_free_items(self):
+        self.command("create-free-item", item=self.free_item("tree_free_first"))
+        second_tree_id = self.command("create-tree", title="临时树")["treeId"]
+        self.command("create-free-item", item=self.free_item("tree_free_doomed"))
+        self.command("delete-tree", treeId=second_tree_id)
+        self.assertNotIn(second_tree_id, {tree["id"] for tree in self.data["goalTrees"]})
+        self.assertEqual(self.active_tree()["freeItems"][0]["id"], "tree_free_first")
 
     def test_root_title_can_be_blank_and_roundtrips(self):
         self.command("rename-root", title="   ")

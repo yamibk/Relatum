@@ -23,6 +23,29 @@ assert(!html.includes('tree-page-head'), 'tree page must not render a visible ti
 assert(!html.includes('data-tree-action="next"'), 'tree page must not render a Next button');
 assert(!html.includes('tree-page-model.js'), 'the discarded generic model must not load');
 
+const dockStart = html.indexOf('<div class="tree-page-item-dock is-collapsed"');
+const dockEnd = html.indexOf('<nav class="study-route-rail', dockStart);
+assert(dockStart >= 0 && dockEnd > dockStart, 'missing initially collapsed Tree free-item toolbar');
+const dockHtml = html.slice(dockStart, dockEnd);
+assert.strictEqual((dockHtml.match(/data-tree-item-create=/g) || []).length, 2,
+  'Tree free-item toolbar must expose only note and text creation');
+assert(dockHtml.includes('data-tree-item-create="note"') && dockHtml.includes('data-tree-item-create="text"'),
+  'Tree free-item toolbar must contain note and text buttons');
+assert.strictEqual((dockHtml.match(/data-tree-item-tone=/g) || []).length, 10,
+  'Tree free-item toolbar must contain exactly ten text tones');
+assert(dockHtml.indexOf('data-tree-item-tone="black"') > dockHtml.indexOf('data-tree-item-tone="white"'),
+  'Tree free-item toolbar must place black at the far right of the tone choices');
+assert.deepStrictEqual(Array.from(dockHtml.matchAll(/data-tree-item-size="(\d+)"/g), (match) => Number(match[1])),
+  [22, 34, 48, 64], 'Tree free-item toolbar must reuse the four Canvas text sizes');
+assert.strictEqual((dockHtml.match(/data-tree-item-clear-empty/g) || []).length, 1,
+  'Tree free-item toolbar must end with one blank-object cleanup action');
+[
+  'data-tree-item-bold', 'data-tree-item-align', 'data-tree-item-highlight',
+  'data-tree-item-rotate', 'data-tree-item-layer', 'data-tree-item-link',
+].forEach((needle) => assert(!dockHtml.includes(needle), 'extra Tree free-item control leaked in: ' + needle));
+assert(html.includes('data-role="tree-page-free-items"') && html.includes('<script src="font-loader.js" defer></script>'),
+  'Tree free items need their own scene layer and the shared lazy font loader');
+
 function functionSource(source, name) {
   const start = source.indexOf('  function ' + name + '(');
   assert(start >= 0, 'missing function ' + name);
@@ -103,8 +126,59 @@ routeFunctions.forEach((name) => {
   "overlay.addEventListener('animationend', routeCloseAnimationHandler)",
   'function ensureTreePageData()', 'if (studyPrefetchPromise) return studyPrefetchPromise',
   'function scheduleTreePagePreload()', 'window.requestIdleCallback(warmTreePage, { timeout: 1500 })',
+  'function applyStudyPayloadAfterFont(', 'Promise.all([ensureTreePageData(), ensureFreeItemFont()])',
   'scheduleTreePagePreload();',
 ].forEach((needle) => assert(tree.includes(needle), 'missing tree runtime contract: ' + needle));
+
+[
+  "boxStyle = 'emphasis-card'", "item.boxStyle === 'emphasis-card'",
+  "['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']",
+  'function createFreeItemAt(kind, point)', 'function beginFreeItemMoveOrResize(event)',
+  'function clearEmptyFreeItems()', "event.target.closest('[data-tree-item-clear-empty]')",
+  'createFreeItemAt(gesture.kind, routeScenePoint(event.clientX, event.clientY))',
+  "createFreeItemAt(kind, routeScenePoint(event.clientX, event.clientY))",
+  "command: 'create-free-item'", "command: 'update-free-item'", "command: 'delete-free-item'",
+  'freeItemCommandQueue', 'function drainFreeItemCommands()', 'function flushFreeItemCommands()',
+  'freeItemTextSaveTimer = window.setTimeout', '}, 350);',
+  "FREE_ITEM_DOCK_COLLAPSED_KEY = 'tree-page:itemToolbarCollapsed:v1'",
+  "FREE_ITEM_DEFAULTS_KEY = 'tree-page:itemToolbarDefaults:v1'",
+  "text: { tone: 'black', fontSize: 34 }", "note: { tone: 'black', fontSize: 34 }",
+  'FREE_ITEM_SIZES.includes(savedFontSize)',
+  'freeItemDockPreference === null ? activeFreeItems().length === 0 : freeItemDockPreference',
+  "localStorage.setItem(FREE_ITEM_DOCK_COLLAPSED_KEY, collapsed ? '1' : '0')",
+  "text.contentEditable = 'plaintext-only'", 'text.textContent = item.text ||',
+  "event.key === 'Delete' || event.key === 'Backspace'",
+  "event.key === 'Enter' && (event.ctrlKey || event.metaKey)",
+  'if (editingFreeItemId) commitFreeItemEdit();', 'ensureFreeItemFont()',
+].forEach((needle) => assert(tree.includes(needle), 'missing Tree free-item contract: ' + needle));
+assert(functionSource(tree, 'createFreeItemData').includes('width = note ? 344 : 118')
+  && functionSource(tree, 'createFreeItemData').includes('height = note ? 283 : 54')
+  && functionSource(tree, 'createFreeItemData').includes("text: ''"),
+  'Tree notes/text boxes must use the agreed default dimensions and start with blank text');
+assert(functionSource(tree, 'beginFreeItemMoveOrResize').includes('if (editingFreeItemId) commitFreeItemEdit();'),
+  'Tree free-item drag/resize must persist a newly edited item before updating its geometry');
+assert(functionSource(tree, 'applyFreeItemTone').includes('item.fillColor = FREE_ITEM_NOTE_FILL;')
+  && functionSource(tree, 'applyFreeItemTone').includes('item.borderColor = FREE_ITEM_NOTE_BORDER;')
+  && functionSource(tree, 'applyFreeItemTone').includes('item.color = tone.text;'),
+  'Tree note tone changes must affect text while keeping the note paper yellow');
+assert(functionSource(tree, 'applyFreeItemSizeChoice').includes('freeItemDefaults[kind].fontSize = size; persistFreeItemDefaults();'),
+  'Tree text boxes and notes must remember the last explicitly selected size for their kind');
+assert(functionSource(tree, 'clearEmptyFreeItems').includes("String(item.text || '').trim()")
+  && functionSource(tree, 'clearEmptyFreeItems').includes('queueFreeItemDelete(entry.item, entry.index)')
+  && !functionSource(tree, 'clearEmptyFreeItems').includes('openConfirm('),
+  'Tree blank-object cleanup must delete only blank text without confirmation');
+assert(functionSource(tree, 'finishFreeItemPointer').includes('active.moved && item')
+  && functionSource(tree, 'finishFreeItemPointer').includes('queueFreeItemUpdate(item, active.before)'),
+  'Tree free-item drag/resize must persist once when the pointer is released');
+assert(css.includes('.tree-page-free-item[data-box-style="emphasis-card"]')
+  && css.includes('.tree-page-free-item.is-selected:not(.is-editing) .decor-resize-handle')
+  && css.includes('.tree-page-item-dock.is-collapsed .tree-page-item-dock-row'),
+  'Tree free-item note, eight-way resize, and collapsible toolbar styles are required');
+assert(/\.tree-page-free-item:not\(\[data-box-style\]\) \.text-box-content\s*\{[^}]*display:\s*block;[^}]*height:\s*auto;/s.test(css),
+  'Tree text editing must keep the editable as a normal line box so its empty caret stays vertically centered');
+assert(/\.tree-page-free-item \.text-box-content::?-webkit-scrollbar\s*\{[^}]*display:\s*none;/s.test(css)
+  && /\.tree-page-free-item \.text-box-content\s*\{[^}]*scrollbar-width:\s*none;/s.test(css),
+  'Tree free-item text must hide native scrollbar chrome while preserving overflow scrolling');
 const resetViewSource = functionSource(tree, 'resetView');
 assert(resetViewSource.includes("scene.classList.contains('is-loading')")
   && resetViewSource.includes('resetViewPending = true')
