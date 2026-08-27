@@ -5955,6 +5955,13 @@ TREE_PAGE_TASKS_MAX = STUDY_GOAL_TREE_NODES_MAX
 TREE_PAGE_TOTAL_NODES_MAX = 6000
 TREE_PAGE_TOTAL_LINKS_MAX = 18000
 TREE_PAGE_SHAPES = {"rounded", "rectangle", "pill", "diamond", "circle"}
+TREE_PAGE_FREE_ITEMS_MAX = 2000
+TREE_PAGE_TOTAL_FREE_ITEMS_MAX = 6000
+TREE_PAGE_FREE_ITEM_TEXT_MAX = 2000
+TREE_PAGE_FREE_ITEM_COORD_MAX = 10_000_000
+TREE_PAGE_FREE_ITEM_SIZE_MAX = 6000
+TREE_PAGE_NOTE_FILL = "#f6eab8"
+TREE_PAGE_NOTE_BORDER = "#b99a48"
 
 
 def _tree_page_stored_id(value: object, label: str) -> str:
@@ -5978,6 +5985,66 @@ def _tree_page_color(value: object) -> str:
     return color
 
 
+def _tree_page_free_item_number(
+    value: object, label: str, minimum: float, maximum: float,
+) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{label}不正确")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"{label}不正确") from err
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        raise ValueError(f"{label}不正确")
+    return round(number)
+
+
+def _tree_page_free_item(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("自由对象格式不正确")
+    item_id = _tree_page_stored_id(value.get("id"), "自由对象标识")
+    if value.get("kind") != "textBox":
+        raise ValueError("自由对象类型不正确")
+    box_style = str(value.get("boxStyle") or "").strip()
+    if box_style not in {"", "emphasis-card"}:
+        raise ValueError("自由对象样式不正确")
+    text = value.get("text", "")
+    if not isinstance(text, str) or len(text) > TREE_PAGE_FREE_ITEM_TEXT_MAX:
+        raise ValueError("自由对象文字不正确")
+    item = {
+        "id": item_id,
+        "kind": "textBox",
+        "x": _tree_page_free_item_number(
+            value.get("x"), "自由对象横坐标",
+            -TREE_PAGE_FREE_ITEM_COORD_MAX, TREE_PAGE_FREE_ITEM_COORD_MAX,
+        ),
+        "y": _tree_page_free_item_number(
+            value.get("y"), "自由对象纵坐标",
+            -TREE_PAGE_FREE_ITEM_COORD_MAX, TREE_PAGE_FREE_ITEM_COORD_MAX,
+        ),
+        "width": _tree_page_free_item_number(
+            value.get("width"), "自由对象宽度", 20, TREE_PAGE_FREE_ITEM_SIZE_MAX,
+        ),
+        "height": _tree_page_free_item_number(
+            value.get("height"), "自由对象高度", 8, TREE_PAGE_FREE_ITEM_SIZE_MAX,
+        ),
+        "text": text,
+        "fontSize": _tree_page_free_item_number(
+            value.get("fontSize"), "自由对象字号", 8, 120,
+        ),
+        "color": _tree_page_color(value.get("color") or ("#383225" if box_style else "#1a1a1a")),
+    }
+    if box_style:
+        item.update({
+            "boxStyle": "emphasis-card",
+            "fillColor": TREE_PAGE_NOTE_FILL,
+            "borderColor": TREE_PAGE_NOTE_BORDER,
+            "borderWidth": 2.5,
+            "borderStyle": "solid",
+        })
+    return item
+
+
 def _tree_page_title(value: object) -> str:
     """树状页的树名允许留空；其他目标树标题仍沿用非空规则。"""
     return str(value or "").strip()[:STUDY_GOAL_TREE_TITLE_MAX]
@@ -5995,7 +6062,7 @@ def _tree_page_fresh() -> dict:
     # 文件缺失或旧 v1 被废弃时，GET 不落盘；使用稳定标识，确保随后第一次
     # POST 仍能命中同一棵内存空白树，而不会因每次生成随机 id 被误判为已删除。
     tree["id"] = "goal_default"
-    tree.update({"shape": "rounded", "color": ""})
+    tree.update({"shape": "rounded", "color": "", "freeItems": []})
     return {
         "version": TREE_PAGE_VERSION,
         "activeTreeId": tree["id"],
@@ -6035,6 +6102,7 @@ def _tree_page_capture_extras(data: dict) -> dict:
                     str(node.get("id") or ""): _tree_page_shape(node.get("shape"))
                     for node in tree.get("nodes", []) if node.get("kind") == "branch"
                 },
+                "freeItems": [dict(item) for item in tree.get("freeItems", [])],
             }
             for tree in data.get("goalTrees", [])
         },
@@ -6051,6 +6119,7 @@ def _tree_page_restore_extras(data: dict, extras: dict) -> None:
             tree["title"] = _tree_page_title(saved.get("title"))
         tree["shape"] = _tree_page_shape(saved.get("shape"))
         tree["color"] = _tree_page_color(saved.get("color"))
+        tree["freeItems"] = [dict(item) for item in saved.get("freeItems", [])]
         node_shapes = saved.get("nodeShapes", {})
         for node in tree.get("nodes", []):
             if node.get("kind") == "branch":
@@ -6088,6 +6157,8 @@ def _tree_page_normalize(data: object) -> dict:
     raw_by_tree: dict[str, dict] = {}
     total_nodes = 0
     total_links = 0
+    total_free_items = 0
+    free_item_ids: set[str] = set()
     for raw_tree in raw_trees:
         if not isinstance(raw_tree, dict):
             raise ValueError("目标树格式不正确")
@@ -6097,14 +6168,22 @@ def _tree_page_normalize(data: object) -> dict:
         raw_by_tree[tree_id] = raw_tree
         raw_nodes = raw_tree.get("nodes")
         raw_links = raw_tree.get("links")
+        raw_free_items = raw_tree.get("freeItems", [])
         if not isinstance(raw_nodes, list) or not isinstance(raw_links, list):
             raise ValueError("目标树节点或连接格式不正确")
+        if not isinstance(raw_free_items, list):
+            raise ValueError("树状页自由对象格式不正确")
+        if len(raw_free_items) > TREE_PAGE_FREE_ITEMS_MAX:
+            raise ValueError("单棵树的自由对象数量已达到安全上限")
         total_nodes += len(raw_nodes)
         total_links += len(raw_links)
+        total_free_items += len(raw_free_items)
         if total_nodes > TREE_PAGE_TOTAL_NODES_MAX:
             raise ValueError("树状页节点总量已达到安全上限")
         if total_links > TREE_PAGE_TOTAL_LINKS_MAX:
             raise ValueError("树状页连接总量已达到安全上限")
+        if total_free_items > TREE_PAGE_TOTAL_FREE_ITEMS_MAX:
+            raise ValueError("树状页自由对象总量已达到安全上限")
         for raw_node in raw_nodes:
             if not isinstance(raw_node, dict):
                 raise ValueError("目标树节点格式不正确")
@@ -6116,6 +6195,11 @@ def _tree_page_normalize(data: object) -> dict:
             if not isinstance(raw_link, dict):
                 raise ValueError("目标树连接格式不正确")
             _tree_page_stored_id(raw_link.get("id"), "树连接标识")
+        for raw_item in raw_free_items:
+            item = _tree_page_free_item(raw_item)
+            if item["id"] in free_item_ids:
+                raise ValueError("自由对象标识不能重复")
+            free_item_ids.add(item["id"])
 
     trees = _study_goal_normalize_trees(raw_trees, tasks, strict=True)
     globally_owned: set[str] = set()
@@ -6124,6 +6208,7 @@ def _tree_page_normalize(data: object) -> dict:
         tree["title"] = _tree_page_title(raw_tree.get("title"))
         tree["shape"] = _tree_page_shape(raw_tree.get("shape"))
         tree["color"] = _tree_page_color(raw_tree.get("color"))
+        tree["freeItems"] = [_tree_page_free_item(item) for item in raw_tree.get("freeItems", [])]
         raw_nodes = {
             str(node.get("id") or ""): node
             for node in raw_tree.get("nodes", []) if isinstance(node, dict)
@@ -6184,7 +6269,63 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
     result: dict = {"command": command}
     extras = _tree_page_capture_extras(data)
 
-    if command in {"create-branch", "create-task"} and any(
+    if command == "create-free-item":
+        tree = _tree_page_tree(data, body.get("treeId"))
+        if len(tree.get("freeItems", [])) >= TREE_PAGE_FREE_ITEMS_MAX:
+            raise ValueError("单棵树的自由对象数量已达到安全上限")
+        total_free_items = sum(
+            len(saved_tree.get("freeItems", [])) for saved_tree in data.get("goalTrees", [])
+        )
+        if total_free_items >= TREE_PAGE_TOTAL_FREE_ITEMS_MAX:
+            raise ValueError("树状页自由对象总量已达到安全上限")
+        raw_item = body.get("item")
+        if not isinstance(raw_item, dict):
+            raise ValueError("缺少自由对象")
+        item = _tree_page_free_item(raw_item)
+        _tree_page_client_id(item["id"], "tree_free_", "自由对象标识")
+        if any(
+            saved.get("id") == item["id"]
+            for saved_tree in data.get("goalTrees", [])
+            for saved in saved_tree.get("freeItems", [])
+        ):
+            raise ValueError("自由对象标识不能重复")
+        tree.setdefault("freeItems", []).append(item)
+        tree["updatedAt"] = _study_now()
+        result["item"] = item
+
+    elif command == "update-free-item":
+        tree = _tree_page_tree(data, body.get("treeId"))
+        item_id = _tree_page_stored_id(body.get("itemId"), "自由对象标识")
+        index = next((
+            index for index, item in enumerate(tree.get("freeItems", []))
+            if item.get("id") == item_id
+        ), -1)
+        if index < 0:
+            raise KeyError("没有找到这个自由对象")
+        patch = body.get("patch")
+        if not isinstance(patch, dict):
+            raise ValueError("自由对象修改格式不正确")
+        allowed = {"x", "y", "width", "height", "text", "fontSize", "color", "fillColor", "borderColor"}
+        if any(key not in allowed for key in patch):
+            raise ValueError("自由对象修改字段不正确")
+        merged = dict(tree["freeItems"][index])
+        merged.update(patch)
+        item = _tree_page_free_item(merged)
+        tree["freeItems"][index] = item
+        tree["updatedAt"] = _study_now()
+        result["item"] = item
+
+    elif command == "delete-free-item":
+        tree = _tree_page_tree(data, body.get("treeId"))
+        item_id = _tree_page_stored_id(body.get("itemId"), "自由对象标识")
+        retained = [item for item in tree.get("freeItems", []) if item.get("id") != item_id]
+        if len(retained) == len(tree.get("freeItems", [])):
+            raise KeyError("没有找到这个自由对象")
+        tree["freeItems"] = retained
+        tree["updatedAt"] = _study_now()
+        result["removedItemId"] = item_id
+
+    elif command in {"create-branch", "create-task"} and any(
         key in body for key in ("clientTaskId", "clientNodeId", "clientLinkId")
     ):
         tree = _tree_page_tree(data, body.get("treeId"))
