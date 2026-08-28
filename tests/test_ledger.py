@@ -32,83 +32,62 @@ class LedgerTests(unittest.TestCase):
         return app.ledger_entry_create(body)
 
     def test_missing_file_is_empty_and_not_written(self):
-        payload = app.ledger_month_payload(2026, 8)
+        payload = app.ledger_full_payload()
         self.assertEqual(payload["version"], 1)
-        self.assertEqual(payload["page"], 1)
         self.assertEqual(payload["highestPage"], 1)
+        self.assertEqual(payload["pageUnits"], {})
         self.assertEqual(payload["entries"], [])
-        self.assertEqual(payload["summary"], {
-            "incomeCents": 0,
-            "expenseCents": 0,
-            "balanceCents": 0,
-            "count": 0,
-        })
         self.assertFalse(app.LEDGER_FILE.exists())
 
-    def test_create_uses_integer_cents_and_builds_month_summary(self):
+    def test_create_uses_integer_cents_and_returns_full_snapshot(self):
         expense = self.create()
         income = self.create(
             type="income", amountCents=500000, date="2026-08-20", note="稿费",
         )
         self.assertTrue(expense["entry"]["id"].startswith("le_"))
-        self.assertEqual(income["months"]["2026-08"]["summary"], {
-            "incomeCents": 500000,
-            "expenseCents": 1250,
-            "balanceCents": 498750,
-            "count": 2,
-        })
+        self.assertIn("ledger", income)
+        self.assertEqual([entry["id"] for entry in income["ledger"]["entries"]],
+                         [income["entry"]["id"], expense["entry"]["id"]])
+        self.assertEqual(income["ledger"]["highestPage"], 1)
         self.assertTrue(app.LEDGER_FILE.is_file())
         self.assertTrue(app.LEDGER_BACKUP_FILE.is_file())
 
-    def test_optional_multiplier_changes_display_amount_summary_and_can_be_cleared(self):
+    def test_optional_multiplier_changes_effective_amount_and_can_be_cleared(self):
         created = self.create(amountCents=3000, multiplier=10)
         entry_id = created["entry"]["id"]
         self.assertEqual(created["entry"]["multiplier"], 10)
-        self.assertEqual(created["months"]["2026-08"]["summary"]["expenseCents"], 30000)
+        self.assertEqual(app._ledger_effective_amount(created["entry"]), 30000)
 
         cleared = app.ledger_entry_update({"id": entry_id, "multiplier": None})
         self.assertNotIn("multiplier", cleared["entry"])
-        self.assertEqual(cleared["months"]["2026-08"]["summary"]["expenseCents"], 3000)
+        self.assertEqual(app._ledger_effective_amount(cleared["entry"]), 3000)
 
     def test_decimal_multiplier_rounds_final_amount_to_nearest_cent(self):
         expense = self.create(amountCents=101, multiplier=1.005)
         income = self.create(type="income", amountCents=1, multiplier=0.5)
-        summary = income["months"]["2026-08"]["summary"]
-        self.assertEqual(expense["entry"]["multiplier"], 1.005)
-        self.assertEqual(summary["expenseCents"], 102)
-        self.assertEqual(summary["incomeCents"], 1)
-        self.assertEqual(summary["balanceCents"], -101)
+        self.assertEqual(app._ledger_effective_amount(expense["entry"]), 102)
+        self.assertEqual(app._ledger_effective_amount(income["entry"]), 1)
 
-    def test_ledger_pages_keep_entries_and_summaries_isolated(self):
+    def test_entries_keep_their_page_and_highest_page_is_shared(self):
         page_one = self.create(amountCents=3000)
         page_two = self.create(type="income", amountCents=5000, ledgerPage=2)
 
-        first = app.ledger_month_payload(2026, 8, 1)
-        second = app.ledger_month_payload(2026, 8, 2)
+        ledger = app.ledger_full_payload()
+        by_id = {entry["id"]: entry for entry in ledger["entries"]}
+        self.assertEqual(by_id[page_one["entry"]["id"]]["ledgerPage"], 1)
+        self.assertEqual(by_id[page_two["entry"]["id"]]["ledgerPage"], 2)
+        self.assertEqual(ledger["highestPage"], 2)
 
-        self.assertEqual([entry["id"] for entry in first["entries"]], [page_one["entry"]["id"]])
-        self.assertEqual([entry["id"] for entry in second["entries"]], [page_two["entry"]["id"]])
-        self.assertEqual(first["summary"]["expenseCents"], 3000)
-        self.assertEqual(second["summary"]["incomeCents"], 5000)
-        self.assertEqual(first["highestPage"], 2)
-        self.assertEqual(second["highestPage"], 2)
-
-    def test_cumulative_view_uses_all_months_but_stays_on_one_page(self):
+    def test_full_payload_covers_all_months_and_pages(self):
         self.create(amountCents=3000, date="2026-07-01")
         self.create(type="income", amountCents=9000, date="2026-08-01")
         self.create(type="income", amountCents=5000, date="2026-06-01", ledgerPage=2)
 
-        cumulative = app.ledger_month_payload(2026, 8, 1, scope="all")
+        ledger = app.ledger_full_payload()
 
-        self.assertEqual(cumulative["scope"], "all")
-        self.assertEqual(cumulative["summary"], {
-            "incomeCents": 9000,
-            "expenseCents": 3000,
-            "balanceCents": 6000,
-            "count": 2,
-        })
-        self.assertEqual({entry["date"] for entry in cumulative["entries"]}, {
-            "2026-07-01", "2026-08-01",
+        self.assertEqual(len(ledger["entries"]), 3)
+        self.assertEqual({entry["date"] for entry in ledger["entries"]}, {
+            "2026-07-01", "2026-08-01", "2026-06-01",
         })
 
     def test_legacy_entry_without_page_defaults_to_first_page(self):
@@ -117,30 +96,25 @@ class LedgerTests(unittest.TestCase):
         raw["entries"][0].pop("ledgerPage", None)
         app.LEDGER_FILE.write_text(json.dumps(raw), encoding="utf-8")
 
-        first = app.ledger_month_payload(2026, 8, 1)
-        second = app.ledger_month_payload(2026, 8, 2)
+        ledger = app.ledger_full_payload()
 
-        self.assertEqual(first["entries"][0]["id"], created["entry"]["id"])
-        self.assertNotIn("ledgerPage", first["entries"][0])
-        self.assertEqual(second["entries"], [])
+        self.assertEqual(ledger["entries"][0]["id"], created["entry"]["id"])
+        self.assertNotIn("ledgerPage", ledger["entries"][0])
+        self.assertEqual(app._ledger_page(None), 1)
+        self.assertEqual(app._ledger_page(""), 1)
 
     def test_page_unit_is_independent_and_blank_restores_rmb(self):
-        saved = app.ledger_page_unit_update({
-            "page": 3, "year": 2026, "month": 8, "unit": "块",
-        })
-        self.assertEqual(saved["payload"]["unit"], "块")
-        self.assertEqual(saved["payload"]["highestPage"], 3)
-        self.assertEqual(app.ledger_month_payload(2026, 9, 3)["unit"], "块")
-        self.assertEqual(app.ledger_month_payload(2026, 8, 1)["unit"], "")
+        saved = app.ledger_page_unit_update({"page": 3, "unit": "块"})
+        self.assertEqual(saved["ledger"]["pageUnits"], {"3": "块"})
+        self.assertEqual(saved["ledger"]["highestPage"], 3)
+        self.assertEqual(app.ledger_full_payload()["pageUnits"], {"3": "块"})
 
-        cleared = app.ledger_page_unit_update({
-            "page": 3, "year": 2026, "month": 8, "unit": "",
-        })
-        self.assertEqual(cleared["payload"]["unit"], "")
-        self.assertEqual(cleared["payload"]["highestPage"], 1)
+        cleared = app.ledger_page_unit_update({"page": 3, "unit": ""})
+        self.assertEqual(cleared["ledger"]["pageUnits"], {})
+        self.assertEqual(cleared["ledger"]["highestPage"], 1)
         self.assertEqual(json.loads(app.LEDGER_FILE.read_text(encoding="utf-8"))["pageUnits"], {})
 
-    def test_future_entry_and_cross_month_update_return_both_months(self):
+    def test_future_entry_and_cross_month_update_keep_one_snapshot(self):
         created = self.create(date="2032-12-31")
         entry_id = created["entry"]["id"]
         updated = app.ledger_entry_update({
@@ -150,9 +124,8 @@ class LedgerTests(unittest.TestCase):
             "amountCents": 9901,
             "note": "未来收入",
         })
-        self.assertEqual(set(updated["months"]), {"2032-12", "2033-01"})
-        self.assertEqual(updated["months"]["2032-12"]["summary"]["count"], 0)
-        self.assertEqual(updated["months"]["2033-01"]["summary"]["balanceCents"], 9901)
+        self.assertEqual(updated["entry"]["date"], "2033-01-15")
+        self.assertEqual([entry["id"] for entry in updated["ledger"]["entries"]], [entry_id])
 
     def test_color_patch_and_delete(self):
         created = self.create()
@@ -161,7 +134,7 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(colored["entry"]["color"], "#fce2cc")
         deleted = app.ledger_entry_delete({"id": entry_id})
         self.assertEqual(deleted["deletedId"], entry_id)
-        self.assertEqual(deleted["months"]["2026-08"]["entries"], [])
+        self.assertEqual(deleted["ledger"]["entries"], [])
         with self.assertRaises(KeyError):
             app.ledger_entry_delete({"id": entry_id})
 
@@ -186,12 +159,10 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(app.LEDGER_FILE.read_bytes(), before)
         for page in (0, 100, 1.5, "bad"):
             with self.assertRaises(ValueError):
-                app.ledger_month_payload(2026, 8, page)
-        with self.assertRaises(ValueError):
-            app.ledger_month_payload(2026, 8, 1, scope="year")
+                app._ledger_page(page)
         for unit in ("a" * 13, 12, "bad\nunit"):
             with self.assertRaises(ValueError):
-                app.ledger_page_unit_update({"page": 1, "year": 2026, "month": 8, "unit": unit})
+                app.ledger_page_unit_update({"page": 1, "unit": unit})
 
     def test_corrupt_primary_is_preserved_and_valid_backup_recovers(self):
         self.create(note="上一份有效数据")

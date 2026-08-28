@@ -11,7 +11,7 @@
   const DRAFT_ID = 'ledger-local-draft';
   const PAGE_MAX = 99;
   const PAGE_EDGE_PX = 84;
-  const CACHE_MAX = 24;
+  const PAGE_SWITCH_MS = 150;
   const reducedMotion = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
@@ -22,17 +22,18 @@
     active: false, activatedOnce: false, mounted: false,
     year: now.getFullYear(), month: now.getMonth() + 1, page: initialPage, highestPage: 1,
     viewMode: loadViewMode(),
-    payload: null, draft: null, cache: new Map(),
-    requestSeq: 0, controller: null, prefetching: new Map(),
-    prefetchHandle: 0, prefetchUsesIdle: false,
-    warmupHandle: 0, warmupUsesIdle: false, warmupKey: '', warmupController: null, warmupPromise: null,
+    // 与学习页同款模型：一次全量加载整本账本，当前视图（月/页/累计）由本地派生。
+    ledger: null, payload: null, draft: null,
+    requestSeq: 0, controller: null,
+    warmupPromise: null,
     settings: null, settingsPopover: null, settingsTrigger: null,
     settingsPositionFrame: 0, deleteTimer: 0,
     unitPopover: null, unitTrigger: null, unitSaving: false,
-    highlightId: '', entranceAnimations: [], exitFrozen: false,
+    highlightId: '', entranceTimer: 0,
     monthMotionTimer: 0, mutationSeq: new Map(), mutationChains: new Map(),
     pageRailOver: false, pageRailVisible: false, pageWheelAccum: 0, pageWheelTimer: 0,
     pageOrbSettleUntil: 0,
+    pageSwitchSeq: 0, pageSwitchTimer: 0,
   };
   const dom = {};
   let legendColors = loadLegend();
@@ -76,17 +77,6 @@
   function saveViewMode() {
     try { localStorage.setItem(VIEW_KEY, state.viewMode); }
     catch (error) {}
-  }
-
-  function ledgerCacheKey(year, month, page, viewMode) {
-    const view = normalizeViewMode(viewMode == null ? state.viewMode : viewMode);
-    return (view === 'cumulative' ? 'all' : monthKey(year, month)) + '@' + normalizePage(page);
-  }
-
-  function ledgerUrl(year, month, page, viewMode) {
-    const view = normalizeViewMode(viewMode == null ? state.viewMode : viewMode);
-    return '/api/ledger?year=' + year + '&month=' + month + '&page=' + normalizePage(page)
-      + (view === 'cumulative' ? '&scope=all' : '');
   }
 
   function dateParts(day) {
@@ -188,7 +178,39 @@
       summary: { incomeCents: 0, expenseCents: 0, balanceCents: 0, count: 0 }, entries: [] };
   }
 
-  function clonePayload(payload) { return JSON.parse(JSON.stringify(payload)); }
+  // 从全量账本派生当前视图（月/累计 × 当前页）的 payload；渲染层继续读 state.payload。
+  function computePayload() {
+    const ledger = state.ledger;
+    const page = state.page;
+    const cumulative = state.viewMode === 'cumulative';
+    const year = state.year; const month = state.month;
+    const entries = [];
+    (ledger && ledger.entries || []).forEach((entry) => {
+      if (normalizePage(entry.ledgerPage) !== page) return;
+      if (!cumulative) {
+        const parts = monthFromDay(entry.date);
+        if (!parts || parts.year !== year || parts.month !== month) return;
+      }
+      entries.push(entry);
+    });
+    const payload = { version: ledger && ledger.version || 1, year, month, page,
+      highestPage: ledger ? normalizePage(ledger.highestPage) : state.highestPage,
+      scope: cumulative ? 'all' : 'month',
+      unit: ledger && ledger.pageUnits ? String(ledger.pageUnits[String(page)] || '') : '',
+      summary: { incomeCents: 0, expenseCents: 0, balanceCents: 0, count: 0 },
+      entries };
+    return normalizePayload(payload);
+  }
+
+  // 服务端快照（GET / 各 mutation 响应）整体替换本地账本，页栏同步最高页。
+  function applyLedgerPayload(payload) {
+    if (!payload || !Array.isArray(payload.entries)) return;
+    state.ledger = payload;
+    state.highestPage = normalizePage(payload.highestPage);
+    acceptHighestPage(payload);
+  }
+
+  function cloneLedger() { return state.ledger ? JSON.parse(JSON.stringify(state.ledger)) : null; }
 
   function normalizePayload(payload) {
     const result = payload || emptyPayload(state.year, state.month, state.page);
@@ -447,9 +469,21 @@
     });
   }
 
+  // 草稿跨页保留：只在创建它的页（且月视图时日期属于当前月）显示，切页不丢弃。
+  function draftVisible() {
+    if (!state.draft) return null;
+    if (normalizePage(state.draft.ledgerPage) !== state.page) return null;
+    if (state.viewMode !== 'cumulative') {
+      const parts = monthFromDay(state.draft.date);
+      if (!parts || parts.year !== state.year || parts.month !== state.month) return null;
+    }
+    return state.draft;
+  }
+
   function displayEntries() {
     const entries = (state.payload && state.payload.entries || []).slice();
-    if (state.draft) entries.push(state.draft);
+    const draft = draftVisible();
+    if (draft) entries.push(draft);
     entries.sort((left, right) => String(right.date).localeCompare(String(left.date))
       || String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
       || String(right.id).localeCompare(String(left.id)));
@@ -569,11 +603,13 @@
     const opts = options || {};
     const previous = opts.previousRects || (opts.skipFlip ? null : captureEntryRects());
     const desiredIds = new Set(); const desiredDays = new Set();
-    groupedEntries().forEach((groupData) => {
+    groupedEntries().forEach((groupData, index) => {
       desiredDays.add(groupData.day);
       let group = dom.groups.querySelector('[data-ledger-day="' + CSS.escape(groupData.day) + '"]');
       const newGroup = !group;
       if (!group) group = createDayGroup(groupData.day);
+      // 错峰入场 stagger：日期组按序号延迟（与学习页卡片 --study-row-index 一致）
+      group.style.setProperty('--ledger-row-index', String(Math.min(index, 7)));
       const header = group.querySelector('header');
       header.hidden = state.viewMode === 'cumulative';
       header.querySelector('strong').textContent = state.viewMode === 'cumulative'
@@ -587,10 +623,15 @@
         const isNew = !row;
         if (!row) row = createEntryRow(entry); else syncEntryRow(row, entry);
         rows.appendChild(row);
-        if (isNew || opts.newIds && opts.newIds.has(entry.id)) replayClass(row, 'quick-enter', 320);
+        // 切页静音：整版淡出入场期间不叠加条目级入场动画，新条目直接就位
+        // （与学习页 incrementalSyncCardList 的 pageSwitch silent 一致）。
+        if (!opts.silent && (isNew || opts.newIds && opts.newIds.has(entry.id))) {
+          replayClass(row, 'quick-enter', 320);
+        }
       });
       dom.groups.appendChild(group);
-      if (newGroup) replayClass(group, 'ledger-day-entering', 320);
+      // 切页静音：整版淡出入场期间不叠加组级入场动画（与学习页 pageSwitch silent 一致）
+      if (newGroup && !opts.silent) replayClass(group, 'ledger-day-entering', 320);
     });
     dom.groups.querySelectorAll('[data-ledger-entry]').forEach((row) => {
       if (!desiredIds.has(row.dataset.ledgerEntry)) row.remove();
@@ -606,11 +647,11 @@
 
   function syncLedger(options) {
     if (!state.mounted) return;
+    state.payload = computePayload();
     syncViewMode(); dom.monthTitle.textContent = monthTitle();
     dom.empty.querySelector('span').textContent = currentUnit() || '¥';
     syncSummary(); syncEntries(options);
   }
-
   function revealHighlightedEntry() {
     if (!state.highlightId) return;
     const highlighted = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(state.highlightId) + '"]');
@@ -621,140 +662,60 @@
     window.setTimeout(() => highlighted.classList.remove('is-highlighted'), reducedMotion ? 0 : 900);
   }
 
-  function trimCache() {
-    if (state.cache.size <= CACHE_MAX) return;
-    const preserve = ledgerCacheKey(state.year, state.month, state.page);
-    for (const key of state.cache.keys()) {
-      if (state.cache.size <= CACHE_MAX) break;
-      if (key !== preserve) state.cache.delete(key);
-    }
-  }
-
-  function absorbMonths(months) {
-    if (!months || typeof months !== 'object') return;
-    let highestPage = null;
-    Object.keys(months).forEach((month) => {
-      const payload = months[month];
-      if (payload && Array.isArray(payload.entries) && payload.summary) {
-        state.cache.set(ledgerCacheKey(payload.year, payload.month, payload.page, 'month'), payload);
-        highestPage = normalizePage(payload.highestPage);
-      }
-    });
-    if (highestPage !== null) {
-      state.cache.forEach((cached) => { cached.highestPage = highestPage; });
-      acceptHighestPage({ highestPage });
-    }
-    trimCache();
-  }
-
-  function absorbMutation(result) {
-    absorbMonths(result && result.months);
-    const cumulative = result && result.cumulative;
-    if (cumulative && Array.isArray(cumulative.entries) && cumulative.summary) {
-      state.cache.set(ledgerCacheKey(cumulative.year, cumulative.month, cumulative.page, 'cumulative'), cumulative);
-      state.cache.forEach((cached) => { cached.highestPage = cumulative.highestPage; });
-      acceptHighestPage(cumulative); trimCache();
-    }
-  }
-
-  function currentCachePayload() {
-    const key = ledgerCacheKey(state.year, state.month, state.page);
-    const current = state.payload;
-    const currentMatches = current && Number(current.year) === state.year
-      && (state.viewMode === 'cumulative' || Number(current.month) === state.month)
-      && normalizePage(current.page) === state.page
-      && String(current.scope || 'month') === (state.viewMode === 'cumulative' ? 'all' : 'month');
-    state.payload = state.cache.get(key) || (currentMatches ? current : null)
-      || emptyPayload(state.year, state.month, state.page);
-    return state.payload;
-  }
-
   function cancelMainRequest() {
     if (state.controller) state.controller.abort();
     state.controller = null; state.requestSeq += 1;
   }
 
-  function cancelPrefetch() {
-    if (state.prefetchHandle) {
-      if (state.prefetchUsesIdle && 'cancelIdleCallback' in window) window.cancelIdleCallback(state.prefetchHandle);
-      else window.clearTimeout(state.prefetchHandle);
+  // 整本账本只取一次：未加载时请求（复用空闲预热 promise），已加载直接返回并同步渲染。
+  function loadLedger(options) {
+    const opts = options || {};
+    if (state.ledger) {
+      if (opts.sync !== false) syncLedger({ skipFlip: !!opts.skipFlip, silent: !!opts.entrance });
+      if (opts.entrance) finishPageSwitch();
+      return Promise.resolve(state.ledger);
     }
-    state.prefetchHandle = 0;
-    state.prefetching.forEach((controller) => controller.abort()); state.prefetching.clear();
-  }
-
-  function prefetchMonth(year, month) {
-    if (!state.active || state.viewMode === 'cumulative') return;
-    const page = state.page; const key = ledgerCacheKey(year, month, page, 'month');
-    if (state.cache.has(key) || state.prefetching.has(key)) return;
-    const controller = new AbortController(); state.prefetching.set(key, controller);
-    request(ledgerUrl(year, month, page, 'month'), { signal: controller.signal })
-      .then((payload) => { state.cache.set(key, payload); trimCache(); }).catch(() => {})
-      .finally(() => { if (state.prefetching.get(key) === controller) state.prefetching.delete(key); });
-  }
-
-  function scheduleNeighborPrefetch() {
-    cancelPrefetch();
-    if (state.viewMode === 'cumulative') return;
-    const run = () => {
-      state.prefetchHandle = 0;
-      if (!state.active) return;
-      const previous = shiftedMonth(state.year, state.month, -1);
-      const next = shiftedMonth(state.year, state.month, 1);
-      prefetchMonth(previous.year, previous.month); prefetchMonth(next.year, next.month);
-    };
-    state.prefetchUsesIdle = 'requestIdleCallback' in window;
-    state.prefetchHandle = state.prefetchUsesIdle
-      ? window.requestIdleCallback(run, { timeout: 1200 }) : window.setTimeout(run, 220);
-  }
-
-  function loadMonth(year, month, options) {
-    const opts = options || {}; const page = state.page;
-    const viewMode = state.viewMode;
-    const key = ledgerCacheKey(year, month, page, viewMode);
-    const cached = opts.force ? null : state.cache.get(key);
-    state.year = year; state.month = month; state.payload = cached || emptyPayload(year, month, page);
-    if (cached) acceptHighestPage(cached);
-    root.classList.toggle('is-loading', !cached);
-    if (opts.sync !== false) syncLedger({ skipFlip: !!opts.skipFlip });
-    if (!cached && state.warmupHandle && state.warmupKey === key) {
-      if (state.warmupUsesIdle && 'cancelIdleCallback' in window) window.cancelIdleCallback(state.warmupHandle);
-      else window.clearTimeout(state.warmupHandle);
-      state.warmupHandle = 0;
-    }
-    if (!cached && state.warmupPromise && state.warmupKey === key) {
-      const warmupPromise = state.warmupPromise;
-      const requestId = ++state.requestSeq;
-      return warmupPromise.then((payload) => {
-        if (!payload || requestId !== state.requestSeq) return null;
-        state.cache.set(key, payload); trimCache();
-        if (state.year === year && state.month === month && state.page === page && state.viewMode === viewMode) {
-          state.payload = payload; root.classList.remove('is-loading'); acceptHighestPage(payload); syncLedger();
-        }
-        scheduleNeighborPrefetch();
-        return payload;
-      });
-    }
+    root.classList.add('is-loading');
+    if (opts.sync !== false) syncLedger({ skipFlip: true, silent: !!opts.entrance });
     const requestId = ++state.requestSeq;
-    if (state.controller) state.controller.abort();
-    const controller = new AbortController(); state.controller = controller;
-    return request(ledgerUrl(year, month, page, viewMode), { signal: controller.signal })
-      .then((payload) => {
-        if (requestId !== state.requestSeq) return null;
-        state.cache.set(key, payload); trimCache();
-        if (state.year === year && state.month === month && state.page === page && state.viewMode === viewMode) {
-          state.payload = payload; root.classList.remove('is-loading'); acceptHighestPage(payload); syncLedger();
-        }
-        scheduleNeighborPrefetch(); return payload;
-      }).catch((error) => {
-        if (error && error.name === 'AbortError') return null;
-        if (requestId === state.requestSeq) { root.classList.remove('is-loading'); showToast(error.message); }
-        return null;
-      }).finally(() => { if (requestId === state.requestSeq) state.controller = null; });
+    const pending = state.warmupPromise
+      ? state.warmupPromise
+      : (() => {
+        if (state.controller) state.controller.abort();
+        const controller = new AbortController(); state.controller = controller;
+        return request('/api/ledger', { signal: controller.signal });
+      })();
+    return pending.then((payload) => {
+      if (requestId !== state.requestSeq) return null;
+      applyLedgerPayload(payload);
+      root.classList.remove('is-loading');
+      syncLedger({ skipFlip: true });
+      if (opts.entrance) finishPageSwitch();
+      return payload;
+    }).catch((error) => {
+      if (error && error.name === 'AbortError') return null;
+      if (requestId === state.requestSeq) {
+        root.classList.remove('is-loading');
+        // 请求失败也要把内容恢复可见，不能停在整体淡出的透明态。
+        if (opts.entrance) finishPageSwitch();
+        showToast(error.message);
+      }
+      return null;
+    }).finally(() => { if (requestId === state.requestSeq) state.controller = null; });
   }
 
   function createDraft() {
     if (state.draft) {
+      // 单例草稿：在其他页时把它搬回当前页（切页不丢草稿，点 ＋ 只认当前页）。
+      if (normalizePage(state.draft.ledgerPage) !== state.page) {
+        state.draft.ledgerPage = state.page;
+        const today = new Date();
+        state.draft.date = state.viewMode === 'cumulative'
+          ? monthKey(today.getFullYear(), today.getMonth() + 1) + '-' + String(today.getDate()).padStart(2, '0')
+          : currentMonthDefaultDate(state.year, state.month);
+        const previous = captureEntryRects();
+        syncEntries({ previousRects: previous });
+      }
       const existing = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
       if (existing) {
         existing.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
@@ -793,7 +754,7 @@
 
   function findEntry(id) {
     if (id === DRAFT_ID) return state.draft;
-    return (state.payload && state.payload.entries || []).find((entry) => entry.id === id) || null;
+    return (state.ledger && state.ledger.entries || []).find((entry) => entry.id === id) || null;
   }
 
   function buildSettingsField(labelText, type, role, value, placeholder) {
@@ -963,7 +924,9 @@
   }
 
   function openUnitSettings() {
-    if (state.unitPopover || !dom.pageSettings) return;
+    // 已打开时再点同一按钮收回（与账目行「⋯」一致）；弹层打开期间点按钮本身不关闭。
+    if (state.unitPopover) { closeUnitSettings(true); return; }
+    if (!dom.pageSettings) return;
     closeSettings(false, true); if (paletteController) paletteController.close(false, true);
     state.unitTrigger = dom.pageSettings; state.unitPopover = buildUnitSettings(); state.unitSaving = false;
     dom.pageSettings.setAttribute('aria-expanded', 'true');
@@ -1003,21 +966,13 @@
     state.unitSaving = true; box.classList.add('is-saving');
     box.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
     const save = box.querySelector('[data-ledger-unit-save]'); if (save) save.textContent = T('正在保存');
-    post('/api/ledger-page-unit', { page: state.page, year: state.year, month: state.month,
-      unit, scope: nextViewMode === 'cumulative' ? 'all' : 'month' }).then((result) => {
-      if (!result.payload) throw new Error(T('账本同步失败'));
-      const payload = result.payload;
-      state.cache.forEach((cached) => {
-        cached.highestPage = payload.highestPage;
-        if (normalizePage(cached.page) === state.page) {
-          cached.unit = payload.unit;
-        }
-      });
+    post('/api/ledger-page-unit', { page: state.page, unit }).then((result) => {
+      if (!result.ledger) throw new Error(T('账本同步失败'));
+      applyLedgerPayload(result.ledger);
       state.viewMode = nextViewMode; saveViewMode();
-      state.cache.set(ledgerCacheKey(payload.year, payload.month, payload.page, nextViewMode), payload);
-      state.payload = payload; acceptHighestPage(payload); closeUnitSettings(false);
-      discardDraft({ instant: true }); cancelPrefetch(); syncLedger({ skipFlip: true });
-      scheduleNeighborPrefetch();
+      closeUnitSettings(false);
+      // 视图切换与切页一致：草稿保留，不丢弃。
+      syncLedger({ skipFlip: true });
     }).catch((requestError) => {
       if (!state.unitPopover) return;
       state.unitSaving = false; box.classList.remove('is-saving');
@@ -1064,53 +1019,18 @@
       note: String(note && note.value || '').trim() };
   }
 
-  function cacheSnapshots(keys) {
-    const snapshots = new Map();
-    keys.forEach((key) => snapshots.set(key, state.cache.has(key) ? clonePayload(state.cache.get(key)) : null));
-    return snapshots;
-  }
-
-  function restoreSnapshots(snapshots) {
-    snapshots.forEach((payload, key) => { if (payload) state.cache.set(key, payload); else state.cache.delete(key); });
-  }
-
+  // 乐观更新直接改全量账本；失败时整本回滚（响应快照为权威数据）。
   function applyLocalEntry(previousEntry, nextEntry) {
-    if (state.viewMode === 'cumulative') {
-      const key = ledgerCacheKey(state.year, state.month, state.page, 'cumulative');
-      const payload = state.cache.get(key) || state.payload
-        || emptyPayload(state.year, state.month, state.page, 'cumulative');
-      payload.entries = payload.entries.filter((entry) => entry.id !== previousEntry.id);
-      payload.entries.push(nextEntry); normalizePayload(payload); state.cache.set(key, payload);
-      currentCachePayload(); return;
-    }
-    const previousMonth = monthFromDay(previousEntry.date); const nextMonth = monthFromDay(nextEntry.date);
-    const ledgerPage = normalizePage(previousEntry.ledgerPage);
-    const previousKey = ledgerCacheKey(previousMonth.year, previousMonth.month, ledgerPage);
-    const nextKey = ledgerCacheKey(nextMonth.year, nextMonth.month, ledgerPage);
-    const previousPayload = state.cache.get(previousKey)
-      || (ledgerCacheKey(state.year, state.month, state.page) === previousKey
-        ? state.payload : emptyPayload(previousMonth.year, previousMonth.month, ledgerPage));
-    previousPayload.entries = previousPayload.entries.filter((entry) => entry.id !== previousEntry.id);
-    normalizePayload(previousPayload); state.cache.set(previousKey, previousPayload);
-    const targetPayload = nextKey === previousKey ? previousPayload
-      : state.cache.get(nextKey) || emptyPayload(nextMonth.year, nextMonth.month, ledgerPage);
-    targetPayload.entries = targetPayload.entries.filter((entry) => entry.id !== nextEntry.id);
-    targetPayload.entries.push(nextEntry); normalizePayload(targetPayload); state.cache.set(nextKey, targetPayload);
-    currentCachePayload();
+    if (!state.ledger) return;
+    const entries = state.ledger.entries;
+    const index = entries.findIndex((item) => item.id === previousEntry.id);
+    if (index >= 0) entries[index] = nextEntry;
+    else entries.push(nextEntry);
   }
 
   function removeLocalEntry(entry) {
-    if (state.viewMode === 'cumulative') {
-      const key = ledgerCacheKey(state.year, state.month, state.page, 'cumulative');
-      const payload = state.cache.get(key) || state.payload;
-      payload.entries = payload.entries.filter((item) => item.id !== entry.id);
-      normalizePayload(payload); state.cache.set(key, payload); currentCachePayload(); return;
-    }
-    const parts = monthFromDay(entry.date);
-    const key = ledgerCacheKey(parts.year, parts.month, entry.ledgerPage);
-    const payload = state.cache.get(key) || state.payload;
-    payload.entries = payload.entries.filter((item) => item.id !== entry.id);
-    normalizePayload(payload); state.cache.set(key, payload); currentCachePayload();
+    if (!state.ledger) return;
+    state.ledger.entries = state.ledger.entries.filter((item) => item.id !== entry.id);
   }
 
   function nextMutation(id) {
@@ -1132,15 +1052,13 @@
       setSettingsSaving(true);
       post('/api/ledger-entry-create', { ...values, ledgerPage: state.draft.ledgerPage,
         color: state.draft.color || '' }).then((result) => {
-        absorbMutation(result);
+        applyLedgerPayload(result.ledger);
         const target = monthFromDay(result.entry.date);
         closeSettings(false); state.draft = null;
         if (state.viewMode !== 'cumulative') { state.year = target.year; state.month = target.month; }
         state.page = normalizePage(result.entry.ledgerPage); saveCurrentPage(); renderPageRail();
-        state.payload = state.cache.get(ledgerCacheKey(state.year, state.month, state.page))
-          || emptyPayload(state.year, state.month, state.page);
         state.highlightId = result.entry.id;
-        syncLedger({ newIds: new Set([result.entry.id]) }); scheduleNeighborPrefetch();
+        syncLedger({ newIds: new Set([result.entry.id]) });
       }).catch((error) => {
         if (!state.draft) return;
         state.draft.pending = false;
@@ -1153,27 +1071,22 @@
 
     const oldEntry = { ...entry }; const nextEntry = { ...entry, ...values, updatedAt: new Date().toISOString() };
     const oldMonth = monthFromDay(oldEntry.date); const nextMonth = monthFromDay(nextEntry.date);
-    const ledgerPage = normalizePage(oldEntry.ledgerPage);
-    const keys = state.viewMode === 'cumulative'
-      ? new Set([ledgerCacheKey(state.year, state.month, ledgerPage, 'cumulative')])
-      : new Set([ledgerCacheKey(oldMonth.year, oldMonth.month, ledgerPage, 'month'),
-        ledgerCacheKey(nextMonth.year, nextMonth.month, ledgerPage, 'month')]);
-    const snapshots = cacheSnapshots(keys); const previousRects = captureEntryRects(); const seq = nextMutation(id);
+    const snapshots = cloneLedger(); const previousRects = captureEntryRects(); const seq = nextMutation(id);
     applyLocalEntry(oldEntry, nextEntry); closeSettings(false);
     if (state.viewMode !== 'cumulative'
         && (nextMonth.year !== state.year || nextMonth.month !== state.month)) {
-      state.year = nextMonth.year; state.month = nextMonth.month; currentCachePayload();
+      state.year = nextMonth.year; state.month = nextMonth.month;
       beginMonthMotion(nextMonth.year * 12 + nextMonth.month > oldMonth.year * 12 + oldMonth.month ? 1 : -1);
     }
     state.highlightId = id; syncLedger({ previousRects });
     postInOrder(id, '/api/ledger-entry-update', { id, ...values }).then((result) => {
       if (!mutationCurrent(id, seq)) return;
-      absorbMutation(result); currentCachePayload(); syncLedger();
+      applyLedgerPayload(result.ledger); syncLedger();
     }).catch((error) => {
       if (!mutationCurrent(id, seq)) return;
-      restoreSnapshots(snapshots);
+      state.ledger = snapshots;
       if (state.viewMode !== 'cumulative') { state.year = oldMonth.year; state.month = oldMonth.month; }
-      currentCachePayload(); state.highlightId = id; syncLedger({ newIds: new Set([id]) }); showToast(error.message);
+      state.highlightId = id; syncLedger({ newIds: new Set([id]) }); showToast(error.message);
     });
   }
 
@@ -1207,22 +1120,19 @@
       }, 3200); return;
     }
     const id = state.settings.id; const entry = findEntry(id); if (!entry) return;
-    const parts = monthFromDay(entry.date);
-    const key = state.viewMode === 'cumulative'
-      ? ledgerCacheKey(state.year, state.month, entry.ledgerPage, 'cumulative')
-      : ledgerCacheKey(parts.year, parts.month, entry.ledgerPage, 'month');
-    const snapshots = cacheSnapshots(new Set([key])); const previousRects = captureEntryRects();
+    const snapshots = cloneLedger(); const previousRects = captureEntryRects();
     const row = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(id) + '"]'); const seq = nextMutation(id);
-    closeSettings(false); removeLocalEntry(entry); syncSummary();
+    closeSettings(false); removeLocalEntry(entry);
+    state.payload = computePayload(); syncSummary();
     if (row && !reducedMotion) {
       row.classList.add('is-leaving'); window.setTimeout(() => syncEntries({ previousRects }), 300);
     } else syncEntries({ previousRects });
     postInOrder(id, '/api/ledger-entry-delete', { id }).then((result) => {
       if (!mutationCurrent(id, seq)) return;
-      absorbMutation(result); currentCachePayload(); syncLedger();
+      applyLedgerPayload(result.ledger); syncLedger();
     }).catch((error) => {
       if (!mutationCurrent(id, seq)) return;
-      restoreSnapshots(snapshots); currentCachePayload(); state.highlightId = id;
+      state.ledger = snapshots; state.highlightId = id;
       syncLedger({ newIds: new Set([id]) }); showToast(error.message);
     });
   }
@@ -1239,7 +1149,7 @@
     if (row) { syncEntryRow(row, entry); replayClass(row, 'ledger-entry-color-updated', 380); }
     postInOrder(entry.id, '/api/ledger-entry-update', { id: entry.id, color: value }).then((result) => {
       if (!mutationCurrent(entry.id, seq)) return;
-      absorbMutation(result); currentCachePayload();
+      applyLedgerPayload(result.ledger);
     }).catch((error) => {
       if (!mutationCurrent(entry.id, seq)) return;
       entry.color = oldColor; if (row) syncEntryRow(row, entry); showToast(error.message);
@@ -1280,20 +1190,55 @@
   function changeMonth(delta) {
     discardDraft({ instant: true }); closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
-    const next = shiftedMonth(state.year, state.month, delta); beginMonthMotion(delta);
-    loadMonth(next.year, next.month, { skipFlip: true });
+    // 打断挂起的切页淡出：切月走自己的滑动动画，不能让整版透明态残留。
+    state.pageSwitchSeq += 1;
+    window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+    if (dom.page) dom.page.classList.remove('ledger-page-switching');
+    const next = shiftedMonth(state.year, state.month, delta);
+    state.year = next.year; state.month = next.month; beginMonthMotion(delta);
+    syncLedger({ skipFlip: true });
   }
 
+  // 切页照搬学习页：数据全量在本地，先整体淡出，内容在隐藏状态替换，再整版错峰入场；
+  // 快速连点只让最后一次切换真正换内容。草稿跨页保留，不丢弃。
   function changePage(page) {
     const next = normalizePage(page);
     if (next === state.page) { renderPageRail(); return; }
-    const direction = next > state.page ? 1 : -1;
-    discardDraft({ instant: true }); closeSettings(false, true); closeUnitSettings(false, true);
+    closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
-    cancelPrefetch();
+    stopPageEntrance();
     state.page = next; state.highlightId = ''; saveCurrentPage(); renderPageRail();
-    beginMonthMotion(direction);
-    loadMonth(state.year, state.month, { skipFlip: true });
+    const seq = ++state.pageSwitchSeq;
+    if (reducedMotion || !state.active || !dom.page) {
+      syncLedger({ skipFlip: true, silent: true });
+      return;
+    }
+    window.clearTimeout(state.pageSwitchTimer);
+    dom.page.classList.add('ledger-page-switching');
+    state.pageSwitchTimer = window.setTimeout(() => {
+      state.pageSwitchTimer = 0;
+      if (seq !== state.pageSwitchSeq) return;
+      syncLedger({ skipFlip: true, silent: true });
+      finishPageSwitch();
+    }, PAGE_SWITCH_MS);
+  }
+
+  // 切页内容在隐藏状态替换后：容器先禁过渡瞬跳回不透明，再直接播整版错峰入场
+  // （照搬学习页 progress 视图的切页收尾，避免整体淡入与错峰动画叠加）。
+  function finishPageSwitch() {
+    if (!dom.page) return;
+    const targets = dom.page.querySelectorAll('.ledger-head, .ledger-summary, .ledger-flow');
+    targets.forEach((element) => {
+      element.style.transition = 'none'; element.style.opacity = '1'; element.style.transform = 'none';
+    });
+    dom.page.classList.remove('ledger-page-switching');
+    startPageEntrance();
+    // 下一帧恢复：过渡与 inline 值一并清掉，避免 inline 覆盖下次切页的淡出类。
+    window.requestAnimationFrame(() => {
+      targets.forEach((element) => {
+        element.style.transition = ''; element.style.opacity = ''; element.style.transform = '';
+      });
+    });
   }
 
   function bindPageRail() {
@@ -1376,52 +1321,37 @@
     });
   }
 
-  function clearEntranceAnimations() {
-    state.entranceAnimations.forEach((animation) => { try { animation.cancel(); } catch (error) {} });
-    state.entranceAnimations = []; state.exitFrozen = false; root.classList.remove('ledger-entering');
+  // —— 整版错峰入场：与学习页一致，纯 CSS class（.is-revealing）驱动，
+  //    不使用 WAAPI element.animate（其 pending 帧会造成“完整内容闪一帧”的闪烁）。
+  function startPageEntrance() {
+    if (!dom.page || reducedMotion || !state.active) return;
+    window.clearTimeout(state.entranceTimer);
+    void dom.page.offsetWidth;
+    dom.page.classList.add('is-revealing');
+    state.entranceTimer = window.setTimeout(() => {
+      state.entranceTimer = 0;
+      if (dom.page) dom.page.classList.remove('is-revealing');
+    }, 1450);
   }
 
-  function replayEntrance() {
-    clearEntranceAnimations(); if (reducedMotion || !state.active) return;
-    root.classList.add('ledger-entering');
-    root.querySelectorAll('.ledger-head, .ledger-summary-card, .ledger-day-group, .ledger-empty')
-      .forEach((element, index) => {
-        const animation = element.animate([{ opacity: 0, transform: 'translateY(12px)' },
-          { opacity: 1, transform: 'translateY(0)' }], {
-          duration: 300, delay: Math.min(index, 9) * 34,
-          easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)', fill: 'both',
-        });
-        state.entranceAnimations.push(animation);
-      });
-    window.setTimeout(() => {
-      if (!state.active || state.exitFrozen) return;
-      state.entranceAnimations = []; root.classList.remove('ledger-entering');
-    }, 700);
+  function stopPageEntrance() {
+    window.clearTimeout(state.entranceTimer);
+    state.entranceTimer = 0;
+    if (dom.page) dom.page.classList.remove('is-revealing');
   }
 
+  // 首屏空闲时预取整本账本：用户第一次翻进记账视图直接消费内存快照。
   function warmup() {
-    const page = state.page; const year = state.year; const month = state.month; const viewMode = state.viewMode;
-    const key = ledgerCacheKey(year, month, page, viewMode);
-    if (state.cache.has(key) || state.warmupHandle || state.warmupPromise) return state.warmupPromise;
-    state.warmupKey = key;
+    if (state.ledger || state.warmupPromise) return state.warmupPromise;
     const run = () => {
-      state.warmupHandle = 0;
-      if (state.cache.has(key)) return;
-      const controller = new AbortController();
-      state.warmupController = controller;
-      state.warmupPromise = request(ledgerUrl(year, month, page, viewMode),
-        { signal: controller.signal })
-        .then((payload) => { state.cache.set(key, payload); trimCache(); return payload; })
+      if (state.ledger) return;
+      state.warmupPromise = request('/api/ledger')
+        .then((payload) => { applyLedgerPayload(payload); return payload; })
         .catch(() => null)
-        .finally(() => {
-          if (state.warmupController === controller) state.warmupController = null;
-          state.warmupPromise = null;
-          state.warmupKey = '';
-        });
+        .finally(() => { state.warmupPromise = null; });
     };
-    state.warmupUsesIdle = 'requestIdleCallback' in window;
-    if (state.warmupUsesIdle) state.warmupHandle = window.requestIdleCallback(run, { timeout: 1400 });
-    else state.warmupHandle = window.setTimeout(run, 260);
+    if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 1400 });
+    else window.setTimeout(run, 260);
     return state.warmupPromise;
   }
 
@@ -1454,41 +1384,48 @@
     if (state.unitPopover) closeUnitSettings(false, true); syncLanguage();
   });
   window.addEventListener('pagehide', () => {
-    state.active = false; discardDraft({ instant: true }); cancelMainRequest(); cancelPrefetch();
+    state.active = false; discardDraft({ instant: true }); cancelMainRequest();
+    window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+    if (dom.page) dom.page.classList.remove('ledger-page-switching');
     closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
   });
 
   mount();
-  // 与起步页其他重页一样，首屏空闲时就读取本月账本，
+  // 与起步页其他重页一样，首屏空闲时就预取整本账本，
   // 用户第一次翻到记账视图时直接消费内存快照。
   warmup();
   window.CanvasLedger = {
     activate() {
-      state.active = true; state.exitFrozen = false;
+      state.active = true;
+      // 保险清理：切页淡出若被离页/重入打断，不能残留透明态或入场动画。
+      window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+      if (dom.page) {
+        dom.page.classList.remove('ledger-page-switching');
+        dom.page.classList.remove('is-revealing');
+      }
       if (!state.activatedOnce) {
         const today = new Date(); state.year = today.getFullYear(); state.month = today.getMonth() + 1;
         state.activatedOnce = true;
       }
       renderPageRail(); window.requestAnimationFrame(renderPageRail);
-      const cached = state.cache.get(ledgerCacheKey(state.year, state.month, state.page));
-      if (cached) {
-        state.payload = cached; root.classList.remove('is-loading'); acceptHighestPage(cached);
-        syncLedger({ skipFlip: true }); replayEntrance(); loadMonth(state.year, state.month, { sync: false });
-      } else {
-        state.payload = emptyPayload(state.year, state.month, state.page);
-        syncLedger({ skipFlip: true }); replayEntrance(); loadMonth(state.year, state.month, { sync: false });
-      }
+      syncLedger({ skipFlip: true }); startPageEntrance();
+      loadLedger({ sync: false });
     },
     deactivate() {
-      state.active = false; state.exitFrozen = true;
+      state.active = false;
+      window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+      if (dom.page) {
+        dom.page.classList.remove('ledger-page-switching');
+        dom.page.classList.remove('is-revealing');
+      }
       setPageRailVisible(false);
-      state.entranceAnimations.forEach((animation) => { try { animation.pause(); } catch (error) {} });
-      discardDraft({ instant: true }); cancelMainRequest(); cancelPrefetch(); closeSettings(false, true);
+      stopPageEntrance();
+      discardDraft({ instant: true }); cancelMainRequest(); closeSettings(false, true);
       closeUnitSettings(false, true);
       if (paletteController) paletteController.close(false, true);
     },
-    finalizeExitMotion() { if (!state.active) clearEntranceAnimations(); },
+    finalizeExitMotion() { if (!state.active) stopPageEntrance(); },
     warmup,
     getMonth() { return { year: state.year, month: state.month }; },
   };
