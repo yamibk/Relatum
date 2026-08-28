@@ -1269,7 +1269,7 @@
           ['<code>start-sticky-notes.json</code>', '起步页各页面上跨页显示的小便签。删除后这些便签全部消失，不影响速记墙。'],
           ['<code>focus.json</code>', '专注记录及相关状态。删除后日历和活跃页中的专注历史、累计时长会随之消失。'],
           ['<code>diary</code>', '日历日记，每天一份 Markdown。删除某一天的文件只丢当天日记；删除整个文件夹会丢全部日记。'],
-          ['<code>ledger.json</code>', '日历“记账”视图中的全部收支流水，包括所属数字页、金额、可选倍率、日期、备注、颜色，以及各数字页可选的金额单位；单位留空时显示人民币 <code>¥</code>。旧账目归入第 1 页，填写倍率时汇总按相乘后的最终金额计算。删除后所有记账页都会从空白开始，不影响日记、每日任务或其它日历数据。'],
+          ['<code>ledger.json</code>', '日历“记账”视图中的 v2 收支流水，包括修订号、所属数字页、金额、可选的精确十进制倍率、日期、备注、颜色，以及各数字页可选的金额单位；单位留空时显示人民币 <code>¥</code>。汇总按倍率计算后的最终分值进行十进制半入舍入。删除后所有记账页都会从空白开始，不影响日记、每日任务或其它日历数据。'],
           ['<code>ledger.backup.json</code>', '记账流水的上一份有效快照。删除后当前账目不变，但主文件损坏时会少一层自动恢复保障。'],
           ['<code>ledger.corrupt-*.json</code>', '记账主文件损坏后隔离的旧数据。确认当前账目已正常恢复且不需要人工找回旧流水后可以删除。'],
           ['<code>countdown.json</code>', '倒数日事件和当前选择。删除后倒数日清空，可重新创建。'],
@@ -1386,7 +1386,7 @@
           ['<code>start-sticky-notes.json</code>', 'Small sticky notes shown across Home pages. Deleting it removes all of them without affecting Quick Notes.'],
           ['<code>focus.json</code>', 'Focus sessions and related state. Deleting it removes focus history and accumulated time from Calendar and Activity.'],
           ['<code>diary</code>', 'Calendar journals, one Markdown file per day. Deleting one file loses only that day; deleting the folder loses every journal entry.'],
-          ['<code>ledger.json</code>', 'All income and expense entries from Calendar’s Ledger view, including their numbered page, amounts, optional multipliers, dates, notes, colors, and each page’s optional amount unit. A blank unit uses RMB <code>¥</code>. Legacy entries belong to page 1, and summaries use the multiplied final amount when a multiplier is set. Deleting it empties every Ledger page without affecting journals, daily tasks, or other Calendar data.'],
+          ['<code>ledger.json</code>', 'All v2 income and expense entries from Calendar’s Ledger view, including the revision, numbered page, amount, optional exact decimal multiplier, date, note, color, and each page’s optional amount unit. A blank unit uses RMB <code>¥</code>. Multiplied final cents use decimal half-up rounding. Deleting it empties every Ledger page without affecting journals, daily tasks, or other Calendar data.'],
           ['<code>ledger.backup.json</code>', 'The previous valid ledger snapshot. Deleting it leaves current entries unchanged but removes one automatic recovery layer if the main file becomes corrupt.'],
           ['<code>ledger.corrupt-*.json</code>', 'Old ledger data quarantined after the main file became corrupt. Delete it only after confirming current entries were recovered correctly and no manual recovery is needed.'],
           ['<code>countdown.json</code>', 'Countdown events and the selected event. Deleting it clears Countdown; events can be created again.'],
@@ -2154,6 +2154,12 @@
     if (window.CanvasCalendar && typeof window.CanvasCalendar.finalizeExitMotion === 'function') {
       window.CanvasCalendar.finalizeExitMotion();
     }
+    if (window.StudyView && typeof window.StudyView.finalizeExitMotion === 'function') {
+      window.StudyView.finalizeExitMotion();
+    }
+    if (window.CanvasFocus && typeof window.CanvasFocus.finalizeExitMotion === 'function') {
+      window.CanvasFocus.finalizeExitMotion();
+    }
   }
 
   function markStartViewTransition(name) {
@@ -2193,10 +2199,6 @@
       const focusRoot = document.querySelector('.focus-embedded');
       if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
     }
-    if (previous === 'focus' && name !== 'focus'
-      && window.CanvasFocus && typeof window.CanvasFocus.deactivate === 'function') {
-      window.CanvasFocus.deactivate();
-    }
     const layout = (name === 'cadence' || name === 'tree' || name === 'notes' || name === 'calendar'
       || name === 'review' || name === 'focus') ? 'study' : name;
     main.dataset.state = layout;
@@ -2206,6 +2208,10 @@
     recentView.hidden = layout !== 'recent' && layout !== 'study';
     if (bookView) {
       markStartViewTransition(name);
+      if (previous === 'focus' && name !== 'focus'
+        && window.CanvasFocus && typeof window.CanvasFocus.deactivate === 'function') {
+        window.CanvasFocus.deactivate();
+      }
       bookView.classList.toggle('study-active', name === 'study');
       bookView.classList.toggle('cadence-active', name === 'cadence');
       bookView.classList.toggle('tree-page-active', name === 'tree');
