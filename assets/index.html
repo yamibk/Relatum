@@ -785,9 +785,13 @@
           </div>
       </section>
 
-      <!-- 日历 · 时间视图与独立 Markdown 日记 -->
-      <section class="calendar-embedded" data-role="calendar-view" aria-label="日历与日记页">
-        <div class="calendar-shell" data-role="calendar-shell"></div>
+      <!-- 日历 · 时间视图、独立 Markdown 日记与极简记账 -->
+      <section class="calendar-embedded" data-role="calendar-view" aria-label="日历与记账页">
+        <div class="calendar-mode-stage">
+          <div class="calendar-shell calendar-internal-view" data-role="calendar-shell"></div>
+          <div class="ledger-shell calendar-internal-view" data-role="ledger-shell"
+            aria-label="记账" aria-hidden="true" inert hidden></div>
+        </div>
       </section>
 
       <!-- 复习卡片 · 反遗忘巡航页 -->
@@ -1673,6 +1677,7 @@
   <script src="mermaid-renderer.js" defer></script>
   <script src="markdown.js" defer></script>
   <script src="calendar.js" defer></script>
+  <script src="ledger.js" defer></script>
   <script src="review.js" defer></script>
   <script src="focus.js" defer></script>
   <script src="tooltip.js" defer></script>

@@ -105,6 +105,8 @@ CANVAS_ACTIVITY_FILE = DATA / "canvas-activity.json"   # 画布前台使用时�
 START_PAGE_ACTIVITY_FILE = DATA / "start-page-activity.json"   # 起步页学习/树状/速记的前台使用时长
 DAILY_FILE = DATA / "daily.json"   # 专注页「每日任务」习惯清单（每天重置勾选，累计天数/分钟；自成一体，不进 .canvas）
 DAILY_BACKUP_FILE = DATA / "daily.backup.json"
+LEDGER_FILE = DATA / "ledger.json"   # 日历页第二视图「记账」的独立收支流水
+LEDGER_BACKUP_FILE = DATA / "ledger.backup.json"
 DIARY_DIR = DATA / "diary"   # 起步页「日历」日记：每天一份 Markdown，与学习/速记数据解耦
 COUNTDOWN_FILE = DATA / "countdown.json"   # 日历页轻量倒数日：目标事件 + 目标日期
 TEMPLATES_FILE = DATA / "templates.json"   # 「模板」库：常用节点组的可复用快照（全局，所有画布共用，不进 .canvas）
@@ -165,6 +167,7 @@ CANVAS_ACTIVITY_SCHEMA = 1
 CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
 START_PAGE_ACTIVITY_SCHEMA = 1
 START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes")
+LEDGER_SCHEMA = 1
 CAREER_REPORT_SCHEMA = 1
 # 画布伴生素材统一可被 /api/canvas-asset 读取的类型（图片 + 附件）。
 CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
@@ -5115,6 +5118,325 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
     return counts, records
 
 
+# ─── 极简记账 ────────────────────────────────────────────────
+
+_LEDGER_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_LEDGER_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+class LedgerVersionError(ValueError):
+    """A newer or otherwise incompatible ledger schema must never be overwritten."""
+
+
+def _ledger_empty() -> dict:
+    return {"version": LEDGER_SCHEMA, "entries": []}
+
+
+def _ledger_day(value: object) -> str:
+    raw = value.strip() if isinstance(value, str) else ""
+    if not _LEDGER_DAY_RE.fullmatch(raw):
+        raise ValueError("账目日期格式不正确")
+    try:
+        return date.fromisoformat(raw).isoformat()
+    except ValueError as err:
+        raise ValueError("账目日期格式不正确") from err
+
+
+def _ledger_amount(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("金额必须是大于零的整数分")
+    return value
+
+
+def _ledger_color(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or not _LEDGER_COLOR_RE.fullmatch(value):
+        raise ValueError("账目标记颜色无效")
+    return value.lower()
+
+
+def _ledger_timestamp(value: object, fallback: str) -> str:
+    raw = value.strip() if isinstance(value, str) else ""
+    if not raw:
+        return fallback
+    try:
+        datetime.fromisoformat(raw)
+    except ValueError:
+        return fallback
+    return raw
+
+
+def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
+    if not isinstance(raw, dict):
+        if strict:
+            raise ValueError("账目格式不正确")
+        return None
+    now = datetime.now().replace(microsecond=0).isoformat()
+    entry_id = raw.get("id")
+    if not isinstance(entry_id, str) or not entry_id.strip():
+        if strict:
+            raise ValueError("账目缺少 id")
+        return None
+    entry_type = raw.get("type")
+    if entry_type not in ("income", "expense"):
+        if strict:
+            raise ValueError("账目类型无效")
+        return None
+    try:
+        amount = _ledger_amount(raw.get("amountCents"))
+        entry_day = _ledger_day(raw.get("date"))
+        color = _ledger_color(raw.get("color"))
+    except ValueError:
+        if strict:
+            raise
+        return None
+    note = raw.get("note", "")
+    if not isinstance(note, str):
+        if strict:
+            raise ValueError("备注必须是文字")
+        note = str(note or "")
+    created_at = _ledger_timestamp(raw.get("createdAt"), now)
+    updated_at = _ledger_timestamp(raw.get("updatedAt"), created_at)
+    return {
+        "id": entry_id.strip()[:80],
+        "type": entry_type,
+        "amountCents": amount,
+        "date": entry_day,
+        "note": note.strip(),
+        "color": color,
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+    }
+
+
+def _ledger_payload_from_raw(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("记账数据格式不正确")
+    version = raw.get("version")
+    if version != LEDGER_SCHEMA:
+        raise LedgerVersionError("记账数据版本不兼容")
+    raw_entries = raw.get("entries")
+    if not isinstance(raw_entries, list):
+        raise ValueError("记账数据格式不正确")
+    entries = []
+    seen = set()
+    for item in raw_entries:
+        entry = _sanitize_ledger_entry(item)
+        if not entry or entry["id"] in seen:
+            continue
+        seen.add(entry["id"])
+        entries.append(entry)
+    return {"version": LEDGER_SCHEMA, "entries": entries}
+
+
+def _read_ledger_file(path: Path) -> tuple[dict, bytes]:
+    content = path.read_bytes()
+    raw = json.loads(content.decode("utf-8-sig"))
+    return _ledger_payload_from_raw(raw), content
+
+
+def _ledger_corrupt_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = LEDGER_FILE.with_name(f"ledger.corrupt-{stamp}.json")
+    if target.exists():
+        target = LEDGER_FILE.with_name(
+            f"ledger.corrupt-{stamp}-{uuid.uuid4().hex[:6]}.json"
+        )
+    return target
+
+
+def _preserve_corrupt_ledger(content: bytes) -> None:
+    target = _ledger_corrupt_path()
+    try:
+        os.replace(LEDGER_FILE, target)
+        return
+    except OSError:
+        pass
+    try:
+        _atomic_write_bytes(target, content)
+        LEDGER_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _save_ledger_unlocked(data: dict, *, backup: bool = True) -> None:
+    payload = _ledger_payload_from_raw(data)
+    backup_written = False
+    if backup and LEDGER_FILE.is_file():
+        try:
+            _current, current_bytes = _read_ledger_file(LEDGER_FILE)
+            _atomic_write_bytes(LEDGER_BACKUP_FILE, current_bytes)
+            backup_written = True
+        except LedgerVersionError:
+            raise
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            pass
+    _atomic_write_json(LEDGER_FILE, payload)
+    if not backup_written:
+        try:
+            _read_ledger_file(LEDGER_BACKUP_FILE)
+        except LedgerVersionError:
+            pass
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            try:
+                _atomic_write_json(LEDGER_BACKUP_FILE, payload)
+            except OSError:
+                pass
+
+
+def load_ledger() -> dict:
+    if not LEDGER_FILE.exists():
+        return _ledger_empty()
+    content = b""
+    try:
+        data, content = _read_ledger_file(LEDGER_FILE)
+        return data
+    except LedgerVersionError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _preserve_corrupt_ledger(content)
+    try:
+        data, _backup_content = _read_ledger_file(LEDGER_BACKUP_FILE)
+    except LedgerVersionError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return _ledger_empty()
+    try:
+        _save_ledger_unlocked(data, backup=False)
+    except OSError:
+        pass
+    return data
+
+
+def _ledger_month_parts(year: object = None, month: object = None) -> tuple[int, int]:
+    today = date.today()
+    if year in (None, ""):
+        year_value = today.year
+    else:
+        try:
+            year_value = int(year)
+        except (TypeError, ValueError) as err:
+            raise ValueError("账本年份无效") from err
+    if month in (None, ""):
+        month_value = today.month
+    else:
+        try:
+            month_value = int(month)
+        except (TypeError, ValueError) as err:
+            raise ValueError("账本月份无效") from err
+    if not 1 <= year_value <= 9999 or not 1 <= month_value <= 12:
+        raise ValueError("账本月份无效")
+    return year_value, month_value
+
+
+def _ledger_month_key(day: str) -> str:
+    return day[:7]
+
+
+def ledger_month_payload(year: object = None, month: object = None, data: dict | None = None) -> dict:
+    year_value, month_value = _ledger_month_parts(year, month)
+    source = load_ledger() if data is None else data
+    key = f"{year_value:04d}-{month_value:02d}"
+    entries = [dict(entry) for entry in source.get("entries", [])
+               if _ledger_month_key(entry["date"]) == key]
+    entries.sort(key=lambda item: (item["date"], item["createdAt"], item["id"]), reverse=True)
+    income = sum(entry["amountCents"] for entry in entries if entry["type"] == "income")
+    expense = sum(entry["amountCents"] for entry in entries if entry["type"] == "expense")
+    return {
+        "version": LEDGER_SCHEMA,
+        "year": year_value,
+        "month": month_value,
+        "summary": {
+            "incomeCents": income,
+            "expenseCents": expense,
+            "balanceCents": income - expense,
+            "count": len(entries),
+        },
+        "entries": entries,
+    }
+
+
+def _ledger_find(data: dict, entry_id: object) -> dict:
+    key = entry_id.strip() if isinstance(entry_id, str) else ""
+    if not key:
+        raise ValueError("缺少账目 id")
+    for entry in data.get("entries", []):
+        if entry.get("id") == key:
+            return entry
+    raise KeyError("找不到这笔账目")
+
+
+def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
+    if not isinstance(body, dict):
+        raise ValueError("请求格式不正确")
+    source = dict(existing or {})
+    for field in ("type", "amountCents", "date", "note", "color"):
+        if field in body:
+            source[field] = body[field]
+    if existing is None:
+        source["id"] = "le_" + uuid.uuid4().hex
+        now = datetime.now().replace(microsecond=0).isoformat()
+        source["createdAt"] = now
+        source["updatedAt"] = now
+        source.setdefault("note", "")
+        source.setdefault("color", "")
+    else:
+        source["id"] = existing["id"]
+        source["createdAt"] = existing["createdAt"]
+        source["updatedAt"] = datetime.now().replace(microsecond=0).isoformat()
+    return _sanitize_ledger_entry(source, strict=True)
+
+
+def _ledger_changed_months(data: dict, keys: set[str]) -> dict:
+    payloads = {}
+    for key in sorted(keys):
+        year, month = key.split("-", 1)
+        payloads[key] = ledger_month_payload(int(year), int(month), data)
+    return payloads
+
+
+def ledger_entry_create(body: dict) -> dict:
+    data = load_ledger()
+    entry = _ledger_entry_from_body(body)
+    data["entries"].append(entry)
+    _save_ledger_unlocked(data)
+    key = _ledger_month_key(entry["date"])
+    return {"ok": True, "entry": entry, "months": _ledger_changed_months(data, {key})}
+
+
+def ledger_entry_update(body: dict) -> dict:
+    if not isinstance(body, dict):
+        raise ValueError("请求格式不正确")
+    allowed = {"type", "amountCents", "date", "note", "color"}
+    if not any(field in body for field in allowed):
+        raise ValueError("没有可更新的账目字段")
+    data = load_ledger()
+    current = _ledger_find(data, body.get("id"))
+    old_key = _ledger_month_key(current["date"])
+    updated = _ledger_entry_from_body(body, current)
+    current.clear()
+    current.update(updated)
+    _save_ledger_unlocked(data)
+    keys = {old_key, _ledger_month_key(updated["date"])}
+    return {"ok": True, "entry": dict(current), "months": _ledger_changed_months(data, keys)}
+
+
+def ledger_entry_delete(body: dict) -> dict:
+    if not isinstance(body, dict):
+        raise ValueError("请求格式不正确")
+    data = load_ledger()
+    entry = _ledger_find(data, body.get("id"))
+    key = _ledger_month_key(entry["date"])
+    data["entries"] = [item for item in data["entries"] if item["id"] != entry["id"]]
+    _save_ledger_unlocked(data)
+    return {
+        "ok": True,
+        "deletedId": entry["id"],
+        "months": _ledger_changed_months(data, {key}),
+    }
+
+
 _DIARY_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -9888,6 +10210,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/daily":
             with DAILY_LOCK:
                 return self._send_json(200, daily_public_payload())
+        if parsed.path == "/api/ledger":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                with DATA_MUTATION_LOCK:
+                    payload = ledger_month_payload(
+                        q.get("year", [None])[0],
+                        q.get("month", [None])[0],
+                    )
+            except LedgerVersionError as err:
+                return self._send_json(409, {"error": str(err), "incompatible": True})
+            except ValueError as err:
+                return self._send_json(400, {"error": str(err)})
+            except OSError as err:
+                return self._send_json(500, {"error": f"读取账本失败：{err}"})
+            return self._send_json(200, payload)
         if parsed.path == "/api/calendar":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -10114,6 +10451,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_daily_mutate(daily_group_delete, body)
         if path == "/api/daily-tree":
             return self._api_daily_mutate(daily_tree_set, body)
+        if path == "/api/ledger-entry-create":
+            return self._api_ledger_mutate(ledger_entry_create, body)
+        if path == "/api/ledger-entry-update":
+            return self._api_ledger_mutate(ledger_entry_update, body)
+        if path == "/api/ledger-entry-delete":
+            return self._api_ledger_mutate(ledger_entry_delete, body)
         if path == "/api/diary-save":
             try:
                 return self._send_json(200, {"diary": save_diary(body)})
@@ -11314,6 +11657,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except OSError as err:
             return self._send_json(500, {"error": f"保存失败：{err}"})
         self._send_json(200, {"ok": True, "daily": payload})
+
+    def _api_ledger_mutate(self, fn, body: dict):
+        try:
+            result = fn(body if isinstance(body, dict) else {})
+        except LedgerVersionError as err:
+            return self._send_json(409, {"error": str(err), "incompatible": True})
+        except KeyError as err:
+            return self._send_json(404, {"error": str(err).strip("'")})
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存账本失败：{err}"})
+        self._send_json(200, result)
 
     def _api_notes_save(self, body: dict):
         """整墙覆盖保存便签：前端持有完整列表，整体写回（已在 save_notes 里清洗）。"""
