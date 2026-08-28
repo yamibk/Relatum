@@ -11,6 +11,7 @@
   const PAGE_KEY = 'ledger:page:v1';
   const VIEW_KEY = 'ledger:viewByPage:v1';
   const HIDE_KEY = 'ledger:hideDecimalsByPage:v1';
+  const DEFAULT_TYPE_KEY = 'ledger:defaultTypeByPage:v1';
   const DRAFT_ID = 'ledger-local-draft';
   const PAGE_MAX = model.PAGE_MAX;
   const PAGE_EDGE_PX = 84;
@@ -26,6 +27,7 @@
     year: now.getFullYear(), month: now.getMonth() + 1, page: initialPage, highestPage: 1,
     viewByPage: loadViewByPage(), viewMode: 'month',
     hideByPage: loadHideByPage(), hideDecimals: false,
+    defaultTypeByPage: loadDefaultTypeByPage(),
     // 与学习页同款模型：一次全量加载整本账本，当前视图（月/页/累计）由本地派生。
     ledger: null, payload: null, draft: null,
     requestSeq: 0, controller: null,
@@ -141,6 +143,37 @@
     if (hidden) state.hideByPage.pages[key] = true;
     else delete state.hideByPage.pages[key];
     saveHideByPage();
+  }
+
+  // 新建账目的默认收支类型按页独立；仅显式保存「收入」页，未记录页默认「支出」。
+  function loadDefaultTypeByPage() {
+    const fallback = { version: 1, pages: {} };
+    try {
+      const raw = JSON.parse(localStorage.getItem(DEFAULT_TYPE_KEY) || 'null');
+      if (!raw || raw.version !== 1 || !raw.pages || typeof raw.pages !== 'object') return fallback;
+      const pages = {};
+      Object.keys(raw.pages).forEach((page) => {
+        if (raw.pages[page] === 'income') pages[page] = 'income';
+      });
+      return { version: 1, pages };
+    } catch (error) { return fallback; }
+  }
+
+  function saveDefaultTypeByPage() {
+    try { localStorage.setItem(DEFAULT_TYPE_KEY, JSON.stringify(state.defaultTypeByPage)); }
+    catch (error) {}
+  }
+
+  function defaultTypeForPage(page) {
+    const store = state.defaultTypeByPage && state.defaultTypeByPage.pages || {};
+    return store[String(normalizePage(page))] === 'income' ? 'income' : 'expense';
+  }
+
+  function setDefaultTypeForPage(page, type) {
+    const key = String(normalizePage(page));
+    if (type === 'income') state.defaultTypeByPage.pages[key] = 'income';
+    else delete state.defaultTypeByPage.pages[key];
+    saveDefaultTypeByPage();
   }
 
   function dateParts(day) {
@@ -807,7 +840,7 @@
     const previous = captureEntryRects();
     const today = new Date();
     const clientId = 'le_' + window.crypto.randomUUID().replace(/-/g, '');
-    state.draft = { id: DRAFT_ID, clientId, type: 'expense', amountCents: null, multiplier: null,
+    state.draft = { id: DRAFT_ID, clientId, type: defaultTypeForPage(state.page), amountCents: null, multiplier: null,
       ledgerPage: state.page, date: state.viewMode === 'cumulative'
         ? monthKey(today.getFullYear(), today.getMonth() + 1) + '-' + String(today.getDate()).padStart(2, '0')
         : currentMonthDefaultDate(state.year, state.month), note: '', color: '',
@@ -979,6 +1012,19 @@
       button.setAttribute('aria-pressed', active ? 'true' : 'false'); hideSwitch.appendChild(button);
     });
     hideField.append(hideLabel, hideSwitch); fields.append(field, viewField, hideField);
+    const defaultField = document.createElement('div'); defaultField.className = 'ledger-settings-field ledger-view-field';
+    const defaultLabel = document.createElement('span'); defaultLabel.textContent = T('默认记录');
+    const defaultSwitch = document.createElement('div');
+    defaultSwitch.className = 'ledger-type-switch'; defaultSwitch.setAttribute('role', 'group');
+    defaultSwitch.setAttribute('aria-label', T('默认收支类型'));
+    const pageDefaultType = defaultTypeForPage(state.page);
+    [['expense', '支出'], ['income', '收入']].forEach((item) => {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.ledgerDefaultType = item[0];
+      const active = pageDefaultType === item[0];
+      button.textContent = T(item[1]); button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false'); defaultSwitch.appendChild(button);
+    });
+    defaultField.append(defaultLabel, defaultSwitch); fields.appendChild(defaultField);
     const error = document.createElement('p');
     error.className = 'study-progress-settings-error ledger-settings-error';
     error.dataset.role = 'ledger-unit-error'; error.setAttribute('role', 'alert');
@@ -1003,6 +1049,14 @@
       if (hide) {
         box.querySelectorAll('[data-ledger-hide-decimals]').forEach((button) => {
           const active = button === hide; button.classList.toggle('is-active', active);
+          button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        return;
+      }
+      const defaultType = event.target.closest('[data-ledger-default-type]');
+      if (defaultType) {
+        box.querySelectorAll('[data-ledger-default-type]').forEach((button) => {
+          const active = button === defaultType; button.classList.toggle('is-active', active);
           button.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
         return;
@@ -1065,12 +1119,16 @@
     const nextViewMode = normalizeViewMode(activeView && activeView.dataset.ledgerView);
     const activeHide = box.querySelector('[data-ledger-hide-decimals].is-active');
     const nextHideDecimals = !!(activeHide && activeHide.dataset.ledgerHideDecimals === 'hidden');
+    const activeDefaultType = box.querySelector('[data-ledger-default-type].is-active');
+    const nextDefaultType = activeDefaultType && activeDefaultType.dataset.ledgerDefaultType === 'income'
+      ? 'income' : 'expense';
     const error = box.querySelector('[data-role="ledger-unit-error"]');
     if (unit.length > 12) { error.textContent = T('金额单位最多 12 个字符'); input.focus(); return; }
     const page = state.page;
     const previousUnit = currentUnit();
     state.viewMode = nextViewMode; setViewForPage(page, nextViewMode);
     state.hideDecimals = nextHideDecimals; setHideForPage(page, nextHideDecimals);
+    setDefaultTypeForPage(page, nextDefaultType);
     if (unit === previousUnit) {
       closeUnitSettings(false); syncLedger({ skipFlip: true }); return;
     }
