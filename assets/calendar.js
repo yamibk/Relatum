@@ -3,6 +3,9 @@
 
   const root = document.querySelector('[data-role="calendar-shell"]');
   if (!root) return;
+  const pageRoot = root.closest('.calendar-embedded');
+  const ledgerRoot = pageRoot && pageRoot.querySelector('[data-role="ledger-shell"]');
+  const VIEW_MODE_KEY = 'calendar:viewMode:v1';
   const COUNTDOWN_ENABLED_KEY = 'canvas:calendarCountdownEnabled';
   const COUNTDOWN_PROGRESS_MODE_KEY = 'canvas:calendarCountdownProgressMode';
   const MONTH_CACHE_MAX = 24;
@@ -61,10 +64,19 @@
   };
   let entranceExitFrozen = false;
   let entranceExitAnimations = [];
+  let calendarPageActive = false;
+  let viewMode = readViewMode();
+  let modeTransitionTimer = 0;
+  let modeTransitionSeq = 0;
   const prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
   })();
+
+  function readViewMode() {
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'ledger' ? 'ledger' : 'calendar'; }
+    catch (error) { return 'calendar'; }
+  }
 
   function localDay(value) {
     const year = value.getFullYear();
@@ -2631,47 +2643,174 @@
     if (column) animateDayColumn(column, { kind: 'enter', direction: 0 });
   }
 
+  function activateCalendarPanel() {
+    finalizeEntranceExit(true);
+    state.active = true;
+    if (!state.loaded || state.stale) {
+      // 首次进入由 render 的 initial 入场负责；非首次（stale 刷新）时：
+      // 等待数据期间先隐藏整个日历内容区（calendar-refreshing），
+      // 禁止旧内容无动画生硬展示；数据到达后同帧解除隐藏并启动入场。
+      const isFirst = !state.loaded;
+      if (!isFirst) root.classList.add('calendar-refreshing');
+      Promise.resolve(load(state.day, { kind: state.loaded ? 'refresh' : 'initial', direction: 0 }))
+        .then(() => {
+          if (!state.active) return;
+          if (isFirst) return;
+          enterAfterRefresh();
+        })
+        .catch(() => {});
+    } else {
+      replayEntranceMotion();
+    }
+    scheduleCountdownProgressBreath(900);
+    const ledger = ledgerApi();
+    if (ledger && typeof ledger.warmup === 'function') ledger.warmup();
+  }
+
+  function deactivateCalendarPanel() {
+    state.active = false;
+    freezeEntranceMotionForExit();
+    state.resumeAfterPageShow = false;
+    cancelCalendarNetworkWork();
+    closeCountdownClock();
+    stopCountdownProgressBreath();
+    closeCountdownProgressSettings(false, true);
+    captureCurrentDraft();
+    state.drafts.forEach((draft) => {
+      if (!draft.deleting && draft.version > draft.savedVersion) queueDiarySave(draft.day, true);
+    });
+  }
+
+  function ledgerApi() {
+    return window.CanvasLedger || null;
+  }
+
+  function modeLayer(mode) {
+    return mode === 'ledger' ? ledgerRoot : root;
+  }
+
+  function clearModeTransitionClasses() {
+    [root, ledgerRoot].forEach((layer) => {
+      if (layer) layer.classList.remove('calendar-mode-entering', 'calendar-mode-leaving');
+    });
+    if (pageRoot) pageRoot.classList.remove('calendar-mode-switching');
+  }
+
+  function syncModeAccessibility(options) {
+    const opts = options || {};
+    const activeLayer = modeLayer(viewMode);
+    [root, ledgerRoot].forEach((layer) => {
+      if (!layer) return;
+      const active = layer === activeLayer;
+      layer.setAttribute('aria-hidden', active ? 'false' : 'true');
+      layer.toggleAttribute('inert', !active);
+      if (!active && !opts.keepBoth) layer.hidden = true;
+      else layer.hidden = false;
+    });
+    if (pageRoot) pageRoot.dataset.calendarMode = viewMode;
+  }
+
+  function activateMode(mode) {
+    if (mode === 'ledger') {
+      const api = ledgerApi();
+      if (api && typeof api.activate === 'function') api.activate();
+      return;
+    }
+    activateCalendarPanel();
+  }
+
+  function deactivateMode(mode) {
+    if (mode === 'ledger') {
+      const api = ledgerApi();
+      if (api && typeof api.deactivate === 'function') api.deactivate();
+      return;
+    }
+    deactivateCalendarPanel();
+  }
+
+  function finishModeTransition(seq) {
+    if (seq !== modeTransitionSeq) return;
+    clearTimeout(modeTransitionTimer);
+    modeTransitionTimer = 0;
+    clearModeTransitionClasses();
+    syncModeAccessibility();
+    finalizeEntranceExit(false);
+    const api = ledgerApi();
+    if (api && typeof api.finalizeExitMotion === 'function') api.finalizeExitMotion();
+  }
+
+  function setViewMode(mode, options) {
+    const opts = options || {};
+    const next = mode === 'ledger' && ledgerRoot && ledgerApi() ? 'ledger' : 'calendar';
+    const previous = viewMode;
+    if (opts.persist !== false) {
+      try { localStorage.setItem(VIEW_MODE_KEY, next); } catch (error) {}
+    }
+    if (previous === next) {
+      viewMode = next;
+      syncModeAccessibility();
+      if (calendarPageActive && opts.activate !== false) activateMode(next);
+      return true;
+    }
+
+    clearTimeout(modeTransitionTimer);
+    modeTransitionTimer = 0;
+    modeTransitionSeq += 1;
+    const seq = modeTransitionSeq;
+    const outgoing = modeLayer(previous);
+    viewMode = next;
+    const incoming = modeLayer(next);
+    if (calendarPageActive) deactivateMode(previous);
+    clearModeTransitionClasses();
+    syncModeAccessibility({ keepBoth: true });
+    if (calendarPageActive) activateMode(next);
+
+    const animate = opts.animate !== false && !prefersReduced
+      && calendarPageActive && outgoing && incoming;
+    if (!animate) {
+      finishModeTransition(seq);
+      return true;
+    }
+    if (pageRoot) pageRoot.classList.add('calendar-mode-switching');
+    outgoing.classList.add('calendar-mode-leaving');
+    incoming.classList.add('calendar-mode-entering');
+    modeTransitionTimer = window.setTimeout(() => finishModeTransition(seq), 300);
+    return true;
+  }
+
   window.CanvasCalendar = {
     activate() {
-      finalizeEntranceExit(true);
-      state.active = true;
-      if (!state.loaded || state.stale) {
-        // 首次进入由 render 的 initial 入场负责；非首次（stale 刷新）时：
-        // 等待数据期间先隐藏整个日历内容区（calendar-refreshing），
-        // 禁止旧内容无动画生硬展示；数据到达后同帧解除隐藏并启动入场。
-        const isFirst = !state.loaded;
-        if (!isFirst) root.classList.add('calendar-refreshing');
-        Promise.resolve(load(state.day, { kind: state.loaded ? 'refresh' : 'initial', direction: 0 }))
-          .then(() => {
-            if (!state.active) return;
-            if (isFirst) return;
-            enterAfterRefresh();
-          })
-          .catch(() => {});
-      } else {
-        replayEntranceMotion();
-      }
-      scheduleCountdownProgressBreath(900);
+      calendarPageActive = true;
+      viewMode = readViewMode();
+      setViewMode(viewMode, { persist: false, animate: false, activate: true });
     },
     deactivate() {
-      state.active = false;
-      freezeEntranceMotionForExit();
-      state.resumeAfterPageShow = false;
-      cancelCalendarNetworkWork();
-      closeCountdownClock();
-      stopCountdownProgressBreath();
-      closeCountdownProgressSettings(false, true);
-      captureCurrentDraft();
-      state.drafts.forEach((draft) => {
-        if (!draft.deleting && draft.version > draft.savedVersion) queueDiarySave(draft.day, true);
-      });
+      calendarPageActive = false;
+      clearTimeout(modeTransitionTimer);
+      modeTransitionTimer = 0;
+      modeTransitionSeq += 1;
+      clearModeTransitionClasses();
+      deactivateCalendarPanel();
+      const api = ledgerApi();
+      if (api && typeof api.deactivate === 'function') api.deactivate();
+      syncModeAccessibility();
     },
     finalizeExitMotion() {
       finalizeEntranceExit(false);
+      const api = ledgerApi();
+      if (api && typeof api.finalizeExitMotion === 'function') api.finalizeExitMotion();
     },
     reload() {
       state.stale = true;
       if (state.active) load(state.day, { kind: 'refresh', direction: 0 });
     },
+    toggleMode() {
+      return setViewMode(viewMode === 'calendar' ? 'ledger' : 'calendar', {
+        persist: true,
+        animate: true,
+      });
+    },
+    getViewMode() { return viewMode; },
   };
+  syncModeAccessibility();
 })();

@@ -4800,7 +4800,14 @@
     btn.addEventListener('click', () => { setReviewActive(true); });
   });
   document.querySelectorAll('[data-action="calendar-view"]').forEach((btn) => {
-    btn.addEventListener('click', () => { setCalendarActive(true); });
+    btn.addEventListener('click', () => {
+      if (calendarActive && window.CanvasCalendar
+          && typeof window.CanvasCalendar.toggleMode === 'function') {
+        window.CanvasCalendar.toggleMode();
+      } else {
+        setCalendarActive(true);
+      }
+    });
   });
   document.querySelectorAll('[data-action="focus-view"]').forEach((btn) => {
     btn.addEventListener('click', () => {

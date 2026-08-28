@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-08-26。
+> 最后按源码校准：2026-08-28。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -103,13 +103,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/graph-view.js` | 当前画布关系图浮层。 |
 | `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、自适应数字任务页、每页可选说明、引用式临时任务侧栏、回收站与完成归档；任务数据与总路线共用。任务卡片颜色存在任务的 `color` 字段，进度卡/清单行/临时侧栏右键弹出同款 12 色调色盘。 |
 | `assets/study-goal-tree.js`、`assets/study-route.js` | 学习页“目标树”V4 的无 DOM 链接模型与交互层；阶段递归等权汇总整棵主路线后代中的任务，但由该阶段自身完成条件解锁的后续分支会作为阶段边界截断，避免后续任务反向自锁；任务/阶段用 `requires` 解锁后续，多个入站依赖按 AND 判定。主链接驱动双向自由布局和整棵子树拖动，附加依赖不影响排版；还负责阻塞原因、“下一步”定位、阶段折叠和每树独立镜头。阶段右键直接弹调色盘，任务节点右键菜单含“颜色”项，颜色都写任务或阶段节点的 `color` 字段。 |
-| `assets/study-palette.js` | 目标树阶段与学习任务卡片共用的 12 色粉彩色库（单一事实来源）；只提供 `window.RelatumStudyPalette.COLORS`，不写用户内容。 |
+| `assets/study-palette.js` | 目标树阶段、学习任务卡片与记账卡片共用的 12 色粉彩色库和浮层控制器（单一事实来源）；`window.RelatumStudyPalette` 提供 `COLORS` 与 `createPopoverController()`，统一 4×3 DOM、定位、焦点恢复和出入场，不写用户内容。 |
 | `assets/tree-page.js` | 起步页独立“树状页”的交互层；直接使用 `study-goal-tree.js` 的目标树模型，并以 `study-route.js` 为运行时母版保留布局、常驻 DOM、FLIP、整枝拖动、相机、编号栏、弹层与教程手感。它只调用树状页独立 API，另加卡片形状与每树自由文本/重点便签层，不读取学习页数据，也不提供接入已有任务。新建重点便签与文本框的正文均为空；便签纸张始终为固定黄色，工具栏 10 个色块只改变文字颜色，无历史偏好时默认选中最右侧黑色。普通文本框的垂直居中由外层 `.decor-content` 承担，可编辑 `.text-box-content` 保持普通块级行盒，不得恢复为空内容时光标与输入后文字使用不同垂直定位的 Flex 编辑容器。文本溢出仍允许滚轮滚动，但隐藏 WebView2 原生滚动条外观。KoseFont 与树状页数据共用现有空闲预载；若首次打开时字体仍未就绪，必须等字体 Promise 完成后才一次性渲染权威数据，不允许先显示备用字体再跳变。对象在首次编辑中开始拖动或缩放时，必须先将创建命令排入独立请求队列，再持久化几何变更。自由对象跟随树状页镜头但不参与自动布局或“适应”边界，文本框需要时才通过 `font-loader.js` 加载 KoseFont。树状页调用共享目标树模型时必须显式启用空根标题；学习页仍保留“我的学习路线”的缺省名，不能用共享规范化再把树状页的空标题回填。任务与黑色根节点的进度条复用学习任务的宽度/颜色缓动、达标材质揭示、有限光流与低动态降级；有量化进度的任务会常驻固定宽度的控制槽和独立完成材质层，手动勾选不改真实数值，而从当前比例揭示到持久 100% 金色完成态，恢复任务后重新露出原进度；未设置量化进度时卡片不显示“设置进度”占位文字。卡片右键调色盘覆盖卡片内部的文字与按钮子控件，里程碑仍不提供外观菜单。树状页只适配卡片尺寸和独立请求队列。 |
 | `assets/study-graph.js` | 活跃页/学习页星图，可视化学习活动和任务结构。 |
 | `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
-| `assets/calendar.js` | 日历、日记、右侧三栏（画布活动 / 每日打卡 / 学习任务，替换原专注记录与归档成果）、倒数日与日历页倒数日进度条（每事件可选 `lengthDays` 窗口长度，已过事件显示学习页同款金色达成态）。内部错峰入场未完成时离页会冻结 CSS / WAAPI 当前帧，外层退场隐藏后再清理，保证再次进入仍从头重播。 |
+| `assets/calendar.js` | 日历页“日历 / 记账”双视图协调层，以及日历、日记、右侧三栏（画布活动 / 每日打卡 / 学习任务）、倒数日与倒数日进度条。已在日历页时重复点击书脊切换内部视图；两个视图使用固定叠层并同步 `hidden` / `inert` / `aria-hidden`。日历内部错峰入场未完成时离页会冻结 CSS / WAAPI 当前帧，外层退场隐藏后再清理。 |
+| `assets/ledger.js` | 日历页第二视图的极简人民币流水：页壳、汇总、日期组和账目卡使用常驻 DOM 与按 ID 增量同步，增删改、换色和排序变化复用学习页的入退场、锚定设置浮层与 FLIP。点击 `＋` 只创建一张显示 `¥—` 的本地草稿，草稿可从设置卡直接删除，保存有效金额后才落盘，切月或离页丢弃；账目仍按日期/创建时间倒序，不提供拖拽排序。运行时在起步页首屏空闲期即预取本月快照，首次翻入记账视图直接消费内存缓存。支持同槽二次确认删除、未来日期、跨月保存定位、共享 4×3 的 12 色标记、最近月份内存缓存、请求乱序保护与空闲相邻月预取；不包含预算、趋势、分类、搜索、筛选、批量、多账户、多币种或周期账单。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。 |
 | `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。 |
@@ -153,6 +154,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 起步页活动账本 | `data/start-page-activity.json`（v1）；只保存学习、树状、速记三页按本地日期拆分并合并去重的前台时间段，不回填历史，不读取或改写三页各自的内容文件。 |
 | 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、命名里程碑 `milestones[]`（用户侧不设小额限制，异常数据安全上限 50）与逐日历史 `doneDates` / `minutesByDate`；上一份有效快照为 `data/daily.backup.json`，损坏原件隔离成 `data/daily.corrupt-<时间>.json` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
+| 记账流水 | `data/ledger.json`（v1）；每笔只保存 `id/type/amountCents/date/note/color/createdAt/updatedAt`，金额为正整数分、类型决定正负，日期允许过去与未来，颜色只接受空串或严格 `#rrggbb`。缺失时返回未落盘空账本；有效写入前维护 `data/ledger.backup.json`，主文件损坏时隔离为 `data/ledger.corrupt-<时间>.json` 并尝试从有效备份恢复；不兼容版本只报错且不覆盖。 |
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移。每个事件可选保存 `lengthDays`（1–9999 整数），是日历页倒数日进度条的窗口长度（天），缺省即未设置，非法值在净化时丢弃 |
 | 模板库 | `data/templates.json` |
@@ -216,6 +218,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 空白框选创建盒子与框选节点创建分组分别由 `canvas:boxCreateEnabled` / `canvas:groupCreateEnabled` 控制，两个开关默认开启且彼此独立；`canvas:genIndexEnabled` 也必须独立判断，不能因关闭盒子或分组而隐藏框选生成索引入口。
 - 学习页两种视图共用 `study:taskPage:v1` 记住当前数字任务页，缺失或非法时为第 1 页。右侧页栏按可用高度提供虚拟空页，有内容、已染色或当前选中的高编号页在缩窗后仍可通过隐藏滚动条的滚动区访问；页号右键复用学习页 12 色调色盘，颜色用 `study:taskPageColors:v1` 的 `{version:1,colors:{页码:"#rrggbb"}}` 保存在 `localStorage`，只接受共享色库中的非空颜色，默认色不保存且不写入 `study.json`。有颜色的当前页滑块采用页色，无颜色时保持原有黑白主题滑块。完整进度标题右侧空白可双击编辑当前页的可选单行说明，空说明不显示提示或占位。
 - 速记、学习、复习、专注各自有视图偏好和临时运行状态；专注页使用 `focus:viewMode` 记住 `timer` / `daily`，未保存偏好或偏好值无效时默认 `daily`（每日任务）。学习页使用 `study:viewMode:v2` 记住 `list` / `progress`，未保存偏好或偏好值无效时默认 `list`（极简清单）；再次点击“学”切换视图。极简清单按 `To Do / Done` 分组，保留快速新建、改名、完成、回收、同状态拖拽排序和归档。完整进度视图为未完成/已完成双列，并提供不复制任务数据、始终覆盖显示且不参与主布局的非模态临时任务浮层；浮层开合只存在当前会话，成员引用跨重启保存在 `temporaryTaskIds[]`。两种学习视图都能打开同一套多目标树路线；从任务设置点击“在树中查看”会切换并持久化到实际包含该任务的目标树，关闭路线面板后把键盘焦点还给原入口。活动树由 `data/study.json` 的 `activeTreeId` 持久化，每棵树的相机与折叠阶段 ID 通过 `relatum.goal-tree-route.view.<treeId>` 独立保存在 `localStorage`；路线面板打开期间窗口尺寸变化只按新旧视口尺寸差补偿平移，以保持原画面中心和缩放，不自动执行全树适配。弹层、拖拽和“下一步”循环位置只存在当前会话。任务点若仍被任一目标树解锁条件引用，学习任务更新接口会拒绝删除并保留原任务与依赖。`canvas:studyGoalTreeSimpleMode:v1` 控制目标树高级解锁编辑，未设置时默认精简，仅显式 `'0'` 显示解锁条件入口、添加解锁条件和阶段到任务/任务点的高级拖放；新建后续任务与新建后续阶段始终可用，切换不改目标树数据。完整视图右上角 4 个圆角色块是颜色图例，右键/Enter 调色，用 `study:legend:v1`（`{version:1,colors:[4 个 #rrggbb]}`）保存在 `localStorage`，损坏或非法值回退 4 个「无」空位（斜纹格），≤700px 隐藏，不写入 study.json。每日任务完成页另用 `focus:dailyReviewedDate` 记住当天是否已经点击“回顾今日”（本地日期变化或当天撤销任一任务后失效）。起始文档解析时会预载 `focus.js`，并行读取 `/api/daily` 与 `/api/focus`；`focus.js` 不读取学习任务，先填好隐藏 DOM，再发布 `CanvasFocus` 和 `canvasfocus:ready`。年度足迹使用 `canvas:cadenceLens:v2` 记住 `canvas` / `complete` / `focus`，没有 v2 偏好时默认“画布”；复习方式使用 `canvas:reviewMode:v1` 记住 `scheduled` / `free`。
+- 日历页使用 `calendar:viewMode:v1` 记住 `calendar` / `ledger`，缺失或非法时默认日历；已在该页时重复点击“历”切换。记账当前月份只存在 `ledger.js` 本次文档会话内：同一会话离页再回来保持刚查看月份，应用重新启动后回到本月。记账页四个无文字图例色块用 `ledger:legend:v1` 的 `{version:1,colors:[4 个空串或 #rrggbb]}` 保存在 `localStorage`，只作视觉备忘且不筛选账目；单笔颜色存在 `ledger.json`，收入/支出仍必须用文字和金额正负号表达。
 - 独立树状页沿用目标树镜头格式，每棵树的相机与折叠节点只用 `relatum.tree-page.view.<treeId>` 保存；首次进入恢复当前树已保存的镜头，再次点击已激活的树状页书脊图标则复用“适应”算法，把当前可见树完整居中并保存新镜头。多树活动项保存在 `tree-page.json`，目标树内部“下一步”循环位置、结构拖拽和浮层均为当前会话状态。根节点百分比使用固定 4ch 左对齐数字槽：两位数从左起排，到 `100%` 时第三位只向右占用预留位，标题起点不移动。两页共用 `canvas:studyGoalTreeSimpleMode:v1`，但树状页不加入跨页便签、活跃统计或学习归档。
 - `sessionStorage` 的 `canvas:route-from-start` 用于从起步页进入编辑器后的返回/过渡体验。
 
@@ -232,7 +235,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 独立树状页：`/api/tree-page`；缺失文件或旧实验 v1 返回稳定 ID 的未落盘空白 v2，损坏或其他非 v2 文件返回明确错误且不覆盖原件。
 - 复习：`/api/review-pool`、`/api/review-cards`
 - 速记/跨页便签/专注/每日任务：`/api/notes`、`/api/start-sticky-notes`、`/api/focus`、`/api/daily`
-- 日历与倒数日：`/api/calendar`、`/api/countdown`
+- 日历、记账与倒数日：`/api/calendar`、`/api/ledger?year=&month=`、`/api/countdown`；记账 GET 只返回所选月的规范化流水与 `incomeCents/expenseCents/balanceCents/count` 汇总。
 - 模板：`/api/templates`
 - 生涯报告：`/api/career-report` 只读取已有 `data/career-report.json` 冻结快照；不存在时返回 `{version:1, exists:false}`，普通读取不扫描业务文件。
 - 画布和资源读取：`/api/load`、`/api/background-image`、`/api/canvas-asset`、`/api/canvas-annotation`、`/api/node-annotations`、`/api/background-preference`
@@ -259,6 +262,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 起步页活动：`/api/start-page-activity` 只接受 `study` / `tree` / `notes`、会话 ID 与前台时间段；按画布计时相同的时长上限、本地午夜拆分和区间合并规则写入独立账本，再返回该页今日及累计秒数。
 - 每日任务：`/api/daily-create`、`/api/daily-update`、`/api/daily-delete`、`/api/daily-toggle`、`/api/daily-add-minutes`、`/api/daily-reorder`、`/api/daily-group-create`、`/api/daily-group-update`、`/api/daily-group-delete`、`/api/daily-tree`
 - 日历：`/api/diary-save`、`/api/diary-delete`、`/api/countdown-save`
+- 记账：`/api/ledger-entry-create`、`/api/ledger-entry-update`、`/api/ledger-entry-delete`；更新既支持完整四字段表单，也支持单独颜色补丁。写响应返回规范化记录和所有受影响月份的完整快照，跨月编辑包含原月与目标月，前端据此原位更新缓存。
 - AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
 
 ### HTTP 与并发边界
@@ -501,6 +505,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 日历 `calendar.js`
 
+- 日历页内部是“日历 / 记账”两个固定 grid 叠层。`CanvasCalendar.toggleMode()` 是唯一切换入口，切换时立即让退场层 `inert` / `aria-hidden=true`，有限交叉淡化结束后再设 `hidden`；离开外层页面会取消两个模块的请求、计时器、临时编辑和动画，低动态偏好下立即完成。
 - 日记是每天一个 Markdown 文件，带 frontmatter：`title/date/tags/updatedAt`。
 - 日历聚合日记、画布活动、每日任务打卡、学习任务完成与倒数日；不读取 `data/calendar-pins.json`。`/api/calendar` 的 day 返回 `canvasActivity`（当天画布活动：标题/秒数/新建/修改标记，按时长降序）、`daily`（当天每日任务打卡摘要：**只记录已打卡的任务**——按 doneDates 判定，未打卡项不返回、不参与入场动画；`checkedCount`/`totalCount`/`items[{name,checked,totalDays}]`，条目按名称排序）、`studyCompleted`（当天**归档**的学习任务：学习归档记录中 kind=study 且落在该日的条目，按时间升序；不读未归档的 study.json）。月网格圆点与右侧三栏一一对应：`canvas`（当天画布活动：有前台时长或新建/修改）、`daily`（当天打过卡：任一每日任务 doneDates 含该日）、`study`（当天有学习归档：kind=study 记录落在该日），图例三色即画布活动 / 每日打卡 / 学习任务；旧 diary/due/focusTask/completed/focusSessions/archives 桶字段保留但不再渲染。右侧三栏在数据未到时**完全隐藏**（不渲染加载骨架白块），数据到达后整列入场动画揭示；每次翻进日历页（activate）都完整重播错峰入场——页头（含进度条）与月历卡片用 CSS 类，右侧整列（日记 + 三栏卡片错峰/条目上滑）由 `animateDayColumn({kind:'enter'})` 走 WAAPI。**非 stale 重进**走 `replayEntranceMotion`（rAF）；**stale 刷新**（用户在他页改过数据）走 `enterAfterRefresh`——数据渲染与入场动画同帧生效（同步加类、不经过 rAF），避免「新内容先完整显示一帧、再闪回动画起点」；首次进入由 render 的 initial 入场负责、不双播。倒数日卡片在数据未到时也**隐藏**（`hidden = !countdownEnabled || !countdown`，不渲染"创建第一个倒数日"占位按钮），数据到达后由 `syncCountdownCard` 以 reveal 动画淡入，避免「占位 → 重建」闪现。
 - 倒数日保存在 `data/countdown.json`，起步页可开关显示。
@@ -510,6 +515,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 独立倒数日页使用不透明深色表面，左侧管理事件、右侧显示当前时钟；新建/编辑共用页面内对话框，删除需短时间内二次确认，最后一条允许删除。当前事件标题和日期支持双击就地编辑（键盘聚焦后也可按 Enter/F2），输入框内 Enter 保存、Esc 取消、失焦保存；保存先轻量更新当前标题、日期与左侧条目，再异步落盘，不重建页面。“放大”进入页面内专注视图：顶栏上移退场、左侧事件栏收至零宽、标题与底部提示淡出，四栏数字卡按同一页面布局连续放大；右上角只留低透明度退出按钮，悬停展开文字。页面未在文字输入或编辑状态时，`F` 在普通视图与专注视图之间切换，快捷键退出后不把键盘焦点锁到“放大”按钮；Esc 仍优先退出专注视图。该模式不调用原生 Fullscreen、不重建时钟 DOM、不持久化，使用 `--easing-page` / `--easing-soft` 和有限 transition，低动态模式下静态切换。计时器按真实整秒对齐，用一次性 timeout 调度。翻页内核复用 `daoshu` 参考项目的固定四层结构：静态上下页和旧上/新下叶片从建页起常驻，每次只更新文字并重启 `.go` 类，不创建或删除合成层；旧上叶片按 `280ms ease-in` 折走，新下叶片延迟 `280ms` 后按 `300ms cubic-bezier(0.37,0,0.63,1)` 落下，600ms 后提交静态底页。为严格保持参考效果，单个变化单位允许读取一次自身 `offsetWidth` 重启动画；不复制参考项目的 200ms 轮询、`drop-shadow` 滤镜、毛玻璃或 Electron 外壳。页面隐藏或离开时必须停止计时器，`prefers-reduced-motion` 下直接换值。
 - 桌面 EXE 中，倒数日页可把当前事件固定为本次进程的主屏动态桌面背景；按钮按当前绑定显示“设为 / 替换 / 取消”。`wallpaper=1&event=<id>&lang=<language>` 是同一页面的只读渲染模式，只显示标题、日期、状态和四栏翻页时钟，不修改 `selectedId`，每 3 秒从既有 `/api/countdown` 同步固定事件的名称和日期；固定事件删除后自动停止。该专用 WebView 即使被 Chromium 报告为后台文档也必须继续整秒调度和轻量同步，普通倒数日页仍在隐藏时暂停。浏览器模式不显示入口，不新增 HTTP 控制接口或持久化字段。
 - 放大/退出按钮使用 `aria-label` 和自身文字，不设置会触发浏览器原生提示的 `title`；退出按钮在悬停与键盘聚焦时都展开文字。倒数页从浏览器前进/后退缓存恢复时，`pageshow` 必须重启并重新对齐计时。
+
+### 极简记账 `ledger.js`
+
+- 页头只保留四个无文字图例色块、上月/下月和“＋记一笔”；三张汇总纸面按结余/收入/支出显示，流水按日期倒序分组，同日按创建时间倒序。桌面三卡并排、窄窗 `auto-fit/minmax` 换行，流水始终单列且没有侧栏。
+- 新增和编辑共用流水顶部行内卡，只含收入/支出、金额、日期、可选备注。行单击或 Enter 进入编辑，Esc 取消、Enter 提交；只有编辑已有流水时显示删除，第一次点击在同一槽位变成“确认删除”，不弹对话框。当前月新增默认今天，其他月份沿用今天日号并夹到月末；日期可自由改到未来，跨月保存后切至目标月份并定位新记录。
+- 行右键或键盘菜单键打开学习页共享 12 色盘，颜色只改变底色/侧边标记；四个图例色块右键或 Enter/Space 使用同一色盘。保存失败必须保留服务端已确认状态或回滚乐观颜色，不能让失败请求改写缓存。
+- 翻月先启动有限退场，再并行读取；最近月份保存在内存，空闲预取相邻月份。主请求和预取各自使用 `AbortController`，主请求另有递增序号，旧响应不得覆盖新月份。汇总、行增删改、颜色、跨视图与月份动画均服从 `prefers-reduced-motion`，离页时清理。
+- 首版固定人民币 `¥`，不得加入预算、趋势图、分类、搜索、筛选、批量、多账户、多币种、周期账单或任何为这些功能预留的复杂状态与控件。
 
 ### 复习 `review.js`
 
@@ -636,6 +649,18 @@ node .\tests\start-spine-motion-contract.js
 ```
 
 只检查改过的手写 JS；不要对 `assets/vendor/` 里的压缩库做人工格式化或随意 check。
+
+改动日历双视图、极简记账数据/API/交互时，还要运行：
+
+```powershell
+python -m unittest .\tests\test_ledger.py .\tests\test_calendar_canvas_activity.py .\tests\test_calendar_daily_study.py .\tests\test_countdown_progress.py
+node .\tests\calendar-ledger-contract.js
+node .\tests\calendar-day-columns-contract.js
+node .\tests\calendar-countdown-progress-contract.js
+```
+
+并使用隔离的 `RELATUM_DATA_ROOT` 验证本月空状态、未来月份新增、跨月修改、同槽删除确认、快速翻月乱序保护、窄窗、键盘、深浅主题和低动态；结束后关闭测试服务，不得读取或写入现有 `data/ledger.json`。
+
 改动画布前台计时、年度足迹“画布”镜头或画布活动账本时，还要运行：
 
 ```powershell

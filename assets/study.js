@@ -166,10 +166,17 @@
   const taskPageNoteSeq = new Map();
   let studyColorPopover = null;
   let studyColorTrigger = null;
-  let studyColorPositionFrame = 0;
-  let studyColorAnchorX = 0;
-  let studyColorAnchorY = 0;
-  let studyColorPick = null;
+  const studyPaletteController = window.RelatumStudyPalette
+    && typeof window.RelatumStudyPalette.createPopoverController === 'function'
+    ? window.RelatumStudyPalette.createPopoverController({
+      reducedMotion: prefersReduced,
+      translate: T,
+      onClose: function () {
+        studyColorPopover = null;
+        studyColorTrigger = null;
+      },
+    })
+    : null;
 
   function studyTaskPagePaletteValues() {
     var colors = (window.RelatumStudyPalette && window.RelatumStudyPalette.COLORS) || [];
@@ -2887,107 +2894,41 @@
     window.setTimeout(finish, 190);
   }
 
-  // —— 调色盘浮层：右键任务卡片 / 图例色块弹出，与目标树阶段同款 12 色 ——
-  function buildStudyColorPalette(currentColor) {
-    var colors = (window.RelatumStudyPalette && window.RelatumStudyPalette.COLORS) || [];
-    currentColor = String(currentColor || '').trim();
-    var swatches = colors.map(function (item) {
-      var isActive = item.value === currentColor || (!item.value && !currentColor);
-      var style = item.value ? ' style="background:' + item.value + '"' : '';
-      return '<button type="button" class="study-route-color-swatch' + (isActive ? ' is-active' : '') + '"'
-        + ' data-color="' + escapeHtml(item.value) + '"'
-        + ' aria-label="' + escapeHtml(item.label) + '"' + style + '></button>';
-    }).join('');
-    return '<div class="study-route-color-palette">' + swatches + '</div>';
-  }
-
-  function positionStudyColorPopover() {
-    if (!studyColorPopover) return;
-    var box = studyColorPopover.getBoundingClientRect();
-    var edge = 12;
-    var left = studyColorAnchorX + 10;
-    if (left + box.width > window.innerWidth - edge) left = studyColorAnchorX - box.width - 10;
-    left = Math.max(edge, left);
-    var top = studyColorAnchorY + 10;
-    if (top + box.height > window.innerHeight - edge) top = studyColorAnchorY - box.height - 10;
-    top = Math.max(edge, top);
-    studyColorPopover.style.left = Math.round(left) + 'px';
-    studyColorPopover.style.top = Math.round(top) + 'px';
-  }
-
+  // —— 调色盘浮层：学习卡片、图例与记账卡共用同一控制器 ——
   function scheduleStudyColorPosition() {
-    if (!studyColorPopover || studyColorPositionFrame) return;
-    studyColorPositionFrame = requestAnimationFrame(function () {
-      studyColorPositionFrame = 0;
-      if (!studyColorTrigger || !studyColorTrigger.isConnected) {
-        closeStudyColorPopover(false, true);
-        return;
-      }
-      positionStudyColorPopover();
-    });
+    if (studyPaletteController) studyPaletteController.schedulePosition();
   }
 
   function openStudyColorPopover(trigger, clientX, clientY, options) {
     options = options || {};
-    if (!trigger) return;
-    if (studyColorPopover) closeStudyColorPopover(false, true);
+    if (!trigger || !studyPaletteController) return;
+    if (studyPaletteController.isOpen()) closeStudyColorPopover(false, true);
     studyColorTrigger = trigger;
-    studyColorAnchorX = clientX;
-    studyColorAnchorY = clientY;
-    studyColorPick = typeof options.pick === 'function' ? options.pick : null;
-    var box = document.createElement('section');
-    box.className = 'study-color-popover';
-    box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-label', options.label || T('选择颜色'));
-    box.innerHTML = buildStudyColorPalette(options.currentColor || '');
-    box.addEventListener('contextmenu', function (event) { event.preventDefault(); });
-    box.addEventListener('click', function (event) {
-      var swatch = event.target.closest('button[data-color]');
-      if (!swatch) return;
-      var value = swatch.dataset.color || '';
-      var pick = studyColorPick;
-      closeStudyColorPopover(false, true);
-      if (pick) pick(value);
-    });
-    studyColorPopover = box;
-    document.body.appendChild(box);
     if (trigger.matches && trigger.matches('[data-task-page]')) setTaskPageRailVisible(true);
-    positionStudyColorPopover();
-    requestAnimationFrame(function () {
-      if (!studyColorPopover) return;
-      studyColorPopover.classList.add('is-open');
-      positionStudyColorPopover();
+    var originalPick = typeof options.pick === 'function' ? options.pick : null;
+    studyColorPopover = studyPaletteController.open(trigger, clientX, clientY, {
+      currentColor: options.currentColor || '',
+      label: options.label || T('选择颜色'),
+      pick: function (value) {
+        studyColorPopover = null;
+        studyColorTrigger = null;
+        if (originalPick) originalPick(value);
+      },
     });
-    window.setTimeout(function () {
-      if (!studyColorPopover) return;
-      var active = studyColorPopover.querySelector('.study-route-color-swatch.is-active');
-      var target = active || studyColorPopover.querySelector('.study-route-color-swatch');
-      if (target) target.focus();
-    }, prefersReduced ? 0 : 80);
   }
 
   function closeStudyColorPopover(restoreFocus, instant) {
-    var popover = studyColorPopover;
     var trigger = studyColorTrigger;
-    if (!popover) return;
-    var wasTaskPageTrigger = !!(trigger && trigger.matches && trigger.matches('[data-task-page]'));
-    if (studyColorPositionFrame) cancelAnimationFrame(studyColorPositionFrame);
-    studyColorPositionFrame = 0;
-    studyColorPopover = null;
-    studyColorTrigger = null;
-    studyColorPick = null;
-    if (wasTaskPageTrigger) setTaskPageRailVisible(taskPageRailOver);
-    var finish = function () {
-      if (popover.isConnected) popover.remove();
-      if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
-    };
-    if (instant || prefersReduced) {
-      finish();
+    if (!studyPaletteController || !studyPaletteController.isOpen()) {
+      studyColorPopover = null;
+      studyColorTrigger = null;
       return;
     }
-    popover.classList.remove('is-open');
-    popover.classList.add('is-closing');
-    window.setTimeout(finish, 160);
+    var wasTaskPageTrigger = !!(trigger && trigger.matches && trigger.matches('[data-task-page]'));
+    studyColorPopover = null;
+    studyColorTrigger = null;
+    if (wasTaskPageTrigger) setTaskPageRailVisible(taskPageRailOver);
+    studyPaletteController.close(restoreFocus, instant);
   }
 
   function commitProgressSettings(id, box) {
