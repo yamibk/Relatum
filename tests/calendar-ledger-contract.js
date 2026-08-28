@@ -71,9 +71,12 @@ assert(!ledger.includes('ledgerCacheKey') && !ledger.includes('scheduleNeighborP
   && !ledger.includes('prefetchPage'), 'page-aware cache or adjacent prefetch must be removed');
 assert(ledger.includes('data-ledger-page-settings') && ledger.includes('data-ledger-unit')
   && ledger.includes("'/api/ledger-page-unit'"), 'per-page amount unit editor is missing');
-assert(ledger.includes("const VIEW_KEY = 'ledger:view:v1'") && ledger.includes('data-ledger-view')
+assert(ledger.includes("const VIEW_KEY = 'ledger:viewByPage:v1'") && ledger.includes('data-ledger-view')
   && ledger.includes("'cumulative'"),
   'remembered monthly/cumulative ledger view is missing');
+assert(ledger.includes('function viewForPage(') && ledger.includes('function setViewForPage(')
+  && ledger.includes('state.viewMode = viewForPage(next)'),
+  'per-page ledger view store is missing');
 assert(ledger.includes("dateField.hidden = state.viewMode === 'cumulative'")
   && ledger.includes("header.hidden = state.viewMode === 'cumulative'")
   && styles.includes('.ledger-cumulative-view .ledger-summary-card small'),
