@@ -8,6 +8,7 @@
   const LEGEND_KEY = 'ledger:legend:v1';
   const PAGE_KEY = 'ledger:page:v1';
   const VIEW_KEY = 'ledger:viewByPage:v1';
+  const HIDE_KEY = 'ledger:hideDecimalsByPage:v1';
   const DRAFT_ID = 'ledger-local-draft';
   const PAGE_MAX = 99;
   const PAGE_EDGE_PX = 84;
@@ -22,6 +23,7 @@
     active: false, activatedOnce: false, mounted: false,
     year: now.getFullYear(), month: now.getMonth() + 1, page: initialPage, highestPage: 1,
     viewByPage: loadViewByPage(), viewMode: 'month',
+    hideByPage: loadHideByPage(), hideDecimals: false,
     // 与学习页同款模型：一次全量加载整本账本，当前视图（月/页/累计）由本地派生。
     ledger: null, payload: null, draft: null,
     requestSeq: 0, controller: null,
@@ -35,8 +37,10 @@
     pageOrbSettleUntil: 0,
     pageSwitchSeq: 0, pageSwitchTimer: 0,
   };
-  // 视图按页独立：viewMode 只镜像当前页，切页与保存视图时同步。
+  // 视图按页独立：viewMode 只镜像当前页，切页与保存视图时同步；
+  // 隐藏小数点同样按页独立，hideDecimals 只镜像当前页。
   state.viewMode = viewForPage(state.page);
+  state.hideDecimals = hideDecimalsForPage(state.page);
   const dom = {};
   let legendColors = loadLegend();
   const paletteController = window.RelatumStudyPalette
@@ -104,6 +108,36 @@
     saveViewByPage();
   }
 
+  // 隐藏小数点按页独立：ledger:hideDecimalsByPage:v1 的 pages 只保存开启的页，
+  // 未记录的页显示完整小数。只改变显示，账目金额数据（分）不变。
+  function loadHideByPage() {
+    const fallback = { version: 1, pages: {} };
+    try {
+      const raw = JSON.parse(localStorage.getItem(HIDE_KEY) || 'null');
+      if (!raw || raw.version !== 1 || !raw.pages || typeof raw.pages !== 'object') return fallback;
+      const pages = {};
+      Object.keys(raw.pages).forEach((page) => { if (raw.pages[page] === true) pages[page] = true; });
+      return { version: 1, pages };
+    } catch (error) { return fallback; }
+  }
+
+  function saveHideByPage() {
+    try { localStorage.setItem(HIDE_KEY, JSON.stringify(state.hideByPage)); }
+    catch (error) {}
+  }
+
+  function hideDecimalsForPage(page) {
+    const store = state.hideByPage && state.hideByPage.pages || {};
+    return store[String(normalizePage(page))] === true;
+  }
+
+  function setHideForPage(page, hidden) {
+    const key = String(normalizePage(page));
+    if (hidden) state.hideByPage.pages[key] = true;
+    else delete state.hideByPage.pages[key];
+    saveHideByPage();
+  }
+
   function dateParts(day) {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ''));
     if (!match) return null;
@@ -153,9 +187,12 @@
   function formatMoney(cents, signed, unit) {
     const value = Number(cents) || 0;
     const locale = document.documentElement.dataset.uiLanguage === 'en' ? 'en-US' : 'zh-CN';
-    const formatted = (Math.abs(value) / 100).toLocaleString(locale, {
-      minimumFractionDigits: 2, maximumFractionDigits: 2,
-    });
+    // 当前页开启「隐藏小数点」时只显示整数（直接截断，不四舍五入）；数据仍按分完整保存。
+    const formatted = state.hideDecimals
+      ? Math.floor(Math.abs(value) / 100).toLocaleString(locale)
+      : (Math.abs(value) / 100).toLocaleString(locale, {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
     const sign = signed && value !== 0 ? (value < 0 ? '−' : '+') : (value < 0 ? '−' : '');
     const customUnit = typeof unit === 'string' ? unit : currentUnit();
     return customUnit ? sign + formatted + customUnit : sign + '¥' + formatted;
@@ -909,7 +946,19 @@
       button.textContent = T(item[1]); button.classList.toggle('is-active', state.viewMode === item[0]);
       button.setAttribute('aria-pressed', state.viewMode === item[0] ? 'true' : 'false'); viewSwitch.appendChild(button);
     });
-    viewField.append(viewLabel, viewSwitch); fields.append(field, viewField);
+    viewField.append(viewLabel, viewSwitch);
+    const hideField = document.createElement('div'); hideField.className = 'ledger-settings-field ledger-view-field';
+    const hideLabel = document.createElement('span'); hideLabel.textContent = T('金额显示');
+    const hideSwitch = document.createElement('div');
+    hideSwitch.className = 'ledger-type-switch'; hideSwitch.setAttribute('role', 'group');
+    hideSwitch.setAttribute('aria-label', T('金额小数'));
+    [['shown', '含小数'], ['hidden', '隐藏小数']].forEach((item) => {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.ledgerHideDecimals = item[0];
+      const active = state.hideDecimals === (item[0] === 'hidden');
+      button.textContent = T(item[1]); button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false'); hideSwitch.appendChild(button);
+    });
+    hideField.append(hideLabel, hideSwitch); fields.append(field, viewField, hideField);
     const error = document.createElement('p');
     error.className = 'study-progress-settings-error ledger-settings-error';
     error.dataset.role = 'ledger-unit-error'; error.setAttribute('role', 'alert');
@@ -926,6 +975,14 @@
       if (view) {
         box.querySelectorAll('[data-ledger-view]').forEach((button) => {
           const active = button === view; button.classList.toggle('is-active', active);
+          button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        return;
+      }
+      const hide = event.target.closest('[data-ledger-hide-decimals]');
+      if (hide) {
+        box.querySelectorAll('[data-ledger-hide-decimals]').forEach((button) => {
+          const active = button === hide; button.classList.toggle('is-active', active);
           button.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
         return;
@@ -986,6 +1043,8 @@
     const unit = String(input && input.value || '').trim();
     const activeView = box.querySelector('[data-ledger-view].is-active');
     const nextViewMode = normalizeViewMode(activeView && activeView.dataset.ledgerView);
+    const activeHide = box.querySelector('[data-ledger-hide-decimals].is-active');
+    const nextHideDecimals = !!(activeHide && activeHide.dataset.ledgerHideDecimals === 'hidden');
     const error = box.querySelector('[data-role="ledger-unit-error"]');
     if (unit.length > 12) { error.textContent = T('金额单位最多 12 个字符'); input.focus(); return; }
     state.unitSaving = true; box.classList.add('is-saving');
@@ -995,6 +1054,7 @@
       if (!result.ledger) throw new Error(T('账本同步失败'));
       applyLedgerPayload(result.ledger);
       state.viewMode = nextViewMode; setViewForPage(state.page, nextViewMode);
+      state.hideDecimals = nextHideDecimals; setHideForPage(state.page, nextHideDecimals);
       closeUnitSettings(false);
       // 视图切换与切页一致：草稿保留，不丢弃。
       syncLedger({ skipFlip: true });
@@ -1082,7 +1142,8 @@
         closeSettings(false); state.draft = null;
         if (state.viewMode !== 'cumulative') { state.year = target.year; state.month = target.month; }
         state.page = normalizePage(result.entry.ledgerPage);
-        state.viewMode = viewForPage(state.page); saveCurrentPage(); renderPageRail();
+        state.viewMode = viewForPage(state.page);
+        state.hideDecimals = hideDecimalsForPage(state.page); saveCurrentPage(); renderPageRail();
         state.highlightId = result.entry.id;
         syncLedger({ newIds: new Set([result.entry.id]) });
       }).catch((error) => {
@@ -1234,6 +1295,7 @@
     if (paletteController) paletteController.close(false, true);
     stopPageEntrance();
     state.page = next; state.viewMode = viewForPage(next);
+    state.hideDecimals = hideDecimalsForPage(next);
     state.highlightId = ''; saveCurrentPage(); renderPageRail();
     const seq = ++state.pageSwitchSeq;
     if (reducedMotion || !state.active || !dom.page) {

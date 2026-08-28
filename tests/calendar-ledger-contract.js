@@ -77,6 +77,14 @@ assert(ledger.includes("const VIEW_KEY = 'ledger:viewByPage:v1'") && ledger.incl
 assert(ledger.includes('function viewForPage(') && ledger.includes('function setViewForPage(')
   && ledger.includes('state.viewMode = viewForPage(next)'),
   'per-page ledger view store is missing');
+assert(ledger.includes("const HIDE_KEY = 'ledger:hideDecimalsByPage:v1'")
+  && ledger.includes('function hideDecimalsForPage(') && ledger.includes('function setHideForPage(')
+  && ledger.includes('state.hideDecimals = hideDecimalsForPage(next)'),
+  'per-page hide-decimals store is missing');
+assert(ledger.includes("Math.floor(Math.abs(value) / 100)") && ledger.includes('state.hideDecimals'),
+  'hide-decimals display truncation is missing');
+assert(ledger.includes('data-ledger-hide-decimals') && ledger.includes("'隐藏小数'"),
+  'hide-decimals toggle in page settings is missing');
 assert(ledger.includes("dateField.hidden = state.viewMode === 'cumulative'")
   && ledger.includes("header.hidden = state.viewMode === 'cumulative'")
   && styles.includes('.ledger-cumulative-view .ledger-summary-card small'),

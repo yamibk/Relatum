@@ -1298,6 +1298,7 @@
           ['任务页颜色与图例', '<code>study:taskPageColors:v1</code> 和 <code>study:legend:v1</code> 只存在本机。删除后颜色恢复默认，不能从 <code>study.json</code> 自动恢复，只能重新设置。'],
           ['记账当前页', '<code>ledger:page:v1</code> 只记住上次查看的数字页，删除后回到第 1 页；账目归属和每页金额单位仍保存在 <code>data/ledger.json</code> 中。'],
           ['记账视图', '<code>ledger:viewByPage:v1</code> 按页记住月份或累计视图，只保存设为累计的页；删除后每页都恢复月份视图。它只改变展示和汇总范围，不改写账目日期。'],
+          ['记账金额显示', '<code>ledger:hideDecimalsByPage:v1</code> 按页记住是否隐藏小数点，只保存设为隐藏的页；删除后每页都显示完整小数。它只改变显示，账目金额数据不变。'],
         ]],
         ['画布编辑器', '模式、面板位置、工具参数、新建节点/连线的默认样式、自动保存和引导状态等以 <code>canvas:*</code> 偏好保存。删除后已有 <code>.canvas</code> 内容不会改变，但编辑器偏好与新建默认会重置，首次引导也可能再次出现。'],
         ['专注钟与当前会话', '两者都不应当作已完成的长期记录。', [
@@ -1414,6 +1415,7 @@
           ['Task-page colors and legend', '<code>study:taskPageColors:v1</code> and <code>study:legend:v1</code> exist only on this device. Deleting them restores default colors; they cannot be recovered automatically from <code>study.json</code> and must be set again.'],
           ['Current Ledger page', '<code>ledger:page:v1</code> only remembers the last numbered page you viewed. Deleting it returns to page 1; entry ownership and per-page amount units remain in <code>data/ledger.json</code>.'],
           ['Ledger view', '<code>ledger:viewByPage:v1</code> remembers the monthly or cumulative view per page, keeping only pages set to cumulative. Deleting it restores the monthly view for every page; it only changes presentation and summary scope, not entry dates.'],
+          ['Ledger amount display', '<code>ledger:hideDecimalsByPage:v1</code> remembers per page whether decimal places are hidden, keeping only pages set to hide them. Deleting it shows full decimals for every page; it only changes display, never the stored amounts.'],
         ]],
         ['Canvas editor', 'Modes, panel positions, tool parameters, default styles for new nodes and edges, autosave, and onboarding state are stored as <code>canvas:*</code> preferences. Deleting them does not change existing <code>.canvas</code> content, but editor preferences and creation defaults reset, and onboarding may appear again.'],
         ['Focus and the current session', 'Neither should be confused with completed long-term records.', [
