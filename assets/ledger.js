@@ -3,26 +3,36 @@
 
   const root = document.querySelector('[data-role="ledger-shell"]');
   if (!root) return;
+  const pageHost = root.closest('.calendar-embedded') || root;
 
   const LEGEND_KEY = 'ledger:legend:v1';
+  const PAGE_KEY = 'ledger:page:v1';
+  const VIEW_KEY = 'ledger:view:v1';
   const DRAFT_ID = 'ledger-local-draft';
+  const PAGE_MAX = 99;
+  const PAGE_EDGE_PX = 84;
   const CACHE_MAX = 24;
   const reducedMotion = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
   })();
   const now = new Date();
+  const initialPage = loadCurrentPage();
   const state = {
     active: false, activatedOnce: false, mounted: false,
-    year: now.getFullYear(), month: now.getMonth() + 1,
+    year: now.getFullYear(), month: now.getMonth() + 1, page: initialPage, highestPage: 1,
+    viewMode: loadViewMode(),
     payload: null, draft: null, cache: new Map(),
     requestSeq: 0, controller: null, prefetching: new Map(),
     prefetchHandle: 0, prefetchUsesIdle: false,
     warmupHandle: 0, warmupUsesIdle: false, warmupKey: '', warmupController: null, warmupPromise: null,
     settings: null, settingsPopover: null, settingsTrigger: null,
     settingsPositionFrame: 0, deleteTimer: 0,
+    unitPopover: null, unitTrigger: null, unitSaving: false,
     highlightId: '', entranceAnimations: [], exitFrozen: false,
     monthMotionTimer: 0, mutationSeq: new Map(), mutationChains: new Map(),
+    pageRailOver: false, pageRailVisible: false, pageWheelAccum: 0, pageWheelTimer: 0,
+    pageOrbSettleUntil: 0,
   };
   const dom = {};
   let legendColors = loadLegend();
@@ -37,6 +47,46 @@
 
   function monthKey(year, month) {
     return String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0');
+  }
+
+  function normalizePage(value) {
+    const page = Number(value);
+    return Number.isInteger(page) && page >= 1 && page <= PAGE_MAX ? page : 1;
+  }
+
+  function loadCurrentPage() {
+    try { return normalizePage(localStorage.getItem(PAGE_KEY)); }
+    catch (error) { return 1; }
+  }
+
+  function saveCurrentPage() {
+    try { localStorage.setItem(PAGE_KEY, String(state.page)); }
+    catch (error) {}
+  }
+
+  function normalizeViewMode(value) {
+    return value === 'cumulative' ? 'cumulative' : 'month';
+  }
+
+  function loadViewMode() {
+    try { return normalizeViewMode(localStorage.getItem(VIEW_KEY)); }
+    catch (error) { return 'month'; }
+  }
+
+  function saveViewMode() {
+    try { localStorage.setItem(VIEW_KEY, state.viewMode); }
+    catch (error) {}
+  }
+
+  function ledgerCacheKey(year, month, page, viewMode) {
+    const view = normalizeViewMode(viewMode == null ? state.viewMode : viewMode);
+    return (view === 'cumulative' ? 'all' : monthKey(year, month)) + '@' + normalizePage(page);
+  }
+
+  function ledgerUrl(year, month, page, viewMode) {
+    const view = normalizeViewMode(viewMode == null ? state.viewMode : viewMode);
+    return '/api/ledger?year=' + year + '&month=' + month + '&page=' + normalizePage(page)
+      + (view === 'cumulative' ? '&scope=all' : '');
   }
 
   function dateParts(day) {
@@ -81,14 +131,19 @@
       .format(new Date(parts.year, parts.month - 1, parts.day));
   }
 
-  function formatMoney(cents, signed) {
+  function currentUnit() {
+    return state.payload && typeof state.payload.unit === 'string' ? state.payload.unit : '';
+  }
+
+  function formatMoney(cents, signed, unit) {
     const value = Number(cents) || 0;
     const locale = document.documentElement.dataset.uiLanguage === 'en' ? 'en-US' : 'zh-CN';
     const formatted = (Math.abs(value) / 100).toLocaleString(locale, {
       minimumFractionDigits: 2, maximumFractionDigits: 2,
     });
-    if (!signed || value === 0) return (value < 0 ? '−' : '') + '¥' + formatted;
-    return (value < 0 ? '−' : '+') + '¥' + formatted;
+    const sign = signed && value !== 0 ? (value < 0 ? '−' : '+') : (value < 0 ? '−' : '');
+    const customUnit = typeof unit === 'string' ? unit : currentUnit();
+    return customUnit ? sign + formatted + customUnit : sign + '¥' + formatted;
   }
 
   function amountInputValue(cents) {
@@ -126,15 +181,17 @@
     return Number.isSafeInteger(result) && result > 0 ? result : 0;
   }
 
-  function emptyPayload(year, month) {
-    return { version: 1, year, month,
+  function emptyPayload(year, month, page, viewMode) {
+    const view = normalizeViewMode(viewMode == null ? state.viewMode : viewMode);
+    return { version: 1, year, month, page: normalizePage(page), highestPage: state.highestPage,
+      scope: view === 'cumulative' ? 'all' : 'month', unit: '',
       summary: { incomeCents: 0, expenseCents: 0, balanceCents: 0, count: 0 }, entries: [] };
   }
 
   function clonePayload(payload) { return JSON.parse(JSON.stringify(payload)); }
 
   function normalizePayload(payload) {
-    const result = payload || emptyPayload(state.year, state.month);
+    const result = payload || emptyPayload(state.year, state.month, state.page);
     result.entries = Array.isArray(result.entries) ? result.entries : [];
     result.entries.sort((left, right) => String(right.date).localeCompare(String(left.date))
       || String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
@@ -207,11 +264,16 @@
       + '<div class="ledger-month-nav" data-ledger-month-nav>'
       + '<button type="button" data-ledger-month="-1">‹</button><strong aria-live="polite" data-ledger-month-title></strong>'
       + '<button type="button" data-ledger-month="1">›</button></div>'
+      + '<button type="button" class="ledger-page-settings" data-ledger-page-settings aria-haspopup="dialog">…</button>'
       + '<button type="button" class="ledger-add" data-ledger-add><span aria-hidden="true">＋</span><span data-ledger-add-label></span></button>'
       + '</div></header><section class="ledger-summary" data-ledger-summary></section>'
       + '<main class="ledger-flow"><section class="ledger-groups" data-ledger-groups></section>'
       + '<section class="ledger-empty" data-ledger-empty><span aria-hidden="true">¥</span><strong></strong><p></p></section>'
-      + '</main></div>';
+      + '</main></div>'
+      + '<nav class="study-task-page-rail ledger-page-rail auto-hide" data-ledger-page-rail>'
+      + '<span class="study-task-page-orb" data-ledger-page-orb aria-hidden="true"></span>'
+      + '<div class="study-task-page-scroll" data-ledger-page-scroll>'
+      + '<div class="study-task-page-list" data-ledger-page-list></div></div></nav>';
     root.appendChild(template.content);
     dom.page = root.querySelector('.ledger-page');
     dom.title = root.querySelector('[data-ledger-title]');
@@ -219,12 +281,17 @@
     dom.monthNav = root.querySelector('[data-ledger-month-nav]');
     dom.monthTitle = root.querySelector('[data-ledger-month-title]');
     dom.add = root.querySelector('[data-ledger-add]');
+    dom.pageSettings = root.querySelector('[data-ledger-page-settings]');
     dom.addLabel = root.querySelector('[data-ledger-add-label]');
     dom.summary = root.querySelector('[data-ledger-summary]');
     dom.flow = root.querySelector('.ledger-flow');
     dom.groups = root.querySelector('[data-ledger-groups]');
     dom.empty = root.querySelector('[data-ledger-empty]');
-    buildLegend(); buildSummaryCards(); bindControls(); syncLanguage();
+    dom.pageRail = root.querySelector('[data-ledger-page-rail]');
+    dom.pageOrb = root.querySelector('[data-ledger-page-orb]');
+    dom.pageScroll = root.querySelector('[data-ledger-page-scroll]');
+    dom.pageList = root.querySelector('[data-ledger-page-list]');
+    buildLegend(); buildSummaryCards(); bindControls(); renderPageRail(); syncLanguage();
   }
 
   function buildLegend() {
@@ -263,23 +330,109 @@
   function syncLanguage() {
     dom.title.textContent = T('记账');
     dom.addLabel.textContent = T('记一笔');
+    dom.pageSettings.setAttribute('aria-label', T('设置当前账本页'));
     dom.legend.setAttribute('aria-label', T('颜色图例'));
     dom.monthNav.setAttribute('aria-label', T('账本月份'));
     const monthButtons = dom.monthNav.querySelectorAll('[data-ledger-month]');
     monthButtons[0].setAttribute('aria-label', T('上个月'));
     monthButtons[1].setAttribute('aria-label', T('下个月'));
-    dom.summary.setAttribute('aria-label', T('本月汇总'));
-    dom.empty.querySelector('strong').textContent = T('这个月还没有账目');
+    dom.summary.setAttribute('aria-label', T(state.viewMode === 'cumulative' ? '累计汇总' : '本月汇总'));
+    dom.empty.querySelector('strong').textContent = T(state.viewMode === 'cumulative'
+      ? '这一页还没有账目' : '这个月还没有账目');
     dom.empty.querySelector('p').textContent = T('点击右上角记下第一笔收支。');
-    syncLegend(); syncLedger({ skipFlip: true });
+    dom.pageRail.setAttribute('aria-label', T('账本页面切换'));
+    syncLegend(); renderPageRail(); syncLedger({ skipFlip: true });
+  }
+
+  function syncViewMode() {
+    const cumulative = state.viewMode === 'cumulative';
+    root.classList.toggle('ledger-cumulative-view', cumulative);
+    dom.monthNav.hidden = cumulative;
+    dom.summary.setAttribute('aria-label', T(cumulative ? '累计汇总' : '本月汇总'));
+    dom.empty.querySelector('strong').textContent = T(cumulative
+      ? '这一页还没有账目' : '这个月还没有账目');
+  }
+
+  function pageRailCapacity() {
+    if (!dom.pageScroll) return 3;
+    return Math.max(3, Math.floor((dom.pageScroll.clientHeight + 6) / 40));
+  }
+
+  function createPageButton(page) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'study-task-page-button' + (page === state.page ? ' is-active' : '');
+    button.dataset.ledgerPage = String(page);
+    button.textContent = String(page);
+    button.setAttribute('aria-label', T('账本第 {page} 页').replace('{page}', page));
+    if (page === state.page) button.setAttribute('aria-current', 'page');
+    return button;
+  }
+
+  function scrollActivePageIntoView(button) {
+    if (!button || !dom.pageScroll) return;
+    const top = button.offsetTop; const bottom = top + button.offsetHeight;
+    if (top < dom.pageScroll.scrollTop) dom.pageScroll.scrollTop = top;
+    else if (bottom > dom.pageScroll.scrollTop + dom.pageScroll.clientHeight) {
+      dom.pageScroll.scrollTop = bottom - dom.pageScroll.clientHeight;
+    }
+  }
+
+  function positionPageOrb(fromScroll) {
+    if (!dom.pageRail || !dom.pageOrb) return;
+    if (fromScroll && performance.now() < state.pageOrbSettleUntil) return;
+    const active = dom.pageRail.querySelector('.study-task-page-button.is-active');
+    if (!active) { dom.pageOrb.style.opacity = '0'; return; }
+    const railRect = dom.pageRail.getBoundingClientRect();
+    const buttonRect = active.getBoundingClientRect();
+    const visible = buttonRect.bottom > railRect.top && buttonRect.top < railRect.bottom;
+    dom.pageOrb.style.opacity = visible ? '1' : '0';
+    dom.pageOrb.style.transform = 'translate3d(0,' + (buttonRect.top - railRect.top) + 'px,0)';
+  }
+
+  function renderPageRail() {
+    if (!dom.pageList) return;
+    const focusedPage = dom.pageRail.contains(document.activeElement)
+      && document.activeElement.dataset ? document.activeElement.dataset.ledgerPage : '';
+    const total = Math.min(PAGE_MAX, Math.max(pageRailCapacity(), state.page, state.highestPage));
+    const fragment = document.createDocumentFragment();
+    for (let page = 1; page <= total; page += 1) fragment.appendChild(createPageButton(page));
+    dom.pageList.replaceChildren(fragment);
+    const active = dom.pageList.querySelector('.study-task-page-button.is-active');
+    scrollActivePageIntoView(active);
+    if (focusedPage) {
+      const focusTarget = dom.pageList.querySelector('[data-ledger-page="' + focusedPage + '"]') || active;
+      if (focusTarget) focusTarget.focus({ preventScroll: true });
+    }
+    const orbMs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--start-orb-ms')) || 239;
+    window.requestAnimationFrame(() => {
+      state.pageOrbSettleUntil = performance.now() + orbMs + 10;
+      positionPageOrb(false);
+      window.setTimeout(() => positionPageOrb(false), orbMs + 20);
+    });
+  }
+
+  function setPageRailVisible(visible) {
+    if (!dom.pageRail) return;
+    state.pageRailVisible = !!visible && state.active;
+    dom.pageRail.classList.toggle('revealed', state.pageRailVisible);
+  }
+
+  function acceptHighestPage(payload) {
+    if (!payload) return;
+    state.highestPage = normalizePage(payload.highestPage);
+    renderPageRail();
   }
 
   function syncSummary() {
-    const summary = state.payload ? state.payload.summary : emptyPayload(state.year, state.month).summary;
+    const summary = state.payload ? state.payload.summary : emptyPayload(state.year, state.month, state.page).summary;
     const values = {
-      balance: [T('结余'), summary.balanceCents, summary.count + ' ' + T('笔记录')],
-      income: [T('收入'), summary.incomeCents, monthTitle()],
-      expense: [T('支出'), summary.expenseCents, monthTitle()],
+      balance: [T(state.viewMode === 'cumulative' ? '总结余' : '结余'), summary.balanceCents,
+        summary.count + ' ' + T('笔记录')],
+      income: [T(state.viewMode === 'cumulative' ? '总收入' : '收入'), summary.incomeCents,
+        state.viewMode === 'cumulative' ? '' : monthTitle()],
+      expense: [T(state.viewMode === 'cumulative' ? '总支出' : '支出'), summary.expenseCents,
+        state.viewMode === 'cumulative' ? '' : monthTitle()],
     };
     dom.summary.querySelectorAll('[data-ledger-summary-kind]').forEach((card) => {
       const data = values[card.dataset.ledgerSummaryKind];
@@ -304,6 +457,10 @@
   }
 
   function groupedEntries() {
+    if (state.viewMode === 'cumulative') {
+      const entries = displayEntries();
+      return entries.length ? [{ day: 'cumulative', entries }] : [];
+    }
     const groups = [];
     displayEntries().forEach((entry) => {
       let group = groups[groups.length - 1];
@@ -400,7 +557,7 @@
         : base + ' × ' + multiplierInputValue(entry.multiplier) + ' = '
           + formatMoney(signedEffectiveCents, true);
     } else {
-      amount.textContent = '¥—';
+      amount.textContent = currentUnit() ? '—' + currentUnit() : '¥—';
     }
     row.setAttribute('aria-label', label + ' ' + amount.textContent + (entry.note ? ' · ' + entry.note : ''));
     const menu = row.querySelector('[data-ledger-entry-menu]');
@@ -418,8 +575,11 @@
       const newGroup = !group;
       if (!group) group = createDayGroup(groupData.day);
       const header = group.querySelector('header');
-      header.querySelector('strong').textContent = formatDayHeading(groupData.day);
-      header.querySelector('span').textContent = groupData.entries.length + ' ' + T('笔');
+      header.hidden = state.viewMode === 'cumulative';
+      header.querySelector('strong').textContent = state.viewMode === 'cumulative'
+        ? '' : formatDayHeading(groupData.day);
+      header.querySelector('span').textContent = state.viewMode === 'cumulative'
+        ? '' : groupData.entries.length + ' ' + T('笔');
       const rows = group.querySelector('[data-ledger-day-rows]');
       groupData.entries.forEach((entry) => {
         desiredIds.add(entry.id);
@@ -446,7 +606,9 @@
 
   function syncLedger(options) {
     if (!state.mounted) return;
-    dom.monthTitle.textContent = monthTitle(); syncSummary(); syncEntries(options);
+    syncViewMode(); dom.monthTitle.textContent = monthTitle();
+    dom.empty.querySelector('span').textContent = currentUnit() || '¥';
+    syncSummary(); syncEntries(options);
   }
 
   function revealHighlightedEntry() {
@@ -461,7 +623,7 @@
 
   function trimCache() {
     if (state.cache.size <= CACHE_MAX) return;
-    const preserve = monthKey(state.year, state.month);
+    const preserve = ledgerCacheKey(state.year, state.month, state.page);
     for (const key of state.cache.keys()) {
       if (state.cache.size <= CACHE_MAX) break;
       if (key !== preserve) state.cache.delete(key);
@@ -470,16 +632,40 @@
 
   function absorbMonths(months) {
     if (!months || typeof months !== 'object') return;
-    Object.keys(months).forEach((key) => {
-      const payload = months[key];
-      if (payload && Array.isArray(payload.entries) && payload.summary) state.cache.set(key, payload);
+    let highestPage = null;
+    Object.keys(months).forEach((month) => {
+      const payload = months[month];
+      if (payload && Array.isArray(payload.entries) && payload.summary) {
+        state.cache.set(ledgerCacheKey(payload.year, payload.month, payload.page, 'month'), payload);
+        highestPage = normalizePage(payload.highestPage);
+      }
     });
+    if (highestPage !== null) {
+      state.cache.forEach((cached) => { cached.highestPage = highestPage; });
+      acceptHighestPage({ highestPage });
+    }
     trimCache();
   }
 
+  function absorbMutation(result) {
+    absorbMonths(result && result.months);
+    const cumulative = result && result.cumulative;
+    if (cumulative && Array.isArray(cumulative.entries) && cumulative.summary) {
+      state.cache.set(ledgerCacheKey(cumulative.year, cumulative.month, cumulative.page, 'cumulative'), cumulative);
+      state.cache.forEach((cached) => { cached.highestPage = cumulative.highestPage; });
+      acceptHighestPage(cumulative); trimCache();
+    }
+  }
+
   function currentCachePayload() {
-    const key = monthKey(state.year, state.month);
-    state.payload = state.cache.get(key) || state.payload || emptyPayload(state.year, state.month);
+    const key = ledgerCacheKey(state.year, state.month, state.page);
+    const current = state.payload;
+    const currentMatches = current && Number(current.year) === state.year
+      && (state.viewMode === 'cumulative' || Number(current.month) === state.month)
+      && normalizePage(current.page) === state.page
+      && String(current.scope || 'month') === (state.viewMode === 'cumulative' ? 'all' : 'month');
+    state.payload = state.cache.get(key) || (currentMatches ? current : null)
+      || emptyPayload(state.year, state.month, state.page);
     return state.payload;
   }
 
@@ -498,17 +684,18 @@
   }
 
   function prefetchMonth(year, month) {
-    if (!state.active) return;
-    const key = monthKey(year, month);
+    if (!state.active || state.viewMode === 'cumulative') return;
+    const page = state.page; const key = ledgerCacheKey(year, month, page, 'month');
     if (state.cache.has(key) || state.prefetching.has(key)) return;
     const controller = new AbortController(); state.prefetching.set(key, controller);
-    request('/api/ledger?year=' + year + '&month=' + month, { signal: controller.signal })
+    request(ledgerUrl(year, month, page, 'month'), { signal: controller.signal })
       .then((payload) => { state.cache.set(key, payload); trimCache(); }).catch(() => {})
       .finally(() => { if (state.prefetching.get(key) === controller) state.prefetching.delete(key); });
   }
 
   function scheduleNeighborPrefetch() {
     cancelPrefetch();
+    if (state.viewMode === 'cumulative') return;
     const run = () => {
       state.prefetchHandle = 0;
       if (!state.active) return;
@@ -522,8 +709,12 @@
   }
 
   function loadMonth(year, month, options) {
-    const opts = options || {}; const key = monthKey(year, month); const cached = state.cache.get(key);
-    state.year = year; state.month = month; state.payload = cached || emptyPayload(year, month);
+    const opts = options || {}; const page = state.page;
+    const viewMode = state.viewMode;
+    const key = ledgerCacheKey(year, month, page, viewMode);
+    const cached = opts.force ? null : state.cache.get(key);
+    state.year = year; state.month = month; state.payload = cached || emptyPayload(year, month, page);
+    if (cached) acceptHighestPage(cached);
     root.classList.toggle('is-loading', !cached);
     if (opts.sync !== false) syncLedger({ skipFlip: !!opts.skipFlip });
     if (!cached && state.warmupHandle && state.warmupKey === key) {
@@ -537,8 +728,8 @@
       return warmupPromise.then((payload) => {
         if (!payload || requestId !== state.requestSeq) return null;
         state.cache.set(key, payload); trimCache();
-        if (state.year === year && state.month === month) {
-          state.payload = payload; root.classList.remove('is-loading'); syncLedger();
+        if (state.year === year && state.month === month && state.page === page && state.viewMode === viewMode) {
+          state.payload = payload; root.classList.remove('is-loading'); acceptHighestPage(payload); syncLedger();
         }
         scheduleNeighborPrefetch();
         return payload;
@@ -547,12 +738,12 @@
     const requestId = ++state.requestSeq;
     if (state.controller) state.controller.abort();
     const controller = new AbortController(); state.controller = controller;
-    return request('/api/ledger?year=' + year + '&month=' + month, { signal: controller.signal })
+    return request(ledgerUrl(year, month, page, viewMode), { signal: controller.signal })
       .then((payload) => {
         if (requestId !== state.requestSeq) return null;
         state.cache.set(key, payload); trimCache();
-        if (state.year === year && state.month === month) {
-          state.payload = payload; root.classList.remove('is-loading'); syncLedger();
+        if (state.year === year && state.month === month && state.page === page && state.viewMode === viewMode) {
+          state.payload = payload; root.classList.remove('is-loading'); acceptHighestPage(payload); syncLedger();
         }
         scheduleNeighborPrefetch(); return payload;
       }).catch((error) => {
@@ -572,8 +763,11 @@
       return;
     }
     const previous = captureEntryRects();
+    const today = new Date();
     state.draft = { id: DRAFT_ID, type: 'expense', amountCents: null, multiplier: null,
-      date: currentMonthDefaultDate(state.year, state.month), note: '', color: '',
+      ledgerPage: state.page, date: state.viewMode === 'cumulative'
+        ? monthKey(today.getFullYear(), today.getMonth() + 1) + '-' + String(today.getDate()).padStart(2, '0')
+        : currentMonthDefaultDate(state.year, state.month), note: '', color: '',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     syncEntries({ previousRects: previous, newIds: new Set([DRAFT_ID]) });
     window.requestAnimationFrame(() => {
@@ -629,10 +823,13 @@
       button.classList.toggle('is-active', entry.type === value);
       button.setAttribute('aria-pressed', entry.type === value ? 'true' : 'false'); type.appendChild(button);
     });
+    const dateField = buildSettingsField(T('日期'), 'date', 'ledgerDate', entry.date, '');
+    dateField.classList.add('ledger-settings-date-field');
+    dateField.hidden = state.viewMode === 'cumulative';
     fields.append(type,
       buildSettingsField(T('金额'), 'text', 'ledgerAmount', amountInputValue(entry.amountCents), '0.00'),
       buildSettingsField(T('倍率'), 'text', 'ledgerMultiplier', multiplierInputValue(entry.multiplier), T('可选')),
-      buildSettingsField(T('日期'), 'date', 'ledgerDate', entry.date, ''),
+      dateField,
       buildSettingsField(T('备注'), 'text', 'ledgerNote', entry.note || '', T('可选')));
     const error = document.createElement('p');
     error.className = 'study-progress-settings-error ledger-settings-error';
@@ -707,6 +904,129 @@
     }
   }
 
+  function buildUnitSettings() {
+    const box = document.createElement('form');
+    box.className = 'study-progress-settings-popover ledger-unit-popover';
+    box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', T('当前账本页设置'));
+    const title = document.createElement('strong');
+    title.className = 'study-progress-settings-title'; title.textContent = T('当前账本页设置');
+    const fields = document.createElement('div'); fields.className = 'ledger-settings-fields';
+    const field = buildSettingsField(T('单位'), 'text', 'ledgerUnit', currentUnit(), T('留空使用人民币'));
+    const input = field.querySelector('input'); input.maxLength = 12;
+    const viewField = document.createElement('div'); viewField.className = 'ledger-settings-field ledger-view-field';
+    const viewLabel = document.createElement('span'); viewLabel.textContent = T('视图');
+    const viewSwitch = document.createElement('div');
+    viewSwitch.className = 'ledger-type-switch'; viewSwitch.setAttribute('role', 'group');
+    viewSwitch.setAttribute('aria-label', T('账本视图'));
+    [['month', '月份'], ['cumulative', '累计']].forEach((item) => {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.ledgerView = item[0];
+      button.textContent = T(item[1]); button.classList.toggle('is-active', state.viewMode === item[0]);
+      button.setAttribute('aria-pressed', state.viewMode === item[0] ? 'true' : 'false'); viewSwitch.appendChild(button);
+    });
+    viewField.append(viewLabel, viewSwitch); fields.append(field, viewField);
+    const error = document.createElement('p');
+    error.className = 'study-progress-settings-error ledger-settings-error';
+    error.dataset.role = 'ledger-unit-error'; error.setAttribute('role', 'alert');
+    const actions = document.createElement('div'); actions.className = 'study-progress-settings-actions ledger-unit-actions';
+    const group = document.createElement('span');
+    const cancel = document.createElement('button'); cancel.type = 'button';
+    cancel.className = 'study-progress-settings-cancel'; cancel.dataset.ledgerUnitCancel = ''; cancel.textContent = T('取消');
+    const save = document.createElement('button'); save.type = 'submit';
+    save.className = 'study-progress-settings-save'; save.dataset.ledgerUnitSave = ''; save.textContent = T('保存');
+    group.append(cancel, save); actions.appendChild(group); box.append(title, fields, error, actions);
+    box.addEventListener('submit', (event) => { event.preventDefault(); saveUnitSettings(); });
+    box.addEventListener('click', (event) => {
+      const view = event.target.closest('[data-ledger-view]');
+      if (view) {
+        box.querySelectorAll('[data-ledger-view]').forEach((button) => {
+          const active = button === view; button.classList.toggle('is-active', active);
+          button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        return;
+      }
+      if (event.target.closest('[data-ledger-unit-cancel]')) closeUnitSettings(true);
+    });
+    return box;
+  }
+
+  function positionUnitSettings() {
+    const box = state.unitPopover; const trigger = state.unitTrigger;
+    if (!box || !trigger || !trigger.isConnected) return;
+    const triggerRect = trigger.getBoundingClientRect(); const boxRect = box.getBoundingClientRect();
+    const edge = 12; const gap = 8; const roomBelow = window.innerHeight - triggerRect.bottom - edge;
+    const placement = roomBelow >= boxRect.height + gap || triggerRect.top < boxRect.height + gap ? 'below' : 'above';
+    const left = Math.min(window.innerWidth - boxRect.width - edge, Math.max(edge, triggerRect.right - boxRect.width));
+    const top = placement === 'above' ? Math.max(edge, triggerRect.top - boxRect.height - gap)
+      : Math.min(window.innerHeight - boxRect.height - edge, triggerRect.bottom + gap);
+    box.dataset.placement = placement;
+    box.style.left = Math.round(left) + 'px'; box.style.top = Math.round(top) + 'px';
+  }
+
+  function openUnitSettings() {
+    if (state.unitPopover || !dom.pageSettings) return;
+    closeSettings(false, true); if (paletteController) paletteController.close(false, true);
+    state.unitTrigger = dom.pageSettings; state.unitPopover = buildUnitSettings(); state.unitSaving = false;
+    dom.pageSettings.setAttribute('aria-expanded', 'true');
+    document.body.appendChild(state.unitPopover); positionUnitSettings();
+    window.requestAnimationFrame(() => {
+      if (!state.unitPopover) return;
+      state.unitPopover.classList.add('is-open'); positionUnitSettings();
+    });
+    window.setTimeout(() => {
+      const input = state.unitPopover && state.unitPopover.querySelector('[data-ledger-unit]');
+      if (input) { input.focus(); input.select(); }
+    }, reducedMotion ? 0 : 80);
+  }
+
+  function closeUnitSettings(restoreFocus, instant) {
+    const box = state.unitPopover; const trigger = state.unitTrigger;
+    if (!box) return;
+    state.unitPopover = null; state.unitTrigger = null; state.unitSaving = false;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    const finish = () => {
+      if (box.isConnected) box.remove();
+      if (restoreFocus && trigger && trigger.isConnected) trigger.focus({ preventScroll: true });
+    };
+    if (instant || reducedMotion) finish();
+    else { box.classList.remove('is-open'); box.classList.add('is-closing'); window.setTimeout(finish, 190); }
+  }
+
+  function saveUnitSettings() {
+    const box = state.unitPopover;
+    if (!box || state.unitSaving) return;
+    const input = box.querySelector('[data-ledger-unit]');
+    const unit = String(input && input.value || '').trim();
+    const activeView = box.querySelector('[data-ledger-view].is-active');
+    const nextViewMode = normalizeViewMode(activeView && activeView.dataset.ledgerView);
+    const error = box.querySelector('[data-role="ledger-unit-error"]');
+    if (unit.length > 12) { error.textContent = T('金额单位最多 12 个字符'); input.focus(); return; }
+    state.unitSaving = true; box.classList.add('is-saving');
+    box.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
+    const save = box.querySelector('[data-ledger-unit-save]'); if (save) save.textContent = T('正在保存');
+    post('/api/ledger-page-unit', { page: state.page, year: state.year, month: state.month,
+      unit, scope: nextViewMode === 'cumulative' ? 'all' : 'month' }).then((result) => {
+      if (!result.payload) throw new Error(T('账本同步失败'));
+      const payload = result.payload;
+      state.cache.forEach((cached) => {
+        cached.highestPage = payload.highestPage;
+        if (normalizePage(cached.page) === state.page) {
+          cached.unit = payload.unit;
+        }
+      });
+      state.viewMode = nextViewMode; saveViewMode();
+      state.cache.set(ledgerCacheKey(payload.year, payload.month, payload.page, nextViewMode), payload);
+      state.payload = payload; acceptHighestPage(payload); closeUnitSettings(false);
+      discardDraft({ instant: true }); cancelPrefetch(); syncLedger({ skipFlip: true });
+      scheduleNeighborPrefetch();
+    }).catch((requestError) => {
+      if (!state.unitPopover) return;
+      state.unitSaving = false; box.classList.remove('is-saving');
+      box.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
+      if (save) save.textContent = T('保存');
+      error.textContent = requestError.message; if (input) input.focus();
+    });
+  }
+
   function setSettingsError(message) {
     const error = state.settingsPopover && state.settingsPopover.querySelector('[data-role="ledger-settings-error"]');
     if (error) error.textContent = message || '';
@@ -755,22 +1075,39 @@
   }
 
   function applyLocalEntry(previousEntry, nextEntry) {
+    if (state.viewMode === 'cumulative') {
+      const key = ledgerCacheKey(state.year, state.month, state.page, 'cumulative');
+      const payload = state.cache.get(key) || state.payload
+        || emptyPayload(state.year, state.month, state.page, 'cumulative');
+      payload.entries = payload.entries.filter((entry) => entry.id !== previousEntry.id);
+      payload.entries.push(nextEntry); normalizePayload(payload); state.cache.set(key, payload);
+      currentCachePayload(); return;
+    }
     const previousMonth = monthFromDay(previousEntry.date); const nextMonth = monthFromDay(nextEntry.date);
-    const previousKey = monthKey(previousMonth.year, previousMonth.month);
-    const nextKey = monthKey(nextMonth.year, nextMonth.month);
+    const ledgerPage = normalizePage(previousEntry.ledgerPage);
+    const previousKey = ledgerCacheKey(previousMonth.year, previousMonth.month, ledgerPage);
+    const nextKey = ledgerCacheKey(nextMonth.year, nextMonth.month, ledgerPage);
     const previousPayload = state.cache.get(previousKey)
-      || (monthKey(state.year, state.month) === previousKey ? state.payload : emptyPayload(previousMonth.year, previousMonth.month));
+      || (ledgerCacheKey(state.year, state.month, state.page) === previousKey
+        ? state.payload : emptyPayload(previousMonth.year, previousMonth.month, ledgerPage));
     previousPayload.entries = previousPayload.entries.filter((entry) => entry.id !== previousEntry.id);
     normalizePayload(previousPayload); state.cache.set(previousKey, previousPayload);
     const targetPayload = nextKey === previousKey ? previousPayload
-      : state.cache.get(nextKey) || emptyPayload(nextMonth.year, nextMonth.month);
+      : state.cache.get(nextKey) || emptyPayload(nextMonth.year, nextMonth.month, ledgerPage);
     targetPayload.entries = targetPayload.entries.filter((entry) => entry.id !== nextEntry.id);
     targetPayload.entries.push(nextEntry); normalizePayload(targetPayload); state.cache.set(nextKey, targetPayload);
     currentCachePayload();
   }
 
   function removeLocalEntry(entry) {
-    const parts = monthFromDay(entry.date); const key = monthKey(parts.year, parts.month);
+    if (state.viewMode === 'cumulative') {
+      const key = ledgerCacheKey(state.year, state.month, state.page, 'cumulative');
+      const payload = state.cache.get(key) || state.payload;
+      payload.entries = payload.entries.filter((item) => item.id !== entry.id);
+      normalizePayload(payload); state.cache.set(key, payload); currentCachePayload(); return;
+    }
+    const parts = monthFromDay(entry.date);
+    const key = ledgerCacheKey(parts.year, parts.month, entry.ledgerPage);
     const payload = state.cache.get(key) || state.payload;
     payload.entries = payload.entries.filter((item) => item.id !== entry.id);
     normalizePayload(payload); state.cache.set(key, payload); currentCachePayload();
@@ -793,11 +1130,15 @@
       const row = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
       if (row) syncEntryRow(row, state.draft);
       setSettingsSaving(true);
-      post('/api/ledger-entry-create', { ...values, color: state.draft.color || '' }).then((result) => {
-        absorbMonths(result.months);
+      post('/api/ledger-entry-create', { ...values, ledgerPage: state.draft.ledgerPage,
+        color: state.draft.color || '' }).then((result) => {
+        absorbMutation(result);
         const target = monthFromDay(result.entry.date);
-        closeSettings(false); state.draft = null; state.year = target.year; state.month = target.month;
-        state.payload = state.cache.get(monthKey(target.year, target.month)) || emptyPayload(target.year, target.month);
+        closeSettings(false); state.draft = null;
+        if (state.viewMode !== 'cumulative') { state.year = target.year; state.month = target.month; }
+        state.page = normalizePage(result.entry.ledgerPage); saveCurrentPage(); renderPageRail();
+        state.payload = state.cache.get(ledgerCacheKey(state.year, state.month, state.page))
+          || emptyPayload(state.year, state.month, state.page);
         state.highlightId = result.entry.id;
         syncLedger({ newIds: new Set([result.entry.id]) }); scheduleNeighborPrefetch();
       }).catch((error) => {
@@ -812,20 +1153,26 @@
 
     const oldEntry = { ...entry }; const nextEntry = { ...entry, ...values, updatedAt: new Date().toISOString() };
     const oldMonth = monthFromDay(oldEntry.date); const nextMonth = monthFromDay(nextEntry.date);
-    const keys = new Set([monthKey(oldMonth.year, oldMonth.month), monthKey(nextMonth.year, nextMonth.month)]);
+    const ledgerPage = normalizePage(oldEntry.ledgerPage);
+    const keys = state.viewMode === 'cumulative'
+      ? new Set([ledgerCacheKey(state.year, state.month, ledgerPage, 'cumulative')])
+      : new Set([ledgerCacheKey(oldMonth.year, oldMonth.month, ledgerPage, 'month'),
+        ledgerCacheKey(nextMonth.year, nextMonth.month, ledgerPage, 'month')]);
     const snapshots = cacheSnapshots(keys); const previousRects = captureEntryRects(); const seq = nextMutation(id);
     applyLocalEntry(oldEntry, nextEntry); closeSettings(false);
-    if (nextMonth.year !== state.year || nextMonth.month !== state.month) {
+    if (state.viewMode !== 'cumulative'
+        && (nextMonth.year !== state.year || nextMonth.month !== state.month)) {
       state.year = nextMonth.year; state.month = nextMonth.month; currentCachePayload();
       beginMonthMotion(nextMonth.year * 12 + nextMonth.month > oldMonth.year * 12 + oldMonth.month ? 1 : -1);
     }
     state.highlightId = id; syncLedger({ previousRects });
     postInOrder(id, '/api/ledger-entry-update', { id, ...values }).then((result) => {
       if (!mutationCurrent(id, seq)) return;
-      absorbMonths(result.months); currentCachePayload(); syncLedger();
+      absorbMutation(result); currentCachePayload(); syncLedger();
     }).catch((error) => {
       if (!mutationCurrent(id, seq)) return;
-      restoreSnapshots(snapshots); state.year = oldMonth.year; state.month = oldMonth.month;
+      restoreSnapshots(snapshots);
+      if (state.viewMode !== 'cumulative') { state.year = oldMonth.year; state.month = oldMonth.month; }
       currentCachePayload(); state.highlightId = id; syncLedger({ newIds: new Set([id]) }); showToast(error.message);
     });
   }
@@ -860,7 +1207,10 @@
       }, 3200); return;
     }
     const id = state.settings.id; const entry = findEntry(id); if (!entry) return;
-    const parts = monthFromDay(entry.date); const key = monthKey(parts.year, parts.month);
+    const parts = monthFromDay(entry.date);
+    const key = state.viewMode === 'cumulative'
+      ? ledgerCacheKey(state.year, state.month, entry.ledgerPage, 'cumulative')
+      : ledgerCacheKey(parts.year, parts.month, entry.ledgerPage, 'month');
     const snapshots = cacheSnapshots(new Set([key])); const previousRects = captureEntryRects();
     const row = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(id) + '"]'); const seq = nextMutation(id);
     closeSettings(false); removeLocalEntry(entry); syncSummary();
@@ -869,7 +1219,7 @@
     } else syncEntries({ previousRects });
     postInOrder(id, '/api/ledger-entry-delete', { id }).then((result) => {
       if (!mutationCurrent(id, seq)) return;
-      absorbMonths(result.months); currentCachePayload(); syncLedger();
+      absorbMutation(result); currentCachePayload(); syncLedger();
     }).catch((error) => {
       if (!mutationCurrent(id, seq)) return;
       restoreSnapshots(snapshots); currentCachePayload(); state.highlightId = id;
@@ -889,7 +1239,7 @@
     if (row) { syncEntryRow(row, entry); replayClass(row, 'ledger-entry-color-updated', 380); }
     postInOrder(entry.id, '/api/ledger-entry-update', { id: entry.id, color: value }).then((result) => {
       if (!mutationCurrent(entry.id, seq)) return;
-      absorbMonths(result.months); currentCachePayload();
+      absorbMutation(result); currentCachePayload();
     }).catch((error) => {
       if (!mutationCurrent(entry.id, seq)) return;
       entry.color = oldColor; if (row) syncEntryRow(row, entry); showToast(error.message);
@@ -928,16 +1278,74 @@
   }
 
   function changeMonth(delta) {
-    discardDraft({ instant: true }); closeSettings(false, true);
+    discardDraft({ instant: true }); closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
     const next = shiftedMonth(state.year, state.month, delta); beginMonthMotion(delta);
     loadMonth(next.year, next.month, { skipFlip: true });
   }
 
+  function changePage(page) {
+    const next = normalizePage(page);
+    if (next === state.page) { renderPageRail(); return; }
+    const direction = next > state.page ? 1 : -1;
+    discardDraft({ instant: true }); closeSettings(false, true); closeUnitSettings(false, true);
+    if (paletteController) paletteController.close(false, true);
+    cancelPrefetch();
+    state.page = next; state.highlightId = ''; saveCurrentPage(); renderPageRail();
+    beginMonthMotion(direction);
+    loadMonth(state.year, state.month, { skipFlip: true });
+  }
+
+  function bindPageRail() {
+    if (!dom.pageRail) return;
+    dom.pageRail.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-ledger-page]');
+      if (!button) return;
+      event.preventDefault(); changePage(Number(button.dataset.ledgerPage));
+    });
+    dom.pageRail.addEventListener('wheel', (event) => {
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      const direction = event.deltaY > 0 ? 1 : -1;
+      const maxScroll = dom.pageScroll.scrollHeight - dom.pageScroll.clientHeight;
+      const atEdge = direction > 0
+        ? dom.pageScroll.scrollTop >= maxScroll - 1 : dom.pageScroll.scrollTop <= 1;
+      if (!atEdge) { event.stopPropagation(); return; }
+      event.preventDefault(); event.stopPropagation();
+      state.pageWheelAccum += event.deltaY;
+      window.clearTimeout(state.pageWheelTimer);
+      state.pageWheelTimer = window.setTimeout(() => { state.pageWheelAccum = 0; }, 200);
+      if (Math.abs(state.pageWheelAccum) < 24) return;
+      const next = state.page + (state.pageWheelAccum > 0 ? 1 : -1);
+      state.pageWheelAccum = 0;
+      if (next >= 1 && next <= PAGE_MAX) changePage(next);
+    }, { passive: false });
+    dom.pageRail.addEventListener('pointerenter', () => {
+      state.pageRailOver = true; setPageRailVisible(true);
+    });
+    dom.pageRail.addEventListener('pointerleave', () => {
+      state.pageRailOver = false; setPageRailVisible(false);
+    });
+    dom.pageRail.addEventListener('focusin', () => setPageRailVisible(true));
+    dom.pageRail.addEventListener('focusout', (event) => {
+      if (!dom.pageRail.contains(event.relatedTarget)) setPageRailVisible(state.pageRailOver);
+    });
+    dom.pageScroll.addEventListener('scroll', () => positionPageOrb(true), { passive: true });
+    pageHost.addEventListener('pointermove', (event) => {
+      if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+      const rect = pageHost.getBoundingClientRect();
+      setPageRailVisible(rect.right - event.clientX <= PAGE_EDGE_PX || state.pageRailOver);
+    }, { passive: true });
+    pageHost.addEventListener('pointerleave', () => {
+      if (!state.pageRailOver) setPageRailVisible(false);
+    });
+  }
+
   function bindControls() {
+    bindPageRail();
     root.addEventListener('click', (event) => {
       const month = event.target.closest('[data-ledger-month]');
       if (month) { changeMonth(Number(month.dataset.ledgerMonth)); return; }
+      if (event.target.closest('[data-ledger-page-settings]')) { openUnitSettings(); return; }
       if (event.target.closest('[data-ledger-add]')) { createDraft(); return; }
       const menu = event.target.closest('[data-ledger-entry-menu]');
       if (menu) {
@@ -992,7 +1400,8 @@
   }
 
   function warmup() {
-    const key = monthKey(state.year, state.month);
+    const page = state.page; const year = state.year; const month = state.month; const viewMode = state.viewMode;
+    const key = ledgerCacheKey(year, month, page, viewMode);
     if (state.cache.has(key) || state.warmupHandle || state.warmupPromise) return state.warmupPromise;
     state.warmupKey = key;
     const run = () => {
@@ -1000,7 +1409,7 @@
       if (state.cache.has(key)) return;
       const controller = new AbortController();
       state.warmupController = controller;
-      state.warmupPromise = request('/api/ledger?year=' + state.year + '&month=' + state.month,
+      state.warmupPromise = request(ledgerUrl(year, month, page, viewMode),
         { signal: controller.signal })
         .then((payload) => { state.cache.set(key, payload); trimCache(); return payload; })
         .catch(() => null)
@@ -1023,25 +1432,31 @@
     const paletteTrigger = paletteController && paletteController.getTrigger();
     if (palette && !palette.contains(event.target)
         && !(paletteTrigger && paletteTrigger.contains(event.target))) paletteController.close(true);
+    if (state.unitPopover && !state.unitPopover.contains(event.target)
+        && !(state.unitTrigger && state.unitTrigger.contains(event.target))) closeUnitSettings(true);
   });
   document.addEventListener('keydown', (event) => {
     if (!state.active || event.key !== 'Escape') return;
     if (paletteController && paletteController.isOpen()) { event.preventDefault(); paletteController.close(true); }
+    else if (state.unitPopover) { event.preventDefault(); closeUnitSettings(true); }
     else if (state.settingsPopover) { event.preventDefault(); closeSettings(true); }
   });
   window.addEventListener('resize', () => {
-    scheduleSettingsPosition(); if (paletteController) paletteController.schedulePosition();
+    scheduleSettingsPosition(); positionUnitSettings(); renderPageRail();
+    if (paletteController) paletteController.schedulePosition();
   });
   window.addEventListener('scroll', () => {
-    scheduleSettingsPosition(); if (paletteController) paletteController.schedulePosition();
+    scheduleSettingsPosition(); positionUnitSettings(); if (paletteController) paletteController.schedulePosition();
   }, true);
   document.addEventListener('relatum:languagechange', () => {
     if (!state.mounted) return;
-    if (state.settingsPopover) closeSettings(false, true); syncLanguage();
+    if (state.settingsPopover) closeSettings(false, true);
+    if (state.unitPopover) closeUnitSettings(false, true); syncLanguage();
   });
   window.addEventListener('pagehide', () => {
     state.active = false; discardDraft({ instant: true }); cancelMainRequest(); cancelPrefetch();
-    closeSettings(false, true); if (paletteController) paletteController.close(false, true);
+    closeSettings(false, true); closeUnitSettings(false, true);
+    if (paletteController) paletteController.close(false, true);
   });
 
   mount();
@@ -1055,19 +1470,22 @@
         const today = new Date(); state.year = today.getFullYear(); state.month = today.getMonth() + 1;
         state.activatedOnce = true;
       }
-      const cached = state.cache.get(monthKey(state.year, state.month));
+      renderPageRail(); window.requestAnimationFrame(renderPageRail);
+      const cached = state.cache.get(ledgerCacheKey(state.year, state.month, state.page));
       if (cached) {
-        state.payload = cached; root.classList.remove('is-loading');
+        state.payload = cached; root.classList.remove('is-loading'); acceptHighestPage(cached);
         syncLedger({ skipFlip: true }); replayEntrance(); loadMonth(state.year, state.month, { sync: false });
       } else {
-        state.payload = emptyPayload(state.year, state.month);
+        state.payload = emptyPayload(state.year, state.month, state.page);
         syncLedger({ skipFlip: true }); replayEntrance(); loadMonth(state.year, state.month, { sync: false });
       }
     },
     deactivate() {
       state.active = false; state.exitFrozen = true;
+      setPageRailVisible(false);
       state.entranceAnimations.forEach((animation) => { try { animation.pause(); } catch (error) {} });
       discardDraft({ instant: true }); cancelMainRequest(); cancelPrefetch(); closeSettings(false, true);
+      closeUnitSettings(false, true);
       if (paletteController) paletteController.close(false, true);
     },
     finalizeExitMotion() { if (!state.active) clearEntranceAnimations(); },

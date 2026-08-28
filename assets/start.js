@@ -1269,7 +1269,7 @@
           ['<code>start-sticky-notes.json</code>', '起步页各页面上跨页显示的小便签。删除后这些便签全部消失，不影响速记墙。'],
           ['<code>focus.json</code>', '专注记录及相关状态。删除后日历和活跃页中的专注历史、累计时长会随之消失。'],
           ['<code>diary</code>', '日历日记，每天一份 Markdown。删除某一天的文件只丢当天日记；删除整个文件夹会丢全部日记。'],
-          ['<code>ledger.json</code>', '日历“记账”视图中的全部人民币收支流水，包括金额、可选倍率、日期、备注和颜色；填写倍率时，汇总按相乘后的最终金额计算。删除后记账页会从空白开始，不影响日记、每日任务或其它日历数据。'],
+          ['<code>ledger.json</code>', '日历“记账”视图中的全部收支流水，包括所属数字页、金额、可选倍率、日期、备注、颜色，以及各数字页可选的金额单位；单位留空时显示人民币 <code>¥</code>。旧账目归入第 1 页，填写倍率时汇总按相乘后的最终金额计算。删除后所有记账页都会从空白开始，不影响日记、每日任务或其它日历数据。'],
           ['<code>ledger.backup.json</code>', '记账流水的上一份有效快照。删除后当前账目不变，但主文件损坏时会少一层自动恢复保障。'],
           ['<code>ledger.corrupt-*.json</code>', '记账主文件损坏后隔离的旧数据。确认当前账目已正常恢复且不需要人工找回旧流水后可以删除。'],
           ['<code>countdown.json</code>', '倒数日事件和当前选择。删除后倒数日清空，可重新创建。'],
@@ -1293,9 +1293,11 @@
           ['主题与工作区', '<code>canvas:startTheme</code>、<code>canvas:startWorkspace:v1</code> 和 <code>canvas:toolbarLanguage</code> 等保存主题、上次工作区、界面语言、搜索与页面显示偏好。删除后恢复默认，不删画布或记录。'],
           ['笔记工作区', '<code>canvas:note*</code> 记住打开标签、当前笔记、文件夹展开状态、视图和字号。删除后工作区会重置，<code>.md</code> 正文和笔记图片仍在。'],
         ]],
-        ['学习、树状、速记与复习', '这些页面的长期内容在 <code>data</code> 中，但一些“怎么看”只存在本机。', [
+        ['学习、树状、速记、复习与记账', '这些页面的长期内容在 <code>data</code> 中，但一些“怎么看”只存在本机。', [
           ['视图与镜头', '<code>study:*</code>、<code>canvas:notesView</code>、<code>canvas:cadenceLens:v2</code>、<code>canvas:reviewMode:v1</code> 和 <code>relatum.*.view.&lt;树 ID&gt;</code> 记住页面、复习模式、镜头与折叠状态。删除后任务、树和便签仍在，但视图会回到默认。'],
           ['任务页颜色与图例', '<code>study:taskPageColors:v1</code> 和 <code>study:legend:v1</code> 只存在本机。删除后颜色恢复默认，不能从 <code>study.json</code> 自动恢复，只能重新设置。'],
+          ['记账当前页', '<code>ledger:page:v1</code> 只记住上次查看的数字页，删除后回到第 1 页；账目归属和每页金额单位仍保存在 <code>data/ledger.json</code> 中。'],
+          ['记账视图', '<code>ledger:view:v1</code> 记住月份或累计视图，删除后恢复月份视图；它只改变展示和汇总范围，不改写账目日期。'],
         ]],
         ['画布编辑器', '模式、面板位置、工具参数、新建节点/连线的默认样式、自动保存和引导状态等以 <code>canvas:*</code> 偏好保存。删除后已有 <code>.canvas</code> 内容不会改变，但编辑器偏好与新建默认会重置，首次引导也可能再次出现。'],
         ['专注钟与当前会话', '两者都不应当作已完成的长期记录。', [
@@ -1383,7 +1385,7 @@
           ['<code>start-sticky-notes.json</code>', 'Small sticky notes shown across Home pages. Deleting it removes all of them without affecting Quick Notes.'],
           ['<code>focus.json</code>', 'Focus sessions and related state. Deleting it removes focus history and accumulated time from Calendar and Activity.'],
           ['<code>diary</code>', 'Calendar journals, one Markdown file per day. Deleting one file loses only that day; deleting the folder loses every journal entry.'],
-          ['<code>ledger.json</code>', 'All RMB income and expense entries from Calendar’s Ledger view, including amounts, optional multipliers, dates, notes, and colors. When a multiplier is set, summaries use the multiplied final amount. Deleting it starts Ledger from empty without affecting journals, daily tasks, or other Calendar data.'],
+          ['<code>ledger.json</code>', 'All income and expense entries from Calendar’s Ledger view, including their numbered page, amounts, optional multipliers, dates, notes, colors, and each page’s optional amount unit. A blank unit uses RMB <code>¥</code>. Legacy entries belong to page 1, and summaries use the multiplied final amount when a multiplier is set. Deleting it empties every Ledger page without affecting journals, daily tasks, or other Calendar data.'],
           ['<code>ledger.backup.json</code>', 'The previous valid ledger snapshot. Deleting it leaves current entries unchanged but removes one automatic recovery layer if the main file becomes corrupt.'],
           ['<code>ledger.corrupt-*.json</code>', 'Old ledger data quarantined after the main file became corrupt. Delete it only after confirming current entries were recovered correctly and no manual recovery is needed.'],
           ['<code>countdown.json</code>', 'Countdown events and the selected event. Deleting it clears Countdown; events can be created again.'],
@@ -1407,9 +1409,11 @@
           ['Theme and workspace', '<code>canvas:startTheme</code>, <code>canvas:startWorkspace:v1</code>, <code>canvas:toolbarLanguage</code>, and related keys store the theme, last workspace, interface language, search, and page-display preferences. Deleting them restores defaults without deleting canvases or records.'],
           ['Notes workspace', '<code>canvas:note*</code> remembers open tabs, the current note, expanded folders, the view, and text size. Deleting it resets the workspace, while <code>.md</code> files and note images remain.'],
         ]],
-        ['Study, Tree, Quick Notes, and Review', 'Long-term content for these pages lives in <code>data</code>, but some details about how it is viewed exist only on this device.', [
+        ['Study, Tree, Quick Notes, Review, and Ledger', 'Long-term content for these pages lives in <code>data</code>, but some details about how it is viewed exist only on this device.', [
           ['Views and cameras', '<code>study:*</code>, <code>canvas:notesView</code>, <code>canvas:cadenceLens:v2</code>, <code>canvas:reviewMode:v1</code>, and <code>relatum.*.view.&lt;tree ID&gt;</code> remember pages, review mode, cameras, and collapsed branches. Tasks, trees, and notes remain after deletion, but their views return to defaults.'],
           ['Task-page colors and legend', '<code>study:taskPageColors:v1</code> and <code>study:legend:v1</code> exist only on this device. Deleting them restores default colors; they cannot be recovered automatically from <code>study.json</code> and must be set again.'],
+          ['Current Ledger page', '<code>ledger:page:v1</code> only remembers the last numbered page you viewed. Deleting it returns to page 1; entry ownership and per-page amount units remain in <code>data/ledger.json</code>.'],
+          ['Ledger view', '<code>ledger:view:v1</code> remembers the monthly or cumulative view. Deleting it restores the monthly view; it only changes presentation and summary scope, not entry dates.'],
         ]],
         ['Canvas editor', 'Modes, panel positions, tool parameters, default styles for new nodes and edges, autosave, and onboarding state are stored as <code>canvas:*</code> preferences. Deleting them does not change existing <code>.canvas</code> content, but editor preferences and creation defaults reset, and onboarding may appear again.'],
         ['Focus and the current session', 'Neither should be confused with completed long-term records.', [

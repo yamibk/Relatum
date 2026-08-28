@@ -169,6 +169,7 @@ CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
 START_PAGE_ACTIVITY_SCHEMA = 1
 START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes")
 LEDGER_SCHEMA = 1
+LEDGER_PAGE_MAX = 99
 CAREER_REPORT_SCHEMA = 1
 # 画布伴生素材统一可被 /api/canvas-asset 读取的类型（图片 + 附件）。
 CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
@@ -5130,7 +5131,7 @@ class LedgerVersionError(ValueError):
 
 
 def _ledger_empty() -> dict:
-    return {"version": LEDGER_SCHEMA, "entries": []}
+    return {"version": LEDGER_SCHEMA, "entries": [], "pageUnits": {}}
 
 
 def _ledger_day(value: object) -> str:
@@ -5195,6 +5196,35 @@ def _ledger_timestamp(value: object, fallback: str) -> str:
     return raw
 
 
+def _ledger_page(value: object = None) -> int:
+    if value in (None, ""):
+        return 1
+    if isinstance(value, bool):
+        raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数")
+    try:
+        page = int(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数") from err
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数")
+    if not 1 <= page <= LEDGER_PAGE_MAX:
+        raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数")
+    return page
+
+
+def _ledger_page_unit(value: object = None) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("记账单位必须是文字")
+    unit = value.strip()
+    if len(unit) > 12:
+        raise ValueError("记账单位最多 12 个字符")
+    if any(ord(char) < 32 or char in "\u2028\u2029" for char in unit):
+        raise ValueError("记账单位不能包含换行或控制字符")
+    return unit
+
+
 def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
     if not isinstance(raw, dict):
         if strict:
@@ -5214,6 +5244,7 @@ def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
     try:
         amount = _ledger_amount(raw.get("amountCents"))
         multiplier = _ledger_multiplier(raw.get("multiplier"))
+        ledger_page = _ledger_page(raw.get("ledgerPage"))
         entry_day = _ledger_day(raw.get("date"))
         color = _ledger_color(raw.get("color"))
     except ValueError:
@@ -5239,6 +5270,8 @@ def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
     }
     if multiplier is not None:
         entry["multiplier"] = multiplier
+    if "ledgerPage" in raw:
+        entry["ledgerPage"] = ledger_page
     try:
         _ledger_effective_amount(entry)
     except ValueError:
@@ -5265,7 +5298,18 @@ def _ledger_payload_from_raw(raw: object) -> dict:
             continue
         seen.add(entry["id"])
         entries.append(entry)
-    return {"version": LEDGER_SCHEMA, "entries": entries}
+    page_units = {}
+    raw_page_units = raw.get("pageUnits", {})
+    if isinstance(raw_page_units, dict):
+        for raw_page, raw_unit in raw_page_units.items():
+            try:
+                page = _ledger_page(raw_page)
+                unit = _ledger_page_unit(raw_unit)
+            except ValueError:
+                continue
+            if unit:
+                page_units[str(page)] = unit
+    return {"version": LEDGER_SCHEMA, "entries": entries, "pageUnits": page_units}
 
 
 def _read_ledger_file(path: Path) -> tuple[dict, bytes]:
@@ -5372,12 +5416,29 @@ def _ledger_month_key(day: str) -> str:
     return day[:7]
 
 
-def ledger_month_payload(year: object = None, month: object = None, data: dict | None = None) -> dict:
+def ledger_month_payload(
+    year: object = None,
+    month: object = None,
+    page: object = None,
+    data: dict | None = None,
+    scope: object = "month",
+) -> dict:
     year_value, month_value = _ledger_month_parts(year, month)
+    page_value = _ledger_page(page)
+    scope_value = str(scope or "month").strip().lower()
+    if scope_value not in {"month", "all"}:
+        raise ValueError("账本视图无效")
     source = load_ledger() if data is None else data
     key = f"{year_value:04d}-{month_value:02d}"
+    highest_page = max(
+        [*(_ledger_page(entry.get("ledgerPage")) for entry in source.get("entries", [])),
+         *(_ledger_page(raw_page) for raw_page in source.get("pageUnits", {}))],
+        default=1,
+    )
+    page_unit = _ledger_page_unit(source.get("pageUnits", {}).get(str(page_value), ""))
     entries = [dict(entry) for entry in source.get("entries", [])
-               if _ledger_month_key(entry["date"]) == key]
+               if _ledger_page(entry.get("ledgerPage")) == page_value
+               and (scope_value == "all" or _ledger_month_key(entry["date"]) == key)]
     entries.sort(key=lambda item: (item["date"], item["createdAt"], item["id"]), reverse=True)
     income = sum(_ledger_effective_amount(entry) for entry in entries if entry["type"] == "income")
     expense = sum(_ledger_effective_amount(entry) for entry in entries if entry["type"] == "expense")
@@ -5385,6 +5446,10 @@ def ledger_month_payload(year: object = None, month: object = None, data: dict |
         "version": LEDGER_SCHEMA,
         "year": year_value,
         "month": month_value,
+        "scope": scope_value,
+        "page": page_value,
+        "highestPage": highest_page,
+        "unit": page_unit,
         "summary": {
             "incomeCents": income,
             "expenseCents": expense,
@@ -5408,6 +5473,8 @@ def _ledger_find(data: dict, entry_id: object) -> dict:
 def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
     if not isinstance(body, dict):
         raise ValueError("请求格式不正确")
+    if existing is not None and "ledgerPage" in body:
+        raise ValueError("暂不支持把账目移动到其它记账页")
     source = dict(existing or {})
     for field in ("type", "amountCents", "multiplier", "date", "note", "color"):
         if field in body:
@@ -5420,6 +5487,7 @@ def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
         source.setdefault("note", "")
         source.setdefault("color", "")
         source.setdefault("multiplier", None)
+        source["ledgerPage"] = _ledger_page(body.get("ledgerPage"))
     else:
         source["id"] = existing["id"]
         source["createdAt"] = existing["createdAt"]
@@ -5427,11 +5495,11 @@ def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
     return _sanitize_ledger_entry(source, strict=True)
 
 
-def _ledger_changed_months(data: dict, keys: set[str]) -> dict:
+def _ledger_changed_months(data: dict, keys: set[str], ledger_page: int) -> dict:
     payloads = {}
     for key in sorted(keys):
         year, month = key.split("-", 1)
-        payloads[key] = ledger_month_payload(int(year), int(month), data)
+        payloads[key] = ledger_month_payload(int(year), int(month), ledger_page, data)
     return payloads
 
 
@@ -5441,7 +5509,10 @@ def ledger_entry_create(body: dict) -> dict:
     data["entries"].append(entry)
     _save_ledger_unlocked(data)
     key = _ledger_month_key(entry["date"])
-    return {"ok": True, "entry": entry, "months": _ledger_changed_months(data, {key})}
+    ledger_page = _ledger_page(entry.get("ledgerPage"))
+    return {"ok": True, "entry": entry,
+            "months": _ledger_changed_months(data, {key}, ledger_page),
+            "cumulative": ledger_month_payload(page=ledger_page, data=data, scope="all")}
 
 
 def ledger_entry_update(body: dict) -> dict:
@@ -5458,7 +5529,10 @@ def ledger_entry_update(body: dict) -> dict:
     current.update(updated)
     _save_ledger_unlocked(data)
     keys = {old_key, _ledger_month_key(updated["date"])}
-    return {"ok": True, "entry": dict(current), "months": _ledger_changed_months(data, keys)}
+    ledger_page = _ledger_page(updated.get("ledgerPage"))
+    return {"ok": True, "entry": dict(current),
+            "months": _ledger_changed_months(data, keys, ledger_page),
+            "cumulative": ledger_month_payload(page=ledger_page, data=data, scope="all")}
 
 
 def ledger_entry_delete(body: dict) -> dict:
@@ -5472,8 +5546,29 @@ def ledger_entry_delete(body: dict) -> dict:
     return {
         "ok": True,
         "deletedId": entry["id"],
-        "months": _ledger_changed_months(data, {key}),
+        "months": _ledger_changed_months(data, {key}, _ledger_page(entry.get("ledgerPage"))),
+        "cumulative": ledger_month_payload(
+            page=_ledger_page(entry.get("ledgerPage")), data=data, scope="all"),
     }
+
+
+def ledger_page_unit_update(body: dict) -> dict:
+    if not isinstance(body, dict):
+        raise ValueError("请求格式不正确")
+    page = _ledger_page(body.get("page"))
+    unit = _ledger_page_unit(body.get("unit"))
+    year, month = _ledger_month_parts(body.get("year"), body.get("month"))
+    data = load_ledger()
+    page_units = data.setdefault("pageUnits", {})
+    previous = page_units.get(str(page), "")
+    if unit:
+        page_units[str(page)] = unit
+    else:
+        page_units.pop(str(page), None)
+    if unit != previous:
+        _save_ledger_unlocked(data)
+    return {"ok": True, "payload": ledger_month_payload(
+        year, month, page, data, body.get("scope", "month"))}
 
 
 _DIARY_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -10256,6 +10351,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     payload = ledger_month_payload(
                         q.get("year", [None])[0],
                         q.get("month", [None])[0],
+                        q.get("page", [None])[0],
+                        scope=q.get("scope", ["month"])[0],
                     )
             except LedgerVersionError as err:
                 return self._send_json(409, {"error": str(err), "incompatible": True})
@@ -10496,6 +10593,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_ledger_mutate(ledger_entry_update, body)
         if path == "/api/ledger-entry-delete":
             return self._api_ledger_mutate(ledger_entry_delete, body)
+        if path == "/api/ledger-page-unit":
+            return self._api_ledger_mutate(ledger_page_unit_update, body)
         if path == "/api/diary-save":
             try:
                 return self._send_json(200, {"diary": save_diary(body)})

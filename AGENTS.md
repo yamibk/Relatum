@@ -110,7 +110,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
 | `assets/calendar.js` | 日历页“日历 / 记账”双视图协调层，以及日历、日记、右侧三栏（画布活动 / 每日打卡 / 学习任务）、倒数日与倒数日进度条。已在日历页时重复点击书脊切换内部视图；两个视图使用固定叠层并同步 `hidden` / `inert` / `aria-hidden`。日历内部错峰入场未完成时离页会冻结 CSS / WAAPI 当前帧，外层退场隐藏后再清理。 |
-| `assets/ledger.js` | 日历页第二视图的极简人民币流水：页壳、汇总、日期组和账目卡使用常驻 DOM 与按 ID 增量同步，增删改、换色和排序变化复用学习页的入退场、锚定设置浮层与 FLIP。点击 `＋` 只创建一张显示 `¥—` 的本地草稿，草稿可从设置卡直接删除，保存有效金额后才落盘，切月或离页丢弃；账目仍按日期/创建时间倒序，不提供拖拽排序。每笔可选正数倍率，留空按 1 计算；填写后账目行显示“原金额 × 倍率 = 最终金额”，月汇总使用最终金额。运行时在起步页首屏空闲期即预取本月快照，首次翻入记账视图直接消费内存缓存。支持同槽二次确认删除、未来日期、跨月保存定位、共享 4×3 的 12 色标记、最近月份内存缓存、请求乱序保护与空闲相邻月预取；不包含预算、趋势、分类、搜索、筛选、批量、多账户、多币种或周期账单。 |
+| `assets/ledger.js` | 日历页第二视图的极简人民币流水：页壳、汇总、日期组和账目卡使用常驻 DOM 与按 ID 增量同步，增删改、换色和排序变化复用学习页的入退场、锚定设置浮层与 FLIP。右缘悬停页栏提供 1–99 虚拟数字页，月份在页间共享，页码与月份共同隔离缓存和汇总；切页丢弃未保存草稿，不提供页命名、颜色、删除或账目跨页移动。点击 `＋` 只创建一张显示 `¥—` 的当前页本地草稿，保存有效金额后才落盘，切月或离页丢弃；账目仍按日期/创建时间倒序，不提供拖拽排序。每笔可选正数倍率，留空按 1 计算；填写后账目行显示“原金额 × 倍率 = 最终金额”，月汇总使用最终金额。运行时在起步页首屏空闲期即预取当前页本月快照，首次翻入记账视图直接消费内存缓存。支持同槽二次确认删除、未来日期、跨月保存定位、共享 4×3 的 12 色标记、最近页月快照缓存、请求乱序保护与当前页相邻月预取；不包含预算、趋势、分类、搜索、筛选、批量、多账户、多币种或周期账单。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。 |
 | `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。 |
@@ -154,7 +154,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 起步页活动账本 | `data/start-page-activity.json`（v1）；只保存学习、树状、速记三页按本地日期拆分并合并去重的前台时间段，不回填历史，不读取或改写三页各自的内容文件。 |
 | 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、命名里程碑 `milestones[]`（用户侧不设小额限制，异常数据安全上限 50）与逐日历史 `doneDates` / `minutesByDate`；上一份有效快照为 `data/daily.backup.json`，损坏原件隔离成 `data/daily.corrupt-<时间>.json` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
-| 记账流水 | `data/ledger.json`（v1）；每笔保存 `id/type/amountCents/date/note/color/createdAt/updatedAt`，并可选保存 `multiplier`。金额为正整数分、类型决定正负；倍率留空时不写字段并按 1 计算，非空时只接受大于 0、不超过 1000000 且最多四位小数的数字，最终金额按分四舍五入并用于月汇总。日期允许过去与未来，颜色只接受空串或严格 `#rrggbb`。缺失时返回未落盘空账本；有效写入前维护 `data/ledger.backup.json`，主文件损坏时隔离为 `data/ledger.corrupt-<时间>.json` 并尝试从有效备份恢复；不兼容版本只报错且不覆盖。 |
+| 记账流水 | `data/ledger.json`（v1）；每笔保存 `id/type/amountCents/date/note/color/createdAt/updatedAt`，并可选保存 `multiplier` 与 `ledgerPage`。`ledgerPage` 只接受 1–99，旧记录缺失时归第 1 页；页面是记录分组而非独立实体，空页不落盘。顶层可选 `pageUnits` 以页码字符串为键保存每页非空金额单位，留空即删除该键并恢复人民币 `¥`；单位最长 12 字符且不允许控制字符。金额为正整数分、类型决定正负；倍率留空时不写字段并按 1 计算，非空时只接受大于 0、不超过 1000000 且最多四位小数的数字，最终金额按分四舍五入并用于当前页月汇总。日期允许过去与未来，颜色只接受空串或严格 `#rrggbb`。缺失时返回未落盘空账本；有效写入前维护 `data/ledger.backup.json`，主文件损坏时隔离为 `data/ledger.corrupt-<时间>.json` 并尝试从有效备份恢复；不兼容版本只报错且不覆盖。 |
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移。每个事件可选保存 `lengthDays`（1–9999 整数），是日历页倒数日进度条的窗口长度（天），缺省即未设置，非法值在净化时丢弃 |
 | 模板库 | `data/templates.json` |
@@ -218,7 +218,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 空白框选创建盒子与框选节点创建分组分别由 `canvas:boxCreateEnabled` / `canvas:groupCreateEnabled` 控制，两个开关默认开启且彼此独立；`canvas:genIndexEnabled` 也必须独立判断，不能因关闭盒子或分组而隐藏框选生成索引入口。
 - 学习页两种视图共用 `study:taskPage:v1` 记住当前数字任务页，缺失或非法时为第 1 页。右侧页栏按可用高度提供虚拟空页，有内容、已染色或当前选中的高编号页在缩窗后仍可通过隐藏滚动条的滚动区访问；页号右键复用学习页 12 色调色盘，颜色用 `study:taskPageColors:v1` 的 `{version:1,colors:{页码:"#rrggbb"}}` 保存在 `localStorage`，只接受共享色库中的非空颜色，默认色不保存且不写入 `study.json`。有颜色的当前页滑块采用页色，无颜色时保持原有黑白主题滑块。完整进度标题右侧空白可双击编辑当前页的可选单行说明，空说明不显示提示或占位。
 - 速记、学习、复习、专注各自有视图偏好和临时运行状态；专注页使用 `focus:viewMode` 记住 `timer` / `daily`，未保存偏好或偏好值无效时默认 `daily`（每日任务）。学习页使用 `study:viewMode:v2` 记住 `list` / `progress`，未保存偏好或偏好值无效时默认 `list`（极简清单）；再次点击“学”切换视图。极简清单按 `To Do / Done` 分组，保留快速新建、改名、完成、回收、同状态拖拽排序和归档。完整进度视图为未完成/已完成双列，并提供不复制任务数据、始终覆盖显示且不参与主布局的非模态临时任务浮层；浮层开合只存在当前会话，成员引用跨重启保存在 `temporaryTaskIds[]`。两种学习视图都能打开同一套多目标树路线；从任务设置点击“在树中查看”会切换并持久化到实际包含该任务的目标树，关闭路线面板后把键盘焦点还给原入口。活动树由 `data/study.json` 的 `activeTreeId` 持久化，每棵树的相机与折叠阶段 ID 通过 `relatum.goal-tree-route.view.<treeId>` 独立保存在 `localStorage`；路线面板打开期间窗口尺寸变化只按新旧视口尺寸差补偿平移，以保持原画面中心和缩放，不自动执行全树适配。弹层、拖拽和“下一步”循环位置只存在当前会话。任务点若仍被任一目标树解锁条件引用，学习任务更新接口会拒绝删除并保留原任务与依赖。`canvas:studyGoalTreeSimpleMode:v1` 控制目标树高级解锁编辑，未设置时默认精简，仅显式 `'0'` 显示解锁条件入口、添加解锁条件和阶段到任务/任务点的高级拖放；新建后续任务与新建后续阶段始终可用，切换不改目标树数据。完整视图右上角 4 个圆角色块是颜色图例，右键/Enter 调色，用 `study:legend:v1`（`{version:1,colors:[4 个 #rrggbb]}`）保存在 `localStorage`，损坏或非法值回退 4 个「无」空位（斜纹格），≤700px 隐藏，不写入 study.json。每日任务完成页另用 `focus:dailyReviewedDate` 记住当天是否已经点击“回顾今日”（本地日期变化或当天撤销任一任务后失效）。起始文档解析时会预载 `focus.js`，并行读取 `/api/daily` 与 `/api/focus`；`focus.js` 不读取学习任务，先填好隐藏 DOM，再发布 `CanvasFocus` 和 `canvasfocus:ready`。年度足迹使用 `canvas:cadenceLens:v2` 记住 `canvas` / `complete` / `focus`，没有 v2 偏好时默认“画布”；复习方式使用 `canvas:reviewMode:v1` 记住 `scheduled` / `free`。
-- 日历页使用 `calendar:viewMode:v1` 记住 `calendar` / `ledger`，缺失或非法时默认日历；已在该页时重复点击“历”切换。记账当前月份只存在 `ledger.js` 本次文档会话内：同一会话离页再回来保持刚查看月份，应用重新启动后回到本月。记账页四个无文字图例色块用 `ledger:legend:v1` 的 `{version:1,colors:[4 个空串或 #rrggbb]}` 保存在 `localStorage`，只作视觉备忘且不筛选账目；单笔颜色存在 `ledger.json`，收入/支出仍必须用文字和金额正负号表达。
+- 日历页使用 `calendar:viewMode:v1` 记住 `calendar` / `ledger`，缺失或非法时默认日历；已在该页时重复点击“历”切换。记账当前月份只存在 `ledger.js` 本次文档会话内：同一会话离页再回来保持刚查看月份，应用重新启动后回到本月。当前数字页用 `ledger:page:v1` 保存在 `localStorage`，只接受 1–99，非法时回到第 1 页；数字页共用当前月份。月份/累计视图用 `ledger:view:v1` 全局记住，非法时默认 `month`；累计视图不改写原账目日期。记账页四个无文字图例色块用 `ledger:legend:v1` 的 `{version:1,colors:[4 个空串或 #rrggbb]}` 保存在 `localStorage`，只作视觉备忘且不筛选账目；单笔颜色存在 `ledger.json`，收入/支出仍必须用文字和金额正负号表达。
 - 独立树状页沿用目标树镜头格式，每棵树的相机与折叠节点只用 `relatum.tree-page.view.<treeId>` 保存；首次进入恢复当前树已保存的镜头，再次点击已激活的树状页书脊图标则复用“适应”算法，把当前可见树完整居中并保存新镜头。多树活动项保存在 `tree-page.json`，目标树内部“下一步”循环位置、结构拖拽和浮层均为当前会话状态。根节点百分比使用固定 4ch 左对齐数字槽：两位数从左起排，到 `100%` 时第三位只向右占用预留位，标题起点不移动。两页共用 `canvas:studyGoalTreeSimpleMode:v1`，但树状页不加入跨页便签、活跃统计或学习归档。
 - `sessionStorage` 的 `canvas:route-from-start` 用于从起步页进入编辑器后的返回/过渡体验。
 
@@ -235,7 +235,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 独立树状页：`/api/tree-page`；缺失文件或旧实验 v1 返回稳定 ID 的未落盘空白 v2，损坏或其他非 v2 文件返回明确错误且不覆盖原件。
 - 复习：`/api/review-pool`、`/api/review-cards`
 - 速记/跨页便签/专注/每日任务：`/api/notes`、`/api/start-sticky-notes`、`/api/focus`、`/api/daily`
-- 日历、记账与倒数日：`/api/calendar`、`/api/ledger?year=&month=`、`/api/countdown`；记账 GET 只返回所选月的规范化流水与 `incomeCents/expenseCents/balanceCents/count` 汇总，三个金额汇总均使用应用可选倍率后的最终分值。
+- 日历、记账与倒数日：`/api/calendar`、`/api/ledger?year=&month=&page=&scope=`、`/api/countdown`；记账 GET 的 `page` 缺省为 1，`scope` 只允许 `month` / `all` 且缺省为 `month`；前者只返回所选页月流水，后者返回所选数字页的全部月份流水。两者均返回规范化流水、`incomeCents/expenseCents/balanceCents/count` 汇总、当页 `unit` 和全账本 `highestPage`，三个金额汇总均使用应用可选倍率后的最终分值。
 - 模板：`/api/templates`
 - 生涯报告：`/api/career-report` 只读取已有 `data/career-report.json` 冻结快照；不存在时返回 `{version:1, exists:false}`，普通读取不扫描业务文件。
 - 画布和资源读取：`/api/load`、`/api/background-image`、`/api/canvas-asset`、`/api/canvas-annotation`、`/api/node-annotations`、`/api/background-preference`
@@ -262,7 +262,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 起步页活动：`/api/start-page-activity` 只接受 `study` / `tree` / `notes`、会话 ID 与前台时间段；按画布计时相同的时长上限、本地午夜拆分和区间合并规则写入独立账本，再返回该页今日及累计秒数。
 - 每日任务：`/api/daily-create`、`/api/daily-update`、`/api/daily-delete`、`/api/daily-toggle`、`/api/daily-add-minutes`、`/api/daily-reorder`、`/api/daily-group-create`、`/api/daily-group-update`、`/api/daily-group-delete`、`/api/daily-tree`
 - 日历：`/api/diary-save`、`/api/diary-delete`、`/api/countdown-save`
-- 记账：`/api/ledger-entry-create`、`/api/ledger-entry-update`、`/api/ledger-entry-delete`；更新既支持收入/支出、金额、可选倍率、日期和可选备注的完整表单，也支持单独颜色补丁；传入 `multiplier:null` 会清除倍率。写响应返回规范化记录和所有受影响月份的完整快照，跨月编辑包含原月与目标月，前端据此原位更新缓存。
+- 记账：`/api/ledger-entry-create`、`/api/ledger-entry-update`、`/api/ledger-entry-delete`、`/api/ledger-page-unit`；创建可传 1–99 的 `ledgerPage`，更新不支持跨页移动；更新既支持收入/支出、金额、可选倍率、日期和可选备注的完整表单，也支持单独颜色补丁，传入 `multiplier:null` 会清除倍率。每页单位接口接受 `page/year/month/unit`，空 `unit` 恢复人民币并返回当前页月快照。流水写响应返回该记录所属数字页所有受影响月份的完整快照，跨月编辑包含原月与目标月，前端据此原位更新页月缓存。
 - AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
 
 ### HTTP 与并发边界
@@ -518,11 +518,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 极简记账 `ledger.js`
 
-- 页头只保留四个无文字图例色块、上月/下月和“＋记一笔”；三张汇总纸面按结余/收入/支出显示，流水按日期倒序分组，同日按创建时间倒序。桌面三卡并排、窄窗 `auto-fit/minmax` 换行，流水始终单列且没有侧栏。
+- 页头保留四个无文字图例色块、上月/下月、“…”当前页设置和“＋记一笔”；设置卡包含一个可留空单位输入框、月份/累计视图二选一与保存/取消。单位留空使用人民币 `¥`，非空单位仅替换当前数字页的金额显示。月份视图的三张汇总纸面按结余/收入/支出显示，流水按日期倒序分组；累计视图隐藏月份切换、日期分组、编辑卡日期项和月份辅助文字，展示当前数字页的总收入/总支出/总结余。桌面三卡并排、窄窗 `auto-fit/minmax` 换行，流水始终单列且没有侧栏。
+- 右侧边缘悬停或键盘聚焦显示 1–99 数字页栏，复用学习页按钮、活动滑块、隐藏滚动条和滚轮边缘切页手感；页栏至少铺满当前可用高度，并覆盖当前页及 `highestPage`。当前页写入 `ledger:page:v1`，切页保留月份、丢弃未保存草稿并关闭设置/调色盘；页月共同组成缓存键，相邻月预取只读取当前数字页。
 - 新增和编辑共用流水顶部行内卡，只含收入/支出、金额、可选倍率、日期、可选备注。倍率留空时账目行只显示原金额；填写后显示“原金额 × 倍率 = 最终金额”，并以最终金额参与结余、收入和支出汇总。行单击或 Enter 进入编辑，Esc 取消、Enter 提交；只有编辑已有流水时显示删除，第一次点击在同一槽位变成“确认删除”，不弹对话框。当前月新增默认今天，其他月份沿用今天日号并夹到月末；日期可自由改到未来，跨月保存后切至目标月份并定位新记录。
 - 行右键或键盘菜单键打开学习页共享 12 色盘，颜色只改变底色/侧边标记；四个图例色块右键或 Enter/Space 使用同一色盘。保存失败必须保留服务端已确认状态或回滚乐观颜色，不能让失败请求改写缓存。
-- 翻月先启动有限退场，再并行读取；最近月份保存在内存，空闲预取相邻月份。主请求和预取各自使用 `AbortController`，主请求另有递增序号，旧响应不得覆盖新月份。汇总、行增删改、颜色、跨视图与月份动画均服从 `prefers-reduced-motion`，离页时清理。
-- 首版固定人民币 `¥`，不得加入预算、趋势图、分类、搜索、筛选、批量、多账户、多币种、周期账单或任何为这些功能预留的复杂状态与控件。
+- 翻月先启动有限退场，再并行读取；月份视图最近页月保存在内存并空闲预取当前页相邻月，累计视图只按数字页缓存且不预取月份。主请求和预取各自使用 `AbortController`，主请求另有递增序号，旧响应不得覆盖新视图或页月。汇总、行增删改、颜色、跨视图与月份动画均服从 `prefers-reduced-motion`，离页时清理。
+- 默认使用人民币 `¥`，每个数字页可独立替换为一段简短自定义金额单位；这只是显示后缀，不引入汇率或币种语义。不得加入预算、趋势图、分类、搜索、筛选、批量、多账户、真正多币种、周期账单或任何为这些功能预留的复杂状态与控件。
 
 ### 复习 `review.js`
 
