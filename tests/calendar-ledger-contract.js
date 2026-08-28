@@ -43,14 +43,18 @@ assert(ledger.includes('function syncEntryRow(') && ledger.includes('function sy
 assert(ledger.includes('captureEntryRects') && ledger.includes('animateEntryChanges'), 'ledger FLIP motion is missing');
 assert(ledger.includes("row.classList.add('is-leaving')") && ledger.includes("'quick-enter'"), 'study-style card enter/exit motion is missing');
 
-// ＋ 只创建一张本地草稿，保存前不发起创建请求；切月和离页丢弃。
+// ＋ 只创建一张本地草稿，保存前不发起创建请求；切页保留草稿，切月和离页丢弃。
 const createDraftSection = ledger.slice(ledger.indexOf('function createDraft()'), ledger.indexOf('function discardDraft'));
 assert(createDraftSection.includes('if (state.draft)') && createDraftSection.includes('amountCents: null'), 'single local draft is missing');
 assert(createDraftSection.includes('DRAFT_ID') && !createDraftSection.includes('/api/ledger-entry-create'), 'plus persists before the draft is valid');
 assert(ledger.includes("currentUnit() ? '—' + currentUnit() : '¥—'"), 'draft amount placeholder is missing');
-assert(ledger.includes("discardDraft({ instant: true })"), 'draft is not discarded on month/page exit');
+assert(ledger.includes("discardDraft({ instant: true })"), 'draft is still discarded on month exit');
 assert(ledger.includes('if (state.settings.id === DRAFT_ID)') && ledger.includes('discardDraft();'), 'draft settings cannot delete the local draft');
 assert(!ledger.includes('draggable'), 'ledger must keep deterministic date ordering without drag state');
+// 切页照搬学习页：全量在本地即时切换，不再按页请求，也不丢弃草稿。
+const changePageSection = ledger.slice(ledger.indexOf('function changePage('), ledger.indexOf('function finishPageSwitch'));
+assert(!changePageSection.includes('discardDraft') && !changePageSection.includes('ensurePageData'),
+  'page switch must keep the draft and stay fully local');
 
 // 记账只保留月导航、四个无文字色块和单一新增入口，不混入首版明确排除的复杂功能。
 assert(ledger.includes("const fallback = ['', '', '', '']") && ledger.includes('raw.colors.length !== 4'), 'four visual legend chips are missing');
@@ -61,12 +65,14 @@ assert(ledger.includes('data-ledger-page-rail') && ledger.includes('data-ledger-
   && ledger.includes('data-ledger-page-list'), 'right-edge ledger page rail is missing');
 assert(ledger.includes('PAGE_EDGE_PX') && ledger.includes('setPageRailVisible')
   && ledger.includes("closest('[data-ledger-page]')"), 'ledger page hover or click switching is missing');
-assert(ledger.includes('function ledgerCacheKey(year, month, page, viewMode)') && ledger.includes("'&page='"),
-  'ledger cache and requests are not page-aware');
+assert(ledger.includes('function computePayload(') && ledger.includes('function applyLedgerPayload(')
+  && ledger.includes('function draftVisible()'), 'full-ledger local derivation is missing');
+assert(!ledger.includes('ledgerCacheKey') && !ledger.includes('scheduleNeighborPrefetch')
+  && !ledger.includes('prefetchPage'), 'page-aware cache or adjacent prefetch must be removed');
 assert(ledger.includes('data-ledger-page-settings') && ledger.includes('data-ledger-unit')
   && ledger.includes("'/api/ledger-page-unit'"), 'per-page amount unit editor is missing');
 assert(ledger.includes("const VIEW_KEY = 'ledger:view:v1'") && ledger.includes('data-ledger-view')
-  && ledger.includes("'cumulative'") && ledger.includes("'&scope=all'"),
+  && ledger.includes("'cumulative'"),
   'remembered monthly/cumulative ledger view is missing');
 assert(ledger.includes("dateField.hidden = state.viewMode === 'cumulative'")
   && ledger.includes("header.hidden = state.viewMode === 'cumulative'")
@@ -80,15 +86,15 @@ for (const forbidden of ['月预算', '趋势图', '搜索账', '批量账', '�
   assert(!ledger.includes(forbidden), `forbidden first-version feature leaked into ledger: ${forbidden}`);
 }
 
-// 自定义色不替代收入/支出语义；数据请求具备乱序保护、取消、缓存与空闲相邻月预取。
+// 自定义色不替代收入/支出语义；全量快照请求具备乱序保护与取消，空闲时整本预热。
 assert(ledger.includes("entry.type === 'income'") && ledger.includes("income ? T('收入') : T('支出')")
   && ledger.includes('const signedCents = income ? entry.amountCents : -entry.amountCents'), 'income/expense text and sign semantics are missing');
 assert(ledger.includes('RelatumStudyPalette.createPopoverController'), 'shared animated palette controller is not reused');
 assert(styles.includes('.study-route-color-palette') && styles.includes('grid-template-columns: repeat(4, 1fr)'), 'shared palette is not 4 by 3');
 assert(!styles.includes('.ledger-color-popover'), 'duplicate ledger-only palette remains');
-assert(ledger.includes('new AbortController()') && ledger.includes('requestSeq'), 'stale month response protection is missing');
-assert(ledger.includes('requestIdleCallback') && ledger.includes('scheduleNeighborPrefetch'), 'adjacent month idle prefetch is missing');
-assert(ledger.includes('mount();') && ledger.includes('warmup();'), 'current-month ledger is not warmed during start-page idle time');
+assert(ledger.includes('new AbortController()') && ledger.includes('requestSeq'), 'stale full-snapshot response protection is missing');
+assert(ledger.includes('requestIdleCallback') && ledger.includes('function warmup()'), 'full ledger is not warmed during start-page idle time');
+assert(ledger.includes('mount();') && ledger.includes('warmup();'), 'ledger is not mounted and warmed at startup');
 assert(styles.includes('@media (prefers-reduced-motion: reduce)') && styles.includes('.ledger-shell'), 'reduced-motion fallback is missing');
 
 // 前后端接口与 v1 文件、备份/损坏隔离和原子替换契约必须同时存在。
@@ -98,15 +104,14 @@ assert(backend.includes('ledger.corrupt-'), 'corrupt ledger isolation is missing
 assert(backend.includes('_atomic_write_json(LEDGER_FILE, payload)'), 'ledger does not use the shared atomic writer');
 assert(backend.includes('def _ledger_multiplier(') && backend.includes('def _ledger_effective_amount('),
   'ledger multiplier validation or effective amount calculation is missing');
-assert(backend.includes('LEDGER_PAGE_MAX = 99') && backend.includes('def _ledger_page(')
-  && backend.includes('q.get("page", [None])[0]'), 'ledger page validation or GET parameter is missing');
+assert(backend.includes('LEDGER_PAGE_MAX = 99') && backend.includes('def _ledger_page('),
+  'ledger page validation is missing');
 assert(backend.includes('"ledgerPage"') && backend.includes('"highestPage"'),
   'ledger entry page or highest-page metadata is missing');
 assert(backend.includes('def _ledger_page_unit(') && backend.includes('def ledger_page_unit_update(')
   && backend.includes('"pageUnits"'), 'per-page amount unit persistence is missing');
-assert(backend.includes('scope_value not in {"month", "all"}')
-  && backend.includes('"cumulative": ledger_month_payload('),
-  'backend cumulative page snapshot is missing');
+assert(backend.includes('def ledger_full_payload(') && backend.includes('"ledger": ledger_full_payload(data)'),
+  'full ledger snapshot contract is missing');
 for (const route of ['/api/ledger', '/api/ledger-entry-create', '/api/ledger-entry-update',
   '/api/ledger-entry-delete', '/api/ledger-page-unit']) {
   assert(backend.includes(route), `missing ledger route: ${route}`);

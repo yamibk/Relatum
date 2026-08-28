@@ -43891,6 +43891,32 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 .ledger-flow.ledger-month-next { animation: ledgerMonthNext 360ms var(--easing-page); }
 .ledger-flow.ledger-month-previous { animation: ledgerMonthPrevious 360ms var(--easing-page); }
 
+/* 切页：与学习页一致 —— transition 整体淡出，内容在隐藏状态替换，再整版错峰入场。
+   is-revealing 用纯 CSS class 动画（复用学习页 keyframes），不走 WAAPI，
+   避免 element.animate 的 pending 帧造成「完整内容闪一帧」的闪烁。 */
+.ledger-head,
+.ledger-summary,
+.ledger-flow { transition: opacity 150ms var(--easing-soft), transform 180ms var(--easing-soft); }
+.ledger-page.ledger-page-switching .ledger-head,
+.ledger-page.ledger-page-switching .ledger-summary,
+.ledger-page.ledger-page-switching .ledger-flow { opacity: 0; transform: translate3d(0, 4px, 0); }
+.ledger-page.is-revealing .ledger-head {
+  animation: study-heading-spring-in 600ms 40ms var(--easing-page) both;
+}
+.ledger-page.is-revealing .ledger-summary-card {
+  animation: study-support-spring-in 560ms 120ms var(--easing-page) both;
+}
+.ledger-page.is-revealing .ledger-day-group {
+  animation-name: study-card-fade-in, study-card-spring-up;
+  animation-duration: 380ms, 600ms;
+  animation-timing-function: var(--easing-soft), var(--easing-page);
+  animation-delay: calc(150ms + var(--ledger-row-index, 0) * 64ms), calc(150ms + var(--ledger-row-index, 0) * 64ms);
+  animation-fill-mode: backwards, both;
+}
+.ledger-page.is-revealing .ledger-empty {
+  animation: study-support-spring-in 560ms 280ms var(--easing-page) both;
+}
+
 @keyframes ledgerMonthNext {
   from { opacity: .35; transform: translateX(14px); }
   to { opacity: 1; transform: translateX(0); }
@@ -43964,6 +43990,10 @@ body.start-page[data-start-theme="dark"] .ledger-entry-expense > b { color: #d99
   .calendar-internal-view.calendar-mode-leaving,
   .ledger-flow.ledger-month-next,
   .ledger-flow.ledger-month-previous,
+  .ledger-page.is-revealing .ledger-head,
+  .ledger-page.is-revealing .ledger-summary-card,
+  .ledger-page.is-revealing .ledger-day-group,
+  .ledger-page.is-revealing .ledger-empty,
   .ledger-entry.quick-enter,
   .ledger-entry.is-leaving,
   .ledger-entry-attention,
