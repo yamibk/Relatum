@@ -624,7 +624,7 @@
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
       entry.animate([{ transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
         { transform: 'translate3d(0,0,0)' }],
-      { duration: 260, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
+      { duration: 190, easing: 'cubic-bezier(0.22, 0.9, 0.26, 1)' });
     });
   }
 
@@ -1301,20 +1301,47 @@
       }, 3200); return;
     }
     const id = state.settings.id; const entry = findEntry(id); if (!entry) return;
-    const oldEntry = { ...entry }; const previousRects = captureEntryRects();
+    const oldEntry = { ...entry };
     const row = entryRows.get(id); const seq = nextMutation(id);
+    let removalSettled = false; let removalTimer = 0; let removalEndHandler = null;
+    const cleanupRemovalMotion = () => {
+      window.clearTimeout(removalTimer); removalTimer = 0;
+      if (row && removalEndHandler) row.removeEventListener('animationend', removalEndHandler);
+      removalEndHandler = null;
+    };
+    const finishRemovalMotion = () => {
+      if (removalSettled) return;
+      removalSettled = true; cleanupRemovalMotion();
+      // 退场结束时才捕获仍在场账目的当前位置，再移除目标并只执行一次 FLIP。
+      // 不能复用点击删除时的旧坐标，否则快速成功响应会让补位动画被拉回重播。
+      const previousRects = captureEntryRects();
+      syncEntries({ previousRects });
+    };
+    const cancelRemovalMotion = () => {
+      if (removalSettled) return;
+      removalSettled = true; cleanupRemovalMotion();
+      if (row) row.classList.remove('is-leaving');
+    };
     closeSettings(false); removeLocalEntry(entry);
     state.payload = computePayload(); syncSummary();
     if (row && !reducedMotion) {
-      row.classList.add('is-leaving'); window.setTimeout(() => syncEntries({ previousRects }), 300);
-    } else syncEntries({ previousRects });
+      removalEndHandler = (event) => {
+        if (event.target !== row || event.animationName !== 'studyCardOut') return;
+        finishRemovalMotion();
+      };
+      row.addEventListener('animationend', removalEndHandler);
+      row.classList.add('is-leaving');
+      removalTimer = window.setTimeout(finishRemovalMotion, 250);
+    } else finishRemovalMotion();
     postInOrder(id, '/api/ledger-entry-delete', { id }).then((result) => {
       acceptMutationRevision(result.revision);
       if (!mutationCurrent(id, seq)) return;
-      removeLocalEntry(oldEntry); syncLedger();
+      // 乐观删除已经更新数据与界面；成功响应只确认修订，避免在退场计时器之外再次补位。
+      removeLocalEntry(oldEntry);
     }).catch((error) => {
       scheduleLedgerReload();
       if (!mutationCurrent(id, seq)) return;
+      cancelRemovalMotion();
       applyLocalEntry(oldEntry, oldEntry); state.highlightId = id;
       syncLedger({ newIds: new Set([id]) }); showToast(error.message);
     });
