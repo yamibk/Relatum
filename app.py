@@ -168,8 +168,9 @@ CANVAS_ACTIVITY_SCHEMA = 1
 CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
 START_PAGE_ACTIVITY_SCHEMA = 1
 START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes")
-LEDGER_SCHEMA = 1
+LEDGER_SCHEMA = 2
 LEDGER_PAGE_MAX = 99
+LEDGER_REVISION_MAX = 9_007_199_254_740_990
 CAREER_REPORT_SCHEMA = 1
 # 画布伴生素材统一可被 /api/canvas-asset 读取的类型（图片 + 附件）。
 CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
@@ -5124,6 +5125,8 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
 
 _LEDGER_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _LEDGER_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_LEDGER_ID_RE = re.compile(r"^le_[0-9a-f]{32}$")
+_LEDGER_MULTIPLIER_RE = re.compile(r"^\d+(?:\.\d{1,4})?$")
 
 
 class LedgerVersionError(ValueError):
@@ -5131,7 +5134,15 @@ class LedgerVersionError(ValueError):
 
 
 def _ledger_empty() -> dict:
-    return {"version": LEDGER_SCHEMA, "entries": [], "pageUnits": {}}
+    return {"version": LEDGER_SCHEMA, "revision": 0, "entries": [], "pageUnits": {}}
+
+
+def _ledger_revision(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("账本修订号无效")
+    if value < 0 or value > LEDGER_REVISION_MAX:
+        raise ValueError("账本修订号无效")
+    return value
 
 
 def _ledger_day(value: object) -> str:
@@ -5150,13 +5161,16 @@ def _ledger_amount(value: object) -> int:
     return value
 
 
-def _ledger_multiplier(value: object) -> int | float | None:
+def _ledger_multiplier(value: object) -> str | None:
     if value in (None, ""):
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+    if not isinstance(value, str):
         raise ValueError("倍率必须是大于零的有效数字")
+    raw = value.strip()
+    if not _LEDGER_MULTIPLIER_RE.fullmatch(raw):
+        raise ValueError("倍率最多保留四位小数")
     try:
-        multiplier = Decimal(str(value).strip())
+        multiplier = Decimal(raw)
     except (InvalidOperation, ValueError) as err:
         raise ValueError("倍率必须是大于零的有效数字") from err
     if not multiplier.is_finite() or multiplier <= 0 or multiplier > 1_000_000:
@@ -5164,7 +5178,7 @@ def _ledger_multiplier(value: object) -> int | float | None:
     normalized = multiplier.normalize()
     if max(0, -normalized.as_tuple().exponent) > 4:
         raise ValueError("倍率最多保留四位小数")
-    return int(normalized) if normalized == normalized.to_integral_value() else float(normalized)
+    return format(normalized, "f")
 
 
 def _ledger_effective_amount(entry: dict) -> int:
@@ -5197,19 +5211,20 @@ def _ledger_timestamp(value: object, fallback: str) -> str:
 
 
 def _ledger_page(value: object = None) -> int:
-    if value in (None, ""):
-        return 1
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数")
-    try:
-        page = int(value)
-    except (TypeError, ValueError) as err:
-        raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数") from err
-    if isinstance(value, float) and not value.is_integer():
+    if not 1 <= value <= LEDGER_PAGE_MAX:
         raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数")
-    if not 1 <= page <= LEDGER_PAGE_MAX:
-        raise ValueError(f"记账页码需要是 1–{LEDGER_PAGE_MAX} 之间的整数")
-    return page
+    return value
+
+
+def _ledger_page_key(value: object) -> int:
+    if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+        raise ValueError("记账页设置键无效")
+    page = int(value)
+    if str(page) != value:
+        raise ValueError("记账页设置键无效")
+    return _ledger_page(page)
 
 
 def _ledger_page_unit(value: object = None) -> str:
@@ -5225,59 +5240,45 @@ def _ledger_page_unit(value: object = None) -> str:
     return unit
 
 
-def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
+def _sanitize_ledger_entry(raw: object, *, canonical: bool = False) -> dict:
     if not isinstance(raw, dict):
-        if strict:
-            raise ValueError("账目格式不正确")
-        return None
-    now = datetime.now().replace(microsecond=0).isoformat()
+        raise ValueError("账目格式不正确")
     entry_id = raw.get("id")
-    if not isinstance(entry_id, str) or not entry_id.strip():
-        if strict:
-            raise ValueError("账目缺少 id")
-        return None
+    if not isinstance(entry_id, str) or not _LEDGER_ID_RE.fullmatch(entry_id):
+        raise ValueError("账目 id 无效")
     entry_type = raw.get("type")
     if entry_type not in ("income", "expense"):
-        if strict:
-            raise ValueError("账目类型无效")
-        return None
-    try:
-        amount = _ledger_amount(raw.get("amountCents"))
-        multiplier = _ledger_multiplier(raw.get("multiplier"))
-        ledger_page = _ledger_page(raw.get("ledgerPage"))
-        entry_day = _ledger_day(raw.get("date"))
-        color = _ledger_color(raw.get("color"))
-    except ValueError:
-        if strict:
-            raise
-        return None
+        raise ValueError("账目类型无效")
+    amount = _ledger_amount(raw.get("amountCents"))
+    multiplier = _ledger_multiplier(raw.get("multiplier"))
+    ledger_page = _ledger_page(raw.get("ledgerPage"))
+    entry_day = _ledger_day(raw.get("date"))
+    color = _ledger_color(raw.get("color"))
+    if canonical and "multiplier" in raw and raw.get("multiplier") not in (None, multiplier):
+        raise ValueError("账目倍率不是规范格式")
+    if canonical and raw.get("color", "") != color:
+        raise ValueError("账目标记颜色不是规范格式")
     note = raw.get("note", "")
     if not isinstance(note, str):
-        if strict:
-            raise ValueError("备注必须是文字")
-        note = str(note or "")
-    created_at = _ledger_timestamp(raw.get("createdAt"), now)
-    updated_at = _ledger_timestamp(raw.get("updatedAt"), created_at)
+        raise ValueError("备注必须是文字")
+    created_at = _ledger_timestamp(raw.get("createdAt"), "")
+    updated_at = _ledger_timestamp(raw.get("updatedAt"), "")
+    if not created_at or not updated_at:
+        raise ValueError("账目时间戳无效")
     entry = {
-        "id": entry_id.strip()[:80],
+        "id": entry_id,
         "type": entry_type,
         "amountCents": amount,
+        "ledgerPage": ledger_page,
         "date": entry_day,
-        "note": note.strip(),
+        "note": note,
         "color": color,
         "createdAt": created_at,
         "updatedAt": updated_at,
     }
     if multiplier is not None:
         entry["multiplier"] = multiplier
-    if "ledgerPage" in raw:
-        entry["ledgerPage"] = ledger_page
-    try:
-        _ledger_effective_amount(entry)
-    except ValueError:
-        if strict:
-            raise
-        return None
+    _ledger_effective_amount(entry)
     return entry
 
 
@@ -5287,29 +5288,32 @@ def _ledger_payload_from_raw(raw: object) -> dict:
     version = raw.get("version")
     if version != LEDGER_SCHEMA:
         raise LedgerVersionError("记账数据版本不兼容")
+    revision = _ledger_revision(raw.get("revision"))
     raw_entries = raw.get("entries")
     if not isinstance(raw_entries, list):
         raise ValueError("记账数据格式不正确")
     entries = []
     seen = set()
     for item in raw_entries:
-        entry = _sanitize_ledger_entry(item)
-        if not entry or entry["id"] in seen:
-            continue
+        entry = _sanitize_ledger_entry(item, canonical=True)
+        if entry["id"] in seen:
+            raise ValueError("账本含有重复账目 id")
         seen.add(entry["id"])
         entries.append(entry)
+    raw_page_units = raw.get("pageUnits")
+    if not isinstance(raw_page_units, dict):
+        raise ValueError("记账页设置格式不正确")
     page_units = {}
-    raw_page_units = raw.get("pageUnits", {})
-    if isinstance(raw_page_units, dict):
-        for raw_page, raw_unit in raw_page_units.items():
-            try:
-                page = _ledger_page(raw_page)
-                unit = _ledger_page_unit(raw_unit)
-            except ValueError:
-                continue
-            if unit:
-                page_units[str(page)] = unit
-    return {"version": LEDGER_SCHEMA, "entries": entries, "pageUnits": page_units}
+    for raw_page, raw_unit in raw_page_units.items():
+        page = _ledger_page_key(raw_page)
+        unit = _ledger_page_unit(raw_unit)
+        if not unit:
+            raise ValueError("记账页设置不能保存空单位")
+        if unit != raw_unit:
+            raise ValueError("记账页单位不是规范格式")
+        page_units[str(page)] = unit
+    return {"version": LEDGER_SCHEMA, "revision": revision,
+            "entries": entries, "pageUnits": page_units}
 
 
 def _read_ledger_file(path: Path) -> tuple[dict, bytes]:
@@ -5352,8 +5356,10 @@ def _save_ledger_unlocked(data: dict, *, backup: bool = True) -> None:
             backup_written = True
         except LedgerVersionError:
             raise
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            pass
+        except OSError:
+            raise
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as err:
+            raise ValueError("当前账本无法安全备份") from err
     _atomic_write_json(LEDGER_FILE, payload)
     if not backup_written:
         try:
@@ -5370,19 +5376,28 @@ def _save_ledger_unlocked(data: dict, *, backup: bool = True) -> None:
 def load_ledger() -> dict:
     if not LEDGER_FILE.exists():
         return _ledger_empty()
-    content = b""
     try:
-        data, content = _read_ledger_file(LEDGER_FILE)
-        return data
+        content = LEDGER_FILE.read_bytes()
+    except FileNotFoundError:
+        return _ledger_empty()
+    except OSError:
+        raise
+    try:
+        raw = json.loads(content.decode("utf-8-sig"))
+        return _ledger_payload_from_raw(raw)
     except LedgerVersionError:
         raise
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         _preserve_corrupt_ledger(content)
     try:
         data, _backup_content = _read_ledger_file(LEDGER_BACKUP_FILE)
+    except FileNotFoundError:
+        return _ledger_empty()
+    except OSError:
+        raise
     except LedgerVersionError:
         raise
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return _ledger_empty()
     try:
         _save_ledger_unlocked(data, backup=False)
@@ -5396,18 +5411,19 @@ def ledger_full_payload(data: dict | None = None) -> dict:
     source = load_ledger() if data is None else data
     highest_page = max(
         [*(_ledger_page(entry.get("ledgerPage")) for entry in source.get("entries", [])),
-         *(_ledger_page(raw_page) for raw_page in source.get("pageUnits", {}))],
+         *(_ledger_page_key(raw_page) for raw_page in source.get("pageUnits", {}))],
         default=1,
     )
     page_units = {}
     for raw_page, raw_unit in source.get("pageUnits", {}).items():
         unit = _ledger_page_unit(raw_unit)
         if unit:
-            page_units[str(_ledger_page(raw_page))] = unit
+            page_units[str(_ledger_page_key(raw_page))] = unit
     entries = [dict(entry) for entry in source.get("entries", [])]
     entries.sort(key=lambda item: (item["date"], item["createdAt"], item["id"]), reverse=True)
     return {
         "version": LEDGER_SCHEMA,
+        "revision": _ledger_revision(source.get("revision")),
         "highestPage": highest_page,
         "pageUnits": page_units,
         "entries": entries,
@@ -5434,7 +5450,8 @@ def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
         if field in body:
             source[field] = body[field]
     if existing is None:
-        source["id"] = "le_" + uuid.uuid4().hex
+        requested_id = body.get("id")
+        source["id"] = requested_id if requested_id is not None else "le_" + uuid.uuid4().hex
         now = datetime.now().replace(microsecond=0).isoformat()
         source["createdAt"] = now
         source["updatedAt"] = now
@@ -5446,15 +5463,45 @@ def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
         source["id"] = existing["id"]
         source["createdAt"] = existing["createdAt"]
         source["updatedAt"] = datetime.now().replace(microsecond=0).isoformat()
-    return _sanitize_ledger_entry(source, strict=True)
+    return _sanitize_ledger_entry(source)
+
+
+def _ledger_create_matches(existing: dict, body: dict) -> bool:
+    source = dict(existing)
+    for field in ("type", "amountCents", "multiplier", "date", "note", "color", "ledgerPage"):
+        if field in body:
+            source[field] = body[field]
+    candidate = _sanitize_ledger_entry(source)
+    comparable = ("type", "amountCents", "multiplier", "ledgerPage", "date", "note", "color")
+    return all(candidate.get(field) == existing.get(field) for field in comparable)
+
+
+def _ledger_commit(data: dict) -> int:
+    revision = _ledger_revision(data.get("revision"))
+    if revision >= LEDGER_REVISION_MAX:
+        raise ValueError("账本修订号已达到安全上限")
+    data["revision"] = revision + 1
+    _save_ledger_unlocked(data)
+    return data["revision"]
 
 
 def ledger_entry_create(body: dict) -> dict:
     data = load_ledger()
+    requested_id = body.get("id") if isinstance(body, dict) else None
+    if requested_id is not None:
+        if not isinstance(requested_id, str) or not _LEDGER_ID_RE.fullmatch(requested_id):
+            raise ValueError("账目 id 无效")
+        for existing in data["entries"]:
+            if existing["id"] != requested_id:
+                continue
+            if not _ledger_create_matches(existing, body):
+                raise ValueError("账目 id 已被其它内容占用")
+            return {"ok": True, "revision": data["revision"],
+                    "entry": dict(existing), "idempotent": True}
     entry = _ledger_entry_from_body(body)
     data["entries"].append(entry)
-    _save_ledger_unlocked(data)
-    return {"ok": True, "entry": entry, "ledger": ledger_full_payload(data)}
+    revision = _ledger_commit(data)
+    return {"ok": True, "revision": revision, "entry": entry}
 
 
 def ledger_entry_update(body: dict) -> dict:
@@ -5468,8 +5515,8 @@ def ledger_entry_update(body: dict) -> dict:
     updated = _ledger_entry_from_body(body, current)
     current.clear()
     current.update(updated)
-    _save_ledger_unlocked(data)
-    return {"ok": True, "entry": dict(current), "ledger": ledger_full_payload(data)}
+    revision = _ledger_commit(data)
+    return {"ok": True, "revision": revision, "entry": dict(current)}
 
 
 def ledger_entry_delete(body: dict) -> dict:
@@ -5478,8 +5525,8 @@ def ledger_entry_delete(body: dict) -> dict:
     data = load_ledger()
     entry = _ledger_find(data, body.get("id"))
     data["entries"] = [item for item in data["entries"] if item["id"] != entry["id"]]
-    _save_ledger_unlocked(data)
-    return {"ok": True, "deletedId": entry["id"], "ledger": ledger_full_payload(data)}
+    revision = _ledger_commit(data)
+    return {"ok": True, "revision": revision, "deletedId": entry["id"]}
 
 
 def ledger_page_unit_update(body: dict) -> dict:
@@ -5494,9 +5541,10 @@ def ledger_page_unit_update(body: dict) -> dict:
         page_units[str(page)] = unit
     else:
         page_units.pop(str(page), None)
-    if unit != previous:
-        _save_ledger_unlocked(data)
-    return {"ok": True, "ledger": ledger_full_payload(data)}
+    changed = unit != previous
+    revision = _ledger_commit(data) if changed else _ledger_revision(data.get("revision"))
+    return {"ok": True, "revision": revision, "page": page,
+            "unit": unit, "changed": changed}
 
 
 _DIARY_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")

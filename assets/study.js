@@ -12,6 +12,8 @@
   let studyLoaded = false;
   let studyRevealTimer = 0;
   let studyRevealKey = '';
+  let studyEntranceExitFrozen = false;
+  let studyEntranceExitAnimations = [];
   let studyGoalBreathTimer = 0;
   let studyGoalCheckFlowTimer = 0;
   let studyPageActive = false;
@@ -131,6 +133,49 @@
     view.classList.add('is-revealing');
     if (temporaryLayerEl) temporaryLayerEl.classList.add('is-revealing');
     armStudyEntranceCleanup();
+  }
+
+  function clearStudyEntranceMotion() {
+    window.clearTimeout(studyRevealTimer);
+    window.clearTimeout(taskPageEntranceTimer);
+    studyRevealTimer = 0;
+    taskPageEntranceTimer = 0;
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    if (view) view.classList.remove('is-revealing');
+    if (temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
+  }
+
+  function freezeStudyEntranceForExit() {
+    window.clearTimeout(studyRevealTimer);
+    window.clearTimeout(taskPageEntranceTimer);
+    studyRevealTimer = 0;
+    taskPageEntranceTimer = 0;
+    if (studyEntranceExitFrozen) return;
+    studyEntranceExitFrozen = true;
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    var hosts = [view, temporaryLayerEl].filter(Boolean);
+    var seen = new Set();
+    hosts.forEach(function (host) {
+      if (typeof host.getAnimations !== 'function') return;
+      try {
+        host.getAnimations({ subtree: true }).forEach(function (animation) {
+          if (seen.has(animation) || (animation.playState !== 'running' && animation.playState !== 'pending')) return;
+          seen.add(animation);
+          studyEntranceExitAnimations.push(animation);
+          try { animation.pause(); } catch (error) {}
+        });
+      } catch (error) {}
+    });
+  }
+
+  function finalizeStudyEntranceExit(force) {
+    if (!studyEntranceExitFrozen || (!force && studyPageActive)) return;
+    clearStudyEntranceMotion();
+    studyEntranceExitAnimations.forEach(function (animation) {
+      try { animation.cancel(); } catch (error) {}
+    });
+    studyEntranceExitAnimations = [];
+    studyEntranceExitFrozen = false;
   }
 
   // —— 视图模式：list(极简清单，默认) / progress(单位进度面板) ——
@@ -685,6 +730,7 @@
     setViewMode(viewMode === 'list' ? 'progress' : 'list', true);
   }
   function activateStudyView() {
+    finalizeStudyEntranceExit(true);
     studyPageActive = true;
     resetStudyHorizontalOffset();
     syncTemporaryLayerAvailability();
@@ -703,6 +749,7 @@
   window.StudyView = {
     toggleMode: toggleViewMode,
     activate: activateStudyView,
+    finalizeExitMotion: function () { finalizeStudyEntranceExit(false); },
     currentTaskPage: function () { return currentTaskPage; },
   };
 
@@ -718,11 +765,7 @@
       stopStudyGoalCheckFlow();
       closeProgressSettings(false, true);
       studyRevealKey = '';
-      window.clearTimeout(studyRevealTimer);
-      studyRevealTimer = 0;
-      var view = document.querySelector('[data-role="study-progress-view"]');
-      if (view) view.classList.remove('is-revealing');
-      if (temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
+      freezeStudyEntranceForExit();
     }
   });
   document.addEventListener('visibilitychange', function () {

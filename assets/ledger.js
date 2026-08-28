@@ -3,6 +3,8 @@
 
   const root = document.querySelector('[data-role="ledger-shell"]');
   if (!root) return;
+  const model = window.RelatumLedgerModel;
+  if (!model) return;
   const pageHost = root.closest('.calendar-embedded') || root;
 
   const LEGEND_KEY = 'ledger:legend:v1';
@@ -10,9 +12,9 @@
   const VIEW_KEY = 'ledger:viewByPage:v1';
   const HIDE_KEY = 'ledger:hideDecimalsByPage:v1';
   const DRAFT_ID = 'ledger-local-draft';
-  const PAGE_MAX = 99;
+  const PAGE_MAX = model.PAGE_MAX;
   const PAGE_EDGE_PX = 84;
-  const PAGE_SWITCH_MS = 150;
+  const PAGE_SWITCH_MS = 220;
   const reducedMotion = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (error) { return false; }
@@ -33,10 +35,14 @@
     unitPopover: null, unitTrigger: null, unitSaving: false,
     highlightId: '', entranceTimer: 0,
     monthMotionTimer: 0, mutationSeq: new Map(), mutationChains: new Map(),
+    pendingMutations: 0, needsReload: false, reloadPromise: null,
     pageRailOver: false, pageRailVisible: false, pageWheelAccum: 0, pageWheelTimer: 0,
     pageOrbSettleUntil: 0,
-    pageSwitchSeq: 0, pageSwitchTimer: 0,
+    pageSwitchSeq: 0, pageSwitchTimer: 0, pageSwitchFrame: 0,
+    pageCrossfading: false, flowHeightFloor: 0,
   };
+  const entryRows = new Map();
+  const dayGroups = new Map();
   // 视图按页独立：viewMode 只镜像当前页，切页与保存视图时同步；
   // 隐藏小数点同样按页独立，hideDecimals 只镜像当前页。
   state.viewMode = viewForPage(state.page);
@@ -57,8 +63,7 @@
   }
 
   function normalizePage(value) {
-    const page = Number(value);
-    return Number.isInteger(page) && page >= 1 && page <= PAGE_MAX ? page : 1;
+    return model.normalizePage(value);
   }
 
   function loadCurrentPage() {
@@ -139,12 +144,7 @@
   }
 
   function dateParts(day) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ''));
-    if (!match) return null;
-    const parts = { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
-    const value = new Date(parts.year, parts.month - 1, parts.day);
-    return value.getFullYear() === parts.year && value.getMonth() + 1 === parts.month
-      && value.getDate() === parts.day ? parts : null;
+    return model.dateParts(day);
   }
 
   function currentMonthDefaultDate(year, month) {
@@ -185,15 +185,17 @@
   }
 
   function formatMoney(cents, signed, unit) {
-    const value = Number(cents) || 0;
+    let value;
+    try { value = typeof cents === 'bigint' ? cents : BigInt(cents || 0); }
+    catch (error) { value = 0n; }
     const locale = document.documentElement.dataset.uiLanguage === 'en' ? 'en-US' : 'zh-CN';
     // 当前页开启「隐藏小数点」时只显示整数（直接截断，不四舍五入）；数据仍按分完整保存。
+    const absolute = value < 0n ? -value : value;
+    const integer = absolute / 100n;
     const formatted = state.hideDecimals
-      ? Math.floor(Math.abs(value) / 100).toLocaleString(locale)
-      : (Math.abs(value) / 100).toLocaleString(locale, {
-        minimumFractionDigits: 2, maximumFractionDigits: 2,
-      });
-    const sign = signed && value !== 0 ? (value < 0 ? '−' : '+') : (value < 0 ? '−' : '');
+      ? integer.toLocaleString(locale)
+      : integer.toLocaleString(locale) + '.' + String(absolute % 100n).padStart(2, '0');
+    const sign = signed && value !== 0n ? (value < 0n ? '−' : '+') : (value < 0n ? '−' : '');
     const customUnit = typeof unit === 'string' ? unit : currentUnit();
     return customUnit ? sign + formatted + customUnit : sign + '¥' + formatted;
   }
@@ -203,98 +205,59 @@
   }
 
   function parseAmountCents(value) {
-    const raw = String(value || '').trim();
-    if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error(T('请输入有效金额，最多两位小数'));
-    const parts = raw.split('.');
-    const cents = Number(parts[0]) * 100 + Number((parts[1] || '').padEnd(2, '0'));
-    if (!Number.isSafeInteger(cents) || cents <= 0) throw new Error(T('请输入大于零的有效金额'));
-    return cents;
+    try { return model.parseAmountCents(value); }
+    catch (error) { throw new Error(T(error.message)); }
   }
 
   function multiplierInputValue(value) {
-    return Number.isFinite(Number(value)) && Number(value) > 0 ? String(Number(value)) : '';
+    return typeof value === 'string' ? value : '';
   }
 
   function parseMultiplier(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return null;
-    if (!/^\d+(?:\.\d{1,4})?$/.test(raw)) throw new Error(T('请输入有效倍率，最多四位小数'));
-    const multiplier = Number(raw);
-    if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 1000000) {
-      throw new Error(T('倍率必须大于零且不超过 1000000'));
-    }
-    return multiplier;
+    try { return model.normalizeMultiplier(value); }
+    catch (error) { throw new Error(T(error.message)); }
   }
 
   function effectiveAmountCents(entry) {
-    const amount = Number(entry && entry.amountCents) || 0;
-    const multiplier = Number(entry && entry.multiplier);
-    const result = Math.round(amount * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1));
-    return Number.isSafeInteger(result) && result > 0 ? result : 0;
+    return model.effectiveAmountCents(entry);
   }
 
   function emptyPayload(year, month, page, viewMode) {
-    const view = normalizeViewMode(viewMode == null ? state.viewMode : viewMode);
-    return { version: 1, year, month, page: normalizePage(page), highestPage: state.highestPage,
-      scope: view === 'cumulative' ? 'all' : 'month', unit: '',
-      summary: { incomeCents: 0, expenseCents: 0, balanceCents: 0, count: 0 }, entries: [] };
+    return model.derivePayload(null, { year, month, page,
+      viewMode: normalizeViewMode(viewMode == null ? state.viewMode : viewMode) });
   }
 
   // 从全量账本派生当前视图（月/累计 × 当前页）的 payload；渲染层继续读 state.payload。
   function computePayload() {
-    const ledger = state.ledger;
-    const page = state.page;
-    const cumulative = state.viewMode === 'cumulative';
-    const year = state.year; const month = state.month;
-    const entries = [];
-    (ledger && ledger.entries || []).forEach((entry) => {
-      if (normalizePage(entry.ledgerPage) !== page) return;
-      if (!cumulative) {
-        const parts = monthFromDay(entry.date);
-        if (!parts || parts.year !== year || parts.month !== month) return;
-      }
-      entries.push(entry);
-    });
-    const payload = { version: ledger && ledger.version || 1, year, month, page,
-      highestPage: ledger ? normalizePage(ledger.highestPage) : state.highestPage,
-      scope: cumulative ? 'all' : 'month',
-      unit: ledger && ledger.pageUnits ? String(ledger.pageUnits[String(page)] || '') : '',
-      summary: { incomeCents: 0, expenseCents: 0, balanceCents: 0, count: 0 },
-      entries };
-    return normalizePayload(payload);
+    return model.derivePayload(state.ledger, { year: state.year, month: state.month,
+      page: state.page, viewMode: state.viewMode });
   }
 
-  // 服务端快照（GET / 各 mutation 响应）整体替换本地账本，页栏同步最高页。
+  // 只有 GET /api/ledger 的权威快照整体替换本地账本；mutation 响应只走目标增量合并。
   function applyLedgerPayload(payload) {
-    if (!payload || !Array.isArray(payload.entries)) return;
+    if (!payload || payload.version !== 2 || !Number.isSafeInteger(payload.revision)
+        || !Array.isArray(payload.entries)) return;
     state.ledger = payload;
+    if (state.draft && state.draft.clientId
+        && payload.entries.some((entry) => entry.id === state.draft.clientId)) {
+      state.highlightId = state.draft.clientId; state.draft = null;
+      if (state.settings && state.settings.id === DRAFT_ID) closeSettings(false, true);
+    }
     state.highestPage = normalizePage(payload.highestPage);
     acceptHighestPage(payload);
   }
 
-  function cloneLedger() { return state.ledger ? JSON.parse(JSON.stringify(state.ledger)) : null; }
-
   function normalizePayload(payload) {
-    const result = payload || emptyPayload(state.year, state.month, state.page);
-    result.entries = Array.isArray(result.entries) ? result.entries : [];
-    result.entries.sort((left, right) => String(right.date).localeCompare(String(left.date))
-      || String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
-      || String(right.id).localeCompare(String(left.id)));
-    let incomeCents = 0;
-    let expenseCents = 0;
-    result.entries.forEach((entry) => {
-      if (entry.type === 'income') incomeCents += effectiveAmountCents(entry);
-      else expenseCents += effectiveAmountCents(entry);
-    });
-    result.summary = { incomeCents, expenseCents,
-      balanceCents: incomeCents - expenseCents, count: result.entries.length };
-    return result;
+    return payload || emptyPayload(state.year, state.month, state.page);
   }
 
   async function request(url, options) {
     const response = await fetch(url, options);
     const json = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(json.error || T('账本同步失败'));
+    if (!response.ok) {
+      const error = new Error(json.error || T('账本同步失败'));
+      error.status = response.status; error.payload = json; throw error;
+    }
     return json;
   }
 
@@ -305,12 +268,46 @@
 
   function postInOrder(id, path, body) {
     const previous = state.mutationChains.get(id) || Promise.resolve();
+    state.pendingMutations += 1;
     const next = previous.catch(() => {}).then(() => post(path, body));
     state.mutationChains.set(id, next);
     next.finally(() => {
       if (state.mutationChains.get(id) === next) state.mutationChains.delete(id);
+      state.pendingMutations = Math.max(0, state.pendingMutations - 1);
+      flushScheduledReload();
     }).catch(() => {});
     return next;
+  }
+
+  function postTracked(path, body) {
+    state.pendingMutations += 1;
+    const pending = post(path, body);
+    pending.finally(() => {
+      state.pendingMutations = Math.max(0, state.pendingMutations - 1);
+      flushScheduledReload();
+    }).catch(() => {});
+    return pending;
+  }
+
+  function acceptMutationRevision(value) {
+    if (!Number.isSafeInteger(value) || value < 0) { scheduleLedgerReload(); return; }
+    if (!state.ledger) state.ledger = { version: 2, revision: value,
+      highestPage: 1, pageUnits: {}, entries: [] };
+    const result = model.acceptRevision(state.ledger, value);
+    if (!result.valid || result.gap) state.needsReload = true;
+    flushScheduledReload();
+  }
+
+  function scheduleLedgerReload() {
+    state.needsReload = true;
+    flushScheduledReload();
+  }
+
+  function flushScheduledReload() {
+    if (!state.needsReload || state.pendingMutations || state.reloadPromise) return;
+    state.needsReload = false;
+    state.reloadPromise = loadLedger({ force: true, skipFlip: true })
+      .finally(() => { state.reloadPromise = null; if (state.needsReload) flushScheduledReload(); });
   }
 
   function showToast(message) {
@@ -508,6 +505,14 @@
     renderPageRail();
   }
 
+  function recomputeHighestPage() {
+    if (!state.ledger) return;
+    const highest = model.recomputeHighestPage(state.ledger);
+    const changed = state.highestPage !== highest;
+    state.ledger.highestPage = highest; state.highestPage = highest;
+    if (changed) renderPageRail();
+  }
+
   function syncSummary() {
     const summary = state.payload ? state.payload.summary : emptyPayload(state.year, state.month, state.page).summary;
     const values = {
@@ -525,7 +530,7 @@
       const nextAmount = formatMoney(data[1], false);
       if (amount.textContent !== nextAmount) {
         amount.textContent = nextAmount;
-        replayClass(amount, 'ledger-summary-updated', 360);
+        if (!state.pageCrossfading) replayClass(amount, 'ledger-summary-updated', 360);
       }
       card.querySelector('small').textContent = data[2];
     });
@@ -546,9 +551,7 @@
     const entries = (state.payload && state.payload.entries || []).slice();
     const draft = draftVisible();
     if (draft) entries.push(draft);
-    entries.sort((left, right) => String(right.date).localeCompare(String(left.date))
-      || String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
-      || String(right.id).localeCompare(String(left.id)));
+    entries.sort(model.entrySort);
     return entries;
   }
 
@@ -570,16 +573,17 @@
 
   function captureEntryRects() {
     const result = new Map();
-    dom.groups.querySelectorAll('[data-ledger-entry]').forEach((entry) => {
-      result.set(entry.dataset.ledgerEntry, entry.getBoundingClientRect());
+    entryRows.forEach((entry, id) => {
+      if (entry.isConnected) result.set(id, entry.getBoundingClientRect());
     });
     return result;
   }
 
   function animateEntryChanges(previous) {
     if (reducedMotion || !previous || !previous.size) return;
-    dom.groups.querySelectorAll('[data-ledger-entry]').forEach((entry) => {
-      const before = previous.get(entry.dataset.ledgerEntry);
+    entryRows.forEach((entry, id) => {
+      if (!entry.isConnected) return;
+      const before = previous.get(id);
       if (!before) return;
       const after = entry.getBoundingClientRect();
       const dx = before.left - after.left;
@@ -606,25 +610,27 @@
     const header = document.createElement('header');
     header.append(document.createElement('strong'), document.createElement('span'));
     const rows = document.createElement('div'); rows.dataset.ledgerDayRows = '';
-    group.append(header, rows); return group;
+    group.append(header, rows); dayGroups.set(day, group); return group;
   }
 
   function createEntryRow(entry) {
     const row = document.createElement('article');
-    row.className = 'ledger-entry'; row.setAttribute('role', 'button'); row.tabIndex = 0;
+    row.className = 'ledger-entry';
+    const open = document.createElement('button');
+    open.type = 'button'; open.className = 'ledger-entry-open'; open.dataset.ledgerEntryOpen = '';
+    open.setAttribute('aria-haspopup', 'dialog'); open.setAttribute('aria-controls', 'ledger-settings-popover');
     const mark = document.createElement('span');
     mark.className = 'ledger-entry-mark'; mark.setAttribute('aria-hidden', 'true');
     const main = document.createElement('div'); main.className = 'ledger-entry-main';
     main.append(document.createElement('strong'), document.createElement('small'));
     const amount = document.createElement('b'); amount.className = 'ledger-entry-amount';
-    const detail = document.createElement('span'); detail.className = 'ledger-entry-detail-group';
     const cue = document.createElement('span');
     cue.className = 'ledger-entry-detail-cue'; cue.setAttribute('aria-hidden', 'true'); cue.textContent = '›';
     const menu = document.createElement('button');
     menu.type = 'button'; menu.className = 'ledger-entry-menu'; menu.dataset.ledgerEntryMenu = '';
     menu.setAttribute('aria-haspopup', 'dialog'); menu.setAttribute('aria-controls', 'ledger-settings-popover');
-    menu.textContent = '⋯'; detail.append(cue, menu); row.append(mark, main, amount, detail);
-    syncEntryRow(row, entry); return row;
+    menu.textContent = '⋯'; open.append(mark, main, amount, cue); row.append(open, menu);
+    entryRows.set(entry.id, row); syncEntryRow(row, entry); return row;
   }
 
   function syncEntryRow(row, entry) {
@@ -634,6 +640,12 @@
     const signedCents = income ? entry.amountCents : -entry.amountCents;
     const effectiveCents = effectiveAmountCents(entry);
     const signedEffectiveCents = income ? effectiveCents : -effectiveCents;
+    const fingerprint = [entry.type, entry.amountCents, entry.multiplier || '', entry.note || '',
+      entry.color || '', entry.pending ? 1 : 0, currentUnit(), state.hideDecimals ? 1 : 0,
+      document.documentElement.dataset.uiLanguage || '',
+      state.settings && state.settings.id === entry.id ? 1 : 0].join('\u001f');
+    if (row.dataset.ledgerFingerprint === fingerprint) return;
+    row.dataset.ledgerFingerprint = fingerprint;
     row.dataset.ledgerEntry = entry.id;
     row.classList.toggle('ledger-entry-income', income);
     row.classList.toggle('ledger-entry-expense', !income);
@@ -656,9 +668,14 @@
       amount.textContent = currentUnit() ? '—' + currentUnit() : '¥—';
     }
     row.setAttribute('aria-label', label + ' ' + amount.textContent + (entry.note ? ' · ' + entry.note : ''));
+    const open = row.querySelector('[data-ledger-entry-open]');
+    open.setAttribute('aria-label', row.getAttribute('aria-label'));
+    open.setAttribute('aria-expanded', state.settings && state.settings.id === entry.id
+      && state.settingsTrigger === open ? 'true' : 'false');
     const menu = row.querySelector('[data-ledger-entry-menu]');
     menu.setAttribute('aria-label', T('账目选项'));
-    menu.setAttribute('aria-expanded', state.settings && state.settings.id === entry.id ? 'true' : 'false');
+    menu.setAttribute('aria-expanded', state.settings && state.settings.id === entry.id
+      && state.settingsTrigger === menu ? 'true' : 'false');
   }
 
   function syncEntries(options) {
@@ -667,7 +684,7 @@
     const desiredIds = new Set(); const desiredDays = new Set();
     groupedEntries().forEach((groupData, index) => {
       desiredDays.add(groupData.day);
-      let group = dom.groups.querySelector('[data-ledger-day="' + CSS.escape(groupData.day) + '"]');
+      let group = dayGroups.get(groupData.day);
       const newGroup = !group;
       if (!group) group = createDayGroup(groupData.day);
       // 错峰入场 stagger：日期组按序号延迟（与学习页卡片 --study-row-index 一致）
@@ -679,27 +696,29 @@
       header.querySelector('span').textContent = state.viewMode === 'cumulative'
         ? '' : groupData.entries.length + ' ' + T('笔');
       const rows = group.querySelector('[data-ledger-day-rows]');
-      groupData.entries.forEach((entry) => {
+      groupData.entries.forEach((entry, rowIndex) => {
         desiredIds.add(entry.id);
-        let row = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(entry.id) + '"]');
+        let row = entryRows.get(entry.id);
         const isNew = !row;
         if (!row) row = createEntryRow(entry); else syncEntryRow(row, entry);
-        rows.appendChild(row);
+        const expected = rows.children[rowIndex] || null;
+        if (expected !== row) rows.insertBefore(row, expected);
         // 切页静音：整版淡出入场期间不叠加条目级入场动画，新条目直接就位
         // （与学习页 incrementalSyncCardList 的 pageSwitch silent 一致）。
         if (!opts.silent && (isNew || opts.newIds && opts.newIds.has(entry.id))) {
           replayClass(row, 'quick-enter', 320);
         }
       });
-      dom.groups.appendChild(group);
+      const expectedGroup = dom.groups.children[index] || null;
+      if (expectedGroup !== group) dom.groups.insertBefore(group, expectedGroup);
       // 切页静音：整版淡出入场期间不叠加组级入场动画（与学习页 pageSwitch silent 一致）
       if (newGroup && !opts.silent) replayClass(group, 'ledger-day-entering', 320);
     });
-    dom.groups.querySelectorAll('[data-ledger-entry]').forEach((row) => {
-      if (!desiredIds.has(row.dataset.ledgerEntry)) row.remove();
+    entryRows.forEach((row, id) => {
+      if (!desiredIds.has(id)) { row.remove(); entryRows.delete(id); }
     });
-    dom.groups.querySelectorAll('[data-ledger-day]').forEach((group) => {
-      if (!desiredDays.has(group.dataset.ledgerDay)) group.remove();
+    dayGroups.forEach((group, day) => {
+      if (!desiredDays.has(day)) { group.remove(); dayGroups.delete(day); }
     });
     const hasEntries = desiredIds.size > 0;
     dom.groups.hidden = !hasEntries; dom.empty.hidden = hasEntries;
@@ -716,7 +735,7 @@
   }
   function revealHighlightedEntry() {
     if (!state.highlightId) return;
-    const highlighted = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(state.highlightId) + '"]');
+    const highlighted = entryRows.get(state.highlightId);
     if (!highlighted) return;
     state.highlightId = '';
     highlighted.classList.add('is-highlighted');
@@ -732,15 +751,15 @@
   // 整本账本只取一次：未加载时请求（复用空闲预热 promise），已加载直接返回并同步渲染。
   function loadLedger(options) {
     const opts = options || {};
-    if (state.ledger) {
+    if (state.ledger && !opts.force) {
       if (opts.sync !== false) syncLedger({ skipFlip: !!opts.skipFlip, silent: !!opts.entrance });
-      if (opts.entrance) finishPageSwitch();
+      if (opts.entrance) startPageEntrance();
       return Promise.resolve(state.ledger);
     }
     root.classList.add('is-loading');
     if (opts.sync !== false) syncLedger({ skipFlip: true, silent: !!opts.entrance });
     const requestId = ++state.requestSeq;
-    const pending = state.warmupPromise
+    const pending = !opts.force && state.warmupPromise
       ? state.warmupPromise
       : (() => {
         if (state.controller) state.controller.abort();
@@ -752,14 +771,14 @@
       applyLedgerPayload(payload);
       root.classList.remove('is-loading');
       syncLedger({ skipFlip: true });
-      if (opts.entrance) finishPageSwitch();
+      if (opts.entrance) startPageEntrance();
       return payload;
     }).catch((error) => {
       if (error && error.name === 'AbortError') return null;
       if (requestId === state.requestSeq) {
         root.classList.remove('is-loading');
         // 请求失败也要把内容恢复可见，不能停在整体淡出的透明态。
-        if (opts.entrance) finishPageSwitch();
+        if (opts.entrance) startPageEntrance();
         showToast(error.message);
       }
       return null;
@@ -778,7 +797,7 @@
         const previous = captureEntryRects();
         syncEntries({ previousRects: previous });
       }
-      const existing = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
+      const existing = entryRows.get(DRAFT_ID);
       if (existing) {
         existing.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
         existing.focus({ preventScroll: true }); replayClass(existing, 'ledger-entry-attention', 420);
@@ -787,14 +806,15 @@
     }
     const previous = captureEntryRects();
     const today = new Date();
-    state.draft = { id: DRAFT_ID, type: 'expense', amountCents: null, multiplier: null,
+    const clientId = 'le_' + window.crypto.randomUUID().replace(/-/g, '');
+    state.draft = { id: DRAFT_ID, clientId, type: 'expense', amountCents: null, multiplier: null,
       ledgerPage: state.page, date: state.viewMode === 'cumulative'
         ? monthKey(today.getFullYear(), today.getMonth() + 1) + '-' + String(today.getDate()).padStart(2, '0')
         : currentMonthDefaultDate(state.year, state.month), note: '', color: '',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     syncEntries({ previousRects: previous, newIds: new Set([DRAFT_ID]) });
     window.requestAnimationFrame(() => {
-      const row = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
+      const row = entryRows.get(DRAFT_ID);
       if (row) {
         row.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
         row.focus({ preventScroll: true });
@@ -805,7 +825,7 @@
   function discardDraft(options) {
     if (!state.draft) return;
     if (state.settings && state.settings.id === DRAFT_ID) closeSettings(false, true);
-    const row = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
+    const row = entryRows.get(DRAFT_ID);
     const previous = captureEntryRects(); state.draft = null;
     if (options && options.instant || reducedMotion || !row) {
       syncEntries({ previousRects: previous }); return;
@@ -1047,37 +1067,38 @@
     const nextHideDecimals = !!(activeHide && activeHide.dataset.ledgerHideDecimals === 'hidden');
     const error = box.querySelector('[data-role="ledger-unit-error"]');
     if (unit.length > 12) { error.textContent = T('金额单位最多 12 个字符'); input.focus(); return; }
+    const page = state.page;
+    const previousUnit = currentUnit();
+    state.viewMode = nextViewMode; setViewForPage(page, nextViewMode);
+    state.hideDecimals = nextHideDecimals; setHideForPage(page, nextHideDecimals);
+    if (unit === previousUnit) {
+      closeUnitSettings(false); syncLedger({ skipFlip: true }); return;
+    }
     state.unitSaving = true; box.classList.add('is-saving');
     box.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
     const save = box.querySelector('[data-ledger-unit-save]'); if (save) save.textContent = T('正在保存');
-    post('/api/ledger-page-unit', { page: state.page, unit }).then((result) => {
-      if (!result.ledger) throw new Error(T('账本同步失败'));
-      applyLedgerPayload(result.ledger);
-      state.viewMode = nextViewMode; setViewForPage(state.page, nextViewMode);
-      state.hideDecimals = nextHideDecimals; setHideForPage(state.page, nextHideDecimals);
-      closeUnitSettings(false);
-      // 视图切换与切页一致：草稿保留，不丢弃。
+    applyLocalPageUnit(page, unit); syncLedger({ skipFlip: true });
+    const seq = nextMutation('unit:' + page);
+    postInOrder('unit:' + page, '/api/ledger-page-unit', { page, unit }).then((result) => {
+      acceptMutationRevision(result.revision);
+      if (!mutationCurrent('unit:' + page, seq)) return;
+      applyLocalPageUnit(result.page, result.unit); closeUnitSettings(false);
       syncLedger({ skipFlip: true });
     }).catch((requestError) => {
-      if (!state.unitPopover) return;
+      scheduleLedgerReload();
+      if (!mutationCurrent('unit:' + page, seq)) return;
+      applyLocalPageUnit(page, previousUnit);
+      if (!state.unitPopover) { syncLedger({ skipFlip: true }); showToast(requestError.message); return; }
       state.unitSaving = false; box.classList.remove('is-saving');
       box.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
       if (save) save.textContent = T('保存');
-      error.textContent = requestError.message; if (input) input.focus();
+      error.textContent = requestError.message; if (input) input.focus(); syncLedger({ skipFlip: true });
     });
   }
 
   function setSettingsError(message) {
     const error = state.settingsPopover && state.settingsPopover.querySelector('[data-role="ledger-settings-error"]');
     if (error) error.textContent = message || '';
-  }
-
-  function setSettingsSaving(saving) {
-    if (!state.settings || !state.settingsPopover) return;
-    state.settings.saving = saving; state.settingsPopover.classList.toggle('is-saving', saving);
-    state.settingsPopover.querySelectorAll('button, input').forEach((control) => { control.disabled = saving; });
-    const save = state.settingsPopover.querySelector('[data-ledger-save]');
-    if (save) save.textContent = saving ? T('正在保存') : T('保存');
   }
 
   function readSettingsValues() {
@@ -1104,18 +1125,25 @@
       note: String(note && note.value || '').trim() };
   }
 
-  // 乐观更新直接改全量账本；失败时整本回滚（响应快照为权威数据）。
+  // 乐观更新只改目标账目；mutation 成功合并服务端增量，失败也只回滚该目标。
   function applyLocalEntry(previousEntry, nextEntry) {
-    if (!state.ledger) return;
-    const entries = state.ledger.entries;
-    const index = entries.findIndex((item) => item.id === previousEntry.id);
-    if (index >= 0) entries[index] = nextEntry;
-    else entries.push(nextEntry);
+    if (!state.ledger) state.ledger = { version: 2, revision: 0,
+      highestPage: 1, pageUnits: {}, entries: [] };
+    model.upsertEntry(state.ledger, previousEntry.id, nextEntry);
+    recomputeHighestPage();
+  }
+
+  function applyLocalPageUnit(page, unit) {
+    if (!state.ledger) state.ledger = { version: 2, revision: 0,
+      highestPage: 1, pageUnits: {}, entries: [] };
+    model.setPageUnit(state.ledger, page, unit);
+    recomputeHighestPage();
   }
 
   function removeLocalEntry(entry) {
     if (!state.ledger) return;
-    state.ledger.entries = state.ledger.entries.filter((item) => item.id !== entry.id);
+    model.removeEntry(state.ledger, entry.id);
+    recomputeHighestPage();
   }
 
   function nextMutation(id) {
@@ -1129,36 +1157,42 @@
     if (!entry || !values) return;
     setSettingsError('');
     if (id === DRAFT_ID) {
-      state.draft.type = values.type; state.draft.amountCents = values.amountCents;
-      state.draft.multiplier = values.multiplier;
-      state.draft.note = values.note; state.draft.pending = true;
-      const row = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
-      if (row) syncEntryRow(row, state.draft);
-      setSettingsSaving(true);
-      post('/api/ledger-entry-create', { ...values, ledgerPage: state.draft.ledgerPage,
-        color: state.draft.color || '' }).then((result) => {
-        applyLedgerPayload(result.ledger);
-        const target = monthFromDay(result.entry.date);
-        closeSettings(false); state.draft = null;
-        if (state.viewMode !== 'cumulative') { state.year = target.year; state.month = target.month; }
-        state.page = normalizePage(result.entry.ledgerPage);
-        state.viewMode = viewForPage(state.page);
-        state.hideDecimals = hideDecimalsForPage(state.page); saveCurrentPage(); renderPageRail();
-        state.highlightId = result.entry.id;
-        syncLedger({ newIds: new Set([result.entry.id]) });
+      const draft = state.draft;
+      const now = new Date().toISOString();
+      const optimisticEntry = { id: draft.clientId, ...values,
+        ledgerPage: draft.ledgerPage, color: draft.color || '',
+        createdAt: draft.createdAt || now, updatedAt: now, pending: true };
+      const retryDraft = { ...draft, ...values, id: DRAFT_ID, pending: false, updatedAt: now };
+      const target = monthFromDay(optimisticEntry.date);
+      const previousRects = captureEntryRects();
+      applyLocalEntry({ id: optimisticEntry.id }, optimisticEntry);
+      state.draft = null; closeSettings(false);
+      if (state.viewMode !== 'cumulative') { state.year = target.year; state.month = target.month; }
+      state.page = normalizePage(optimisticEntry.ledgerPage);
+      state.viewMode = viewForPage(state.page);
+      state.hideDecimals = hideDecimalsForPage(state.page); saveCurrentPage(); renderPageRail();
+      state.highlightId = optimisticEntry.id;
+      syncLedger({ previousRects, newIds: new Set([optimisticEntry.id]) });
+      postTracked('/api/ledger-entry-create', { id: optimisticEntry.id, ...values,
+        ledgerPage: optimisticEntry.ledgerPage,
+        color: optimisticEntry.color }).then((result) => {
+        acceptMutationRevision(result.revision);
+        applyLocalEntry(optimisticEntry, result.entry);
+        syncLedger();
       }).catch((error) => {
-        if (!state.draft) return;
-        state.draft.pending = false;
-        const currentRow = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
-        if (currentRow) syncEntryRow(currentRow, state.draft);
-        setSettingsSaving(false); setSettingsError(error.message);
+        scheduleLedgerReload();
+        const current = findEntry(optimisticEntry.id);
+        if (current && current.pending) removeLocalEntry(current);
+        if (!state.draft) state.draft = retryDraft;
+        syncLedger({ newIds: new Set([DRAFT_ID]) });
+        showToast(error.message);
       });
       return;
     }
 
     const oldEntry = { ...entry }; const nextEntry = { ...entry, ...values, updatedAt: new Date().toISOString() };
     const oldMonth = monthFromDay(oldEntry.date); const nextMonth = monthFromDay(nextEntry.date);
-    const snapshots = cloneLedger(); const previousRects = captureEntryRects(); const seq = nextMutation(id);
+    const previousRects = captureEntryRects(); const seq = nextMutation(id);
     applyLocalEntry(oldEntry, nextEntry); closeSettings(false);
     if (state.viewMode !== 'cumulative'
         && (nextMonth.year !== state.year || nextMonth.month !== state.month)) {
@@ -1167,11 +1201,13 @@
     }
     state.highlightId = id; syncLedger({ previousRects });
     postInOrder(id, '/api/ledger-entry-update', { id, ...values }).then((result) => {
+      acceptMutationRevision(result.revision);
       if (!mutationCurrent(id, seq)) return;
-      applyLedgerPayload(result.ledger); syncLedger();
+      applyLocalEntry(nextEntry, result.entry); syncLedger();
     }).catch((error) => {
+      scheduleLedgerReload();
       if (!mutationCurrent(id, seq)) return;
-      state.ledger = snapshots;
+      applyLocalEntry(nextEntry, oldEntry);
       if (state.viewMode !== 'cumulative') { state.year = oldMonth.year; state.month = oldMonth.month; }
       state.highlightId = id; syncLedger({ newIds: new Set([id]) }); showToast(error.message);
     });
@@ -1207,19 +1243,21 @@
       }, 3200); return;
     }
     const id = state.settings.id; const entry = findEntry(id); if (!entry) return;
-    const snapshots = cloneLedger(); const previousRects = captureEntryRects();
-    const row = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(id) + '"]'); const seq = nextMutation(id);
+    const oldEntry = { ...entry }; const previousRects = captureEntryRects();
+    const row = entryRows.get(id); const seq = nextMutation(id);
     closeSettings(false); removeLocalEntry(entry);
     state.payload = computePayload(); syncSummary();
     if (row && !reducedMotion) {
       row.classList.add('is-leaving'); window.setTimeout(() => syncEntries({ previousRects }), 300);
     } else syncEntries({ previousRects });
     postInOrder(id, '/api/ledger-entry-delete', { id }).then((result) => {
+      acceptMutationRevision(result.revision);
       if (!mutationCurrent(id, seq)) return;
-      applyLedgerPayload(result.ledger); syncLedger();
+      removeLocalEntry(oldEntry); syncLedger();
     }).catch((error) => {
+      scheduleLedgerReload();
       if (!mutationCurrent(id, seq)) return;
-      state.ledger = snapshots; state.highlightId = id;
+      applyLocalEntry(oldEntry, oldEntry); state.highlightId = id;
       syncLedger({ newIds: new Set([id]) }); showToast(error.message);
     });
   }
@@ -1227,19 +1265,23 @@
   function setEntryColor(entry, value) {
     if (entry.id === DRAFT_ID) {
       entry.color = value;
-      const draftRow = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
+      const draftRow = entryRows.get(DRAFT_ID);
       if (draftRow) { syncEntryRow(draftRow, entry); replayClass(draftRow, 'ledger-entry-color-updated', 380); }
       return;
     }
-    const oldColor = entry.color || ''; const seq = nextMutation(entry.id); entry.color = value;
-    const row = dom.groups.querySelector('[data-ledger-entry="' + CSS.escape(entry.id) + '"]');
-    if (row) { syncEntryRow(row, entry); replayClass(row, 'ledger-entry-color-updated', 380); }
+    const oldEntry = { ...entry }; const nextEntry = { ...entry, color: value,
+      updatedAt: new Date().toISOString() }; const seq = nextMutation(entry.id);
+    applyLocalEntry(entry, nextEntry);
+    const row = entryRows.get(entry.id);
+    if (row) { syncEntryRow(row, nextEntry); replayClass(row, 'ledger-entry-color-updated', 380); }
     postInOrder(entry.id, '/api/ledger-entry-update', { id: entry.id, color: value }).then((result) => {
+      acceptMutationRevision(result.revision);
       if (!mutationCurrent(entry.id, seq)) return;
-      applyLedgerPayload(result.ledger);
+      applyLocalEntry(nextEntry, result.entry); if (row) syncEntryRow(row, result.entry);
     }).catch((error) => {
+      scheduleLedgerReload();
       if (!mutationCurrent(entry.id, seq)) return;
-      entry.color = oldColor; if (row) syncEntryRow(row, entry); showToast(error.message);
+      applyLocalEntry(nextEntry, oldEntry); if (row) syncEntryRow(row, oldEntry); showToast(error.message);
     });
   }
 
@@ -1277,57 +1319,90 @@
   function changeMonth(delta) {
     discardDraft({ instant: true }); closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
-    // 打断挂起的切页淡出：切月走自己的滑动动画，不能让整版透明态残留。
+    // 打断挂起的切页交接：切月走自己的滑动动画，不能让账目区残留位移。
     state.pageSwitchSeq += 1;
-    window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
-    if (dom.page) dom.page.classList.remove('ledger-page-switching');
+    clearPageSwitchMotion();
     const next = shiftedMonth(state.year, state.month, delta);
     state.year = next.year; state.month = next.month; beginMonthMotion(delta);
     syncLedger({ skipFlip: true });
   }
 
-  // 切页照搬学习页：数据全量在本地，先整体淡出，内容在隐藏状态替换，再整版错峰入场；
-  // 快速连点只让最后一次切换真正换内容。草稿跨页保留，不丢弃。
+  // 切页保持页头、卡片外壳和纸面稳定：旧/新汇总文字与流水在原位双层交叉淡化。
+  // 流水舞台在当前可见会话内只增高不缩短，避免不同页内容长度让底边跳动。
   function changePage(page) {
     const next = normalizePage(page);
     if (next === state.page) { renderPageRail(); return; }
     closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
     stopPageEntrance();
+    clearPageSwitchMotion();
+    const animate = !reducedMotion && state.active && dom.page;
+    if (animate) preparePageCrossfade();
     state.page = next; state.viewMode = viewForPage(next);
     state.hideDecimals = hideDecimalsForPage(next);
     state.highlightId = ''; saveCurrentPage(); renderPageRail();
-    const seq = ++state.pageSwitchSeq;
-    if (reducedMotion || !state.active || !dom.page) {
-      syncLedger({ skipFlip: true, silent: true });
-      return;
-    }
-    window.clearTimeout(state.pageSwitchTimer);
-    dom.page.classList.add('ledger-page-switching');
-    state.pageSwitchTimer = window.setTimeout(() => {
-      state.pageSwitchTimer = 0;
-      if (seq !== state.pageSwitchSeq) return;
-      syncLedger({ skipFlip: true, silent: true });
-      finishPageSwitch();
-    }, PAGE_SWITCH_MS);
+    state.pageSwitchSeq += 1;
+    syncLedger({ skipFlip: true, silent: true });
+    if (animate) startPageCrossfade();
   }
 
-  // 切页内容在隐藏状态替换后：容器先禁过渡瞬跳回不透明，再直接播整版错峰入场
-  // （照搬学习页 progress 视图的切页收尾，避免整体淡入与错峰动画叠加）。
-  function finishPageSwitch() {
-    if (!dom.page) return;
-    const targets = dom.page.querySelectorAll('.ledger-head, .ledger-summary, .ledger-flow');
-    targets.forEach((element) => {
-      element.style.transition = 'none'; element.style.opacity = '1'; element.style.transform = 'none';
+  function preparePageCrossfade() {
+    if (!dom.page || !dom.flow) return;
+    state.pageCrossfading = true;
+    const outgoing = document.createElement('div');
+    outgoing.className = 'ledger-flow-outgoing';
+    outgoing.setAttribute('aria-hidden', 'true'); outgoing.toggleAttribute('inert', true);
+    outgoing.append(dom.groups.cloneNode(true), dom.empty.cloneNode(true));
+    dom.flow.appendChild(outgoing);
+    dom.summary.querySelectorAll('[data-ledger-summary-kind]').forEach((card) => {
+      const clone = document.createElement('div'); clone.className = 'ledger-summary-outgoing';
+      clone.setAttribute('aria-hidden', 'true'); clone.toggleAttribute('inert', true);
+      Array.from(card.children).forEach((child) => clone.appendChild(child.cloneNode(true)));
+      card.appendChild(clone);
     });
-    dom.page.classList.remove('ledger-page-switching');
-    startPageEntrance();
-    // 下一帧恢复：过渡与 inline 值一并清掉，避免 inline 覆盖下次切页的淡出类。
-    window.requestAnimationFrame(() => {
-      targets.forEach((element) => {
-        element.style.transition = ''; element.style.opacity = ''; element.style.transform = '';
-      });
+    const oldHeight = dom.flow.getBoundingClientRect().height;
+    state.flowHeightFloor = Math.max(state.flowHeightFloor, oldHeight);
+    dom.flow.style.minHeight = state.flowHeightFloor + 'px';
+    dom.flow.style.height = oldHeight + 'px';
+    dom.page.classList.add('ledger-page-crossfade-ready');
+  }
+
+  function startPageCrossfade() {
+    if (!dom.page || !dom.flow) return;
+    // 同一事件任务内短暂释放高度以测量新内容，不会产生可见布局帧。
+    dom.flow.style.height = '';
+    const newHeight = dom.flow.getBoundingClientRect().height;
+    state.flowHeightFloor = Math.max(state.flowHeightFloor, newHeight);
+    dom.flow.style.minHeight = state.flowHeightFloor + 'px';
+    dom.flow.style.height = state.flowHeightFloor + 'px';
+    void dom.flow.offsetWidth;
+    window.cancelAnimationFrame(state.pageSwitchFrame);
+    state.pageSwitchFrame = window.requestAnimationFrame(() => {
+      state.pageSwitchFrame = 0;
+      if (!dom.page) return;
+      dom.page.classList.remove('ledger-page-crossfade-ready');
+      dom.page.classList.add('ledger-page-crossfade-active');
     });
+    state.pageSwitchTimer = window.setTimeout(() => {
+      state.pageSwitchTimer = 0; clearPageSwitchMotion();
+    }, PAGE_SWITCH_MS + 40);
+  }
+
+  function clearPageSwitchMotion() {
+    window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+    window.cancelAnimationFrame(state.pageSwitchFrame); state.pageSwitchFrame = 0;
+    if (dom.page) dom.page.classList.remove('ledger-page-crossfade-ready', 'ledger-page-crossfade-active');
+    root.querySelectorAll('.ledger-flow-outgoing, .ledger-summary-outgoing').forEach((item) => item.remove());
+    if (dom.flow) {
+      dom.flow.style.height = '';
+      dom.flow.style.minHeight = state.flowHeightFloor ? state.flowHeightFloor + 'px' : '';
+    }
+    state.pageCrossfading = false;
+  }
+
+  function resetFlowHeightFloor() {
+    clearPageSwitchMotion(); state.flowHeightFloor = 0;
+    if (dom.flow) dom.flow.style.minHeight = '';
   }
 
   function bindPageRail() {
@@ -1381,6 +1456,10 @@
       if (month) { changeMonth(Number(month.dataset.ledgerMonth)); return; }
       if (event.target.closest('[data-ledger-page-settings]')) { openUnitSettings(); return; }
       if (event.target.closest('[data-ledger-add]')) { createDraft(); return; }
+      const open = event.target.closest('[data-ledger-entry-open]');
+      if (open) {
+        const row = open.closest('[data-ledger-entry]'); openSettings(row.dataset.ledgerEntry, open); return;
+      }
       const menu = event.target.closest('[data-ledger-entry-menu]');
       if (menu) {
         event.stopPropagation(); const row = menu.closest('[data-ledger-entry]');
@@ -1392,7 +1471,7 @@
       const chip = event.target.closest('[data-ledger-legend-index]');
       if (chip) { event.preventDefault(); event.stopPropagation(); openLegendPalette(chip, event); return; }
       const row = event.target.closest('[data-ledger-entry]');
-      if (!row || event.target.closest('button, input, a')) return;
+      if (!row || event.target.closest('[data-ledger-entry-menu], input, a')) return;
       event.preventDefault(); event.stopPropagation(); openEntryPalette(row, event);
     });
     root.addEventListener('keydown', (event) => {
@@ -1400,11 +1479,10 @@
       if (chip && (event.key === 'Enter' || event.key === ' ')) {
         event.preventDefault(); openLegendPalette(chip, null); return;
       }
-      const row = event.target.closest('[data-ledger-entry]');
-      if (!row || event.target.closest('[data-ledger-entry-menu]')) return;
-      if (event.key === 'Enter') {
-        event.preventDefault(); openSettings(row.dataset.ledgerEntry, row.querySelector('[data-ledger-entry-menu]'));
-      } else if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') {
+      const open = event.target.closest('[data-ledger-entry-open]');
+      const row = open && open.closest('[data-ledger-entry]');
+      if (!row) return;
+      if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') {
         event.preventDefault(); openEntryPalette(row, null);
       }
     });
@@ -1461,6 +1539,7 @@
     else if (state.settingsPopover) { event.preventDefault(); closeSettings(true); }
   });
   window.addEventListener('resize', () => {
+    resetFlowHeightFloor();
     scheduleSettingsPosition(); positionUnitSettings(); renderPageRail();
     if (paletteController) paletteController.schedulePosition();
   });
@@ -1474,8 +1553,7 @@
   });
   window.addEventListener('pagehide', () => {
     state.active = false; discardDraft({ instant: true }); cancelMainRequest();
-    window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
-    if (dom.page) dom.page.classList.remove('ledger-page-switching');
+    resetFlowHeightFloor();
     closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
   });
@@ -1487,10 +1565,9 @@
   window.CanvasLedger = {
     activate() {
       state.active = true;
-      // 保险清理：切页淡出若被离页/重入打断，不能残留透明态或入场动画。
-      window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+      // 保险清理：切页交接若被离页/重入打断，不能残留透明度、位移或入场动画。
+      clearPageSwitchMotion();
       if (dom.page) {
-        dom.page.classList.remove('ledger-page-switching');
         dom.page.classList.remove('is-revealing');
       }
       if (!state.activatedOnce) {
@@ -1503,9 +1580,8 @@
     },
     deactivate() {
       state.active = false;
-      window.clearTimeout(state.pageSwitchTimer); state.pageSwitchTimer = 0;
+      resetFlowHeightFloor();
       if (dom.page) {
-        dom.page.classList.remove('ledger-page-switching');
         dom.page.classList.remove('is-revealing');
       }
       setPageRailVisible(false);

@@ -161,6 +161,8 @@
   let dailyRevealTimer = 0;
   let dailyRevealWaitingForData = false;
   let dailyDataRevealTimer = 0;
+  let dailyEntranceExitFrozen = false;
+  let dailyEntranceExitAnimations = [];
   let dailyCelebrateMotionTimer = 0;
   let dailyCelebrateHideTimer = 0;
   let dailyCelebrateGeneration = 0;
@@ -1370,6 +1372,35 @@
     dailyRoot.classList.add('is-revealing');
     dailyRevealWaitingForData = !!opts.waitForData;
     if (!dailyRevealWaitingForData) armDailyViewEntranceCleanup();
+  }
+  function freezeDailyEntranceForExit() {
+    window.clearTimeout(dailyRevealTimer);
+    window.clearTimeout(dailyDataRevealTimer);
+    dailyRevealTimer = 0;
+    dailyDataRevealTimer = 0;
+    if (dailyEntranceExitFrozen || viewMode !== 'daily' || !dailyRoot) return;
+    dailyEntranceExitFrozen = true;
+    if (typeof dailyRoot.getAnimations !== 'function') return;
+    try {
+      dailyEntranceExitAnimations = dailyRoot.getAnimations({ subtree: true }).filter((animation) => {
+        return animation.playState === 'running' || animation.playState === 'pending';
+      });
+      dailyEntranceExitAnimations.forEach((animation) => {
+        try { animation.pause(); } catch (error) {}
+      });
+    } catch (error) {
+      dailyEntranceExitAnimations = [];
+    }
+  }
+  function finalizeDailyEntranceExit(force) {
+    if (!dailyEntranceExitFrozen || (!force && focusLifecycleActive)) return;
+    if (dailyRoot) dailyRoot.classList.remove('is-revealing', 'is-data-revealing');
+    if (dailySkeletonEl && dailyRoot && !dailyRoot.classList.contains('is-loading')) dailySkeletonEl.hidden = true;
+    dailyEntranceExitAnimations.forEach((animation) => {
+      try { animation.cancel(); } catch (error) {}
+    });
+    dailyEntranceExitAnimations = [];
+    dailyEntranceExitFrozen = false;
   }
   function clearViewTransition(sync) {
     viewTransitionSeq += 1;
@@ -4386,6 +4417,7 @@
 
   function prepareFocusActivation(options) {
     const opts = options || {};
+    finalizeDailyEntranceExit(true);
     focusActivationSeq += 1;
     focusPrepared = true;
     focusLifecycleActive = false;
@@ -4414,7 +4446,7 @@
     dailyCelebrateGeneration += 1;
     dailyRevealWaitingForData = false;
     dailyRevealKey = '';
-    if (dailyRoot) dailyRoot.classList.remove('is-revealing', 'is-data-revealing');
+    freezeDailyEntranceForExit();
     if (dailyCelebrateEl) {
       dailyCelebrateEl.classList.remove('is-entering', 'is-leaving', 'is-static');
       if (allDailyDone() && !dailyReviewedToday()) {
@@ -4464,6 +4496,7 @@
       }
     },
     deactivate: deactivateFocusView,
+    finalizeExitMotion() { finalizeDailyEntranceExit(false); },
     showDay(day, sessionId) {
       showTimerView({ persist: false, animate: false });
       footprintDay = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? String(day) : todayStr();
