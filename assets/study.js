@@ -14,6 +14,8 @@
   let studyRevealKey = '';
   let studyEntranceExitFrozen = false;
   let studyEntranceExitAnimations = [];
+  let taskPageEntranceExitFrozen = false;
+  let taskPageEntranceExitAnimations = [];
   let studyGoalBreathTimer = 0;
   let studyGoalCheckFlowTimer = 0;
   let studyPageActive = false;
@@ -138,18 +140,30 @@
   function clearStudyEntranceMotion() {
     window.clearTimeout(studyRevealTimer);
     window.clearTimeout(taskPageEntranceTimer);
+    window.clearTimeout(taskPageSwitchTimer);
     studyRevealTimer = 0;
     taskPageEntranceTimer = 0;
+    taskPageSwitchTimer = 0;
+    taskPageSwitchSeq += 1;
+    if (studyViewEl) studyViewEl.classList.remove('study-task-page-switching');
     var view = document.querySelector('[data-role="study-progress-view"]');
     if (view) view.classList.remove('is-revealing');
     if (temporaryLayerEl) temporaryLayerEl.classList.remove('is-revealing');
+    taskPageEntranceExitAnimations.forEach(function (animation) {
+      try { animation.cancel(); } catch (error) {}
+    });
+    taskPageEntranceExitAnimations = [];
+    taskPageEntranceExitFrozen = false;
   }
 
   function freezeStudyEntranceForExit() {
     window.clearTimeout(studyRevealTimer);
     window.clearTimeout(taskPageEntranceTimer);
+    window.clearTimeout(taskPageSwitchTimer);
     studyRevealTimer = 0;
     taskPageEntranceTimer = 0;
+    taskPageSwitchTimer = 0;
+    taskPageSwitchSeq += 1;
     if (studyEntranceExitFrozen) return;
     studyEntranceExitFrozen = true;
     var view = document.querySelector('[data-role="study-progress-view"]');
@@ -482,6 +496,37 @@
     var view = document.querySelector('[data-role="study-progress-view"]');
     if (view) view.classList.remove('is-revealing');
   }
+  function freezeTaskPageEntranceForSwitch() {
+    window.clearTimeout(taskPageEntranceTimer);
+    taskPageEntranceTimer = 0;
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    if (!view || viewMode !== 'progress') {
+      stopTaskPageEntrance();
+      return;
+    }
+    if (taskPageEntranceExitFrozen) return;
+    taskPageEntranceExitFrozen = true;
+    if (typeof view.getAnimations !== 'function') return;
+    try {
+      taskPageEntranceExitAnimations = view.getAnimations({ subtree: true }).filter(function (animation) {
+        return animation.playState === 'running' || animation.playState === 'pending';
+      });
+      taskPageEntranceExitAnimations.forEach(function (animation) {
+        try { animation.pause(); } catch (error) {}
+      });
+    } catch (error) {
+      taskPageEntranceExitAnimations = [];
+    }
+  }
+  function finalizeTaskPageEntranceSwitch() {
+    var view = document.querySelector('[data-role="study-progress-view"]');
+    if (view) view.classList.remove('is-revealing');
+    taskPageEntranceExitAnimations.forEach(function (animation) {
+      try { animation.cancel(); } catch (error) {}
+    });
+    taskPageEntranceExitAnimations = [];
+    taskPageEntranceExitFrozen = false;
+  }
   function setCurrentTaskPage(page, options) {
     options = options || {};
     var next = normalizeTaskPage(page);
@@ -490,7 +535,7 @@
       return;
     }
     if (taskPageNoteEdit) closeTaskPageNoteEdit(false);
-    stopTaskPageEntrance();
+    freezeTaskPageEntranceForSwitch();
     if (progressDrag) finishProgressDrag({ cancel: true, immediate: true });
     closeProgressSettings(false, true);
     setTemporaryPanelOpen(false);
@@ -500,6 +545,7 @@
     renderTaskPageRail();
     window.clearTimeout(taskPageSwitchTimer);
     if (prefersReduced || options.immediate || !studyViewEl) {
+      finalizeTaskPageEntranceSwitch();
       render({ pageSwitch: true });
       return;
     }
@@ -510,6 +556,8 @@
       taskPageSwitchTimer = 0;
       // 快速连点时旧切换作废，只让最后一次换内容
       if (switchSeq !== taskPageSwitchSeq) return;
+      // 旧页已整体退到不可见，此时再取消冻结的子动画，不会露出“元素瞬间补齐”。
+      finalizeTaskPageEntranceSwitch();
       render({ pageSwitch: true });
       requestAnimationFrame(function () {
         if (switchSeq !== taskPageSwitchSeq) return;
