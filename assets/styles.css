@@ -43826,7 +43826,7 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 .ledger-entry.is-leaving {
   overflow: hidden;
   pointer-events: none;
-  animation: studyCardOut 300ms var(--easing-page) forwards;
+  animation: studyCardOut 220ms var(--easing-page) forwards;
 }
 .ledger-entry-attention { animation: ledgerEntryAttention 420ms var(--easing-soft); }
 .ledger-entry-color-updated { animation: ledgerEntryColorCue 360ms var(--easing-soft); }
