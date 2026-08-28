@@ -7,7 +7,7 @@
 
   const LEGEND_KEY = 'ledger:legend:v1';
   const PAGE_KEY = 'ledger:page:v1';
-  const VIEW_KEY = 'ledger:view:v1';
+  const VIEW_KEY = 'ledger:viewByPage:v1';
   const DRAFT_ID = 'ledger-local-draft';
   const PAGE_MAX = 99;
   const PAGE_EDGE_PX = 84;
@@ -21,7 +21,7 @@
   const state = {
     active: false, activatedOnce: false, mounted: false,
     year: now.getFullYear(), month: now.getMonth() + 1, page: initialPage, highestPage: 1,
-    viewMode: loadViewMode(),
+    viewByPage: loadViewByPage(), viewMode: 'month',
     // 与学习页同款模型：一次全量加载整本账本，当前视图（月/页/累计）由本地派生。
     ledger: null, payload: null, draft: null,
     requestSeq: 0, controller: null,
@@ -35,6 +35,8 @@
     pageOrbSettleUntil: 0,
     pageSwitchSeq: 0, pageSwitchTimer: 0,
   };
+  // 视图按页独立：viewMode 只镜像当前页，切页与保存视图时同步。
+  state.viewMode = viewForPage(state.page);
   const dom = {};
   let legendColors = loadLegend();
   const paletteController = window.RelatumStudyPalette
@@ -69,14 +71,37 @@
     return value === 'cumulative' ? 'cumulative' : 'month';
   }
 
-  function loadViewMode() {
-    try { return normalizeViewMode(localStorage.getItem(VIEW_KEY)); }
-    catch (error) { return 'month'; }
+  // 视图按页独立：ledger:viewByPage:v1 的 views 只保存显式设为「累计」的页，
+  // 未记录的页（含全部「月份」页）一律回退「月份」。
+  function loadViewByPage() {
+    const fallback = { version: 1, views: {} };
+    try {
+      const raw = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null');
+      if (!raw || raw.version !== 1 || !raw.views || typeof raw.views !== 'object') return fallback;
+      const views = {};
+      Object.keys(raw.views).forEach((page) => {
+        if (normalizeViewMode(raw.views[page]) === 'cumulative') views[page] = 'cumulative';
+      });
+      return { version: 1, views };
+    } catch (error) { return fallback; }
   }
 
-  function saveViewMode() {
-    try { localStorage.setItem(VIEW_KEY, state.viewMode); }
+  function saveViewByPage() {
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(state.viewByPage)); }
     catch (error) {}
+  }
+
+  // 指定页的视图；state.viewMode 始终镜像「当前页」，初始化和每次切页时同步。
+  function viewForPage(page) {
+    const store = state.viewByPage && state.viewByPage.views || {};
+    return normalizeViewMode(store[String(normalizePage(page))]);
+  }
+
+  function setViewForPage(page, mode) {
+    const key = String(normalizePage(page));
+    if (normalizeViewMode(mode) === 'cumulative') state.viewByPage.views[key] = 'cumulative';
+    else delete state.viewByPage.views[key];
+    saveViewByPage();
   }
 
   function dateParts(day) {
@@ -969,7 +994,7 @@
     post('/api/ledger-page-unit', { page: state.page, unit }).then((result) => {
       if (!result.ledger) throw new Error(T('账本同步失败'));
       applyLedgerPayload(result.ledger);
-      state.viewMode = nextViewMode; saveViewMode();
+      state.viewMode = nextViewMode; setViewForPage(state.page, nextViewMode);
       closeUnitSettings(false);
       // 视图切换与切页一致：草稿保留，不丢弃。
       syncLedger({ skipFlip: true });
@@ -1056,7 +1081,8 @@
         const target = monthFromDay(result.entry.date);
         closeSettings(false); state.draft = null;
         if (state.viewMode !== 'cumulative') { state.year = target.year; state.month = target.month; }
-        state.page = normalizePage(result.entry.ledgerPage); saveCurrentPage(); renderPageRail();
+        state.page = normalizePage(result.entry.ledgerPage);
+        state.viewMode = viewForPage(state.page); saveCurrentPage(); renderPageRail();
         state.highlightId = result.entry.id;
         syncLedger({ newIds: new Set([result.entry.id]) });
       }).catch((error) => {
@@ -1207,7 +1233,8 @@
     closeSettings(false, true); closeUnitSettings(false, true);
     if (paletteController) paletteController.close(false, true);
     stopPageEntrance();
-    state.page = next; state.highlightId = ''; saveCurrentPage(); renderPageRail();
+    state.page = next; state.viewMode = viewForPage(next);
+    state.highlightId = ''; saveCurrentPage(); renderPageRail();
     const seq = ++state.pageSwitchSeq;
     if (reducedMotion || !state.active || !dom.page) {
       syncLedger({ skipFlip: true, silent: true });
