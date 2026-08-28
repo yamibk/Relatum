@@ -26,11 +26,13 @@ assert(calendar.includes("layer.toggleAttribute('inert', !active)"), 'hidden mod
 assert(calendar.includes("layer.setAttribute('aria-hidden', active ? 'false' : 'true')"), 'mode aria-hidden is not synchronized');
 assert(calendar.includes('api.activate()') && calendar.includes('api.deactivate()'), 'ledger lifecycle is not coordinated');
 
-// 锚定设置卡严格只有收支、金额、日期、可选备注；已有流水支持进入编辑和同槽二次删除。
-for (const marker of ["['expense', 'income']", 'ledgerAmount', 'ledgerDate', 'ledgerNote']) {
+// 锚定设置卡包含收支、金额、可选倍率、日期和可选备注；已有流水支持进入编辑和同槽二次删除。
+for (const marker of ["['expense', 'income']", 'ledgerAmount', 'ledgerMultiplier', 'ledgerDate', 'ledgerNote']) {
   assert(ledger.includes(marker), `missing compact editor field: ${marker}`);
 }
 assert(ledger.includes('dataset.ledgerEntry = entry.id') && ledger.includes("event.key === 'Enter'"), 'entries are not keyboard editable');
+assert(ledger.includes("' × '") && ledger.includes("' = '") && ledger.includes('effectiveAmountCents(entry)'),
+  'multiplier expression or final-amount calculation is missing');
 assert(ledger.includes('deleteArmed') && ledger.includes("T('确认删除')"), 'same-slot delete confirmation is missing');
 assert(ledger.includes("event.key !== 'Escape'") && ledger.includes('closeSettings(true)'), 'Escape does not close settings');
 
@@ -45,7 +47,7 @@ assert(ledger.includes("row.classList.add('is-leaving')") && ledger.includes("'q
 const createDraftSection = ledger.slice(ledger.indexOf('function createDraft()'), ledger.indexOf('function discardDraft'));
 assert(createDraftSection.includes('if (state.draft)') && createDraftSection.includes('amountCents: null'), 'single local draft is missing');
 assert(createDraftSection.includes('DRAFT_ID') && !createDraftSection.includes('/api/ledger-entry-create'), 'plus persists before the draft is valid');
-assert(ledger.includes("amount.textContent = Number.isInteger(entry.amountCents)") && ledger.includes(": '¥—'"), 'draft amount placeholder is missing');
+assert(ledger.includes("amount.textContent = '¥—'"), 'draft amount placeholder is missing');
 assert(ledger.includes("discardDraft({ instant: true })"), 'draft is not discarded on month/page exit');
 assert(ledger.includes('if (state.settings.id === DRAFT_ID)') && ledger.includes('discardDraft();'), 'draft settings cannot delete the local draft');
 assert(!ledger.includes('draggable'), 'ledger must keep deterministic date ordering without drag state');
@@ -75,6 +77,8 @@ assert(backend.includes('LEDGER_FILE = DATA / "ledger.json"'), 'ledger data file
 assert(backend.includes('LEDGER_BACKUP_FILE = DATA / "ledger.backup.json"'), 'ledger backup file is missing');
 assert(backend.includes('ledger.corrupt-'), 'corrupt ledger isolation is missing');
 assert(backend.includes('_atomic_write_json(LEDGER_FILE, payload)'), 'ledger does not use the shared atomic writer');
+assert(backend.includes('def _ledger_multiplier(') && backend.includes('def _ledger_effective_amount('),
+  'ledger multiplier validation or effective amount calculation is missing');
 for (const route of ['/api/ledger', '/api/ledger-entry-create', '/api/ledger-entry-update', '/api/ledger-entry-delete']) {
   assert(backend.includes(route), `missing ledger route: ${route}`);
 }

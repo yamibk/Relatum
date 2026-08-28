@@ -58,6 +58,25 @@ class LedgerTests(unittest.TestCase):
         self.assertTrue(app.LEDGER_FILE.is_file())
         self.assertTrue(app.LEDGER_BACKUP_FILE.is_file())
 
+    def test_optional_multiplier_changes_display_amount_summary_and_can_be_cleared(self):
+        created = self.create(amountCents=3000, multiplier=10)
+        entry_id = created["entry"]["id"]
+        self.assertEqual(created["entry"]["multiplier"], 10)
+        self.assertEqual(created["months"]["2026-08"]["summary"]["expenseCents"], 30000)
+
+        cleared = app.ledger_entry_update({"id": entry_id, "multiplier": None})
+        self.assertNotIn("multiplier", cleared["entry"])
+        self.assertEqual(cleared["months"]["2026-08"]["summary"]["expenseCents"], 3000)
+
+    def test_decimal_multiplier_rounds_final_amount_to_nearest_cent(self):
+        expense = self.create(amountCents=101, multiplier=1.005)
+        income = self.create(type="income", amountCents=1, multiplier=0.5)
+        summary = income["months"]["2026-08"]["summary"]
+        self.assertEqual(expense["entry"]["multiplier"], 1.005)
+        self.assertEqual(summary["expenseCents"], 102)
+        self.assertEqual(summary["incomeCents"], 1)
+        self.assertEqual(summary["balanceCents"], -101)
+
     def test_future_entry_and_cross_month_update_return_both_months(self):
         created = self.create(date="2032-12-31")
         entry_id = created["entry"]["id"]
@@ -92,6 +111,9 @@ class LedgerTests(unittest.TestCase):
             {"type": "expense", "amountCents": 12.5, "date": "2026-08-01"},
             {"type": "expense", "amountCents": 10, "date": "2026-02-30"},
             {"type": "expense", "amountCents": 10, "date": "2026-08-01", "color": "red"},
+            {"type": "expense", "amountCents": 10, "date": "2026-08-01", "multiplier": 0},
+            {"type": "expense", "amountCents": 10, "date": "2026-08-01", "multiplier": 1.23456},
+            {"type": "expense", "amountCents": 10, "date": "2026-08-01", "multiplier": 1000001},
         ]
         for body in invalid:
             with self.assertRaises(ValueError):
