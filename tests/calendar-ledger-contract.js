@@ -47,7 +47,7 @@ assert(ledger.includes("row.classList.add('is-leaving')") && ledger.includes("'q
 const createDraftSection = ledger.slice(ledger.indexOf('function createDraft()'), ledger.indexOf('function discardDraft'));
 assert(createDraftSection.includes('if (state.draft)') && createDraftSection.includes('amountCents: null'), 'single local draft is missing');
 assert(createDraftSection.includes('DRAFT_ID') && !createDraftSection.includes('/api/ledger-entry-create'), 'plus persists before the draft is valid');
-assert(ledger.includes("amount.textContent = '¥—'"), 'draft amount placeholder is missing');
+assert(ledger.includes("currentUnit() ? '—' + currentUnit() : '¥—'"), 'draft amount placeholder is missing');
 assert(ledger.includes("discardDraft({ instant: true })"), 'draft is not discarded on month/page exit');
 assert(ledger.includes('if (state.settings.id === DRAFT_ID)') && ledger.includes('discardDraft();'), 'draft settings cannot delete the local draft');
 assert(!ledger.includes('draggable'), 'ledger must keep deterministic date ordering without drag state');
@@ -55,6 +55,25 @@ assert(!ledger.includes('draggable'), 'ledger must keep deterministic date order
 // 记账只保留月导航、四个无文字色块和单一新增入口，不混入首版明确排除的复杂功能。
 assert(ledger.includes("const fallback = ['', '', '', '']") && ledger.includes('raw.colors.length !== 4'), 'four visual legend chips are missing');
 assert(ledger.includes("const LEGEND_KEY = 'ledger:legend:v1'"), 'legend preference key is missing');
+assert(ledger.includes("const PAGE_KEY = 'ledger:page:v1'") && ledger.includes('const PAGE_MAX = 99'),
+  'ledger page preference or range is missing');
+assert(ledger.includes('data-ledger-page-rail') && ledger.includes('data-ledger-page-orb')
+  && ledger.includes('data-ledger-page-list'), 'right-edge ledger page rail is missing');
+assert(ledger.includes('PAGE_EDGE_PX') && ledger.includes('setPageRailVisible')
+  && ledger.includes("closest('[data-ledger-page]')"), 'ledger page hover or click switching is missing');
+assert(ledger.includes('function ledgerCacheKey(year, month, page, viewMode)') && ledger.includes("'&page='"),
+  'ledger cache and requests are not page-aware');
+assert(ledger.includes('data-ledger-page-settings') && ledger.includes('data-ledger-unit')
+  && ledger.includes("'/api/ledger-page-unit'"), 'per-page amount unit editor is missing');
+assert(ledger.includes("const VIEW_KEY = 'ledger:view:v1'") && ledger.includes('data-ledger-view')
+  && ledger.includes("'cumulative'") && ledger.includes("'&scope=all'"),
+  'remembered monthly/cumulative ledger view is missing');
+assert(ledger.includes("dateField.hidden = state.viewMode === 'cumulative'")
+  && ledger.includes("header.hidden = state.viewMode === 'cumulative'")
+  && styles.includes('.ledger-cumulative-view .ledger-summary-card small'),
+  'cumulative view does not hide date/month-only UI');
+assert(ledger.includes("customUnit ? sign + formatted + customUnit")
+  && ledger.includes("sign + '¥' + formatted"), 'custom suffix unit or RMB fallback formatting is missing');
 assert(ledger.includes('data-ledger-month="-1"') && ledger.includes('data-ledger-month="1"'), 'month navigation is missing');
 assert(ledger.includes('data-ledger-add') && ledger.includes("closest('[data-ledger-add]')"), 'single add entry point is missing');
 for (const forbidden of ['月预算', '趋势图', '搜索账', '批量账', '账目分类', '多账户', '周期账单']) {
@@ -79,7 +98,17 @@ assert(backend.includes('ledger.corrupt-'), 'corrupt ledger isolation is missing
 assert(backend.includes('_atomic_write_json(LEDGER_FILE, payload)'), 'ledger does not use the shared atomic writer');
 assert(backend.includes('def _ledger_multiplier(') && backend.includes('def _ledger_effective_amount('),
   'ledger multiplier validation or effective amount calculation is missing');
-for (const route of ['/api/ledger', '/api/ledger-entry-create', '/api/ledger-entry-update', '/api/ledger-entry-delete']) {
+assert(backend.includes('LEDGER_PAGE_MAX = 99') && backend.includes('def _ledger_page(')
+  && backend.includes('q.get("page", [None])[0]'), 'ledger page validation or GET parameter is missing');
+assert(backend.includes('"ledgerPage"') && backend.includes('"highestPage"'),
+  'ledger entry page or highest-page metadata is missing');
+assert(backend.includes('def _ledger_page_unit(') && backend.includes('def ledger_page_unit_update(')
+  && backend.includes('"pageUnits"'), 'per-page amount unit persistence is missing');
+assert(backend.includes('scope_value not in {"month", "all"}')
+  && backend.includes('"cumulative": ledger_month_payload('),
+  'backend cumulative page snapshot is missing');
+for (const route of ['/api/ledger', '/api/ledger-entry-create', '/api/ledger-entry-update',
+  '/api/ledger-entry-delete', '/api/ledger-page-unit']) {
   assert(backend.includes(route), `missing ledger route: ${route}`);
 }
 
