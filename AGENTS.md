@@ -110,7 +110,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。 |
 | `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
 | `assets/calendar.js` | 日历页“日历 / 记账”双视图协调层，以及日历、日记、右侧三栏（画布活动 / 每日打卡 / 学习任务）、倒数日与倒数日进度条。已在日历页时重复点击书脊切换内部视图；两个视图使用固定叠层并同步 `hidden` / `inert` / `aria-hidden`。日历内部错峰入场未完成时离页会冻结 CSS / WAAPI 当前帧，外层退场隐藏后再清理。 |
-| `assets/ledger.js` | 日历页第二视图的极简人民币流水：页壳、汇总、日期组和账目卡使用常驻 DOM 与按 ID 增量同步，增删改、换色和排序变化复用学习页的入退场、锚定设置浮层与 FLIP。点击 `＋` 只创建一张显示 `¥—` 的本地草稿，草稿可从设置卡直接删除，保存有效金额后才落盘，切月或离页丢弃；账目仍按日期/创建时间倒序，不提供拖拽排序。运行时在起步页首屏空闲期即预取本月快照，首次翻入记账视图直接消费内存缓存。支持同槽二次确认删除、未来日期、跨月保存定位、共享 4×3 的 12 色标记、最近月份内存缓存、请求乱序保护与空闲相邻月预取；不包含预算、趋势、分类、搜索、筛选、批量、多账户、多币种或周期账单。 |
+| `assets/ledger.js` | 日历页第二视图的极简人民币流水：页壳、汇总、日期组和账目卡使用常驻 DOM 与按 ID 增量同步，增删改、换色和排序变化复用学习页的入退场、锚定设置浮层与 FLIP。点击 `＋` 只创建一张显示 `¥—` 的本地草稿，草稿可从设置卡直接删除，保存有效金额后才落盘，切月或离页丢弃；账目仍按日期/创建时间倒序，不提供拖拽排序。每笔可选正数倍率，留空按 1 计算；填写后账目行显示“原金额 × 倍率 = 最终金额”，月汇总使用最终金额。运行时在起步页首屏空闲期即预取本月快照，首次翻入记账视图直接消费内存缓存。支持同槽二次确认删除、未来日期、跨月保存定位、共享 4×3 的 12 色标记、最近月份内存缓存、请求乱序保护与空闲相邻月预取；不包含预算、趋势、分类、搜索、筛选、批量、多账户、多币种或周期账单。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。 |
 | `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。 |
@@ -154,7 +154,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 起步页活动账本 | `data/start-page-activity.json`（v1）；只保存学习、树状、速记三页按本地日期拆分并合并去重的前台时间段，不回填历史，不读取或改写三页各自的内容文件。 |
 | 每日任务 | `data/daily.json`，含汇总字段、可选累计打卡目标 `targetDays`、命名里程碑 `milestones[]`（用户侧不设小额限制，异常数据安全上限 50）与逐日历史 `doneDates` / `minutesByDate`；上一份有效快照为 `data/daily.backup.json`，损坏原件隔离成 `data/daily.corrupt-<时间>.json` |
 | 日记 | `data/diary/YYYY-MM-DD.md` |
-| 记账流水 | `data/ledger.json`（v1）；每笔只保存 `id/type/amountCents/date/note/color/createdAt/updatedAt`，金额为正整数分、类型决定正负，日期允许过去与未来，颜色只接受空串或严格 `#rrggbb`。缺失时返回未落盘空账本；有效写入前维护 `data/ledger.backup.json`，主文件损坏时隔离为 `data/ledger.corrupt-<时间>.json` 并尝试从有效备份恢复；不兼容版本只报错且不覆盖。 |
+| 记账流水 | `data/ledger.json`（v1）；每笔保存 `id/type/amountCents/date/note/color/createdAt/updatedAt`，并可选保存 `multiplier`。金额为正整数分、类型决定正负；倍率留空时不写字段并按 1 计算，非空时只接受大于 0、不超过 1000000 且最多四位小数的数字，最终金额按分四舍五入并用于月汇总。日期允许过去与未来，颜色只接受空串或严格 `#rrggbb`。缺失时返回未落盘空账本；有效写入前维护 `data/ledger.backup.json`，主文件损坏时隔离为 `data/ledger.corrupt-<时间>.json` 并尝试从有效备份恢复；不兼容版本只报错且不覆盖。 |
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移。每个事件可选保存 `lengthDays`（1–9999 整数），是日历页倒数日进度条的窗口长度（天），缺省即未设置，非法值在净化时丢弃 |
 | 模板库 | `data/templates.json` |
@@ -235,7 +235,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 独立树状页：`/api/tree-page`；缺失文件或旧实验 v1 返回稳定 ID 的未落盘空白 v2，损坏或其他非 v2 文件返回明确错误且不覆盖原件。
 - 复习：`/api/review-pool`、`/api/review-cards`
 - 速记/跨页便签/专注/每日任务：`/api/notes`、`/api/start-sticky-notes`、`/api/focus`、`/api/daily`
-- 日历、记账与倒数日：`/api/calendar`、`/api/ledger?year=&month=`、`/api/countdown`；记账 GET 只返回所选月的规范化流水与 `incomeCents/expenseCents/balanceCents/count` 汇总。
+- 日历、记账与倒数日：`/api/calendar`、`/api/ledger?year=&month=`、`/api/countdown`；记账 GET 只返回所选月的规范化流水与 `incomeCents/expenseCents/balanceCents/count` 汇总，三个金额汇总均使用应用可选倍率后的最终分值。
 - 模板：`/api/templates`
 - 生涯报告：`/api/career-report` 只读取已有 `data/career-report.json` 冻结快照；不存在时返回 `{version:1, exists:false}`，普通读取不扫描业务文件。
 - 画布和资源读取：`/api/load`、`/api/background-image`、`/api/canvas-asset`、`/api/canvas-annotation`、`/api/node-annotations`、`/api/background-preference`
@@ -262,7 +262,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 起步页活动：`/api/start-page-activity` 只接受 `study` / `tree` / `notes`、会话 ID 与前台时间段；按画布计时相同的时长上限、本地午夜拆分和区间合并规则写入独立账本，再返回该页今日及累计秒数。
 - 每日任务：`/api/daily-create`、`/api/daily-update`、`/api/daily-delete`、`/api/daily-toggle`、`/api/daily-add-minutes`、`/api/daily-reorder`、`/api/daily-group-create`、`/api/daily-group-update`、`/api/daily-group-delete`、`/api/daily-tree`
 - 日历：`/api/diary-save`、`/api/diary-delete`、`/api/countdown-save`
-- 记账：`/api/ledger-entry-create`、`/api/ledger-entry-update`、`/api/ledger-entry-delete`；更新既支持完整四字段表单，也支持单独颜色补丁。写响应返回规范化记录和所有受影响月份的完整快照，跨月编辑包含原月与目标月，前端据此原位更新缓存。
+- 记账：`/api/ledger-entry-create`、`/api/ledger-entry-update`、`/api/ledger-entry-delete`；更新既支持收入/支出、金额、可选倍率、日期和可选备注的完整表单，也支持单独颜色补丁；传入 `multiplier:null` 会清除倍率。写响应返回规范化记录和所有受影响月份的完整快照，跨月编辑包含原月与目标月，前端据此原位更新缓存。
 - AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
 
 ### HTTP 与并发边界
@@ -519,7 +519,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ### 极简记账 `ledger.js`
 
 - 页头只保留四个无文字图例色块、上月/下月和“＋记一笔”；三张汇总纸面按结余/收入/支出显示，流水按日期倒序分组，同日按创建时间倒序。桌面三卡并排、窄窗 `auto-fit/minmax` 换行，流水始终单列且没有侧栏。
-- 新增和编辑共用流水顶部行内卡，只含收入/支出、金额、日期、可选备注。行单击或 Enter 进入编辑，Esc 取消、Enter 提交；只有编辑已有流水时显示删除，第一次点击在同一槽位变成“确认删除”，不弹对话框。当前月新增默认今天，其他月份沿用今天日号并夹到月末；日期可自由改到未来，跨月保存后切至目标月份并定位新记录。
+- 新增和编辑共用流水顶部行内卡，只含收入/支出、金额、可选倍率、日期、可选备注。倍率留空时账目行只显示原金额；填写后显示“原金额 × 倍率 = 最终金额”，并以最终金额参与结余、收入和支出汇总。行单击或 Enter 进入编辑，Esc 取消、Enter 提交；只有编辑已有流水时显示删除，第一次点击在同一槽位变成“确认删除”，不弹对话框。当前月新增默认今天，其他月份沿用今天日号并夹到月末；日期可自由改到未来，跨月保存后切至目标月份并定位新记录。
 - 行右键或键盘菜单键打开学习页共享 12 色盘，颜色只改变底色/侧边标记；四个图例色块右键或 Enter/Space 使用同一色盘。保存失败必须保留服务端已确认状态或回滚乐观颜色，不能让失败请求改写缓存。
 - 翻月先启动有限退场，再并行读取；最近月份保存在内存，空闲预取相邻月份。主请求和预取各自使用 `AbortController`，主请求另有递增序号，旧响应不得覆盖新月份。汇总、行增删改、颜色、跨视图与月份动画均服从 `prefers-reduced-motion`，离页时清理。
 - 首版固定人民币 `¥`，不得加入预算、趋势图、分类、搜索、筛选、批量、多账户、多币种、周期账单或任何为这些功能预留的复杂状态与控件。

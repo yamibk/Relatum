@@ -32,6 +32,7 @@ import unicodedata
 import webbrowser
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from ai_plan import (
@@ -5148,6 +5149,33 @@ def _ledger_amount(value: object) -> int:
     return value
 
 
+def _ledger_multiplier(value: object) -> int | float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError("倍率必须是大于零的有效数字")
+    try:
+        multiplier = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError) as err:
+        raise ValueError("倍率必须是大于零的有效数字") from err
+    if not multiplier.is_finite() or multiplier <= 0 or multiplier > 1_000_000:
+        raise ValueError("倍率必须是大于零且不超过 1000000 的数字")
+    normalized = multiplier.normalize()
+    if max(0, -normalized.as_tuple().exponent) > 4:
+        raise ValueError("倍率最多保留四位小数")
+    return int(normalized) if normalized == normalized.to_integral_value() else float(normalized)
+
+
+def _ledger_effective_amount(entry: dict) -> int:
+    multiplier = Decimal(str(entry.get("multiplier", 1)))
+    amount = (Decimal(entry["amountCents"]) * multiplier).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    if amount <= 0 or amount > 9_007_199_254_740_991:
+        raise ValueError("应用倍率后的金额超出有效范围")
+    return int(amount)
+
+
 def _ledger_color(value: object) -> str:
     if value in (None, ""):
         return ""
@@ -5185,6 +5213,7 @@ def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
         return None
     try:
         amount = _ledger_amount(raw.get("amountCents"))
+        multiplier = _ledger_multiplier(raw.get("multiplier"))
         entry_day = _ledger_day(raw.get("date"))
         color = _ledger_color(raw.get("color"))
     except ValueError:
@@ -5198,7 +5227,7 @@ def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
         note = str(note or "")
     created_at = _ledger_timestamp(raw.get("createdAt"), now)
     updated_at = _ledger_timestamp(raw.get("updatedAt"), created_at)
-    return {
+    entry = {
         "id": entry_id.strip()[:80],
         "type": entry_type,
         "amountCents": amount,
@@ -5208,6 +5237,15 @@ def _sanitize_ledger_entry(raw: object, *, strict: bool = False) -> dict | None:
         "createdAt": created_at,
         "updatedAt": updated_at,
     }
+    if multiplier is not None:
+        entry["multiplier"] = multiplier
+    try:
+        _ledger_effective_amount(entry)
+    except ValueError:
+        if strict:
+            raise
+        return None
+    return entry
 
 
 def _ledger_payload_from_raw(raw: object) -> dict:
@@ -5341,8 +5379,8 @@ def ledger_month_payload(year: object = None, month: object = None, data: dict |
     entries = [dict(entry) for entry in source.get("entries", [])
                if _ledger_month_key(entry["date"]) == key]
     entries.sort(key=lambda item: (item["date"], item["createdAt"], item["id"]), reverse=True)
-    income = sum(entry["amountCents"] for entry in entries if entry["type"] == "income")
-    expense = sum(entry["amountCents"] for entry in entries if entry["type"] == "expense")
+    income = sum(_ledger_effective_amount(entry) for entry in entries if entry["type"] == "income")
+    expense = sum(_ledger_effective_amount(entry) for entry in entries if entry["type"] == "expense")
     return {
         "version": LEDGER_SCHEMA,
         "year": year_value,
@@ -5371,7 +5409,7 @@ def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
     if not isinstance(body, dict):
         raise ValueError("请求格式不正确")
     source = dict(existing or {})
-    for field in ("type", "amountCents", "date", "note", "color"):
+    for field in ("type", "amountCents", "multiplier", "date", "note", "color"):
         if field in body:
             source[field] = body[field]
     if existing is None:
@@ -5381,6 +5419,7 @@ def _ledger_entry_from_body(body: object, existing: dict | None = None) -> dict:
         source["updatedAt"] = now
         source.setdefault("note", "")
         source.setdefault("color", "")
+        source.setdefault("multiplier", None)
     else:
         source["id"] = existing["id"]
         source["createdAt"] = existing["createdAt"]
@@ -5408,7 +5447,7 @@ def ledger_entry_create(body: dict) -> dict:
 def ledger_entry_update(body: dict) -> dict:
     if not isinstance(body, dict):
         raise ValueError("请求格式不正确")
-    allowed = {"type", "amountCents", "date", "note", "color"}
+    allowed = {"type", "amountCents", "multiplier", "date", "note", "color"}
     if not any(field in body for field in allowed):
         raise ValueError("没有可更新的账目字段")
     data = load_ledger()

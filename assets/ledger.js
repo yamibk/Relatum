@@ -104,6 +104,28 @@
     return cents;
   }
 
+  function multiplierInputValue(value) {
+    return Number.isFinite(Number(value)) && Number(value) > 0 ? String(Number(value)) : '';
+  }
+
+  function parseMultiplier(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (!/^\d+(?:\.\d{1,4})?$/.test(raw)) throw new Error(T('请输入有效倍率，最多四位小数'));
+    const multiplier = Number(raw);
+    if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 1000000) {
+      throw new Error(T('倍率必须大于零且不超过 1000000'));
+    }
+    return multiplier;
+  }
+
+  function effectiveAmountCents(entry) {
+    const amount = Number(entry && entry.amountCents) || 0;
+    const multiplier = Number(entry && entry.multiplier);
+    const result = Math.round(amount * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1));
+    return Number.isSafeInteger(result) && result > 0 ? result : 0;
+  }
+
   function emptyPayload(year, month) {
     return { version: 1, year, month,
       summary: { incomeCents: 0, expenseCents: 0, balanceCents: 0, count: 0 }, entries: [] };
@@ -120,8 +142,8 @@
     let incomeCents = 0;
     let expenseCents = 0;
     result.entries.forEach((entry) => {
-      if (entry.type === 'income') incomeCents += Number(entry.amountCents) || 0;
-      else expenseCents += Number(entry.amountCents) || 0;
+      if (entry.type === 'income') incomeCents += effectiveAmountCents(entry);
+      else expenseCents += effectiveAmountCents(entry);
     });
     result.summary = { incomeCents, expenseCents,
       balanceCents: incomeCents - expenseCents, count: result.entries.length };
@@ -357,6 +379,8 @@
     const draft = entry.id === DRAFT_ID;
     const label = income ? T('收入') : T('支出');
     const signedCents = income ? entry.amountCents : -entry.amountCents;
+    const effectiveCents = effectiveAmountCents(entry);
+    const signedEffectiveCents = income ? effectiveCents : -effectiveCents;
     row.dataset.ledgerEntry = entry.id;
     row.classList.toggle('ledger-entry-income', income);
     row.classList.toggle('ledger-entry-expense', !income);
@@ -369,8 +393,15 @@
     row.querySelector('.ledger-entry-main strong').textContent = entry.note
       || (draft ? T('待填写的账目') : label);
     row.querySelector('.ledger-entry-main small').textContent = draft ? T('本地草稿') + ' · ' + label : label;
-    amount.textContent = Number.isInteger(entry.amountCents) && entry.amountCents > 0
-      ? formatMoney(signedCents, true) : '¥—';
+    if (Number.isInteger(entry.amountCents) && entry.amountCents > 0) {
+      const base = formatMoney(signedCents, true);
+      amount.textContent = entry.multiplier == null
+        ? base
+        : base + ' × ' + multiplierInputValue(entry.multiplier) + ' = '
+          + formatMoney(signedEffectiveCents, true);
+    } else {
+      amount.textContent = '¥—';
+    }
     row.setAttribute('aria-label', label + ' ' + amount.textContent + (entry.note ? ' · ' + entry.note : ''));
     const menu = row.querySelector('[data-ledger-entry-menu]');
     menu.setAttribute('aria-label', T('账目选项'));
@@ -541,7 +572,7 @@
       return;
     }
     const previous = captureEntryRects();
-    state.draft = { id: DRAFT_ID, type: 'expense', amountCents: null,
+    state.draft = { id: DRAFT_ID, type: 'expense', amountCents: null, multiplier: null,
       date: currentMonthDefaultDate(state.year, state.month), note: '', color: '',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     syncEntries({ previousRects: previous, newIds: new Set([DRAFT_ID]) });
@@ -576,7 +607,8 @@
     const labelSpan = document.createElement('span'); labelSpan.textContent = labelText;
     const input = document.createElement('input');
     input.type = type; input.value = value; input.placeholder = placeholder; input.autocomplete = 'off';
-    input.dataset[role] = ''; if (role === 'ledgerAmount') input.inputMode = 'decimal';
+    input.dataset[role] = '';
+    if (role === 'ledgerAmount' || role === 'ledgerMultiplier') input.inputMode = 'decimal';
     label.append(labelSpan, input); return label;
   }
 
@@ -599,6 +631,7 @@
     });
     fields.append(type,
       buildSettingsField(T('金额'), 'text', 'ledgerAmount', amountInputValue(entry.amountCents), '0.00'),
+      buildSettingsField(T('倍率'), 'text', 'ledgerMultiplier', multiplierInputValue(entry.multiplier), T('可选')),
       buildSettingsField(T('日期'), 'date', 'ledgerDate', entry.date, ''),
       buildSettingsField(T('备注'), 'text', 'ledgerNote', entry.note || '', T('可选')));
     const error = document.createElement('p');
@@ -691,16 +724,24 @@
     const box = state.settingsPopover; if (!box || !state.settings) return null;
     const activeType = box.querySelector('[data-ledger-type].is-active');
     const amount = box.querySelector('[data-ledger-amount]');
+    const multiplier = box.querySelector('[data-ledger-multiplier]');
     const date = box.querySelector('[data-ledger-date]');
     const note = box.querySelector('[data-ledger-note]');
     let amountCents;
     try { amountCents = parseAmountCents(amount && amount.value); }
     catch (error) { setSettingsError(error.message); if (amount) amount.focus(); return null; }
+    let multiplierValue;
+    try { multiplierValue = parseMultiplier(multiplier && multiplier.value); }
+    catch (error) { setSettingsError(error.message); if (multiplier) multiplier.focus(); return null; }
+    if (!effectiveAmountCents({ amountCents, multiplier: multiplierValue })) {
+      setSettingsError(T('应用倍率后的金额超出有效范围')); if (multiplier) multiplier.focus(); return null;
+    }
     if (!dateParts(date && date.value)) {
       setSettingsError(T('请选择有效日期')); if (date) date.focus(); return null;
     }
     return { type: activeType && activeType.dataset.ledgerType === 'income' ? 'income' : 'expense',
-      amountCents, date: date.value, note: String(note && note.value || '').trim() };
+      amountCents, multiplier: multiplierValue, date: date.value,
+      note: String(note && note.value || '').trim() };
   }
 
   function cacheSnapshots(keys) {
@@ -747,6 +788,7 @@
     setSettingsError('');
     if (id === DRAFT_ID) {
       state.draft.type = values.type; state.draft.amountCents = values.amountCents;
+      state.draft.multiplier = values.multiplier;
       state.draft.note = values.note; state.draft.pending = true;
       const row = dom.groups.querySelector('[data-ledger-entry="' + DRAFT_ID + '"]');
       if (row) syncEntryRow(row, state.draft);
