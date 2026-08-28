@@ -915,6 +915,7 @@
     '设置当前账本页': 'Set up this ledger page', '当前账本页设置': 'Ledger page settings',
     '视图': 'View', '账本视图': 'Ledger view', '月份': 'Monthly', '累计': 'Cumulative',
     '金额显示': 'Amount display', '金额小数': 'Amount decimals', '含小数': 'With decimals', '隐藏小数': 'Hide decimals',
+    '默认记录': 'Default entry', '默认收支类型': 'Default entry type',
     '累计汇总': 'Cumulative summary', '总结余': 'Total balance', '总收入': 'Total income', '总支出': 'Total expenses',
     '单位': 'Unit', '留空使用人民币': 'Leave blank to use RMB',
     '金额单位最多 12 个字符': 'The amount unit can contain up to 12 characters.',

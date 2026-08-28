@@ -103,6 +103,12 @@ assert(ledger.includes('absolute / 100n') && ledger.includes('state.hideDecimals
   'hide-decimals display truncation is missing');
 assert(ledger.includes('data-ledger-hide-decimals') && ledger.includes("'隐藏小数'"),
   'hide-decimals toggle in page settings is missing');
+assert(ledger.includes("const DEFAULT_TYPE_KEY = 'ledger:defaultTypeByPage:v1'")
+  && ledger.includes('function defaultTypeForPage(') && ledger.includes('function setDefaultTypeForPage('),
+  'per-page default entry type preference is missing');
+assert(ledger.includes('dataset.ledgerDefaultType')
+  && ledger.includes('type: defaultTypeForPage(state.page)'),
+  'page default entry type is not exposed in settings or applied to new drafts');
 assert(ledger.includes("dateField.hidden = state.viewMode === 'cumulative'")
   && ledger.includes("header.hidden = state.viewMode === 'cumulative'")
   && styles.includes('.ledger-cumulative-view .ledger-summary-card small'),
