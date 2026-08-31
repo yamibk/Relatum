@@ -823,6 +823,7 @@
     railFlipTimer = setTimeout(clearRailTransients, 320);
   }
   var railRevealPx = 84, railOver = false, railVisible = false;
+  var railWheelAccum = 0, railWheelTimer = 0;
   function setRailVisible(visible) {
     visible = !!visible;
     if (railVisible === visible || !rail) return;
@@ -3096,6 +3097,9 @@
     routeReturnFocus = null;
     stopTreeGoalBreath();
     setRailVisible(false);
+    clearTimeout(railWheelTimer);
+    railWheelTimer = 0;
+    railWheelAccum = 0;
     endTreeTransition();
     railOrbY = null;  // 滑块位置随画布一起失效，下次打开直接落位，不做跨会话飞行
     ++routeRequestId;
@@ -3995,6 +3999,30 @@
   }, { passive: true });
   rail.addEventListener('pointerenter', function () { railOver = true; setRailVisible(true); });
   rail.addEventListener('pointerleave', function () { railOver = false; setRailVisible(false); });
+  // 滚轮切树：页栏上向下滚 → 下一页，向上滚 → 上一页；
+  // 树较多时先滚动数字列表，到边缘后继续滚才切页。
+  rail.addEventListener('wheel', function (event) {
+    if (!open || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    var direction = event.deltaY > 0 ? 1 : -1;
+    var targetInList = railList.contains(event.target);
+    var maxScroll = railList.scrollHeight - railList.clientHeight;
+    var atEdge = direction > 0 ? railList.scrollTop >= maxScroll - 1 : railList.scrollTop <= 1;
+    if (targetInList && !atEdge) {
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    railWheelAccum += event.deltaY;
+    clearTimeout(railWheelTimer);
+    railWheelTimer = setTimeout(function () { railWheelAccum = 0; }, 200);
+    if (Math.abs(railWheelAccum) < 24) return;
+    var currentIndex = state.trees.findIndex(function (tree) { return tree.id === state.activeTreeId; });
+    var nextIndex = currentIndex + (railWheelAccum > 0 ? 1 : -1);
+    railWheelAccum = 0;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= state.trees.length) return;
+    switchTree(state.trees[nextIndex].id).catch(ignoreBusy);
+  }, { passive: false });
   railList.addEventListener('click', function (event) {
     var button = event.target.closest('[data-route-tree-id]');
     if (!button) return;
