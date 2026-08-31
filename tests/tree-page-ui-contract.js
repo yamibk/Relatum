@@ -203,17 +203,25 @@ assert(renderRailSource.includes('var orbStartY = animateOrb ? fromY : toY;')
   'a rebuilt Tree rail orb must be pinned before layout instead of flashing at page 1');
 const previewRailWheelSource = functionSource(tree, 'previewRailWheelTarget');
 const flushRailWheelSource = functionSource(tree, 'flushRailWheelTarget');
-const finishRailWheelSource = functionSource(tree, 'finishRailWheelCommit');
+const applyRailWheelTreeSource = functionSource(tree, 'applyRailWheelTree');
+const retargetRailWheelMotionSource = functionSource(tree, 'retargetRailWheelMotion');
 const beginTreeSwitchMotionSource = functionSource(tree, 'beginTreeSwitchMotion');
 assert(previewRailWheelSource.includes("orb.style.transform = 'translate3d(0,' + railOrbY")
-  && flushRailWheelSource.includes("treeSwitchMotion.phase === 'in'")
-  && flushRailWheelSource.includes('continueMotion: canInterruptEntrance')
-  && finishRailWheelSource.includes("treeSwitchMotion.phase === 'in'")
+  && applyRailWheelTreeSource.includes('syncStudyCacheFromState()')
+  && retargetRailWheelMotionSource.includes("motion.phase === 'out'")
+  && retargetRailWheelMotionSource.includes('motion.swap = swap')
+  && retargetRailWheelMotionSource.includes('(motion && motion.visualTreeId) || state.activeTreeId')
+  && retargetRailWheelMotionSource.includes('continueFromCurrent: !!motion')
+  && flushRailWheelSource.indexOf('retargetRailWheelMotion(railWheelTargetId)')
+    < flushRailWheelSource.indexOf("command({ command: 'switch-tree'")
+  && flushRailWheelSource.includes('railWheelTargetId !== railWheelPersistedTreeId')
   && beginTreeSwitchMotionSource.includes('finishTreeSwitchMotion(previousMotion, false, true)')
   && beginTreeSwitchMotionSource.includes('Math.max(24, TREE_SWITCH_OUT_MS')
   && tree.includes('previewRailWheelTarget(railWheelTargetId);')
+  && tree.includes('if (!railWheelGestureActive) {')
+  && tree.includes('if (editingFreeItemId) commitFreeItemEdit();')
   && tree.includes('flushRailWheelTarget();'),
-  'rapid Tree rail wheel input must preview every page and retarget from an unfinished entrance without queuing full animations');
+  'rapid Tree rail wheel input must retarget the visual swap immediately while serial persistence coalesces to the latest tree');
 assert(!functionSource(tree, 'activateDrag').includes('setPointerCapture'),
   'task drag activation must not recapture the pointer after movement has begun');
 const gestureCancelSource = functionSource(tree, 'cancelActivePointerGestures');

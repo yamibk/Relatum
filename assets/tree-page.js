@@ -825,9 +825,9 @@
     railFlipTimer = setTimeout(clearRailTransients, 320);
   }
   var railRevealPx = 84, railOver = false, railVisible = false;
-  var railWheelAccum = 0, railWheelTimer = 0;
+  var railWheelAccum = 0, railWheelTimer = 0, railWheelGestureActive = false;
   var railWheelCommitTimer = 0;
-  var railWheelFinishTimer = 0;
+  var railWheelPersistedTreeId = '';
   var railWheelTargetId = '';
   var railWheelCommittedTreeId = '';
   function setRailVisible(visible) {
@@ -836,9 +836,9 @@
     railVisible = visible;
     rail.classList.toggle('revealed', visible);
   }
-  // 快速滚轮分两条通道：页码与滑块立即追随，第一个目标也立即开始完整切树；
-  // 在途期间只保留最新目标。旧树退到透明点后，新目标可以接管尚未完成的入场，
-  // 不逐页排队、不等待整轮入场，也不并发写入。
+  // 快速滚轮分两条通道：画面只追最新目标，持久化在后台串行合并。退场尚未
+  // 到透明点时直接改写即将交换的树；入场中则从当前帧连续反向。中间树不落画面，
+  // 最终树保留完整入场，写盘延迟不再阻塞视觉接管。
   function previewRailWheelTarget(treeId) {
     var target = null;
     Array.prototype.forEach.call(railList.querySelectorAll('.study-route-rail-item'), function (button) {
@@ -871,55 +871,104 @@
     railWheelCommitTimer = setTimeout(flushRailWheelTarget,
       typeof delay === 'number' ? Math.max(0, delay) : 0);
   }
-  function finishRailWheelCommit(targetId, error) {
-    if (railWheelCommittedTreeId !== targetId) return;
-    // 落盘成功且旧树已换到透明点后，最新目标可从当前入场帧继续转向；只有退场
-    // 尚未到交换点时才短暂等待，避免在仍可见的旧内容上直接换树。
-    if (!error && railWheelTargetId && (!treeSwitchMotion || treeSwitchMotion.phase === 'in')) {
-      clearTimeout(railWheelFinishTimer);
-      railWheelFinishTimer = 0;
-      railWheelCommittedTreeId = '';
-      scheduleRailWheelCommit(0);
+  function applyRailWheelTree(treeId) {
+    if (!open) return false;
+    var target = state.trees.find(function (tree) { return tree.id === treeId; });
+    if (!target) return false;
+    state.activeTreeId = treeId;
+    state.tree = target;
+    var restored = restoreView(treeId);
+    render({ animateLayout: false, suppressEntrance: true });
+    var visualTreeId = railWheelTargetId || treeId;
+    var activeBtn = railList.querySelector('.study-route-rail-item.is-active');
+    if (!activeBtn || activeBtn.dataset.routeTreeId !== visualTreeId) renderRail(visualTreeId);
+    if (!restored) fit(true);
+    syncStudyCacheFromState();
+    return true;
+  }
+  function retargetRailWheelMotion(treeId) {
+    if (!open) return;
+    var targetIndex = state.trees.findIndex(function (tree) { return tree.id === treeId; });
+    if (targetIndex < 0) return;
+    var motion = treeSwitchMotion;
+    if (treeId === state.activeTreeId && (!motion || motion.visualTreeId === treeId)) return;
+    var referenceTreeId = (motion && motion.visualTreeId) || state.activeTreeId;
+    var referenceIndex = state.trees.findIndex(function (tree) { return tree.id === referenceTreeId; });
+    var direction = targetIndex < referenceIndex ? -1 : 1;
+    var swap = function () { return applyRailWheelTree(treeId); };
+    if (motion && motion.phase === 'out' && motion.direction === direction) {
+      // 同方向退场无需重启动画；只替换透明点的目标，因此快速跨页不会显示中间树。
+      motion.swap = swap;
+      motion.visualTreeId = treeId;
       return;
     }
-    if (treeSwitchMotion) {
-      clearTimeout(railWheelFinishTimer);
-      railWheelFinishTimer = setTimeout(function () { finishRailWheelCommit(targetId, error); }, 16);
-      return;
-    }
-    clearTimeout(railWheelFinishTimer);
-    railWheelFinishTimer = 0;
+    beginTreeSwitchMotion(swap, direction, {
+      continueFromCurrent: !!motion,
+      visualTreeId: treeId,
+    });
+  }
+  function failRailWheelCommit(error) {
+    var fallbackId = railWheelPersistedTreeId;
     railWheelCommittedTreeId = '';
-    if (error) {
-      railWheelTargetId = '';
-      renderRail();
-      ignoreBusy(error);
-      return;
+    railWheelTargetId = fallbackId;
+    if (fallbackId) {
+      if (open) {
+        previewRailWheelTarget(fallbackId);
+        retargetRailWheelMotion(fallbackId);
+      } else {
+        var fallback = state.trees.find(function (tree) { return tree.id === fallbackId; });
+        if (fallback) {
+          state.activeTreeId = fallbackId;
+          state.tree = fallback;
+          syncStudyCacheFromState();
+        }
+      }
     }
-    if (railWheelTargetId) scheduleRailWheelCommit(0);
+    // 请求结果不确定时不沿用乐观缓存，下次打开会重新读取磁盘权威状态。
+    studyCache = null;
+    window[STUDY_DATA_CACHE_KEY] = null;
+    ignoreBusy(error);
   }
   function flushRailWheelTarget() {
     railWheelCommitTimer = 0;
-    if (!open || !railWheelTargetId) return;
-    var canInterruptEntrance = !!(treeSwitchMotion && treeSwitchMotion.phase === 'in');
-    if (busy || railWheelCommittedTreeId || (treeSwitchMotion && !canInterruptEntrance)) {
+    if (!railWheelTargetId) return;
+    if (open && (!busy || railWheelCommittedTreeId)) retargetRailWheelMotion(railWheelTargetId);
+    if (railWheelCommittedTreeId) return;
+    if (busy) {
       scheduleRailWheelCommit(16);
       return;
     }
     var targetId = railWheelTargetId;
-    railWheelTargetId = '';
-    if (targetId === state.activeTreeId) return;
+    if (!railWheelPersistedTreeId) railWheelPersistedTreeId = state.activeTreeId;
+    if (targetId === railWheelPersistedTreeId) return;
     railWheelCommittedTreeId = targetId;
-    switchTree(targetId, { preserveRail: true, continueMotion: canInterruptEntrance }).then(function () {
-      finishRailWheelCommit(targetId, null);
+    command({ command: 'switch-tree', treeId: targetId }, { skipRender: true, optimistic: true }).then(function () {
+      if (railWheelCommittedTreeId !== targetId) return;
+      railWheelPersistedTreeId = targetId;
+      railWheelCommittedTreeId = '';
+      if (railWheelTargetId !== railWheelPersistedTreeId) scheduleRailWheelCommit(0);
+      else if (!open) {
+        var persisted = state.trees.find(function (tree) { return tree.id === targetId; });
+        if (persisted) {
+          state.activeTreeId = targetId;
+          state.tree = persisted;
+          syncStudyCacheFromState();
+        }
+        railWheelTargetId = '';
+        railWheelPersistedTreeId = '';
+      }
     }, function (error) {
-      finishRailWheelCommit(targetId, error);
+      if (railWheelCommittedTreeId === targetId) failRailWheelCommit(error);
     });
   }
   function cancelRailWheelNavigation(resetRail) {
     clearTimeout(railWheelCommitTimer);
     railWheelCommitTimer = 0;
-    railWheelTargetId = '';
+    if (railWheelCommittedTreeId) railWheelTargetId = railWheelCommittedTreeId;
+    else {
+      railWheelTargetId = '';
+      railWheelPersistedTreeId = '';
+    }
     if (!resetRail) return;
     if (railWheelCommittedTreeId) previewRailWheelTarget(railWheelCommittedTreeId);
     else renderRail();
@@ -2457,7 +2506,7 @@
   function beginTreeSwitchMotion(swap, direction, options) {
     options = options || {};
     var previousMotion = treeSwitchMotion;
-    var continueFromCurrent = !!(options.continueFromCurrent && previousMotion && previousMotion.phase === 'in');
+    var continueFromCurrent = !!(options.continueFromCurrent && previousMotion);
     var startOpacity = continueFromCurrent ? previousMotion.currentOpacity : 1;
     var startOffset = continueFromCurrent ? previousMotion.currentOffset : 0;
     if (!Number.isFinite(startOpacity)) startOpacity = 1;
@@ -2481,6 +2530,7 @@
       outDuration: continueFromCurrent
         ? Math.max(24, TREE_SWITCH_OUT_MS * Math.max(0.2, Math.min(1, startOpacity)))
         : TREE_SWITCH_OUT_MS,
+      visualTreeId: options.visualTreeId || '',
       swap: swap,
       resolveFinished: null,
       finished: null,
@@ -3219,13 +3269,15 @@
     setRailVisible(false);
     clearTimeout(railWheelTimer);
     clearTimeout(railWheelCommitTimer);
-    clearTimeout(railWheelFinishTimer);
     railWheelTimer = 0;
     railWheelCommitTimer = 0;
-    railWheelFinishTimer = 0;
     railWheelAccum = 0;
-    railWheelTargetId = '';
-    railWheelCommittedTreeId = '';
+    railWheelGestureActive = false;
+    // 已发出的切树写入继续在后台串行追到最终目标；没有在途写入时才丢弃预览。
+    if (!railWheelCommittedTreeId) {
+      railWheelTargetId = '';
+      railWheelPersistedTreeId = '';
+    }
     endTreeTransition();
     railOrbY = null;  // 滑块位置随画布一起失效，下次打开直接落位，不做跨会话飞行
     ++routeRequestId;
@@ -4141,13 +4193,26 @@
     event.stopPropagation();
     railWheelAccum += event.deltaY;
     clearTimeout(railWheelTimer);
-    railWheelTimer = setTimeout(function () { railWheelAccum = 0; }, 200);
+    railWheelTimer = setTimeout(function () {
+      railWheelAccum = 0;
+      railWheelGestureActive = false;
+    }, 200);
     if (Math.abs(railWheelAccum) < 24) return;
     var visualTreeId = railWheelTargetId || railWheelCommittedTreeId || state.activeTreeId;
     var currentIndex = state.trees.findIndex(function (tree) { return tree.id === visualTreeId; });
     var nextIndex = currentIndex + (railWheelAccum > 0 ? 1 : -1);
     railWheelAccum = 0;
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= state.trees.length) return;
+    if (!railWheelGestureActive) {
+      railWheelGestureActive = true;
+      if (editingFreeItemId) commitFreeItemEdit();
+      armedFreeItemKind = '';
+      selectFreeItem('');
+      settleViewThenSave();
+    }
+    if (!railWheelPersistedTreeId && !railWheelCommittedTreeId) {
+      railWheelPersistedTreeId = state.activeTreeId;
+    }
     railWheelTargetId = state.trees[nextIndex].id;
     previewRailWheelTarget(railWheelTargetId);
     flushRailWheelTarget();
