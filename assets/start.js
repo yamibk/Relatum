@@ -125,6 +125,7 @@
   let startBackgroundStyle = 'simple';
   let startThemeButtonTimer = 0;
   let startThemeApplyFrame = 0;
+  let startSpeedCloseTimer = 0;
   const START_SPEED_KEY = 'canvas:startTurnMs';
   const START_SPEED_MIN = 180;
   const START_SPEED_MAX = 500;
@@ -801,8 +802,29 @@
 
   function setStartSpeedOpen(open) {
     if (!startSpeedPop || !startSpeedTrigger) return;
-    startSpeedPop.hidden = !open;
+    if (!open && startSpeedPop.classList.contains('is-closing')) return;
+    window.clearTimeout(startSpeedCloseTimer); startSpeedCloseTimer = 0;
     startSpeedTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      startSpeedPop.classList.remove('is-closing');
+      startSpeedPop.hidden = false;
+      startSpeedPop.removeAttribute('inert');
+      return;
+    }
+    startSpeedPop.setAttribute('inert', '');
+    if (startSpeedPop.hidden) return;
+    if (prefersReduced) {
+      startSpeedPop.classList.remove('is-closing');
+      startSpeedPop.hidden = true;
+      return;
+    }
+    startSpeedPop.classList.add('is-closing');
+    startSpeedCloseTimer = window.setTimeout(() => {
+      startSpeedCloseTimer = 0;
+      if (startSpeedTrigger.getAttribute('aria-expanded') === 'true') return;
+      startSpeedPop.hidden = true;
+      startSpeedPop.classList.remove('is-closing');
+    }, 190);
   }
 
   try { startTurnSpeed = clampStartSpeed(localStorage.getItem(START_SPEED_KEY) || START_SPEED_DEFAULT); } catch (e) {
@@ -856,7 +878,7 @@
   if (startSpeedTrigger && startSpeedPop) {
     startSpeedTrigger.addEventListener('click', (event) => {
       event.stopPropagation();
-      setStartSpeedOpen(startSpeedPop.hidden);
+      setStartSpeedOpen(startSpeedPop.hidden || startSpeedPop.classList.contains('is-closing'));
     });
     if (startSpeedControl) {
       startSpeedControl.addEventListener('click', (event) => event.stopPropagation());
