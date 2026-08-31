@@ -163,14 +163,16 @@
     }
     var orb = railList.querySelector('.study-route-rail-orb');
     var toY = active ? active.offsetTop : 0;
-    // 滑块 FLIP：先钉在旧位置提交一帧，再过渡到新位置；首渲染 / 减动效直接落位。
-    if (fromY != null && fromY !== toY && !prefersReduced) {
-      orb.classList.add('no-transition');
-      orb.style.transform = 'translate3d(0,' + fromY + 'px,0)';
-      void orb.offsetWidth;
-      orb.classList.remove('no-transition');
-    }
+    // 滑块 DOM 每次都会重建：必须先无动画钉到正确起点，否则同目标重绘时
+    // 新滑块会从默认 top:0（第 1 页）短暂闪现后再跳回。真实换页才从旧位置过渡。
+    var animateOrb = fromY != null && fromY !== toY && !prefersReduced;
+    var orbStartY = animateOrb ? fromY : toY;
+    orb.classList.add('no-transition');
+    orb.style.transform = 'translate3d(0,' + orbStartY + 'px,0)';
+    void orb.offsetWidth;
+    if (animateOrb) orb.classList.remove('no-transition');
     orb.style.transform = 'translate3d(0,' + toY + 'px,0)';
+    if (!animateOrb) orb.classList.remove('no-transition');
     railOrbY = toY;
     animateRailChange(snap);
   }

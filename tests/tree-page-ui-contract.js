@@ -95,8 +95,8 @@ routeFunctions.forEach((name) => {
   'preserveViewOnResize', 'edgePath', 'animateLayout', 'settleNodeFills',
   'transitionFill', 'transitionTaskCheck', 'preserveViewAnchor', 'positionPopover',
   'beginTreeTransition', 'endTreeTransition', 'animateRootEntrance', 'settleViewThenSave',
-  'finishTreeSwitchMotion', 'cancelTreeSwitchMotion', 'requestTreeSwitchFrame',
-  'tickTreeSwitchMotion', 'beginTreeSwitchMotion', 'collapseVisibleDescendants',
+  'cancelTreeSwitchMotion', 'requestTreeSwitchFrame',
+  'collapseVisibleDescendants',
   'cleanupCollapseMotion', 'cancelCollapseMotion', 'finishCollapseMotion',
   'setCollapseControlExpanded', 'toggleBranchCollapse', 'clearDropPreview', 'showDropPreview',
   'dragHitId', 'activateDrag', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
@@ -196,6 +196,24 @@ assert(functionSource(tree, 'consumePendingViewReset').includes('resetViewPendin
 assert(!css.includes('.tree-page-reference'), 'removed Alt-reference styles must not remain');
 assert(tree.includes("window.addEventListener('mouseup', onDragMouseUp, true)"),
   'task drag must capture on pointerdown and keep a mouseup fallback');
+const renderRailSource = functionSource(tree, 'renderRail');
+assert(renderRailSource.includes('var orbStartY = animateOrb ? fromY : toY;')
+  && renderRailSource.indexOf("orb.classList.add('no-transition')")
+    < renderRailSource.indexOf("orb.style.transform = 'translate3d(0,' + orbStartY"),
+  'a rebuilt Tree rail orb must be pinned before layout instead of flashing at page 1');
+const previewRailWheelSource = functionSource(tree, 'previewRailWheelTarget');
+const flushRailWheelSource = functionSource(tree, 'flushRailWheelTarget');
+const finishRailWheelSource = functionSource(tree, 'finishRailWheelCommit');
+const beginTreeSwitchMotionSource = functionSource(tree, 'beginTreeSwitchMotion');
+assert(previewRailWheelSource.includes("orb.style.transform = 'translate3d(0,' + railOrbY")
+  && flushRailWheelSource.includes("treeSwitchMotion.phase === 'in'")
+  && flushRailWheelSource.includes('continueMotion: canInterruptEntrance')
+  && finishRailWheelSource.includes("treeSwitchMotion.phase === 'in'")
+  && beginTreeSwitchMotionSource.includes('finishTreeSwitchMotion(previousMotion, false, true)')
+  && beginTreeSwitchMotionSource.includes('Math.max(24, TREE_SWITCH_OUT_MS')
+  && tree.includes('previewRailWheelTarget(railWheelTargetId);')
+  && tree.includes('flushRailWheelTarget();'),
+  'rapid Tree rail wheel input must preview every page and retarget from an unfinished entrance without queuing full animations');
 assert(!functionSource(tree, 'activateDrag').includes('setPointerCapture'),
   'task drag activation must not recapture the pointer after movement has begun');
 const gestureCancelSource = functionSource(tree, 'cancelActivePointerGestures');

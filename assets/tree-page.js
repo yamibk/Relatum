@@ -750,14 +750,16 @@
     }
     var orb = railList.querySelector('.study-route-rail-orb');
     var toY = active ? active.offsetTop : 0;
-    // 滑块 FLIP：先钉在旧位置提交一帧，再过渡到新位置；首渲染 / 减动效直接落位。
-    if (fromY != null && fromY !== toY && !prefersReduced) {
-      orb.classList.add('no-transition');
-      orb.style.transform = 'translate3d(0,' + fromY + 'px,0)';
-      void orb.offsetWidth;
-      orb.classList.remove('no-transition');
-    }
+    // 滑块 DOM 每次都会重建：必须先无动画钉到正确起点，否则同目标重绘时
+    // 新滑块会从默认 top:0（第 1 页）短暂闪现后再跳回。真实换页才从旧位置过渡。
+    var animateOrb = fromY != null && fromY !== toY && !prefersReduced;
+    var orbStartY = animateOrb ? fromY : toY;
+    orb.classList.add('no-transition');
+    orb.style.transform = 'translate3d(0,' + orbStartY + 'px,0)';
+    void orb.offsetWidth;
+    if (animateOrb) orb.classList.remove('no-transition');
     orb.style.transform = 'translate3d(0,' + toY + 'px,0)';
+    if (!animateOrb) orb.classList.remove('no-transition');
     railOrbY = toY;
     animateRailChange(snap);
   }
@@ -824,11 +826,103 @@
   }
   var railRevealPx = 84, railOver = false, railVisible = false;
   var railWheelAccum = 0, railWheelTimer = 0;
+  var railWheelCommitTimer = 0;
+  var railWheelFinishTimer = 0;
+  var railWheelTargetId = '';
+  var railWheelCommittedTreeId = '';
   function setRailVisible(visible) {
     visible = !!visible;
     if (railVisible === visible || !rail) return;
     railVisible = visible;
     rail.classList.toggle('revealed', visible);
+  }
+  // 快速滚轮分两条通道：页码与滑块立即追随，第一个目标也立即开始完整切树；
+  // 在途期间只保留最新目标。旧树退到透明点后，新目标可以接管尚未完成的入场，
+  // 不逐页排队、不等待整轮入场，也不并发写入。
+  function previewRailWheelTarget(treeId) {
+    var target = null;
+    Array.prototype.forEach.call(railList.querySelectorAll('.study-route-rail-item'), function (button) {
+      var active = button.dataset.routeTreeId === treeId;
+      button.classList.toggle('is-active', active);
+      if (active) {
+        button.setAttribute('aria-current', 'page');
+        target = button;
+      } else {
+        button.removeAttribute('aria-current');
+      }
+    });
+    if (!target) return;
+    if (railList.clientHeight < railList.scrollHeight) {
+      var targetTop = target.offsetTop;
+      var targetBottom = targetTop + target.offsetHeight;
+      if (targetTop < railList.scrollTop) railList.scrollTop = targetTop;
+      else if (targetBottom > railList.scrollTop + railList.clientHeight) {
+        railList.scrollTop = targetBottom - railList.clientHeight;
+      }
+    }
+    var orb = railList.querySelector('.study-route-rail-orb');
+    if (!orb) return;
+    orb.classList.remove('no-transition');
+    railOrbY = target.offsetTop;
+    orb.style.transform = 'translate3d(0,' + railOrbY + 'px,0)';
+  }
+  function scheduleRailWheelCommit(delay) {
+    clearTimeout(railWheelCommitTimer);
+    railWheelCommitTimer = setTimeout(flushRailWheelTarget,
+      typeof delay === 'number' ? Math.max(0, delay) : 0);
+  }
+  function finishRailWheelCommit(targetId, error) {
+    if (railWheelCommittedTreeId !== targetId) return;
+    // 落盘成功且旧树已换到透明点后，最新目标可从当前入场帧继续转向；只有退场
+    // 尚未到交换点时才短暂等待，避免在仍可见的旧内容上直接换树。
+    if (!error && railWheelTargetId && (!treeSwitchMotion || treeSwitchMotion.phase === 'in')) {
+      clearTimeout(railWheelFinishTimer);
+      railWheelFinishTimer = 0;
+      railWheelCommittedTreeId = '';
+      scheduleRailWheelCommit(0);
+      return;
+    }
+    if (treeSwitchMotion) {
+      clearTimeout(railWheelFinishTimer);
+      railWheelFinishTimer = setTimeout(function () { finishRailWheelCommit(targetId, error); }, 16);
+      return;
+    }
+    clearTimeout(railWheelFinishTimer);
+    railWheelFinishTimer = 0;
+    railWheelCommittedTreeId = '';
+    if (error) {
+      railWheelTargetId = '';
+      renderRail();
+      ignoreBusy(error);
+      return;
+    }
+    if (railWheelTargetId) scheduleRailWheelCommit(0);
+  }
+  function flushRailWheelTarget() {
+    railWheelCommitTimer = 0;
+    if (!open || !railWheelTargetId) return;
+    var canInterruptEntrance = !!(treeSwitchMotion && treeSwitchMotion.phase === 'in');
+    if (busy || railWheelCommittedTreeId || (treeSwitchMotion && !canInterruptEntrance)) {
+      scheduleRailWheelCommit(16);
+      return;
+    }
+    var targetId = railWheelTargetId;
+    railWheelTargetId = '';
+    if (targetId === state.activeTreeId) return;
+    railWheelCommittedTreeId = targetId;
+    switchTree(targetId, { preserveRail: true, continueMotion: canInterruptEntrance }).then(function () {
+      finishRailWheelCommit(targetId, null);
+    }, function (error) {
+      finishRailWheelCommit(targetId, error);
+    });
+  }
+  function cancelRailWheelNavigation(resetRail) {
+    clearTimeout(railWheelCommitTimer);
+    railWheelCommitTimer = 0;
+    railWheelTargetId = '';
+    if (!resetRail) return;
+    if (railWheelCommittedTreeId) previewRailWheelTarget(railWheelCommittedTreeId);
+    else renderRail();
   }
   function sceneTransform(offsetX) {
     return 'translate3d(' + (view.x + (Number(offsetX) || 0)) + 'px,' + view.y + 'px,0) scale(' + view.zoom + ')';
@@ -2297,7 +2391,7 @@
   var TREE_SWITCH_ENTER_PX = 34;
   var treeSwitchMotion = null;
   var treeSwitchMotionId = 0;
-  function finishTreeSwitchMotion(motion, completed) {
+  function finishTreeSwitchMotion(motion, completed, preserveVisual) {
     if (!motion) return;
     var wasActive = treeSwitchMotion === motion;
     if (motion.frame) cancelAnimationFrame(motion.frame);
@@ -2309,6 +2403,7 @@
     }
     if (!wasActive) return;
     treeSwitchMotion = null;
+    if (preserveVisual) return;
     // 先在 transition:none 的保护下恢复最终样式，再摘状态类，避免清理动作自己产生余波。
     scene.style.opacity = '';
     applyView();
@@ -2327,13 +2422,16 @@
       return;
     }
     if (motion.startedAt == null) motion.startedAt = timestamp;
-    var duration = motion.phase === 'out' ? TREE_SWITCH_OUT_MS : TREE_SWITCH_IN_MS;
+    var duration = motion.phase === 'out' ? motion.outDuration : TREE_SWITCH_IN_MS;
     var p = Math.min(1, (timestamp - motion.startedAt) / duration);
     var eased = motion.phase === 'out' ? p * p : 1 - Math.pow(1 - p, 3);
     var offset = motion.phase === 'out'
-      ? motion.direction * -TREE_SWITCH_EXIT_PX * eased
+      ? motion.startOffset + (motion.direction * -TREE_SWITCH_EXIT_PX - motion.startOffset) * eased
       : motion.direction * TREE_SWITCH_ENTER_PX * (1 - eased);
-    scene.style.opacity = String(motion.phase === 'out' ? 1 - eased : eased);
+    var opacity = motion.phase === 'out' ? motion.startOpacity * (1 - eased) : eased;
+    motion.currentOpacity = opacity;
+    motion.currentOffset = offset;
+    scene.style.opacity = String(opacity);
     scene.style.transform = sceneTransform(offset);
     if (p < 1) {
       requestTreeSwitchFrame(motion);
@@ -2348,14 +2446,24 @@
       }
       motion.phase = 'in';
       motion.startedAt = null;
+      motion.currentOpacity = 0;
+      motion.currentOffset = motion.direction * TREE_SWITCH_ENTER_PX;
       scene.style.transform = sceneTransform(motion.direction * TREE_SWITCH_ENTER_PX);
       requestTreeSwitchFrame(motion);
       return;
     }
     finishTreeSwitchMotion(motion, true);
   }
-  function beginTreeSwitchMotion(swap, direction) {
-    cancelTreeSwitchMotion();
+  function beginTreeSwitchMotion(swap, direction, options) {
+    options = options || {};
+    var previousMotion = treeSwitchMotion;
+    var continueFromCurrent = !!(options.continueFromCurrent && previousMotion && previousMotion.phase === 'in');
+    var startOpacity = continueFromCurrent ? previousMotion.currentOpacity : 1;
+    var startOffset = continueFromCurrent ? previousMotion.currentOffset : 0;
+    if (!Number.isFinite(startOpacity)) startOpacity = 1;
+    if (!Number.isFinite(startOffset)) startOffset = 0;
+    if (continueFromCurrent) finishTreeSwitchMotion(previousMotion, false, true);
+    else cancelTreeSwitchMotion(previousMotion);
     direction = direction < 0 ? -1 : 1;
     var motion = {
       id: ++treeSwitchMotionId,
@@ -2365,6 +2473,14 @@
       phase: 'out',
       startedAt: null,
       direction: direction,
+      startOpacity: Math.max(0, Math.min(1, startOpacity)),
+      startOffset: startOffset,
+      currentOpacity: Math.max(0, Math.min(1, startOpacity)),
+      currentOffset: startOffset,
+      // 从半途入场接管时按剩余可见度缩短退场，既不断帧，也不在暗场多等 80ms。
+      outDuration: continueFromCurrent
+        ? Math.max(24, TREE_SWITCH_OUT_MS * Math.max(0.2, Math.min(1, startOpacity)))
+        : TREE_SWITCH_OUT_MS,
       swap: swap,
       resolveFinished: null,
       finished: null,
@@ -2380,7 +2496,8 @@
     requestTreeSwitchFrame(motion);
     return motion;
   }
-  function switchTree(treeId) {
+  function switchTree(treeId, options) {
+    options = options || {};
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
     if (editingFreeItemId) commitFreeItemEdit();
@@ -2405,7 +2522,7 @@
     // 作废点击前在途的旧快照。
     // 滑块抢跑：点击瞬间 rail 高亮与黑色滑块立刻开滑（与旧树淡出并行）；
     // 权威活动树状态仍在离屏点切换，落盘失败时随回退一起滑回。
-    renderRail(treeId);
+    if (!options.preserveRail) renderRail(treeId);
     var performSwap = function () {
       if (!open || requestId !== routeRequestId) return false;
       state.activeTreeId = treeId;
@@ -2416,11 +2533,14 @@
       render({ animateLayout: false, suppressEntrance: true });
       // 滑块已在点击时抢跑；若抢跑未发生才补一次 rail 同步（重建会掐断在途滑块动画）。
       var activeBtn = railList.querySelector('.study-route-rail-item.is-active');
-      if (!activeBtn || activeBtn.dataset.routeTreeId !== treeId) renderRail();
+      var visualTreeId = railWheelTargetId || railWheelCommittedTreeId || treeId;
+      if (!activeBtn || activeBtn.dataset.routeTreeId !== visualTreeId) renderRail(visualTreeId);
       if (!restored) fit(true);
       return true;
     };
-    var motion = beginTreeSwitchMotion(performSwap, direction);
+    var motion = beginTreeSwitchMotion(performSwap, direction, {
+      continueFromCurrent: !!options.continueMotion,
+    });
     return command({ command: 'switch-tree', treeId: treeId }, { skipRender: true, optimistic: true }).catch(function (error) {
       if (requestId !== routeRequestId) throw error;
       // 落盘失败：若视觉已换过去，用同一个可取消控制器反向回退；若仍在退场，
@@ -3098,8 +3218,14 @@
     stopTreeGoalBreath();
     setRailVisible(false);
     clearTimeout(railWheelTimer);
+    clearTimeout(railWheelCommitTimer);
+    clearTimeout(railWheelFinishTimer);
     railWheelTimer = 0;
+    railWheelCommitTimer = 0;
+    railWheelFinishTimer = 0;
     railWheelAccum = 0;
+    railWheelTargetId = '';
+    railWheelCommittedTreeId = '';
     endTreeTransition();
     railOrbY = null;  // 滑块位置随画布一起失效，下次打开直接落位，不做跨会话飞行
     ++routeRequestId;
@@ -4017,21 +4143,26 @@
     clearTimeout(railWheelTimer);
     railWheelTimer = setTimeout(function () { railWheelAccum = 0; }, 200);
     if (Math.abs(railWheelAccum) < 24) return;
-    var currentIndex = state.trees.findIndex(function (tree) { return tree.id === state.activeTreeId; });
+    var visualTreeId = railWheelTargetId || railWheelCommittedTreeId || state.activeTreeId;
+    var currentIndex = state.trees.findIndex(function (tree) { return tree.id === visualTreeId; });
     var nextIndex = currentIndex + (railWheelAccum > 0 ? 1 : -1);
     railWheelAccum = 0;
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= state.trees.length) return;
-    switchTree(state.trees[nextIndex].id).catch(ignoreBusy);
+    railWheelTargetId = state.trees[nextIndex].id;
+    previewRailWheelTarget(railWheelTargetId);
+    flushRailWheelTarget();
   }, { passive: false });
   railList.addEventListener('click', function (event) {
     var button = event.target.closest('[data-route-tree-id]');
     if (!button) return;
     event.preventDefault();
+    cancelRailWheelNavigation(true);
     if (button.dataset.routeTreeId === state.activeTreeId) return;
     switchTree(button.dataset.routeTreeId).catch(ignoreBusy);
   });
   railAdd.addEventListener('click', function (event) {
     event.preventDefault();
+    cancelRailWheelNavigation(true);
     createTree().catch(ignoreBusy);
   });
   window.addEventListener('resize', preserveViewOnResize);
