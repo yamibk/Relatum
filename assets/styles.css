@@ -8107,6 +8107,10 @@ body.desktop-window-transitioning .desktop-window-btn[data-window-action="maximi
 }
 
 .start-speed-pop[hidden] { display: none; }
+.start-speed-pop.is-closing {
+  pointer-events: none;
+  animation: corner-panel-out 180ms cubic-bezier(.4, 0, .8, .2) both;
+}
 
 .start-speed-head {
   display: flex;
@@ -30527,6 +30531,11 @@ body.dual-screen-open .formula-panel {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@keyframes corner-panel-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.982); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings-pop,
   .start-speed-pop,
@@ -43633,6 +43642,8 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   transform: translateY(-2px) scale(1.06);
   box-shadow: 0 4px 10px color-mix(in srgb, var(--text) 12%, transparent);
 }
+.ledger-legend-chip:active { transform: translateY(0) scale(.92); }
+.ledger-legend-chip.ledger-legend-updated { animation: ledgerLegendUpdated 360ms var(--easing-soft); }
 
 .ledger-summary {
   display: grid;
@@ -43700,6 +43711,7 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   color: var(--text);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 10%, transparent);
 }
+.ledger-type-switch button:active { transform: scale(.94); }
 
 .ledger-groups { display: grid; gap: 20px; }
 .ledger-groups[hidden], .ledger-empty[hidden] { display: none !important; }
@@ -43748,6 +43760,11 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   background: transparent;
   color: inherit;
   text-align: left;
+  transition: background 120ms var(--easing-soft), transform 100ms var(--easing-soft);
+}
+.ledger-entry-open:active {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  transform: scale(.997);
 }
 .ledger-entry-open:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 28%, transparent); outline-offset: -3px; }
 .ledger-entry-mark {
@@ -43811,7 +43828,7 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   line-height: 1;
   opacity: 0;
   transition: opacity 180ms var(--easing-soft), background 180ms var(--easing-soft),
-              color 180ms var(--easing-soft);
+              color 180ms var(--easing-soft), transform 100ms var(--easing-soft);
 }
 .ledger-entry:hover .ledger-entry-menu,
 .ledger-entry:focus-within .ledger-entry-menu,
@@ -43821,6 +43838,7 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
+.ledger-entry-menu:active { transform: translateY(-50%) scale(.88); }
 .ledger-entry.is-highlighted { animation: ledgerEntryHighlight 760ms var(--easing-soft) both; }
 .ledger-entry.quick-enter { animation: studyCardIn 320ms var(--easing-page) both; }
 .ledger-entry.is-leaving {
@@ -43854,6 +43872,29 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 }
 .ledger-empty strong { color: var(--text); font-size: 18px; }
 .ledger-empty p { margin: 9px 0 0; font-size: 12px; }
+.ledger-empty.ledger-empty-after-delete {
+  animation: ledgerEmptySurfaceAfterDelete 720ms cubic-bezier(.2, .72, .22, 1) both;
+}
+.ledger-empty.ledger-empty-after-delete > span {
+  animation: ledgerEmptyCopyAfterDelete 520ms 120ms var(--easing-page) both;
+}
+.ledger-empty.ledger-empty-after-delete > strong {
+  animation: ledgerEmptyCopyAfterDelete 460ms 220ms var(--easing-page) both;
+}
+.ledger-empty.ledger-empty-after-delete > p {
+  animation: ledgerEmptyCopyAfterDelete 460ms 310ms var(--easing-page) both;
+}
+
+@keyframes ledgerEmptySurfaceAfterDelete {
+  0% { opacity: 0; }
+  42% { opacity: .72; }
+  100% { opacity: 1; }
+}
+@keyframes ledgerEmptyCopyAfterDelete {
+  0% { opacity: 0; transform: translateY(7px) scale(.99); }
+  72% { opacity: 1; transform: translateY(-1px) scale(1); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 .ledger-settings-popover,
 .ledger-unit-popover { z-index: 1310; width: min(330px, calc(100vw - 24px)); }
@@ -43889,6 +43930,20 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 .ledger-settings-popover.is-saving { pointer-events: none; opacity: .72; }
 .ledger-unit-popover.is-saving { pointer-events: none; opacity: .72; }
 .ledger-unit-actions { justify-content: flex-end; }
+.ledger-settings-popover .study-progress-settings-actions button,
+.ledger-unit-popover .study-progress-settings-actions button {
+  transition: color 140ms var(--easing-soft), background 140ms var(--easing-soft),
+              border-color 140ms var(--easing-soft), transform 100ms var(--easing-soft);
+}
+.ledger-settings-popover .study-progress-settings-actions button:not(:disabled):active,
+.ledger-unit-popover .study-progress-settings-actions button:not(:disabled):active {
+  transform: translateY(1px) scale(.96);
+}
+.ledger-page-rail .study-task-page-button {
+  transition: color 160ms var(--easing-soft), background 160ms var(--easing-soft),
+              transform 100ms var(--easing-soft);
+}
+.ledger-page-rail .study-task-page-button:active { transform: scale(.9); }
 
 .ledger-shell.is-loading .ledger-summary-card strong {
   width: min(150px, 70%);
@@ -43951,6 +44006,10 @@ body.canvas-dark .task-root-archive-root:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 .ledger-summary-outgoing small { font-size: 12px; }
+.ledger-flow-outgoing[data-ledger-view-mode="month"] .ledger-day-group > header { display: flex; }
+.ledger-flow-outgoing[data-ledger-view-mode="cumulative"] .ledger-day-group > header { display: none; }
+.ledger-summary-outgoing[data-ledger-view-mode="month"] small { visibility: visible; }
+.ledger-summary-outgoing[data-ledger-view-mode="cumulative"] small { visibility: hidden; }
 .ledger-flow-outgoing *,
 .ledger-summary-outgoing * { animation: none !important; }
 .ledger-page.ledger-page-crossfade-ready .ledger-flow-outgoing,
@@ -43989,6 +44048,12 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 }
 @keyframes ledgerEntryColorCue {
   45% { transform: scale(1.008); }
+}
+@keyframes ledgerLegendUpdated {
+  42% {
+    transform: translateY(-1px) scale(1.12);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ledger-legend-color, var(--text)) 18%, transparent);
+  }
 }
 @keyframes ledgerEntryAttention {
   45% { transform: translateY(-2px) scale(1.006); box-shadow: 0 0 0 4px color-mix(in srgb, #75977b 16%, transparent); }
@@ -44054,18 +44119,29 @@ body.start-page[data-start-theme="dark"] .ledger-entry-expense .ledger-entry-amo
   .ledger-page.is-revealing .ledger-empty,
   .ledger-entry.quick-enter,
   .ledger-entry.is-leaving,
+  .ledger-empty.ledger-empty-after-delete,
+  .ledger-empty.ledger-empty-after-delete > span,
+  .ledger-empty.ledger-empty-after-delete > strong,
+  .ledger-empty.ledger-empty-after-delete > p,
   .ledger-entry-attention,
   .ledger-day-group.ledger-day-entering,
   .ledger-summary-card strong.ledger-summary-updated,
   .ledger-entry.is-highlighted,
-  .ledger-entry-color-updated {
+  .ledger-entry-color-updated,
+  .ledger-legend-chip.ledger-legend-updated {
     animation: none !important;
   }
   .ledger-settings-popover,
   .ledger-entry,
+  .ledger-entry-open,
+  .ledger-entry-menu,
   .ledger-add,
   .ledger-month-nav button,
-  .ledger-legend-chip {
+  .ledger-legend-chip,
+  .ledger-type-switch button,
+  .ledger-page-rail .study-task-page-button,
+  .ledger-settings-popover .study-progress-settings-actions button,
+  .ledger-unit-popover .study-progress-settings-actions button {
     transition: none !important;
   }
 }

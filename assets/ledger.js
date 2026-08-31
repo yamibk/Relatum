@@ -755,6 +755,9 @@
     });
     const hasEntries = desiredIds.size > 0;
     dom.groups.hidden = !hasEntries; dom.empty.hidden = hasEntries;
+    if (!hasEntries && opts.revealEmptyAfterDelete) {
+      replayClass(dom.empty, 'ledger-empty-after-delete', 880);
+    }
     window.requestAnimationFrame(() => animateEntryChanges(previous));
     revealHighlightedEntry();
   }
@@ -859,12 +862,29 @@
     if (!state.draft) return;
     if (state.settings && state.settings.id === DRAFT_ID) closeSettings(false, true);
     const row = entryRows.get(DRAFT_ID);
-    const previous = captureEntryRects(); state.draft = null;
+    const removalView = { page: state.page, viewMode: state.viewMode,
+      year: state.year, month: state.month };
+    state.draft = null;
     if (options && options.instant || reducedMotion || !row) {
-      syncEntries({ previousRects: previous }); return;
+      syncEntries({ previousRects: captureEntryRects() }); return;
     }
+    let settled = false; let timer = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true; window.clearTimeout(timer);
+      row.removeEventListener('animationend', onEnd);
+      const sameView = state.page === removalView.page && state.viewMode === removalView.viewMode
+        && state.year === removalView.year && state.month === removalView.month;
+      const previousRects = captureEntryRects();
+      syncEntries({ previousRects,
+        revealEmptyAfterDelete: sameView && displayEntries().length === 0 });
+    };
+    const onEnd = (event) => {
+      if (event.target === row && event.animationName === 'studyCardOut') finish();
+    };
+    row.addEventListener('animationend', onEnd);
     row.classList.add('is-leaving');
-    window.setTimeout(() => syncEntries({ previousRects: previous }), 300);
+    timer = window.setTimeout(finish, 250);
   }
 
   function findEntry(id) {
@@ -1126,16 +1146,26 @@
     if (unit.length > 12) { error.textContent = T('金额单位最多 12 个字符'); input.focus(); return; }
     const page = state.page;
     const previousUnit = currentUnit();
+    const displayChanged = nextViewMode !== state.viewMode
+      || nextHideDecimals !== state.hideDecimals || unit !== previousUnit;
+    const animateDisplayChange = displayChanged && !reducedMotion && state.active && dom.page;
+    if (animateDisplayChange) {
+      stopPageEntrance(); clearPageSwitchMotion(); preparePageCrossfade();
+    }
     state.viewMode = nextViewMode; setViewForPage(page, nextViewMode);
     state.hideDecimals = nextHideDecimals; setHideForPage(page, nextHideDecimals);
     setDefaultTypeForPage(page, nextDefaultType);
+    const syncDisplayChange = () => {
+      syncLedger({ skipFlip: true, silent: animateDisplayChange });
+      if (animateDisplayChange) startPageCrossfade();
+    };
     if (unit === previousUnit) {
-      closeUnitSettings(false); syncLedger({ skipFlip: true }); return;
+      closeUnitSettings(false); syncDisplayChange(); return;
     }
     state.unitSaving = true; box.classList.add('is-saving');
     box.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
     const save = box.querySelector('[data-ledger-unit-save]'); if (save) save.textContent = T('正在保存');
-    applyLocalPageUnit(page, unit); syncLedger({ skipFlip: true });
+    applyLocalPageUnit(page, unit); syncDisplayChange();
     const seq = nextMutation('unit:' + page);
     postInOrder('unit:' + page, '/api/ledger-page-unit', { page, unit }).then((result) => {
       acceptMutationRevision(result.revision);
@@ -1303,6 +1333,9 @@
     const id = state.settings.id; const entry = findEntry(id); if (!entry) return;
     const oldEntry = { ...entry };
     const row = entryRows.get(id); const seq = nextMutation(id);
+    const removalView = { page: state.page, viewMode: state.viewMode,
+      year: state.year, month: state.month };
+    let revealEmptyAfterDelete = false;
     let removalSettled = false; let removalTimer = 0; let removalEndHandler = null;
     const cleanupRemovalMotion = () => {
       window.clearTimeout(removalTimer); removalTimer = 0;
@@ -1315,7 +1348,9 @@
       // 退场结束时才捕获仍在场账目的当前位置，再移除目标并只执行一次 FLIP。
       // 不能复用点击删除时的旧坐标，否则快速成功响应会让补位动画被拉回重播。
       const previousRects = captureEntryRects();
-      syncEntries({ previousRects });
+      const sameView = state.page === removalView.page && state.viewMode === removalView.viewMode
+        && state.year === removalView.year && state.month === removalView.month;
+      syncEntries({ previousRects, revealEmptyAfterDelete: revealEmptyAfterDelete && sameView });
     };
     const cancelRemovalMotion = () => {
       if (removalSettled) return;
@@ -1324,6 +1359,7 @@
     };
     closeSettings(false); removeLocalEntry(entry);
     state.payload = computePayload(); syncSummary();
+    revealEmptyAfterDelete = displayEntries().length === 0;
     if (row && !reducedMotion) {
       removalEndHandler = (event) => {
         if (event.target !== row || event.animationName !== 'studyCardOut') return;
@@ -1372,6 +1408,10 @@
 
   function openEntryPalette(row, event) {
     const entry = findEntry(row.dataset.ledgerEntry); if (!entry || !paletteController) return;
+    if (paletteController.isOpen() && paletteController.getTrigger() === row) {
+      paletteController.close(true);
+      return;
+    }
     const rect = row.getBoundingClientRect();
     paletteController.open(row,
       event && Number.isFinite(event.clientX) ? event.clientX : rect.right,
@@ -1383,12 +1423,19 @@
 
   function openLegendPalette(chip, event) {
     if (!paletteController) return;
+    if (paletteController.isOpen() && paletteController.getTrigger() === chip) {
+      paletteController.close(true);
+      return;
+    }
     const index = Number(chip.dataset.ledgerLegendIndex); const rect = chip.getBoundingClientRect();
     paletteController.open(chip,
       event && Number.isFinite(event.clientX) ? event.clientX : rect.left + rect.width / 2,
       event && Number.isFinite(event.clientY) ? event.clientY : rect.bottom, {
         currentColor: legendColors[index] || '', label: T('选择颜色'),
-        pick: (value) => { legendColors[index] = value; saveLegend(); syncLegend(); },
+        pick: (value) => {
+          legendColors[index] = value; saveLegend(); syncLegend();
+          replayClass(chip, 'ledger-legend-updated', 380);
+        },
       });
   }
 
@@ -1436,11 +1483,13 @@
     state.pageCrossfading = true;
     const outgoing = document.createElement('div');
     outgoing.className = 'ledger-flow-outgoing';
+    outgoing.dataset.ledgerViewMode = state.viewMode;
     outgoing.setAttribute('aria-hidden', 'true'); outgoing.toggleAttribute('inert', true);
     outgoing.append(dom.groups.cloneNode(true), dom.empty.cloneNode(true));
     dom.flow.appendChild(outgoing);
     dom.summary.querySelectorAll('[data-ledger-summary-kind]').forEach((card) => {
       const clone = document.createElement('div'); clone.className = 'ledger-summary-outgoing';
+      clone.dataset.ledgerViewMode = state.viewMode;
       clone.setAttribute('aria-hidden', 'true'); clone.toggleAttribute('inert', true);
       Array.from(card.children).forEach((child) => clone.appendChild(child.cloneNode(true)));
       card.appendChild(clone);
@@ -1543,12 +1592,18 @@
       if (event.target.closest('[data-ledger-add]')) { createDraft(); return; }
       const open = event.target.closest('[data-ledger-entry-open]');
       if (open) {
-        const row = open.closest('[data-ledger-entry]'); openSettings(row.dataset.ledgerEntry, open); return;
+        const row = open.closest('[data-ledger-entry]');
+        if (state.settings && state.settings.id === row.dataset.ledgerEntry) {
+          closeSettings(state.settingsTrigger === open); return;
+        }
+        openSettings(row.dataset.ledgerEntry, open); return;
       }
       const menu = event.target.closest('[data-ledger-entry-menu]');
       if (menu) {
         event.stopPropagation(); const row = menu.closest('[data-ledger-entry]');
-        if (state.settings && state.settings.id === row.dataset.ledgerEntry) closeSettings(true);
+        if (state.settings && state.settings.id === row.dataset.ledgerEntry) {
+          closeSettings(state.settingsTrigger === menu);
+        }
         else openSettings(row.dataset.ledgerEntry, menu);
       }
     });
