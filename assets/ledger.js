@@ -36,6 +36,7 @@
     settingsPositionFrame: 0, deleteTimer: 0,
     unitPopover: null, unitTrigger: null, unitSaving: false,
     highlightId: '', entranceTimer: 0,
+    entranceExitFrozen: false, entranceExitAnimations: [],
     monthMotionTimer: 0, mutationSeq: new Map(), mutationChains: new Map(),
     pendingMutations: 0, needsReload: false, reloadPromise: null,
     pageRailOver: false, pageRailVisible: false, pageWheelAccum: 0, pageWheelTimer: 0,
@@ -1647,6 +1648,34 @@
     if (dom.page) dom.page.classList.remove('is-revealing');
   }
 
+  function freezePageEntranceForExit() {
+    window.clearTimeout(state.entranceTimer);
+    state.entranceTimer = 0;
+    if (!dom.page || !dom.page.classList.contains('is-revealing') || state.entranceExitFrozen) return;
+    state.entranceExitFrozen = true;
+    if (typeof dom.page.getAnimations !== 'function') return;
+    try {
+      state.entranceExitAnimations = dom.page.getAnimations({ subtree: true }).filter((animation) => {
+        return animation.playState === 'running' || animation.playState === 'pending';
+      });
+      state.entranceExitAnimations.forEach((animation) => {
+        try { animation.pause(); } catch (error) {}
+      });
+    } catch (error) {
+      state.entranceExitAnimations = [];
+    }
+  }
+
+  function finalizePageEntranceExit(force) {
+    if (!state.entranceExitFrozen || (!force && state.active)) return;
+    state.entranceExitAnimations.forEach((animation) => {
+      try { animation.cancel(); } catch (error) {}
+    });
+    state.entranceExitAnimations = [];
+    state.entranceExitFrozen = false;
+    stopPageEntrance();
+  }
+
   // 首屏空闲时预取整本账本：用户第一次翻进记账视图直接消费内存快照。
   function warmup() {
     if (state.ledger || state.warmupPromise) return state.warmupPromise;
@@ -1704,6 +1733,7 @@
   warmup();
   window.CanvasLedger = {
     activate() {
+      finalizePageEntranceExit(true);
       state.active = true;
       // 保险清理：切页交接若被离页/重入打断，不能残留透明度、位移或入场动画。
       clearPageSwitchMotion();
@@ -1720,17 +1750,14 @@
     },
     deactivate() {
       state.active = false;
+      freezePageEntranceForExit();
       resetFlowHeightFloor();
-      if (dom.page) {
-        dom.page.classList.remove('is-revealing');
-      }
       setPageRailVisible(false);
-      stopPageEntrance();
       discardDraft({ instant: true }); cancelMainRequest(); closeSettings(false, true);
       closeUnitSettings(false, true);
       if (paletteController) paletteController.close(false, true);
     },
-    finalizeExitMotion() { if (!state.active) stopPageEntrance(); },
+    finalizeExitMotion() { finalizePageEntranceExit(false); },
     warmup,
     getMonth() { return { year: state.year, month: state.month }; },
   };
