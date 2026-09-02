@@ -4258,13 +4258,13 @@
     drag.startPoint = routeScenePoint(drag.x, drag.y);
     if (layoutFrame) cancelAnimationFrame(layoutFrame);
     layoutFrame = 0;
-    drag.baseTree = {
+    drag.baseTree = preserveTreeExtensions(state.tree, {
       version: 2, id: state.tree.id, title: state.tree.title,
       nodes: state.tree.nodes.map(function (node) { return Object.assign({}, node); }),
       links: (state.tree.links || []).map(function (link) {
         return Object.assign({}, link, link.trigger ? { trigger: Object.assign({}, link.trigger) } : {});
       }),
-    };
+    });
     drag.baseLayout = Object.assign({}, layout, {
       nodes: layout.nodes.map(function (placement) { return Object.assign({}, visualPlacements.get(placement.id) || placement); }),
     });
