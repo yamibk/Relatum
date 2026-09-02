@@ -308,6 +308,9 @@ assert(visualPortsSource.includes('Math.min(24, Math.max(0, placement.height * .
   && functionSource(tree, 'positionDraggedSubtree').includes("edge.type === 'visual'")
   && functionSource(tree, 'positionDraggedSubtree').includes('visualEdgePath(from, to, edge)'),
   'visual-only ports must be stable, bounded away from center, and follow structural dragging');
+assert(functionSource(tree, 'activateDrag').includes('drag.baseTree = preserveTreeExtensions(state.tree, {')
+  && functionSource(tree, 'finishDrag').includes('preserveTreeExtensions(current.baseTree,'),
+  'structural drag previews and rollback must retain Tree-page visual links and other extensions');
 assert(functionSource(tree, 'animateLayout').includes('if (!geometryChanged')
   && functionSource(route, 'animateLayout').includes('if (!geometryChanged'),
   'unchanged geometry must not run a full FLIP animation on every data-only update');
