@@ -4367,6 +4367,9 @@ body.start-page[data-start-page-activity-stats-visible="0"] .cadence-stat-addon 
   line-height: 1.12;
   color: var(--text);
 }
+.study-list-page-note:empty::before {
+  content: "\200b";
+}
 .study-list-count {
   color: var(--text-tertiary);
   font-size: 15px;

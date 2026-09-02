@@ -1922,16 +1922,16 @@
       + (tasks.length ? '<span class="study-list-count">' + tasks.length + '</span>' : '');
     if (group.add) {
       var pageNote = currentTaskPageNote();
-      if (pageNote) {
-        var pageNoteEl = document.createElement('span');
-        pageNoteEl.className = 'study-task-page-note study-list-page-note';
-        pageNoteEl.textContent = pageNote;
-        pageNoteEl.addEventListener('dblclick', function (event) {
-          event.stopPropagation();
-          beginTaskPageNoteEdit(event, pageNoteEl);
-        });
-        head.appendChild(pageNoteEl);
-      }
+      var pageNoteEl = document.createElement('span');
+      pageNoteEl.className = 'study-task-page-note study-list-page-note';
+      pageNoteEl.textContent = pageNote;
+      pageNoteEl.classList.toggle('has-note', !!pageNote);
+      setStudyAriaLabel(pageNoteEl, '学习任务页说明');
+      pageNoteEl.addEventListener('dblclick', function (event) {
+        event.stopPropagation();
+        beginTaskPageNoteEdit(event, pageNoteEl);
+      });
+      head.appendChild(pageNoteEl);
       var actions = document.createElement('div');
       actions.className = 'study-list-actions';
       var treeBtn = document.createElement('button');
