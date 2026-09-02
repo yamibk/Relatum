@@ -194,6 +194,49 @@ assert(functionSource(tree, 'consumePendingViewReset').includes('resetViewPendin
   'referenceDrag', 'referencePreview', 'referenceElements', 'tree-page-reference',
 ].forEach((needle) => assert(!tree.includes(needle), 'removed Alt-reference feature leaked into tree runtime: ' + needle));
 assert(!css.includes('.tree-page-reference'), 'removed Alt-reference styles must not remain');
+[
+  'function activeVisualLinks()', 'function visualLinkRelation(', 'function beginVisualLinkDrag(',
+  'function updateVisualLinkPreview(', 'function finishVisualLinkDrag(', 'function setVisualLinkOptimistic(',
+  "command: 'set-visual-link'", 'setVisualLinkOptimistic(current.sourceId, targetId, !removing)',
+  "event.button === 2", 'Math.hypot(', '<= 6',
+  'visualLinkEndedAt < 260', "window.addEventListener('pointercancel', onVisualLinkCancel, true)",
+  "window.addEventListener('mouseup', onVisualLinkMouseUp, true)",
+].forEach((needle) => assert(tree.includes(needle), 'missing visual-link gesture contract: ' + needle));
+assert(functionSource(tree, 'setVisualLinkOptimistic').includes('applyVisualLinkLocally(fromNodeId, toNodeId, active)')
+  && functionSource(tree, 'setVisualLinkOptimistic').includes('{ skipRender: true }')
+  && functionSource(tree, 'applyVisualLinkLocally').includes('animateLayout: false'),
+  'visual-link add/remove must render optimistically and reconcile without a second visible render');
+const visualPointerStart = tree.indexOf("nodesHost.addEventListener('pointerdown', function (event)");
+const visualPointerEnd = tree.indexOf('function routeScenePoint', visualPointerStart);
+const visualPointerSource = tree.slice(visualPointerStart, visualPointerEnd);
+const visualRightButtonSource = visualPointerSource.slice(0, visualPointerSource.indexOf('if (event.button !== 0'));
+assert(visualPointerSource.includes('}, true);')
+  && !visualRightButtonSource.includes("event.target.closest('button')")
+  && tree.includes("if (actionControl.getAttribute('aria-disabled') === 'true') return;")
+  && tree.includes("aria-disabled=\"true\" tabindex=\"-1\""),
+  'right-button visual dragging must cover card controls while logically disabled controls remain inert');
+assert(functionSource(tree, 'visualLinkRelation').includes('link.from === targetId && link.to === sourceId')
+  && functionSource(tree, 'visualLinkRelation').includes('(state.tree.links || [])')
+  && functionSource(tree, 'visualLinkRelation').includes('removing: true'),
+  'visual links must toggle only in their original direction and reject route or reverse conflicts');
+assert(functionSource(tree, 'finishVisualLinkDrag').includes('if (cancelled || !targetId)')
+  && functionSource(tree, 'finishVisualLinkDrag').includes("document.body.classList.remove('tree-page-visual-linking')"),
+  'invalid and interrupted visual drags must clean up without writing');
+assert(functionSource(tree, 'switchTree').includes('finishVisualLinkDrag(true)')
+  && functionSource(tree, 'applyRailWheelTree').includes('finishVisualLinkDrag(true)')
+  && functionSource(tree, 'closeRoute').includes('finishVisualLinkDrag(true)'),
+  'tree switching and page exit must cancel a pending visual-link drag');
+assert(!tree.includes('visualLinkCommandQueue') && !route.includes('visualLinks') && !route.includes('set-visual-link'),
+  'visual links must use the existing command chain and stay out of the shared route runtime');
+assert(css.includes('.study-route-edge.is-visual')
+  && css.includes('#tree-page-visual-arrow path')
+  && css.includes('.study-route-node[data-node-id].is-visual-link-target')
+  && css.includes('.study-route-node[data-node-id].is-visual-unlink-target')
+  && css.includes('.tree-page-shape-diamond.is-visual-link-target')
+  && css.includes('.study-route-edge.is-visual.is-link-preview.is-removing'),
+  'visual links need route-colored, target, and removal feedback in the Tree page');
+assert(tree.includes('右键拖到另一张卡片') && tree.includes('视觉关系只用于说明，不参与解锁、进度或排版'),
+  'the existing four-page help must explain visual-link creation, removal, and semantics');
 assert(tree.includes("window.addEventListener('mouseup', onDragMouseUp, true)"),
   'task drag must capture on pointerdown and keep a mouseup fallback');
 const renderRailSource = functionSource(tree, 'renderRail');
@@ -225,8 +268,8 @@ assert(previewRailWheelSource.includes("orb.style.transform = 'translate3d(0,' +
 assert(!functionSource(tree, 'activateDrag').includes('setPointerCapture'),
   'task drag activation must not recapture the pointer after movement has begun');
 const gestureCancelSource = functionSource(tree, 'cancelActivePointerGestures');
-assert(gestureCancelSource.includes('finishDrag(true)'),
-  'window blur and backgrounding must cancel task dragging');
+assert(gestureCancelSource.includes('finishDrag(true)') && gestureCancelSource.includes('finishVisualLinkDrag(true)'),
+  'window blur and backgrounding must cancel task and visual-link dragging');
 const treeDataSource = functionSource(tree, 'ensureTreePageData');
 assert(treeDataSource.indexOf('if (studyPrefetchPromise) return studyPrefetchPromise')
   < treeDataSource.indexOf("api('/api/tree-page')"),
@@ -252,6 +295,19 @@ assert(tree.includes('var nodeSizeCache = new Map()')
   && renderSource.includes('model: model, sizes: nodeSizeCache')
   && renderSource.includes('var next = sizesChanged ? GoalTree.layout'),
   'Tree renders must reuse one model and cached DOM geometry until a node size changes');
+const visualLayoutSource = functionSource(tree, 'appendVisualEdges');
+const visualPortsSource = functionSource(tree, 'assignVisualPortOffsets');
+assert(renderSource.indexOf('GoalTree.layout') < renderSource.indexOf('appendVisualEdges(next)')
+  && visualLayoutSource.includes('activeVisualLinks()')
+  && visualLayoutSource.includes("type: 'visual'")
+  && visualLayoutSource.includes('placements.has(link.from) && placements.has(link.to)'),
+  'visual links must be appended after shared layout and disappear while an endpoint is folded');
+assert(visualPortsSource.includes('Math.min(24, Math.max(0, placement.height * .25))')
+  && visualPortsSource.includes('other && other.y > placement.y ? 1 : -1')
+  && visualPortsSource.includes('Math.abs(offset) < 6')
+  && functionSource(tree, 'positionDraggedSubtree').includes("edge.type === 'visual'")
+  && functionSource(tree, 'positionDraggedSubtree').includes('visualEdgePath(from, to, edge)'),
+  'visual-only ports must be stable, bounded away from center, and follow structural dragging');
 assert(functionSource(tree, 'animateLayout').includes('if (!geometryChanged')
   && functionSource(route, 'animateLayout').includes('if (!geometryChanged'),
   'unchanged geometry must not run a full FLIP animation on every data-only update');

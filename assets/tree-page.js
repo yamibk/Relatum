@@ -24,7 +24,7 @@
   var guideReturnTrigger = null;
   var stageEl = overlay.querySelector('.study-route-stage');
   var T = function (value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; };
-  var state = { tasks: [], tree: { version: 2, title: '树 1', nodes: [], links: [] }, trees: [], activeTreeId: '' };
+  var state = { tasks: [], tree: { version: 2, title: '树 1', nodes: [], links: [], visualLinks: [] }, trees: [], activeTreeId: '' };
   var open = false, busy = false, layout = null, confirmAction = null;
   var resetViewPending = false;
   var progressCommandQueue = [], progressCommandContext = null;
@@ -42,6 +42,7 @@
   var viewTarget = Object.assign({}, view), viewTickAt = 0;
   var viewportSize = { width: 0, height: 0 };
   var pan = null, drag = null, dragEndedAt = 0, pointerDownInPopover = false;
+  var visualLinkDrag = null, visualLinkEndedAt = -Infinity, visualLinkPreviewPath = null;
   var collapseMotion = null;
   var nodeElements = new Map(), edgeElements = new Map(), visualPlacements = new Map();
   var freeItemElements = new Map();
@@ -54,7 +55,7 @@
   // DOM 尺寸只在节点内容或响应式样式真正变化时更新。普通进度点击可直接
   // 复用上次几何，避免每次都用两轮完整树模型和布局来确认相同尺寸。
   var nodeSizeCache = new Map();
-  var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, rootTitleSizeFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0;
+  var layoutFrame = 0, summaryFrame = 0, rootProgressFrame = 0, rootTitleSizeFrame = 0, viewFrame = 0, panInertiaFrame = 0, dragFrame = 0, visualLinkFrame = 0;
   var dropSlot = null, reparentBadge = null, viewSaveTimer = 0;
   var GOAL_TREE_ROUTE_VIEW_KEY = 'relatum.tree-page.view';
   var TREE_MODEL_OPTIONS = { allowBlankTitle: true };
@@ -123,6 +124,10 @@
   function activeFreeItems() {
     if (!Array.isArray(state.tree.freeItems)) state.tree.freeItems = [];
     return state.tree.freeItems;
+  }
+  function activeVisualLinks() {
+    if (!Array.isArray(state.tree.visualLinks)) state.tree.visualLinks = [];
+    return state.tree.visualLinks;
   }
   function findFreeItem(itemId) {
     return activeFreeItems().find(function (item) { return item.id === itemId; }) || null;
@@ -676,7 +681,7 @@
     var trees = Array.isArray(json.goalTrees) ? json.goalTrees : [];
     replaceTreeListPreservingPendingFreeItems(trees);
     state.activeTreeId = json.activeTreeId || (trees.length ? trees[0].id : '');
-    state.tree = activeTree(state.trees, state.activeTreeId) || { version: 2, title: '树 1', nodes: [], links: [], freeItems: [] };
+    state.tree = activeTree(state.trees, state.activeTreeId) || { version: 2, title: '树 1', nodes: [], links: [], freeItems: [], visualLinks: [] };
     nextTaskIndex = 0;
   }
   function applyTreeSnapshot(json, expectedTreeId) {
@@ -875,6 +880,7 @@
     if (!open) return false;
     var target = state.trees.find(function (tree) { return tree.id === treeId; });
     if (!target) return false;
+    if (visualLinkDrag) finishVisualLinkDrag(true);
     state.activeTreeId = treeId;
     state.tree = target;
     var restored = restoreView(treeId);
@@ -1193,6 +1199,77 @@
     var middle = x1 + (x2 - x1) * .48;
     return 'M' + x1 + ',' + y1 + ' C' + middle + ',' + y1 + ' ' + middle + ',' + y2 + ' ' + x2 + ',' + y2;
   }
+  function visualLinkKey(link) {
+    return 'visual|' + String(link.from || '') + '>' + String(link.to || '');
+  }
+  function visualEdgePath(from, to, edge) {
+    var fromSide = edge && edge.fromSide;
+    var toSide = edge && edge.toSide;
+    if (!fromSide || !toSide) {
+      var reverse = to.x + to.width / 2 < from.x + from.width / 2;
+      fromSide = reverse ? 'left' : 'right';
+      toSide = reverse ? 'right' : 'left';
+    }
+    var x1 = fromSide === 'left' ? from.x : from.x + from.width;
+    var x2 = toSide === 'right' ? to.x + to.width : to.x;
+    var y1 = from.y + Number(edge && edge.fromPortOffset || 0);
+    var y2 = to.y + Number(edge && edge.toPortOffset || 0);
+    var middle = x1 + (x2 - x1) * .48;
+    return 'M' + x1 + ',' + y1 + ' C' + middle + ',' + y1 + ' ' + middle + ',' + y2 + ' ' + x2 + ',' + y2;
+  }
+  function assignVisualPortOffsets(groups, placements, endpointKey, otherKey, property) {
+    groups.forEach(function (edges, groupKey) {
+      var nodeId = groupKey.slice(0, groupKey.lastIndexOf('|'));
+      var placement = placements.get(nodeId);
+      if (!placement || !edges.length) return;
+      edges.sort(function (a, b) {
+        var aOther = placements.get(a[otherKey]), bOther = placements.get(b[otherKey]);
+        var ay = aOther ? aOther.y : 0, by = bOther ? bOther.y : 0;
+        return ay - by || visualLinkKey(a).localeCompare(visualLinkKey(b));
+      });
+      var range = Math.min(24, Math.max(0, placement.height * .25));
+      if (edges.length === 1) {
+        var other = placements.get(edges[0][otherKey]);
+        var direction = other && other.y > placement.y ? 1 : -1;
+        edges[0][property] = direction * Math.min(12, range);
+        return;
+      }
+      edges.forEach(function (edge, index) {
+        var unit = ((index + 1) / (edges.length + 1)) * 2 - 1;
+        var offset = unit * range;
+        if (Math.abs(offset) < 6) offset = (index < (edges.length - 1) / 2 ? -1 : 1) * Math.min(6, range);
+        edge[property] = offset;
+      });
+    });
+  }
+  function appendVisualEdges(next) {
+    var placements = new Map((next.nodes || []).map(function (placement) { return [placement.id, placement]; }));
+    var visualEdges = activeVisualLinks().filter(function (link) {
+      return placements.has(link.from) && placements.has(link.to);
+    }).map(function (link) {
+      var from = placements.get(link.from), to = placements.get(link.to);
+      var reverse = to.x + to.width / 2 < from.x + from.width / 2;
+      return {
+        id: visualLinkKey(link), from: link.from, to: link.to,
+        type: 'visual', primary: false,
+        fromSide: reverse ? 'left' : 'right', toSide: reverse ? 'right' : 'left',
+        fromPortOffset: 0, toPortOffset: 0,
+      };
+    });
+    var outgoing = new Map(), incoming = new Map();
+    visualEdges.forEach(function (edge) {
+      var outgoingKey = edge.from + '|' + edge.fromSide;
+      var incomingKey = edge.to + '|' + edge.toSide;
+      if (!outgoing.has(outgoingKey)) outgoing.set(outgoingKey, []);
+      if (!incoming.has(incomingKey)) incoming.set(incomingKey, []);
+      outgoing.get(outgoingKey).push(edge);
+      incoming.get(incomingKey).push(edge);
+    });
+    assignVisualPortOffsets(outgoing, placements, 'from', 'to', 'fromPortOffset');
+    assignVisualPortOffsets(incoming, placements, 'to', 'from', 'toPortOffset');
+    next.edges = (next.edges || []).concat(visualEdges);
+    return next;
+  }
   function branchMarkup(placement) {
     var metrics = placement.metrics || { count: 0, progress: 0 };
     var percent = Math.round(metrics.progress * 100);
@@ -1201,7 +1278,7 @@
     var showCollapse = placement.kind === 'branch' || hasChildren;
     var collapse = showCollapse ? '<button type="button" class="study-route-collapse" data-route-action="collapse" aria-expanded="'
       + (hasChildren ? !placement.collapsed : true) + '" aria-label="' + (hasChildren && placement.collapsed ? T('展开阶段') : T('收起阶段')) + '"'
-      + (!hasChildren ? ' disabled aria-disabled="true"' : '') + '><span aria-hidden="true"></span></button>' : '';
+      + (!hasChildren ? ' aria-disabled="true" tabindex="-1"' : '') + '><span aria-hidden="true"></span></button>' : '';
     var hidden = hasChildren && placement.collapsed ? '<em class="study-route-hidden-count">' + placement.hiddenCount + ' ' + T('项已隐藏') + '</em>' : '';
     var rootTreeTitle = String(state.tree.title || '').trim();
     var rootTitle = placement.kind === 'root' && !rootTitleHidden && rootTreeTitle
@@ -1286,8 +1363,8 @@
       ? (done
         ? '<span class="study-route-task-steps is-placeholder" aria-hidden="true"></span>'
         : '<span class="study-route-task-steps"><button type="button" data-route-action="progress" data-delta="-1" aria-label="进度减一"'
-          + (blocked || progress.current <= 0 ? ' disabled' : '') + '>−</button><button type="button" data-route-action="progress" data-delta="1" aria-label="进度加一"'
-          + (blocked || progress.current >= progress.target ? ' disabled' : '') + '>＋</button></span>')
+          + (blocked || progress.current <= 0 ? ' aria-disabled="true" tabindex="-1"' : '') + '>−</button><button type="button" data-route-action="progress" data-delta="1" aria-label="进度加一"'
+          + (blocked || progress.current >= progress.target ? ' aria-disabled="true" tabindex="-1"' : '') + '>＋</button></span>')
       : '';
     var value = progress.target ? progress.current + ' / ' + progress.target : '';
     var width = progress.target
@@ -1307,13 +1384,13 @@
       : '';
     var progressValueMarkup = progress.target
       ? '<button type="button" class="study-route-task-value" data-route-action="settings"'
-        + (lockedByConditions ? ' disabled' : '') + '>' + escapeHtml(value) + '</button>'
+        + (lockedByConditions ? ' aria-disabled="true" tabindex="-1"' : '') + '>' + escapeHtml(value) + '</button>'
       : '';
     var taskLine = progressValueMarkup
       ? '<span class="study-route-task-line">' + progressValueMarkup + '</span>'
       : '';
     return '<button type="button" class="study-route-task-check' + (done ? ' is-done' : '') + (ready ? ' is-ready' : '')
-      + '" data-route-action="complete"' + (blocked ? ' disabled' : '') + ' aria-label="' + (done ? T('恢复为未完成') : T('标记完成')) + '"><span>✓</span></button>'
+      + '" data-route-action="complete"' + (blocked ? ' aria-disabled="true" tabindex="-1"' : '') + ' aria-label="' + (done ? T('恢复为未完成') : T('标记完成')) + '"><span>✓</span></button>'
       + '<div class="study-route-task-main"><strong data-user-content>' + escapeHtml(task.title || T('未命名任务'))
       + '</strong>' + taskLine
       + progressBar + '</div>'
@@ -1505,6 +1582,10 @@
     target.shape = source.shape || 'rounded';
     target.color = source.color || '';
     target.freeItems = Array.isArray(source.freeItems) ? source.freeItems.map(cloneFreeItem) : [];
+    var retainedNodeIds = new Set((target.nodes || []).map(function (node) { return node.id; }));
+    target.visualLinks = Array.isArray(source.visualLinks) ? source.visualLinks.filter(function (link) {
+      return link && retainedNodeIds.has(link.from) && retainedNodeIds.has(link.to);
+    }).map(function (link) { return { from: link.from, to: link.to }; }) : [];
     var shapes = new Map((source.nodes || []).filter(function (node) { return node.kind === 'branch'; })
       .map(function (node) { return [node.id, node.shape || 'rounded']; }));
     (target.nodes || []).forEach(function (node) {
@@ -1520,7 +1601,9 @@
     options = options || {};
     if (!edgesHost.querySelector('#study-route-arrow')) {
       var defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-      defs.innerHTML = '<marker id="study-route-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker>';
+      defs.innerHTML = '<marker id="study-route-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker>'
+        + '<marker id="tree-page-visual-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker>'
+        + '<marker id="tree-page-visual-remove-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker>';
       edgesHost.appendChild(defs);
     }
     var wanted = new Set(next.edges.map(edgeKey));
@@ -1541,7 +1624,8 @@
       }
       path.setAttribute('class', 'study-route-edge is-' + edge.type + (edge.primary ? ' is-primary' : ' is-secondary')
         + (isNewPath && !options.suppressEntrance && !prefersReduced ? ' is-entering' : ''));
-      if (edge.type === 'requires') path.setAttribute('marker-end', 'url(#study-route-arrow)');
+      if (edge.type === 'visual') path.setAttribute('marker-end', 'url(#tree-page-visual-arrow)');
+      else if (edge.type === 'requires') path.setAttribute('marker-end', 'url(#study-route-arrow)');
       else path.removeAttribute('marker-end');
     });
   }
@@ -1556,7 +1640,8 @@
     next.edges.forEach(function (edge) {
       var path = edgeElements.get(edgeKey(edge));
       var from = placements.get(edge.from), to = placements.get(edge.to);
-      if (path && from && to) path.setAttribute('d', edgePath(from, to));
+      if (path && from && to) path.setAttribute('d', edge.type === 'visual'
+        ? visualEdgePath(from, to, edge) : edgePath(from, to));
     });
   }
   function animateLayout(previous, next, duration, excluded, newNodesAtDestination) {
@@ -1845,6 +1930,7 @@
     var next = sizesChanged ? GoalTree.layout(state.tree, state.tasks, {
       model: model, sizes: nodeSizeCache, collapsedIds: collapsedIds,
     }) : first;
+    appendVisualEdges(next);
     layout = next;
     scene.style.width = next.bounds.width + 'px'; scene.style.height = next.bounds.height + 'px';
     edgesHost.setAttribute('viewBox', '0 0 ' + next.bounds.width + ' ' + next.bounds.height);
@@ -2550,6 +2636,7 @@
     options = options || {};
     if (busy) return Promise.reject(new Error(T('请稍候')));
     if (treeId === state.activeTreeId) return Promise.resolve(null);
+    if (visualLinkDrag) finishVisualLinkDrag(true);
     if (editingFreeItemId) commitFreeItemEdit();
     armedFreeItemKind = ''; selectFreeItem('');
     settleViewThenSave();
@@ -3037,7 +3124,7 @@
     },
     {
       title: '箭头、解锁与高级编辑',
-      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
+      body: '<p>只有需要“做完 A 才能做 B”时，才需要关心解锁条件。</p><ul><li>浅灰无箭头线表示“收纳在某阶段”；深色箭头线表示“完成后解锁下一项”。</li><li>虚线是附加条件；有多个条件时，必须全部满足才算解锁。</li><li>从任务或阶段卡片任意位置右键拖到另一张卡片可建立同色视觉关系；按原方向再拖一次即可删除。视觉关系只用于说明，不参与解锁、进度或排版。</li><li>默认只把解锁关系作为路线提示，任务仍可自由完成和修改进度；在起步页齿轮开启“强制按解锁顺序”后，未解锁任务才会被限制。</li><li>如需添加附加解锁条件，请在起步页齿轮中关闭“精简目标树编辑”；这不会修改已有路线。</li></ul>',
     },
   ];
   function renderGuidePage() {
@@ -3103,6 +3190,8 @@
   function finishRouteCloseVisuals() {
     cancelRouteCloseWait();
     if (open) return;
+    if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+    document.body.classList.remove('tree-page-visual-linking');
     nodesHost.innerHTML = '';
     edgesHost.innerHTML = '';
     nodeElements.clear();
@@ -3259,6 +3348,7 @@
   }
   function closeRoute(restoreFocus) {
     if (!open) return;
+    if (visualLinkDrag) finishVisualLinkDrag(true);
     if (editingFreeItemId) commitFreeItemEdit();
     armedFreeItemKind = ''; selectFreeItem('');
     cancelFreeItemPointerGestures();
@@ -3654,6 +3744,7 @@
     var actionControl = event.target.closest('[data-route-action]');
     if (actionControl) {
       event.preventDefault(); event.stopPropagation();
+      if (actionControl.getAttribute('aria-disabled') === 'true') return;
       var action = actionControl.dataset.routeAction;
       if (action === 'close') return closeRoute();
       if (action === 'fit') return fit();
@@ -3834,6 +3925,8 @@
   nodesHost.addEventListener('contextmenu', function (event) {
     event.preventDefault();
     event.stopPropagation();
+    if ((visualLinkDrag && visualLinkDrag.active) || performance.now() - visualLinkEndedAt < 260) return;
+    if (visualLinkDrag) finishVisualLinkDrag(true);
     var anchor = event.target.closest('.study-route-node');
     if (!anchor) { closePopover(false); return; }
     if (anchor.dataset.kind === 'milestone') { closePopover(false); return; }
@@ -3847,6 +3940,11 @@
   });
   nodesHost.addEventListener('pointerdown', function (event) {
     var anchor = event.target.closest('.study-route-node');
+    if (event.button === 2) {
+      if (busy || drag || visualLinkDrag || !anchor || !['task', 'branch'].includes(anchor.dataset.kind)) return;
+      beginVisualLinkDrag(anchor, event);
+      return;
+    }
     if (event.button !== 0 || drag || !anchor || anchor.dataset.kind === 'milestone' || event.target.closest('button')) return;
     if (anchor.dataset.kind === 'root') return;
     drag = {
@@ -3861,13 +3959,239 @@
     window.addEventListener('mouseup', onDragMouseUp, true);
     anchor.addEventListener('lostpointercapture', onDragLostCapture);
     try { anchor.setPointerCapture(event.pointerId); } catch (error) {}
-  });
+  }, true);
   function routeScenePoint(clientX, clientY) {
     var rect = viewport.getBoundingClientRect(), zoom = Math.max(.001, view.zoom);
     return { x: (clientX - rect.left - view.x) / zoom, y: (clientY - rect.top - view.y) / zoom };
   }
+  function visualLinkRelation(sourceId, targetId) {
+    var exact = activeVisualLinks().find(function (link) {
+      return link.from === sourceId && link.to === targetId;
+    });
+    if (exact) return { valid: true, removing: true };
+    var reverse = activeVisualLinks().some(function (link) {
+      return link.from === targetId && link.to === sourceId;
+    });
+    var routeConflict = (state.tree.links || []).some(function (link) {
+      return link.from && ((link.from === sourceId && link.to === targetId)
+        || (link.from === targetId && link.to === sourceId));
+    });
+    return { valid: !reverse && !routeConflict, removing: false };
+  }
+  function visualLinkHitId(clientX, clientY) {
+    if (typeof document.elementsFromPoint !== 'function') return '';
+    var hits = document.elementsFromPoint(clientX, clientY);
+    for (var index = 0; index < hits.length; index += 1) {
+      var element = hits[index] && hits[index].closest ? hits[index].closest('.study-route-node') : null;
+      if (!element || !nodesHost.contains(element) || !['task', 'branch'].includes(element.dataset.kind)) continue;
+      if (visualLinkDrag && element.dataset.nodeId === visualLinkDrag.sourceId) continue;
+      return element.dataset.nodeId || '';
+    }
+    return '';
+  }
+  function visualLinkPlacement(nodeId) {
+    return visualPlacements.get(nodeId)
+      || (layout && layout.nodes || []).find(function (placement) { return placement.id === nodeId; }) || null;
+  }
+  function ensureVisualLinkPreview() {
+    if (visualLinkPreviewPath && visualLinkPreviewPath.isConnected) return visualLinkPreviewPath;
+    visualLinkPreviewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    visualLinkPreviewPath.setAttribute('class', 'study-route-edge is-visual is-link-preview');
+    visualLinkPreviewPath.setAttribute('marker-end', 'url(#tree-page-visual-arrow)');
+    visualLinkPreviewPath.setAttribute('aria-hidden', 'true');
+    edgesHost.appendChild(visualLinkPreviewPath);
+    return visualLinkPreviewPath;
+  }
+  function clearVisualLinkTarget() {
+    if (!visualLinkDrag || !visualLinkDrag.targetElement) return;
+    visualLinkDrag.targetElement.classList.remove('is-visual-link-target', 'is-visual-unlink-target');
+    visualLinkDrag.targetElement = null;
+  }
+  function updateVisualLinkPreview(clientX, clientY) {
+    if (!visualLinkDrag || !visualLinkDrag.active) return;
+    var source = visualLinkPlacement(visualLinkDrag.sourceId);
+    if (!source) return;
+    var targetId = visualLinkHitId(clientX, clientY);
+    var relation = targetId ? visualLinkRelation(visualLinkDrag.sourceId, targetId) : { valid: false, removing: false };
+    var targetElement = targetId && nodeElements.get(targetId);
+    if (visualLinkDrag.targetElement !== targetElement) clearVisualLinkTarget();
+    if (targetElement && relation.valid) {
+      targetElement.classList.add(relation.removing ? 'is-visual-unlink-target' : 'is-visual-link-target');
+      visualLinkDrag.targetElement = targetElement;
+    }
+    visualLinkDrag.targetId = relation.valid ? targetId : '';
+    visualLinkDrag.removing = !!(relation.valid && relation.removing);
+
+    var target = relation.valid && targetId ? visualLinkPlacement(targetId) : null;
+    var point = routeScenePoint(clientX, clientY);
+    var endpoint = target || { x: point.x, y: point.y, width: 0, height: 0 };
+    var previewEdge = null;
+    if (target && relation.removing && layout) {
+      previewEdge = layout.edges.find(function (edge) {
+        return edge.type === 'visual' && edge.from === visualLinkDrag.sourceId && edge.to === targetId;
+      }) || null;
+    }
+    if (!previewEdge) {
+      var reverse = endpoint.x + endpoint.width / 2 < source.x + source.width / 2;
+      var delta = endpoint.y - source.y;
+      previewEdge = {
+        fromSide: reverse ? 'left' : 'right', toSide: reverse ? 'right' : 'left',
+        fromPortOffset: (delta > 0 ? 1 : -1) * Math.min(12, Math.max(0, source.height * .25)),
+        toPortOffset: target ? (delta > 0 ? -1 : 1) * Math.min(12, Math.max(0, target.height * .25)) : 0,
+      };
+    }
+    var preview = ensureVisualLinkPreview();
+    preview.classList.toggle('is-removing', visualLinkDrag.removing);
+    preview.classList.toggle('is-invalid', !!targetId && !relation.valid);
+    preview.setAttribute('marker-end', visualLinkDrag.removing
+      ? 'url(#tree-page-visual-remove-arrow)' : 'url(#tree-page-visual-arrow)');
+    preview.setAttribute('d', visualEdgePath(source, endpoint, previewEdge));
+  }
+  function flushVisualLinkFrame(allowAutoPan) {
+    visualLinkFrame = 0;
+    if (!visualLinkDrag || !visualLinkDrag.active) return;
+    var panned = allowAutoPan !== false && autoPanDrag(visualLinkDrag.latestX, visualLinkDrag.latestY);
+    updateVisualLinkPreview(visualLinkDrag.latestX, visualLinkDrag.latestY);
+    if (panned && visualLinkDrag && visualLinkDrag.active) {
+      visualLinkFrame = requestAnimationFrame(function () { flushVisualLinkFrame(true); });
+    }
+  }
+  function activateVisualLinkDrag() {
+    if (!visualLinkDrag || visualLinkDrag.active) return;
+    stopViewAnimation(); stopPanInertia(); closePopover(false);
+    visualLinkDrag.active = true;
+    document.body.classList.add('tree-page-visual-linking');
+    ensureVisualLinkPreview();
+  }
+  function applyVisualLinkLocally(fromNodeId, toNodeId, active) {
+    var links = activeVisualLinks();
+    if (active) {
+      if (!links.some(function (link) { return link.from === fromNodeId && link.to === toNodeId; })) {
+        state.tree.visualLinks = links.concat([{ from: fromNodeId, to: toNodeId }]);
+      }
+    } else {
+      state.tree.visualLinks = links.filter(function (link) {
+        return link.from !== fromNodeId || link.to !== toNodeId;
+      });
+    }
+    syncActiveTreeReference();
+    syncStudyCacheFromState();
+    render({
+      animateLayout: false,
+      suppressEntrance: true,
+      suppressProgressAnimation: true,
+      suppressSummaryAnimation: true,
+    });
+  }
+  function setVisualLinkOptimistic(fromNodeId, toNodeId, active) {
+    var treeId = state.activeTreeId;
+    var requestId = routeRequestId;
+    var rollbackLinks = activeVisualLinks().map(function (link) {
+      return { from: link.from, to: link.to };
+    });
+    applyVisualLinkLocally(fromNodeId, toNodeId, active);
+    return command({
+      command: 'set-visual-link', treeId: treeId,
+      fromNodeId: fromNodeId, toNodeId: toNodeId, active: active,
+    }, { skipRender: true }).catch(function (error) {
+      if (requestId === routeRequestId) {
+        var tree = state.trees.find(function (item) { return item.id === treeId; });
+        if (tree) {
+          tree.visualLinks = rollbackLinks;
+          if (state.activeTreeId === treeId) state.tree = tree;
+          syncStudyCacheFromState();
+          if (open && state.activeTreeId === treeId) render({
+            animateLayout: false,
+            suppressEntrance: true,
+            suppressProgressAnimation: true,
+            suppressSummaryAnimation: true,
+          });
+        }
+      }
+      throw error;
+    });
+  }
+  function onVisualLinkMove(event) {
+    if (!visualLinkDrag || visualLinkDrag.id !== event.pointerId) return;
+    if ((event.buttons & 2) === 0) {
+      visualLinkDrag.latestX = event.clientX; visualLinkDrag.latestY = event.clientY;
+      finishVisualLinkDrag(false);
+      return;
+    }
+    if (!visualLinkDrag.active
+        && Math.hypot(event.clientX - visualLinkDrag.x, event.clientY - visualLinkDrag.y) <= 6) return;
+    if (!visualLinkDrag.active) activateVisualLinkDrag();
+    event.preventDefault();
+    visualLinkDrag.latestX = event.clientX; visualLinkDrag.latestY = event.clientY;
+    if (!visualLinkFrame) visualLinkFrame = requestAnimationFrame(function () { flushVisualLinkFrame(true); });
+  }
+  function finishVisualLinkDrag(cancelled) {
+    if (!visualLinkDrag) return;
+    var current = visualLinkDrag;
+    if (visualLinkFrame) cancelAnimationFrame(visualLinkFrame);
+    visualLinkFrame = 0;
+    if (current.active && Number.isFinite(current.latestX) && Number.isFinite(current.latestY)) {
+      updateVisualLinkPreview(current.latestX, current.latestY);
+    }
+    var targetId = current.targetId;
+    var removing = current.removing;
+    visualLinkDrag = null;
+    window.removeEventListener('pointermove', onVisualLinkMove);
+    window.removeEventListener('pointerup', onVisualLinkEnd, true);
+    window.removeEventListener('pointercancel', onVisualLinkCancel, true);
+    window.removeEventListener('mouseup', onVisualLinkMouseUp, true);
+    current.source.removeEventListener('lostpointercapture', onVisualLinkLostCapture);
+    try {
+      if (current.source.hasPointerCapture(current.id)) current.source.releasePointerCapture(current.id);
+    } catch (error) {}
+    if (current.targetElement) current.targetElement.classList.remove('is-visual-link-target', 'is-visual-unlink-target');
+    document.body.classList.remove('tree-page-visual-linking');
+    if (!current.active) {
+      if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+      return;
+    }
+    visualLinkEndedAt = performance.now();
+    if (cancelled || !targetId) {
+      if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+      return;
+    }
+    setVisualLinkOptimistic(current.sourceId, targetId, !removing).catch(ignoreBusy);
+    if (visualLinkPreviewPath) { visualLinkPreviewPath.remove(); visualLinkPreviewPath = null; }
+  }
+  function onVisualLinkEnd(event) {
+    if (!visualLinkDrag || visualLinkDrag.id !== event.pointerId) return;
+    if (visualLinkDrag.active) event.preventDefault();
+    finishVisualLinkDrag(false);
+  }
+  function onVisualLinkCancel(event) {
+    if (!visualLinkDrag || visualLinkDrag.id !== event.pointerId) return;
+    finishVisualLinkDrag(true);
+  }
+  function onVisualLinkMouseUp(event) {
+    if (!visualLinkDrag || event.button !== 2) return;
+    if (visualLinkDrag.active) event.preventDefault();
+    finishVisualLinkDrag(false);
+  }
+  function onVisualLinkLostCapture(event) {
+    if (!visualLinkDrag || visualLinkDrag.id !== event.pointerId) return;
+    finishVisualLinkDrag(true);
+  }
+  function beginVisualLinkDrag(anchor, event) {
+    visualLinkDrag = {
+      id: event.pointerId, source: anchor, sourceId: anchor.dataset.nodeId,
+      x: event.clientX, y: event.clientY, latestX: event.clientX, latestY: event.clientY,
+      active: false, targetId: '', targetElement: null, removing: false,
+    };
+    window.addEventListener('pointermove', onVisualLinkMove, { passive: false });
+    window.addEventListener('pointerup', onVisualLinkEnd, true);
+    window.addEventListener('pointercancel', onVisualLinkCancel, true);
+    window.addEventListener('mouseup', onVisualLinkMouseUp, true);
+    anchor.addEventListener('lostpointercapture', onVisualLinkLostCapture);
+    try { anchor.setPointerCapture(event.pointerId); } catch (error) {}
+  }
   function cancelActivePointerGestures() {
     if (drag) finishDrag(true);
+    if (visualLinkDrag) finishVisualLinkDrag(true);
     cancelFreeItemPointerGestures();
     if (pan) {
       try { viewport.releasePointerCapture(pan.id); } catch (error) {}
@@ -3985,7 +4309,8 @@
     drag.affectedEdges.forEach(function (edge) {
       var path = edgeElements.get(edgeKey(edge));
       var from = drag.livePlacements.get(edge.from), to = drag.livePlacements.get(edge.to);
-      if (path && from && to) path.setAttribute('d', edgePath(from, to));
+      if (path && from && to) path.setAttribute('d', edge.type === 'visual'
+        ? visualEdgePath(from, to, edge) : edgePath(from, to));
     });
   }
   function updateDragCandidate(clientX, clientY) {

@@ -69,6 +69,7 @@ class TreePageTests(unittest.TestCase):
         self.assertEqual(len(self.data["goalTrees"]), 1)
         self.assertEqual(self.data["activeTreeId"], "goal_default")
         self.assertEqual(self.active_tree()["freeItems"], [])
+        self.assertEqual(self.active_tree()["visualLinks"], [])
         self.assertEqual(app.load_tree_page()["activeTreeId"], self.data["activeTreeId"])
         self.assertFalse(app.TREE_PAGE_FILE.exists())
         self.task("第一项")
@@ -76,11 +77,13 @@ class TreePageTests(unittest.TestCase):
         self.assertTrue(app.TREE_PAGE_FILE.exists())
         self.assertEqual(app.load_tree_page(), saved)
 
-    def test_old_v2_without_free_items_normalizes_to_an_empty_list(self):
+    def test_old_v2_without_optional_tree_extensions_normalizes_to_empty_lists(self):
         legacy = copy.deepcopy(self.data)
         legacy["goalTrees"][0].pop("freeItems", None)
+        legacy["goalTrees"][0].pop("visualLinks", None)
         normalized = app._tree_page_normalize(legacy)
         self.assertEqual(normalized["goalTrees"][0]["freeItems"], [])
+        self.assertEqual(normalized["goalTrees"][0]["visualLinks"], [])
 
     def test_free_items_create_update_delete_and_stay_in_their_tree(self):
         first_tree_id = self.data["activeTreeId"]
@@ -339,6 +342,149 @@ class TreePageTests(unittest.TestCase):
             self.command("move-node", nodeId=first, primaryLink={
                 "from": second, "type": "requires", "trigger": {"kind": "complete"},
             })
+
+    def test_visual_links_are_directional_idempotent_and_semantically_inert(self):
+        first = self.task("高等数学上")["nodeId"]
+        second = self.task("高等数学下")["nodeId"]
+        gate = self.task("正式前置")["nodeId"]
+        target_result = self.task("后续计划")
+        target = target_result["nodeId"]
+        self.command("move-node", nodeId=target, primaryLink={
+            "from": gate, "type": "requires", "trigger": {"kind": "complete"},
+        })
+
+        first_link = self.command(
+            "set-visual-link", fromNodeId=first, toNodeId=target, active=True,
+        )
+        self.assertTrue(first_link["active"])
+        self.command("set-visual-link", fromNodeId=first, toNodeId=target, active=True)
+        self.command("set-visual-link", fromNodeId=second, toNodeId=target, active=True)
+        self.assertEqual(self.active_tree()["visualLinks"], [
+            {"from": first, "to": target},
+            {"from": second, "to": target},
+        ])
+        saved = app.save_tree_page(self.data)
+        self.assertEqual(app.load_tree_page(), saved)
+
+        with self.assertRaisesRegex(RuntimeError, "解锁条件"):
+            self.command(
+                "update-task", taskId=target_result["taskId"], status="done",
+                enforceGoalTreeUnlock=True,
+            )
+        for source_task_id in (
+            next(task["id"] for task in self.data["tasks"] if task["title"] == "高等数学上"),
+            next(task["id"] for task in self.data["tasks"] if task["title"] == "高等数学下"),
+        ):
+            self.command("update-task", taskId=source_task_id, status="done")
+        with self.assertRaisesRegex(RuntimeError, "解锁条件"):
+            self.command(
+                "update-task", taskId=target_result["taskId"], status="done",
+                enforceGoalTreeUnlock=True,
+            )
+        gate_task_id = next(task["id"] for task in self.data["tasks"] if task["title"] == "正式前置")
+        self.command("update-task", taskId=gate_task_id, status="done")
+        self.command(
+            "update-task", taskId=target_result["taskId"], status="done",
+            enforceGoalTreeUnlock=True,
+        )
+
+        self.command("set-visual-link", fromNodeId=first, toNodeId=target, active=False)
+        self.command("set-visual-link", fromNodeId=first, toNodeId=target, active=False)
+        self.assertEqual(self.active_tree()["visualLinks"], [
+            {"from": second, "to": target},
+        ])
+
+    def test_visual_link_validation_rejects_self_reverse_route_overlap_and_bad_state(self):
+        first = self.task("一")["nodeId"]
+        second = self.task("二")["nodeId"]
+        third = self.task("三")["nodeId"]
+        self.command("set-visual-link", fromNodeId=first, toNodeId=second, active=True)
+        with self.assertRaisesRegex(ValueError, "反向"):
+            self.command("set-visual-link", fromNodeId=second, toNodeId=first, active=True)
+        with self.assertRaisesRegex(ValueError, "自身"):
+            self.command("set-visual-link", fromNodeId=first, toNodeId=first, active=True)
+        with self.assertRaisesRegex(ValueError, "状态"):
+            self.command("set-visual-link", fromNodeId=first, toNodeId=third, active=1)
+        with self.assertRaisesRegex((ValueError, KeyError), "节点"):
+            self.command("set-visual-link", fromNodeId=first, toNodeId="missing", active=True)
+
+        self.command("move-node", nodeId=third, primaryLink={
+            "from": second, "type": "requires", "trigger": {"kind": "complete"},
+        })
+        with self.assertRaisesRegex(ValueError, "路线连接"):
+            self.command("set-visual-link", fromNodeId=second, toNodeId=third, active=True)
+
+    def test_visual_links_validate_limits_and_are_cleaned_with_deleted_nodes(self):
+        first = self.task("一")
+        second = self.task("二")
+        third = self.task("三")
+        self.command(
+            "set-visual-link", fromNodeId=first["nodeId"], toNodeId=third["nodeId"], active=True,
+        )
+        self.command(
+            "set-visual-link", fromNodeId=second["nodeId"], toNodeId=third["nodeId"], active=True,
+        )
+        total_links = len(self.active_tree()["links"]) + len(self.active_tree()["visualLinks"])
+        with mock.patch.object(app, "STUDY_GOAL_TREE_LINKS_MAX", total_links):
+            with self.assertRaisesRegex(ValueError, "单棵树"):
+                self.command(
+                    "set-visual-link", fromNodeId=first["nodeId"],
+                    toNodeId=second["nodeId"], active=True,
+                )
+        with mock.patch.object(app, "TREE_PAGE_TOTAL_LINKS_MAX", total_links):
+            with self.assertRaisesRegex(ValueError, "连接总量"):
+                self.command(
+                    "set-visual-link", fromNodeId=first["nodeId"],
+                    toNodeId=second["nodeId"], active=True,
+                )
+        with mock.patch.object(app, "STUDY_GOAL_TREE_LINKS_MAX", total_links - 1):
+            with self.assertRaisesRegex(ValueError, "单棵树"):
+                app._tree_page_normalize(copy.deepcopy(self.data))
+        with mock.patch.object(app, "TREE_PAGE_TOTAL_LINKS_MAX", total_links - 1):
+            with self.assertRaisesRegex(ValueError, "连接总量"):
+                app._tree_page_normalize(copy.deepcopy(self.data))
+
+        self.command("delete-task", taskId=first["taskId"])
+        self.assertEqual(self.active_tree()["visualLinks"], [
+            {"from": second["nodeId"], "to": third["nodeId"]},
+        ])
+        branch = self.branch("阶段")
+        inside = self.task("阶段内", parent=branch)
+        self.command(
+            "set-visual-link", fromNodeId=inside["nodeId"], toNodeId=third["nodeId"], active=True,
+        )
+        self.command("delete-branch", nodeId=branch)
+        self.assertEqual(self.active_tree()["visualLinks"], [
+            {"from": second["nodeId"], "to": third["nodeId"]},
+        ])
+
+    def test_visual_links_survive_moves_and_disappear_with_a_deleted_tree(self):
+        first = self.task("一")
+        second = self.task("二")
+        parent = self.branch("新位置")
+        self.command(
+            "set-visual-link", fromNodeId=first["nodeId"],
+            toNodeId=second["nodeId"], active=True,
+        )
+        self.command("move-node", nodeId=second["nodeId"], primaryLink={
+            "from": parent, "type": "contains",
+        })
+        self.assertEqual(self.active_tree()["visualLinks"], [
+            {"from": first["nodeId"], "to": second["nodeId"]},
+        ])
+
+        created = self.command("create-tree", title="临时树")
+        temporary_tree_id = created["treeId"]
+        source = self.task("临时来源")
+        target = self.task("临时目标")
+        temporary_task_ids = {source["taskId"], target["taskId"]}
+        self.command(
+            "set-visual-link", fromNodeId=source["nodeId"],
+            toNodeId=target["nodeId"], active=True,
+        )
+        self.command("delete-tree", treeId=temporary_tree_id)
+        self.assertNotIn(temporary_tree_id, {tree["id"] for tree in self.data["goalTrees"]})
+        self.assertTrue(temporary_task_ids.isdisjoint({task["id"] for task in self.data["tasks"]}))
 
     def test_removed_reference_commands_are_rejected(self):
         first = self.task("一")["nodeId"]

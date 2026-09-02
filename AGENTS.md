@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-08-28。
+> 最后按源码校准：2026-09-02。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -63,7 +63,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
 | `desktop_instance.py` | Windows 桌面主程序单实例协调；按数据根持有命名互斥锁，通过带认证的本地命名管道转交窗口激活或 `.canvas` 打开请求，并管理 `%TEMP%` 中的短期状态文件。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
-| `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`。脚本保持 ASCII。 |
+| `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`；构建暂存时会把本次选定的 EXE 图标同步为运行时窗口/任务栏/托盘共用的 `assets/app-icon.ico`，避免 Windows 在不同路径显示两套图标。脚本保持 ASCII。 |
 | `build-msix.ps1` | Microsoft Store x64 MSIX 打包；复用便携版产物，生成匹配商店身份的清单与图标，输出 `Relatum-store/*.msixupload`。脚本保持 ASCII。 |
 | `start.ps1`、`打开画布.bat` | 源码模式启动器，查找 Python 并运行 `app.py`。 |
 | `index.html` | 起步页壳，书脊导航、最近画布、树状/学习/速记/日历/复习/专注入口。 |
@@ -104,7 +104,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、自适应数字任务页、每页可选说明、引用式临时任务侧栏、回收站与完成归档；任务数据与总路线共用。进度视图错峰入场中离页或切换右侧数字页时冻结当前帧，当前页整体退场后再清理并替换内容。任务卡片颜色存在任务的 `color` 字段，进度卡/清单行/临时侧栏右键弹出同款 12 色调色盘。 |
 | `assets/study-goal-tree.js`、`assets/study-route.js` | 学习页“目标树”V4 的无 DOM 链接模型与交互层；阶段递归等权汇总整棵主路线后代中的任务，但由该阶段自身完成条件解锁的后续分支会作为阶段边界截断，避免后续任务反向自锁；任务/阶段用 `requires` 解锁后续，多个入站依赖按 AND 判定。主链接驱动双向自由布局和整棵子树拖动，附加依赖不影响排版；还负责阻塞原因、“下一步”定位、阶段折叠和每树独立镜头。阶段右键直接弹调色盘，任务节点右键菜单含“颜色”项，颜色都写任务或阶段节点的 `color` 字段。 |
 | `assets/study-palette.js` | 目标树阶段、学习任务卡片与记账卡片共用的 12 色粉彩色库和浮层控制器（单一事实来源）；`window.RelatumStudyPalette` 提供 `COLORS` 与 `createPopoverController()`，统一 4×3 DOM、定位、焦点恢复和出入场，不写用户内容。 |
-| `assets/tree-page.js` | 起步页独立“树状页”的交互层；直接使用 `study-goal-tree.js` 的目标树模型，并以 `study-route.js` 为运行时母版保留布局、常驻 DOM、FLIP、整枝拖动、相机、编号栏、弹层与教程手感。它只调用树状页独立 API，另加卡片形状与每树自由文本/重点便签层，不读取学习页数据，也不提供接入已有任务。新建重点便签与文本框的正文均为空；便签纸张始终为固定黄色，工具栏 10 个色块只改变文字颜色，无历史偏好时默认选中最右侧黑色。普通文本框的垂直居中由外层 `.decor-content` 承担，可编辑 `.text-box-content` 保持普通块级行盒，不得恢复为空内容时光标与输入后文字使用不同垂直定位的 Flex 编辑容器。文本溢出仍允许滚轮滚动，但隐藏 WebView2 原生滚动条外观。KoseFont 与树状页数据共用现有空闲预载；若首次打开时字体仍未就绪，必须等字体 Promise 完成后才一次性渲染权威数据，不允许先显示备用字体再跳变。对象在首次编辑中开始拖动或缩放时，必须先将创建命令排入独立请求队列，再持久化几何变更。自由对象跟随树状页镜头但不参与自动布局或“适应”边界，文本框需要时才通过 `font-loader.js` 加载 KoseFont。树状页调用共享目标树模型时必须显式启用空根标题；学习页仍保留“我的学习路线”的缺省名，不能用共享规范化再把树状页的空标题回填。任务与黑色根节点的进度条复用学习任务的宽度/颜色缓动、达标材质揭示、有限光流与低动态降级；有量化进度的任务会常驻固定宽度的控制槽和独立完成材质层，手动勾选不改真实数值，而从当前比例揭示到持久 100% 金色完成态，恢复任务后重新露出原进度；未设置量化进度时卡片不显示“设置进度”占位文字。右侧数字栏支持滚轮翻页：编号与滑块即时追随，画面只追最新目标，持久化在后台串行合并。退场期间同方向滚动只替换透明点目标，中间树不渲染；反向或入场中改向则继承当前帧连续转向，最终树保留完整入场，写盘延迟不阻塞动画。关闭后在途写入仍需追到最终目标。重建编号栏时必须先无过渡钉住黑色滑块，不能短暂闪回第 1 页。卡片右键调色盘覆盖卡片内部的文字与按钮子控件，里程碑仍不提供外观菜单。树状页只适配卡片尺寸和独立请求队列。 |
+| `assets/tree-page.js` | 起步页独立“树状页”的交互层；直接使用 `study-goal-tree.js` 的目标树模型，并以 `study-route.js` 为运行时母版保留布局、常驻 DOM、FLIP、整枝拖动、相机、编号栏、弹层与教程手感。它只调用树状页独立 API，另加卡片形状、每树自由文本/重点便签层，以及不进入共享模型和布局的右键拖拽视觉关系线，不读取学习页数据，也不提供接入已有任务。新建重点便签与文本框的正文均为空；便签纸张始终为固定黄色，工具栏 10 个色块只改变文字颜色，无历史偏好时默认选中最右侧黑色。普通文本框的垂直居中由外层 `.decor-content` 承担，可编辑 `.text-box-content` 保持普通块级行盒，不得恢复为空内容时光标与输入后文字使用不同垂直定位的 Flex 编辑容器。文本溢出仍允许滚轮滚动，但隐藏 WebView2 原生滚动条外观。KoseFont 与树状页数据共用现有空闲预载；若首次打开时字体仍未就绪，必须等字体 Promise 完成后才一次性渲染权威数据，不允许先显示备用字体再跳变。对象在首次编辑中开始拖动或缩放时，必须先将创建命令排入独立请求队列，再持久化几何变更。自由对象跟随树状页镜头但不参与自动布局或“适应”边界，文本框需要时才通过 `font-loader.js` 加载 KoseFont。树状页调用共享目标树模型时必须显式启用空根标题；学习页仍保留“我的学习路线”的缺省名，不能用共享规范化再把树状页的空标题回填。任务与黑色根节点的进度条复用学习任务的宽度/颜色缓动、达标材质揭示、有限光流与低动态降级；有量化进度的任务会常驻固定宽度的控制槽和独立完成材质层，手动勾选不改真实数值，而从当前比例揭示到持久 100% 金色完成态，恢复任务后重新露出原进度；未设置量化进度时卡片不显示“设置进度”占位文字。右侧数字栏支持滚轮翻页：编号与滑块即时追随，画面只追最新目标，持久化在后台串行合并。退场期间同方向滚动只替换透明点目标，中间树不渲染；反向或入场中改向则继承当前帧连续转向，最终树保留完整入场，写盘延迟不阻塞动画。关闭后在途写入仍需追到最终目标。重建编号栏时必须先无过渡钉住黑色滑块，不能短暂闪回第 1 页。卡片右键调色盘覆盖卡片内部的文字与按钮子控件，里程碑仍不提供外观菜单。树状页只适配卡片尺寸和独立请求队列。 |
 | `assets/study-graph.js` | 活跃页/学习页星图，可视化学习活动和任务结构。 |
 | `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。 |
@@ -143,7 +143,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 背景偏好、辅助底纹与上传背景 | `data/background.json`（v2：`background` + 可选 `guide`）、`data/backgrounds/` |
 | 画布视口 | `data/viewport.json` |
 | 学习任务 | `data/study.json`（v6）；任务含标题、`active/done` 状态、单位进度、任务点、时间戳与 `taskPage`（1–99，旧 v6 缺失时归入第 1 页）；可选 `color` 保存任务卡片颜色，只允许严格 `#rrggbb`，空串为默认色，缺失时缺省为空串，旧数据无需迁移；可选 `taskPageNotes` 按页码保存非空的单行说明。`temporaryTaskIds[]` 按加入顺序全局引用临时任务侧栏中的未完成任务，完成、回收、归档或悬空引用在规范化时自动清理；`goalTrees[]` 保存多棵 `{version:2,id,title,nodes[],links[]}` 路线，`activeTreeId` 保存当前树。数字任务页只分组显示与排序，临时任务、回收站、活跃统计和目标树继续跨页共享，归档只处理当前页。每个目标树节点恰有一条主链接，附加解锁条件使用非主 `requires`；不再写入 `goalTree` 兼容镜像。v6 不迁移旧学习数据，读到旧版本只报不兼容且不覆盖原文件。 |
-| 独立树状页 | `data/tree-page.json`（v2）；顶层保存独立 `tasks[]`、`goalTrees[]` 与 `activeTreeId`，目标树结构对齐学习目标树 v2，每树另存根外观、可选 `freeItems[]`，阶段/任务可选保存 `shape`。自由对象只接受纯文本 `kind:"textBox"`：普通文本框无 `boxStyle`，重点便签固定 `boxStyle:"emphasis-card"`，两者保存坐标、尺寸、字号和对应颜色。旧 v2 缺少 `freeItems` 时只规范化为 `[]`；每树最多 2000 个、全页最多 6000 个，单条文本最多 2000 字，宽/高安全范围为 `20/8–6000`。根标题允许保存为空字符串，空值在保存、其他树命令规范化、页面重载和共享前端模型构建后都不得被回填。每个任务必须只在一棵树出现一次，不允许跨树共享或成为孤儿；删任务、阶段或树会级联清理其任务和依赖，删树也自然删除该树的自由对象。缺失文件及旧实验 v1 均返回同一个未落盘的稳定空白 v2，首次命令才原子写入；损坏或其他不兼容版本报错且不覆盖。它绝不读取、迁移或同步 `study.json`。 |
+| 独立树状页 | `data/tree-page.json`（v2）；顶层保存独立 `tasks[]`、`goalTrees[]` 与 `activeTreeId`，目标树结构对齐学习目标树 v2，每树另存根外观、可选 `freeItems[]`、纯视觉有向 `visualLinks[]`，阶段/任务可选保存 `shape`。视觉线端点只能是本树阶段/任务，不允许自连、反向重复或与同一对节点的路线/解锁线重叠；它不参与解锁、进度和布局，节点或阶段子树删除时随端点清理。自由对象只接受纯文本 `kind:"textBox"`：普通文本框无 `boxStyle`，重点便签固定 `boxStyle:"emphasis-card"`，两者保存坐标、尺寸、字号和对应颜色。旧 v2 缺少 `freeItems` 或 `visualLinks` 时分别规范化为 `[]`；每树最多 2000 个、全页最多 6000 个，单条文本最多 2000 字，宽/高安全范围为 `20/8–6000`。根标题允许保存为空字符串，空值在保存、其他树命令规范化、页面重载和共享前端模型构建后都不得被回填。每个任务必须只在一棵树出现一次，不允许跨树共享或成为孤儿；删任务、阶段或树会级联清理其任务、依赖和视觉线，删树也自然删除该树的自由对象。缺失文件及旧实验 v1 均返回同一个未落盘的稳定空白 v2，首次命令才原子写入；损坏或其他不兼容版本报错且不覆盖。它绝不读取、迁移或同步 `study.json`。 |
 | 学习归档 | `data/学习归档/`；学习任务使用 `tasks.json`、速记使用 `notes.json`、任务簿完成归档使用单条 `taskbook.json` marker。 |
 | 画布归档轻量记录 | `data/画布归档/` |
 | 速记墙 | `data/notes.json` |
@@ -253,7 +253,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 背景/图片/附件：`/api/pick-background-image`、`/api/upload-background-image`、`/api/import-canvas-image`、`/api/upload-canvas-image`、`/api/upload-canvas-attachment`
 - 批注与视口：`/api/save-canvas-annotation`、`/api/save-node-annotations`、`/api/background-preference`、`/api/viewport`
 - 学习任务：`/api/study-task-create`、`/api/study-task-update`、`/api/study-task-progress`、`/api/study-temporary-update`、`/api/study-task-trash`、`/api/study-task-restore`、`/api/study-task-delete`、`/api/study-trash-empty`、`/api/study-archive-done`、`/api/study-reorder`；临时任务接口接收 `{id,included}` 并只允许加入现存未完成任务；目标树发出的 update/progress 可携带 `goalTreeId`，后端据此拒绝未解锁任务的完成和进度写入，普通学习清单不携带该字段。`/api/study-goal-tree-command` 的节点命令统一接收 `primaryLink`，并提供 `add-requirement` / `remove-requirement` / `clear-primary-requirement` 管理解锁条件。
-- 独立树状页：`/api/tree-page-command`；命令语义对齐 `/api/study-goal-tree-command` 的建树/切树/删树、阶段与任务创建更新、进度/完成/任务点、折叠和结构/依赖移动，另有永久 `delete-task` 及根/阶段/任务外观。明确拒绝 `attach-task` / `detach-task`，每个任务必须唯一归属；删除任务、阶段或树级联清理任务记录和依赖。后端继续执行目标树的 ID、链接、循环、任务点、层数和数量校验。
+- 独立树状页：`/api/tree-page-command`；命令语义对齐 `/api/study-goal-tree-command` 的建树/切树/删树、阶段与任务创建更新、进度/完成/任务点、折叠和结构/依赖移动，另有永久 `delete-task`、根/阶段/任务外观及幂等 `set-visual-link`。明确拒绝 `attach-task` / `detach-task`，每个任务必须唯一归属；删除任务、阶段或树级联清理任务记录、依赖和视觉线。后端继续执行目标树的 ID、链接、循环、任务点、层数和数量校验。
 - 跨功能：`/api/archive-canvas`、`/api/taskbook-archive`
 - 复习：`/api/review-card-create`、`/api/review-card-update`、`/api/review-card-delete`、`/api/review-cards-batch`、`/api/review-cards-batch-delete`、`/api/review-deck-create`、`/api/review-deck-update`、`/api/review-deck-delete`、`/api/review-settings`、`/api/review-mark`
 - 速记、跨页便签和模板：`/api/notes-save`、`/api/notes-archive`、`/api/start-sticky-notes-save`、`/api/templates-save`
@@ -474,10 +474,10 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 添加菜单中的“新建阶段 / 新建任务 / 新建后续……”都是单击直接创建，不再弹出取名表单；新节点名称为当前界面语言的“未命名 / Untitled”，新任务默认进度为 `0 / 1`，之后仍通过改名和设置进度修改。
 - 已设置量化目标的任务在右键菜单中额外显示“取消进度条”；点击后通过现有任务更新命令把进度规范化为 `current:0 / target:0 / milestones:[]`，立即隐藏量化进度控件，保存失败时回滚，不删除任务或树结构。未设置量化目标的任务不显示该入口。
 - “设置进度”只校验当前值与目标值是否都是 `0–9999` 的整数；保存时若目标总量小于当前进度，前端自动把当前进度夹到目标值（例如 `6/10 → 4/4`），不再弹出大小关系警告。任务点仍随新目标范围裁剪。
-- 树状页不绑定 `Alt + 左键` 的额外交互；按住 Alt 不创建引用线，也不写入独立引用数据。
+- 树状页不绑定 `Alt + 左键` 的额外交互；阶段或任务卡片任意区域（包含卡内按钮）右键移动超过 6px 后进入视觉连线，松到合法目标时添加，同方向重复拖拽删除；普通右键单击仍打开外观面板。增删在松手时先乐观同步本地数据和 SVG，再沿现有串行命令链静默保存，失败时才回滚，不能先撤掉预览再等待后端造成闪烁。视觉线与解锁箭头使用同一深色，且只在共享布局完成后按当前可见端点追加；端口轻量错位但不移动节点，也不进入解锁、进度或下一步计算。
 - 树状页场景底部有独立精简工具栏，只含“便签 / 文本框”、10 个文字色块、4 档字号、无确认的空白对象清理入口与上下收展箭头；清理入口只删除正文为空或全部是空白字符的文本框/便签。新建对象既可拖出创建，也可单击进入一次性放置。“便签”是复用画布图案模式的固定黄色折角 `emphasis-card`，新建默认尺寸为 `344 × 283`，色块不改纸张底色，不是任务便签节点。对象可单击选中拖动、双击原位编辑纯文本，选中后使用八向手柄缩放；`Ctrl/Cmd+Enter` 提交、`Esc` 恢复（新建时取消）、`Delete/Backspace` 或对象删除按钮删除。拖动/缩放只在松手时提交一次，文字与格式用约 350ms 串行防抖队列，切树、离页前提交当前编辑并冲刷队列，失败按命令快照回滚。
 - 工具栏折叠与新建默认值分别使用 `tree-page:itemToolbarCollapsed:v1` / `tree-page:itemToolbarDefaults:v1`，不影响画布编辑器。折叠偏好是三态：没有保存过偏好时，当前树没有自由对象则默认收起、有对象则自动展开；用户点过收展箭头后始终尊重该明确选择。没有历史偏好时文本框与便签均默认选中最右侧黑色和第二档字号（34）；旧版便签自动保存的非档位值 21 按未选择处理。未选对象时颜色/字号保存为下次创建的默认值，选中时颜色只修改整个对象的文字；在对象上选择字号也要记住为该类型下次创建时的字号。不要为该栏加回局部富文本、对齐、粗体、高光、旋转、图层、连线或设置面板。
-- 数据修改沿用目标树的服务端命令时序、`busy` 规则及同目录临时文件 + `os.replace` 原子写入；自由对象另用 `create-free-item` / `update-free-item` / `delete-free-item` 和客户端正式 ID 做乐观更新。HTTP 命令处理只在加载后和命令落地后各做一次完整规范化，不能在 `load → apply → save` 链中重复四次扫描同一份树数据；除每棵树自身的 2000 节点 / 6000 连接上限外，独立页全部树合计最多 6000 节点 / 18000 连接，避免多棵满载树把整文件请求放大到数十 MiB。独立树状页的聚合进度命令允许安全范围内的非零整数增量，共享学习页 API 仍只接受 `±1`。验证运行 `python -m unittest tests.test_tree_page`、`node tests/tree-page-model-contract.js`、`node tests/tree-page-ui-contract.js` 和 `node tests/start-tree-page-contract.js`，再回归 `python -m unittest tests.test_study_goal_tree` 与 `node tests/study-goal-tree-contract.js`；完整交付还需运行全部 Python unittest、全部 Node 契约和本地页面的深浅主题/窄窗/滚轮/切树动画实测。
+- 数据修改沿用目标树的服务端命令时序、`busy` 规则及同目录临时文件 + `os.replace` 原子写入；视觉线复用这条链，不增加队列；自由对象另用 `create-free-item` / `update-free-item` / `delete-free-item` 和客户端正式 ID 做乐观更新。HTTP 命令处理只在加载后和命令落地后各做一次完整规范化，不能在 `load → apply → save` 链中重复四次扫描同一份树数据；每棵树的路线/解锁线与视觉线合计受 6000 连接上限约束，独立页全部树合计最多 6000 节点 / 18000 连接，避免多棵满载树把整文件请求放大到数十 MiB。独立树状页的聚合进度命令允许安全范围内的非零整数增量，共享学习页 API 仍只接受 `±1`。验证运行 `python -m unittest tests.test_tree_page`、`node tests/tree-page-model-contract.js`、`node tests/tree-page-ui-contract.js` 和 `node tests/start-tree-page-contract.js`，再回归 `python -m unittest tests.test_study_goal_tree` 与 `node tests/study-goal-tree-contract.js`；完整交付还需运行全部 Python unittest、全部 Node 契约和本地页面的深浅主题/窄窗/滚轮/切树动画实测。
 
 ### 活跃星图 `study-graph.js`
 

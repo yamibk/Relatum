@@ -131,6 +131,8 @@ New-Item -ItemType Directory -Path $BuildRoot | Out-Null
 
 $PackAssets = Join-Path $BuildRoot 'assets'
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'assets') -Destination $PackAssets -Recurse -Force
+# Keep the runtime window/tray icon identical to the icon embedded in Relatum.exe.
+Copy-Item -LiteralPath $Icon -Destination (Join-Path $PackAssets 'app-icon.ico') -Force
 $FontTtf = Join-Path $PackAssets 'fonts\kose-font.ttf'
 if (Test-Path -LiteralPath $FontTtf) { Remove-Item -LiteralPath $FontTtf -Force }  # CSS uses woff2
 $RuntimeConfig = Join-Path $ProjectRoot 'packaging\Relatum.exe.config'
