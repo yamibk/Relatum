@@ -315,6 +315,11 @@
     taskPageNoteEl.classList.remove('is-editing');
     taskPageNoteEl.classList.toggle('has-note', !!note);
   }
+  function renderTaskPageNoteViews() {
+    renderTaskPageNote();
+    if (viewMode === 'list'
+        && !(taskPageNoteEdit && taskPageNoteEdit.page === currentTaskPage)) renderList();
+  }
   function closeTaskPageNoteEdit(cancel) {
     var edit = taskPageNoteEdit;
     if (!edit) return;
@@ -333,19 +338,22 @@
         if (taskPageNoteSeq.get(edit.page) !== seq) return;
         if (json.note) state.taskPageNotes[String(edit.page)] = json.note;
         else delete state.taskPageNotes[String(edit.page)];
-        renderTaskPageNote();
+        renderTaskPageNoteViews();
       }).catch(function (error) {
         if (taskPageNoteSeq.get(edit.page) !== seq) return;
         if (edit.previous) state.taskPageNotes[String(edit.page)] = edit.previous;
         else delete state.taskPageNotes[String(edit.page)];
-        renderTaskPageNote();
+        renderTaskPageNoteViews();
         showToast(error.message);
       });
     }
-    renderTaskPageNote();
+    renderTaskPageNoteViews();
   }
-  function beginTaskPageNoteEdit(event) {
-    if (!taskPageNoteEl || taskPageNoteEdit
+  function beginTaskPageNoteEdit(event, targetEl) {
+    var editEl = targetEl
+      || (event && event.target.closest('.study-task-page-note'))
+      || taskPageNoteEl;
+    if (!editEl || taskPageNoteEdit
         || (event && event.target.closest('h1, button, input'))) return;
     var page = currentTaskPage;
     var previous = currentTaskPageNote();
@@ -355,10 +363,10 @@
     input.maxLength = 240;
     input.value = previous;
     setStudyAriaLabel(input, '学习任务页说明');
-    taskPageNoteEl.textContent = '';
-    taskPageNoteEl.classList.add('is-editing');
-    taskPageNoteEl.appendChild(input);
-    taskPageNoteEdit = { page: page, previous: previous, input: input };
+    editEl.textContent = '';
+    editEl.classList.add('is-editing');
+    editEl.appendChild(input);
+    taskPageNoteEdit = { page: page, previous: previous, input: input, element: editEl };
     input.addEventListener('keydown', function (keyEvent) {
       if (keyEvent.key === 'Enter') {
         keyEvent.preventDefault();
@@ -1913,6 +1921,17 @@
     head.innerHTML = '<h2>' + group.label + '</h2>'
       + (tasks.length ? '<span class="study-list-count">' + tasks.length + '</span>' : '');
     if (group.add) {
+      var pageNote = currentTaskPageNote();
+      if (pageNote) {
+        var pageNoteEl = document.createElement('span');
+        pageNoteEl.className = 'study-task-page-note study-list-page-note';
+        pageNoteEl.textContent = pageNote;
+        pageNoteEl.addEventListener('dblclick', function (event) {
+          event.stopPropagation();
+          beginTaskPageNoteEdit(event, pageNoteEl);
+        });
+        head.appendChild(pageNoteEl);
+      }
       var actions = document.createElement('div');
       actions.className = 'study-list-actions';
       var treeBtn = document.createElement('button');
