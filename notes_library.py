@@ -160,7 +160,9 @@ def _is_reparse(path: Path) -> bool:
 
 
 def _revision(content: bytes) -> str:
-    return "sha256:" + hashlib.sha256(content).hexdigest()
+    # usedforsecurity=False: this hash identifies content revisions for
+    # optimistic-concurrency checks, not for authentication/password storage.
+    return "sha256:" + hashlib.sha256(content, usedforsecurity=False).hexdigest()
 
 
 def _natural_key(name: str) -> tuple:
@@ -650,7 +652,9 @@ class NotesStore:
         }
 
     def _history_bucket(self, relative: str) -> Path:
-        digest = hashlib.sha256(relative.casefold().encode("utf-8")).hexdigest()[:32]
+        digest = hashlib.sha256(
+            relative.casefold().encode("utf-8"), usedforsecurity=False
+        ).hexdigest()[:32]
         return self.recovery_root / digest
 
     def _history_manifest(self, relative: str, *, create: bool = False) -> tuple[Path, dict]:
@@ -1103,7 +1107,7 @@ class NotesStore:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
         if _sniff_image_media_type(content) != expected_type:
             raise NotesError("图片内容与扩展名不一致", status=400, code="invalid_image")
-        digest = hashlib.sha256(content).hexdigest()[:12]
+        digest = hashlib.sha256(content, usedforsecurity=False).hexdigest()[:12]
         safe_stem = re.sub(r"[^\w\-.\u4e00-\u9fff]+", "-", Path(original_name).stem,
                            flags=re.UNICODE).strip("-.") or "image"
         asset_root = note_path.with_name(note_path.stem + ".assets")
