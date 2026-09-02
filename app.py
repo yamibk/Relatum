@@ -6489,12 +6489,47 @@ def _tree_page_client_id(value: object, prefix: str, label: str) -> str:
     return client_id
 
 
+def _tree_page_visual_links(
+    value: object,
+    node_ids: set[str],
+    route_links: list[dict],
+) -> list[dict]:
+    if value is None:
+        value = []
+    if not isinstance(value, list):
+        raise ValueError("视觉连接格式不正确")
+    occupied_pairs = {
+        tuple(sorted((str(link.get("from") or ""), str(link.get("to") or ""))))
+        for link in route_links
+        if link.get("from") and link.get("to")
+    }
+    seen_pairs: set[tuple[str, str]] = set()
+    result: list[dict] = []
+    for raw in value:
+        if not isinstance(raw, dict) or any(key not in {"from", "to"} for key in raw):
+            raise ValueError("视觉连接格式不正确")
+        source_id = _tree_page_stored_id(raw.get("from"), "视觉连接来源")
+        target_id = _tree_page_stored_id(raw.get("to"), "视觉连接目标")
+        if source_id not in node_ids or target_id not in node_ids:
+            raise ValueError("视觉连接端点不存在")
+        if source_id == target_id:
+            raise ValueError("视觉连接不能连接节点自身")
+        pair = tuple(sorted((source_id, target_id)))
+        if pair in occupied_pairs:
+            raise ValueError("这两个节点之间已经存在路线连接")
+        if pair in seen_pairs:
+            raise ValueError("这两个节点之间已经存在视觉连接")
+        seen_pairs.add(pair)
+        result.append({"from": source_id, "to": target_id})
+    return result
+
+
 def _tree_page_fresh() -> dict:
     tree = _study_goal_new_tree("树 1", 0)
     # 文件缺失或旧 v1 被废弃时，GET 不落盘；使用稳定标识，确保随后第一次
     # POST 仍能命中同一棵内存空白树，而不会因每次生成随机 id 被误判为已删除。
     tree["id"] = "goal_default"
-    tree.update({"shape": "rounded", "color": "", "freeItems": []})
+    tree.update({"shape": "rounded", "color": "", "freeItems": [], "visualLinks": []})
     return {
         "version": TREE_PAGE_VERSION,
         "activeTreeId": tree["id"],
@@ -6535,6 +6570,7 @@ def _tree_page_capture_extras(data: dict) -> dict:
                     for node in tree.get("nodes", []) if node.get("kind") == "branch"
                 },
                 "freeItems": [dict(item) for item in tree.get("freeItems", [])],
+                "visualLinks": [dict(link) for link in tree.get("visualLinks", [])],
             }
             for tree in data.get("goalTrees", [])
         },
@@ -6552,6 +6588,16 @@ def _tree_page_restore_extras(data: dict, extras: dict) -> None:
         tree["shape"] = _tree_page_shape(saved.get("shape"))
         tree["color"] = _tree_page_color(saved.get("color"))
         tree["freeItems"] = [dict(item) for item in saved.get("freeItems", [])]
+        node_ids = {str(node.get("id") or "") for node in tree.get("nodes", [])}
+        retained_visual_links = [
+            dict(link) for link in saved.get("visualLinks", [])
+            if isinstance(link, dict)
+            and str(link.get("from") or "") in node_ids
+            and str(link.get("to") or "") in node_ids
+        ]
+        tree["visualLinks"] = _tree_page_visual_links(
+            retained_visual_links, node_ids, tree.get("links", []),
+        )
         node_shapes = saved.get("nodeShapes", {})
         for node in tree.get("nodes", []):
             if node.get("kind") == "branch":
@@ -6600,15 +6646,20 @@ def _tree_page_normalize(data: object) -> dict:
         raw_by_tree[tree_id] = raw_tree
         raw_nodes = raw_tree.get("nodes")
         raw_links = raw_tree.get("links")
+        raw_visual_links = raw_tree.get("visualLinks", [])
         raw_free_items = raw_tree.get("freeItems", [])
         if not isinstance(raw_nodes, list) or not isinstance(raw_links, list):
             raise ValueError("目标树节点或连接格式不正确")
+        if not isinstance(raw_visual_links, list):
+            raise ValueError("视觉连接格式不正确")
         if not isinstance(raw_free_items, list):
             raise ValueError("树状页自由对象格式不正确")
+        if len(raw_links) + len(raw_visual_links) > STUDY_GOAL_TREE_LINKS_MAX:
+            raise ValueError("单棵树的连接数量已达到安全上限")
         if len(raw_free_items) > TREE_PAGE_FREE_ITEMS_MAX:
             raise ValueError("单棵树的自由对象数量已达到安全上限")
         total_nodes += len(raw_nodes)
-        total_links += len(raw_links)
+        total_links += len(raw_links) + len(raw_visual_links)
         total_free_items += len(raw_free_items)
         if total_nodes > TREE_PAGE_TOTAL_NODES_MAX:
             raise ValueError("树状页节点总量已达到安全上限")
@@ -6641,6 +6692,10 @@ def _tree_page_normalize(data: object) -> dict:
         tree["shape"] = _tree_page_shape(raw_tree.get("shape"))
         tree["color"] = _tree_page_color(raw_tree.get("color"))
         tree["freeItems"] = [_tree_page_free_item(item) for item in raw_tree.get("freeItems", [])]
+        node_ids = {str(node.get("id") or "") for node in tree.get("nodes", [])}
+        tree["visualLinks"] = _tree_page_visual_links(
+            raw_tree.get("visualLinks", []), node_ids, tree.get("links", []),
+        )
         raw_nodes = {
             str(node.get("id") or ""): node
             for node in raw_tree.get("nodes", []) if isinstance(node, dict)
@@ -6701,7 +6756,51 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
     result: dict = {"command": command}
     extras = _tree_page_capture_extras(data)
 
-    if command == "create-free-item":
+    if command == "set-visual-link":
+        tree = _tree_page_tree(data, body.get("treeId"))
+        source_id = _tree_page_stored_id(body.get("fromNodeId"), "视觉连接来源")
+        target_id = _tree_page_stored_id(body.get("toNodeId"), "视觉连接目标")
+        source = _study_goal_node(tree, source_id)
+        target = _study_goal_node(tree, target_id)
+        if source_id == target_id:
+            raise ValueError("视觉连接不能连接节点自身")
+        if source.get("kind") not in {"task", "branch"} or target.get("kind") not in {"task", "branch"}:
+            raise ValueError("视觉连接只能连接任务或阶段")
+        active = body.get("active")
+        if not isinstance(active, bool):
+            raise ValueError("视觉连接状态不正确")
+
+        exact = next((
+            link for link in tree.get("visualLinks", [])
+            if link.get("from") == source_id and link.get("to") == target_id
+        ), None)
+        if active and not exact:
+            pair = {source_id, target_id}
+            if any(
+                {str(link.get("from") or ""), str(link.get("to") or "")} == pair
+                for link in tree.get("visualLinks", [])
+            ):
+                raise ValueError("这两个节点之间已经存在反向视觉连接")
+            if any(
+                link.get("from") and {str(link.get("from")), str(link.get("to") or "")} == pair
+                for link in tree.get("links", [])
+            ):
+                raise ValueError("这两个节点之间已经存在路线连接")
+            if len(tree.get("links", [])) + len(tree.get("visualLinks", [])) >= STUDY_GOAL_TREE_LINKS_MAX:
+                raise ValueError("单棵树的连接数量已达到安全上限")
+            total_links = sum(
+                len(saved_tree.get("links", [])) + len(saved_tree.get("visualLinks", []))
+                for saved_tree in data.get("goalTrees", [])
+            )
+            if total_links >= TREE_PAGE_TOTAL_LINKS_MAX:
+                raise ValueError("树状页连接总量已达到安全上限")
+            tree.setdefault("visualLinks", []).append({"from": source_id, "to": target_id})
+        elif not active and exact:
+            tree["visualLinks"] = [link for link in tree.get("visualLinks", []) if link is not exact]
+        tree["updatedAt"] = _study_now()
+        result.update({"visualLink": {"from": source_id, "to": target_id}, "active": active})
+
+    elif command == "create-free-item":
         tree = _tree_page_tree(data, body.get("treeId"))
         if len(tree.get("freeItems", [])) >= TREE_PAGE_FREE_ITEMS_MAX:
             raise ValueError("单棵树的自由对象数量已达到安全上限")
@@ -6848,6 +6947,17 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
         if not owner:
             raise KeyError("这个任务不在当前树中")
         removed = _study_goal_detach_task(data, task_id, tree_id=tree["id"])
+        remaining_node_ids = {str(node.get("id") or "") for node in tree.get("nodes", [])}
+        occupied_pairs = {
+            tuple(sorted((str(link.get("from") or ""), str(link.get("to") or ""))))
+            for link in tree.get("links", []) if link.get("from") and link.get("to")
+        }
+        tree["visualLinks"] = [
+            link for link in tree.get("visualLinks", [])
+            if str(link.get("from") or "") in remaining_node_ids
+            and str(link.get("to") or "") in remaining_node_ids
+            and tuple(sorted((str(link.get("from")), str(link.get("to"))))) not in occupied_pairs
+        ]
         data["tasks"] = [task for task in data["tasks"] if task.get("id") != task_id]
         result.update({"removedTaskId": task_id, **(removed or {})})
 
