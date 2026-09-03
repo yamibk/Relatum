@@ -26,7 +26,7 @@
 
 <p align="center">
   <a href="https://github.com/yamibk/Relatum/releases/latest">
-    <img src="https://github.com/user-attachments/assets/fed0dc96-c635-4e79-99c4-fef8f8eb8195" alt="Relatum freeform canvas with connected notes and mind maps">
+    <img src="docs/images/relatum-style-panel.png" alt="Relatum freeform canvas, connected knowledge, and style panel">
   </a>
 </p>
 
@@ -81,33 +81,35 @@ No account is required. Canvases, preferences, and optional AI credentials stay 
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/images/relatum-freeform-canvas.png" alt="Custom nodes, connections, and shapes on the Relatum freeform canvas">
-      <p align="center">Freeform nodes, connections, and styles</p>
+      <img src="docs/images/relatum-goal-tree.png" alt="Independent goal trees and progressive tasks in Relatum">
+      <p align="center">Goal trees and progressive tasks</p>
     </td>
     <td width="50%">
-      <img src="docs/images/relatum-mind-map.png" alt="Relatum mind map presets and automatic layout">
-      <p align="center">Mind map presets and one-click layout</p>
+      <img src="docs/images/relatum-quick-notes.png" alt="Colorful quick notes and visual relationship lines in Relatum">
+      <p align="center">Quick notes and visual relationships</p>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="docs/images/relatum-focus-timer.png" alt="Relatum Pomodoro focus timer">
-      <p align="center">Pomodoro and focus records</p>
+      <img src="docs/images/relatum-activity.png" alt="Annual activity statistics and canvas constellation in Relatum">
+      <p align="center">Annual activity and canvas constellation</p>
     </td>
     <td width="50%">
-      <img src="docs/images/relatum-activity-stats.png" alt="Relatum yearly activity and study statistics">
-      <p align="center">Yearly activity and study statistics</p>
+      <img src="docs/images/relatum-daily-tasks.png" alt="Daily tasks, streaks, and milestones in Relatum">
+      <p align="center">Daily tasks, streaks, and milestones</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/relatum-knowledge-canvas.png" alt="Relatum freeform canvas with connected course knowledge">
+      <p align="center">Freeform canvas and course knowledge map</p>
+    </td>
+    <td width="50%">
+      <img src="docs/images/relatum-calendar.png" alt="Relatum calendar, diary, countdowns, and daily records">
+      <p align="center">Calendar, diary, countdowns, and daily records</p>
     </td>
   </tr>
 </table>
-
-<p align="center">
-  <img src="docs/images/relatum-calendar-diary.png" alt="Relatum calendar, diary, countdowns, study plans, and focus records">
-  <br>
-  <em>Calendar, daily journal, countdowns, and study records</em>
-</p>
-
-![Relatum custom gradients and image backgrounds](docs/images/relatum-backgrounds.png)
 
 ## Quick start
 

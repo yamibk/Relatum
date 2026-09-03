@@ -26,7 +26,7 @@
 
 <p align="center">
   <a href="https://github.com/yamibk/Relatum/releases/latest">
-    <img src="https://github.com/user-attachments/assets/fed0dc96-c635-4e79-99c4-fef8f8eb8195" alt="Relatum 自由画布、节点连接与思维导图界面">
+    <img src="docs/images/relatum-style-panel.png" alt="Relatum 自由画布、知识连接与样式面板">
   </a>
 </p>
 
@@ -81,33 +81,35 @@ Relatum 是一款开源、本地优先的自由知识画布和学习工作台。
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/images/relatum-freeform-canvas.png" alt="Relatum 自由画布中的自定义节点、连线和图案">
-      <p align="center">自由节点、连线与丰富样式</p>
+      <img src="docs/images/relatum-goal-tree.png" alt="Relatum 独立目标树与渐进任务">
+      <p align="center">独立目标树与渐进任务</p>
     </td>
     <td width="50%">
-      <img src="docs/images/relatum-mind-map.png" alt="Relatum 思维导图预设和自动排版">
-      <p align="center">思维导图预设与一键排版</p>
+      <img src="docs/images/relatum-quick-notes.png" alt="Relatum 彩色速记墙与视觉关系线">
+      <p align="center">速记墙与视觉关系线</p>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="docs/images/relatum-focus-timer.png" alt="Relatum 番茄钟和专注计时界面">
-      <p align="center">番茄钟与专注记录</p>
+      <img src="docs/images/relatum-activity.png" alt="Relatum 年度活跃统计与画布星图">
+      <p align="center">年度活跃统计与画布星图</p>
     </td>
     <td width="50%">
-      <img src="docs/images/relatum-activity-stats.png" alt="Relatum 年度足迹和学习数据统计">
-      <p align="center">年度足迹与数据统计</p>
+      <img src="docs/images/relatum-daily-tasks.png" alt="Relatum 每日任务、连续记录与里程碑">
+      <p align="center">每日任务、连续记录与里程碑</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/relatum-knowledge-canvas.png" alt="Relatum 自由画布、连线与课程知识图谱">
+      <p align="center">自由画布与课程知识图谱</p>
+    </td>
+    <td width="50%">
+      <img src="docs/images/relatum-calendar.png" alt="Relatum 日历、日记、倒数日与每日记录">
+      <p align="center">日历、日记、倒数日与每日记录</p>
     </td>
   </tr>
 </table>
-
-<p align="center">
-  <img src="docs/images/relatum-calendar-diary.png" alt="Relatum 日历、日记、倒数日、学习计划与专注记录界面">
-  <br>
-  <em>日历日记、倒数日与每日学习记录</em>
-</p>
-
-![Relatum 自定义渐变与图片背景](docs/images/relatum-backgrounds.png)
 
 ## 快速开始
 
