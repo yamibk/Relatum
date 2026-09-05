@@ -1204,6 +1204,11 @@
       applyStartBackgroundStyle(button.dataset.backgroundStyle, true);
     });
   });
+  // 齿轮面板顶部「恢复默认」：整面板一键回到出厂偏好（见 resetStartPanelDefaults）。
+  const startPanelReset = document.querySelector('[data-action="start-panel-reset"]');
+  if (startPanelReset) {
+    startPanelReset.addEventListener('click', () => resetStartPanelDefaults());
+  }
 
   if (startThemeToggle) {
     startThemeToggle.addEventListener('click', () => {
@@ -1869,6 +1874,54 @@
       starmapMotionNotifyTimer = 0;
       window.dispatchEvent(new CustomEvent('canvas:starmap-motion-change', { detail: settings }));
     }, 140);
+  }
+
+  // 齿轮面板「恢复默认」：面板内每一项偏好都只有一个 localStorage 键，而且所有读取
+  // 路径都把“缺失键”当作出厂默认值，因此删除这些键就是真正的恢复出厂（不写回默认值）。
+  // 随后把每个控件的勾选/滑条、CSS 变量与运行状态用各自的 apply / 同步函数即时刷回
+  // 默认（persist:false，只同步不写盘），并派发既有事件让已加载的页面运行时跟随。
+  // 绝不 localStorage.clear()：主题、语言、当前分组等不属于本面板的键不受影响。
+  function resetStartPanelDefaults() {
+    [
+      START_BACKGROUND_KEY,               // 主页背景（简洁）
+      NOTE_FONT_SCALE_KEY,                // 笔记正文字号（100%）
+      STARMAP_MOTION_KEY,                 // 足迹星图动画（含「结束后自动取景」）
+      CALENDAR_COUNTDOWN_KEY,             // 日历倒数日（开）
+      START_PAGE_ACTIVITY_ENABLED_KEY,    // 学习/树状/速记计时（关）
+      START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, // 显示三页统计数字（关）
+      HIDE_SPECIAL_KEY,                   // 隐藏特殊页（关）
+      GOAL_TREE_SIMPLE_KEY,               // 精简目标树编辑（开）
+      GOAL_TREE_ENFORCE_UNLOCK_KEY,       // 强制按解锁顺序（关）
+      TREE_PAGE_ROOT_TITLE_HIDDEN_KEY,    // 隐藏根节点标题（关）
+      TREE_PAGE_ROOT_TITLE_SIZE_KEY,      // 根节点标题字号（25px）
+      LIBRARY_SEARCH_ENABLED_KEY,         // 画布名称搜索（关）
+      START_SPEED_KEY,                    // 翻页速度（260ms）
+      CAREER_SCROLL_FEEL_KEY,             // 生涯滚动手感
+      CAREER_SCROLL_IDLE_KEY,             // 生涯揭示等待（50ms）
+    ].forEach((key) => {
+      try { localStorage.removeItem(key); } catch (e) {}
+    });
+    applyStartBackgroundStyle('simple', false);
+    applyNoteFontScale(100, false);
+    syncStarmapMotionForm(STARMAP_MOTION_DEFAULTS);
+    clearTimeout(starmapMotionNotifyTimer);
+    starmapMotionNotifyTimer = window.setTimeout(() => {
+      starmapMotionNotifyTimer = 0;
+      window.dispatchEvent(new CustomEvent('canvas:starmap-motion-change', {
+        detail: Object.assign({}, STARMAP_MOTION_DEFAULTS),
+      }));
+    }, 140);
+    applyCalendarCountdownEnabled(true, false);
+    applyStartPageActivityEnabled(false, false);
+    applyStartPageActivityStatsVisible(false, false);
+    applyHideSpecialPages(false, false);
+    applyGoalTreeSimpleMode(true, false);
+    applyGoalTreeUnlockEnforcement(false, false);
+    applyTreePageRootTitleHidden(false, false);
+    applyTreePageRootTitleSize(TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT, false);
+    applyLibrarySearchEnabled(false, false);
+    applyStartSpeed(START_SPEED_DEFAULT, false);
+    applyCareerScrollFeel(readCareerScrollFeel(), false);
   }
 
   function syncDesktopSizeForm(size) {
