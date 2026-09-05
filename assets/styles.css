@@ -8275,6 +8275,13 @@ body.desktop-window-transitioning .desktop-window-btn[data-window-action="maximi
 
 .start-priority-settings .starmap-motion-toggle { margin-top: 0; }
 
+/* 齿轮面板顶部「设置 · 恢复默认」：行内样式对齐各分区标题，底部细线与首组分隔对称。 */
+.start-speed-pop .start-panel-head {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.06);
+}
+
 .start-priority-background {
   display: grid;
   gap: 8px;
@@ -36493,6 +36500,9 @@ body.start-page[data-start-theme="dark"] .start-speed-pop .start-speed-section {
   border-top-color: rgba(221, 237, 230, 0.10);
 }
 body.start-page[data-start-theme="dark"] .start-speed-pop .start-priority-settings {
+  border-bottom-color: rgba(221, 237, 230, 0.10);
+}
+body.start-page[data-start-theme="dark"] .start-speed-pop .start-panel-head {
   border-bottom-color: rgba(221, 237, 230, 0.10);
 }
 /* 学习页「任务回收站」滑出卡：之前只给外层 panel 上了深色，真正可见的白卡 study-trash-card
