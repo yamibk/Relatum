@@ -196,7 +196,7 @@ def main() -> None:
     args = parser.parse_args()
     root = args.runtime_root.resolve()
     source_root = Path(__file__).resolve().parents[1]
-    if root == source_root or (root / ".git").exists():
+    if root == source_root or source_root in root.parents or (root / ".git").exists():
         raise SystemExit(
             "Refusing to write performance fixtures into a source repository; "
             "pass a disposable isolated runtime directory."
@@ -245,6 +245,40 @@ def main() -> None:
     nodes = grid_nodes()
     write_json(canvases / "perf-nodes.canvas", canvas(nodes))
     write_json(canvases / "perf-edges.canvas", canvas(nodes, dense_edges()))
+    large_nodes = [
+        {"id": f"large-{i}", "text": f"性能节点 {i}", "kind": "card",
+         "x": (i % 100) * 260, "y": (i // 100) * 140}
+        for i in range(3000)
+    ]
+    large_edges = [
+        {"id": f"large-edge-{i}", "from": f"large-{i}", "to": f"large-{i + 1}"}
+        for i in range(3000) if i % 100 != 99
+    ]
+    write_json(canvases / "perf-3000.canvas", canvas(large_nodes, large_edges))
+    write_json(canvases / "perf-interactions.canvas", canvas([
+        {"id": "a", "kind": "card", "text": "保存", "x": 0, "y": 0},
+        {"id": "b", "kind": "card", "text": "开始", "x": 360, "y": 0},
+        {"id": "c", "kind": "index", "text": "目录", "x": 0, "y": 260},
+        {"id": "d", "kind": "card", "text": "中文输入", "x": 360, "y": 260},
+    ], [
+        {"id": "under", "from": "a", "to": "b", "arrow": "end"},
+        {"id": "over", "from": "a", "to": "b", "arrow": "end"},
+        {"id": "curve", "from": "c", "to": "d", "curve": "smooth", "arrow": "both",
+         "text": "曲线名称", "waypoints": [{"x": 150, "y": 170}, {"x": 280, "y": 420}]},
+    ]))
+    write_json(canvases / "perf-tree.canvas", canvas([
+        {"id": "root", "kind": "index", "text": "路线目录", "x": 0, "y": 0},
+        {"id": "child", "kind": "card", "text": "子节点", "x": 280, "y": 0},
+        {"id": "branch", "kind": "card", "text": "分支", "x": 280, "y": 150},
+        {"id": "leaf", "kind": "card", "text": "深层叶子", "x": 560, "y": 0},
+        {"id": "group", "kind": "shape", "shapeType": "group-box", "text": "分组",
+         "x": -20, "y": 280, "width": 540, "height": 160, "groupMemberIds": ["member"]},
+        {"id": "member", "kind": "card", "text": "组员", "x": 40, "y": 330},
+    ], [
+        {"id": "rc", "from": "root", "to": "child", "arrow": "end"},
+        {"id": "rb", "from": "root", "to": "branch", "arrow": "end"},
+        {"id": "cl", "from": "child", "to": "leaf", "arrow": "end"},
+    ]))
 
     viewport = {"scale": 1, "centerX": 330, "centerY": 280}
     write_json(
@@ -257,6 +291,9 @@ def main() -> None:
                 "local:perf-images.canvas": viewport,
                 "local:perf-nodes.canvas": viewport,
                 "local:perf-edges.canvas": viewport,
+                "local:perf-3000.canvas": viewport,
+                "local:perf-interactions.canvas": viewport,
+                "local:perf-tree.canvas": viewport,
             },
         },
     )
@@ -271,6 +308,8 @@ def main() -> None:
                 "imageDimensions": [image_size, image_size],
                 "nodes": 1200,
                 "edges": 2359,
+                "largeNodes": 3000,
+                "largeEdges": len(large_edges),
             },
             ensure_ascii=False,
         )

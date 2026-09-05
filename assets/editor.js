@@ -8,6 +8,7 @@
   'use strict';
 
   const params = new URLSearchParams(window.location.search);
+  const openingPerf = params.get('perf') === '1' ? window.__relatumOpeningPerf : null;
   let filePath = params.get('file') || '';
   const LOCATE_NODE = params.get('node') || '';
   const LOCATE_TASK_ROOT = params.get('taskRoot') || '';
@@ -1036,6 +1037,14 @@
         // 延迟加载的新手引导可能在 editor:ready 派发后才执行；保留一份只读启动摘要供它补接。
         window.__relatumEditorReadyDetail = readyDetail;
         document.dispatchEvent(new CustomEvent('editor:ready', { detail: readyDetail }));
+        if (openingPerf) {
+          // 等待揭幕样式、观察器和布局真正走过一个可见帧，再记录可交互时间。
+          // 不使用 rAF 的入参时间戳：它可能早于同帧内的长任务。
+          requestAnimationFrame(() => {
+            openingPerf.firstVisibleFrameMs = performance.now();
+            setTimeout(() => { openingPerf.interactiveMs = performance.now(); }, 0);
+          });
+        }
       });
     });
   }
@@ -2121,10 +2130,15 @@
       });
     }
 
-    function sendAppearance(frame) {
-      const appearance = appearancePayload();
+    function canSyncDualAppearance() {
+      return !pane.hidden && !pane.classList.contains('tool-layer-leaving')
+        && document.body.classList.contains('dual-screen-open');
+    }
+
+    function sendAppearance(frame, sharedAppearance) {
+      if (!frame || !frame.contentWindow || !canSyncDualAppearance()) return;
+      const appearance = sharedAppearance || appearancePayload();
       applyPaneAppearance(appearance);
-      if (!frame || !frame.contentWindow) return;
       frame.contentWindow.postMessage({
         type: 'relatum:dual:appearance',
         appearance: appearance,
@@ -2149,7 +2163,7 @@
       frameWrap.appendChild(frame);
       pane.classList.add('loading');
       showDualToast(toolbarCopy('dualLoading'));
-      applyPaneAppearance(appearancePayload());
+      if (canSyncDualAppearance()) applyPaneAppearance(appearancePayload());
     }
 
     function activateFrame(frame, info) {
@@ -2273,6 +2287,9 @@
 
     function closeDualScreen() {
       if (pane.hidden) return;
+      if (appearanceFrame) cancelAnimationFrame(appearanceFrame);
+      appearanceFrame = 0;
+      lastAppearanceSignature = '';
       hideDualPicker();
       resizer.classList.remove('tool-layer-entering');
       resizer.classList.add('tool-layer-leaving');
@@ -2379,10 +2396,33 @@
       if (!picker.hidden) renderDualPicker();
     });
 
+    let appearanceFrame = 0;
+    let lastAppearanceSignature = '';
+    function appearanceSourceSignature() {
+      return JSON.stringify([
+        document.body.classList.contains('immersive-background'),
+        document.body.classList.contains('dark-semantic-ui'),
+        document.body.dataset.backgroundTone,
+        viewportEl && viewportEl.classList.contains('image-background'),
+        viewportEl && viewportEl.classList.contains('flowing-background'),
+        viewportEl && viewportEl.dataset.guideType,
+        viewportEl && viewportEl.getAttribute('style'),
+        immersiveBackgroundEl && immersiveBackgroundEl.getAttribute('style'),
+      ]);
+    }
     const appearanceObserver = new MutationObserver(() => {
-      applyPaneAppearance(appearancePayload());
-      sendAppearance(activeFrame);
-      sendAppearance(pendingFrame);
+      if (!canSyncDualAppearance()) return;
+      const signature = appearanceSourceSignature();
+      if (signature === lastAppearanceSignature || appearanceFrame) return;
+      appearanceFrame = requestAnimationFrame(() => {
+        appearanceFrame = 0;
+        if (!canSyncDualAppearance()) return;
+        lastAppearanceSignature = appearanceSourceSignature();
+        const appearance = appearancePayload();
+        applyPaneAppearance(appearance);
+        sendAppearance(activeFrame, appearance);
+        sendAppearance(pendingFrame, appearance);
+      });
     });
     if (viewportEl) appearanceObserver.observe(viewportEl, {
       attributes: true,
@@ -2396,7 +2436,6 @@
       attributes: true,
       attributeFilter: ['class', 'data-background-tone'],
     });
-    applyPaneAppearance(appearancePayload());
   })();
 
   // ── 笔记坞：随当前 .canvas 保存；与画布内容只交换显式快照 ──
@@ -10256,6 +10295,7 @@
         return;
       }
       canvasData = json.data || { version: 2, nodes: [], edges: [] };
+      if (openingPerf && openingPerf.dataReadyMs === null) openingPerf.dataReadyMs = performance.now();
       if (!Array.isArray(canvasData.nodes)) canvasData.nodes = [];
       if (!Array.isArray(canvasData.edges)) canvasData.edges = [];
       const typographyReady = window.RelatumFontLoader
@@ -10343,6 +10383,7 @@
           onChange: markDirty,
         });
         document.dispatchEvent(new CustomEvent('editor:canvasready'));
+        if (openingPerf) openingPerf.domReadyMs = performance.now();
         startCanvasActivityTracker(json.canvasActivity || {});
         if ((LOCATE_NODE || LOCATE_TASK_ROOT) && typeof window.CanvasModule.revealNode === 'function') {
           window.setTimeout(() => {

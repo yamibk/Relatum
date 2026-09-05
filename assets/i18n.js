@@ -1081,8 +1081,11 @@
     '[contenteditable]', 'input', 'textarea', '.notes-surface', '.review-body',
     '.calendar-diary-preview', '.study-task-title',
     '.focus-daily-name', '.template-card-name', '[data-role="graph-title"]',
-    '.background-image-name', '.canvas', '.node', '[data-user-content]', '[data-i18n-managed]'
+    '.background-image-name', '.canvas', '.node', '[data-user-content]', '[data-i18n-managed]',
+    '.canvas-edges-layer', '.canvas-edge-label', '.canvas-ink-layer', '.minimap-node'
   ].join(',');
+  const LANGUAGE_CONTROLS = '[data-role="ui-language"], [data-role="toolbar-language"]';
+  const languageControls = new Set();
   const ATTRS = ['title', 'aria-label', 'placeholder'];
   const textSources = new WeakMap();
   let language = readLanguage();
@@ -1498,15 +1501,33 @@
     applying = true;
     try {
       if (root instanceof Element) applyElement(root);
-      const scope = root.querySelectorAll ? root : document;
-      scope.querySelectorAll('*').forEach(applyElement);
-      document.documentElement.lang = language;
-      document.documentElement.dataset.uiLanguage = language;
-      if (document.body) document.body.dataset.uiLanguage = language;
-      document.querySelectorAll('[data-role="ui-language"], [data-role="toolbar-language"]').forEach((select) => { select.value = language; });
+      // Prune user content and geometry as whole subtrees, including during a language switch.
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+        acceptNode(element) {
+          return isExcluded(element) && !element.matches('input, textarea')
+            ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      while (walker.nextNode()) applyElement(walker.currentNode);
+      // 被裁掉的用户区仍可能嵌有真正的 UI 输入框；只翻译它们的提示，不读取 value。
+      root.querySelectorAll('input, textarea').forEach(function (input) {
+        if (input.parentElement && isExcluded(input.parentElement)) applyElement(input);
+      });
     } finally {
       applying = false;
     }
+  }
+
+  function syncLanguageState() {
+    // Writing lang invalidates language-dependent styles across the document. Never do this
+    // for every inserted path/minimap dot: only initialization and actual language changes.
+    if (document.documentElement.lang !== language) document.documentElement.lang = language;
+    if (document.documentElement.dataset.uiLanguage !== language) document.documentElement.dataset.uiLanguage = language;
+    if (document.body && document.body.dataset.uiLanguage !== language) document.body.dataset.uiLanguage = language;
+    languageControls.forEach((select) => {
+      if (!select.isConnected) languageControls.delete(select);
+      else if (select.value !== language) select.value = language;
+    });
   }
 
   function setLanguage(next, persist = true) {
@@ -1515,35 +1536,55 @@
     if (persist) {
       try { localStorage.setItem(STORAGE_KEY, normalized); } catch (error) {}
     }
+    syncLanguageState();
     apply(document);
     listeners.forEach((listener) => listener(normalized));
     document.dispatchEvent(new CustomEvent('relatum:languagechange', { detail: { language: normalized } }));
   }
 
   function bindLanguageControls(root) {
-    (root || document).querySelectorAll('[data-role="ui-language"], [data-role="toolbar-language"]').forEach((select) => {
+    const bind = (select) => {
+      languageControls.add(select);
       if (select.dataset.i18nBound === '1') return;
       select.dataset.i18nBound = '1';
       select.value = language;
       select.addEventListener('change', () => setLanguage(select.value, true));
-    });
+    };
+    const scope = root || document;
+    if (scope instanceof Element && scope.matches(LANGUAGE_CONTROLS)) bind(scope);
+    scope.querySelectorAll(LANGUAGE_CONTROLS).forEach(bind);
   }
 
   const observer = new MutationObserver((records) => {
     if (applying) return;
+    const roots = new Set();
+    const elements = new Set();
     records.forEach((record) => {
       record.addedNodes.forEach((node) => {
         if (node.nodeType === 3) {
-          if (node.parentElement) applyElement(node.parentElement);
+          if (node.parentElement) elements.add(node.parentElement);
           return;
         }
         if (node.nodeType !== 1) return;
         if (isExcluded(node) && !node.matches('input, textarea')) return;
-        bindLanguageControls(node);
-        apply(node);
+        roots.add(node);
       });
-      if (record.type === 'characterData' && record.target.parentElement) applyElement(record.target.parentElement);
-      if (record.type === 'attributes' && record.target instanceof Element) applyElement(record.target);
+      if (record.type === 'characterData' && record.target.parentElement) elements.add(record.target.parentElement);
+      if (record.type === 'attributes' && record.target instanceof Element) elements.add(record.target);
+    });
+    const hasQueuedAncestor = (element) => {
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        if (roots.has(parent)) return true;
+      }
+      return false;
+    };
+    roots.forEach((root) => {
+      if (!root.isConnected || hasQueuedAncestor(root)) return;
+      bindLanguageControls(root);
+      apply(root);
+    });
+    elements.forEach((element) => {
+      if (element.isConnected && !roots.has(element) && !hasQueuedAncestor(element)) applyElement(element);
     });
   });
 
@@ -1557,6 +1598,7 @@
 
   function start() {
     bindLanguageControls(document);
+    syncLanguageState();
     apply(document);
     observer.observe(document.body, {
       childList: true,

@@ -47,6 +47,8 @@
   let arrows = [];             // [{id,fromNote?,toNote?,x1?,y1?,x2?,y2?}]，右键拖出的箭头
   let loaded = false;
   let loading = null;
+  let preloadHandle = 0;
+  let preloadUsesIdle = false;
   let touched = false;         // 用户是否已改动过墙面（防异步 load 回来覆盖新建/编辑）
   let lastColor = null;        // 上一次用过的颜色与色系，用于避免视觉近似的连续色
   let lastColorFamily = '';
@@ -1974,6 +1976,31 @@
     return loading;
   }
 
+  function cancelPreload() {
+    if (!preloadHandle) return;
+    if (preloadUsesIdle && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(preloadHandle);
+    } else {
+      window.clearTimeout(preloadHandle);
+    }
+    preloadHandle = 0;
+    preloadUsesIdle = false;
+  }
+
+  // 起步页稳定后在隐藏状态读取并构建速记墙；真正翻入页面时只需校准连线几何。
+  function schedulePreload() {
+    if (preloadHandle || loaded || loading) return;
+    const warm = () => {
+      preloadHandle = 0;
+      preloadUsesIdle = false;
+      load().catch(() => undefined);
+    };
+    preloadUsesIdle = typeof window.requestIdleCallback === 'function';
+    preloadHandle = preloadUsesIdle
+      ? window.requestIdleCallback(warm, { timeout: 1500 })
+      : window.setTimeout(warm, 600);
+  }
+
   // ── 整墙归档（长按速记图标触发）──
   // 有名字的便签搬进「学习归档」，无名的丢弃；之后整墙清空。归档是「定局」动作，
   // 不进撤销栈（后端已建好归档夹并清空 notes.json，本地再撤销会造成两边不一致）。
@@ -2042,7 +2069,19 @@
   }
 
   window.CanvasNotes = {
-    activate() { return loaded ? Promise.resolve() : load(); },
+    activate() {
+      cancelPreload();
+      const ready = loaded ? Promise.resolve(true) : load();
+      return ready.then((ok) => {
+        if (!ok) return false;
+        // 隐藏预渲染时 content-visibility 会跳过尺寸计算；页面显现后重算一次端点。
+        relayout();
+        window.requestAnimationFrame(() => {
+          if (notesPageActive()) renderEdges();
+        });
+        return true;
+      });
+    },
     deactivate,
     archive,
     count() { return notes.length; },
@@ -2063,4 +2102,5 @@
   document.addEventListener('start:viewchange', (event) => {
     if (!event.detail || event.detail.current !== 'notes') deactivate();
   });
+  schedulePreload();
 })();

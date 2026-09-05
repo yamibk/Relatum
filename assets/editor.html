@@ -48,11 +48,17 @@
     (function () {
       var file = '';
       try { file = new URLSearchParams(location.search).get('file') || ''; } catch (e) {}
+      var perf = new URLSearchParams(location.search).get('perf') === '1'
+        ? (window.__relatumOpeningPerf = { dataReadyMs: null, domReadyMs: null,
+          firstVisibleFrameMs: null, interactiveMs: null }) : null;
       window.__relatumOpeningRequests = {
         file: file,
         canvas: file ? fetch('/api/load?path=' + encodeURIComponent(file))
           .then(function (response) {
-            return response.json().then(function (json) { return { ok: response.ok, json: json }; });
+            return response.json().then(function (json) {
+              if (perf) perf.dataReadyMs = performance.now();
+              return { ok: response.ok, json: json };
+            });
           })
           .catch(function () { return { ok: false, json: { error: '读取失败' } }; }) : null,
         background: fetch('/api/background-preference')
@@ -80,6 +86,7 @@
   <script src="ai-canvas-plan.js" defer></script>
   <script src="dual-clipboard.js" defer></script>
   <script src="font-loader.js" defer></script>
+  <script src="canvas-changes.js" defer></script>
   <script src="canvas.js" defer></script>
   <script src="editor-lazy.js" defer></script>
   <script src="editor.js" defer></script>
