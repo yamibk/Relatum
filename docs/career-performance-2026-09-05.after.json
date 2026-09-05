@@ -1,0 +1,107 @@
+{
+  "baseline": false,
+  "browser": "152.0.4191.62",
+  "viewport": "1440x900",
+  "dpr": 1,
+  "cpuSlowdown": 1,
+  "dataRoot": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-NSq6ZR",
+  "runs": [
+    {
+      "frames": 781,
+      "p95": 16.90000000000009,
+      "max": 17.600000000000364,
+      "over25": 0,
+      "longTasks": [],
+      "reads": {
+        "scrollTop": 23
+      },
+      "numberReplacements": 0,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 831,
+        "LayoutDuration": 0.138152,
+        "RecalcStyleCount": 1000,
+        "RecalcStyleDuration": 0.275848,
+        "ScriptDuration": 0.174459,
+        "TaskDuration": 2.269833
+      }
+    },
+    {
+      "frames": 781,
+      "p95": 16.90000000000009,
+      "max": 17.600000000000364,
+      "over25": 0,
+      "longTasks": [],
+      "reads": {
+        "scrollTop": 24
+      },
+      "numberReplacements": 0,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 833,
+        "LayoutDuration": 0.123169,
+        "RecalcStyleCount": 997,
+        "RecalcStyleDuration": 0.243345,
+        "ScriptDuration": 0.154237,
+        "TaskDuration": 2.1087450000000003
+      }
+    },
+    {
+      "frames": 781,
+      "p95": 16.900000000000546,
+      "max": 18,
+      "over25": 0,
+      "longTasks": [],
+      "reads": {
+        "scrollTop": 24
+      },
+      "numberReplacements": 0,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 832,
+        "LayoutDuration": 0.120392,
+        "RecalcStyleCount": 993,
+        "RecalcStyleDuration": 0.22808,
+        "ScriptDuration": 0.147805,
+        "TaskDuration": 2.0502870000000004
+      }
+    }
+  ],
+  "regression": [
+    "counting keeps bar width and document height stable",
+    "dot reveal uses at most one transition per four marks",
+    "chart tooltip remains available at rest",
+    "real browser wheel moves the report and hides the tooltip",
+    "departed charts stop their transitions and number jobs",
+    "coarse wheel uses inertia",
+    "precise wheel stays native",
+    "precise input cancels the old wheel tail",
+    "zoom/horizontal gesture stays native {\"ctrlKey\":true}",
+    "zoom/horizontal gesture stays native {\"metaKey\":true}",
+    "zoom/horizontal gesture stays native {\"deltaX\":180,\"deltaY\":40}",
+    "pointerdown takes ownership of scrolling",
+    "keydown takes ownership of scrolling",
+    "resizing refreshes the bottom boundary",
+    "pause reveal waits for the selected idle window",
+    "pause reveal resumes visible cards and skips passed chapters",
+    "live reduced motion reveals all numbers and stops animations",
+    "reduced motion wheel stays native",
+    "all final statistics match the frozen values",
+    "language repaint is complete and preserves item names",
+    "leaving the workspace cancels inertia",
+    "leaving stops report animations",
+    "return keeps the report and scroll position",
+    "hidden page stops inertia and animations",
+    "narrow report has no horizontal overflow",
+    "failed regeneration preserves the frozen report"
+  ],
+  "screenshots": [
+    "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-NSq6ZR\\career-hero.png",
+    "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-NSq6ZR\\career-charts.png",
+    "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-NSq6ZR\\career-dark.png",
+    "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-NSq6ZR\\career-narrow.png"
+  ]
+}

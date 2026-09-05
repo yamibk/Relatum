@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
@@ -90,5 +91,35 @@ assert(!career.includes('innerHTML'), 'report rendering must not inject user nam
 assert(career.includes('data-career-action="generate"'), 'the only report action must be regeneration');
 assert(i18n.includes("'生涯': 'Career'"), 'Career workspace needs an English label');
 assert(agents.includes('career-report.json'), 'AGENTS.md must document the frozen report data file');
+
+// Run the actual inertia callback on virtual displays. Its hot path must not
+// query geometry, and an isolated wheel notch should travel the same distance.
+const wheelSource = career.slice(career.indexOf('  function runWheelInertia(now)'), career.indexOf('  function isDiscreteMouseWheel(event)'));
+function wheelDistance(hz, start = 100, velocity = 19.2, max = 50000) {
+  let queued = false, writes = 0;
+  const state = { active: true, wheelFrame: 1, wheelLastFrame: 0, wheelVelocity: velocity, wheelPosition: start, maxScrollTop: max };
+  const scroll = {};
+  for (const key of ['scrollTop', 'scrollHeight', 'clientHeight']) {
+    Object.defineProperty(scroll, key, { get() { throw Error('layout read in inertia frame: ' + key); }, set() { writes++; } });
+  }
+  const sandbox = { state, scroll, scrollFeel: { inertia: 45 }, WHEEL_STOP_SPEED: .08,
+    runtimeVisible: () => true, reducedMotion: () => false,
+    stopWheelInertia() { state.wheelVelocity = 0; },
+    requestAnimationFrame() { queued = true; return 1; } };
+  vm.createContext(sandbox);
+  vm.runInContext(wheelSource, sandbox);
+  for (let frame = 0; frame < hz * 5; frame++) {
+    queued = false;
+    sandbox.runWheelInertia(1000 + frame * 1000 / hz);
+    if (!queued) break;
+  }
+  assert(!queued, 'inertia must settle without leaving a frame loop');
+  assert(writes > 0);
+  return state.wheelPosition - start;
+}
+const distances = [60, 120, 144, 240].map(hz => wheelDistance(hz));
+assert(Math.max(...distances) - Math.min(...distances) < .1, 'wheel travel must stay stable from 60 to 240Hz');
+assert.equal(wheelDistance(120, 49990), 10, 'bottom edge must clamp precisely');
+assert.equal(wheelDistance(120, 10, -19.2), -10, 'top edge must clamp precisely');
 
 console.log('career-report-contract: ok');

@@ -1,0 +1,77 @@
+{
+  "baseline": true,
+  "browser": "152.0.4191.62",
+  "viewport": "1440x900",
+  "dataRoot": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-rMua4Q",
+  "runs": [
+    {
+      "frames": 780,
+      "p95": 16.899999999999636,
+      "max": 33.29999999999973,
+      "over25": 1,
+      "longTasks": [],
+      "reads": {
+        "scrollTop": 658,
+        "scrollHeight": 658,
+        "clientHeight": 658
+      },
+      "numberReplacements": 3542,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 936,
+        "LayoutDuration": 0.203527,
+        "RecalcStyleCount": 1186,
+        "RecalcStyleDuration": 0.281295,
+        "ScriptDuration": 0.17425,
+        "TaskDuration": 2.3067279999999997
+      }
+    },
+    {
+      "frames": 781,
+      "p95": 16.899999999999636,
+      "max": 17.799999999999272,
+      "over25": 0,
+      "longTasks": [],
+      "reads": {
+        "scrollTop": 660,
+        "scrollHeight": 660,
+        "clientHeight": 660
+      },
+      "numberReplacements": 3541,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 938,
+        "LayoutDuration": 0.210624,
+        "RecalcStyleCount": 1190,
+        "RecalcStyleDuration": 0.294204,
+        "ScriptDuration": 0.186194,
+        "TaskDuration": 2.400017
+      }
+    },
+    {
+      "frames": 781,
+      "p95": 16.899999999999636,
+      "max": 17.700000000000728,
+      "over25": 0,
+      "longTasks": [],
+      "reads": {
+        "scrollTop": 657,
+        "scrollHeight": 657,
+        "clientHeight": 657
+      },
+      "numberReplacements": 3542,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 934,
+        "LayoutDuration": 0.203988,
+        "RecalcStyleCount": 1183,
+        "RecalcStyleDuration": 0.286437,
+        "ScriptDuration": 0.175582,
+        "TaskDuration": 2.332451
+      }
+    }
+  ]
+}
