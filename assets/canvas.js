@@ -825,8 +825,29 @@
 
   function init(opts) {
     const initStartedAt = Date.now();
+    const Changes = global.RelatumCanvasChanges;
+    let perfSnapshotEnabled = false;
+    try { perfSnapshotEnabled = new URLSearchParams(global.location.search).get('perf') === '1'; } catch (e) {}
+    const perfOperations = [];
+    function beginPerfOperation(kind) {
+      if (!perfSnapshotEnabled) return function () {};
+      const started = performance.now();
+      return function () {
+        const operation = { kind: kind, startedAt: started, jsMs: performance.now() - started, settledMs: null };
+        perfOperations.push(operation);
+        if (perfOperations.length > 40) perfOperations.shift();
+        requestAnimationFrame(function () {
+          setTimeout(function () { operation.settledMs = performance.now() - started; }, 0);
+        });
+      };
+    }
     const viewport = opts.viewport;
     const surface = opts.surface;
+    // 抓手命中层位于 surface 上方、工具栏下方；光标切换不再失效全部节点的样式。
+    const panCursorLayer = document.createElement('div');
+    panCursorLayer.className = 'canvas-pan-cursor';
+    panCursorLayer.setAttribute('aria-hidden', 'true');
+    viewport.appendChild(panCursorLayer);
     const emptyHint = opts.emptyHint || null;
     const edgesLayer = opts.edgesLayer || null;
     const edgesCanvas = opts.edgesCanvas || null;
@@ -878,6 +899,9 @@
     const minimap = opts.minimap || null;
     const minimapNodes = opts.minimapNodes || null;
     const minimapViewbox = opts.minimapViewbox || null;
+    let minimapSize = { w: 180, h: 120 };
+    let minimapNodeMapping = null;
+    let minimapRebaseTimer = null;
     let filePath = opts.filePath || '';
     const initialViewport = opts.initialViewport || null;
     const embeddedEditor = !!opts.embed;
@@ -1184,17 +1208,63 @@
     // ── 内部状态 ──────────────────────────────
     const nodeMap = new Map();           // id → element
     const edgeMap = new Map();           // id → { path, hit, labelEl }
+    let nextEdgeOrder = 0;
+    const removalGhosts = new Set();
     const timerMap = new Map();           // id → element
     const timerRuntime = new Map();       // id → { running, startedAt }，仅当前会话
     // 节点 id 索引：连线绘制与拖拽每帧都会大量查端点，不能反复线性扫描 data.nodes。
     const nodeById = new Map();
+    let contentBoundsCache = null;
+    let viewportRectCache = null;
+    const edgeById = new Map();
+    const incidentEdgeIds = new Map();
+    const indexedEdgeEnds = new Map();
+    let indexedEdges = null;
+    function indexEdgeData(edge) {
+      const old = indexedEdgeEnds.get(edge.id);
+      if (old && (old.from !== edge.from || old.to !== edge.to)) unindexEdgeData(edge.id);
+      edgeById.set(edge.id, edge);
+      if (indexedEdgeEnds.has(edge.id)) return;
+      indexedEdgeEnds.set(edge.id, { from: edge.from, to: edge.to });
+      [edge.from, edge.to].forEach(function (id) {
+        let ids = incidentEdgeIds.get(id);
+        if (!ids) { ids = new Set(); incidentEdgeIds.set(id, ids); }
+        ids.add(edge.id);
+      });
+    }
+    function unindexEdgeData(id) {
+      const ends = indexedEdgeEnds.get(id);
+      if (ends) [ends.from, ends.to].forEach(function (nodeId) {
+        const ids = incidentEdgeIds.get(nodeId);
+        if (ids) { ids.delete(id); if (!ids.size) incidentEdgeIds.delete(nodeId); }
+      });
+      indexedEdgeEnds.delete(id);
+      edgeById.delete(id);
+    }
+    function rebuildEdgeIndex() {
+      edgeById.clear(); incidentEdgeIds.clear(); indexedEdgeEnds.clear();
+      data.edges.forEach(indexEdgeData);
+      indexedEdges = data.edges;
+    }
+    function ensureEdgeIndex() {
+      if (indexedEdges !== data.edges || edgeById.size !== data.edges.length) rebuildEdgeIndex();
+    }
+    function refreshViewportRect() {
+      viewportRectCache = viewport.getBoundingClientRect();
+      return viewportRectCache;
+    }
+    function cachedViewportRect() {
+      return viewportRectCache || refreshViewportRect();
+    }
     function rebuildNodeIndex() {
+      contentBoundsCache = null;
       nodeById.clear();
       data.nodes.forEach(function (node) {
         if (node && node.id) nodeById.set(node.id, node);
       });
     }
     function indexNodeData(node) {
+      contentBoundsCache = null;
       if (node && node.id) {
         if (normalizeNodeRichText(node)) richMigrationChanged = true;
         if (normalizeTableNodeLayout(node)) richMigrationChanged = true;
@@ -1202,9 +1272,11 @@
       }
     }
     function unindexNodeData(node) {
+      contentBoundsCache = null;
       if (node && node.id && nodeById.get(node.id) === node) nodeById.delete(node.id);
     }
     rebuildNodeIndex();
+    rebuildEdgeIndex();
     // ── 连线 Canvas 层 ───────────────────────────────────────────
     // 静态几何缓存包含路径、箭头点、中点和边界；相机移动只查 512 单位空间网格并重描，
     // 不再逐帧重算全部连线。拖动/脑图滑行仍走临时 SVG 与实时几何。
@@ -1218,12 +1290,32 @@
     const EDGE_CANVAS_ON = !!edgesCtx
       && typeof Path2D === 'function'
       && typeof requestAnimationFrame === 'function';  // 可用时启用；否则自动回退 SVG
+    // 命中使用独立的恒等变换上下文，避免读取/改变正在显示的 Canvas 状态。
+    const edgeHitCtx = EDGE_CANVAS_ON ? document.createElement('canvas').getContext('2d') : null;
+    const EDGE_GEOMETRY_HIT = !!edgeHitCtx && typeof edgeHitCtx.isPointInStroke === 'function';
+    const liveSvgEdgeIds = new Set();
     let edgeCanvasLiveCoords = null;     // 拖动/脑图滑行动画中的临时节点坐标
     let edgeCanvasRaf = null;            // 多条连线变化合并到下一帧重画
     if (edgesCanvas) edgesCanvas.hidden = !EDGE_CANVAS_ON;
     viewport.classList.toggle('edges-canvas-on', EDGE_CANVAS_ON);
-    function setEdgesSvgLive(active) {
+    viewport.classList.toggle('edges-geometry-hit', EDGE_GEOMETRY_HIT);
+    function setEdgesSvgLive(active, affectedEdges) {
       if (!EDGE_CANVAS_ON) return;
+      if (EDGE_GEOMETRY_HIT) {
+        liveSvgEdgeIds.forEach(function (id) {
+          const refs = edgeMap.get(id);
+          if (refs) { refs.path.remove(); removeEdgeMarkers(id); }
+        });
+        liveSvgEdgeIds.clear();
+        if (active) (affectedEdges || []).forEach(function (edge) {
+          const refs = edgeMap.get(edge.id);
+          if (!refs) return;
+          liveSvgEdgeIds.add(edge.id);
+          edgesLayer.appendChild(refs.path);
+          applyEdgeArrows(refs, edge);
+        });
+        requestEdgesCanvasRender();
+      }
       viewport.classList.toggle('edges-svg-live', !!active);
     }
     // 节点尺寸缓存：供小地图 / 连线锚点查表，避免平移·缩放每帧现读 offsetWidth 触发强制回流。
@@ -1240,15 +1332,20 @@
             // 只接受 nodeMap 里当前那个活体元素，避免已删/快照旧 DOM 把尺寸缓存又添回来。
             if (nodeMap.get(id) !== entry.target) continue;
             const box = entry.borderBoxSize && entry.borderBoxSize[0];
-            if (box) nodeSizeCache.set(id, { w: box.inlineSize, h: box.blockSize });
-            else nodeSizeCache.set(id, { w: entry.target.offsetWidth, h: entry.target.offsetHeight });
+            const size = box ? { w: box.inlineSize, h: box.blockSize }
+              : { w: entry.target.offsetWidth, h: entry.target.offsetHeight };
+            const old = nodeSizeCache.get(id);
+            if (old && Math.abs(old.w - size.w) < 0.5 && Math.abs(old.h - size.h) < 0.5) continue;
+            nodeSizeCache.set(id, size);
             resizedIds.add(id);
           }
           if (!resizedIds.size) return;
+          contentBoundsCache = null;
           edgesIncidentTo(resizedIds).forEach(function (edge) {
             updateEdgePath(edge);
           });
           requestEdgesCanvasRender();
+          redrawMinimap();
         })
       : null;
     // ── 视口裁剪（阶段 2）：节点多时把屏外节点 visibility:hidden，省缩放重栅格 / 平移重绘。
@@ -1374,6 +1471,8 @@
     const horizontalScrollState = new WeakMap(); // MD 宽内容：Shift+滚轮目标值 + RAF 缓动
     let spaceUsedForPan = false;        // 本次空格按住期间是否拖动过（区分"短按定位" vs "按住平移"）
     let shortcutsOpen = false;          // 速查表浮层是否打开（Y1 轮）
+    let shortcutsCloseTimer = 0;
+    let formulaPanelCloseTimer = 0;
     let externalOverlayOpen = false;    // 图谱等外部浮窗显示时暂停底层画布快捷操作
     let scenePresentationMode = false;  // 镜头册演示：锁内容编辑，只保留相机平移/缩放
     let sceneGeometryCache = null;      // 镜头缩略图共用的一次性节点/连线几何快照
@@ -2289,9 +2388,12 @@
     // 历史栈：栈顶 = 当前状态
     const history = [snapshotCanvasState()];
     const redoStack = [];
+    let pendingHistoryChanges = null;
 
     function pushHistory() {
-      history.push(snapshotCanvasState());
+      const next = snapshotCanvasState();
+      if (Changes) pendingHistoryChanges = Changes.merge(pendingHistoryChanges, Changes.diff(history[history.length - 1], next));
+      history.push(next);
       if (history.length > HISTORY_LIMIT) history.shift();
       redoStack.length = 0;
       refreshHistoryButtons();
@@ -2311,20 +2413,29 @@
     }
     refreshHistoryButtons();
 
-    function notify() {
+    function notify(changeSet) {
+      const changes = changeSet || pendingHistoryChanges;
+      pendingHistoryChanges = null;
       sceneGeometryCache = null;
-      taskbookOwnershipCache = null;
-      if (Taskbooks) Taskbooks.synchronizeCompletion(data);
+      contentBoundsCache = null;
+      if (!changes || changes.topology || changes.taskbook) {
+        taskbookOwnershipCache = null;
+        if (Taskbooks) Taskbooks.synchronizeCompletion(data);
+      }
       document.dispatchEvent(new CustomEvent('canvas:scene-geometry-change'));
       updateEmptyHint();
-      refreshGroupContainers();
-      refreshMindmapFolding();
-      refreshAllIndexNodes();
-      refreshTaskbookCards();
+      if (!changes || changes.topology) {
+        rebuildEdgeIndex();
+        refreshGroupContainers();
+        refreshMindmapFolding();
+      }
+      refreshAllIndexNodes(changes);
+      if (!changes || changes.taskbook || changes.topology || changes.contentNodeIds.size) refreshTaskbookCards(null, changes);
       // 阶段 4：搜索开着时，增删改后重算命中（不强制居中）
       if (searchOpen) runSearch(searchInput ? searchInput.value : '', false);
-      redrawMinimap();   // 阶段 4：节点增删改后刷新小地图
-      if (Taskbooks && data.taskbook && data.taskbook.roots && data.taskbook.roots.length) {
+      redrawMinimap(changes);   // 只同步发生变化的小地图方块。
+      if ((!changes || changes.taskbook || changes.topology || changes.contentNodeIds.size)
+        && Taskbooks && data.taskbook && data.taskbook.roots && data.taskbook.roots.length) {
         document.dispatchEvent(new CustomEvent('canvas:taskbook-change'));
       }
       onChange();
@@ -2972,10 +3083,8 @@
       });
     }
     function findEdge(id) {
-      for (let i = 0; i < data.edges.length; i++) {
-        if (data.edges[i].id === id) return data.edges[i];
-      }
-      return null;
+      ensureEdgeIndex();
+      return edgeById.get(id) || null;
     }
 
     function ensureInkData() {
@@ -3574,8 +3683,9 @@
     // 删除离场：克隆一个「幽灵」叠在原处淡出缩小，原元素由调用方同步移除。
     // 用克隆是为了不干扰 nodeMap/data（数据已同步删，幽灵只负责视觉收尾）。
     function ghostRemove(el, withScale) {
-      if (!canWAAPI(el) || prefersReducedMotion()) return;
+      if (!canWAAPI(el) || !el.isConnected || prefersReducedMotion()) return;
       const ghost = el.cloneNode(true);
+      removalGhosts.add(ghost);
       ghost.style.pointerEvents = 'none';
       ghost.classList.remove('selected');
       (el.parentNode || surface).appendChild(ghost);
@@ -3585,7 +3695,7 @@
       }
       const fade = ghost.animate([{ opacity: 1 }, { opacity: 0 }],
         { duration: 190, easing: 'cubic-bezier(0.4, 0, 1, 1)' });
-      const done = function () { ghost.remove(); };
+      const done = function () { ghost.remove(); removalGhosts.delete(ghost); };
       fade.onfinish = done;
       fade.oncancel = done;
     }
@@ -3808,12 +3918,13 @@
       return { x: x, y: y, w: s.w, h: s.h, r: r };
     }
     function edgesIncidentTo(idSet) {
-      const out = [];
-      for (let i = 0; i < data.edges.length; i++) {
-        const e = data.edges[i];
-        if (idSet.has(e.from) || idSet.has(e.to)) out.push(e);
-      }
-      return out;
+      ensureEdgeIndex();
+      const ids = new Set();
+      idSet.forEach(function (id) {
+        const adjacent = incidentEdgeIds.get(id);
+        if (adjacent) adjacent.forEach(function (edgeId) { ids.add(edgeId); });
+      });
+      return Array.from(ids, function (id) { return edgeById.get(id); }).filter(Boolean);
     }
     function indexNodeTitle(node) {
       const text = String(node && (node.text || node.name) || '').trim();
@@ -3829,7 +3940,7 @@
     }
     function edgeNeighborsFrom(nodeId) {
       const out = [];
-      data.edges.forEach(function (edge) {
+      edgesIncidentTo(new Set([nodeId])).forEach(function (edge) {
         const arrow = edge.arrow || 'none';
         let next = null;
         if (edge.from === nodeId && (arrow === 'none' || arrow === 'end' || arrow === 'both')) next = edge.to;
@@ -3882,9 +3993,27 @@
       if (isMdNode(node)) return 'Markdown';
       return '节点';
     }
-    function refreshAllIndexNodes() {
+    function refreshAllIndexNodes(changes) {
+      if (changes && !changes.topology && !changes.nodeIds.size) return;
+      let affected = null;
+      if (changes && !changes.topology) {
+        // 目录包含多层后代，位置变化也可能改变目录排序；向入边追溯所有祖先。
+        affected = new Set(changes.nodeIds);
+        const pending = Array.from(affected);
+        for (let i = 0; i < pending.length; i++) {
+          edgesIncidentTo(new Set([pending[i]])).forEach(function (edge) {
+            const arrow = edge.arrow || 'none';
+            const ancestor = edge.to === pending[i] && arrow !== 'start' ? edge.from
+              : edge.from === pending[i] && arrow !== 'end' ? edge.to : null;
+            if (ancestor && !affected.has(ancestor)) {
+              affected.add(ancestor); pending.push(ancestor);
+            }
+          });
+        }
+      }
       data.nodes.forEach(function (node) {
         if (!isIndexNode(node)) return;
+        if (affected && !affected.has(node.id)) return;
         const el = nodeMap.get(node.id);
         if (el) renderTextNodeMeta(el, node);
       });
@@ -4050,7 +4179,7 @@
     // ── Z 轮：坐标转换 + 缓动循环 ───────────
     // 把 client 坐标（鼠标事件的 e.clientX/Y）转换到 surface 坐标（节点 x/y 用的那个）
     function clientToSurface(clientX, clientY) {
-      const vRect = viewport.getBoundingClientRect();
+      const vRect = cachedViewportRect();
       return {
         x: (clientX - vRect.left - curPanX) / curScale,
         y: (clientY - vRect.top - curPanY) / curScale,
@@ -4058,7 +4187,7 @@
     }
 
     function surfaceToClient(x, y) {
-      const vRect = viewport.getBoundingClientRect();
+      const vRect = cachedViewportRect();
       return {
         x: vRect.left + curPanX + x * curScale,
         y: vRect.top + curPanY + y * curScale,
@@ -4119,11 +4248,12 @@
         'translate(' + curPanX + 'px, ' + curPanY + 'px) scale(' + curScale + ')';
       updateGuideViewport();
       // 连线透明命中条宽度按缩放反向缩放，使其在屏幕上恒定（~22px）→ 缩小画布也好点中
-      if (edgesLayer) {
+      if (edgesLayer && !EDGE_GEOMETRY_HIT) {
         edgesLayer.style.setProperty('--edge-hit-w', Math.max(14, 22 / curScale).toFixed(2));
       }
       if (zoomIndicator) {
-        zoomIndicator.textContent = Math.round(curScale * 100) + '%';
+        const text = Math.round(curScale * 100) + '%';
+        if (zoomIndicator.textContent !== text) zoomIndicator.textContent = text;
       }
       updateMinimapViewport();   // 阶段 4：视口变化每帧只挪取景框（映射变了才完整重画）
       maybeUpdateCulling();      // 阶段 2：节点多时按视口移动阈值重算屏外裁剪集
@@ -4935,6 +5065,8 @@
     }
 
     function applyNodeStyle(el, node) {
+      // In-place type switches must update this too, so undo rebuilds incompatible content.
+      el.__canvasNodeKind = node.kind || '';
       if (isDecorationNode(node)) {
         el.dataset.kind = node.kind;
         el.dataset.decoration = 'true';
@@ -8336,9 +8468,17 @@
           : taskbookCopy('开始这个任务', 'Start this task')));
     }
 
-    function refreshTaskbookCards(now) {
+    function refreshTaskbookCards(now, changes) {
       if (!Taskbooks) return;
+      const incremental = changes && !changes.topology && !changes.taskbook;
+      const roots = new Set();
+      if (incremental) changes.contentNodeIds.forEach(function (id) {
+        const owner = taskbookOwnerId(id);
+        if (owner) roots.add(owner);
+      });
       data.nodes.forEach(function (node) {
+        if (incremental && !changes.contentNodeIds.has(node.id)
+          && !(isTaskbookNode(node) && roots.has(node.taskRootId))) return;
         if (isTaskbookNode(node)) updateTaskbookCard(node, now || Date.now());
         else if (Taskbooks.isTaskNode(node)) updateTaskbookTaskToggle(node);
       });
@@ -8947,6 +9087,7 @@
       });
     }
     function applyEdgeArrows(refs, edge) {
+      if (EDGE_GEOMETRY_HIT && !refs.path.isConnected) return;
       removeEdgeMarkers(edge.id);
       const arrow = edge.arrow || 'none';
       if (arrow === 'none') {
@@ -13994,6 +14135,7 @@
     }
 
     function createEdgeEls(edge) {
+      indexEdgeData(edge);
       const path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('class', 'canvas-edge');
       path.dataset.id = edge.id;
@@ -14006,8 +14148,10 @@
         hit.classList.add('taskbook-workflow-edge');
       }
       // hit 放底下，path 在上：视觉上看的是 path，但 hit 比 path 粗更易点中
-      edgesLayer.appendChild(hit);
-      edgesLayer.appendChild(path);
+      if (!EDGE_GEOMETRY_HIT) {
+        edgesLayer.appendChild(hit);
+        edgesLayer.appendChild(path);
+      }
 
       if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)) {
         path.classList.add('mindmap-fold-hidden');
@@ -14022,14 +14166,15 @@
         hit.classList.add('taskbook-tree-hidden');
       }
 
-      bindEdgeEvents(path, hit, null, edge);
-      const refs = { path: path, hit: hit, labelEl: null, order: edgeMap.size };
+      const handlers = bindEdgeEvents(path, hit, null, edge);
+      const refs = { path: path, hit: hit, labelEl: null, order: nextEdgeOrder++, handlers: handlers };
       if (edge.text) ensureEdgeLabel(edge, refs);
       applyEdgeStyle(refs, edge);     // 5-2：粗细 + 箭头
       return refs;
     }
 
     function updateEdgePath(edge) {
+      indexEdgeData(edge);
       const refs = edgeMap.get(edge.id);
       if (!refs) return;
       const src = findNode(edge.from);
@@ -14191,6 +14336,20 @@
         minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
         maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
       });
+      const curve = edgeCurveType(edge);
+      const smooth = curve === 'smooth' || (edge.waypoints && edge.waypoints.length
+        && curve !== 'straight' && curve !== 'elbow' && curve !== 'rounded-elbow');
+      if (smooth) {
+        // Catmull-Rom 可能越过原折线的包围盒；控制点凸包必须进入网格，否则
+        // 在远处拉出的大弯曲线会可见却无法命中（也可能被错误裁剪）。
+        for (let i = 0; i < pts.length - 1; i++) {
+          const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+          const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+          const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+          minX = Math.min(minX, c1x, c2x); minY = Math.min(minY, c1y, c2y);
+          maxX = Math.max(maxX, c1x, c2x); maxY = Math.max(maxY, c1y, c2y);
+        }
+      }
       const pad = Math.max(24, (Number(edge.width) || 1.5) * 8 + (Number(edge.arrowSize) || 12));
       return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
     }
@@ -14302,6 +14461,39 @@
       return items;
     }
 
+    function edgeIsHidden(edge) {
+      return hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)
+        || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)
+        || hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to);
+    }
+
+    function edgeAtClient(clientX, clientY) {
+      if (!EDGE_GEOMETRY_HIT) return null;
+      const p = clientToSurface(clientX, clientY);
+      const width = Math.max(14, 22 / curScale);
+      const radius = width / 2;
+      const items = queryEdgeGeometry({ minX: p.x - radius, minY: p.y - radius,
+        maxX: p.x + radius, maxY: p.y + radius });
+      edgeHitCtx.lineWidth = width;
+      // SVG 透明命中条原本不继承可见线的虚线、箭头和阴影。
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (!edgeIsHidden(item.edge) && edgeHitCtx.isPointInStroke(item.path, p.x, p.y)) return item.edge;
+      }
+      return null;
+    }
+
+    function geometryEdgeForEvent(e) {
+      if (!EDGE_GEOMETRY_HIT || scenePresentationMode || spaceHeld || drawTool !== 'select') return null;
+      if (e.target !== surface && e.target !== viewport && e.target !== emptyHint && e.target !== edgesCanvas) return null;
+      return edgeAtClient(e.clientX, e.clientY);
+    }
+
+    function updateEdgeHover(e) {
+      const edge = !drag && geometryEdgeForEvent(e);
+      viewport.classList.toggle('edge-hover', !!edge);
+    }
+
     // 取（或重建）一条连线在 surface 坐标系的完整几何项。
     function edgeCachedPath2D(edge) {
       const rects = edgeCanvasRects(edge);
@@ -14323,7 +14515,7 @@
 
     function requestEdgesCanvasRender() {
       if (!edgesCtx || !EDGE_CANVAS_ON) return;
-      if (viewport.classList.contains('edges-svg-live')) return;
+      if (!EDGE_GEOMETRY_HIT && viewport.classList.contains('edges-svg-live')) return;
       if (edgeCanvasRaf != null) return;
       edgeCanvasRaf = requestAnimationFrame(() => {
         edgeCanvasRaf = null;
@@ -14419,8 +14611,9 @@
         cancelAnimationFrame(edgeCanvasRaf);
         edgeCanvasRaf = null;
       }
-      const vw = viewport.clientWidth || 1;
-      const vh = viewport.clientHeight || 1;
+      const viewportRect = cachedViewportRect();
+      const vw = viewportRect.width || 1;
+      const vh = viewportRect.height || 1;
       const dpr = window.devicePixelRatio || 1;
       const needW = Math.max(1, Math.round(vw * dpr));
       const needH = Math.max(1, Math.round(vh * dpr));
@@ -14438,9 +14631,8 @@
       for (let i = 0; i < visibleItems.length; i++) {
         const item = visibleItems[i];
         const edge = item.edge;
-        if (hiddenMindmapNodeIds.has(edge.from) || hiddenMindmapNodeIds.has(edge.to)
-            || hiddenGroupNodeIds.has(edge.from) || hiddenGroupNodeIds.has(edge.to)
-            || hiddenTaskbookNodeIds.has(edge.from) || hiddenTaskbookNodeIds.has(edge.to)) continue;
+        if (edgeIsHidden(edge)) continue;
+        if (liveSvgEdgeIds.has(edge.id)) continue;
         const b = item.bounds;
         if (b.maxX < x0 || b.minX > x1 || b.maxY < y0 || b.minY > y1) continue;  // 屏外跳过
         const selected = selectedEdgeIds.has(edge.id);
@@ -14451,6 +14643,12 @@
         drawCanvasEdgeArrows(edge, item.points, selected);
         if (selected) drawCanvasEdgeSelectionMarker(item);
       }
+      liveSvgEdgeIds.forEach(function (id) {
+        if (!selectedEdgeIds.has(id)) return;
+        const edge = edgeById.get(id);
+        const item = edge && edgeCachedPath2D(edge);
+        if (item) drawCanvasEdgeSelectionMarker(item);
+      });
     }
 
     // 用临时坐标重画（拖动多个节点时用，避免提前 mutate data.nodes）
@@ -14473,32 +14671,58 @@
     }
 
     // ── reconcile（DOM ↔ data 同步）────────────
-    function reconcileAll() {
+    function reconcileAll(changes) {
       normalizeTextBindings();
-      renderInk();
-      reconcileNodes();
-      reconcileEdges();
-      renderTimers();
-      refreshTaskbookVisibility();
-      refreshGroupContainers();
-      refreshMindmapFolding();
+      contentBoundsCache = null;
+      if (!changes || changes.ink) renderInk();
+      reconcileNodes(changes);
+      primeNodeSizeCache();
+      reconcileEdges(changes);
+      if (!changes || changes.timers) renderTimers();
+      if (!changes || changes.topology || changes.taskbook) refreshTaskbookVisibility();
+      if (!changes || changes.topology) {
+        refreshGroupContainers();
+        refreshMindmapFolding();
+      }
       applySelection();
       updateEmptyHint();
       updateCulling();   // 阶段 2：节点增删 / 撤销重做后，按当前视口重算屏外裁剪集
     }
 
-    function reconcileNodes() {
+    function primeNodeSizeCache() {
+      // Finish every DOM write before measuring any node. Edge construction must not
+      // interleave SVG/style writes with the first offsetWidth read for each endpoint.
+      nodeMap.forEach(function (el, id) { if (!nodeSizeCache.has(id)) cachedNodeSize(el, id); });
+    }
+
+    function disposeNodeElement(id, el) {
+      disposeViewportAsset(id);
+      if (nodeSizeObserver) nodeSizeObserver.unobserve(el);
+      nodeSizeCache.delete(id);
+      el.remove();
+      nodeMap.delete(id);
+    }
+
+    function reconcileNodes(changes) {
       const seen = new Set();
+      const fragment = document.createDocumentFragment();
       data.nodes.forEach((node) => {
         seen.add(node.id);
         let el = nodeMap.get(node.id);
+        if (el && el.__canvasNodeKind !== (node.kind || '')) {
+          disposeNodeElement(node.id, el);
+          el = null;
+        }
+        if (el && changes && !changes.nodeIds.has(node.id)) return;
         if (!el) {
           el = createNodeEl(node);
-          surface.appendChild(el);
+          fragment.appendChild(el);
           nodeMap.set(node.id, el);
           if (nodeSizeObserver) nodeSizeObserver.observe(el);
         } else {
           applyTransform(el, node.x, node.y);
+          if (changes && !changes.contentNodeIds.has(node.id)) return;
+          nodeSizeCache.delete(node.id);
           // C1：同步颜色
           if (node.color) el.dataset.color = node.color;
           else el.removeAttribute('data-color');
@@ -14520,21 +14744,29 @@
           }
         }
       });
+      surface.appendChild(fragment);
       for (const [id, el] of nodeMap) {
         if (!seen.has(id)) {
-          disposeViewportAsset(id); // 附件/图片被删或撤销移除时，释放文档、位图与外层监听
-          if (nodeSizeObserver) nodeSizeObserver.unobserve(el);
-          nodeSizeCache.delete(id);
-          el.remove();
-          nodeMap.delete(id);
+          disposeNodeElement(id, el);
           selectedNodeIds.delete(id);
         }
       }
-      syncDecorationStackingOrder();
+      if (changes && changes.topology) {
+        // 恢复删除/类型转换后，保持文件内节点的叠放顺序；常规撤销不搬动 DOM。
+        const ordered = data.nodes.map(function (node) { return nodeMap.get(node.id); });
+        const current = Array.from(surface.children).filter(function (el) { return el.classList.contains('node'); });
+        if (ordered.some(function (el, i) { return el !== current[i]; })) {
+          ordered.forEach(function (el) { surface.appendChild(el); });
+        }
+      }
+      if (!changes || changes.topology || changes.contentNodeIds.size) syncDecorationStackingOrder();
     }
 
-    function reconcileEdges() {
+    function reconcileEdges(changes) {
+      rebuildEdgeIndex();
       const seen = new Set();
+      const affected = changes ? new Set(changes.edgeIds) : null;
+      if (affected) edgesIncidentTo(changes.nodeIds).forEach(function (edge) { affected.add(edge.id); });
       data.edges.forEach((edge, edgeIndex) => {
         seen.add(edge.id);
         let refs = edgeMap.get(edge.id);
@@ -14543,6 +14775,10 @@
           edgeMap.set(edge.id, refs);
         }
         refs.order = edgeIndex;
+        nextEdgeOrder = Math.max(nextEdgeOrder, edgeIndex + 1);
+        const cached = edgePathCache.get(edge.id);
+        if (cached) { cached.order = edgeIndex; cached.edge = edge; }
+        if (affected && cached && !affected.has(edge.id)) return;
         const want = edge.text || '';
         if (want) {
           const labelEl = ensureEdgeLabel(edge, refs);
@@ -14946,7 +15182,7 @@
     // ── 连线事件 ──────────────────────────────
     function bindEdgeEvents(pathEl, hitEl, labelEl, edge) {
       // allowBend：在线身上按下时，编辑模式下允许"拖线出弯"加拐点
-      const pick = (e, allowBend) => {
+      const pick = (e, allowBend, target) => {
         if (e.button !== 0) return;
         if (mindmapColorBrushState) {
           e.preventDefault();
@@ -14956,7 +15192,7 @@
         e.stopPropagation();
         if (isSelectionToggleEvent(e)) {
           e.preventDefault();
-          suppressNextSelectionToggleClick(e.currentTarget);
+          suppressNextSelectionToggleClick(target || e.currentTarget);
           toggleEdgeSelection(edge.id);
           return;
         }
@@ -14971,8 +15207,8 @@
           pick(e, false);
         });
       }
-      const onEditTrigger = (e) => {
-        if (consumeSelectionToggleClick(e.currentTarget, e)) {
+      const onEditTrigger = (e, target) => {
+        if (consumeSelectionToggleClick(target || e.currentTarget, e)) {
           e.preventDefault();
           e.stopPropagation();
           return;
@@ -15000,6 +15236,7 @@
       if (hitEl) hitEl.addEventListener('contextmenu', onMenu);
       if (pathEl) pathEl.addEventListener('contextmenu', onMenu);
       if (labelEl) labelEl.addEventListener('contextmenu', onMenu);
+      return { pick: pick, edit: onEditTrigger, menu: onMenu };
     }
 
     // ── 拖动：节点 / 多选 ────────────────────
@@ -15981,12 +16218,14 @@
       });
       parentEdge.from = target.id;
       parentEdge.to = anchor.id;
+      indexEdgeData(parentEdge);
       delete parentEdge.waypoints;
       if (target.mindmapCollapsed) delete target.mindmapCollapsed;
       const nextTree = buildManagedMindmapTree(findNode(context.rootId));
       if (!nextTree.valid) {
         parentEdge.from = oldEdge.from;
         parentEdge.to = oldEdge.to;
+        indexEdgeData(parentEdge);
         if (oldEdge.waypoints) parentEdge.waypoints = oldEdge.waypoints;
         if (targetWasCollapsed) target.mindmapCollapsed = true;
         state.starts.forEach(function (start, id) {
@@ -16216,7 +16455,7 @@
         rulerLiveCoords: null,
       };
 
-      setEdgesSvgLive(true);
+      setEdgesSvgLive(true, affectedEdges);
 
       starts.forEach((_, id) => {
         const elN = nodeMap.get(id);
@@ -18466,6 +18705,7 @@
     function removeEdgeRaw(id) {
       const idx = data.edges.findIndex((e) => e.id === id);
       if (idx >= 0) data.edges.splice(idx, 1);
+      unindexEdgeData(id);
       removeEdgeMarkers(id);
       const refs = edgeMap.get(id);
       if (refs) {
@@ -18932,6 +19172,11 @@
         e.stopPropagation();
         if (currentMode() === 'decor' && hasActiveDecorTool()) clearActiveDecorTool();
         setDrawTool('select');
+        return;
+      }
+      const hitEdge = geometryEdgeForEvent(e);
+      if (hitEdge) {
+        edgeMap.get(hitEdge.id).handlers.menu(e);
         return;
       }
       const nodeEl = e.target.closest ? e.target.closest('.node') : null;
@@ -22966,12 +23211,27 @@
 
     function setFormulaPanelOpen(open) {
       if (!formulaPanel) return;
-      formulaPanel.hidden = !open;
       if (formulaBtn) {
         formulaBtn.classList.toggle('active', open);
         formulaBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       }
-      if (open) refreshFormulaHint();
+      if (open) {
+        if (formulaPanelCloseTimer) window.clearTimeout(formulaPanelCloseTimer);
+        formulaPanelCloseTimer = 0;
+        formulaPanel.classList.remove('is-closing');
+        formulaPanel.hidden = false;
+        refreshFormulaHint();
+        return;
+      }
+      if (formulaPanel.hidden || formulaPanel.classList.contains('is-closing')) return;
+      formulaPanel.classList.add('is-closing');
+      const reduceMotion = window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      formulaPanelCloseTimer = window.setTimeout(function () {
+        formulaPanel.hidden = true;
+        formulaPanel.classList.remove('is-closing');
+        formulaPanelCloseTimer = 0;
+      }, reduceMotion ? 0 : 180);
     }
 
     function stopFormulaDrag() {
@@ -23088,7 +23348,7 @@
       if (formulaBtn) {
         formulaBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
         formulaBtn.addEventListener('click', function () {
-          setFormulaPanelOpen(formulaPanel.hidden);
+          setFormulaPanelOpen(formulaPanel.hidden || formulaPanel.classList.contains('is-closing'));
         });
       }
       // 焦点进入任意可编辑面时刷新提示语（便宜，无需轮询）
@@ -23214,13 +23474,21 @@
     // ── Y1 轮：速查表浮层 ───────────────────
     function openShortcuts() {
       if (!shortcutsOverlay) return;
+      if (shortcutsCloseTimer) window.clearTimeout(shortcutsCloseTimer);
+      shortcutsCloseTimer = 0;
+      shortcutsOverlay.classList.remove('is-closing');
       shortcutsOverlay.hidden = false;
       shortcutsOpen = true;
     }
     function closeShortcuts() {
-      if (!shortcutsOverlay) return;
-      shortcutsOverlay.hidden = true;
+      if (!shortcutsOverlay || shortcutsOverlay.hidden || shortcutsOverlay.classList.contains('is-closing')) return;
       shortcutsOpen = false;
+      shortcutsOverlay.classList.add('is-closing');
+      shortcutsCloseTimer = window.setTimeout(function () {
+        shortcutsOverlay.hidden = true;
+        shortcutsOverlay.classList.remove('is-closing');
+        shortcutsCloseTimer = 0;
+      }, 180);
     }
     function toggleShortcuts() {
       if (shortcutsOpen) closeShortcuts();
@@ -23324,6 +23592,7 @@
     const MM_PAD = 60;   // 映射域四周留白（surface 单位）
 
     function hasMinimapNodes() {
+      if (contentBoundsCache) return Number.isFinite(contentBoundsCache.minX);
       return data.nodes.some((node) => (
         !isEdgeAnchorNode(node) && !isCanvasNodeVisuallyHidden(node.id)
       ));
@@ -23331,7 +23600,7 @@
 
     // 当前视口在 surface 坐标中可见区域的 [x0,y0,x1,y1]
     function visibleSurfaceRect() {
-      const vRect = viewport.getBoundingClientRect();
+      const vRect = cachedViewportRect();
       return {
         x0: (-curPanX) / curScale,
         y0: (-curPanY) / curScale,
@@ -23344,7 +23613,7 @@
 
     // 目标视口（用 target 提前于缓动揭示）在 surface 坐标的范围，已外扩预渲染余量。
     function cullExpandedRect() {
-      const vRect = viewport.getBoundingClientRect();
+      const vRect = cachedViewportRect();
       cullVpW = vRect.width; cullVpH = vRect.height;
       const x0 = (-targetPanX) / targetScale;
       const y0 = (-targetPanY) / targetScale;
@@ -23391,17 +23660,23 @@
 
     // 世界→小地图映射：包围盒(节点 ∪ 可见区域) → 缩放/偏移。尺寸全走缓存，零强制回流。
     function computeMinimapMapping() {
-      const mmW = minimap.clientWidth || 180;
-      const mmH = minimap.clientHeight || 120;
+      const mmW = minimapSize.w;
+      const mmH = minimapSize.h;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      data.nodes.forEach(function (n) {
-        if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
-        const s = cachedNodeSize(nodeMap.get(n.id), n.id);
-        if (n.x < minX) minX = n.x;
-        if (n.y < minY) minY = n.y;
-        if (n.x + s.w > maxX) maxX = n.x + s.w;
-        if (n.y + s.h > maxY) maxY = n.y + s.h;
-      });
+      if (!contentBoundsCache) {
+        data.nodes.forEach(function (n) {
+          if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
+          const s = cachedNodeSize(nodeMap.get(n.id), n.id);
+          if (n.x < minX) minX = n.x;
+          if (n.y < minY) minY = n.y;
+          if (n.x + s.w > maxX) maxX = n.x + s.w;
+          if (n.y + s.h > maxY) maxY = n.y + s.h;
+        });
+        contentBoundsCache = { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+      } else {
+        minX = contentBoundsCache.minX; minY = contentBoundsCache.minY;
+        maxX = contentBoundsCache.maxX; maxY = contentBoundsCache.maxY;
+      }
       const vis = visibleSurfaceRect();
       if (vis.x0 < minX) minX = vis.x0;
       if (vis.y0 < minY) minY = vis.y0;
@@ -23442,15 +23717,21 @@
     }
 
     // 完整重画：重算映射 + 同步所有节点小方块 + 取景框。节点增删改/拖动后调用。
-    function redrawMinimap() {
+    function redrawMinimap(changes, reuseBounds) {
       if (!minimap || !minimapNodes || !minimapViewbox) return;
+      if (minimapRebaseTimer != null) { clearTimeout(minimapRebaseTimer); minimapRebaseTimer = null; }
+      if (!reuseBounds) contentBoundsCache = null;
       if (!hasMinimapNodes()) {
         if (!minimap.hidden) minimap.hidden = true;
         return;
       }
       if (minimap.hidden) minimap.hidden = false;
 
-      mmMap = computeMinimapMapping();
+      const nextMapping = computeMinimapMapping();
+      const incremental = changes && !changes.topology && sameMinimapMapping(nextMapping, minimapNodeMapping);
+      mmMap = nextMapping;
+      minimapNodeMapping = nextMapping;
+      minimapNodes.style.transform = '';
       const ox = mmMap.ox, oy = mmMap.oy, s = mmMap.s, minX = mmMap.minX, minY = mmMap.minY;
 
       // 节点小矩形：持久 div 池，增删改时同步（不每帧重建）
@@ -23458,6 +23739,7 @@
       data.nodes.forEach(function (n) {
         if (isEdgeAnchorNode(n) || isCanvasNodeVisuallyHidden(n.id)) return;
         seen.add(n.id);
+        if (incremental && !changes.nodeIds.has(n.id) && mmNodeMap.has(n.id)) return;
         const sz = cachedNodeSize(nodeMap.get(n.id), n.id);
         let dot = mmNodeMap.get(n.id);
         if (!dot) {
@@ -23508,14 +23790,22 @@
 
     function updateMinimapViewport() {
       if (!minimap || !minimapNodes || !minimapViewbox) return;
-      if (!hasMinimapNodes()) { redrawMinimap(); return; }
+      if (!minimapNodeMapping || !hasMinimapNodes()) { redrawMinimap(); return; }
       const next = computeMinimapMapping();
-      if (sameMinimapMapping(next, mmMap)) {
-        mmMap = next;
-        placeMinimapViewbox();
-      } else {
-        redrawMinimap();
-      }
+      mmMap = next;
+      // 相机移动只变换已画好的小地图节点层，不逐节点写几千个样式。
+      const base = minimapNodeMapping;
+      const ratio = next.s / base.s;
+      const x = next.ox + (base.minX - next.minX) * next.s - base.ox * ratio;
+      const y = next.oy + (base.minY - next.minY) * next.s - base.oy * ratio;
+      minimapNodes.style.transformOrigin = '0 0';
+      minimapNodes.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + ratio + ')';
+      placeMinimapViewbox();
+      if (minimapRebaseTimer != null) clearTimeout(minimapRebaseTimer);
+      minimapRebaseTimer = setTimeout(function () {
+        minimapRebaseTimer = null;
+        if (!sameMinimapMapping(mmMap, minimapNodeMapping)) redrawMinimap(null, true);
+      }, 160);
     }
 
     // 小地图坐标 → surface 坐标（反映射）
@@ -23913,7 +24203,7 @@
       if (childrenIndex) return childrenIndex.get(node.id) || [];
       const seen = new Set();
       const children = [];
-      data.edges.forEach(function (edge) {
+      edgesIncidentTo(new Set([node.id])).forEach(function (edge) {
         if (edge.from !== node.id || edge.to === node.id || seen.has(edge.to)) return;
         const child = findNode(edge.to);
         if (!child || isDecorationNode(child) || isTableNode(child)) return;
@@ -24458,8 +24748,14 @@
         return;
       }
       // 绑在 viewport 上：surface 框外（含负坐标区）的空白处也能建节点
-      if (e.target !== surface && e.target !== viewport && e.target !== emptyHint) return;
+      if (e.target !== surface && e.target !== viewport && e.target !== emptyHint && e.target !== edgesCanvas) return;
       if (lastPointerType === 'pen') return;   // 手写笔双击不建节点（防批注时误触；鼠标/触摸照常）
+      const hitEdge = geometryEdgeForEvent(e);
+      if (hitEdge) {
+        const refs = edgeMap.get(hitEdge.id);
+        refs.handlers.edit(e, refs.hit);
+        return;
+      }
       if (drawTool === 'edge-anchor') {
         if (currentMode() === 'decor') return;
         e.preventDefault();
@@ -24493,10 +24789,17 @@
         if (e.button === 0) startPan(e);
         return;
       }
-      if (e.target !== surface && e.target !== viewport && e.target !== emptyHint) return;
+      if (e.target !== surface && e.target !== viewport && e.target !== emptyHint && e.target !== edgesCanvas) return;
       if (mindmapColorBrushState) {
         e.preventDefault();
         e.stopPropagation();
+        return;
+      }
+      const hitEdge = geometryEdgeForEvent(e);
+      if (hitEdge && !rulerHitAtClient(e.clientX, e.clientY)) {
+        e.stopPropagation();
+        const refs = edgeMap.get(hitEdge.id);
+        refs.handlers.pick(e, true, refs.hit);
         return;
       }
       if (e.button === 2) {
@@ -24542,6 +24845,7 @@
     // Z 轮：viewport 上 capture-phase 拦截——空格按住时所有 mousedown 都启动 pan
     // 即使鼠标按在节点上也走 pan（不让节点拖动抢到这次 mousedown）
     function onViewportMouseDownCapture(e) {
+      refreshViewportRect();
       // 折叠按钮是瞬时点击，必须在视口收尾前放行，避免重绘替换按下时的按钮。
       if (e.target.closest && e.target.closest('.group-collapse-btn')) return;
       cancelPanInertia();   // W 轮：任何在画布内按下都立即停掉平移惯性（抓手感，像 Figma/Miro）
@@ -24583,6 +24887,7 @@
     let drawPointerId = null;
     let lastPointerType = 'mouse';   // 记录最近一次指针类型，用于「手写笔不建节点」
     function onViewportPointerDownCapture(e) {
+      refreshViewportRect();
       if (e.target.closest && e.target.closest('.group-collapse-btn')) return;
       lastPointerType = e.pointerType || 'mouse';
       freezeViewportForInteraction();
@@ -24624,6 +24929,14 @@
     // ── 撤销 / 重做 ────────────────────────
     function applySnapshot(snap, options) {
       options = options || {};
+      removalGhosts.forEach(function (ghost) {
+        ghost.getAnimations().forEach(function (animation) { animation.cancel(); });
+        ghost.remove();
+      });
+      removalGhosts.clear();
+      setEdgesSvgLive(false);
+      const before = Changes ? snapshotCanvasState() : null;
+      const previousEdges = data.edges;
       const now = Date.now();
       const liveTimers = new Map();
       const liveTaskbooks = new Map();
@@ -24644,7 +24957,7 @@
           runtime: timerRuntime.has(timer.id) ? { running: true, startedAt: now } : null,
         });
       });
-      data.nodes = snap.nodes.map(cloneNode);
+      data.nodes = Changes ? Changes.restoreRecords(data.nodes, snap.nodes, cloneNode) : snap.nodes.map(cloneNode);
       const restoredTaskbook = cloneTaskbook(snap.taskbook);
       if (restoredTaskbook) data.taskbook = restoredTaskbook;
       else delete data.taskbook;
@@ -24666,8 +24979,13 @@
         scheduleTaskbookTick();
       }
       rebuildNodeIndex();
-      data.edges = snap.edges.map(cloneEdge);   // 5-3：深拷 waypoints，避免与快照共享
-      if (Taskbooks) Taskbooks.rebuildWorkflowEdges(data);
+      data.edges = Changes ? Changes.restoreRecords(previousEdges, snap.edges, cloneEdge) : snap.edges.map(cloneEdge);
+      if (Taskbooks) {
+        Taskbooks.synchronizeCompletion(data);
+        Taskbooks.rebuildWorkflowEdges(data);
+      }
+      if (Changes) data.edges = Changes.restoreRecords(previousEdges, data.edges, cloneEdge);
+      rebuildEdgeIndex();
       data.ink = cloneInk(snap.ink);
       const snapshotRuler = cloneRuler(snap.ruler);
       if (snapshotRuler) data.ruler = snapshotRuler;
@@ -24689,59 +25007,62 @@
       restoredRuntime.forEach(function (runtime, id) { timerRuntime.set(id, runtime); });
       if (restoredTimers.length) data.timers = restoredTimers;
       else delete data.timers;
+      normalizeTextBindings();
+      const changes = Changes ? Changes.diff(before, data) : null;
+      pendingHistoryChanges = null;
+      sceneGeometryCache = null;
+      contentBoundsCache = null;
       rulerSelected = false;
-      // 撤销/重做重建 DOM 前先推导隐藏集合，避免折叠分支先闪现一帧再隐藏。
-      hiddenMindmapNodeIds = computeHiddenMindmapNodeIds();
-      hiddenGroupNodeIds = computeHiddenGroupNodeIds();
-      hiddenTaskbookNodeIds = computeHiddenTaskbookNodeIds();
-      // 全部 DOM 推倒重建（最稳）
-      nodeMap.forEach((el, id) => {
-        disposeViewportAsset(id);
-        if (nodeSizeObserver) nodeSizeObserver.unobserve(el);   // 旧元素退订，避免观察器攒游离 DOM
-        el.remove();
-      });
-      nodeMap.clear();
-      nodeSizeCache.clear();   // reconcileAll 会按新节点重新观察、cachedNodeSize 兜底过渡
-      edgeMap.forEach((refs) => {
-        refs.path.remove();
-        refs.hit.remove();
-        if (refs.labelEl) refs.labelEl.remove();
-      });
-      edgeMap.clear();
-      edgePathCache.clear();
-      edgeSpatialGrid.clear();
-      edgeSpatialCells.clear();
-      edgeGeometryDirty.clear();
-      edgeMidpointCache.clear();
+      if (!changes || changes.topology) {
+        hiddenMindmapNodeIds = computeHiddenMindmapNodeIds();
+        hiddenGroupNodeIds = computeHiddenGroupNodeIds();
+      }
+      if (!changes || changes.topology || changes.taskbook) hiddenTaskbookNodeIds = computeHiddenTaskbookNodeIds();
+      // Older standalone hosts without the change-set runtime retain the old rebuild fallback.
+      if (!Changes) {
+        nodeMap.forEach((el, id) => disposeNodeElement(id, el));
+        edgeMap.forEach((refs, id) => {
+          removeEdgeMarkers(id);
+          refs.path.remove(); refs.hit.remove();
+          if (refs.labelEl) refs.labelEl.remove();
+        });
+        edgeMap.clear(); edgePathCache.clear(); edgeSpatialGrid.clear();
+        edgeSpatialCells.clear(); edgeGeometryDirty.clear(); edgeMidpointCache.clear();
+      }
       edgeCanvasLiveCoords = null;
       selectedNodeIds.clear();
       selectedEdgeIds.clear();
       selectedTimerIds.clear();
-      renderInk();
-      reconcileAll();
-      renderRuler();
-      // 阶段 4：DOM 推倒重建后高亮 class 没了，搜索开着就重算（撤销/重做）
+      reconcileAll(changes);
+      refreshAllIndexNodes(changes);
+      if (!changes || changes.taskbook || changes.topology || changes.contentNodeIds.size) refreshTaskbookCards(null, changes);
+      if (!changes || changes.ruler) renderRuler();
+      // Search and selection keep their existing undo semantics; unchanged content stays mounted.
       if (searchOpen) runSearch(searchInput ? searchInput.value : '', false);
-      redrawMinimap();   // 阶段 4：撤销/重做后刷新小地图
+      redrawMinimap(changes);
       if (options.notify !== false) onChange();
     }
 
     function undo() {
       if (history.length <= 1) return;
+      const finishPerf = beginPerfOperation('undo');
       refreshHistoryTimerHead();
       const current = history.pop();
       redoStack.push(current);
       applySnapshot(history[history.length - 1]);
       refreshHistoryButtons();
+      finishPerf();
     }
 
     function redo() {
       if (redoStack.length === 0) return;
+      const finishPerf = beginPerfOperation('redo');
       refreshHistoryTimerHead();
       const next = redoStack.pop();
       history.push(next);
       applySnapshot(next);
       refreshHistoryButtons();
+      finishPerf();
     }
 
     // ── 键盘 ──────────────────────────────────
@@ -25525,6 +25846,10 @@
     viewport.addEventListener('dblclick', onSurfaceDblClick);
     viewport.addEventListener('click', onSemanticGroupControlClick, true);
     viewport.addEventListener('mousedown', onSurfaceMouseDown);
+    if (EDGE_GEOMETRY_HIT) {
+      viewport.addEventListener('mousemove', updateEdgeHover);
+      viewport.addEventListener('mouseleave', function () { viewport.classList.remove('edge-hover'); });
+    }
     // Z 轮：capture-phase 在 viewport 上拦截空格+拖（要比节点的 mousedown 先看到）
     viewport.addEventListener('mousedown', onViewportMouseDownCapture, true);
     // 手写笔/数位板：绘图工具激活时由 pointerdown（capture，早于节点 mousedown）接管起笔
@@ -25540,22 +25865,39 @@
     viewport.addEventListener('dragleave', onViewportDragLeave);
     viewport.addEventListener('drop', onViewportDrop);
     window.addEventListener('mousemove', onWindowMouseMove);
-    window.addEventListener('mouseup', onWindowMouseUp);
+    window.addEventListener('mouseup', function (event) {
+      const finishPerf = beginPerfOperation(drag ? 'finish-' + drag.mode : 'mouseup');
+      onWindowMouseUp(event);
+      finishPerf();
+    });
     window.addEventListener('dragover', onWindowFileDragOver, true);
     window.addEventListener('drop', onWindowFileDrop, true);
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('paste', onPaste, true);
     window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('resize', refreshViewportRect);
     window.addEventListener('resize', keepRememberedViewportCentered);
     window.addEventListener('resize', requestEdgesCanvasRender);
     // 分屏、侧栏等 flex 布局会改变 viewport 尺寸但不会触发 window.resize。
     // Canvas 连线层的 backing store 必须在容器尺寸变化后重建，否则浏览器会拉伸旧位图，
     // 节点位置仍正确而连线整体错位。ResizeObserver 回调内仍走 rAF 合并重绘。
     const viewportSizeObserver = (typeof ResizeObserver === 'function')
-      ? new ResizeObserver(function () { requestEdgesCanvasRender(); })
+      ? new ResizeObserver(function () {
+        refreshViewportRect();
+        lastCullPanX = NaN;
+        requestEdgesCanvasRender();
+      })
       : null;
     if (viewportSizeObserver) viewportSizeObserver.observe(viewport);
+    const minimapSizeObserver = minimap && typeof ResizeObserver === 'function'
+      ? new ResizeObserver(function () {
+        const w = minimap.clientWidth, h = minimap.clientHeight;
+        if (!w || !h || (w === minimapSize.w && h === minimapSize.h)) return;
+        minimapSize = { w: w, h: h };
+        redrawMinimap(null, true);
+      }) : null;
+    if (minimapSizeObserver) minimapSizeObserver.observe(minimap);
     // 从外部编辑器改完 MD 回到画布：重渲那几篇附件（重新校验内容指纹，失效标注自动判废）。
     window.addEventListener('focus', function () {
       if (!mdExternalPending.size) return;
@@ -28633,7 +28975,7 @@
       }
       // 逐帧插值滑行：同时驱动节点 transform 与连线（复用 updateEdgePathLive），连线全程跟随不脱节。
       const affectedEdges = edgesIncidentTo(movingIds);
-      setEdgesSvgLive(true);
+      setEdgesSvgLive(true, affectedEdges);
       data.edges.forEach(function (e) {                    // 两端都不动的连线一次到位
         if (!movingIds.has(e.from) && !movingIds.has(e.to)) updateEdgePath(e);
       });
@@ -29128,13 +29470,8 @@
     };
 
     // 只在显式性能夹具中暴露；正常运行不创建调试全局。
-    let perfSnapshotEnabled = false;
-    try { perfSnapshotEnabled = new URLSearchParams(global.location.search).get('perf') === '1'; } catch (e) {}
     if (perfSnapshotEnabled) {
       const perfInitMs = Date.now() - initStartedAt;
-      const perfLoadMs = global.performance && Number.isFinite(Number(global.performance.timeOrigin))
-        ? Date.now() - Number(global.performance.timeOrigin)
-        : perfInitMs;
       const perfFrameDeltas = [];
       let perfLastFrame = 0;
       const samplePerfFrame = function (stamp) {
@@ -29183,6 +29520,8 @@
           },
           edges: {
             total: data.edges.length,
+            hitBackend: EDGE_GEOMETRY_HIT ? 'geometry' : 'svg',
+            activeSvg: liveSvgEdgeIds.size,
             geometryCache: edgePathCache.size,
             spatialBuckets: edgeSpatialGrid.size,
             spatialRefs: indexedRefs,
@@ -29199,7 +29538,9 @@
           },
           domElements: document.getElementsByTagName('*').length,
           initMs: perfInitMs,
-          loadMs: perfLoadMs,
+          loadMs: global.__relatumOpeningPerf ? global.__relatumOpeningPerf.interactiveMs : null,
+          opening: global.__relatumOpeningPerf ? Object.assign({}, global.__relatumOpeningPerf) : null,
+          operations: perfOperations.map(function (operation) { return Object.assign({}, operation); }),
         };
       };
       const perfOutput = document.createElement('output');
@@ -29211,7 +29552,7 @@
         perfOutput.textContent = JSON.stringify(global.__relatumPerfSnapshot());
       };
       updatePerfOutput();
-      setInterval(updatePerfOutput, 200);
+      setInterval(updatePerfOutput, 1000);
     }
 
     if (richMigrationChanged) {

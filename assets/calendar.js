@@ -41,6 +41,10 @@
     prefetchControllers: new Map(),
     neighborPrefetchHandle: 0,
     neighborPrefetchUsesIdle: false,
+    initialPreloadHandle: 0,
+    initialPreloadUsesIdle: false,
+    initialPreloadKey: '',
+    initialPreloadPromise: null,
     keyboardFocusDay: '',
     lastDayMotionAt: 0,
     lastNavAt: 0,
@@ -127,6 +131,59 @@
 
   function monthKey(year, month) {
     return String(year) + '-' + String(month).padStart(2, '0');
+  }
+
+  function calendarRequest(day, year, month, options) {
+    const query = new URLSearchParams({
+      year: String(year),
+      month: String(month),
+      day: String(day),
+    });
+    return request('/api/calendar?' + query.toString(), options);
+  }
+
+  function initialCalendarKey(day, year, month) {
+    return String(year) + '-' + String(month) + '-' + String(day);
+  }
+
+  function cancelInitialPreload() {
+    if (!state.initialPreloadHandle) return;
+    if (state.initialPreloadUsesIdle && 'cancelIdleCallback' in window) {
+      window.cancelIdleCallback(state.initialPreloadHandle);
+    } else {
+      window.clearTimeout(state.initialPreloadHandle);
+    }
+    state.initialPreloadHandle = 0;
+    state.initialPreloadUsesIdle = false;
+  }
+
+  function takeInitialPreload(day, year, month, options) {
+    cancelInitialPreload();
+    const key = initialCalendarKey(day, year, month);
+    if (!state.initialPreloadPromise || state.initialPreloadKey !== key) return null;
+    const pending = state.initialPreloadPromise;
+    state.initialPreloadPromise = null;
+    state.initialPreloadKey = '';
+    return pending.then((payload) => payload || calendarRequest(day, year, month, options));
+  }
+
+  // 只预取首次打开所需的当天快照，不在隐藏页启动日历渲染或入场动画。
+  function scheduleInitialPreload() {
+    if (state.initialPreloadHandle || state.initialPreloadPromise || state.loaded) return;
+    const warm = () => {
+      state.initialPreloadHandle = 0;
+      state.initialPreloadUsesIdle = false;
+      const date = new Date(state.day + 'T00:00:00');
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      state.initialPreloadKey = initialCalendarKey(state.day, year, month);
+      state.initialPreloadPromise = calendarRequest(state.day, year, month)
+        .catch(() => null);
+    };
+    state.initialPreloadUsesIdle = 'requestIdleCallback' in window;
+    state.initialPreloadHandle = state.initialPreloadUsesIdle
+      ? window.requestIdleCallback(warm, { timeout: 1500 })
+      : window.setTimeout(warm, 600);
   }
 
   function trimMap(map, max, preserveKey) {
@@ -363,12 +420,9 @@
     const sameDayRefresh = wasLoaded && requestedDay === previousDay
       && motion && motion.kind === 'refresh';
     try {
-      const query = new URLSearchParams({
-        year: String(requestedYear),
-        month: String(requestedMonth),
-        day: requestedDay,
-      });
-      const payloadPromise = request('/api/calendar?' + query.toString(), { signal: controller.signal });
+      const payloadPromise = takeInitialPreload(
+        requestedDay, requestedYear, requestedMonth, { signal: controller.signal }
+      ) || calendarRequest(requestedDay, requestedYear, requestedMonth, { signal: controller.signal });
       if (!wasLoaded) {
         state.year = requestedYear;
         state.month = requestedMonth;
@@ -2813,4 +2867,5 @@
     getViewMode() { return viewMode; },
   };
   syncModeAccessibility();
+  scheduleInitialPreload();
 })();

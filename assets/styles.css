@@ -24328,17 +24328,20 @@ body.canvas-readonly .settings-fab {
   }
 }
 
-/* Z 轮：空格按住等待平移 → 抓手光标。
-   这是全局瞬时交互态，必须压过当前绘图工具及节点自身的 cursor。 */
-.canvas-viewport.space-held,
-.canvas-viewport.space-held .canvas-surface,
-.canvas-viewport.space-held .canvas-surface * {
-  cursor: grab !important;
+/* 光标仅在透明命中层切换；祖先 cursor 的继承变化会让数万后代重算样式。 */
+.canvas-pan-cursor {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: grab;
 }
-.canvas-viewport.panning,
-.canvas-viewport.panning .canvas-surface,
-.canvas-viewport.panning .canvas-surface * {
-  cursor: grabbing !important;
+.canvas-viewport.space-held > .canvas-pan-cursor,
+.canvas-viewport.panning > .canvas-pan-cursor {
+  display: block;
+}
+.canvas-viewport.panning > .canvas-pan-cursor {
+  cursor: grabbing;
 }
 
 .canvas-viewport.decor-draw-ready {
@@ -29557,11 +29560,26 @@ body:not([data-mode="decor"]) .canvas-free-arrow-poly {
 }
 
 /* 拖节点 / 脑图滑行时只增量更新 SVG 连线，避免每帧清空并重画整张 Canvas 连线层。 */
-.canvas-viewport.edges-canvas-on.edges-svg-live .canvas-edges-canvas {
+.canvas-viewport.edges-canvas-on.edges-svg-live:not(.edges-geometry-hit) .canvas-edges-canvas {
   visibility: hidden;
 }
 .canvas-viewport.edges-canvas-on.edges-svg-live .canvas-edge {
   visibility: visible;
+}
+
+.canvas-viewport.edges-geometry-hit .canvas-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  cursor: default;
+}
+.canvas-viewport.edge-hover .canvas-surface::before {
+  cursor: pointer;
+}
+.canvas-viewport.edges-geometry-hit.edge-hover .canvas-edges-canvas {
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .canvas-edge:hover {
@@ -30571,6 +30589,11 @@ body.dual-screen-open .formula-panel {
 
 .formula-panel[hidden] { display: none; }
 
+.formula-panel.is-closing {
+  pointer-events: none;
+  animation: corner-panel-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
 @keyframes corner-panel-in {
   from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -30585,6 +30608,7 @@ body.dual-screen-open .formula-panel {
   .settings-pop,
   .start-speed-pop,
   .formula-panel,
+  .formula-panel.is-closing,
   .node-menu:not([hidden]) {
     animation: none;
   }
@@ -30642,6 +30666,14 @@ body.dual-screen-open .formula-panel {
 .formula-grid {
   overflow-y: auto;
   padding: 0 12px 14px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.formula-grid::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .formula-section-label {
@@ -31367,9 +31399,19 @@ mjx-container.eq-jump-flash {
   display: none;
 }
 
+.shortcuts-overlay.is-closing {
+  pointer-events: none;
+  animation: shortcuts-fade-out var(--duration) var(--easing) both;
+}
+
 @keyframes shortcuts-fade {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+
+@keyframes shortcuts-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 
 .shortcuts-card {
@@ -31817,39 +31859,7 @@ html.dark-semantic-ui {
   }
 
   .editor-page[data-background-tone="dark"] .formula-grid {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(211, 232, 223, 0.28) transparent;
-  }
-
-  .editor-page[data-background-tone="dark"] .formula-grid::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .editor-page[data-background-tone="dark"] .formula-grid::-webkit-scrollbar-track {
-    margin-block: 10px;
-    background: transparent;
-  }
-
-  .editor-page[data-background-tone="dark"] .formula-grid::-webkit-scrollbar-corner {
-    background: transparent;
-  }
-
-  .editor-page[data-background-tone="dark"] .formula-grid::-webkit-scrollbar-thumb {
-    min-height: 42px;
-    border: 2px solid transparent;
-    border-radius: 999px;
-    background:
-      linear-gradient(180deg, rgba(231, 242, 237, 0.4), rgba(155, 190, 176, 0.22))
-      padding-box;
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-      0 2px 8px rgba(0, 0, 0, 0.18);
-  }
-
-  .editor-page[data-background-tone="dark"] .formula-grid::-webkit-scrollbar-thumb:hover {
-    background:
-      linear-gradient(180deg, rgba(239, 248, 244, 0.58), rgba(174, 211, 196, 0.34))
-      padding-box;
+    scrollbar-width: none;
   }
 }
 

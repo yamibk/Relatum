@@ -1,0 +1,245 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "fixedCamera": {
+    "scale": 1,
+    "centerX": 330,
+    "centerY": 280
+  },
+  "browser": "152.0.4191.62",
+  "regressions": [
+    {
+      "kindHistory": [
+        {
+          "kind": "code",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "sticky",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "index",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "preview",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        }
+      ],
+      "exportResult": {
+        "type": "image/png",
+        "size": 59923,
+        "paths": 3,
+        "midpointError": 0.0003405641833946782
+      },
+      "backend": "geometry"
+    },
+    {
+      "dark": true,
+      "dpr": 2,
+      "reduced": true,
+      "kindHistory": [
+        {
+          "kind": "code",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "sticky",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "index",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "preview",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        }
+      ],
+      "exportResult": {
+        "type": "image/png",
+        "size": 75983,
+        "paths": 3,
+        "midpointError": 0.0003405641833946782
+      },
+      "backend": "geometry"
+    },
+    {
+      "fallback": true,
+      "kindHistory": [
+        {
+          "kind": "code",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "sticky",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "index",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        },
+        {
+          "kind": "preview",
+          "restored": true,
+          "replayed": true,
+          "identity": true
+        }
+      ],
+      "exportResult": {
+        "type": "image/png",
+        "size": 59923,
+        "paths": 3,
+        "midpointError": 0.0003405641833946782
+      },
+      "backend": "svg"
+    }
+  ],
+  "lifecycle": {
+    "foldingAndMindmap": true,
+    "taskbook": {
+      "completed": true,
+      "undone": false,
+      "redone": true
+    },
+    "image": {
+      "images": {
+        "registered": 80,
+        "active": 1,
+        "loaded": 1,
+        "elements": 1
+      },
+      "attachments": {
+        "registered": 0,
+        "active": 0,
+        "markdown": 0,
+        "pdf": 0,
+        "markdownInflight": 0,
+        "pdfDocuments": 0,
+        "pdfCanvases": 0,
+        "pdfPagePlaceholders": 0
+      }
+    },
+    "md": {
+      "images": {
+        "registered": 0,
+        "active": 0,
+        "loaded": 0,
+        "elements": 0
+      },
+      "attachments": {
+        "registered": 40,
+        "active": 1,
+        "markdown": 1,
+        "pdf": 0,
+        "markdownInflight": 0,
+        "pdfDocuments": 0,
+        "pdfCanvases": 0,
+        "pdfPagePlaceholders": 0
+      }
+    },
+    "pdf": {
+      "images": {
+        "registered": 0,
+        "active": 0,
+        "loaded": 0,
+        "elements": 0
+      },
+      "attachments": {
+        "registered": 12,
+        "active": 1,
+        "markdown": 0,
+        "pdf": 1,
+        "markdownInflight": 0,
+        "pdfDocuments": 1,
+        "pdfCanvases": 3,
+        "pdfPagePlaceholders": 120
+      }
+    }
+  },
+  "translationAndDual": {
+    "translation": {
+      "globalWrites": 0,
+      "dynamic": true,
+      "protectedContent": true
+    },
+    "appearanceReads": 3,
+    "backingAligned": true,
+    "referenceSelection": true
+  },
+  "start": {
+    "study": {
+      "count": 44,
+      "p95": 16.800000000000182,
+      "max": 17,
+      "over33": 0
+    },
+    "tree-page": {
+      "count": 45,
+      "p95": 17,
+      "max": 17.100000000000364,
+      "over33": 0
+    },
+    "notes": {
+      "count": 43,
+      "p95": 16.800000000000182,
+      "max": 16.90000000000009,
+      "over33": 0
+    },
+    "cadence": {
+      "count": 46,
+      "p95": 17,
+      "max": 33.40000000000009,
+      "over33": 0
+    },
+    "calendar": {
+      "count": 47,
+      "p95": 17,
+      "max": 33.600000000000364,
+      "over33": 1
+    },
+    "review": {
+      "count": 45,
+      "p95": 16.899999999999636,
+      "max": 16.900000000000546,
+      "over33": 0
+    },
+    "focus": {
+      "count": 45,
+      "p95": 16.800000000000182,
+      "max": 16.900000000000546,
+      "over33": 0
+    },
+    "reversal": {
+      "count": 77,
+      "p95": 16.899999999999636,
+      "max": 33.100000000000364,
+      "over33": 0
+    }
+  }
+}

@@ -101,6 +101,9 @@
   let loaded = false;
   let loadedDay = '';
   let loading = false;
+  let preloadHandle = 0;
+  let preloadUsesIdle = false;
+  let preloadPromise = null;
   let libraryLoaded = false;
   let libraryRenderedDay = '';
   let libraryLoading = false;
@@ -644,7 +647,8 @@
     if (concealInitialState) root.classList.add('is-pool-loading');
     loading = true;
     try {
-      const json = await readJson('/api/review-pool');
+      const pendingPreload = !force ? takePreload() : null;
+      const json = await (pendingPreload || readJson('/api/review-pool'));
       pool = Array.isArray(json.cards) ? json.cards : [];
       reviewSettings = Object.assign({}, reviewSettings, json.settings || {});
       reviewSettings.requireReveal = false;
@@ -675,6 +679,39 @@
       loading = false;
       if (concealInitialState) root.classList.remove('is-pool-loading');
     }
+  }
+
+  function cancelPreload() {
+    if (!preloadHandle) return;
+    if (preloadUsesIdle && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(preloadHandle);
+    } else {
+      window.clearTimeout(preloadHandle);
+    }
+    preloadHandle = 0;
+    preloadUsesIdle = false;
+  }
+
+  function takePreload() {
+    cancelPreload();
+    if (!preloadPromise) return null;
+    const pending = preloadPromise;
+    preloadPromise = null;
+    return pending.then((json) => json || readJson('/api/review-pool'));
+  }
+
+  // 空闲时只缓存卡池 JSON；真正进入复习页后再生成卡片并按需加载公式运行时。
+  function schedulePreload() {
+    if (preloadHandle || preloadPromise || loaded) return;
+    const warm = () => {
+      preloadHandle = 0;
+      preloadUsesIdle = false;
+      preloadPromise = readJson('/api/review-pool').catch(() => null);
+    };
+    preloadUsesIdle = typeof window.requestIdleCallback === 'function';
+    preloadHandle = preloadUsesIdle
+      ? window.requestIdleCallback(warm, { timeout: 1500 })
+      : window.setTimeout(warm, 600);
   }
 
   async function mark(rating) {
@@ -1713,4 +1750,5 @@
     cancelMathReadyWait();
     cancelMathLoadSchedule();
   });
+  schedulePreload();
 })();

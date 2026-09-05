@@ -1,0 +1,603 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "fixedCamera": {
+    "scale": 1,
+    "centerX": 330,
+    "centerY": 280
+  },
+  "benchmarks": [
+    {
+      "count": 1200,
+      "run": 1,
+      "cold": {
+        "dataReadyMs": 270,
+        "domReadyMs": 825.6000000238419,
+        "firstVisibleFrameMs": 902.1999999880791,
+        "interactiveMs": 1083.9000000357628,
+        "longestTaskMs": 564
+      },
+      "warm": {
+        "dataReadyMs": 140,
+        "domReadyMs": 554.1000000238419,
+        "firstVisibleFrameMs": 759.6000000238419,
+        "interactiveMs": 760.7000000476837,
+        "longestTaskMs": 420
+      },
+      "drag": {
+        "frames": {
+          "count": 74,
+          "p95": 16.90000000000009,
+          "max": 17.700000000000045,
+          "over33": 0
+        },
+        "activeSvg": 3,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 2357.300000011921,
+          "jsMs": 9,
+          "settledMs": 24.30000001192093
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 2564.100000023842,
+          "jsMs": 7.600000023841858,
+          "settledMs": 33.10000002384186
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 119,
+        "p95": 16.800000000000182,
+        "max": 17.699999999999818,
+        "over33": 0
+      },
+      "pan": {
+        "count": 109,
+        "p95": 16.900000000000546,
+        "max": 17.5,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 119,
+        "p95": 16.899999999999636,
+        "max": 17.5,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 1200,
+      "run": 2,
+      "cold": {
+        "dataReadyMs": 258.2999999523163,
+        "domReadyMs": 858.6999999880791,
+        "firstVisibleFrameMs": 942.0999999642372,
+        "interactiveMs": 1123.8999999761581,
+        "longestTaskMs": 606
+      },
+      "warm": {
+        "dataReadyMs": 244.5,
+        "domReadyMs": 668.0999999642372,
+        "firstVisibleFrameMs": 867.0999999642372,
+        "interactiveMs": 868.7999999523163,
+        "longestTaskMs": 429
+      },
+      "drag": {
+        "frames": {
+          "count": 87,
+          "p95": 17,
+          "max": 17.299999999999955,
+          "over33": 0
+        },
+        "activeSvg": 3,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 2683.699999988079,
+          "jsMs": 4.199999988079071,
+          "settledMs": 13.099999964237213
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 2882.599999964237,
+          "jsMs": 8.400000035762787,
+          "settledMs": 31.5
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 118,
+        "p95": 17,
+        "max": 17.600000000000364,
+        "over33": 0
+      },
+      "pan": {
+        "count": 112,
+        "p95": 16.899999999999636,
+        "max": 17.5,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 117,
+        "p95": 16.899999999999636,
+        "max": 17.400000000001455,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 1200,
+      "run": 3,
+      "cold": {
+        "dataReadyMs": 322.89999997615814,
+        "domReadyMs": 990.3000000119209,
+        "firstVisibleFrameMs": 1194,
+        "interactiveMs": 1275.199999988079,
+        "longestTaskMs": 674
+      },
+      "warm": {
+        "dataReadyMs": 291.80000001192093,
+        "domReadyMs": 727.1999999880791,
+        "firstVisibleFrameMs": 919.6000000238419,
+        "interactiveMs": 920.6000000238419,
+        "longestTaskMs": 450
+      },
+      "drag": {
+        "frames": {
+          "count": 77,
+          "p95": 16.800000000000182,
+          "max": 17.100000000000364,
+          "over33": 0
+        },
+        "activeSvg": 3,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 2765.600000023842,
+          "jsMs": 11.599999964237213,
+          "settledMs": 22.30000001192093
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 2970.199999988079,
+          "jsMs": 9.200000047683716,
+          "settledMs": 27.200000047683716
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 116,
+        "p95": 16.899999999999636,
+        "max": 16.90000000000009,
+        "over33": 0
+      },
+      "pan": {
+        "count": 104,
+        "p95": 16.800000000000182,
+        "max": 16.900000000000546,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 115,
+        "p95": 16.899999999999636,
+        "max": 17.5,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 1200,
+      "run": 4,
+      "cold": {
+        "dataReadyMs": 74.10000002384186,
+        "domReadyMs": 820.1999999880791,
+        "firstVisibleFrameMs": 1045.699999988079,
+        "interactiveMs": 1128.8999999761581,
+        "longestTaskMs": 642
+      },
+      "warm": {
+        "dataReadyMs": 179.30000001192093,
+        "domReadyMs": 586.4000000357628,
+        "firstVisibleFrameMs": 833.1000000238419,
+        "interactiveMs": 834.8000000119209,
+        "longestTaskMs": 413
+      },
+      "drag": {
+        "frames": {
+          "count": 78,
+          "p95": 16.90000000000009,
+          "max": 17.09999999999991,
+          "over33": 0
+        },
+        "activeSvg": 3,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 2489.600000023842,
+          "jsMs": 5.199999988079071,
+          "settledMs": 12.399999976158142
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 2694.800000011921,
+          "jsMs": 11.699999988079071,
+          "settledMs": 32.69999998807907
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 117,
+        "p95": 17,
+        "max": 17.5,
+        "over33": 0
+      },
+      "pan": {
+        "count": 103,
+        "p95": 16.899999999999636,
+        "max": 17.600000000000364,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 115,
+        "p95": 16.899999999999636,
+        "max": 17.399999999999636,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 1200,
+      "run": 5,
+      "cold": {
+        "dataReadyMs": 87.19999998807907,
+        "domReadyMs": 846.8999999761581,
+        "firstVisibleFrameMs": 949.1999999880791,
+        "interactiveMs": 961.8999999761581,
+        "longestTaskMs": 779
+      },
+      "warm": {
+        "dataReadyMs": 243.30000001192093,
+        "domReadyMs": 630.7000000476837,
+        "firstVisibleFrameMs": 698.4000000357628,
+        "interactiveMs": 807.1000000238419,
+        "longestTaskMs": 394
+      },
+      "drag": {
+        "frames": {
+          "count": 81,
+          "p95": 16.90000000000009,
+          "max": 33.30000000000018,
+          "over33": 0
+        },
+        "activeSvg": 3,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 2583.400000035763,
+          "jsMs": 6.800000011920929,
+          "settledMs": 15.599999964237213
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 2783.7000000476837,
+          "jsMs": 13.699999988079071,
+          "settledMs": 32.09999996423721
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 118,
+        "p95": 16.90000000000009,
+        "max": 17.400000000000546,
+        "over33": 0
+      },
+      "pan": {
+        "count": 109,
+        "p95": 16.800000000000182,
+        "max": 17.099999999999454,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 118,
+        "p95": 16.900000000000546,
+        "max": 17.399999999999636,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 3000,
+      "run": 1,
+      "cold": {
+        "dataReadyMs": 182,
+        "domReadyMs": 1123.2000000476837,
+        "firstVisibleFrameMs": 1451.9000000357628,
+        "interactiveMs": 1453.2000000476837,
+        "longestTaskMs": 957
+      },
+      "warm": {
+        "dataReadyMs": 110.5,
+        "domReadyMs": 992,
+        "firstVisibleFrameMs": 1314.5,
+        "interactiveMs": 1316,
+        "longestTaskMs": 892
+      },
+      "drag": {
+        "frames": {
+          "count": 79,
+          "p95": 16.800000000000182,
+          "max": 17,
+          "over33": 0
+        },
+        "activeSvg": 1,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 2999.600000023842,
+          "jsMs": 5.800000011920929,
+          "settledMs": 18.100000023841858
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 3195.900000035763,
+          "jsMs": 14.099999964237213,
+          "settledMs": 34.89999997615814
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 118,
+        "p95": 16.899999999999636,
+        "max": 16.900000000000546,
+        "over33": 0
+      },
+      "pan": {
+        "count": 108,
+        "p95": 16.900000000000546,
+        "max": 17.399999999999636,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 118,
+        "p95": 16.900000000001455,
+        "max": 17.299999999999272,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 3000,
+      "run": 2,
+      "cold": {
+        "dataReadyMs": 159.89999997615814,
+        "domReadyMs": 1069,
+        "firstVisibleFrameMs": 1212.8999999761581,
+        "interactiveMs": 1415.8999999761581,
+        "longestTaskMs": 919
+      },
+      "warm": {
+        "dataReadyMs": 116.80000001192093,
+        "domReadyMs": 975.3000000119209,
+        "firstVisibleFrameMs": 1326,
+        "interactiveMs": 1327.3999999761581,
+        "longestTaskMs": 872
+      },
+      "drag": {
+        "frames": {
+          "count": 83,
+          "p95": 16.90000000000009,
+          "max": 16.90000000000009,
+          "over33": 0
+        },
+        "activeSvg": 1,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 3059.899999976158,
+          "jsMs": 5.5,
+          "settledMs": 21.5
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 3265,
+          "jsMs": 14.199999988079071,
+          "settledMs": 48.69999998807907
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 117,
+        "p95": 16.900000000000546,
+        "max": 33.5,
+        "over33": 0
+      },
+      "pan": {
+        "count": 106,
+        "p95": 16.900000000000546,
+        "max": 17.399999999999636,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 118,
+        "p95": 16.899999999999636,
+        "max": 17.099999999999454,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 3000,
+      "run": 3,
+      "cold": {
+        "dataReadyMs": 261.30000001192093,
+        "domReadyMs": 1729,
+        "firstVisibleFrameMs": 1899.8999999761581,
+        "interactiveMs": 2208.199999988079,
+        "longestTaskMs": 1479
+      },
+      "warm": {
+        "dataReadyMs": 147.60000002384186,
+        "domReadyMs": 1281.199999988079,
+        "firstVisibleFrameMs": 1685.5,
+        "interactiveMs": 1687.6000000238419,
+        "longestTaskMs": 1147
+      },
+      "drag": {
+        "frames": {
+          "count": 96,
+          "p95": 16.90000000000009,
+          "max": 50.19999999999982,
+          "over33": 1
+        },
+        "activeSvg": 1,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 3715.800000011921,
+          "jsMs": 9.100000023841858,
+          "settledMs": 29.399999976158142
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 3936.800000011921,
+          "jsMs": 23.69999998807907,
+          "settledMs": 66.39999997615814
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 118,
+        "p95": 17,
+        "max": 17.899999999999636,
+        "over33": 0
+      },
+      "pan": {
+        "count": 111,
+        "p95": 16.900000000000546,
+        "max": 17.100000000000364,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 117,
+        "p95": 17,
+        "max": 17.600000000000364,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 3000,
+      "run": 4,
+      "cold": {
+        "dataReadyMs": 80.30000001192093,
+        "domReadyMs": 1823.300000011921,
+        "firstVisibleFrameMs": 2242.899999976158,
+        "interactiveMs": 2383.399999976158,
+        "longestTaskMs": 1793
+      },
+      "warm": {
+        "dataReadyMs": 302.10000002384186,
+        "domReadyMs": 1563.4000000357628,
+        "firstVisibleFrameMs": 1912.300000011921,
+        "interactiveMs": 1914.6000000238419,
+        "longestTaskMs": 1272
+      },
+      "drag": {
+        "frames": {
+          "count": 87,
+          "p95": 17,
+          "max": 50,
+          "over33": 1
+        },
+        "activeSvg": 1,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 3804.400000035763,
+          "jsMs": 5.5,
+          "settledMs": 19.19999998807907
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 4004.800000011921,
+          "jsMs": 15.199999988079071,
+          "settledMs": 46.5
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 121,
+        "p95": 16.899999999999636,
+        "max": 17.300000000000182,
+        "over33": 0
+      },
+      "pan": {
+        "count": 103,
+        "p95": 16.900000000000546,
+        "max": 17.400000000000546,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 119,
+        "p95": 16.899999999999636,
+        "max": 17.100000000000364,
+        "over33": 0
+      },
+      "errors": []
+    },
+    {
+      "count": 3000,
+      "run": 5,
+      "cold": {
+        "dataReadyMs": 225.19999998807907,
+        "domReadyMs": 1844.800000011921,
+        "firstVisibleFrameMs": 2066.399999976158,
+        "interactiveMs": 2392.199999988079,
+        "longestTaskMs": 1633
+      },
+      "warm": {
+        "dataReadyMs": 139.60000002384186,
+        "domReadyMs": 1294.2000000476837,
+        "firstVisibleFrameMs": 1706.2000000476837,
+        "interactiveMs": 1707.6000000238419,
+        "longestTaskMs": 1166
+      },
+      "drag": {
+        "frames": {
+          "count": 92,
+          "p95": 17,
+          "max": 33.30000000000018,
+          "over33": 0
+        },
+        "activeSvg": 1,
+        "finish": {
+          "kind": "finish-node",
+          "startedAt": 3647.5,
+          "jsMs": 12.200000047683716,
+          "settledMs": 29.700000047683716
+        },
+        "undo": {
+          "kind": "undo",
+          "startedAt": 3860.600000023842,
+          "jsMs": 15,
+          "settledMs": 54.39999997615814
+        },
+        "remainingSvg": 0
+      },
+      "localZoom": {
+        "count": 116,
+        "p95": 17,
+        "max": 33.099999999999454,
+        "over33": 0
+      },
+      "pan": {
+        "count": 118,
+        "p95": 16.900000000000546,
+        "max": 17.199999999999818,
+        "over33": 0
+      },
+      "overviewZoom": {
+        "count": 118,
+        "p95": 17,
+        "max": 17.600000000000364,
+        "over33": 0
+      },
+      "errors": []
+    }
+  ]
+}
