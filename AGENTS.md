@@ -451,6 +451,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 复习页进入时根层保持静止，不得把整页当成完成的矩形贴图横移；日历先短促淡出并轻移，复习页标题、操作区、统计、纸面和纸面内容依次渐入。分层时长跟随起步页翻页速度，`start.js` 的清理延迟必须覆盖最长一层；自由复习和计划复习切到下一张卡片时直接完整展示，不再叠加卡片内部入场动画。
 - 默认最近页不把特殊页数据请求放进首屏阻塞链；起步页脚本就绪后，学习、活跃和独立树状页分别在浏览器空闲时预读 `/api/study`、当前年度 `/api/study-activity` 与 `/api/tree-page`，首次进入复用相同缓存或在途 Promise。速记仍在首次进入或执行跨页动作时加载并复用同一个在途 Promise。任何首次加载完成前都不得用空前端状态覆盖服务端数据。
 
+### 生涯 `career-report.js`
+
+- 报告文案由模块自身的中英文词表管理，正文根使用 `data-i18n-managed`，避免全局翻译重复处理统计数字和用户项目名称。数值仍按显示刷新率逐帧递增；隐藏的最终值负责预留尺寸（时长预留两位分钟并保留自然换行），独立定位的文本层只更新常驻 Text 节点，不能每帧替换 DOM 或撑动画条宽度。
+- 惯性帧只更新缓存的浮点位置和 `scrollTop`，不读布局；`ResizeObserver` 在报告或视口尺寸变化时更新边界，旧内核在下一次滚轮输入时补测。速度衰减按真实帧间隔积分，保留亚像素余量；精确滚动、缩放/横向手势、滚动条/触控按下和滚动键会停止旧惯性。惯性收尾后才启动一次揭示等待计时器。
+- 揭示直接消费 `IntersectionObserver` 的可见性结果，不再逐卡重复读取矩形。卡片离开视口时结束该卡片尚未完成的 CSS 动画和数字任务；重新进入显示最终态，尚未进入的卡片仍保留首次错峰。点阵按连续四点一组错峰，关系图连线按八条一组淡入，颜色、数量、图形与悬停/键盘说明保持原数据。入场完成的卡片恢复 `transform:none`，避免整篇长报告常驻三维变换层。
+- 离开工作区、页面隐藏、`pagehide` 和低动态偏好改变时统一清理滚动、数字、动画和观察器；恢复可见后重新观察，异步加载完成时仍须检查当前工作区。尺寸与动画缓存均只存在内存，不改 `career-report.json` 或用户偏好格式。
+- 验证：`node tests/career-report-contract.js`、`python -B -m unittest tests.test_career_report`。真实浏览器使用测试主机已有 Playwright：设置 `RELATUM_PLAYWRIGHT` 后运行 `node tests/career-browser-performance.js <结果.json> regression`。工具自行创建一次性 `RELATUM_DATA_ROOT`、提供 24 个月/365 天的冻结报告替身并在退出时关闭测试服务；不得改成连接真实数据根。性能对比与复现参数见 `docs/career-performance-2026-09-05.md`。
+
 ### 学习 `study.js`
 
 - `data/study.json` 固定为 v6，不迁移旧版本；读取旧文件时报不兼容且不写盘。任务结构为 `id/title/color/status/progress/createdAt/updatedAt/completedAt`，可选 `color` 只允许严格 `#rrggbb` 或空串（默认色），旧任务缺省空串；顶层可选 `temporaryTaskIds[]` 只保存现存未完成任务的有序唯一 ID。`status` 只允许 `active/done`；`progress` 含 `current/target/milestones[]`，目标 `0` 表示未设置，否则为 `1..9999`；任务点位置唯一且在目标范围内，用户侧不设小额数量限制，后端保留 50 个异常数据安全上限。

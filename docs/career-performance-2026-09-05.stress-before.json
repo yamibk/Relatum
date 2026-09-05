@@ -1,0 +1,168 @@
+{
+  "baseline": true,
+  "browser": "152.0.4191.62",
+  "viewport": "1440x900",
+  "dpr": 2,
+  "cpuSlowdown": 4,
+  "dataRoot": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-career-perf-3qHnZD",
+  "runs": [
+    {
+      "frames": 667,
+      "p95": 33.400000000000546,
+      "max": 83.30000000000018,
+      "over25": 93,
+      "longTasks": [
+        71,
+        75,
+        61,
+        58,
+        82
+      ],
+      "reads": {
+        "scrollTop": 553,
+        "scrollHeight": 553,
+        "clientHeight": 553
+      },
+      "numberReplacements": 2664,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 757,
+        "LayoutDuration": 0.982276,
+        "RecalcStyleCount": 987,
+        "RecalcStyleDuration": 1.106522,
+        "ScriptDuration": 0.778574,
+        "TaskDuration": 9.765137
+      },
+      "trace": {
+        "PrePaint": {
+          "count": 668,
+          "ms": 417.7909999999999
+        },
+        "Layerize": {
+          "count": 659,
+          "ms": 2674.115000000016
+        },
+        "UpdateLayoutTree": {
+          "count": 987,
+          "ms": 1107.7769999999978
+        },
+        "Paint": {
+          "count": 5594,
+          "ms": 1376.1959999999747
+        },
+        "RasterTask": {
+          "count": 7361,
+          "ms": 67.18900000000143
+        },
+        "Layout": {
+          "count": 757,
+          "ms": 953.1149999999993
+        }
+      }
+    },
+    {
+      "frames": 697,
+      "p95": 33.30000000000018,
+      "max": 66.69999999999982,
+      "over25": 77,
+      "longTasks": [
+        55,
+        59
+      ],
+      "reads": {
+        "scrollTop": 578,
+        "scrollHeight": 578,
+        "clientHeight": 578
+      },
+      "numberReplacements": 2774,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 804,
+        "LayoutDuration": 0.960332,
+        "RecalcStyleCount": 1033,
+        "RecalcStyleDuration": 1.041577,
+        "ScriptDuration": 0.768576,
+        "TaskDuration": 9.654644
+      },
+      "trace": {
+        "PrePaint": {
+          "count": 698,
+          "ms": 422.16699999999975
+        },
+        "Layerize": {
+          "count": 687,
+          "ms": 2618.352000000013
+        },
+        "UpdateLayoutTree": {
+          "count": 1033,
+          "ms": 1041.8870000000006
+        },
+        "Paint": {
+          "count": 5780,
+          "ms": 1344.072999999963
+        },
+        "RasterTask": {
+          "count": 7436,
+          "ms": 68.96500000000165
+        },
+        "Layout": {
+          "count": 804,
+          "ms": 934.3819999999997
+        }
+      }
+    },
+    {
+      "frames": 693,
+      "p95": 33.399999999999636,
+      "max": 66.70000000000073,
+      "over25": 82,
+      "longTasks": [
+        53
+      ],
+      "reads": {
+        "scrollTop": 572,
+        "scrollHeight": 572,
+        "clientHeight": 572
+      },
+      "numberReplacements": 2794,
+      "top": 11203,
+      "height": 12103,
+      "work": {
+        "LayoutCount": 786,
+        "LayoutDuration": 0.934952,
+        "RecalcStyleCount": 1019,
+        "RecalcStyleDuration": 1.038217,
+        "ScriptDuration": 0.768341,
+        "TaskDuration": 9.572306
+      },
+      "trace": {
+        "PrePaint": {
+          "count": 694,
+          "ms": 404.7169999999997
+        },
+        "Layerize": {
+          "count": 682,
+          "ms": 2587.797000000015
+        },
+        "UpdateLayoutTree": {
+          "count": 1019,
+          "ms": 1042.0479999999995
+        },
+        "Paint": {
+          "count": 5799,
+          "ms": 1292.3839999999695
+        },
+        "RasterTask": {
+          "count": 7662,
+          "ms": 68.22100000000138
+        },
+        "Layout": {
+          "count": 786,
+          "ms": 910.1129999999989
+        }
+      }
+    }
+  ]
+}

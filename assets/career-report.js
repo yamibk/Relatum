@@ -8,6 +8,9 @@
   const entry = root.querySelector('[data-role="career-entry"]');
   const loading = root.querySelector('[data-role="career-loading"]');
   const reportHost = root.querySelector('[data-role="career-report"]');
+  // This report owns its bilingual copy, including the animated number text.
+  reportHost.setAttribute('data-i18n-managed', '');
+  const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const SCROLL_IDLE_MS = 50;
   const SCROLL_IDLE_MIN = 20;
@@ -144,8 +147,15 @@
     wheelFrame: 0,
     wheelLastFrame: 0,
     wheelVelocity: 0,
+    wheelPosition: 0,
+    viewportHeight: 0,
+    maxScrollTop: 0,
+    geometryDirty: true,
+    resizeObserver: null,
+    activeTooltip: null,
   };
-  function reducedMotion() { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function reducedMotion() { return motionPreference.matches; }
+  function runtimeVisible() { return state.active && !document.hidden; }
   function clampScrollFeel(key, value) {
     if (key === 'pauseReveal') return value !== false;
     const n = Number(value);
@@ -169,8 +179,9 @@
   function readScrollIdleMs() {
     let ms = SCROLL_IDLE_MS;
     try {
-      const stored = Number(window.localStorage.getItem('canvas:careerScrollIdleMs:v1'));
-      if (Number.isFinite(stored)) ms = Math.max(SCROLL_IDLE_MIN, Math.min(SCROLL_IDLE_MAX, Math.round(stored / 10) * 10));
+      const raw = window.localStorage.getItem('canvas:careerScrollIdleMs:v1');
+      const stored = Number(raw);
+      if (raw != null && Number.isFinite(stored)) ms = Math.max(SCROLL_IDLE_MIN, Math.min(SCROLL_IDLE_MAX, Math.round(stored / 10) * 10));
     } catch (e) {}
     return ms;
   }
@@ -230,8 +241,19 @@
     node.dataset.careerFormat = format || 'number';
     node.dataset.careerSuffix = suffix || '';
     if (zeroText) node.dataset.careerZeroText = zeroText;
-    node.textContent = number(value) === 0 && zeroText
+    const initial = number(value) === 0 && zeroText
       ? zeroText : format === 'duration' ? formatDuration(0) : '0' + (suffix || '');
+    const final = number(value) === 0 && zeroText
+      ? zeroText : format === 'duration' ? formatDuration(value) : formatNumber(value) + (suffix || '');
+    const text = element('span', 'career-number-text');
+    // Minutes can gain a second digit before the final rounded hour is reached.
+    const roundedHours = Math.floor(Math.round(Math.round(number(value)) / 60) / 60);
+    const reserved = format === 'duration' && roundedHours > 0
+      ? formatDuration(roundedHours * 3600 + 59 * 60) : final;
+    const sizer = element('span', 'career-number-sizer', reserved);
+    sizer.setAttribute('aria-hidden', 'true');
+    append(text, sizer, element('span', 'career-number-value', initial));
+    node.appendChild(text);
     return node;
   }
   function sectionHeader(kicker, title, copy) {
@@ -266,12 +288,14 @@
     return tip;
   }
   function showTooltip(tip, container, target, text) {
+    if (!runtimeVisible() || state.scrolling) return;
     const box = target.getBoundingClientRect();
     const parent = container.getBoundingClientRect();
     tip.textContent = text;
     tip.style.left = `${box.left - parent.left + box.width / 2}px`;
     tip.style.top = `${box.top - parent.top}px`;
     tip.classList.add('visible');
+    state.activeTooltip = tip;
   }
   function bindTooltip(target, tip, container, text) {
     const show = () => showTooltip(tip, container, target, text);
@@ -302,7 +326,7 @@
     const tip = chartTooltip(container);
     points.forEach((point, index) => {
       const circle = svgElement('circle', { cx: point[0], cy: point[1], r: 5, fill: 'currentColor', tabindex: 0, class: 'career-chart-focus career-line-point' });
-      circle.style.setProperty('--career-index', String(index));
+      circle.style.setProperty('--career-index', String(Math.min(index, 24)));
       circle.setAttribute('aria-label', series.label(items[index], values[index]));
       bindTooltip(circle, tip, container, series.label(items[index], values[index]));
       svg.appendChild(circle);
@@ -372,6 +396,7 @@
     const cap = 120;
     const scale = Math.max(1, Math.ceil(total / cap));
     let dotIndex = 0;
+    let band = null;
     const legend = element('div', 'career-dot-legend');
     safeGroups.forEach((group, groupIndex) => {
       const colorIndex = safeGroups.length === 1
@@ -381,10 +406,15 @@
       const amount = Math.max(1, Math.ceil(number(group.count) / scale));
       for (let count = 0; count < amount; count += 1) {
         const dot = element('span', 'career-dot active');
-        if (staggered) dot.style.setProperty('--career-index', String(dotIndex++));
+        if (staggered && dotIndex % 4 === 0) {
+          band = element('span', 'career-dot-band');
+          band.style.setProperty('--career-index', String(dotIndex / 4));
+          matrix.appendChild(band);
+        }
+        dotIndex += 1;
         dot.style.setProperty('--career-dot-color', color);
         dot.title = `${group.label}: ${formatNumber(group.count)}`;
-        matrix.appendChild(dot);
+        (staggered ? band : matrix).appendChild(dot);
       }
       const row = element('div', 'career-dot-legend-row');
       const swatch = element('i', 'career-dot-legend-swatch');
@@ -481,12 +511,16 @@
       });
     });
     const svg = svgElement('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': tr('notesNetwork') });
+    let lineGroup = null;
     edges.forEach((edge, index) => {
       const from = positions.get(edge.from), to = positions.get(edge.to);
       if (from && to) {
-        const line = svgElement('line', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, class: 'career-network-line career-network-line-fade' });
-        line.style.setProperty('--career-index', String(Math.min(index, 24)));
-        svg.appendChild(line);
+        if (!lineGroup || index % 8 === 0) {
+          lineGroup = svgElement('g', { class: 'career-network-line-fade' });
+          lineGroup.style.setProperty('--career-index', String(Math.min(index, 24)));
+          svg.appendChild(lineGroup);
+        }
+        lineGroup.appendChild(svgElement('line', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, class: 'career-network-line' }));
       }
     });
     const tip = chartTooltip(chart);
@@ -786,7 +820,8 @@
     });
     entry.hidden = true; loading.hidden = true; reportHost.hidden = false;
     bindActions(reportHost);
-    if (state.active) startReveals();
+    state.geometryDirty = true;
+    if (runtimeVisible()) startReveals();
   }
 
   function cancelRevealFrame() {
@@ -795,19 +830,13 @@
     state.revealFrame = 0;
   }
 
-  function targetStillVisible(target, rootBox) {
-    if (!target.isConnected || target.dataset.visible === '1') return false;
-    const box = target.getBoundingClientRect();
-    const revealBottom = rootBox.bottom - rootBox.height * .04;
-    return box.bottom > rootBox.top && box.top < revealBottom;
-  }
-
   function revealPendingTargets() {
     state.revealFrame = 0;
-    if (!state.active || revealPausedForScroll() || !state.pendingReveals.size) return;
+    if (!runtimeVisible() || revealPausedForScroll() || !state.pendingReveals.size) return;
     const targets = Array.from(state.pendingReveals);
-    const rootBox = scroll.getBoundingClientRect();
-    const visibleTargets = targets.filter((target) => targetStillVisible(target, rootBox));
+    // IntersectionObserver already supplies visibility after layout. Re-reading
+    // every card here forced another layout between the scroll and number frames.
+    const visibleTargets = targets.filter((target) => target.isConnected && target.dataset.visible !== '1');
     const scrollReveal = state.scrollSettledAt > 0
       && performance.now() - state.scrollSettledAt <= SCROLL_REVEAL_WINDOW_MS;
     targets.forEach((target) => {
@@ -818,31 +847,40 @@
       if (scrollReveal) target.dataset.careerScrollReveal = '1';
       target.dataset.visible = '1';
       animateNumbers(target);
-      if (state.observer) state.observer.unobserve(target);
     });
   }
 
   function scheduleRevealFlush() {
-    if (state.revealFrame || revealPausedForScroll() || !state.active || !state.pendingReveals.size) return;
+    if (state.revealFrame || revealPausedForScroll() || !runtimeVisible() || !state.pendingReveals.size) return;
     state.revealFrame = requestAnimationFrame(revealPendingTargets);
   }
 
   function startReveals() {
+    if (!runtimeVisible()) return;
+    startGeometryObserver();
     if (state.observer) state.observer.disconnect();
     state.pendingReveals.clear();
     cancelRevealFrame();
-    const targets = reportHost.querySelectorAll('.career-reveal:not([data-visible="1"])');
+    const targets = reportHost.querySelectorAll('.career-reveal');
     if (reducedMotion() || !('IntersectionObserver' in window)) {
       targets.forEach((target) => target.dataset.visible = '1');
+      clearNumberJobs(true);
       animateNumbers(reportHost);
       return;
     }
     state.observer = new IntersectionObserver((entries) => {
+      if (!runtimeVisible()) return;
+      const departed = [];
       entries.forEach((item) => {
-        if (item.isIntersecting) state.pendingReveals.add(item.target);
+        if (item.target.dataset.visible === '1') {
+          if (!item.isIntersecting) departed.push(item.target);
+        } else if (item.isIntersecting) state.pendingReveals.add(item.target);
         else state.pendingReveals.delete(item.target);
       });
-      scheduleRevealFlush();
+      settleTargets(departed);
+      departed.forEach(target => state.observer.unobserve(target));
+      cancelRevealFrame();
+      revealPendingTargets();
     }, { root: scroll, rootMargin: '0px 0px -4% 0px', threshold: .04 });
     targets.forEach((target) => state.observer.observe(target));
   }
@@ -854,7 +892,7 @@
 
   function finishNumberJob(node, job) {
     if (node.isConnected) {
-      node.textContent = renderNumberValue(job, job.target);
+      job.textNode.data = renderNumberValue(job, job.target);
       node.classList.remove('is-counting');
       node.classList.add('is-counted');
     }
@@ -869,7 +907,7 @@
 
   function runNumberFrame(now) {
     state.numberFrame = 0;
-    if (!state.active || revealPausedForScroll() || !state.numberJobs.size) {
+    if (!runtimeVisible() || revealPausedForScroll() || !state.numberJobs.size) {
       state.numberLastFrame = 0;
       return;
     }
@@ -885,7 +923,7 @@
       const eased = 1 - Math.pow(1 - progress, 4);
       const text = renderNumberValue(job, job.target * eased);
       if (text !== job.lastText) {
-        node.textContent = text;
+        job.textNode.data = text;
         job.lastText = text;
       }
       if (progress >= 1) finishNumberJob(node, job);
@@ -895,7 +933,7 @@
   }
 
   function scheduleNumberFrame() {
-    if (state.numberFrame || !state.active || revealPausedForScroll() || !state.numberJobs.size) return;
+    if (state.numberFrame || !runtimeVisible() || revealPausedForScroll() || !state.numberJobs.size) return;
     state.numberLastFrame = 0;
     state.numberFrame = requestAnimationFrame(runNumberFrame);
   }
@@ -921,12 +959,13 @@
         suffix,
         format,
         zeroText,
+        textNode: node.querySelector('.career-number-value').firstChild,
         duration: Math.min(1480, 900 + Math.log10(target + 1) * 105),
         elapsed: 0,
         lastText: '',
       };
       if (reducedMotion() || target === 0) {
-        node.textContent = renderNumberValue(job, target);
+        job.textNode.data = renderNumberValue(job, target);
         node.classList.add('is-counted');
         return;
       }
@@ -937,9 +976,41 @@
   }
 
   function scheduleScrollFinish() {
-    if (!state.active || !state.scrolling) return;
+    if (!runtimeVisible() || !state.scrolling) return;
     if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
+    state.scrollIdleTimer = 0;
+    // Inertia owns the scroll until its last frame; no timer churn on every frame.
+    if (state.wheelFrame) return;
     state.scrollIdleTimer = window.setTimeout(finishScroll, scrollIdleMs);
+  }
+
+  function updateScrollGeometry() {
+    if (!runtimeVisible()) return;
+    state.viewportHeight = scroll.clientHeight;
+    state.maxScrollTop = Math.max(0, scroll.scrollHeight - state.viewportHeight);
+    state.geometryDirty = false;
+  }
+
+  function startGeometryObserver() {
+    if (state.resizeObserver || !('ResizeObserver' in window)) return;
+    state.resizeObserver = new ResizeObserver(updateScrollGeometry);
+    state.resizeObserver.observe(scroll);
+    state.resizeObserver.observe(reportHost);
+  }
+
+  function settleTargets(targets) {
+    if (!targets.length) return;
+    // Read all animation lists before finishing any of them. CSS transitions
+    // that left the viewport should not keep hundreds of SVG/dot jobs alive.
+    const animations = targets.flatMap(target => target.getAnimations ? target.getAnimations({ subtree: true }) : []);
+    animations.forEach(animation => {
+      if (animation.playState !== 'finished') {
+        try { animation.finish(); } catch (e) {}
+      }
+    });
+    state.numberJobs.forEach((job, node) => {
+      if (targets.some(target => target.contains(node))) finishNumberJob(node, job);
+    });
   }
 
   function stopWheelInertia(settle) {
@@ -952,26 +1023,29 @@
 
   function runWheelInertia(now) {
     state.wheelFrame = 0;
-    if (!state.active || reducedMotion() || !(scrollFeel.inertia > 0)
+    if (!runtimeVisible() || reducedMotion() || !(scrollFeel.inertia > 0)
         || Math.abs(state.wheelVelocity) < WHEEL_STOP_SPEED) {
       stopWheelInertia(true);
       return;
     }
     const dt = state.wheelLastFrame
-      ? Math.max(0.45, Math.min(2.4, (now - state.wheelLastFrame) / 16.667))
+      ? Math.max(0, Math.min(2.4, (now - state.wheelLastFrame) / 16.667))
       : 1;
     state.wheelLastFrame = now;
-    const before = scroll.scrollTop;
-    const maxTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
-    const next = Math.max(0, Math.min(maxTop, before + state.wheelVelocity * dt));
+    const before = state.wheelPosition;
+    const maxTop = state.maxScrollTop;
+    const retention = 0.80 + 0.16 * (scrollFeel.inertia / 100);
+    const decay = Math.pow(retention, dt);
+    // Integrate the same 60Hz impulse at any refresh rate, retaining subpixels.
+    const next = Math.max(0, Math.min(maxTop, before + state.wheelVelocity * (1 - decay) / (1 - retention)));
+    state.wheelPosition = next;
     scroll.scrollTop = next;
     if (next === before || (next <= 0 && state.wheelVelocity < 0)
         || (next >= maxTop && state.wheelVelocity > 0)) {
       stopWheelInertia(true);
       return;
     }
-    const retention = 0.80 + 0.16 * (scrollFeel.inertia / 100);
-    state.wheelVelocity *= Math.pow(retention, dt);
+    state.wheelVelocity *= decay;
     state.wheelFrame = requestAnimationFrame(runWheelInertia);
   }
 
@@ -987,11 +1061,17 @@
   }
 
   function handleWheel(event) {
-    if (!state.active || reducedMotion() || !(scrollFeel.inertia > 0) || !isDiscreteMouseWheel(event)) return;
+    if (!runtimeVisible()) return;
+    if (reducedMotion() || !(scrollFeel.inertia > 0) || !isDiscreteMouseWheel(event)) {
+      stopWheelInertia(true);
+      return;
+    }
+    if (state.geometryDirty || !state.resizeObserver) updateScrollGeometry();
+    if (!state.wheelFrame) state.wheelPosition = scroll.scrollTop;
     event.preventDefault();
     const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
       ? 16
-      : (event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? scroll.clientHeight : 1);
+      : (event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? state.viewportHeight : 1);
     const impulse = event.deltaY * unit * 0.16 * (scrollFeel.strength / 100);
     const sameDirection = !state.wheelVelocity || Math.sign(state.wheelVelocity) === Math.sign(impulse);
     state.wheelVelocity = impulse + state.wheelVelocity
@@ -1002,6 +1082,7 @@
       state.wheelLastFrame = 0;
       state.wheelFrame = requestAnimationFrame(runWheelInertia);
     }
+    handleScroll();
   }
 
   function finishScroll() {
@@ -1017,9 +1098,11 @@
   }
 
   function handleScroll() {
-    if (!state.active) return;
+    if (!runtimeVisible()) return;
     if (!state.scrolling) {
       state.scrolling = true;
+      if (state.activeTooltip) state.activeTooltip.classList.remove('visible');
+      state.activeTooltip = null;
       if (scrollFeel.pauseReveal) stopNumberFrame();
     }
     scheduleScrollFinish();
@@ -1029,6 +1112,9 @@
     const finishNumbers = !options || options.finishNumbers !== false;
     if (state.observer) state.observer.disconnect();
     state.observer = null;
+    if (state.resizeObserver) state.resizeObserver.disconnect();
+    state.resizeObserver = null;
+    state.geometryDirty = true;
     state.pendingReveals.clear();
     cancelRevealFrame();
     if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
@@ -1036,6 +1122,9 @@
     state.scrolling = false;
     state.scrollSettledAt = 0;
     stopWheelInertia(false);
+    if (state.activeTooltip) state.activeTooltip.classList.remove('visible');
+    state.activeTooltip = null;
+    if (finishNumbers) settleTargets([reportHost]);
     clearNumberJobs(finishNumbers);
   }
 
@@ -1071,6 +1160,7 @@
   async function generate() {
     if (state.loading) return;
     state.loading = true;
+    stopWheelInertia(true);
     const regenerate = !!state.report;
     state.error = '';
     showLoading(regenerate);
@@ -1121,10 +1211,16 @@
   async function activate() {
     state.active = true;
     await initialize();
-    if (state.report && !state.observer) startReveals();
+    if (runtimeVisible() && state.report && !state.observer) startReveals();
   }
   scroll.addEventListener('scroll', handleScroll, { passive: true });
   scroll.addEventListener('wheel', handleWheel, { passive: false });
+  // A scrollbar drag, touch or keyboard scroll takes ownership immediately.
+  scroll.addEventListener('pointerdown', () => stopWheelInertia(true), { passive: true });
+  scroll.addEventListener('keydown', (event) => {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) stopWheelInertia(true);
+  });
+  window.addEventListener('resize', () => { state.geometryDirty = true; }, { passive: true });
   document.addEventListener('relatum:start-workspacechange', (event) => {
     const active = !!(event.detail && event.detail.workspace === 'career');
     state.active = active;
@@ -1151,9 +1247,17 @@
       scroll.scrollTop = top;
     } else showEntry();
   });
-  window.addEventListener('pagehide', () => stopWheelInertia(false));
+  motionPreference.addEventListener('change', () => {
+    stopRuntime({ finishNumbers: true });
+    if (runtimeVisible() && state.report) startReveals();
+  });
+  window.addEventListener('pagehide', () => stopRuntime({ finishNumbers: true }));
+  window.addEventListener('pageshow', () => {
+    if (runtimeVisible() && state.report && !state.observer) startReveals();
+  });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopWheelInertia(false);
+    if (document.hidden) stopRuntime({ finishNumbers: true });
+    else if (state.active && state.report) startReveals();
   });
 
   window.RelatumCareerReport = { activate, preload, generate, get report() { return state.report; } };
