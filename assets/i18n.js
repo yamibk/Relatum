@@ -170,6 +170,7 @@
     '新建分支': 'New stage', '新建阶段': 'New stage', '新建任务': 'New task', '选择已有任务': 'Choose an existing task',
     '新建后续任务': 'New following task', '新建后续阶段': 'New following stage', '接入已有任务': 'Attach existing task',
     '改名': 'Rename', '设置进度': 'Set progress', '取消进度条': 'Remove progress bar', '移出路线': 'Remove from route', '删除分支': 'Delete stage', '删除阶段': 'Delete stage',
+    '收起已完成阶段': 'Collapse completed stages', '全部展开': 'Expand all', '删除目标树': 'Delete goal tree',
     '分支名称': 'Stage name', '阶段名称': 'Stage name', '添加分支': 'Add stage', '添加阶段': 'Add stage', '任务名称': 'Task name', '创建任务': 'Create task',
     '加入路线': 'Add to route', '没有可加入的学习任务': 'No available study task', '名称': 'Name',
     '当前进度': 'Current progress', '请稍候': 'Please wait', '已移除任务': 'Removed task',
