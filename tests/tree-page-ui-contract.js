@@ -167,6 +167,16 @@ assert(functionSource(tree, 'createFreeItemData').includes('width = note ? 344 :
   'Tree notes/text boxes must use the agreed default dimensions and start with blank text');
 assert(functionSource(tree, 'beginFreeItemMoveOrResize').includes('if (editingFreeItemId) commitFreeItemEdit();'),
   'Tree free-item drag/resize must persist a newly edited item before updating its geometry');
+const createFreeItemSource = functionSource(tree, 'createFreeItemAt');
+assert(createFreeItemSource.indexOf('queueFreeItemCreate(item);')
+    < createFreeItemSource.indexOf('enterFreeItemEdit(item, true);')
+  && !functionSource(tree, 'commitFreeItemEdit').includes('queueFreeItemCreate(item);')
+  && functionSource(tree, 'cancelFreeItemEdit').includes('queueFreeItemDelete(snapshot, itemIndex);'),
+  'Tree free-item creation must enter the serial queue before first-edit updates and cancellation must undo it');
+assert(!functionSource(tree, 'saveEditingFreeItemText').includes('!editingFreeItemIsNew')
+  && !functionSource(tree, 'applyFreeItemToneChoice').includes('!editingFreeItemIsNew')
+  && !functionSource(tree, 'applyFreeItemSizeChoice').includes('!editingFreeItemIsNew'),
+  'first-edit text and appearance updates must queue behind the already-enqueued create command');
 assert(functionSource(tree, 'applyFreeItemTone').includes('item.fillColor = FREE_ITEM_NOTE_FILL;')
   && functionSource(tree, 'applyFreeItemTone').includes('item.borderColor = FREE_ITEM_NOTE_BORDER;')
   && functionSource(tree, 'applyFreeItemTone').includes('item.color = tone.text;'),
@@ -321,6 +331,8 @@ assert(progressSource.includes('queuedProgress.delta += delta')
 assert(functionSource(tree, 'progressPanelShortcutBlocked').includes('!guide.hidden || !confirmBox.hidden || !popover.hidden')
   && functionSource(tree, 'progressPanelShortcutBlocked').includes('editingFreeItemId || armedFreeItemKind || visualLinkDrag'),
   'bare Tab must yield to IME, reverse focus navigation, dialogs, popovers, and free-item editing');
+assert(!functionSource(tree, 'setProgressBranchesVisible').includes('preserveViewAnchor'),
+  'showing or hiding progress branches must not pan free items by compensating the shared camera');
 assert(functionSource(tree, 'finishProgressPointEdit').includes("if (commit && nextName !== edit.original")
   && functionSource(tree, 'applyProgressPointName').includes("createClientId('sm_')")
   && functionSource(tree, 'rollbackProgressPointEntry').includes('hasNewerProgressPointEdit(entry)'),

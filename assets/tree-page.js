@@ -477,7 +477,7 @@
     if (item.text === value) return;
     var before = cloneFreeItem(item);
     item.text = value; syncActiveTreeReference();
-    if (!editingFreeItemIsNew) queueFreeItemUpdate(item, before);
+    queueFreeItemUpdate(item, before);
   }
   function scheduleEditingFreeItemSave() {
     if (freeItemTextSaveTimer) clearTimeout(freeItemTextSaveTimer);
@@ -524,7 +524,6 @@
     if (!editingFreeItemId) return;
     if (freeItemTextSaveTimer) { clearTimeout(freeItemTextSaveTimer); freeItemTextSaveTimer = 0; }
     var itemId = editingFreeItemId;
-    var wasNew = editingFreeItemIsNew;
     saveEditingFreeItemText();
     var item = findFreeItem(itemId);
     var text = freeItemTextElement(itemId);
@@ -534,7 +533,6 @@
     var element = freeItemElements.get(itemId);
     if (element) element.classList.remove('is-editing', 'editing');
     syncActiveTreeReference();
-    if (wasNew) queueFreeItemCreate(item);
     applyFreeItemElement(element, item); updateFreeItemDockState();
   }
   function cancelFreeItemEdit() {
@@ -545,8 +543,12 @@
     editingFreeItemId = ''; editingFreeItemOriginal = ''; editingFreeItemIsNew = false;
     if (!item) return;
     if (wasNew) {
+      var itemIndex = activeFreeItems().findIndex(function (candidate) { return candidate.id === itemId; });
+      var snapshot = cloneFreeItem(item);
       state.tree.freeItems = activeFreeItems().filter(function (candidate) { return candidate.id !== itemId; });
-      selectedFreeItemId = ''; syncActiveTreeReference(); syncFreeItemElements(); return;
+      selectedFreeItemId = ''; syncActiveTreeReference(); syncFreeItemElements();
+      queueFreeItemDelete(snapshot, itemIndex);
+      return;
     }
     if (item.text !== previousText) {
       var before = cloneFreeItem(item); item.text = previousText;
@@ -564,6 +566,9 @@
     var item = createFreeItemData(kind, point);
     activeFreeItems().push(item); syncActiveTreeReference();
     armedFreeItemKind = ''; syncFreeItemElements(); selectFreeItem(item.id);
+    // 创建必须在首次编辑、拖动或字号/颜色更新之前进入串行队列。
+    // 这样快速交错操作也不会先向后端发送 update 而得到 404。
+    queueFreeItemCreate(item);
     if (!freeItemIsNote(item)) ensureFreeItemFont();
     enterFreeItemEdit(item, true);
     return item;
@@ -602,7 +607,7 @@
     if (item) {
       var before = cloneFreeItem(item); applyFreeItemTone(item, toneKey);
       syncActiveTreeReference(); applyFreeItemElement(freeItemElements.get(item.id), item);
-      if (!editingFreeItemIsNew) queueFreeItemUpdate(item, before);
+      queueFreeItemUpdate(item, before);
     } else { freeItemDefaults[kind].tone = toneKey; persistFreeItemDefaults(); }
     updateFreeItemDockState();
   }
@@ -615,7 +620,7 @@
     if (item && item.fontSize !== size) {
       var before = cloneFreeItem(item); item.fontSize = size;
       syncActiveTreeReference(); applyFreeItemElement(freeItemElements.get(item.id), item);
-      if (!editingFreeItemIsNew) queueFreeItemUpdate(item, before);
+      queueFreeItemUpdate(item, before);
     }
     updateFreeItemDockState();
   }
@@ -669,12 +674,6 @@
     progressBranchesToggle.setAttribute('aria-label', T('在树上显示进度点'));
     progressBranchesToggle.title = T('在树上显示进度点');
   }
-  function progressBranchAnchorId() {
-    var owner = (state.tree.nodes || []).find(function (node) {
-      return node.kind === 'task' && node.taskId === selectedProgressTaskId;
-    });
-    return owner ? owner.id : 'root';
-  }
   function setProgressBranchesVisible(value) {
     value = !!value;
     if (progressBranchesVisible === value) { syncProgressBranchesToggle(); return; }
@@ -683,7 +682,6 @@
     syncProgressBranchesToggle();
     if (open) render({
       duration: 240,
-      preserveViewAnchor: progressBranchAnchorId(),
       suppressEntrance: !value,
     });
   }
@@ -4250,8 +4248,8 @@
     if (!item) return;
     event.stopPropagation();
     if (editingFreeItemId === item.id && event.target.closest('.text-box-content')) return;
-    // 新建对象在首次编辑结束前尚未发送 create；先提交，确保后续拖动的
-    // update 一定排在 create 之后，避免后端误报“没有找到这个自由对象”。
+    // 结束首次编辑后再开始几何手势；create 已在创建时入队，
+    // 因此这里产生的 update 始终严格排在其后。
     if (editingFreeItemId) commitFreeItemEdit();
     event.preventDefault(); selectFreeItem(item.id);
     var direction = event.target.dataset.freeItemResize;
