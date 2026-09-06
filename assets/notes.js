@@ -28,6 +28,7 @@
   const STACK_HOVER_DELAY_DEFAULT = 320;
   const STACK_HOVER_DELAY_MIN = 0;
   const STACK_HOVER_DELAY_MAX = 1200;
+  const CREATE_BROWSE_SHORTCUTS_DISABLED_KEY = 'canvas:notesCreateBrowseShortcutsDisabled:v1';
   const NOTES_VIEW_KEY = 'canvas:notesView';
   const NOTES_VIEW_MIN = 0.45;
   const NOTES_VIEW_MAX = 2.35;
@@ -82,6 +83,7 @@
   let searchIndex = -1;
   let searchMatchIds = new Set();
   let keyboardBrowseActive = false;
+  let createBrowseShortcutsDisabled = true;
 
   // ── 小工具 ──
   function genId() {
@@ -169,6 +171,9 @@
       const v = Number(savedDelay);
       if (Number.isFinite(v)) stackHoverDelay = Math.max(STACK_HOVER_DELAY_MIN, Math.min(STACK_HOVER_DELAY_MAX, Math.round(v / 20) * 20));
     }
+  } catch (e) {}
+  try {
+    createBrowseShortcutsDisabled = localStorage.getItem(CREATE_BROWSE_SHORTCUTS_DISABLED_KEY) !== '0';
   } catch (e) {}
   function clampViewScale(value) {
     const n = Number(value);
@@ -1819,6 +1824,19 @@
     if (searchInput) return;                          // 搜索输入自身接管文字、回车与退出
     if (editingEl) return;                            // 写字时让浏览器做字符级撤销
     if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, [contenteditable], [role="dialog"]')) return;
+    const plainKey = !e.ctrlKey && !e.metaKey && !e.altKey;
+    const lowerKey = e.key.toLowerCase();
+    if (createBrowseShortcutsDisabled && plainKey
+      && (e.key === 'Escape' || e.key === 'Enter' || e.key === 'Tab' || e.key === '/'
+        || lowerKey === 'j' || lowerKey === 'k' || lowerKey === 'n')) {
+      // 禁用快捷键时，Tab / Shift+Tab 也不能落回浏览器默认的焦点切换，
+      // 否则会把键盘焦点带进速记页右侧平时隐藏的控制栏。
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+      return;
+    }
     if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (stopKeyboardBrowse()) {
         e.preventDefault();
@@ -2095,6 +2113,15 @@
       return stackHoverDelay;
     },
     getStackHoverDelay() { return stackHoverDelay; },
+    setCreateBrowseShortcutsDisabled(disabled) {
+      createBrowseShortcutsDisabled = disabled !== false;
+      if (createBrowseShortcutsDisabled) {
+        closeNoteSearch();
+        stopKeyboardBrowse();
+      }
+      return createBrowseShortcutsDisabled;
+    },
+    getCreateBrowseShortcutsDisabled() { return createBrowseShortcutsDisabled; },
     fitAll: fitAllNotes,
     resetView,
   };

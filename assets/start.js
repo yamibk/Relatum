@@ -62,6 +62,7 @@
   const notesConsoleColors = document.querySelector('[data-role="notes-console-colors"]');
   const notesConsoleReset = document.querySelector('[data-role="notes-console-reset"]');
   const notesConsoleHelpTrigger = document.querySelector('[data-role="notes-console-help-trigger"]');
+  const notesConsoleShortcutsToggle = document.querySelector('[data-role="notes-console-shortcuts-toggle"]');
   const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
   const startPageActivityToggle = document.querySelector('[data-role="start-page-activity-toggle"]');
@@ -147,6 +148,7 @@
   const NOTES_INERTIA_DEFAULT = 0.45;
   const NOTES_STACK_HOVER_DELAY_KEY = 'canvas:notesStackHoverDelay';
   const NOTES_STACK_HOVER_DELAY_DEFAULT = 320;
+  const NOTES_CREATE_BROWSE_SHORTCUTS_DISABLED_KEY = 'canvas:notesCreateBrowseShortcutsDisabled:v1';
   const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;
   const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
@@ -645,6 +647,25 @@
     }
   }
 
+  function applyNotesCreateBrowseShortcutsDisabled(disabled, persist) {
+    const active = disabled !== false;
+    if (notesConsoleShortcutsToggle) {
+      notesConsoleShortcutsToggle.setAttribute('aria-checked', active ? 'true' : 'false');
+      const label = englishUI()
+        ? (active ? 'Create and browse shortcuts disabled' : 'Create and browse shortcuts enabled')
+        : (active ? '创建与浏览快捷键已禁用' : '创建与浏览快捷键已启用');
+      notesConsoleShortcutsToggle.title = label;
+      notesConsoleShortcutsToggle.setAttribute('aria-label', label);
+    }
+    if (persist) {
+      try { localStorage.setItem(NOTES_CREATE_BROWSE_SHORTCUTS_DISABLED_KEY, active ? '1' : '0'); } catch (e) {}
+      if (window.CanvasNotes && typeof window.CanvasNotes.setCreateBrowseShortcutsDisabled === 'function') {
+        window.CanvasNotes.setCreateBrowseShortcutsDisabled(active);
+      }
+    }
+    return active;
+  }
+
   function applyCalendarCountdownEnabled(enabled, persist) {
     const active = enabled !== false;
     if (calendarCountdownToggle) calendarCountdownToggle.checked = active;
@@ -841,6 +862,11 @@
     notesStackHoverDelay = NOTES_STACK_HOVER_DELAY_DEFAULT;
   }
   applyNotesStackHoverDelay(notesStackHoverDelay, false);
+  let notesCreateBrowseShortcutsDisabled = true;
+  try {
+    notesCreateBrowseShortcutsDisabled = localStorage.getItem(NOTES_CREATE_BROWSE_SHORTCUTS_DISABLED_KEY) !== '0';
+  } catch (e) {}
+  applyNotesCreateBrowseShortcutsDisabled(notesCreateBrowseShortcutsDisabled, false);
   let calendarCountdownEnabled = true;
   try { calendarCountdownEnabled = localStorage.getItem(CALENDAR_COUNTDOWN_KEY) !== '0'; } catch (e) {}
   applyCalendarCountdownEnabled(calendarCountdownEnabled, false);
@@ -1064,6 +1090,12 @@
         setHelpOpen(!helpOpen, false);
       });
     }
+    if (notesConsoleShortcutsToggle) {
+      notesConsoleShortcutsToggle.addEventListener('click', () => {
+        const disabled = notesConsoleShortcutsToggle.getAttribute('aria-checked') !== 'true';
+        applyNotesCreateBrowseShortcutsDisabled(disabled, true);
+      });
+    }
     notesConsolePanel.addEventListener('click', (event) => {
       const action = event.target.closest('[data-action]');
       if (!action || !window.CanvasNotes) return;
@@ -1079,6 +1111,7 @@
         palette.reset();
         applyNotesInertia(NOTES_INERTIA_DEFAULT, true);
         applyNotesStackHoverDelay(NOTES_STACK_HOVER_DELAY_DEFAULT, true);
+        applyNotesCreateBrowseShortcutsDisabled(true, true);
         notesConsoleReset.classList.add('is-restored');
         notesConsoleReset.textContent = englishUI() ? 'Restored' : '已恢复';
         clearTimeout(resetTimer);
@@ -1134,6 +1167,10 @@
     }, true);
     document.addEventListener('relatum:languagechange', () => {
       syncPaletteButtons();
+      applyNotesCreateBrowseShortcutsDisabled(
+        !notesConsoleShortcutsToggle || notesConsoleShortcutsToggle.getAttribute('aria-checked') === 'true',
+        false,
+      );
       if (notesConsoleReset && !notesConsoleReset.classList.contains('is-restored')) {
         notesConsoleReset.textContent = englishUI() ? 'Reset' : '恢复默认';
       }

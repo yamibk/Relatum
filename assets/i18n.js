@@ -81,6 +81,8 @@
     '交互手感': 'Interaction feel', '视野': 'View', '总览便签': 'Fit notes', '重置视野': 'Reset view',
     '恢复默认': 'Reset', '已恢复': 'Restored', '全选': 'Select all', '取消全选': 'Clear all',
     '打开速记快捷键说明': 'Open Quick Notes keyboard shortcuts', '速记快捷键': 'Quick Notes shortcuts',
+    '创建与浏览快捷键已禁用': 'Create and browse shortcuts disabled', '创建与浏览快捷键已启用': 'Create and browse shortcuts enabled',
+    '勾选控制台“？”旁的圆形按钮后，将禁用“创建与连接”和“浏览与搜索”两组快捷键；取消勾选即可恢复。': 'Select the round button beside “?” in the controls to disable the Create & connect and Browse & search shortcuts; clear it to restore them.',
     '创建与连接': 'Create & connect', '浏览与搜索': 'Browse & search', '编辑便签': 'Edit notes', '视野与历史': 'View & history',
     '在鼠标位置或视野中心新建便签': 'Create a note at the pointer or view center',
     '在当前便签右侧新建': 'Create to the right of the current note',
