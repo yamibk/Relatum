@@ -47352,6 +47352,292 @@ body.start-page[data-start-theme="dark"] .study-temporary-card { border-color: r
 .tree-page-route-rail .study-route-rail-item:focus-visible::after {
   transform: translate(0, -50%);
 }
+.tree-page-route-rail.is-progress-panel-obscured {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(14px, -50%) !important;
+  transition: opacity 150ms ease, transform 210ms cubic-bezier(.22,1,.36,1), visibility 0s linear 210ms;
+}
+.tree-page-progress-panel {
+  position: absolute;
+  z-index: 11;
+  top: 50%;
+  right: max(16px, calc(env(safe-area-inset-right, 0px) + 12px));
+  width: min(382px, calc(100vw - 126px));
+  height: min(720px, calc(100vh - 104px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,.12);
+  border-radius: 22px;
+  color: #171717;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(0,0,0,.16), 0 3px 12px rgba(0,0,0,.055);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(16px, -50%) scale(.985);
+  transform-origin: right center;
+  transition: transform 280ms cubic-bezier(.18,.9,.22,1), opacity 220ms ease,
+              visibility 0s linear 280ms, height 240ms cubic-bezier(.22,1,.36,1);
+}
+.tree-page-progress-panel.is-empty { height: min(142px, calc(100vh - 104px)); }
+.tree-page-embedded[data-progress-panel-open="1"] .tree-page-progress-panel {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(0, -50%) scale(1);
+  transition-delay: 0s;
+}
+.tree-page-progress-head {
+  flex: 0 0 auto;
+  min-height: 78px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 13px 12px 18px;
+  border-bottom: 1px solid rgba(0,0,0,.095);
+}
+.tree-page-progress-head > div:first-child { min-width: 0; }
+.tree-page-progress-head p,
+.tree-page-progress-head h2,
+.tree-page-progress-head span,
+.tree-page-progress-status { margin: 0; }
+.tree-page-progress-head p {
+  color: #777;
+  font: 700 9.5px/1.2 var(--font-ui);
+  letter-spacing: .105em;
+}
+.tree-page-progress-head h2 {
+  margin-top: 3px;
+  color: #111;
+  font: 650 16px/1.22 var(--font-ui);
+  letter-spacing: -.01em;
+}
+.tree-page-progress-head [data-role="tree-page-progress-task-meta"] {
+  display: block;
+  max-width: 245px;
+  min-height: 14px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #707070;
+  font: 500 11.5px/1.25 var(--font-ui);
+  letter-spacing: -.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-page-progress-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.tree-page-progress-head-actions button {
+  width: 30px;
+  height: 30px;
+  padding: 0 0 1px;
+  border: 0;
+  border-radius: 50%;
+  color: #777;
+  background: transparent;
+  font: 300 22px/1 var(--font-ui);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, transform 120ms ease;
+}
+.tree-page-progress-head-actions button:hover { color: #111; background: rgba(0,0,0,.055); }
+.tree-page-progress-head-actions button:active { transform: scale(.92); }
+.tree-page-progress-head-actions button.tree-page-progress-branches-toggle {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1.4px solid #c8c8c8;
+  color: #fff;
+  background: #fff;
+  box-shadow: none;
+  font: 700 13px/1 var(--font-ui);
+  transition: border-color 160ms ease, background 160ms ease, transform 120ms ease;
+}
+.tree-page-progress-branches-toggle span {
+  opacity: 0;
+  transform: scale(.62);
+  transition: opacity 130ms ease, transform 180ms cubic-bezier(.22,1,.36,1);
+}
+.tree-page-progress-head-actions button.tree-page-progress-branches-toggle:hover {
+  border-color: #a9a9a9;
+  color: #fff;
+  background: #fff;
+}
+.tree-page-progress-head-actions button.tree-page-progress-branches-toggle[aria-checked="true"] {
+  border-color: #86aa8e;
+  color: #fff;
+  background: #91b299;
+}
+.tree-page-progress-branches-toggle[aria-checked="true"] span { opacity: 1; transform: scale(1); }
+.tree-page-progress-head-actions button.tree-page-progress-branches-toggle[aria-checked="true"]:hover {
+  border-color: #789d81;
+  background: #86aa8e;
+}
+.tree-page-progress-branches-toggle:focus-visible {
+  outline: 2px solid rgba(104,139,113,.34);
+  outline-offset: 2px;
+}
+.tree-page-progress-list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: 8px 18px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tree-page-progress-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.tree-page-progress-panel.is-empty .tree-page-progress-list { overflow: hidden; }
+.tree-page-progress-virtual-spacer { position: relative; width: 100%; }
+.tree-page-progress-row {
+  box-sizing: border-box;
+  height: 58px;
+  display: grid;
+  grid-template-columns: 28px 22px minmax(0,1fr);
+  align-items: center;
+  gap: 8px;
+  margin-inline: 14px;
+  transform-origin: center;
+}
+.tree-page-progress-row.is-virtual {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  width: auto;
+  margin-inline: 0;
+}
+.tree-page-progress-number {
+  color: #929292;
+  font: 550 10.5px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.tree-page-progress-check {
+  width: 19px;
+  height: 19px;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border: 1.35px solid #d0d0d0;
+  border-radius: 6px;
+  color: #fff;
+  background: #fff;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms cubic-bezier(.22,1,.36,1);
+}
+.tree-page-progress-check span {
+  opacity: 0;
+  transform: scale(.6) rotate(-7deg);
+  font: 700 12px/1 var(--font-ui);
+  transition: opacity 140ms ease, transform 200ms cubic-bezier(.22,1,.36,1);
+}
+.tree-page-progress-row.is-checked .tree-page-progress-check {
+  border-color: #86aa8e;
+  background: #91b299;
+}
+.tree-page-progress-row.is-checked .tree-page-progress-check span { opacity: 1; transform: scale(1) rotate(0); }
+.tree-page-progress-card {
+  height: 42px;
+  min-width: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,.10);
+  border-radius: 12px;
+  color: #252525;
+  background: #fbfbfb;
+  box-shadow: 0 2px 7px rgba(0,0,0,.035);
+  font: 500 13px/1.35 var(--font-ui);
+  letter-spacing: -.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease,
+              transform 190ms cubic-bezier(.22,1,.36,1);
+}
+.tree-page-progress-card:hover,
+.tree-page-progress-card:focus-visible {
+  border-color: rgba(0,0,0,.21);
+  background: #fafafa;
+  outline: none;
+}
+.tree-page-progress-card.is-empty { color: transparent; }
+.tree-page-progress-row.is-checked .tree-page-progress-card { background: #fbfbfb; }
+.tree-page-progress-card input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+.tree-page-progress-card.is-editing {
+  border-color: rgba(0,0,0,.34);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0,0,0,.065);
+}
+.tree-page-progress-status {
+  position: absolute;
+  z-index: 2;
+  right: 15px;
+  bottom: 10px;
+  max-width: calc(100% - 30px);
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: #a25a48;
+  background: #fff;
+  font: 500 10px/1.3 var(--font-ui);
+  pointer-events: none;
+}
+.tree-page-progress-status:empty { display: none; }
+.tree-page-progress-panel.is-content-swapping .tree-page-progress-list,
+.tree-page-progress-panel.is-content-swapping [data-role="tree-page-progress-task-meta"] {
+  animation: treePageProgressContentSwap 190ms ease both;
+}
+.tree-page-progress-row.is-checking .tree-page-progress-check { animation: treePageProgressCheck 340ms cubic-bezier(.22,1,.36,1); }
+.tree-page-progress-row.is-unchecking .tree-page-progress-check { animation: treePageProgressUncheck 300ms ease; }
+.tree-page-progress-row.is-name-changing .tree-page-progress-card { animation: treePageProgressName 200ms ease; }
+.tree-page-route-panel .study-route-node.is-task.is-progress-selected {
+  outline: 2px solid rgba(104,139,113,.44);
+  outline-offset: 3px;
+}
+@keyframes treePageProgressContentSwap {
+  0% { opacity: .35; transform: translateY(3px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes treePageProgressCheck {
+  0% { transform: scale(.84); }
+  55% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes treePageProgressUncheck {
+  0% { transform: scale(1); }
+  45% { transform: scale(.88); }
+  100% { transform: scale(1); }
+}
+@keyframes treePageProgressName {
+  0% { opacity: .48; transform: translateY(2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
 .tree-page-route-panel .study-route-fit {
   left: max(84px, calc(env(safe-area-inset-left, 0px) + 74px));
   z-index: 11;
@@ -47583,6 +47869,73 @@ body.start-page[data-start-theme="dark"] .tree-page-route-stage {
   background-color: transparent;
   background-image: radial-gradient(circle, rgba(229,238,232,.12) .7px, transparent .8px);
 }
+body.start-page[data-start-theme="dark"] .tree-page-progress-panel {
+  color: rgba(255,255,255,.92);
+  border-color: rgba(255,255,255,.18);
+  background: #000;
+  box-shadow: 0 24px 64px rgba(0,0,0,.52), 0 3px 12px rgba(0,0,0,.30);
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-head { border-bottom-color: rgba(255,255,255,.13); }
+body.start-page[data-start-theme="dark"] .tree-page-progress-head p,
+body.start-page[data-start-theme="dark"] .tree-page-progress-head [data-role="tree-page-progress-task-meta"],
+body.start-page[data-start-theme="dark"] .tree-page-progress-number { color: rgba(255,255,255,.50); }
+body.start-page[data-start-theme="dark"] .tree-page-progress-head h2 { color: #fff; }
+body.start-page[data-start-theme="dark"] .tree-page-progress-head-actions button { color: rgba(255,255,255,.58); }
+body.start-page[data-start-theme="dark"] .tree-page-progress-head-actions button:hover {
+  color: #fff;
+  background: rgba(255,255,255,.10);
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-head-actions button.tree-page-progress-branches-toggle {
+  border-color: rgba(255,255,255,.34);
+  color: #fff;
+  background: #000;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-head-actions button.tree-page-progress-branches-toggle:hover {
+  border-color: rgba(255,255,255,.55);
+  background: #090909;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-head-actions button.tree-page-progress-branches-toggle[aria-checked="true"] {
+  border-color: #a9c6ae;
+  color: #152019;
+  background: #b5cfba;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-list {
+  scrollbar-color: rgba(255,255,255,.24) transparent;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-check {
+  color: #111;
+  border-color: rgba(255,255,255,.30);
+  background: #0a0a0a;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-row.is-checked .tree-page-progress-check {
+  color: #152019;
+  border-color: #a9c6ae;
+  background: #b5cfba;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-card {
+  color: rgba(255,255,255,.90);
+  border-color: rgba(255,255,255,.14);
+  background: #111;
+  box-shadow: 0 2px 8px rgba(0,0,0,.22);
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-card:hover,
+body.start-page[data-start-theme="dark"] .tree-page-progress-card:focus-visible,
+body.start-page[data-start-theme="dark"] .tree-page-progress-row.is-checked .tree-page-progress-card {
+  border-color: rgba(255,255,255,.23);
+  background: #171717;
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-card.is-editing {
+  border-color: rgba(255,255,255,.42);
+  background: #1a1a1a;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.085);
+}
+body.start-page[data-start-theme="dark"] .tree-page-progress-status {
+  color: #e9a996;
+  background: #000;
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node.is-task.is-progress-selected {
+  outline-color: rgba(181,207,187,.54);
+}
 body.start-page[data-start-theme="dark"] .tree-page-item-dock-row {
   color: rgba(245,247,244,.94);
   background: rgba(20,29,28,.98);
@@ -47636,6 +47989,12 @@ body.start-page[data-start-theme="dark"] .tree-page-appearance-colors {
   }
   .tree-page-item-dock { bottom: 12px; max-width: calc(100vw - 70px); }
   .tree-page-item-dock-row { max-width: calc(100vw - 70px); }
+  .tree-page-progress-panel {
+    right: 10px;
+    width: min(342px, calc(100vw - 78px));
+    height: min(660px, calc(100vh - 88px));
+  }
+  .tree-page-progress-panel.is-empty { height: min(132px, calc(100vh - 88px)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .tree-page-embedded,
@@ -47645,6 +48004,9 @@ body.start-page[data-start-theme="dark"] .tree-page-appearance-colors {
   .tree-page-item-colors button,
   .tree-page-item-sizes button,
   .tree-page-route-panel .study-progress-fill,
+  .tree-page-progress-panel,
+  .tree-page-progress-panel *,
+  .tree-page-route-rail.is-progress-panel-obscured,
   .tree-page-route-panel .study-route-node.is-goal-celebrating .study-progress-fill::before,
   .tree-page-route-panel .study-route-node.is-goal-celebrating .study-progress-fill::after,
   .tree-page-route-panel .study-route-node.is-goal-breathing .study-progress-fill::before,

@@ -6604,6 +6604,74 @@ def _tree_page_restore_extras(data: dict, extras: dict) -> None:
                 node["shape"] = _tree_page_shape(node_shapes.get(str(node.get("id") or ""), "rounded"))
 
 
+def _tree_page_reconcile_removed_milestones(
+    data: dict, task_id: str, removed_ids: set[str],
+) -> dict[str, list[str]]:
+    """Remove dangling milestone requirements without breaking primary layout links.
+
+    A primary ``requires`` link is also the node's only layout parent, so it cannot
+    simply disappear.  When its milestone is removed, keep the route and downgrade
+    the trigger to whole-task completion.  Extra requirements can be dropped.
+    """
+    removed = {str(item or "").strip() for item in removed_ids if str(item or "").strip()}
+    result = {"removedRequirementLinkIds": [], "downgradedPrimaryLinkIds": []}
+    if not removed:
+        return result
+
+    for tree in data.get("goalTrees", []):
+        source_ids = {
+            str(node.get("id") or "")
+            for node in tree.get("nodes", [])
+            if node.get("kind") == "task" and str(node.get("taskId") or "") == task_id
+        }
+        if not source_ids:
+            continue
+        retained: list[dict] = []
+        downgraded_signatures: set[tuple[str, str, str, object]] = set()
+        for link in tree.get("links", []):
+            trigger = link.get("trigger") if isinstance(link.get("trigger"), dict) else {}
+            invalid = (
+                link.get("type") == "requires"
+                and str(link.get("from") or "") in source_ids
+                and trigger.get("kind") == "milestone"
+                and str(trigger.get("milestoneId") or "") in removed
+            )
+            if not invalid:
+                retained.append(link)
+                continue
+            if link.get("primary"):
+                link["trigger"] = {"kind": "complete"}
+                retained.append(link)
+                result["downgradedPrimaryLinkIds"].append(str(link.get("id") or ""))
+                downgraded_signatures.add((
+                    str(link.get("from") or ""), str(link.get("to") or ""), "complete", None,
+                ))
+            else:
+                result["removedRequirementLinkIds"].append(str(link.get("id") or ""))
+
+        # Downgrading a primary milestone link can collide with an existing extra
+        # whole-task requirement between the same endpoints.  Prefer the primary
+        # route and remove only the redundant extra link.
+        deduped: list[dict] = []
+        for link in retained:
+            signature = (
+                str(link.get("from") or ""),
+                str(link.get("to") or ""),
+                (link.get("trigger") or {}).get("kind"),
+                (link.get("trigger") or {}).get("milestoneId"),
+            )
+            if (
+                link.get("type") == "requires"
+                and not link.get("primary")
+                and signature in downgraded_signatures
+            ):
+                result["removedRequirementLinkIds"].append(str(link.get("id") or ""))
+                continue
+            deduped.append(link)
+        tree["links"] = deduped
+    return result
+
+
 def _tree_page_normalize(data: object) -> dict:
     if not isinstance(data, dict) or data.get("version") != TREE_PAGE_VERSION:
         raise ValueError("树状页数据版本不兼容")
@@ -6902,6 +6970,61 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
         tree["updatedAt"] = _study_now()
         result["linkId"] = link_id
 
+    elif command == "set-progress-point-name":
+        task_id = str(body.get("taskId") or body.get("id") or "").strip()
+        index, old = study_find_task(data, task_id)
+        tree = _tree_page_tree(data, body.get("treeId"))
+        owner = next((
+            node for node in tree.get("nodes", [])
+            if node.get("kind") == "task" and node.get("taskId") == task_id
+        ), None)
+        if owner is None:
+            raise KeyError("这个任务不在当前树中")
+        raw_name = body.get("name", "")
+        if not isinstance(raw_name, str):
+            raise ValueError("任务点名称需要是文字")
+        name = raw_name.strip()
+        if len(name) > 40:
+            raise ValueError("任务点名称最多 40 字")
+        at = _study_config_int(body.get("at"), "任务点位置", strict=True)
+        progress = old.get("progress") if isinstance(old.get("progress"), dict) else {}
+        target = _study_int(progress.get("target"))
+        if target <= 0 or at < 1 or at > target:
+            raise ValueError("任务点必须位于当前目标范围内")
+        milestones = [dict(item) for item in progress.get("milestones", [])]
+        existing = next((item for item in milestones if _study_int(item.get("at")) == at), None)
+        removed_ids: set[str] = set()
+        saved_milestone = None
+        if name:
+            if existing is None:
+                milestone_id = _tree_page_client_id(
+                    body.get("milestoneId"), "sm_", "任务点标识",
+                )
+                if any(str(item.get("id") or "") == milestone_id for item in milestones):
+                    raise ValueError("任务点标识不能重复")
+                existing = {"id": milestone_id, "name": name, "at": at}
+                milestones.append(existing)
+            else:
+                existing["name"] = name
+            saved_milestone = dict(existing)
+        elif existing is not None:
+            removed_ids.add(str(existing.get("id") or ""))
+            milestones = [item for item in milestones if item is not existing]
+        else:
+            result.update({"task": old, "milestone": None, "at": at})
+
+        if name or removed_ids:
+            task = _study_task({}, existing=old)
+            task["progress"] = _study_progress({
+                "current": progress.get("current", 0),
+                "target": target,
+                "milestones": milestones,
+            }, progress, strict=True, allow_current=True)
+            task["shape"] = _tree_page_shape(old.get("shape"))
+            data["tasks"][index] = task
+            cleanup = _tree_page_reconcile_removed_milestones(data, task_id, removed_ids)
+            result.update({"task": task, "milestone": saved_milestone, "at": at, **cleanup})
+
     elif command == "update-task":
         task_id = str(body.get("taskId") or body.get("id") or "").strip()
         index, old = study_find_task(data, task_id)
@@ -6917,10 +7040,39 @@ def apply_tree_page_command(data: dict, body: dict, *, normalized: bool = False)
         progress_patch = patch.pop("progress", None)
         task = _study_task(patch, existing=old)
         if isinstance(progress_patch, dict):
+            progress_source = dict(progress_patch)
+            old_progress = old.get("progress") if isinstance(old.get("progress"), dict) else {}
+            target = _study_config_int(
+                progress_source.get("target", old_progress.get("target", 0)),
+                "目标总量", strict=True,
+            )
+            if not 0 <= target <= STUDY_PROGRESS_MAX:
+                raise ValueError(f"目标总量需要在 0–{STUDY_PROGRESS_MAX} 之间")
+            milestone_source = progress_source.get("milestones", old_progress.get("milestones", []))
+            if isinstance(milestone_source, list):
+                retained_milestones = []
+                for item in milestone_source:
+                    if not isinstance(item, dict):
+                        retained_milestones.append(item)
+                        continue
+                    position = _study_config_int(item.get("at"), "任务点位置", strict=True)
+                    if target <= 0 or position > target:
+                        continue
+                    retained_milestones.append(item)
+                progress_source["milestones"] = retained_milestones
+            old_ids = {
+                str(item.get("id") or "") for item in old_progress.get("milestones", [])
+                if isinstance(item, dict) and item.get("id")
+            }
             task["progress"] = _study_progress(
-                progress_patch, old.get("progress"), strict=True,
+                progress_source, old_progress, strict=True,
                 allow_current="current" in progress_patch,
             )
+            next_ids = {
+                str(item.get("id") or "") for item in task["progress"].get("milestones", [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            result.update(_tree_page_reconcile_removed_milestones(data, task_id, old_ids - next_ids))
         task["shape"] = _tree_page_shape(body.get("shape", old.get("shape")))
         data["tasks"][index] = task
         result["task"] = task

@@ -250,6 +250,165 @@ class TreePageTests(unittest.TestCase):
         self.command("update-task", taskId=task_id, status="done")
         self.assertEqual(self.data["tasks"][0]["status"], "done")
 
+    def test_progress_point_name_create_rename_clear_and_validate(self):
+        task_id = self.task("章节", target=8)["taskId"]
+        created = self.command(
+            "set-progress-point-name", taskId=task_id, at=3,
+            name="  第一节  ", milestoneId="sm_panel_first",
+        )
+        self.assertEqual(created["milestone"], {
+            "id": "sm_panel_first", "name": "第一节", "at": 3,
+        })
+
+        renamed = self.command(
+            "set-progress-point-name", taskId=task_id, at=3,
+            name="第二节", milestoneId="sm_should_not_replace",
+        )
+        self.assertEqual(renamed["milestone"]["id"], "sm_panel_first")
+        self.assertEqual(renamed["milestone"]["name"], "第二节")
+
+        cleared = self.command(
+            "set-progress-point-name", taskId=task_id, at=3, name="",
+            milestoneId="sm_panel_first",
+        )
+        self.assertIsNone(cleared["milestone"])
+        task = next(item for item in self.data["tasks"] if item["id"] == task_id)
+        self.assertEqual(task["progress"]["milestones"], [])
+
+        before = copy.deepcopy(self.data)
+        invalid = [
+            ({"at": 0, "name": "越界", "milestoneId": "sm_bad_at"}, "目标范围"),
+            ({"at": 9, "name": "越界", "milestoneId": "sm_bad_at"}, "目标范围"),
+            ({"at": 4, "name": "字" * 41, "milestoneId": "sm_bad_name"}, "最多 40 字"),
+            ({"at": 4, "name": "合法名", "milestoneId": "bad"}, "标识"),
+        ]
+        for body, message in invalid:
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.command("set-progress-point-name", taskId=task_id, **body)
+        self.assertEqual(self.data, before)
+
+        second_tree = self.command("create-tree", title="别的树")["treeId"]
+        with self.assertRaisesRegex(KeyError, "不在当前树"):
+            self.command(
+                "set-progress-point-name", treeId=second_tree, taskId=task_id,
+                at=2, name="错树", milestoneId="sm_wrong_tree",
+            )
+
+    def test_progress_point_limit_is_enforced(self):
+        task_id = self.task("长任务", target=60)["taskId"]
+        milestones = [
+            {"id": f"sm_limit_{index}", "name": f"点 {index}", "at": index}
+            for index in range(1, 51)
+        ]
+        self.command("update-task", taskId=task_id, progress={
+            "current": 0, "target": 60, "milestones": milestones,
+        })
+        with self.assertRaisesRegex(ValueError, "任务点最多 50 个"):
+            self.command(
+                "set-progress-point-name", taskId=task_id, at=51,
+                name="超出", milestoneId="sm_limit_overflow",
+            )
+
+    def test_shrinking_progress_prunes_names_and_reconciles_requirements(self):
+        source = self.task("来源", target=10)
+        primary_target = self.task("主路线目标")
+        extra_target = self.task("附加条件目标")
+        self.command(
+            "set-progress-point-name", taskId=source["taskId"], at=8,
+            name="第八点", milestoneId="sm_dependency_point",
+        )
+        self.command("move-node", nodeId=primary_target["nodeId"], primaryLink={
+            "from": source["nodeId"], "type": "requires",
+            "trigger": {"kind": "milestone", "milestoneId": "sm_dependency_point"},
+        })
+        extra = self.command(
+            "add-requirement", fromNodeId=source["nodeId"], toNodeId=extra_target["nodeId"],
+            trigger={"kind": "milestone", "milestoneId": "sm_dependency_point"},
+        )
+
+        result = self.command("update-task", taskId=source["taskId"], progress={
+            "current": 4, "target": 4,
+        })
+        self.assertEqual(result["task"]["progress"]["milestones"], [])
+        self.assertIn(extra["linkId"], result["removedRequirementLinkIds"])
+        tree = self.active_tree()
+        primary = next(link for link in tree["links"]
+                       if link.get("primary") and link["to"] == primary_target["nodeId"])
+        self.assertEqual(primary["trigger"], {"kind": "complete"})
+        self.assertIn(primary["id"], result["downgradedPrimaryLinkIds"])
+        self.assertFalse(any(link["id"] == extra["linkId"] for link in tree["links"]))
+
+    def test_clearing_named_point_reconciles_requirements(self):
+        source = self.task("来源", target=5)
+        target = self.task("目标")
+        self.command(
+            "set-progress-point-name", taskId=source["taskId"], at=2,
+            name="检查点", milestoneId="sm_clear_dependency",
+        )
+        self.command("move-node", nodeId=target["nodeId"], primaryLink={
+            "from": source["nodeId"], "type": "requires",
+            "trigger": {"kind": "milestone", "milestoneId": "sm_clear_dependency"},
+        })
+        result = self.command(
+            "set-progress-point-name", taskId=source["taskId"], at=2, name="",
+            milestoneId="sm_clear_dependency",
+        )
+        primary = next(link for link in self.active_tree()["links"]
+                       if link.get("primary") and link["to"] == target["nodeId"])
+        self.assertEqual(primary["trigger"], {"kind": "complete"})
+        self.assertEqual(result["downgradedPrimaryLinkIds"], [primary["id"]])
+
+    def test_removing_progress_bar_clears_names_and_downgrades_primary_route(self):
+        source = self.task("来源", target=5)
+        target = self.task("目标")
+        self.command(
+            "set-progress-point-name", taskId=source["taskId"], at=4,
+            name="终点前", milestoneId="sm_remove_bar",
+        )
+        self.command("move-node", nodeId=target["nodeId"], primaryLink={
+            "from": source["nodeId"], "type": "requires",
+            "trigger": {"kind": "milestone", "milestoneId": "sm_remove_bar"},
+        })
+        result = self.command("update-task", taskId=source["taskId"], progress={
+            "current": 0, "target": 0, "milestones": [],
+        })
+        self.assertEqual(result["task"]["progress"], {
+            "current": 0, "target": 0, "milestones": [],
+        })
+        primary = next(link for link in self.active_tree()["links"]
+                       if link.get("primary") and link["to"] == target["nodeId"])
+        self.assertEqual(primary["trigger"], {"kind": "complete"})
+
+    def test_progress_point_api_failure_does_not_overwrite_the_file(self):
+        task_id = self.task("落盘保护", target=5)["taskId"]
+        app.save_tree_page(self.data)
+        before = app.TREE_PAGE_FILE.read_bytes()
+
+        class CaptureHandler:
+            def __init__(self):
+                self.response = None
+
+            def _send_json(self, status, payload):
+                self.response = (status, payload)
+                return self.response
+
+        handler = CaptureHandler()
+        app.Handler._api_tree_page_command(handler, {
+            "command": "set-progress-point-name", "treeId": self.data["activeTreeId"],
+            "taskId": task_id, "at": 9, "name": "越界", "milestoneId": "sm_bad_api",
+        })
+        self.assertEqual(handler.response[0], 400)
+        self.assertEqual(app.TREE_PAGE_FILE.read_bytes(), before)
+
+        with mock.patch.object(app, "save_tree_page", side_effect=OSError("disk full")):
+            app.Handler._api_tree_page_command(handler, {
+                "command": "set-progress-point-name", "treeId": self.data["activeTreeId"],
+                "taskId": task_id, "at": 2, "name": "合法", "milestoneId": "sm_save_failure",
+            })
+        self.assertEqual(handler.response[0], 500)
+        self.assertEqual(app.TREE_PAGE_FILE.read_bytes(), before)
+
     def test_progress_command_accepts_coalesced_delta(self):
         task_id = self.task("连点", target=10)["taskId"]
         self.command("update-task", taskId=task_id, progress={

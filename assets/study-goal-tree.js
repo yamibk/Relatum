@@ -383,6 +383,7 @@
     var model = options.model && options.model.tree ? options.model : buildModel(value, tasks);
     var collapsed = options.collapsedIds instanceof Set ? options.collapsedIds : new Set();
     var sizes = options.sizes instanceof Map ? options.sizes : new Map();
+    var showMilestones = options.showMilestones !== false;
     var gapX = number(options.gapX, 92), gapY = number(options.gapY, 30);
     var visualById = new Map(), visualChildren = new Map(), visualParent = new Map(), primaryEdgeByTarget = new Map();
     var rootNode = { id: 'root', kind: 'root', title: model.tree.title };
@@ -402,7 +403,7 @@
     }
     function includeTaskChildren(node) {
       var task = model.byTask.get(node.taskId), milestones = milestonesForTask(task), milestoneIds = new Map();
-      milestones.forEach(function (milestone) {
+      if (showMilestones) milestones.forEach(function (milestone) {
         var id = milestonePlacementId(node.id, milestone.id), progress = task && task.progress || {};
         visualById.set(id, {
           id: id, kind: 'milestone', parentNodeId: node.id, taskId: node.taskId,
@@ -492,7 +493,9 @@
     model.tree.links.forEach(function (link) {
       if (link.primary || link.type !== 'requires' || !visibleIds.has(link.to)) return;
       var from = link.from;
-      if ((link.trigger || {}).kind === 'milestone') from = milestonePlacementId(link.from, link.trigger.milestoneId);
+      if (showMilestones && (link.trigger || {}).kind === 'milestone') {
+        from = milestonePlacementId(link.from, link.trigger.milestoneId);
+      }
       if (visibleIds.has(from)) edges.push({ id: link.id, from: from, to: link.to, type: 'requires', primary: false, trigger: link.trigger });
     });
     var minX = 0, minY = 0, maxX = 0, maxY = 0;

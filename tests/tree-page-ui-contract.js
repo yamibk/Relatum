@@ -17,7 +17,16 @@ const css = readAsset('styles.css');
   'data-role="study-route-rail"', 'data-role="rail-active-orb"',
   'data-role="study-route-popover"', 'data-role="study-route-confirm"',
   'data-role="study-route-guide"',
+  'data-role="tree-page-progress-panel"', 'data-role="tree-page-progress-list"',
+  'data-role="tree-page-progress-task-meta"', 'data-tree-progress-branches-toggle', 'data-tree-progress-close',
 ].forEach((needle) => assert(html.includes(needle), 'missing cloned goal-tree DOM: ' + needle));
+const progressPanelHtmlStart = html.indexOf('<aside class="tree-page-progress-panel"');
+const progressPanelHtmlEnd = html.indexOf('</aside>', progressPanelHtmlStart);
+const progressPanelHtml = html.slice(progressPanelHtmlStart, progressPanelHtmlEnd);
+assert(progressPanelHtml.includes('aria-hidden="true" inert')
+  && progressPanelHtml.includes('data-tree-progress-branches-toggle role="checkbox" aria-checked="true"')
+  && !progressPanelHtml.includes('<kbd'),
+  'Tree progress details must start collapsed and expose a default-on branch toggle instead of a Tab badge');
 
 assert(!html.includes('tree-page-head'), 'tree page must not render a visible title header');
 assert(!html.includes('data-tree-action="next"'), 'tree page must not render a Next button');
@@ -99,7 +108,8 @@ routeFunctions.forEach((name) => {
   'collapseVisibleDescendants',
   'cleanupCollapseMotion', 'cancelCollapseMotion', 'finishCollapseMotion',
   'setCollapseControlExpanded', 'toggleBranchCollapse', 'clearDropPreview', 'showDropPreview',
-  'dragHitId', 'activateDrag', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
+  // activateDrag is intentionally Tree-specific because its rollback snapshot must retain visualLinks/freeItems.
+  'dragHitId', 'autoPanDrag', 'updateDragCandidate', 'flushDragFrame',
   'onDragMove', 'onDragEnd', 'onDragCancel', 'endPan',
 ].forEach((name) => {
   assert.strictEqual(functionSource(tree, name), functionSource(route, name),
@@ -283,6 +293,59 @@ assert(progressSource.includes('if (busy && !joiningQueue) return;'),
 assert(progressSource.includes('queuedProgress.delta += delta')
   && progressSource.includes('if (!queuedProgress.delta) progressCommandQueue.pop()'),
   'rapid progress clicks must coalesce instead of accumulating one full POST per click');
+[
+  "PROGRESS_PANEL_OPEN_KEY = 'tree-page:progressPanelOpen:v1'",
+  "PROGRESS_PANEL_SELECTIONS_KEY = 'tree-page:progressPanelSelections:v1'",
+  "PROGRESS_BRANCHES_VISIBLE_KEY = 'tree-page:progressBranchesVisible:v1'",
+  'PROGRESS_PANEL_VIRTUAL_THRESHOLD = 200', 'PROGRESS_PANEL_ROW_HEIGHT = 58',
+  'function selectProgressTask(', 'function syncProgressPanelContent(',
+  'function renderProgressPanelRows(', 'function beginProgressPointEdit(',
+  'function flushProgressPointNames()', 'function drainProgressPointNames()',
+  "command: 'set-progress-point-name'", '}, 350);',
+  "window.addEventListener('keydown', handleProgressPanelTab, true)",
+  'event.shiftKey || event.ctrlKey || event.metaKey || event.altKey',
+  'event.isComposing || event.keyCode === 229',
+  "progressPanelSelections[state.activeTreeId] = taskId",
+  "selectProgressTask('', true)",
+  "checkbox.setAttribute('aria-readonly', 'true')",
+  'progress.current >= at', 'progress.target > PROGRESS_PANEL_VIRTUAL_THRESHOLD',
+  'positionProgressPanelAtFirstIncomplete(task)',
+  "overlay.dataset.progressPanelOpen = '1'", 'delete overlay.dataset.progressPanelOpen',
+  "progressBranchesVisible = localStorage.getItem(PROGRESS_BRANCHES_VISIBLE_KEY) !== '0'",
+  'showMilestones: progressBranchesVisible',
+  'setProgressBranchesVisible(!progressBranchesVisible)',
+  'rail.inert = visible', "else if (progressPanelIsVisible()) setProgressPanelPreference(false, true)",
+  'hideProgressPanelForPage();', 'flushProgressPointNames();',
+  "window.RelatumI18n.onChange(function ()",
+].forEach((needle) => assert(tree.includes(needle), 'missing Tree progress-details contract: ' + needle));
+assert(functionSource(tree, 'progressPanelShortcutBlocked').includes('!guide.hidden || !confirmBox.hidden || !popover.hidden')
+  && functionSource(tree, 'progressPanelShortcutBlocked').includes('editingFreeItemId || armedFreeItemKind || visualLinkDrag'),
+  'bare Tab must yield to IME, reverse focus navigation, dialogs, popovers, and free-item editing');
+assert(functionSource(tree, 'finishProgressPointEdit').includes("if (commit && nextName !== edit.original")
+  && functionSource(tree, 'applyProgressPointName').includes("createClientId('sm_')")
+  && functionSource(tree, 'rollbackProgressPointEntry').includes('hasNewerProgressPointEdit(entry)'),
+  'point naming must commit on demand with stable client ids and reject stale failure rollback');
+assert(functionSource(tree, 'reconcileRemovedMilestonesLocally').includes("link.primary")
+  && functionSource(tree, 'reconcileRemovedMilestonesLocally').includes("trigger: { kind: 'complete' }"),
+  'removed milestone dependencies must drop extras and downgrade primary route links locally');
+const panelVisibilitySource = functionSource(tree, 'syncProgressPanelVisibility');
+const panelPageHideSource = functionSource(tree, 'hideProgressPanelForPage');
+assert(panelVisibilitySource.includes("overlay.dataset.progressPanelOpen = '1'")
+  && panelVisibilitySource.includes('delete overlay.dataset.progressPanelOpen')
+  && panelPageHideSource.includes("rail.classList.remove('is-progress-panel-obscured')")
+  && panelPageHideSource.includes('rail.inert = false'),
+  'panel visibility must match its CSS value selector and restore the legacy hover rail when hidden');
+assert(css.includes('.tree-page-progress-panel')
+  && css.includes('.tree-page-embedded[data-progress-panel-open="1"] .tree-page-progress-panel')
+  && css.includes('.tree-page-route-rail.is-progress-panel-obscured')
+  && css.includes('.tree-page-progress-branches-toggle[aria-checked="true"]')
+  && css.includes('.tree-page-progress-list::-webkit-scrollbar')
+  && /\.tree-page-progress-list\s*\{[^}]*scrollbar-width:\s*none;/s.test(css)
+  && css.includes('body.start-page[data-start-theme="dark"] .tree-page-progress-panel')
+  && /\.tree-page-progress-panel\s*\{[^}]*background:\s*#fff;[^}]*backdrop-filter:\s*none;/s.test(css)
+  && /body\.start-page\[data-start-theme="dark"\] \.tree-page-progress-panel\s*\{[^}]*background:\s*#000;/s.test(css)
+  && css.includes('@media (prefers-reduced-motion: reduce)'),
+  'progress details need pure white/black surfaces, rail handoff, and reduced-motion support');
 const commandSource = functionSource(tree, 'command');
 assert(commandSource.includes('applyAuthorityAfterGenerationChange(json)')
   && commandSource.includes('refreshAuthorityAfterGenerationChange()'),
