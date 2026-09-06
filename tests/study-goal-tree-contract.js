@@ -230,10 +230,17 @@ assert.strictEqual(model.availability.get('nc').available, true, 'second prerequ
 
 const expanded = GoalTree.layout(tree, tasks);
 const collapsed = GoalTree.layout(tree, tasks, { collapsedIds: new Set(['stage']) });
+const withoutMilestoneNodes = GoalTree.layout(tree, tasks, { showMilestones: false });
 assert(expanded.nodes.some((node) => node.id === 'nb'));
 assert(!collapsed.nodes.some((node) => node.id === 'nb'));
 assert.strictEqual(collapsed.nodes.find((node) => node.id === 'stage').hiddenCount, 2);
 assert(collapsed.edges.every((edge) => edge.from !== 'stage' || edge.to !== 'nb'));
+assert(!withoutMilestoneNodes.nodes.some((node) => node.kind === 'milestone'),
+  'optional milestone visuals must hide every milestone placement');
+assert(withoutMilestoneNodes.edges.some((edge) => edge.id === 'l2' && edge.from === 'na' && edge.to === 'stage'),
+  'a hidden milestone keeps its primary route attached directly to the source task');
+assert.strictEqual(withoutMilestoneNodes.model.availability.get('stage').available, true,
+  'hiding milestone visuals must not change milestone unlock semantics');
 
 const withoutSecondary = { ...tree, links: tree.links.filter((link) => link.primary) };
 const basePositions = new Map(GoalTree.layout(withoutSecondary, tasks).nodes.map((node) => [node.id, [node.x, node.y]]));

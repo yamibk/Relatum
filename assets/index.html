@@ -646,6 +646,26 @@
             <button type="button" class="study-route-fit" data-route-action="fit"
               aria-label="适应树状页；滚轮缩放，拖动画布平移" title="适应树状页 · 滚轮缩放 · 拖动画布平移">适应</button>
             <div class="study-route-popover" data-role="study-route-popover" hidden></div>
+            <aside class="tree-page-progress-panel" data-role="tree-page-progress-panel"
+              aria-label="进度明细" aria-hidden="true" inert>
+              <header class="tree-page-progress-head">
+                <div>
+                  <p>PROGRESS POINTS</p>
+                  <h2>进度明细</h2>
+                  <span data-role="tree-page-progress-task-meta" aria-live="polite"></span>
+                </div>
+                <div class="tree-page-progress-head-actions">
+                  <button type="button" class="tree-page-progress-branches-toggle"
+                    data-tree-progress-branches-toggle role="checkbox" aria-checked="true"
+                    aria-label="在树上显示进度点" title="在树上显示进度点"><span aria-hidden="true">✓</span></button>
+                  <button type="button" data-tree-progress-close aria-label="关闭进度明细">×</button>
+                </div>
+              </header>
+              <div class="tree-page-progress-list" data-role="tree-page-progress-list"
+                role="list" aria-label="进度点"></div>
+              <p class="tree-page-progress-status" data-role="tree-page-progress-status"
+                aria-live="polite"></p>
+            </aside>
           </div>
           <div class="study-route-confirm" data-role="study-route-confirm" hidden>
             <section role="alertdialog" aria-modal="true" aria-labelledby="tree-page-confirm-title">
