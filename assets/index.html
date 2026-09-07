@@ -1371,18 +1371,20 @@
               <div class="focus-daily-list" data-role="focus-daily-list"></div>
             </div>
             <div class="focus-daily-composer" data-role="focus-daily-composer" hidden>
-              <div class="focus-daily-compose" data-role="focus-daily-compose">
-                <div class="focus-daily-compose-modes" role="group" aria-label="新增类型">
-                  <button type="button" class="is-active" data-role="daily-compose-task" aria-pressed="true">任务</button>
-                  <button type="button" data-role="daily-compose-group" aria-pressed="false">分组</button>
+              <div class="focus-daily-composer-inner">
+                <div class="focus-daily-compose" data-role="focus-daily-compose">
+                  <div class="focus-daily-compose-modes" role="group" aria-label="新增类型">
+                    <button type="button" class="is-active" data-role="daily-compose-task" aria-pressed="true">任务</button>
+                    <button type="button" data-role="daily-compose-group" aria-pressed="false">分组</button>
+                  </div>
+                  <button type="button" class="focus-daily-compose-target" data-role="daily-compose-target" hidden></button>
                 </div>
-                <button type="button" class="focus-daily-compose-target" data-role="daily-compose-target" hidden></button>
+                <form class="focus-daily-add" data-role="focus-daily-add">
+                  <input type="text" maxlength="80" data-role="focus-daily-input"
+                    placeholder="添加一件今天想坚持的事…" aria-label="新增每日任务">
+                  <button type="submit" class="focus-daily-add-btn" aria-label="添加每日任务">＋</button>
+                </form>
               </div>
-              <form class="focus-daily-add" data-role="focus-daily-add">
-                <input type="text" maxlength="80" data-role="focus-daily-input"
-                  placeholder="添加一件今天想坚持的事…" aria-label="新增每日任务">
-                <button type="submit" class="focus-daily-add-btn" aria-label="添加每日任务">＋</button>
-              </form>
             </div>
             <p class="focus-daily-foot" data-role="focus-daily-foot"></p>
           </div>
