@@ -13453,7 +13453,8 @@ body.start-page[data-start-theme="dark"] .focus-daily-detail-recent span.today {
 }
 .focus-daily-view .focus-daily-head {
   align-items: center;
-  padding: 0 5px 14px;
+  /* 展开态按钮旋转后外接框会多出约 3.3px；右侧留足空间，避免生成隐形横向滚动。 */
+  padding: 0 9px 14px 5px;
 }
 .focus-daily-view .focus-daily-head h1 {
   display: flex;
@@ -13679,16 +13680,57 @@ body.start-page[data-start-theme="dark"] .focus-daily-detail-recent span.today {
 }
 
 .focus-daily-composer {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 0;
+  animation: focus-daily-composer-in 260ms var(--easing-page) both;
+}
+.focus-daily-composer-inner {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 4px;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 94%, white 6%);
   box-shadow: 0 7px 22px rgba(35, 33, 29, 0.045);
-  animation: focus-daily-edit-in 260ms var(--easing-page) both;
+}
+@keyframes focus-daily-composer-in {
+  from {
+    opacity: 0;
+    transform: translateY(-7px);
+    max-height: 0;
+    margin-top: 0;
+    margin-bottom: -20px;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 220px;
+    margin-top: 10px;
+    margin-bottom: 0;
+  }
+}
+.focus-daily-composer.is-closing {
+  overflow: hidden;
+  pointer-events: none;
+  animation: focus-daily-composer-out 260ms var(--easing-soft) both;
+}
+@keyframes focus-daily-composer-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+    height: var(--daily-composer-height, 120px);
+    margin-top: var(--daily-composer-margin-top, 10px);
+    margin-bottom: 0;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-7px);
+    height: 0;
+    margin-top: 0;
+    margin-bottom: -20px;
+  }
 }
 .focus-daily-composer.is-pending { opacity: 0.72; }
 .focus-daily-view .focus-daily-compose,
@@ -13734,7 +13776,7 @@ body.start-page[data-start-theme="dark"] .focus-daily-view .focus-daily-row:focu
   background: rgba(255, 255, 255, 0.065);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.23);
 }
-body.start-page[data-start-theme="dark"] .focus-daily-composer {
+body.start-page[data-start-theme="dark"] .focus-daily-composer-inner {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.045);
 }

@@ -137,6 +137,8 @@
   let viewTransitionSeq = 0;
   let viewTransitionTimer = 0;
   let dailyComposerOpen = false;
+  let dailyComposerCloseTimer = 0;
+  let dailyComposerCloseSeq = 0;
   let dailyCreatePending = false;
   let dailyEditId = '';
   let dailyEditMilestones = null;
@@ -3646,20 +3648,57 @@
   }
   function openDailyComposer(mode, targetGroupId) {
     dailyComposerOpen = true;
-    if (dailyComposerEl) dailyComposerEl.hidden = false;
+    dailyComposerCloseSeq += 1;
+    window.clearTimeout(dailyComposerCloseTimer);
+    dailyComposerCloseTimer = 0;
+    if (dailyComposerEl) {
+      dailyComposerEl.classList.remove('is-closing');
+      dailyComposerEl.style.removeProperty('--daily-composer-height');
+      dailyComposerEl.style.removeProperty('--daily-composer-margin-top');
+      dailyComposerEl.hidden = false;
+    }
     if (dailyCreateBtn) dailyCreateBtn.setAttribute('aria-expanded', 'true');
     setDailyCompose(mode || dailyComposeMode, targetGroupId == null ? dailyAddTargetGroup : targetGroupId);
   }
   function closeDailyComposer(options) {
     const opts = options || {};
+    const composer = dailyComposerEl;
+    const closeSeq = ++dailyComposerCloseSeq;
     dailyComposerOpen = false;
     dailyAddTargetGroup = '';
     dailyComposeMode = 'task';
-    if (dailyComposerEl) dailyComposerEl.hidden = true;
     if (dailyCreateBtn) dailyCreateBtn.setAttribute('aria-expanded', 'false');
-    if (dailyInputEl) dailyInputEl.value = '';
-    updateDailyComposeUI();
-    if (opts.focus !== false && dailyCreateBtn && dailyCreateBtn.isConnected) dailyCreateBtn.focus();
+    window.clearTimeout(dailyComposerCloseTimer);
+    const finish = () => {
+      if (composer) composer.removeEventListener('animationend', onEnd);
+      if (closeSeq !== dailyComposerCloseSeq) return;
+      window.clearTimeout(dailyComposerCloseTimer);
+      dailyComposerCloseTimer = 0;
+      if (composer) {
+        composer.classList.remove('is-closing');
+        composer.style.removeProperty('--daily-composer-height');
+        composer.style.removeProperty('--daily-composer-margin-top');
+        composer.hidden = true;
+      }
+      if (dailyInputEl) dailyInputEl.value = '';
+      updateDailyComposeUI();
+      if (opts.focus !== false && dailyCreateBtn && dailyCreateBtn.isConnected) {
+        try { dailyCreateBtn.focus({ preventScroll: true }); } catch (e) { dailyCreateBtn.focus(); }
+      }
+    };
+    const onEnd = (event) => {
+      if (event.target === composer) finish();
+    };
+    if (!composer || composer.hidden || prefersReduced || opts.instant) {
+      finish();
+      return;
+    }
+    const composerStyle = window.getComputedStyle(composer);
+    composer.style.setProperty('--daily-composer-height', composer.offsetHeight + 'px');
+    composer.style.setProperty('--daily-composer-margin-top', composerStyle.marginTop);
+    composer.classList.add('is-closing');
+    composer.addEventListener('animationend', onEnd);
+    dailyComposerCloseTimer = window.setTimeout(finish, 300);
   }
   function toggleDailyComposer() {
     if (dailyCreatePending) return;
