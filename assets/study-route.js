@@ -2051,15 +2051,17 @@
     });
     document.body.classList.add('study-route-node-dragging'); drag.active = true;
   }
-  function autoPanDrag(clientX, clientY) {
+  function autoPanDrag(clientX, clientY, elapsedMs) {
     var rect = viewport.getBoundingClientRect(), edge = 56;
     var dx = clientX < rect.left + edge ? Math.min(11, (rect.left + edge - clientX) * .18)
       : clientX > rect.right - edge ? -Math.min(11, (clientX - rect.right + edge) * .18) : 0;
     var dy = clientY < rect.top + edge ? Math.min(11, (rect.top + edge - clientY) * .18)
       : clientY > rect.bottom - edge ? -Math.min(11, (clientY - rect.bottom + edge) * .18) : 0;
     if (!dx && !dy) return false;
+    // Keep the established 60Hz speed while sampling every display frame.
+    var frames = Math.max(0, Math.min(40, Number.isFinite(elapsedMs) ? elapsedMs : 1000 / 60)) / (1000 / 60);
     stopViewAnimation();
-    view.x += dx; view.y += dy;
+    view.x += dx * frames; view.y += dy * frames;
     viewTarget = Object.assign({}, view);
     applyView();
     return true;
@@ -2099,14 +2101,17 @@
     drag.candidateKey = candidateKey;
     showDropPreview(candidate);
   }
-  function flushDragFrame(allowAutoPan) {
+  function flushDragFrame(allowAutoPan, timestamp) {
     dragFrame = 0;
     if (!drag || !drag.active) return;
-    var panned = allowAutoPan !== false && autoPanDrag(drag.latestX, drag.latestY);
+    var now = Number.isFinite(timestamp) ? timestamp : performance.now();
+    var elapsedMs = drag.panFrameAt == null ? 1000 / 60 : now - drag.panFrameAt;
+    drag.panFrameAt = now;
+    var panned = allowAutoPan !== false && autoPanDrag(drag.latestX, drag.latestY, elapsedMs);
     positionDraggedSubtree(drag.latestX, drag.latestY);
     updateDragCandidate(drag.latestX, drag.latestY);
     if (panned && drag && drag.active) {
-      dragFrame = requestAnimationFrame(function () { flushDragFrame(true); });
+      dragFrame = requestAnimationFrame(function (nextTimestamp) { flushDragFrame(true, nextTimestamp); });
     }
   }
   function onDragMove(event) {
@@ -2115,7 +2120,10 @@
     if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) <= 4) return;
     if (!drag.active) activateDrag();
     event.preventDefault(); drag.latestX = event.clientX; drag.latestY = event.clientY;
-    if (!dragFrame) dragFrame = requestAnimationFrame(function () { flushDragFrame(true); });
+    if (!dragFrame) {
+      drag.panFrameAt = performance.now();
+      dragFrame = requestAnimationFrame(function (timestamp) { flushDragFrame(true, timestamp); });
+    }
   }
   function finishDrag(cancelled) {
     if (!drag) return;

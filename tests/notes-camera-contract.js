@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const notes = fs.readFileSync(path.join(root, 'assets', 'notes.js'), 'utf8');
@@ -50,5 +51,32 @@ assert(i18n.includes("'以鼠标位置为中心缩放视野': 'Zoom the view aro
   'Quick Notes wheel help must include its English translation');
 assert(agents.includes('普通滚轮在空白、普通便签和叠摞便签上都以鼠标位置为锚点连续缩放'),
   'AGENTS.md must describe the current Quick Notes camera behavior');
+
+// Run the actual motion functions against virtual display clocks. A minimum
+// 0.35-frame step used to accelerate 240Hz input relative to 60/120/144Hz.
+const easeSource = notes.slice(notes.indexOf('function frameEase('), notes.indexOf('  function cancelZoom('));
+const frameEase = vm.runInNewContext('(' + easeSource + ')');
+const arrowSource = notes.slice(notes.indexOf('function viewArrowTick('), notes.indexOf('  function stopViewArrowPan('));
+[60, 120, 144, 240].forEach((hz) => {
+  let remainder = 1;
+  let previous = 100;
+  let displacement = 0;
+  const context = {
+    viewArrowRaf: 0, viewArrowTs: previous, viewArrowShift: false,
+    viewArrowKeys: { ArrowRight: true }, NOTES_KEY_PAN: 8,
+    panViewBy: (dx) => { displacement += dx; }, saveViewSoon() {}, requestAnimationFrame() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(arrowSource, context);
+  for (let i = 1; i <= hz; i++) {
+    const timestamp = 100 + i * 1000 / hz;
+    remainder *= 1 - frameEase(.32, timestamp, previous);
+    context.viewArrowTick(timestamp);
+    previous = timestamp;
+  }
+  assert(Math.abs(displacement + 480) < 1e-7, hz + 'Hz keyboard pan must cover the same distance');
+  assert(Math.abs(remainder / Math.pow(.68, 60) - 1) < 1e-7,
+    hz + 'Hz zoom must use the same elapsed-time easing');
+});
 
 console.log('Quick Notes camera contract: ok');

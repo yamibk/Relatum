@@ -206,8 +206,8 @@
   }
   function syncWorldTransform() {
     if (!worldEl) return;
-    worldEl.style.transform = 'translate3d(' + viewX.toFixed(2) + 'px,' + viewY.toFixed(2)
-      + 'px,0) scale(' + viewScale.toFixed(4) + ')';
+    worldEl.style.transform = 'translate3d(' + viewX + 'px,' + viewY
+      + 'px,0) scale(' + viewScale + ')';
   }
   function saveViewSoon() {
     clearTimeout(viewSaveTimer);
@@ -226,7 +226,7 @@
   }
   function applyView(persist) {
     syncWorldTransform();
-    renderEdges();
+    projectEdges();
     if (persist) saveViewSoon();
   }
   function surfaceToWorldPoint(x, y) {
@@ -274,7 +274,7 @@
     if (typeof ts !== 'number') ts = performance.now();
     let frames = lastTs ? (ts - lastTs) / (1000 / 60) : 1;
     if (!(frames > 0)) frames = 1;
-    frames = Math.max(0.35, Math.min(3, frames));
+    frames = Math.min(3, frames);
     return 1 - Math.pow(1 - r, frames);
   }
   function cancelZoom(snap) {
@@ -603,6 +603,49 @@
   let edgeTempLine = null;
   let arrowStaticG = null;
   let arrowTempPath = null;
+  const edgeElements = new Map();
+  const arrowElements = new Map();
+  let edgeGeometry = [];
+  let arrowGeometry = [];
+  const measuredNotes = new Set();
+  const movingEdgeNotes = new Map();
+  let edgeRefreshFrame = 0;
+  const edgeResizeObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(scheduleEdgeRefresh) : null;
+  function scheduleEdgeRefresh() {
+    if (edgeRefreshFrame || document.hidden || !notesPageActive()
+        || document.body.dataset.startWorkspace !== 'canvas') return;
+    edgeRefreshFrame = requestAnimationFrame(refreshEdgeGeometry);
+  }
+  function refreshEdgeGeometry() {
+    edgeRefreshFrame = 0;
+    if (document.hidden || !notesPageActive() || document.body.dataset.startWorkspace !== 'canvas') return;
+    movingEdgeNotes.forEach((motions, el) => {
+      if (!el.isConnected || !measuredNotes.has(el)) movingEdgeNotes.delete(el);
+    });
+    renderEdges();
+    if (movingEdgeNotes.size) scheduleEdgeRefresh();
+  }
+  function trackEdgeMotion(event) {
+    if (!measuredNotes.has(event.target)) return;
+    if (event.propertyName !== 'transform' && event.animationName !== 'sticky-note-pop') return;
+    const key = event.propertyName || event.animationName;
+    const motions = movingEdgeNotes.get(event.target) || new Set();
+    if (event.type === 'transitionrun' || event.type === 'animationstart') motions.add(key);
+    else motions.delete(key);
+    if (motions.size) movingEdgeNotes.set(event.target, motions);
+    else movingEdgeNotes.delete(event.target);
+    scheduleEdgeRefresh();
+  }
+  ['transitionrun', 'transitionend', 'transitioncancel', 'animationstart', 'animationend', 'animationcancel']
+    .forEach((type) => surface.addEventListener(type, trackEdgeMotion));
+  function stopEdgeRefresh() {
+    if (edgeRefreshFrame) cancelAnimationFrame(edgeRefreshFrame);
+    edgeRefreshFrame = 0;
+    movingEdgeNotes.clear();
+    if (edgeResizeObserver) edgeResizeObserver.disconnect();
+    measuredNotes.clear();
+  }
   function ensureEdgeSvg() {
     if (edgeSvg) return;
     edgeSvg = document.createElementNS(SVGNS, 'svg');
@@ -644,37 +687,92 @@
   }
   function renderEdges() {
     ensureEdgeSvg();
-    const srect = surface.getBoundingClientRect();
-    while (edgeStaticG.firstChild) edgeStaticG.removeChild(edgeStaticG.firstChild);
-    while (arrowStaticG.firstChild) arrowStaticG.removeChild(arrowStaticG.firstChild);
-    edges.forEach((ed) => {
-      const a = noteCenter(ed.from, srect);
-      const b = noteCenter(ed.to, srect);
-      if (!a || !b) return;
-      const line = document.createElementNS(SVGNS, 'line');
-      line.setAttribute('class', 'notes-edge');
-      line.setAttribute('x1', a.x.toFixed(1));
-      line.setAttribute('y1', a.y.toFixed(1));
-      line.setAttribute('x2', b.x.toFixed(1));
-      line.setAttribute('y2', b.y.toFixed(1));
-      line.dataset.id = ed.id;
-      if (searchQuery) line.classList.add(searchMatchIds.has(ed.from) && searchMatchIds.has(ed.to) ? 'search-match' : 'search-dim');
-      edgeStaticG.appendChild(line);
-    });
-    arrows.forEach((ar) => {
-      const pts = arrowPoints(ar, srect);
-      if (!pts) return;
-      const path = document.createElementNS(SVGNS, 'path');
-      path.setAttribute('class', 'notes-arrow');
-      path.setAttribute('marker-end', 'url(#notes-arrow-head)');
-      path.setAttribute('d', arrowPathD(pts.a, pts.b));
-      path.dataset.id = ar.id;
-      if (searchQuery) {
-        const fromMatches = !ar.fromNote || searchMatchIds.has(ar.fromNote);
-        const toMatches = !ar.toNote || searchMatchIds.has(ar.toNote);
-        path.classList.add(fromMatches && toMatches ? 'search-match' : 'search-dim');
+    const centers = new Map();
+    const nextMeasuredNotes = new Set();
+    let srect;
+    const center = (id) => {
+      if (!centers.has(id)) {
+        if (!srect) srect = surface.getBoundingClientRect();
+        const el = elById(id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          centers.set(id, surfaceToWorldPoint(rect.left - srect.left + rect.width / 2,
+            rect.top - srect.top + rect.height / 2));
+          nextMeasuredNotes.add(el);
+        } else centers.set(id, null);
       }
-      arrowStaticG.appendChild(path);
+      return centers.get(id);
+    };
+    // Read each attached note once, before any SVG writes. Camera-only frames
+    // reuse these world coordinates and preserve screen-sized strokes/markers.
+    edgeGeometry = edges.map((ed) => ({ data: ed, a: center(ed.from), b: center(ed.to) }))
+      .filter((item) => item.a && item.b);
+    arrowGeometry = arrows.map((ar) => ({ data: ar,
+      a: ar.fromNote ? center(ar.fromNote) : { x: Number(ar.x1), y: Number(ar.y1) },
+      b: ar.toNote ? center(ar.toNote) : { x: Number(ar.x2), y: Number(ar.y2) },
+    })).filter((item) => item.a && item.b && Number.isFinite(item.a.x) && Number.isFinite(item.a.y)
+      && Number.isFinite(item.b.x) && Number.isFinite(item.b.y));
+    measuredNotes.forEach((el) => {
+      if (!nextMeasuredNotes.has(el)) {
+        if (edgeResizeObserver) edgeResizeObserver.unobserve(el);
+        measuredNotes.delete(el);
+        movingEdgeNotes.delete(el);
+      }
+    });
+    nextMeasuredNotes.forEach((el) => {
+      if (measuredNotes.has(el)) return;
+      measuredNotes.add(el);
+      if (edgeResizeObserver && notesPageActive() && !document.hidden) edgeResizeObserver.observe(el);
+    });
+    syncEdgeElements(edgeGeometry, edgeElements, edgeStaticG, 'line', 'notes-edge');
+    syncEdgeElements(arrowGeometry, arrowElements, arrowStaticG, 'path', 'notes-arrow');
+    projectEdges();
+  }
+  function syncEdgeElements(geometry, elements, host, tag, className) {
+    const liveIds = new Set();
+    let cursor = host.firstChild;
+    geometry.forEach((item) => {
+      const data = item.data;
+      liveIds.add(data.id);
+      let el = elements.get(data.id);
+      if (!el) {
+        el = document.createElementNS(SVGNS, tag);
+        el.setAttribute('class', className);
+        el.dataset.id = data.id;
+        if (tag === 'path') el.setAttribute('marker-end', 'url(#notes-arrow-head)');
+        elements.set(data.id, el);
+      }
+      if (el === cursor) cursor = cursor.nextSibling;
+      else host.insertBefore(el, cursor);
+      const from = tag === 'line' ? data.from : data.fromNote;
+      const to = tag === 'line' ? data.to : data.toNote;
+      const match = (!from || searchMatchIds.has(from)) && (!to || searchMatchIds.has(to));
+      setEdgeAttribute(el, 'class', className + (searchQuery ? (match ? ' search-match' : ' search-dim') : ''));
+      item.el = el;
+    });
+    elements.forEach((el, id) => {
+      if (!liveIds.has(id)) {
+        el.remove();
+        elements.delete(id);
+      }
+    });
+  }
+  function setEdgeAttribute(el, name, value) {
+    if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+  }
+  function projectEdges() {
+    edgeGeometry.forEach((item) => {
+      const a = worldToSurfacePoint(item.a.x, item.a.y);
+      const b = worldToSurfacePoint(item.b.x, item.b.y);
+      setEdgeAttribute(item.el, 'x1', a.x.toFixed(1));
+      setEdgeAttribute(item.el, 'y1', a.y.toFixed(1));
+      setEdgeAttribute(item.el, 'x2', b.x.toFixed(1));
+      setEdgeAttribute(item.el, 'y2', b.y.toFixed(1));
+    });
+    arrowGeometry.forEach((item) => {
+      const a = worldToSurfacePoint(item.a.x, item.a.y);
+      const b = worldToSurfacePoint(item.b.x, item.b.y);
+      setEdgeAttribute(item.el, 'd', arrowPathD(a, b));
     });
   }
   function arrowPathD(a, b) {
@@ -1783,7 +1881,7 @@
     let frames = viewArrowTs ? (ts - viewArrowTs) / (1000 / 60) : 1;
     viewArrowTs = ts;
     if (!(frames > 0)) frames = 1;
-    frames = Math.max(0.35, Math.min(3, frames));
+    frames = Math.min(3, frames);
     const speed = viewArrowShift ? 3 : 1;
     panViewBy(dx * frames * speed, dy * frames * speed, false);
     saveViewSoon();
@@ -2084,6 +2182,7 @@
     interacting = false;
     spaceHeld = false;
     surface.classList.remove('space-ready', 'panning');
+    stopEdgeRefresh();
   }
 
   window.CanvasNotes = {
@@ -2092,7 +2191,9 @@
       const ready = loaded ? Promise.resolve(true) : load();
       return ready.then((ok) => {
         if (!ok) return false;
+        if (!notesPageActive() || document.body.dataset.startWorkspace !== 'canvas') return true;
         // 隐藏预渲染时 content-visibility 会跳过尺寸计算；页面显现后重算一次端点。
+        stopEdgeRefresh();
         relayout();
         window.requestAnimationFrame(() => {
           if (notesPageActive()) renderEdges();
@@ -2128,6 +2229,14 @@
 
   document.addEventListener('start:viewchange', (event) => {
     if (!event.detail || event.detail.current !== 'notes') deactivate();
+  });
+  document.addEventListener('relatum:start-workspacechange', (event) => {
+    if (!event.detail || event.detail.workspace !== 'canvas') deactivate();
+    else if (notesPageActive()) scheduleEdgeRefresh();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) deactivate();
+    else if (notesPageActive()) scheduleEdgeRefresh();
   });
   schedulePreload();
 })();
