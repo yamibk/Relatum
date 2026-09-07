@@ -2263,6 +2263,7 @@ body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-nod
 body.start-page[data-start-theme="dark"] .study-route-node { color: #edf0ea; background: #242a26; border-color: rgba(235,242,237,.13); box-shadow: 0 9px 27px rgba(0,0,0,.20); }
 body.start-page[data-start-theme="dark"] .study-route-node.is-root { color: #20251f; background: #f0eee7; border-color: #f0eee7; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-root .study-route-branch-main > span { color: rgba(28,34,28,.58); }
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node.is-root .study-route-node-meta { color: rgba(28,34,28,.68); }
 body.start-page[data-start-theme="dark"] .study-route-node.is-root .study-route-node-actions button { color: rgba(28,34,28,.68); }
 body.start-page[data-start-theme="dark"] .study-route-node.is-branch .study-route-node-actions button { color: #686d69; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-branch .study-route-node-actions button:hover,
