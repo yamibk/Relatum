@@ -36694,9 +36694,7 @@ body.start-page[data-start-theme="dark"] .cadence-l3 { --c: #6d9d78; }
 body.start-page[data-start-theme="dark"] .cadence-l4 { --c: #9bc9a3; }
 
 body.start-page[data-start-theme="dark"] .notes-surface {
-  background:
-    radial-gradient(60% 44% at 22% 18%, rgba(176, 146, 210, 0.08), transparent 70%),
-    radial-gradient(54% 44% at 80% 82%, rgba(210, 132, 154, 0.08), transparent 70%);
+  background: var(--bg);
 }
 
 body.start-page[data-start-theme="dark"] .notes-console-trigger {
@@ -47941,7 +47939,7 @@ body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-nod
 }
 
 body.start-page[data-start-theme="dark"] .tree-page-route-stage {
-  background-color: transparent;
+  background-color: var(--bg);
   background-image: radial-gradient(circle, rgba(229,238,232,.12) .7px, transparent .8px);
 }
 body.start-page[data-start-theme="dark"] .tree-page-progress-panel {
