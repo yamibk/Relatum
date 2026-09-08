@@ -33535,6 +33535,13 @@ html.dark-semantic-ui {
   line-height: 1.65;
 }
 
+.study-trash-confirm-copy {
+  margin: -2px 0 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 .confirm-actions {
   display: flex;
   align-items: center;

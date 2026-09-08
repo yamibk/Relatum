@@ -85,6 +85,7 @@
   const openingCoverEl = document.querySelector('[data-role="editor-opening-cover"]');
   const immersiveBackgroundEl = document.querySelector('[data-role="editor-immersive-background"]');
   const renameNotice = document.querySelector('[data-role="rename-notice"]');
+  const archiveNotice = document.querySelector('[data-role="archive-notice"]');
   const toolbarLanguageSelect = document.querySelector('[data-role="toolbar-language"]');
   const toolbarLanguageLabel = document.querySelector('[data-role="toolbar-language-label"]');
 
@@ -859,6 +860,10 @@
     if (toolbarLanguage !== 'en' || !label) return label;
     if (STATUS_COPY_EN[label]) return STATUS_COPY_EN[label];
     if (label.indexOf('已清理 ') === 0) return 'Cleaned · ' + label.slice(4);
+    const archivedMatch = label.match(/^已归档\s*(\d+)\s*个划线节点$/);
+    if (archivedMatch) {
+      return `Archived ${archivedMatch[1]} struck-through ${archivedMatch[1] === '1' ? 'node' : 'nodes'}`;
+    }
     return label;
   }
 
@@ -10689,6 +10694,46 @@
   let archiving = false;
   let archiveConfirmTimer = null;
 
+  function closeArchiveNotice() {
+    if (!archiveNotice || archiveNotice.hidden) return;
+    archiveNotice.hidden = true;
+    if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+      window.CanvasModule.setExternalOverlayOpen(false);
+    }
+    if (archiveBtn && archiveBtn.isConnected) archiveBtn.focus({ preventScroll: true });
+  }
+
+  function showArchiveNotice() {
+    if (!archiveNotice) {
+      const message = window.RelatumI18n
+        ? window.RelatumI18n.t('没有可归档的划线节点') : '没有可归档的划线节点';
+      window.alert(message);
+      return;
+    }
+    archiveNotice.hidden = false;
+    if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+      window.CanvasModule.setExternalOverlayOpen(true);
+    }
+    const closeBtn = archiveNotice.querySelector('[data-role="archive-notice-close"]');
+    requestAnimationFrame(() => {
+      if (closeBtn && !archiveNotice.hidden) closeBtn.focus({ preventScroll: true });
+    });
+  }
+
+  if (archiveNotice) {
+    const closeBtn = archiveNotice.querySelector('[data-role="archive-notice-close"]');
+    if (closeBtn) closeBtn.addEventListener('click', closeArchiveNotice);
+    archiveNotice.addEventListener('mousedown', (event) => {
+      if (event.target === archiveNotice) closeArchiveNotice();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (!archiveNotice.hidden && event.key === 'Escape') {
+        event.preventDefault();
+        closeArchiveNotice();
+      }
+    });
+  }
+
   function exitArchiveConfirm() {
     if (archiveConfirmTimer) { clearTimeout(archiveConfirmTimer); archiveConfirmTimer = null; }
     if (archiveBtn) archiveBtn.classList.remove('confirming');
@@ -10728,7 +10773,9 @@
       });
       const json = await resp.json();
       if (!resp.ok) {
-        window.alert(json.error || '归档失败');
+        const archiveError = json.error || '归档失败';
+        if (archiveError === '没有可归档的划线节点') showArchiveNotice();
+        else window.alert(window.RelatumI18n ? window.RelatumI18n.t(archiveError) : archiveError);
         archiving = false;
         if (archiveBtn) archiveBtn.disabled = false;
         setState(dirty ? '未保存' : '已保存');

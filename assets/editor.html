@@ -3481,6 +3481,20 @@
     </div>
   </div>
 
+  <!-- 没有划线节点时的归档提示：避免使用浏览器原生 alert。 -->
+  <div class="confirm-overlay" data-role="archive-notice" hidden>
+    <div class="confirm-box" role="alertdialog" aria-modal="true"
+         aria-labelledby="archive-notice-title" aria-describedby="archive-notice-detail">
+      <div class="confirm-title" id="archive-notice-title" data-i18n="没有可归档的划线节点">没有可归档的划线节点</div>
+      <div class="confirm-path confirm-copy" id="archive-notice-detail"
+           data-i18n="请先给要归档的正文节点添加删除线，然后再试一次。">请先给要归档的正文节点添加删除线，然后再试一次。</div>
+      <div class="confirm-actions">
+        <button type="button" class="btn btn-primary confirm-ok" data-role="archive-notice-close"
+                data-i18n="知道了">知道了</button>
+      </div>
+    </div>
+  </div>
+
   <!-- AI 助手 V2：聊天与受控画布计划共用一个侧栏；计划先预览，确认后才原子应用。
        配置经后端存 data/ai.json，不写入 .canvas、不长期留前端。 -->
   <aside class="ai-panel" id="ai-panel" data-role="ai-panel" role="dialog" aria-label="AI 助手" hidden>

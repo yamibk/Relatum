@@ -250,6 +250,8 @@
     '回收站是空的': 'Trash is empty', '回收站是空的。': 'Trash is empty.',
     '回收站中有其他内容，可使用一键清空永久删除': 'Trash contains other items. Use Empty All to delete them permanently.',
     '永久移除': 'Delete permanently',
+    '永久移除这条任务？': 'Permanently remove this task?',
+    '此操作不可恢复。': 'This cannot be undone.',
     '永久移除这条任务？此操作不可恢复。': 'Permanently remove this task? This cannot be undone.',
     '取消': 'Cancel', '保存': 'Save', '移到回收站': 'Move to Trash',
     '暂无任务': 'No tasks', '删除任务': 'Delete task',
@@ -501,6 +503,8 @@
       'Turn a research idea into a plan covering the question, hypothesis, current evidence, experiment design, risks, and next steps.',
     '导出 MD': 'Export MD', '导出 PNG': 'Export PNG', '转为任务': 'Turn into Tasks',
     '确认转为任务': 'Confirm Tasks', '确认归档划线节点': 'Confirm Archive',
+    '没有可归档的划线节点': 'No struck-through nodes to archive.',
+    '请先给要归档的正文节点添加删除线，然后再试一次。': 'Add strikethrough to the content nodes you want to archive, then try again.',
     '已保存': 'Saved', '保存中…': 'Saving…', '未保存': 'Unsaved', '顶栏语言': 'Interface language',
     '（这里没有未分组的画布）': 'No ungrouped canvases yet.',
     '（还没有收藏的画布）': 'No favorite canvases yet.',
@@ -951,7 +955,7 @@
     '今天，发生了什么？': 'What happened today?', '标签，用逗号分隔': 'Tags, separated by commas',
     '删除这篇': 'Delete entry',
     '当天成果': 'Daily outcomes', '查看活跃': 'View Activity', '自由专注': 'Open focus',
-    '画布活动': 'Canvas activity',
+    '画布活动': 'Canvas activity', '新建 · 修改': 'New · Edited', '工作': 'Worked on',
     '这一天还没有画布活动。': 'No canvas activity was recorded this day.',
     '每日打卡': 'Daily check-in', '已打卡': 'Checked in', '未打卡': 'Not checked',
     '完成于': 'Completed at',
@@ -1232,6 +1236,12 @@
     match = source.match(/^使用\s*(\d+)\s*张画布(?:\s*·\s*(.+))?$/);
     if (match) return `${match[1]} ${match[1] === '1' ? 'canvas' : 'canvases'} used`
       + (match[2] ? ` · ${EN[match[2]] || translateDynamic(match[2])}` : '');
+    match = source.match(/^(\d+)\s*张\s*·\s*(.+)$/);
+    if (match) return `${match[1]} ${match[1] === '1' ? 'canvas' : 'canvases'} · ${EN[match[2]] || translateDynamic(match[2])}`;
+    match = source.match(/^(\d+)\s*项打卡$/);
+    if (match) return `${match[1]} ${match[1] === '1' ? 'check-in' : 'check-ins'}`;
+    match = source.match(/^(\d+)\s*项完成$/);
+    if (match) return `${match[1]} completed`;
     match = source.match(/^(\d+)\s*分(?:钟)?$/);
     if (match) return `${match[1]} min`;
     match = source.match(/^(\d+(?:\.\d+)?)\s*小时(?:\s*(\d+)\s*分)?$/);

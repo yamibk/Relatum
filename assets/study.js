@@ -28,6 +28,7 @@
   let progressSettingsPositionFrame = 0;
   const trashPanel = document.querySelector('[data-role="trash-panel"]');
   const trashConfirm = document.querySelector('[data-role="study-trash-confirm"]');
+  const taskDeleteConfirm = document.querySelector('[data-role="study-task-delete-confirm"]');
   const toast = document.querySelector('[data-role="study-toast"]');
   const progressListEl = document.querySelector('[data-role="study-progress-list"]');
   const completedListEl = document.querySelector('[data-role="study-completed-list"]');
@@ -58,6 +59,8 @@
   const TEMPORARY_EDGE_ZONE_PX = 36;
   let trashChain = Promise.resolve(); // 快速连删时后台按点击顺序落盘，界面无需等待网络
   let isEmptyingTrash = false;
+  let pendingTrashDeleteId = '';
+  let isDeletingTrashTask = false;
   const STUDY_TRASH_LIMIT = 30;
   const STUDY_MILESTONES_MAX = 50;
   const STUDY_TASK_PAGE_MAX = 99;
@@ -2124,7 +2127,7 @@
         + '<button type="button" class="btn-text" data-action="restore">' + escapeHtml(T('恢复')) + '</button>'
         + '<button type="button" class="btn-text study-danger" data-action="delete">' + escapeHtml(T('永久移除')) + '</button></div>';
       item.querySelector('[data-action="restore"]').addEventListener('click', () => restoreTask(entry.task.id));
-      item.querySelector('[data-action="delete"]').addEventListener('click', () => deleteTask(entry.task.id));
+      item.querySelector('[data-action="delete"]').addEventListener('click', () => openTaskDeleteConfirm(entry.task.id));
       list.appendChild(item);
     });
     trashEnterId = '';
@@ -4487,17 +4490,43 @@
     }
   }
 
-  async function deleteTask(id) {
-    if (!window.confirm(T('永久移除这条任务？此操作不可恢复。'))) return;
+  function openTaskDeleteConfirm(id) {
+    if (!taskDeleteConfirm || isDeletingTrashTask) return;
+    if (!state.trash.some((entry) => entry.task.id === id)) return;
+    pendingTrashDeleteId = id;
+    taskDeleteConfirm.hidden = false;
+    const confirmBtn = taskDeleteConfirm.querySelector('[data-action="study-task-delete-confirm"]');
+    if (confirmBtn) requestAnimationFrame(() => confirmBtn.focus());
+  }
+
+  function closeTaskDeleteConfirm() {
+    if (isDeletingTrashTask) return;
+    pendingTrashDeleteId = '';
+    if (taskDeleteConfirm) taskDeleteConfirm.hidden = true;
+  }
+
+  async function deleteTask() {
+    const id = pendingTrashDeleteId;
+    if (!id || isDeletingTrashTask) return;
+    isDeletingTrashTask = true;
+    const confirmBtn = taskDeleteConfirm
+      ? taskDeleteConfirm.querySelector('[data-action="study-task-delete-confirm"]')
+      : null;
+    if (confirmBtn) confirmBtn.disabled = true;
     lockTrashItem(id, true);
     try {
       await post('/api/study-task-delete', { id });
       animateDetachedExit(document.querySelector('.study-trash-item' + taskSelector(id)), 'study-trash-exit-ghost');
       state.trash = state.trash.filter((entry) => entry.task.id !== id);
+      pendingTrashDeleteId = '';
+      if (taskDeleteConfirm) taskDeleteConfirm.hidden = true;
       render();
     } catch (error) {
       lockTrashItem(id, false);
       showToast(error.message);
+    } finally {
+      isDeletingTrashTask = false;
+      if (confirmBtn) confirmBtn.disabled = false;
     }
   }
 
@@ -4508,6 +4537,7 @@
   }
 
   function closeTrash() {
+    closeTaskDeleteConfirm();
     closeTrashConfirm();
     trashPanel.classList.remove('show');
     setTimeout(() => { trashPanel.hidden = true; }, 180);
@@ -4675,6 +4705,15 @@
   if (trashConfirm) {
     trashConfirm.addEventListener('mousedown', (event) => {
       if (event.target === trashConfirm) closeTrashConfirm();
+    });
+  }
+  const taskDeleteCancel = document.querySelector('[data-action="study-task-delete-cancel"]');
+  if (taskDeleteCancel) taskDeleteCancel.addEventListener('click', closeTaskDeleteConfirm);
+  const taskDeleteConfirmButton = document.querySelector('[data-action="study-task-delete-confirm"]');
+  if (taskDeleteConfirmButton) taskDeleteConfirmButton.addEventListener('click', deleteTask);
+  if (taskDeleteConfirm) {
+    taskDeleteConfirm.addEventListener('mousedown', (event) => {
+      if (event.target === taskDeleteConfirm) closeTaskDeleteConfirm();
     });
   }
   const archiveButton = document.querySelector('[data-role="study-progress-completed-column"] [data-action="archive-done"]');
@@ -4912,6 +4951,13 @@
         event.stopPropagation();
         closeStudyMilestoneDialog(false);
         return;
+      }
+      return;
+    }
+    if (taskDeleteConfirm && !taskDeleteConfirm.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeTaskDeleteConfirm();
       }
       return;
     }
