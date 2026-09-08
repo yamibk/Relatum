@@ -2527,7 +2527,7 @@
       if ((placement.kind === 'root' || placement.kind === 'branch' || placement.kind === 'task')
           && window.RelatumStudyPalette
           && typeof window.RelatumStudyPalette.applyColorTones === 'function') {
-        window.RelatumStudyPalette.applyColorTones(element, 'branch-color', routeNodeColor);
+        window.RelatumStudyPalette.applyColorTones(element, 'branch-color', routeNodeColor, { scope: 'tree' });
       }
       element.dataset.progress = String(Math.round(((placement.metrics || {}).progress || 0) * 100));
       if (placement.kind === 'root' && isGoalReady && !oldGoalState.ready && !isNew && !prefersReduced) {

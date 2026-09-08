@@ -73,6 +73,10 @@
   const treePageRootTitleToggle = document.querySelector('[data-role="tree-page-root-title-toggle"]');
   const treePageRootTitleSizeRange = document.querySelector('[data-role="tree-page-root-title-size-range"]');
   const treePageRootTitleSizeValue = document.querySelector('[data-role="tree-page-root-title-size-value"]');
+  const darkCardPresentationSettings = document.querySelector('[data-role="dark-card-presentation-settings"]');
+  const darkCardPresentationRanges = Array.from(document.querySelectorAll('[data-role="dark-card-presentation-range"]'));
+  const darkCardPresentationValues = Array.from(document.querySelectorAll('[data-role="dark-card-presentation-value"]'));
+  const darkCardInkSwitches = Array.from(document.querySelectorAll('[data-role="dark-card-ink-switch"]'));
   const librarySearchToggle = document.querySelector('[data-role="library-search-toggle"]');
   const initialView = new URLSearchParams(window.location.search).get('view') || '';
   let initialStudy = initialView === 'study';
@@ -162,6 +166,10 @@
   const TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT = 25;
   const TREE_PAGE_ROOT_TITLE_SIZE_MIN = 16;
   const TREE_PAGE_ROOT_TITLE_SIZE_MAX = 36;
+  const DARK_CARD_PRESENTATION_KEY = 'canvas:darkCardPresentation:v1';
+  const DARK_CARD_FILL_DEFAULT = 15;
+  const DARK_CARD_ACCENT_DEFAULT = 100;
+  const DARK_CARD_INK_DEFAULT = 'light';
   const LIBRARY_SEARCH_ENABLED_KEY = 'canvas:librarySearchEnabled';
   let startTurnSpeed = START_SPEED_DEFAULT;
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
@@ -178,11 +186,12 @@
   let careerWorkspaceWarmupScheduled = false;
   let workspaceTransitionTimer = 0;
   let notesInertia = NOTES_INERTIA_DEFAULT;
+  let darkCardPresentation = null;
   let startViewTransitionTimer = 0;
   const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
   const START_PAGE_ACTIVITY_VIEWS = new Set(['study', 'tree', 'notes']);
-  let startPageActivityEnabled = false;
+  let startPageActivityEnabled = true;
   let startPageActivityStatsVisible = false;
   let startPageActivityActive = false;
   let startPageActivityPage = '';
@@ -474,6 +483,7 @@
       startThemeToggle.setAttribute('aria-pressed', dark ? 'true' : 'false');
       startThemeToggle.setAttribute('aria-label', dark ? '切换为浅色起始页' : '切换为深色起始页');
     }
+    syncDarkCardPresentationControls();
   }
 
   function applyStartBackgroundStyle(style, persist) {
@@ -768,6 +778,102 @@
     }));
   }
 
+  function clampDarkCardStrength(value, fallback) {
+    if (value == null || typeof value === 'boolean' || String(value).trim() === '') {
+      return fallback;
+    }
+    const strength = Number(value);
+    if (!Number.isFinite(strength)) return fallback;
+    return Math.max(0, Math.min(100, Math.round(strength / 5) * 5));
+  }
+
+  function normalizeDarkCardInk(value) {
+    return value === 'auto' || value === 'dark' ? value : DARK_CARD_INK_DEFAULT;
+  }
+
+  function normalizeDarkCardPresentation(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    const tree = source.tree && typeof source.tree === 'object' ? source.tree : {};
+    const study = source.study && typeof source.study === 'object' ? source.study : {};
+    return {
+      version: 1,
+      tree: {
+        fill: clampDarkCardStrength(tree.fill, DARK_CARD_FILL_DEFAULT),
+        accent: clampDarkCardStrength(tree.accent, DARK_CARD_ACCENT_DEFAULT),
+        ink: normalizeDarkCardInk(tree.ink),
+      },
+      study: {
+        fill: clampDarkCardStrength(study.fill, DARK_CARD_FILL_DEFAULT),
+        accent: clampDarkCardStrength(study.accent, DARK_CARD_ACCENT_DEFAULT),
+        ink: normalizeDarkCardInk(study.ink),
+      },
+    };
+  }
+
+  function readDarkCardPresentation() {
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(DARK_CARD_PRESENTATION_KEY) || 'null'); } catch (e) {}
+    if (!stored && window.RelatumBoot && window.RelatumBoot.darkCardPresentation) {
+      stored = window.RelatumBoot.darkCardPresentation;
+    }
+    return normalizeDarkCardPresentation(stored);
+  }
+
+  function syncDarkCardPresentationControls() {
+    if (!darkCardPresentation) return;
+    const dark = document.documentElement.dataset.startTheme === 'dark';
+    if (darkCardPresentationSettings) {
+      darkCardPresentationSettings.classList.toggle('is-disabled', !dark);
+      darkCardPresentationSettings.setAttribute('aria-disabled', dark ? 'false' : 'true');
+    }
+    darkCardPresentationRanges.forEach((input) => {
+      const page = input.dataset.page;
+      const setting = input.dataset.setting;
+      if (darkCardPresentation[page] && darkCardPresentation[page][setting] != null) {
+        input.value = String(darkCardPresentation[page][setting]);
+      }
+      input.disabled = !dark;
+    });
+    darkCardPresentationValues.forEach((output) => {
+      const page = output.dataset.page;
+      const setting = output.dataset.setting;
+      if (darkCardPresentation[page] && darkCardPresentation[page][setting] != null) {
+        output.textContent = darkCardPresentation[page][setting] + '%';
+      }
+    });
+    darkCardInkSwitches.forEach((control) => {
+      const page = control.dataset.page;
+      const ink = normalizeDarkCardInk(darkCardPresentation[page] && darkCardPresentation[page].ink);
+      control.dataset.value = ink;
+      control.querySelectorAll('button[data-ink]').forEach((button) => {
+        const active = button.dataset.ink === ink;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', active ? 'true' : 'false');
+        button.tabIndex = active ? 0 : -1;
+        button.disabled = !dark;
+      });
+    });
+  }
+
+  function applyDarkCardPresentation(value, persist) {
+    darkCardPresentation = normalizeDarkCardPresentation(value);
+    const rootStyle = document.documentElement.style;
+    rootStyle.setProperty('--tree-dark-card-fill-strength', darkCardPresentation.tree.fill + '%');
+    rootStyle.setProperty('--tree-dark-card-accent-strength', darkCardPresentation.tree.accent + '%');
+    rootStyle.setProperty('--study-dark-card-fill-strength', darkCardPresentation.study.fill + '%');
+    rootStyle.setProperty('--study-dark-card-accent-strength', darkCardPresentation.study.accent + '%');
+    window.RelatumBoot = window.RelatumBoot || {};
+    window.RelatumBoot.darkCardPresentation = darkCardPresentation;
+    syncDarkCardPresentationControls();
+    if (persist) {
+      try { localStorage.setItem(DARK_CARD_PRESENTATION_KEY, JSON.stringify(darkCardPresentation)); } catch (e) {}
+    }
+    document.dispatchEvent(new CustomEvent('relatum:dark-card-presentation-change', {
+      detail: darkCardPresentation,
+    }));
+    return darkCardPresentation;
+  }
+
   function applyLibrarySearchEnabled(enabled, persist) {
     const active = enabled === true;
     const wasEnabled = librarySearchEnabled;
@@ -870,15 +976,23 @@
   let calendarCountdownEnabled = true;
   try { calendarCountdownEnabled = localStorage.getItem(CALENDAR_COUNTDOWN_KEY) !== '0'; } catch (e) {}
   applyCalendarCountdownEnabled(calendarCountdownEnabled, false);
-  let startPageActivityEnabledInit = false;
-  try { startPageActivityEnabledInit = localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY) === '1'; } catch (e) {}
+  let storedStartPageActivityEnabled = null;
+  let startPageActivityEnabledInit = true;
+  try {
+    storedStartPageActivityEnabled = localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY);
+    if (storedStartPageActivityEnabled === '1' || storedStartPageActivityEnabled === '0') {
+      startPageActivityEnabledInit = storedStartPageActivityEnabled === '1';
+    }
+  } catch (e) {}
   applyStartPageActivityEnabled(startPageActivityEnabledInit, false);
-  let startPageActivityStatsVisibleInit = startPageActivityEnabledInit;
+  let startPageActivityStatsVisibleInit = false;
   try {
     const storedStartPageActivityStatsVisible = localStorage.getItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY);
     if (storedStartPageActivityStatsVisible === '1' || storedStartPageActivityStatsVisible === '0') {
       startPageActivityStatsVisibleInit = storedStartPageActivityStatsVisible === '1';
-    } else {
+    } else if (storedStartPageActivityEnabled === '1' || storedStartPageActivityEnabled === '0') {
+      // 只为旧用户迁移已有计时开关；全新用户按出厂组合保持“计时开、统计关”。
+      startPageActivityStatsVisibleInit = startPageActivityEnabledInit;
       localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisibleInit ? '1' : '0');
     }
   } catch (e) {}
@@ -898,6 +1012,7 @@
   let treePageRootTitleSizeInit = TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT;
   try { treePageRootTitleSizeInit = localStorage.getItem(TREE_PAGE_ROOT_TITLE_SIZE_KEY) || TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT; } catch (e) {}
   applyTreePageRootTitleSize(treePageRootTitleSizeInit, false);
+  applyDarkCardPresentation(readDarkCardPresentation(), false);
   let librarySearchEnabledInit = false;
   try { librarySearchEnabledInit = localStorage.getItem(LIBRARY_SEARCH_ENABLED_KEY) === '1'; } catch (e) {}
   applyLibrarySearchEnabled(librarySearchEnabledInit, false);
@@ -1225,6 +1340,41 @@
       applyTreePageRootTitleSize(treePageRootTitleSizeRange.value, true);
     });
   }
+  darkCardPresentationRanges.forEach((input) => {
+    input.addEventListener('input', () => {
+      const page = input.dataset.page;
+      const setting = input.dataset.setting;
+      if (!darkCardPresentation[page] || (setting !== 'fill' && setting !== 'accent')) return;
+      const next = normalizeDarkCardPresentation(darkCardPresentation);
+      next[page][setting] = clampDarkCardStrength(input.value,
+        setting === 'fill' ? DARK_CARD_FILL_DEFAULT : DARK_CARD_ACCENT_DEFAULT);
+      applyDarkCardPresentation(next, true);
+    });
+  });
+  darkCardInkSwitches.forEach((control) => {
+    function selectInk(value) {
+      const page = control.dataset.page;
+      if (!darkCardPresentation[page]) return;
+      const next = normalizeDarkCardPresentation(darkCardPresentation);
+      next[page].ink = normalizeDarkCardInk(value);
+      applyDarkCardPresentation(next, true);
+    }
+    control.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-ink]');
+      if (button && !button.disabled) selectInk(button.dataset.ink);
+    });
+    control.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const buttons = Array.from(control.querySelectorAll('button[data-ink]:not(:disabled)'));
+      const current = buttons.indexOf(document.activeElement);
+      if (current < 0 || !buttons.length) return;
+      event.preventDefault();
+      const step = event.key === 'ArrowRight' ? 1 : -1;
+      const target = buttons[(current + step + buttons.length) % buttons.length];
+      selectInk(target.dataset.ink);
+      target.focus();
+    });
+  });
   if (librarySearchToggle) {
     librarySearchToggle.addEventListener('change', () => {
       applyLibrarySearchEnabled(librarySearchToggle.checked, true);
@@ -1359,6 +1509,7 @@
         ]],
         ['学习、树状、速记、复习与记账', '这些页面的长期内容在 <code>data</code> 中，但一些“怎么看”只存在本机。', [
           ['视图与镜头', '<code>study:*</code>、<code>canvas:notesView</code>、<code>canvas:cadenceLens:v2</code>、<code>canvas:reviewMode:v1</code> 和 <code>relatum.*.view.&lt;树 ID&gt;</code> 记住页面、复习模式、镜头与折叠状态。删除后任务、树和便签仍在，但视图会回到默认。'],
+          ['深色卡片呈现', '<code>canvas:darkCardPresentation:v1</code> 分别记住树状页与学习页彩色卡片的底色、边框和侧条强度及字体颜色。删除后两页都恢复底色 15%、强调 100% 和白字，不会清除任务、阶段或它们已选的颜色。'],
           ['任务页颜色与图例', '<code>study:taskPageColors:v1</code> 和 <code>study:legend:v1</code> 只存在本机。删除后颜色恢复默认，不能从 <code>study.json</code> 自动恢复，只能重新设置。'],
           ['记账当前页', '<code>ledger:page:v1</code> 只记住上次查看的数字页，删除后回到第 1 页；账目归属和每页金额单位仍保存在 <code>data/ledger.json</code> 中。'],
           ['记账视图', '<code>ledger:viewByPage:v1</code> 按页记住月份或累计视图，只保存设为累计的页；删除后每页都恢复月份视图。它只改变展示和汇总范围，不改写账目日期。'],
@@ -1476,6 +1627,7 @@
         ]],
         ['Study, Tree, Quick Notes, Review, and Ledger', 'Long-term content for these pages lives in <code>data</code>, but some details about how it is viewed exist only on this device.', [
           ['Views and cameras', '<code>study:*</code>, <code>canvas:notesView</code>, <code>canvas:cadenceLens:v2</code>, <code>canvas:reviewMode:v1</code>, and <code>relatum.*.view.&lt;tree ID&gt;</code> remember pages, review mode, cameras, and collapsed branches. Tasks, trees, and notes remain after deletion, but their views return to defaults.'],
+          ['Dark card presentation', '<code>canvas:darkCardPresentation:v1</code> separately remembers the color-fill, border and stripe strengths, and text-color mode for Tree and Study cards. Deleting it restores 15% fill, 100% accent, and white text for both pages without removing tasks, stages, or their assigned colors.'],
           ['Task-page colors and legend', '<code>study:taskPageColors:v1</code> and <code>study:legend:v1</code> exist only on this device. Deleting them restores default colors; they cannot be recovered automatically from <code>study.json</code> and must be set again.'],
           ['Current Ledger page', '<code>ledger:page:v1</code> only remembers the last numbered page you viewed. Deleting it returns to page 1; entry ownership and per-page amount units remain in <code>data/ledger.json</code>.'],
           ['Ledger view', '<code>ledger:viewByPage:v1</code> remembers the monthly or cumulative view per page, keeping only pages set to cumulative. Deleting it restores the monthly view for every page; it only changes presentation and summary scope, not entry dates.'],
@@ -1924,13 +2076,14 @@
       NOTE_FONT_SCALE_KEY,                // 笔记正文字号（100%）
       STARMAP_MOTION_KEY,                 // 足迹星图动画（含「结束后自动取景」）
       CALENDAR_COUNTDOWN_KEY,             // 日历倒数日（开）
-      START_PAGE_ACTIVITY_ENABLED_KEY,    // 学习/树状/速记计时（关）
+      START_PAGE_ACTIVITY_ENABLED_KEY,    // 学习/树状/速记计时（开）
       START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, // 显示三页统计数字（关）
       HIDE_SPECIAL_KEY,                   // 隐藏特殊页（关）
       GOAL_TREE_SIMPLE_KEY,               // 精简目标树编辑（开）
       GOAL_TREE_ENFORCE_UNLOCK_KEY,       // 强制按解锁顺序（关）
       TREE_PAGE_ROOT_TITLE_HIDDEN_KEY,    // 隐藏根节点标题（关）
       TREE_PAGE_ROOT_TITLE_SIZE_KEY,      // 根节点标题字号（25px）
+      DARK_CARD_PRESENTATION_KEY,         // 树状页/学习页深色彩色卡片（底色 15%、强调 100%、白字）
       LIBRARY_SEARCH_ENABLED_KEY,         // 画布名称搜索（关）
       START_SPEED_KEY,                    // 翻页速度（260ms）
       CAREER_SCROLL_FEEL_KEY,             // 生涯滚动手感
@@ -1949,13 +2102,14 @@
       }));
     }, 140);
     applyCalendarCountdownEnabled(true, false);
-    applyStartPageActivityEnabled(false, false);
+    applyStartPageActivityEnabled(true, false);
     applyStartPageActivityStatsVisible(false, false);
     applyHideSpecialPages(false, false);
     applyGoalTreeSimpleMode(true, false);
     applyGoalTreeUnlockEnforcement(false, false);
     applyTreePageRootTitleHidden(false, false);
     applyTreePageRootTitleSize(TREE_PAGE_ROOT_TITLE_SIZE_DEFAULT, false);
+    applyDarkCardPresentation(null, false);
     applyLibrarySearchEnabled(false, false);
     applyStartSpeed(START_SPEED_DEFAULT, false);
     applyCareerScrollFeel(readCareerScrollFeel(), false);

@@ -50,6 +50,12 @@ jobs:
         shell: pwsh
         run: node tests/richtext-regression.js
 
+      - name: Run start page dark-card presentation tests
+        shell: pwsh
+        run: |
+          node tests/start-dark-card-presentation-contract.js
+          node tests/study-palette-contract.js
+
       - name: Run node resize contract tests
         shell: pwsh
         run: node tests/node-resize-contract.js

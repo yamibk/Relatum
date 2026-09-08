@@ -14,12 +14,13 @@ const i18n = read('assets', 'i18n.js');
 const backend = read('app.py');
 
 assert(html.includes('data-role="start-page-activity-toggle"')
-  && !html.includes('data-role="start-page-activity-toggle" checked')
-  && html.includes('学习、树状、速记计时'), 'the settings toggle must be visible and off by default');
+  && html.includes('data-role="start-page-activity-toggle" checked')
+  && html.includes('学习、树状、速记计时'), 'the settings toggle must be visible and on by default');
 assert(html.includes('data-role="start-page-activity-stats-toggle"')
   && html.includes('显示三页统计数字'), 'the green statistics need an independent visibility toggle');
-assert(start.includes("localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY) === '1'"),
-  'timing must remain off until the user explicitly enables it');
+assert(start.includes('let startPageActivityEnabledInit = true;')
+  && start.includes("storedStartPageActivityEnabled === '1' || storedStartPageActivityEnabled === '0'"),
+  'timing must default on while preserving either explicit user choice');
 assert(start.includes("localStorage.setItem(START_PAGE_ACTIVITY_ENABLED_KEY, startPageActivityEnabled ? '1' : '0')"),
   'both user choices must persist locally');
 assert(start.includes("document.body.dataset.startPageActivityEnabled = startPageActivityEnabled ? '1' : '0'"),
@@ -28,8 +29,9 @@ assert(start.includes("localStorage.getItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KE
   && start.includes("localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisible ? '1' : '0')")
   && start.includes("document.body.dataset.startPageActivityStatsVisible = startPageActivityStatsVisible ? '1' : '0'"),
   'the add-on visibility preference must persist independently');
-assert(start.includes('let startPageActivityStatsVisibleInit = startPageActivityEnabledInit;'),
-  'the new visibility preference must inherit the old combined state once');
+assert(start.includes('let startPageActivityStatsVisibleInit = false;')
+  && start.includes("else if (storedStartPageActivityEnabled === '1' || storedStartPageActivityEnabled === '0')"),
+  'new users must keep statistics hidden while existing users receive the one-time migration');
 [
   "new Set(['study', 'tree', 'notes'])",
   "fetch('/api/start-page-activity'",
