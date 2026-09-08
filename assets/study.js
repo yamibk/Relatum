@@ -2110,7 +2110,7 @@
     const prevRects = captureListRects(list, '.study-trash-item');
     list.innerHTML = '';
     if (!state.trash.length) {
-      list.innerHTML = '<p class="study-empty soft-enter">回收站是空的。</p>';
+      list.innerHTML = '<p class="study-empty soft-enter">' + escapeHtml(T('回收站是空的。')) + '</p>';
       return;
     }
     state.trash.forEach((entry) => {
@@ -2121,8 +2121,8 @@
       item.innerHTML = '<div><strong>' + escapeHtml(entry.task.title)
         + '</strong><span>' + escapeHtml(STATUS_LABEL[entry.task.status] || '') + '</span></div>'
         + '<div class="study-trash-item-actions">'
-        + '<button type="button" class="btn-text" data-action="restore">恢复</button>'
-        + '<button type="button" class="btn-text study-danger" data-action="delete">永久移除</button></div>';
+        + '<button type="button" class="btn-text" data-action="restore">' + escapeHtml(T('恢复')) + '</button>'
+        + '<button type="button" class="btn-text study-danger" data-action="delete">' + escapeHtml(T('永久移除')) + '</button></div>';
       item.querySelector('[data-action="restore"]').addEventListener('click', () => restoreTask(entry.task.id));
       item.querySelector('[data-action="delete"]').addEventListener('click', () => deleteTask(entry.task.id));
       list.appendChild(item);
@@ -2761,7 +2761,7 @@
         && progressSettingsPopover.querySelector('[data-role="progress-settings-milestones"]');
       if (button) {
         var count = Array.isArray(progressSettingsMilestones) ? progressSettingsMilestones.length : 0;
-        button.textContent = '任务点设置' + (count ? ' · ' + count : '');
+        button.textContent = T('任务点设置') + (count ? ' · ' + count : '');
       }
       if (!instant && returnEl && returnEl.isConnected) returnEl.focus();
     };
@@ -2826,7 +2826,7 @@
     var title = document.createElement('strong');
     title.id = 'study-progress-settings-title';
     title.className = 'study-progress-settings-title';
-    title.textContent = '任务设置';
+    title.textContent = T('任务设置');
     box.appendChild(title);
 
     var targetWrap = document.createElement('label');
@@ -2857,7 +2857,7 @@
       var count = Array.isArray(progressSettingsMilestones) ? progressSettingsMilestones.length : 0;
       milestoneBtn.disabled = !enabled;
       milestoneBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-      milestoneBtn.textContent = '任务点设置' + (count ? ' · ' + count : '');
+      milestoneBtn.textContent = T('任务点设置') + (count ? ' · ' + count : '');
       setProgressSettingsError('');
     };
     targetIn.addEventListener('input', updateMilestoneButton);
