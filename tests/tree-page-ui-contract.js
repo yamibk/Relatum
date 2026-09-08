@@ -97,6 +97,15 @@ routeFunctions.forEach((name) => {
   assert(treeFunctions.has(name), 'cloned runtime omitted goal-tree function: ' + name);
 });
 
+const syncNodeElementsSource = functionSource(tree, 'syncNodeElements');
+assert(syncNodeElementsSource.indexOf("var nextCheckDone = !!nextCheck && nextCheck.classList.contains('is-done');")
+  < syncNodeElementsSource.indexOf('transitionTaskCheck(nextCheck, oldCheckState);'),
+  'Tree task completion must capture the new checkbox state before its visual transition restores the old frame');
+assert(syncNodeElementsSource.includes("replayClass(element, 'is-completion-restoring', 680);")
+  && tree.includes("oldCompletionRestoring = !!element && element.classList.contains('is-completion-restoring')")
+  && css.includes('@keyframes treePageTaskCompletionRestore'),
+  'Tree task restore must animate the completion material back to its persisted numeric progress');
+
 [
   'clearRailTransients', 'railSnapshot', 'renderRail', 'animateRailChange', 'setRailVisible',
   'sceneTransform', 'applyView', 'stopViewAnimation', 'stopPanInertia', 'startPanInertia',

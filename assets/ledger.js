@@ -52,9 +52,10 @@
   state.hideDecimals = hideDecimalsForPage(state.page);
   const dom = {};
   let legendColors = loadLegend();
-  const paletteController = window.RelatumStudyPalette
-    && typeof window.RelatumStudyPalette.createPopoverController === 'function'
-    ? window.RelatumStudyPalette.createPopoverController({ reducedMotion, translate: T })
+  const palette = window.RelatumStudyPalette;
+  const paletteController = palette
+    && typeof palette.createPopoverController === 'function'
+    ? palette.createPopoverController({ reducedMotion, translate: T })
     : null;
 
   function T(value) {
@@ -427,6 +428,9 @@
       chip.classList.toggle('is-default', !color);
       if (color) chip.style.setProperty('--ledger-legend-color', color);
       else chip.style.removeProperty('--ledger-legend-color');
+      if (palette && typeof palette.applyColorTones === 'function') {
+        palette.applyColorTones(chip, 'ledger-legend-color', color);
+      }
       chip.setAttribute('aria-label', T('图例色') + ' ' + (index + 1));
     });
   }
@@ -688,6 +692,12 @@
     const color = /^#[0-9a-fA-F]{6}$/.test(String(entry.color || '')) ? entry.color : '';
     if (color) row.style.setProperty('--ledger-entry-color', color);
     else row.style.removeProperty('--ledger-entry-color');
+    // 两套呈现色随常驻行一起缓存；切主题只由 CSS 切换，不重建账目或改写保存色值。
+    if (palette && typeof palette.applyColorTones === 'function') {
+      palette.applyColorTones(row, 'ledger-entry-color', color);
+    }
+    row.toggleAttribute('data-ledger-palette', !!(palette
+      && typeof palette.toneFor === 'function' && palette.toneFor(color)));
     const amount = row.querySelector('.ledger-entry-amount');
     row.querySelector('.ledger-entry-main strong').textContent = entry.note
       || (draft ? T('待填写的账目') : label);

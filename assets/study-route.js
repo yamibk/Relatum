@@ -473,7 +473,8 @@
     currentColor = String(currentColor || '').trim();
     var swatches = BRANCH_COLORS.map(function (item) {
       var isActive = item.value === currentColor || (!item.value && !currentColor);
-      var style = item.value ? ' style="background:' + item.value + '"' : '';
+      var style = item.value ? ' style="--palette-swatch-light:' + (item.light || item.value)
+        + ';--palette-swatch-dark:' + (item.dark || item.value) + '"' : '';
       return '<button type="button" data-route-pop="set-color" data-color="' + escapeHtml(item.value)
         + '" class="study-route-color-swatch' + (isActive ? ' is-active' : '') + '"'
         + ' aria-label="' + escapeHtml(item.label) + '"' + style + '></button>';
@@ -739,6 +740,11 @@
       } else if (placement.kind === 'branch' || placement.kind === 'task') {
         element.style.removeProperty('--branch-color');
         delete element.dataset.branchColor;
+      }
+      if ((placement.kind === 'branch' || placement.kind === 'task')
+          && window.RelatumStudyPalette
+          && typeof window.RelatumStudyPalette.applyColorTones === 'function') {
+        window.RelatumStudyPalette.applyColorTones(element, 'branch-color', routeNodeColor);
       }
       element.dataset.progress = String(Math.round(((placement.metrics || {}).progress || 0) * 100));
       if (wasBlocked && placement.availability && placement.availability.available && !prefersReduced) {
