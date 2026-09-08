@@ -4820,8 +4820,18 @@
       var index = Number(chip.dataset.legendIndex);
       var color = legendColors[index] || '';
       chip.classList.toggle('is-default', !color);
-      if (color) chip.style.background = color;
-      else chip.style.removeProperty('background');
+      chip.style.removeProperty('background');
+      if (color) {
+        chip.style.setProperty('--study-legend-color', color);
+        chip.setAttribute('data-legend-color', color);
+      } else {
+        chip.style.removeProperty('--study-legend-color');
+        chip.removeAttribute('data-legend-color');
+      }
+      if (window.RelatumStudyPalette
+          && typeof window.RelatumStudyPalette.applyColorTones === 'function') {
+        window.RelatumStudyPalette.applyColorTones(chip, 'study-legend-color', color);
+      }
       chip.setAttribute('aria-label', T('图例色') + ' ' + (index + 1));
     });
     studyLegendEl.setAttribute('aria-label', T('颜色图例'));
