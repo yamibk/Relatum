@@ -2448,7 +2448,7 @@
     }
     if (window.RelatumStudyPalette
         && typeof window.RelatumStudyPalette.applyColorTones === 'function') {
-      window.RelatumStudyPalette.applyColorTones(el, 'task-color', color);
+      window.RelatumStudyPalette.applyColorTones(el, 'task-color', color, { scope: 'study' });
     }
   }
 

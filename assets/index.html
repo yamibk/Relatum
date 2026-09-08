@@ -28,6 +28,38 @@
         var language = localStorage.getItem('canvas:toolbarLanguage') === 'en' ? 'en' : 'zh-CN';
         document.documentElement.dataset.uiLanguage = language;
         document.documentElement.lang = language;
+        var darkCardRaw = null;
+        try {
+          darkCardRaw = JSON.parse(localStorage.getItem('canvas:darkCardPresentation:v1') || 'null');
+        } catch (darkCardError) {}
+        function darkCardStrength(value, fallback) {
+          if (value == null || typeof value === 'boolean' || String(value).trim() === '') return fallback;
+          value = Number(value);
+          if (!Number.isFinite(value)) return fallback;
+          return Math.max(0, Math.min(100, Math.round(value / 5) * 5));
+        }
+        function darkCardInk(value) {
+          return value === 'auto' || value === 'dark' ? value : 'light';
+        }
+        var darkCardPresentation = {
+          version: 1,
+          tree: {
+            fill: darkCardStrength(darkCardRaw && darkCardRaw.tree && darkCardRaw.tree.fill, 15),
+            accent: darkCardStrength(darkCardRaw && darkCardRaw.tree && darkCardRaw.tree.accent, 100),
+            ink: darkCardInk(darkCardRaw && darkCardRaw.tree && darkCardRaw.tree.ink),
+          },
+          study: {
+            fill: darkCardStrength(darkCardRaw && darkCardRaw.study && darkCardRaw.study.fill, 15),
+            accent: darkCardStrength(darkCardRaw && darkCardRaw.study && darkCardRaw.study.accent, 100),
+            ink: darkCardInk(darkCardRaw && darkCardRaw.study && darkCardRaw.study.ink),
+          },
+        };
+        document.documentElement.style.setProperty('--tree-dark-card-fill-strength', darkCardPresentation.tree.fill + '%');
+        document.documentElement.style.setProperty('--tree-dark-card-accent-strength', darkCardPresentation.tree.accent + '%');
+        document.documentElement.style.setProperty('--study-dark-card-fill-strength', darkCardPresentation.study.fill + '%');
+        document.documentElement.style.setProperty('--study-dark-card-accent-strength', darkCardPresentation.study.accent + '%');
+        window.RelatumBoot = window.RelatumBoot || {};
+        window.RelatumBoot.darkCardPresentation = darkCardPresentation;
       } catch (e) {
         document.documentElement.dataset.startTheme = 'light';
         document.documentElement.dataset.startBackground = 'simple';
@@ -118,6 +150,70 @@
                 <button type="button" data-background-style="scenic">沉浸</button>
               </div>
             </div>
+            <div class="start-dark-card-settings" data-role="dark-card-presentation-settings">
+              <div class="start-dark-card-settings-head">
+                <strong>深色彩色卡片</strong>
+                <small>仅深色模式生效</small>
+              </div>
+              <section aria-labelledby="tree-dark-card-settings-title">
+                <h3 id="tree-dark-card-settings-title">树状页</h3>
+                <label class="start-dark-card-setting">
+                  <span><strong>彩色底不透明度</strong><output data-role="dark-card-presentation-value" data-page="tree" data-setting="fill">15%</output></span>
+                  <span class="start-dark-card-range" style="--default-pos:15%;">
+                    <input type="range" min="0" max="100" step="5" value="15"
+                      data-role="dark-card-presentation-range" data-page="tree" data-setting="fill"
+                      aria-label="树状页彩色底不透明度">
+                  </span>
+                </label>
+                <label class="start-dark-card-setting">
+                  <span><strong>彩色边框与侧条</strong><output data-role="dark-card-presentation-value" data-page="tree" data-setting="accent">100%</output></span>
+                  <span class="start-dark-card-range" style="--default-pos:100%;">
+                    <input type="range" min="0" max="100" step="5" value="100"
+                      data-role="dark-card-presentation-range" data-page="tree" data-setting="accent"
+                      aria-label="树状页彩色边框与侧条">
+                  </span>
+                </label>
+                <div class="start-dark-card-setting start-dark-card-ink-setting">
+                  <span><strong>字体颜色</strong></span>
+                  <div class="start-dark-card-ink-switch" data-role="dark-card-ink-switch"
+                    data-page="tree" data-value="light" role="radiogroup" aria-label="树状页卡片字体颜色">
+                    <span class="start-dark-card-ink-slider" aria-hidden="true"></span>
+                    <button type="button" data-ink="auto" role="radio" aria-checked="false">智能</button>
+                    <button type="button" data-ink="light" role="radio" aria-checked="true">白</button>
+                    <button type="button" data-ink="dark" role="radio" aria-checked="false">黑</button>
+                  </div>
+                </div>
+              </section>
+              <section aria-labelledby="study-dark-card-settings-title">
+                <h3 id="study-dark-card-settings-title">学习页</h3>
+                <label class="start-dark-card-setting">
+                  <span><strong>彩色底不透明度</strong><output data-role="dark-card-presentation-value" data-page="study" data-setting="fill">15%</output></span>
+                  <span class="start-dark-card-range" style="--default-pos:15%;">
+                    <input type="range" min="0" max="100" step="5" value="15"
+                      data-role="dark-card-presentation-range" data-page="study" data-setting="fill"
+                      aria-label="学习页彩色底不透明度">
+                  </span>
+                </label>
+                <label class="start-dark-card-setting">
+                  <span><strong>彩色边框与侧条</strong><output data-role="dark-card-presentation-value" data-page="study" data-setting="accent">100%</output></span>
+                  <span class="start-dark-card-range" style="--default-pos:100%;">
+                    <input type="range" min="0" max="100" step="5" value="100"
+                      data-role="dark-card-presentation-range" data-page="study" data-setting="accent"
+                      aria-label="学习页彩色边框与侧条">
+                  </span>
+                </label>
+                <div class="start-dark-card-setting start-dark-card-ink-setting">
+                  <span><strong>字体颜色</strong></span>
+                  <div class="start-dark-card-ink-switch" data-role="dark-card-ink-switch"
+                    data-page="study" data-value="light" role="radiogroup" aria-label="学习页卡片字体颜色">
+                    <span class="start-dark-card-ink-slider" aria-hidden="true"></span>
+                    <button type="button" data-ink="auto" role="radio" aria-checked="false">智能</button>
+                    <button type="button" data-ink="light" role="radio" aria-checked="true">白</button>
+                    <button type="button" data-ink="dark" role="radio" aria-checked="false">黑</button>
+                  </div>
+                </div>
+              </section>
+            </div>
             <label class="start-root-title-size-setting start-note-font-setting">
               <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
               <span class="start-note-font-range" style="--default-pos:33.333%;">
@@ -147,7 +243,7 @@
                 <strong>学习、树状、速记计时</strong>
                 <small>开启后记录这三页的前台使用时长</small>
               </span>
-              <input type="checkbox" data-role="start-page-activity-toggle">
+              <input type="checkbox" data-role="start-page-activity-toggle" checked>
               <i aria-hidden="true"></i>
             </label>
             <label class="start-setting-toggle">
