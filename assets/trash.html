@@ -26,7 +26,8 @@
     <section class="recent-view">
       <header class="recent-header">
         <h1 class="recent-title">回收站</h1>
-        <div class="trash-hint">
+        <div class="trash-hint" data-i18n="trashPageHint"
+             data-i18n-zh="↑↓ 选择 · ← 恢复到「最近」 · 数字键 恢复到分组 · 或拖到左侧分组">
           ↑↓ 选择 ·&nbsp; ← 恢复到「最近」 ·&nbsp; 数字键 恢复到分组 ·&nbsp; 或拖到左侧分组
         </div>
       </header>
@@ -60,6 +61,7 @@
   <!-- 顶部轻提示 -->
   <div class="toast" data-role="toast"></div>
 
+  <script src="i18n.js" defer></script>
   <script src="desktop-shell.js" defer></script>
   <script src="trash.js" defer></script>
   <script src="tooltip.js" defer></script>

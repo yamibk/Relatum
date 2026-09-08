@@ -9597,7 +9597,8 @@
   }
 
   function backgroundFileName(path) {
-    return String(path || '').split(/[\\/]/).pop() || '已选择图片';
+    return String(path || '').split(/[\\/]/).pop()
+      || (toolbarLanguage === 'en' ? 'Image selected' : '已选择图片');
   }
 
   function syncGuidePanel() {
@@ -9647,8 +9648,10 @@
     const remove = backgroundPanel.querySelector('[data-action="background-image-remove"]');
     if (nameEl) {
       nameEl.textContent = imageMode
-        ? backgroundFileName(bg.path) + (imageError ? '（文件不存在或不可读取）' : '')
-        : '尚未选择图片';
+        ? backgroundFileName(bg.path) + (imageError
+          ? (toolbarLanguage === 'en' ? ' (file is missing or unreadable)' : '（文件不存在或不可读取）')
+          : '')
+        : (toolbarLanguage === 'en' ? 'No image selected' : '尚未选择图片');
     }
     if (opacity) {
       opacity.disabled = !imageMode;

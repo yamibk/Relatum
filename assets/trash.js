@@ -27,6 +27,11 @@
   let draggingPath = null;
   let isEmptyingTrash = false;
 
+  function T(message) {
+    return window.RelatumI18n ? window.RelatumI18n.t(String(message || '')) : String(message || '');
+  }
+  document.title = T('回收站 — 画布');
+
   // ── 顶栏按钮 ───────────────────────────────────
   const backBtn = document.querySelector('[data-action="back"]');
   if (backBtn) backBtn.addEventListener('click', () => { window.location.href = 'index.html'; });
@@ -43,10 +48,10 @@
     const now = new Date();
     const diffMs = now - then;
     const min = 60 * 1000, hour = 60 * min, day = 24 * hour;
-    if (diffMs < min) return '刚刚';
-    if (diffMs < hour) return Math.floor(diffMs / min) + ' 分钟前';
-    if (diffMs < day) return Math.floor(diffMs / hour) + ' 小时前';
-    if (diffMs < 7 * day) return Math.floor(diffMs / day) + ' 天前';
+    if (diffMs < min) return T('刚刚');
+    if (diffMs < hour) return T(Math.floor(diffMs / min) + ' 分钟前');
+    if (diffMs < day) return T(Math.floor(diffMs / hour) + ' 小时前');
+    if (diffMs < 7 * day) return T(Math.floor(diffMs / day) + ' 天前');
     return then.getFullYear() + '-'
       + String(then.getMonth() + 1).padStart(2, '0') + '-'
       + String(then.getDate()).padStart(2, '0');
@@ -87,7 +92,8 @@
 
       const name = document.createElement('span');
       name.className = 'rail-name';
-      name.textContent = g.name;
+      name.textContent = g.special ? T(g.name) : g.name;
+      if (!g.special) name.setAttribute('data-user-content', '');
 
       const left = document.createElement('span');
       left.className = 'rail-left';
@@ -100,7 +106,7 @@
       item.append(left, count);
       // 点击 = 把当前选中的回收站文件恢复到这个组
       item.addEventListener('click', () => {
-        if (selectedIndex < 0 || !trashFiles[selectedIndex]) { showToast('先用 ↑↓ 选中一个画布'); return; }
+        if (selectedIndex < 0 || !trashFiles[selectedIndex]) { showToast(T('先用 ↑↓ 选中一个画布')); return; }
         doRestore(selectedIndex, g.id, '已恢复到「' + g.name + '」');
       });
       // 拖拽放置目标
@@ -132,8 +138,8 @@
       const empty = document.createElement('li');
       empty.className = 'group-empty';
       empty.textContent = trashEntryCount === 0
-        ? '回收站是空的'
-        : '回收站中有其他内容，可使用一键清空永久删除';
+        ? T('回收站是空的')
+        : T('回收站中有其他内容，可使用一键清空永久删除');
       fileList.appendChild(empty);
       return;
     }
@@ -153,17 +159,19 @@
 
     const title = document.createElement('div');
     title.className = 'recent-item-title';
-    title.textContent = f.title || '(未命名)';
+    title.textContent = f.title || T('(未命名)');
+    if (f.title) title.setAttribute('data-user-content', '');
 
     const meta = document.createElement('div');
     meta.className = 'recent-item-meta';
     const when = document.createElement('span');
     when.className = 'recent-item-when';
-    when.textContent = f.trashedAt ? '删除于 ' + formatRelTime(f.trashedAt) : '';
+    when.textContent = f.trashedAt ? T('删除于') + ' ' + formatRelTime(f.trashedAt) : '';
     const where = document.createElement('span');
     where.className = 'recent-item-where';
     where.textContent = f.path;
     where.title = f.path;
+    where.setAttribute('data-user-content', '');
     meta.append(when, where);
     li.append(title, meta);
 
@@ -219,7 +227,7 @@
   let toastTimer = null;
   function showToast(msg) {
     if (!toastEl) return;
-    toastEl.textContent = msg;
+    toastEl.textContent = T(msg);
     toastEl.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1200);
@@ -243,15 +251,15 @@
     try {
       const response = await fetch('/api/trash-empty', { method: 'POST' });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || '清空失败');
+      if (!response.ok) throw new Error(result.error || T('清空失败'));
       trashFiles = [];
       trashEntryCount = 0;
       selectedIndex = -1;
       if (emptyTrashConfirm) emptyTrashConfirm.hidden = true;
       renderPanel();
-      showToast(result.deleted > 0 ? '回收站已清空' : '回收站已经是空的');
+      showToast(result.deleted > 0 ? T('回收站已清空') : T('回收站已经是空的'));
     } catch (err) {
-      window.alert('清空回收站失败：' + err.message);
+      window.alert(T('清空回收站失败：') + err.message);
       await refresh();
     } finally {
       isEmptyingTrash = false;
@@ -288,8 +296,8 @@
 
   function restoreSelectedToIndex(n) {
     const f = trashFiles[selectedIndex];
-    if (!f) { showToast('先用 ↑↓ 选中一个画布'); return; }
-    if (n > lastGroups.length) { showToast('没有第 ' + n + ' 个分组'); return; }
+    if (!f) { showToast(T('先用 ↑↓ 选中一个画布')); return; }
+    if (n > lastGroups.length) { showToast(T('没有第 ' + n + ' 个分组')); return; }
     doRestore(selectedIndex, lastGroups[n - 1].id, '已恢复到「' + lastGroups[n - 1].name + '」');
   }
 
@@ -326,11 +334,11 @@
   function openFileMenu(x, y, f) {
     if (!ctxMenu) return;
     clearMenu();
-    addMenuItem('打开查看', () => gotoEditor(f.path));
+    addMenuItem(T('打开查看'), () => gotoEditor(f.path));
     addMenuSep();
-    addMenuLabel('恢复到');
+    addMenuLabel(T('恢复到'));
     const idx = () => trashFiles.findIndex((t) => t.path === f.path);
-    addMenuItem('最近', () => { const i = idx(); if (i >= 0) doRestore(i, '', '已恢复到「最近」'); });
+    addMenuItem(T('最近'), () => { const i = idx(); if (i >= 0) doRestore(i, '', '已恢复到「最近」'); });
     lastGroups.forEach((g) => {
       addMenuItem(g.name, () => { const i = idx(); if (i >= 0) doRestore(i, g.id, '已恢复到「' + g.name + '」'); });
     });
@@ -375,7 +383,7 @@
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       if (selectedIndex >= 0 && trashFiles[selectedIndex]) doRestore(selectedIndex, '', '已恢复到「最近」');
-      else showToast('先用 ↑↓ 选中一个画布');
+      else showToast(T('先用 ↑↓ 选中一个画布'));
     } else if (e.key === 'Enter') {
       const f = trashFiles[selectedIndex];
       if (f) { e.preventDefault(); gotoEditor(f.path); }
