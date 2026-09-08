@@ -45838,11 +45838,17 @@ body.start-page[data-start-theme="dark"] .study-goal-tree-confirm section { back
   outline: 2px solid color-mix(in srgb, #547e5f 48%, transparent);
   outline-offset: 2px;
 }
+.study-legend-chip[data-legend-color] {
+  background: var(--study-legend-color-light, var(--study-legend-color));
+}
 .study-legend-chip.is-default {
   background: repeating-linear-gradient(45deg, #eef1eb, #eef1eb 3px, #dce0d9 3px, #dce0d9 6px);
 }
 body.start-page[data-start-theme="dark"] .study-legend { border-right-color: rgba(255, 255, 255, .14); }
 body.start-page[data-start-theme="dark"] .study-legend-chip { border-color: rgba(255, 255, 255, .18); }
+body.start-page[data-start-theme="dark"] .study-legend-chip[data-legend-color] {
+  background: var(--study-legend-color-dark, var(--study-legend-color));
+}
 body.start-page[data-start-theme="dark"] .study-legend-chip.is-default {
   background: repeating-linear-gradient(45deg, #2a302b, #2a302b 3px, #363c37 3px, #363c37 6px);
 }
