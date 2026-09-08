@@ -1753,8 +1753,8 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 
 /* Branch node -- custom color background */
 .study-route-node.is-branch[data-branch-color] {
-  background: var(--branch-color);
-  border-color: color-mix(in srgb, var(--branch-color) 85%, #9ba399);
+  background: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 86%, #ffffff);
+  border-color: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 80%, var(--branch-color-light-accent, #9ba399));
 }
 .study-route-node.is-branch[data-branch-color]::before {
   content: '';
@@ -1763,7 +1763,7 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   top: 12px;
   bottom: 12px;
   width: 4px;
-  background: color-mix(in srgb, var(--branch-color) 62%, #3a4537);
+  background: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 34%, var(--branch-color-light-accent, #3a4537));
   border-radius: 0 3px 3px 0;
   opacity: 0.45;
   transition: opacity 180ms ease;
@@ -1774,10 +1774,10 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
 .study-route-node.is-task > .study-route-task-main { grid-column: 2; }
 .study-route-node.is-task > .study-route-task-steps { grid-column: 3; }
 .study-route-node.is-task > .study-route-node-menu { grid-column: 4; }
-/* Task node -- custom color background (mirrors branch tint; 与任务卡片 60% 底色同强度) */
+/* Task node -- custom color background (uses the shared theme-aware palette tones). */
 .study-route-node.is-task[data-branch-color] {
-  background: color-mix(in srgb, var(--branch-color) 50%, #ffffff);
-  border-color: color-mix(in srgb, var(--branch-color) 60%, #9ba399);
+  background: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 84%, #ffffff);
+  border-color: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 82%, var(--branch-color-light-accent, #9ba399));
 }
 .study-route-node.is-milestone {
   grid-template-columns: 16px minmax(0, 1fr);
@@ -2071,6 +2071,10 @@ body.study-route-node-dragging { cursor: grabbing !important; user-select: none;
   cursor: pointer;
   transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
+.study-route-color-swatch[style] {
+  background: var(--palette-swatch-light);
+  box-shadow: inset 0 0 0 1px rgba(44, 50, 44, .055);
+}
 .study-route-color-swatch:hover {
   transform: scale(1.12);
   box-shadow: 0 3px 12px rgba(26,32,26,.16);
@@ -2106,20 +2110,27 @@ body.start-page[data-start-theme="dark"] .study-color-popover {
   background: #252b27;
   border-color: rgba(235, 242, 237, .12);
 }
+body.start-page[data-start-theme="dark"] .study-route-color-swatch[style] {
+  background: var(--palette-swatch-dark);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .13);
+}
+body.start-page[data-start-theme="dark"] .study-route-color-swatch.is-active {
+  border-color: #f5f5f7;
+  box-shadow: 0 0 0 2px #1c1c1e, 0 0 0 3px rgba(245, 245, 247, .65);
+}
 
-/* 任务卡片着色：左侧色条 + 低饱和底色（深浅主题分别混合）。
-   浅色主题刻意比阶段节点更浓：底色 60% + 墨化色条，保证浅色背景上可辨。 */
+/* 任务卡片着色：浅色纸面与描边独立保留，深色采用完整彩色表面与配套前景。 */
 .study-progress-card[data-task-color],
 .study-temporary-card[data-task-color] {
-  background: color-mix(in srgb, var(--task-color) 60%, var(--surface));
-  border-color: color-mix(in srgb, var(--task-color) 68%, var(--line));
+  background: color-mix(in srgb, var(--task-color-light, var(--task-color)) 84%, var(--surface));
+  border-color: color-mix(in srgb, var(--task-color-light, var(--task-color)) 82%, var(--task-color-light-accent, var(--line)));
 }
-.study-list-row[data-task-color] { background: color-mix(in srgb, var(--task-color) 60%, transparent); }
-.study-list-row[data-task-color]:hover { background: color-mix(in srgb, var(--task-color) 70%, transparent); }
+.study-list-row[data-task-color] { background: color-mix(in srgb, var(--task-color-light, var(--task-color)) 80%, transparent); }
+.study-list-row[data-task-color]:hover { background: color-mix(in srgb, var(--task-color-light, var(--task-color)) 88%, transparent); }
 /* 悬停边框保持任务色，避免被通用 :hover 的强调色边框盖掉 */
 .study-progress-card[data-task-color]:hover,
 .study-temporary-card[data-task-color]:hover {
-  border-color: color-mix(in srgb, var(--task-color) 72%, var(--line));
+  border-color: color-mix(in srgb, var(--task-color-light, var(--task-color)) 64%, var(--task-color-light-accent, var(--line)));
 }
 .study-progress-card[data-task-color]::before,
 .study-temporary-card[data-task-color]::before {
@@ -2130,8 +2141,8 @@ body.start-page[data-start-theme="dark"] .study-color-popover {
   bottom: 14px;
   width: 5px;
   border-radius: 0 3px 3px 0;
-  background: color-mix(in srgb, var(--task-color) 55%, #3a4537);
-  opacity: .85;
+  background: color-mix(in srgb, var(--task-color-light, var(--task-color)) 34%, var(--task-color-light-accent, #3a4537));
+  opacity: .92;
 }
 .study-list-row[data-task-color]::before {
   content: '';
@@ -2141,27 +2152,51 @@ body.start-page[data-start-theme="dark"] .study-color-popover {
   bottom: 8px;
   width: 4px;
   border-radius: 0 2px 2px 0;
-  background: color-mix(in srgb, var(--task-color) 58%, #3a4537);
-  opacity: .85;
+  background: color-mix(in srgb, var(--task-color-light, var(--task-color)) 36%, var(--task-color-light-accent, #3a4537));
+  opacity: .92;
 }
 body.start-page[data-start-theme="dark"] .study-progress-card[data-task-color],
 body.start-page[data-start-theme="dark"] .study-temporary-card[data-task-color] {
-  background: color-mix(in srgb, var(--task-color) 24%, #1c1e1d);
-  border-color: color-mix(in srgb, var(--task-color) 20%, #2a302b);
+  background: var(--task-color-dark, color-mix(in srgb, var(--task-color) 46%, #141715));
+  border-color: color-mix(in srgb, var(--task-color-dark, #2a302b) 88%, #fff);
 }
-body.start-page[data-start-theme="dark"] .study-list-row[data-task-color],
+body.start-page[data-start-theme="dark"] .study-list-row[data-task-color] {
+  background: var(--task-color-dark, var(--task-color));
+}
 body.start-page[data-start-theme="dark"] .study-list-row[data-task-color]:hover {
-  background: color-mix(in srgb, var(--task-color) 18%, transparent);
+  background: color-mix(in srgb, var(--task-color-dark, var(--task-color)) 88%, var(--task-color-light, #f4f1e8));
 }
-/* 深色主题的色条保持亮色混合，不用浅色主题的墨化参数，避免暗底上发灰 */
 body.start-page[data-start-theme="dark"] .study-progress-card[data-task-color]::before,
 body.start-page[data-start-theme="dark"] .study-temporary-card[data-task-color]::before {
-  background: color-mix(in srgb, var(--task-color) 82%, #1a1f1c);
-  opacity: .75;
+  background: color-mix(in srgb, var(--task-color-dark, #1a1f1c) 34%, var(--task-color-light, var(--task-color)));
+  opacity: .90;
 }
 body.start-page[data-start-theme="dark"] .study-list-row[data-task-color]::before {
-  background: color-mix(in srgb, var(--task-color) 85%, #1a1f1c);
-  opacity: .75;
+  background: color-mix(in srgb, var(--task-color-dark, #1a1f1c) 30%, var(--task-color-light, var(--task-color)));
+  opacity: .92;
+}
+body.start-page[data-start-theme="dark"] :is(.study-progress-card, .study-temporary-card, .study-list-row)[data-task-color] {
+  --text: var(--task-color-dark-ink, #edf0ea);
+  --text-secondary: color-mix(in srgb, var(--text) 86%, var(--task-color-dark, #242a26));
+  --text-tertiary: color-mix(in srgb, var(--text) 80%, var(--task-color-dark, #242a26));
+  --surface-soft: color-mix(in srgb, var(--task-color-dark, #242a26) 76%, #fff);
+  --line: color-mix(in srgb, var(--text) 22%, transparent);
+  --line-strong: color-mix(in srgb, var(--text) 44%, transparent);
+  color: var(--text);
+}
+body.start-page[data-start-theme="dark"] :is(.study-progress-card, .study-list-row)[data-task-color] :is(.study-list-title, .study-progress-goal-label, .study-progress-value-number, .study-progress-grip:hover) {
+  color: var(--text);
+}
+body.start-page[data-start-theme="dark"] .study-list-row[data-task-color].is-done .study-list-title,
+body.start-page[data-start-theme="dark"] .study-progress-card[data-task-color].is-goal-ready :is(.study-progress-goal-label, .study-progress-value-number) {
+  color: var(--text);
+}
+body.start-page[data-start-theme="dark"] :is(.study-progress-card, .study-temporary-card)[data-task-color]:hover {
+  border-color: color-mix(in srgb, var(--task-color-dark, #2a302b) 64%, #fff);
+}
+body.start-page[data-start-theme="dark"] :is(.study-progress-card, .study-list-row)[data-task-color] :is(.study-progress-check:not(.on), .study-list-check:not(.on)) {
+  background: color-mix(in srgb, var(--task-color-dark, #242a26) 74%, #fff);
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
 }
 .study-route-progress-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .study-route-milestone-summary { margin: -2px 0 0; color: #818980; font-size: 10px; line-height: 1.55; }
@@ -2244,13 +2279,14 @@ body.start-page[data-start-theme="dark"] .study-list-row[data-task-color]::befor
 body.start-page[data-start-theme="dark"] .study-route-panel,
 body.start-page[data-start-theme="dark"] .study-route-head { color: #edf0ea; background: #1d211e; border-color: rgba(235,242,237,.10); }
 body.start-page[data-start-theme="dark"] .study-route-stage { background-color: #171b18; background-image: radial-gradient(circle, rgba(229,238,232,.12) .7px, transparent .8px); }
-body.start-page[data-start-theme="dark"] .study-route-edge { stroke: #4f5951; }
-body.start-page[data-start-theme="dark"] .study-route-edge.is-requires { stroke: #87988c; }
-body.start-page[data-start-theme="dark"] .study-route-edges marker path { fill: #87988c; }
-body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual { stroke: #87988c; }
-body.start-page[data-start-theme="dark"] .tree-page-route-panel #tree-page-visual-arrow path { fill: #87988c; }
+body.start-page[data-start-theme="dark"] .study-route-edge { stroke: #ffffff; }
+body.start-page[data-start-theme="dark"] .study-route-edge.is-requires { stroke: #ffffff; }
+body.start-page[data-start-theme="dark"] .study-route-edge.is-requires.is-secondary:not(.is-entering) { opacity: 1; }
+body.start-page[data-start-theme="dark"] .study-route-edges marker path { fill: #ffffff; }
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual { stroke: #ffffff; }
+body.start-page[data-start-theme="dark"] .tree-page-route-panel #tree-page-visual-arrow path { fill: #ffffff; }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel #tree-page-visual-remove-arrow path { fill: #ff7569; }
-body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview { stroke: #87988c; }
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview { stroke: #ffffff; }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-edge.is-visual.is-link-preview.is-removing { stroke: #ff7569; }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node[data-node-id].is-visual-link-target {
   border-color: #90aa98;
@@ -2276,16 +2312,60 @@ body.start-page[data-start-theme="dark"] .study-route-node.is-milestone > div sp
 body.start-page[data-start-theme="dark"] .study-route-milestone-dot { background: #252c27; border-color: #6f8875; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-milestone.is-complete .study-route-milestone-dot { background: #78a884; border-color: #78a884; }
 body.start-page[data-start-theme="dark"] .study-route-node.is-branch[data-branch-color] {
-  background: color-mix(in srgb, var(--branch-color) 28%, #1a1f1c);
-  border-color: color-mix(in srgb, var(--branch-color) 18%, #2a302b);
+  background: var(--branch-color-dark, color-mix(in srgb, var(--branch-color) 48%, #141715));
+  border-color: color-mix(in srgb, var(--branch-color-dark, #2a302b) 88%, #fff);
 }
 body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] {
-  background: color-mix(in srgb, var(--branch-color) 24%, #1a1f1c);
-  border-color: color-mix(in srgb, var(--branch-color) 18%, #2a302b);
+  background: var(--branch-color-dark, color-mix(in srgb, var(--branch-color) 48%, #141715));
+  border-color: color-mix(in srgb, var(--branch-color-dark, #2a302b) 88%, #fff);
+}
+body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] .study-route-task-value,
+body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] .study-route-task-value:hover,
+body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] .study-route-task-value:focus-visible {
+  color: var(--branch-color-dark-ink, #fff);
 }
 body.start-page[data-start-theme="dark"] .study-route-node.is-branch[data-branch-color]::before {
-  background: color-mix(in srgb, var(--branch-color) 58%, #1a1f1c);
-  opacity: 0.40;
+  background: color-mix(in srgb, var(--branch-color-dark, #1a1f1c) 30%, var(--branch-color-light, var(--branch-color)));
+  opacity: .88;
+}
+body.start-page[data-start-theme="dark"] .study-route-node[data-branch-color] .study-route-node-meta,
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch[data-branch-color] .study-route-branch-main > span {
+  color: color-mix(in srgb, var(--branch-color-dark-ink, #fffffa) 86%, var(--branch-color-dark, #242a26));
+}
+body.start-page[data-start-theme="dark"] .study-route-node.is-branch[data-branch-color] .study-route-node-actions button {
+  color: var(--branch-color-dark-ink, #fffffa);
+}
+body.start-page[data-start-theme="dark"] .study-route-node:is(.is-task, .is-branch)[data-branch-color] {
+  color: var(--branch-color-dark-ink, #edf0ea);
+}
+/* 明亮底色配深字时，整卡过度透明会一起损失对比。仍保留完成/阻塞的弱化层次。 */
+body.start-page[data-start-theme="dark"] .study-route-node:is(.is-task, .is-branch)[data-branch-color]:is(.is-complete, .is-blocked) {
+  --route-node-opacity: .90;
+}
+body.start-page[data-start-theme="dark"] .study-progress-card[data-task-color].is-completed {
+  opacity: .90;
+}
+body.start-page[data-start-theme="dark"] .study-route-node:is(.is-task, .is-branch)[data-branch-color] :is(.study-route-task-steps button, .study-route-node-menu, .study-route-hidden-count) {
+  color: var(--branch-color-dark-ink, #edf0ea);
+}
+body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] .study-route-task-check:not(.is-done) {
+  background: color-mix(in srgb, var(--branch-color-dark, #242a26) 74%, #fff);
+  border-color: color-mix(in srgb, var(--branch-color-dark-ink, #edf0ea) 25%, transparent);
+}
+body.start-page[data-start-theme="dark"] .study-route-node:is(.is-task, .is-branch)[data-branch-color] :is(.study-route-task-main > i, .study-route-branch-main > i, .study-progress-track) {
+  background: color-mix(in srgb, var(--branch-color-dark-ink, #edf0ea) 16%, transparent);
+}
+body.start-page[data-start-theme="dark"] .study-route-node:is(.is-task, .is-branch)[data-branch-color] :is(.study-route-task-main > i, .study-route-branch-main > i) > b {
+  background: color-mix(in srgb, var(--branch-color-dark-ink, #edf0ea) 68%, var(--branch-color-dark, #242a26));
+}
+body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] .study-progress-track,
+body.start-page[data-start-theme="dark"] .study-progress-card[data-task-color] .study-progress-track {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--branch-color-dark-ink, var(--task-color-dark-ink, #edf0ea)) 16%, transparent);
+}
+body.start-page[data-start-theme="dark"] .study-route-node.is-task[data-branch-color] .study-progress-track:not(.is-full) .study-progress-fill:not(.tree-page-task-completion-fill),
+body.start-page[data-start-theme="dark"] .study-progress-card[data-task-color] .study-progress-track:not(.is-full) .study-progress-fill {
+  --study-progress-fill-start: color-mix(in srgb, var(--branch-color-dark-ink, var(--task-color-dark-ink, #edf0ea)) 70%, var(--branch-color-dark, var(--task-color-dark, #242a26)));
+  --study-progress-fill-end: color-mix(in srgb, var(--branch-color-dark-ink, var(--task-color-dark-ink, #edf0ea)) 56%, var(--branch-color-dark, var(--task-color-dark, #242a26)));
 }
 body.start-page[data-start-theme="dark"] .study-route-color-swatch:not([style]) {
   background: repeating-linear-gradient(45deg, #2a302b, #2a302b 3px, #363c37 3px, #363c37 6px);
@@ -43761,11 +43841,12 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 
 .ledger-legend { gap: 5px; }
 .ledger-legend-chip {
+  --ledger-legend-surface: var(--ledger-legend-color-light, var(--ledger-legend-color, var(--text)));
   width: 19px;
   height: 19px;
   border: 1px solid color-mix(in srgb, var(--text) 11%, transparent);
   border-radius: 6px;
-  background: var(--ledger-legend-color, transparent);
+  background: var(--ledger-legend-surface);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 18%, transparent);
   cursor: context-menu;
   transition: transform 140ms var(--easing-soft), box-shadow 140ms var(--easing-soft);
@@ -43931,6 +44012,19 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 }
 .ledger-entry.is-draft .ledger-entry-amount { visibility: hidden; }
 .ledger-entry.is-pending { pointer-events: none; opacity: .7; }
+/* 共享色板的完整纸面；默认色和库外自定义色继续沿用原有回退。 */
+.ledger-entry[data-ledger-palette] {
+  --ledger-entry-surface: color-mix(in srgb, var(--ledger-entry-color-light) 84%, var(--surface));
+  background: var(--ledger-entry-surface);
+  border-color: color-mix(in srgb, var(--ledger-entry-color-light) 82%, var(--ledger-entry-color-light-accent));
+}
+.ledger-entry[data-ledger-palette]:hover,
+.ledger-entry[data-ledger-palette]:focus-within {
+  border-color: color-mix(in srgb, var(--ledger-entry-color-light) 64%, var(--ledger-entry-color-light-accent));
+}
+.ledger-entry[data-ledger-palette] .ledger-entry-mark {
+  background: color-mix(in srgb, var(--ledger-entry-color-light) 34%, var(--ledger-entry-color-light-accent));
+}
 .ledger-entry-detail-cue {
   flex: 0 0 22px;
   text-align: center;
@@ -44191,7 +44285,7 @@ body.canvas-dark .task-root-archive-root:focus-visible {
 @keyframes ledgerLegendUpdated {
   42% {
     transform: translateY(-1px) scale(1.12);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ledger-legend-color, var(--text)) 18%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ledger-legend-surface, var(--text)) 18%, transparent);
   }
 }
 @keyframes ledgerEntryAttention {
@@ -44217,8 +44311,33 @@ body.start-page[data-start-theme="dark"] .ledger-entry {
   --ledger-entry-surface: color-mix(in srgb, var(--ledger-entry-color, #232426) 14%, #232426);
   border-color: rgba(255, 255, 255, .075);
 }
-body.start-page[data-start-theme="dark"] .ledger-entry-income .ledger-entry-amount { color: #8fc7a9; }
-body.start-page[data-start-theme="dark"] .ledger-entry-expense .ledger-entry-amount { color: #d99a94; }
+body.start-page[data-start-theme="dark"] .ledger-entry-income .ledger-entry-amount { color: #72d8aa; }
+body.start-page[data-start-theme="dark"] .ledger-entry-expense .ledger-entry-amount { color: #f18e96; }
+body.start-page[data-start-theme="dark"] .ledger-legend-chip {
+  --ledger-legend-surface: var(--ledger-legend-color-dark, var(--ledger-legend-color, var(--text)));
+}
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette] {
+  --ledger-entry-surface: var(--ledger-entry-color-dark);
+  --text: var(--ledger-entry-color-dark-ink);
+  --text-secondary: color-mix(in srgb, var(--text) 86%, var(--ledger-entry-surface));
+  --text-tertiary: color-mix(in srgb, var(--text) 80%, var(--ledger-entry-surface));
+  color: var(--text);
+  background: var(--ledger-entry-surface);
+  border-color: color-mix(in srgb, var(--ledger-entry-color-dark) 88%, #fff);
+}
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette]:hover,
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette]:focus-within {
+  border-color: color-mix(in srgb, var(--ledger-entry-color-dark) 64%, #fff);
+}
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette] .ledger-entry-mark {
+  background: color-mix(in srgb, var(--ledger-entry-color-dark) 34%, var(--ledger-entry-color-light));
+}
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette] .ledger-entry-detail-cue {
+  color: var(--text-secondary);
+}
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette].ledger-entry-income .ledger-entry-amount { color: #187a54; }
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette].ledger-entry-expense .ledger-entry-amount { color: #bd4658; }
+body.start-page[data-start-theme="dark"] .ledger-entry[data-ledger-palette].is-pending { opacity: .90; }
 
 @media (max-width: 980px) {
   .ledger-head { align-items: flex-start; }
@@ -46416,6 +46535,18 @@ body.study-progress-dragging .study-progress-list .study-progress-card:not(.drag
   from { transform: scaleX(var(--tree-page-completion-start-scale, 0)); }
   to { transform: scaleX(1); }
 }
+.tree-page-route-panel .study-route-node.is-task.is-completion-restoring .tree-page-task-completion-fill {
+  opacity: 1;
+  animation: treePageTaskCompletionRestore 520ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes treePageTaskCompletionRestore {
+  0% { opacity: 1; transform: scaleX(1); }
+  82% { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: scaleX(var(--tree-page-completion-start-scale, 0));
+  }
+}
 
 /* —— 目标达成：真实填充条展开为持久金属材质，光雾从同一几何体自然溶入背景 —— */
 .study-progress-card.is-goal-ready .study-progress-fill::before,
@@ -47744,8 +47875,8 @@ body.start-page[data-start-theme="dark"] .study-temporary-card { border-color: r
   white-space: nowrap;
 }
 .tree-page-route-panel .study-route-node.is-root[data-branch-color] {
-  background: color-mix(in srgb, var(--branch-color) 66%, #252a25);
-  border-color: color-mix(in srgb, var(--branch-color) 72%, #252a25);
+  background: color-mix(in srgb, var(--branch-color-light-accent, var(--branch-color)) 84%, #252a25);
+  border-color: color-mix(in srgb, var(--branch-color-light-accent, var(--branch-color)) 68%, var(--branch-color-light, #252a25));
 }
 .tree-page-route-panel .study-route-node.is-root .study-route-branch-meta-row {
   margin-top: 2px;
@@ -47801,16 +47932,16 @@ body.start-page[data-start-theme="dark"] .study-temporary-card { border-color: r
   --tree-diamond-stroke: #252a25;
 }
 .tree-page-route-panel .study-route-node.is-root.tree-page-shape-diamond[data-branch-color] {
-  --tree-diamond-fill: color-mix(in srgb, var(--branch-color) 66%, #252a25);
-  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color) 72%, #252a25);
+  --tree-diamond-fill: color-mix(in srgb, var(--branch-color-light-accent, var(--branch-color)) 84%, #252a25);
+  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color-light-accent, var(--branch-color)) 68%, var(--branch-color-light, #252a25));
 }
 .tree-page-route-panel .study-route-node.is-branch.tree-page-shape-diamond[data-branch-color] {
-  --tree-diamond-fill: var(--branch-color);
-  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color) 85%, #9ba399);
+  --tree-diamond-fill: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 86%, #ffffff);
+  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 80%, var(--branch-color-light-accent, #9ba399));
 }
 .tree-page-route-panel .study-route-node.is-task.tree-page-shape-diamond[data-branch-color] {
-  --tree-diamond-fill: color-mix(in srgb, var(--branch-color) 50%, #ffffff);
-  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color) 60%, #9ba399);
+  --tree-diamond-fill: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 84%, #ffffff);
+  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 82%, var(--branch-color-light-accent, #9ba399));
 }
 .tree-page-route-panel .study-route-node.is-task.tree-page-shape-diamond {
   width: 326px;
@@ -47908,17 +48039,24 @@ body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-nod
   --tree-diamond-fill: #f0eee7;
   --tree-diamond-stroke: #f0eee7;
 }
+body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node.is-root[data-branch-color] {
+  color: #20251f;
+  background: var(--branch-color-light, var(--branch-color));
+  border-color: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 72%, var(--branch-color-light-accent, #f0eee7));
+}
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node.is-root.tree-page-shape-diamond[data-branch-color] {
-  --tree-diamond-fill: color-mix(in srgb, var(--branch-color) 58%, #f0eee7);
-  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color) 64%, #f0eee7);
+  --tree-diamond-fill: var(--branch-color-light, var(--branch-color));
+  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color-light, var(--branch-color)) 72%, var(--branch-color-light-accent, #f0eee7));
+  background: transparent;
+  border-color: transparent;
 }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node.is-branch.tree-page-shape-diamond[data-branch-color] {
-  --tree-diamond-fill: color-mix(in srgb, var(--branch-color) 28%, #1a1f1c);
-  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color) 42%, #4a514b);
+  --tree-diamond-fill: var(--branch-color-dark, color-mix(in srgb, var(--branch-color) 48%, #141715));
+  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color-dark, #4a514b) 88%, #fff);
 }
 body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-node.is-task.tree-page-shape-diamond[data-branch-color] {
-  --tree-diamond-fill: color-mix(in srgb, var(--branch-color) 24%, #1a1f1c);
-  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color) 38%, #4a514b);
+  --tree-diamond-fill: var(--branch-color-dark, color-mix(in srgb, var(--branch-color) 48%, #141715));
+  --tree-diamond-stroke: color-mix(in srgb, var(--branch-color-dark, #4a514b) 88%, #fff);
 }
 .tree-page-route-panel .study-route-node.tree-page-shape-diamond.is-visual-link-target {
   --tree-diamond-stroke: #8ea595;
@@ -47942,6 +48080,42 @@ body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-nod
 body.start-page[data-start-theme="dark"] .tree-page-route-stage {
   background-color: var(--bg);
   background-image: radial-gradient(circle, rgba(229,238,232,.12) .7px, transparent .8px);
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-rail {
+  border-color: rgba(235, 242, 237, .13);
+  background: rgba(30, 35, 31, .96);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .055);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-orb {
+  background: #f0eee7;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .28), inset 0 0 0 1px rgba(255, 255, 255, .62);
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item,
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-add {
+  color: #9aa69c;
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item:hover,
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item:focus-visible,
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-add:hover,
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-add:focus-visible {
+  color: #eef2eb;
+  background: rgba(235, 242, 237, .085);
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item.is-active,
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item.is-active:hover,
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item.is-active:focus-visible {
+  color: #222821;
+  background: transparent;
+}
+body.start-page[data-start-theme="dark"] .tree-page-route-rail .study-route-rail-item::after {
+  color: #e9eee8;
+  background: #252b27;
+  border-color: rgba(235, 242, 237, .13);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .32);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 body.start-page[data-start-theme="dark"] .tree-page-progress-panel {
   color: rgba(255,255,255,.92);
@@ -48085,6 +48259,7 @@ body.start-page[data-start-theme="dark"] .tree-page-appearance-colors {
   .tree-page-route-panel .study-route-node.is-goal-celebrating .study-progress-fill::after,
   .tree-page-route-panel .study-route-node.is-goal-breathing .study-progress-fill::before,
   .tree-page-route-panel .study-route-node.is-goal-breathing .study-progress-fill::after,
+  .tree-page-route-panel .study-route-node.is-completion-restoring .tree-page-task-completion-fill,
   .tree-page-route-panel .study-route-node.is-completion-celebrating .tree-page-task-completion-fill::before,
   .tree-page-route-panel .study-route-node.is-completion-celebrating .tree-page-task-completion-fill::after {
     animation: none !important;

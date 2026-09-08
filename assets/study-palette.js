@@ -1,21 +1,58 @@
-/* 学习页、目标树与记账页共用的 12 色粉彩色库及浮层控制器。
- * 色值、DOM、定位、焦点与出入场时序都只在这里维护；不写用户数据。 */
+/* 学习页、树状页、目标树与记账页共用的 12 色主题色库及浮层控制器。
+ * 持久化色值、主题呈现色、DOM、定位、焦点与出入场时序都只在这里维护；不写用户数据。 */
 (function () {
   'use strict';
+  // value 是已有数据的颜色标识；light / dark 仅控制显示，不改写保存值。
+  // lightAccent 独立保留浅色描边；深色使用鲜明完整色面与配套墨色文字。
+  var DARK_INK = '#172033';
   var COLORS = [
     { value: '', label: '默认' },
-    { value: '#fce2cc', label: '杏橙' },
-    { value: '#e2ece4', label: '薄荷' },
-    { value: '#e8ecf2', label: '天空' },
-    { value: '#f0dee4', label: '蔷薇' },
-    { value: '#ece2ee', label: '丁香' },
-    { value: '#f3ecd8', label: '暖金' },
-    { value: '#f2d9d6', label: '赤霞' },
-    { value: '#def0ec', label: '青瓷' },
-    { value: '#dde3f2', label: '雾蓝' },
-    { value: '#eaf0dc', label: '新绿' },
-    { value: '#f0efe9', label: '月灰' },
+    { value: '#fce2cc', label: '杏橙', light: '#fceee3', lightAccent: '#654e40', dark: '#f8af73' },
+    { value: '#e2ece4', label: '薄荷', light: '#eaf6ee', lightAccent: '#3f5b4e', dark: '#6dd7b3' },
+    { value: '#e8ecf2', label: '天空', light: '#eaf4fc', lightAccent: '#3c576b', dark: '#72c9f1' },
+    { value: '#f0dee4', label: '蔷薇', light: '#ffe3ef', lightAccent: '#654958', dark: '#f28cb3' },
+    { value: '#ece2ee', label: '丁香', light: '#f4edfa', lightAccent: '#564d6c', dark: '#b89df0' },
+    { value: '#f3ecd8', label: '暖金', light: '#fafec3', lightAccent: '#685c3e', dark: '#f6d76b' },
+    { value: '#f2d9d6', label: '赤霞', light: '#fcede9', lightAccent: '#694c48', dark: '#f89a94' },
+    { value: '#def0ec', label: '青瓷', light: '#daf5ef', lightAccent: '#3c5d5b', dark: '#64d0cf' },
+    { value: '#dde3f2', label: '雾蓝', light: '#e3e9ff', lightAccent: '#485570', dark: '#8badf5' },
+    { value: '#eaf0dc', label: '新绿', light: '#f1f7e6', lightAccent: '#515f42', dark: '#add887' },
+    { value: '#f0efe9', label: '月灰', light: '#f5f3ee', lightAccent: '#585650', dark: '#b9c2d1' },
   ];
+
+  function toneFor(value) {
+    value = String(value || '').trim().toLowerCase();
+    if (!value) return null;
+    var item = COLORS.find(function (candidate) {
+      return String(candidate.value || '').toLowerCase() === value;
+    });
+    return item ? {
+      light: item.light || item.value,
+      lightAccent: item.lightAccent || item.value,
+      dark: item.dark || item.value,
+      darkInk: DARK_INK,
+    } : null;
+  }
+
+  function applyColorTones(element, name, value) {
+    if (!element || !name) return;
+    var tone = toneFor(value);
+    var lightName = '--' + name + '-light';
+    var darkName = '--' + name + '-dark';
+    var lightAccentName = '--' + name + '-light-accent';
+    var darkInkName = '--' + name + '-dark-ink';
+    if (tone) {
+      element.style.setProperty(lightName, tone.light);
+      element.style.setProperty(darkName, tone.dark);
+      element.style.setProperty(lightAccentName, tone.lightAccent);
+      element.style.setProperty(darkInkName, tone.darkInk);
+    } else {
+      element.style.removeProperty(lightName);
+      element.style.removeProperty(darkName);
+      element.style.removeProperty(lightAccentName);
+      element.style.removeProperty(darkInkName);
+    }
+  }
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -39,9 +76,11 @@
       return '<div class="study-route-color-palette">' + COLORS.map(function (item) {
         var value = String(item.value || '').toLowerCase();
         var active = value === currentColor || (!value && !currentColor);
+        var swatchStyle = value ? ' style="--palette-swatch-light:' + (item.light || value)
+          + ';--palette-swatch-dark:' + (item.dark || value) + '"' : '';
         return '<button type="button" class="study-route-color-swatch' + (active ? ' is-active' : '') + '"'
           + ' data-color="' + escapeHtml(value) + '" aria-label="' + escapeHtml(translate(item.label)) + '"'
-          + (value ? ' style="background:' + value + '"' : '') + '></button>';
+          + swatchStyle + '></button>';
       }).join('') + '</div>';
     }
 
@@ -144,6 +183,8 @@
 
   window.RelatumStudyPalette = Object.freeze({
     COLORS: Object.freeze(COLORS.map(function (item) { return Object.freeze(item); })),
+    toneFor: toneFor,
+    applyColorTones: applyColorTones,
     createPopoverController: createPopoverController,
   });
 })();

@@ -2435,8 +2435,7 @@
     return shell;
   }
 
-  // 任务卡片着色：颜色值来自目标树同款 12 色粉彩家族（study-palette.js），
-  // 通过 --task-color 变量与 data-task-color 属性驱动 CSS 底色与左侧色条。
+  // 任务卡片着色：持久化值保持兼容，浅色纸面与深色墨彩由共享色板分别映射。
   function applyTaskColor(el, task) {
     if (!el) return;
     var color = task && task.color ? String(task.color).trim() : '';
@@ -2446,6 +2445,10 @@
     } else {
       el.style.removeProperty('--task-color');
       el.removeAttribute('data-task-color');
+    }
+    if (window.RelatumStudyPalette
+        && typeof window.RelatumStudyPalette.applyColorTones === 'function') {
+      window.RelatumStudyPalette.applyColorTones(el, 'task-color', color);
     }
   }
 

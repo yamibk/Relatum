@@ -1929,7 +1929,8 @@
     currentColor = String(currentColor || '').trim();
     var swatches = BRANCH_COLORS.map(function (item) {
       var isActive = item.value === currentColor || (!item.value && !currentColor);
-      var style = item.value ? ' style="background:' + item.value + '"' : '';
+      var style = item.value ? ' style="--palette-swatch-light:' + (item.light || item.value)
+        + ';--palette-swatch-dark:' + (item.dark || item.value) + '"' : '';
       return '<button type="button" data-route-pop="set-color" data-color="' + escapeHtml(item.value)
         + '" class="study-route-color-swatch' + (isActive ? ' is-active' : '') + '"'
         + ' aria-label="' + escapeHtml(item.label) + '"' + style + '></button>';
@@ -2409,6 +2410,7 @@
         breathing: element.classList.contains('is-goal-breathing'),
       } : { ready: false, pending: false, celebrating: false, breathing: false };
       var oldCompletionCelebrating = !!element && element.classList.contains('is-completion-celebrating');
+      var oldCompletionRestoring = !!element && element.classList.contains('is-completion-restoring');
       if (!element) {
         element = document.createElement('article');
         element.setAttribute('role', 'treeitem'); element.tabIndex = 0;
@@ -2433,6 +2435,7 @@
         + (isGoalReady && oldGoalState.celebrating ? ' is-goal-celebrating' : '')
         + (isGoalReady && oldGoalState.breathing ? ' is-goal-breathing' : '')
         + (isComplete && oldCompletionCelebrating ? ' is-completion-celebrating' : '')
+        + (!isComplete && oldCompletionRestoring ? ' is-completion-restoring' : '')
         + (placement.collapsed ? ' is-collapsed' : '')
         + (isExpansionEntrance ? ' is-expanding' : '')
         + (isNew && !isExpansionEntrance && !options.suppressEntrance && !prefersReduced
@@ -2494,14 +2497,17 @@
           transitionFill(nextFill, nextFillPercent, oldFillPercent);
         }
         var nextCheck = element.querySelector('.study-route-task-check');
-        transitionTaskCheck(nextCheck, oldCheckState);
         var nextCheckDone = !!nextCheck && nextCheck.classList.contains('is-done');
+        transitionTaskCheck(nextCheck, oldCheckState);
         if (oldCheckState && !oldCheckState.done && nextCheckDone && !prefersReduced) {
           cancelReplayClass(element, 'is-goal-breathing');
           cancelReplayClass(element, 'is-goal-celebrating');
+          cancelReplayClass(element, 'is-completion-restoring');
           replayClass(element, 'is-completion-celebrating', 1480);
         } else if (oldCheckState && oldCheckState.done && !nextCheckDone) {
           cancelReplayClass(element, 'is-completion-celebrating');
+          if (prefersReduced) cancelReplayClass(element, 'is-completion-restoring');
+          else replayClass(element, 'is-completion-restoring', 680);
         }
       }
       var routeNodeColor = placement.kind === 'root'
@@ -2517,6 +2523,11 @@
       } else if (placement.kind === 'root' || placement.kind === 'branch' || placement.kind === 'task') {
         element.style.removeProperty('--branch-color');
         delete element.dataset.branchColor;
+      }
+      if ((placement.kind === 'root' || placement.kind === 'branch' || placement.kind === 'task')
+          && window.RelatumStudyPalette
+          && typeof window.RelatumStudyPalette.applyColorTones === 'function') {
+        window.RelatumStudyPalette.applyColorTones(element, 'branch-color', routeNodeColor);
       }
       element.dataset.progress = String(Math.round(((placement.metrics || {}).progress || 0) * 100));
       if (placement.kind === 'root' && isGoalReady && !oldGoalState.ready && !isNew && !prefersReduced) {
@@ -3051,7 +3062,8 @@
     if (!element) return;
     var ghost = element.cloneNode(true);
     ghost.classList.remove('is-entering', 'is-expanding', 'is-collapsing', 'is-goal-breathing',
-      'is-goal-celebrating', 'is-completion-celebrating', 'is-drag-anchor', 'is-subtree-dragging');
+      'is-goal-celebrating', 'is-completion-celebrating', 'is-completion-restoring',
+      'is-drag-anchor', 'is-subtree-dragging');
     ghost.classList.add('is-deleting');
     ghost.removeAttribute('data-node-id');
     ghost.removeAttribute('data-task-id');
