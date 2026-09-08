@@ -2166,6 +2166,41 @@
     if (currentActions && nextActions) currentActions.replaceWith(nextActions);
     return true;
   }
+  function syncExistingBranchMarkup(element, placement) {
+    var template = document.createElement('div');
+    template.innerHTML = branchMarkup(placement);
+    var currentMain = element.querySelector('.study-route-branch-main');
+    var nextMain = template.querySelector('.study-route-branch-main');
+    if (!currentMain || !nextMain) return false;
+
+    var currentTitle = currentMain.querySelector(':scope > strong');
+    var nextTitle = nextMain.querySelector(':scope > strong');
+    if (currentTitle && nextTitle) currentTitle.textContent = nextTitle.textContent;
+
+    var currentMeta = currentMain.querySelector('.study-route-branch-meta-row');
+    var nextMeta = nextMain.querySelector('.study-route-branch-meta-row');
+    if (currentMeta && nextMeta) currentMeta.replaceWith(nextMeta);
+
+    var currentTrack = currentMain.querySelector(':scope > i');
+    var nextTrack = nextMain.querySelector(':scope > i');
+    var currentFill = currentTrack && currentTrack.querySelector('[data-route-progress-fill]');
+    var nextFill = nextTrack && nextTrack.querySelector('[data-route-progress-fill]');
+    if (currentFill && nextFill) {
+      // ＋/− 会先乐观渲染、再快速校准后端结果。阶段 fill 必须保留在 DOM 中，
+      // 否则第二次渲染会截断第一次渲染刚启动的 width transition。
+      currentFill.dataset.progressTarget = nextFill.dataset.progressTarget;
+      currentFill.style.width = nextFill.style.width;
+    } else if (currentTrack && !nextTrack) {
+      currentTrack.remove();
+    } else if (!currentTrack && nextTrack) {
+      currentMain.appendChild(nextTrack);
+    }
+
+    var currentActions = element.querySelector('.study-route-node-actions');
+    var nextActions = template.querySelector('.study-route-node-actions');
+    if (currentActions && nextActions) currentActions.replaceWith(nextActions);
+    return true;
+  }
   function milestoneMarkup(placement) {
     var milestone = placement.node.milestone || {};
     return '<span class="study-route-milestone-dot" aria-hidden="true"></span><div><strong data-user-content>'
@@ -2355,6 +2390,7 @@
       var element = nodeElements.get(placement.id), isNew = !element;
       var wasExistingTask = !!element && element.dataset.kind === 'task';
       var wasExistingRoot = !!element && element.dataset.kind === 'root';
+      var wasExistingBranch = !!element && element.dataset.kind === 'branch';
       var isComplete = !!((placement.metrics || {}).complete && placement.kind !== 'root');
       var isBlocked = !!(unlockEnforcementEnabled()
         && placement.availability && !placement.availability.available);
@@ -2418,7 +2454,9 @@
         && syncExistingTaskMarkup(element, placement);
       var rootMarkupSynced = !isNew && wasExistingRoot && placement.kind === 'root'
         && syncExistingRootMarkup(element, placement);
-      if (!taskMarkupSynced && !rootMarkupSynced) element.innerHTML = nodeMarkup(placement);
+      var branchMarkupSynced = !isNew && wasExistingBranch && placement.kind === 'branch'
+        && syncExistingBranchMarkup(element, placement);
+      if (!taskMarkupSynced && !rootMarkupSynced && !branchMarkupSynced) element.innerHTML = nodeMarkup(placement);
       if (options.expandingControlIds && options.expandingControlIds.has(placement.id)) {
         var expandingControl = element.querySelector('.study-route-collapse');
         if (expandingControl) {
@@ -2452,7 +2490,7 @@
       if (!isNew) {
         var nextFill = element.querySelector('[data-route-progress-fill]');
         var nextFillPercent = nextFill ? Number(nextFill.dataset.progressTarget || 0) : 0;
-        if (!taskMarkupSynced && !rootMarkupSynced) {
+        if (!taskMarkupSynced && !rootMarkupSynced && !branchMarkupSynced) {
           transitionFill(nextFill, nextFillPercent, oldFillPercent);
         }
         var nextCheck = element.querySelector('.study-route-task-check');

@@ -421,9 +421,15 @@ assert(tree.includes("var required = node && node.kind === 'root' ? '' : ' requi
   'scheduleTreeGoalBreath(1560)', 'function syncExistingTaskMarkup(element, placement)',
   "currentTrack.classList.toggle('is-full'", 'currentFill.style.width = nextFill.style.width',
   'tree-page-root-progress-track', 'function syncExistingRootMarkup(element, placement)',
+  'function syncExistingBranchMarkup(element, placement)', 'branchMarkupSynced',
 ].forEach((needle) => assert(tree.includes(needle), 'missing copied study progress motion: ' + needle));
 assert(!tree.includes('nextProgressShell.replaceWith(oldProgressShell)'),
   'the progress fill must never be detached and reattached during +/- updates');
+const branchProgressSyncSource = functionSource(tree, 'syncExistingBranchMarkup');
+assert(branchProgressSyncSource.includes("currentFill.dataset.progressTarget = nextFill.dataset.progressTarget")
+  && branchProgressSyncSource.includes('currentFill.style.width = nextFill.style.width')
+  && !branchProgressSyncSource.includes('currentTrack.replaceWith'),
+  'stage progress must keep its live fill node across optimistic and authoritative +/- renders');
 [
   '.tree-page-route-panel .study-route-node.is-task.is-goal-ready .study-progress-fill::before',
   '.tree-page-route-panel .study-route-node.is-task.is-goal-celebrating .study-progress-fill::after',
