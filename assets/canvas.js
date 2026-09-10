@@ -3917,6 +3917,17 @@
       const r = Number(node.radius) >= 0 ? Number(node.radius) : 10;
       return { x: x, y: y, w: s.w, h: s.h, r: r };
     }
+    function edgeEndpointRect(node, rect) {
+      if (!isEdgeAnchorNode(node)) return rect;
+      // 连接锚点的真实几何端点恒定在中心。显形时图标覆盖中心段，隐藏后多条相邻线自然连续。
+      return {
+        x: rect.x + rect.w / 2,
+        y: rect.y + rect.h / 2,
+        w: 0,
+        h: 0,
+        r: 0,
+      };
+    }
     function edgesIncidentTo(idSet) {
       ensureEdgeIndex();
       const ids = new Set();
@@ -9151,7 +9162,8 @@
       const src = findNode(edge.from);
       const tgt = findNode(edge.to);
       if (!src || !tgt) return null;
-      const sr = nodeRect(src), tr = nodeRect(tgt);
+      const sr = edgeEndpointRect(src, nodeRect(src));
+      const tr = edgeEndpointRect(tgt, nodeRect(tgt));
       const wps = Array.isArray(edge.waypoints) ? edge.waypoints : [];
       let sExit, tExit;
       if (wps.length) {
@@ -14180,7 +14192,11 @@
       const src = findNode(edge.from);
       const tgt = findNode(edge.to);
       if (!src || !tgt) return;
-      const rects = { srcRect: nodeRect(src), tgtRect: nodeRect(tgt), live: false };
+      const rects = {
+        srcRect: edgeEndpointRect(src, nodeRect(src)),
+        tgtRect: edgeEndpointRect(tgt, nodeRect(tgt)),
+        live: false,
+      };
       const bez = edgeGeom(edge, rects.srcRect, rects.tgtRect);
       refs.path.setAttribute('d', bez.d);
       refs.hit.setAttribute('d', bez.d);
@@ -14269,8 +14285,8 @@
       const srcLive = live && live.get(edge.from);
       const tgtLive = live && live.get(edge.to);
       return {
-        srcRect: srcLive ? rectFromXY(src, srcLive.x, srcLive.y) : nodeRect(src),
-        tgtRect: tgtLive ? rectFromXY(tgt, tgtLive.x, tgtLive.y) : nodeRect(tgt),
+        srcRect: edgeEndpointRect(src, srcLive ? rectFromXY(src, srcLive.x, srcLive.y) : nodeRect(src)),
+        tgtRect: edgeEndpointRect(tgt, tgtLive ? rectFromXY(tgt, tgtLive.x, tgtLive.y) : nodeRect(tgt)),
         live: !!(srcLive || tgtLive),
       };
     }
@@ -14660,8 +14676,8 @@
       if (!src || !tgt) return;
       const srcLive = liveCoords.get(edge.from);
       const tgtLive = liveCoords.get(edge.to);
-      const srcRect = srcLive ? rectFromXY(src, srcLive.x, srcLive.y) : nodeRect(src);
-      const tgtRect = tgtLive ? rectFromXY(tgt, tgtLive.x, tgtLive.y) : nodeRect(tgt);
+      const srcRect = edgeEndpointRect(src, srcLive ? rectFromXY(src, srcLive.x, srcLive.y) : nodeRect(src));
+      const tgtRect = edgeEndpointRect(tgt, tgtLive ? rectFromXY(tgt, tgtLive.x, tgtLive.y) : nodeRect(tgt));
       const bez = edgeGeom(edge, srcRect, tgtRect);
       refs.path.setAttribute('d', bez.d);
       refs.hit.setAttribute('d', bez.d);
@@ -23387,7 +23403,7 @@
     // ── Y1 轮：复制 / 全选 ──────────────────
     // Ctrl+D：复制选中节点 / 图片（贴近鼠标悬停处）；选区内两端都在的连线也一并复制；
     // 复制一次即结束——不选中副本，避免反复 Ctrl+D 连续复制。
-    function duplicateSelected() {
+    function duplicateSelected(activateAnchorTool) {
       if (readOnlyCanvas) return;
       if (!canCreate()) return;             // 图案模式不复制内容节点
       if (selectedNodeIds.size === 0) return;
@@ -23431,6 +23447,10 @@
         newIds.push(nid);
       });
       if (newIds.length === 0) return;
+      if (activateAnchorTool && drawTool === 'select'
+          && [...selectedNodeIds].some((id) => isEdgeAnchorNode(findNode(id)))) {
+        setDrawTool('edge-anchor');
+      }
       // 同时复制“目标节点 + 跟随文本框”时，让副本继续跟随副本；只复制文本框时保留原目标。
       idMap.forEach(function (newId) {
         const copy = findNode(newId);
@@ -25515,7 +25535,7 @@
       if (mod && (e.key === 'd' || e.key === 'D')) {
         if (inEditable) return;
         e.preventDefault();
-        duplicateSelected();
+        duplicateSelected(true);
         return;
       }
       // Y1 轮：Ctrl+A 全选（编辑态让浏览器全选文字）
