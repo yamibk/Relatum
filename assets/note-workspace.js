@@ -918,9 +918,18 @@
     if (readingHost) readingHost.toggleAttribute('inert', !!active);
   }
 
-  function applyDocument(data) {
+  function applyDocument(data, options) {
+    const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
+      ? editorSnapshot()
+      : null;
     clearTimeout(state.saveTimer); clearTimeout(state.retryTimer); state.editGeneration += 1;
     const documentState = typeof data.editGeneration === 'number' ? data : makeDocument(data);
+    if (preservedView) {
+      const end = documentState.content.length;
+      documentState.selectionStart = Math.max(0, Math.min(end, Number(preservedView.anchor) || 0));
+      documentState.selectionEnd = Math.max(0, Math.min(end, Number(preservedView.head) || 0));
+      documentState.scrollTop = Math.max(0, Number(preservedView.scrollTop) || 0);
+    }
     setDocumentSwitchPending(false);
     state.current = documentState; cacheDocument(documentState); state.openingPath = '';
     if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, true);
@@ -1089,7 +1098,7 @@
   async function filesFromTransfer(transfer) { const items = Array.from(transfer && transfer.items || []); const entries = items.map((item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean); if (entries.length) return (await Promise.all(entries.map((entry) => entryFiles(entry, '')))).flat(); return Array.from(transfer && transfer.files || []).map((file) => ({ path: file.name, file })); }
   async function importDataTransfer(transfer, destination) { if (state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
 
-  async function checkExternalChanges(announce) { if (!state.active) return false; const seq = ++state.externalSeq; const path = state.current && state.current.path; const generation = state.editGeneration; const revision = state.current && state.current.revision; await refreshTree(announce); if (seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation || state.saveRunning || hasPendingEdits()) return true; try { const disk = await request('/api/note?path=' + encodeURIComponent(path)); if (seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true; if (disk.revision !== revision) applyDocument(disk); return true; } catch (error) { if (seq === state.externalSeq && state.current && state.current.path === path && !hasPendingEdits() && (error.status === 404 || error.code === 'not_found')) await closeTab(path, { skipSave: true, noFocus: true }); return false; } }
+  async function checkExternalChanges(announce) { if (!state.active) return false; const seq = ++state.externalSeq; const path = state.current && state.current.path; const generation = state.editGeneration; const revision = state.current && state.current.revision; await refreshTree(announce); if (seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation || state.saveRunning || hasPendingEdits()) return true; try { const disk = await request('/api/note?path=' + encodeURIComponent(path)); if (seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true; if (disk.revision !== revision) applyDocument(disk, { preserveViewState: true }); return true; } catch (error) { if (seq === state.externalSeq && state.current && state.current.path === path && !hasPendingEdits() && (error.status === 404 || error.code === 'not_found')) await closeTab(path, { skipSave: true, noFocus: true }); return false; } }
   function initializeWorkspace() {
     if (state.initialized) return Promise.resolve(true);
     if (state.initializePromise) return state.initializePromise;
@@ -1109,7 +1118,22 @@
     return state.initializePromise;
   }
   async function preload() { return initializeWorkspace(); }
-  async function activate() { const wasInitialized = state.initialized; state.active = true; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true); root.classList.add('active'); const initialized = await initializeWorkspace(); revealColdBoot(); if (!initialized) return false; if (wasInitialized) await checkExternalChanges(false); return true; }
+  async function activate() {
+    const wasInitialized = state.initialized;
+    state.active = true;
+    if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true);
+    root.classList.add('active');
+    const initialized = await initializeWorkspace();
+    revealColdBoot();
+    if (!initialized) return false;
+    if (wasInitialized) await checkExternalChanges(false);
+    if (state.current) {
+      requestAnimationFrame(() => {
+        if (state.active && state.current) focusEditor();
+      });
+    }
+    return true;
+  }
   async function deactivate() { if (!(await flushSave())) return false; state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {

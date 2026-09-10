@@ -92,6 +92,11 @@ assert(html.includes('data-role="note-word-count"') && html.includes('data-role=
 assert(html.includes('data-role="note-font-scale"'), 'the start-page gear needs a Markdown font scale control');
 assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create the Live Preview adapter');
 assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument'), 'workspace save/load must use editor snapshots');
+const applyDocumentSource = notes.slice(notes.indexOf('function applyDocument'), notes.indexOf('function clearCurrent'));
+assert(applyDocumentSource.includes('options.preserveViewState') && applyDocumentSource.includes('editorSnapshot()'),
+  'external document refreshes must be able to carry the current editor view state');
+assert(notes.includes("applyDocument(disk, { preserveViewState: true })"),
+  'an external revision refresh must preserve the caret selection and scroll position');
 assert(notes.includes('onDocChanged: (meta) => markChanged(meta)'), 'Live Preview edits must report metadata rather than cloning the full document');
 assert(notes.includes("OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1'"), 'open Markdown tabs must survive a local restart');
 assert(notes.includes('function renderTabs()') && notes.includes('async function closeTab'), 'tabs need open, close, reorder, and switch behavior');
