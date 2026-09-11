@@ -49,7 +49,7 @@ async function freePort() {
     let source = fs.readFileSync(path.join(repo, 'assets', 'note-workspace.js'), 'utf8');
     // Expose internals only in the intercepted test response; production has no debug API.
     source = source.replace('  window.CanvasNoteWorkspace = {',
-      '  window.__noteViewTest = {state, openNote, closeAllTabs, createEntry, movePath, setViewMode, flushSave, checkExternalChanges, snapshot: editorSnapshot, editor: liveEditor, rememberViewState, persistViewStates};\n  window.CanvasNoteWorkspace = {');
+      '  window.__noteViewTest = {state, openNote, closeAllTabs, createEntry, movePath, recycleEntry, setViewMode, flushSave, checkExternalChanges, snapshot: editorSnapshot, editor: liveEditor, rememberViewState, persistViewStates};\n  window.CanvasNoteWorkspace = {');
     async function prepare(target) {
       const page = await target.newPage();
       page.on('pageerror', error => errors.push(error.message));
@@ -97,6 +97,67 @@ async function freePort() {
     assert(await renameNode.evaluate(node => node.isConnected && document.activeElement === node), 'refresh preserves rename focus');
     assert.equal(await rename.inputValue(), 'Uncommitted draft');
     await rename.press('Escape');
+
+    fs.writeFileSync(path.join(root, 'notes', 'auto-added.md'), 'Automatic external note');
+    await page.locator('.note-tree-row[data-note-path="auto-added.md"]').waitFor({ timeout: 6500 });
+    fs.unlinkSync(path.join(root, 'notes', 'auto-added.md'));
+    await page.waitForFunction(() => !document.querySelector('.note-tree-row[data-note-path="auto-added.md"]'), null, { timeout: 6500 });
+
+    fs.writeFileSync(path.join(root, 'notes', 'trash-ui.md'), 'Recycle immediately');
+    await page.evaluate(() => __noteViewTest.checkExternalChanges(false));
+    await open('trash-ui.md');
+    let releaseTrash;
+    const trashRelease = new Promise(resolve => { releaseTrash = resolve; });
+    let sawTrashRequest;
+    const trashRequested = new Promise(resolve => { sawTrashRequest = resolve; });
+    await page.route('**/api/note-trash', async route => {
+      sawTrashRequest();
+      await trashRelease;
+      fs.unlinkSync(path.join(root, 'notes', 'trash-ui.md'));
+      const tree = await (await fetch(url + '/api/notes-tree')).json();
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, path: 'trash-ui.md', tree }) });
+    });
+    await page.evaluate(() => { window.__trashPromise = __noteViewTest.recycleEntry({ kind: 'note', path: 'trash-ui.md' }); });
+    assert.equal(await page.locator('.note-tree-row[data-note-path="trash-ui.md"]').count(), 0,
+      'the Recycle Bin action removes its row before the backend responds');
+    await trashRequested;
+    releaseTrash();
+    await page.evaluate(() => window.__trashPromise);
+    await page.unroute('**/api/note-trash');
+    assert.equal(await page.evaluate(() => __noteViewTest.state.tabs.includes('trash-ui.md')), false,
+      'a confirmed Recycle Bin action removes its tab');
+
+    fs.writeFileSync(path.join(root, 'notes', 'auto-dirty.md'), 'Delete me');
+    await page.locator('.note-tree-row[data-note-path="auto-dirty.md"]').waitFor({ timeout: 6500 });
+    await open('auto-dirty.md');
+    await page.keyboard.type(' unsaved tail');
+    fs.unlinkSync(path.join(root, 'notes', 'auto-dirty.md'));
+    await page.waitForFunction(() => __noteViewTest.state.current?.path !== 'auto-dirty.md', null, { timeout: 6500 });
+    await sleep(800);
+    assert.equal(fs.existsSync(path.join(root, 'notes', 'auto-dirty.md')), false, 'an autosave must not recreate an externally deleted note');
+    assert.equal(await page.locator('[data-role="note-error"]').isHidden(), true, 'external deletion must not leave a save retry error');
+
+    await page.locator('button[data-start-workspace="canvas"]').click();
+    await page.waitForFunction(() => !__noteViewTest.state.active);
+    fs.writeFileSync(path.join(root, 'notes', 'inactive-added.md'), 'Added while inactive');
+    await sleep(2400);
+    assert.equal(await page.locator('.note-tree-row[data-note-path="inactive-added.md"]').count(), 0, 'inactive Notes must not keep polling');
+    await page.locator('button[data-start-workspace="notes"]').click();
+    await page.waitForFunction(() => __noteViewTest.state.active);
+    await page.locator('.note-tree-row[data-note-path="inactive-added.md"]').waitFor({ timeout: 3000 });
+
+    fs.mkdirSync(path.join(root, 'notes', 'auto-folder'));
+    fs.writeFileSync(path.join(root, 'notes', 'auto-folder', 'one.md'), 'One');
+    fs.writeFileSync(path.join(root, 'notes', 'auto-folder', 'two.md'), 'Two');
+    await page.locator('.note-tree-row[data-note-path="auto-folder"]').waitFor({ timeout: 6500 });
+    await open('auto-folder/one.md');
+    await open('auto-folder/two.md');
+    fs.rmSync(path.join(root, 'notes', 'auto-folder'), { recursive: true, force: true });
+    await page.waitForFunction(() => !__noteViewTest.state.tabs.some(path => path.startsWith('auto-folder/')), null, { timeout: 6500 });
+    assert.equal(await page.locator('.note-tree-row[data-note-path="auto-folder"]').count(), 0, 'external folder deletion removes the full subtree');
+    assert.equal(await page.evaluate(() => Array.from(__noteViewTest.state.documentCache.keys()).some(path => path.startsWith('auto-folder/'))), false,
+      'external folder deletion clears descendant document caches');
+
     const metadataRow = await page.locator('.note-tree-row[data-note-path="A.md"]').elementHandle();
     const stat = fs.statSync(path.join(root, 'notes', 'A.md'));
     fs.utimesSync(path.join(root, 'notes', 'A.md'), stat.atime, new Date(stat.mtimeMs + 1000));
@@ -111,7 +172,7 @@ async function freePort() {
     assert.equal(await page.locator('.note-tree-row[data-note-path="000-added.md"]').count(), 0);
     await page.route('**/api/notes-tree', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"test unavailable"}' }));
     await page.evaluate(() => __noteViewTest.checkExternalChanges(false));
-    assert.equal(await page.locator('.note-tree-row').count(), 0);
+    assert.equal(await page.locator('.note-tree-row[data-note-path="A.md"]').count(), 1, 'a transient refresh error must keep the existing tree');
     await page.unroute('**/api/notes-tree');
     await page.evaluate(() => __noteViewTest.checkExternalChanges(false));
     assert.equal(await page.locator('.note-tree-row[data-note-path="A.md"]').count(), 1, 'unchanged tree recovers after error');
@@ -219,7 +280,7 @@ async function freePort() {
       __noteViewTest.persistViewStates();
     });
     assert.deepEqual(errors, [], 'browser errors');
-    console.log('note view state browser: ok (tree DOM reuse, rename focus, metadata/structure refresh, error recovery, focus, external edits, reopen, eviction, selection, restart, moves, clamping, modes, bounded/corrupt/unavailable storage)');
+    console.log('note view state browser: ok (tree DOM reuse, optimistic recycle, automatic external sync, rename focus, metadata/structure refresh, error recovery, focus, external edits, reopen, eviction, selection, restart, moves, clamping, modes, bounded/corrupt/unavailable storage)');
     await context.close();
   } finally {
     if (browser) await browser.close();
