@@ -137,7 +137,7 @@
     '请先创建倒数日': 'Create a countdown first',
     '时': 'hr', '秒': 'sec',
     '隐藏特殊页': 'Hide utility pages',
-    '收起复习/日历/速记/活跃/树状/学习/专注，只留最近·收藏·分组': 'Hide Review, Calendar, Notes, Activity, Tree, Study, and Focus; keep Recent, Favorites, and Groups.',
+    '收起复习/日历/活跃/速记/树状/学习/专注，只留最近·收藏·分组': 'Hide Review, Calendar, Activity, Quick Notes, Tree, Study, and Focus; keep Recent, Favorites, and Groups.',
     '精简目标树编辑': 'Simplify Goal Tree editing',
     '强制按解锁顺序': 'Enforce unlock order',
     '开启后，完成前项才能勾选或推进后项': 'When enabled, finish prerequisites before completing or advancing later tasks.',
@@ -1297,8 +1297,8 @@
     if (match) return `${match[1]} selected`;
     match = source.match(/^(\d+)\s*条$/);
     if (match) return `${match[1]} selected`;
-    match = source.match(/^当前显示器可选范围：(.+)$/);
-    if (match) return `Available range on this display: ${match[1]}`;
+    match = source.match(/^当前显示器可选范围：(.+?)\s+至\s+(.+)$/);
+    if (match) return `Available range on this display: ${match[1]} to ${match[2]}`;
     match = source.match(/^将只整理已选中的\s*(\d+)\s*个节点$/);
     if (match) return `Only the ${match[1]} selected nodes will be arranged.`;
     match = source.match(/^(.+)\s*·\s*(?:预设|Preset)$/);
