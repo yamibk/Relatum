@@ -483,6 +483,53 @@
     return image && image.from === selection.from && image.to === selection.to ? image : null;
   }
 
+  function adjacentImageRange(state, backward) {
+    const selection = state.selection.main;
+    if (!selection.empty) return exactSelectedImageRange(state);
+    const head = selection.head;
+    const line = state.doc.lineAt(head);
+    const standaloneAt = (candidate) => {
+      if (!candidate) return null;
+      const parsed = parseStandaloneImage(candidate.text);
+      return parsed && !isRemoteTarget(parsed.target)
+        ? { from: candidate.from, to: candidate.to, parsed: parsed }
+        : null;
+    };
+    const current = standaloneAt(line);
+    // A block replacement has one visual object but two source boundaries.
+    // Either deletion key at either boundary should remove that object whole.
+    if (current && (head === line.from || head === line.to)) return current;
+
+    // A block image visually occupies its own line. When the caret is on the
+    // adjacent empty line, treat Backspace/Delete as an object operation too,
+    // instead of peeling one hidden Markdown delimiter off the image token.
+    if (!line.length && head === line.from) {
+      const number = line.number + (backward ? -1 : 1);
+      if (number >= 1 && number <= state.doc.lines) {
+        const neighbour = standaloneAt(state.doc.line(number));
+        if (neighbour) return neighbour;
+      }
+    }
+
+    let node = syntaxTree(state).resolveInner(clamp(head, 0, state.doc.length), backward ? -1 : 1);
+    while (node && node.name !== 'Image') node = node.parent;
+    if (node && (backward ? node.to === head : node.from === head)) {
+      const parsed = parseMarkdownImage(state.doc.sliceString(node.from, node.to));
+      if (parsed && !isRemoteTarget(parsed.target)) return { from: node.from, to: node.to, parsed: parsed };
+    }
+
+    const wiki = /!\[\[[^\]\n]+?\]\]/g;
+    let match;
+    while ((match = wiki.exec(line.text))) {
+      const from = line.from + match.index;
+      const to = from + match[0].length;
+      if (backward ? to !== head : from !== head) continue;
+      const parsed = parseStandaloneImage(match[0]);
+      if (parsed && !isRemoteTarget(parsed.target)) return { from: from, to: to, parsed: parsed };
+    }
+    return null;
+  }
+
   function applyImageDimensions(frame, parsed) {
     frame.classList.toggle('has-explicit-size', !!parsed.width);
     frame.classList.toggle('has-explicit-box', !!(parsed.width && parsed.height));
@@ -1628,6 +1675,19 @@
       host.classList.toggle('has-image-selection', !sourceMode && !!exactSelectedImageRange(view.state));
     }
 
+    function deleteImageObject(view, backward) {
+      if (sourceMode || compositionActive(view)) return false;
+      const image = adjacentImageRange(view.state, backward);
+      if (!image) return false;
+      view.dispatch({
+        changes: { from: image.from, to: image.to, insert: '' },
+        selection: EditorSelection.cursor(image.from),
+        scrollIntoView: true,
+        userEvent: backward ? 'delete.backward' : 'delete.forward',
+      });
+      return true;
+    }
+
     function livePreviewExtensions() {
       return sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin];
     }
@@ -1738,6 +1798,10 @@
         markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
         relatumCodeHighlighting || [],
         livePreviewCompartment.of(livePreviewExtensions()),
+        Prec.highest(keymap.of([
+          { key: 'Backspace', run: (view) => deleteImageObject(view, true) },
+          { key: 'Delete', run: (view) => deleteImageObject(view, false) },
+        ])),
         Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }])),
         shortcutCompartment.of(keymap.of(customKeyBindings())),
         keymap.of((Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : []).concat(
