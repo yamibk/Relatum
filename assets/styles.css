@@ -32502,12 +32502,10 @@ html.dark-semantic-ui {
   max-height: calc(100vh - 24px);
   overflow: hidden;
   resize: both;
-  border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 16px;
-  /* 去掉毛玻璃 backdrop-filter：大面积 blur(24px) 每帧重算是图谱卡顿的根因（合成器开销、
-     与节点数无关，星图无此层才丝滑）。保留半透明底 + 阴影 + 描边，依旧是干净的悬浮卡片质感。 */
-  background: rgba(251, 251, 250, var(--graph-window-alpha));
-  box-shadow: 0 22px 58px rgba(18, 20, 24, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  /* 单一纸面贯穿标题、工具和图谱；不使用 blur 或内描边，避免视觉被容器切碎。 */
+  background: rgba(255, 255, 255, var(--graph-window-alpha));
+  box-shadow: 0 22px 58px rgba(18, 20, 24, 0.20);
   animation: graph-window-in 240ms var(--easing-soft) both;
 }
 
@@ -32544,8 +32542,7 @@ html.dark-semantic-ui {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  border-bottom: 1px solid rgba(30, 31, 34, 0.10);
-  background: rgba(255, 255, 255, calc(var(--graph-window-alpha) * 0.62));
+  background: transparent;
   cursor: move;
   user-select: none;
 }
@@ -32593,10 +32590,10 @@ html.dark-semantic-ui {
   display: flex;
   align-items: center;
   gap: 9px;
-  border: 1px solid rgba(30, 31, 34, 0.075);
+  border: 0;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow: 0 1px 2px rgba(20, 22, 25, 0.035), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  background: transparent;
+  box-shadow: none;
   color: var(--text-secondary);
   font-size: 11.5px;
 }
@@ -32676,9 +32673,9 @@ html.dark-semantic-ui {
 .graph-window-close {
   appearance: none;
   height: 34px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.62);
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
@@ -32718,18 +32715,16 @@ html.dark-semantic-ui {
 
 .graph-tool-btn:hover {
   color: var(--text);
-  border-color: rgba(30, 31, 34, 0.12);
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 3px 9px rgba(20, 22, 25, 0.08);
-  transform: translateY(-1px);
+  background: rgba(30, 31, 34, 0.07);
+  box-shadow: none;
+  transform: none;
 }
 
 .graph-window-close:hover {
   color: #fff;
-  border-color: rgba(20, 21, 23, 0.92);
   background: rgba(20, 21, 23, 0.92);
-  box-shadow: 0 3px 9px rgba(20, 22, 25, 0.16);
-  transform: translateY(-1px);
+  box-shadow: none;
+  transform: none;
 }
 
 .graph-tool-btn:active,
@@ -32750,7 +32745,7 @@ html.dark-semantic-ui {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  background: rgba(251, 251, 250, calc(var(--graph-window-alpha) * 0.68));
+  background: transparent;
   touch-action: none;
 }
 
@@ -32786,9 +32781,9 @@ html.dark-semantic-ui {
   z-index: 3;
   transform: translateX(-50%);
   padding: 7px 13px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.76);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -32816,10 +32811,10 @@ html.dark-semantic-ui {
   z-index: 3;
   display: flex;
   gap: 13px;
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 7px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
   pointer-events: none;
@@ -32840,15 +32835,12 @@ html.dark-semantic-ui {
   --border-strong: rgba(255, 255, 255, 0.22);
   color-scheme: dark;
   color: var(--text);
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(22, 24, 26, var(--graph-window-alpha));
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.46),
-              inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  background: rgba(18, 20, 22, var(--graph-window-alpha));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.46);
 }
 
 .editor-page[data-background-tone="dark"] .graph-window-head {
-  border-bottom-color: rgba(255, 255, 255, 0.10);
-  background: rgba(35, 37, 39, calc(var(--graph-window-alpha) * 0.72));
+  background: transparent;
 }
 
 .editor-page[data-background-tone="dark"] .graph-window-tools {
@@ -32890,21 +32882,20 @@ html.dark-semantic-ui {
 
 .editor-page[data-background-tone="dark"] .graph-tool-btn:hover,
 .editor-page[data-background-tone="dark"] .graph-window-close:hover {
-  border-color: rgba(218, 237, 229, 0.14);
   background: rgba(224, 239, 232, 0.085);
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  box-shadow: none;
 }
 
 .editor-page[data-background-tone="dark"] .graph-stage {
-  background: rgba(15, 17, 19, calc(var(--graph-window-alpha) * 0.74));
+  background: transparent;
 }
 
 .editor-page[data-background-tone="dark"] .graph-hint,
 .editor-page[data-background-tone="dark"] .graph-legend {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(35, 37, 39, 0.82);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 }
