@@ -10,6 +10,7 @@
   const main = document.querySelector('.start-main');
   const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
   const workspaceButtons = Array.from(document.querySelectorAll('button[data-start-workspace]'));
+  const workspaceStage = document.querySelector('.start-workspace-stage');
   const loadingView = document.querySelector('[data-view="loading"]');
   const emptyView = document.querySelector('[data-view="empty"]');
   const recentView = document.querySelector('[data-view="recent"]');
@@ -308,41 +309,52 @@
     });
   }
 
-  function showWorkspacePanel(name, previous, animate) {
+  function showWorkspacePanel(name, previous, animate, previousStageTop) {
     clearTimeout(workspaceTransitionTimer);
+    document.body.classList.remove('start-workspace-turning');
     const nextPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === name);
     const previousPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === previous);
     if (!nextPanel) return;
     workspacePanels.forEach((panel) => {
+      panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      panel.style.removeProperty('--workspace-layout-shift-y');
       if (panel !== nextPanel && panel !== previousPanel) {
         panel.hidden = true;
-        panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
       }
     });
     nextPanel.hidden = false;
     nextPanel.inert = false;
     if (!animate || !previousPanel || previousPanel === nextPanel
       || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      if (previousPanel && previousPanel !== nextPanel) previousPanel.hidden = true;
-      nextPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      if (previousPanel && previousPanel !== nextPanel) {
+        previousPanel.hidden = true;
+        previousPanel.inert = false;
+      }
       if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
       return;
     }
     const forward = START_WORKSPACE_ORDER[name] > START_WORKSPACE_ORDER[previous];
     const directionClass = forward ? 'workspace-forward' : 'workspace-back';
+    if (workspaceStage && Number.isFinite(previousStageTop)) {
+      const layoutShiftY = previousStageTop - workspaceStage.getBoundingClientRect().top;
+      if (Math.abs(layoutShiftY) > 0.5) {
+        previousPanel.style.setProperty('--workspace-layout-shift-y', `${layoutShiftY}px`);
+      }
+    }
     previousPanel.hidden = false;
     previousPanel.inert = true;
     previousPanel.classList.add('workspace-leaving', directionClass);
     nextPanel.classList.add('workspace-entering', directionClass);
-    requestAnimationFrame(() => document.body.classList.add('start-workspace-turning'));
+    document.body.classList.add('start-workspace-turning');
     workspaceTransitionTimer = window.setTimeout(() => {
       previousPanel.hidden = true;
       previousPanel.inert = false;
-      previousPanel.classList.remove('workspace-leaving', directionClass);
-      nextPanel.classList.remove('workspace-entering', directionClass);
+      previousPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      nextPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
+      previousPanel.style.removeProperty('--workspace-layout-shift-y');
       document.body.classList.remove('start-workspace-turning');
       if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
-    }, Math.max(180, startTurnSpeed) + 60);
+    }, Math.max(220, startTurnSpeed) + 140);
     if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
   }
 
@@ -359,6 +371,7 @@
   async function performStartWorkspace(next, options = {}) {
     const name = Object.prototype.hasOwnProperty.call(START_WORKSPACE_ORDER, next) ? next : 'canvas';
     const previous = activeStartWorkspace;
+    const previousStageTop = workspaceStage ? workspaceStage.getBoundingClientRect().top : 0;
     if (name !== previous && previous === 'notes' && window.CanvasNoteWorkspace
       && typeof window.CanvasNoteWorkspace.deactivate === 'function') {
       const canLeave = await window.CanvasNoteWorkspace.deactivate();
@@ -367,7 +380,7 @@
     activeStartWorkspace = name;
     syncWorkspaceControls(name);
     syncStartPageActivity();
-    showWorkspacePanel(name, previous, options.animate !== false && name !== previous);
+    showWorkspacePanel(name, previous, options.animate !== false && name !== previous, previousStageTop);
     if (options.persist !== false) {
       try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
     }
