@@ -138,8 +138,16 @@ assert(live.includes('function setSourceMode(active)') && live.includes('livePre
   'source mode must reconfigure the existing CodeMirror state instead of rebuilding the document');
 assert(live.includes('function setShortcutBindings(bindings)') && live.includes('shortcutCompartment.reconfigure'),
   'custom Note shortcuts must reconfigure the existing CodeMirror surface');
+assert(notes.includes("command.id === 'strike'") && notes.includes("replaceFallbackSelection('~~', '~~', '删除线')")
+  && notes.includes("command.id === 'highlight'") && notes.includes("replaceFallbackSelection('==', '==', '高光')"),
+  'the fallback editor must support the new formatting commands');
+assert(notes.includes('NOTE_SHORTCUTS.inactiveDefaultBindings(state.shortcutBindings).includes(binding)'),
+  'the fallback editor must also consume cancelled factory bindings');
 assert(notes.includes('function setNoteSettingsOpen(open, options)') && notes.includes('function beginShortcutRecording(commandId)'),
   'Note settings must support an anchored panel and shortcut recording');
+assert(notes.includes("contextMenu.dataset.source === 'current-menu'")
+  && notes.includes("{ viewModes: true, source: 'current-menu' }"),
+  'the current-note menu trigger must close its own open menu when clicked again');
 assert(notes.includes("canvas:noteShortcuts:v1") === false && start.includes("loadScript('note-shortcuts.js'"),
   'the shortcut preference layer must load before the Note workspace adapter');
 const sourceToggle = live.slice(live.indexOf('function setSourceMode(active)'), live.indexOf('function snapshot()'));
