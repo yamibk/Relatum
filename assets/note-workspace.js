@@ -44,6 +44,12 @@
   const EXPANDED_KEY = 'canvas:noteExpandedFolders:v1';
   const LINKS_OPEN_KEY = 'canvas:noteLinksOpen:v1';
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
+  const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
+  const VIEW_STATES_LIMIT = 200;
+  const VIEW_STATES_DELAY = 750;
+  const viewStates = new Map();
+  let viewStatesTimer = 0;
+  let viewStatesDirty = false;
   const SAVE_DELAY = 350;
   const RETRY_DELAY = 2200;
   const TREE_MOTION_MS = 220;
@@ -95,7 +101,7 @@
     },
   };
   const state = {
-    active: false, initialized: false, entries: [], current: null, selectedFolder: '', selectedPath: '', expanded: new Set(), sideMode: 'links',
+    active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', expanded: new Set(), sideMode: 'links',
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, draggedPath: '', renamePath: '', renameOriginal: '',
     historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
@@ -109,13 +115,60 @@
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { if (localStorage.getItem(LINKS_OPEN_KEY) === '1') root.classList.add('links-overlay-open'); } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
+  try {
+    const stored = JSON.parse(localStorage.getItem(VIEW_STATES_KEY) || '[]');
+    if (Array.isArray(stored)) stored.slice(-VIEW_STATES_LIMIT).forEach((entry) => {
+      if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !entry[0] || !entry[1]) return;
+      const view = entry[1];
+      if (![view.anchor, view.head, view.scrollTop].every((value) => Number.isFinite(value) && value >= 0)) return;
+      viewStates.set(entry[0], { anchor: Math.floor(view.anchor), head: Math.floor(view.head), scrollTop: view.scrollTop });
+    });
+  } catch (error) {}
+
+  function persistViewStates() {
+    clearTimeout(viewStatesTimer); viewStatesTimer = 0;
+    if (!viewStatesDirty) return;
+    try {
+      localStorage.setItem(VIEW_STATES_KEY, JSON.stringify(Array.from(viewStates)));
+      viewStatesDirty = false;
+    } catch (error) {} // Position memory must never prevent editing or saving the note.
+  }
+
+  function rememberViewState(path, view) {
+    if (!path) return;
+    const normalized = {
+      anchor: Math.max(0, Math.floor(Number(view.anchor) || 0)),
+      head: Math.max(0, Math.floor(Number(view.head) || 0)),
+      scrollTop: Math.max(0, Number(view.scrollTop) || 0),
+    };
+    const previous = viewStates.get(path);
+    if (previous && previous.anchor === normalized.anchor && previous.head === normalized.head
+      && previous.scrollTop === normalized.scrollTop && Array.from(viewStates.keys()).pop() === path) return;
+    viewStates.delete(path); viewStates.set(path, normalized);
+    while (viewStates.size > VIEW_STATES_LIMIT) viewStates.delete(viewStates.keys().next().value);
+    viewStatesDirty = true;
+    if (!viewStatesTimer) viewStatesTimer = setTimeout(persistViewStates, VIEW_STATES_DELAY);
+  }
+
+  function remapViewStates(source, destination) {
+    const entries = Array.from(viewStates);
+    entries.forEach(([path]) => { if (mapPath(path, source, destination) !== path) viewStates.delete(path); });
+    entries.forEach(([path, view]) => {
+      const next = mapPath(path, source, destination);
+      if (next !== path) rememberViewState(next, view);
+    });
+    if (state.current && (state.current.path === destination || state.current.path.startsWith(destination + '/'))) {
+      rememberEditorState(state.current);
+    }
+    persistViewStates();
+  }
 
   function editorSnapshot() {
     if (state.viewMode === 'reading' && state.current) {
       return {
         value: state.current.content || '',
         anchor: state.current.selectionStart || 0,
-        head: state.current.selectionEnd || state.current.selectionStart || 0,
+        head: state.current.selectionEnd ?? state.current.selectionStart ?? 0,
         scrollTop: readingHost && readingHost.scrollTop || 0,
       };
     }
@@ -123,7 +176,7 @@
     return {
       value: fallbackEditor.value,
       anchor: fallbackEditor.selectionStart || 0,
-      head: fallbackEditor.selectionEnd || fallbackEditor.selectionStart || 0,
+      head: fallbackEditor.selectionEnd ?? fallbackEditor.selectionStart ?? 0,
       scrollTop: fallbackEditor.scrollTop || 0,
     };
   }
@@ -179,7 +232,7 @@
       value: documentState && documentState.content || '',
       notePath: documentState && documentState.path || '',
       anchor: documentState && documentState.selectionStart || 0,
-      head: documentState && (documentState.selectionEnd || documentState.selectionStart) || 0,
+      head: documentState ? (documentState.selectionEnd ?? documentState.selectionStart ?? 0) : 0,
       scrollTop: documentState && documentState.scrollTop || 0,
     };
     if (state.titleScrollFrame) {
@@ -239,7 +292,7 @@
       value: target && target.content || '',
       notePath: target && target.path || '',
       anchor: target && target.selectionStart || 0,
-      head: target && (target.selectionEnd || target.selectionStart) || 0,
+      head: target ? (target.selectionEnd ?? target.selectionStart ?? 0) : 0,
       scrollTop: target && target.scrollTop || 0,
     };
   }
@@ -432,6 +485,15 @@
     return changed;
   }
   function flattenEntries(entries, output) { (entries || []).forEach((entry) => { output.push(entry); if (entry.kind === 'folder') flattenEntries(entry.children, output); }); return output; }
+  function sameTreeStructure(previous, next) {
+    if (previous.length !== next.length) return false;
+    for (let index = 0; index < previous.length; index += 1) {
+      const left = previous[index]; const right = next[index];
+      if (left.path !== right.path || left.name !== right.name || left.kind !== right.kind) return false;
+      if (left.kind === 'folder' && !sameTreeStructure(left.children || [], right.children || [])) return false;
+    }
+    return true;
+  }
   function folderPaths() { return flattenEntries(state.entries, []).filter((entry) => entry.kind === 'folder').map((entry) => entry.path); }
   function updateExpandAllButton() {
     if (!expandAllButton) return;
@@ -501,8 +563,9 @@
     const snapshot = editorSnapshot();
     documentState.content = snapshot.value;
     documentState.selectionStart = snapshot.anchor || 0;
-    documentState.selectionEnd = snapshot.head || snapshot.anchor || 0;
+    documentState.selectionEnd = snapshot.head ?? snapshot.anchor ?? 0;
     documentState.scrollTop = snapshot.scrollTop || 0;
+    rememberViewState(documentState.path, snapshot);
     if (documentState.countedGeneration !== documentState.editGeneration) {
       documentState.wordCount = wordCount(snapshot.value);
       documentState.countedGeneration = documentState.editGeneration;
@@ -866,12 +929,17 @@
     renderLevel(state.entries, 0, fragment);
     if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-tree-empty'; message.textContent = tr('emptyTree'); fragment.appendChild(message); }
     treeEl.replaceChildren(fragment); updateTreeSelection(); updateExpandAllButton();
+    state.treeRendered = true;
   }
   async function refreshTree(announce) {
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
     try {
       const result = await request('/api/notes-tree'); if (seq !== state.refreshSeq) return false;
-      state.entries = Array.isArray(result.entries) ? result.entries : [];
+      const entries = Array.isArray(result.entries) ? result.entries : [];
+      const treeChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
+      // Always refresh metadata for cache validation; unchanged rows retain focus,
+      // inline rename drafts and any folder transition already in progress.
+      state.entries = entries;
       const flat = flattenEntries(state.entries, []); rebuildEntryIndex();
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
       state.tabs = state.tabs.filter((path) => isBlankTab(path) || !!findEntry(path) || !!(state.current && state.current.path === path));
@@ -881,9 +949,10 @@
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
       if (state.selectedPath && !flat.some((entry) => entry.path === state.selectedPath)) state.selectedPath = '';
-      renderTree(); scheduleDocumentPrefetch(); if (announce) showToast(tr('refreshed')); return true;
+      if (treeChanged) renderTree();
+      scheduleDocumentPrefetch(); if (announce) showToast(tr('refreshed')); return true;
     }
-    catch (error) { if (seq === state.refreshSeq) treeEl.textContent = error.message || tr('readFailed'); showToast(error.message || tr('readFailed'), 'error'); return false; }
+    catch (error) { if (seq === state.refreshSeq) { state.treeRendered = false; treeEl.textContent = error.message || tr('readFailed'); } showToast(error.message || tr('readFailed'), 'error'); return false; }
   }
 
   function renderLinks() {
@@ -921,7 +990,7 @@
   function applyDocument(data, options) {
     const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
       ? editorSnapshot()
-      : null;
+      : viewStates.get(data.path);
     clearTimeout(state.saveTimer); clearTimeout(state.retryTimer); state.editGeneration += 1;
     const documentState = typeof data.editGeneration === 'number' ? data : makeDocument(data);
     if (preservedView) {
@@ -930,6 +999,9 @@
       documentState.selectionEnd = Math.max(0, Math.min(end, Number(preservedView.head) || 0));
       documentState.scrollTop = Math.max(0, Number(preservedView.scrollTop) || 0);
     }
+    rememberViewState(documentState.path, {
+      anchor: documentState.selectionStart, head: documentState.selectionEnd, scrollTop: documentState.scrollTop,
+    });
     setDocumentSwitchPending(false);
     state.current = documentState; cacheDocument(documentState); state.openingPath = '';
     if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, true);
@@ -1018,6 +1090,8 @@
         state.selectedFolder = parentPath(result.path);
         expandTreePath(result.path, false);
         renderTree();
+        // A newly created file may reuse a deleted note's name, but not its position.
+        if (viewStates.delete(result.path)) viewStatesDirty = true;
         if (typeof result.content === 'string') applyDocument(result);
         else await openNote(result.path, { skipSave: true, force: true });
         if (!(options && options.noFocus)) requestAnimationFrame(() => hasExplicitName ? focusEditor() : focusInlineTitle());
@@ -1050,7 +1124,7 @@
       renderTabs(); renderTree();
     };
     if (!(await flushPromise)) { rollback(); state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false; }
-    try { const result = await post('/api/note-move', { path: source, destination }); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); refreshTree(false); return true; }
+    try { const result = await post('/api/note-move', { path: source, destination }); remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); refreshTree(false); return true; }
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
   }
   function moveEntry(source, folder) { const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
@@ -1134,7 +1208,7 @@
     }
     return true;
   }
-  async function deactivate() { if (!(await flushSave())) return false; state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { if (!(await flushSave())) return false; persistViewStates(); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {
     const action = event.target.closest('[data-note-action]');
@@ -1210,11 +1284,18 @@
     else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); beginInlineRename(state.selectedPath || state.current.path); }
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });
-  window.addEventListener('blur', () => { if (state.active) flushSave(); });
+  function flushWorkspaceState() {
+    const save = state.active ? flushSave() : Promise.resolve(true);
+    persistViewStates();
+    return save;
+  }
+  window.addEventListener('blur', flushWorkspaceState);
   window.addEventListener('focus', () => { if (state.active) checkExternalChanges(false); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && state.active) flushSave(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushWorkspaceState(); });
+  window.addEventListener('pagehide', flushWorkspaceState);
+  window.addEventListener('beforeunload', flushWorkspaceState);
   document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
-  if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(() => state.active ? flushSave() : true);
+  if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: checkExternalChanges, get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

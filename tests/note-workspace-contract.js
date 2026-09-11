@@ -34,7 +34,7 @@ assert(start.includes('prefers-reduced-motion'), 'workspace transitions need red
 assert(html.includes("classList.add('note-boot-pending')"), 'a Notes cold boot must hide the static empty state before first paint');
 assert(html.includes('noteRevealTimer') && html.includes('}, 4000);'), 'the Notes cold-boot reveal gate needs a finite fallback');
 assert(notes.includes('function revealColdBoot()'), 'Notes must reveal only after its tree and current document initialize');
-assert(notes.includes('const initialized = await initializeWorkspace(); revealColdBoot();'), 'the cold-boot gate must cover both the tree and active document read');
+assert(/const initialized = await initializeWorkspace\(\);\s*revealColdBoot\(\);/.test(notes), 'the cold-boot gate must cover both the tree and active document read');
 assert(start.includes("if (name !== 'notes')"), 'leaving Notes during boot must cancel the reveal gate');
 
 for (const endpoint of [
