@@ -9298,6 +9298,10 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 }
 
 .spine-active-orb {
+  /* 局部固定为翻页速度 500ms 时的节奏（500 × 0.92），不影响其他游标。 */
+  --start-orb-ms: 460ms;
+  --start-orb-shape-ms: 460ms;
+  --start-orb-clip-ms: 460ms;
   position: absolute;
   left: 0;
   top: 0;
