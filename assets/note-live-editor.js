@@ -72,40 +72,17 @@
     return target;
   }
 
-  function closingBracket(text, start, open, close) {
-    let depth = 0;
-    for (let index = start; index < text.length; index += 1) {
-      if (text[index] === '\\') { index += 1; continue; }
-      if (text[index] === open) depth += 1;
-      else if (text[index] === close) {
-        depth -= 1;
-        if (!depth) return index;
-      }
-    }
-    return -1;
-  }
-
   function parseMarkdownImage(text) {
-    const source = String(text || '');
-    const leading = /^\s*/.exec(source)[0].length;
-    if (source.slice(leading, leading + 2) !== '![') return null;
-    const labelEnd = closingBracket(source, leading + 1, '[', ']');
-    if (labelEnd < 0 || source[labelEnd + 1] !== '(') return null;
-    const targetEnd = closingBracket(source, labelEnd + 1, '(', ')');
-    if (targetEnd < 0 || source.slice(targetEnd + 1).trim()) return null;
-    const rawTarget = source.slice(labelEnd + 2, targetEnd).trim();
-    return {
-      alt: source.slice(leading + 2, labelEnd).replace(/\\([\\\[\]])/g, '$1').trim(),
-      target: normalizedImageTarget(rawTarget),
-    };
+    const markdownMini = window.MarkdownMini;
+    const parsed = markdownMini && typeof markdownMini.parseImage === 'function'
+      ? markdownMini.parseImage(text) : null;
+    return parsed && parsed.syntax === 'markdown' ? parsed : null;
   }
 
   function parseStandaloneImage(text) {
-    const markdown = parseMarkdownImage(text);
-    if (markdown) return markdown;
-    const match = /^\s*!\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]\s*$/.exec(text);
-    if (match) return { alt: (match[2] || '').trim(), target: match[1].trim() };
-    return null;
+    const markdownMini = window.MarkdownMini;
+    return markdownMini && typeof markdownMini.parseImage === 'function'
+      ? markdownMini.parseImage(text) : null;
   }
 
   function fenceStart(text) {
@@ -218,7 +195,10 @@
           if (node.to <= line.to && !doc.sliceString(line.from, node.from).trim() && !doc.sliceString(node.to, line.to).trim()) {
             const image = parseStandaloneImage(line.text);
             if (image && image.target && !isRemoteTarget(image.target) && line.length <= MAX_RICH_LINE) {
-              push({ from: line.from, to: line.to, kind: 'image', source: line.text, target: image.target, alt: image.alt });
+              push({
+                from: line.from, to: line.to, kind: 'image', source: line.text,
+                target: image.target, alt: image.alt, width: image.width, height: image.height,
+              });
             }
           }
           return false;
@@ -242,6 +222,16 @@
       const protectedBlock = protectedBlocks.find((range) => range.from <= line.from && range.to >= line.to);
       if (protectedBlock) { number = doc.lineAt(protectedBlock.to).number + 1; continue; }
       if (line.length > MAX_RICH_LINE) { number += 1; continue; }
+      const standaloneImage = parseStandaloneImage(line.text);
+      if (standaloneImage && standaloneImage.target && !isRemoteTarget(standaloneImage.target)) {
+        push({
+          from: line.from, to: line.to, kind: 'image', source: line.text,
+          target: standaloneImage.target, alt: standaloneImage.alt,
+          width: standaloneImage.width, height: standaloneImage.height,
+        });
+        number += 1;
+        continue;
+      }
       const singleLine = sameLineBlockMath(line.text);
       if (singleLine) {
         const protectedSource = protectedBlocks.some((range) => range.from < line.to && range.to > line.from);
@@ -442,21 +432,219 @@
     destroy() { this.token = null; }
   }
 
-  class InlineImageWidget extends WidgetType {
-    constructor(target, alt, notePath, options) { super(); this.target = target; this.alt = alt; this.notePath = notePath; this.options = options; }
-    eq(other) { return other.target === this.target && other.notePath === this.notePath && other.alt === this.alt; }
-    toDOM(view) {
-      const wrap = document.createElement('span');
-      wrap.className = 'note-live-inline-image';
-      const image = document.createElement('img');
-      image.alt = this.alt || this.target.split('/').pop() || '';
-      image.loading = 'lazy'; image.decoding = 'async';
-      image.src = this.options.imageUrl(this.notePath, this.target);
-      image.addEventListener('load', () => { if (wrap.isConnected) view.requestMeasure(); }, { once: true });
-      image.addEventListener('error', () => { if (wrap.isConnected) { wrap.classList.add('is-failed'); wrap.title = '图片无法加载'; } }, { once: true });
-      wrap.appendChild(image);
-      return wrap;
+  function imageSelectionMatches(viewOrState, from, to) {
+    const state = viewOrState && viewOrState.state ? viewOrState.state : viewOrState;
+    const range = state.selection.main;
+    return !range.empty && range.from === from && range.to === to;
+  }
+
+  function currentImageRange(view, from, to) {
+    if (from < 0 || to <= from || to > view.state.doc.length) return null;
+    const source = view.state.doc.sliceString(from, to);
+    const parsed = parseStandaloneImage(source);
+    return parsed ? { from: from, to: to, parsed: parsed } : null;
+  }
+
+  function imageRangeForLiveMode(state) {
+    const selection = state.selection.main;
+    const accepts = (from, to) => selection.empty
+      ? selection.head > from && selection.head < to
+      : selection.from < to && selection.to > from;
+    const line = state.doc.lineAt(selection.head);
+    const standalone = parseStandaloneImage(line.text);
+    if (standalone && !isRemoteTarget(standalone.target) && accepts(line.from, line.to)) {
+      return { from: line.from, to: line.to };
     }
+
+    const tree = syntaxTree(state);
+    for (const side of [1, -1]) {
+      let node = tree.resolveInner(clamp(selection.head, 0, state.doc.length), side);
+      while (node && node.name !== 'Image') node = node.parent;
+      if (!node || !accepts(node.from, node.to)) continue;
+      const parsed = parseMarkdownImage(state.doc.sliceString(node.from, node.to));
+      if (parsed && !isRemoteTarget(parsed.target)) return { from: node.from, to: node.to };
+    }
+
+    const wiki = /!\[\[[^\]\n]+?\]\]/g;
+    let match;
+    while ((match = wiki.exec(line.text))) {
+      const from = line.from + match.index;
+      const to = from + match[0].length;
+      const parsed = parseStandaloneImage(match[0]);
+      if (parsed && !isRemoteTarget(parsed.target) && accepts(from, to)) return { from: from, to: to };
+    }
+    return null;
+  }
+
+  function exactSelectedImageRange(state) {
+    const selection = state.selection.main;
+    if (selection.empty) return null;
+    const image = imageRangeForLiveMode(state);
+    return image && image.from === selection.from && image.to === selection.to ? image : null;
+  }
+
+  function applyImageDimensions(frame, parsed) {
+    frame.classList.toggle('has-explicit-size', !!parsed.width);
+    frame.classList.toggle('has-explicit-box', !!(parsed.width && parsed.height));
+    if (!parsed.width) return;
+    frame.style.width = 'min(100%,' + parsed.width + 'px)';
+    if (parsed.height) frame.style.aspectRatio = parsed.width + ' / ' + parsed.height;
+  }
+
+  function createInteractiveImage(owner, view, parsed, notePath, options, resolveRange, block) {
+    const initial = resolveRange();
+    const frame = document.createElement('span');
+    frame.className = 'note-live-image-frame ' + (block ? 'is-block' : 'is-inline');
+    frame.setAttribute('role', 'img');
+    frame.setAttribute('aria-label', parsed.alt || parsed.target.split('/').pop() || '图片');
+    applyImageDimensions(frame, parsed);
+    if (initial && imageSelectionMatches(view, initial.from, initial.to)) frame.classList.add('is-selected');
+
+    const image = document.createElement('img');
+    image.alt = parsed.alt || parsed.target.split('/').pop() || '';
+    image.loading = 'lazy'; image.decoding = 'async';
+    image.src = options.imageUrl(notePath, parsed.target);
+    image.addEventListener('load', () => { if (frame.isConnected) view.requestMeasure(); }, { once: true });
+    image.addEventListener('error', () => {
+      if (!frame.isConnected) return;
+      frame.classList.add('is-failed');
+      frame.dataset.errorLabel = '图片无法加载 · ' + image.alt;
+    }, { once: true });
+    frame.appendChild(image);
+
+    const select = (event) => {
+      if (event) { event.preventDefault(); event.stopPropagation(); }
+      const current = resolveRange();
+      if (!current) return;
+      view.dispatch({ selection: EditorSelection.range(current.from, current.to), scrollIntoView: true });
+      view.focus();
+    };
+    frame.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('.note-live-image-resize-handle')) return;
+      select(event);
+    });
+
+    let cleanupResize = null;
+    if (frame.classList.contains('is-selected')) {
+      const handle = document.createElement('span');
+      handle.className = 'note-live-image-resize-handle';
+      handle.setAttribute('role', 'separator');
+      handle.setAttribute('aria-label', '等比例调整图片大小');
+      frame.appendChild(handle);
+      handle.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation();
+        const start = resolveRange();
+        if (!start) return;
+        const startRect = frame.getBoundingClientRect();
+        const line = frame.closest('.cm-line');
+        const contentRect = (line || view.contentDOM).getBoundingClientRect();
+        const startWidth = startRect.width;
+        const maxWidth = Math.max(48, contentRect.right - startRect.left);
+        let previewWidth = Math.round(startWidth);
+        let finished = false;
+        frame.classList.add('is-resizing');
+        try { handle.setPointerCapture(event.pointerId); } catch (captureError) {}
+
+        const preview = (clientX) => {
+          previewWidth = Math.round(clamp(startWidth + clientX - event.clientX, 48, maxWidth));
+          frame.classList.remove('has-explicit-box');
+          frame.style.aspectRatio = '';
+          frame.style.width = previewWidth + 'px';
+          frame.style.maxWidth = '100%';
+          view.requestMeasure();
+        };
+        const removeListeners = () => {
+          handle.removeEventListener('pointermove', onMove);
+          handle.removeEventListener('pointerup', onUp);
+          handle.removeEventListener('pointercancel', onCancel);
+          document.removeEventListener('keydown', onKeyDown, true);
+          try {
+            if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+          } catch (captureError) {}
+          cleanupResize = null;
+        };
+        const cancel = () => {
+          if (finished) return;
+          finished = true;
+          removeListeners();
+          frame.classList.remove('is-resizing');
+          frame.style.width = '';
+          frame.style.maxWidth = '';
+          frame.style.aspectRatio = '';
+          applyImageDimensions(frame, start.parsed);
+          view.requestMeasure();
+        };
+        const commit = () => {
+          if (finished) return;
+          finished = true;
+          removeListeners();
+          const current = resolveRange();
+          const markdownMini = window.MarkdownMini;
+          if (!current || !markdownMini || typeof markdownMini.serializeImage !== 'function') {
+            finished = false; cancel(); return;
+          }
+          const replacement = markdownMini.serializeImage(current.parsed, { width: previewWidth });
+          if (!replacement || replacement === current.parsed.source) {
+            frame.classList.remove('is-resizing');
+            frame.style.width = '';
+            frame.style.maxWidth = '';
+            frame.style.aspectRatio = '';
+            applyImageDimensions(frame, current.parsed);
+            view.requestMeasure();
+            return;
+          }
+          view.dispatch({
+            changes: { from: current.from, to: current.to, insert: replacement },
+            selection: EditorSelection.range(current.from, current.from + replacement.length),
+            scrollIntoView: true,
+            userEvent: 'input',
+          });
+          view.focus();
+        };
+        const onMove = (moveEvent) => {
+          if (moveEvent.pointerId !== event.pointerId) return;
+          moveEvent.preventDefault();
+          preview(moveEvent.clientX);
+        };
+        const onUp = (upEvent) => {
+          if (upEvent.pointerId !== event.pointerId) return;
+          upEvent.preventDefault();
+          commit();
+        };
+        const onCancel = (cancelEvent) => {
+          if (cancelEvent.pointerId === event.pointerId) cancel();
+        };
+        const onKeyDown = (keyEvent) => {
+          if (keyEvent.key !== 'Escape') return;
+          keyEvent.preventDefault(); keyEvent.stopPropagation(); cancel();
+        };
+        cleanupResize = cancel;
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onCancel);
+        document.addEventListener('keydown', onKeyDown, true);
+      });
+    }
+    owner.imageCleanup = () => { if (cleanupResize) cleanupResize(); };
+    return frame;
+  }
+
+  class InlineImageWidget extends WidgetType {
+    constructor(parsed, from, to, selected, notePath, options) {
+      super(); this.parsed = parsed; this.from = from; this.to = to; this.selected = selected;
+      this.notePath = notePath; this.options = options; this.imageCleanup = null;
+    }
+    eq(other) {
+      return other.from === this.from && other.to === this.to && other.selected === this.selected
+        && other.parsed.source === this.parsed.source && other.notePath === this.notePath;
+    }
+    toDOM(view) {
+      return createInteractiveImage(this, view, this.parsed, this.notePath, this.options,
+        () => currentImageRange(view, this.from, this.to), false);
+    }
+    destroy() { if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; }
+    ignoreEvent() { return false; }
   }
 
   function safeIsolatedResult(source) {
@@ -506,13 +694,13 @@
   }
 
   class RichBlockWidget extends WidgetType {
-    constructor(spec, notePath, options, coordinator) {
+    constructor(spec, notePath, options, coordinator, selected) {
       super(); this.spec = spec; this.notePath = notePath; this.options = options; this.coordinator = coordinator;
-      this.epoch = coordinator.epoch; this.token = null;
+      this.epoch = coordinator.epoch; this.token = null; this.selected = !!selected; this.imageCleanup = null;
     }
     eq(other) {
       return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
-        && other.notePath === this.notePath && other.epoch === this.epoch;
+        && other.notePath === this.notePath && other.epoch === this.epoch && other.selected === this.selected;
     }
     isCurrent(view, wrap, token) {
       if (this.token !== token || !wrap.isConnected || this.coordinator.epoch !== this.epoch) return false;
@@ -530,22 +718,22 @@
     toDOM(view) {
       const wrap = document.createElement('div');
       wrap.className = 'note-live-rich-block is-' + this.spec.kind;
-      wrap.tabIndex = 0;
-      wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
-      wrap.addEventListener('click', (event) => this.reveal(view, event));
-      wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
       const token = {};
       this.token = token;
 
       if (this.spec.kind === 'image') {
-        const image = document.createElement('img');
-        image.alt = this.spec.alt || this.spec.target.split('/').pop() || '';
-        image.loading = 'lazy'; image.decoding = 'async';
-        image.src = this.options.imageUrl(this.notePath, this.spec.target);
-        image.addEventListener('load', () => { if (this.isCurrent(view, wrap, token)) view.requestMeasure(); }, { once: true });
-        image.addEventListener('error', () => { wrap.classList.add('is-failed'); wrap.textContent = '图片无法加载 · ' + image.alt; }, { once: true });
-        wrap.appendChild(image);
+        const parsed = parseStandaloneImage(this.spec.source);
+        if (parsed) {
+          wrap.appendChild(createInteractiveImage(this, view, parsed, this.notePath, this.options, () => {
+            const current = this.coordinator.spec(view, this.spec.id);
+            return current ? currentImageRange(view, current.from, current.to) : null;
+          }, true));
+        }
       } else if (this.spec.kind === 'math') {
+        wrap.tabIndex = 0;
+        wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
+        wrap.addEventListener('click', (event) => this.reveal(view, event));
+        wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         wrap.classList.add('md-math-block');
         wrap.textContent = this.spec.source;
         ensureMathJax().then((math) => {
@@ -553,8 +741,16 @@
           return math.typesetPromise([wrap]).then(() => { if (this.isCurrent(view, wrap, token)) view.requestMeasure(); });
         }).catch(() => wrap.classList.add('is-failed'));
       } else if (this.spec.kind === 'rule') {
+        wrap.tabIndex = 0;
+        wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
+        wrap.addEventListener('click', (event) => this.reveal(view, event));
+        wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         wrap.appendChild(document.createElement('hr')).className = 'md-hr';
       } else {
+        wrap.tabIndex = 0;
+        wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
+        wrap.addEventListener('click', (event) => this.reveal(view, event));
+        wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         const result = safeIsolatedResult(this.spec.source);
         wrap.innerHTML = result.html;
         wrap.querySelectorAll('[data-note-image]').forEach((image) => {
@@ -580,7 +776,7 @@
       }
       return wrap;
     }
-    destroy() { this.token = null; }
+    destroy() { this.token = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; }
     ignoreEvent() { return false; }
   }
 
@@ -706,11 +902,23 @@
     return active;
   }
 
+  function selectedBlockImageIds(specs, state) {
+    const selected = new Set();
+    specs.forEach((spec) => {
+      if (spec.kind === 'image' && imageSelectionMatches(state, spec.from, spec.to)) selected.add(spec.id);
+    });
+    return selected;
+  }
+
   function usesBlockReplacement(spec) {
     // Callouts deliberately remain CodeMirror-owned lines. Replacing the whole
     // block makes the source range collapse into a widget boundary, so clicks on
     // the neighbouring visual lines can resolve inside the Callout instead.
     return spec && spec.kind !== 'callout';
+  }
+
+  function blockIsProjected(spec, activeIds) {
+    return usesBlockReplacement(spec) && (spec.kind === 'image' || !activeIds.has(spec.id));
   }
 
   function createBlockField(notePath, options, coordinator) {
@@ -720,10 +928,13 @@
         const parsedTo = typeof tree.length === 'number' ? Math.min(state.doc.length, tree.length) : state.doc.length;
         const specs = scanBlockSpecs(state, 0, parsedTo);
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
+        const selectedImageIds = selectedBlockImageIds(specs, state);
         const decorations = Decoration.set(specs.filter(usesBlockReplacement).map((spec) => Decoration.replace({
-          widget: new RichBlockWidget(spec, notePath(), options, coordinator), block: true, inclusive: false, blockId: spec.id,
+          widget: new RichBlockWidget(spec, notePath(), options, coordinator,
+            selectedImageIds.has(spec.id)),
+          block: true, inclusive: false, blockId: spec.id,
         }).range(spec.from, spec.to)), true);
-        return { specs, byId, activeIds: new Set(), focused: false, composing: false, decorations };
+        return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, composing: false, decorations };
       },
       update(value, transaction) {
         let focused = value.focused;
@@ -740,6 +951,7 @@
           })) : value.specs;
           return Object.assign({}, value, {
             specs, byId: transaction.docChanged ? new Map(specs.map((spec) => [spec.id, spec])) : value.byId,
+            selectedImageIds: value.selectedImageIds,
             focused, composing,
             decorations: transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations,
           });
@@ -761,6 +973,7 @@
 
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, composing);
+        const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const refresh = new Set();
         value.byId.forEach((old, id) => {
           const current = byId.get(id);
@@ -769,6 +982,8 @@
         byId.forEach((current, id) => { if (!value.byId.has(id)) refresh.add(id); });
         value.activeIds.forEach((id) => { if (!activeIds.has(id)) refresh.add(id); });
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
+        value.selectedImageIds.forEach((id) => { if (!selectedImageIds.has(id)) refresh.add(id); });
+        selectedImageIds.forEach((id) => { if (!value.selectedImageIds.has(id)) refresh.add(id); });
         // Mapped widgets still carry the pre-composition source positions.
         // Refresh them once after commit, including unchanged blocks below it.
         if (notePathChanged || value.composing) specs.forEach((spec) => refresh.add(spec.id));
@@ -777,13 +992,15 @@
         if (refresh.size) {
           decorations = decorations.update({
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
-            add: specs.filter((spec) => usesBlockReplacement(spec) && refresh.has(spec.id) && !activeIds.has(spec.id)).map((spec) => Decoration.replace({
-              widget: new RichBlockWidget(spec, notePath(), options, coordinator), block: true, inclusive: false, blockId: spec.id,
+            add: specs.filter((spec) => blockIsProjected(spec, activeIds) && refresh.has(spec.id)).map((spec) => Decoration.replace({
+              widget: new RichBlockWidget(spec, notePath(), options, coordinator,
+                selectedImageIds.has(spec.id)),
+              block: true, inclusive: false, blockId: spec.id,
             }).range(spec.from, spec.to)),
             sort: true,
           });
         }
-        return { specs, byId, activeIds, focused, composing, decorations };
+        return { specs, byId, activeIds, selectedImageIds, focused, composing, decorations };
       },
       provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
     });
@@ -888,8 +1105,8 @@
     const replace = (from, to) => { if (to > from) add(from, to, Decoration.replace({ inclusive: false })); };
     const mark = (from, to, name) => { if (to > from) add(from, to, Decoration.mark({ class: name })); };
     const lineClass = (position, name) => add(position, position, Decoration.line({ class: name }));
-    const inactiveBlockAt = (from, to) => blockSpecs.some((spec) => usesBlockReplacement(spec) && !blockValue.activeIds.has(spec.id) && spec.from < to && spec.to > from);
-    const inactiveBlockContains = (from, to) => blockSpecs.some((spec) => usesBlockReplacement(spec) && !blockValue.activeIds.has(spec.id) && spec.from <= from && spec.to >= to);
+    const inactiveBlockAt = (from, to) => blockSpecs.some((spec) => blockIsProjected(spec, blockValue.activeIds) && spec.from < to && spec.to > from);
+    const inactiveBlockContains = (from, to) => blockSpecs.some((spec) => blockIsProjected(spec, blockValue.activeIds) && spec.from <= from && spec.to >= to);
     const sourceMark = (from, to, unitFrom, unitTo, role) => {
       if (constructActive(view, unitFrom, unitTo)) mark(from, to, 'note-live-source-mark' + (role ? ' is-' + role : ''));
       else replace(from, to);
@@ -1016,13 +1233,12 @@
             const raw = view.state.doc.sliceString(nodeRef.from, nodeRef.to);
             const parsed = parseMarkdownImage(raw);
             if (parsed && parsed.target && !isRemoteTarget(parsed.target) && raw.length <= RICH_BLOCK_LIMIT) {
-              if (!constructActive(view, nodeRef.from, nodeRef.to)) {
-                add(nodeRef.from, nodeRef.to, Decoration.replace({
-                  widget: new InlineImageWidget(parsed.target, parsed.alt, notePath(), options), inclusive: false,
-                }));
-                return false;
-              }
-              mark(nodeRef.from, nodeRef.to, 'note-live-image-source');
+              add(nodeRef.from, nodeRef.to, Decoration.replace({
+                widget: new InlineImageWidget(parsed, nodeRef.from, nodeRef.to,
+                  imageSelectionMatches(view, nodeRef.from, nodeRef.to), notePath(), options),
+                inclusive: false,
+              }));
+              return false;
             } else if (parsed) {
               mark(nodeRef.from, nodeRef.to, 'note-live-image-source');
               return false;
@@ -1134,10 +1350,13 @@
           }
         }
 
-        matches(/!\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, (match, from, to) => {
-          const target = match[1].trim(); protect(from, to);
-          if (!constructActive(view, from, to) && target && !isRemoteTarget(target)) {
-            add(from, to, Decoration.replace({ widget: new InlineImageWidget(target, (match[2] || '').trim(), notePath(), options) }));
+        matches(/!\[\[[^\]\n]+?\]\]/g, (match, from, to) => {
+          const parsed = parseStandaloneImage(match[0]);
+          protect(from, to);
+          if (parsed && parsed.target && !isRemoteTarget(parsed.target)) {
+            add(from, to, Decoration.replace({
+              widget: new InlineImageWidget(parsed, from, to, imageSelectionMatches(view, from, to), notePath(), options),
+            }));
           } else mark(from, to, 'note-live-image-source');
         });
 
@@ -1405,6 +1624,10 @@
 
     let currentShortcutBindings = normalizedShortcutBindings(options.shortcutBindings);
 
+    function syncImageSelectionClass(view) {
+      host.classList.toggle('has-image-selection', !sourceMode && !!exactSelectedImageRange(view.state));
+    }
+
     function livePreviewExtensions() {
       return sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin];
     }
@@ -1526,6 +1749,7 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          syncImageSelectionClass(update.view);
           if (!update.docChanged || suppressChanges) return;
           if (compositionActive(update.view)) { compositionDirty = true; return; }
           notifyDocChanged(update.view);
@@ -1599,6 +1823,7 @@
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
     host.classList.toggle('is-source-mode', sourceMode);
+    syncImageSelectionClass(view);
 
     function setDocument(documentState) {
       const seq = ++documentSetSeq;
@@ -1621,6 +1846,7 @@
       try { view.setState(makeState(value, EditorSelection.range(anchor, head))); }
       finally { suppressChanges = false; }
       host.classList.toggle('is-source-mode', sourceMode);
+      syncImageSelectionClass(view);
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
       requestAnimationFrame(() => {
         if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
@@ -1645,11 +1871,16 @@
       if (next === sourceMode) return;
       sourceMode = next;
       coordinator.epoch += 1;
-      view.dispatch({ effects: [
+      const imageRange = next ? null : imageRangeForLiveMode(view.state);
+      view.dispatch({
+        selection: imageRange ? EditorSelection.range(imageRange.from, imageRange.to) : undefined,
+        effects: [
         livePreviewCompartment.reconfigure(livePreviewExtensions()),
         editorLabelCompartment.reconfigure(editorLabelExtension()),
-      ] });
+        ],
+      });
       host.classList.toggle('is-source-mode', sourceMode);
+      syncImageSelectionClass(view);
       view.requestMeasure();
     }
 
@@ -1675,7 +1906,7 @@
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, snapshot, replaceSelection,
       focus() { view.focus(); },
-      destroy() { destroyed = true; cancelCompositionFinish(); view.__relatumCompositionActive = false; host.classList.remove('is-composing'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
+      destroy() { destroyed = true; cancelCompositionFinish(); view.__relatumCompositionActive = false; host.classList.remove('is-composing', 'has-image-selection'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
       get view() { return view; },
     };
   }

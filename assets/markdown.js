@@ -149,6 +149,126 @@
       .replace(/"/g, '&quot;');
   }
 
+  const MAX_IMAGE_DIMENSION = 8192;
+
+  function closingBracket(text, start, open, close) {
+    let depth = 0;
+    for (let index = start; index < text.length; index += 1) {
+      if (text[index] === '\\') { index += 1; continue; }
+      if (text[index] === open) depth += 1;
+      else if (text[index] === close) {
+        depth -= 1;
+        if (!depth) return index;
+      }
+    }
+    return -1;
+  }
+
+  function escapedAtSource(text, index) {
+    let slashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) slashes += 1;
+    return slashes % 2 === 1;
+  }
+
+  function parseImageDimensions(value) {
+    const match = /^([1-9]\d*)(?:[xX]([1-9]\d*))?$/.exec(String(value || '').trim());
+    if (!match) return null;
+    const width = Number(match[1]);
+    const height = match[2] ? Number(match[2]) : null;
+    if (!Number.isSafeInteger(width) || width > MAX_IMAGE_DIMENSION
+        || (height != null && (!Number.isSafeInteger(height) || height > MAX_IMAGE_DIMENSION))) return null;
+    return { width: width, height: height };
+  }
+
+  function splitImageLabel(rawLabel) {
+    const value = String(rawLabel || '');
+    const pipe = value.lastIndexOf('|');
+    if (pipe >= 0) {
+      const dimensions = parseImageDimensions(value.slice(pipe + 1));
+      if (dimensions) return { rawAlt: value.slice(0, pipe).trim(), dimensions: dimensions };
+    }
+    const dimensions = parseImageDimensions(value);
+    return dimensions ? { rawAlt: '', dimensions: dimensions } : { rawAlt: value.trim(), dimensions: null };
+  }
+
+  function parseImageDestination(rawDestination) {
+    const source = String(rawDestination || '').trim();
+    const angle = /^<([^>\n]+)>(?:[ \t]+(?:"([^"]*)"|'([^']*)'))?$/.exec(source);
+    if (angle) return { target: angle[1].trim(), title: angle[2] != null ? angle[2] : (angle[3] || '') };
+    const titled = /^(\S+)[ \t]+(?:"([^"]*)"|'([^']*)')$/.exec(source);
+    if (titled) return { target: titled[1], title: titled[2] != null ? titled[2] : (titled[3] || '') };
+    return { target: source, title: '' };
+  }
+
+  // Parse one complete image token (optional surrounding horizontal whitespace included).
+  // Numeric labels follow Obsidian's pixel sizing convention; non-numeric pipes remain alt text.
+  function parseImage(source) {
+    const value = String(source || '');
+    const leading = /^[ \t]*/.exec(value)[0];
+    const trailing = /[ \t]*$/.exec(value)[0];
+    const token = value.slice(leading.length, value.length - trailing.length);
+    if (token.indexOf('\n') >= 0) return null;
+
+    if (token.startsWith('![[') && token.endsWith(']]')) {
+      const inner = token.slice(3, -2);
+      const pipe = inner.indexOf('|');
+      const target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
+      if (!target) return null;
+      const label = splitImageLabel(pipe >= 0 ? inner.slice(pipe + 1) : '');
+      return {
+        source: value, syntax: 'wiki', leading: leading, trailing: trailing,
+        target: target, rawAlt: label.rawAlt,
+        alt: label.rawAlt.replace(/\\([\\\[\]])/g, '$1').trim(),
+        title: '', rawDestination: '',
+        width: label.dimensions ? label.dimensions.width : null,
+        height: label.dimensions ? label.dimensions.height : null,
+      };
+    }
+
+    if (!token.startsWith('![')) return null;
+    const labelEnd = closingBracket(token, 1, '[', ']');
+    if (labelEnd < 0 || token[labelEnd + 1] !== '(') return null;
+    const targetEnd = closingBracket(token, labelEnd + 1, '(', ')');
+    if (targetEnd < 0 || token.slice(targetEnd + 1).trim()) return null;
+    const label = splitImageLabel(token.slice(2, labelEnd));
+    const destination = parseImageDestination(token.slice(labelEnd + 2, targetEnd));
+    if (!destination.target) return null;
+    return {
+      source: value, syntax: 'markdown', leading: leading, trailing: trailing,
+      target: destination.target, rawAlt: label.rawAlt,
+      alt: label.rawAlt.replace(/\\([\\\[\]])/g, '$1').trim(),
+      title: destination.title, rawDestination: token.slice(labelEnd + 2, targetEnd),
+      width: label.dimensions ? label.dimensions.width : null,
+      height: label.dimensions ? label.dimensions.height : null,
+    };
+  }
+
+  function markdownImageDestination(target) {
+    const value = String(target || '');
+    return /[\s()]/.test(value) ? '<' + value + '>' : value;
+  }
+
+  function serializeImage(parsed, dimensions) {
+    if (!parsed || !parsed.target) return '';
+    const width = Number(dimensions && dimensions.width);
+    const height = dimensions && dimensions.height != null ? Number(dimensions.height) : null;
+    if (!Number.isSafeInteger(width) || width < 1 || width > MAX_IMAGE_DIMENSION
+        || (height != null && (!Number.isSafeInteger(height) || height < 1 || height > MAX_IMAGE_DIMENSION))) {
+      return String(parsed.source || '');
+    }
+    const size = String(width) + (height == null ? '' : ('x' + height));
+    const leading = String(parsed.leading || '');
+    const trailing = String(parsed.trailing || '');
+    const rawAlt = String(parsed.rawAlt || '');
+    if (parsed.syntax === 'wiki' && !rawAlt) {
+      return leading + '![[' + parsed.target + '|' + size + ']]' + trailing;
+    }
+    const destination = parsed.syntax === 'markdown' && parsed.rawDestination
+      ? parsed.rawDestination : markdownImageDestination(parsed.target);
+    const label = rawAlt ? (rawAlt + '|' + size) : size;
+    return leading + '![' + label + '](' + destination + ')' + trailing;
+  }
+
   // 行内处理：顺序很重要——先 code（避免 ** 在反引号里被错误识别），再 bold，再 italic
   // 注意：输入 s 已经被 escapeHtml 过，里面没有真正的 < >
   function renderInline(s) {
@@ -430,22 +550,40 @@
   function protectLocalImages(src, enabled) {
     const images = [];
     if (!enabled) return { protected: src, images: images };
-    let s = src.replace(/!\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g, function (_, target, alias) {
-      images.push({ target: target.trim(), alt: (alias || '').trim() });
-      return '\x00NIMAGE' + (images.length - 1) + '\x00';
-    });
-    s = s.replace(/!\[([^\]\n]*)\]\(([^)\n]+)\)/g, function (_, alt, rawTarget) {
-      let target = rawTarget.trim();
-      if (target.charAt(0) === '<' && target.charAt(target.length - 1) === '>') {
-        target = target.slice(1, -1).trim();
+    const source = String(src || '');
+    let output = '';
+    let cursor = 0;
+    while (cursor < source.length) {
+      if (source[cursor] !== '!' || source[cursor + 1] !== '[' || escapedAtSource(source, cursor)) {
+        output += source[cursor++];
+        continue;
       }
-      // 当前笔记上传器生成不含空格的相对路径；兼容常见的可选图片 title。
-      const titled = /^(\S+)[ \t]+(?:"[^"]*"|'[^']*')$/.exec(target);
-      if (titled) target = titled[1];
-      images.push({ target: target, alt: alt.trim() });
-      return '\x00NIMAGE' + (images.length - 1) + '\x00';
-    });
-    return { protected: s, images: images };
+      let end = -1;
+      if (source[cursor + 2] === '[') {
+        const close = source.indexOf(']]', cursor + 3);
+        const newline = source.indexOf('\n', cursor + 3);
+        if (close >= 0 && (newline < 0 || close < newline)) end = close + 2;
+      } else {
+        const labelEnd = closingBracket(source, cursor + 1, '[', ']');
+        if (labelEnd >= 0 && source[labelEnd + 1] === '(') {
+          const targetEnd = closingBracket(source, labelEnd + 1, '(', ')');
+          if (targetEnd >= 0 && source.slice(cursor, targetEnd + 1).indexOf('\n') < 0) end = targetEnd + 1;
+        }
+      }
+      if (end < 0) {
+        output += source[cursor++];
+        continue;
+      }
+      const parsed = parseImage(source.slice(cursor, end));
+      if (!parsed) {
+        output += source[cursor++];
+        continue;
+      }
+      images.push(parsed);
+      output += '\x00NIMAGE' + (images.length - 1) + '\x00';
+      cursor = end;
+    }
+    return { protected: output, images: images };
   }
 
   function restoreLocalImages(html, images) {
@@ -455,7 +593,12 @@
       if (!item) return '';
       const target = escapeHtml(item.target);
       const alt = escapeHtml(item.alt || item.target.split('/').pop() || '');
-      return '<span class="md-local-image" data-note-image-wrap="' + target + '">'
+      const sized = item.width
+        ? (' has-explicit-size' + (item.height ? ' has-explicit-box' : '')) : '';
+      const sizeStyle = item.width
+        ? (' style="width:min(100%,' + item.width + 'px)'
+          + (item.height ? (';aspect-ratio:' + item.width + '/' + item.height) : '') + '"') : '';
+      return '<span class="md-local-image' + sized + '" data-note-image-wrap="' + target + '"' + sizeStyle + '>'
         + '<img data-note-image="' + target + '" alt="' + alt + '" loading="lazy" decoding="async">'
         + '<span class="md-local-image-fallback">' + alt + '</span></span>';
     });
@@ -886,6 +1029,8 @@
     escapeHtml: escapeHtml,
     highlightCode: highlightCode,
     markIntervals: markIntervals,
+    parseImage: parseImage,
+    serializeImage: serializeImage,
     structure: structure,
   };
 })(window);

@@ -83,6 +83,7 @@ const sandbox = {
   document: {}, console, setTimeout, clearTimeout, requestAnimationFrame() {},
 };
 sandbox.window.window = sandbox.window;
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), sandbox);
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-live-editor.js'), 'utf8'), sandbox);
 const editorSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-live-editor.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'styles.css'), 'utf8');
@@ -98,9 +99,10 @@ function loadLiveDecorationProbe() {
   vm.runInNewContext(vendorSource, context);
   context.window = context;
   context.document = {};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -297,6 +299,24 @@ assert(largestRead < 100, 'ordinary code scanning and badge comparison must not 
 assert.strictEqual(badge.code, longCodeSource.slice(5, -4), 'the badge must read exact code when it is actually copied');
 delete longCodeState.doc.sliceString;
 
+const inlineImageSource = 'before ![diagram|96](note.assets/images/a.png) after';
+const inlineImageFrom = inlineImageSource.indexOf('![');
+const inlineImageTo = inlineImageSource.indexOf(' after');
+const inlineImageState = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: inlineImageSource,
+  selection: {anchor:inlineImageFrom, head:inlineImageTo},
+  extensions: [
+    liveProbe.RelatumCodeMirror.markdown({base:liveProbe.RelatumCodeMirror.markdownLanguage}),
+    blockField,
+  ],
+});
+const inlineImageDecorations = decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+  state:inlineImageState, visibleRanges:[{from:0,to:inlineImageState.doc.length}], hasFocus:true, composing:false,
+}, blockField, () => 'inline.md', probeOptions), inlineImageState.doc.length);
+assert(inlineImageDecorations.some(item => item.from === inlineImageFrom && item.to === inlineImageTo
+  && item.spec.widget instanceof liveProbe.__relatumLiveTest.InlineImageWidget),
+  'an exactly selected inline image must remain a visual image widget');
+
 const escapeSource = '\\==123==\n\\a\n`\\*`\n```text\n\\*\n```';
 const escapeCoordinator = { field: null, spec() { return null; } };
 const escapeOptions = { coordinator: escapeCoordinator, imageUrl() { return ''; } };
@@ -371,6 +391,14 @@ assert.strictEqual(syntax.scanBlockSpecsFromString('<svg onload="alert(1)"></svg
 assert.strictEqual(syntax.scanBlockSpecsFromString('![remote](https://example.com/a.png)').length, 0, 'remote images must not load');
 assert.strictEqual(syntax.parseStandaloneImage('![x](a.assets/images/x.png)').target, 'a.assets/images/x.png');
 assert.strictEqual(syntax.parseStandaloneImage('![x](a.assets/images/(nested).png "title")').target, 'a.assets/images/(nested).png');
+assert.strictEqual(syntax.parseStandaloneImage('![[a.png|320]]').width, 320);
+assert.strictEqual(syntax.parseStandaloneImage('![[a.png|320x180]]').height, 180);
+assert.strictEqual(syntax.parseStandaloneImage('![alt|320](a.png)').alt, 'alt');
+assert.strictEqual(syntax.parseStandaloneImage('![320](a.png)').width, 320);
+assert.strictEqual(syntax.parseStandaloneImage('![[a.png|50%]]').width, null, 'percentage sizing must remain unsupported');
+const wikiImageBlock = syntax.scanBlockSpecsFromString('![[a.png|320]]')[0];
+assert.strictEqual(wikiImageBlock.kind, 'image', 'a standalone Obsidian image must use the block image projection');
+assert.strictEqual(wikiImageBlock.width, 320);
 assert.strictEqual(syntax.isRemoteTarget('javascript:alert(1)'), true);
 assert.strictEqual(syntax.isRemoteTarget('data:image/svg+xml,<svg/>'), true);
 assert.strictEqual(syntax.isRemoteTarget('//example.com/a.png'), true);
@@ -428,6 +456,18 @@ assert(editorSource.includes('inactiveDefaultShortcutBindings().forEach((key) =>
 assert(editorSource.includes("Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }]))"),
   'empty quote exit must outrank the Markdown continuation keymap');
 assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading markers must include their separator whitespace');
+assert(editorSource.includes("frame.className = 'note-live-image-frame '")
+  && editorSource.includes("handle.setPointerCapture(event.pointerId)")
+  && editorSource.includes("userEvent: 'input'"),
+  'image widgets must remain visual, use pointer capture, and commit one editor transaction');
+assert(editorSource.includes("spec.kind === 'image' || !activeIds.has(spec.id)"),
+  'selected block images must remain projected instead of exposing their Markdown source');
+assert(stylesSource.includes('.note-live-rich-block.is-image { width: 100%; margin-right: 0; margin-left: 0; text-align: left;')
+  && stylesSource.includes('.note-reading-content .md-local-image { display: grid; justify-items: start;'),
+  'standalone images must align with the left edge of note text in live and reading modes');
+assert(stylesSource.includes('.note-live-image-resize-handle')
+  && stylesSource.includes('cursor: nwse-resize;'),
+  'selected images must expose a bottom-right proportional resize handle');
 assert(stylesSource.includes('.cm-line.note-live-code-line.cm-activeLine'), 'the active code line must retain its block background');
 assert(stylesSource.includes('note-live-code-first') && stylesSource.includes('note-live-code-last'), 'code block corners must use explicit first/last line roles');
 assert(stylesSource.includes('.note-live-source-mark.is-escape'), 'effective escape markers must have an explicit muted style');
