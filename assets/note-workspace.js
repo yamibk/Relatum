@@ -61,6 +61,7 @@
   let viewStatesDirty = false;
   const SAVE_DELAY = 350;
   const RETRY_DELAY = 2200;
+  const EXTERNAL_SYNC_DELAYS = [2000, 4000, 8000, 16000, 30000];
   const TREE_MOTION_MS = 220;
   const FOCUS_MOTION_MS = 320;
   const DOCUMENT_CACHE_LIMIT = 24;
@@ -116,6 +117,7 @@
     historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
+    externalSyncTimer: 0, externalSyncFailures: 0, externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
     shortcutBindings: NOTE_SHORTCUTS ? NOTE_SHORTCUTS.load() : {},
@@ -715,6 +717,7 @@
     if (!response.ok) { const error = new Error((data && data.error) || (language() === 'en' ? 'Request failed' : '请求失败')); error.status = response.status; error.code = data && data.code; throw error; }
     return data || {};
   }
+  function isMissingError(error) { return !!error && (error.status === 404 || error.code === 'not_found'); }
   function post(url, payload) { return request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) }); }
   function showToast(message, tone) { if (!toastEl || !message) return; toastEl.textContent = message; toastEl.dataset.tone = tone || ''; toastEl.classList.add('show'); clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toastEl.classList.remove('show'), 2600); }
   function showSaveError(message) { if (errorBar) { errorBar.textContent = message || tr('saveFailed'); errorBar.hidden = false; } }
@@ -1186,28 +1189,89 @@
     treeEl.replaceChildren(fragment); updateTreeSelection(); updateExpandAllButton();
     state.treeRendered = true;
   }
-  async function refreshTree(announce) {
+  function samePathList(left, right) {
+    return left.length === right.length && left.every((path, index) => path === right[index]);
+  }
+  function removeTreeEntry(entries, targetPath) {
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (entry.path === targetPath) { entries.splice(index, 1); return true; }
+      if (entry.kind === 'folder' && removeTreeEntry(entry.children || [], targetPath)) return true;
+    }
+    return false;
+  }
+  async function reconcileExternalTree(previousTabs) {
+    const oldTabs = Array.isArray(previousTabs) ? previousTabs : state.tabs.slice();
+    const oldActivePath = state.activeTab || (state.current && state.current.path) || '';
+    const oldActiveIndex = Math.max(0, oldTabs.indexOf(oldActivePath));
+    const isLiveTab = (path) => isBlankTab(path) || !!findEntry(path);
+    const nextTabs = oldTabs.filter(isLiveTab);
+    const currentMissing = !!state.current && !findEntry(state.current.path);
+    const openingMissing = !!state.openingPath && !findEntry(state.openingPath);
+
+    Array.from(state.documentCache.keys()).forEach((path) => {
+      if (!findEntry(path)) state.documentCache.delete(path);
+    });
+    state.tabs = nextTabs;
+
+    if (openingMissing) {
+      state.openSeq += 1;
+      state.openingPath = '';
+      setDocumentSwitchPending(false);
+    }
+    if (!currentMissing) {
+      if (state.current && !state.tabs.includes(state.current.path)) {
+        state.tabs.splice(Math.min(oldActiveIndex, state.tabs.length), 0, state.current.path);
+      }
+      if (!state.tabs.includes(state.activeTab)) state.activeTab = state.current && state.current.path || state.tabs[0] || '';
+      if (!samePathList(oldTabs, state.tabs) || openingMissing) {
+        persistTabs();
+        renderTabs();
+        updateTreeSelection();
+      }
+      return false;
+    }
+
+    const removedDocument = state.current;
+    clearTimeout(state.saveTimer);
+    clearTimeout(state.retryTimer);
+    if (removedDocument) removedDocument.persistedGeneration = removedDocument.editGeneration;
+    const after = oldTabs.slice(oldActiveIndex + 1).find(isLiveTab);
+    const before = oldTabs.slice(0, oldActiveIndex).reverse().find(isLiveTab);
+    const nextPath = after || before || state.tabs[0] || '';
+    state.activeTab = nextPath;
+    closeContextMenu();
+    clearCurrent({ keepTabs: true, keepActiveTab: !!nextPath });
+    if (nextPath) await activateTab(nextPath, { skipSave: true, noFocus: true });
+    return true;
+  }
+  async function refreshTree(announce, options) {
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
     try {
       const result = await request('/api/notes-tree'); if (seq !== state.refreshSeq) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
       const treeChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
+      const previousTabs = state.tabs.slice();
       // Always refresh metadata for cache validation; unchanged rows retain focus,
       // inline rename drafts and any folder transition already in progress.
       state.entries = entries;
       const flat = flattenEntries(state.entries, []); rebuildEntryIndex();
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
-      state.tabs = state.tabs.filter((path) => isBlankTab(path) || !!findEntry(path) || !!(state.current && state.current.path === path));
-      if (!state.tabs.includes(state.activeTab)) state.activeTab = '';
-      persistTabs(); renderTabs();
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
       if (state.selectedPath && !flat.some((entry) => entry.path === state.selectedPath)) state.selectedPath = '';
       if (treeChanged) renderTree();
-      scheduleDocumentPrefetch(); if (announce) showToast(tr('refreshed')); return true;
+      await reconcileExternalTree(previousTabs);
+      if (treeChanged) scheduleDocumentPrefetch();
+      if (announce) showToast(tr('refreshed'));
+      return true;
     }
-    catch (error) { if (seq === state.refreshSeq) { state.treeRendered = false; treeEl.textContent = error.message || tr('readFailed'); } showToast(error.message || tr('readFailed'), 'error'); return false; }
+    catch (error) {
+      if (seq === state.refreshSeq && !state.treeRendered) treeEl.textContent = error.message || tr('readFailed');
+      if (!(options && options.silentErrors)) showToast(error.message || tr('readFailed'), 'error');
+      return false;
+    }
   }
 
   function renderLinks() {
@@ -1282,8 +1346,33 @@
     state.saveChain = state.saveChain.catch(() => false).then(async () => {
       if (target.persistedGeneration >= generation) return true;
       state.saveRunning = true;
-      try { const result = await post('/api/note-save', { path, content, revision: target.revision }); target.revision = result.revision || target.revision; target.persistedGeneration = Math.max(target.persistedGeneration, generation); if (target.editGeneration <= generation) target.content = content; cacheDocument(target); if (state.current === target) { clearSaveError(); if (!hasPendingEdits(target)) desktopDirty(false); else scheduleSave(0); if (root.classList.contains('links-overlay-open')) setTimeout(() => ensureLinks(), 500); } return true; }
-      catch (error) { showSaveError(error.message || tr('saveFailed')); desktopDirty(true); clearTimeout(state.retryTimer); state.retryTimer = setTimeout(() => flushSave(), RETRY_DELAY); return false; }
+      try {
+        const result = await post('/api/note-save', { path, content, revision: target.revision });
+        target.revision = result.revision || target.revision;
+        target.persistedGeneration = Math.max(target.persistedGeneration, generation);
+        if (target.editGeneration <= generation) target.content = content;
+        cacheDocument(target);
+        if (state.current === target) {
+          clearSaveError();
+          if (!hasPendingEdits(target)) desktopDirty(false); else scheduleSave(0);
+          if (root.classList.contains('links-overlay-open')) setTimeout(() => ensureLinks(), 500);
+        }
+        return true;
+      } catch (error) {
+        if (isMissingError(error)) {
+          target.persistedGeneration = target.editGeneration;
+          state.documentCache.delete(path);
+          clearTimeout(state.retryTimer);
+          clearSaveError();
+          await refreshTree(false, { silentErrors: true });
+          return true;
+        }
+        showSaveError(error.message || tr('saveFailed'));
+        desktopDirty(true);
+        clearTimeout(state.retryTimer);
+        state.retryTimer = setTimeout(() => flushSave(), RETRY_DELAY);
+        return false;
+      }
       finally { state.saveRunning = false; }
     });
     const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target); return ok;
@@ -1315,8 +1404,16 @@
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
       return true;
     } catch (error) {
-      if (seq === state.openSeq) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); if (error.code !== 'aborted') showToast(error.message || tr('readFailed'), 'error'); }
-      if (error.code !== 'aborted') await refreshTree(false); return false;
+      const missing = isMissingError(error);
+      if (seq === state.openSeq) {
+        state.openingPath = '';
+        setDocumentSwitchPending(false);
+        updateTreeSelection();
+        renderTabs();
+        if (error.code !== 'aborted' && !missing) showToast(error.message || tr('readFailed'), 'error');
+      }
+      if (error.code !== 'aborted') await refreshTree(false, { silentErrors: missing });
+      return false;
     }
   }
   async function createEntry(kind, options) {
@@ -1383,7 +1480,60 @@
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
   }
   function moveEntry(source, folder) { const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
-  async function recycleEntry(entry) { const affects = state.current && (state.current.path === entry.path || state.current.path.startsWith(entry.path + '/')); if (affects && !(await flushSave())) return; try { const result = await post('/api/note-trash', { path: entry.path }); state.entries = result.tree && result.tree.entries || state.entries; const removed = (path) => !isBlankTab(path) && (path === entry.path || path.startsWith(entry.path + '/')); Array.from(state.documentCache.keys()).forEach((path) => { if (removed(path)) state.documentCache.delete(path); }); state.tabs = state.tabs.filter((path) => !removed(path)); if (!state.tabs.includes(state.activeTab)) state.activeTab = ''; persistTabs(); if (affects) { const next = state.tabs[0] || ''; if (next) await activateTab(next, { skipSave: true }); else clearCurrent({ keepTabs: true }); } else { renderTabs(); renderTree(); } showToast(tr('recycled')); } catch (error) { showToast(error.message || tr('recycle'), 'error'); } }
+  async function recycleEntry(entry) {
+    if (!entry || state.recycleRunning) return;
+    state.recycleRunning = true;
+    stopExternalSync();
+    state.externalSeq += 1;
+    state.refreshSeq += 1;
+    const previousEntries = state.entries;
+    const previousTabs = state.tabs.slice();
+    const previousSelectedPath = state.selectedPath;
+    const previousSelectedFolder = state.selectedFolder;
+    const previousExpanded = new Set(state.expanded);
+    const affects = !!state.current && (state.current.path === entry.path || state.current.path.startsWith(entry.path + '/'));
+    const flushPromise = affects ? flushSave() : Promise.resolve(true);
+    const optimisticEntries = JSON.parse(JSON.stringify(state.entries));
+    if (!removeTreeEntry(optimisticEntries, entry.path)) {
+      state.recycleRunning = false;
+      triggerExternalSync({ silentErrors: true });
+      return;
+    }
+    state.entries = optimisticEntries;
+    rebuildEntryIndex();
+    if (state.selectedPath === entry.path || state.selectedPath.startsWith(entry.path + '/')) state.selectedPath = '';
+    if (state.selectedFolder === entry.path || state.selectedFolder.startsWith(entry.path + '/')) state.selectedFolder = parentPath(entry.path);
+    state.expanded = new Set(Array.from(state.expanded).filter((path) => path !== entry.path && !path.startsWith(entry.path + '/')));
+    persistExpanded();
+    renderTree();
+
+    const rollback = () => {
+      state.entries = previousEntries;
+      state.selectedPath = previousSelectedPath;
+      state.selectedFolder = previousSelectedFolder;
+      state.expanded = previousExpanded;
+      persistExpanded();
+      rebuildEntryIndex();
+      renderTree();
+    };
+    try {
+      if (!(await flushPromise)) { rollback(); return; }
+      const result = await post('/api/note-trash', { path: entry.path });
+      const serverEntries = result.tree && Array.isArray(result.tree.entries) ? result.tree.entries : state.entries;
+      const treeChanged = !sameTreeStructure(state.entries, serverEntries);
+      state.entries = serverEntries;
+      rebuildEntryIndex();
+      if (treeChanged) renderTree();
+      await reconcileExternalTree(previousTabs);
+      showToast(tr('recycled'));
+    } catch (error) {
+      if (isMissingError(error)) await refreshTree(false, { silentErrors: true });
+      else { rollback(); showToast(error.message || tr('recycle'), 'error'); }
+    } finally {
+      state.recycleRunning = false;
+      scheduleExternalSync();
+    }
+  }
   async function reveal(path, assets) { try { await post(assets ? '/api/note-reveal-assets' : '/api/note-reveal', { path: path || '' }); } catch (error) { showToast(assets && error.status === 404 ? tr('noAssets') : error.message || tr('revealFailed'), 'error'); } }
   async function copyText(value) { try { await navigator.clipboard.writeText(value); } catch (error) { const area = document.createElement('textarea'); area.value = value; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); } showToast(tr('copied')); }
   function contextButton(label, action, danger) { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; if (danger) button.className = 'danger'; button.addEventListener('click', () => { closeContextMenu(); action(); }); return button; }
@@ -1398,7 +1548,7 @@
   function separator() { const line = document.createElement('span'); line.className = 'note-context-separator'; return line; }
   function showContext(items, x, y, source) { contextMenu.replaceChildren(...items); contextMenu.dataset.source = source || ''; contextMenu.hidden = false; contextMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 250)) + 'px'; contextMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - contextMenu.offsetHeight - 8)) + 'px'; }
   function openContextMenu(entry, x, y, options) {
-    if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: '' })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: '' })), separator(), contextButton(tr('refresh'), () => checkExternalChanges(true)), contextButton(tr('openLibrary'), () => reveal('', false))], x, y); return; }
+    if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: '' })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: '' })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal('', false))], x, y); return; }
     state.selectedPath = entry.path;
     const items = [];
     if (entry.kind === 'note' && options && options.viewModes) {
@@ -1427,7 +1577,79 @@
   async function filesFromTransfer(transfer) { const items = Array.from(transfer && transfer.items || []); const entries = items.map((item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean); if (entries.length) return (await Promise.all(entries.map((entry) => entryFiles(entry, '')))).flat(); return Array.from(transfer && transfer.files || []).map((file) => ({ path: file.name, file })); }
   async function importDataTransfer(transfer, destination) { if (state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
 
-  async function checkExternalChanges(announce) { if (!state.active) return false; const seq = ++state.externalSeq; const path = state.current && state.current.path; const generation = state.editGeneration; const revision = state.current && state.current.revision; await refreshTree(announce); if (seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation || state.saveRunning || hasPendingEdits()) return true; try { const disk = await request('/api/note?path=' + encodeURIComponent(path)); if (seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true; if (disk.revision !== revision) applyDocument(disk, { preserveViewState: true }); return true; } catch (error) { if (seq === state.externalSeq && state.current && state.current.path === path && !hasPendingEdits() && (error.status === 404 || error.code === 'not_found')) await closeTab(path, { skipSave: true, noFocus: true }); return false; } }
+  async function checkExternalChanges(announce, options) {
+    if (!state.active) return false;
+    if (state.recycleRunning) return true;
+    const settings = options || {};
+    const seq = ++state.externalSeq;
+    const path = state.current && state.current.path;
+    const generation = state.editGeneration;
+    const revision = state.current && state.current.revision;
+    const previousModifiedNs = state.current && state.current.treeModifiedNs || 0;
+    const previousSize = state.current && state.current.treeSize || 0;
+    const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors });
+    if (!refreshed) return false;
+    if (seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
+    const entry = findEntry(path);
+    if (!entry) return true;
+    const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size;
+    if (settings.metadataOnly && !metadataChanged) return true;
+    if (state.saveRunning || hasPendingEdits()) return true;
+    try {
+      const disk = await request('/api/note?path=' + encodeURIComponent(path));
+      if (seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
+      if (disk.revision !== revision) applyDocument(disk, { preserveViewState: true });
+      else {
+        state.current.treeModifiedNs = entry.modifiedNs || 0;
+        state.current.treeSize = entry.size || 0;
+        cacheDocument(state.current);
+      }
+      return true;
+    } catch (error) {
+      if (isMissingError(error)) {
+        await refreshTree(false, { silentErrors: true });
+        return true;
+      }
+      if (announce) showToast(error.message || tr('readFailed'), 'error');
+      return false;
+    }
+  }
+  function stopExternalSync() {
+    clearTimeout(state.externalSyncTimer);
+    state.externalSyncTimer = 0;
+  }
+  function externalSyncDelay() {
+    const index = Math.min(Math.max(0, state.externalSyncFailures - 1), EXTERNAL_SYNC_DELAYS.length - 1);
+    return EXTERNAL_SYNC_DELAYS[index];
+  }
+  function scheduleExternalSync(delay) {
+    stopExternalSync();
+    if (!state.active || document.hidden) return;
+    state.externalSyncTimer = setTimeout(() => {
+      state.externalSyncTimer = 0;
+      triggerExternalSync({ background: true, metadataOnly: true, silentErrors: true });
+    }, Number.isFinite(delay) ? delay : externalSyncDelay());
+  }
+  function triggerExternalSync(options) {
+    const settings = options || {};
+    stopExternalSync();
+    let ran = false;
+    const task = state.externalSyncChain.catch(() => false).then(async () => {
+      if (!state.active || (settings.background && document.hidden)) return false;
+      ran = true;
+      return checkExternalChanges(!!settings.announce, settings);
+    });
+    state.externalSyncChain = task;
+    task.then((ok) => {
+      if (!ran) return;
+      state.externalSyncFailures = ok ? 0 : Math.min(EXTERNAL_SYNC_DELAYS.length, state.externalSyncFailures + 1);
+    }, () => {
+      if (ran) state.externalSyncFailures = Math.min(EXTERNAL_SYNC_DELAYS.length, state.externalSyncFailures + 1);
+    }).finally(() => {
+      if (state.externalSyncChain === task) scheduleExternalSync();
+    });
+    return task;
+  }
   function initializeWorkspace() {
     if (state.initialized) return Promise.resolve(true);
     if (state.initializePromise) return state.initializePromise;
@@ -1455,7 +1677,8 @@
     const initialized = await initializeWorkspace();
     revealColdBoot();
     if (!initialized) return false;
-    if (wasInitialized) await checkExternalChanges(false);
+    if (wasInitialized) await triggerExternalSync({ silentErrors: true });
+    else scheduleExternalSync();
     if (state.current) {
       requestAnimationFrame(() => {
         if (state.active && state.current) focusEditor();
@@ -1463,7 +1686,7 @@
     }
     return true;
   }
-  async function deactivate() { if (!(await flushSave())) return false; persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {
     const action = event.target.closest('[data-note-action]');
@@ -1473,7 +1696,7 @@
     else if (name === 'new-tab') openBlankTab();
     else if (name === 'close-all-tabs') { if (await finishInlineTitle()) await closeAllTabs(); }
     else if (name === 'new-folder') createEntry('folder');
-    else if (name === 'refresh') checkExternalChanges(true);
+    else if (name === 'refresh') triggerExternalSync({ announce: true });
     else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
@@ -1590,12 +1813,15 @@
     return save;
   }
   window.addEventListener('blur', flushWorkspaceState);
-  window.addEventListener('focus', () => { if (state.active) checkExternalChanges(false); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) flushWorkspaceState(); });
-  window.addEventListener('pagehide', flushWorkspaceState);
-  window.addEventListener('beforeunload', flushWorkspaceState);
+  window.addEventListener('focus', () => { if (state.active && !document.hidden) triggerExternalSync({ silentErrors: true }); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { stopExternalSync(); flushWorkspaceState(); }
+    else if (state.active) triggerExternalSync({ silentErrors: true });
+  });
+  window.addEventListener('pagehide', () => { stopExternalSync(); flushWorkspaceState(); });
+  window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(); });
   document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
-  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: checkExternalChanges, get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
+  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

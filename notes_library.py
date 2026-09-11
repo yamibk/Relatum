@@ -880,20 +880,24 @@ class NotesStore:
         encoded = content.encode("utf-8")
         if len(encoded) > MAX_NOTE_BYTES:
             raise NotesError("笔记过大（单文件上限 4MB）", status=413, code="too_large")
-        if target.exists():
-            current = self._read_note_bytes(target)
-            current_revision = _revision(current)
-            if current == encoded:
-                self._cache_document(normalized, current)
-                return {"path": normalized, "revision": current_revision}
-            external = not isinstance(expected_revision, str) or expected_revision != current_revision
-            self.snapshot(
-                normalized, current,
-                reason="external-overwrite" if external else "autosave",
-                force=external,
-            )
-        elif not target.parent.is_dir():
-            raise NotesError("目标文件夹不存在", status=404, code="parent_missing")
+        if not target.exists():
+            # A save belongs to an already-open document.  Creation has its own
+            # endpoint, so an external delete must win instead of letting a late
+            # autosave silently recreate the removed file.
+            raise NotesError("笔记不存在", status=404, code="not_found")
+        current = self._read_note_bytes(target)
+        current_revision = _revision(current)
+        if current == encoded:
+            self._cache_document(normalized, current)
+            return {"path": normalized, "revision": current_revision}
+        external = not isinstance(expected_revision, str) or expected_revision != current_revision
+        self.snapshot(
+            normalized, current,
+            reason="external-overwrite" if external else "autosave",
+            force=external,
+        )
+        if not target.exists():
+            raise NotesError("笔记不存在", status=404, code="not_found")
         self.atomic_text(target, content)
         self._cache_document(normalized, encoded)
         return {"path": normalized, "revision": _revision(encoded)}

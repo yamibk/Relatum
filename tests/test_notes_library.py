@@ -267,13 +267,15 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertEqual(len(self.store.history("Prune.md")["versions"]), 1)
         self.assertFalse((bucket / item["file"]).exists())
 
-    def test_external_delete_with_active_editor_content_recreates_note(self):
-        self.store.create("", "Recreate", "note", content="one")
-        loaded = self.store.load("Recreate.md")
-        (self.root / "Recreate.md").unlink()
-        saved = self.store.save("Recreate.md", "local typing", loaded["revision"])
-        self.assertTrue(saved["revision"].startswith("sha256:"))
-        self.assertEqual(self.store.load("Recreate.md")["content"], "local typing")
+    def test_external_delete_with_active_editor_content_stays_deleted(self):
+        self.store.create("", "Deleted", "note", content="one")
+        loaded = self.store.load("Deleted.md")
+        (self.root / "Deleted.md").unlink()
+        with self.assertRaises(NotesError) as caught:
+            self.store.save("Deleted.md", "local typing", loaded["revision"])
+        self.assertEqual(caught.exception.status, 404)
+        self.assertEqual(caught.exception.code, "not_found")
+        self.assertFalse((self.root / "Deleted.md").exists())
 
     def test_staged_external_import_keeps_structure_and_numbers_collisions(self):
         token = self.store.begin_import("")["token"]

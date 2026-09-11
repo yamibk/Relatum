@@ -36,6 +36,14 @@ assert(html.includes('noteRevealTimer') && html.includes('}, 4000);'), 'the Note
 assert(notes.includes('function revealColdBoot()'), 'Notes must reveal only after its tree and current document initialize');
 assert(/const initialized = await initializeWorkspace\(\);\s*revealColdBoot\(\);/.test(notes), 'the cold-boot gate must cover both the tree and active document read');
 assert(start.includes("if (name !== 'notes')"), 'leaving Notes during boot must cancel the reveal gate');
+assert(notes.includes('EXTERNAL_SYNC_DELAYS = [2000, 4000, 8000, 16000, 30000]'),
+  'foreground Notes sync needs a bounded two-to-thirty-second retry schedule');
+assert(notes.includes('function triggerExternalSync(options)') && notes.includes('externalSyncChain: Promise.resolve(true)'),
+  'automatic filesystem checks must stay serialized');
+assert(notes.includes('if (!state.active || document.hidden) return;'),
+  'automatic filesystem checks must stop outside the visible Notes workspace');
+assert(notes.includes('if (treeChanged) scheduleDocumentPrefetch();'),
+  'unchanged polling must not repeatedly prefetch documents');
 
 for (const endpoint of [
   '/api/notes-tree', '/api/note?', '/api/note-create', '/api/note-save',
@@ -102,6 +110,15 @@ assert(applyDocumentSource.includes('options.preserveViewState') && applyDocumen
   'external document refreshes must be able to carry the current editor view state');
 assert(notes.includes("applyDocument(disk, { preserveViewState: true })"),
   'an external revision refresh must preserve the caret selection and scroll position');
+assert(notes.includes("if (settings.metadataOnly && !metadataChanged) return true;"),
+  'periodic checks must avoid rereading an unchanged current document');
+assert(notes.includes("if (isMissingError(error))") && notes.includes("await refreshTree(false, { silentErrors: true });"),
+  'a missing save target must be reconciled without a retry loop or stale error UI');
+const recycleSource = notes.slice(notes.indexOf('async function recycleEntry'), notes.indexOf('async function reveal'));
+assert(recycleSource.indexOf('renderTree();') < recycleSource.indexOf('await flushPromise'),
+  'Recycle Bin actions must remove the tree row before waiting for saves or the backend');
+assert(recycleSource.includes('const rollback = () =>') && recycleSource.includes('state.entries = previousEntries'),
+  'a failed Recycle Bin action must restore the optimistic tree removal');
 assert(notes.includes('onDocChanged: (meta) => markChanged(meta)'), 'Live Preview edits must report metadata rather than cloning the full document');
 assert(notes.includes("OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1'"), 'open Markdown tabs must survive a local restart');
 assert(notes.includes('function renderTabs()') && notes.includes('async function closeTab'), 'tabs need open, close, reorder, and switch behavior');
