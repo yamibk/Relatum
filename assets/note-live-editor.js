@@ -195,12 +195,12 @@
         }
         if (node.name === 'FencedCode') {
           protectedBlocks.push({ from: node.from, to: node.to });
-          const source = doc.sliceString(node.from, node.to);
           const opener = fenceStart(doc.lineAt(node.from).text);
-          if (!opener || !isFenceEnd(doc.lineAt(Math.max(node.from, node.to - 1)).text, opener)) return false;
+          if (!opener) return false;
           const kind = opener.language === 'derive' ? 'derive' : MERMAID_LANGS.has(opener.language) ? 'mermaid' : '';
           const limit = kind === 'mermaid' ? MERMAID_LIMIT : RICH_BLOCK_LIMIT;
-          if (kind && source.length <= limit && !rangeHasLongLine(doc, node.from, node.to)) push({ from: node.from, to: node.to, kind, source, language: opener.language });
+          if (!kind || node.to - node.from > limit || !isFenceEnd(doc.lineAt(Math.max(node.from, node.to - 1)).text, opener)) return false;
+          if (!rangeHasLongLine(doc, node.from, node.to)) push({ from: node.from, to: node.to, kind, source: doc.sliceString(node.from, node.to), language: opener.language });
           return false;
         }
         if (/^(?:CodeBlock|IndentedCode|HTMLBlock)$/.test(node.name)) {
@@ -236,6 +236,11 @@
     const finalLine = doc.lineAt(mathTo).number;
     while (number <= finalLine) {
       const line = doc.line(number);
+      // Ancestor expansion can include a whole long code/HTML block. Its
+      // contents cannot contain Markdown math, so skip the known range instead
+      // of inspecting every line again on each viewport refresh.
+      const protectedBlock = protectedBlocks.find((range) => range.from <= line.from && range.to >= line.to);
+      if (protectedBlock) { number = doc.lineAt(protectedBlock.to).number + 1; continue; }
       if (line.length > MAX_RICH_LINE) { number += 1; continue; }
       const singleLine = sameLineBlockMath(line.text);
       if (singleLine) {
@@ -626,7 +631,9 @@
 
   function fencedCodeBody(source) {
     const lines = String(source || '').split('\n');
-    return lines.length >= 2 ? lines.slice(1, -1).join('\n') : '';
+    const opener = fenceStart(lines[0]);
+    const closed = opener && lines.length > 1 && isFenceEnd(lines[lines.length - 1], opener);
+    return lines.slice(1, closed ? -1 : undefined).join('\n');
   }
 
   async function copyPlainText(value) {
@@ -654,10 +661,13 @@
   }
 
   class CodeLanguageWidget extends WidgetType {
-    constructor(label, code) {
-      super(); this.label = String(label || ''); this.code = String(code || ''); this.timer = 0;
+    constructor(label, doc, from, to) {
+      super(); this.label = String(label || ''); this.doc = doc; this.from = from; this.to = to; this.timer = 0;
     }
-    eq(other) { return other.label === this.label && other.code === this.code; }
+    // Keep the immutable document reference. Scrolling/selection must not copy a
+    // potentially huge fence just to compare or display its tiny language badge.
+    get code() { return fencedCodeBody(this.doc.sliceString(this.from, this.to)); }
+    eq(other) { return other.label === this.label && other.doc === this.doc && other.from === this.from && other.to === this.to; }
     toDOM() {
       const button = document.createElement('button');
       button.type = 'button';
@@ -902,12 +912,22 @@
             if (number === blockLast) className += ' note-live-code-last';
             lineClass(view.state.doc.line(number).from, className);
           }
-          if (range.kind === 'FencedCode' && !constructActive(view, range.from, range.to)) {
+          if (range.kind === 'FencedCode') {
+            const codeNode = ancestorOf(tree.resolveInner(range.from, 1), /^FencedCode$/);
+            // Only the fence markers belong to the Markdown projection. The
+            // mounted language tree is already highlighted by CodeMirror.
+            if (codeNode) {
+              for (let child = codeNode.firstChild; child; child = child.nextSibling) {
+                if (/^(?:CodeMark|CodeInfo)$/.test(child.name) && child.from >= first.from && child.to <= last.to) {
+                  sourceMark(child.from, child.to, range.from, range.to, 'code');
+                }
+              }
+            }
             const openingLine = view.state.doc.line(blockFirst);
             const opener = fenceStart(openingLine.text);
-            if (opener && opener.label && openingLine.from >= first.from && openingLine.to <= last.to) {
+            if (!constructActive(view, range.from, range.to) && opener && opener.label && openingLine.from >= first.from && openingLine.to <= last.to) {
               add(openingLine.to, openingLine.to, Decoration.widget({
-                widget: new CodeLanguageWidget(opener.label, fencedCodeBody(view.state.doc.sliceString(range.from, range.to))),
+                widget: new CodeLanguageWidget(opener.label, view.state.doc, range.from, range.to),
                 side: 1,
               }));
             }
@@ -923,6 +943,9 @@
       tree.iterate({
         from: first.from, to: last.to,
         enter(nodeRef) {
+          // Protected blocks were handled above, bounded to visible lines. Do
+          // not walk all lines again or interpret embedded code as Markdown.
+          if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|HTMLTag)$/.test(nodeRef.name)) return false;
           const node = syntaxNodeForRef(tree, nodeRef);
           const key = nodeRef.name + ':' + nodeRef.from + ':' + nodeRef.to;
           // Rich block replacements split visibleRanges. An ancestor already seen
@@ -1013,7 +1036,12 @@
             lineClass(line.from, 'note-live-list-line');
             const unit = ancestorOf(node, /^ListItem$/) || node;
             if (constructActive(view, unit.from, unit.to)) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-list');
-            else add(nodeRef.from, nodeRef.to, Decoration.replace({
+            else if (unit && unit.getChild('Task') && !/^\d/.test(view.state.doc.sliceString(nodeRef.from, nodeRef.to))) {
+              // An unordered task uses its checkbox as the list marker. Keep
+              // indentation, but do not display a second bullet beside it.
+              const gap = /^[\t ]*/.exec(view.state.doc.sliceString(nodeRef.to, line.to))[0];
+              replace(nodeRef.from, nodeRef.to + gap.length);
+            } else add(nodeRef.from, nodeRef.to, Decoration.replace({
               widget: new BulletWidget(/^\d/.test(view.state.doc.sliceString(nodeRef.from, nodeRef.to)), view.state.doc.sliceString(nodeRef.from, nodeRef.to)),
               inclusive: false,
             }));
@@ -1035,20 +1063,6 @@
           } else if (nodeRef.name === 'TableDelimiter') {
             const unit = ancestorOf(node, /^Table$/) || node;
             sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'table');
-          } else if (/^(?:FencedCode|CodeBlock|IndentedCode)$/.test(nodeRef.name)) {
-            const startLine = view.state.doc.lineAt(nodeRef.from).number;
-            const endLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1)).number;
-            for (let number = startLine; number <= endLine; number += 1) {
-              let className = 'note-live-code-line';
-              if (number === startLine) className += ' note-live-code-first';
-              if (number === endLine) className += ' note-live-code-last';
-              lineClass(view.state.doc.line(number).from, className);
-            }
-          } else if (/^(?:HTMLBlock|HTMLTag)$/.test(nodeRef.name)) {
-            const startLine = view.state.doc.lineAt(nodeRef.from).number;
-            const endLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1)).number;
-            for (let number = startLine; number <= endLine; number += 1) lineClass(view.state.doc.line(number).from, 'note-live-raw-html-line');
-            return false;
           }
           return undefined;
         },

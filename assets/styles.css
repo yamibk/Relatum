@@ -477,9 +477,9 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-image-source,
 .note-live-dangerous-source,
 .note-live-raw-html-line {
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--note-font-mono, "Cascadia Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", monospace);
 }
-.note-live-inline-code { padding: .1em .3em; border-radius: 4px; color: #405244; background: rgba(77, 97, 72, .09); font-size: .9em; }
+.note-live-inline-code { padding: .1em .3em; border-radius: 4px; color: #52604f; background: rgba(57, 65, 55, .065); font-size: .92em; }
 .note-live-image-source { color: var(--note-live-code); }
 .note-live-dangerous-source { color: #a05d51; }
 .note-live-link, .note-live-wikilink { color: var(--note-live-link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--note-live-link) 32%, transparent); text-underline-offset: .15em; }
@@ -528,12 +528,13 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-callout-line.is-callout-quote { --callout: #656b72; --callout-bg: rgba(101, 107, 114, .11); }
 .note-live-editor-host .cm-line.note-live-code-line,
 .note-live-editor-host .cm-line.note-live-code-line.cm-activeLine {
-  padding-inline: .8em !important;
-  color: #39433b;
-  background: rgba(61, 73, 62, .055);
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: inherit;
-  line-height: inherit;
+  padding-inline: 1.05em !important;
+  color: #363b38;
+  background: rgba(38, 43, 40, .032);
+  font-family: var(--note-font-mono, "Cascadia Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", monospace);
+  font-size: .94em;
+  line-height: 1.65;
+  tab-size: 4;
 }
 .note-live-editor-host .cm-line.note-live-code-first { position: relative; border-radius: 7px 7px 0 0; }
 .note-live-editor-host .cm-line.note-live-code-last { border-radius: 0 0 7px 7px; }
@@ -550,9 +551,9 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   overflow: hidden;
   border: 0;
   border-radius: 5px;
-  color: rgba(57, 67, 59, .62);
-  background: rgba(255, 255, 255, .56);
-  box-shadow: inset 0 0 0 1px rgba(57, 67, 59, .045);
+  color: #828780;
+  background: transparent;
+  box-shadow: none;
   font: 500 11px/20px "Cascadia Mono", Consolas, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -576,7 +577,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   font: 11px/1.2 var(--font-ui);
   pointer-events: none;
 }
-.note-live-editor-host .cm-line.note-live-code-line .note-live-code-comment { color: #949a94; }
+.note-live-editor-host .cm-line.note-live-code-line .note-live-code-comment { color: #7e867e; }
 .note-live-editor-host .cm-line.note-live-code-line .note-live-code-keyword { color: #b55349; font-weight: 620; }
 .note-live-editor-host .cm-line.note-live-code-line .note-live-code-type { color: #b77708; }
 .note-live-editor-host .cm-line.note-live-code-line .note-live-code-string { color: #16804b; }
@@ -885,9 +886,11 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   position: relative;
   --note-font-text: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI",
     Roboto, Helvetica, Arial, "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --note-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", monospace;
   --note-content-left: clamp(42px, 6vw, 112px);
   --note-content-right: clamp(22px, 3vw, 48px);
-  --note-content-width: 1040px;
+  --note-content-width: 880px;
 }
 .note-tab-bar {
   min-height: 38px;
@@ -1088,10 +1091,10 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-live-editor-host { grid-row: 1; min-height: 0; }
 .note-live-editor-host .cm-editor {
   font-size: calc(16px * var(--note-font-scale, 1));
-  line-height: 1.5;
+  line-height: 1.65;
 }
 .note-live-editor-host.is-source-mode .cm-editor {
-  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, "Noto Sans SC", monospace;
+  font-family: var(--note-font-mono);
   font-size: calc(15px * var(--note-font-scale, 1));
   line-height: 1.62;
 }
@@ -1118,7 +1121,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   margin: 0 var(--note-content-right) 0 var(--note-content-left);
   padding: calc(var(--note-inline-title-space) + 10px) 0 120px;
   font-size: calc(16px * var(--note-font-scale, 1));
-  line-height: 1.5;
+  line-height: 1.65;
 }
 .note-reading-view {
   grid-row: 1;
@@ -1138,7 +1141,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   margin: 0 var(--note-content-right) 0 var(--note-content-left);
   padding: calc(var(--note-inline-title-space) + 10px) 0 120px;
   color: var(--text);
-  font: calc(16px * var(--note-font-scale, 1))/1.5 var(--note-font-text);
+  font: calc(16px * var(--note-font-scale, 1))/1.65 var(--note-font-text);
   font-synthesis: none;
 }
 .note-reading-content.node-text {
@@ -1164,16 +1167,16 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   margin: .8em 0 1em;
   padding: 14px 16px;
   overflow-x: auto;
-  border: 1px solid var(--md-code-border);
+  border: 0;
   border-radius: 7px;
-  background: var(--md-code-bg);
+  background: rgba(38, 43, 40, .032);
 }
 .note-reading-content pre.md-code code {
   display: block;
   padding: 0;
   color: var(--md-code-text);
   background: transparent;
-  font: 13px/1.68 var(--font-mono);
+  font: .94em/1.65 var(--note-font-mono);
   white-space: pre;
   tab-size: 4;
 }
@@ -1312,6 +1315,7 @@ body.start-page[data-start-theme="dark"] .note-error-bar { color: #f0bbb5; backg
 body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-editor { color: #edf0ea; }
 body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-cursor,
 body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-dropCursor { border-left-color: #edf0ea; }
+body.start-page[data-start-theme="dark"] .note-live-task { color-scheme: dark; accent-color: #91ab87; }
 body.start-page[data-start-theme="dark"] .note-live-inline-code,
 body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-line.note-live-code-line { color: #dce5da; background: rgba(224,235,222,.065); }
 body.start-page[data-start-theme="dark"] .note-live-code-language { color: rgba(220,229,218,.68); background: rgba(16,22,18,.72); box-shadow: inset 0 0 0 1px rgba(220,229,218,.08); }

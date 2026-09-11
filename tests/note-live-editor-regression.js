@@ -100,7 +100,7 @@ function loadLiveDecorationProbe() {
   context.document = {};
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -229,6 +229,38 @@ assert.strictEqual(codeLanguageDecoration.spec.widget.label, 'c');
 assert.strictEqual(codeLanguageDecoration.spec.widget.code, 'int a = 5, b = 5;\nint c, d;',
   'copying the language badge must copy only code, without either fence');
 
+const longCodeSource = '```c\n' + 'int value = 42;\n'.repeat(6000) + '```';
+const longCodeState = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: longCodeSource,
+  extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), blockField],
+});
+const longCodeFrom = longCodeState.doc.line(8).from;
+const longCodeTo = longCodeState.doc.line(35).to;
+const originalSlice = longCodeState.doc.sliceString;
+let largestRead = 0;
+longCodeState.doc.sliceString = function (from, to) {
+  largestRead = Math.max(largestRead, to - from);
+  return originalSlice.call(this, from, to);
+};
+const longCodeDecorations = decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+  state: longCodeState, visibleRanges: [{ from: longCodeFrom, to: longCodeTo }], hasFocus: false, composing: false,
+}, blockField, () => 'long.md', probeOptions), longCodeSource.length);
+assert.strictEqual(longCodeDecorations.length, 28, 'a large code block must decorate only its visible lines');
+assert(longCodeDecorations.every(item => item.from >= longCodeFrom && item.to <= longCodeTo),
+  'code decorations must not leak outside the viewport');
+liveProbe.__relatumLiveTest.scanBlockSpecs(longCodeState, longCodeFrom, longCodeTo);
+const originalLine = longCodeState.doc.line;
+let scannedLines = 0;
+longCodeState.doc.line = function (number) { scannedLines++; return originalLine.call(this, number); };
+liveProbe.__relatumLiveTest.scanBlockSpecs(longCodeState, 0, longCodeSource.length);
+assert(scannedLines < 10, 'math discovery must skip a known code block even when scan boundaries expand to its ancestor');
+delete longCodeState.doc.line;
+const badge = new liveProbe.__relatumLiveTest.CodeLanguageWidget('c', longCodeState.doc, 0, longCodeSource.length);
+assert(badge.eq(new liveProbe.__relatumLiveTest.CodeLanguageWidget('c', longCodeState.doc, 0, longCodeSource.length)));
+assert(largestRead < 100, 'ordinary code scanning and badge comparison must not materialize the whole fence');
+assert.strictEqual(badge.code, longCodeSource.slice(5, -4), 'the badge must read exact code when it is actually copied');
+delete longCodeState.doc.sliceString;
+
 const escapeSource = '\\==123==\n\\a\n`\\*`\n```text\n\\*\n```';
 const escapeCoordinator = { field: null, spec() { return null; } };
 const escapeOptions = { coordinator: escapeCoordinator, imageUrl() { return ''; } };
@@ -287,6 +319,10 @@ assert.strictEqual(syntax.parseCalloutSource('> [!unknown]+ 自定义').type, 'u
 assert.strictEqual(syntax.fenceStart('```Py').label, 'Py', 'the displayed fence language must preserve the author\'s spelling');
 assert.strictEqual(syntax.fenceStart('```Py').language, 'py', 'language lookup must remain case-insensitive');
 assert.strictEqual(syntax.fencedCodeBody('```C\nint main(void) {}\n```'), 'int main(void) {}');
+assert.strictEqual(syntax.fencedCodeBody('```c\nint final = 7;'), 'int final = 7;',
+  'an unclosed fence must retain its last code line when copied');
+assert.strictEqual(syntax.fencedCodeBody('~~~~text\n```\n~~~~'), '```',
+  'only the matching closing delimiter may be stripped');
 assert.strictEqual(syntax.scanBlockSpecsFromString('```mermaid\ngraph TD; A-->B').length, 0, 'unclosed fences must remain source');
 assert.strictEqual(syntax.scanBlockSpecsFromString('```text\n$$\nx+1\n$$\n```').length, 0, 'custom math must not project inside code fences');
 assert.strictEqual(syntax.scanBlockSpecsFromString('$$\nx+1').length, 0, 'unclosed math must remain source');
