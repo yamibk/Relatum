@@ -214,14 +214,6 @@
                 </div>
               </section>
             </div>
-            <label class="start-root-title-size-setting start-note-font-setting">
-              <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
-              <span class="start-note-font-range" style="--default-pos:33.333%;">
-                <input type="range" min="80" max="140" step="5" value="100"
-                  data-role="note-font-scale" aria-label="笔记正文字号缩放比例">
-              </span>
-              <small aria-hidden="true"><i>80%</i><i>100% = 16px</i><i>140%</i></small>
-            </label>
             <label class="start-setting-toggle starmap-motion-toggle">
               <span>
                 <strong>结束后自动取景</strong>
@@ -1568,6 +1560,56 @@
           </button>
           <button type="button" class="note-side-button" data-note-action="toggle-links"
             aria-label="显示链接面板">⇄</button>
+          <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
+            aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15.08 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/>
+            </svg>
+          </button>
+          <section class="note-settings-pop" id="note-settings-pop" data-role="note-settings-pop"
+            role="dialog" aria-label="笔记设置" hidden inert>
+            <header class="note-settings-head">
+              <h2>笔记设置</h2>
+              <div class="note-settings-reset-area" data-role="note-settings-reset-area">
+                <button type="button" class="note-settings-reset" data-note-settings-action="reset-open"
+                  aria-expanded="false" aria-controls="note-settings-reset-confirm">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1M2.8 3.4v3h3"/></svg>
+                  <span>恢复默认</span>
+                </button>
+                <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
+                  data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
+                  <div><strong>恢复笔记设置默认值？</strong><span>仅重置正文字号和编辑器快捷键。</span></div>
+                  <footer>
+                    <button type="button" data-note-settings-action="reset-cancel">取消</button>
+                    <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
+                  </footer>
+                </div>
+                <span class="note-settings-reset-status" data-role="note-settings-reset-status"
+                  role="status" aria-live="polite"></span>
+              </div>
+            </header>
+            <section class="note-settings-section" aria-labelledby="note-settings-appearance-title">
+              <h3 id="note-settings-appearance-title">外观</h3>
+              <label class="note-settings-font">
+                <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
+                <span class="note-settings-range" style="--default-pos:33.333%;">
+                  <input type="range" min="80" max="140" step="5" value="100"
+                    data-role="note-font-scale" aria-label="笔记正文字号缩放比例">
+                </span>
+                <small aria-hidden="true"><i>80%</i><i>100% = 16px</i><i>140%</i></small>
+              </label>
+            </section>
+            <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">
+              <div class="note-settings-section-head">
+                <h3 id="note-settings-shortcuts-title">编辑器快捷键</h3>
+                <span>单次组合键</span>
+              </div>
+              <p>点击“＋”后按下新的快捷键；同一命令可以保留多个组合。</p>
+              <div class="note-shortcut-list" data-role="note-shortcut-list"></div>
+              <div class="note-shortcut-status" data-role="note-shortcut-status" role="status" aria-live="polite"></div>
+            </section>
+          </section>
           <button type="button" class="note-more-button" data-note-action="current-menu"
             aria-label="当前笔记菜单">•••</button>
         </div>

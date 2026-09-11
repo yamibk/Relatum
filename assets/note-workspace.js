@@ -36,6 +36,14 @@
   const historyPreview = $('[data-role="note-history-preview"]');
   const historyRestore = $('[data-note-action="history-restore"]');
   const historyCopy = $('[data-note-action="history-copy"]');
+  const settingsTrigger = $('[data-note-action="toggle-settings"]');
+  const settingsPop = $('[data-role="note-settings-pop"]');
+  const settingsShortcutList = $('[data-role="note-shortcut-list"]');
+  const settingsShortcutStatus = $('[data-role="note-shortcut-status"]');
+  const settingsResetArea = $('[data-role="note-settings-reset-area"]');
+  const settingsResetButton = $('[data-note-settings-action="reset-open"]');
+  const settingsResetConfirm = $('[data-role="note-settings-reset-confirm"]');
+  const settingsResetStatus = $('[data-role="note-settings-reset-status"]');
   let liveEditor = null;
 
   const ACTIVE_PATH_KEY = 'canvas:noteActivePath:v1';
@@ -45,6 +53,7 @@
   const LINKS_OPEN_KEY = 'canvas:noteLinksOpen:v1';
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
+  const NOTE_SHORTCUTS = window.RelatumNoteShortcuts || null;
   const VIEW_STATES_LIMIT = 200;
   const VIEW_STATES_DELAY = 750;
   const viewStates = new Map();
@@ -108,7 +117,8 @@
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
-    viewMode: 'live',
+    viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
+    shortcutBindings: NOTE_SHORTCUTS ? NOTE_SHORTCUTS.load() : {},
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
   try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = stored.filter((path) => typeof path === 'string'); } catch (error) {}
@@ -124,6 +134,242 @@
       viewStates.set(entry[0], { anchor: Math.floor(view.anchor), head: Math.floor(view.head), scrollTop: view.scrollTop });
     });
   } catch (error) {}
+
+  function noteSettingsCopy(key) {
+    const english = language() === 'en';
+    const copy = {
+      listen: ['按下快捷键', 'Press shortcut'],
+      unassigned: ['未设置', 'Unassigned'],
+      duplicate: ['该快捷键已在此命令中', 'This shortcut is already assigned here'],
+      invalid: ['请使用 Ctrl/Cmd、Alt，或独立功能键', 'Use Ctrl/Cmd, Alt, or a function key'],
+      restored: ['已恢复', 'Restored'],
+      conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
+      resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
+      resetCopy: ['仅重置正文字号和编辑器快捷键。', 'Only text size and editor shortcuts will be reset.'],
+      reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
+    };
+    return (copy[key] || ['', ''])[english ? 1 : 0];
+  }
+
+  function commandName(command) {
+    return language() === 'en' ? command.en : command.zh;
+  }
+
+  function setShortcutStatus(text, type) {
+    if (!settingsShortcutStatus) return;
+    settingsShortcutStatus.textContent = text || '';
+    settingsShortcutStatus.classList.toggle('is-ok', type === 'ok');
+  }
+
+  function renderNoteShortcutSettings() {
+    if (!settingsShortcutList || !NOTE_SHORTCUTS) return;
+    settingsShortcutList.replaceChildren();
+    NOTE_SHORTCUTS.COMMANDS.forEach((command) => {
+      const row = document.createElement('div');
+      row.className = 'note-shortcut-row' + (state.recordingShortcutCommand === command.id ? ' is-recording' : '');
+      const name = document.createElement('span');
+      name.className = 'note-shortcut-command';
+      name.textContent = commandName(command);
+      const bindings = document.createElement('div');
+      bindings.className = 'note-shortcut-bindings';
+      const assigned = state.shortcutBindings[command.id] || [];
+      if (!assigned.length && state.recordingShortcutCommand !== command.id) {
+        const emptyLabel = document.createElement('span');
+        emptyLabel.className = 'note-shortcut-empty';
+        emptyLabel.textContent = noteSettingsCopy('unassigned');
+        bindings.append(emptyLabel);
+      }
+      assigned.forEach((binding) => {
+        const chip = document.createElement('span');
+        chip.className = 'note-shortcut-chip';
+        const label = document.createElement('kbd');
+        label.textContent = NOTE_SHORTCUTS.displayBinding(binding);
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.dataset.noteShortcutAction = 'remove';
+        remove.dataset.noteShortcutCommand = command.id;
+        remove.dataset.noteShortcutBinding = binding;
+        remove.setAttribute('aria-label', (language() === 'en' ? 'Remove ' : '移除 ') + NOTE_SHORTCUTS.displayBinding(binding));
+        remove.textContent = '×';
+        chip.append(label, remove);
+        bindings.append(chip);
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.dataset.noteShortcutAction = 'record';
+      add.dataset.noteShortcutCommand = command.id;
+      if (state.recordingShortcutCommand === command.id) {
+        add.className = 'note-shortcut-add is-recording';
+        add.textContent = noteSettingsCopy('listen');
+        add.setAttribute('aria-label', noteSettingsCopy('listen'));
+      } else {
+        add.className = 'note-shortcut-add';
+        add.textContent = '+';
+        add.setAttribute('aria-label', (language() === 'en' ? 'Add shortcut for ' : '为此命令添加快捷键：') + commandName(command));
+      }
+      bindings.append(add);
+      row.append(name, bindings);
+      settingsShortcutList.append(row);
+    });
+  }
+
+  function applyShortcutBindings() {
+    if (liveEditor && typeof liveEditor.setShortcutBindings === 'function') liveEditor.setShortcutBindings(state.shortcutBindings);
+  }
+
+  function persistShortcutBindings() {
+    if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.save(state.shortcutBindings);
+    applyShortcutBindings();
+    renderNoteShortcutSettings();
+  }
+
+  function stopShortcutRecording(clearStatus) {
+    if (!state.recordingShortcutCommand) return false;
+    state.recordingShortcutCommand = '';
+    if (clearStatus) setShortcutStatus('');
+    renderNoteShortcutSettings();
+    return true;
+  }
+
+  function beginShortcutRecording(commandId) {
+    if (!NOTE_SHORTCUTS || !NOTE_SHORTCUTS.COMMANDS.some((command) => command.id === commandId)) return;
+    state.recordingShortcutCommand = commandId;
+    setShortcutStatus('');
+    renderNoteShortcutSettings();
+  }
+
+  function acceptShortcutBinding(commandId, binding) {
+    if (!NOTE_SHORTCUTS) return;
+    const normalized = NOTE_SHORTCUTS.normalizeBinding(binding);
+    if (!NOTE_SHORTCUTS.isAllowedBinding(normalized)) {
+      setShortcutStatus(noteSettingsCopy('invalid'));
+      return;
+    }
+    const assigned = state.shortcutBindings[commandId] || [];
+    if (assigned.includes(normalized)) {
+      setShortcutStatus(noteSettingsCopy('duplicate'));
+      return;
+    }
+    const conflict = NOTE_SHORTCUTS.conflictFor(normalized, commandId, state.shortcutBindings);
+    if (conflict) {
+      setShortcutStatus(noteSettingsCopy('conflict').replace('{name}', commandName(conflict.command)));
+      return;
+    }
+    state.shortcutBindings[commandId] = assigned.concat(normalized);
+    state.recordingShortcutCommand = '';
+    setShortcutStatus('');
+    persistShortcutBindings();
+  }
+
+  function removeShortcutBinding(commandId, binding) {
+    if (!NOTE_SHORTCUTS) return;
+    state.shortcutBindings[commandId] = (state.shortcutBindings[commandId] || []).filter((item) => item !== binding);
+    setShortcutStatus('');
+    persistShortcutBindings();
+  }
+
+  function syncNoteSettingsFontScale() {
+    const preference = window.RelatumNotePreferences;
+    const input = $('[data-role="note-font-scale"]');
+    const output = $('[data-role="note-font-scale-value"]');
+    const scale = preference && typeof preference.readFontScale === 'function' ? preference.readFontScale() : 100;
+    if (input) input.value = String(scale);
+    if (output) output.textContent = scale + '%';
+  }
+
+  function setNoteSettingsOpen(open, options) {
+    if (!settingsPop || !settingsTrigger) return;
+    const next = !!open;
+    const restoreFocus = !options || options.restoreFocus !== false;
+    if (!next && settingsPop.classList.contains('is-closing')) return;
+    clearTimeout(state.settingsCloseTimer); state.settingsCloseTimer = 0;
+    state.settingsOpen = next;
+    settingsTrigger.setAttribute('aria-expanded', next ? 'true' : 'false');
+    if (next) {
+      settingsPop.classList.remove('is-closing');
+      settingsPop.hidden = false;
+      settingsPop.removeAttribute('inert');
+      syncNoteSettingsFontScale();
+      renderNoteShortcutSettings();
+      return;
+    }
+    stopShortcutRecording(true);
+    if (settingsResetConfirm) settingsResetConfirm.hidden = true;
+    if (settingsResetButton) settingsResetButton.setAttribute('aria-expanded', 'false');
+    settingsPop.setAttribute('inert', '');
+    if (settingsPop.hidden) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      settingsPop.hidden = true;
+      settingsPop.classList.remove('is-closing');
+      if (restoreFocus && document.contains(settingsTrigger)) settingsTrigger.focus();
+      return;
+    }
+    settingsPop.classList.add('is-closing');
+    state.settingsCloseTimer = window.setTimeout(() => {
+      state.settingsCloseTimer = 0;
+      if (state.settingsOpen) return;
+      settingsPop.hidden = true;
+      settingsPop.classList.remove('is-closing');
+      if (restoreFocus && document.contains(settingsTrigger)) settingsTrigger.focus();
+    }, 180);
+  }
+
+  function toggleNoteSettingsReset(open) {
+    if (!settingsResetConfirm || !settingsResetButton) return;
+    settingsResetConfirm.hidden = !open;
+    settingsResetButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function resetNoteSettings() {
+    const preference = window.RelatumNotePreferences;
+    if (preference && typeof preference.resetFontScale === 'function') preference.resetFontScale();
+    else {
+      try { localStorage.removeItem('canvas:noteFontScale:v1'); } catch (error) {}
+      document.documentElement.style.setProperty('--note-font-scale', '1');
+    }
+    if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset();
+    applyShortcutBindings();
+    syncNoteSettingsFontScale();
+    renderNoteShortcutSettings();
+    toggleNoteSettingsReset(false);
+    if (settingsResetArea && settingsResetStatus) {
+      clearTimeout(state.settingsResetTimer);
+      settingsResetStatus.textContent = noteSettingsCopy('restored');
+      settingsResetArea.classList.add('is-restored');
+      state.settingsResetTimer = window.setTimeout(() => {
+        settingsResetArea.classList.remove('is-restored');
+        settingsResetStatus.textContent = '';
+      }, 1300);
+    }
+  }
+
+  function replaceFallbackSelection(prefix, suffix, placeholder) {
+    if (!fallbackEditor) return false;
+    const start = fallbackEditor.selectionStart;
+    const end = fallbackEditor.selectionEnd;
+    const selected = fallbackEditor.value.slice(start, end) || placeholder || '';
+    const insert = prefix + selected + suffix;
+    fallbackEditor.setRangeText(insert, start, end, 'end');
+    if (start === end && selected) fallbackEditor.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
+    markChanged(editorSnapshot());
+    return true;
+  }
+
+  function runFallbackShortcut(event) {
+    if (!NOTE_SHORTCUTS || !fallbackEditor || event.defaultPrevented) return false;
+    const binding = NOTE_SHORTCUTS.bindingFromEvent(event);
+    if (!binding) return false;
+    const command = NOTE_SHORTCUTS.COMMANDS.find((entry) => (state.shortcutBindings[entry.id] || []).includes(binding));
+    if (!command) return false;
+    event.preventDefault();
+    if (command.id === 'save') flushSave();
+    else if (command.id === 'bold') replaceFallbackSelection('**', '**', '粗体');
+    else if (command.id === 'italic') replaceFallbackSelection('*', '*', '斜体');
+    else if (command.id === 'inline-code') replaceFallbackSelection('`', '`', '代码');
+    else if (command.id === 'code-block') replaceFallbackSelection('```\n', '\n```', '');
+    else if (command.id === 'link') replaceFallbackSelection('[', '](https://)', '链接文字');
+    return true;
+  }
 
   function persistViewStates() {
     clearTimeout(viewStatesTimer); viewStatesTimer = 0;
@@ -343,7 +589,7 @@
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.create === 'function') {
       try {
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
-          value: '', notePath: '', sourceMode: state.viewMode === 'source',
+          value: '', notePath: '', sourceMode: state.viewMode === 'source', shortcutBindings: state.shortcutBindings,
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
           onOpenWiki: (target) => openWikiFromEditor(target),
@@ -374,7 +620,10 @@
       state.titleResizeObserver.observe(inlineTitleShell);
     }
     fallbackEditor.addEventListener('input', () => markChanged(editorSnapshot()));
-    fallbackEditor.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); flushSave(); } });
+    fallbackEditor.addEventListener('keydown', (event) => {
+      if (runFallbackShortcut(event)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); flushSave(); }
+    });
     fallbackEditor.addEventListener('paste', (event) => {
       const files = Array.from(event.clipboardData && event.clipboardData.items || []).filter((item) => item.kind === 'file' && /^image\//i.test(item.type || '')).map((item) => item.getAsFile()).filter(Boolean);
       if (files.length) { event.preventDefault(); uploadImages(files); }
@@ -1208,7 +1457,7 @@
     }
     return true;
   }
-  async function deactivate() { if (!(await flushSave())) return false; persistViewStates(); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { if (!(await flushSave())) return false; persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {
     const action = event.target.closest('[data-note-action]');
@@ -1223,6 +1472,7 @@
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
     else if (name === 'toggle-source' && state.current) setViewMode(state.viewMode === 'source' ? 'live' : 'source');
+    else if (name === 'toggle-settings') setNoteSettingsOpen(!state.settingsOpen);
     else if (name === 'current-menu' && state.current) {
       const entry = findEntry(state.current.path) || { kind: 'note', path: state.current.path, name: noteTitle(state.current.path) };
       const rect = action.getBoundingClientRect();
@@ -1239,6 +1489,25 @@
     } else if (name === 'history-restore') restoreHistory();
     else if (name === 'history-copy' && state.historyVersion) copyText(state.historyVersion.content || '');
   });
+  if (settingsShortcutList) {
+    settingsShortcutList.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-note-shortcut-action]');
+      if (!action) return;
+      const commandId = action.dataset.noteShortcutCommand || '';
+      if (action.dataset.noteShortcutAction === 'record') beginShortcutRecording(commandId);
+      else if (action.dataset.noteShortcutAction === 'remove') removeShortcutBinding(commandId, action.dataset.noteShortcutBinding || '');
+    });
+  }
+  if (settingsPop) {
+    settingsPop.addEventListener('scroll', () => settingsPop.classList.toggle('is-scrolled', settingsPop.scrollTop > 3), { passive: true });
+    settingsPop.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-note-settings-action]');
+      if (!action) return;
+      if (action.dataset.noteSettingsAction === 'reset-open') toggleNoteSettingsReset(settingsResetConfirm && settingsResetConfirm.hidden);
+      else if (action.dataset.noteSettingsAction === 'reset-cancel') toggleNoteSettingsReset(false);
+      else if (action.dataset.noteSettingsAction === 'reset-accept') resetNoteSettings();
+    });
+  }
   if (inlineTitleEl) {
     inlineTitleEl.addEventListener('input', () => inlineTitleEl.classList.remove('is-invalid'));
     inlineTitleEl.addEventListener('blur', () => commitInlineTitle());
@@ -1272,9 +1541,30 @@
   treeEl.addEventListener('dragover', (event) => { if (event.target.closest('.note-tree-row')) return; const external = Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.dataTransfer.dropEffect = state.draggedPath ? 'move' : 'copy'; treeEl.classList.add('note-drop-root'); });
   treeEl.addEventListener('dragleave', (event) => { if (!treeEl.contains(event.relatedTarget)) treeEl.classList.remove('note-drop-root'); });
   treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.draggedPath) moveEntry(state.draggedPath, ''); else importDataTransfer(event.dataTransfer, ''); });
-  document.addEventListener('pointerdown', (event) => { if (contextMenu && !contextMenu.hidden && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu(); });
+  document.addEventListener('pointerdown', (event) => {
+    if (contextMenu && !contextMenu.hidden && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
+    if (state.settingsOpen && settingsPop && settingsTrigger && !settingsPop.contains(event.target) && !settingsTrigger.contains(event.target)) {
+      setNoteSettingsOpen(false, { restoreFocus: false });
+    }
+  });
   document.addEventListener('keydown', (event) => {
     if (!state.active) return;
+    if (state.recordingShortcutCommand && !event.isComposing) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.key === 'Escape') { stopShortcutRecording(true); return; }
+      const binding = NOTE_SHORTCUTS && NOTE_SHORTCUTS.bindingFromEvent(event);
+      if (binding) acceptShortcutBinding(state.recordingShortcutCommand, binding);
+      else setShortcutStatus(noteSettingsCopy('invalid'));
+      return;
+    }
+    if (state.settingsOpen && event.key === 'Escape') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (settingsResetConfirm && !settingsResetConfirm.hidden) toggleNoteSettingsReset(false);
+      else setNoteSettingsOpen(false);
+      return;
+    }
     const mod = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
     if (mod && key === 'n') { event.preventDefault(); createEntry('note'); }
     else if (mod && key === 't') { event.preventDefault(); openBlankTab(); }
@@ -1294,8 +1584,8 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) flushWorkspaceState(); });
   window.addEventListener('pagehide', flushWorkspaceState);
   window.addEventListener('beforeunload', flushWorkspaceState);
-  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
-  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle();
+  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: checkExternalChanges, get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();
