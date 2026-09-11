@@ -9303,7 +9303,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   top: 0;
   z-index: 2;
   opacity: 0;
-  background: var(--accent);
+  background: #000;
   box-shadow: 0 8px 20px rgba(26, 26, 26, 0.14);
   pointer-events: none;
   will-change: transform;
@@ -9312,8 +9312,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
               height var(--start-orb-shape-ms) var(--easing-soft),
               border-radius var(--start-orb-shape-ms) var(--easing-soft),
               clip-path var(--start-orb-clip-ms) var(--easing-soft),
-              box-shadow var(--start-orb-shape-ms) var(--easing-soft),
-              opacity var(--start-orb-fade-ms) var(--easing-soft);
+              box-shadow var(--start-orb-shape-ms) var(--easing-soft);
 }
 .spine-active-orb.show { opacity: 1; }
 .spine-active-orb[data-shape="tab"] { box-shadow: 0 8px 20px rgba(26, 26, 26, 0.14); }
@@ -9324,14 +9323,14 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .spine-active-orb[data-shape="dot"],
 .spine-active-orb[data-shape="star"] { border-radius: 0; }
 
-/* 当前页静止片刻后才出现的微弱生命感；不改变定位或尺寸。 */
+/* 呼吸只作用于外侧光晕，实体始终保持纯黑 / 纯白与完全不透明。 */
 .spine-active-orb.orb-breathing {
   animation: spine-orb-breathe 3.8s var(--easing-soft) infinite;
 }
 
 @keyframes spine-orb-breathe {
-  0%, 100% { filter: brightness(1) drop-shadow(0 0 0 rgba(26, 26, 26, 0)); }
-  50% { filter: brightness(1.025) drop-shadow(0 0 5px rgba(26, 26, 26, 0.11)); }
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(26, 26, 26, 0)); }
+  50% { filter: drop-shadow(0 0 5px rgba(26, 26, 26, 0.11)); }
 }
 
 /* 速记搜索进行中：只让当前页游标透出一圈微弱呼吸光，不增加任何搜索 UI。 */
@@ -9341,14 +9340,12 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 
 @keyframes notes-search-orb-glow {
   0%, 100% {
-    filter: brightness(1);
     box-shadow:
       0 8px 20px rgba(26, 26, 26, 0.14),
       0 0 0 2px rgba(246, 194, 76, 0.34),
       0 0 9px rgba(246, 194, 76, 0.42);
   }
   50% {
-    filter: brightness(1.045);
     box-shadow:
       0 8px 20px rgba(26, 26, 26, 0.14),
       0 0 0 3px rgba(250, 202, 86, 0.62),
@@ -9444,12 +9441,10 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   color: var(--text-secondary);
   cursor: pointer;
   box-shadow: 0 3px 12px rgba(26, 26, 26, 0.045);
-  backdrop-filter: blur(16px) saturate(1.35);
-  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* 升到实体滑块上方时立即清空按钮表面，避免旧底色在过渡中覆盖滑块。 */
   transition: color var(--duration) var(--easing-soft),
-              background var(--duration) var(--easing-soft),
-              border-color var(--duration) var(--easing-soft),
-              box-shadow var(--duration) var(--easing-soft),
               transform var(--duration) var(--easing-soft);
   z-index: 1;
 }
@@ -9493,10 +9488,8 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   background: transparent;
   color: #fff;
   box-shadow: none;
-  /* 激活的字浮到滑动游标(spine-active-orb, z-index:2)之上，恢复「白字黑底药丸」本意。
-     按钮自带 position:relative + z-index:1 + 毛玻璃，会把字困在自己的层叠上下文里、
-     被游标整块盖住；激活时把整枚按钮抬到游标之上、并撤掉毛玻璃（透明底无需虚化、
-     也免得把背后的游标连带糊一层），字就稳稳落在色块上。 */
+  /* 非激活按钮在实体滑块(z-index:2)下方；激活按钮升层时表面立即透明，
+     只让文字与图标显示在实体上方，快速改道也不会残留半透明底色。 */
   z-index: 3;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -36924,8 +36917,8 @@ body.start-page[data-start-theme="dark"] .start-help-trigger[disabled] {
 }
 
 body.start-page[data-start-theme="dark"] .spine-active-orb {
-  border-color: rgba(255, 255, 255, 0.84);
-  background: rgba(242, 241, 237, 0.94);
+  border-color: #fff;
+  background: #fff;
 }
 
 body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="tab"] {
@@ -36950,14 +36943,12 @@ body.start-page[data-start-theme="dark"] .left-spine.notes-search-active .spine-
 
 @keyframes notes-search-orb-glow-dark {
   0%, 100% {
-    filter: brightness(1);
     box-shadow:
       0 10px 26px rgba(0, 0, 0, 0.34),
       0 0 0 2px rgba(255, 205, 88, 0.48),
       0 0 11px rgba(255, 205, 88, 0.58);
   }
   50% {
-    filter: brightness(1.055);
     box-shadow:
       0 10px 26px rgba(0, 0, 0, 0.34),
       0 0 0 3px rgba(255, 211, 103, 0.78),
@@ -36966,8 +36957,8 @@ body.start-page[data-start-theme="dark"] .left-spine.notes-search-active .spine-
 }
 
 @keyframes spine-orb-breathe-dark {
-  0%, 100% { filter: brightness(1) drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
-  50% { filter: brightness(1.025) drop-shadow(0 0 5px rgba(255, 255, 255, 0.13)); }
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
+  50% { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.13)); }
 }
 
 body.start-page[data-start-theme="dark"] .left-spine.spine-hover-current .spine-hover-orb {
