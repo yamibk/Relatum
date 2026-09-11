@@ -1506,6 +1506,7 @@
         ['起步页、语言与笔记工作区', '这一组主要记住你上次看到的界面，不代替真正的内容文件。', [
           ['主题与工作区', '<code>canvas:startTheme</code>、<code>canvas:startWorkspace:v1</code> 和 <code>canvas:toolbarLanguage</code> 等保存主题、上次工作区、界面语言、搜索与页面显示偏好。删除后恢复默认，不删画布或记录。'],
           ['笔记工作区', '<code>canvas:note*</code> 记住打开标签、当前笔记、文件夹展开状态、视图和字号。删除后工作区会重置，<code>.md</code> 正文和笔记图片仍在。'],
+          ['笔记编辑位置', '<code>canvas:noteViewStates:v1</code> 记住最近 200 篇笔记的库内路径、光标选区和滚动位置，方便重启或重新打开后接着编辑。它只保存在本机，不包含正文；清除后会忘记这些位置，不会删除笔记或图片。'],
         ]],
         ['学习、树状、速记、复习与记账', '这些页面的长期内容在 <code>data</code> 中，但一些“怎么看”只存在本机。', [
           ['视图与镜头', '<code>study:*</code>、<code>canvas:notesView</code>、<code>canvas:cadenceLens:v2</code>、<code>canvas:reviewMode:v1</code> 和 <code>relatum.*.view.&lt;树 ID&gt;</code> 记住页面、复习模式、镜头与折叠状态。删除后任务、树和便签仍在，但视图会回到默认。'],
@@ -1624,6 +1625,7 @@
         ['Home, language, and the Notes workspace', 'These settings mainly remember the interface you last saw; they do not replace the real content files.', [
           ['Theme and workspace', '<code>canvas:startTheme</code>, <code>canvas:startWorkspace:v1</code>, <code>canvas:toolbarLanguage</code>, and related keys store the theme, last workspace, interface language, search, and page-display preferences. Deleting them restores defaults without deleting canvases or records.'],
           ['Notes workspace', '<code>canvas:note*</code> remembers open tabs, the current note, expanded folders, the view, and text size. Deleting it resets the workspace, while <code>.md</code> files and note images remain.'],
+          ['Note editing positions', '<code>canvas:noteViewStates:v1</code> remembers vault-relative paths, cursor selections, and scroll positions for the 200 most recent notes, so you can resume editing after restarting or reopening them. It stays on this device and contains no note text. Clearing it forgets these positions without deleting notes or images.'],
         ]],
         ['Study, Tree, Quick Notes, Review, and Ledger', 'Long-term content for these pages lives in <code>data</code>, but some details about how it is viewed exist only on this device.', [
           ['Views and cameras', '<code>study:*</code>, <code>canvas:notesView</code>, <code>canvas:cadenceLens:v2</code>, <code>canvas:reviewMode:v1</code>, and <code>relatum.*.view.&lt;tree ID&gt;</code> remember pages, review mode, cameras, and collapsed branches. Tasks, trees, and notes remain after deletion, but their views return to defaults.'],
