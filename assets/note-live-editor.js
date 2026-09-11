@@ -726,17 +726,35 @@
         return { specs, byId, activeIds: new Set(), focused: false, composing: false, decorations };
       },
       update(value, transaction) {
+        let focused = value.focused;
+        let composing = value.composing;
+        transaction.effects.forEach((effect) => { if (effect.is(focusEffect)) focused = !!effect.value; });
+        transaction.effects.forEach((effect) => { if (effect.is(compositionEffect)) composing = !!effect.value; });
+        if (composing) {
+          // The browser owns the preedit text until compositionend. Preserve
+          // all projections and only map their positions through native edits;
+          // reparsing/replacing neighbouring blocks can move the IME caret.
+          const specs = transaction.docChanged ? value.specs.map((spec) => Object.assign({}, spec, {
+            from: transaction.changes.mapPos(spec.from, -1),
+            to: transaction.changes.mapPos(spec.to, 1),
+          })) : value.specs;
+          return Object.assign({}, value, {
+            specs, byId: transaction.docChanged ? new Map(specs.map((spec) => [spec.id, spec])) : value.byId,
+            focused, composing,
+            decorations: transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations,
+          });
+        }
         let specs = updateBlockSpecs(value.specs, transaction);
         let viewportRefreshed = false;
+        if (value.composing) {
+          specs = refreshVisibleBlockSpecs(specs, transaction.state, transaction.state.selection.ranges);
+          viewportRefreshed = true;
+        }
         transaction.effects.forEach((effect) => {
           if (!effect.is(viewportScanEffect)) return;
           specs = refreshVisibleBlockSpecs(specs, transaction.state, effect.value);
           viewportRefreshed = true;
         });
-        let focused = value.focused;
-        let composing = value.composing;
-        transaction.effects.forEach((effect) => { if (effect.is(focusEffect)) focused = !!effect.value; });
-        transaction.effects.forEach((effect) => { if (effect.is(compositionEffect)) composing = !!effect.value; });
         const notePathChanged = transaction.effects.some((effect) => effect.is(notePathEffect));
         const selectionChanged = !!transaction.selection;
         if (!transaction.docChanged && !selectionChanged && focused === value.focused && composing === value.composing && !notePathChanged && !viewportRefreshed) return value;
@@ -751,7 +769,9 @@
         byId.forEach((current, id) => { if (!value.byId.has(id)) refresh.add(id); });
         value.activeIds.forEach((id) => { if (!activeIds.has(id)) refresh.add(id); });
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
-        if (notePathChanged) specs.forEach((spec) => refresh.add(spec.id));
+        // Mapped widgets still carry the pre-composition source positions.
+        // Refresh them once after commit, including unchanged blocks below it.
+        if (notePathChanged || value.composing) specs.forEach((spec) => refresh.add(spec.id));
 
         let decorations = transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations;
         if (refresh.size) {
@@ -815,8 +835,14 @@
     return ranges.some((range) => (!pattern || pattern.test(range.kind)) && range.from < to && range.to > from);
   }
 
+  function compositionActive(view) {
+    return !!(view.__relatumCompositionActive || (view.hasFocus && (view.compositionStarted || view.composing)));
+  }
+
   function constructActive(view, from, to) {
-    return view.composing || view.__relatumCompositionActive || (view.hasFocus && selectionTouches(view.state.selection, from, to));
+    // IME activity is local to the selection, never a request to expose every
+    // Markdown marker in the document.
+    return (view.hasFocus || compositionActive(view)) && selectionTouches(view.state.selection, from, to);
   }
 
   function escapedAt(text, index) {
@@ -1164,11 +1190,17 @@
 
   function createInlinePlugin(blockField, notePath, options) {
     return ViewPlugin.fromClass(class {
-      constructor(view) { this.decorations = createInlineDecorations(view, blockField, notePath, options); }
+      constructor(view) { this.decorations = createInlineDecorations(view, blockField, notePath, options); this.compositionPending = false; }
       update(update) {
+        if (compositionActive(update.view)) {
+          this.decorations = this.decorations.map(update.changes);
+          this.compositionPending = true;
+          return;
+        }
         const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(compositionEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect)));
         const syntaxChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
-        if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || update.view.composing || lifecycleChanged || syntaxChanged) {
+        if (this.compositionPending || update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || lifecycleChanged || syntaxChanged) {
+          this.compositionPending = false;
           this.decorations = createInlineDecorations(update.view, blockField, notePath, options);
         }
       }
@@ -1220,6 +1252,9 @@
       parseViewport() {
         const view = this.view;
         if (this.stopped || !view.dom.isConnected) return;
+        // compositionend explicitly schedules a fresh pass. Do not force the
+        // parser or replace DOM while Windows is still editing a candidate.
+        if (compositionActive(view)) return;
         const target = Math.min(view.state.doc.length, view.viewport.to + BLOCK_MATH_LIMIT);
         const complete = typeof forceParsing !== 'function' || forceParsing(view, target, VIEWPORT_PARSE_SLICE);
         if (!complete) {
@@ -1331,6 +1366,10 @@
     let documentSetSeq = 0;
     let destroyed = false;
     let compositionDirty = false;
+    let compositionFrame = 0;
+    let compositionSeq = 0;
+    let pendingSourceMode = null;
+    let pendingShortcutBindings = null;
     let sourceMode = !!options.sourceMode;
     const coordinator = { epoch: 1, field: null, spec() { return null; } };
     const safeOptions = Object.assign({
@@ -1346,6 +1385,25 @@
     const viewportParsePlugin = createViewportParsePlugin();
     const livePreviewCompartment = new Compartment();
     const editorLabelCompartment = new Compartment();
+    const shortcutCompartment = new Compartment();
+    const shortcutRegistry = window.RelatumNoteShortcuts || null;
+    const fallbackShortcutDefaults = Object.freeze({
+      save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], link: ['Mod-k'],
+      'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'],
+    });
+
+    function normalizedShortcutBindings(bindings) {
+      if (shortcutRegistry) return shortcutRegistry.cloneBindings(bindings || shortcutRegistry.defaultBindings());
+      const next = {};
+      Object.keys(fallbackShortcutDefaults).forEach((id) => {
+        next[id] = Array.isArray(bindings && bindings[id])
+          ? bindings[id].filter((key) => typeof key === 'string' && key)
+          : fallbackShortcutDefaults[id].slice();
+      });
+      return next;
+    }
+
+    let currentShortcutBindings = normalizedShortcutBindings(options.shortcutBindings);
 
     function livePreviewExtensions() {
       return sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin];
@@ -1355,20 +1413,31 @@
       return EditorView.contentAttributes.of({ spellcheck: 'false', 'aria-label': sourceMode ? languageSourceLabel() : languageLabel() });
     }
 
-    const customKeys = [
-      { key: 'Mod-s', preventDefault: true, run() { safeOptions.onSaveRequest(); return true; } },
-      { key: 'Mod-b', preventDefault: true, run(view) { return wrapSelection(view, '**', '**', '粗体'); } },
-      { key: 'Mod-i', preventDefault: true, run(view) { return wrapSelection(view, '*', '*', '斜体'); } },
-      { key: 'Mod-`', preventDefault: true, run(view) { return wrapSelection(view, '`', '`', '代码'); } },
-      { key: 'Mod-Shift-k', preventDefault: true, run: wrapCodeBlock },
-      { key: 'Mod-k', preventDefault: true, run(view) {
+    const shortcutRuns = {
+      save() { safeOptions.onSaveRequest(); return true; },
+      bold(view) { return wrapSelection(view, '**', '**', '粗体'); },
+      italic(view) { return wrapSelection(view, '*', '*', '斜体'); },
+      'inline-code'(view) { return wrapSelection(view, '`', '`', '代码'); },
+      'code-block': wrapCodeBlock,
+      link(view) {
         const range = view.state.selection.main;
         const selected = view.state.doc.sliceString(range.from, range.to) || '链接文字';
         const insert = '[' + selected + '](https://)';
         view.dispatch({ changes: { from: range.from, to: range.to, insert }, selection: EditorSelection.range(range.from + selected.length + 3, range.from + insert.length - 1) });
         return true;
-      } },
-    ];
+      },
+    };
+
+    function customKeyBindings() {
+      const keys = [];
+      Object.keys(shortcutRuns).forEach((id) => {
+        const run = shortcutRuns[id];
+        (currentShortcutBindings[id] || []).forEach((key) => {
+          keys.push({ key, preventDefault: true, run });
+        });
+      });
+      return keys;
+    }
 
     function notifyDocChanged(view) {
       const main = view.state.selection.main;
@@ -1377,6 +1446,39 @@
         head: main.head,
         scrollTop: view.scrollDOM.scrollTop,
         length: view.state.doc.length,
+      });
+    }
+
+    function cancelCompositionFinish() {
+      compositionSeq += 1;
+      if (compositionFrame) cancelAnimationFrame(compositionFrame);
+      compositionFrame = 0;
+    }
+
+    function finishComposition(view) {
+      cancelCompositionFinish();
+      const seq = compositionSeq;
+      const documentSeq = documentSetSeq;
+      compositionFrame = requestAnimationFrame(() => {
+        compositionFrame = 0;
+        if (destroyed || seq !== compositionSeq || documentSeq !== documentSetSeq || !view.dom.isConnected) return;
+        // Let CodeMirror consume the final native input/selection first. A new
+        // compositionstart cancels this callback before it can touch the view.
+        if (view.hasFocus && view.compositionStarted) { finishComposition(view); return; }
+        view.__relatumCompositionActive = false;
+        view.dispatch({ effects: [compositionEffect.of(false), viewportParseRequestEffect.of(true)] });
+        host.classList.remove('is-composing');
+        if (compositionDirty) { compositionDirty = false; notifyDocChanged(view); }
+        if (pendingSourceMode !== null) {
+          const next = pendingSourceMode;
+          pendingSourceMode = null;
+          setSourceMode(next);
+        }
+        if (pendingShortcutBindings !== null) {
+          const next = pendingShortcutBindings;
+          pendingShortcutBindings = null;
+          setShortcutBindings(next);
+        }
       });
     }
 
@@ -1389,8 +1491,8 @@
         relatumCodeHighlighting || [],
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }])),
-        keymap.of(customKeys.concat(
-          Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : [],
+        shortcutCompartment.of(keymap.of(customKeyBindings())),
+        keymap.of((Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : []).concat(
           markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
         placeholder(languagePlaceholder()), EditorView.lineWrapping,
         EditorView.exceptionSink.of((error) => {
@@ -1400,24 +1502,25 @@
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || suppressChanges) return;
-          if (update.view.composing || update.view.__relatumCompositionActive) { compositionDirty = true; return; }
+          if (compositionActive(update.view)) { compositionDirty = true; return; }
           notifyDocChanged(update.view);
         }),
         EditorView.domEventHandlers({
           focus(event, view) { view.dispatch({ effects: focusEffect.of(true) }); return false; },
-          blur(event, view) { view.dispatch({ effects: focusEffect.of(false) }); return false; },
+          blur(event, view) {
+            view.dispatch({ effects: focusEffect.of(false) });
+            if (view.__relatumCompositionActive) finishComposition(view);
+            return false;
+          },
           compositionstart(event, view) {
+            cancelCompositionFinish();
             view.__relatumCompositionActive = true;
+            host.classList.add('is-composing');
             view.dispatch({ effects: compositionEffect.of(true) });
             return false;
           },
           compositionend(event, view) {
-            requestAnimationFrame(() => {
-              if (destroyed || !view.dom.isConnected) return;
-              view.__relatumCompositionActive = false;
-              view.dispatch({ effects: compositionEffect.of(false) });
-              if (compositionDirty) { compositionDirty = false; notifyDocChanged(view); }
-            });
+            finishComposition(view);
             return false;
           },
           mousedown(event, view) {
@@ -1475,7 +1578,15 @@
     function setDocument(documentState) {
       const seq = ++documentSetSeq;
       coordinator.epoch += 1;
+      cancelCompositionFinish();
+      view.__relatumCompositionActive = false;
+      host.classList.remove('is-composing');
       compositionDirty = false;
+      if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
+      if (pendingShortcutBindings !== null) {
+        currentShortcutBindings = normalizedShortcutBindings(pendingShortcutBindings);
+        pendingShortcutBindings = null;
+      }
       const value = documentState && typeof documentState.value === 'string' ? documentState.value : '';
       currentPath = String(documentState && documentState.notePath || '');
       const end = value.length;
@@ -1487,7 +1598,7 @@
       host.classList.toggle('is-source-mode', sourceMode);
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
       requestAnimationFrame(() => {
-        if (seq !== documentSetSeq) return;
+        if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
         view.scrollDOM.scrollTop = Math.max(0, Number(documentState && documentState.scrollTop) || 0);
         view.requestMeasure();
         requestAnimationFrame(() => {
@@ -1505,6 +1616,7 @@
 
     function setSourceMode(active) {
       const next = !!active;
+      if (compositionActive(view)) { pendingSourceMode = next; return; }
       if (next === sourceMode) return;
       sourceMode = next;
       coordinator.epoch += 1;
@@ -1514,6 +1626,13 @@
       ] });
       host.classList.toggle('is-source-mode', sourceMode);
       view.requestMeasure();
+    }
+
+    function setShortcutBindings(bindings) {
+      const next = normalizedShortcutBindings(bindings);
+      if (compositionActive(view)) { pendingShortcutBindings = next; return; }
+      currentShortcutBindings = next;
+      view.dispatch({ effects: shortcutCompartment.reconfigure(keymap.of(customKeyBindings())) });
     }
 
     function snapshot() {
@@ -1529,9 +1648,9 @@
     }
 
     return {
-      setDocument, setNotePath, setSourceMode, snapshot, replaceSelection,
+      setDocument, setNotePath, setSourceMode, setShortcutBindings, snapshot, replaceSelection,
       focus() { view.focus(); },
-      destroy() { destroyed = true; coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
+      destroy() { destroyed = true; cancelCompositionFinish(); view.__relatumCompositionActive = false; host.classList.remove('is-composing'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
       get view() { return view; },
     };
   }

@@ -224,6 +224,7 @@
       });
     };
     noteWorkspaceLoader = loadScript('vendor/codemirror/relatum-codemirror.min.js', () => !!window.RelatumCodeMirror)
+      .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
       .then(() => window.CanvasNoteWorkspace);
@@ -2088,7 +2089,6 @@
   function resetStartPanelDefaults() {
     [
       START_BACKGROUND_KEY,               // 主页背景（简洁）
-      NOTE_FONT_SCALE_KEY,                // 笔记正文字号（100%）
       STARMAP_MOTION_KEY,                 // 足迹星图动画（含「结束后自动取景」）
       CALENDAR_COUNTDOWN_KEY,             // 日历倒数日（开）
       START_PAGE_ACTIVITY_ENABLED_KEY,    // 学习/树状/速记计时（开）
@@ -2107,7 +2107,6 @@
       try { localStorage.removeItem(key); } catch (e) {}
     });
     applyStartBackgroundStyle('simple', false);
-    applyNoteFontScale(100, false);
     syncStarmapMotionForm(STARMAP_MOTION_DEFAULTS);
     clearTimeout(starmapMotionNotifyTimer);
     starmapMotionNotifyTimer = window.setTimeout(() => {
@@ -2186,6 +2185,14 @@
   if (desktopSettingsOpen) desktopSettingsOpen.addEventListener('click', openDesktopSettings);
   applyNoteFontScale(readNoteFontScale(), false);
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
+  window.RelatumNotePreferences = Object.freeze({
+    readFontScale: readNoteFontScale,
+    applyFontScale(value, persist) { return applyNoteFontScale(value, persist !== false); },
+    resetFontScale() {
+      try { localStorage.removeItem(NOTE_FONT_SCALE_KEY); } catch (e) {}
+      return applyNoteFontScale(100, false);
+    },
+  });
   document.querySelectorAll('[data-action="desktop-settings-close"]').forEach((button) => {
     button.addEventListener('click', closeDesktopSettings);
   });

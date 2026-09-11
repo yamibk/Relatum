@@ -89,7 +89,12 @@ assert(notes.includes("const label = tr(anyExpanded ? 'collapseAll' : 'expandAll
   'the folder-wide toggle must advertise collapse whenever any folder is expanded');
 assert(notes.includes('persistExpanded(); renderTree();'), 'expand-all state must reuse the persistent folder state');
 assert(html.includes('data-role="note-word-count"') && html.includes('data-role="note-character-count"'), 'the document footer needs word and character counts');
-assert(html.includes('data-role="note-font-scale"'), 'the start-page gear needs a Markdown font scale control');
+assert(html.includes('data-role="note-font-scale"') && html.includes('data-role="note-settings-pop"'),
+  'Note settings must own the Markdown font scale control');
+assert(html.includes('data-note-action="toggle-settings"'), 'Note settings need a toolbar gear trigger');
+assert(html.indexOf('data-note-action="toggle-links"') < html.indexOf('data-note-action="toggle-settings"')
+  && html.indexOf('data-note-action="toggle-settings"') < html.indexOf('data-note-action="current-menu"'),
+  'the Note settings trigger must sit between Links and the current-note menu');
 assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create the Live Preview adapter');
 assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument'), 'workspace save/load must use editor snapshots');
 const applyDocumentSource = notes.slice(notes.indexOf('function applyDocument'), notes.indexOf('function clearCurrent'));
@@ -131,6 +136,12 @@ assert(notes.includes('function setViewMode(mode)') && notes.includes('function 
   'view switching must keep one Markdown source and render reading mode on demand');
 assert(live.includes('function setSourceMode(active)') && live.includes('livePreviewCompartment.reconfigure(livePreviewExtensions())'),
   'source mode must reconfigure the existing CodeMirror state instead of rebuilding the document');
+assert(live.includes('function setShortcutBindings(bindings)') && live.includes('shortcutCompartment.reconfigure'),
+  'custom Note shortcuts must reconfigure the existing CodeMirror surface');
+assert(notes.includes('function setNoteSettingsOpen(open, options)') && notes.includes('function beginShortcutRecording(commandId)'),
+  'Note settings must support an anchored panel and shortcut recording');
+assert(notes.includes("canvas:noteShortcuts:v1") === false && start.includes("loadScript('note-shortcuts.js'"),
+  'the shortcut preference layer must load before the Note workspace adapter');
 const sourceToggle = live.slice(live.indexOf('function setSourceMode(active)'), live.indexOf('function snapshot()'));
 assert(!sourceToggle.includes('setDocument(') && !sourceToggle.includes('snapshot()'),
   'source toggles must preserve CodeMirror history, selection, and scroll state');
@@ -187,5 +198,7 @@ assert(!css.includes('position: fixed !important;\n  z-index: 80'), 'workspace a
 assert(css.includes('@media (max-width: 1120px)'), 'the two-pane workspace needs narrow-window collapse');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'), 'new motion needs a reduced-motion fallback');
 assert(start.includes("NOTE_FONT_SCALE_KEY = 'canvas:noteFontScale:v1'") && start.includes("style.setProperty('--note-font-scale'"), 'the font scale must apply offline and persist locally');
+assert(!start.slice(start.indexOf('function resetStartPanelDefaults()'), start.indexOf('function closeDesktopSettings()')).includes('applyNoteFontScale(100, false)'),
+  'global start settings must no longer reset Note text size');
 
 console.log('note workspace contract: ok');

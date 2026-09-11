@@ -380,8 +380,9 @@ assert(editorSource.includes('function renderMarkdown(host, source, notePath, op
   'reading mode must reuse the safe Markdown renderer and authorized local image path');
 assert(editorSource.includes('compositionstart') && editorSource.includes('compositionend'), 'explicit IME lifecycle is required');
 assert(editorSource.includes('note-live-source-mark'), 'source marker roles must be emitted by Relatum decorations');
-assert(editorSource.includes("{ key: 'Mod-b'") && editorSource.includes("{ key: 'Mod-Shift-k'"),
-  'bold and fenced-code shortcuts must be registered');
+assert(editorSource.includes("bold: ['Mod-b']") && editorSource.includes("'code-block': ['Mod-Shift-k']")
+  && editorSource.includes('shortcutCompartment.of(keymap.of(customKeyBindings()))'),
+  'bold and fenced-code shortcuts must be registered in the reconfigurable shortcut compartment');
 assert(editorSource.includes("Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }]))"),
   'empty quote exit must outrank the Markdown continuation keymap');
 assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading markers must include their separator whitespace');
