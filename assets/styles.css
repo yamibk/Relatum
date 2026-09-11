@@ -36,6 +36,8 @@
 .start-workspace-panel[hidden] { display: none !important; }
 
 .start-workspace-stage {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -98,44 +100,59 @@ body.start-page[data-start-workspace="career"] {
   overflow: hidden;
 }
 
-body.start-page:not([data-start-workspace="canvas"]) .top-actions { display: none !important; }
+/* 保留画布操作区的布局槽位，切换工作区时只淡出内容，避免左侧工作区开关横向跳位。 */
+body.start-page .top-actions {
+  transition:
+    opacity 180ms var(--easing-soft),
+    transform 240ms var(--easing-start-view),
+    visibility 0s linear;
+}
+body.start-page:not([data-start-workspace="canvas"]) .top-actions {
+  visibility: hidden;
+  opacity: 0;
+  transform: translate3d(8px, -2px, 0);
+  pointer-events: none;
+  transition-delay: 0s, 0s, 220ms;
+}
 
 .start-workspace-panel.workspace-entering,
 .start-workspace-panel.workspace-leaving {
-  z-index: 80;
-  background: var(--bg);
   transform-origin: 50% 44%;
   pointer-events: none;
+  backface-visibility: hidden;
+  will-change: opacity, transform;
 }
+.start-workspace-panel.workspace-leaving { z-index: 80; }
+.start-workspace-panel.workspace-entering { z-index: 81; }
 
 .start-workspace-panel.workspace-entering.workspace-forward {
-  animation: startWorkspaceEnterForward var(--start-turn-ms) var(--easing-start-view) both;
+  animation: startWorkspaceEnterForward calc(var(--start-turn-ms) + 80ms) var(--easing-start-view) both;
 }
 .start-workspace-panel.workspace-leaving.workspace-forward {
-  animation: startWorkspaceLeaveForward var(--start-turn-leave-ms) var(--easing-start-view) both;
+  animation: startWorkspaceLeaveForward calc(var(--start-turn-leave-ms) + 40ms) var(--easing-start-view) both;
 }
 .start-workspace-panel.workspace-entering.workspace-back {
-  animation: startWorkspaceEnterBack var(--start-turn-ms) var(--easing-start-view) both;
+  animation: startWorkspaceEnterBack calc(var(--start-turn-ms) + 80ms) var(--easing-start-view) both;
 }
 .start-workspace-panel.workspace-leaving.workspace-back {
-  animation: startWorkspaceLeaveBack var(--start-turn-leave-ms) var(--easing-start-view) both;
+  animation: startWorkspaceLeaveBack calc(var(--start-turn-leave-ms) + 40ms) var(--easing-start-view) both;
 }
 
 @keyframes startWorkspaceEnterForward {
-  from { opacity: 0; transform: translateX(28px) rotateY(-1.2deg); }
+  from { opacity: 0; transform: translate3d(38px, 0, 0) scale(.992); }
   to { opacity: 1; transform: none; }
 }
 @keyframes startWorkspaceLeaveForward {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateX(-22px) rotateY(1deg); }
+  from { opacity: 1; transform: translate3d(0, var(--workspace-layout-shift-y, 0px), 0); }
+  to { opacity: 0; transform: translate3d(-24px, var(--workspace-layout-shift-y, 0px), 0) scale(.996); }
 }
 @keyframes startWorkspaceEnterBack {
-  from { opacity: 0; transform: translateX(-28px) rotateY(1.2deg); }
+  from { opacity: 0; transform: translate3d(-38px, 0, 0) scale(.992); }
   to { opacity: 1; transform: none; }
 }
 @keyframes startWorkspaceLeaveBack {
-  from { opacity: 1; transform: none; }
-  to { opacity: 0; transform: translateX(22px) rotateY(-1deg); }
+  from { opacity: 1; transform: translate3d(0, var(--workspace-layout-shift-y, 0px), 0); }
+  to { opacity: 0; transform: translate3d(24px, var(--workspace-layout-shift-y, 0px), 0) scale(.996); }
 }
 
 /* ─── Markdown 笔记库 ─────────────────────────────────────── */
@@ -1338,7 +1355,7 @@ body.start-page[data-start-theme="dark"] .note-reading-content .md-local-image-f
 /* 主页背景为“沉浸”时，笔记工作区不再用整块实色纸面遮住环境背景。
    正文仍保持高不透明度以保证长文阅读，树、标签栏与工具栏用更轻的纸张层次；
    常驻表面不使用 backdrop-filter，避免编辑长文时产生持续全屏模糊开销。 */
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace {
+body.start-page[data-start-background="scenic"] .note-workspace {
   --note-scenic-shell: rgba(250, 250, 247, .48);
   --note-scenic-tree: rgba(248, 248, 244, .74);
   --note-scenic-paper: rgba(255, 255, 252, .80);
@@ -1354,41 +1371,41 @@ body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .n
     0 24px 64px rgba(50, 48, 43, .12),
     inset 0 1px 0 rgba(255, 255, 255, .68);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tree-pane {
+body.start-page[data-start-background="scenic"] .note-tree-pane {
   border-right-color: var(--note-scenic-line);
   background: var(--note-scenic-tree);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-pane,
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-body {
+body.start-page[data-start-background="scenic"] .note-document-pane,
+body.start-page[data-start-background="scenic"] .note-document-body {
   background: var(--note-scenic-paper);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-pane-head,
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-head,
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tab-bar {
+body.start-page[data-start-background="scenic"] .note-pane-head,
+body.start-page[data-start-background="scenic"] .note-document-head,
+body.start-page[data-start-background="scenic"] .note-tab-bar {
   background: var(--note-scenic-chrome);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tab-bar {
+body.start-page[data-start-background="scenic"] .note-tab-bar {
   border-bottom-color: var(--note-scenic-line);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-tab.active {
+body.start-page[data-start-background="scenic"] .note-tab.active {
   border-color: var(--note-scenic-line);
   background: var(--note-scenic-paper);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-links-pane {
+body.start-page[data-start-background="scenic"] .note-links-pane {
   border-left-color: var(--note-scenic-line);
   background: var(--note-scenic-overlay);
   box-shadow: -18px 0 42px rgba(43, 42, 38, .10);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-document-status {
+body.start-page[data-start-background="scenic"] .note-document-status {
   border-color: var(--note-scenic-line);
   background: var(--note-scenic-overlay);
 }
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace.workspace-entering,
-body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace.workspace-leaving {
+body.start-page[data-start-background="scenic"] .note-workspace.workspace-entering,
+body.start-page[data-start-background="scenic"] .note-workspace.workspace-leaving {
   background: var(--note-scenic-shell);
 }
 
-body.start-page[data-start-theme="dark"][data-start-workspace="notes"][data-start-background="scenic"] .note-workspace {
+body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-workspace {
   --note-scenic-shell: rgba(13, 17, 15, .66);
   --note-scenic-tree: rgba(24, 28, 25, .78);
   --note-scenic-paper: rgba(20, 23, 21, .84);
@@ -1401,7 +1418,7 @@ body.start-page[data-start-theme="dark"][data-start-workspace="notes"][data-star
 }
 
 @media (max-width: 760px) {
-  body.start-page[data-start-workspace="notes"][data-start-background="scenic"] .note-workspace {
+  body.start-page[data-start-background="scenic"] .note-workspace {
     height: 100%;
     margin: 0;
     border-width: 0;
@@ -1412,6 +1429,7 @@ body.start-page[data-start-theme="dark"][data-start-workspace="notes"][data-star
 
 @media (prefers-reduced-motion: reduce) {
   .start-workspace-slider,
+  .top-actions,
   .note-links-pane,
   .note-tree-pane,
   .note-tree-toggle,
@@ -48248,6 +48266,16 @@ body.start-page[data-start-theme="dark"] .tree-page-route-panel .study-route-nod
 body.start-page[data-start-theme="dark"] .tree-page-route-stage {
   background-color: var(--bg);
   background-image: radial-gradient(circle, rgba(229,238,232,.12) .7px, transparent .8px);
+}
+
+/* 树状页与速记页的全屏台面只服从主页背景开关：简洁模式沿用上面的实色暗场，
+   沉浸模式放开外壳与台面，让公共 .start-sky 极光直接透出。 */
+body.start-page[data-start-theme="dark"][data-start-background="scenic"] .tree-page-route-panel,
+body.start-page[data-start-theme="dark"][data-start-background="scenic"] .tree-page-route-stage {
+  background-color: transparent;
+}
+body.start-page[data-start-theme="dark"][data-start-background="scenic"] .notes-surface {
+  background: transparent;
 }
 body.start-page[data-start-theme="dark"] .tree-page-route-rail {
   border-color: rgba(235, 242, 237, .13);
