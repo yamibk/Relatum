@@ -360,11 +360,17 @@
     const binding = NOTE_SHORTCUTS.bindingFromEvent(event);
     if (!binding) return false;
     const command = NOTE_SHORTCUTS.COMMANDS.find((entry) => (state.shortcutBindings[entry.id] || []).includes(binding));
-    if (!command) return false;
+    if (!command) {
+      if (!NOTE_SHORTCUTS.inactiveDefaultBindings(state.shortcutBindings).includes(binding)) return false;
+      event.preventDefault();
+      return true;
+    }
     event.preventDefault();
     if (command.id === 'save') flushSave();
     else if (command.id === 'bold') replaceFallbackSelection('**', '**', '粗体');
     else if (command.id === 'italic') replaceFallbackSelection('*', '*', '斜体');
+    else if (command.id === 'strike') replaceFallbackSelection('~~', '~~', '删除线');
+    else if (command.id === 'highlight') replaceFallbackSelection('==', '==', '高光');
     else if (command.id === 'inline-code') replaceFallbackSelection('`', '`', '代码');
     else if (command.id === 'code-block') replaceFallbackSelection('```\n', '\n```', '');
     else if (command.id === 'link') replaceFallbackSelection('[', '](https://)', '链接文字');
@@ -720,7 +726,7 @@
     }
     document.documentElement.classList.remove('note-boot-pending');
   }
-  function closeContextMenu() { if (contextMenu) { contextMenu.hidden = true; contextMenu.replaceChildren(); } }
+  function closeContextMenu() { if (contextMenu) { contextMenu.hidden = true; contextMenu.dataset.source = ''; contextMenu.replaceChildren(); } }
   function persistExpanded() { try { localStorage.setItem(EXPANDED_KEY, JSON.stringify(Array.from(state.expanded))); } catch (error) {} }
   function expandTreePath(path, includeSelf) {
     const parts = String(path || '').split('/').filter(Boolean);
@@ -1390,7 +1396,7 @@
     return button;
   }
   function separator() { const line = document.createElement('span'); line.className = 'note-context-separator'; return line; }
-  function showContext(items, x, y) { contextMenu.replaceChildren(...items); contextMenu.hidden = false; contextMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 250)) + 'px'; contextMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - contextMenu.offsetHeight - 8)) + 'px'; }
+  function showContext(items, x, y, source) { contextMenu.replaceChildren(...items); contextMenu.dataset.source = source || ''; contextMenu.hidden = false; contextMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 250)) + 'px'; contextMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - contextMenu.offsetHeight - 8)) + 'px'; }
   function openContextMenu(entry, x, y, options) {
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: '' })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: '' })), separator(), contextButton(tr('refresh'), () => checkExternalChanges(true)), contextButton(tr('openLibrary'), () => reveal('', false))], x, y); return; }
     state.selectedPath = entry.path;
@@ -1404,7 +1410,7 @@
       );
     }
     if (entry.kind === 'folder') items.push(contextButton(tr('createHere'), () => createEntry('note', { parent: entry.path })), contextButton(tr('createFolderHere'), () => createEntry('folder', { parent: entry.path })), separator()); else items.push(contextButton(tr('open'), () => openNote(entry.path)));
-    items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path))); if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path))); items.push(contextButton(tr('explorer'), () => reveal(entry.path, false))); if (entry.kind === 'note') items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), contextButton(tr('history'), () => openHistory(entry.path))); items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true)); showContext(items, x, y);
+    items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path))); if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path))); items.push(contextButton(tr('explorer'), () => reveal(entry.path, false))); if (entry.kind === 'note') items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), contextButton(tr('history'), () => openHistory(entry.path))); items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true)); showContext(items, x, y, options && options.source);
   }
 
   function modalConfirm(title, copy) { if (!modalHost) return Promise.resolve(false); return new Promise((resolve) => { const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay'; const dialog = document.createElement('section'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); const heading = document.createElement('h2'); heading.textContent = title; const paragraph = document.createElement('p'); paragraph.textContent = copy; const actions = document.createElement('footer'); actions.className = 'note-modal-actions'; const finish = (value) => { overlay.remove(); resolve(value); }; actions.append(contextButton(tr('cancel'), () => finish(false)), contextButton(tr('create'), () => finish(true))); dialog.append(heading, paragraph, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay); requestAnimationFrame(() => overlay.classList.add('visible')); }); }
@@ -1474,9 +1480,13 @@
     else if (name === 'toggle-source' && state.current) setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'toggle-settings') setNoteSettingsOpen(!state.settingsOpen);
     else if (name === 'current-menu' && state.current) {
+      if (contextMenu && !contextMenu.hidden && contextMenu.dataset.source === 'current-menu') {
+        closeContextMenu();
+        return;
+      }
       const entry = findEntry(state.current.path) || { kind: 'note', path: state.current.path, name: noteTitle(state.current.path) };
       const rect = action.getBoundingClientRect();
-      openContextMenu(entry, rect.right - 220, rect.bottom + 6, { viewModes: true });
+      openContextMenu(entry, rect.right - 220, rect.bottom + 6, { viewModes: true, source: 'current-menu' });
     } else if (name === 'toggle-tree') root.classList.toggle('tree-overlay-open');
     else if (name === 'toggle-links') {
       if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') {

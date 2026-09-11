@@ -7,6 +7,8 @@
     { id: 'save', zh: '保存当前笔记', en: 'Save current note', defaults: ['Mod-s'] },
     { id: 'bold', zh: '加粗', en: 'Bold', defaults: ['Mod-b'] },
     { id: 'italic', zh: '斜体', en: 'Italic', defaults: ['Mod-i'] },
+    { id: 'strike', zh: '删除线', en: 'Strikethrough', defaults: [] },
+    { id: 'highlight', zh: '高光', en: 'Highlight', defaults: [] },
     { id: 'link', zh: '插入链接', en: 'Insert link', defaults: ['Mod-k'] },
     { id: 'inline-code', zh: '行内代码', en: 'Inline code', defaults: ['Mod-`'] },
     { id: 'code-block', zh: '代码块', en: 'Code block', defaults: ['Mod-Shift-k'] },
@@ -121,6 +123,18 @@
     return defaults;
   }
 
+  function inactiveDefaultBindings(bindings) {
+    const active = cloneBindings(bindings);
+    const claimed = new Set();
+    COMMANDS.forEach((command) => active[command.id].forEach((binding) => claimed.add(binding)));
+    const inactive = [];
+    COMMANDS.forEach((command) => command.defaults.forEach((binding) => {
+      const normalized = normalizeBinding(binding);
+      if (normalized && !claimed.has(normalized) && !inactive.includes(normalized)) inactive.push(normalized);
+    }));
+    return inactive;
+  }
+
   function sameBindings(left, right) {
     return left.length === right.length && left.every((binding, index) => binding === right[index]);
   }
@@ -218,6 +232,6 @@
   window.RelatumNoteShortcuts = Object.freeze({
     STORAGE_KEY, COMMANDS, RESERVED,
     normalizeBinding, bindingFromEvent, isAllowedBinding, defaultBindings, cloneBindings,
-    conflictFor, load, save, reset, displayBinding, isMacPlatform,
+    inactiveDefaultBindings, conflictFor, load, save, reset, displayBinding, isMacPlatform,
   });
 })();

@@ -1388,7 +1388,7 @@
     const shortcutCompartment = new Compartment();
     const shortcutRegistry = window.RelatumNoteShortcuts || null;
     const fallbackShortcutDefaults = Object.freeze({
-      save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], link: ['Mod-k'],
+      save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
       'inline-code': ['Mod-`'], 'code-block': ['Mod-Shift-k'],
     });
 
@@ -1417,6 +1417,8 @@
       save() { safeOptions.onSaveRequest(); return true; },
       bold(view) { return wrapSelection(view, '**', '**', '粗体'); },
       italic(view) { return wrapSelection(view, '*', '*', '斜体'); },
+      strike(view) { return wrapSelection(view, '~~', '~~', '删除线'); },
+      highlight(view) { return wrapSelection(view, '==', '==', '高光'); },
       'inline-code'(view) { return wrapSelection(view, '`', '`', '代码'); },
       'code-block': wrapCodeBlock,
       link(view) {
@@ -1428,6 +1430,23 @@
       },
     };
 
+    function inactiveDefaultShortcutBindings() {
+      if (shortcutRegistry && typeof shortcutRegistry.inactiveDefaultBindings === 'function') {
+        return shortcutRegistry.inactiveDefaultBindings(currentShortcutBindings);
+      }
+      const claimed = new Set();
+      Object.keys(currentShortcutBindings).forEach((id) => {
+        (currentShortcutBindings[id] || []).forEach((key) => claimed.add(key));
+      });
+      const inactive = [];
+      Object.keys(fallbackShortcutDefaults).forEach((id) => {
+        fallbackShortcutDefaults[id].forEach((key) => {
+          if (!claimed.has(key) && !inactive.includes(key)) inactive.push(key);
+        });
+      });
+      return inactive;
+    }
+
     function customKeyBindings() {
       const keys = [];
       Object.keys(shortcutRuns).forEach((id) => {
@@ -1435,6 +1454,12 @@
         (currentShortcutBindings[id] || []).forEach((key) => {
           keys.push({ key, preventDefault: true, run });
         });
+      });
+      // Removing one of Relatum's factory bindings is an explicit opt-out.
+      // Consume that chord here so it cannot fall through to CodeMirror's
+      // lower-priority defaults (notably Shift-Mod-k -> delete.line).
+      inactiveDefaultShortcutBindings().forEach((key) => {
+        keys.push({ key, preventDefault: true, run() { return true; } });
       });
       return keys;
     }

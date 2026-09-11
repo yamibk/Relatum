@@ -170,6 +170,42 @@ const emptyCodeState = runEditCommand(liveProbe.__relatumLiveTest.wrapCodeBlock,
 assert.strictEqual(emptyCodeState.doc.toString(), '```\n\n```', 'Ctrl+Shift+K must insert an empty fenced block');
 assert.strictEqual(emptyCodeState.selection.main.head, 4, 'an empty fenced block must place the caret inside');
 
+const strikeState = runEditCommand(
+  (view) => liveProbe.__relatumLiveTest.wrapSelection(view, '~~', '~~', '删除线'),
+  'obsolete', 0, 8,
+);
+assert.strictEqual(strikeState.doc.toString(), '~~obsolete~~', 'strikethrough must use Obsidian/Typora Markdown markers');
+assert.strictEqual(strikeState.doc.sliceString(strikeState.selection.main.from, strikeState.selection.main.to), 'obsolete');
+const emptyHighlightState = runEditCommand(
+  (view) => liveProbe.__relatumLiveTest.wrapSelection(view, '==', '==', '高光'),
+  '', 0,
+);
+assert.strictEqual(emptyHighlightState.doc.toString(), '==高光==', 'highlight must insert and select its placeholder');
+assert.strictEqual(
+  emptyHighlightState.doc.sliceString(emptyHighlightState.selection.main.from, emptyHighlightState.selection.main.to),
+  '高光',
+);
+
+let multiState = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: 'alpha beta',
+  selection: liveProbe.RelatumCodeMirror.EditorSelection.create([
+    liveProbe.RelatumCodeMirror.EditorSelection.range(0, 5),
+    liveProbe.RelatumCodeMirror.EditorSelection.range(6, 10),
+  ]),
+  extensions: [liveProbe.RelatumCodeMirror.EditorState.allowMultipleSelections.of(true)],
+});
+const multiView = {
+  get state() { return multiState; },
+  dispatch(spec) { multiState = multiState.update(spec).state; },
+};
+assert.strictEqual(liveProbe.__relatumLiveTest.wrapSelection(multiView, '~~', '~~', '删除线'), true);
+assert.strictEqual(multiState.doc.toString(), '~~alpha~~ ~~beta~~', 'format shortcuts must wrap every selected range');
+assert.deepStrictEqual(
+  JSON.parse(JSON.stringify(multiState.selection.ranges.map((range) => multiState.doc.sliceString(range.from, range.to)))),
+  ['alpha', 'beta'],
+  'every wrapped range must remain selected',
+);
+
 const segmentedSource = [
   '当自增运算符出现在表达式中，前缀和后缀的执行时机不同。',
   '',
@@ -383,6 +419,12 @@ assert(editorSource.includes('note-live-source-mark'), 'source marker roles must
 assert(editorSource.includes("bold: ['Mod-b']") && editorSource.includes("'code-block': ['Mod-Shift-k']")
   && editorSource.includes('shortcutCompartment.of(keymap.of(customKeyBindings()))'),
   'bold and fenced-code shortcuts must be registered in the reconfigurable shortcut compartment');
+assert(editorSource.includes("strike(view) { return wrapSelection(view, '~~', '~~', '删除线'); }")
+  && editorSource.includes("highlight(view) { return wrapSelection(view, '==', '==', '高光'); }"),
+  'strikethrough and highlight must reuse the selection-aware formatting command');
+assert(editorSource.includes('inactiveDefaultShortcutBindings().forEach((key) => {')
+  && editorSource.includes('lower-priority defaults (notably Shift-Mod-k -> delete.line)'),
+  'cancelled factory shortcuts must install no-op bindings ahead of CodeMirror defaults');
 assert(editorSource.includes("Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }]))"),
   'empty quote exit must outrank the Markdown continuation keymap');
 assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading markers must include their separator whitespace');
