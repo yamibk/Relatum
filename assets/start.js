@@ -49,6 +49,8 @@
   const startSpeedPop = document.querySelector('[data-role="start-speed-pop"]');
   const startSpeedRange = document.querySelector('[data-role="start-speed-range"]');
   const startSpeedValue = document.querySelector('[data-role="start-speed-value"]');
+  const spineSpeedRange = document.querySelector('[data-role="spine-speed-range"]');
+  const spineSpeedValue = document.querySelector('[data-role="spine-speed-value"]');
   const careerScrollFeelRanges = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-range"]'));
   const careerScrollFeelValues = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-value"]'));
   const careerScrollFeelReset = document.querySelector('[data-action="career-scroll-feel-reset"]');
@@ -136,6 +138,10 @@
   const START_SPEED_MIN = 180;
   const START_SPEED_MAX = 500;
   const START_SPEED_DEFAULT = 260;
+  const SPINE_SPEED_KEY = 'canvas:spineMotionMs:v1';
+  const SPINE_SPEED_DEFAULT = 414; // 原 460ms 动画时长缩短 10%。
+  const SPINE_SPEED_MIN = 100;
+  const SPINE_SPEED_MAX = 800;
   const CAREER_SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1';
   const CAREER_SCROLL_IDLE_KEY = 'canvas:careerScrollIdleMs:v1';
   const CAREER_SCROLL_IDLE_MIN = 20;
@@ -545,6 +551,22 @@
 
   function setStartMsVar(name, value) {
     document.documentElement.style.setProperty(name, Math.round(value) + 'ms');
+  }
+
+  function applySpineSpeed(value, persist) {
+    const n = Number(value);
+    const ms = value == null || value === '' || !Number.isFinite(n)
+      ? SPINE_SPEED_DEFAULT
+      : Math.max(SPINE_SPEED_MIN, Math.min(SPINE_SPEED_MAX, Math.round(n)));
+    setStartMsVar('--spine-motion-ms', ms);
+    if (spineSpeedRange) {
+      spineSpeedRange.value = String(ms);
+      spineSpeedRange.setAttribute('aria-valuetext', ms + 'ms');
+    }
+    if (spineSpeedValue) spineSpeedValue.textContent = ms + 'ms';
+    if (persist) {
+      try { localStorage.setItem(SPINE_SPEED_KEY, String(ms)); } catch (e) {}
+    }
   }
 
   function applyStartSpeed(value, persist) {
@@ -972,6 +994,9 @@
     startTurnSpeed = START_SPEED_DEFAULT;
   }
   applyStartSpeed(startTurnSpeed, false);
+  let savedSpineSpeed = null;
+  try { savedSpineSpeed = localStorage.getItem(SPINE_SPEED_KEY); } catch (e) {}
+  applySpineSpeed(savedSpineSpeed, false);
   applyCareerScrollFeel(readCareerScrollFeel(), false);
   try { notesInertia = clampNotesInertia(localStorage.getItem(NOTES_INERTIA_KEY) || NOTES_INERTIA_DEFAULT); } catch (e) {
     notesInertia = NOTES_INERTIA_DEFAULT;
@@ -1049,6 +1074,9 @@
   }
   if (startSpeedRange) {
     startSpeedRange.addEventListener('input', () => applyStartSpeed(startSpeedRange.value, true));
+  }
+  if (spineSpeedRange) {
+    spineSpeedRange.addEventListener('input', () => applySpineSpeed(spineSpeedRange.value, true));
   }
   careerScrollFeelRanges.forEach((input) => {
     input.addEventListener('input', () => {
@@ -2101,6 +2129,7 @@
       DARK_CARD_PRESENTATION_KEY,         // 树状页/学习页深色彩色卡片（底色 15%、强调 100%、白字）
       LIBRARY_SEARCH_ENABLED_KEY,         // 画布名称搜索（关）
       START_SPEED_KEY,                    // 翻页速度（260ms）
+      SPINE_SPEED_KEY,                    // 书脊滑块动画时长（414ms）
       CAREER_SCROLL_FEEL_KEY,             // 生涯滚动手感
       CAREER_SCROLL_IDLE_KEY,             // 生涯揭示等待（50ms）
     ].forEach((key) => {
@@ -2126,6 +2155,7 @@
     applyDarkCardPresentation(null, false);
     applyLibrarySearchEnabled(false, false);
     applyStartSpeed(START_SPEED_DEFAULT, false);
+    applySpineSpeed(SPINE_SPEED_DEFAULT, false);
     applyCareerScrollFeel(readCareerScrollFeel(), false);
   }
 

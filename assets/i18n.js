@@ -82,7 +82,7 @@
     '学习页彩色底不透明度': 'Study card color fill opacity', '学习页彩色边框与侧条': 'Study card colored border and stripe',
     '树状页卡片字体颜色': 'Tree card text color', '学习页卡片字体颜色': 'Study card text color',
     '起始页、专注、学习与画布使用同一种语言': 'Use one language across Home, Focus, Study, and Canvas.',
-    '翻页速度': 'Page motion', '快': 'Fast', '慢': 'Slow', '生涯滚动手感': 'Career scroll feel', '生涯揭示等待': 'Career reveal delay',
+    '翻页速度': 'Page motion', '滑块速度': 'Navigation slider motion', '快': 'Fast', '慢': 'Slow', '生涯滚动手感': 'Career scroll feel', '生涯揭示等待': 'Career reveal delay',
     '生涯滚轮力度': 'Career wheel strength', '生涯惯性滑行': 'Career scroll inertia', '生涯连滚加速': 'Career repeated-wheel acceleration',
     '生涯滚动速度上限': 'Career scroll speed limit', '滚轮力度': 'Wheel strength', '惯性滑行': 'Scroll inertia',
     '连滚加速': 'Repeated-wheel acceleration', '速度上限': 'Speed limit', '揭示等待': 'Reveal delay',
