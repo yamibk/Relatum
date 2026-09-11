@@ -171,9 +171,9 @@ assert(css.includes('.note-expand-all[data-all-expanded="true"] .note-expand-ico
   'the expand-all control needs a distinct collapse state');
 assert(css.includes('.note-path-crumb.is-file'), 'the active note header needs a folder breadcrumb');
 assert(css.includes('body.start-page[data-start-workspace="notes"].note-focus-mode > .top-bar'), 'Notes focus mode needs an animated top-bar collapse');
-assert(css.includes('--note-content-width: 1040px'), 'the Markdown body needs the wider long-form measure');
+assert(css.includes('--note-content-width: 880px'), 'the Markdown body needs a readable measure shared by editing and reading');
 assert(css.includes('--note-content-left: clamp(42px, 6vw, 112px)'), 'the Markdown body must be shifted left on wide screens');
-assert(css.includes('font-size: calc(16px * var(--note-font-scale, 1))') && css.includes('line-height: 1.5'), 'Markdown typography must use the Obsidian-aligned 16px/1.5 baseline');
+assert(css.includes('font-size: calc(16px * var(--note-font-scale, 1))') && css.includes('line-height: 1.65'), 'Markdown typography must use the 16px/1.65 reading baseline');
 assert(css.includes('--note-font-text: -apple-system') && css.includes('"Segoe UI Variable Text"'), 'Markdown text must prefer the Obsidian-like system font stack');
 assert(css.includes('.note-live-h1 { padding-top: .28em !important; font-size: 1.75em; }'), 'H1 needs a distinct, compact scale below the inline filename title');
 assert(css.includes("transform: translateY(calc(-1 * var(--note-title-scroll-offset, 0px)))"), 'the inline filename title must scroll away instead of staying fixed');
