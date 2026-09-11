@@ -34,13 +34,18 @@ body { margin: 0; }
 <main class="note-document-pane"><div class="note-document-body"><div class="note-live-editor-host" id="editor"></div></div></main>
 <script src="markdown.js"></script><script src="mermaid-renderer.js"></script>
 <script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-live-editor.js"></script>
-<script>window.editor = RelatumNoteLiveEditor.create(document.getElementById('editor'), {value: ${JSON.stringify(sample)}, notePath:'sample.md'});</script>
+<script>window.editor = RelatumNoteLiveEditor.create(document.getElementById('editor'), {value: ${JSON.stringify(sample)}, notePath:'sample.md', imageUrl(){return '/fixture.png';}});</script>
 </body></html>`;
 
 (async () => {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
     if (pathname === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); return; }
+    if (pathname === '/fixture.png') {
+      res.setHeader('Content-Type', 'image/png');
+      res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAZAAAADICAYAAADGFbfiAAAACXBIWXMAAAsTAAALEwEAmpwYAAABWUlEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfgG7WgABM7mWAAAAAElFTkSuQmCC', 'base64'));
+      return;
+    }
     if (pathname === '/harness') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(fs.readFileSync(path.join(repo, 'tests/note-live-editor-harness.html'))); return;
@@ -181,6 +186,101 @@ body { margin: 0; }
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => editor.snapshot().value), '```c\n// 正文\n```');
     await cdp.detach();
+
+    // Images stay visual while selected, align with text, and commit one
+    // proportional resize transaction using Obsidian's pixel-width syntax.
+    const imageSource = '正文左边缘\n\n![[fixture.png|240]]\n\n结尾';
+    await page.evaluate(imageSource => {
+      editor.setDocument({value:imageSource, notePath:'image.md'});
+      editor.setSourceMode(false);
+    }, imageSource);
+    await page.waitForFunction(() => {
+      const image = document.querySelector('.note-live-image-frame.is-block img');
+      return image && image.complete;
+    });
+    await settle();
+    const alignment = await page.evaluate(() => {
+      const frame = document.querySelector('.note-live-image-frame.is-block');
+      const textLine = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line'))
+        .find(line => line.textContent.includes('正文左边缘'));
+      const textNode = textLine.firstChild;
+      const range = document.createRange();
+      range.setStart(textNode, 0); range.setEnd(textNode, 1);
+      return {
+        imageLeft:frame.getBoundingClientRect().left,
+        textLeft:range.getBoundingClientRect().left,
+        parents:Array.from({length:4}, (_, index) => {
+          let node = frame;
+          for (let step = 0; step <= index; step++) node = node && node.parentElement;
+          if (!node) return null;
+          const rect = node.getBoundingClientRect();
+          return {className:node.className, left:rect.left, width:rect.width};
+        }),
+      };
+    });
+    assert(Math.abs(alignment.imageLeft - alignment.textLeft) <= 1, JSON.stringify(alignment));
+    await page.locator('.note-live-image-frame.is-block').click({position:{x:40,y:40}});
+    await settle();
+    assert.equal(await page.locator('.note-live-image-frame.is-selected').count(), 1, 'clicking an image must select the visual widget');
+    assert.equal(await page.locator('.note-live-image-resize-handle').count(), 1, 'a selected image must expose one resize handle');
+    await page.screenshot({path:path.join(output, 'image-selected.png')});
+    assert(!await page.locator('.cm-content').innerText().then(text => text.includes('![[fixture.png')),
+      'selecting an image in Live Preview must not expose source');
+    const handleBox = await page.locator('.note-live-image-resize-handle').boundingBox();
+    assert(handleBox, 'resize handle must have browser geometry');
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 60, handleBox.y + handleBox.height / 2, {steps:4});
+    await page.mouse.up();
+    await settle();
+    assert((await page.evaluate(() => editor.snapshot().value)).includes('![[fixture.png|300]]'),
+      'resize must write the rounded pixel width');
+    await page.keyboard.press('Control+z');
+    assert.equal((await page.evaluate(() => editor.snapshot().value)), imageSource, 'one undo must restore the pre-resize source');
+    await page.locator('.note-live-image-frame.is-block').click({position:{x:40,y:40}});
+    const cancelHandle = await page.locator('.note-live-image-resize-handle').boundingBox();
+    await page.mouse.move(cancelHandle.x + cancelHandle.width / 2, cancelHandle.y + cancelHandle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(cancelHandle.x + cancelHandle.width / 2 + 35, cancelHandle.y + cancelHandle.height / 2);
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await settle();
+    assert.equal((await page.evaluate(() => editor.snapshot().value)), imageSource, 'Escape must cancel resizing without a document edit');
+    assert(Math.abs((await page.locator('.note-live-image-frame.is-block').boundingBox()).width - 240) <= 1,
+      'cancelled resizing must restore the rendered width');
+    await page.keyboard.press('Delete');
+    assert(!await page.evaluate(() => editor.snapshot().value.includes('fixture.png')), 'Delete must remove the selected image token');
+    await page.keyboard.press('Control+z');
+    assert.equal((await page.evaluate(() => editor.snapshot().value)), imageSource, 'undo must restore a deleted image');
+    await page.locator('.note-live-image-frame.is-block').click({position:{x:40,y:40}});
+    await page.keyboard.press('ArrowLeft');
+    const beforeImage = await page.evaluate(() => {
+      const snapshot = editor.snapshot();
+      return {empty:snapshot.anchor === snapshot.head, head:snapshot.head, imageAt:snapshot.value.indexOf('![[fixture.png')};
+    });
+    assert(beforeImage.empty && beforeImage.head === beforeImage.imageAt, JSON.stringify(beforeImage));
+    await page.evaluate(() => editor.setSourceMode(true));
+    await settle();
+    assert((await page.locator('.cm-content').innerText()).includes('![[fixture.png|240]]'),
+      'source mode must expose the original image Markdown');
+    await page.evaluate(() => {
+      const from = editor.view.state.doc.toString().indexOf('![[fixture.png');
+      editor.view.dispatch({selection:RelatumCodeMirror.EditorSelection.cursor(from + 5)});
+      editor.setSourceMode(false);
+    });
+    await settle();
+    assert.equal(await page.locator('.note-live-image-frame.is-selected').count(), 1,
+      'a source cursor inside an image must become a safe visual image selection when Live Preview resumes');
+    await page.evaluate(() => editor.setDocument({
+      value:'前文 ![行内图|96](fixture.png) 后文', notePath:'inline-image.md',
+    }));
+    await page.waitForFunction(() => document.querySelector('.note-live-image-frame.is-inline img')?.complete);
+    await page.locator('.note-live-image-frame.is-inline').click({position:{x:20,y:20}});
+    await settle();
+    assert.equal(await page.locator('.note-live-image-frame.is-inline.is-selected').count(), 1,
+      'inline images must use the same visual object selection');
+    assert(!await page.locator('.cm-content').innerText().then(text => text.includes('![行内图|96]')),
+      'an active inline image must not reveal its Markdown source');
 
     // Existing late-viewport and segmented-range fixtures exercise MathJax,
     // tables, callouts and mounted language highlighting together.
