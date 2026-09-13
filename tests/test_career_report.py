@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import app
-from notes_library import NotesStore, note_word_count
+from notes_library import NotesStore, note_visible_text, note_word_count
 
 
 class CareerReportTests(unittest.TestCase):
@@ -87,6 +88,25 @@ class CareerReportTests(unittest.TestCase):
     def test_word_count_matches_notes_contract(self):
         self.assertEqual(note_word_count("hello-world 你好 test_case"), 4)
         self.assertEqual(note_word_count("日本語 and français"), 5)
+
+    def test_image_text_statistics_decode_visible_text_only(self):
+        payload = json.dumps({"items": [
+            {"id": "one", "text": "图片 标题", "x": 0.5, "y": 0.4, "size": "md", "color": "white"},
+            {"id": "two", "text": "line one\nline two", "x": 0.2, "y": 0.8, "size": "sm", "color": "black"},
+        ]}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        source = f"![photo|640](A.assets/images/photo.png) <!--relatum:image-text:v1:{encoded}-->"
+        visible = note_visible_text(source)
+        self.assertIn("图片 标题", visible)
+        self.assertIn("line one\nline two", visible)
+        self.assertNotIn("relatum:image-text", visible)
+        self.assertEqual(note_word_count(source), note_word_count(visible))
+
+        invalid = "![photo](photo.png) <!--relatum:image-text:v1:not-json-->"
+        self.assertEqual(note_visible_text(invalid), "![photo](photo.png)")
+        remote = source.replace("A.assets/images/photo.png", "https://example.com/photo.png")
+        self.assertNotIn("图片 标题", note_visible_text(remote))
+        self.assertIn("relatum:image-text", note_visible_text(remote))
 
     def test_missing_snapshot_read_does_not_generate_or_scan(self):
         self.assertEqual(app.load_career_report(), {"version": 1, "exists": False})

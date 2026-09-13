@@ -1563,6 +1563,39 @@
           <p class="note-current-path" data-role="note-current-path">选择一篇笔记</p>
         </div>
         <div class="note-document-tools">
+          <button type="button" class="note-side-button note-image-text-toggle" data-note-action="toggle-image-text"
+            data-role="note-image-text-toggle" aria-label="图片文字" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h13v11h-13zM6 12l2.4-2.6 2.1 2 1.5-1.5 2.5 2.6M7 7.5h.01"/><path d="M12.2 5.8h4.3M14.35 3.65v4.3"/></svg>
+          </button>
+          <section class="note-image-text-tools" data-role="note-image-text-tools" role="toolbar"
+            aria-label="图片文字工具" hidden inert>
+            <button type="button" class="note-image-text-action" data-image-text-action="add" title="添加文字">T+</button>
+            <span class="note-image-text-separator" aria-hidden="true"></span>
+            <div class="note-image-text-sizes" role="group" aria-label="字号">
+              <button type="button" data-image-text-action="size" data-image-text-value="sm" title="小字号">A</button>
+              <button type="button" data-image-text-action="size" data-image-text-value="md" title="中字号">A</button>
+              <button type="button" data-image-text-action="size" data-image-text-value="lg" title="大字号">A</button>
+              <button type="button" data-image-text-action="size" data-image-text-value="xl" title="特大字号">A</button>
+            </div>
+            <span class="note-image-text-separator" aria-hidden="true"></span>
+            <div class="note-image-text-colors" role="group" aria-label="字色">
+              <button type="button" data-image-text-action="color" data-image-text-value="black" title="黑色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="white" title="白色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="yellow" title="黄色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="orange" title="橙色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="red" title="红色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="purple" title="紫色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="blue" title="蓝色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="cyan" title="青色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="green" title="绿色"></button>
+              <button type="button" data-image-text-action="color" data-image-text-value="gray" title="灰色"></button>
+            </div>
+            <span class="note-image-text-separator" aria-hidden="true"></span>
+            <button type="button" class="note-image-text-action" data-image-text-action="delete" title="删除文字" disabled>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 3.5h4M6.5 6l.6 10h5.8l.6-10M8.5 8.5v5M11.5 8.5v5"/></svg>
+            </button>
+            <button type="button" class="note-image-text-merge" title="合并为图片">合并为图片</button>
+          </section>
           <button type="button" class="note-side-button note-view-toggle" data-note-action="toggle-source"
             data-role="note-view-toggle" aria-label="切换到源码模式" aria-pressed="false" disabled>
             <svg viewBox="0 0 20 20" aria-hidden="true">

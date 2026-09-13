@@ -83,6 +83,13 @@ assert(html.includes('note-live-editor-host') && html.includes('note-editor-fall
 assert(html.includes('data-role="note-reading-view"'), 'Notes needs a safe read-only Markdown surface');
 assert(html.includes('data-note-action="toggle-source"') && html.includes('data-role="note-view-toggle"'),
   'the document header needs a direct Live Preview/source toggle');
+assert(html.includes('data-note-action="toggle-image-text"') && html.includes('data-role="note-image-text-tools"'),
+  'the document header needs an image-bound text entry and compact toolbar');
+assert(/data-role="note-image-text-toggle"[^>]*disabled/.test(html),
+  'image text must start disabled until a standalone local image is selected');
+const mergeImageButton = /<button[^>]*class="note-image-text-merge"[^>]*>/.exec(html);
+assert(mergeImageButton && !mergeImageButton[0].includes('data-image-text-action') && !mergeImageButton[0].includes('data-note-action'),
+  'the merge-to-image placeholder must have no command binding');
 assert(html.includes('data-role="note-tabs"') && html.includes('data-note-action="new-tab"'), 'Notes needs a persistent multi-document tab strip');
 assert(html.includes('aria-label="新建标签页"'), 'the plus button must describe a new tab rather than a new note');
 assert(html.includes('data-note-action="close-all-tabs"'), 'the tab strip needs a persistent close-all control');
@@ -104,6 +111,11 @@ assert(html.indexOf('data-note-action="toggle-links"') < html.indexOf('data-note
   && html.indexOf('data-note-action="toggle-settings"') < html.indexOf('data-note-action="current-menu"'),
   'the Note settings trigger must sit between Links and the current-note menu');
 assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create the Live Preview adapter');
+assert(notes.includes('onImageSelectionChange: (selection) => updateImageTextTools(selection)')
+  && notes.includes('liveEditor.setImageTextMode') && notes.includes('liveEditor.imageTextCommand'),
+  'the workspace must drive image text through the editor selection contract');
+assert(notes.includes('function visibleNoteSource(value)') && notes.includes('MarkdownMini.imageTextVisibleSource'),
+  'the Note status bar must count decoded visible image text rather than metadata encoding');
 assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument'), 'workspace save/load must use editor snapshots');
 const applyDocumentSource = notes.slice(notes.indexOf('function applyDocument'), notes.indexOf('function clearCurrent'));
 assert(applyDocumentSource.includes('options.preserveViewState') && applyDocumentSource.includes('editorSnapshot()'),

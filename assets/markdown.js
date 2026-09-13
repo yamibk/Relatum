@@ -150,6 +150,21 @@
   }
 
   const MAX_IMAGE_DIMENSION = 8192;
+  const IMAGE_TEXT_PREFIX = '<!--relatum:image-text:v';
+  const IMAGE_TEXT_SUFFIX = '-->';
+  const IMAGE_TEXT_VERSION = 1;
+  const MAX_IMAGE_TEXT_ITEMS = 64;
+  const MAX_IMAGE_TEXT_LENGTH = 1000;
+  const MAX_IMAGE_TEXT_BYTES = 48 * 1024;
+  const IMAGE_TEXT_SIZES = new Set(['sm', 'md', 'lg', 'xl']);
+  const IMAGE_TEXT_COLORS = new Set([
+    'black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray',
+  ]);
+  const IMAGE_TEXT_COMMENT_RE = /[ \t]+<!--relatum:image-text:v(\d+):([A-Za-z0-9_-]+)-->[ \t]*$/;
+
+  function isRemoteImageTarget(target) {
+    return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(String(target || '').trim());
+  }
 
   function closingBracket(text, start, open, close) {
     let depth = 0;
@@ -267,6 +282,118 @@
       ? parsed.rawDestination : markdownImageDestination(parsed.target);
     const label = rawAlt ? (rawAlt + '|' + size) : size;
     return leading + '![' + label + '](' + destination + ')' + trailing;
+  }
+
+  function base64UrlEncodeUtf8(value) {
+    const bytes = new TextEncoder().encode(String(value || ''));
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + 0x8000));
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function base64UrlDecodeUtf8(value) {
+    const source = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    const padded = source + '==='.slice((source.length + 3) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  }
+
+  function normalizeImageTextItem(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const keys = Object.keys(raw).sort().join(',');
+    if (keys !== 'color,id,size,text,x,y') return null;
+    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+    const text = typeof raw.text === 'string' ? raw.text.replace(/\r\n?/g, '\n') : '';
+    const x = raw.x;
+    const y = raw.y;
+    const size = raw.size;
+    const color = raw.color;
+    if (!id || id.length > 80 || !text.trim() || text.length > MAX_IMAGE_TEXT_LENGTH
+        || !Number.isFinite(x) || x < 0 || x > 1 || !Number.isFinite(y) || y < 0 || y > 1
+        || !IMAGE_TEXT_SIZES.has(size) || !IMAGE_TEXT_COLORS.has(color)) return null;
+    return { id: id, text: text, x: x, y: y, size: size, color: color };
+  }
+
+  function decodeImageTextPayload(encoded) {
+    try {
+      const json = base64UrlDecodeUtf8(encoded);
+      if (new TextEncoder().encode(json).length > MAX_IMAGE_TEXT_BYTES) return null;
+      const parsed = JSON.parse(json);
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)
+          || Object.keys(parsed).length !== 1 || parsed.items.length > MAX_IMAGE_TEXT_ITEMS) return null;
+      const items = parsed.items.map(normalizeImageTextItem);
+      if (items.some(function (item) { return !item; })) return null;
+      if (new Set(items.map(function (item) { return item.id; })).size !== items.length) return null;
+      return items;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // A standalone note image may carry one versioned, same-line annotation comment.
+  // The returned object stays flat for existing image consumers while exposing the
+  // original image token and normalized text items to the note editor.
+  function parseImageBlock(source) {
+    const value = String(source || '');
+    if (value.indexOf('\n') >= 0) return null;
+    const metadata = IMAGE_TEXT_COMMENT_RE.exec(value);
+    const imageSource = metadata ? value.slice(0, metadata.index) : value;
+    const image = parseImage(imageSource);
+    if (!image) return null;
+    let metadataStatus = 'none';
+    let items = [];
+    if (metadata) {
+      const version = Number(metadata[1]);
+      if (isRemoteImageTarget(image.target)) metadataStatus = 'ineligible';
+      else if (version !== IMAGE_TEXT_VERSION) metadataStatus = 'unsupported';
+      else {
+        const decoded = decodeImageTextPayload(metadata[2]);
+        if (decoded) { metadataStatus = 'valid'; items = decoded; }
+        else metadataStatus = 'invalid';
+      }
+    }
+    return Object.assign({}, image, {
+      source: value,
+      imageSource: imageSource,
+      image: image,
+      imageTextItems: items,
+      metadataStatus: metadataStatus,
+      imageTextEditable: metadataStatus === 'none' || metadataStatus === 'valid',
+      metadataSource: metadata ? metadata[0] : '',
+    });
+  }
+
+  function serializeImageBlock(parsed, items, replacementImageSource) {
+    if (!parsed || parsed.imageTextEditable === false) return String(parsed && parsed.source || '');
+    const normalized = Array.isArray(items) ? items.map(normalizeImageTextItem) : [];
+    if (normalized.some(function (item) { return !item; }) || normalized.length > MAX_IMAGE_TEXT_ITEMS) {
+      return String(parsed.source || '');
+    }
+    const imageSource = String(replacementImageSource == null ? parsed.imageSource || parsed.source || '' : replacementImageSource);
+    if (!normalized.length) return imageSource;
+    const json = JSON.stringify({ items: normalized });
+    if (new TextEncoder().encode(json).length > MAX_IMAGE_TEXT_BYTES) return String(parsed.source || '');
+    const trailing = /[ \t]*$/.exec(imageSource)[0];
+    const core = imageSource.slice(0, imageSource.length - trailing.length);
+    return core + ' ' + IMAGE_TEXT_PREFIX + IMAGE_TEXT_VERSION + ':' + base64UrlEncodeUtf8(json)
+      + IMAGE_TEXT_SUFFIX + trailing;
+  }
+
+  function imageTextVisibleSource(source) {
+    return String(source || '').split('\n').map(function (line) {
+      const block = parseImageBlock(line);
+      if (block && block.metadataStatus !== 'none') {
+        if (block.metadataStatus === 'ineligible') return line;
+        const text = block.metadataStatus === 'valid'
+          ? block.imageTextItems.map(function (item) { return item.text; }).join('\n') : '';
+        return block.imageSource + (text ? ('\n' + text) : '');
+      }
+      return line;
+    }).join('\n');
   }
 
   // 行内处理：顺序很重要——先 code（避免 ** 在反引号里被错误识别），再 bold，再 italic
@@ -574,10 +701,20 @@
         output += source[cursor++];
         continue;
       }
-      const parsed = parseImage(source.slice(cursor, end));
+      let parsed = parseImage(source.slice(cursor, end));
       if (!parsed) {
         output += source[cursor++];
         continue;
+      }
+      const lineStart = source.lastIndexOf('\n', cursor - 1) + 1;
+      const lineBreak = source.indexOf('\n', end);
+      const lineEnd = lineBreak < 0 ? source.length : lineBreak;
+      if (!source.slice(lineStart, cursor).trim()) {
+        const block = parseImageBlock(source.slice(lineStart, lineEnd));
+        if (block && block.metadataStatus !== 'none' && block.metadataStatus !== 'ineligible') {
+          parsed = block;
+          end = lineEnd;
+        }
       }
       images.push(parsed);
       output += '\x00NIMAGE' + (images.length - 1) + '\x00';
@@ -598,8 +735,16 @@
       const sizeStyle = item.width
         ? (' style="width:min(100%,' + item.width + 'px)'
           + (item.height ? (';aspect-ratio:' + item.width + '/' + item.height) : '') + '"') : '';
-      return '<span class="md-local-image' + sized + '" data-note-image-wrap="' + target + '"' + sizeStyle + '>'
+      const overlays = Array.isArray(item.imageTextItems) ? item.imageTextItems.map(function (entry) {
+        return '<span class="note-image-text-box" data-image-text-id="' + escapeHtml(entry.id)
+          + '" data-image-text-size="' + entry.size + '" data-image-text-color="' + entry.color
+          + '" style="left:' + (entry.x * 100) + '%;top:' + (entry.y * 100) + '%">'
+          + escapeHtml(entry.text) + '</span>';
+      }).join('') : '';
+      return '<span class="md-local-image' + sized + (overlays ? ' has-image-text' : '')
+        + '" data-note-image-wrap="' + target + '"' + sizeStyle + '>'
         + '<img data-note-image="' + target + '" alt="' + alt + '" loading="lazy" decoding="async">'
+        + (overlays ? ('<span class="note-image-text-layer">' + overlays + '</span>') : '')
         + '<span class="md-local-image-fallback">' + alt + '</span></span>';
     });
   }
@@ -1031,6 +1176,9 @@
     markIntervals: markIntervals,
     parseImage: parseImage,
     serializeImage: serializeImage,
+    parseImageBlock: parseImageBlock,
+    serializeImageBlock: serializeImageBlock,
+    imageTextVisibleSource: imageTextVisibleSource,
     structure: structure,
   };
 })(window);

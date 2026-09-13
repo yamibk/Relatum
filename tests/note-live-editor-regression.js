@@ -463,11 +463,28 @@ assert(editorSource.includes("frame.className = 'note-live-image-frame '")
 assert(editorSource.includes("spec.kind === 'image' || !activeIds.has(spec.id)"),
   'selected block images must remain projected instead of exposing their Markdown source');
 assert(stylesSource.includes('.note-live-rich-block.is-image { width: 100%; margin-right: 0; margin-left: 0; text-align: left;')
-  && stylesSource.includes('.note-reading-content .md-local-image { display: grid; justify-items: start;'),
+  && stylesSource.includes('.note-reading-content .md-local-image { position: relative; display: grid; justify-items: start;'),
   'standalone images must align with the left edge of note text in live and reading modes');
 assert(stylesSource.includes('.note-live-image-resize-handle')
   && stylesSource.includes('cursor: nwse-resize;'),
   'selected images must expose a bottom-right proportional resize handle');
+assert(editorSource.includes('function createImageTextSizer()')
+  && editorSource.includes('new ResizeObserver((entries) => entries.forEach((entry) => update(entry.target)))'),
+  'image text overlays must share one event-driven size observer per editor or reading view');
+assert(editorSource.includes('function commitImageTextItems(items, selectedId)')
+  && editorSource.includes('serializeImageBlock(current.parsed, items)')
+  && editorSource.includes("userEvent: 'input'"),
+  'each image-text commit must replace its complete image block in one undoable transaction');
+assert(editorSource.includes('setImageTextMode') && editorSource.includes('imageTextCommand')
+  && editorSource.includes('onImageSelectionChange'),
+  'the workspace needs a narrow image-selection and image-text command contract');
+assert(editorSource.includes("const editor = document.createElement('textarea')")
+  && editorSource.includes('editor.maxLength = 1000')
+  && editorSource.includes("event.key === 'Enter' && (event.ctrlKey || event.metaKey)"),
+  'the native plain-text textarea must retain IME and one-shot keyboard commit behavior');
+assert(stylesSource.includes('.note-live-image-frame.is-image-text-mode .note-image-text-box')
+  && stylesSource.includes('pointer-events: none;'),
+  'visible overlays must remain pointer-transparent outside image-text mode');
 assert(stylesSource.includes('.cm-line.note-live-code-line.cm-activeLine'), 'the active code line must retain its block background');
 assert(stylesSource.includes('note-live-code-first') && stylesSource.includes('note-live-code-last'), 'code block corners must use explicit first/last line roles');
 assert(stylesSource.includes('.note-live-source-mark.is-escape'), 'effective escape markers must have an explicit muted style');

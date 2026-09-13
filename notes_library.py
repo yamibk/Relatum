@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -61,6 +62,18 @@ _WIKI_RE = re.compile(r"(?<!!)\[\[([^\]\n]+)\]\]")
 _IMAGE_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\n]+)\)")
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)$")
 _INLINE_CODE_RE = re.compile(r"(`+)(.*?)\1")
+_IMAGE_TEXT_COMMENT_RE = re.compile(
+    r"[ \t]+<!--relatum:image-text:v(\d+):([A-Za-z0-9_-]+)-->[ \t]*$"
+)
+_REMOTE_IMAGE_TARGET_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
+_IMAGE_TEXT_SIZES = {"sm", "md", "lg", "xl"}
+_IMAGE_TEXT_COLORS = {
+    "black", "white", "yellow", "orange", "red",
+    "purple", "blue", "cyan", "green", "gray",
+}
+_MAX_IMAGE_TEXT_BYTES = 48 * 1024
+_MAX_IMAGE_TEXT_ITEMS = 64
+_MAX_IMAGE_TEXT_LENGTH = 1000
 
 
 def _is_cjk_code_point(code_point: int) -> bool:
@@ -80,16 +93,93 @@ def _is_cjk_code_point(code_point: int) -> bool:
     )
 
 
-def note_word_count(value: object) -> int:
-    """Count words exactly like the browser Notes status bar.
+def _standalone_local_image_target(value: str) -> str | None:
+    """Return the relative target for a complete standalone image token."""
+    token = value.strip(" \t")
+    if token.startswith("![[") and token.endswith("]]"):
+        target = token[3:-2].split("|", 1)[0].strip()
+    elif token.startswith("![") and token.endswith(")"):
+        label_end = token.find("](")
+        if label_end < 2:
+            return None
+        destination = token[label_end + 2:-1].strip()
+        if destination.startswith("<"):
+            close = destination.find(">")
+            if close < 1:
+                return None
+            target = destination[1:close].strip()
+        else:
+            target = destination.split(None, 1)[0] if destination else ""
+    else:
+        return None
+    return target if target and not _REMOTE_IMAGE_TARGET_RE.match(target) else None
 
-    CJK characters count individually. Other letters and numbers form runs;
-    apostrophes, hyphens and underscores may join a run but never create one.
-    """
+
+def _decode_image_text_items(encoded: str) -> list[str] | None:
+    try:
+        padding = "=" * ((4 - len(encoded) % 4) % 4)
+        raw = base64.b64decode(encoded + padding, altchars=b"-_", validate=True)
+        if len(raw) > _MAX_IMAGE_TEXT_BYTES:
+            return None
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(payload, dict) or set(payload) != {"items"}
+        or not isinstance(payload.get("items"), list)
+    ):
+        return None
+    items = payload["items"]
+    if len(items) > _MAX_IMAGE_TEXT_ITEMS:
+        return None
+    texts: list[str] = []
+    identifiers: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {"id", "text", "x", "y", "size", "color"}:
+            return None
+        identifier = item.get("id")
+        text = item.get("text")
+        x, y = item.get("x"), item.get("y")
+        if (
+            not isinstance(identifier, str) or not identifier.strip() or len(identifier.strip()) > 80
+            or identifier.strip() in identifiers
+            or not isinstance(text, str) or not text.strip() or len(text) > _MAX_IMAGE_TEXT_LENGTH
+            or isinstance(x, bool) or not isinstance(x, (int, float)) or not 0 <= x <= 1
+            or isinstance(y, bool) or not isinstance(y, (int, float)) or not 0 <= y <= 1
+            or item.get("size") not in _IMAGE_TEXT_SIZES
+            or item.get("color") not in _IMAGE_TEXT_COLORS
+        ):
+            return None
+        identifiers.add(identifier.strip())
+        texts.append(text.replace("\r\n", "\n").replace("\r", "\n"))
+    return texts
+
+
+def note_visible_text(value: object) -> str:
+    """Replace valid image-text metadata with its visible plain text for statistics."""
+    lines: list[str] = []
+    for line in str(value or "").split("\n"):
+        metadata = _IMAGE_TEXT_COMMENT_RE.search(line)
+        if not metadata:
+            lines.append(line)
+            continue
+        image_source = line[:metadata.start()]
+        texts = None
+        local_target = _standalone_local_image_target(image_source)
+        if not local_target:
+            lines.append(line)
+            continue
+        if metadata.group(1) == "1":
+            texts = _decode_image_text_items(metadata.group(2))
+        lines.append(image_source + (("\n" + "\n".join(texts)) if texts else ""))
+    return "\n".join(lines)
+
+
+def _visible_word_count(text: str) -> int:
     count = 0
     in_word = False
     pending_joiner = False
-    for character in str(value or ""):
+    for character in text:
         code_point = ord(character)
         if _is_cjk_code_point(code_point):
             if in_word:
@@ -111,6 +201,15 @@ def note_word_count(value: object) -> int:
             in_word = False
             pending_joiner = False
     return count + int(in_word)
+
+
+def note_word_count(value: object) -> int:
+    """Count visible words exactly like the browser Notes status bar.
+
+    CJK characters count individually. Other letters and numbers form runs;
+    apostrophes, hyphens and underscores may join a run but never create one.
+    """
+    return _visible_word_count(note_visible_text(value))
 
 
 class NotesError(ValueError):
@@ -554,12 +653,13 @@ class NotesStore:
         modified_months: dict[str, int] = {}
         for relative, document in documents.items():
             text = str(document.get("text") or "")
-            words = note_word_count(text)
+            visible_text = note_visible_text(text)
+            words = _visible_word_count(visible_text)
             lengths.append({
                 "path": relative,
                 "title": PurePosixPath(relative).stem[:160],
                 "words": words,
-                "characters": len(text),
+                "characters": len(visible_text),
             })
             parent = PurePosixPath(relative).parent
             if str(parent) != ".":

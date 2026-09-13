@@ -17,6 +17,8 @@
   const focusToggle = $('[data-note-action="toggle-focus"]');
   const expandAllButton = $('[data-note-action="toggle-all-folders"]');
   const viewToggle = $('[data-role="note-view-toggle"]');
+  const imageTextToggle = $('[data-role="note-image-text-toggle"]');
+  const imageTextTools = $('[data-role="note-image-text-tools"]');
   const documentStatusEl = $('[data-role="note-document-status"]');
   const wordCountEl = $('[data-role="note-word-count"]');
   const characterCountEl = $('[data-role="note-character-count"]');
@@ -87,6 +89,7 @@
       enterFocus: '隐藏顶部栏', exitFocus: '显示顶部栏',
       livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
       switchToSource: '切换到源码模式', switchToLive: '切换到实时预览',
+      imageText: '图片文字', addImageText: '添加文字', deleteImageText: '删除文字框', mergeImageText: '合并为图片',
     },
     en: {
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
@@ -108,6 +111,7 @@
       enterFocus: 'Hide top bar', exitFocus: 'Show top bar',
       livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
       switchToSource: 'Switch to source mode', switchToLive: 'Switch to Live Preview',
+      imageText: 'Image text', addImageText: 'Add text', deleteImageText: 'Delete text box', mergeImageText: 'Merge into image',
     },
   };
   const state = {
@@ -120,6 +124,7 @@
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
+    imageText: { available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false },
     shortcutBindings: NOTE_SHORTCUTS ? NOTE_SHORTCUTS.load() : {},
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
@@ -540,6 +545,40 @@
     viewToggle.setAttribute('data-ui-tooltip', label);
   }
 
+  function updateImageTextTools(nextState) {
+    if (nextState && typeof nextState === 'object') Object.assign(state.imageText, nextState);
+    const enabled = !!(state.current && liveEditor && state.viewMode === 'live' && state.imageText.available);
+    if (!enabled) state.imageText.active = false;
+    if (imageTextToggle) {
+      const label = tr('imageText');
+      imageTextToggle.disabled = !enabled;
+      imageTextToggle.setAttribute('aria-pressed', state.imageText.active ? 'true' : 'false');
+      imageTextToggle.setAttribute('aria-label', label);
+      imageTextToggle.setAttribute('data-ui-tooltip', label);
+      imageTextToggle.classList.toggle('is-active', !!state.imageText.active);
+    }
+    if (!imageTextTools) return;
+    const open = enabled && !!state.imageText.active;
+    imageTextTools.hidden = !open;
+    imageTextTools.toggleAttribute('inert', !open);
+    imageTextTools.querySelectorAll('[data-image-text-action="size"]').forEach((button) => {
+      const selected = button.dataset.imageTextValue === state.imageText.size;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+    imageTextTools.querySelectorAll('[data-image-text-action="color"]').forEach((button) => {
+      const selected = button.dataset.imageTextValue === state.imageText.color;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+    const add = imageTextTools.querySelector('[data-image-text-action="add"]');
+    if (add) { add.classList.toggle('is-selected', !!state.imageText.armed); add.title = tr('addImageText'); }
+    const remove = imageTextTools.querySelector('[data-image-text-action="delete"]');
+    if (remove) { remove.disabled = !state.imageText.canDelete; remove.title = tr('deleteImageText'); }
+    const merge = imageTextTools.querySelector('.note-image-text-merge');
+    if (merge) { merge.textContent = tr('mergeImageText'); merge.title = tr('mergeImageText'); }
+  }
+
   function readingPayload(documentState) {
     const target = documentState || state.current;
     return {
@@ -568,6 +607,7 @@
   function setViewMode(mode) {
     const next = normalizeViewMode(mode);
     if (next === state.viewMode) return;
+    if (liveEditor) liveEditor.setImageTextMode(false);
     if (state.current) rememberEditorState(state.current);
     if (next === 'reading' && state.current) flushSave(state.current);
     state.viewMode = next;
@@ -603,6 +643,7 @@
           onOpenWiki: (target) => openWikiFromEditor(target),
           onOpenExternal: (target) => post('/api/open-external', { kind: 'url', target }).catch(() => showToast(tr('externalOpenFailed'), 'error')),
           onImageFiles: (files) => uploadImages(files),
+          onImageSelectionChange: (selection) => updateImageTextTools(selection),
         });
         liveEditor.view.scrollDOM.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       } catch (error) {
@@ -701,10 +742,19 @@
     }
     return count + (inWord ? 1 : 0);
   }
+  function visibleNoteSource(value) {
+    const source = String(value || '');
+    return window.MarkdownMini && typeof window.MarkdownMini.imageTextVisibleSource === 'function'
+      ? window.MarkdownMini.imageTextVisibleSource(source) : source;
+  }
+  function noteStatistics(value) {
+    const visible = visibleNoteSource(value);
+    return { words: wordCount(visible), characters: visible.length };
+  }
   function updateDocumentStats(value, knownLength, knownWords) {
-    const text = typeof value === 'string' ? value : '';
-    const characters = Number.isFinite(knownLength) ? knownLength : text.length;
-    const words = Number.isFinite(knownWords) ? knownWords : typeof value === 'string' ? wordCount(text) : null;
+    const statistics = typeof value === 'string' ? noteStatistics(value) : null;
+    const characters = Number.isFinite(knownLength) ? knownLength : statistics ? statistics.characters : 0;
+    const words = Number.isFinite(knownWords) ? knownWords : statistics ? statistics.words : null;
     if (wordCountEl && Number.isFinite(words)) wordCountEl.textContent = tr('words', { count: words.toLocaleString() });
     if (characterCountEl) characterCountEl.textContent = tr('characters', { count: Math.max(0, characters).toLocaleString() });
   }
@@ -792,10 +842,11 @@
     const generation = ++state.documentGeneration;
     const entry = findEntry(data.path);
     const content = data.content || '';
+    const statistics = noteStatistics(content);
     return {
       path: data.path, content, revision: data.revision || '', outgoing: [], backlinks: [],
       editGeneration: generation, persistedGeneration: generation, selectionStart: 0, selectionEnd: 0, scrollTop: 0,
-      wordCount: wordCount(content), countedGeneration: generation,
+      wordCount: statistics.words, characterCount: statistics.characters, countedGeneration: generation,
       treeModifiedNs: entry && entry.modifiedNs || 0, treeSize: entry && entry.size || 0,
     };
   }
@@ -825,11 +876,13 @@
     documentState.scrollTop = snapshot.scrollTop || 0;
     rememberViewState(documentState.path, snapshot);
     if (documentState.countedGeneration !== documentState.editGeneration) {
-      documentState.wordCount = wordCount(snapshot.value);
+      const statistics = noteStatistics(snapshot.value);
+      documentState.wordCount = statistics.words;
+      documentState.characterCount = statistics.characters;
       documentState.countedGeneration = documentState.editGeneration;
     }
     cacheDocument(documentState);
-    updateDocumentStats(null, snapshot.value.length, documentState.wordCount);
+    updateDocumentStats(null, documentState.characterCount, documentState.wordCount);
   }
   function renderCurrentPath(path) {
     currentPathEl.replaceChildren();
@@ -1298,6 +1351,7 @@
     fallbackEditor.hidden = !hasNote || state.viewMode === 'reading' || !!liveEditor;
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
     updateViewToggle();
+    updateImageTextTools();
   }
   function setDocumentSwitchPending(active) {
     root.classList.toggle('note-document-switch-pending', !!active);
@@ -1327,7 +1381,7 @@
     else if (state.activeTab !== documentState.path) { state.activeTab = documentState.path; persistTabs(); }
     setEditorDocument(documentState);
     renderCurrentPath(documentState.path); state.selectedPath = documentState.path; state.selectedFolder = parentPath(documentState.path);
-    renderInlineTitle(documentState.path, true); updateDocumentStats(null, documentState.content.length, documentState.wordCount); renderTabs();
+    renderInlineTitle(documentState.path, true); updateDocumentStats(null, documentState.characterCount, documentState.wordCount); renderTabs();
     const treeExpanded = expandTreePath(documentState.path, false);
     clearSaveError(); desktopDirty(hasPendingEdits(documentState));
     try { localStorage.setItem(ACTIVE_PATH_KEY, documentState.path); } catch (error) {}
@@ -1337,7 +1391,28 @@
   function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
   function hasPendingEdits(documentState) { const target = documentState || state.current; return !!target && target.persistedGeneration < target.editGeneration; }
   function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(), typeof delay === 'number' ? delay : SAVE_DELAY); }
-  function markChanged(meta) { if (!state.current) return; const changeMeta = meta || {}; state.editGeneration += 1; state.current.editGeneration = ++state.documentGeneration; if (typeof changeMeta.value === 'string') { state.current.content = changeMeta.value; state.current.wordCount = wordCount(changeMeta.value); state.current.countedGeneration = state.current.editGeneration; } if (Number.isFinite(changeMeta.anchor)) state.current.selectionStart = changeMeta.anchor; if (Number.isFinite(changeMeta.head)) state.current.selectionEnd = changeMeta.head; else if (Number.isFinite(changeMeta.anchor)) state.current.selectionEnd = changeMeta.anchor; if (Number.isFinite(changeMeta.scrollTop)) state.current.scrollTop = changeMeta.scrollTop; cacheDocument(state.current); if (typeof changeMeta.value === 'string') updateDocumentStats(null, changeMeta.value.length, state.current.wordCount); else if (Number.isFinite(changeMeta.length)) updateDocumentStats(null, changeMeta.length); desktopDirty(true); scheduleSave(); }
+  function markChanged(meta) {
+    if (!state.current) return;
+    const changeMeta = meta || {};
+    state.editGeneration += 1;
+    state.current.editGeneration = ++state.documentGeneration;
+    if (typeof changeMeta.value === 'string') {
+      const statistics = noteStatistics(changeMeta.value);
+      state.current.content = changeMeta.value;
+      state.current.wordCount = statistics.words;
+      state.current.characterCount = statistics.characters;
+      state.current.countedGeneration = state.current.editGeneration;
+    }
+    if (Number.isFinite(changeMeta.anchor)) state.current.selectionStart = changeMeta.anchor;
+    if (Number.isFinite(changeMeta.head)) state.current.selectionEnd = changeMeta.head;
+    else if (Number.isFinite(changeMeta.anchor)) state.current.selectionEnd = changeMeta.anchor;
+    if (Number.isFinite(changeMeta.scrollTop)) state.current.scrollTop = changeMeta.scrollTop;
+    cacheDocument(state.current);
+    if (typeof changeMeta.value === 'string') updateDocumentStats(null, state.current.characterCount, state.current.wordCount);
+    else if (Number.isFinite(changeMeta.length) && !String(state.current.content || '').includes('<!--relatum:image-text:')) updateDocumentStats(null, changeMeta.length);
+    desktopDirty(true);
+    scheduleSave();
+  }
   async function flushSave(documentState) {
     const target = documentState || state.current;
     if (target === state.current) { clearTimeout(state.saveTimer); rememberEditorState(target); }
@@ -1689,6 +1764,11 @@
   async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {
+    const imageTextAction = event.target.closest('[data-image-text-action]');
+    if (imageTextAction && imageTextTools && imageTextTools.contains(imageTextAction) && liveEditor) {
+      liveEditor.imageTextCommand(imageTextAction.dataset.imageTextAction, imageTextAction.dataset.imageTextValue || '');
+      return;
+    }
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
     const name = action.dataset.noteAction;
@@ -1700,6 +1780,7 @@
     else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
+    else if (name === 'toggle-image-text' && liveEditor && !action.disabled) liveEditor.setImageTextMode(!state.imageText.active);
     else if (name === 'toggle-source' && state.current) setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'toggle-settings') setNoteSettingsOpen(!state.settingsOpen);
     else if (name === 'current-menu' && state.current) {
@@ -1798,6 +1879,11 @@
       else setNoteSettingsOpen(false);
       return;
     }
+    if (state.imageText.active && event.key === 'Escape') {
+      event.preventDefault();
+      liveEditor.setImageTextMode(false);
+      return;
+    }
     const mod = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
     if (mod && key === 'n') { event.preventDefault(); createEntry('note'); }
     else if (mod && key === 't') { event.preventDefault(); openBlankTab(); }
@@ -1820,8 +1906,8 @@
   });
   window.addEventListener('pagehide', () => { stopExternalSync(); flushWorkspaceState(); });
   window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(); });
-  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.content.length, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
-  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
+  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

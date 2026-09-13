@@ -97,6 +97,49 @@ assert(!Markdown.render('![[photo.webp|50%]]', { localImages: true }).includes('
 const guardedRemoteImage = Markdown.render('![remote](https://example.com/a.png)', { localImages: true });
 assert(guardedRemoteImage.includes('data-note-image="https://example.com/a.png"'));
 assert(!guardedRemoteImage.includes('src='));
+const imageTextItems = [
+  { id: 'caption-1', text: '中文标题\n<script>alert(1)</script>', x: 0.5, y: 0.25, size: 'lg', color: 'white' },
+  { id: 'caption-2', text: 'A & B', x: 0.2, y: 0.8, size: 'sm', color: 'black' },
+];
+const imageTextSource = Markdown.serializeImageBlock(
+  Markdown.parseImageBlock('![Diagram|360](page.assets/images/diagram.png)'), imageTextItems,
+);
+assert(imageTextSource.startsWith('![Diagram|360](page.assets/images/diagram.png) <!--relatum:image-text:v1:'));
+const imageTextBlock = Markdown.parseImageBlock(imageTextSource);
+assert.strictEqual(imageTextBlock.metadataStatus, 'valid');
+assert.strictEqual(imageTextBlock.imageTextEditable, true);
+assert.deepStrictEqual(imageTextBlock.imageTextItems, imageTextItems);
+assert.strictEqual(Markdown.serializeImageBlock(imageTextBlock, []), imageTextBlock.imageSource,
+  'deleting the last image text must remove the complete metadata comment');
+const resizedImageText = Markdown.serializeImageBlock(
+  imageTextBlock, imageTextBlock.imageTextItems,
+  Markdown.serializeImage(imageTextBlock.image, { width: 640 }),
+);
+assert(resizedImageText.startsWith('![Diagram|640](page.assets/images/diagram.png) '),
+  'image resizing must preserve the text metadata while changing only dimensions');
+const visibleImageText = Markdown.imageTextVisibleSource('before\n' + imageTextSource + '\nafter');
+assert(visibleImageText.includes('中文标题\n<script>alert(1)</script>'));
+assert(visibleImageText.includes('A & B'));
+assert(!visibleImageText.includes('relatum:image-text'));
+const renderedImageText = Markdown.render(imageTextSource, { localImages: true });
+assert(renderedImageText.includes('class="note-image-text-layer"'));
+assert(renderedImageText.includes('data-image-text-id="caption-1"'));
+assert(renderedImageText.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+assert(!renderedImageText.includes('<script>alert(1)</script>'));
+const unsupportedImageText = '![x](x.png) <!--relatum:image-text:v2:e30-->';
+assert.strictEqual(Markdown.parseImageBlock(unsupportedImageText).metadataStatus, 'unsupported');
+assert.strictEqual(Markdown.parseImageBlock(unsupportedImageText).imageTextEditable, false);
+assert.strictEqual(Markdown.serializeImageBlock(Markdown.parseImageBlock(unsupportedImageText), imageTextItems), unsupportedImageText);
+const invalidImageText = '![x](x.png) <!--relatum:image-text:v1:not-json-->';
+assert.strictEqual(Markdown.parseImageBlock(invalidImageText).metadataStatus, 'invalid');
+assert.strictEqual(Markdown.serializeImageBlock(Markdown.parseImageBlock(invalidImageText), imageTextItems), invalidImageText);
+const remoteImageText = Markdown.parseImageBlock('![x](https://example.com/x.png) ' + imageTextSource.slice(imageTextSource.indexOf('<!--')));
+assert.strictEqual(remoteImageText.metadataStatus, 'ineligible');
+assert.strictEqual(remoteImageText.imageTextEditable, false);
+assert(Markdown.imageTextVisibleSource(remoteImageText.source).includes('relatum:image-text'),
+  'remote image comments must retain ordinary Markdown/source behavior');
+assert(!Markdown.render('prefix ' + imageTextSource, { localImages: true }).includes('note-image-text-layer'),
+  'inline images must not consume standalone image text metadata');
 assert(Markdown.render('$$').includes('$$'));
 const noteCallout = Markdown.render('> [!note] Title\n> Body');
 assert(noteCallout.includes('class="md-callout"'));

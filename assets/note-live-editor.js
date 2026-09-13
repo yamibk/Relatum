@@ -81,8 +81,9 @@
 
   function parseStandaloneImage(text) {
     const markdownMini = window.MarkdownMini;
-    return markdownMini && typeof markdownMini.parseImage === 'function'
-      ? markdownMini.parseImage(text) : null;
+    return markdownMini && typeof markdownMini.parseImageBlock === 'function'
+      ? markdownMini.parseImageBlock(text)
+      : (markdownMini && typeof markdownMini.parseImage === 'function' ? markdownMini.parseImage(text) : null);
   }
 
   function fenceStart(text) {
@@ -538,6 +539,35 @@
     if (parsed.height) frame.style.aspectRatio = parsed.width + ' / ' + parsed.height;
   }
 
+  function createImageTextSizer() {
+    const frames = new Set();
+    const update = (frame) => {
+      if (!frame || !frame.isConnected) return;
+      const width = frame.getBoundingClientRect().width;
+      if (width > 0) frame.style.setProperty('--note-image-text-unit', (width / 100) + 'px');
+    };
+    const observer = typeof ResizeObserver === 'function'
+      ? new ResizeObserver((entries) => entries.forEach((entry) => update(entry.target))) : null;
+    return {
+      observe(frame) {
+        if (!frame || frames.has(frame)) return;
+        frames.add(frame); update(frame);
+        if (observer) observer.observe(frame);
+      },
+      unobserve(frame) {
+        frames.delete(frame);
+        if (observer) observer.unobserve(frame);
+      },
+      update,
+      destroy() { if (observer) observer.disconnect(); frames.clear(); },
+    };
+  }
+
+  function imageTextItemId() {
+    if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return 'image-text-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
   function createInteractiveImage(owner, view, parsed, notePath, options, resolveRange, block) {
     const initial = resolveRange();
     const frame = document.createElement('span');
@@ -551,13 +581,228 @@
     image.alt = parsed.alt || parsed.target.split('/').pop() || '';
     image.loading = 'lazy'; image.decoding = 'async';
     image.src = options.imageUrl(notePath, parsed.target);
-    image.addEventListener('load', () => { if (frame.isConnected) view.requestMeasure(); }, { once: true });
+    image.addEventListener('load', () => {
+      if (!frame.isConnected) return;
+      if (options.imageTextSizer) options.imageTextSizer.update(frame);
+      view.requestMeasure();
+    }, { once: true });
     image.addEventListener('error', () => {
       if (!frame.isConnected) return;
       frame.classList.add('is-failed');
       frame.dataset.errorLabel = '图片无法加载 · ' + image.alt;
     }, { once: true });
     frame.appendChild(image);
+
+    const imageTextItems = block && Array.isArray(parsed.imageTextItems) ? parsed.imageTextItems : [];
+    const imageTextController = block && parsed.imageTextEditable !== false ? options.imageTextController : null;
+    let imageTextLayer = null;
+    let imageTextDraftCleanup = null;
+    let unregisterImageText = null;
+
+    function currentItems() {
+      const current = resolveRange();
+      return current && Array.isArray(current.parsed.imageTextItems)
+        ? current.parsed.imageTextItems.map((item) => Object.assign({}, item)) : [];
+    }
+
+    function commitImageTextItems(items, selectedId) {
+      const current = resolveRange();
+      const markdownMini = window.MarkdownMini;
+      if (!current || !current.parsed.imageTextEditable || !markdownMini
+          || typeof markdownMini.serializeImageBlock !== 'function') return false;
+      const replacement = markdownMini.serializeImageBlock(current.parsed, items);
+      if (!replacement || replacement === current.parsed.source) return false;
+      if (imageTextController) imageTextController.prepareRange(current.from, current.from + replacement.length, selectedId || '');
+      view.dispatch({
+        changes: { from: current.from, to: current.to, insert: replacement },
+        selection: EditorSelection.range(current.from, current.from + replacement.length),
+        scrollIntoView: true,
+        userEvent: 'input.image-text',
+      });
+      return true;
+    }
+
+    function positionStyle(element, item) {
+      element.style.left = (item.x * 100) + '%';
+      element.style.top = (item.y * 100) + '%';
+      element.dataset.imageTextSize = item.size;
+      element.dataset.imageTextColor = item.color;
+    }
+
+    function cancelDraft() {
+      if (imageTextDraftCleanup) imageTextDraftCleanup(false);
+    }
+
+    function beginTextEdit(item, point) {
+      if (!imageTextLayer || !imageTextController || !imageTextController.active) return;
+      cancelDraft();
+      const isNew = !item;
+      const draft = item ? Object.assign({}, item) : {
+        id: imageTextItemId(), text: '', x: point.x, y: point.y,
+        size: imageTextController.defaults.size, color: imageTextController.defaults.color,
+      };
+      const prior = item && Array.from(imageTextLayer.querySelectorAll('[data-image-text-id]'))
+        .find((candidate) => candidate.dataset.imageTextId === item.id);
+      if (prior) prior.hidden = true;
+      const editor = document.createElement('textarea');
+      editor.className = 'note-image-text-editor';
+      editor.value = draft.text;
+      editor.maxLength = 1000;
+      editor.rows = 1;
+      editor.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Image text' : '图片文字');
+      positionStyle(editor, draft);
+      imageTextLayer.appendChild(editor);
+      imageTextController.select(draft.id, draft.size, draft.color);
+      const fit = () => { editor.style.height = '0'; editor.style.height = Math.max(28, editor.scrollHeight) + 'px'; };
+      fit();
+      let finished = false;
+      const finish = (commit) => {
+        if (finished) return;
+        finished = true;
+        editor.removeEventListener('blur', onBlur);
+        editor.removeEventListener('keydown', onKeyDown);
+        editor.removeEventListener('input', fit);
+        editor.remove();
+        if (prior) prior.hidden = false;
+        imageTextDraftCleanup = null;
+        const text = editor.value.replace(/\r\n?/g, '\n').slice(0, 1000);
+        if (!commit || !text.trim()) {
+          imageTextController.select(isNew ? '' : draft.id, draft.size, draft.color);
+          return;
+        }
+        const items = currentItems();
+        const next = Object.assign({}, draft, { text: text });
+        const index = items.findIndex((candidate) => candidate.id === draft.id);
+        if (index >= 0) items[index] = next; else items.push(next);
+        commitImageTextItems(items, draft.id);
+      };
+      const onBlur = () => finish(true);
+      const onKeyDown = (event) => {
+        event.stopPropagation();
+        if (event.key === 'Escape') { event.preventDefault(); finish(false); view.focus(); }
+        else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault(); finish(true); view.focus();
+        }
+      };
+      editor.addEventListener('blur', onBlur);
+      editor.addEventListener('keydown', onKeyDown);
+      editor.addEventListener('input', fit);
+      ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach((name) => {
+        editor.addEventListener(name, (event) => event.stopPropagation());
+      });
+      imageTextDraftCleanup = finish;
+      requestAnimationFrame(() => { editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length); });
+    }
+
+    function renderImageTextItem(item) {
+      const label = document.createElement('span');
+      label.className = 'note-image-text-box';
+      label.dataset.imageTextId = item.id;
+      label.textContent = item.text;
+      positionStyle(label, item);
+      label.addEventListener('pointerdown', (event) => {
+        if (!imageTextController || !imageTextController.active || event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation();
+        view.focus();
+        imageTextController.select(item.id, item.size, item.color);
+        const imageRect = image.getBoundingClientRect();
+        const labelRect = label.getBoundingClientRect();
+        const halfX = Math.min(.49, labelRect.width / Math.max(1, imageRect.width) / 2);
+        const halfY = Math.min(.49, labelRect.height / Math.max(1, imageRect.height) / 2);
+        const startX = item.x; const startY = item.y;
+        let nextX = startX; let nextY = startY; let moved = false; let finished = false;
+        try { label.setPointerCapture(event.pointerId); } catch (captureError) {}
+        const remove = () => {
+          label.removeEventListener('pointermove', onMove);
+          label.removeEventListener('pointerup', onUp);
+          label.removeEventListener('pointercancel', onCancel);
+          try { if (label.hasPointerCapture(event.pointerId)) label.releasePointerCapture(event.pointerId); } catch (captureError) {}
+        };
+        const onMove = (moveEvent) => {
+          if (moveEvent.pointerId !== event.pointerId) return;
+          const dx = (moveEvent.clientX - event.clientX) / Math.max(1, imageRect.width);
+          const dy = (moveEvent.clientY - event.clientY) / Math.max(1, imageRect.height);
+          moved = moved || Math.abs(moveEvent.clientX - event.clientX) > 3 || Math.abs(moveEvent.clientY - event.clientY) > 3;
+          nextX = clamp(startX + dx, halfX, 1 - halfX);
+          nextY = clamp(startY + dy, halfY, 1 - halfY);
+          label.style.left = (nextX * 100) + '%'; label.style.top = (nextY * 100) + '%';
+        };
+        const finish = (commit) => {
+          if (finished) return;
+          finished = true; remove();
+          if (!commit || !moved) { positionStyle(label, item); return; }
+          const items = currentItems();
+          const index = items.findIndex((candidate) => candidate.id === item.id);
+          if (index >= 0) {
+            items[index] = Object.assign({}, items[index], { x: nextX, y: nextY });
+            commitImageTextItems(items, item.id);
+          }
+        };
+        const onUp = (upEvent) => { if (upEvent.pointerId === event.pointerId) finish(true); };
+        const onCancel = (cancelEvent) => { if (cancelEvent.pointerId === event.pointerId) finish(false); };
+        label.addEventListener('pointermove', onMove);
+        label.addEventListener('pointerup', onUp);
+        label.addEventListener('pointercancel', onCancel);
+      });
+      label.addEventListener('dblclick', (event) => {
+        if (!imageTextController || !imageTextController.active) return;
+        event.preventDefault(); event.stopPropagation(); beginTextEdit(item);
+      });
+      imageTextLayer.appendChild(label);
+    }
+
+    if (imageTextItems.length || (imageTextController && frame.classList.contains('is-selected'))) {
+      imageTextLayer = document.createElement('span');
+      imageTextLayer.className = 'note-image-text-layer';
+      frame.appendChild(imageTextLayer);
+      imageTextItems.forEach(renderImageTextItem);
+      if (options.imageTextSizer) options.imageTextSizer.observe(frame);
+    }
+
+    if (imageTextController && frame.classList.contains('is-selected')) {
+      const adapter = {
+        frame,
+        setMode(active, armed, selectedId) {
+          frame.classList.toggle('is-image-text-mode', !!active);
+          frame.classList.toggle('is-image-text-armed', !!(active && armed));
+          frame.querySelectorAll('.note-image-text-box').forEach((label) => {
+            label.classList.toggle('is-selected', !!active && label.dataset.imageTextId === selectedId);
+          });
+        },
+        command(name, value) {
+          if (name === 'add') { imageTextController.arm(); return; }
+          const id = imageTextController.selectedId;
+          if (!id) return;
+          if (name === 'edit') {
+            const item = currentItems().find((candidate) => candidate.id === id);
+            if (item) beginTextEdit(item);
+            return;
+          }
+          const items = currentItems();
+          const index = items.findIndex((candidate) => candidate.id === id);
+          if (index < 0) return;
+          if (name === 'delete') items.splice(index, 1);
+          else if (name === 'size') items[index].size = value;
+          else if (name === 'color') items[index].color = value;
+          else return;
+          commitImageTextItems(items, name === 'delete' ? '' : id);
+        },
+        cancelDraft,
+      };
+      unregisterImageText = imageTextController.register(adapter);
+      frame.addEventListener('click', (event) => {
+        if (!imageTextController.active || !imageTextController.armed
+            || event.target.closest('.note-image-text-box, .note-image-text-editor, .note-live-image-resize-handle')) return;
+        event.preventDefault(); event.stopPropagation();
+        const rect = image.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        imageTextController.disarm();
+        beginTextEdit(null, {
+          x: clamp((event.clientX - rect.left) / rect.width, .04, .96),
+          y: clamp((event.clientY - rect.top) / rect.height, .04, .96),
+        });
+      });
+    }
 
     const select = (event) => {
       if (event) { event.preventDefault(); event.stopPropagation(); }
@@ -631,7 +876,10 @@
           if (!current || !markdownMini || typeof markdownMini.serializeImage !== 'function') {
             finished = false; cancel(); return;
           }
-          const replacement = markdownMini.serializeImage(current.parsed, { width: previewWidth });
+          const resizedImage = markdownMini.serializeImage(current.parsed.image || current.parsed, { width: previewWidth });
+          const replacement = current.parsed.imageTextItems && typeof markdownMini.serializeImageBlock === 'function'
+            ? markdownMini.serializeImageBlock(current.parsed, current.parsed.imageTextItems, resizedImage)
+            : resizedImage;
           if (!replacement || replacement === current.parsed.source) {
             frame.classList.remove('is-resizing');
             frame.style.width = '';
@@ -645,7 +893,7 @@
             changes: { from: current.from, to: current.to, insert: replacement },
             selection: EditorSelection.range(current.from, current.from + replacement.length),
             scrollIntoView: true,
-            userEvent: 'input',
+            userEvent: 'input.image-text',
           });
           view.focus();
         };
@@ -673,7 +921,12 @@
         document.addEventListener('keydown', onKeyDown, true);
       });
     }
-    owner.imageCleanup = () => { if (cleanupResize) cleanupResize(); };
+    owner.imageCleanup = () => {
+      if (cleanupResize) cleanupResize();
+      cancelDraft();
+      if (unregisterImageText) unregisterImageText();
+      if (options.imageTextSizer) options.imageTextSizer.unobserve(frame);
+    };
     return frame;
   }
 
@@ -714,12 +967,20 @@
     if (window.MathJax && typeof window.MathJax.typesetClear === 'function') {
       try { window.MathJax.typesetClear([host]); } catch (error) {}
     }
+    if (host.__relatumImageTextSizer) host.__relatumImageTextSizer.destroy();
+    const imageTextSizer = createImageTextSizer();
+    host.__relatumImageTextSizer = imageTextSizer;
     const result = safeIsolatedResult(String(source || ''));
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
     content.querySelectorAll('[data-note-image]').forEach((image) => {
       image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '');
+      const frame = image.closest('.md-local-image');
+      if (frame && frame.classList.contains('has-image-text')) {
+        imageTextSizer.observe(frame);
+        image.addEventListener('load', () => imageTextSizer.update(frame), { once: true });
+      }
       image.addEventListener('error', () => image.removeAttribute('src'), { once: true });
     });
     content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
@@ -1638,12 +1899,111 @@
     let pendingShortcutBindings = null;
     let sourceMode = !!options.sourceMode;
     const coordinator = { epoch: 1, field: null, spec() { return null; } };
+    const imageTextSizer = createImageTextSizer();
     const safeOptions = Object.assign({
       imageUrl(notePath, target) {
         return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '');
       },
       onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onImageFiles() {},
+      onImageSelectionChange() {},
     }, options);
+    const imageTextController = {
+      active: false,
+      armed: false,
+      available: false,
+      selectedId: '',
+      activeRange: null,
+      pendingRange: null,
+      adapter: null,
+      defaults: { size: 'md', color: 'white' },
+      notify() {
+        const selected = this.adapter && this.selectedId
+          ? Array.from(this.adapter.frame.querySelectorAll('[data-image-text-id]'))
+            .find((candidate) => candidate.dataset.imageTextId === this.selectedId) : null;
+        safeOptions.onImageSelectionChange({
+          available: !!this.available,
+          active: !!this.active,
+          armed: !!this.armed,
+          selectedId: this.selectedId,
+          size: selected ? selected.dataset.imageTextSize : this.defaults.size,
+          color: selected ? selected.dataset.imageTextColor : this.defaults.color,
+          canDelete: !!selected,
+        });
+      },
+      render() {
+        host.classList.toggle('is-image-text-mode', this.active);
+        if (this.adapter) this.adapter.setMode(this.active, this.armed, this.selectedId);
+        this.notify();
+      },
+      register(adapter) {
+        this.adapter = adapter;
+        adapter.setMode(this.active, this.armed, this.selectedId);
+        this.notify();
+        return () => { if (this.adapter === adapter) this.adapter = null; };
+      },
+      prepareRange(from, to, selectedId) {
+        this.pendingRange = { from, to };
+        this.activeRange = { from, to };
+        this.selectedId = selectedId || '';
+      },
+      syncSelection(view) {
+        const range = !sourceMode ? exactSelectedImageRange(view.state) : null;
+        let available = false;
+        if (range) {
+          const line = view.state.doc.lineAt(range.from);
+          const parsed = range.from === line.from && range.to === line.to ? parseStandaloneImage(line.text) : null;
+          available = !!(parsed && !isRemoteTarget(parsed.target) && parsed.imageTextEditable !== false);
+        }
+        this.available = available;
+        if (this.pendingRange && range && range.from === this.pendingRange.from && range.to === this.pendingRange.to) {
+          this.activeRange = { from: range.from, to: range.to };
+          this.pendingRange = null;
+        } else if (this.active && (!range || !this.activeRange
+                   || range.from !== this.activeRange.from || range.to !== this.activeRange.to)) {
+          this.setActive(false);
+          return;
+        }
+        if (!available && this.active) { this.setActive(false); return; }
+        this.notify();
+      },
+      setActive(value, view) {
+        const next = !!value && this.available;
+        if (next && view) {
+          const range = exactSelectedImageRange(view.state);
+          this.activeRange = range ? { from: range.from, to: range.to } : null;
+        }
+        if (!next) {
+          if (this.adapter) this.adapter.cancelDraft();
+          this.armed = false; this.selectedId = ''; this.activeRange = null; this.pendingRange = null;
+        }
+        this.active = next;
+        this.render();
+        return this.active;
+      },
+      select(id, size, color) {
+        this.selectedId = id || '';
+        if (size) this.defaults.size = size;
+        if (color) this.defaults.color = color;
+        this.armed = false;
+        this.render();
+      },
+      arm() { if (this.active) { this.selectedId = ''; this.armed = true; this.render(); } },
+      disarm() { if (this.armed) { this.armed = false; this.render(); } },
+      command(name, value) {
+        if (!this.active) return false;
+        if ((name === 'size' || name === 'color') && !this.selectedId) {
+          if (name === 'size' && ['sm', 'md', 'lg', 'xl'].includes(value)) this.defaults.size = value;
+          if (name === 'color' && ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'].includes(value)) this.defaults.color = value;
+          this.render();
+          return true;
+        }
+        if (!this.adapter) return false;
+        this.adapter.command(name, value);
+        return true;
+      },
+    };
+    safeOptions.imageTextController = imageTextController;
+    safeOptions.imageTextSizer = imageTextSizer;
     safeOptions.coordinator = coordinator;
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator);
@@ -1673,17 +2033,22 @@
 
     function syncImageSelectionClass(view) {
       host.classList.toggle('has-image-selection', !sourceMode && !!exactSelectedImageRange(view.state));
+      imageTextController.syncSelection(view);
     }
 
     function deleteImageObject(view, backward) {
       if (sourceMode || compositionActive(view)) return false;
+      if (imageTextController.active && imageTextController.selectedId) {
+        imageTextController.command('delete');
+        return true;
+      }
       const image = adjacentImageRange(view.state, backward);
       if (!image) return false;
       view.dispatch({
         changes: { from: image.from, to: image.to, insert: '' },
         selection: EditorSelection.cursor(image.from),
         scrollIntoView: true,
-        userEvent: backward ? 'delete.backward' : 'delete.forward',
+        userEvent: 'delete.image-object',
       });
       return true;
     }
@@ -1747,14 +2112,16 @@
       return keys;
     }
 
-    function notifyDocChanged(view) {
+    function notifyDocChanged(view, includeValue) {
       const main = view.state.selection.main;
-      safeOptions.onDocChanged({
+      const meta = {
         anchor: main.anchor,
         head: main.head,
         scrollTop: view.scrollDOM.scrollTop,
         length: view.state.doc.length,
-      });
+      };
+      if (includeValue) meta.value = view.state.doc.toString();
+      safeOptions.onDocChanged(meta);
     }
 
     function cancelCompositionFinish() {
@@ -1816,7 +2183,13 @@
           syncImageSelectionClass(update.view);
           if (!update.docChanged || suppressChanges) return;
           if (compositionActive(update.view)) { compositionDirty = true; return; }
-          notifyDocChanged(update.view);
+          const includeValue = update.transactions.some((transaction) => (
+            transaction.isUserEvent('input.image-text')
+            || transaction.isUserEvent('delete.image-object')
+            || transaction.isUserEvent('undo')
+            || transaction.isUserEvent('redo')
+          ));
+          notifyDocChanged(update.view, includeValue);
         }),
         EditorView.domEventHandlers({
           focus(event, view) { view.dispatch({ effects: focusEffect.of(true) }); return false; },
@@ -1892,6 +2265,7 @@
     function setDocument(documentState) {
       const seq = ++documentSetSeq;
       coordinator.epoch += 1;
+      imageTextController.setActive(false);
       cancelCompositionFinish();
       view.__relatumCompositionActive = false;
       host.classList.remove('is-composing');
@@ -1934,6 +2308,7 @@
       if (compositionActive(view)) { pendingSourceMode = next; return; }
       if (next === sourceMode) return;
       sourceMode = next;
+      if (next) imageTextController.setActive(false);
       coordinator.epoch += 1;
       const imageRange = next ? null : imageRangeForLiveMode(view.state);
       view.dispatch({
@@ -1967,10 +2342,18 @@
       view.focus();
     }
 
+    function setImageTextMode(active) {
+      return imageTextController.setActive(active, view);
+    }
+
+    function imageTextCommand(name, value) {
+      return imageTextController.command(String(name || ''), value);
+    }
+
     return {
-      setDocument, setNotePath, setSourceMode, setShortcutBindings, snapshot, replaceSelection,
+      setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection,
       focus() { view.focus(); },
-      destroy() { destroyed = true; cancelCompositionFinish(); view.__relatumCompositionActive = false; host.classList.remove('is-composing', 'has-image-selection'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
+      destroy() { destroyed = true; imageTextController.setActive(false); imageTextSizer.destroy(); cancelCompositionFinish(); view.__relatumCompositionActive = false; host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
       get view() { return view; },
     };
   }
