@@ -660,6 +660,18 @@
       element.dataset.imageTextColor = item.color;
     }
 
+    function clampImageTextPosition(item, element) {
+      const imageRect = image.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      if (!imageRect.width || !imageRect.height) return item;
+      const halfX = Math.min(.49, elementRect.width / imageRect.width / 2);
+      const halfY = Math.min(.49, elementRect.height / imageRect.height / 2);
+      return Object.assign({}, item, {
+        x: clamp(item.x, halfX, 1 - halfX),
+        y: clamp(item.y, halfY, 1 - halfY),
+      });
+    }
+
     function cancelDraft() {
       if (imageTextDraftCleanup) imageTextDraftCleanup(false);
     }
@@ -683,9 +695,22 @@
       editor.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Image text' : '图片文字');
       positionStyle(editor, draft);
       imageTextLayer.appendChild(editor);
+      const measurer = document.createElement('span');
+      measurer.className = 'note-image-text-box note-image-text-measurer';
+      positionStyle(measurer, draft);
+      imageTextLayer.appendChild(measurer);
       imageTextController.beginDraft();
-      imageTextController.select(draft.id, draft.size, draft.color);
-      const fit = () => { editor.style.height = '0'; editor.style.height = Math.max(28, editor.scrollHeight) + 'px'; };
+      imageTextController.select(draft.id);
+      const fit = () => {
+        const value = editor.value || '\u200b';
+        measurer.textContent = value.endsWith('\n') ? value + '\u200b' : value;
+        const measured = measurer.getBoundingClientRect();
+        editor.style.width = Math.max(1, Math.ceil(measured.width)) + 'px';
+        editor.style.height = Math.max(1, Math.ceil(measured.height)) + 'px';
+        const fitted = clampImageTextPosition(draft, editor);
+        draft.x = fitted.x; draft.y = fitted.y;
+        positionStyle(editor, draft);
+      };
       fit();
       let finished = false;
       let textComposing = false;
@@ -701,11 +726,12 @@
         editor.removeEventListener('compositionstart', onCompositionStart);
         editor.removeEventListener('compositionend', onCompositionEnd);
         editor.remove();
+        measurer.remove();
         if (prior) prior.hidden = false;
         imageTextDraftCleanup = null;
         const text = editor.value.replace(/\r\n?/g, '\n').slice(0, 1000);
         if (!commit || !text.trim()) {
-          imageTextController.select(isNew ? '' : draft.id, draft.size, draft.color);
+          imageTextController.select(isNew ? '' : draft.id);
           imageTextController.endDraft();
           return;
         }
@@ -776,15 +802,17 @@
         if (!imageTextController || !imageTextController.active || event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
         view.focus();
-        imageTextController.select(item.id, item.size, item.color);
+        imageTextController.select(item.id);
         const imageRect = image.getBoundingClientRect();
         const labelRect = label.getBoundingClientRect();
         const halfX = Math.min(.49, labelRect.width / Math.max(1, imageRect.width) / 2);
         const halfY = Math.min(.49, labelRect.height / Math.max(1, imageRect.height) / 2);
         const startX = item.x; const startY = item.y;
         let nextX = startX; let nextY = startY; let moved = false; let finished = false;
+        label.classList.add('is-dragging');
         try { label.setPointerCapture(event.pointerId); } catch (captureError) {}
         const remove = () => {
+          label.classList.remove('is-dragging');
           label.removeEventListener('pointermove', onMove);
           label.removeEventListener('pointerup', onUp);
           label.removeEventListener('pointercancel', onCancel);
@@ -854,8 +882,24 @@
           const index = items.findIndex((candidate) => candidate.id === id);
           if (index < 0) return;
           if (name === 'delete') items.splice(index, 1);
-          else if (name === 'size') items[index].size = value;
+          else if (name === 'size') {
+            items[index].size = value;
+            const label = Array.from(imageTextLayer.querySelectorAll('.note-image-text-box[data-image-text-id]'))
+              .find((candidate) => candidate.dataset.imageTextId === id);
+            if (label) {
+              positionStyle(label, items[index]);
+              items[index] = clampImageTextPosition(items[index], label);
+            }
+          }
           else if (name === 'color') items[index].color = value;
+          else if (name === 'move' && value && Number.isFinite(value.dx) && Number.isFinite(value.dy)) {
+            const rect = image.getBoundingClientRect();
+            const label = Array.from(imageTextLayer.querySelectorAll('.note-image-text-box[data-image-text-id]'))
+              .find((candidate) => candidate.dataset.imageTextId === id);
+            items[index].x += value.dx / Math.max(1, rect.width);
+            items[index].y += value.dy / Math.max(1, rect.height);
+            if (label) items[index] = clampImageTextPosition(items[index], label);
+          }
           else return;
           commitImageTextItems(items, name === 'delete' ? '' : id);
         },
@@ -2083,7 +2127,8 @@
         return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '');
       },
       onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onImageFiles() {},
-      onImageSelectionChange() {},
+      onImageSelectionChange() {}, onImageTextDefaultsChange() {},
+      imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
     const inputSession = {
       phase: 'idle',
@@ -2205,6 +2250,9 @@
         waiters.forEach((resolve) => resolve(false));
       },
     };
+    const requestedImageTextDefaults = safeOptions.imageTextDefaults || {};
+    const imageTextSizes = ['sm', 'md', 'lg', 'xl'];
+    const imageTextColors = ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'];
     const imageTextController = {
       active: false,
       armed: false,
@@ -2215,7 +2263,13 @@
       adapter: null,
       draftActive: false,
       draftWaiters: [],
-      defaults: { size: 'md', color: 'white' },
+      defaults: {
+        size: imageTextSizes.includes(requestedImageTextDefaults.size) ? requestedImageTextDefaults.size : 'md',
+        color: imageTextColors.includes(requestedImageTextDefaults.color) ? requestedImageTextDefaults.color : 'white',
+      },
+      persistDefaults() {
+        safeOptions.onImageTextDefaultsChange({ size: this.defaults.size, color: this.defaults.color });
+      },
       beginDraft() { this.draftActive = true; },
       endDraft() {
         this.draftActive = false;
@@ -2289,10 +2343,8 @@
         this.render();
         return this.active;
       },
-      select(id, size, color) {
+      select(id) {
         this.selectedId = id || '';
-        if (size) this.defaults.size = size;
-        if (color) this.defaults.color = color;
         this.armed = false;
         this.render();
       },
@@ -2300,14 +2352,20 @@
       disarm() { if (this.armed) { this.armed = false; this.render(); } },
       command(name, value) {
         if (!this.active) return false;
+        if (name === 'size' && !imageTextSizes.includes(value)) return false;
+        if (name === 'color' && !imageTextColors.includes(value)) return false;
         if ((name === 'size' || name === 'color') && !this.selectedId) {
-          if (name === 'size' && ['sm', 'md', 'lg', 'xl'].includes(value)) this.defaults.size = value;
-          if (name === 'color' && ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'].includes(value)) this.defaults.color = value;
+          if (name === 'size' && imageTextSizes.includes(value)) this.defaults.size = value;
+          if (name === 'color' && imageTextColors.includes(value)) this.defaults.color = value;
+          this.persistDefaults();
           this.render();
           return true;
         }
         if (!this.adapter) return false;
         this.adapter.command(name, value);
+        if (name === 'size' && imageTextSizes.includes(value)) this.defaults.size = value;
+        if (name === 'color' && imageTextColors.includes(value)) this.defaults.color = value;
+        if (name === 'size' || name === 'color') this.persistDefaults();
         return true;
       },
     };
@@ -2361,6 +2419,15 @@
         userEvent: 'delete.image-object',
       });
       return true;
+    }
+
+    function imageTextKeyCommand(name, value) {
+      if (sourceMode || compositionActive(view) || !imageTextController.active || !imageTextController.selectedId) return false;
+      if (name === 'clear-selection') {
+        imageTextController.select('');
+        return true;
+      }
+      return imageTextController.command(name, value);
     }
 
     function livePreviewExtensions() {
@@ -2445,6 +2512,16 @@
         Prec.highest(keymap.of([
           { key: 'Backspace', run: (view) => deleteImageObject(view, true) },
           { key: 'Delete', run: (view) => deleteImageObject(view, false) },
+          { key: 'Enter', run: () => imageTextKeyCommand('edit') },
+          { key: 'Escape', run: () => imageTextKeyCommand('clear-selection') },
+          { key: 'ArrowLeft', run: () => imageTextKeyCommand('move', { dx: -1, dy: 0 }) },
+          { key: 'ArrowRight', run: () => imageTextKeyCommand('move', { dx: 1, dy: 0 }) },
+          { key: 'ArrowUp', run: () => imageTextKeyCommand('move', { dx: 0, dy: -1 }) },
+          { key: 'ArrowDown', run: () => imageTextKeyCommand('move', { dx: 0, dy: 1 }) },
+          { key: 'Shift-ArrowLeft', run: () => imageTextKeyCommand('move', { dx: -10, dy: 0 }) },
+          { key: 'Shift-ArrowRight', run: () => imageTextKeyCommand('move', { dx: 10, dy: 0 }) },
+          { key: 'Shift-ArrowUp', run: () => imageTextKeyCommand('move', { dx: 0, dy: -10 }) },
+          { key: 'Shift-ArrowDown', run: () => imageTextKeyCommand('move', { dx: 0, dy: 10 }) },
         ])),
         Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }])),
         shortcutCompartment.of(keymap.of(customKeyBindings())),

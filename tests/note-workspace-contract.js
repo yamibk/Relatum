@@ -87,6 +87,8 @@ assert(html.includes('data-note-action="toggle-image-text"') && html.includes('d
   'the document header needs an image-bound text entry and compact toolbar');
 assert(/data-role="note-image-text-toggle"[^>]*disabled/.test(html),
   'image text must start disabled until a standalone local image is selected');
+assert(html.includes('data-image-text-action="edit"') && /data-image-text-action="edit"[^>]*disabled/.test(html),
+  'selected image text needs a direct, initially disabled edit command');
 const mergeImageButton = /<button[^>]*class="note-image-text-merge"[^>]*>/.exec(html);
 assert(mergeImageButton && !mergeImageButton[0].includes('data-image-text-action') && !mergeImageButton[0].includes('data-note-action'),
   'the merge-to-image placeholder must have no command binding');
@@ -114,6 +116,10 @@ assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create th
 assert(notes.includes('onImageSelectionChange: (selection) => updateImageTextTools(selection)')
   && notes.includes('liveEditor.setImageTextMode') && notes.includes('liveEditor.imageTextCommand'),
   'the workspace must drive image text through the editor selection contract');
+assert(notes.includes("const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1'")
+  && notes.includes('onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults)')
+  && notes.includes('localStorage.setItem(IMAGE_TEXT_DEFAULTS_KEY'),
+  'image text size and color choices must survive editor and app restarts');
 assert(notes.includes('function visibleNoteSource(value)') && notes.includes('MarkdownMini.imageTextVisibleSource'),
   'the Note status bar must count decoded visible image text rather than metadata encoding');
 assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument'), 'workspace save/load must use editor snapshots');

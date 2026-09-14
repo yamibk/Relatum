@@ -504,6 +504,13 @@ assert(editorSource.includes("const editor = document.createElement('textarea')"
   && editorSource.includes("editor.addEventListener('compositionstart', onCompositionStart)")
   && editorSource.includes('if (event.isComposing || event.keyCode === 229 || textComposing) return;'),
   'the native plain-text textarea must retain IME and one-shot keyboard commit behavior');
+assert(editorSource.includes("measurer.className = 'note-image-text-box note-image-text-measurer'")
+  && editorSource.includes('editor.style.width = Math.max(1, Math.ceil(measured.width))')
+  && stylesSource.includes('.note-image-text-measurer'),
+  'image text editing and display must share one measured typography box instead of switching widths and heights');
+assert(editorSource.includes("key: 'ArrowLeft'") && editorSource.includes("key: 'Shift-ArrowDown'")
+  && editorSource.includes("key: 'Enter', run: () => imageTextKeyCommand('edit')"),
+  'selected image text must support keyboard editing and precise or accelerated nudging');
 assert(editorSource.includes("span.addEventListener('mousedown', (event) => this.reveal(view, event))")
   && editorSource.includes("span.setAttribute('aria-label', '点击编辑公式源码')")
   && editorSource.includes("wrap.addEventListener('mousedown', (event) => this.reveal(view, event))"),

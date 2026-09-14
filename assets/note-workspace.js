@@ -55,6 +55,9 @@
   const LINKS_OPEN_KEY = 'canvas:noteLinksOpen:v1';
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
+  const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
+  const IMAGE_TEXT_SIZES = ['sm', 'md', 'lg', 'xl'];
+  const IMAGE_TEXT_COLORS = ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'];
   const NOTE_SHORTCUTS = window.RelatumNoteShortcuts || null;
   const VIEW_STATES_LIMIT = 200;
   const VIEW_STATES_DELAY = 750;
@@ -89,7 +92,7 @@
       enterFocus: '隐藏顶部栏', exitFocus: '显示顶部栏',
       livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
       switchToSource: '切换到源码模式', switchToLive: '切换到实时预览',
-      imageText: '图片文字', addImageText: '添加文字', deleteImageText: '删除文字框', mergeImageText: '合并为图片',
+      imageText: '图片文字', addImageText: '添加文字', editImageText: '编辑文字框', deleteImageText: '删除文字框', mergeImageText: '合并为图片',
     },
     en: {
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
@@ -111,7 +114,7 @@
       enterFocus: 'Hide top bar', exitFocus: 'Show top bar',
       livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
       switchToSource: 'Switch to source mode', switchToLive: 'Switch to Live Preview',
-      imageText: 'Image text', addImageText: 'Add text', deleteImageText: 'Delete text box', mergeImageText: 'Merge into image',
+      imageText: 'Image text', addImageText: 'Add text', editImageText: 'Edit text box', deleteImageText: 'Delete text box', mergeImageText: 'Merge into image',
     },
   };
   const state = {
@@ -132,6 +135,11 @@
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { if (localStorage.getItem(LINKS_OPEN_KEY) === '1') root.classList.add('links-overlay-open'); } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
+  try {
+    const stored = JSON.parse(localStorage.getItem(IMAGE_TEXT_DEFAULTS_KEY) || '{}');
+    if (IMAGE_TEXT_SIZES.includes(stored.size)) state.imageText.size = stored.size;
+    if (IMAGE_TEXT_COLORS.includes(stored.color)) state.imageText.color = stored.color;
+  } catch (error) {}
   try {
     const stored = JSON.parse(localStorage.getItem(VIEW_STATES_KEY) || '[]');
     if (Array.isArray(stored)) stored.slice(-VIEW_STATES_LIMIT).forEach((entry) => {
@@ -583,10 +591,28 @@
     });
     const add = imageTextTools.querySelector('[data-image-text-action="add"]');
     if (add) { add.classList.toggle('is-selected', !!state.imageText.armed); add.title = tr('addImageText'); }
+    const edit = imageTextTools.querySelector('[data-image-text-action="edit"]');
+    if (edit) {
+      edit.disabled = !state.imageText.canDelete;
+      edit.title = tr('editImageText');
+      edit.setAttribute('aria-label', tr('editImageText'));
+    }
     const remove = imageTextTools.querySelector('[data-image-text-action="delete"]');
     if (remove) { remove.disabled = !state.imageText.canDelete; remove.title = tr('deleteImageText'); }
     const merge = imageTextTools.querySelector('.note-image-text-merge');
     if (merge) { merge.textContent = tr('mergeImageText'); merge.title = tr('mergeImageText'); }
+  }
+
+  function persistImageTextDefaults(defaults) {
+    if (!defaults || typeof defaults !== 'object') return;
+    if (IMAGE_TEXT_SIZES.includes(defaults.size)) state.imageText.size = defaults.size;
+    if (IMAGE_TEXT_COLORS.includes(defaults.color)) state.imageText.color = defaults.color;
+    try {
+      localStorage.setItem(IMAGE_TEXT_DEFAULTS_KEY, JSON.stringify({
+        size: state.imageText.size,
+        color: state.imageText.color,
+      }));
+    } catch (error) {}
   }
 
   function readingPayload(documentState) {
@@ -656,6 +682,8 @@
           onOpenExternal: (target) => post('/api/open-external', { kind: 'url', target }).catch(() => showToast(tr('externalOpenFailed'), 'error')),
           onImageFiles: (files) => uploadImages(files),
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
+          imageTextDefaults: { size: state.imageText.size, color: state.imageText.color },
+          onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults),
         });
         liveEditor.view.scrollDOM.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       } catch (error) {
