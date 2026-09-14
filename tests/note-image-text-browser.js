@@ -306,8 +306,25 @@ function geometry(element) {
 
     await page.keyboard.press('Enter');
     await input.fill('Changed A');
-    await box('b').click();
+    const switchRect = await box('b').boundingBox();
+    await page.mouse.move(switchRect.x + switchRect.width / 2, switchRect.y + switchRect.height / 2);
+    await page.mouse.down();
+    assert.equal(await box('a').isVisible(), true, 'old text remains visible before pointer release and commit');
+    assert.equal(await box('a').textContent(), 'Changed A', 'handoff shows the current draft, not stale saved text');
+    await page.evaluate(() => {
+      window.handoffFrames = [];
+      const sample = () => {
+        const label = document.querySelector('[data-image-text-id="a"]');
+        handoffFrames.push(!!label && !label.hidden && getComputedStyle(label).visibility !== 'hidden'
+          && label.textContent === 'Changed A');
+        if (handoffFrames.length < 8) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await page.mouse.up();
     await page.waitForFunction(() => document.querySelector('.note-image-text-editor')?.value === 'Beta');
+    await page.waitForFunction(() => handoffFrames.length === 8);
+    assert((await page.evaluate(() => handoffFrames)).every(Boolean), 'old text must not disappear for a settling frame');
     assert.equal((await items())[0].text, 'Changed A');
     await page.keyboard.type('2');
     await box('c').click();
@@ -348,6 +365,8 @@ function geometry(element) {
       editor.whenInputSettled().then(() => { window.imageTextSettled = true; });
     });
     await box('b').click();
+    assert.equal(await box('a').isVisible(), true, 'pending IME handoff keeps its visible text');
+    assert.equal(await box('a').textContent(), 'raw');
     await box('c').click();
     await page.evaluate(() => {
       pendingImeHost.value = '候选';

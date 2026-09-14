@@ -785,7 +785,13 @@
         clearSwitchGesture();
         editor.remove();
         measurer.remove();
-        if (prior) prior.hidden = false;
+        if (prior) {
+          prior.hidden = false;
+          if (!commit || dispose) {
+            prior.textContent = item.text;
+            positionStyle(prior, item);
+          }
+        }
         if (options.imageTextSizer) options.imageTextSizer.update(frame);
         imageTextDraftCleanup = null;
         const text = editor.value.replace(/\r\n?/g, '\n').slice(0, 1000);
@@ -922,6 +928,16 @@
           imageTextDraftCommit = true;
           if (textComposing) pagePointerPreeditText = editor.value;
           pendingCommit = true;
+          // Bridge the settling frames with the visible draft, not the stale
+          // persisted label. Keep the native IME host alive but hide its UI.
+          // Reuse the label so pointer hit testing and measured geometry stay
+          // unchanged while the source transaction is still pending.
+          if (prior) {
+            prior.textContent = editor.value;
+            positionStyle(prior, draft);
+            prior.hidden = false;
+            prior.classList.remove('is-selected');
+          }
           editor.style.visibility = 'hidden';
           editor.setAttribute('aria-hidden', 'true');
           editor.blur();
