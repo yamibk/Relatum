@@ -10293,6 +10293,7 @@ CANVAS_AND_DATA_POST_ROUTES = {
     "/api/restore",
 }
 NOTES_POST_ROUTES = {
+    "/api/note-cleanup-unused-images",
     "/api/note-image-text-merge",
     "/api/note-image-text-cleanup",
     "/api/note-create",
@@ -10719,6 +10720,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_note_upload_image(body)
         if path in {"/api/note-image-text-merge", "/api/note-image-text-cleanup"}:
             return self._api_note_image_text(body, merge=path.endswith("-merge"))
+        if path == "/api/note-cleanup-unused-images":
+            try:
+                result = NOTES_STORE.cleanup_unused_images(body.get("path"), body.get("revision"))
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError as err:
+                return self._send_json(500, {"error": f"清理图片失败：{err}"})
+            return self._send_json(200, result)
         if path == "/api/note-history-restore":
             return self._api_note_history_restore(body)
         if path == "/api/note-import-begin":

@@ -294,6 +294,37 @@ async function freePort() {
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => __imageTextToolbarTest.editor.snapshot().value), cleared.editor);
     assert(fs.existsSync(path.join(root, 'notes/Image.assets/images/fixture.png')), 'original asset stays intact');
+
+    // The file-tree action also works on a note that is not currently open.
+    const imageDir = path.join(root, 'notes/Image.assets/images');
+    const originalBytes = fs.readFileSync(path.join(imageDir, 'fixture.png'));
+    fs.writeFileSync(path.join(imageDir, 'unused.png'), originalBytes);
+    fs.writeFileSync(path.join(imageDir, 'shared.png'), originalBytes);
+    fs.writeFileSync(path.join(imageDir, 'keep.pdf'), 'not an image');
+    await page.evaluate(async () => {
+      await fetch('/api/note-create', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent: '', name: 'Other', kind: 'note' }) });
+      await __imageTextToolbarTest.openNote('Other.md', { reuseActiveTab: false });
+      const editor = __imageTextToolbarTest.editor;
+      editor.view.dispatch({ changes: { from: 0, to: editor.view.state.doc.length,
+        insert: '![](Image.assets/images/shared.png)' } });
+    });
+    let assetRequests = 0;
+    await page.route('**/api/note-cleanup-unused-images', async (route) => { assetRequests++; await route.continue(); });
+    await page.locator('.note-tree-row[data-note-path="Image.md"]').click({ button: 'right' });
+    const cleanupAssets = page.locator('[data-note-action="cleanup-unused-images"]');
+    await cleanupAssets.waitFor();
+    assert.equal(await cleanupAssets.textContent(), '清理未使用图片');
+    await cleanupAssets.click();
+    await page.waitForFunction(() => !__imageTextToolbarTest.state.assetCleanupBusy);
+    assert.equal(assetRequests, 1);
+    assert.equal(fs.existsSync(path.join(imageDir, 'unused.png')), false);
+    assert.equal(fs.existsSync(path.join(imageDir, 'shared.png')), true, 'shared unsaved note must be flushed before cleanup');
+    assert.equal(fs.existsSync(path.join(imageDir, 'keep.pdf')), true);
+    assert.equal(fs.readFileSync(path.join(root, 'notes/Image.md'), 'utf8'), cleared.disk);
+    assert.equal(await page.evaluate(() => __imageTextToolbarTest.state.current.path), 'Other.md');
+    await sleep(300);
+    assert.equal(assetRequests, 1, 'cleanup must never repeat in the background');
     assert.deepEqual(errors, []);
     console.log('note image text workspace browser regression: ok');
   } finally {

@@ -618,7 +618,7 @@
 
   let imageTextOperationPromise = null;
   function runImageTextOperation(kind) {
-    if (state.imageTextBusy || !state.current || !liveEditor) return imageTextOperationPromise;
+    if (state.imageTextBusy || state.assetCleanupBusy || !state.current || !liveEditor) return imageTextOperationPromise;
     const target = state.current;
     state.imageTextBusy = true;
     state.imageTextEpoch = (state.imageTextEpoch || 0) + 1;
@@ -1740,6 +1740,44 @@
   }
   async function reveal(path, assets) { try { await post(assets ? '/api/note-reveal-assets' : '/api/note-reveal', { path: path || '' }); } catch (error) { showToast(assets && error.status === 404 ? tr('noAssets') : error.message || tr('revealFailed'), 'error'); } }
   async function copyText(value) { try { await navigator.clipboard.writeText(value); } catch (error) { const area = document.createElement('textarea'); area.value = value; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); } showToast(tr('copied')); }
+  async function cleanupUnusedImages(path) {
+    if (state.assetCleanupBusy || state.imageTextBusy) return;
+    state.assetCleanupBusy = true;
+    stopExternalSync();
+    try {
+      await whenEditorInputSettled();
+      root.inert = true;
+      // Flush all cached drafts as another open note may use a shared image.
+      if (!(await flushSave())) throw new Error(tr('saveFailed'));
+      for (const documentState of state.documentCache.values()) {
+        if (hasPendingEdits(documentState) && !(await flushSave(documentState))) throw new Error(tr('saveFailed'));
+      }
+      state.imageTextBusy = true;
+      updateImageTextTools();
+      imageTextOperationPromise = (async () => {
+        const note = await request('/api/note?path=' + encodeURIComponent(path));
+        return post('/api/note-cleanup-unused-images', { path, revision: note.revision });
+      })();
+      const result = await imageTextOperationPromise;
+      const count = Number(result.deletedCount) || 0;
+      const failed = Number(result.failedCount) || 0;
+      const size = Number(result.deletedBytes) || 0;
+      const freed = size >= 1024 * 1024 ? (size / (1024 * 1024)).toFixed(1) + ' MB' : (size / 1024).toFixed(1) + ' KB';
+      const message = language() === 'en'
+        ? (count ? `Deleted ${count} unused image(s), freed ${freed}` : 'No unused images to clean up')
+        : (count ? `已清理 ${count} 张未使用图片，释放 ${freed}` : '没有需要清理的未使用图片');
+      showToast(message + (failed ? (language() === 'en' ? `; ${failed} file(s) could not be deleted. Retry later.` : `；${failed} 个文件未能删除，请重试`) : ''), failed ? 'warning' : '');
+    } catch (error) {
+      showToast(error.message || tr('saveFailed'), 'error');
+    } finally {
+      root.inert = false;
+      state.assetCleanupBusy = false;
+      state.imageTextBusy = false;
+      updateImageTextTools();
+      scheduleExternalSync();
+    }
+  }
+
   function contextButton(label, action, danger) { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; if (danger) button.className = 'danger'; button.addEventListener('click', () => { closeContextMenu(); action(); }); return button; }
   function viewModeButton(mode, label) {
     const button = contextButton(label, () => setViewMode(mode));
@@ -1764,7 +1802,19 @@
       );
     }
     if (entry.kind === 'folder') items.push(contextButton(tr('createHere'), () => createEntry('note', { parent: entry.path })), contextButton(tr('createFolderHere'), () => createEntry('folder', { parent: entry.path })), separator()); else items.push(contextButton(tr('open'), () => openNote(entry.path)));
-    items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path))); if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path))); items.push(contextButton(tr('explorer'), () => reveal(entry.path, false))); if (entry.kind === 'note') items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), contextButton(tr('history'), () => openHistory(entry.path))); items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true)); showContext(items, x, y, options && options.source);
+    items.push(contextButton(tr('rename'), () => beginInlineRename(entry.path)));
+    if (entry.kind === 'note') items.push(contextButton(tr('copyPath'), () => copyText(entry.path)));
+    items.push(contextButton(tr('explorer'), () => reveal(entry.path, false)));
+    if (entry.kind === 'note') {
+      const cleanup = contextButton(language() === 'en' ? 'Clean up unused images' : '清理未使用图片', () => cleanupUnusedImages(entry.path));
+      cleanup.title = language() === 'en' ? 'Permanently delete unused images in this note’s attachment folder; preserve images used by other notes'
+        : '永久删除本篇笔记附件目录中未使用的图片文件；其他笔记仍在使用的图片会保留';
+      cleanup.dataset.noteAction = 'cleanup-unused-images';
+      cleanup.disabled = !!(state.assetCleanupBusy || state.imageTextBusy);
+      items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), cleanup, contextButton(tr('history'), () => openHistory(entry.path)));
+    }
+    items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true));
+    showContext(items, x, y, options && options.source);
   }
 
   function modalConfirm(title, copy) { if (!modalHost) return Promise.resolve(false); return new Promise((resolve) => { const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay'; const dialog = document.createElement('section'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); const heading = document.createElement('h2'); heading.textContent = title; const paragraph = document.createElement('p'); paragraph.textContent = copy; const actions = document.createElement('footer'); actions.className = 'note-modal-actions'; const finish = (value) => { overlay.remove(); resolve(value); }; actions.append(contextButton(tr('cancel'), () => finish(false)), contextButton(tr('create'), () => finish(true))); dialog.append(heading, paragraph, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay); requestAnimationFrame(() => overlay.classList.add('visible')); }); }
@@ -1838,6 +1888,7 @@
   function scheduleExternalSync(delay) {
     stopExternalSync();
     if (!state.active || document.hidden || state.imageTextBusy) return;
+    if (state.assetCleanupBusy) return;
     state.externalSyncTimer = setTimeout(() => {
       state.externalSyncTimer = 0;
       triggerExternalSync({ background: true, metadataOnly: true, silentErrors: true });
@@ -1848,7 +1899,7 @@
     stopExternalSync();
     let ran = false;
     const task = state.externalSyncChain.catch(() => false).then(async () => {
-      if (!state.active || state.imageTextBusy || (settings.background && document.hidden)) return false;
+      if (!state.active || state.imageTextBusy || state.assetCleanupBusy || (settings.background && document.hidden)) return false;
       ran = true;
       return checkExternalChanges(!!settings.announce, settings);
     });
@@ -2029,7 +2080,7 @@
     }
   });
   document.addEventListener('keydown', (event) => {
-    if (state.imageTextBusy && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
+    if ((state.imageTextBusy || state.assetCleanupBusy) && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
     if (!state.active) return;
     if (state.recordingShortcutCommand && !event.isComposing) {
       event.preventDefault();

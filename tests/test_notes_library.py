@@ -22,6 +22,84 @@ class NotesLibraryTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_cleanup_unused_images_preserves_live_shared_and_nonimage_files(self):
+        png, asset, _, _, _, _, _ = self.image_text_fixture()
+        folder = (self.root / asset).parent
+        unused = folder / 'unused.png'
+        unused.write_bytes(png)
+        shared = folder / 'shared.png'
+        shared.write_bytes(png)
+        (folder / 'document.pdf').write_bytes(b'keep')
+        self.store.create('', 'Other', 'note', content='![](Image.assets/images/shared.png)')
+        before = (self.root / 'Image.md').read_bytes()
+        history = self.store.history('Image.md')
+        result = self.store.cleanup_unused_images('Image.md', self.store.load('Image.md')['revision'])
+        self.assertEqual(result['deletedCount'], 1)
+        self.assertEqual(result['deletedBytes'], len(png))
+        self.assertEqual(result['failedCount'], 0)
+        self.assertFalse(unused.exists())
+        self.assertTrue(shared.exists())
+        self.assertTrue((self.root / asset).exists())
+        self.assertTrue((folder / 'document.pdf').exists())
+        self.assertEqual((self.root / 'Image.md').read_bytes(), before)
+        self.assertEqual(self.store.history('Image.md'), history)
+        self.assertEqual(self.store.cleanup_unused_images('Image.md', self.store.load('Image.md')['revision'])['deletedCount'], 0)
+
+    def test_cleanup_unused_images_understands_markdown_paths_and_nested_assets(self):
+        self.store.create('', 'A', 'note')
+        folder = self.root / 'A.assets' / 'nested'
+        folder.mkdir(parents=True)
+        names = ['空 格.png', 'diagram(2).png', 'escaped(3).png', 'wiki.png', 'link.png', 'ref.png', 'code.png', 'comment.png']
+        for name in names:
+            (folder / name).write_bytes(b'image')
+        content = '\n'.join([
+            '![a](<A.assets/nested/空 格.png> "title")',
+            'inline ![a](A.assets/nested/diagram(2).png) text',
+            '![a](A.assets/nested/escaped\\(3\\).png)',
+            '![[A.assets/nested/wiki.png|200]]', '[download](A.assets/nested/link.png)',
+            '![ref][picture]', '[picture]: A.assets/nested/ref.png',
+            '```md', '![](A.assets/nested/code.png)', '```',
+            '<!-- ![](A.assets/nested/comment.png) -->',
+        ])
+        self.store.save('A.md', content, self.store.load('A.md')['revision'])
+        result = self.store.cleanup_unused_images('A.md', self.store.load('A.md')['revision'])
+        self.assertEqual(result['deletedCount'], 2)
+        self.assertEqual({p.name for p in folder.iterdir()}, set(names[:-2]))
+
+    def test_cleanup_unused_images_empty_folder_revision_and_path_guards(self):
+        self.store.create('', 'A', 'note')
+        revision = self.store.load('A.md')['revision']
+        self.assertEqual(self.store.cleanup_unused_images('A.md', revision)['deletedCount'], 0)
+        with self.assertRaises(NotesError):
+            self.store.cleanup_unused_images('A.md', 'stale')
+        with self.assertRaises(NotesError):
+            self.store.cleanup_unused_images('../A.md', revision)
+        folder = self.root / 'A.assets'
+        folder.mkdir()
+        (folder / 'a.png').write_bytes(b'image')
+        original = notes_library._is_reparse
+        with mock.patch('notes_library._is_reparse', side_effect=lambda path: path == folder or original(path)):
+            with self.assertRaises(NotesError):
+                self.store.cleanup_unused_images('A.md', revision)
+        self.assertTrue((folder / 'a.png').exists())
+
+    def test_cleanup_unused_images_reports_partial_failure_and_retries(self):
+        self.store.create('', 'A', 'note')
+        folder = self.root / 'A.assets'
+        folder.mkdir()
+        for name in ['a.png', 'b.png']:
+            (folder / name).write_bytes(b'image')
+        original = Path.unlink
+        def unlink(path, *args, **kwargs):
+            if path.name == 'a.png':
+                raise PermissionError('locked')
+            return original(path, *args, **kwargs)
+        revision = self.store.load('A.md')['revision']
+        with mock.patch.object(Path, 'unlink', unlink):
+            result = self.store.cleanup_unused_images('A.md', revision)
+        self.assertEqual((result['deletedCount'], result['failedCount']), (1, 1))
+        self.assertEqual(self.store.cleanup_unused_images('A.md', revision)['deletedCount'], 1)
+
     def image_text_fixture(self):
         png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=')
         self.store.create('', 'Image', 'note')

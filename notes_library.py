@@ -131,6 +131,60 @@ def _standalone_local_image_target(value: str) -> str | None:
     return target if target and not _REMOTE_IMAGE_TARGET_RE.match(target) else None
 
 
+def _attachment_references(content: str) -> set[str]:
+    """Local Markdown destinations, including links and reference definitions.
+
+    Only called by explicit attachment cleanup. Code and HTML comments are not
+    rendered attachments. Keep reference definitions conservatively even when
+    their label is unused, so uncommon Markdown forms cannot lose their files.
+    """
+    lines = []
+    fence = ""
+    for line in content.split('\n'):
+        bare = line.rstrip('\r')
+        marker = _FENCE_RE.match(bare)
+        if fence:
+            if re.fullmatch(r"[ \t]{0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", bare):
+                fence = ""
+            continue
+        if marker:
+            fence = marker[1]
+            continue
+        # Indentation may belong to a nested list rather than a code block.
+        # Retain its destinations conservatively instead of risking live images.
+        lines.append(bare)
+    source = re.sub(r'<!--[\s\S]*?-->', '', '\n'.join(lines))
+    source = re.sub(r'(`+)[\s\S]*?\1', '', source)
+    targets = set()
+    for match in re.finditer(r'(?<!\\)!?\[\[([^\]\n]+)\]\]', source):
+        targets.add(match[1].split('|', 1)[0].strip())
+    # Parse balanced parentheses and escaped delimiters instead of truncating
+    # filenames such as "diagram(2).png" at the first closing parenthesis.
+    for match in re.finditer(r'(?<!\\)\]\(\s*|^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*', source, re.MULTILINE):
+        start = match.end()
+        if source[start:start + 1] == '<':
+            end = source.find('>', start + 1)
+            if end >= 0:
+                targets.add(source[start + 1:end])
+            continue
+        end, depth = start, 0
+        while end < len(source):
+            char = source[end]
+            if char == '\\' and end + 1 < len(source):
+                end += 2
+                continue
+            if char.isspace() or (char == ')' and depth == 0):
+                break
+            if char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+            end += 1
+        if end > start:
+            targets.add(re.sub(r'\\([!"#$%&\'()*+,\-./:;<=>?@\[\]\\^_`{|}~])', r'\1', source[start:end]))
+    return {value for value in targets if value and not _REMOTE_IMAGE_TARGET_RE.match(value)}
+
+
 def _decode_image_text_items(encoded: str) -> list[str] | None:
     try:
         padding = "=" * ((4 - len(encoded) % 4) % 4)
@@ -1406,6 +1460,86 @@ class NotesStore:
         if target.stat().st_size > MAX_NOTE_IMAGE_BYTES:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
         return target, media_type
+
+    def cleanup_unused_images(self, note: object, expected_revision: object) -> dict:
+        """Permanently delete unused images in this note's companion directory.
+
+        Caller holds NOTES_MUTATION_LOCK. Other live notes protect shared
+        references; history is deliberately not a usage source for this action.
+        """
+        normalized = self.normalize_path(note)
+        note_path = self._absolute(normalized)
+        raw = self._read_note_bytes(note_path)
+        if expected_revision != _revision(raw):
+            raise NotesError("笔记已修改，请重试清理", status=409, code="revision_conflict")
+        asset_root = note_path.with_name(note_path.stem + '.assets')
+        result = {"path": normalized, "deletedCount": 0, "deletedBytes": 0, "failedCount": 0}
+        if not asset_root.exists():
+            return result
+        self._absolute(asset_root.relative_to(self.root).as_posix(), allow_assets=True)
+        if not asset_root.is_dir():
+            raise NotesError("伴生素材路径不是目录")
+        candidates = {}
+        for base, directories, filenames in os.walk(asset_root, followlinks=False):
+            directory = Path(base)
+            directories[:] = [name for name in directories if not _is_reparse(directory / name)]
+            for name in filenames:
+                path = directory / name
+                if path.suffix.casefold() not in NOTE_IMAGE_TYPES or _is_reparse(path) or not path.is_file():
+                    continue
+                relative = path.relative_to(self.root).as_posix()
+                self._absolute(relative, allow_assets=True)
+                candidates[relative.casefold()] = (relative, path.stat())
+        if not candidates:
+            return result
+        protected = set()
+        revisions = []
+        # Shared-image references elsewhere must not be broken by cleaning this
+        # note. This read happens only on the user's explicit cleanup action.
+        for document in self._note_paths():
+            document_relative = document.relative_to(self.root).as_posix()
+            document_raw = raw if document == note_path else self._read_note_bytes(document)
+            revisions.append((document, _revision(document_raw)))
+            for source in _attachment_references(self._decode_note(document_raw)):
+                # Resolve paths without the display-size limit: a referenced
+                # image must be retained even if it is currently too large to load.
+                decoded = urllib.parse.unquote(source.split('#', 1)[0]).replace('\\', '/')
+                if decoded.startswith('/') or _REMOTE_IMAGE_TARGET_RE.match(decoded):
+                    continue
+                parts = list(document.parent.relative_to(self.root).parts)
+                escaped = False
+                for part in decoded.split('/'):
+                    if part in ('', '.'):
+                        continue
+                    if part == '..':
+                        if not parts:
+                            escaped = True
+                            break
+                        parts.pop()
+                    else:
+                        parts.append(part)
+                if not escaped:
+                    protected.add('/'.join(parts).casefold())
+        # Abort before the first unlink if an external edit raced the scan.
+        for document, revision in revisions:
+            if _revision(self._read_note_bytes(document)) != revision:
+                raise NotesError("扫描期间笔记发生修改，请重试", status=409, code="revision_conflict")
+        for key, (relative, original) in candidates.items():
+            if key in protected:
+                continue
+            try:
+                path = self._absolute(relative, allow_assets=True)
+                stat = path.stat()
+                if (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) != (
+                        original.st_dev, original.st_ino, original.st_size, original.st_mtime_ns):
+                    result['failedCount'] += 1
+                    continue
+                path.unlink()
+                result['deletedCount'] += 1
+                result['deletedBytes'] += stat.st_size
+            except (OSError, NotesError):
+                result['failedCount'] += 1
+        return result
 
     def assets_directory(self, note: object) -> Path:
         note_rel = self.normalize_path(note)
