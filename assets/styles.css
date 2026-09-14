@@ -1216,13 +1216,13 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   font: 650 11px/1 var(--font-ui);
   cursor: pointer;
 }
-.note-image-text-action:hover,
-.note-image-text-sizes button:hover,
-.note-image-text-merge:hover { color: var(--text); background: rgba(28,28,25,.055); }
+.note-image-text-action:hover:not(:disabled),
+.note-image-text-sizes button:hover:not(:disabled),
+.note-image-text-merge:hover:not(:disabled) { color: var(--text); background: rgba(28,28,25,.055); }
 .note-image-text-action.is-selected,
 .note-image-text-sizes button.is-selected { color: #fff; background: #22231f; }
-.note-image-text-action:disabled { opacity: .3; cursor: default; }
-.note-image-text-merge:disabled { opacity: .4; cursor: wait; }
+.note-image-text-tools button:disabled { opacity: .3; cursor: default; }
+.note-image-text-tools[aria-busy="true"] button:disabled { cursor: wait; }
 .note-image-text-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .note-image-text-sizes { display: flex; align-items: center; gap: 1px; }
 .note-image-text-sizes button:nth-child(1) { font-size: 9px; }
@@ -1795,9 +1795,9 @@ body.start-page[data-start-theme="dark"] .note-image-text-tools {
   background: rgba(22, 27, 24, .985);
   box-shadow: 0 22px 54px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .05);
 }
-body.start-page[data-start-theme="dark"] .note-image-text-action:hover,
-body.start-page[data-start-theme="dark"] .note-image-text-sizes button:hover,
-body.start-page[data-start-theme="dark"] .note-image-text-merge:hover { background: rgba(235, 240, 235, .08); }
+body.start-page[data-start-theme="dark"] .note-image-text-action:hover:not(:disabled),
+body.start-page[data-start-theme="dark"] .note-image-text-sizes button:hover:not(:disabled),
+body.start-page[data-start-theme="dark"] .note-image-text-merge:hover:not(:disabled) { background: rgba(235, 240, 235, .08); }
 body.start-page[data-start-theme="dark"] .note-image-text-action.is-selected,
 body.start-page[data-start-theme="dark"] .note-image-text-sizes button.is-selected { color: #171918; background: #f2f4ef; }
 body.start-page[data-start-theme="dark"] .note-image-text-colors button.is-selected {

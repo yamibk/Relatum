@@ -2383,6 +2383,7 @@
           size: selected ? selected.dataset.imageTextSize : this.defaults.size,
           color: selected ? selected.dataset.imageTextColor : this.defaults.color,
           canDelete: !!selected,
+          hasText: !!(this.adapter && this.adapter.frame.querySelector('[data-image-text-id]')),
         });
       },
       render() {

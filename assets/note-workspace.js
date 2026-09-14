@@ -616,9 +616,43 @@
       cleanup.textContent = language() === 'en' ? 'Delete text box data' : '删除文本框数据';
       cleanup.title = language() === 'en' ? 'Permanently clear this image’s text and unused text data in this note' : '永久删除选中图片的文字框及本篇未使用的文字框数据';
     }
+    const busy = !!(state.imageTextBusy || state.assetCleanupBusy);
+    const hasImage = enabled && !!state.imageText.available && !state.imageTextCleanupPath;
+    const hasBox = hasImage && !!state.imageText.canDelete;
+    const english = language() === 'en';
+    const copy = (zh, en) => english ? en : zh;
+    const sizes = { sm: ['小字号', 'Small text'], md: ['中字号', 'Medium text'], lg: ['大字号', 'Large text'], xl: ['特大字号', 'Extra-large text'], xxl: ['超大字号', 'Huge text'], xxxl: ['巨大字号', 'Giant text'] };
+    const colors = { black: ['黑色', 'Black'], white: ['白色', 'White'], yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'], gray: ['灰色', 'Gray'] };
+    imageTextTools.setAttribute('aria-busy', String(busy));
     imageTextTools.querySelectorAll('button').forEach((button) => {
-      if (state.imageTextBusy || (state.imageTextCleanupPath && button.dataset.imageTextAction !== 'cleanup')) button.disabled = true;
-      else if (!['edit', 'delete'].includes(button.dataset.imageTextAction)) button.disabled = false;
+      const action = button.dataset.imageTextAction;
+      let label = button.title || button.getAttribute('aria-label') || '';
+      if (action === 'size' || action === 'color') {
+        const names = (action === 'size' ? sizes : colors)[button.dataset.imageTextValue];
+        label = names ? copy(...names) : label;
+      }
+      let reason = '';
+      if (busy) reason = copy('正在处理，请稍候', 'Processing, please wait');
+      else if (action !== 'cleanup' && !hasImage) reason = copy('请先选中图片', 'Select an image first');
+      else if (['edit', 'delete'].includes(action) && !hasBox) reason = copy('请先选中文字框', 'Select a text box first');
+      else if (action === 'merge' && !state.imageText.hasText) reason = copy('请先在图片上添加文字', 'Add text to the image first');
+      else if (action === 'cleanup' && !hasImage && !state.imageTextCleanupPath) reason = copy('没有可删除的文字框数据', 'No text box data to delete');
+      button.disabled = !!reason;
+      let hint = reason;
+      if (!hint && ['size', 'color'].includes(action)) hint = hasBox
+        ? copy('应用于选中文字框，并用于新建文字框', 'Apply to the selected text box and new text boxes')
+        : copy('用于接下来新建的文字框', 'Use for new text boxes');
+      if (!hint && action === 'add') hint = state.imageText.armed
+        ? copy('点击图片放置文字；再次点击取消', 'Click the image to place text; click again to cancel')
+        : copy('点击后，在图片上选择文字位置', 'Click, then choose a position on the image');
+      if (!hint && action === 'merge') hint = copy('将文字合并为新的 PNG，保留原图；文字将不可单独编辑', 'Merge text into a new PNG and keep the original; text will no longer be editable');
+      if (!hint && action === 'cleanup') hint = hasImage
+        ? copy('永久删除选中图片文字及本篇未使用的文字框数据，不创建备份', 'Permanently delete this image’s text and unused text data in this note, without a backup')
+        : copy('永久清理本篇未使用的文字框数据，不创建备份', 'Permanently clear unused text data in this note, without a backup');
+      button.removeAttribute('title');
+      button.setAttribute('aria-label', label);
+      button.setAttribute('data-ui-tooltip', label + (hint ? ' · ' + hint : ''));
+      button.setAttribute('data-ui-tooltip-source', label + (hint ? ' · ' + hint : ''));
     });
   }
 
@@ -1962,11 +1996,13 @@
     if (state.imageTextBusy) return;
     const imageTextAction = event.target.closest('[data-image-text-action]');
     if (imageTextAction && imageTextTools && imageTextTools.contains(imageTextAction) && liveEditor) {
+      if (imageTextAction.disabled) return;
       if (['merge', 'cleanup'].includes(imageTextAction.dataset.imageTextAction)) {
         await runImageTextOperation(imageTextAction.dataset.imageTextAction);
         return;
       }
       if (editorInputPending()) await whenEditorInputSettled();
+      if (imageTextAction.disabled || !liveEditor || state.imageTextBusy) return;
       liveEditor.imageTextCommand(imageTextAction.dataset.imageTextAction, imageTextAction.dataset.imageTextValue || '');
       return;
     }
