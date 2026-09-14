@@ -10953,6 +10953,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 result = NOTES_STORE.create_timestamp_note(
                     body.get("parent", ""), content=body.get("content", ""),
                 )
+            elif body.get("autoName") == "custom" and body.get("kind", "note") == "note":
+                result = NOTES_STORE.create_unique_note(
+                    body.get("parent", ""), body.get("name", ""),
+                    content=body.get("content", ""),
+                )
             elif body.get("autoName") == "folder" and body.get("kind") == "folder":
                 result = NOTES_STORE.create_untitled_folder(
                     body.get("parent", ""),

@@ -42,7 +42,7 @@ assert(notes.includes('function triggerExternalSync(options)') && notes.includes
   'automatic filesystem checks must stay serialized');
 assert(notes.includes('if (!state.active || document.hidden || state.imageTextBusy) return;'),
   'automatic filesystem checks must stop outside the visible Notes workspace');
-assert(notes.includes('if (treeChanged) scheduleDocumentPrefetch();'),
+assert(notes.includes('if (structureChanged) scheduleDocumentPrefetch();'),
   'unchanged polling must not repeatedly prefetch documents');
 
 for (const endpoint of [

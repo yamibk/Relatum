@@ -61,6 +61,10 @@ async function freePort() {
       return page;
     }
     let page = await prepare(context);
+    // Keep this pre-existing DOM reuse suite on name order: a modified-time
+    // sort is expected to move rows when an external edit changes their rank.
+    await page.locator('[data-note-action="toggle-sort"]').click();
+    await page.locator('#note-sort-menu [data-note-sort-mode="name-asc"]').click();
     async function settle() { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); await sleep(120); }
     async function open(name) { await page.evaluate(name => __noteViewTest.openNote(name, { reuseActiveTab: false }), name); await settle(); }
     async function position(anchor, head = anchor, scrollTop) {

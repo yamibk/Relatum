@@ -991,6 +991,59 @@ body.start-page[data-start-theme="dark"] .note-modal-field input { color: #edf0e
 .note-pane-head h1 { min-width: 0; overflow: hidden; font-size: 15.5px; text-overflow: ellipsis; white-space: nowrap; }
 .note-tree-pane > .note-pane-head { gap: 6px; padding-inline: 12px; }
 .note-library-heading { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 5px; overflow: hidden; }
+.note-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.note-tree-pane { position: relative; }
+.note-library-settings-trigger { flex: none; }
+.note-library-settings-trigger svg { width: 17px; height: 17px; }
+.note-sort-trigger[aria-expanded="true"],
+.note-library-settings-trigger[aria-expanded="true"] { color: var(--text); background: rgba(25, 25, 23, .075); }
+.note-library-popover {
+  position: absolute; z-index: 680; top: 55px; box-sizing: border-box;
+  padding: 7px; color: var(--text); background: #fff;
+  border: 1px solid rgba(28, 28, 30, .11); border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(28, 28, 30, .16);
+  animation: noteLibraryPopoverIn 150ms cubic-bezier(.2, .82, .24, 1) both;
+}
+.note-library-popover[hidden] { display: none; }
+.note-library-popover.is-closing { pointer-events: none; animation: noteLibraryPopoverOut 150ms ease-in both; }
+@keyframes noteLibraryPopoverIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes noteLibraryPopoverOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-4px); } }
+.note-sort-menu { right: 8px; width: min(230px, calc(100% - 16px)); }
+.note-sort-option, .note-name-option {
+  display: block; width: 100%; border: 0; border-radius: 7px; padding: 8px 27px 8px 10px;
+  color: var(--text-secondary); background: transparent; font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.3;
+  text-align: left; cursor: pointer; position: relative;
+}
+.note-sort-option:hover, .note-name-option:hover { color: var(--text); background: rgba(25, 25, 23, .055); }
+.note-sort-option.is-selected, .note-name-option.is-selected { color: var(--text); font-weight: 680; }
+.note-sort-option.is-selected::after, .note-name-option.is-selected::after {
+  content: '✓'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 13px;
+}
+.note-sort-menu .note-sort-option:nth-child(3), .note-sort-menu .note-sort-option:nth-child(5) { margin-top: 5px; border-top: 1px solid rgba(28, 28, 30, .08); border-radius: 0 0 7px 7px; padding-top: 12px; }
+.note-library-settings { left: 8px; right: 8px; max-height: min(650px, calc(100% - 65px)); overflow-y: auto; overscroll-behavior: contain; padding: 14px; }
+.note-library-settings h2 { margin: 0 0 13px; font-family: inherit; font-size: 14px; font-weight: 700; line-height: 1.3; }
+.note-library-settings h3 { margin: 13px 0 7px; font-family: inherit; font-size: 11.5px; font-weight: 680; line-height: 1.3; }
+.note-library-sort-options, .note-library-name-options { display: grid; gap: 1px; }
+.note-library-name-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.note-name-option { padding-right: 22px; background: rgba(25, 25, 23, .035); }
+.note-name-option.is-selected { background: rgba(91, 113, 88, .12); }
+.note-name-option.is-selected::after { right: 7px; }
+.note-library-name-field { display: grid; gap: 5px; margin-top: 9px; font-size: 11px; color: var(--text-secondary); }
+.note-library-name-field.is-disabled { display: none; }
+.note-library-name-field input { min-width: 0; box-sizing: border-box; width: 100%; padding: 7px 8px; border: 1px solid rgba(28, 28, 30, .16); border-radius: 7px; color: var(--text); background: var(--bg); font-family: inherit; font-size: 12px; line-height: 1.35; }
+.note-library-name-field input:focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.note-library-name-preview, .note-library-name-error { margin: 7px 0 0; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.note-library-name-preview { color: var(--text-tertiary); }
+.note-library-name-error { color: #a4413e; }
+.note-library-name-error:empty { display: none; }
+@media (max-width: 760px) { .note-tree-pane { position: fixed; } }
+body.start-page[data-start-theme="dark"] .note-library-popover { color: #edf0ea; background: #242724; border-color: rgba(235,240,235,.12); box-shadow: 0 14px 36px rgba(0,0,0,.32); }
+body.start-page[data-start-theme="dark"] .note-sort-option:hover,
+body.start-page[data-start-theme="dark"] .note-name-option:hover { background: rgba(235,240,235,.07); }
+body.start-page[data-start-theme="dark"] .note-name-option { background: rgba(235,240,235,.05); }
+body.start-page[data-start-theme="dark"] .note-name-option.is-selected { background: rgba(235,240,235,.12); }
+body.start-page[data-start-theme="dark"] .note-library-name-field input { color: #edf0ea; background: #1a1d1b; border-color: rgba(235,240,235,.16); }
+@media (prefers-reduced-motion: reduce) { .note-library-popover, .note-library-popover.is-closing { animation: none; } }
 .note-library-focus-button {
   flex: none;
   appearance: none;

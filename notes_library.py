@@ -560,6 +560,7 @@ class NotesStore:
                         "fileName": entry.name,
                         "path": relative,
                         "modifiedNs": stat.st_mtime_ns,
+                        "createdNs": getattr(stat, "st_birthtime_ns", stat.st_ctime_ns),
                         "size": stat.st_size,
                     })
             return result
@@ -1017,11 +1018,22 @@ class NotesStore:
 
     def create_timestamp_note(self, parent: object, *, content: object = "",
                               timestamp: datetime | None = None) -> dict:
+        base = (timestamp or datetime.now()).strftime("%Y-%m-%d-%H%M%S")
+        return self.create_unique_note(parent, base, content=content)
+
+    def create_unique_note(self, parent: object, base_name: object, *, content: object = "") -> dict:
         parent_relative = self.normalize_path(parent, allow_root=True)
         parent_target = self._absolute(parent_relative, allow_root=True)
         if not parent_target.is_dir():
             raise NotesError("目标文件夹不存在", status=404, code="parent_missing")
-        base = (timestamp or datetime.now()).strftime("%Y-%m-%d-%H%M%S")
+        if not isinstance(base_name, str) or not base_name.strip():
+            raise NotesError("请输入名称")
+        base = unicodedata.normalize("NFC", base_name.strip())
+        if base.casefold().endswith(NOTE_SUFFIX):
+            base = base[:-len(NOTE_SUFFIX)]
+        if not base or base.endswith((".", " ")) or "/" in base or "\\" in base:
+            raise NotesError("笔记名称不能包含路径分隔符")
+        self.normalize_path(base + NOTE_SUFFIX)
         name = base + NOTE_SUFFIX
         counter = 2
         while self._case_collision(parent_target, name):

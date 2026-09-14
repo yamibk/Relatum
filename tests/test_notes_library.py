@@ -412,6 +412,26 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertEqual(folder["path"], "新建文件夹")
         self.assertEqual(another["path"], "新建文件夹-2")
 
+    def test_custom_new_note_uses_unique_name_without_changing_exact_create_or_move(self):
+        first = self.store.create_unique_note("", "Ideas")
+        second = self.store.create_unique_note("", "Ideas.md")
+        third = self.store.create_unique_note("", "Ideas")
+        self.assertEqual([first["path"], second["path"], third["path"]],
+                         ["Ideas.md", "Ideas-2.md", "Ideas-3.md"])
+        with self.assertRaises(NotesError) as collision:
+            self.store.create("", "ideas", "note")
+        self.assertEqual(collision.exception.code, "exists")
+        self.store.create("", "Other", "note")
+        with self.assertRaises(NotesError) as collision:
+            self.store.move("Other.md", "Ideas.md")
+        self.assertEqual(collision.exception.code, "exists")
+        for bad in ("", "../escape", "folder/name", "CON", "trailing."):
+            with self.subTest(bad=bad), self.assertRaises(NotesError):
+                self.store.create_unique_note("", bad)
+        note = next(entry for entry in self.store.tree()["entries"] if entry["path"] == "Ideas.md")
+        self.assertIsInstance(note["createdNs"], int)
+        self.assertGreater(note["createdNs"], 0)
+
     def test_history_restore_snapshots_current_version(self):
         self.store.create("", "History", "note", content="one")
         first = self.store.load("History.md")

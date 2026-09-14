@@ -16,6 +16,7 @@
     '学习': 'Study', '专注': 'Focus', '画布': 'Canvas', '导图': 'Mind Map', '图案': 'Shapes', '工具': 'Tools',
     '笔记': 'Notes', '生涯': 'Career', '工作区': 'Workspace', 'Markdown 笔记库': 'Markdown notes library',
     '笔记文件树': 'Notes tree', '笔记库': 'Notes Library', '刷新笔记库': 'Refresh notes library',
+    '排序': 'Sort', '文件树排序': 'File tree sorting', '笔记库设置': 'Library settings',
     '新建笔记': 'New note', '新建文件夹': 'New folder', '本地目录 · notes/': 'Local folder · notes/',
     '在资源管理器中打开': 'Open in File Explorer', '选择一篇笔记': 'Select a note',
     '编辑模式': 'Editing mode', '书写': 'Write', '阅读': 'Read',

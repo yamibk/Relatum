@@ -46,6 +46,16 @@
   const settingsResetButton = $('[data-note-settings-action="reset-open"]');
   const settingsResetConfirm = $('[data-role="note-settings-reset-confirm"]');
   const settingsResetStatus = $('[data-role="note-settings-reset-status"]');
+  const sortTrigger = $('[data-note-action="toggle-sort"]');
+  const sortMenu = $('[data-role="note-sort-menu"]');
+  const libraryTrigger = $('[data-note-action="toggle-library-settings"]');
+  const librarySettings = $('[data-role="note-library-settings"]');
+  const librarySortOptions = $('[data-role="note-library-sort-options"]');
+  const libraryNameOptions = $('[data-role="note-library-name-options"]');
+  const libraryNameField = $('[data-role="note-library-name-field"]');
+  const libraryNameInput = $('[data-role="note-library-name-input"]');
+  const libraryNamePreview = $('[data-role="note-library-name-preview"]');
+  const libraryNameError = $('[data-role="note-library-name-error"]');
   let liveEditor = null;
 
   const ACTIVE_PATH_KEY = 'canvas:noteActivePath:v1';
@@ -56,6 +66,9 @@
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
+  const TREE_SORT_KEY = 'canvas:noteTreeSort:v1';
+  const NEW_NAME_KEY = 'canvas:noteNewName:v1';
+  const SORT_MODES = ['name-asc', 'name-desc', 'modified-desc', 'modified-asc', 'created-desc', 'created-asc'];
   const IMAGE_TEXT_SIZES = ['sm', 'md', 'lg', 'xl', 'xxl', 'xxxl'];
   const IMAGE_TEXT_COLORS = ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'];
   const NOTE_SHORTCUTS = window.RelatumNoteShortcuts || null;
@@ -93,6 +106,11 @@
       livePreview: '实时预览', sourceMode: '源码模式', readingMode: '阅读模式',
       switchToSource: '切换到源码模式', switchToLive: '切换到实时预览',
       imageText: '图片文字', addImageText: '添加文字', editImageText: '编辑文字框', deleteImageText: '删除文字框', mergeImageText: '合并为图片',
+      sort: '排序', librarySettings: '笔记库设置', librarySort: '文件树排序', newNameSetting: '新建笔记命名',
+      sortNameAsc: '文件名 (A-Z)', sortNameDesc: '文件名 (Z-A)', sortModifiedDesc: '编辑时间（从新到旧）', sortModifiedAsc: '编辑时间（从旧到新）',
+      sortCreatedDesc: '创建时间（从新到旧）', sortCreatedAsc: '创建时间（从旧到新）',
+      timestampName: '日期 + 时间', customName: '自定义名称', customNameLabel: '名称（不含 .md）', defaultCustomName: '未命名笔记',
+      namePreview: '新建示例：{name}', invalidNewName: '请输入有效文件名；不能包含路径或 Windows 禁用字符',
     },
     en: {
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
@@ -115,6 +133,11 @@
       livePreview: 'Live Preview', sourceMode: 'Source mode', readingMode: 'Reading mode',
       switchToSource: 'Switch to source mode', switchToLive: 'Switch to Live Preview',
       imageText: 'Image text', addImageText: 'Add text', editImageText: 'Edit text box', deleteImageText: 'Delete text box', mergeImageText: 'Merge into image',
+      sort: 'Sort', librarySettings: 'Library settings', librarySort: 'File tree sorting', newNameSetting: 'New note naming',
+      sortNameAsc: 'File name (A-Z)', sortNameDesc: 'File name (Z-A)', sortModifiedDesc: 'Modified (newest first)', sortModifiedAsc: 'Modified (oldest first)',
+      sortCreatedDesc: 'Created (newest first)', sortCreatedAsc: 'Created (oldest first)',
+      timestampName: 'Date + time', customName: 'Custom name', customNameLabel: 'Name (without .md)', defaultCustomName: 'Untitled',
+      namePreview: 'Example: {name}', invalidNewName: 'Enter a valid file name without paths or Windows-reserved characters',
     },
   };
   const state = {
@@ -127,6 +150,7 @@
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
+    treeSort: 'modified-desc', newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
     imageText: {
       available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false,
       toggleSeq: 0, toggleIntent: null,
@@ -138,6 +162,12 @@
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { if (localStorage.getItem(LINKS_OPEN_KEY) === '1') root.classList.add('links-overlay-open'); } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
+  try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
+  try {
+    const savedName = JSON.parse(localStorage.getItem(NEW_NAME_KEY) || '{}');
+    const baseName = savedName && normalizeCustomBase(savedName.baseName);
+    if (baseName) state.newName = { mode: savedName.mode === 'custom' ? 'custom' : 'timestamp', baseName };
+  } catch (error) {}
   try {
     const stored = JSON.parse(localStorage.getItem(IMAGE_TEXT_DEFAULTS_KEY) || '{}');
     if (IMAGE_TEXT_SIZES.includes(stored.size)) state.imageText.size = stored.size;
@@ -854,6 +884,129 @@
 
   function language() { return window.RelatumI18n && window.RelatumI18n.language === 'en' ? 'en' : 'zh-CN'; }
   function tr(key, values) { let text = COPY[language()][key] || COPY['zh-CN'][key] || key; Object.keys(values || {}).forEach((name) => { text = text.replaceAll('{' + name + '}', String(values[name])); }); return text; }
+  const SORT_LABELS = {
+    'name-asc': 'sortNameAsc', 'name-desc': 'sortNameDesc',
+    'modified-desc': 'sortModifiedDesc', 'modified-asc': 'sortModifiedAsc',
+    'created-desc': 'sortCreatedDesc', 'created-asc': 'sortCreatedAsc',
+  };
+  function nameCompare(left, right) {
+    return left.name.localeCompare(right.name, language(), { numeric: true, sensitivity: 'base' }) || left.path.localeCompare(right.path);
+  }
+  function sortedTreeEntries(entries) {
+    const mode = state.treeSort;
+    return (entries || []).slice().sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === 'folder' ? -1 : 1;
+      if (left.kind === 'folder') return nameCompare(left, right);
+      if (mode === 'name-asc' || mode === 'name-desc') return nameCompare(left, right) * (mode === 'name-desc' ? -1 : 1);
+      const key = mode.startsWith('created-') ? 'createdNs' : 'modifiedNs';
+      const delta = (Number(left[key]) || 0) - (Number(right[key]) || 0);
+      return (mode.endsWith('-desc') ? -delta : delta) || nameCompare(left, right);
+    });
+  }
+  function treeOrderSignature(entries) {
+    const paths = [];
+    const visit = (items) => sortedTreeEntries(items).forEach((entry) => {
+      paths.push(entry.path);
+      if (entry.kind === 'folder') visit(entry.children);
+    });
+    visit(entries);
+    return JSON.stringify(paths);
+  }
+  function normalizeCustomBase(raw) {
+    if (typeof raw !== 'string') return '';
+    let base = raw.trim().normalize('NFC');
+    if (/\.md$/i.test(base)) base = base.slice(0, -3);
+    if (!base || /[<>:"/\\|?*\x00-\x1f]/.test(base) || /[. ]$/.test(base)) return '';
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(base) || /^\.relatum-/i.test(base)) return '';
+    return base;
+  }
+  function persistNewName() { try { localStorage.setItem(NEW_NAME_KEY, JSON.stringify(state.newName)); } catch (error) {} }
+  function timestampNamePreview() {
+    const now = new Date();
+    const part = (value) => String(value).padStart(2, '0');
+    return `${now.getFullYear()}-${part(now.getMonth() + 1)}-${part(now.getDate())}-${part(now.getHours())}${part(now.getMinutes())}${part(now.getSeconds())}.md`;
+  }
+  function updateNamePreview() {
+    if (!libraryNameInput || !libraryNamePreview) return;
+    const custom = state.newName.mode === 'custom';
+    libraryNameInput.disabled = !custom;
+    libraryNameField.classList.toggle('is-disabled', !custom);
+    const base = custom ? normalizeCustomBase(libraryNameInput.value) : '';
+    libraryNamePreview.textContent = tr('namePreview', { name: custom && base ? base + '.md' : timestampNamePreview() });
+    libraryNameError.textContent = custom && !base ? tr('invalidNewName') : '';
+  }
+  function renderLibraryPreferences() {
+    if (!sortMenu || !librarySettings) return;
+    const focusedChoice = document.activeElement && (document.activeElement.dataset.noteSortMode || document.activeElement.dataset.noteNameMode);
+    const focusedHost = focusedChoice && (sortMenu.contains(document.activeElement) ? sortMenu : librarySettings.contains(document.activeElement) ? librarySettings : null);
+    sortTrigger.title = tr('sort'); sortTrigger.setAttribute('aria-label', tr('sort'));
+    libraryTrigger.title = tr('librarySettings'); libraryTrigger.setAttribute('aria-label', tr('librarySettings'));
+    sortMenu.setAttribute('aria-label', tr('librarySort'));
+    librarySettings.setAttribute('aria-label', tr('librarySettings'));
+    $('[data-role="note-library-settings-title"]').textContent = tr('librarySettings');
+    $('[data-role="note-library-sort-title"]').textContent = tr('librarySort');
+    $('[data-role="note-library-name-title"]').textContent = tr('newNameSetting');
+    $('[data-role="note-library-name-label"]').textContent = tr('customNameLabel');
+    const makeSortButton = (mode, inMenu) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.noteSortMode = mode;
+      button.textContent = tr(SORT_LABELS[mode]);
+      button.className = 'note-sort-option' + (mode === state.treeSort ? ' is-selected' : '');
+      if (inMenu) { button.setAttribute('role', 'menuitemradio'); button.setAttribute('aria-checked', String(mode === state.treeSort)); }
+      else button.setAttribute('aria-pressed', String(mode === state.treeSort));
+      return button;
+    };
+    sortMenu.replaceChildren(...SORT_MODES.map((mode) => makeSortButton(mode, true)));
+    librarySortOptions.replaceChildren(...SORT_MODES.map((mode) => makeSortButton(mode, false)));
+    libraryNameOptions.replaceChildren(...['timestamp', 'custom'].map((mode) => {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.noteNameMode = mode;
+      button.className = 'note-name-option' + (state.newName.mode === mode ? ' is-selected' : '');
+      button.setAttribute('aria-pressed', String(state.newName.mode === mode));
+      button.textContent = tr(mode === 'custom' ? 'customName' : 'timestampName');
+      return button;
+    }));
+    libraryNameInput.value = state.newName.baseName || '';
+    updateNamePreview();
+    if (focusedHost) {
+      const replacement = Array.from(focusedHost.querySelectorAll('[data-note-sort-mode], [data-note-name-mode]'))
+        .find((button) => button.dataset.noteSortMode === focusedChoice || button.dataset.noteNameMode === focusedChoice);
+      if (replacement) replacement.focus();
+    }
+  }
+  function setTreeSort(mode) {
+    if (!SORT_MODES.includes(mode)) return;
+    if (state.treeSort !== mode) {
+      state.treeSort = mode;
+      try { localStorage.setItem(TREE_SORT_KEY, mode); } catch (error) {}
+      renderTree();
+    }
+    renderLibraryPreferences();
+  }
+  function setLibraryPanel(kind, options) {
+    const panels = { sort: [sortMenu, sortTrigger], settings: [librarySettings, libraryTrigger] };
+    const restoreFocus = !options || options.restoreFocus !== false;
+    Object.entries(panels).forEach(([name, [panel, trigger]]) => {
+      if (!panel || !trigger) return;
+      clearTimeout(state.libraryPanelTimers[name]);
+      const open = name === kind;
+      trigger.setAttribute('aria-expanded', String(open));
+      if (open) {
+        panel.hidden = false; panel.inert = false; panel.classList.remove('is-closing');
+      } else if (!panel.hidden) {
+        panel.inert = true;
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) panel.hidden = true;
+        else {
+          panel.classList.add('is-closing');
+          state.libraryPanelTimers[name] = window.setTimeout(() => {
+            if (state.libraryPanel !== name) { panel.hidden = true; panel.classList.remove('is-closing'); }
+          }, 160);
+        }
+        if (restoreFocus && !kind && state.libraryPanel === name) trigger.focus();
+      }
+    });
+    state.libraryPanel = kind;
+    if (kind) { setNoteSettingsOpen(false, { restoreFocus: false }); closeContextMenu(); renderLibraryPreferences(); }
+  }
   function parentPath(path) { const parts = String(path || '').split('/'); parts.pop(); return parts.join('/'); }
   function baseName(path) { return String(path || '').split('/').pop() || ''; }
   function noteTitle(path) { return baseName(path).replace(/\.md$/i, ''); }
@@ -1380,7 +1533,7 @@
       updateTreeSelection();
     }
 
-    function renderLevel(entries, depth, host) { (entries || []).forEach((entry) => {
+    function renderLevel(entries, depth, host) { sortedTreeEntries(entries).forEach((entry) => {
       const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry'; wrapper.dataset.path = entry.path; wrapper.style.setProperty('--note-depth', depth);
       const row = document.createElement('button'); row.type = 'button'; row.className = 'note-tree-row'; row.style.setProperty('--note-depth', depth); row.draggable = state.renamePath !== entry.path; row.dataset.notePath = entry.path;
       row.title = entry.path; row.setAttribute('aria-label', entry.path);
@@ -1411,6 +1564,8 @@
     if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-tree-empty'; message.textContent = tr('emptyTree'); fragment.appendChild(message); }
     treeEl.replaceChildren(fragment); updateTreeSelection(); updateExpandAllButton();
     state.treeRendered = true;
+    state.renderedOrder = treeOrderSignature(state.entries);
+    state.pendingTreeReorder = false;
   }
   function samePathList(left, right) {
     return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -1473,7 +1628,8 @@
     try {
       const result = await request('/api/notes-tree'); if (seq !== state.refreshSeq) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
-      const treeChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
+      const structureChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
+      const orderChanged = state.renderedOrder !== treeOrderSignature(entries);
       const previousTabs = state.tabs.slice();
       // Always refresh metadata for cache validation; unchanged rows retain focus,
       // inline rename drafts and any folder transition already in progress.
@@ -1484,9 +1640,12 @@
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
       if (state.selectedPath && !flat.some((entry) => entry.path === state.selectedPath)) state.selectedPath = '';
-      if (treeChanged) renderTree();
+      if (structureChanged || orderChanged) {
+        if (state.renamePath && !structureChanged) state.pendingTreeReorder = true;
+        else renderTree();
+      }
       await reconcileExternalTree(previousTabs);
-      if (treeChanged) scheduleDocumentPrefetch();
+      if (structureChanged) scheduleDocumentPrefetch();
       if (announce) showToast(tr('refreshed'));
       return true;
     }
@@ -1676,7 +1835,8 @@
         payload.name = options.name;
         payload.createParents = !!options.createParents;
       } else {
-        payload.autoName = kind === 'folder' ? 'folder' : 'timestamp';
+        payload.autoName = kind === 'folder' ? 'folder' : state.newName.mode === 'custom' ? 'custom' : 'timestamp';
+        if (payload.autoName === 'custom') payload.name = state.newName.baseName;
         payload.language = language();
       }
       const result = await post('/api/note-create', payload);
@@ -1996,10 +2156,29 @@
     }
     return true;
   }
-  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {
     if (state.imageTextBusy) return;
+    const sortChoice = event.target.closest('[data-note-sort-mode]');
+    if (sortChoice && root.contains(sortChoice)) {
+      const fromMenu = sortMenu.contains(sortChoice);
+      if (state.renamePath && !(await finishInlineRename())) return;
+      setTreeSort(sortChoice.dataset.noteSortMode);
+      if (fromMenu) setLibraryPanel('');
+      return;
+    }
+    const nameChoice = event.target.closest('[data-note-name-mode]');
+    if (nameChoice && librarySettings.contains(nameChoice)) {
+      const mode = nameChoice.dataset.noteNameMode;
+      if (mode === 'timestamp' || mode === 'custom') {
+        state.newName.mode = mode;
+        if (mode === 'custom' && !normalizeCustomBase(state.newName.baseName)) state.newName.baseName = tr('defaultCustomName');
+        persistNewName(); renderLibraryPreferences();
+        if (mode === 'custom') { libraryNameInput.focus(); libraryNameInput.select(); }
+      }
+      return;
+    }
     const imageTextAction = event.target.closest('[data-image-text-action]');
     if (imageTextAction && imageTextTools && imageTextTools.contains(imageTextAction) && liveEditor) {
       if (imageTextAction.disabled) return;
@@ -2025,11 +2204,13 @@
     else if (name === 'close-all-tabs') { if (await finishInlineTitle()) await closeAllTabs(); }
     else if (name === 'new-folder') createEntry('folder');
     else if (name === 'refresh') triggerExternalSync({ announce: true });
+    else if (name === 'toggle-sort') setLibraryPanel(state.libraryPanel === 'sort' ? '' : 'sort', { restoreFocus: false });
+    else if (name === 'toggle-library-settings') setLibraryPanel(state.libraryPanel === 'settings' ? '' : 'settings', { restoreFocus: false });
     else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
     else if (name === 'toggle-source' && state.current) await setViewMode(state.viewMode === 'source' ? 'live' : 'source');
-    else if (name === 'toggle-settings') setNoteSettingsOpen(!state.settingsOpen);
+    else if (name === 'toggle-settings') { if (!state.settingsOpen) setLibraryPanel('', { restoreFocus: false }); setNoteSettingsOpen(!state.settingsOpen); }
     else if (name === 'current-menu' && state.current) {
       if (contextMenu && !contextMenu.hidden && contextMenu.dataset.source === 'current-menu') {
         closeContextMenu();
@@ -2088,6 +2269,29 @@
       else if (action.dataset.noteSettingsAction === 'reset-accept') resetNoteSettings();
     });
   }
+  if (libraryNameInput) {
+    libraryNameInput.addEventListener('input', () => {
+      const base = normalizeCustomBase(libraryNameInput.value);
+      if (base) { state.newName.baseName = base; persistNewName(); }
+      updateNamePreview();
+    });
+    libraryNameInput.addEventListener('blur', () => {
+      if (!normalizeCustomBase(libraryNameInput.value)) {
+        libraryNameInput.value = state.newName.baseName || tr('defaultCustomName');
+        updateNamePreview();
+      }
+    });
+  }
+  if (sortMenu) sortMenu.addEventListener('keydown', (event) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const buttons = Array.from(sortMenu.querySelectorAll('[data-note-sort-mode]'));
+    if (!buttons.length) return;
+    event.preventDefault();
+    const index = buttons.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus();
+  });
   if (inlineTitleEl) {
     inlineTitleEl.addEventListener('input', () => inlineTitleEl.classList.remove('is-invalid'));
     inlineTitleEl.addEventListener('blur', () => commitInlineTitle());
@@ -2123,6 +2327,9 @@
   treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.draggedPath) moveEntry(state.draggedPath, ''); else importDataTransfer(event.dataTransfer, ''); });
   document.addEventListener('pointerdown', (event) => {
     if (contextMenu && !contextMenu.hidden && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
+    if (state.libraryPanel && !event.target.closest('.note-library-popover') && !event.target.closest('[data-note-action="toggle-sort"]') && !event.target.closest('[data-note-action="toggle-library-settings"]')) {
+      setLibraryPanel('', { restoreFocus: false });
+    }
     if (state.settingsOpen && settingsPop && settingsTrigger && !settingsPop.contains(event.target) && !settingsTrigger.contains(event.target)) {
       setNoteSettingsOpen(false, { restoreFocus: false });
     }
@@ -2140,6 +2347,11 @@
       return;
     }
     if (event.isComposing || event.keyCode === 229) return;
+    if (state.libraryPanel && event.key === 'Escape') {
+      event.preventDefault(); event.stopImmediatePropagation();
+      setLibraryPanel('');
+      return;
+    }
     if (state.settingsOpen && event.key === 'Escape') {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -2176,8 +2388,8 @@
   });
   window.addEventListener('pagehide', () => { stopExternalSync(); flushWorkspaceState(); });
   window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(); });
-  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
-  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
+  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

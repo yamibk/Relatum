@@ -1516,7 +1516,11 @@
     <aside class="note-tree-pane" aria-label="笔记文件树">
       <header class="note-pane-head">
         <div class="note-library-heading">
-          <h1>笔记库</h1>
+          <h1 class="note-visually-hidden">笔记库</h1>
+          <button type="button" class="note-icon-button note-library-settings-trigger" data-note-action="toggle-library-settings"
+            title="笔记库设置" aria-label="笔记库设置" aria-expanded="false" aria-controls="note-library-settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.08a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15.08 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/></svg>
+          </button>
           <button type="button" class="note-library-focus-button" data-note-action="toggle-focus"
             title="隐藏顶部栏" aria-label="隐藏顶部栏" aria-pressed="false">
             <svg class="note-focus-icon note-focus-icon-expand" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.25 3.25h-4v4M12.75 3.25h4v4M7.25 16.75h-4v-4M12.75 16.75h4v-4"/></svg>
@@ -1528,8 +1532,8 @@
             title="新建笔记" aria-label="新建笔记"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.25 2.75h6l3.5 3.5v11H5.25v-14.5Zm6 0v3.5h3.5M7.5 11h5M10 8.5v5"/></svg></button>
           <button type="button" class="note-icon-button note-folder-add" data-note-action="new-folder"
             title="新建文件夹" aria-label="新建文件夹"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 7V5.25c0-.83.67-1.5 1.5-1.5h3l2 2h6.5c.83 0 1.5.67 1.5 1.5v8c0 .83-.67 1.5-1.5 1.5H4.25c-.83 0-1.5-.67-1.5-1.5V7Z"/><path d="M10 9v5M7.5 11.5h5"/></svg></button>
-          <button type="button" class="note-icon-button note-refresh" data-note-action="refresh"
-            title="刷新笔记库" aria-label="刷新笔记库"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.15A6.25 6.25 0 1 0 16 12.5"/><path d="M15.85 3.75v3.4h-3.4"/></svg></button>
+          <button type="button" class="note-icon-button note-sort-trigger" data-note-action="toggle-sort"
+            title="排序" aria-label="排序" aria-expanded="false" aria-controls="note-sort-menu"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h12M3.5 8h9M3.5 11.5h6M14.5 11v5m-2-2 2 2 2-2"/></svg></button>
           <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-folders"
             title="全部展开" aria-label="全部展开" aria-pressed="false" disabled>
             <svg class="note-expand-icon note-expand-icon-open" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 8 4.5-4 4.5 4M5.5 12l4.5 4 4.5-4"/></svg>
@@ -1537,6 +1541,22 @@
           </button>
         </div>
       </header>
+      <div class="note-sort-menu note-library-popover" id="note-sort-menu" data-role="note-sort-menu"
+        role="menu" aria-label="文件树排序" hidden inert></div>
+      <section class="note-library-settings note-library-popover" id="note-library-settings"
+        data-role="note-library-settings" role="dialog" aria-label="笔记库设置" hidden inert>
+        <h2 data-role="note-library-settings-title"></h2>
+        <h3 data-role="note-library-sort-title"></h3>
+        <div class="note-library-sort-options" data-role="note-library-sort-options"></div>
+        <h3 data-role="note-library-name-title"></h3>
+        <div class="note-library-name-options" data-role="note-library-name-options"></div>
+        <label class="note-library-name-field" data-role="note-library-name-field">
+          <span data-role="note-library-name-label"></span>
+          <input type="text" data-role="note-library-name-input" autocomplete="off" maxlength="120">
+        </label>
+        <p class="note-library-name-preview" data-role="note-library-name-preview"></p>
+        <p class="note-library-name-error" data-role="note-library-name-error" role="alert"></p>
+      </section>
       <div class="note-tree-scroll" data-role="note-tree" tabindex="0">
         <p class="note-tree-loading">正在读取笔记库…</p>
       </div>
