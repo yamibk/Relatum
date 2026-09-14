@@ -777,6 +777,7 @@
         if (finishFrame) cancelAnimationFrame(finishFrame);
         editor.removeEventListener('blur', onBlur);
         editor.removeEventListener('keydown', onKeyDown);
+        editor.removeEventListener('contextmenu', onContextMenu);
         editor.removeEventListener('input', fit);
         frame.removeEventListener('image-text-measure', fit);
         editor.removeEventListener('compositionstart', onCompositionStart);
@@ -840,6 +841,16 @@
         finishFrame = requestAnimationFrame(settle);
       };
       const onBlur = () => finishCommittedText();
+      const onContextMenu = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // Right-click is an explicit commit, like leaving the text field.
+        // Preserve visible preedit while the native IME host loses focus;
+        // do not remove that host before its compositionend arrives.
+        if (textComposing) pagePointerPreeditText = editor.value;
+        finishCommittedText();
+        view.focus();
+      };
       const onKeyDown = (event) => {
         event.stopPropagation();
         if (event.isComposing || event.keyCode === 229 || textComposing) return;
@@ -969,6 +980,7 @@
       };
       editor.addEventListener('blur', onBlur);
       editor.addEventListener('keydown', onKeyDown);
+      editor.addEventListener('contextmenu', onContextMenu);
       editor.addEventListener('input', fit);
       editor.addEventListener('compositionstart', onCompositionStart);
       editor.addEventListener('compositionend', onCompositionEnd);
