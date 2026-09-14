@@ -514,6 +514,21 @@ assert(editorSource.includes('let pagePointerPreeditText = null')
   && editorSource.includes("document.addEventListener('pointerdown', onPagePointerDown, true)")
   && editorSource.includes("document.removeEventListener('pointerdown', onPagePointerDown, true)"),
   'page-side blur must preserve the visible image-text preedit without changing the shared IME session');
+assert(editorSource.includes("target.closest('.note-image-text-box[data-image-text-id]')")
+  && editorSource.includes('switchAfterFinish = nextBox.dataset.imageTextId')
+  && editorSource.includes('if (nextBox && frame.contains(nextBox))')
+  && editorSource.includes('if (switchedTo) imageTextController.switchTo(switchedTo, switchGesture);')
+  && editorSource.indexOf('dismissAfterFinish = true')
+    > editorSource.indexOf("target.closest('.note-image-text-box[data-image-text-id]')"),
+  'clicking another text box while editing must commit that box and keep the image-text mode open');
+assert(editorSource.includes('if (imageTextDraftCleanup) imageTextDraftCleanup(dispose ? false : imageTextDraftCommit, !!dispose);')
+  && editorSource.includes('imageTextDraftCommit = true;'),
+  'a draft whose commit is already scheduled must not be dropped when another box takes over');
+assert(editorSource.includes("if (name === 'add') { imageTextController.toggleArm(); return; }")
+  && editorSource.includes('if (this.armed) this.disarm(true); else this.arm();')
+  && editorSource.includes('this.armedFrom = this.selectedId;')
+  && editorSource.includes('if (restore && this.armedFrom) this.selectedId = this.armedFrom;'),
+  'the add-text entry must toggle a pending placement and restore the box selected before arming');
 assert(editorSource.includes("measurer.className = 'note-image-text-box note-image-text-measurer'")
   && editorSource.includes('editor.style.width = Math.max(1, Math.ceil(measured.width))')
   && stylesSource.includes('.note-image-text-measurer'),

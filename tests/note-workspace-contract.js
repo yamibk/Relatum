@@ -121,6 +121,9 @@ assert(notes.includes('toggleSeq: 0, toggleIntent: null')
   && notes.includes('async function toggleImageTextMode(action)')
   && notes.includes('if (seq !== state.imageText.toggleSeq) return;'),
   'delayed image-text toggles must apply an explicit latest intent instead of inverting newer state');
+assert(notes.includes("imageTextTools.querySelector('[data-image-text-action=\"add\"]')")
+  && notes.includes("add.setAttribute('aria-pressed', state.imageText.armed ? 'true' : 'false');"),
+  'the add-text entry must expose its pending placement state as a toggle');
 assert(notes.includes("document.addEventListener('pointerdown'")
   && notes.includes('including the far-right blank strip')
   && notes.includes('liveEditor.setImageTextMode(false);'),

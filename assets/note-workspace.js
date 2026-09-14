@@ -600,7 +600,11 @@
       button.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
     const add = imageTextTools.querySelector('[data-image-text-action="add"]');
-    if (add) { add.classList.toggle('is-selected', !!state.imageText.armed); add.title = tr('addImageText'); }
+    if (add) {
+      add.classList.toggle('is-selected', !!state.imageText.armed);
+      add.setAttribute('aria-pressed', state.imageText.armed ? 'true' : 'false');
+      add.title = tr('addImageText');
+    }
     const edit = imageTextTools.querySelector('[data-image-text-action="edit"]');
     if (edit) {
       edit.disabled = !state.imageText.canDelete;
@@ -645,6 +649,8 @@
       if (!hint && action === 'add') hint = state.imageText.armed
         ? copy('点击图片放置文字；再次点击取消', 'Click the image to place text; click again to cancel')
         : copy('点击后，在图片上选择文字位置', 'Click, then choose a position on the image');
+      if (!hint && action === 'edit') hint = copy('Enter 或双击编辑；直接打字在末尾追加；编辑时单击另一框继续编辑', 'Enter or double-click to edit; typing appends; click another box while editing to continue there');
+      if (!hint && action === 'delete') hint = copy('删除选中文字框及其数据，可撤销；编辑中 Delete 只删除文字', 'Delete the selected text box and its data; undo is available. While editing, Delete removes characters');
       if (!hint && action === 'merge') hint = copy('将文字合并为新的 PNG，保留原图；文字将不可单独编辑', 'Merge text into a new PNG and keep the original; text will no longer be editable');
       if (!hint && action === 'cleanup') hint = hasImage
         ? copy('永久删除选中图片文字及本篇未使用的文字框数据，不创建备份', 'Permanently delete this image’s text and unused text data in this note, without a backup')

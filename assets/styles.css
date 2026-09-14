@@ -701,6 +701,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-image-frame.is-image-text-mode .note-image-text-box { pointer-events: auto; cursor: grab; user-select: none; touch-action: none; }
 .note-live-image-frame.is-image-text-mode .note-image-text-box.is-dragging { cursor: grabbing; }
 .note-live-image-frame.is-image-text-armed { cursor: crosshair; }
+.note-live-image-frame.is-image-text-armed .note-image-text-box { pointer-events: none; }
 .note-live-image-frame.is-image-text-mode .note-image-text-box.is-selected {
   border-radius: 3px;
   box-shadow: 0 0 0 1px rgba(255,255,255,.92), 0 0 0 3px rgba(56,48,40,.45);

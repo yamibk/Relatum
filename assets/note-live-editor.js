@@ -658,6 +658,7 @@
     const imageTextController = block && parsed.imageTextEditable !== false ? options.imageTextController : null;
     let imageTextLayer = null;
     let imageTextDraftCleanup = null;
+    let imageTextDraftCommit = false;
     let unregisterImageText = null;
 
     function currentItems() {
@@ -702,13 +703,18 @@
       });
     }
 
-    function cancelDraft() {
-      if (imageTextDraftCleanup) imageTextDraftCleanup(false);
+    function cancelDraft(dispose) {
+      // A draft whose page-side pointer already scheduled a commit must land
+      // that commit instead of dropping the visible text when another box or
+      // the mode itself takes over.
+      if (imageTextDraftCleanup) imageTextDraftCleanup(dispose ? false : imageTextDraftCommit, !!dispose);
     }
 
     function beginTextEdit(item, point) {
       if (!imageTextLayer || !imageTextController || !imageTextController.active) return;
+      if (imageTextController.draftActive) return;
       cancelDraft();
+      imageTextDraftCommit = false;
       const isNew = !item;
       const draft = item ? Object.assign({}, item) : {
         id: imageTextItemId(), text: '', x: point.x, y: point.y,
@@ -749,9 +755,25 @@
       let finishFrame = 0;
       let pagePointerPreeditText = null;
       let dismissAfterFinish = false;
-      const finish = (commit) => {
+      let switchAfterFinish = '';
+      let switchGesture = null;
+      const restoreSwitchPreview = () => {
+        if (switchGesture && switchGesture.item && switchGesture.label.isConnected) {
+          positionStyle(switchGesture.label, switchGesture.item);
+          switchGesture.label.classList.remove('is-dragging');
+        }
+      };
+      const clearSwitchGesture = () => {
+        document.removeEventListener('pointermove', onSwitchMove, true);
+        document.removeEventListener('pointerup', onSwitchUp, true);
+        document.removeEventListener('pointercancel', onSwitchCancel, true);
+      };
+      const finish = (commit, dispose) => {
         if (finished) return;
+        if (textComposing && !dispose) { pendingCommit = pendingCommit || commit; return; }
         finished = true;
+        restoreSwitchPreview();
+        imageTextDraftCommit = false;
         if (finishFrame) cancelAnimationFrame(finishFrame);
         editor.removeEventListener('blur', onBlur);
         editor.removeEventListener('keydown', onKeyDown);
@@ -760,36 +782,47 @@
         editor.removeEventListener('compositionstart', onCompositionStart);
         editor.removeEventListener('compositionend', onCompositionEnd);
         document.removeEventListener('pointerdown', onPagePointerDown, true);
+        clearSwitchGesture();
         editor.remove();
         measurer.remove();
         if (prior) prior.hidden = false;
         if (options.imageTextSizer) options.imageTextSizer.update(frame);
         imageTextDraftCleanup = null;
         const text = editor.value.replace(/\r\n?/g, '\n').slice(0, 1000);
-        if (!commit || !text.trim()) {
+        const switchedTo = dispose ? '' : switchAfterFinish;
+        switchAfterFinish = '';
+        if (!commit || (isNew && !text.trim())) {
           imageTextController.select(isNew ? '' : draft.id);
           imageTextController.endDraft();
+          if (switchedTo) imageTextController.switchTo(switchedTo, switchGesture);
           if (dismissAfterFinish) imageTextController.setActive(false);
           return;
         }
         const items = currentItems();
         const next = Object.assign({}, draft, { text: text });
         const index = items.findIndex((candidate) => candidate.id === draft.id);
-        if (index >= 0) items[index] = next; else items.push(next);
+        if (!text.trim()) {
+          if (index >= 0) items.splice(index, 1);
+        } else if (index >= 0) items[index] = next; else items.push(next);
         try {
-          commitImageTextItems(items, draft.id);
+          commitImageTextItems(items, text.trim() ? draft.id : '');
         } finally {
           imageTextController.endDraft();
         }
+        // Committing re-pins this box; the box the user clicked wins instead.
+        if (switchedTo) imageTextController.switchTo(switchedTo, switchGesture);
         if (dismissAfterFinish) imageTextController.setActive(false);
       };
       const finishCommittedText = () => {
-        if (finished || textComposing) { pendingCommit = true; return; }
+        if (finished) return;
+        imageTextDraftCommit = true;
+        if (textComposing || (switchGesture && !switchGesture.released)) { pendingCommit = true; return; }
         if (finishFrame) cancelAnimationFrame(finishFrame);
         let quietFrames = 0;
         const settle = () => {
           finishFrame = 0;
-          if (finished || textComposing) { pendingCommit = true; return; }
+          if (finished) return;
+          if (textComposing || (switchGesture && !switchGesture.released)) { pendingCommit = true; return; }
           if (quietFrames < 1) {
             quietFrames += 1;
             finishFrame = requestAnimationFrame(settle);
@@ -828,6 +861,35 @@
         }
         if (pendingCommit || document.activeElement !== editor) finishCommittedText();
       };
+      const onSwitchMove = (event) => {
+        if (!switchGesture || event.pointerId !== switchGesture.pointerId) return;
+        switchGesture.dx = event.clientX - switchGesture.x;
+        switchGesture.dy = event.clientY - switchGesture.y;
+        switchGesture.moved = switchGesture.moved || Math.abs(switchGesture.dx) > 3 || Math.abs(switchGesture.dy) > 3;
+        if (switchGesture.moved && switchGesture.item) {
+          const rect = image.getBoundingClientRect();
+          const preview = Object.assign({}, switchGesture.item, {
+            x: switchGesture.item.x + switchGesture.dx / Math.max(1, rect.width),
+            y: switchGesture.item.y + switchGesture.dy / Math.max(1, rect.height),
+          });
+          positionStyle(switchGesture.label, clampImageTextPosition(preview, switchGesture.label));
+          switchGesture.label.classList.add('is-dragging');
+        }
+      };
+      const onSwitchUp = (event) => {
+        if (!switchGesture || event.pointerId !== switchGesture.pointerId) return;
+        onSwitchMove(event);
+        switchGesture.released = true;
+        clearSwitchGesture();
+        finishCommittedText();
+      };
+      const onSwitchCancel = (event) => {
+        if (!switchGesture || event.pointerId !== switchGesture.pointerId) return;
+        switchGesture.released = true;
+        switchAfterFinish = '';
+        clearSwitchGesture();
+        finishCommittedText();
+      };
       const onPagePointerDown = (event) => {
         if (finished || editor.contains(event.target)) return;
         const target = event.target instanceof Element ? event.target : null;
@@ -841,6 +903,34 @@
           }
           return;
         }
+        // Own the complete gesture: committing can replace the clicked DOM.
+        // Resolve its id through the current adapter only after the old draft
+        // settles, and distinguish a click from a drag before opening an editor.
+        const nextBox = event.button === 0 && target
+          ? target.closest('.note-image-text-box[data-image-text-id]') : null;
+        if (nextBox && frame.contains(nextBox)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          restoreSwitchPreview();
+          switchAfterFinish = nextBox.dataset.imageTextId || '';
+          switchGesture = { pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+            dx: 0, dy: 0, moved: false, released: false, label: nextBox,
+            item: currentItems().find((item) => item.id === switchAfterFinish) };
+          document.addEventListener('pointermove', onSwitchMove, true);
+          document.addEventListener('pointerup', onSwitchUp, true);
+          document.addEventListener('pointercancel', onSwitchCancel, true);
+          imageTextDraftCommit = true;
+          if (textComposing) pagePointerPreeditText = editor.value;
+          pendingCommit = true;
+          editor.style.visibility = 'hidden';
+          editor.setAttribute('aria-hidden', 'true');
+          editor.blur();
+          return;
+        }
+        switchAfterFinish = '';
+        restoreSwitchPreview();
+        clearSwitchGesture();
+        switchGesture = null;
         if (textComposing) {
           pagePointerPreeditText = editor.value;
           pendingCommit = true;
@@ -871,7 +961,15 @@
         editor.addEventListener(name, (event) => event.stopPropagation());
       });
       imageTextDraftCleanup = finish;
-      requestAnimationFrame(() => { editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length); });
+      // Focus synchronously so the very first native input/IME event belongs
+      // to the textarea, never the selected Markdown image source.
+      editor.focus();
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      requestAnimationFrame(() => {
+        if (!finished && !pendingCommit && !imageTextDraftCommit && !dismissAfterFinish && !switchGesture && editor.isConnected
+            && document.activeElement !== editor && !textComposing) editor.focus();
+      });
+      return editor;
     }
 
     function renderImageTextItem(item) {
@@ -883,6 +981,11 @@
       label.addEventListener('pointerdown', (event) => {
         if (!imageTextController || !imageTextController.active || event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
+        const continueEditing = !!imageTextController.switchFrame;
+        if (continueEditing) {
+          cancelAnimationFrame(imageTextController.switchFrame);
+          imageTextController.switchFrame = 0;
+        }
         view.focus();
         imageTextController.select(item.id);
         const imageRect = image.getBoundingClientRect();
@@ -913,13 +1016,19 @@
         const finish = (commit) => {
           if (finished) return;
           finished = true; remove();
-          if (!commit || !moved) { positionStyle(label, item); return; }
+          if (!commit || !moved) {
+            positionStyle(label, item);
+            if (commit && continueEditing) imageTextController.switchTo(item.id);
+            else if (continueEditing) imageTextController.endDraft();
+            return;
+          }
           const items = currentItems();
           const index = items.findIndex((candidate) => candidate.id === item.id);
           if (index >= 0) {
             items[index] = Object.assign({}, items[index], { x: nextX, y: nextY });
             commitImageTextItems(items, item.id);
           }
+          if (continueEditing) imageTextController.endDraft();
         };
         const onUp = (upEvent) => { if (upEvent.pointerId === event.pointerId) finish(true); };
         const onCancel = (cancelEvent) => { if (cancelEvent.pointerId === event.pointerId) finish(false); };
@@ -954,13 +1063,12 @@
           });
         },
         command(name, value) {
-          if (name === 'add') { imageTextController.arm(); return; }
+          if (name === 'add') { imageTextController.toggleArm(); return; }
           const id = imageTextController.selectedId;
           if (!id) return;
           if (name === 'edit') {
             const item = currentItems().find((candidate) => candidate.id === id);
-            if (item) beginTextEdit(item);
-            return;
+            return item ? beginTextEdit(item) : null;
           }
           const items = currentItems();
           const index = items.findIndex((candidate) => candidate.id === id);
@@ -2345,6 +2453,7 @@
     const imageTextController = {
       active: false,
       armed: false,
+      armedFrom: '',
       available: false,
       selectedId: '',
       activeRange: null,
@@ -2352,6 +2461,7 @@
       adapter: null,
       draftActive: false,
       draftWaiters: [],
+      switchFrame: 0,
       selectionRestoreFrame: 0,
       uiSuppressed: false,
       defaults: {
@@ -2364,11 +2474,48 @@
       beginDraft() { this.draftActive = true; },
       endDraft() {
         this.draftActive = false;
-        const waiters = this.draftWaiters.splice(0);
-        waiters.forEach((resolve) => resolve(true));
+        // A committed draft may immediately hand off to another box. Saving
+        // waits for that new session as well, not the gap between the two.
+        queueMicrotask(() => {
+          if (this.draftActive || this.switchFrame) return;
+          const waiters = this.draftWaiters.splice(0);
+          waiters.forEach((resolve) => resolve(true));
+        });
       },
       whenSettled() {
-        return this.draftActive ? new Promise((resolve) => this.draftWaiters.push(resolve)) : Promise.resolve(true);
+        return this.draftActive || this.switchFrame ? new Promise((resolve) => this.draftWaiters.push(resolve)) : Promise.resolve(true);
+      },
+      openEditor(text) {
+        if (!this.active || !this.selectedId || !this.adapter || this.draftActive) return null;
+        if (this.switchFrame) cancelAnimationFrame(this.switchFrame);
+        this.switchFrame = 0;
+        const editor = this.adapter.command('edit');
+        if (editor && typeof text === 'string') {
+          editor.setRangeText(text.slice(0, Math.max(0, 1000 - editor.value.length)), editor.value.length, editor.value.length, 'end');
+          editor.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return editor;
+      },
+      switchTo(id, gesture) {
+        const from = this.activeRange && this.activeRange.from;
+        this.select(id);
+        const apply = () => {
+          this.switchFrame = 0;
+          if (!this.active || !this.activeRange || this.activeRange.from !== from || !this.adapter) {
+            this.endDraft();
+            return;
+          }
+          this.select(id);
+          if (gesture && gesture.moved) {
+            this.command('move', { dx: gesture.dx, dy: gesture.dy });
+            view.focus();
+          } else this.openEditor();
+          if (!this.draftActive) this.endDraft();
+        };
+        if (this.switchFrame) cancelAnimationFrame(this.switchFrame);
+        // Native composition and CodeMirror may restore focus after the old
+        // textarea is removed. Open the next host after those callbacks finish.
+        this.switchFrame = requestAnimationFrame(apply);
       },
       notify() {
         const visibleActive = this.active && !this.uiSuppressed;
@@ -2467,9 +2614,12 @@
           this.activeRange = range ? { from: range.from, to: range.to } : null;
         }
         if (!next) {
+          if (this.switchFrame) cancelAnimationFrame(this.switchFrame);
+          this.switchFrame = 0;
           this.cancelSelectionRestore();
           if (this.adapter) this.adapter.cancelDraft();
-          this.armed = false; this.selectedId = ''; this.activeRange = null; this.pendingRange = null;
+          this.armed = false; this.armedFrom = ''; this.selectedId = ''; this.activeRange = null; this.pendingRange = null;
+          if (!this.draftActive) this.endDraft();
         }
         this.active = next;
         this.render();
@@ -2480,8 +2630,27 @@
         this.armed = false;
         this.render();
       },
-      arm() { if (this.active) { this.selectedId = ''; this.armed = true; this.render(); } },
-      disarm() { if (this.armed) { this.armed = false; this.render(); } },
+      arm() {
+        if (!this.active) return;
+        this.armedFrom = this.selectedId;
+        this.selectedId = '';
+        this.armed = true;
+        this.render();
+      },
+      disarm(restore) {
+        if (!this.armed) return;
+        this.armed = false;
+        if (restore && this.armedFrom) this.selectedId = this.armedFrom;
+        this.armedFrom = '';
+        this.render();
+      },
+      // The add-text entry is a toggle: a second click cancels the pending
+      // placement and brings back the box that was selected before arming.
+      toggleArm() {
+        if (!this.active) return false;
+        if (this.armed) this.disarm(true); else this.arm();
+        return true;
+      },
       command(name, value) {
         if (!this.active) return false;
         if (name === 'size' && !imageTextSizes.includes(value)) return false;
@@ -2562,6 +2731,52 @@
       return imageTextController.command(name, value);
     }
 
+    function ownsImageTextInput(event) {
+      return !sourceMode && imageTextController.active && !!imageTextController.selectedId
+        && !(event && event.target instanceof Element && event.target.closest('textarea'));
+    }
+
+    const imageTextInputHandlers = EditorView.domEventHandlers({
+      keydown(event) {
+        if (!ownsImageTextInput(event)) return false;
+        if (imageTextController.draftActive) { event.preventDefault(); return true; }
+        if (event.keyCode === 229 || event.key === 'Process' || event.isComposing) {
+          imageTextController.openEditor();
+          return false;
+        }
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
+          event.preventDefault();
+          imageTextController.openEditor(event.key);
+          return true;
+        }
+        return false;
+      },
+      beforeinput(event) {
+        if (!ownsImageTextInput(event)) return false;
+        event.preventDefault();
+        if (!imageTextController.draftActive && event.inputType.startsWith('insert')) {
+          imageTextController.openEditor(event.data || '');
+        }
+        return true;
+      },
+      compositionstart(event) {
+        if (!ownsImageTextInput(event)) return false;
+        imageTextController.openEditor();
+        return true;
+      },
+      paste(event) {
+        if (!ownsImageTextInput(event)) return false;
+        event.preventDefault();
+        imageTextController.openEditor(event.clipboardData ? event.clipboardData.getData('text/plain') : '');
+        return true;
+      },
+      cut(event) {
+        if (!ownsImageTextInput(event)) return false;
+        event.preventDefault();
+        return true;
+      },
+    });
+
     function livePreviewExtensions() {
       return sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin];
     }
@@ -2641,6 +2856,15 @@
         markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
         relatumCodeHighlighting || [],
         livePreviewCompartment.of(livePreviewExtensions()),
+        Prec.highest(imageTextInputHandlers),
+        EditorState.transactionFilter.of((transaction) => {
+          if (!transaction.docChanged || sourceMode || !imageTextController.active || !imageTextController.selectedId
+              || transaction.isUserEvent('input.image-text')
+              || transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) return transaction;
+          // Formatting, cut and unhandled native input must never replace the
+          // Markdown range that merely represents the selected image object.
+          return [];
+        }),
         Prec.highest(keymap.of([
           { key: 'Backspace', run: (view) => deleteImageObject(view, true) },
           { key: 'Delete', run: (view) => deleteImageObject(view, false) },
@@ -2666,6 +2890,19 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (imageTextController.active && update.docChanged
+              && update.transactions.some((transaction) => transaction.isUserEvent('undo') || transaction.isUserEvent('redo'))) {
+            const range = exactSelectedImageRange(update.state);
+            if (range) {
+              imageTextController.activeRange = { from: range.from, to: range.to };
+              imageTextController.pendingRange = null;
+              const parsed = parseStandaloneImage(update.state.doc.sliceString(range.from, range.to));
+              if (!parsed || !parsed.imageTextItems.some((item) => item.id === imageTextController.selectedId)) {
+                imageTextController.selectedId = '';
+              }
+              imageTextController.render();
+            }
+          }
           if (!inputSession.pending()) {
             inputSession.capture(update.view);
             syncImageSelectionClass(update.view);
@@ -2961,7 +3198,7 @@
     }
 
     function inputPending() {
-      return inputSession.pending() || imageTextController.draftActive;
+      return inputSession.pending() || imageTextController.draftActive || !!imageTextController.switchFrame;
     }
 
     function whenInputSettled() {
@@ -2973,7 +3210,18 @@
       whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
-      destroy() { destroyed = true; imageTextController.setActive(false); imageTextSizer.destroy(); inputSession.destroy(); delete view.__relatumInputSession; host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
+      destroy() {
+        destroyed = true;
+        if (imageTextController.adapter) imageTextController.adapter.cancelDraft(true);
+        imageTextController.setActive(false);
+        imageTextSizer.destroy();
+        inputSession.destroy();
+        delete view.__relatumInputSession;
+        host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode');
+        coordinator.epoch += 1;
+        view.destroy();
+        host.replaceChildren();
+      },
       get view() { return view; },
     };
   }

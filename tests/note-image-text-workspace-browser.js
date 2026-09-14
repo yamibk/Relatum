@@ -148,7 +148,15 @@ async function freePort() {
     for (let index = 0; index < 12; index += 1) {
       await page.locator('[data-image-text-action="add"]').click();
       await frame.click({ position: { x: 30 + index * 40, y: 40 } });
-      await page.waitForFunction(() => document.activeElement === document.querySelector('.note-image-text-editor'));
+      await page.waitForFunction(() => document.activeElement === document.querySelector('.note-image-text-editor'))
+        .catch(async (error) => {
+          console.error('native IME iteration', index, await page.evaluate(() => ({
+            active: document.activeElement?.outerHTML.slice(0, 300),
+            input: document.querySelector('.note-image-text-editor')?.outerHTML,
+            state: __imageTextToolbarTest.state.imageText,
+          })));
+          throw error;
+        });
       await cdp.send('Input.imeSetComposition', { text: 'abc', selectionStart: 3, selectionEnd: 3 });
       const button = await toggle.boundingBox();
       await page.mouse.click(1590, 520);
@@ -325,6 +333,43 @@ async function freePort() {
     assert.equal(await page.evaluate(() => __imageTextToolbarTest.state.current.path), 'Other.md');
     await sleep(300);
     assert.equal(assetRequests, 1, 'cleanup must never repeat in the background');
+    // Verify ordinary object deletion through the real autosave/API/disk chain.
+    await page.evaluate(async () => {
+      await fetch('/api/note-create', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent: '', name: 'Deletion', kind: 'note' }) });
+      await __imageTextToolbarTest.openNote('Deletion.md', { reuseActiveTab: false });
+      const editor = __imageTextToolbarTest.editor;
+      const parsed = MarkdownMini.parseImageBlock('![](Image.assets/images/fixture.png)');
+      const value = MarkdownMini.serializeImageBlock(parsed, [
+        { id: 'delete-a', text: 'A', x: .25, y: .3, size: 'sm', color: 'white' },
+        { id: 'delete-b', text: 'B', x: .65, y: .6, size: 'sm', color: 'white' },
+      ]);
+      editor.view.dispatch({ changes: { from: 0, to: editor.view.state.doc.length, insert: value } });
+      await __imageTextToolbarTest.flushSave();
+    });
+    await frame.click({ position: { x: 10, y: 10 } });
+    await toggle.click();
+    await page.locator('[data-image-text-id="delete-a"]').click();
+    const beforeDeletion = fs.readFileSync(path.join(root, 'notes/Deletion.md'), 'utf8');
+    await page.keyboard.press('Delete');
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (fs.readFileSync(path.join(root, 'notes/Deletion.md'), 'utf8') !== beforeDeletion) break;
+      await sleep(100);
+    }
+    let deletionDisk = fs.readFileSync(path.join(root, 'notes/Deletion.md'), 'utf8');
+    let deletionItems = await page.evaluate((value) => MarkdownMini.parseImageBlock(value).imageTextItems, deletionDisk);
+    assert.deepEqual(deletionItems.map((item) => item.id), ['delete-b']);
+    await page.locator('[data-image-text-id="delete-b"]').click();
+    await page.keyboard.press('Backspace');
+    await page.evaluate(() => __imageTextToolbarTest.flushSave());
+    deletionDisk = fs.readFileSync(path.join(root, 'notes/Deletion.md'), 'utf8');
+    assert.equal(deletionDisk, '![](Image.assets/images/fixture.png)');
+    await page.reload();
+    await page.waitForFunction(() => window.__imageTextToolbarTest?.state.initialized);
+    await page.evaluate(() => __imageTextToolbarTest.openNote('Deletion.md', { reuseActiveTab: false }));
+    await frame.locator('img').waitFor();
+    assert.equal(await page.locator('.note-image-text-box[data-image-text-id]').count(), 0);
+    assert.equal(await page.evaluate(() => __imageTextToolbarTest.editor.snapshot().value), deletionDisk);
     assert.deepEqual(errors, []);
     console.log('note image text workspace browser regression: ok');
   } finally {
