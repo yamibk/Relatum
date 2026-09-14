@@ -108,30 +108,35 @@
   ].join('');
   bar.appendChild(controls);
 
-  // The Notes focus layout hides the title bar, so keep the same close action
-  // available at the original top-right window position.
-  const focusClose = document.body.classList.contains('start-page') ? document.createElement('button') : null;
-  if (focusClose) {
-    focusClose.type = 'button';
-    focusClose.className = 'desktop-note-focus-close desktop-window-close';
-    focusClose.title = '关闭';
-    focusClose.setAttribute('aria-label', '关闭');
-    focusClose.innerHTML = '<span class="desktop-cross" aria-hidden="true"></span>';
-    document.body.appendChild(focusClose);
+  // Notes focus mode hides the title bar; keep its window controls in the same
+  // top-right position and send them through the original action handlers.
+  const focusControls = document.body.classList.contains('start-page') ? document.createElement('div') : null;
+  if (focusControls) {
+    focusControls.className = 'desktop-note-focus-controls';
+    focusControls.setAttribute('aria-label', '窗口控制');
+    focusControls.innerHTML = [
+      '<button type="button" class="desktop-window-btn" data-window-action="minimize" title="最小化" aria-label="最小化"><span class="desktop-minus"></span></button>',
+      '<button type="button" class="desktop-window-btn" data-window-action="maximize" title="最大化或还原" aria-label="最大化或还原"><span class="desktop-square"></span></button>',
+      '<button type="button" class="desktop-window-btn desktop-window-close desktop-note-focus-close" data-window-action="close" title="关闭" aria-label="关闭"><span class="desktop-cross"></span></button>',
+    ].join('');
+    document.body.appendChild(focusControls);
   }
-  function syncFocusClose() {
-    if (!focusClose) return;
+  function syncFocusControls() {
+    if (!focusControls) return;
     const visible = document.body.dataset.startWorkspace === 'notes'
       && document.body.classList.contains('note-focus-mode');
-    focusClose.inert = !visible;
-    focusClose.tabIndex = visible ? 0 : -1;
-    focusClose.setAttribute('aria-hidden', String(!visible));
+    focusControls.inert = !visible;
+    focusControls.setAttribute('aria-hidden', String(!visible));
+    focusControls.querySelectorAll('button').forEach((button) => {
+      button.tabIndex = visible ? 0 : -1;
+      button.setAttribute('aria-hidden', String(!visible));
+    });
   }
-  syncFocusClose();
-  document.addEventListener('relatum:note-focuschange', syncFocusClose);
-  document.addEventListener('relatum:start-workspacechange', syncFocusClose);
-  if (focusClose && window.MutationObserver) {
-    new MutationObserver(syncFocusClose).observe(document.body, {
+  syncFocusControls();
+  document.addEventListener('relatum:note-focuschange', syncFocusControls);
+  document.addEventListener('relatum:start-workspacechange', syncFocusControls);
+  if (focusControls && window.MutationObserver) {
+    new MutationObserver(syncFocusControls).observe(document.body, {
       attributes: true, attributeFilter: ['data-start-workspace'],
     });
   }
@@ -190,15 +195,16 @@
       closeInFlight = false;
     }
   }
-  if (focusClose) focusClose.addEventListener('click', requestClose);
-  controls.addEventListener('click', (event) => {
+  function handleControlClick(event) {
     const button = event.target.closest('[data-window-action]');
     if (!button) return;
     const action = button.dataset.windowAction;
     if (action === 'minimize') withApi((api) => api.minimize());
     else if (action === 'maximize') toggleMaximize();
     else if (action === 'close') requestClose();
-  });
+  }
+  controls.addEventListener('click', handleControlClick);
+  if (focusControls) focusControls.addEventListener('click', handleControlClick);
 
   bar.addEventListener('dblclick', (event) => {
     if (!event.target.closest('button, input, select, textarea, a, [contenteditable], .editor-file-name')) {

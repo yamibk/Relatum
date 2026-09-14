@@ -8404,41 +8404,37 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
   background: #b84d46;
 }
 
-.desktop-note-focus-close {
+.desktop-note-focus-controls {
   position: fixed;
   z-index: 750;
   top: 0;
   right: 0;
-  width: 46px;
   height: 42px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 0 0 0 7px;
-  color: var(--text-secondary);
-  background: transparent;
-  cursor: pointer;
+  display: flex;
+  align-items: stretch;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transform: translateY(-4px);
   transition: opacity 130ms ease, transform 130ms ease, visibility 0s linear 130ms;
 }
-body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .desktop-note-focus-close {
+.desktop-note-focus-controls .desktop-window-btn { height: 42px; min-height: 42px; }
+.desktop-note-focus-controls .desktop-window-btn:first-child { border-radius: 0 0 0 7px; }
+body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .desktop-note-focus-controls {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: none;
   transition-delay: 0s;
 }
-body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-focus-transitioning .desktop-note-focus-close {
+body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-focus-transitioning .desktop-note-focus-controls {
   transition-delay: 180ms;
 }
-body.desktop-host.start-page.note-focus-restoring .desktop-note-focus-close { transition: none; }
-.desktop-note-focus-close:hover { color: #fff; background: #b84d46; }
-.desktop-note-focus-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
-@media (prefers-reduced-motion: reduce) { .desktop-note-focus-close { transition: none !important; } }
+body.desktop-host.start-page.note-focus-restoring .desktop-note-focus-controls { transition: none; }
+.desktop-note-focus-controls .desktop-window-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) {
+  .desktop-note-focus-controls, .desktop-note-focus-controls .desktop-window-btn { transition: none !important; }
+}
 
 .desktop-minus {
   width: 11px;
