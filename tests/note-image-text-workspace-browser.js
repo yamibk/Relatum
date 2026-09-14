@@ -63,6 +63,34 @@ async function freePort() {
     await page.evaluate(() => __imageTextToolbarTest.openNote('Image.md', { reuseActiveTab: false }));
     const frame = page.locator('.note-live-image-frame.is-block');
     await frame.locator('img').waitFor();
+    const probeCanvasKeys = () => page.evaluate(() => {
+      const keys = ['0', '1', '2', '9', 'ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Backspace', 'Enter', '?'];
+      document.activeElement?.blur();
+      return keys.map((key) => {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(event);
+        return { key, prevented: event.defaultPrevented };
+      });
+    });
+    assert((await probeCanvasKeys()).every((item) => !item.prevented), 'canvas keys must not consume events in Notes');
+    assert.equal(await page.locator('[data-role="toast"]').textContent(), '');
+    const hiddenSearchFocused = await page.evaluate(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }));
+      return document.activeElement === document.querySelector('[data-role="library-search-input"]');
+    });
+    assert.equal(hiddenSearchFocused, false, 'Notes search must not focus the hidden canvas search');
+    await page.locator('button[data-start-workspace="canvas"]').click();
+    await page.waitForFunction(() => document.body.dataset.startWorkspace === 'canvas');
+    await page.evaluate(() => {
+      const notice = document.querySelector('[data-role="start-notice"]');
+      if (notice) notice.hidden = true;
+      document.querySelector('.start-main').dataset.state = 'recent';
+    });
+    assert((await probeCanvasKeys()).find((item) => item.key === '1').prevented, 'visible recent list keeps number shortcuts');
+    await page.keyboard.press('Escape');
+    await page.locator('button[data-start-workspace="notes"]').click();
+    await page.waitForFunction(() => __imageTextToolbarTest.state.active);
+    assert((await probeCanvasKeys()).every((item) => !item.prevented), 'returning to Notes restores keyboard isolation');
     await page.waitForFunction(() => {
       const image = document.querySelector('.note-live-image-frame.is-block img');
       return image && image.complete && image.naturalWidth > 0;

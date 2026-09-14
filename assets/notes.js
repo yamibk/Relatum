@@ -1918,7 +1918,7 @@
 
   // ── 键盘：无 UI 创建 / 续写 / 定位，以及原有编辑快捷键 ──
   document.addEventListener('keydown', (e) => {
-    if (!loaded || !notesPageActive()) return;
+    if (document.body.dataset.startWorkspace !== 'canvas' || !loaded || !notesPageActive()) return;
     if (searchInput) return;                          // 搜索输入自身接管文字、回车与退出
     if (editingEl) return;                            // 写字时让浏览器做字符级撤销
     if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, [contenteditable], [role="dialog"]')) return;

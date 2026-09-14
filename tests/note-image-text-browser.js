@@ -416,6 +416,50 @@ function geometry(element) {
     await input.click({ button: 'right' });
     await page.waitForFunction(() => !editor.inputPending);
     assert.equal((await items()).some((item) => item.id === 'a'), false, 'right-click commits an empty box as deletion');
+    await resetBoxes();
+    await box('a').dblclick();
+    await input.fill('Keep this draft');
+    const handle = page.locator('.note-live-image-resize-handle');
+    const dragStart = async () => {
+      const rect = await handle.boundingBox();
+      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(rect.x + rect.width / 2 + 80, rect.y + rect.height / 2 + 40, { steps: 4 });
+    };
+    const originalWidth = (await frame.boundingBox()).width;
+    await dragStart();
+    await page.mouse.up();
+    assert.equal(await input.inputValue(), 'Keep this draft');
+    assert.equal((await frame.boundingBox()).width, originalWidth, 'editing blocks resize without dismissing draft');
+    await cdp.send('Input.imeSetComposition', { text: 't', selectionStart: 1, selectionEnd: 1 });
+    await dragStart();
+    await page.mouse.up();
+    assert.equal((await frame.boundingBox()).width, originalWidth);
+    assert.equal(await input.count(), 1, 'IME host survives attempted resize');
+    await cdp.send('Input.insertText', { text: '字' });
+    await commit();
+    const caption = (await items())[0].text;
+    await dragStart();
+    assert(Math.abs((await frame.locator('img').boundingBox()).width - (await frame.boundingBox()).width) < 2);
+    await page.mouse.up();
+    assert((await frame.boundingBox()).width > originalWidth);
+    assert.equal((await items())[0].text, caption);
+    for (const imageSource of ['![[fixture.png]]', '![[fixture.png|300x150]]']) {
+      await page.evaluate((value) => editor.setDocument({ value, notePath: 'image-text.md' }), imageSource);
+      await frame.click({ position: { x: 10, y: 10 } });
+      const widthBefore = (await frame.boundingBox()).width;
+      await dragStart();
+      assert(Math.abs((await frame.locator('img').boundingBox()).width - (await frame.boundingBox()).width) < 2,
+        'all images follow their frame during preview');
+      await page.keyboard.press('Escape');
+      await page.mouse.up();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), imageSource);
+      assert(Math.abs((await frame.boundingBox()).width - widthBefore) < 2, 'cancel restores dimensions');
+      await dragStart();
+      await page.mouse.up();
+      assert.equal(await frame.evaluate((node) => node.classList.contains('is-resizing')), false);
+      assert(Math.abs((await frame.locator('img').boundingBox()).width - (await frame.boundingBox()).width) < 2);
+    }
     await cdp.detach();
     assert.deepEqual(errors, []);
     console.log('note image text browser regression: ok');

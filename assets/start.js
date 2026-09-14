@@ -1312,6 +1312,7 @@
       if (open && !notesConsole.contains(event.target)) setOpen(false, false);
     });
     document.addEventListener('keydown', (event) => {
+      if (activeStartWorkspace !== 'canvas') return;
       if (helpOpen && event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -1972,6 +1973,7 @@
   }
 
   document.addEventListener('keydown', (event) => {
+    if (activeStartWorkspace !== 'canvas') return;
     const target = event.target;
     const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
       || target.tagName === 'SELECT' || target.isContentEditable);
@@ -4923,7 +4925,7 @@
   ctxMenu.addEventListener('click', (e) => e.stopPropagation());
 
   document.addEventListener('keydown', (e) => {
-    if (main.dataset.state !== 'recent' || !librarySearchInput || !librarySearchEnabled) return;
+    if (activeStartWorkspace !== 'canvas' || main.dataset.state !== 'recent' || !librarySearchInput || !librarySearchEnabled) return;
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== 'f') return;
     e.preventDefault();
     librarySearchInput.focus();
@@ -4932,7 +4934,8 @@
 
   // ── 3d：键盘归类（↑↓ 选中、数字键移动、Enter 打开）──
   document.addEventListener('keydown', (e) => {
-    if (main.dataset.state !== 'recent') return;             // 只在画布列表视图
+    if (activeStartWorkspace !== 'canvas' || main.dataset.state !== 'recent') return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     if (startNotice && !startNotice.hidden) return;           // 提示层显示时暂停底层快捷键
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;

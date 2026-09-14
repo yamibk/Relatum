@@ -736,6 +736,7 @@
       positionStyle(measurer, draft);
       imageTextLayer.appendChild(measurer);
       imageTextController.beginDraft();
+      frame.classList.add('is-image-text-editing');
       imageTextController.select(draft.id);
       const fit = () => {
         const value = editor.value || '\u200b';
@@ -772,6 +773,7 @@
         if (finished) return;
         if (textComposing && !dispose) { pendingCommit = pendingCommit || commit; return; }
         finished = true;
+        frame.classList.remove('is-image-text-editing');
         restoreSwitchPreview();
         imageTextDraftCommit = false;
         if (finishFrame) cancelAnimationFrame(finishFrame);
@@ -910,6 +912,11 @@
       const onPagePointerDown = (event) => {
         if (finished || editor.contains(event.target)) return;
         const target = event.target instanceof Element ? event.target : null;
+        if (target && frame.contains(target) && target.closest('.note-live-image-resize-handle')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
         const keepsToolsOpen = target && target.closest(
           '[data-role="note-image-text-tools"], [data-role="note-image-text-toggle"]'
         );
@@ -1168,6 +1175,7 @@
       handle.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
         event.preventDefault(); event.stopPropagation();
+        if (imageTextController && (imageTextController.draftActive || imageTextController.switchFrame)) return;
         const start = resolveRange();
         if (!start) return;
         const startRect = frame.getBoundingClientRect();
@@ -1183,6 +1191,7 @@
         const preview = (clientX) => {
           previewWidth = Math.round(clamp(startWidth + clientX - event.clientX, 48, maxWidth));
           frame.classList.remove('has-explicit-box');
+          frame.classList.add('has-explicit-size');
           frame.style.aspectRatio = '';
           frame.style.width = previewWidth + 'px';
           frame.style.maxWidth = '100%';

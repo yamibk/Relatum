@@ -645,6 +645,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   touch-action: none;
 }
 .note-live-image-frame.is-resizing { cursor: nwse-resize; }
+.note-live-image-frame.is-image-text-editing .note-live-image-resize-handle { cursor: not-allowed; opacity: .45; }
 .note-image-text-layer {
   position: absolute;
   z-index: 1;
