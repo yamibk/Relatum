@@ -108,6 +108,34 @@
   ].join('');
   bar.appendChild(controls);
 
+  // The Notes focus layout hides the title bar, so keep the same close action
+  // available at the original top-right window position.
+  const focusClose = document.body.classList.contains('start-page') ? document.createElement('button') : null;
+  if (focusClose) {
+    focusClose.type = 'button';
+    focusClose.className = 'desktop-note-focus-close desktop-window-close';
+    focusClose.title = '关闭';
+    focusClose.setAttribute('aria-label', '关闭');
+    focusClose.innerHTML = '<span class="desktop-cross" aria-hidden="true"></span>';
+    document.body.appendChild(focusClose);
+  }
+  function syncFocusClose() {
+    if (!focusClose) return;
+    const visible = document.body.dataset.startWorkspace === 'notes'
+      && document.body.classList.contains('note-focus-mode');
+    focusClose.inert = !visible;
+    focusClose.tabIndex = visible ? 0 : -1;
+    focusClose.setAttribute('aria-hidden', String(!visible));
+  }
+  syncFocusClose();
+  document.addEventListener('relatum:note-focuschange', syncFocusClose);
+  document.addEventListener('relatum:start-workspacechange', syncFocusClose);
+  if (focusClose && window.MutationObserver) {
+    new MutationObserver(syncFocusClose).observe(document.body, {
+      attributes: true, attributeFilter: ['data-start-workspace'],
+    });
+  }
+
   // pywebview 会沿祖先向上寻找拖动区，顶栏内的交互元素需要拦住冒泡，否则在桌面 EXE 里
   // 按住它们拖动会变成拖动整个窗口。除了常规控件，还要拦顶栏里的浮层弹窗（如「模板」下拉
   // role="menu"）——其内部卡片是自定义指针拖拽的 <div>，不在标签白名单里，必须按 role 一并拦住，
@@ -149,23 +177,27 @@
     });
   }
 
-  controls.addEventListener('click', async (event) => {
+  let closeInFlight = false;
+  async function requestClose() {
+    if (closeInFlight) return;
+    closeInFlight = true;
+    try {
+      if (beforeCloseHandler && await beforeCloseHandler() === false) return;
+      await callApi('close_window');
+    } catch (error) {
+      // An unavailable bridge or failed save keeps the window open.
+    } finally {
+      closeInFlight = false;
+    }
+  }
+  if (focusClose) focusClose.addEventListener('click', requestClose);
+  controls.addEventListener('click', (event) => {
     const button = event.target.closest('[data-window-action]');
     if (!button) return;
     const action = button.dataset.windowAction;
     if (action === 'minimize') withApi((api) => api.minimize());
     else if (action === 'maximize') toggleMaximize();
-    else if (action === 'close') {
-      if (beforeCloseHandler) {
-        try {
-          const canClose = await beforeCloseHandler();
-          if (canClose === false) return;
-        } catch (error) {
-          return;
-        }
-      }
-      withApi((api) => api.close_window());
-    }
+    else if (action === 'close') requestClose();
   });
 
   bar.addEventListener('dblclick', (event) => {

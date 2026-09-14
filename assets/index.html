@@ -18,6 +18,8 @@
         var workspace = storedWorkspace === 'notes' || storedWorkspace === 'career'
           ? storedWorkspace : 'canvas';
         document.documentElement.dataset.startWorkspace = workspace;
+        window.RelatumBoot = window.RelatumBoot || {};
+        window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
           window.RelatumBoot = window.RelatumBoot || {};
@@ -111,6 +113,12 @@
         document.documentElement.dataset.startWorkspace === 'notes'
           || document.documentElement.dataset.startWorkspace === 'career'
           ? document.documentElement.dataset.startWorkspace : 'canvas';
+      if (window.RelatumBoot && window.RelatumBoot.noteFocusMode) {
+        document.body.classList.add('note-focus-mode', 'note-focus-restoring');
+        window.addEventListener('load', function () {
+          document.body.classList.remove('note-focus-restoring');
+        }, { once: true });
+      }
       let librarySearchEnabled = false;
       try { librarySearchEnabled = localStorage.getItem('canvas:librarySearchEnabled') === '1'; } catch (e) {}
       document.body.dataset.librarySearchEnabled = librarySearchEnabled ? '1' : '0';
@@ -1545,7 +1553,24 @@
         role="menu" aria-label="文件树排序" hidden inert></div>
       <section class="note-library-settings note-library-popover" id="note-library-settings"
         data-role="note-library-settings" role="dialog" aria-label="笔记库设置" hidden inert>
-        <h2 data-role="note-library-settings-title"></h2>
+        <header class="note-library-settings-head">
+          <h2 data-role="note-library-settings-title"></h2>
+          <div class="note-settings-reset-area">
+            <button type="button" class="note-settings-reset" data-note-library-action="reset-open"
+              aria-expanded="false" aria-controls="note-library-reset-confirm">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1M2.8 3.4v3h3"/></svg>
+              <span data-role="note-library-reset-label">恢复默认</span>
+            </button>
+            <div class="note-settings-reset-confirm" id="note-library-reset-confirm"
+              data-role="note-library-reset-confirm" role="alertdialog" aria-label="恢复笔记库设置默认值？" hidden>
+              <div><strong data-role="note-library-reset-title">恢复笔记库设置默认值？</strong><span data-role="note-library-reset-copy">重置文件树排序和新建笔记命名。</span></div>
+              <footer>
+                <button type="button" data-note-library-action="reset-cancel" data-role="note-library-reset-cancel">取消</button>
+                <button type="button" class="is-primary" data-note-library-action="reset-accept" data-role="note-library-reset-accept">恢复默认</button>
+              </footer>
+            </div>
+          </div>
+        </header>
         <h3 data-role="note-library-sort-title"></h3>
         <div class="note-library-sort-options" data-role="note-library-sort-options"></div>
         <h3 data-role="note-library-name-title"></h3>

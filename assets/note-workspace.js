@@ -56,6 +56,8 @@
   const libraryNameInput = $('[data-role="note-library-name-input"]');
   const libraryNamePreview = $('[data-role="note-library-name-preview"]');
   const libraryNameError = $('[data-role="note-library-name-error"]');
+  const libraryResetButton = $('[data-note-library-action="reset-open"]');
+  const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
   let liveEditor = null;
 
   const ACTIVE_PATH_KEY = 'canvas:noteActivePath:v1';
@@ -66,6 +68,7 @@
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
+  const NOTE_FOCUS_KEY = 'canvas:noteFocusMode:v1';
   const TREE_SORT_KEY = 'canvas:noteTreeSort:v1';
   const NEW_NAME_KEY = 'canvas:noteNewName:v1';
   const SORT_MODES = ['name-asc', 'name-desc', 'modified-desc', 'modified-asc', 'created-desc', 'created-asc'];
@@ -111,6 +114,8 @@
       sortCreatedDesc: '创建时间（从新到旧）', sortCreatedAsc: '创建时间（从旧到新）',
       timestampName: '日期 + 时间', customName: '自定义名称', customNameLabel: '名称（不含 .md）', defaultCustomName: '未命名笔记',
       namePreview: '新建示例：{name}', invalidNewName: '请输入有效文件名；不能包含路径或 Windows 禁用字符',
+      libraryReset: '恢复默认', libraryResetTitle: '恢复笔记库设置默认值？',
+      libraryResetCopy: '重置文件树排序和新建笔记命名。',
     },
     en: {
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
@@ -138,6 +143,8 @@
       sortCreatedDesc: 'Created (newest first)', sortCreatedAsc: 'Created (oldest first)',
       timestampName: 'Date + time', customName: 'Custom name', customNameLabel: 'Name (without .md)', defaultCustomName: 'Untitled',
       namePreview: 'Example: {name}', invalidNewName: 'Enter a valid file name without paths or Windows-reserved characters',
+      libraryReset: 'Reset', libraryResetTitle: 'Restore default Library settings?',
+      libraryResetCopy: 'Reset file tree sorting and new note naming.',
     },
   };
   const state = {
@@ -148,7 +155,7 @@
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncChain: Promise.resolve(true), recycleRunning: false,
-    focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
+    focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
     treeSort: 'modified-desc', newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
     imageText: {
@@ -531,13 +538,21 @@
   }
 
   function setFocusMode(active) {
-    state.focusMode = !!active;
+    const next = !!active;
+    if (state.focusMode === next) return;
+    state.focusMode = next;
+    const seq = ++state.focusMotionSeq;
+    clearTimeout(state.focusMotionTimer);
+    document.body.classList.remove('note-focus-restoring');
     document.body.classList.add('note-focus-transitioning');
     document.body.classList.toggle('note-focus-mode', state.focusMode);
+    try { localStorage.setItem(NOTE_FOCUS_KEY, state.focusMode ? '1' : '0'); } catch (error) {}
     updateFocusToggle();
-    clearTimeout(state.focusMotionTimer);
-    requestAnimationFrame(requestEditorMeasure);
+    document.dispatchEvent(new CustomEvent('relatum:note-focuschange', { detail: { active: state.focusMode } }));
+    requestAnimationFrame(() => { if (seq === state.focusMotionSeq) requestEditorMeasure(); });
     state.focusMotionTimer = setTimeout(() => {
+      if (seq !== state.focusMotionSeq) return;
+      state.focusMotionTimer = 0;
       document.body.classList.remove('note-focus-transitioning');
       requestEditorMeasure();
     }, FOCUS_MOTION_MS + 40);
@@ -947,6 +962,12 @@
     $('[data-role="note-library-sort-title"]').textContent = tr('librarySort');
     $('[data-role="note-library-name-title"]').textContent = tr('newNameSetting');
     $('[data-role="note-library-name-label"]').textContent = tr('customNameLabel');
+    $('[data-role="note-library-reset-label"]').textContent = tr('libraryReset');
+    $('[data-role="note-library-reset-title"]').textContent = tr('libraryResetTitle');
+    $('[data-role="note-library-reset-copy"]').textContent = tr('libraryResetCopy');
+    $('[data-role="note-library-reset-cancel"]').textContent = tr('cancel');
+    $('[data-role="note-library-reset-accept"]').textContent = tr('libraryReset');
+    libraryResetConfirm.setAttribute('aria-label', tr('libraryResetTitle'));
     const makeSortButton = (mode, inMenu) => {
       const button = document.createElement('button');
       button.type = 'button'; button.dataset.noteSortMode = mode;
@@ -982,6 +1003,24 @@
     }
     renderLibraryPreferences();
   }
+  function toggleLibraryReset(open, restoreFocus) {
+    if (!libraryResetConfirm || !libraryResetButton) return;
+    libraryResetConfirm.hidden = !open;
+    libraryResetButton.setAttribute('aria-expanded', String(open));
+    if (open) $('[data-role="note-library-reset-cancel"]').focus();
+    else if (restoreFocus) libraryResetButton.focus();
+  }
+  function resetLibraryPreferences() {
+    const orderChanged = state.treeSort !== 'modified-desc';
+    [TREE_SORT_KEY, NEW_NAME_KEY].forEach((key) => {
+      try { localStorage.removeItem(key); } catch (error) {}
+    });
+    state.treeSort = 'modified-desc';
+    state.newName = { mode: 'timestamp', baseName: '' };
+    toggleLibraryReset(false, true);
+    if (orderChanged) renderTree();
+    renderLibraryPreferences();
+  }
   function setLibraryPanel(kind, options) {
     const panels = { sort: [sortMenu, sortTrigger], settings: [librarySettings, libraryTrigger] };
     const restoreFocus = !options || options.restoreFocus !== false;
@@ -990,6 +1029,7 @@
       clearTimeout(state.libraryPanelTimers[name]);
       const open = name === kind;
       trigger.setAttribute('aria-expanded', String(open));
+      if (name === 'settings' && !open) toggleLibraryReset(false);
       if (open) {
         panel.hidden = false; panel.inert = false; panel.classList.remove('is-closing');
       } else if (!panel.hidden) {
@@ -2160,6 +2200,17 @@
 
   root.addEventListener('click', async (event) => {
     if (state.imageTextBusy) return;
+    const libraryAction = event.target.closest('[data-note-library-action]');
+    if (libraryAction && librarySettings.contains(libraryAction)) {
+      const command = libraryAction.dataset.noteLibraryAction;
+      if (command === 'reset-open') toggleLibraryReset(libraryResetConfirm.hidden, true);
+      else if (command === 'reset-cancel') toggleLibraryReset(false, true);
+      else if (command === 'reset-accept') {
+        if (state.renamePath && !(await finishInlineRename())) return;
+        resetLibraryPreferences();
+      }
+      return;
+    }
     const sortChoice = event.target.closest('[data-note-sort-mode]');
     if (sortChoice && root.contains(sortChoice)) {
       const fromMenu = sortMenu.contains(sortChoice);
@@ -2349,7 +2400,8 @@
     if (event.isComposing || event.keyCode === 229) return;
     if (state.libraryPanel && event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
-      setLibraryPanel('');
+      if (libraryResetConfirm && !libraryResetConfirm.hidden) toggleLibraryReset(false, true);
+      else setLibraryPanel('');
       return;
     }
     if (state.settingsOpen && event.key === 'Escape') {

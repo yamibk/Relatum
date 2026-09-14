@@ -1020,8 +1020,19 @@ body.start-page[data-start-theme="dark"] .note-modal-field input { color: #edf0e
   content: '✓'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 13px;
 }
 .note-sort-menu .note-sort-option:nth-child(3), .note-sort-menu .note-sort-option:nth-child(5) { margin-top: 5px; border-top: 1px solid rgba(28, 28, 30, .08); border-radius: 0 0 7px 7px; padding-top: 12px; }
-.note-library-settings { left: 8px; right: 8px; max-height: min(650px, calc(100% - 65px)); overflow-y: auto; overscroll-behavior: contain; padding: 14px; }
+.note-library-settings {
+  --note-settings-paper: #fff;
+  --note-settings-line: rgba(28, 28, 30, .11);
+  left: 8px; right: 8px; max-height: min(650px, calc(100% - 65px));
+  overflow-y: auto; overscroll-behavior: contain; padding: 14px;
+}
+.note-library-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 13px; }
+.note-library-settings .note-settings-reset { padding: 0 2px; border: 0; background: transparent; }
+.note-library-settings .note-settings-reset:hover { color: var(--text); background: transparent; }
+.note-library-settings .note-settings-reset:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.note-library-settings .note-settings-reset-confirm { box-sizing: border-box; width: min(224px, calc(100vw - 48px)); }
 .note-library-settings h2 { margin: 0 0 13px; font-family: inherit; font-size: 14px; font-weight: 700; line-height: 1.3; }
+.note-library-settings .note-library-settings-head h2 { margin: 0; }
 .note-library-settings h3 { margin: 13px 0 7px; font-family: inherit; font-size: 11.5px; font-weight: 680; line-height: 1.3; }
 .note-library-sort-options, .note-library-name-options { display: grid; gap: 1px; }
 .note-library-name-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
@@ -1038,6 +1049,14 @@ body.start-page[data-start-theme="dark"] .note-modal-field input { color: #edf0e
 .note-library-name-error:empty { display: none; }
 @media (max-width: 760px) { .note-tree-pane { position: fixed; } }
 body.start-page[data-start-theme="dark"] .note-library-popover { color: #edf0ea; background: #242724; border-color: rgba(235,240,235,.12); box-shadow: 0 14px 36px rgba(0,0,0,.32); }
+body.start-page[data-start-theme="dark"] .note-library-settings {
+  --note-settings-paper: #242724;
+  --note-settings-line: rgba(235, 240, 235, .12);
+}
+body.start-page[data-start-theme="dark"] .note-library-settings .note-settings-reset,
+body.start-page[data-start-theme="dark"] .note-library-settings .note-settings-reset:hover { background: transparent; }
+body.start-page[data-start-theme="dark"] .note-library-settings .note-settings-reset-confirm { background: #2c302d; }
+body.start-page[data-start-theme="dark"] .note-library-settings .note-settings-reset-confirm span { color: rgba(237, 240, 234, .72); }
 body.start-page[data-start-theme="dark"] .note-sort-option:hover,
 body.start-page[data-start-theme="dark"] .note-name-option:hover { background: rgba(235,240,235,.07); }
 body.start-page[data-start-theme="dark"] .note-name-option { background: rgba(235,240,235,.05); }
@@ -8385,6 +8404,42 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
   background: #b84d46;
 }
 
+.desktop-note-focus-close {
+  position: fixed;
+  z-index: 750;
+  top: 0;
+  right: 0;
+  width: 46px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 0 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 130ms ease, transform 130ms ease, visibility 0s linear 130ms;
+}
+body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .desktop-note-focus-close {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+}
+body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-focus-transitioning .desktop-note-focus-close {
+  transition-delay: 180ms;
+}
+body.desktop-host.start-page.note-focus-restoring .desktop-note-focus-close { transition: none; }
+.desktop-note-focus-close:hover { color: #fff; background: #b84d46; }
+.desktop-note-focus-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) { .desktop-note-focus-close { transition: none !important; } }
+
 .desktop-minus {
   width: 11px;
   height: 1px;
@@ -9299,6 +9354,10 @@ body.start-page[data-start-workspace="notes"].note-focus-mode > .top-bar {
   opacity: 0;
   transform: translateY(-12px);
   pointer-events: none;
+}
+body.start-page.note-focus-restoring > .top-bar { transition: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  body.start-page[data-start-workspace="notes"] > .top-bar { transition: none !important; }
 }
 
 /* 生涯报告使用完整窗口阅读：顶栏默认收在窗口上沿，顶部保留一条感应区。
