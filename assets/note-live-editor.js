@@ -716,6 +716,7 @@
       let textComposing = false;
       let pendingCommit = false;
       let finishFrame = 0;
+      let pagePointerPreeditText = null;
       const finish = (commit) => {
         if (finished) return;
         finished = true;
@@ -725,6 +726,7 @@
         editor.removeEventListener('input', fit);
         editor.removeEventListener('compositionstart', onCompositionStart);
         editor.removeEventListener('compositionend', onCompositionEnd);
+        document.removeEventListener('pointerdown', onPagePointerDown, true);
         editor.remove();
         measurer.remove();
         if (prior) prior.hidden = false;
@@ -772,19 +774,44 @@
         }
       };
       const onCompositionStart = () => {
+        pagePointerPreeditText = null;
         textComposing = true;
         if (finishFrame) cancelAnimationFrame(finishFrame);
         finishFrame = 0;
       };
       const onCompositionEnd = () => {
         textComposing = false;
+        if (pagePointerPreeditText !== null) {
+          // A page-side pointer ends the text box without choosing an OS
+          // candidate. Preserve exactly what was visible at pointerdown even
+          // if the IME emits a different final input while losing focus.
+          editor.value = pagePointerPreeditText;
+          pagePointerPreeditText = null;
+          fit();
+          pendingCommit = true;
+        }
         if (pendingCommit || document.activeElement !== editor) finishCommittedText();
+      };
+      const onPagePointerDown = (event) => {
+        if (finished || !textComposing || editor.contains(event.target)) return;
+        pagePointerPreeditText = editor.value;
+        pendingCommit = true;
+        if (view.dom.contains(event.target)) {
+          // Do not let CodeMirror replace the selected image range before the
+          // textarea has converted its frozen preedit into one image-block
+          // transaction. The first blank click finishes the overlay; a later
+          // click may place the document caret normally.
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          editor.blur();
+        }
       };
       editor.addEventListener('blur', onBlur);
       editor.addEventListener('keydown', onKeyDown);
       editor.addEventListener('input', fit);
       editor.addEventListener('compositionstart', onCompositionStart);
       editor.addEventListener('compositionend', onCompositionEnd);
+      document.addEventListener('pointerdown', onPagePointerDown, true);
       ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach((name) => {
         editor.addEventListener(name, (event) => event.stopPropagation());
       });

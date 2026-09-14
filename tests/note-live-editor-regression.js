@@ -504,6 +504,12 @@ assert(editorSource.includes("const editor = document.createElement('textarea')"
   && editorSource.includes("editor.addEventListener('compositionstart', onCompositionStart)")
   && editorSource.includes('if (event.isComposing || event.keyCode === 229 || textComposing) return;'),
   'the native plain-text textarea must retain IME and one-shot keyboard commit behavior');
+assert(editorSource.includes('let pagePointerPreeditText = null')
+  && editorSource.includes('pagePointerPreeditText = editor.value')
+  && editorSource.includes('editor.value = pagePointerPreeditText')
+  && editorSource.includes("document.addEventListener('pointerdown', onPagePointerDown, true)")
+  && editorSource.includes("document.removeEventListener('pointerdown', onPagePointerDown, true)"),
+  'page-side blur must preserve the visible image-text preedit without changing the shared IME session');
 assert(editorSource.includes("measurer.className = 'note-image-text-box note-image-text-measurer'")
   && editorSource.includes('editor.style.width = Math.max(1, Math.ceil(measured.width))')
   && stylesSource.includes('.note-image-text-measurer'),

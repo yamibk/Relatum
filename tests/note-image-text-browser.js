@@ -55,8 +55,14 @@ function geometry(element) {
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const frame = page.locator('.note-live-image-frame.is-block');
     await frame.locator('img').waitFor();
+    await page.waitForFunction(() => {
+      const image = document.querySelector('.note-live-image-frame.is-block img');
+      return image && image.complete && image.naturalWidth > 0;
+    });
     await frame.click({ position: { x: 30, y: 30 } });
+    await page.locator('.note-live-image-frame.is-selected').waitFor();
     await page.evaluate(() => { editor.setImageTextMode(true); editor.imageTextCommand('add'); });
+    await page.locator('.note-live-image-frame.is-image-text-armed').waitFor();
     await frame.click({ position: { x: 200, y: 100 } });
     const input = page.locator('.note-image-text-editor');
     await input.fill('第一行\n第二行');
@@ -107,18 +113,60 @@ function geometry(element) {
     });
     assert(bounded.textLeft >= bounded.imageLeft - 1 && bounded.textRight <= bounded.imageRight + 1,
       'dragging to an edge and enlarging text must keep the complete box visible');
-    await page.evaluate((value) => editor.setDocument({ value, notePath: 'image-text-ime.md' }), source);
+    await page.reload();
+    await frame.locator('img').waitFor();
+    await page.waitForFunction(() => document.querySelector('.note-live-image-frame.is-block img').complete);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await frame.click({ position: { x: 30, y: 30 } });
+    await page.locator('.note-live-image-frame.is-selected').waitFor();
     await page.evaluate(() => { editor.setImageTextMode(true); editor.imageTextCommand('add'); });
+    await page.locator('.note-live-image-frame.is-image-text-armed').waitFor();
     await frame.click({ position: { x: 120, y: 70 } });
     await input.waitFor();
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.note-image-text-editor'));
+    await page.evaluate(() => {
+      const target = document.querySelector('.note-image-text-editor');
+      target.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      target.value = 't';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: 't', inputType: 'insertCompositionText' }));
+    });
+    const scrollerBox = await page.locator('.cm-scroller').boundingBox();
+    assert(scrollerBox);
+    await page.mouse.click(scrollerBox.x + scrollerBox.width - 12, scrollerBox.y + scrollerBox.height - 12);
+    const retainedUntilRawCommit = await page.evaluate(() => {
+      const target = document.querySelector('.note-image-text-editor');
+      if (!target) return false;
+      target.dispatchEvent(new FocusEvent('blur'));
+      target.value = '他';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: '他', inputType: 'insertCompositionText' }));
+      target.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '他' }));
+      return true;
+    });
+    assert(retainedUntilRawCommit, 'a page click must let the native IME finish before closing the textarea');
+    await page.waitForFunction(() => !document.querySelector('.note-image-text-editor'));
+    const rawPointerText = await page.evaluate(() => {
+      const line = editor.snapshot().value.split('\n').find((value) => value.includes('fixture.png'));
+      return MarkdownMini.parseImageBlock(line).imageTextItems.map((item) => item.text);
+    });
+    assert.deepEqual(rawPointerText, ['t'], 'clicking page blank space must preserve the visible raw preedit text');
+
+    await page.reload();
+    await frame.locator('img').waitFor();
+    await page.waitForFunction(() => document.querySelector('.note-live-image-frame.is-block img').complete);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await frame.click({ position: { x: 30, y: 30 } });
+    await page.locator('.note-live-image-frame.is-selected').waitFor();
+    await page.evaluate(() => { editor.setImageTextMode(true); editor.imageTextCommand('add'); });
+    await page.locator('.note-live-image-frame.is-image-text-armed').waitFor();
+    await frame.click({ position: { x: 120, y: 70 } });
+    await input.waitFor();
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.note-image-text-editor'));
     const retainedDuringComposition = await page.evaluate(() => {
       const target = document.querySelector('.note-image-text-editor');
       target.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
       target.value = 'zi';
       target.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'zi', inputType: 'insertCompositionText' }));
-      target.blur();
+      target.dispatchEvent(new FocusEvent('blur'));
       const retained = target.isConnected;
       target.value = '字';
       target.dispatchEvent(new InputEvent('input', { bubbles: true, data: '字', inputType: 'insertCompositionText' }));
@@ -127,12 +175,38 @@ function geometry(element) {
     });
     assert(retainedDuringComposition, 'candidate-window blur must not remove the native textarea');
     await page.waitForFunction(() => !document.querySelector('.note-image-text-editor'));
-    const composedTexts = await page.evaluate(() => {
+    const composedResult = await page.evaluate(() => {
       const line = editor.snapshot().value.split('\n').find((value) => value.includes('fixture.png'));
-      return MarkdownMini.parseImageBlock(line).imageTextItems.map((item) => item.text);
+      return { source: editor.snapshot().value, texts: MarkdownMini.parseImageBlock(line).imageTextItems.map((item) => item.text) };
     });
-    assert.deepEqual(composedTexts, ['字'],
-      'only the final IME candidate may be committed: ' + JSON.stringify(composedTexts));
+    assert.deepEqual(composedResult.texts, ['字'],
+      'only the final IME candidate may be committed: ' + JSON.stringify(composedResult));
+
+    await page.reload();
+    await frame.locator('img').waitFor();
+    await page.waitForFunction(() => document.querySelector('.note-live-image-frame.is-block img').complete);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await frame.click({ position: { x: 30, y: 30 } });
+    await page.locator('.note-live-image-frame.is-selected').waitFor();
+    await page.evaluate(() => { editor.setImageTextMode(true); editor.imageTextCommand('add'); });
+    await page.locator('.note-live-image-frame.is-image-text-armed').waitFor();
+    await frame.click({ position: { x: 120, y: 70 } });
+    await input.waitFor();
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.note-image-text-editor'));
+    const remainsAfterImeEscape = await page.evaluate(() => {
+      const target = document.querySelector('.note-image-text-editor');
+      target.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      target.value = 't';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: 't', inputType: 'insertCompositionText' }));
+      target.value = '';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: null, inputType: 'deleteCompositionText' }));
+      target.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+      return target.isConnected;
+    });
+    assert(remainsAfterImeEscape, 'cancelling only the IME composition must leave the empty text-box editor open');
+    await input.press('Escape');
+    assert.equal(await page.evaluate(() => editor.snapshot().value), source,
+      'explicitly cancelling the text box must not revive or save the raw preedit text');
     assert.deepEqual(errors, []);
     console.log('note image text browser regression: ok');
   } finally {
