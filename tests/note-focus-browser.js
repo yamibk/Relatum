@@ -83,6 +83,15 @@ async function freePort() {
     assert.equal(await floating.evaluate(node => getComputedStyle(node).pointerEvents), 'none');
     await sleep(400);
     assert(await page.locator('.top-bar').evaluate(node => node.getBoundingClientRect().height > 40));
+    await toggle.click();
+    await sleep(240);
+    const enteringOpacity = await page.locator('.desktop-note-focus-controls').evaluate(node => Number(getComputedStyle(node).opacity));
+    assert(enteringOpacity > 0 && enteringOpacity < 1, 'focus controls should fade in gradually');
+    await page.screenshot({ path: path.join(root, 'focus-controls-fade.png') });
+    await sleep(220);
+    assert.equal(await page.locator('.desktop-note-focus-controls').evaluate(node => getComputedStyle(node).pointerEvents), 'auto');
+    await toggle.click();
+    await sleep(400);
     await page.evaluate(() => { const button = document.querySelector('[data-note-action="toggle-focus"]'); for (let i = 0; i < 7; i++) button.click(); });
     await sleep(410);
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '1');

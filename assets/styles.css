@@ -8415,8 +8415,8 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translateY(-4px);
-  transition: opacity 130ms ease, transform 130ms ease, visibility 0s linear 130ms;
+  transform: translateY(-6px);
+  transition: opacity 160ms ease-in, transform 160ms ease-in, visibility 0s linear 160ms;
 }
 .desktop-note-focus-controls .desktop-window-btn { height: 42px; min-height: 42px; }
 .desktop-note-focus-controls .desktop-window-btn:first-child { border-radius: 0 0 0 7px; }
@@ -8425,15 +8425,17 @@ body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .desk
   visibility: visible;
   pointer-events: auto;
   transform: none;
-  transition-delay: 0s;
+  transition: opacity 270ms ease, transform 270ms cubic-bezier(.2, .8, .2, 1), visibility 0s;
 }
 body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-focus-transitioning .desktop-note-focus-controls {
-  transition-delay: 180ms;
+  transition-delay: 120ms;
+  pointer-events: none;
 }
 body.desktop-host.start-page.note-focus-restoring .desktop-note-focus-controls { transition: none; }
 .desktop-note-focus-controls .desktop-window-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
 @media (prefers-reduced-motion: reduce) {
   .desktop-note-focus-controls, .desktop-note-focus-controls .desktop-window-btn { transition: none !important; }
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-focus-transitioning .desktop-note-focus-controls { pointer-events: auto; }
 }
 
 .desktop-minus {
