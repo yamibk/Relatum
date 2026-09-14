@@ -82,7 +82,7 @@ def _image_text_comment(items: list[dict]) -> str:
     raw = json.dumps({"items": items}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return " <!--relatum:image-text:v1:" + base64.urlsafe_b64encode(raw).decode().rstrip("=") + "-->"
 _REMOTE_IMAGE_TARGET_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
-_IMAGE_TEXT_SIZES = {"sm", "md", "lg", "xl"}
+_IMAGE_TEXT_SIZES = {"sm", "md", "lg", "xl", "xxl", "xxxl"}
 _IMAGE_TEXT_COLORS = {
     "black", "white", "yellow", "orange", "red",
     "purple", "blue", "cyan", "green", "gray",

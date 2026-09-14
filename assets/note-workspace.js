@@ -56,7 +56,7 @@
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
-  const IMAGE_TEXT_SIZES = ['sm', 'md', 'lg', 'xl'];
+  const IMAGE_TEXT_SIZES = ['sm', 'md', 'lg', 'xl', 'xxl', 'xxxl'];
   const IMAGE_TEXT_COLORS = ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'];
   const NOTE_SHORTCUTS = window.RelatumNoteShortcuts || null;
   const VIEW_STATES_LIMIT = 200;
@@ -163,7 +163,7 @@
       restored: ['已恢复', 'Restored'],
       conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
       resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
-      resetCopy: ['仅重置正文字号和编辑器快捷键。', 'Only text size and editor shortcuts will be reset.'],
+      resetCopy: ['重置正文字号、图片文本框字号比例和编辑器快捷键。', 'Reset note text size, image text scale and editor shortcuts.'],
       reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
@@ -293,6 +293,11 @@
     const scale = preference && typeof preference.readFontScale === 'function' ? preference.readFontScale() : 100;
     if (input) input.value = String(scale);
     if (output) output.textContent = scale + '%';
+    const imageInput = $('[data-role="note-image-text-scale"]');
+    const imageOutput = $('[data-role="note-image-text-scale-value"]');
+    const imageScale = preference ? preference.readImageTextScale() : 100;
+    if (imageInput) imageInput.value = String(imageScale);
+    if (imageOutput) imageOutput.textContent = imageScale + '%';
   }
 
   function setNoteSettingsOpen(open, options) {
@@ -340,6 +345,7 @@
 
   function resetNoteSettings() {
     const preference = window.RelatumNotePreferences;
+    if (preference) preference.resetImageTextScale();
     if (preference && typeof preference.resetFontScale === 'function') preference.resetFontScale();
     else {
       try { localStorage.removeItem('canvas:noteFontScale:v1'); } catch (error) {}

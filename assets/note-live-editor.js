@@ -572,25 +572,55 @@
 
   function createImageTextSizer() {
     const frames = new Set();
+    const onWheel = (event) => {
+      if (event.ctrlKey || event.metaKey) return;
+      const labels = Array.from(event.currentTarget.querySelectorAll('.note-image-text-box:not(.note-image-text-measurer), .note-image-text-editor')).reverse();
+      for (const label of labels) {
+        if (label.hidden) continue;
+        const rect = label.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) continue;
+        const before = label.scrollTop;
+        const unit = event.deltaMode === 1 ? parseFloat(getComputedStyle(label).lineHeight) || 16 : event.deltaMode === 2 ? label.clientHeight : 1;
+        label.scrollTop += event.deltaY * unit;
+        if (before !== label.scrollTop) { event.preventDefault(); event.stopPropagation(); }
+        break;
+      }
+    };
     const update = (frame) => {
       if (!frame || !frame.isConnected) return;
       const width = frame.getBoundingClientRect().width;
       if (width > 0) frame.style.setProperty('--note-image-text-unit', (width / 100) + 'px');
+      frame.dispatchEvent(new Event('image-text-measure'));
+      frame.querySelectorAll('.note-image-text-box:not(.note-image-text-measurer)').forEach((label) => {
+        if (label.hidden) return;
+        const rect = label.getBoundingClientRect();
+        label.style.setProperty('--image-text-half-width', (rect.width / 2) + 'px');
+        label.style.setProperty('--image-text-half-height', (rect.height / 2) + 'px');
+      });
     };
+    const refresh = () => frames.forEach(update);
+    window.addEventListener('relatum:image-text-scale', refresh);
     const observer = typeof ResizeObserver === 'function'
       ? new ResizeObserver((entries) => entries.forEach((entry) => update(entry.target))) : null;
     return {
       observe(frame) {
         if (!frame || frames.has(frame)) return;
         frames.add(frame); update(frame);
+        frame.addEventListener('wheel', onWheel, { passive: false });
         if (observer) observer.observe(frame);
       },
       unobserve(frame) {
         frames.delete(frame);
+        frame.removeEventListener('wheel', onWheel);
         if (observer) observer.unobserve(frame);
       },
       update,
-      destroy() { if (observer) observer.disconnect(); frames.clear(); },
+      destroy() {
+        window.removeEventListener('relatum:image-text-scale', refresh);
+        if (observer) observer.disconnect();
+        frames.forEach((frame) => frame.removeEventListener('wheel', onWheel));
+        frames.clear();
+      },
     };
   }
 
@@ -654,8 +684,8 @@
     }
 
     function positionStyle(element, item) {
-      element.style.left = (item.x * 100) + '%';
-      element.style.top = (item.y * 100) + '%';
+      element.style.left = 'clamp(var(--image-text-half-width, 0px), ' + (item.x * 100) + '%, calc(100% - var(--image-text-half-width, 0px)))';
+      element.style.top = 'clamp(var(--image-text-half-height, 0px), ' + (item.y * 100) + '%, calc(100% - var(--image-text-half-height, 0px)))';
       element.dataset.imageTextSize = item.size;
       element.dataset.imageTextColor = item.color;
     }
@@ -664,8 +694,8 @@
       const imageRect = image.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
       if (!imageRect.width || !imageRect.height) return item;
-      const halfX = Math.min(.49, elementRect.width / imageRect.width / 2);
-      const halfY = Math.min(.49, elementRect.height / imageRect.height / 2);
+      const halfX = Math.min(.5, elementRect.width / imageRect.width / 2);
+      const halfY = Math.min(.5, elementRect.height / imageRect.height / 2);
       return Object.assign({}, item, {
         x: clamp(item.x, halfX, 1 - halfX),
         y: clamp(item.y, halfY, 1 - halfY),
@@ -712,6 +742,7 @@
         positionStyle(editor, draft);
       };
       fit();
+      frame.addEventListener('image-text-measure', fit);
       let finished = false;
       let textComposing = false;
       let pendingCommit = false;
@@ -725,12 +756,14 @@
         editor.removeEventListener('blur', onBlur);
         editor.removeEventListener('keydown', onKeyDown);
         editor.removeEventListener('input', fit);
+        frame.removeEventListener('image-text-measure', fit);
         editor.removeEventListener('compositionstart', onCompositionStart);
         editor.removeEventListener('compositionend', onCompositionEnd);
         document.removeEventListener('pointerdown', onPagePointerDown, true);
         editor.remove();
         measurer.remove();
         if (prior) prior.hidden = false;
+        if (options.imageTextSizer) options.imageTextSizer.update(frame);
         imageTextDraftCleanup = null;
         const text = editor.value.replace(/\r\n?/g, '\n').slice(0, 1000);
         if (!commit || !text.trim()) {
@@ -854,9 +887,10 @@
         imageTextController.select(item.id);
         const imageRect = image.getBoundingClientRect();
         const labelRect = label.getBoundingClientRect();
-        const halfX = Math.min(.49, labelRect.width / Math.max(1, imageRect.width) / 2);
-        const halfY = Math.min(.49, labelRect.height / Math.max(1, imageRect.height) / 2);
-        const startX = item.x; const startY = item.y;
+        const halfX = Math.min(.5, labelRect.width / Math.max(1, imageRect.width) / 2);
+        const halfY = Math.min(.5, labelRect.height / Math.max(1, imageRect.height) / 2);
+        const startX = (labelRect.left + labelRect.width / 2 - imageRect.left) / Math.max(1, imageRect.width);
+        const startY = (labelRect.top + labelRect.height / 2 - imageRect.top) / Math.max(1, imageRect.height);
         let nextX = startX; let nextY = startY; let moved = false; let finished = false;
         label.classList.add('is-dragging');
         try { label.setPointerCapture(event.pointerId); } catch (captureError) {}
@@ -946,6 +980,11 @@
             const rect = image.getBoundingClientRect();
             const label = Array.from(imageTextLayer.querySelectorAll('.note-image-text-box[data-image-text-id]'))
               .find((candidate) => candidate.dataset.imageTextId === id);
+            if (label) {
+              const labelRect = label.getBoundingClientRect();
+              items[index].x = (labelRect.left + labelRect.width / 2 - rect.left) / Math.max(1, rect.width);
+              items[index].y = (labelRect.top + labelRect.height / 2 - rect.top) / Math.max(1, rect.height);
+            }
             items[index].x += value.dx / Math.max(1, rect.width);
             items[index].y += value.dy / Math.max(1, rect.height);
             if (label) items[index] = clampImageTextPosition(items[index], label);
@@ -2301,7 +2340,7 @@
       },
     };
     const requestedImageTextDefaults = safeOptions.imageTextDefaults || {};
-    const imageTextSizes = ['sm', 'md', 'lg', 'xl'];
+    const imageTextSizes = ['sm', 'md', 'lg', 'xl', 'xxl', 'xxxl'];
     const imageTextColors = ['black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray'];
     const imageTextController = {
       active: false,
@@ -2880,16 +2919,27 @@
         const root = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
         root.style.cssText = `position:relative;width:${rect.width}px;height:${rect.height}px;transform-origin:0 0;transform:scale(${width / rect.width},${height / rect.height});`;
         frame.querySelectorAll('.note-image-text-box').forEach((label) => {
+          if (label.hidden || label.classList.contains('note-image-text-measurer')) return;
           const box = document.createElementNS('http://www.w3.org/1999/xhtml', 'span');
           const style = getComputedStyle(label);
           // Only text presentation is exported; selection chrome never enters the PNG.
           ['position', 'box-sizing', 'width', 'height', 'min-width', 'max-width', 'padding',
             'left', 'top', 'transform', 'color', 'font-family', 'font-size', 'font-weight',
             'font-style', 'line-height', 'text-align', 'white-space', 'overflow-wrap',
-            'word-break', 'letter-spacing', 'text-shadow'].forEach((key) => {
+            'word-break', 'letter-spacing', 'text-shadow', 'max-height', 'overflow'].forEach((key) => {
             box.style.setProperty(key, style.getPropertyValue(key));
           });
-          box.textContent = label.textContent;
+          // Freeze resolved geometry; the exported tree has no editor CSS variables.
+          const labelRect = label.getBoundingClientRect();
+          box.style.left = (labelRect.left - rect.left) + 'px';
+          box.style.top = (labelRect.top - rect.top) + 'px';
+          box.style.transform = 'none';
+          box.style.overflow = 'hidden';
+          const text = document.createElement('span');
+          text.style.display = 'block';
+          text.style.transform = `translate(${-label.scrollLeft}px, ${-label.scrollTop}px)`;
+          text.textContent = label.textContent;
+          box.appendChild(text);
           root.appendChild(box);
         });
         if (!root.childNodes.length) throw new Error('图片没有可合并的文字框');

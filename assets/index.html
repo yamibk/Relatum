@@ -1580,6 +1580,8 @@
               <button type="button" data-image-text-action="size" data-image-text-value="md" title="中字号">A</button>
               <button type="button" data-image-text-action="size" data-image-text-value="lg" title="大字号">A</button>
               <button type="button" data-image-text-action="size" data-image-text-value="xl" title="特大字号">A</button>
+              <button type="button" data-image-text-action="size" data-image-text-value="xxl" title="超大字号">A</button>
+              <button type="button" data-image-text-action="size" data-image-text-value="xxxl" title="巨大字号">A</button>
             </div>
             <span class="note-image-text-separator" aria-hidden="true"></span>
             <div class="note-image-text-colors" role="group" aria-label="字色">
@@ -1629,7 +1631,7 @@
                 </button>
                 <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
                   data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
-                  <div><strong>恢复笔记设置默认值？</strong><span>仅重置正文字号和编辑器快捷键。</span></div>
+                  <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文本框字号比例和编辑器快捷键。</span></div>
                   <footer>
                     <button type="button" data-note-settings-action="reset-cancel">取消</button>
                     <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
@@ -1648,6 +1650,14 @@
                     data-role="note-font-scale" aria-label="笔记正文字号缩放比例">
                 </span>
                 <small aria-hidden="true"><i>80%</i><i>100% = 16px</i><i>140%</i></small>
+              </label>
+              <label class="note-settings-font">
+                <span><strong>图片文本框字号比例</strong><output data-role="note-image-text-scale-value">100%</output></span>
+                <span class="note-settings-range" style="--default-pos:20%;">
+                  <input type="range" min="50" max="300" step="5" value="100"
+                    data-role="note-image-text-scale" aria-label="图片文本框字号比例">
+                </span>
+                <small aria-hidden="true"><i>50%</i><i>100%</i><i>300%</i></small>
               </label>
             </section>
             <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">

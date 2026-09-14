@@ -156,7 +156,7 @@
   const MAX_IMAGE_TEXT_ITEMS = 64;
   const MAX_IMAGE_TEXT_LENGTH = 1000;
   const MAX_IMAGE_TEXT_BYTES = 48 * 1024;
-  const IMAGE_TEXT_SIZES = new Set(['sm', 'md', 'lg', 'xl']);
+  const IMAGE_TEXT_SIZES = new Set(['sm', 'md', 'lg', 'xl', 'xxl', 'xxxl']);
   const IMAGE_TEXT_COLORS = new Set([
     'black', 'white', 'yellow', 'orange', 'red', 'purple', 'blue', 'cyan', 'green', 'gray',
   ]);
@@ -738,7 +738,9 @@
       const overlays = Array.isArray(item.imageTextItems) ? item.imageTextItems.map(function (entry) {
         return '<span class="note-image-text-box" data-image-text-id="' + escapeHtml(entry.id)
           + '" data-image-text-size="' + entry.size + '" data-image-text-color="' + entry.color
-          + '" style="left:' + (entry.x * 100) + '%;top:' + (entry.y * 100) + '%">'
+          + '" style="left:clamp(var(--image-text-half-width,0px),' + (entry.x * 100)
+          + '%,calc(100% - var(--image-text-half-width,0px)));top:clamp(var(--image-text-half-height,0px),'
+          + (entry.y * 100) + '%,calc(100% - var(--image-text-half-height,0px)))">'
           + escapeHtml(entry.text) + '</span>';
       }).join('') : '';
       return '<span class="md-local-image' + sized + (overlays ? ' has-image-text' : '')

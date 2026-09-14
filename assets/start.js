@@ -2040,6 +2040,28 @@
   const starmapMotionValues = Array.from(document.querySelectorAll('[data-role="starmap-motion-value"]'));
   const STARMAP_MOTION_KEY = 'canvas:starmapMotion:v1';
   const NOTE_FONT_SCALE_KEY = 'canvas:noteFontScale:v1';
+  const NOTE_IMAGE_TEXT_SCALE_KEY = 'canvas:noteImageTextScale:v1';
+  function normalizeImageTextScale(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(50, Math.min(300, Math.round(number / 5) * 5)) : 100;
+  }
+  function readImageTextScale() {
+    try { return normalizeImageTextScale(localStorage.getItem(NOTE_IMAGE_TEXT_SCALE_KEY) ?? 100); }
+    catch (error) { return 100; }
+  }
+  function applyImageTextScale(value, persist) {
+    const scale = normalizeImageTextScale(value);
+    document.documentElement.style.setProperty('--note-image-text-scale', String(scale / 100));
+    const input = document.querySelector('[data-role="note-image-text-scale"]');
+    const output = document.querySelector('[data-role="note-image-text-scale-value"]');
+    if (input) input.value = String(scale);
+    if (output) output.textContent = scale + '%';
+    if (persist) {
+      try { localStorage.setItem(NOTE_IMAGE_TEXT_SCALE_KEY, String(scale)); } catch (error) {}
+    }
+    window.dispatchEvent(new Event('relatum:image-text-scale'));
+    return scale;
+  }
   const STARMAP_MOTION_DEFAULTS = Object.freeze({
     introMs: 1080,
     introStagger: 60,
@@ -2216,6 +2238,11 @@
   applyNoteFontScale(readNoteFontScale(), false);
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
   window.RelatumNotePreferences = Object.freeze({
+    readImageTextScale,
+    resetImageTextScale() {
+      try { localStorage.removeItem(NOTE_IMAGE_TEXT_SCALE_KEY); } catch (error) {}
+      return applyImageTextScale(100, false);
+    },
     readFontScale: readNoteFontScale,
     applyFontScale(value, persist) { return applyNoteFontScale(value, persist !== false); },
     resetFontScale() {
@@ -2226,6 +2253,9 @@
   document.querySelectorAll('[data-action="desktop-settings-close"]').forEach((button) => {
     button.addEventListener('click', closeDesktopSettings);
   });
+  applyImageTextScale(readImageTextScale(), false);
+  const imageTextScaleRange = document.querySelector('[data-role="note-image-text-scale"]');
+  if (imageTextScaleRange) imageTextScaleRange.addEventListener('input', () => applyImageTextScale(imageTextScaleRange.value, true));
   desktopPresetButtons.forEach((button) => {
     button.addEventListener('click', () => applyDesktopSize(button.dataset.width, button.dataset.height));
   });
