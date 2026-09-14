@@ -195,7 +195,17 @@ const changeListener = live.slice(live.indexOf('EditorView.updateListener'), liv
 assert(!changeListener.includes('toString()'), 'ordinary keystrokes must not stringify the full Markdown document');
 assert(live.includes('length: view.state.doc.length'), 'ordinary keystrokes should update character count without cloning Markdown');
 assert(live.includes('function setNotePath(path)') && live.includes('notePathEffect.of(currentPath)'), 'a file rename must refresh path-dependent widgets without rebuilding editor state');
-assert(live.includes('compositionEffect') && live.includes('compositionDirty'), 'IME composition must suspend projection and defer autosave notification');
+assert(live.includes("phase: 'idle'") && live.includes("this.phase = 'composing'")
+  && live.includes("this.phase = 'settling'") && live.includes('inputReconcileEffect'),
+  'IME composition must use one idle/composing/settling session and one post-commit reconciliation');
+const compositionStart = live.slice(live.indexOf('compositionstart(event, view)'), live.indexOf('compositionend(event, view)'));
+assert(compositionStart.includes('inputSession.begin(view)') && !compositionStart.includes('view.dispatch'),
+  'compositionstart must not compete with CodeMirror by dispatching a state transaction');
+assert(notes.includes('function whenEditorInputSettled()')
+  && notes.includes('function editorInputPending()')
+  && notes.includes('if (target && target === state.current && editorInputPending()) await whenEditorInputSettled()')
+  && notes.includes('if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled()'),
+  'saving and document switches must wait for committed IME input');
 assert(!live.includes('defaultHighlightStyle') && !live.includes('syntaxHighlighting('), 'Relatum source roles must replace CodeMirror default heading/link decoration');
 assert(live.includes("kind: 'callout'") && live.includes("kind === 'callout'"), 'Obsidian-style Callout blocks must have a stable projection');
 assert(live.includes('/api/note-asset?note='), 'Live Preview local images must use the authorized note asset endpoint');

@@ -29,7 +29,7 @@
     relatumCodeLanguages, relatumCodeHighlighting,
   } = CM;
   const focusEffect = StateEffect.define();
-  const compositionEffect = StateEffect.define();
+  const inputReconcileEffect = StateEffect.define();
   const notePathEffect = StateEffect.define();
   const viewportScanEffect = StateEffect.define();
   const viewportParseRequestEffect = StateEffect.define();
@@ -414,23 +414,54 @@
   }
 
   class InlineMathWidget extends WidgetType {
-    constructor(source, coordinator) { super(); this.source = source; this.coordinator = coordinator; this.epoch = coordinator.epoch; }
-    eq(other) { return other.source === this.source && other.epoch === this.epoch; }
+    constructor(source, from, to, coordinator) {
+      super(); this.source = source; this.from = from; this.to = to;
+      this.coordinator = coordinator; this.epoch = coordinator.epoch;
+    }
+    eq(other) {
+      return other.source === this.source && other.from === this.from && other.to === this.to
+        && other.epoch === this.epoch;
+    }
+    reveal(view, event) {
+      if (compositionActive(view)) return;
+      if (event) { event.preventDefault(); event.stopPropagation(); }
+      const inside = Math.max(this.from + 1, this.to - 1);
+      // Atomic ranges intentionally clamp a selection that starts inside the
+      // hidden source. First touch the boundary so this widget is removed,
+      // then place the real caret in the now-visible formula source.
+      view.dispatch({ selection: EditorSelection.cursor(this.from), scrollIntoView: true });
+      const doc = view.state.doc;
+      requestAnimationFrame(() => {
+        if (!view.dom.isConnected || view.state.doc !== doc || compositionActive(view)) return;
+        view.dispatch({ selection: EditorSelection.cursor(inside), scrollIntoView: true });
+        view.focus();
+      });
+    }
     toDOM(view) {
       const span = document.createElement('span');
       span.className = 'note-live-inline-math';
       span.textContent = this.source;
+      span.setAttribute('aria-label', '点击编辑公式源码');
+      span.addEventListener('mousedown', (event) => this.reveal(view, event));
+      span.addEventListener('click', (event) => this.reveal(view, event));
       const token = {};
       this.token = token;
       ensureMathJax().then((math) => {
         if (this.token !== token || !span.isConnected || this.coordinator.epoch !== this.epoch) return;
-        return math.typesetPromise([span]).then(() => {
-          if (this.token === token && span.isConnected && this.coordinator.epoch === this.epoch) view.requestMeasure();
+        return runWhenInputSettled(view, () => (
+          this.token === token && span.isConnected && this.coordinator.epoch === this.epoch
+            ? math.typesetPromise([span]) : undefined
+        )).then(() => {
+          if (this.token !== token || !span.isConnected || this.coordinator.epoch !== this.epoch) return;
+          return runWhenInputSettled(view, () => {
+            if (this.token === token && span.isConnected && this.coordinator.epoch === this.epoch) view.requestMeasure();
+          });
         });
       }).catch(() => { span.classList.add('is-failed'); });
       return span;
     }
     destroy() { this.token = null; }
+    ignoreEvent() { return false; }
   }
 
   function imageSelectionMatches(viewOrState, from, to) {
@@ -581,11 +612,11 @@
     image.alt = parsed.alt || parsed.target.split('/').pop() || '';
     image.loading = 'lazy'; image.decoding = 'async';
     image.src = options.imageUrl(notePath, parsed.target);
-    image.addEventListener('load', () => {
-      if (!frame.isConnected) return;
-      if (options.imageTextSizer) options.imageTextSizer.update(frame);
-      view.requestMeasure();
-    }, { once: true });
+      image.addEventListener('load', () => {
+        if (!frame.isConnected) return;
+        if (options.imageTextSizer) options.imageTextSizer.update(frame);
+        runWhenInputSettled(view, () => { if (frame.isConnected) view.requestMeasure(); });
+      }, { once: true });
     image.addEventListener('error', () => {
       if (!frame.isConnected) return;
       frame.classList.add('is-failed');
@@ -652,41 +683,82 @@
       editor.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Image text' : '图片文字');
       positionStyle(editor, draft);
       imageTextLayer.appendChild(editor);
+      imageTextController.beginDraft();
       imageTextController.select(draft.id, draft.size, draft.color);
       const fit = () => { editor.style.height = '0'; editor.style.height = Math.max(28, editor.scrollHeight) + 'px'; };
       fit();
       let finished = false;
+      let textComposing = false;
+      let pendingCommit = false;
+      let finishFrame = 0;
       const finish = (commit) => {
         if (finished) return;
         finished = true;
+        if (finishFrame) cancelAnimationFrame(finishFrame);
         editor.removeEventListener('blur', onBlur);
         editor.removeEventListener('keydown', onKeyDown);
         editor.removeEventListener('input', fit);
+        editor.removeEventListener('compositionstart', onCompositionStart);
+        editor.removeEventListener('compositionend', onCompositionEnd);
         editor.remove();
         if (prior) prior.hidden = false;
         imageTextDraftCleanup = null;
         const text = editor.value.replace(/\r\n?/g, '\n').slice(0, 1000);
         if (!commit || !text.trim()) {
           imageTextController.select(isNew ? '' : draft.id, draft.size, draft.color);
+          imageTextController.endDraft();
           return;
         }
         const items = currentItems();
         const next = Object.assign({}, draft, { text: text });
         const index = items.findIndex((candidate) => candidate.id === draft.id);
         if (index >= 0) items[index] = next; else items.push(next);
-        commitImageTextItems(items, draft.id);
+        try {
+          commitImageTextItems(items, draft.id);
+        } finally {
+          imageTextController.endDraft();
+        }
       };
-      const onBlur = () => finish(true);
+      const finishCommittedText = () => {
+        if (finished || textComposing) { pendingCommit = true; return; }
+        if (finishFrame) cancelAnimationFrame(finishFrame);
+        let quietFrames = 0;
+        const settle = () => {
+          finishFrame = 0;
+          if (finished || textComposing) { pendingCommit = true; return; }
+          if (quietFrames < 1) {
+            quietFrames += 1;
+            finishFrame = requestAnimationFrame(settle);
+            return;
+          }
+          pendingCommit = false;
+          finish(true);
+        };
+        finishFrame = requestAnimationFrame(settle);
+      };
+      const onBlur = () => finishCommittedText();
       const onKeyDown = (event) => {
         event.stopPropagation();
+        if (event.isComposing || event.keyCode === 229 || textComposing) return;
         if (event.key === 'Escape') { event.preventDefault(); finish(false); view.focus(); }
         else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-          event.preventDefault(); finish(true); view.focus();
+          event.preventDefault(); finishCommittedText(); view.focus();
         }
+      };
+      const onCompositionStart = () => {
+        textComposing = true;
+        if (finishFrame) cancelAnimationFrame(finishFrame);
+        finishFrame = 0;
+      };
+      const onCompositionEnd = () => {
+        textComposing = false;
+        if (pendingCommit || document.activeElement !== editor) finishCommittedText();
       };
       editor.addEventListener('blur', onBlur);
       editor.addEventListener('keydown', onKeyDown);
       editor.addEventListener('input', fit);
+      editor.addEventListener('compositionstart', onCompositionStart);
+      editor.addEventListener('compositionend', onCompositionEnd);
       ['pointerdown', 'mousedown', 'click', 'dblclick'].forEach((name) => {
         editor.addEventListener(name, (event) => event.stopPropagation());
       });
@@ -805,6 +877,7 @@
     }
 
     const select = (event) => {
+      if (compositionActive(view)) return;
       if (event) { event.preventDefault(); event.stopPropagation(); }
       const current = resolveRange();
       if (!current) return;
@@ -1001,6 +1074,31 @@
     return result;
   }
 
+  function richBlockEditPosition(spec) {
+    const source = String(spec && spec.source || '');
+    const from = Number(spec && spec.from) || 0;
+    if (spec && spec.kind === 'math') {
+      const opener = source.indexOf('$$');
+      const closer = source.lastIndexOf('$$');
+      if (opener >= 0 && closer > opener) {
+        let offset = opener + 2;
+        if (source[offset] === '\r' && source[offset + 1] === '\n') offset += 2;
+        else if (source[offset] === '\n') offset += 1;
+        while (offset < closer && /[\t ]/.test(source[offset])) offset += 1;
+        return from + Math.min(offset, closer);
+      }
+    }
+    if (spec && (spec.kind === 'mermaid' || spec.kind === 'derive')) {
+      const newline = source.indexOf('\n');
+      if (newline >= 0) return from + newline + 1;
+    }
+    if (spec && spec.kind === 'table') {
+      const content = /^(\s*\|?\s*)/.exec(source);
+      return from + (content ? content[0].length : 0);
+    }
+    return from;
+  }
+
   class RichBlockWidget extends WidgetType {
     constructor(spec, notePath, options, coordinator, selected) {
       super(); this.spec = spec; this.notePath = notePath; this.options = options; this.coordinator = coordinator;
@@ -1017,11 +1115,24 @@
     }
     reveal(view, event) {
       if (event) { event.preventDefault(); event.stopPropagation(); }
+      if (compositionActive(view)) {
+        runWhenInputSettled(view, () => this.reveal(view));
+        return;
+      }
       const current = this.coordinator.spec(view, this.spec.id);
       if (!current) return;
-      const at = Math.min(current.to, current.from + (current.kind === 'table' ? 1 : 3));
-      view.dispatch({ selection: EditorSelection.cursor(at), scrollIntoView: true });
-      view.focus();
+      const at = clamp(richBlockEditPosition(current), current.from, current.to);
+      // See InlineMathWidget.reveal: an atomic projection must be removed
+      // before CodeMirror can retain a caret inside its hidden source range.
+      view.dispatch({ selection: EditorSelection.cursor(current.from), scrollIntoView: true });
+      const doc = view.state.doc;
+      requestAnimationFrame(() => {
+        if (!view.dom.isConnected || view.state.doc !== doc || compositionActive(view)) return;
+        const refreshed = this.coordinator.spec(view, this.spec.id);
+        if (!refreshed) return;
+        view.dispatch({ selection: EditorSelection.cursor(clamp(at, refreshed.from, refreshed.to)), scrollIntoView: true });
+        view.focus();
+      });
     }
     toDOM(view) {
       const wrap = document.createElement('div');
@@ -1040,23 +1151,33 @@
       } else if (this.spec.kind === 'math') {
         wrap.tabIndex = 0;
         wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
+        wrap.addEventListener('mousedown', (event) => this.reveal(view, event));
         wrap.addEventListener('click', (event) => this.reveal(view, event));
         wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         wrap.classList.add('md-math-block');
         wrap.textContent = this.spec.source;
         ensureMathJax().then((math) => {
           if (!this.isCurrent(view, wrap, token)) return;
-          return math.typesetPromise([wrap]).then(() => { if (this.isCurrent(view, wrap, token)) view.requestMeasure(); });
+          return runWhenInputSettled(view, () => (
+            this.isCurrent(view, wrap, token) ? math.typesetPromise([wrap]) : undefined
+          )).then(() => {
+            if (!this.isCurrent(view, wrap, token)) return;
+            return runWhenInputSettled(view, () => {
+              if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+            });
+          });
         }).catch(() => wrap.classList.add('is-failed'));
       } else if (this.spec.kind === 'rule') {
         wrap.tabIndex = 0;
         wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
+        wrap.addEventListener('mousedown', (event) => this.reveal(view, event));
         wrap.addEventListener('click', (event) => this.reveal(view, event));
         wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         wrap.appendChild(document.createElement('hr')).className = 'md-hr';
       } else {
         wrap.tabIndex = 0;
         wrap.setAttribute('aria-label', '点击编辑 ' + this.spec.kind + ' 源码');
+        wrap.addEventListener('mousedown', (event) => this.reveal(view, event));
         wrap.addEventListener('click', (event) => this.reveal(view, event));
         wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         const result = safeIsolatedResult(this.spec.source);
@@ -1071,14 +1192,26 @@
         const hasMermaid = this.spec.kind === 'mermaid' || !!(result.features && result.features.mermaid);
         const hasMath = this.spec.kind === 'derive' || !!(result.features && result.features.math);
         if (hasMermaid && window.MermaidRenderer) {
-          window.MermaidRenderer.renderAll(wrap).then(() => {
-            if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+          runWhenInputSettled(view, () => (
+            this.isCurrent(view, wrap, token) ? window.MermaidRenderer.renderAll(wrap) : undefined
+          )).then(() => {
+            if (!this.isCurrent(view, wrap, token)) return;
+            return runWhenInputSettled(view, () => {
+              if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+            });
           }).catch(() => wrap.classList.add('is-failed'));
         }
         if (hasMath) {
           ensureMathJax().then((math) => {
             if (!this.isCurrent(view, wrap, token)) return;
-            return math.typesetPromise([wrap]).then(() => { if (this.isCurrent(view, wrap, token)) view.requestMeasure(); });
+            return runWhenInputSettled(view, () => (
+              this.isCurrent(view, wrap, token) ? math.typesetPromise([wrap]) : undefined
+            )).then(() => {
+              if (!this.isCurrent(view, wrap, token)) return;
+              return runWhenInputSettled(view, () => {
+                if (this.isCurrent(view, wrap, token)) view.requestMeasure();
+              });
+            });
           }).catch(() => wrap.classList.add('is-failed'));
         }
       }
@@ -1229,7 +1362,7 @@
     return usesBlockReplacement(spec) && (spec.kind === 'image' || !activeIds.has(spec.id));
   }
 
-  function createBlockField(notePath, options, coordinator) {
+  function createBlockField(notePath, options, coordinator, inputSession) {
     const field = StateField.define({
       create(state) {
         const tree = syntaxTree(state);
@@ -1242,45 +1375,44 @@
             selectedImageIds.has(spec.id)),
           block: true, inclusive: false, blockId: spec.id,
         }).range(spec.from, spec.to)), true);
-        return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, composing: false, decorations };
+        return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, decorations };
       },
       update(value, transaction) {
         let focused = value.focused;
-        let composing = value.composing;
         transaction.effects.forEach((effect) => { if (effect.is(focusEffect)) focused = !!effect.value; });
-        transaction.effects.forEach((effect) => { if (effect.is(compositionEffect)) composing = !!effect.value; });
-        if (composing) {
+        if (inputSession.pending()) {
           // The browser owns the preedit text until compositionend. Preserve
           // all projections and only map their positions through native edits;
           // reparsing/replacing neighbouring blocks can move the IME caret.
           const specs = transaction.docChanged ? value.specs.map((spec) => Object.assign({}, spec, {
-            from: transaction.changes.mapPos(spec.from, -1),
-            to: transaction.changes.mapPos(spec.to, 1),
+            // Rich replacements are non-inclusive. Text inserted exactly before
+            // an object shifts it right; text inserted after it stays outside.
+            from: transaction.changes.mapPos(spec.from, 1),
+            to: transaction.changes.mapPos(spec.to, -1),
           })) : value.specs;
           return Object.assign({}, value, {
             specs, byId: transaction.docChanged ? new Map(specs.map((spec) => [spec.id, spec])) : value.byId,
             selectedImageIds: value.selectedImageIds,
-            focused, composing,
+            focused,
             decorations: transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations,
           });
         }
         let specs = updateBlockSpecs(value.specs, transaction);
         let viewportRefreshed = false;
-        if (value.composing) {
-          specs = refreshVisibleBlockSpecs(specs, transaction.state, transaction.state.selection.ranges);
-          viewportRefreshed = true;
-        }
+        let inputReconcileRanges;
         transaction.effects.forEach((effect) => {
-          if (!effect.is(viewportScanEffect)) return;
+          if (!effect.is(viewportScanEffect) && !effect.is(inputReconcileEffect)) return;
           specs = refreshVisibleBlockSpecs(specs, transaction.state, effect.value);
+          if (effect.is(inputReconcileEffect)) inputReconcileRanges = effect.value;
           viewportRefreshed = true;
         });
         const notePathChanged = transaction.effects.some((effect) => effect.is(notePathEffect));
+        const inputReconciled = inputReconcileRanges !== undefined;
         const selectionChanged = !!transaction.selection;
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && composing === value.composing && !notePathChanged && !viewportRefreshed) return value;
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !viewportRefreshed) return value;
 
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
-        const activeIds = activeBlockIds(specs, transaction.state, focused, composing);
+        const activeIds = activeBlockIds(specs, transaction.state, focused, false);
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const refresh = new Set();
         value.byId.forEach((old, id) => {
@@ -1292,9 +1424,16 @@
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
         value.selectedImageIds.forEach((id) => { if (!selectedImageIds.has(id)) refresh.add(id); });
         selectedImageIds.forEach((id) => { if (!value.selectedImageIds.has(id)) refresh.add(id); });
-        // Mapped widgets still carry the pre-composition source positions.
-        // Refresh them once after commit, including unchanged blocks below it.
-        if (notePathChanged || value.composing) specs.forEach((spec) => refresh.add(spec.id));
+        // Mapped widgets still carry their pre-composition source positions.
+        // The bounded reconciliation scan refreshes visible widgets once after
+        // the browser has committed the candidate text.
+        if (notePathChanged) specs.forEach((spec) => refresh.add(spec.id));
+        else if (inputReconciled) {
+          const ranges = Array.isArray(inputReconcileRanges) ? inputReconcileRanges : [];
+          specs.forEach((spec) => {
+            if (ranges.some((range) => spec.from <= range.to && spec.to >= range.from)) refresh.add(spec.id);
+          });
+        }
 
         let decorations = transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations;
         if (refresh.size) {
@@ -1308,9 +1447,15 @@
             sort: true,
           });
         }
-        return { specs, byId, activeIds, selectedImageIds, focused, composing, decorations };
+        return { specs, byId, activeIds, selectedImageIds, focused, decorations };
       },
-      provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
+      provide: (field) => [
+        EditorView.decorations.from(field, (value) => value.decorations),
+        EditorView.atomicRanges.of((view) => {
+          const value = view.state.field(field, false);
+          return value ? value.decorations : Decoration.none;
+        }),
+      ],
     });
     coordinator.field = field;
     coordinator.spec = (view, id) => {
@@ -1361,7 +1506,17 @@
   }
 
   function compositionActive(view) {
-    return !!(view.__relatumCompositionActive || (view.hasFocus && (view.compositionStarted || view.composing)));
+    const session = view && view.__relatumInputSession;
+    return !!(view && ((session && session.pending()) || view.compositionStarted || view.composing));
+  }
+
+  function runWhenInputSettled(view, callback) {
+    if (!compositionActive(view)) return Promise.resolve(callback());
+    const session = view && view.__relatumInputSession;
+    if (session && typeof session.whenSettled === 'function') {
+      return session.whenSettled().then((settled) => settled ? callback() : undefined);
+    }
+    return new Promise((resolve) => requestAnimationFrame(() => resolve(runWhenInputSettled(view, callback))));
   }
 
   function constructActive(view, from, to) {
@@ -1544,7 +1699,7 @@
               add(nodeRef.from, nodeRef.to, Decoration.replace({
                 widget: new InlineImageWidget(parsed, nodeRef.from, nodeRef.to,
                   imageSelectionMatches(view, nodeRef.from, nodeRef.to), notePath(), options),
-                inclusive: false,
+                inclusive: false, relatumAtomic: true,
               }));
               return false;
             } else if (parsed) {
@@ -1664,6 +1819,7 @@
           if (parsed && parsed.target && !isRemoteTarget(parsed.target)) {
             add(from, to, Decoration.replace({
               widget: new InlineImageWidget(parsed, from, to, imageSelectionMatches(view, from, to), notePath(), options),
+              relatumAtomic: true,
             }));
           } else mark(from, to, 'note-live-image-source');
         });
@@ -1683,7 +1839,9 @@
           if (text[match.index - 1] === '$' || text[match.index + match[0].length] === '$' || escapedAt(text, match.index + match[0].length - 1)) return;
           if (match[0].length > INLINE_MATH_LIMIT) return;
           protect(from, to);
-          if (!constructActive(view, from, to)) add(from, to, Decoration.replace({ widget: new InlineMathWidget(match[0], options.coordinator) }));
+          if (!constructActive(view, from, to)) add(from, to, Decoration.replace({
+            widget: new InlineMathWidget(match[0], from, to, options.coordinator), relatumAtomic: true,
+          }));
           else {
             mark(from, to, 'note-live-math-source');
             mark(from, from + 1, 'note-live-source-mark is-math');
@@ -1715,23 +1873,44 @@
     return Decoration.set(ranges, true);
   }
 
+  function atomicDecorationSubset(decorations, length) {
+    const ranges = [];
+    decorations.between(0, length, (from, to, decoration) => {
+      if (decoration.spec && decoration.spec.relatumAtomic) ranges.push(decoration.range(from, to));
+    });
+    return ranges.length ? Decoration.set(ranges, true) : Decoration.none;
+  }
+
   function createInlinePlugin(blockField, notePath, options) {
-    return ViewPlugin.fromClass(class {
-      constructor(view) { this.decorations = createInlineDecorations(view, blockField, notePath, options); this.compositionPending = false; }
+    const plugin = ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.decorations = createInlineDecorations(view, blockField, notePath, options);
+        this.atomic = atomicDecorationSubset(this.decorations, view.state.doc.length);
+        this.compositionPending = false;
+      }
       update(update) {
         if (compositionActive(update.view)) {
           this.decorations = this.decorations.map(update.changes);
+          this.atomic = this.atomic.map(update.changes);
           this.compositionPending = true;
           return;
         }
-        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(compositionEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect)));
+        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(inputReconcileEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect)));
         const syntaxChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
         if (this.compositionPending || update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || lifecycleChanged || syntaxChanged) {
           this.compositionPending = false;
           this.decorations = createInlineDecorations(update.view, blockField, notePath, options);
+          this.atomic = atomicDecorationSubset(this.decorations, update.state.doc.length);
         }
       }
-    }, { decorations: (value) => value.decorations });
+    }, {
+      decorations: (value) => value.decorations,
+      provide: (extension) => EditorView.atomicRanges.of((view) => {
+        const value = view.plugin(extension);
+        return value ? value.atomic : Decoration.none;
+      }),
+    });
+    return plugin;
   }
 
   function createViewportParsePlugin() {
@@ -1892,11 +2071,10 @@
     let suppressChanges = false;
     let documentSetSeq = 0;
     let destroyed = false;
-    let compositionDirty = false;
-    let compositionFrame = 0;
-    let compositionSeq = 0;
     let pendingSourceMode = null;
     let pendingShortcutBindings = null;
+    let pendingDocumentState = null;
+    let pendingDocumentWait = false;
     let sourceMode = !!options.sourceMode;
     const coordinator = { epoch: 1, field: null, spec() { return null; } };
     const imageTextSizer = createImageTextSizer();
@@ -1907,6 +2085,126 @@
       onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onImageFiles() {},
       onImageSelectionChange() {},
     }, options);
+    const inputSession = {
+      phase: 'idle',
+      dirty: false,
+      frame: 0,
+      sequence: 0,
+      stableFrames: 0,
+      waiters: [],
+      committedDoc: null,
+      committedAnchor: 0,
+      committedHead: 0,
+      committedScrollTop: 0,
+      pending() { return this.phase !== 'idle'; },
+      capture(view) {
+        if (!view || this.pending()) return;
+        const main = view.state.selection.main;
+        this.committedDoc = view.state.doc;
+        this.committedAnchor = main.anchor;
+        this.committedHead = main.head;
+        this.committedScrollTop = view.scrollDOM.scrollTop;
+      },
+      begin(view) {
+        const carriedDirty = this.pending() && this.dirty;
+        this.cancelFinish();
+        if (this.phase === 'idle') this.capture(view);
+        this.phase = 'composing';
+        this.dirty = carriedDirty;
+        this.stableFrames = 0;
+        host.dataset.inputPhase = this.phase;
+        host.classList.add('is-composing');
+      },
+      changed() { if (this.pending()) this.dirty = true; },
+      cancelFinish() {
+        this.sequence += 1;
+        if (this.frame) cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      },
+      end(view) {
+        if (this.phase === 'idle') return;
+        this.cancelFinish();
+        this.phase = 'settling';
+        this.stableFrames = 0;
+        host.dataset.inputPhase = this.phase;
+        const sequence = this.sequence;
+        const settle = () => {
+          this.frame = 0;
+          if (destroyed || sequence !== this.sequence || !view.dom.isConnected) return;
+          if (view.compositionStarted || view.composing) {
+            this.stableFrames = 0;
+            this.frame = requestAnimationFrame(settle);
+            return;
+          }
+          // Chromium may flush the final DOM mutation in a microtask after
+          // compositionend. Require two quiet animation frames before Relatum
+          // is allowed to rebuild projections or expose the value to saving.
+          if (this.stableFrames < 1) {
+            this.stableFrames += 1;
+            this.frame = requestAnimationFrame(settle);
+            return;
+          }
+          this.finish(view);
+        };
+        this.frame = requestAnimationFrame(settle);
+      },
+      finish(view) {
+        const changed = this.dirty;
+        this.cancelFinish();
+        this.phase = 'idle';
+        this.dirty = false;
+        this.stableFrames = 0;
+        delete host.dataset.inputPhase;
+        host.classList.remove('is-composing');
+        this.capture(view);
+        const ranges = (view.visibleRanges && view.visibleRanges.length ? view.visibleRanges : [view.viewport])
+          .map((range) => ({ from: range.from, to: range.to }));
+        view.dispatch({ effects: [inputReconcileEffect.of(ranges), focusEffect.of(view.hasFocus)] });
+        if (changed) notifyDocChanged(view);
+        if (pendingSourceMode !== null) {
+          const next = pendingSourceMode;
+          pendingSourceMode = null;
+          setSourceMode(next);
+        }
+        if (pendingShortcutBindings !== null) {
+          const next = pendingShortcutBindings;
+          pendingShortcutBindings = null;
+          setShortcutBindings(next);
+        }
+        const waiters = this.waiters.splice(0);
+        waiters.forEach((resolve) => resolve(true));
+      },
+      reset(view) {
+        this.cancelFinish();
+        this.phase = 'idle';
+        this.dirty = false;
+        this.stableFrames = 0;
+        delete host.dataset.inputPhase;
+        host.classList.remove('is-composing');
+        this.capture(view);
+        const waiters = this.waiters.splice(0);
+        waiters.forEach((resolve) => resolve(false));
+      },
+      whenSettled() {
+        return this.pending() ? new Promise((resolve) => this.waiters.push(resolve)) : Promise.resolve(true);
+      },
+      snapshot(view) {
+        if (!this.pending()) this.capture(view);
+        const doc = this.committedDoc || view.state.doc;
+        return {
+          value: doc.toString(),
+          anchor: this.committedAnchor,
+          head: this.committedHead,
+          scrollTop: this.pending() ? this.committedScrollTop : view.scrollDOM.scrollTop,
+        };
+      },
+      destroy() {
+        this.cancelFinish();
+        this.phase = 'idle';
+        const waiters = this.waiters.splice(0);
+        waiters.forEach((resolve) => resolve(false));
+      },
+    };
     const imageTextController = {
       active: false,
       armed: false,
@@ -1915,7 +2213,18 @@
       activeRange: null,
       pendingRange: null,
       adapter: null,
+      draftActive: false,
+      draftWaiters: [],
       defaults: { size: 'md', color: 'white' },
+      beginDraft() { this.draftActive = true; },
+      endDraft() {
+        this.draftActive = false;
+        const waiters = this.draftWaiters.splice(0);
+        waiters.forEach((resolve) => resolve(true));
+      },
+      whenSettled() {
+        return this.draftActive ? new Promise((resolve) => this.draftWaiters.push(resolve)) : Promise.resolve(true);
+      },
       notify() {
         const selected = this.adapter && this.selectedId
           ? Array.from(this.adapter.frame.querySelectorAll('[data-image-text-id]'))
@@ -2006,7 +2315,7 @@
     safeOptions.imageTextSizer = imageTextSizer;
     safeOptions.coordinator = coordinator;
     const notePath = () => currentPath;
-    const blockField = createBlockField(notePath, safeOptions, coordinator);
+    const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
     const viewportParsePlugin = createViewportParsePlugin();
     const livePreviewCompartment = new Compartment();
@@ -2032,6 +2341,7 @@
     let currentShortcutBindings = normalizedShortcutBindings(options.shortcutBindings);
 
     function syncImageSelectionClass(view) {
+      if (inputSession.pending()) return;
       host.classList.toggle('has-image-selection', !sourceMode && !!exactSelectedImageRange(view.state));
       imageTextController.syncSelection(view);
     }
@@ -2124,39 +2434,6 @@
       safeOptions.onDocChanged(meta);
     }
 
-    function cancelCompositionFinish() {
-      compositionSeq += 1;
-      if (compositionFrame) cancelAnimationFrame(compositionFrame);
-      compositionFrame = 0;
-    }
-
-    function finishComposition(view) {
-      cancelCompositionFinish();
-      const seq = compositionSeq;
-      const documentSeq = documentSetSeq;
-      compositionFrame = requestAnimationFrame(() => {
-        compositionFrame = 0;
-        if (destroyed || seq !== compositionSeq || documentSeq !== documentSetSeq || !view.dom.isConnected) return;
-        // Let CodeMirror consume the final native input/selection first. A new
-        // compositionstart cancels this callback before it can touch the view.
-        if (view.hasFocus && view.compositionStarted) { finishComposition(view); return; }
-        view.__relatumCompositionActive = false;
-        view.dispatch({ effects: [compositionEffect.of(false), viewportParseRequestEffect.of(true)] });
-        host.classList.remove('is-composing');
-        if (compositionDirty) { compositionDirty = false; notifyDocChanged(view); }
-        if (pendingSourceMode !== null) {
-          const next = pendingSourceMode;
-          pendingSourceMode = null;
-          setSourceMode(next);
-        }
-        if (pendingShortcutBindings !== null) {
-          const next = pendingShortcutBindings;
-          pendingShortcutBindings = null;
-          setShortcutBindings(next);
-        }
-      });
-    }
-
     function makeState(value, selection) {
       const extensions = [
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
@@ -2180,9 +2457,12 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
-          syncImageSelectionClass(update.view);
+          if (!inputSession.pending()) {
+            inputSession.capture(update.view);
+            syncImageSelectionClass(update.view);
+          }
           if (!update.docChanged || suppressChanges) return;
-          if (compositionActive(update.view)) { compositionDirty = true; return; }
+          if (inputSession.pending()) { inputSession.changed(); return; }
           const includeValue = update.transactions.some((transaction) => (
             transaction.isUserEvent('input.image-text')
             || transaction.isUserEvent('delete.image-object')
@@ -2192,21 +2472,21 @@
           notifyDocChanged(update.view, includeValue);
         }),
         EditorView.domEventHandlers({
-          focus(event, view) { view.dispatch({ effects: focusEffect.of(true) }); return false; },
+          focus(event, view) {
+            if (!inputSession.pending()) view.dispatch({ effects: focusEffect.of(true) });
+            return false;
+          },
           blur(event, view) {
-            view.dispatch({ effects: focusEffect.of(false) });
-            if (view.__relatumCompositionActive) finishComposition(view);
+            if (inputSession.pending()) inputSession.end(view);
+            else view.dispatch({ effects: focusEffect.of(false) });
             return false;
           },
           compositionstart(event, view) {
-            cancelCompositionFinish();
-            view.__relatumCompositionActive = true;
-            host.classList.add('is-composing');
-            view.dispatch({ effects: compositionEffect.of(true) });
+            inputSession.begin(view);
             return false;
           },
           compositionend(event, view) {
-            finishComposition(view);
+            inputSession.end(view);
             return false;
           },
           mousedown(event, view) {
@@ -2259,17 +2539,29 @@
     }
 
     const view = new EditorView({ state: makeState(options.value || '', EditorSelection.cursor(0)), parent: host });
+    view.__relatumInputSession = inputSession;
+    inputSession.capture(view);
     host.classList.toggle('is-source-mode', sourceMode);
     syncImageSelectionClass(view);
 
     function setDocument(documentState) {
+      if (inputPending()) {
+        pendingDocumentState = Object.assign({}, documentState || {});
+        if (!pendingDocumentWait) {
+          pendingDocumentWait = true;
+          whenInputSettled().then(() => {
+            pendingDocumentWait = false;
+            const pendingDocument = pendingDocumentState;
+            pendingDocumentState = null;
+            if (!destroyed && pendingDocument) setDocument(pendingDocument);
+          });
+        }
+        return;
+      }
+      pendingDocumentState = null;
       const seq = ++documentSetSeq;
       coordinator.epoch += 1;
       imageTextController.setActive(false);
-      cancelCompositionFinish();
-      view.__relatumCompositionActive = false;
-      host.classList.remove('is-composing');
-      compositionDirty = false;
       if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
       if (pendingShortcutBindings !== null) {
         currentShortcutBindings = normalizedShortcutBindings(pendingShortcutBindings);
@@ -2283,6 +2575,8 @@
       suppressChanges = true;
       try { view.setState(makeState(value, EditorSelection.range(anchor, head))); }
       finally { suppressChanges = false; }
+      view.__relatumInputSession = inputSession;
+      inputSession.reset(view);
       host.classList.toggle('is-source-mode', sourceMode);
       syncImageSelectionClass(view);
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
@@ -2298,14 +2592,30 @@
     }
 
     function setNotePath(path) {
-      currentPath = String(path || '');
+      const next = String(path || '');
+      if (inputPending()) {
+        whenInputSettled().then(() => { if (!destroyed) setNotePath(next); });
+        return;
+      }
+      currentPath = next;
       coordinator.epoch += 1;
       view.dispatch({ effects: notePathEffect.of(currentPath) });
     }
 
     function setSourceMode(active) {
       const next = !!active;
-      if (compositionActive(view)) { pendingSourceMode = next; return; }
+      if (inputPending()) {
+        pendingSourceMode = next;
+        if (!inputSession.pending()) {
+          whenInputSettled().then(() => {
+            if (destroyed || pendingSourceMode === null) return;
+            const queued = pendingSourceMode;
+            pendingSourceMode = null;
+            setSourceMode(queued);
+          });
+        }
+        return;
+      }
       if (next === sourceMode) return;
       sourceMode = next;
       if (next) imageTextController.setActive(false);
@@ -2325,17 +2635,32 @@
 
     function setShortcutBindings(bindings) {
       const next = normalizedShortcutBindings(bindings);
-      if (compositionActive(view)) { pendingShortcutBindings = next; return; }
+      if (inputPending()) {
+        pendingShortcutBindings = next;
+        if (!inputSession.pending()) {
+          whenInputSettled().then(() => {
+            if (destroyed || pendingShortcutBindings === null) return;
+            const queued = pendingShortcutBindings;
+            pendingShortcutBindings = null;
+            setShortcutBindings(queued);
+          });
+        }
+        return;
+      }
       currentShortcutBindings = next;
       view.dispatch({ effects: shortcutCompartment.reconfigure(keymap.of(customKeyBindings())) });
     }
 
     function snapshot() {
-      const main = view.state.selection.main;
-      return { value: view.state.doc.toString(), anchor: main.anchor, head: main.head, scrollTop: view.scrollDOM.scrollTop };
+      return inputSession.snapshot(view);
     }
 
     function replaceSelection(text) {
+      if (inputPending()) {
+        const path = currentPath;
+        whenInputSettled().then(() => { if (!destroyed && path === currentPath) replaceSelection(text); });
+        return;
+      }
       const range = view.state.selection.main;
       const insert = String(text || '');
       view.dispatch({ changes: { from: range.from, to: range.to, insert }, selection: EditorSelection.cursor(range.from + insert.length), userEvent: 'input' });
@@ -2343,17 +2668,29 @@
     }
 
     function setImageTextMode(active) {
+      if (inputPending()) return false;
       return imageTextController.setActive(active, view);
     }
 
     function imageTextCommand(name, value) {
+      if (inputSession.pending()) return false;
       return imageTextController.command(String(name || ''), value);
+    }
+
+    function inputPending() {
+      return inputSession.pending() || imageTextController.draftActive;
+    }
+
+    function whenInputSettled() {
+      return Promise.all([inputSession.whenSettled(), imageTextController.whenSettled()]);
     }
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection,
+      whenInputSettled,
+      get inputPending() { return inputPending(); },
       focus() { view.focus(); },
-      destroy() { destroyed = true; imageTextController.setActive(false); imageTextSizer.destroy(); cancelCompositionFinish(); view.__relatumCompositionActive = false; host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
+      destroy() { destroyed = true; imageTextController.setActive(false); imageTextSizer.destroy(); inputSession.destroy(); delete view.__relatumInputSession; host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },
       get view() { return view; },
     };
   }
@@ -2370,6 +2707,7 @@
     isRemoteTarget,
     isDangerousTarget,
     headingMarkerProjectionEnd,
+    richBlockEditPosition,
   };
   window.RelatumNoteLiveEditor = { create, renderMarkdown };
 })();

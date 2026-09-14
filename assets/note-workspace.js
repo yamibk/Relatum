@@ -440,6 +440,16 @@
     };
   }
 
+  function whenEditorInputSettled() {
+    return liveEditor && typeof liveEditor.whenInputSettled === 'function'
+      ? liveEditor.whenInputSettled()
+      : Promise.resolve(true);
+  }
+
+  function editorInputPending() {
+    return !!(liveEditor && liveEditor.inputPending);
+  }
+
   function editorScrollElement() {
     if (state.viewMode === 'reading' && readingHost) return readingHost;
     if (!liveEditor) return fallbackEditor;
@@ -604,8 +614,10 @@
     requestAnimationFrame(() => { readingHost.scrollTop = Math.max(0, Number(documentState.scrollTop) || 0); });
   }
 
-  function setViewMode(mode) {
+  async function setViewMode(mode) {
     const next = normalizeViewMode(mode);
+    if (next === state.viewMode) return;
+    if (editorInputPending()) await whenEditorInputSettled();
     if (next === state.viewMode) return;
     if (liveEditor) liveEditor.setImageTextMode(false);
     if (state.current) rememberEditorState(state.current);
@@ -1030,6 +1042,7 @@
   }
   async function openBlankTab(options) {
     const previous = state.current;
+    if (previous && editorInputPending()) await whenEditorInputSettled();
     rememberEditorState(previous);
     if (previous && !(options && options.skipSave)) flushSave(previous);
     const tabPath = newBlankTabToken();
@@ -1044,6 +1057,7 @@
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
     if (isBlankTab(tabPath)) {
       const previous = state.current;
+      if (previous && editorInputPending()) await whenEditorInputSettled();
       rememberEditorState(previous);
       if (previous && !(options && options.skipSave)) flushSave(previous);
       state.activeTab = tabPath;
@@ -1415,6 +1429,7 @@
   }
   async function flushSave(documentState) {
     const target = documentState || state.current;
+    if (target && target === state.current && editorInputPending()) await whenEditorInputSettled();
     if (target === state.current) { clearTimeout(state.saveTimer); rememberEditorState(target); }
     if (!target || !hasPendingEdits(target)) return state.saveChain;
     const path = target.path; const generation = target.editGeneration; const content = target.content;
@@ -1454,6 +1469,7 @@
   }
   async function openNote(path, options) {
     if (!path) return false;
+    if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled();
     selectNoteTab(path, !(options && options.reuseActiveTab === false));
     if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); return true; }
     const previous = state.current; rememberEditorState(previous);
@@ -1766,11 +1782,13 @@
   root.addEventListener('click', async (event) => {
     const imageTextAction = event.target.closest('[data-image-text-action]');
     if (imageTextAction && imageTextTools && imageTextTools.contains(imageTextAction) && liveEditor) {
+      if (editorInputPending()) await whenEditorInputSettled();
       liveEditor.imageTextCommand(imageTextAction.dataset.imageTextAction, imageTextAction.dataset.imageTextValue || '');
       return;
     }
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
+    if (editorInputPending()) await whenEditorInputSettled();
     const name = action.dataset.noteAction;
     if (name === 'new-note') createEntry('note');
     else if (name === 'new-tab') openBlankTab();
@@ -1781,7 +1799,7 @@
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
     else if (name === 'toggle-image-text' && liveEditor && !action.disabled) liveEditor.setImageTextMode(!state.imageText.active);
-    else if (name === 'toggle-source' && state.current) setViewMode(state.viewMode === 'source' ? 'live' : 'source');
+    else if (name === 'toggle-source' && state.current) await setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'toggle-settings') setNoteSettingsOpen(!state.settingsOpen);
     else if (name === 'current-menu' && state.current) {
       if (contextMenu && !contextMenu.hidden && contextMenu.dataset.source === 'current-menu') {
@@ -1872,6 +1890,7 @@
       else setShortcutStatus(noteSettingsCopy('invalid'));
       return;
     }
+    if (event.isComposing || event.keyCode === 229) return;
     if (state.settingsOpen && event.key === 'Escape') {
       event.preventDefault();
       event.stopImmediatePropagation();

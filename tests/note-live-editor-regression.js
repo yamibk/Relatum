@@ -413,6 +413,12 @@ assert.strictEqual(syntax.headingMarkerProjectionEnd(headingDoc, 10, 13), 16,
   'all separator whitespace after an opening ATX marker must be hidden');
 assert.strictEqual(syntax.headingMarkerProjectionEnd(headingDoc, headingDoc.value.length - 1, headingDoc.value.length), headingDoc.value.length,
   'a closing heading marker must not consume preceding content or unrelated whitespace');
+assert.strictEqual(syntax.richBlockEditPosition({kind:'math', from:20, source:'$$x^2$$'}), 22,
+  'single-line display math must reveal a caret after the opening delimiter');
+assert.strictEqual(syntax.richBlockEditPosition({kind:'math', from:20, source:'$$\n  x^2\n$$'}), 25,
+  'multiline display math must reveal a caret at its first content character');
+assert.strictEqual(syntax.richBlockEditPosition({kind:'mermaid', from:10, source:'```mermaid\ngraph TD\n```'}), 21,
+  'fenced rich blocks must reveal a caret on the editable body line');
 
 assert.strictEqual(syntax.scanBlockSpecsFromString('$$\n' + 'x'.repeat(32 * 1024) + '\n$$').length, 0,
   'oversized block math must remain source');
@@ -443,6 +449,20 @@ assert(editorSource.includes('onDocChanged'), 'the editor must report metadata-o
 assert(editorSource.includes('function renderMarkdown(host, source, notePath, options)'),
   'reading mode must reuse the safe Markdown renderer and authorized local image path');
 assert(editorSource.includes('compositionstart') && editorSource.includes('compositionend'), 'explicit IME lifecycle is required');
+assert(editorSource.includes("phase: 'idle'") && editorSource.includes("this.phase = 'composing'")
+  && editorSource.includes("this.phase = 'settling'") && editorSource.includes('whenInputSettled()'),
+  'IME input needs a single observable session and a settlement barrier');
+const compositionHandler = editorSource.slice(
+  editorSource.indexOf('compositionstart(event, view)'), editorSource.indexOf('compositionend(event, view)'),
+);
+assert(compositionHandler.includes('inputSession.begin(view)') && !compositionHandler.includes('view.dispatch'),
+  'compositionstart must leave the native CodeMirror composition transaction untouched');
+assert(editorSource.includes('committedDoc: null') && editorSource.includes('const doc = this.committedDoc || view.state.doc'),
+  'snapshots must retain the last committed document while a candidate is provisional');
+assert((editorSource.match(/EditorView\.atomicRanges\.of\(\(view\)/g) || []).length >= 2,
+  'block and inline object projections must publish atomic cursor ranges');
+assert(editorSource.includes('mapPos(spec.from, 1)') && editorSource.includes('mapPos(spec.to, -1)'),
+  'composition mapping must keep text inserted beside a rich object outside its non-inclusive range');
 assert(editorSource.includes('note-live-source-mark'), 'source marker roles must be emitted by Relatum decorations');
 assert(editorSource.includes("bold: ['Mod-b']") && editorSource.includes("'code-block': ['Mod-Shift-k']")
   && editorSource.includes('shortcutCompartment.of(keymap.of(customKeyBindings()))'),
@@ -480,8 +500,14 @@ assert(editorSource.includes('setImageTextMode') && editorSource.includes('image
   'the workspace needs a narrow image-selection and image-text command contract');
 assert(editorSource.includes("const editor = document.createElement('textarea')")
   && editorSource.includes('editor.maxLength = 1000')
-  && editorSource.includes("event.key === 'Enter' && (event.ctrlKey || event.metaKey)"),
+  && editorSource.includes("event.key === 'Enter' && (event.ctrlKey || event.metaKey)")
+  && editorSource.includes("editor.addEventListener('compositionstart', onCompositionStart)")
+  && editorSource.includes('if (event.isComposing || event.keyCode === 229 || textComposing) return;'),
   'the native plain-text textarea must retain IME and one-shot keyboard commit behavior');
+assert(editorSource.includes("span.addEventListener('mousedown', (event) => this.reveal(view, event))")
+  && editorSource.includes("span.setAttribute('aria-label', '点击编辑公式源码')")
+  && editorSource.includes("wrap.addEventListener('mousedown', (event) => this.reveal(view, event))"),
+  'rendered inline and block formulas must own pointer-down before atomic projection teardown');
 assert(stylesSource.includes('.note-live-image-frame.is-image-text-mode .note-image-text-box')
   && stylesSource.includes('pointer-events: none;'),
   'visible overlays must remain pointer-transparent outside image-text mode');

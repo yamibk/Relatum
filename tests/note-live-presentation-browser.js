@@ -167,24 +167,93 @@ body { margin: 0; }
     await page.locator('.note-live-task').click();
     assert((await page.evaluate(() => editor.snapshot().value)).startsWith('- [x] task'), 'checkbox must still edit Markdown');
 
-    // Compartment switches must preserve the native history and focused cursor.
+    // Exercise a real Chromium composition stream, including the provisional
+    // Latin text emitted by Windows Pinyin before the selected Hanzi commit.
+    // Relatum must never treat those intermediate DOM values as committed data.
     await page.evaluate(() => {
-      editor.setDocument({value:'```c\n// 正文\n```', notePath:'ime.md', anchor:10, head:10});
+      editor.setDocument({value:'甲乙', notePath:'ime-middle.md', anchor:1, head:1});
       editor.focus();
     });
     const cdp = await page.context().newCDPSession(page);
-    await cdp.send('Input.imeSetComposition', {text:'中文',selectionStart:2,selectionEnd:2});
-    await cdp.send('Input.insertText', {text:'中文'});
+    for (const text of ['z', 'zh', 'zhong']) {
+      await cdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+    }
+    const provisional = await page.evaluate(() => editor.snapshot());
+    assert.equal(provisional.value, '甲乙', 'snapshot must hide provisional Pinyin from saving');
+    await cdp.send('Input.insertText', {text:'中'});
     await settle();
     const composed = await page.evaluate(() => editor.snapshot());
-    assert.equal(composed.value, '```c\n// 正文中文\n```');
+    assert.equal(composed.value, '甲中乙');
+    assert.equal(composed.anchor, composed.head, 'middle insertion must leave an empty caret');
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '甲乙', 'one undo must remove one selected candidate');
+
+    // Compartment switches must preserve the native history and focused cursor.
+    await page.evaluate(() => {
+      editor.setDocument({value:'```c\n// 正文\n```', notePath:'ime-code.md', anchor:10, head:10});
+      editor.focus();
+    });
+    for (const text of ['z', 'zh', 'zhong', 'zhongwen']) {
+      await cdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+    }
+    await cdp.send('Input.insertText', {text:'中文'});
+    await settle();
+    const codeComposed = await page.evaluate(() => editor.snapshot());
+    assert.equal(codeComposed.value, '```c\n// 正文中文\n```');
     await page.evaluate(() => { editor.setSourceMode(true); editor.setSourceMode(false); });
     await settle();
     const switched = await page.evaluate(() => editor.snapshot());
-    assert.equal(switched.value, composed.value);
-    assert.equal(switched.head, composed.head);
+    assert.equal(switched.value, codeComposed.value);
+    assert.equal(switched.head, codeComposed.head);
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => editor.snapshot().value), '```c\n// 正文\n```');
+
+    // A rendered formula must be directly enterable and remain stable while
+    // the IME replaces its provisional Pinyin with the chosen character.
+    await page.evaluate(() => editor.setDocument({value:'公式 $x^2$ 结尾', notePath:'ime-math.md'}));
+    await settle();
+    await page.locator('.note-live-inline-math').click();
+    await settle();
+    const formulaCaret = await page.evaluate(() => editor.snapshot());
+    assert(formulaCaret.anchor === formulaCaret.head && formulaCaret.head > formulaCaret.value.indexOf('$x^2')
+      && formulaCaret.head < formulaCaret.value.lastIndexOf('$') + 1, 'formula click must reveal an internal source caret');
+    for (const text of ['z', 'zi']) {
+      await cdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+    }
+    await cdp.send('Input.insertText', {text:'字'});
+    await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '公式 $x^2字$ 结尾');
+
+    await page.evaluate(() => editor.setDocument({value:'$$x^2$$', notePath:'ime-block-math.md'}));
+    await settle();
+    await page.locator('[aria-label="点击编辑 math 源码"]').click();
+    await settle();
+    const blockFormulaCaret = await page.evaluate(() => editor.snapshot());
+    assert.deepEqual({anchor:blockFormulaCaret.anchor, head:blockFormulaCaret.head}, {anchor:2, head:2},
+      'block formula click must reveal an empty caret after its opening delimiter');
+    for (const text of ['h', 'han']) {
+      await cdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+    }
+    await cdp.send('Input.insertText', {text:'汉'});
+    await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '$$汉x^2$$');
+
+    // Images remain projected, but text insertion beside them must keep an
+    // empty text caret and must not select/replace the image source range.
+    const imeImageSource = '前文\n\n![[fixture.png|240]]\n\n后文';
+    await page.evaluate(source => {
+      const at = source.indexOf('后文') + 1;
+      editor.setDocument({value:source, notePath:'ime-image.md', anchor:at, head:at});
+      editor.focus();
+    }, imeImageSource);
+    for (const text of ['s', 'sh', 'shuru']) {
+      await cdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+    }
+    await cdp.send('Input.insertText', {text:'输入'});
+    await settle();
+    const imageAdjacent = await page.evaluate(() => editor.snapshot());
+    assert.equal(imageAdjacent.value, imeImageSource.replace('后文', '后输入文'));
+    assert.equal(imageAdjacent.anchor, imageAdjacent.head);
     await cdp.detach();
 
     // Images stay visual while selected, align with text, and commit one
@@ -226,6 +295,37 @@ body { margin: 0; }
     await page.screenshot({path:path.join(output, 'image-selected.png')});
     assert(!await page.locator('.cm-content').innerText().then(text => text.includes('![[fixture.png')),
       'selecting an image in Live Preview must not expose source');
+
+    // A candidate-window blur must not commit the textarea's provisional
+    // Latin spelling. The final composition value is one image transaction.
+    await page.evaluate(() => { editor.setImageTextMode(true); editor.imageTextCommand('add'); });
+    await page.locator('.note-live-image-frame.is-block').click({position:{x:100,y:55}});
+    await page.locator('.note-image-text-editor').waitFor();
+    const imageTextDuringBlur = await page.evaluate(() => {
+      const input = document.querySelector('.note-image-text-editor');
+      input.dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true, data:''}));
+      input.value = 'zi';
+      input.dispatchEvent(new InputEvent('input', {bubbles:true, data:'zi', inputType:'insertCompositionText'}));
+      input.blur();
+      const retained = input.isConnected;
+      input.value = '字';
+      input.dispatchEvent(new InputEvent('input', {bubbles:true, data:'字', inputType:'insertCompositionText'}));
+      input.dispatchEvent(new CompositionEvent('compositionend', {bubbles:true, data:'字'}));
+      return retained;
+    });
+    assert(imageTextDuringBlur, 'blur during composition must retain the native textarea until the final candidate arrives');
+    await settle();
+    const imageTextValue = await page.evaluate(() => {
+      const parsed = MarkdownMini.parseImageBlock(editor.snapshot().value.split('\n').find(line => line.includes('fixture.png')));
+      return parsed && parsed.imageTextItems && parsed.imageTextItems[0] && parsed.imageTextItems[0].text;
+    });
+    assert.equal(imageTextValue, '字');
+    await page.keyboard.press('Control+z');
+    await page.evaluate(() => editor.setImageTextMode(false));
+    await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), imageSource,
+      'one undo must remove the complete image-text candidate commit');
+
     const handleBox = await page.locator('.note-live-image-resize-handle').boundingBox();
     assert(handleBox, 'resize handle must have browser geometry');
     await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);

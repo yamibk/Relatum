@@ -51,7 +51,7 @@
   <script src="markdown.js"></script>
   <script src="mermaid-renderer.js"></script>
   <script src="vendor/codemirror/relatum-codemirror.min.js"></script>
-  <script src="note-live-editor.js?live-preview-finish-11"></script>
+  <script src="note-live-editor.js?ime-session-15"></script>
   <script>
     (function () {
       'use strict';
@@ -113,12 +113,29 @@
       });
       document.querySelector('[data-role="control-ime"]').addEventListener('click', function () {
         var before = changeCount;
+        var committed = editor.snapshot().value;
+        var at = editor.view.state.selection.main.head;
         editor.view.contentDOM.dispatchEvent(new Event('compositionstart', { bubbles: true }));
-        editor.replaceSelection('中');
+        editor.view.dispatch({
+          changes: { from: at, to: at, insert: 'z' },
+          selection: window.RelatumCodeMirror.EditorSelection.cursor(at + 1),
+          userEvent: 'input.type.compose'
+        });
+        var provisionalHidden = editor.snapshot().value === committed;
+        editor.view.dispatch({
+          changes: { from: at, to: at + 1, insert: '中' },
+          selection: window.RelatumCodeMirror.EditorSelection.cursor(at + 1),
+          userEvent: 'input.type.compose'
+        });
         var during = changeCount - before;
         editor.view.contentDOM.dispatchEvent(new Event('compositionend', { bubbles: true }));
         requestAnimationFrame(function () { requestAnimationFrame(function () {
-          document.documentElement.dataset.noteLiveIme = JSON.stringify({ during: during, after: changeCount - before });
+          document.documentElement.dataset.noteLiveIme = JSON.stringify({
+            during: during,
+            after: changeCount - before,
+            provisionalHidden: provisionalHidden,
+            finalPrefix: editor.snapshot().value.slice(0, 1)
+          });
         }); });
       });
       function runLongPreviewProbe() {
