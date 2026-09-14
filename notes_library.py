@@ -65,6 +65,22 @@ _INLINE_CODE_RE = re.compile(r"(`+)(.*?)\1")
 _IMAGE_TEXT_COMMENT_RE = re.compile(
     r"[ \t]+<!--relatum:image-text:v(\d+):([A-Za-z0-9_-]+)-->[ \t]*$"
 )
+_IMAGE_TEXT_ANY_RE = re.compile(r"[ \t]*<!--relatum:image-text:v\d+:[^\r\n]*?-->")
+
+
+def _image_text_payload(comment: str) -> list[dict] | None:
+    match = re.fullmatch(r"\s*<!--relatum:image-text:v1:([A-Za-z0-9_-]+)-->", comment)
+    if not match or _decode_image_text_items(match[1]) is None:
+        return None
+    encoded = match[1]
+    return json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))["items"]
+
+
+def _image_text_comment(items: list[dict]) -> str:
+    if not items:
+        return ""
+    raw = json.dumps({"items": items}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return " <!--relatum:image-text:v1:" + base64.urlsafe_b64encode(raw).decode().rstrip("=") + "-->"
 _REMOTE_IMAGE_TARGET_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 _IMAGE_TEXT_SIZES = {"sm", "md", "lg", "xl"}
 _IMAGE_TEXT_COLORS = {
@@ -225,7 +241,8 @@ def _default_atomic_text(target: Path, text: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".relatum-note-{os.getpid()}-{uuid.uuid4().hex[:10]}.tmp")
     try:
-        tmp.write_text(text, encoding="utf-8")
+        # Keep persisted bytes identical to the content used for revision hashes.
+        tmp.write_text(text, encoding="utf-8", newline="")
         os.replace(tmp, target)
     finally:
         try:
@@ -1184,6 +1201,137 @@ class NotesStore:
             "rewritten": len(updates),
             "warnings": warnings,
         }
+
+    def image_text_operation(self, relative: object, content: object, expected_revision: object,
+                             selected: object, png: bytes | None = None,
+                             rendered_lines: object = None) -> dict:
+        """Destructive image-text edit: no snapshot, with targeted history sanitization.
+
+        Selection uses a 1-based line and its exact source, avoiding JS/Python
+        UTF-16 offset differences. Caller holds the notes mutation lock.
+        """
+        normalized = self.normalize_path(relative)
+        target = self._absolute(normalized)
+        if target.suffix.casefold() != NOTE_SUFFIX or not isinstance(content, str):
+            raise NotesError("只能处理 Markdown 笔记")
+        if len(content.encode("utf-8")) > MAX_NOTE_BYTES:
+            raise NotesError("笔记过大", status=413, code="too_large")
+        current = self._read_note_bytes(target)
+        if expected_revision != _revision(current):
+            raise NotesError("笔记已在外部修改，请重新载入后重试", status=409, code="revision_conflict")
+        if selected is not None and (not isinstance(selected, dict) or type(selected.get("line")) is not int):
+            raise NotesError("缺少选中图片")
+        if selected is None and png is not None:
+            raise NotesError("合并前请先选中图片")
+        lines = re.findall(r"[^\n]*\n|[^\n]+$", content)
+        if rendered_lines is not None and (not isinstance(rendered_lines, list)
+                or any(type(line) is not int or not 1 <= line <= len(lines) for line in rendered_lines)):
+            raise NotesError("图片语法位置无效")
+        rendered = set(rendered_lines) if rendered_lines is not None else None
+        index = selected["line"] - 1 if selected is not None else -1
+        if selected is not None and (not 0 <= index < len(lines) or lines[index].rstrip("\r\n") != selected.get("source")):
+            raise NotesError("选中图片已经改变", status=409, code="selection_changed")
+
+        # The editor's image-text projection is a standalone local image block.
+        # Fences, indented code and display math never project image text.
+        valid: dict[int, tuple[str, str, list[dict]]] = {}
+        fence = ""
+        math = False
+        for number, line in enumerate(lines):
+            bare = line.rstrip("\r\n")
+            if rendered is not None:
+                if number + 1 not in rendered:
+                    continue
+            marker = _FENCE_RE.match(bare)
+            if rendered is None and fence:
+                if re.fullmatch(r"[ \t]{0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", bare):
+                    fence = ""
+                continue
+            if rendered is None and marker:
+                fence = marker[1]
+                continue
+            if rendered is None and bare.strip() == "$$":
+                math = not math
+                continue
+            if rendered is None and (math or bare.startswith(("    ", "\t"))):
+                continue
+            matches = list(_IMAGE_TEXT_ANY_RE.finditer(bare))
+            source = _IMAGE_TEXT_ANY_RE.sub("", bare)
+            image_target = _standalone_local_image_target(source)
+            if not image_target or len(matches) > 1:
+                continue
+            items = _image_text_payload(matches[0][0]) if matches else []
+            if items is None:
+                continue
+            try:
+                self.resolve_image(normalized, image_target)
+            except (NotesError, OSError):
+                continue
+            valid[number] = (source, image_target, items)
+        if selected is not None and index not in valid:
+            raise NotesError("选中的图片无法加载或不支持图片文字")
+        source, image_target, items = valid[index] if selected is not None else ('', '', [])
+        replacement = source
+        if png is not None:
+            if not items:
+                raise NotesError("图片没有可合并的文字框")
+            uploaded = self.upload_image(normalized, "merged.png", png, "image/png")
+            # Preserve Obsidian width, alt text, title and surrounding whitespace.
+            if source.strip().startswith("![["):
+                start = source.index("![[") + 3
+                end = source.find("|", start)
+                if end < 0:
+                    end = source.index("]]", start)
+                replacement = source[:start] + uploaded["path"] + source[end:]
+            else:
+                start = source.index("](") + 2
+                start += len(source[start:]) - len(source[start:].lstrip())
+                if source[start:start + 1] == "<":
+                    start += 1
+                replacement = source[:start] + uploaded["path"] + source[start + len(image_target):]
+
+        keep_ids: set[str] = set()
+        for number, line in enumerate(lines):
+            if number == index:
+                ending = line[len(line.rstrip("\r\n")):]
+                lines[number] = replacement + ending
+            elif number in valid:
+                keep_ids.update(item["id"] for item in valid[number][2])
+            else:
+                lines[number] = _IMAGE_TEXT_ANY_RE.sub("", line)
+        updated = "".join(lines)
+
+        # Sanitize existing recovery files in place. No backup or recovery copy
+        # of the removed metadata is created, including on a failed retry.
+        manifest_path, manifest = self._history_manifest(normalized)
+        history_files = []
+        for entry in manifest["snapshots"]:
+            name = entry.get("file", "") if isinstance(entry, dict) else ""
+            if not re.fullmatch(r"[0-9]+-[0-9a-f]{8}\.md", name):
+                raise NotesError("恢复历史文件名无效", code="unsafe_path")
+            history_path = manifest_path.parent / name
+            if _is_reparse(manifest_path.parent) or _is_reparse(history_path):
+                raise NotesError("恢复历史不能是链接", code="unsafe_path")
+            history_files.append((entry, history_path))
+        def sanitize(match):
+            payload = _image_text_payload(match[0])
+            return _image_text_comment([item for item in payload or [] if item["id"] in keep_ids])
+        try:
+            for entry, history_path in history_files:
+                raw = self._read_note_bytes(history_path)
+                cleaned = _IMAGE_TEXT_ANY_RE.sub(sanitize, self._decode_note(raw)).encode("utf-8")
+                if cleaned != raw:
+                    self.atomic_bytes(history_path, cleaned)
+                entry.update(revision=_revision(cleaned), size=len(cleaned))
+            if history_files:
+                self._write_history_manifest(manifest_path, manifest)
+        except OSError as err:
+            raise NotesError("历史数据未全部清理，当前正文尚未替换，请重试", status=500,
+                             code="history_cleanup_failed") from err
+        self.atomic_text(target, updated)
+        encoded = updated.encode("utf-8")
+        self._cache_document(normalized, encoded)
+        return {"path": normalized, "content": updated, "revision": _revision(encoded)}
 
     def upload_image(self, note: object, name: object, content: bytes, media_type: object = "") -> dict:
         note_rel = self.normalize_path(note)

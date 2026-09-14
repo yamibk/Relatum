@@ -498,6 +498,10 @@ assert(editorSource.includes('function commitImageTextItems(items, selectedId)')
 assert(editorSource.includes('setImageTextMode') && editorSource.includes('imageTextCommand')
   && editorSource.includes('onImageSelectionChange'),
   'the workspace needs a narrow image-selection and image-text command contract');
+assert(editorSource.includes('restoreActiveSelection(view)')
+  && editorSource.includes('const pinned = this.validActiveRange(view);')
+  && editorSource.includes('this.restoreActiveSelection(view);'),
+  'an open image-text toolbar must pin its image across transient focus and projection selection drift');
 assert(editorSource.includes("const editor = document.createElement('textarea')")
   && editorSource.includes('editor.maxLength = 1000')
   && editorSource.includes("event.key === 'Enter' && (event.ctrlKey || event.metaKey)")

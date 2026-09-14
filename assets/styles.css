@@ -1184,7 +1184,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   align-items: center;
   gap: 5px;
   width: max-content;
-  max-width: min(620px, calc(100vw - 36px));
+  max-width: min(780px, calc(100vw - 36px));
   padding: 7px 8px;
   overflow-x: auto;
   border: 1px solid rgba(39,39,35,.12);
@@ -1215,6 +1215,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-image-text-action.is-selected,
 .note-image-text-sizes button.is-selected { color: #fff; background: #22231f; }
 .note-image-text-action:disabled { opacity: .3; cursor: default; }
+.note-image-text-merge:disabled { opacity: .4; cursor: wait; }
 .note-image-text-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .note-image-text-sizes { display: flex; align-items: center; gap: 1px; }
 .note-image-text-sizes button:nth-child(1) { font-size: 9px; }

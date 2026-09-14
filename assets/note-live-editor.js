@@ -143,7 +143,7 @@
     return false;
   }
 
-  function scanBlockSpecs(state, from, to, reusable) {
+  function scanBlockSpecs(state, from, to, reusable, completeTree) {
     const doc = state.doc;
     const specs = [];
     if (!doc.length) return specs;
@@ -158,7 +158,7 @@
       seen.add(key); raw.push(spec);
     };
 
-    const tree = syntaxTree(state);
+    const tree = completeTree || syntaxTree(state);
     tree.iterate({
       from: start, to: end,
       enter(node) {
@@ -717,6 +717,7 @@
       let pendingCommit = false;
       let finishFrame = 0;
       let pagePointerPreeditText = null;
+      let dismissAfterFinish = false;
       const finish = (commit) => {
         if (finished) return;
         finished = true;
@@ -735,6 +736,7 @@
         if (!commit || !text.trim()) {
           imageTextController.select(isNew ? '' : draft.id);
           imageTextController.endDraft();
+          if (dismissAfterFinish) imageTextController.setActive(false);
           return;
         }
         const items = currentItems();
@@ -746,6 +748,7 @@
         } finally {
           imageTextController.endDraft();
         }
+        if (dismissAfterFinish) imageTextController.setActive(false);
       };
       const finishCommittedText = () => {
         if (finished || textComposing) { pendingCommit = true; return; }
@@ -793,18 +796,37 @@
         if (pendingCommit || document.activeElement !== editor) finishCommittedText();
       };
       const onPagePointerDown = (event) => {
-        if (finished || !textComposing || editor.contains(event.target)) return;
-        pagePointerPreeditText = editor.value;
-        pendingCommit = true;
+        if (finished || editor.contains(event.target)) return;
+        const target = event.target instanceof Element ? event.target : null;
+        const keepsToolsOpen = target && target.closest(
+          '[data-role="note-image-text-tools"], [data-role="note-image-text-toggle"]'
+        );
+        if (keepsToolsOpen) {
+          if (textComposing) {
+            pagePointerPreeditText = editor.value;
+            pendingCommit = true;
+          }
+          return;
+        }
+        if (textComposing) {
+          pagePointerPreeditText = editor.value;
+          pendingCommit = true;
+        }
         if (view.dom.contains(event.target)) {
-          // Do not let CodeMirror replace the selected image range before the
-          // textarea has converted its frozen preedit into one image-block
-          // transaction. The first blank click finishes the overlay; a later
-          // click may place the document caret normally.
+          // Keep CodeMirror from replacing the selected image range while the
+          // hidden native textarea completes its composition lifecycle.
           event.preventDefault();
           event.stopImmediatePropagation();
-          editor.blur();
         }
+        // Close the visible UI synchronously, but keep the native textarea in
+        // the DOM until compositionend. Removing an active IME host here can
+        // discard the raw preedit value on WebView2.
+        dismissAfterFinish = true;
+        editor.style.visibility = 'hidden';
+        editor.setAttribute('aria-hidden', 'true');
+        imageTextController.suppressDraftUi();
+        editor.blur();
+        if (!textComposing) finishCommittedText();
       };
       editor.addEventListener('blur', onBlur);
       editor.addEventListener('keydown', onKeyDown);
@@ -889,6 +911,7 @@
     if (imageTextController && frame.classList.contains('is-selected')) {
       const adapter = {
         frame,
+        image,
         setMode(active, armed, selectedId) {
           frame.classList.toggle('is-image-text-mode', !!active);
           frame.classList.toggle('is-image-text-armed', !!(active && armed));
@@ -2290,6 +2313,8 @@
       adapter: null,
       draftActive: false,
       draftWaiters: [],
+      selectionRestoreFrame: 0,
+      uiSuppressed: false,
       defaults: {
         size: imageTextSizes.includes(requestedImageTextDefaults.size) ? requestedImageTextDefaults.size : 'md',
         color: imageTextColors.includes(requestedImageTextDefaults.color) ? requestedImageTextDefaults.color : 'white',
@@ -2307,12 +2332,13 @@
         return this.draftActive ? new Promise((resolve) => this.draftWaiters.push(resolve)) : Promise.resolve(true);
       },
       notify() {
+        const visibleActive = this.active && !this.uiSuppressed;
         const selected = this.adapter && this.selectedId
           ? Array.from(this.adapter.frame.querySelectorAll('[data-image-text-id]'))
             .find((candidate) => candidate.dataset.imageTextId === this.selectedId) : null;
         safeOptions.onImageSelectionChange({
           available: !!this.available,
-          active: !!this.active,
+          active: !!visibleActive,
           armed: !!this.armed,
           selectedId: this.selectedId,
           size: selected ? selected.dataset.imageTextSize : this.defaults.size,
@@ -2321,13 +2347,19 @@
         });
       },
       render() {
-        host.classList.toggle('is-image-text-mode', this.active);
-        if (this.adapter) this.adapter.setMode(this.active, this.armed, this.selectedId);
+        const visibleActive = this.active && !this.uiSuppressed;
+        host.classList.toggle('is-image-text-mode', visibleActive);
+        if (this.adapter) this.adapter.setMode(visibleActive, this.armed, this.selectedId);
         this.notify();
+      },
+      suppressDraftUi() {
+        if (!this.active || this.uiSuppressed) return;
+        this.uiSuppressed = true;
+        this.render();
       },
       register(adapter) {
         this.adapter = adapter;
-        adapter.setMode(this.active, this.armed, this.selectedId);
+        adapter.setMode(this.active && !this.uiSuppressed, this.armed, this.selectedId);
         this.notify();
         return () => { if (this.adapter === adapter) this.adapter = null; };
       },
@@ -2335,6 +2367,30 @@
         this.pendingRange = { from, to };
         this.activeRange = { from, to };
         this.selectedId = selectedId || '';
+      },
+      cancelSelectionRestore() {
+        if (this.selectionRestoreFrame) cancelAnimationFrame(this.selectionRestoreFrame);
+        this.selectionRestoreFrame = 0;
+      },
+      validActiveRange(view) {
+        if (!this.activeRange || this.activeRange.from < 0 || this.activeRange.to > view.state.doc.length) return null;
+        const line = view.state.doc.lineAt(this.activeRange.from);
+        if (line.from !== this.activeRange.from || line.to !== this.activeRange.to) return null;
+        const parsed = parseStandaloneImage(line.text);
+        return parsed && !isRemoteTarget(parsed.target) && parsed.imageTextEditable !== false
+          ? { from: line.from, to: line.to } : null;
+      },
+      restoreActiveSelection(view) {
+        if (this.selectionRestoreFrame || !this.active) return;
+        this.selectionRestoreFrame = requestAnimationFrame(() => {
+          this.selectionRestoreFrame = 0;
+          if (!this.active) return;
+          const pinned = this.validActiveRange(view);
+          if (!pinned) { this.setActive(false); return; }
+          const current = exactSelectedImageRange(view.state);
+          if (current && current.from === pinned.from && current.to === pinned.to) return;
+          view.dispatch({ selection: EditorSelection.range(pinned.from, pinned.to) });
+        });
       },
       syncSelection(view) {
         const range = !sourceMode ? exactSelectedImageRange(view.state) : null;
@@ -2350,7 +2406,14 @@
           this.pendingRange = null;
         } else if (this.active && (!range || !this.activeRange
                    || range.from !== this.activeRange.from || range.to !== this.activeRange.to)) {
-          this.setActive(false);
+          const pinned = this.validActiveRange(view);
+          if (!pinned) { this.setActive(false); return; }
+          // Opening the image tools pins their image. Focus changes and rich
+          // block redraws may transiently collapse the CodeMirror selection;
+          // those internal updates must not masquerade as an outside click.
+          this.available = true;
+          this.restoreActiveSelection(view);
+          this.notify();
           return;
         }
         if (!available && this.active) { this.setActive(false); return; }
@@ -2358,11 +2421,13 @@
       },
       setActive(value, view) {
         const next = !!value && this.available;
+        this.uiSuppressed = false;
         if (next && view) {
           const range = exactSelectedImageRange(view.state);
           this.activeRange = range ? { from: range.from, to: range.to } : null;
         }
         if (!next) {
+          this.cancelSelectionRestore();
           if (this.adapter) this.adapter.cancelDraft();
           this.armed = false; this.selectedId = ''; this.activeRange = null; this.pendingRange = null;
         }
@@ -2776,6 +2841,69 @@
       return imageTextController.setActive(active, view);
     }
 
+    function imageTextTarget() {
+      const range = imageTextController.validActiveRange(view);
+      if (!range) return null;
+      const line = view.state.doc.lineAt(range.from);
+      return { line: line.number, source: line.text };
+    }
+
+    function imageTextRenderedLines() {
+      forceParsing(view, view.state.doc.length, 3000);
+      const tree = syntaxTree(view.state);
+      if (!tree || tree.length < view.state.doc.length) throw new Error('笔记语法尚未解析完成，请重试');
+      const specs = scanBlockSpecs(view.state, 0, view.state.doc.length, [], tree);
+      return specs.filter((spec) => spec.kind === 'image'
+        && !specs.some((outer) => outer.kind !== 'image' && outer.from <= spec.from && outer.to >= spec.to))
+        .map((spec) => view.state.doc.lineAt(spec.from).number);
+    }
+
+    async function exportImageTextPng() {
+      const adapter = imageTextController.adapter;
+      if (!adapter || !imageTextTarget()) throw new Error('请先选中图片');
+      const { frame, image } = adapter;
+      await image.decode();
+      if (document.fonts) await document.fonts.ready;
+      const width = image.naturalWidth, height = image.naturalHeight;
+      if (!width || !height || width > 16384 || height > 16384 || width * height > 64 * 1024 * 1024) {
+        throw new Error('图片尺寸过大或无法读取');
+      }
+      const rect = image.getBoundingClientRect();
+      if (!rect.width || !rect.height) throw new Error('图片尚未显示');
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      try {
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('无法创建图片');
+        // Freeze animated images before asynchronous SVG decoding.
+        context.drawImage(image, 0, 0, width, height);
+        const root = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+        root.style.cssText = `position:relative;width:${rect.width}px;height:${rect.height}px;transform-origin:0 0;transform:scale(${width / rect.width},${height / rect.height});`;
+        frame.querySelectorAll('.note-image-text-box').forEach((label) => {
+          const box = document.createElementNS('http://www.w3.org/1999/xhtml', 'span');
+          const style = getComputedStyle(label);
+          // Only text presentation is exported; selection chrome never enters the PNG.
+          ['position', 'box-sizing', 'width', 'height', 'min-width', 'max-width', 'padding',
+            'left', 'top', 'transform', 'color', 'font-family', 'font-size', 'font-weight',
+            'font-style', 'line-height', 'text-align', 'white-space', 'overflow-wrap',
+            'word-break', 'letter-spacing', 'text-shadow'].forEach((key) => {
+            box.style.setProperty(key, style.getPropertyValue(key));
+          });
+          box.textContent = label.textContent;
+          root.appendChild(box);
+        });
+        if (!root.childNodes.length) throw new Error('图片没有可合并的文字框');
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="${width}" height="${height}">${new XMLSerializer().serializeToString(root)}</foreignObject></svg>`;
+        const overlay = new Image();
+        overlay.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        await overlay.decode();
+        context.drawImage(overlay, 0, 0);
+        return await new Promise((resolve, reject) => canvas.toBlob((blob) => {
+          if (blob) resolve(blob); else reject(new Error('PNG 生成失败'));
+        }, 'image/png'));
+      } finally { canvas.width = 0; canvas.height = 0; }
+    }
+
     function imageTextCommand(name, value) {
       if (inputSession.pending()) return false;
       return imageTextController.command(String(name || ''), value);
@@ -2791,7 +2919,7 @@
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection,
-      whenInputSettled,
+      whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
       destroy() { destroyed = true; imageTextController.setActive(false); imageTextSizer.destroy(); inputSession.destroy(); delete view.__relatumInputSession; host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode'); coordinator.epoch += 1; view.destroy(); host.replaceChildren(); },

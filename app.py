@@ -381,7 +381,9 @@ def _atomic_write_text(target: Path, text: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = _atomic_temp_path(target)
     try:
-        with tmp.open("w", encoding="utf-8") as fh:
+        # Revisions hash UTF-8 bytes before writing. Windows newline expansion
+        # would make our own save look like a subsequent external modification.
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
             fh.write(text)
         os.replace(tmp, target)
     finally:
@@ -10291,6 +10293,8 @@ CANVAS_AND_DATA_POST_ROUTES = {
     "/api/restore",
 }
 NOTES_POST_ROUTES = {
+    "/api/note-image-text-merge",
+    "/api/note-image-text-cleanup",
     "/api/note-create",
     "/api/note-save",
     "/api/note-move",
@@ -10713,6 +10717,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_note_trash(body)
         if path == "/api/note-upload-image":
             return self._api_note_upload_image(body)
+        if path in {"/api/note-image-text-merge", "/api/note-image-text-cleanup"}:
+            return self._api_note_image_text(body, merge=path.endswith("-merge"))
         if path == "/api/note-history-restore":
             return self._api_note_history_restore(body)
         if path == "/api/note-import-begin":
@@ -11053,6 +11059,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(err)
         except OSError as err:
             return self._send_json(500, {"error": f"清理导入失败：{err}"})
+        return self._send_json(200, result)
+
+    def _api_note_image_text(self, body: dict, *, merge: bool):
+        if not isinstance(body.get("renderedLines"), list):
+            return self._send_json(400, {"error": "缺少整篇图片语法位置"})
+        png = None
+        if merge:
+            encoded = body.get("data")
+            if not isinstance(encoded, str) or not encoded:
+                return self._send_json(400, {"error": "缺少 PNG 图片数据"})
+            if _base64_too_large(encoded, MAX_NOTE_IMAGE_BYTES):
+                return self._send_json(413, {"error": "图片过大（上限 40MB）"})
+            try:
+                png = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError):
+                return self._send_json(400, {"error": "PNG 数据无效"})
+        try:
+            result = NOTES_STORE.image_text_operation(body.get("path"), body.get("content"),
+                                                     body.get("revision"), body.get("selected"), png,
+                                                     body.get("renderedLines"))
+        except NotesError as err:
+            return self._send_notes_error(err)
+        except OSError as err:
+            return self._send_json(500, {"error": f"图片文字操作未完成，请重试：{err}"})
         return self._send_json(200, result)
 
     def _api_note_upload_image(self, body: dict):

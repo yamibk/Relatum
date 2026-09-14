@@ -22,6 +22,95 @@ class NotesLibraryTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def image_text_fixture(self):
+        png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=')
+        self.store.create('', 'Image', 'note')
+        asset = self.store.upload_image('Image.md', 'original.png', png, 'image/png')['path']
+        def annotation(identifier):
+            return notes_library._image_text_comment([{
+                'id': identifier, 'text': '中文\nsecond line', 'x': .5, 'y': .5, 'size': 'md', 'color': 'white',
+            }])
+        selected = f'![原图|700](<{asset}> "title")' + annotation('selected')
+        kept = f'![[{asset}|320]]' + annotation('keep')
+        content = '\r\n'.join(['# 正文 😀', selected, kept, annotation('orphan'),
+                                  '```md', f'![]({asset})' + annotation('code'), '```',
+                                  '![](missing.png)' + annotation('missing'), '正文 <!--ordinary-->'])
+        saved = self.store.save('Image.md', content, self.store.load('Image.md')['revision'])
+        self.store.snapshot('Image.md', content, force=True)
+        return png, asset, annotation, selected, kept, content, saved
+
+    def test_image_text_cleanup_removes_selected_unused_and_history_without_backup(self):
+        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
+        before = self.store.history('Image.md')['versions']
+        result = self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
+        self.assertIn(kept, result['content'])
+        for identifier in ('selected', 'orphan', 'code', 'missing'):
+            self.assertNotIn(annotation(identifier), result['content'])
+        self.assertIn('正文 <!--ordinary-->', result['content'])
+        self.assertEqual((self.root / 'Image.md').read_bytes(), result['content'].encode('utf-8'))
+        self.assertEqual((self.root / asset).read_bytes(), png)
+        after = self.store.history('Image.md')['versions']
+        self.assertEqual([v['id'] for v in before], [v['id'] for v in after])
+        for version in after:
+            historical = self.store.history_version('Image.md', version['id'])['content']
+            for identifier in ('selected', 'orphan', 'code', 'missing'):
+                self.assertNotIn(annotation(identifier), historical)
+        # Repeating cleanup with a now-empty selected image is safe.
+        clean_source = result['content'].splitlines()[1]
+        repeated = self.store.image_text_operation('Image.md', result['content'], result['revision'], {'line': 2, 'source': clean_source})
+        self.assertEqual(repeated, result)
+
+    def test_image_text_merge_preserves_original_reference_width_title_and_other_occurrence(self):
+        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
+        result = self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected}, png)
+        line = result['content'].splitlines()[1]
+        self.assertTrue(line.startswith('![原图|700](<Image.assets/images/merged-'))
+        self.assertTrue(line.endswith('> "title")'))
+        self.assertIn(kept, result['content'])
+        self.assertEqual((self.root / asset).read_bytes(), png)
+        self.assertEqual(len(list((self.root / 'Image.assets/images').glob('*.png'))), 2)
+
+    def test_image_text_rejects_stale_selection_revision_and_invalid_png_before_cleanup(self):
+        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
+        for revision, selection, image in [
+            ('stale', {'line': 2, 'source': selected}, None),
+            (saved['revision'], {'line': 3, 'source': selected}, None),
+            (saved['revision'], {'line': 2, 'source': selected}, b'not a PNG'),
+        ]:
+            with self.assertRaises(NotesError):
+                self.store.image_text_operation('Image.md', content, revision, selection, image)
+            self.assertEqual(self.store.load('Image.md')['content'], content)
+
+    def test_image_text_history_failure_is_retryable_and_does_not_replace_current(self):
+        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
+        with mock.patch.object(self.store, '_write_history_manifest', side_effect=OSError('disk full')):
+            with self.assertRaises(NotesError) as caught:
+                self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
+        self.assertEqual(caught.exception.code, 'history_cleanup_failed')
+        self.assertEqual(self.store.load('Image.md')['content'], content)
+        result = self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
+        self.assertNotIn(annotation('selected'), result['content'])
+
+    def test_image_text_full_document_rendered_lines_exclude_html_source(self):
+        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
+        result = self.store.image_text_operation('Image.md', content, saved['revision'],
+                                                {'line': 2, 'source': selected}, rendered_lines=[2])
+        self.assertNotIn(annotation('keep'), result['content'])
+
+    def test_image_text_cleanup_without_selection_only_removes_unused_data(self):
+        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
+        result = self.store.image_text_operation('Image.md', content, saved['revision'], None,
+                                                rendered_lines=[2, 3, 8])
+        self.assertIn(selected, result['content'])
+        self.assertIn(kept, result['content'])
+        for identifier in ('orphan', 'code', 'missing'):
+            self.assertNotIn(annotation(identifier), result['content'])
+        for version in self.store.history('Image.md')['versions']:
+            historical = self.store.history_version('Image.md', version['id'])['content']
+            for identifier in ('orphan', 'code', 'missing'):
+                self.assertNotIn(annotation(identifier), historical)
+        self.assertEqual((self.root / asset).read_bytes(), png)
+
     def test_nested_create_tree_and_path_guards(self):
         created = self.store.create("", "课程/数学/极限", "note", create_parents=True)
         self.assertEqual(created["path"], "课程/数学/极限.md")
@@ -51,6 +140,22 @@ class NotesLibraryTests(unittest.TestCase):
         restored_disk = self.store.history_version("A.md", versions[0]["id"])
         self.assertEqual(restored_disk["content"], "two")
         self.assertEqual(overwritten["revision"], self.store.load("A.md")["revision"])
+
+    def test_multiline_write_preserves_bytes_and_revision(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                content = newline.join(["# 图片文字", "", "![图](A.assets/image.png)", "正文"])
+                created = self.store.create("", "Multiline-" + str(len(newline)), "note", content=content)
+                note_path = self.root / created["path"]
+                self.assertEqual(note_path.read_bytes(), content.encode("utf-8"))
+                loaded = self.store.load(created["path"])
+                changed = content + newline + "abc"
+                saved = self.store.save(created["path"], changed, loaded["revision"])
+                self.assertEqual(note_path.read_bytes(), changed.encode("utf-8"))
+                self.assertEqual(saved["revision"], self.store.load(created["path"])["revision"])
+                before = note_path.stat().st_mtime_ns
+                self.store.save(created["path"], changed, saved["revision"])
+                self.assertEqual(note_path.stat().st_mtime_ns, before, "unchanged save must not rewrite the note")
 
     def test_concurrent_revision_writers_are_serialized_without_conflict_ui(self):
         self.store.create("", "Concurrent", "note", content="base")

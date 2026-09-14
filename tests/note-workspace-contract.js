@@ -40,7 +40,7 @@ assert(notes.includes('EXTERNAL_SYNC_DELAYS = [2000, 4000, 8000, 16000, 30000]')
   'foreground Notes sync needs a bounded two-to-thirty-second retry schedule');
 assert(notes.includes('function triggerExternalSync(options)') && notes.includes('externalSyncChain: Promise.resolve(true)'),
   'automatic filesystem checks must stay serialized');
-assert(notes.includes('if (!state.active || document.hidden) return;'),
+assert(notes.includes('if (!state.active || document.hidden || state.imageTextBusy) return;'),
   'automatic filesystem checks must stop outside the visible Notes workspace');
 assert(notes.includes('if (treeChanged) scheduleDocumentPrefetch();'),
   'unchanged polling must not repeatedly prefetch documents');
@@ -90,8 +90,9 @@ assert(/data-role="note-image-text-toggle"[^>]*disabled/.test(html),
 assert(html.includes('data-image-text-action="edit"') && /data-image-text-action="edit"[^>]*disabled/.test(html),
   'selected image text needs a direct, initially disabled edit command');
 const mergeImageButton = /<button[^>]*class="note-image-text-merge"[^>]*>/.exec(html);
-assert(mergeImageButton && !mergeImageButton[0].includes('data-image-text-action') && !mergeImageButton[0].includes('data-note-action'),
-  'the merge-to-image placeholder must have no command binding');
+assert(mergeImageButton && mergeImageButton[0].includes('data-image-text-action="merge"')
+  && html.includes('data-image-text-action="cleanup"'),
+  'merge and permanent text-data cleanup must have separate commands');
 assert(html.includes('data-role="note-tabs"') && html.includes('data-note-action="new-tab"'), 'Notes needs a persistent multi-document tab strip');
 assert(html.includes('aria-label="新建标签页"'), 'the plus button must describe a new tab rather than a new note');
 assert(html.includes('data-note-action="close-all-tabs"'), 'the tab strip needs a persistent close-all control');
@@ -116,6 +117,14 @@ assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create th
 assert(notes.includes('onImageSelectionChange: (selection) => updateImageTextTools(selection)')
   && notes.includes('liveEditor.setImageTextMode') && notes.includes('liveEditor.imageTextCommand'),
   'the workspace must drive image text through the editor selection contract');
+assert(notes.includes('toggleSeq: 0, toggleIntent: null')
+  && notes.includes('async function toggleImageTextMode(action)')
+  && notes.includes('if (seq !== state.imageText.toggleSeq) return;'),
+  'delayed image-text toggles must apply an explicit latest intent instead of inverting newer state');
+assert(notes.includes("document.addEventListener('pointerdown'")
+  && notes.includes('including the far-right blank strip')
+  && notes.includes('liveEditor.setImageTextMode(false);'),
+  'page blank space outside CodeMirror must dismiss image-text mode');
 assert(notes.includes("const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1'")
   && notes.includes('onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults)')
   && notes.includes('localStorage.setItem(IMAGE_TEXT_DEFAULTS_KEY'),

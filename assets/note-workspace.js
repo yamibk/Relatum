@@ -127,7 +127,10 @@
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: false, focusMotionTimer: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
-    imageText: { available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false },
+    imageText: {
+      available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false,
+      toggleSeq: 0, toggleIntent: null,
+    },
     shortcutBindings: NOTE_SHORTCUTS ? NOTE_SHORTCUTS.load() : {},
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
@@ -565,18 +568,19 @@
 
   function updateImageTextTools(nextState) {
     if (nextState && typeof nextState === 'object') Object.assign(state.imageText, nextState);
-    const enabled = !!(state.current && liveEditor && state.viewMode === 'live' && state.imageText.available);
-    if (!enabled) state.imageText.active = false;
+    const enabled = !!(state.current && liveEditor && state.viewMode === 'live');
+    if (!enabled || state.imageText.available || state.imageTextCleanupPath !== state.current.path) state.imageTextCleanupPath = '';
+    if (!enabled || !state.imageText.available) state.imageText.active = false;
+    const open = enabled && (!!state.imageText.active || !!state.imageTextCleanupPath);
     if (imageTextToggle) {
       const label = tr('imageText');
-      imageTextToggle.disabled = !enabled;
-      imageTextToggle.setAttribute('aria-pressed', state.imageText.active ? 'true' : 'false');
+      imageTextToggle.disabled = !enabled || !!state.imageTextBusy;
+      imageTextToggle.setAttribute('aria-pressed', open ? 'true' : 'false');
       imageTextToggle.setAttribute('aria-label', label);
       imageTextToggle.setAttribute('data-ui-tooltip', label);
-      imageTextToggle.classList.toggle('is-active', !!state.imageText.active);
+      imageTextToggle.classList.toggle('is-active', open);
     }
     if (!imageTextTools) return;
-    const open = enabled && !!state.imageText.active;
     imageTextTools.hidden = !open;
     imageTextTools.toggleAttribute('inert', !open);
     imageTextTools.querySelectorAll('[data-image-text-action="size"]').forEach((button) => {
@@ -599,8 +603,62 @@
     }
     const remove = imageTextTools.querySelector('[data-image-text-action="delete"]');
     if (remove) { remove.disabled = !state.imageText.canDelete; remove.title = tr('deleteImageText'); }
-    const merge = imageTextTools.querySelector('.note-image-text-merge');
+    const merge = imageTextTools.querySelector('[data-image-text-action="merge"]');
     if (merge) { merge.textContent = tr('mergeImageText'); merge.title = tr('mergeImageText'); }
+    const cleanup = imageTextTools.querySelector('[data-image-text-action="cleanup"]');
+    if (cleanup) {
+      cleanup.textContent = language() === 'en' ? 'Delete text box data' : '删除文本框数据';
+      cleanup.title = language() === 'en' ? 'Permanently clear this image’s text and unused text data in this note' : '永久删除选中图片的文字框及本篇未使用的文字框数据';
+    }
+    imageTextTools.querySelectorAll('button').forEach((button) => {
+      if (state.imageTextBusy || (state.imageTextCleanupPath && button.dataset.imageTextAction !== 'cleanup')) button.disabled = true;
+      else if (!['edit', 'delete'].includes(button.dataset.imageTextAction)) button.disabled = false;
+    });
+  }
+
+  let imageTextOperationPromise = null;
+  function runImageTextOperation(kind) {
+    if (state.imageTextBusy || !state.current || !liveEditor) return imageTextOperationPromise;
+    const target = state.current;
+    state.imageTextBusy = true;
+    state.imageTextEpoch = (state.imageTextEpoch || 0) + 1;
+    clearTimeout(state.saveTimer); clearTimeout(state.retryTimer); stopExternalSync();
+    updateImageTextTools();
+    imageTextOperationPromise = (async () => {
+      try {
+        await whenEditorInputSettled();
+        root.inert = true;
+        await state.saveChain;
+        await state.externalSyncChain;
+        if (state.current !== target) throw new Error('笔记已经切换，请重新选择图片');
+        const selected = liveEditor.imageTextTarget();
+        if (!selected && kind === 'merge') throw new Error('请先选中图片');
+        rememberEditorState(target);
+        const payload = { path: target.path, content: target.content, revision: target.revision, selected,
+          renderedLines: liveEditor.imageTextRenderedLines() };
+        if (kind === 'merge') payload.data = await fileToBase64(await liveEditor.exportImageTextPng());
+        const result = await post('/api/note-image-text-' + kind, payload);
+        target.persistedGeneration = target.editGeneration;
+        state.documentCache.delete(target.path);
+        state.loadPromises.delete(target.path);
+        state.historyVersion = null;
+        historyPreview.textContent = ''; historyList.replaceChildren();
+        historyRestore.disabled = true; historyCopy.disabled = true;
+        applyDocument(result, { preserveViewState: true });
+        showToast(language() === 'en' ? (kind === 'merge' ? 'Merged into PNG' : 'Text box data deleted')
+          : (kind === 'merge' ? '已合并为 PNG 图片' : '文本框数据已删除'));
+        return true;
+      } catch (error) {
+        showToast(error.message || tr('saveFailed'), 'error');
+        return false;
+      } finally {
+        root.inert = false;
+        state.imageTextBusy = false;
+        updateImageTextTools();
+        scheduleExternalSync();
+      }
+    })();
+    return imageTextOperationPromise;
   }
 
   function persistImageTextDefaults(defaults) {
@@ -613,6 +671,30 @@
         color: state.imageText.color,
       }));
     } catch (error) {}
+  }
+
+  async function toggleImageTextMode(action) {
+    if (!liveEditor || !action || action.disabled) return;
+    const base = typeof state.imageText.toggleIntent === 'boolean'
+      ? state.imageText.toggleIntent : !!(state.imageText.active || state.imageTextCleanupPath);
+    const requested = !base;
+    const seq = ++state.imageText.toggleSeq;
+    state.imageText.toggleIntent = requested;
+    if (editorInputPending()) await whenEditorInputSettled();
+    if (seq !== state.imageText.toggleSeq) return;
+    state.imageText.toggleIntent = null;
+    if (!liveEditor || action.disabled) return;
+    if (!state.imageText.available) {
+      // This check runs only on an explicit toolbar click, never on input,
+      // selection updates, timers or background sync.
+      state.imageTextCleanupPath = requested && liveEditor.snapshot().value.includes('<!--relatum:image-text:')
+        ? state.current.path : '';
+      updateImageTextTools();
+      if (requested && !state.imageTextCleanupPath) showToast(language() === 'en' ? 'No text box data in this note' : '本篇没有文本框数据');
+      return;
+    }
+    state.imageTextCleanupPath = '';
+    liveEditor.setImageTextMode(requested);
   }
 
   function readingPayload(documentState) {
@@ -1403,6 +1485,7 @@
   }
 
   function applyDocument(data, options) {
+    state.imageTextCleanupPath = '';
     const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
       ? editorSnapshot()
       : viewStates.get(data.path);
@@ -1456,6 +1539,7 @@
     scheduleSave();
   }
   async function flushSave(documentState) {
+    if (state.imageTextBusy) return imageTextOperationPromise;
     const target = documentState || state.current;
     if (target && target === state.current && editorInputPending()) await whenEditorInputSettled();
     if (target === state.current) { clearTimeout(state.saveTimer); rememberEditorState(target); }
@@ -1496,6 +1580,7 @@
     const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target); return ok;
   }
   async function openNote(path, options) {
+    if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (!path) return false;
     if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled();
     selectNoteTab(path, !(options && options.reuseActiveTab === false));
@@ -1687,7 +1772,16 @@
 
   function setSideMode(mode) { state.sideMode = mode === 'history' ? 'history' : 'links'; root.classList.add('links-overlay-open'); try { localStorage.setItem(LINKS_OPEN_KEY, '1'); } catch (error) {} if (sideTitle) sideTitle.textContent = state.sideMode === 'history' ? tr('history') : language() === 'en' ? 'Links' : '链接'; if (linksContent) linksContent.hidden = state.sideMode !== 'links'; if (historyContent) historyContent.hidden = state.sideMode !== 'history'; if (state.sideMode === 'links') ensureLinks(); }
   async function openHistory(path) { state.historyPath = path; state.historyVersion = null; setSideMode('history'); historyPreview.textContent = ''; historyRestore.disabled = true; historyCopy.disabled = true; try { const result = await request('/api/note-history?path=' + encodeURIComponent(path)); const fragment = document.createDocumentFragment(); (result.versions || []).forEach((version) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'note-history-item'; const date = new Date(version.createdAt); button.textContent = Number.isNaN(date.getTime()) ? version.createdAt : date.toLocaleString(); button.addEventListener('click', () => loadHistoryVersion(path, version.id, button)); fragment.appendChild(button); }); if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-link-empty'; message.textContent = tr('noHistory'); fragment.appendChild(message); } historyList.replaceChildren(fragment); } catch (error) { historyList.textContent = error.message || tr('versionUnavailable'); } }
-  async function loadHistoryVersion(path, id, button) { try { const version = await request('/api/note-history?path=' + encodeURIComponent(path) + '&version=' + encodeURIComponent(id)); state.historyVersion = version; historyPreview.textContent = version.content || ''; historyList.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button)); historyRestore.disabled = false; historyCopy.disabled = false; } catch (error) { showToast(error.message || tr('versionUnavailable'), 'error'); } }
+  async function loadHistoryVersion(path, id, button) {
+    const epoch = state.imageTextEpoch || 0;
+    try {
+      const version = await request('/api/note-history?path=' + encodeURIComponent(path) + '&version=' + encodeURIComponent(id));
+      if (state.imageTextBusy || epoch !== (state.imageTextEpoch || 0)) return;
+      state.historyVersion = version; historyPreview.textContent = version.content || '';
+      historyList.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
+      historyRestore.disabled = false; historyCopy.disabled = false;
+    } catch (error) { showToast(error.message || tr('versionUnavailable'), 'error'); }
+  }
   async function restoreHistory() { if (!state.historyVersion) return; try { const result = await post('/api/note-history-restore', { path: state.historyPath, version: state.historyVersion.id }); if (state.current && state.current.path === result.path) applyDocument(result); showToast(tr('restored')); openHistory(result.path); } catch (error) { showToast(error.message || tr('versionUnavailable'), 'error'); } }
 
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
@@ -1697,7 +1791,7 @@
   async function importDataTransfer(transfer, destination) { if (state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
 
   async function checkExternalChanges(announce, options) {
-    if (!state.active) return false;
+    if (!state.active || state.imageTextBusy) return false;
     if (state.recycleRunning) return true;
     const settings = options || {};
     const seq = ++state.externalSeq;
@@ -1708,7 +1802,7 @@
     const previousSize = state.current && state.current.treeSize || 0;
     const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors });
     if (!refreshed) return false;
-    if (seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
+    if (state.imageTextBusy || seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
     if (!entry) return true;
     const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size;
@@ -1716,7 +1810,7 @@
     if (state.saveRunning || hasPendingEdits()) return true;
     try {
       const disk = await request('/api/note?path=' + encodeURIComponent(path));
-      if (seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
+      if (state.imageTextBusy || seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
       if (disk.revision !== revision) applyDocument(disk, { preserveViewState: true });
       else {
         state.current.treeModifiedNs = entry.modifiedNs || 0;
@@ -1743,7 +1837,7 @@
   }
   function scheduleExternalSync(delay) {
     stopExternalSync();
-    if (!state.active || document.hidden) return;
+    if (!state.active || document.hidden || state.imageTextBusy) return;
     state.externalSyncTimer = setTimeout(() => {
       state.externalSyncTimer = 0;
       triggerExternalSync({ background: true, metadataOnly: true, silentErrors: true });
@@ -1754,7 +1848,7 @@
     stopExternalSync();
     let ran = false;
     const task = state.externalSyncChain.catch(() => false).then(async () => {
-      if (!state.active || (settings.background && document.hidden)) return false;
+      if (!state.active || state.imageTextBusy || (settings.background && document.hidden)) return false;
       ran = true;
       return checkExternalChanges(!!settings.announce, settings);
     });
@@ -1808,16 +1902,25 @@
   async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
 
   root.addEventListener('click', async (event) => {
+    if (state.imageTextBusy) return;
     const imageTextAction = event.target.closest('[data-image-text-action]');
     if (imageTextAction && imageTextTools && imageTextTools.contains(imageTextAction) && liveEditor) {
+      if (['merge', 'cleanup'].includes(imageTextAction.dataset.imageTextAction)) {
+        await runImageTextOperation(imageTextAction.dataset.imageTextAction);
+        return;
+      }
       if (editorInputPending()) await whenEditorInputSettled();
       liveEditor.imageTextCommand(imageTextAction.dataset.imageTextAction, imageTextAction.dataset.imageTextValue || '');
       return;
     }
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
-    if (editorInputPending()) await whenEditorInputSettled();
     const name = action.dataset.noteAction;
+    if (name === 'toggle-image-text') {
+      toggleImageTextMode(action);
+      return;
+    }
+    if (editorInputPending()) await whenEditorInputSettled();
     if (name === 'new-note') createEntry('note');
     else if (name === 'new-tab') openBlankTab();
     else if (name === 'close-all-tabs') { if (await finishInlineTitle()) await closeAllTabs(); }
@@ -1826,7 +1929,6 @@
     else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'reveal-root') reveal('', false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
-    else if (name === 'toggle-image-text' && liveEditor && !action.disabled) liveEditor.setImageTextMode(!state.imageText.active);
     else if (name === 'toggle-source' && state.current) await setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'toggle-settings') setNoteSettingsOpen(!state.settingsOpen);
     else if (name === 'current-menu' && state.current) {
@@ -1849,6 +1951,25 @@
     } else if (name === 'history-restore') restoreHistory();
     else if (name === 'history-copy' && state.historyVersion) copyText(state.historyVersion.content || '');
   });
+
+  document.addEventListener('pointerdown', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!state.active || !target
+        || target.closest('[data-role="note-image-text-tools"], [data-role="note-image-text-toggle"]')) return;
+    // Any newer page interaction supersedes a toggle that may still be waiting
+    // for the native input chain. Otherwise that stale click can reopen or
+    // close the toolbar after the user has already moved on.
+    state.imageText.toggleSeq += 1;
+    state.imageText.toggleIntent = null;
+    if (state.imageTextCleanupPath) { state.imageTextCleanupPath = ''; updateImageTextTools(); }
+    if (!state.imageText.active || !liveEditor || editorInputPending()) return;
+    const selectedFrame = editorHost && editorHost.querySelector('.note-live-image-frame.is-selected');
+    if (selectedFrame && selectedFrame.contains(target)) return;
+    // The editor content does not cover the complete document width. Treat
+    // the surrounding page, including the far-right blank strip, as a real
+    // outside click instead of relying on CodeMirror to move its selection.
+    liveEditor.setImageTextMode(false);
+  }, true);
   if (settingsShortcutList) {
     settingsShortcutList.addEventListener('click', (event) => {
       const action = event.target.closest('[data-note-shortcut-action]');
@@ -1908,6 +2029,7 @@
     }
   });
   document.addEventListener('keydown', (event) => {
+    if (state.imageTextBusy && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
     if (!state.active) return;
     if (state.recordingShortcutCommand && !event.isComposing) {
       event.preventDefault();
@@ -1926,9 +2048,11 @@
       else setNoteSettingsOpen(false);
       return;
     }
-    if (state.imageText.active && event.key === 'Escape') {
+    if ((state.imageText.active || state.imageTextCleanupPath) && event.key === 'Escape') {
       event.preventDefault();
+      state.imageTextCleanupPath = '';
       liveEditor.setImageTextMode(false);
+      updateImageTextTools();
       return;
     }
     const mod = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();

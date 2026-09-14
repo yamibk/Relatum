@@ -87,6 +87,17 @@ function geometry(element) {
     assert.equal(editing.lineHeight, display.lineHeight);
     await input.press('Escape');
 
+    await page.evaluate(() => editor.view.dispatch({ selection: { anchor: 0 } }));
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const pinnedSelection = await page.evaluate(() => ({
+      active: document.getElementById('editor').classList.contains('is-image-text-mode'),
+      from: editor.view.state.selection.main.from,
+      to: editor.view.state.selection.main.to,
+      length: editor.view.state.doc.length,
+    }));
+    assert.deepEqual(pinnedSelection, { active: true, from: 0, to: pinnedSelection.length, length: pinnedSelection.length },
+      'transient editor selection drift must restore the bound image without closing image-text mode');
+
     await page.waitForTimeout(600);
     const beforeNudge = initial.x;
     await page.keyboard.press('ArrowRight');
@@ -133,22 +144,55 @@ function geometry(element) {
     const scrollerBox = await page.locator('.cm-scroller').boundingBox();
     assert(scrollerBox);
     await page.mouse.click(scrollerBox.x + scrollerBox.width - 12, scrollerBox.y + scrollerBox.height - 12);
-    const retainedUntilRawCommit = await page.evaluate(() => {
+    assert.equal(await input.isHidden(), true,
+      'a page click must hide the native textarea immediately');
+    assert.equal(await page.evaluate(() => document.getElementById('editor').classList.contains('is-image-text-mode')), false,
+      'a page click must close the image-text tools immediately');
+    await page.evaluate(() => {
       const target = document.querySelector('.note-image-text-editor');
-      if (!target) return false;
-      target.dispatchEvent(new FocusEvent('blur'));
       target.value = '他';
       target.dispatchEvent(new InputEvent('input', { bubbles: true, data: '他', inputType: 'insertCompositionText' }));
       target.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '他' }));
-      return true;
     });
-    assert(retainedUntilRawCommit, 'a page click must let the native IME finish before closing the textarea');
     await page.waitForFunction(() => !document.querySelector('.note-image-text-editor'));
     const rawPointerText = await page.evaluate(() => {
       const line = editor.snapshot().value.split('\n').find((value) => value.includes('fixture.png'));
       return MarkdownMini.parseImageBlock(line).imageTextItems.map((item) => item.text);
     });
     assert.deepEqual(rawPointerText, ['t'], 'clicking page blank space must preserve the visible raw preedit text');
+
+    await page.reload();
+    await frame.locator('img').waitFor();
+    await page.waitForFunction(() => document.querySelector('.note-live-image-frame.is-block img').complete);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await frame.click({ position: { x: 30, y: 30 } });
+    await page.locator('.note-live-image-frame.is-selected').waitFor();
+    await page.evaluate(() => { editor.setImageTextMode(true); editor.imageTextCommand('add'); });
+    await page.locator('.note-live-image-frame.is-image-text-armed').waitFor();
+    await frame.click({ position: { x: 120, y: 70 } });
+    await input.waitFor();
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.note-image-text-editor'));
+    await page.evaluate(() => {
+      const target = document.querySelector('.note-image-text-editor');
+      target.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      target.value = 't';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: 't', inputType: 'insertCompositionText' }));
+    });
+    await frame.click({ position: { x: 340, y: 150 } });
+    assert.equal(await input.isHidden(), true,
+      'clicking image blank space must hide the textarea immediately');
+    await page.evaluate(() => {
+      const target = document.querySelector('.note-image-text-editor');
+      target.value = '他';
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: '他', inputType: 'insertCompositionText' }));
+      target.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '他' }));
+    });
+    await page.waitForFunction(() => !document.querySelector('.note-image-text-editor'));
+    const rawImageText = await page.evaluate(() => {
+      const line = editor.snapshot().value.split('\n').find((value) => value.includes('fixture.png'));
+      return MarkdownMini.parseImageBlock(line).imageTextItems.map((item) => item.text);
+    });
+    assert.deepEqual(rawImageText, ['t'], 'clicking image blank space must preserve the visible raw preedit text');
 
     await page.reload();
     await frame.locator('img').waitFor();
