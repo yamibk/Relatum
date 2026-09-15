@@ -61,6 +61,17 @@ def validate_project(project, project_id):
         return seen
     objects = records(project["objects"])
     records(project["relations"])
+    relations = {relation["id"]: relation for relation in project["relations"]}
+    for relation in project["relations"]:
+        if relation.get("type") == "core.association" and relation.get("typeVersion") == 1:
+            ends, label = relation.get("ends"), relation.get("label")
+            if (not isinstance(ends, list) or len(ends) != 2
+                    or any(not isinstance(end, dict) or not isinstance(end.get("objectId"), str)
+                           or end["objectId"] not in objects for end in ends)
+                    or ends[0]["objectId"] == ends[1]["objectId"]
+                    or not isinstance(label, str)
+                    or len(label.encode("utf-16-le", errors="surrogatepass")) // 2 > 2000):
+                raise ResearchError("普通关系端点或名称无效")
     records(project["views"])
     for obj in project["objects"]:
         if not isinstance(obj.get("type"), str) or type(obj.get("typeVersion")) is not int or not isinstance(obj.get("payload"), dict):
@@ -93,6 +104,23 @@ def validate_project(project, project_id):
                     value = rep.get(key)
                     if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e9:
                         raise ResearchError("研究呈现坐标无效")
+        if view["type"] == "core.canvas":
+            links = view.get("links", [])
+            if not isinstance(links, list):
+                raise ResearchError("研究连线集合无效")
+            records(links)
+            by_id = {rep["id"]: rep for rep in reps}
+            for link in links:
+                relation_id, source_id, target_id = (link.get(key) for key in ("relationId", "sourceId", "targetId"))
+                if any(not isinstance(value, str) for value in (relation_id, source_id, target_id)):
+                    raise ResearchError("研究连线引用无效")
+                relation = relations.get(relation_id)
+                source, target = by_id.get(source_id), by_id.get(target_id)
+                if not relation or not source or not target:
+                    raise ResearchError("研究连线引用不存在")
+                if relation.get("type") == "core.association" and relation.get("typeVersion") == 1:
+                    if [source["objectId"], target["objectId"]] != [end["objectId"] for end in relation["ends"]]:
+                        raise ResearchError("研究连线与关系端点不一致")
     for relation in project["relations"]:
         if "ends" in relation:
             if not isinstance(relation["ends"], list) or any(

@@ -58,6 +58,7 @@ export class ResearchModel {
     this.#doc.revision += 1;
     const change = { revision: this.revision,
       changedObjectIds: patches.filter(p => p.collection === 'objects').map(p => p.id),
+      changedRelationIds: patches.filter(p => p.collection === 'relations').map(p => p.id),
       changedViewIds: patches.filter(p => p.collection === 'views').map(p => p.id) };
     for (const listener of this.#listeners) listener(change);
   }
@@ -120,9 +121,39 @@ export class ResearchModel {
       const target = view(command.viewId);
       const index = target.representations.findIndex(item => item.id === command.representationId);
       if (index < 0) throw new Error('Unknown representation');
-      if (command.type === 'removeRepresentation') target.representations.splice(index, 1);
+      if (command.type === 'removeRepresentation') {
+        target.representations.splice(index, 1);
+        // Removing a visual reference never deletes an object-level relationship.
+        if (target.links) target.links = target.links.filter(link => link.sourceId !== command.representationId && link.targetId !== command.representationId);
+      }
       else Object.assign(target.representations[index], position());
       patch('views', target.id, target);
+    } else if (command.type === 'createRelation') {
+      const target = view(command.viewId);
+      const source = target.representations.find(rep => rep.id === command.sourceId);
+      const dest = target.representations.find(rep => rep.id === command.targetId);
+      if (!source || !dest || source.objectId === dest.objectId) throw new Error('Choose two different objects');
+      if (this.#doc.relations.some(rel => rel.id === command.relationId)) throw new Error('Duplicate relation ID');
+      const label = command.label ?? '';
+      if (typeof label !== 'string' || label.length > 2000) throw new Error('Invalid relation label');
+      patch('relations', command.relationId, { id: command.relationId, type: 'core.association', typeVersion: 1,
+        label, ends: [{ objectId: source.objectId }, { objectId: dest.objectId }] });
+      target.links = [...(target.links || []), { id: newId('link'), relationId: command.relationId, sourceId: source.id, targetId: dest.id }];
+      patch('views', target.id, target);
+    } else if (['renameRelation', 'removeRelation'].includes(command.type)) {
+      const relation = this.#doc.relations.find(rel => rel.id === command.relationId);
+      if (!relation || relation.type !== 'core.association' || relation.typeVersion !== 1) throw new Error('Unavailable relation');
+      if (command.type === 'renameRelation') {
+        if (typeof command.label !== 'string' || command.label.length > 2000) throw new Error('Invalid relation label');
+        patch('relations', relation.id, { ...relation, label: command.label });
+      } else {
+        patch('relations', relation.id, null);
+        for (const current of this.#doc.views) {
+          if (current.type === 'core.canvas' && current.links?.some(link => link.relationId === relation.id)) {
+            patch('views', current.id, { ...current, links: current.links.filter(link => link.relationId !== relation.id) });
+          }
+        }
+      }
     } else throw new Error('Unknown research command');
     if (!patches.length) return false;
     const last = this.#undo.at(-1);

@@ -1,17 +1,21 @@
 .research-workspace {
-  --research-paper: #f8f7f3; --research-surface: #fefdf9; --research-ink: #302f29;
-  --research-muted: #77776c; --research-line: #deded3; --research-accent: #46604d;
+  --research-paper: #fff; --research-surface: #fff; --research-ink: #171717;
+  --research-muted: #707070; --research-line: #e5e5e5; --research-accent: #171717;
+  --research-hover: #f5f5f5;
+  color-scheme: light;
   display: flex; flex-direction: column; color: var(--research-ink); background: var(--research-paper);
   overflow: hidden; font-size: 13px;
 }
 body[data-start-theme="dark"] .research-workspace {
-  --research-paper: #1b201d; --research-surface: #222923; --research-ink: #edece2;
-  --research-muted: #a9b1a7; --research-line: #3c453d; --research-accent: #b5cdb0;
+  --research-paper: #111; --research-surface: #111; --research-ink: #f5f5f5;
+  --research-muted: #a3a3a3; --research-line: #333; --research-accent: #fff;
+  --research-hover: #202020;
+  color-scheme: dark;
 }
 .research-workspace [hidden] { display: none !important; }
 .research-workspace button, .research-workspace input, .research-workspace select, .research-workspace textarea { font: inherit; color: inherit; }
 .research-workspace button { border: 1px solid var(--research-line); border-radius: 7px; padding: 7px 11px; background: transparent; cursor: pointer; }
-.research-workspace button:hover:not(:disabled) { background: var(--research-surface); border-color: var(--research-accent); }
+.research-workspace button:hover:not(:disabled) { background: var(--research-hover); border-color: var(--research-accent); }
 .research-workspace button:disabled { opacity: .4; cursor: default; }
 .research-workspace :focus-visible { outline: 2px solid var(--research-accent); outline-offset: 3px; }
 .research-header { display: flex; align-items: center; gap: 16px; padding: 20px 26px; border-block: 1px solid var(--research-line); }
@@ -23,14 +27,25 @@ body[data-start-theme="dark"] .research-workspace {
 .research-directory, .research-inspector { padding: 20px 16px; overflow: auto; }
 .research-directory { border-right: 1px solid var(--research-line); }
 .research-directory > button { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
-.research-directory [aria-pressed="true"], .research-object-list .is-selected { background: var(--research-surface); border-color: var(--research-accent); }
+.research-directory [aria-pressed="true"], .research-object-list .is-selected { background: var(--research-hover); border-color: var(--research-accent); }
 .research-section-label { color: var(--research-muted); margin: 0 0 13px; font-size: 11px; letter-spacing: .08em; }
 .research-directory .research-section-label:not(:first-child) { margin-top: 28px; }
 .research-directory-note { margin-top: 26px; color: var(--research-muted); line-height: 1.8; font-size: 11px; }
 .research-object-list { display: grid; gap: 5px; }
 .research-object-list button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border-color: transparent; }
 .research-surface { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--research-surface); }
-.research-canvas { position: relative; overflow: hidden; flex: 1; min-height: 180px; touch-action: none; background-image: radial-gradient(var(--research-line) .7px, transparent .7px); background-size: 22px 22px; }
+.research-canvas { position: relative; overflow: hidden; flex: 1; min-height: 180px; touch-action: none; }
+.research-links { position: absolute; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.research-link path { fill: none; stroke: var(--research-muted); stroke-width: 1.5; }
+.research-link .research-link-hit { stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
+.research-link.is-selected path:not(.research-link-hit) { stroke: var(--research-accent); stroke-width: 2.5; }
+.research-link text { fill: var(--research-ink); stroke: var(--research-paper); stroke-width: 5; paint-order: stroke; font-size: 12px; text-anchor: middle; pointer-events: auto; cursor: pointer; }
+.research-canvas.is-connecting, .research-canvas.is-connecting .research-card { cursor: crosshair; }
+.research-workspace button[aria-pressed="true"][data-action="connect"] { background: var(--research-ink); color: var(--research-paper); }
+.research-relation-list { display: grid; gap: 5px; margin-top: 12px; }
+.research-relation-list button { text-align: left; overflow-wrap: anywhere; }
+.research-relation-list .is-selected { border-color: var(--research-accent); }
+.research-relation-editor { display: grid; gap: 14px; }
 .research-scene { position: absolute; inset: 0; transform-origin: 0 0; pointer-events: none; }
 .research-card { position: absolute; width: 180px; padding: 16px; box-sizing: border-box; background: var(--research-paper); border: 1px solid var(--research-line); border-radius: 10px; display: grid; gap: 9px; cursor: grab; user-select: none; pointer-events: auto; }
 .research-card.is-selected { border-color: var(--research-accent); box-shadow: 0 0 0 2px var(--research-accent); }
@@ -55,6 +70,8 @@ body[data-start-theme="dark"] .research-workspace {
 .research-canvas-empty strong { color: var(--research-ink); font-size: 19px; font-weight: 500; }
 .research-surface-footer { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--research-line); color: var(--research-muted); font-size: 10px; }
 .research-surface-footer button { margin-left: auto; padding: 4px 8px; white-space: nowrap; }
+.research-surface-footer button + button { margin-left: 0; }
+.research-inspector [data-role="relations-label"] { margin-top: 24px; }
 .research-inspector { border-left: 1px solid var(--research-line); }
 .research-inspector form { display: grid; gap: 15px; }
 .research-inspector label { display: grid; gap: 7px; font-size: 11px; color: var(--research-muted); }
@@ -65,7 +82,7 @@ body[data-start-theme="dark"] .research-workspace {
 .research-table-wrap th { font-size: 11px; color: var(--research-muted); font-weight: 500; }
 .research-table-wrap td, .research-table-wrap th { border-bottom: 1px solid var(--research-line); padding: 12px 8px; overflow-wrap: anywhere; }
 .research-table-wrap button { border-color: transparent; text-align: left; }
-.research-table-wrap .is-selected { background: var(--research-paper); }
+.research-table-wrap .is-selected { background: var(--research-hover); }
 .research-welcome { flex: 1; display: grid; align-content: center; justify-items: center; padding: 30px; text-align: center; }
 .research-welcome-mark { font: italic 90px/1 Georgia, serif; color: var(--research-accent); margin-bottom: 20px; }
 .research-welcome h2 { font-size: 25px; font-weight: 500; }

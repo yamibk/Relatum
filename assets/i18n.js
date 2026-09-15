@@ -4,6 +4,10 @@
   const STORAGE_KEY = 'canvas:toolbarLanguage';
   const EN = {
     '研究': 'Research', '研究工作区': 'Research workspace', '研究画布': 'Research canvas',
+    '连接节点': 'Connect nodes', '连线名称': 'Connection name', '删除关系': 'Delete relationship',
+    '普通关系': 'Relationships', '定位到画布': 'Locate on canvas', '适应视野': 'Fit to view',
+    '点击另一个节点连接 · Esc 取消': 'Click another node to connect · Esc to cancel',
+    '先在画布选中一个节点，再连接另一个节点。': 'Select a node on the canvas, then connect it to another node.',
     '＋ 记录': '+ Note', '＋ 公式': '+ Formula', '自由记录': 'Free note', '公式草稿': 'Formula draft',
     '从一个想法开始': 'Start with an idea', '双击空白记录想法，添加变量与公式。': 'Double-click empty space to capture an idea; add variables and formulas.',
     '在自由空间摆放想法、变量与公式。': 'Arrange ideas, variables and formulas in a free space.',

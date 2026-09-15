@@ -87,6 +87,35 @@ class ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "conflict")
         self.assertEqual(self.store.load("project-main")["project"]["title"], "external")
 
+    def test_relationships_validate_visual_and_object_endpoints(self):
+        body = self.request(self.store.create())
+        project = body['project']
+        project['objects'] = [{'id': key, 'type': 'core.note', 'typeVersion': 1,
+                               'payload': {'label': key, 'source': ''}} for key in ('a', 'b')]
+        project['relations'] = [{'id': 'rel', 'type': 'core.association', 'typeVersion': 1,
+                                 'label': '依据', 'ends': [{'objectId': 'a'}, {'objectId': 'b'}]}]
+        view = project['views'][0]
+        view['representations'] = [{'id': 'rep-' + key, 'objectId': key, 'x': 0, 'y': 0} for key in ('a', 'b')]
+        view['links'] = [{'id': 'link', 'relationId': 'rel', 'sourceId': 'rep-a', 'targetId': 'rep-b'}]
+        self.store.save(body)
+        loaded = self.store.load('project-main')
+        self.assertEqual(loaded['project'], project)
+        for mutate in (
+            lambda p: p['relations'][0].update(ends=[]),
+            lambda p: p['relations'][0].update(label='😀' * 1001),
+            lambda p: p['relations'][0]['ends'][1].update(objectId='a'),
+            lambda p: p['views'][0]['links'][0].update(targetId='rep-a'),
+            lambda p: p['views'][0]['links'][0].update(relationId='missing'),
+            lambda p: p['views'][0]['links'][0].update(sourceId=[]),
+        ):
+            request = self.request(loaded, revision=2); mutate(request['project'])
+            with self.assertRaises(ResearchError): self.store.save(request)
+        request = self.request(loaded, revision=2)
+        request['project']['views'][0]['links'] = []
+        request['project']['views'][0]['representations'].pop()
+        self.store.save(request)
+        self.assertEqual(self.store.load('project-main')['project']['relations'], project['relations'])
+
     def test_corruption_is_never_replaced_by_empty_project(self):
         loaded = self.store.create()
         path = self.root / "project-main/project.json"; path.write_bytes(b"{broken")

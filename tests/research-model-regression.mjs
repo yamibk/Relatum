@@ -75,3 +75,27 @@ for (const kind of ['note', 'formula']) {
   }
 }
 console.log('Research draft types and grouped history passed');
+
+const graph = new ResearchModel(blank());
+for (const id of ['a', 'b']) graph.dispatch({ type: 'createObject', objectType: 'core.note', objectId: id, viewId: 'view-main', x: 0, y: 0 });
+graph.dispatch({ type: 'addRepresentation', objectId: 'a', viewId: 'view-main', x: 200, y: 0 });
+const [a, b, alias] = graph.snapshot().views[0].representations;
+const connect = { type: 'createRelation', viewId: 'view-main', relationId: 'association', sourceId: a.id, targetId: b.id };
+for (const invalid of [{ targetId: 'missing' }, { targetId: alias.id }, { label: 123 }]) {
+  const before = graph.snapshot();
+  assert.throws(() => graph.dispatch({ ...connect, ...invalid })); assert.deepEqual(graph.snapshot(), before);
+}
+graph.dispatch(connect); graph.undo();
+assert.equal(graph.snapshot().relations.length, 0); assert.equal(graph.snapshot().views[0].links?.length || 0, 0);
+graph.redo();
+graph.dispatch({ type: 'renameRelation', relationId: 'association', label: '证据 → 假设' });
+graph.dispatch({ type: 'removeRepresentation', viewId: 'view-main', representationId: a.id });
+assert.equal(graph.snapshot().relations[0].label, '证据 → 假设');
+assert.equal(graph.snapshot().views[0].links.length, 0);
+graph.undo(); assert.equal(graph.snapshot().views[0].links.length, 1);
+graph.dispatch({ type: 'removeRelation', relationId: 'association' });
+assert.equal(graph.snapshot().relations.length, 0); assert.equal(graph.snapshot().views[0].links.length, 0);
+graph.undo(); assert.equal(graph.snapshot().relations[0].label, '证据 → 假设');
+assert.equal(graph.snapshot().views[0].links[0].sourceId, a.id);
+assert.equal(new ResearchModel(graph.snapshot()).snapshot().relations[0].ends[1].objectId, 'b');
+console.log('Research relationship identity, atomic history and visual removal passed');
