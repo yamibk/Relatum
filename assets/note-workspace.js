@@ -148,7 +148,7 @@
     },
   };
   const state = {
-    active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', expanded: new Set(), sideMode: 'links',
+    active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', rootTargeted: false, expanded: new Set(), sideMode: 'links',
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, draggedPath: '', renamePath: '', renameOriginal: '',
     historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
@@ -1186,7 +1186,7 @@
   }
   function rebuildEntryIndex() { state.entryIndex = new Map(flattenEntries(state.entries, []).map((entry) => [entry.path, entry])); }
   function findEntry(path) { return state.entryIndex.get(path) || null; }
-  function folderTarget() { return state.selectedFolder && findEntry(state.selectedFolder) ? state.selectedFolder : state.current ? parentPath(state.current.path) : ''; }
+  function folderTarget() { return state.rootTargeted ? '' : state.selectedFolder && findEntry(state.selectedFolder) ? state.selectedFolder : state.current ? parentPath(state.current.path) : ''; }
   function treeIcon(kind) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.classList.add('note-tree-icon', kind === 'folder' ? 'is-folder' : 'is-note');
@@ -1587,9 +1587,9 @@
         input.addEventListener('blur', () => commitInlineRename(entry, input, false)); requestAnimationFrame(() => { input.focus(); input.select(); });
       } else label.textContent = entry.name;
       row.append(toggle, treeIcon(entry.kind), label);
-      row.addEventListener('click', async () => { const clickedPath = entry.path; if (!(await finishInlineTitle())) return; if (state.renamePath && !(await finishInlineRename())) return; closeContextMenu(); const liveEntry = findEntry(clickedPath); if (!liveEntry) return; state.selectedPath = liveEntry.path; if (liveEntry.kind === 'folder') { state.selectedFolder = liveEntry.path; setFolderExpanded(liveEntry.path, !state.expanded.has(liveEntry.path)); } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); } });
+      row.addEventListener('click', async () => { const clickedPath = entry.path; if (!(await finishInlineTitle())) return; if (state.renamePath && !(await finishInlineRename())) return; closeContextMenu(); const liveEntry = findEntry(clickedPath); if (!liveEntry) return; state.rootTargeted = false; state.selectedPath = liveEntry.path; if (liveEntry.kind === 'folder') { state.selectedFolder = liveEntry.path; setFolderExpanded(liveEntry.path, !state.expanded.has(liveEntry.path)); } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); } });
       row.addEventListener('pointerenter', () => { if (entry.kind !== 'note' || state.documentCache.has(entry.path)) return; fetchDocument(entry.path).then((data) => { if (!state.documentCache.has(entry.path)) cacheDocument(makeDocument(data)); }).catch(() => {}); });
-      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); state.selectedPath = entry.path; state.selectedFolder = entry.kind === 'folder' ? entry.path : parentPath(entry.path); updateTreeSelection(); openContextMenu(entry, event.clientX, event.clientY); });
+      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); state.rootTargeted = false; state.selectedPath = entry.path; state.selectedFolder = entry.kind === 'folder' ? entry.path : parentPath(entry.path); updateTreeSelection(); openContextMenu(entry, event.clientX, event.clientY); });
       row.addEventListener('dragstart', (event) => { state.draggedPath = entry.path; row.classList.add('dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-relatum-note-path', entry.path); });
       row.addEventListener('dragend', () => { state.draggedPath = ''; row.classList.remove('dragging'); root.querySelectorAll('.note-drop-target').forEach((item) => item.classList.remove('note-drop-target')); });
       row.addEventListener('dragover', (event) => { const external = !state.draggedPath && Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = external ? 'copy' : 'move'; row.classList.add('note-drop-target'); });
@@ -1750,7 +1750,8 @@
     if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, true);
     else if (state.activeTab !== documentState.path) { state.activeTab = documentState.path; persistTabs(); }
     setEditorDocument(documentState);
-    renderCurrentPath(documentState.path); state.selectedPath = documentState.path; state.selectedFolder = parentPath(documentState.path);
+    renderCurrentPath(documentState.path);
+    if (!state.rootTargeted) { state.selectedPath = documentState.path; state.selectedFolder = parentPath(documentState.path); }
     renderInlineTitle(documentState.path, true); updateDocumentStats(null, documentState.characterCount, documentState.wordCount); renderTabs();
     const treeExpanded = expandTreePath(documentState.path, false);
     clearSaveError(); desktopDirty(hasPendingEdits(documentState));
@@ -1831,7 +1832,7 @@
     selectNoteTab(path, !(options && options.reuseActiveTab === false));
     if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); return true; }
     const previous = state.current; rememberEditorState(previous);
-    const seq = ++state.openSeq; state.openingPath = path; state.selectedPath = path; state.selectedFolder = parentPath(path);
+    const seq = ++state.openSeq; state.openingPath = path; state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
     renderTabs();
     const treeExpanded = expandTreePath(path, false);
     if (!(options && options.selectionPrimed)) { renderCurrentPath(path); if (treeExpanded) renderTree(); else updateTreeSelection(); }
@@ -1881,6 +1882,7 @@
       }
       const result = await post('/api/note-create', payload);
       state.entries = result.tree && result.tree.entries || state.entries;
+      state.rootTargeted = false;
       state.selectedPath = result.path;
       rebuildEntryIndex();
       if (kind === 'folder') {
@@ -2372,7 +2374,27 @@
     });
     tabsEl.addEventListener('dragend', () => { state.draggedTabPath = ''; });
   }
-  treeEl.addEventListener('contextmenu', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); state.selectedPath = ''; openContextMenu(null, event.clientX, event.clientY); });
+  function selectTreeRoot() {
+    state.rootTargeted = true;
+    state.selectedPath = '';
+    state.selectedFolder = '';
+    updateTreeSelection();
+  }
+  treeEl.addEventListener('click', async (event) => {
+    if (event.target.closest('.note-tree-row')) return;
+    if (!(await finishInlineTitle())) return;
+    if (state.renamePath && !(await finishInlineRename())) return;
+    closeContextMenu();
+    selectTreeRoot();
+  });
+  treeEl.addEventListener('contextmenu', async (event) => {
+    if (event.target.closest('.note-tree-row')) return;
+    event.preventDefault();
+    if (!(await finishInlineTitle())) return;
+    if (state.renamePath && !(await finishInlineRename())) return;
+    selectTreeRoot();
+    openContextMenu(null, event.clientX, event.clientY);
+  });
   treeEl.addEventListener('dragover', (event) => { if (event.target.closest('.note-tree-row')) return; const external = Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.dataTransfer.dropEffect = state.draggedPath ? 'move' : 'copy'; treeEl.classList.add('note-drop-root'); });
   treeEl.addEventListener('dragleave', (event) => { if (!treeEl.contains(event.relatedTarget)) treeEl.classList.remove('note-drop-root'); });
   treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.draggedPath) moveEntry(state.draggedPath, ''); else importDataTransfer(event.dataTransfer, ''); });

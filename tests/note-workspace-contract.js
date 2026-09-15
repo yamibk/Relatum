@@ -70,6 +70,12 @@ assert(notes.includes('note-tree-rename'), 'renames must use an inline tree edit
 assert(notes.includes('renameCommitPromise'), 'inline rename completion must be shared with the next tree click');
 assert(notes.includes('finishInlineRename()'), 'a tree click must finish an active inline rename instead of being swallowed');
 assert(!notes.includes('if (state.renamePath) return;'), 'an active inline rename must not swallow the next tree click');
+assert(notes.includes('function selectTreeRoot()') && notes.includes("treeEl.addEventListener('click'"),
+  'clicking blank tree space must clear the selected folder and target the notes root');
+assert(notes.includes('state.rootTargeted = true;') && notes.includes("state.selectedFolder = '';"),
+  'blank tree selection must explicitly override the current note folder fallback');
+assert(notes.includes('if (!state.rootTargeted) { state.selectedPath = documentState.path;'),
+  'an asynchronous note load must not restore a folder selection after a blank tree click');
 assert(notes.includes('expandTreePath(result.path, true)'), 'new folders must reveal their full parent chain');
 assert(notes.includes('expandTreePath(result.path, false)'), 'new notes must reveal their full parent chain');
 assert(notes.includes('row.setAttribute(\'aria-expanded\''), 'folder expansion state must be exposed to UI automation and assistive tech');

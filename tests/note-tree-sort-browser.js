@@ -224,6 +224,20 @@ async function chooseSort(page, mode) {
     assert.equal(await page.locator('[data-note-name-mode="timestamp"]').getAttribute('aria-pressed'), 'true');
     await page.locator('.note-head-actions [data-note-action="new-note"]').click();
     await page.waitForFunction(() => Array.from(document.querySelectorAll('.note-tree-row')).some(row => /^\d{4}-\d{2}-\d{2}-\d{6}(?:-\d+)?\.md$/.test(row.dataset.notePath || '')));
+
+    const folderRow = page.locator('.note-tree-row[data-note-path="aFolder"]');
+    if (await folderRow.getAttribute('aria-expanded') !== 'true') await folderRow.click();
+    await page.locator('.note-tree-row[data-note-path="aFolder/B.md"]').click();
+    await folderRow.click();
+    assert.equal(await folderRow.evaluate(node => node.classList.contains('selected-folder')), true);
+    const treeBox = await page.locator('[data-role="note-tree"]').boundingBox();
+    assert(treeBox, 'note tree must have a clickable blank area');
+    await page.mouse.click(treeBox.x + treeBox.width - 8, treeBox.y + treeBox.height - 8);
+    assert.equal(await page.locator('.note-tree-row.selected-folder').count(), 0, 'blank tree click must clear folder selection');
+    await page.locator('.note-head-actions [data-note-action="new-folder"]').click();
+    await page.locator('.note-tree-scroll > .note-tree-entry[data-path="新建文件夹"] > .note-tree-row').waitFor();
+    assert.equal(await page.locator('.note-tree-entry[data-path="aFolder"] .note-tree-entry[data-path="aFolder/新建文件夹"]').count(), 0,
+      'blank tree click must target the notes root even while a nested note is open');
     assert.deepEqual(errors, []);
     await context.close();
     console.log('note tree sorting and naming browser: ok');
