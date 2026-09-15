@@ -180,13 +180,33 @@
   const LIBRARY_SEARCH_ENABLED_KEY = 'canvas:librarySearchEnabled';
   let startTurnSpeed = START_SPEED_DEFAULT;
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
-  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, career: 2 };
+  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, research: 2, career: 3 };
   let activeStartWorkspace = Object.prototype.hasOwnProperty.call(
     START_WORKSPACE_ORDER, document.body.dataset.startWorkspace,
   ) ? document.body.dataset.startWorkspace : 'canvas';
   let workspaceSwitchPromise = Promise.resolve(true);
   let noteWorkspaceLoader = null;
   let careerWorkspaceLoader = null;
+  let researchWorkspaceLoader = null;
+  function loadResearchWorkspace() {
+    if (window.RelatumResearchWorkspace) return Promise.resolve(window.RelatumResearchWorkspace);
+    if (!researchWorkspaceLoader) {
+      const style = document.createElement('link');
+      style.rel = 'stylesheet'; style.href = 'research/workspace.css';
+      const ready = new Promise((resolve, reject) => {
+        style.onload = resolve; style.onerror = () => reject(new Error('研究样式加载失败'));
+      });
+      document.head.append(style);
+      researchWorkspaceLoader = Promise.all([import('./research/workspace.js'), ready])
+        .then(([module]) => {
+          window.RelatumResearchWorkspace = module.createResearchWorkspace({
+            host: document.querySelector('[data-start-workspace-panel="research"]'),
+          });
+          return window.RelatumResearchWorkspace;
+        }).catch(error => { researchWorkspaceLoader = null; style.remove(); throw error; });
+    }
+    return researchWorkspaceLoader;
+  }
   let noteWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false;
   let careerWorkspaceWarmupHandle = 0;
@@ -384,6 +404,9 @@
       const canLeave = await window.CanvasNoteWorkspace.deactivate();
       if (canLeave === false) return false;
     }
+    if (name !== previous && previous === 'research' && window.RelatumResearchWorkspace) {
+      if (await window.RelatumResearchWorkspace.deactivate() === false) return false;
+    }
     activeStartWorkspace = name;
     syncWorkspaceControls(name);
     syncStartPageActivity();
@@ -403,6 +426,18 @@
           showWorkspacePanel('canvas', 'notes', false);
           showNotice(englishUI() ? 'Notes unavailable' : '笔记工作区暂时无法打开', error.message || String(error));
         }
+        return false;
+      }
+    } else if (name === 'research') {
+      try {
+        const researchWorkspace = await loadResearchWorkspace();
+        if (activeStartWorkspace === 'research') await researchWorkspace.activate();
+      } catch (error) {
+        window.RelatumResearchWorkspace?.suspend();
+        activeStartWorkspace = 'canvas';
+        syncWorkspaceControls('canvas'); syncStartPageActivity();
+        showWorkspacePanel('canvas', 'research', false);
+        showNotice(englishUI() ? 'Research unavailable' : '研究工作区暂时无法打开', error.message || String(error));
         return false;
       }
     } else if (name === 'career') {
@@ -437,6 +472,14 @@
   }
 
   workspaceButtons.forEach((button) => {
+    button.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const index = workspaceButtons.indexOf(button);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? workspaceButtons.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : -1) + workspaceButtons.length) % workspaceButtons.length;
+      workspaceButtons[next].focus(); setStartWorkspace(workspaceButtons[next].dataset.startWorkspace);
+    });
     button.addEventListener('click', (event) => {
       const workspace = button.dataset.startWorkspace;
       setStartWorkspace(workspace);
@@ -456,7 +499,7 @@
     get current() { return activeStartWorkspace; },
     set: setStartWorkspace,
   };
-  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'career') {
+  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'research' || activeStartWorkspace === 'career') {
     setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
   }
   else {

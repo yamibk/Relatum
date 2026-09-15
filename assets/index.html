@@ -15,7 +15,7 @@
         document.documentElement.dataset.startTheme = theme;
         document.documentElement.dataset.startBackground = backgroundStyle;
         var storedWorkspace = localStorage.getItem('canvas:startWorkspace:v1');
-        var workspace = storedWorkspace === 'notes' || storedWorkspace === 'career'
+        var workspace = storedWorkspace === 'notes' || storedWorkspace === 'research' || storedWorkspace === 'career'
           ? storedWorkspace : 'canvas';
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
@@ -111,6 +111,7 @@
         document.documentElement.dataset.startBackground === 'scenic' ? 'scenic' : 'simple';
       document.body.dataset.startWorkspace =
         document.documentElement.dataset.startWorkspace === 'notes'
+          || document.documentElement.dataset.startWorkspace === 'research'
           || document.documentElement.dataset.startWorkspace === 'career'
           ? document.documentElement.dataset.startWorkspace : 'canvas';
       if (window.RelatumBoot && window.RelatumBoot.noteFocusMode) {
@@ -400,6 +401,8 @@
           aria-controls="start-canvas-workspace">画布</button>
         <button type="button" role="tab" data-start-workspace="notes"
           aria-controls="start-notes-workspace">笔记</button>
+        <button type="button" role="tab" data-start-workspace="research"
+          aria-controls="start-research-workspace">研究</button>
         <button type="button" role="tab" data-start-workspace="career"
           aria-controls="start-career-workspace">生涯</button>
       </nav>
@@ -1769,6 +1772,9 @@
       </div>
     </aside>
   </section>
+
+  <section class="research-workspace start-workspace-panel" id="start-research-workspace"
+    data-start-workspace-panel="research" aria-label="研究工作区" hidden></section>
 
   <section class="career-workspace start-workspace-panel" id="start-career-workspace"
     data-start-workspace-panel="career" aria-label="生涯使用报告" hidden>

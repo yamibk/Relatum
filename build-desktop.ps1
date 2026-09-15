@@ -162,8 +162,9 @@ if (-not (Test-Path -LiteralPath $BuiltDir)) { throw ('Build output missing: ' +
 $ReleaseCanvases = Join-Path $Release 'canvases'
 $ReleaseData = Join-Path $Release 'data'
 $ReleaseNotes = Join-Path $Release 'notes'
+$ReleaseResearch = Join-Path $Release 'research'
 if (((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData) -or
-     (Test-Path -LiteralPath $ReleaseNotes)) -and
+     (Test-Path -LiteralPath $ReleaseNotes) -or (Test-Path -LiteralPath $ReleaseResearch)) -and
     -not $ForceReplaceUserData) {
     throw ('Release folder contains user data. Back it up or move it first; use -ForceReplaceUserData only intentionally: ' + $Release)
 }
@@ -182,7 +183,7 @@ if (-not (Test-Path -LiteralPath $ReleaseConfig)) { throw ('Runtime config missi
 if (-not (Test-Path -LiteralPath $ReleaseAssets)) { throw ('Release assets missing: ' + $ReleaseAssets) }
 if (Test-Path -LiteralPath $ReleaseTtf) { throw ('Build-only TTF leaked into release: ' + $ReleaseTtf) }
 if ((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData) -or
-    (Test-Path -LiteralPath $ReleaseNotes)) {
+    (Test-Path -LiteralPath $ReleaseNotes) -or (Test-Path -LiteralPath $ReleaseResearch)) {
     throw ('User data leaked into release: ' + $Release)
 }
 if (-not $KeepBuildArtifacts) { Remove-TreeInside $BuildRoot $BuildParent }

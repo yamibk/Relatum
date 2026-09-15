@@ -1,6 +1,7 @@
 # User-created content and local application state
 /canvases/
 /notes/
+/research/
 /data/
 *.canvas
 *.assets/

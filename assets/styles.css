@@ -19,11 +19,11 @@
   transition: opacity 220ms ease-out;
 }
 
-/* ─── 起步页 · 画布 / 笔记 / 生涯三工作区 ───────────────────── */
+/* ─── 起步页 · 画布 / 笔记 / 研究 / 生涯 ───────────────────── */
 .start-workspace-switch {
   position: relative;
   display: inline-grid;
-  grid-template-columns: repeat(3, minmax(48px, 1fr));
+  grid-template-columns: repeat(4, minmax(48px, 1fr));
   gap: 1px;
   padding: 3px;
   border: 1px solid transparent;
@@ -57,7 +57,7 @@
   top: 3px;
   bottom: 3px;
   left: 3px;
-  width: calc((100% - 8px) / 3);
+  width: calc((100% - 9px) / 4);
   border-radius: 9px;
   background: #181817;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16), 0 4px 10px rgba(0, 0, 0, 0.08),
@@ -67,7 +67,8 @@
 }
 
 body[data-start-workspace="notes"] .start-workspace-slider { transform: translateX(calc(100% + 1px)); }
-body[data-start-workspace="career"] .start-workspace-slider { transform: translateX(calc(200% + 2px)); }
+body[data-start-workspace="research"] .start-workspace-slider { transform: translateX(calc(200% + 2px)); }
+body[data-start-workspace="career"] .start-workspace-slider { transform: translateX(calc(300% + 3px)); }
 
 .start-workspace-switch button {
   position: relative;
@@ -90,11 +91,13 @@ body[data-start-workspace="career"] .start-workspace-slider { transform: transla
 .start-workspace-switch button.active,
 html[data-start-workspace="canvas"] .start-workspace-switch button[data-start-workspace="canvas"],
 html[data-start-workspace="notes"] .start-workspace-switch button[data-start-workspace="notes"],
+html[data-start-workspace="research"] .start-workspace-switch button[data-start-workspace="research"],
 html[data-start-workspace="career"] .start-workspace-switch button[data-start-workspace="career"] { color: #fff; }
 .start-workspace-switch button:active { transform: scale(0.96); }
 .start-workspace-switch button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 body.start-page[data-start-workspace="notes"],
+body.start-page[data-start-workspace="research"],
 body.start-page[data-start-workspace="career"] {
   height: 100vh;
   overflow: hidden;
@@ -928,7 +931,7 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host {
   .top-bar { padding-inline: 18px; }
   .brand-wrap { gap: 7px; }
   .brand-wrap .brand { display: none; }
-  .start-workspace-switch { grid-template-columns: repeat(3, 45px); }
+  .start-workspace-switch { grid-template-columns: repeat(4, 45px); }
   .start-workspace-switch button { padding-inline: 7px; }
   .note-workspace { grid-template-columns: minmax(0, 1fr); margin: 0 10px 10px; border-radius: 16px; }
   .note-tree-pane {
@@ -950,6 +953,7 @@ body.start-page[data-start-theme="dark"] .start-workspace-slider { background: #
 body.start-page[data-start-theme="dark"] .start-workspace-switch button.active,
 html[data-start-theme="dark"][data-start-workspace="canvas"] .start-workspace-switch button[data-start-workspace="canvas"],
 html[data-start-theme="dark"][data-start-workspace="notes"] .start-workspace-switch button[data-start-workspace="notes"],
+html[data-start-theme="dark"][data-start-workspace="research"] .start-workspace-switch button[data-start-workspace="research"],
 html[data-start-theme="dark"][data-start-workspace="career"] .start-workspace-switch button[data-start-workspace="career"] { color: #1b1d1b; }
 body.start-page[data-start-theme="dark"] .note-workspace {
   border-color: rgba(235,240,235,.08); background: #181a19; box-shadow: 0 18px 52px rgba(0,0,0,.2);

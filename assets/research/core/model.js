@@ -1,0 +1,140 @@
+/** Research format v1. Object identity is independent of view representations. */
+const clone = value => structuredClone(value);
+export const newId = prefix => `${prefix}-${crypto.randomUUID()}`;
+
+export function createTypeRegistry() {
+  const types = new Map();
+  return Object.freeze({
+    register(type, descriptor) {
+      if (types.has(type)) throw new Error(`Duplicate research type: ${type}`);
+      types.set(type, Object.freeze({ ...descriptor }));
+    },
+    get: type => types.get(type),
+  });
+}
+
+export function coreTypes() {
+  const registry = createTypeRegistry();
+  registry.register('core.variable', {
+    version: 1,
+    defaults: () => ({ label: '变量', symbol: 'q', domain: 'real', shape: [], unit: '' }),
+    validate(changes) {
+      for (const [key, value] of Object.entries(changes)) {
+        if (!['label', 'symbol', 'domain', 'unit'].includes(key) || typeof value !== 'string' || value.length > 2000) {
+          throw new Error('Invalid variable field');
+        }
+      }
+    },
+  });
+  return registry;
+}
+
+/** Record differences, not whole-document history. Unknown data stays intact. */
+export class ResearchModel {
+  #doc; #registry; #undo = []; #redo = []; #listeners = new Set(); #bytes = 0;
+  constructor(project, registry = coreTypes()) {
+    if (project.format !== 'relatum-research' || project.formatVersion !== 1) throw new Error('Unsupported research format');
+    this.#doc = clone(project);
+    this.#registry = registry;
+  }
+  get revision() { return this.#doc.revision; }
+  get canUndo() { return this.#undo.length > 0; }
+  get canRedo() { return this.#redo.length > 0; }
+  snapshot() { return clone(this.#doc); }
+  subscribe(listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
+  #publish(patches) {
+    this.#doc.revision += 1;
+    const change = { revision: this.revision,
+      changedObjectIds: patches.filter(p => p.collection === 'objects').map(p => p.id),
+      changedViewIds: patches.filter(p => p.collection === 'views').map(p => p.id) };
+    for (const listener of this.#listeners) listener(change);
+  }
+  #apply(patches, forward) {
+    for (const patch of patches) {
+      const records = this.#doc[patch.collection];
+      const index = records.findIndex(item => item.id === patch.id);
+      const value = forward ? patch.after : patch.before;
+      if (value == null) { if (index >= 0) records.splice(index, 1); }
+      else if (index >= 0) records[index] = clone(value);
+      else records.splice(patch.index, 0, clone(value));
+    }
+    this.#publish(patches);
+  }
+  dispatch(command, group = null) {
+    const patches = [];
+    const patch = (collection, id, after) => {
+      const index = this.#doc[collection].findIndex(item => item.id === id);
+      const before = index < 0 ? null : this.#doc[collection][index];
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
+        patches.push({ collection, id, index: index < 0 ? this.#doc[collection].length : index, before: clone(before), after: clone(after) });
+      }
+    };
+    const object = id => {
+      const obj = this.#doc.objects.find(item => item.id === id);
+      if (!obj) throw new Error('Unknown research object');
+      return obj;
+    };
+    const view = id => {
+      const item = this.#doc.views.find(value => value.id === id);
+      if (!item || item.type !== 'core.canvas') throw new Error('Unknown canvas view');
+      return clone(item);
+    };
+    const position = () => {
+      if (![command.x, command.y].every(value => Number.isFinite(value) && Math.abs(value) <= 1e9)) throw new Error('Invalid position');
+      return { x: command.x, y: command.y };
+    };
+    if (command.type === 'createObject') {
+      const descriptor = this.#registry.get(command.objectType);
+      if (!descriptor) throw new Error('Unavailable object type');
+      if (this.#doc.objects.some(item => item.id === command.objectId)) throw new Error('Duplicate object ID');
+      const payload = { ...descriptor.defaults(), ...command.payload };
+      descriptor.validate(command.payload || {});
+      const target = view(command.viewId);
+      target.representations.push({ id: newId('rep'), objectId: command.objectId, ...position(), presentation: 'compact' });
+      patch('objects', command.objectId, { id: command.objectId, type: command.objectType, typeVersion: descriptor.version, payload });
+      patch('views', target.id, target);
+    } else if (command.type === 'updateObject') {
+      const current = object(command.objectId);
+      const descriptor = this.#registry.get(current.type);
+      if (!descriptor || descriptor.version !== current.typeVersion) throw new Error('Unavailable object type');
+      descriptor.validate(command.changes);
+      patch('objects', current.id, { ...current, payload: { ...current.payload, ...command.changes } });
+    } else if (command.type === 'addRepresentation') {
+      object(command.objectId);
+      const target = view(command.viewId);
+      target.representations.push({ id: newId('rep'), objectId: command.objectId, ...position(), presentation: 'compact' });
+      patch('views', target.id, target);
+    } else if (['moveRepresentation', 'removeRepresentation'].includes(command.type)) {
+      const target = view(command.viewId);
+      const index = target.representations.findIndex(item => item.id === command.representationId);
+      if (index < 0) throw new Error('Unknown representation');
+      if (command.type === 'removeRepresentation') target.representations.splice(index, 1);
+      else Object.assign(target.representations[index], position());
+      patch('views', target.id, target);
+    } else throw new Error('Unknown research command');
+    if (!patches.length) return false;
+    const last = this.#undo.at(-1);
+    if (group && last?.group === group && patches.length === 1 && last.patches.length === 1
+      && patches[0].id === last.patches[0].id && patches[0].collection === last.patches[0].collection) {
+      this.#bytes -= last.bytes;
+      last.patches[0].after = clone(patches[0].after);
+      last.bytes = new TextEncoder().encode(JSON.stringify(last.patches)).byteLength;
+      this.#bytes += last.bytes;
+    } else {
+      const bytes = new TextEncoder().encode(JSON.stringify(patches)).byteLength;
+      this.#undo.push({ patches, group, bytes }); this.#bytes += bytes;
+    }
+    this.#redo = [];
+    while (this.#bytes > 64 * 1024 * 1024 && this.#undo.length > 1) this.#bytes -= this.#undo.shift().bytes;
+    this.#apply(patches, true);
+    return true;
+  }
+  undo() {
+    const entry = this.#undo.pop(); if (!entry) return;
+    this.#bytes -= entry.bytes; this.#redo.push(entry); this.#apply(entry.patches, false);
+  }
+  redo() {
+    const entry = this.#redo.pop(); if (!entry) return;
+    this.#undo.push(entry); this.#bytes += entry.bytes; this.#apply(entry.patches, true);
+  }
+}

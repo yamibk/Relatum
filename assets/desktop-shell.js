@@ -28,6 +28,7 @@
 
   let pendingDirty = false;
   let beforeCloseHandler = null;
+  const beforeCloseHandlers = new Set();
   const apiWaiters = [];
 
   // pywebview 桥接「真正就绪」的判定：EXE 冷启动有一小段 window.pywebview.api 已存在、
@@ -70,13 +71,25 @@
 
   window.CanvasDesktop = {
     setDirty(value) {
-      pendingDirty = !!value;
+      pendingDirty = !!value || !!window.RelatumResearchWorkspace?.dirty;
       // 冷启动期间 dirty 会高频变化，只保留最终值；pywebviewready 处理器会统一同步。
       // 否则每次键入都排一个闭包，桥接就绪时又集中发出数百次重复调用。
       if (bridgeReady()) withApi((api) => api.set_dirty(pendingDirty));
     },
     setBeforeCloseHandler(handler) {
       beforeCloseHandler = typeof handler === 'function' ? handler : null;
+    },
+    addBeforeCloseHandler(handler) {
+      beforeCloseHandlers.add(handler);
+      return () => beforeCloseHandlers.delete(handler);
+    },
+    async flushBeforeClose() {
+      if (beforeCloseHandler && await beforeCloseHandler() === false) return false;
+      for (const handler of beforeCloseHandlers) if (await handler() === false) return false;
+      return true;
+    },
+    setResearchWorkspaceActive(value) {
+      withApi((api) => { if (api.set_research_workspace_active) api.set_research_workspace_active(!!value); });
     },
     setNoteWorkspaceActive(value) {
       withApi((api) => api.set_note_workspace_active(!!value));
@@ -187,7 +200,7 @@
     if (closeInFlight) return;
     closeInFlight = true;
     try {
-      if (beforeCloseHandler && await beforeCloseHandler() === false) return;
+      if (await window.CanvasDesktop.flushBeforeClose() === false) return;
       await callApi('close_window');
     } catch (error) {
       // An unavailable bridge or failed save keeps the window open.

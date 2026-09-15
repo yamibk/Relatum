@@ -43,6 +43,7 @@ from ai_plan import (
     parse_plan,
 )
 from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, NotesStore
+from research_library import ResearchError, ResearchStore
 
 # 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
 # 旁边；具有 MSIX 包身份时改用 %LOCALAPPDATA%\Relatum，避免写只读安装目录。
@@ -429,6 +430,7 @@ NOTES_STORE = NotesStore(
     atomic_text=_atomic_write_text,
     atomic_bytes=_atomic_write_bytes,
 )
+RESEARCH_STORE = ResearchStore(ROOT / "research", atomic_text=_atomic_write_text)
 
 
 def _base64_too_large(encoded: str, decoded_limit: int) -> bool:
@@ -10501,6 +10503,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ── 路由 ──
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in {"/api/research/projects", "/api/research/project"}:
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                result = RESEARCH_STORE.projects() if parsed.path.endswith("/projects") else RESEARCH_STORE.load(query.get("id", [""])[0])
+                return self._send_json(200, result)
+            except ResearchError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except OSError:
+                return self._send_json(500, {"error": "研究项目读取失败", "code": "read_failed"})
         if parsed.path == "/api/runtime":
             return self._send_json(200, {
                 "schema": RUNTIME_SCHEMA,
@@ -10698,6 +10709,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
+        if path in {"/api/research/create", "/api/research/save"}:
+            # Same-origin JSON only; these local routes never execute project content.
+            origin = self.headers.get("Origin")
+            host = self.headers.get("Host", "")
+            if host not in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}:
+                return self._send_json(403, {"error": "研究请求主机无效"})
+            if origin and origin != "http://" + self.headers.get("Host", ""):
+                return self._send_json(403, {"error": "研究请求来源无效"})
+            if "application/json" not in self.headers.get("Content-Type", "").lower():
+                return self._send_json(415, {"error": "研究请求必须使用 JSON"})
+            try:
+                result = RESEARCH_STORE.create() if path.endswith("/create") else RESEARCH_STORE.save(body)
+                return self._send_json(200, result)
+            except ResearchError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except OSError:
+                return self._send_json(500, {"error": "研究项目保存失败，草稿仍保留", "code": "write_failed"})
         if path == "/api/career-report-generate":
             try:
                 report = generate_career_report()
