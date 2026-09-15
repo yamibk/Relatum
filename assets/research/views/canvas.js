@@ -1,11 +1,14 @@
 /** A DOM scene with one camera. Gestures only preview until pointer-up. */
-export function createCanvas(host, { select, move, remove, active }) {
+import { createContentRenderer } from './content.js';
+
+export function createCanvas(host, { select, move, remove, active, visible, create, edit }) {
   const scene = host.querySelector('.research-scene');
   const controller = new AbortController();
   const options = { signal: controller.signal };
   const cards = new Map();
   const camera = { x: 40, y: 40, scale: 1 };
   let gesture = null;
+  const content = createContentRenderer(() => visible() && !host.hidden);
   const transform = () => { scene.style.transform = `translate(${camera.x}px,${camera.y}px) scale(${camera.scale})`; };
   const world = (x, y) => {
     const box = host.getBoundingClientRect();
@@ -47,9 +50,17 @@ export function createCanvas(host, { select, move, remove, active }) {
   host.addEventListener('lostpointercapture', cancel, options);
   host.addEventListener('pointercancel', cancel, options);
   window.addEventListener('blur', cancel, options);
+  host.addEventListener('dblclick', event => {
+    if (!active() || event.button !== 0) return;
+    cancel();
+    const card = event.target.closest('[data-representation]');
+    if (card) { select(card.dataset.object, card.dataset.representation); edit(); }
+    else create(world(event.clientX, event.clientY));
+  }, options);
   host.addEventListener('keydown', event => {
     if (!active()) return;
     if (event.key === 'Escape') { cancel(); return; }
+    if (event.key === 'Enter') { event.preventDefault(); edit(); return; }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); remove(); }
   }, options);
   host.addEventListener('wheel', event => {
@@ -64,9 +75,30 @@ export function createCanvas(host, { select, move, remove, active }) {
   }, { ...options, passive: false });
   transform();
   return {
-    center() { const box = host.getBoundingClientRect(); return world(box.left + box.width / 2 - 90, box.top + box.height / 2 - 45); },
+    center() {
+      const box = host.getBoundingClientRect();
+      const point = world(box.left + box.width / 2 - 140, box.top + box.height / 2 - 70);
+      // Prefer an empty visible slot. Measure only when creating a representation, never on pan.
+      const occupied = [...cards.values()].map(card => ({ x: parseFloat(card.style.left), y: parseFloat(card.style.top),
+        width: card.offsetWidth, height: card.offsetHeight }));
+      const topLeft = world(box.left + 20, box.top + 20);
+      const width = box.width / camera.scale, height = box.height / camera.scale;
+      const candidates = [point];
+      for (let y = topLeft.y; y + 160 < topLeft.y + height; y += 210) {
+        for (let x = topLeft.x; x + 280 < topLeft.x + width; x += 300) candidates.push({ x, y });
+      }
+      const free = candidates.find(pos => occupied.every(rect => pos.x + 290 < rect.x || pos.x > rect.x + rect.width + 10
+        || pos.y + 170 < rect.y || pos.y > rect.y + rect.height + 10));
+      if (free) return free;
+      for (let n = 0; n <= occupied.length; n++) {
+        const candidate = { x: point.x + n * 28, y: point.y + n * 28 };
+        if (occupied.every(rect => Math.abs(rect.x - candidate.x) > 20 || Math.abs(rect.y - candidate.y) > 20)) return candidate;
+      }
+      return point;
+    },
     home() { cancel(); Object.assign(camera, { x: 40, y: 40, scale: 1 }); transform(); },
     cancel,
+    pause() { cancel(); content.cancel(); },
     render(project, selectedId, selectedRep) {
       const objects = new Map(project.objects.map(obj => [obj.id, obj]));
       const reps = project.views.find(view => view.id === 'view-main')?.representations || [];
@@ -78,18 +110,23 @@ export function createCanvas(host, { select, move, remove, active }) {
         if (!card) {
           card = document.createElement('div'); card.className = 'research-card';
           card.dataset.representation = rep.id; card.dataset.object = obj.id;
-          card.innerHTML = '<span class="research-card-type"></span><strong></strong><span class="research-card-label"></span><small></small>';
+          card.innerHTML = '<span class="research-card-type"></span><strong></strong><span class="research-card-label"></span><small></small><div class="research-card-content"></div>';
           scene.append(card); cards.set(rep.id, card);
         }
         card.style.left = `${rep.x}px`; card.style.top = `${rep.y}px`;
         card.classList.toggle('is-selected', selectedRep ? selectedRep === rep.id : selectedId === obj.id);
-        card.children[0].textContent = obj.type === 'core.variable' ? 'VARIABLE' : obj.type;
-        card.children[1].textContent = obj.payload.symbol || '—';
-        card.children[2].textContent = obj.payload.label || obj.id;
-        card.children[3].textContent = obj.payload.unit || '—';
+        card.style.zIndex = card.classList.contains('is-selected') ? '1' : '0';
+        const draft = ['core.note', 'core.formula'].includes(obj.type) && obj.typeVersion === 1;
+        card.classList.toggle('is-draft', draft);
+        card.children[0].textContent = ({ 'core.variable': 'VARIABLE', 'core.note': 'NOTE', 'core.formula': 'FORMULA' })[obj.type] || obj.type;
+        card.children[1].textContent = draft ? obj.payload.label : obj.payload.symbol || '—';
+        card.children[2].textContent = draft ? '' : obj.payload.label || obj.id;
+        card.children[3].textContent = draft ? '' : obj.payload.unit || '—';
+        card.children[4].hidden = !draft;
+        if (draft) content.render(card.children[4], obj);
       }
       host.querySelector('.research-canvas-empty').hidden = reps.length > 0;
     },
-    dispose() { cancel(); controller.abort(); cards.clear(); },
+    dispose() { cancel(); content.cancel(); controller.abort(); cards.clear(); },
   };
 }

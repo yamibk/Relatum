@@ -66,9 +66,10 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 | 路径 | 责任 |
 | --- | --- |
-| `research_library.py` | 研究工作区 M0 的独立存储层；校验实验 v1 格式、对象/视图引用及受管路径，原子保存单项目，以修订号和文件指纹拒绝覆盖冲突，冲突另存恢复副本；请求 ID 与内容摘要支持响应丢失后的幂等重试。 |
-| `assets/research/workspace.js`、`workspace.css` | 按需研究入口与独立样式；单项目、变量属性、对象目录/对象表、输入收尾、工作区与桌面关闭保存，使用现有语言服务。 |
+| `research_library.py` | 研究工作区的独立存储层；校验实验 v1 格式、变量/记录/公式草稿、对象/视图引用及受管路径，原子保存单项目，以修订号和文件指纹拒绝覆盖冲突，冲突另存恢复副本；请求 ID 与内容摘要支持响应丢失后的幂等重试。 |
+| `assets/research/workspace.js`、`workspace.css` | 按需研究入口与独立样式；单项目、变量/记录/公式属性、对象目录/对象表、输入收尾、工作区与桌面关闭保存，使用现有语言服务。 |
 | `assets/research/core/model.js`、`core/persistence.js`、`views/canvas.js` | 无 DOM 类型注册/命令差异历史与串行保存队列；画布层独立管理相机、常驻节点 DOM、指针取消和松手一次提交。对象身份与呈现位置分离；首期不依赖旧画布引擎或计算库。 |
+| `assets/research/core/text-input.js`、`views/content.js` | 字段/对象隔离的局部文本历史；研究卡片的有界 Markdown/公式预览，180ms 合并、复用离线 MarkdownMini/MathJax/Mermaid、迟到结果淘汰与离页取消。原生 textarea 保留完整源文，预览不承担计算。 |
 | `app.py` | 本地 HTTP 服务、路由、持久化、导入导出、AI 代理、托管笔记库接口、独立复习卡片数据库、学习/日历/速记/专注数据。 |
 | `notes_library.py` | `ROOT/notes/` 托管 Markdown 笔记库的无 HTTP 数据层；负责安全相对路径、增量文档/双链索引、无感修订保存、库外恢复历史、移动改写与回滚、伴生图片、回收站目标校验、外部拖入暂存，以及生涯统计所需的图片文字元数据解码。 |
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
@@ -145,7 +146,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 用户数据文件
 
-- `ROOT/research/project-main/project.json`：M0 唯一研究项目的权威快照；首次进入只读，用户点击“新建研究项目”才创建。实验格式 `relatum-research` / `formatVersion:1`，包含对象、关系、视图、资源与研究包声明；当前只有变量和画布/对象表可操作，未知内容原样保留。上限 8 MiB；冲突在同目录写 `recovery-<uuid>.json`，不覆盖另一版本，不自动清理。
+- `ROOT/research/project-main/project.json`：当前唯一研究项目的权威快照；首次进入只读，用户点击“新建研究项目”才创建。实验格式 `relatum-research` / `formatVersion:1`，包含对象、关系、视图、资源与研究包声明；当前支持变量、自由记录 `core.note`、公式草稿 `core.formula` 和画布/对象表。两种草稿使用 `typeVersion:1` 与 `payload.label/source`，源文最长 100000 UTF-16 单位，未知类型/字段原样保留。上限 8 MiB；冲突在同目录写 `recovery-<uuid>.json`，不覆盖另一版本，不自动清理。
 
 | 数据 | 路径 |
 | --- | --- |
@@ -484,10 +485,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 研究 `assets/research/`
 
-- M0 框架只提供单项目、变量、画布与对象表。修改名称/符号/单位/定义域同步到同一对象的各处呈现；添加引用不复制对象，从视图移除不删除对象。创建、属性编辑、拖动、添加/移除引用统一进入会话撤销；手势每帧只预览，松手一次提交，取消恢复原位。
+- 单项目支持变量、自由记录、公式草稿、画布与对象表。修改属性或源文同步到同一对象的各处呈现；添加引用不复制对象，从视图移除不删除对象。创建、属性编辑、拖动、添加/移除引用统一进入会话撤销；手势每帧只预览，松手一次提交，取消恢复原位。双击空白创建记录，双击草稿节点或画布内 Enter 聚焦右侧源文；新呈现优先找可见空位、空间不足时错位放置，选中节点临时置前，不改持久化叠放顺序。
+- 记录源文为 Markdown，公式草稿为无外层定界符的 LaTeX；卡片预览最多解析前 12000 字符、显示高度上限 250px，编辑器保留完整源文。预览复用安全 MarkdownMini，仅有真实公式或 Mermaid fence 才触发对应离线运行时；原始 HTML 不执行，特殊 TeX 资源/HTML 命令保留源文显示，公式排版失败不改写源文。180ms 合并预览并淘汰过期结果，切视图/离页取消等待中的投影；不加载旧画布引擎或科研计算库。
+- 原生字段/textarea 使用独立局部文本历史（最多 200 态、4 MiB，至少保留前后两态）；字段内 Ctrl/Cmd+Z/Y 与输入历史事件只修改文字，画布快捷键/撤销按钮操作命令历史。切换对象或应用文档历史时重置局部历史，防止正文串入其他对象；组合期间不记录候选，结束后一次同步，保持焦点与选区。
 - 500ms 空闲合并自动保存，单请求串行追到最新修订；失败保留草稿，冲突不继续覆盖，支持导出当前草稿。浏览器同源配置内用 Web Locks 限制单写入窗口；不同配置仍由后端修订/指纹保护。只读窗口需重开以再次获取写入权。
 - 激活/暂停/释放由独立工作区接口管理；离页暂停交互，保存失败阻止切页。属性输入组合期间不提交预编辑内容，切页/关闭等待输入收尾；桌面关闭通过共享 `CanvasDesktop.flushBeforeClose()` 汇总笔记与研究保存，原生 Alt+F4/托盘退出也进入此链。中文覆盖目前为浏览器合成事件，真实微软拼音另行手测。
-- 本轮按用户要求止于框架；后续入口为 `docs/研究工作区总体规划.md` Q02，不自动实现公式、手写、关系或计算。常驻 DOM 适合当前小项目，尚无大场景虚拟化或基准承诺。
+- 后续入口为 `docs/研究工作区总体规划.md` Q03：节点连线与思维分支；长期以自由空间为主要界面。尚未实现关系编辑、手写或计算。常驻 DOM 与目录重绘适合当前小项目，尚无大场景虚拟化或基准承诺。
 
 ### 生涯 `career-report.js`
 
@@ -660,7 +663,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 11. 验证清单
 
-研究框架改动：`python -B -m unittest tests.test_research_library`、`node tests/research-model-regression.mjs`。真实浏览器设置 `RELATUM_PLAYWRIGHT` / `RELATUM_EDGE_PATH` / 可选 `RELATUM_PYTHON` 后运行 `node tests/research-workspace-browser.js`；脚本启动隔离 `RELATUM_DATA_ROOT`，验证懒加载、显式创建、双视图、拖动/撤销、引用移除、保存重开、第二窗口只读、四工作区切换、深浅/窄窗/低动态、合成 IME、关闭保存、写入失败重试和外部冲突，并在结束时关闭服务。不得指向真实 `research/`。桌面共享关闭链另运行 `node tests/note-focus-browser.js` 与原有桌面 Python 回归；不需要为了框架验收重新打包发行版。
+研究工作区改动：`python -B -m unittest tests.test_research_library`、`node tests/research-model-regression.mjs`。真实浏览器设置 `RELATUM_PLAYWRIGHT` / `RELATUM_EDGE_PATH` / 可选 `RELATUM_PYTHON` 后运行 `node tests/research-workspace-browser.js`；脚本启动隔离 `RELATUM_DATA_ROOT`，验证懒加载、显式创建、双视图、拖动/撤销、引用移除、保存重开、第二窗口只读、四工作区切换、深浅/窄窗/低动态、合成 IME、关闭保存、写入失败重试和外部冲突；Q02 另覆盖正文局部/文档历史、跨对象历史隔离、共享内容、安全 Markdown、按需离线 MathJax/Mermaid、无效公式源文、候选输入中切对象、末字保存重开、双击创建、只读预览和迟到排版。结束时关闭服务，不得指向真实 `research/`。桌面共享关闭链另运行 `node tests/note-focus-browser.js` 与原有桌面 Python 回归；不需要重新打包发行版。
 
 文档-only 改动：
 

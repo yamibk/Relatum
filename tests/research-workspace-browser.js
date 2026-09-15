@@ -126,6 +126,107 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.unroute('**/api/research/save'); await action('retry').click();
     await page.waitForFunction(() => !window.RelatumResearchWorkspace.dirty);
 
+    // Q02: free-space drafts, local/document history, safe preview and shared references.
+    await action('note').click();
+    const source = host.locator('textarea[name="source"]');
+    await label.fill('研究问题'); await source.fill('# 储能参与市场\n\n**假设**：价格可以变化。\n<script>window.__draftExecuted = true</script>');
+    const noteId = await host.locator('.research-object-id').innerText();
+    const noteCards = host.locator(`.research-card[data-object="${noteId}"]`);
+    await noteCards.locator('.research-card-content h1').waitFor();
+    assert.equal(await page.evaluate(() => window.__draftExecuted), undefined);
+    assert(!requests.some(url => url.includes('/vendor/mathjax/')), 'plain Markdown must not load MathJax');
+    const originalText = await source.inputValue();
+    await source.press('Control+End'); await page.keyboard.insertText('A'); await page.keyboard.insertText('B');
+    await source.press('Control+z'); assert.equal(await source.inputValue(), originalText + 'A');
+    await source.press('Control+y'); assert.equal(await source.inputValue(), originalText + 'AB');
+    await action('undo').click(); assert.equal(await source.inputValue(), '');
+    await action('redo').click(); assert.equal(await source.inputValue(), originalText + 'AB');
+    await action('reference').click(); assert.equal(await noteCards.count(), 2);
+    await source.fill('同一份记录');
+    await page.waitForFunction(id => [...document.querySelectorAll(`.research-card[data-object="${id}"] .research-card-content`)].every(el => el.textContent === '同一份记录'), noteId);
+
+    // Composition is never persisted, and object switches wait for its final candidate.
+    await page.evaluate(() => window.RelatumResearchWorkspace.flush());
+    await source.focus();
+    await source.evaluate(el => {
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      el.value = '同一份记录zhong'; el.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
+    });
+    await sleep(650);
+    disk = JSON.parse(fs.readFileSync(path.join(root, 'research/project-main/project.json'), 'utf8'));
+    assert.equal(disk.objects.find(obj => obj.id === noteId).payload.source, '同一份记录');
+    await action('formula').click();
+    assert.equal(await host.locator('.research-object-id').innerText(), noteId);
+    await source.evaluate(el => {
+      el.value = '同一份记录中文'; el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文' }));
+    });
+    await page.waitForFunction(id => document.querySelector('.research-object-id').textContent !== id, noteId);
+    assert.equal(await source.inputValue(), '');
+    const formulaId = await host.locator('.research-object-id').innerText();
+    await source.fill('\\frac{q_1^2}{2} + q_2');
+    const formulaCard = host.locator(`.research-card[data-object="${formulaId}"]`);
+    await formulaCard.locator('mjx-container').waitFor({ timeout: 20000 });
+    // A late typesetter must not strand a preview after leaving and re-entering the view.
+    await page.evaluate(() => {
+      const original = window.MathJax.typesetPromise.bind(window.MathJax);
+      window.__restoreMath = () => { window.MathJax.typesetPromise = original; };
+      let first = true;
+      window.MathJax.typesetPromise = (...args) => {
+        if (!first) return original(...args);
+        first = false;
+        return new Promise(resolve => { window.__releaseMath = () => resolve(original(...args)); });
+      };
+    });
+    await source.fill('q_3'); await page.waitForFunction(() => !!window.__releaseMath);
+    await action('table').click(); await source.fill('q_4'); await action('canvas').click();
+    await page.evaluate(() => { window.__releaseMath(); window.__restoreMath(); });
+    await formulaCard.locator('mjx-container').waitFor();
+    assert(!(await formulaCard.innerText()).includes('3'));
+    await source.fill('\\frac{');
+    assert.equal(await page.evaluate(() => window.RelatumResearchWorkspace.flush()), true);
+    assert.equal(await source.inputValue(), '\\frac{');
+    await source.fill('\\frac{q_1^2}{2} + q_2');
+    await formulaCard.locator('mjx-container').waitFor();
+    await host.locator(`.research-object-list [data-select-object="${noteId}"]`).click();
+    assert.equal(await source.inputValue(), '同一份记录中文');
+    await source.press('Control+z'); assert.equal(await source.inputValue(), '同一份记录中文', 'new object editor cannot undo another object');
+    await source.fill('记录里的公式 $q_1 + q_2$\n\n```mermaid\ngraph LR\n A-->B\n```');
+    await noteCards.first().locator('mjx-container').waitFor();
+    await noteCards.first().locator('.mermaid-diagram svg').waitFor();
+    await source.press('Control+End'); await page.keyboard.insertText('\n末字');
+    await page.evaluate(() => window.RelatumStartWorkspace.set('canvas'));
+    await page.evaluate(() => window.RelatumStartWorkspace.set('research'));
+    await page.reload(); await noteCards.first().waitFor();
+    await host.locator(`.research-object-list [data-select-object="${noteId}"]`).click();
+    assert((await source.inputValue()).endsWith('末字'));
+    await page.evaluate(() => window.RelatumI18n.setLanguage('en'));
+    assert.equal(await host.locator('[data-role="source-label"]').innerText(), 'Note source (Markdown)');
+    assert((await source.inputValue()).endsWith('末字'));
+    await page.evaluate(() => window.RelatumI18n.setLanguage('zh'));
+    await formulaCard.locator('mjx-container').waitFor();
+    await noteCards.first().locator('.mermaid-diagram svg').waitFor();
+    const reader = await context.newPage(); await reader.goto(`${base}/?desktop=1`);
+    await reader.locator(`.research-card[data-object="${formulaId}"] mjx-container`).waitFor();
+    await reader.locator(`.research-object-list [data-select-object="${noteId}"]`).click();
+    assert(await reader.locator('textarea[name="source"]').isDisabled());
+    await reader.close();
+    await page.screenshot({ path: path.join(root, 'research-drafts-light.png') });
+    await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; });
+    await page.screenshot({ path: path.join(root, 'research-drafts-dark.png') });
+    await page.setViewportSize({ width: 620, height: 600 });
+    await page.screenshot({ path: path.join(root, 'research-drafts-narrow.png') });
+    assert(await source.isVisible());
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.evaluate(() => { document.body.dataset.startTheme = 'light'; });
+    // Double-click an empty point creates a note; typing Delete stays inside the textarea.
+    const count = await host.locator('.research-object-list button').count();
+    await host.locator('.research-canvas').dblclick({ position: { x: 30, y: 35 } });
+    assert.equal(await host.locator('.research-object-list button').count(), count + 1);
+    await page.keyboard.insertText('临时'); await source.press('Backspace');
+    assert.equal(await host.locator('.research-object-list button').count(), count + 1);
+    await host.locator('.research-object-list button').first().click();
+
     // External rewrite with unchanged revision is detected by byte fingerprint.
     const file = path.join(root, 'research/project-main/project.json');
     disk = JSON.parse(fs.readFileSync(file, 'utf8')); disk.title = '外部版本';
@@ -137,7 +238,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await label.inputValue(), '冲突草稿');
     assert.equal(await action('export').isVisible(), true);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ result: 'passed', root, checks: 'lazy load, create, shared identity, rename, drag, undo/redo, remove/reference, save/reopen, read-only window, four-workspace switching, themes, narrow, reduced motion, synthetic IME, desktop close, failed save retry, external conflict' }, null, 2));
+    console.log(JSON.stringify({ result: 'passed', root, checks: 'Q01 plus Q02 note/formula drafts, local/document history, shared content, safe Markdown, lazy offline MathJax/Mermaid, malformed formula, composition switch, last-character save/reopen, bilingual UI, draft themes/narrow, double-click creation, input ownership' }, null, 2));
   } finally {
     if (browser) await browser.close();
     server.kill();

@@ -9,7 +9,7 @@ body[data-start-theme="dark"] .research-workspace {
   --research-muted: #a9b1a7; --research-line: #3c453d; --research-accent: #b5cdb0;
 }
 .research-workspace [hidden] { display: none !important; }
-.research-workspace button, .research-workspace input, .research-workspace select { font: inherit; color: inherit; }
+.research-workspace button, .research-workspace input, .research-workspace select, .research-workspace textarea { font: inherit; color: inherit; }
 .research-workspace button { border: 1px solid var(--research-line); border-radius: 7px; padding: 7px 11px; background: transparent; cursor: pointer; }
 .research-workspace button:hover:not(:disabled) { background: var(--research-surface); border-color: var(--research-accent); }
 .research-workspace button:disabled { opacity: .4; cursor: default; }
@@ -35,9 +35,22 @@ body[data-start-theme="dark"] .research-workspace {
 .research-card { position: absolute; width: 180px; padding: 16px; box-sizing: border-box; background: var(--research-paper); border: 1px solid var(--research-line); border-radius: 10px; display: grid; gap: 9px; cursor: grab; user-select: none; pointer-events: auto; }
 .research-card.is-selected { border-color: var(--research-accent); box-shadow: 0 0 0 2px var(--research-accent); }
 .research-card-type { color: var(--research-muted); font-size: 9px; letter-spacing: .14em; }
-.research-card strong { font: italic 30px/1.1 Georgia, serif; overflow-wrap: anywhere; }
+.research-card > strong { font: italic 30px/1.1 Georgia, serif; overflow-wrap: anywhere; }
 .research-card-label { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .research-card small { color: var(--research-muted); }
+.research-card.is-draft { width: 280px; }
+.research-card.is-draft > strong { font-family: inherit; font-size: 15px; line-height: 1.5; font-weight: 600; font-style: normal; }
+.research-card.is-draft > .research-card-label, .research-card.is-draft > small { display: none; }
+.research-card-content { max-height: 250px; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+.research-card-content > div { white-space: normal; }
+.research-card-content p { margin: 5px 0; }
+.research-card-content pre { white-space: pre-wrap; }
+.research-card-content h1, .research-card-content h2, .research-card-content h3 { font-size: 16px; margin: 7px 0; }
+.research-card-content table { border-collapse: collapse; }
+.research-card-content td, .research-card-content th { border: 1px solid var(--research-line); padding: 3px; }
+.research-card-content mjx-container { max-width: 100%; overflow: hidden; }
+.research-draft-hint { color: var(--research-muted); font-size: 11px; line-height: 1.7; margin: 0; }
+.research-inspector textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 190px; max-height: 65vh; padding: 9px; border: 1px solid var(--research-line); border-radius: 5px; background: var(--research-surface); line-height: 1.7; }
 .research-canvas-empty { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; color: var(--research-muted); text-align: center; padding: 20px; }
 .research-canvas-empty strong { color: var(--research-ink); font-size: 19px; font-weight: 500; }
 .research-surface-footer { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--research-line); color: var(--research-muted); font-size: 10px; }

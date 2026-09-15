@@ -60,3 +60,18 @@ add('var-d'); assert.equal(await retry.flush(), false);
 assert(retry.dirty); assert.equal(await retry.flush(), true);
 assert.deepEqual(attempts[0], attempts[1]); retry.dispose();
 console.log('Research model and save queue regression passed');
+
+const drafts = new ResearchModel(blank());
+for (const kind of ['note', 'formula']) {
+  drafts.dispatch({ type: 'createObject', objectType: `core.${kind}`, objectId: kind, viewId: 'view-main', x: 0, y: 0 });
+  drafts.dispatch({ type: 'updateObject', objectId: kind, changes: { source: '中文\n\\frac{1}{2} <script>draft</script>' } }, kind);
+  drafts.dispatch({ type: 'updateObject', objectId: kind, changes: { source: '最终内容😀' } }, kind);
+  drafts.undo(); assert.equal(drafts.snapshot().objects.find(obj => obj.id === kind).payload.source, '');
+  drafts.redo(); assert.equal(drafts.snapshot().objects.find(obj => obj.id === kind).payload.source, '最终内容😀');
+  const before = drafts.snapshot();
+  for (const changes of [{ source: 123 }, { source: 'x'.repeat(100001) }, { symbol: 'q' }]) {
+    assert.throws(() => drafts.dispatch({ type: 'updateObject', objectId: kind, changes }));
+    assert.deepEqual(drafts.snapshot(), before);
+  }
+}
+console.log('Research draft types and grouped history passed');

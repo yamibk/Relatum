@@ -72,6 +72,12 @@ def validate_project(project, project_id):
                     raise ResearchError("变量字段无效：" + key)
             if not isinstance(payload.get("shape"), list):
                 raise ResearchError("变量形状无效")
+        if obj["type"] in ("core.note", "core.formula") and obj["typeVersion"] == 1:
+            for key, limit in (("label", 2000), ("source", 100000)):
+                value = obj["payload"].get(key)
+                # Match JavaScript's UTF-16 length, including astral characters.
+                if not isinstance(value, str) or len(value.encode("utf-16-le", errors="surrogatepass")) // 2 > limit:
+                    raise ResearchError("草稿字段无效：" + key)
     for view in project["views"]:
         if not isinstance(view.get("type"), str):
             raise ResearchError("研究视图类型无效")

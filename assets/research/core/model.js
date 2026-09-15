@@ -26,6 +26,18 @@ export function coreTypes() {
       }
     },
   });
+  for (const type of ['core.note', 'core.formula']) {
+    registry.register(type, {
+      version: 1,
+      defaults: () => ({ label: '', source: '' }),
+      validate(changes) {
+        for (const [key, value] of Object.entries(changes)) {
+          if (!['label', 'source'].includes(key) || typeof value !== 'string'
+            || value.length > (key === 'source' ? 100000 : 2000)) throw new Error('Invalid draft field');
+        }
+      },
+    });
+  }
   return registry;
 }
 

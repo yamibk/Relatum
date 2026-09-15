@@ -63,6 +63,21 @@ class ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(len(recovery), 1)
         self.assertEqual(json.loads(recovery[0].read_text(encoding="utf-8"))["title"], "other window")
 
+    def test_drafts_roundtrip_and_validation(self):
+        loaded = self.store.create()
+        body = self.request(loaded)
+        source = '# 中文😀\r\n未完成 $x_\n<script>source only</script>'
+        for kind in ('note', 'formula'):
+            body['project']['objects'].append({'id': kind, 'type': 'core.' + kind,
+                'typeVersion': 1, 'payload': {'label': '草稿', 'source': source}})
+        self.store.save(body)
+        self.assertEqual(self.store.load('project-main')['project']['objects'], body['project']['objects'])
+        for invalid in (None, 1, 'x' * 100001, '😀' * 50001):
+            request = self.request(self.store.load('project-main'), revision=2)
+            request['project']['objects'][0]['payload']['source'] = invalid
+            with self.assertRaises(ResearchError): self.store.save(request)
+        self.assertEqual(self.store.load('project-main')['project']['objects'][0]['payload']['source'], source)
+
     def test_external_edit_same_revision_conflicts(self):
         loaded = self.store.create()
         path = self.root / "project-main/project.json"

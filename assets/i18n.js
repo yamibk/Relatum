@@ -4,6 +4,11 @@
   const STORAGE_KEY = 'canvas:toolbarLanguage';
   const EN = {
     '研究': 'Research', '研究工作区': 'Research workspace', '研究画布': 'Research canvas',
+    '＋ 记录': '+ Note', '＋ 公式': '+ Formula', '自由记录': 'Free note', '公式草稿': 'Formula draft',
+    '从一个想法开始': 'Start with an idea', '双击空白记录想法，添加变量与公式。': 'Double-click empty space to capture an idea; add variables and formulas.',
+    '在自由空间摆放想法、变量与公式。': 'Arrange ideas, variables and formulas in a free space.',
+    '记录正文（Markdown）': 'Note source (Markdown)', '公式源文（LaTeX）': 'Formula source (LaTeX)',
+    '源文自动保存；公式只排版，不执行计算。': 'Source saves automatically. Formulas are displayed, without computation.',
     '新建研究项目': 'Create research project', '试用阶段': 'Experimental', '＋ 变量': '+ Variable', '变量': 'Variable',
     '自由画布': 'Free canvas', '对象表': 'Object table', '项目对象': 'Project objects',
     '同一对象可以在多处呈现。': 'One object can appear in multiple places.',
