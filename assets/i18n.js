@@ -180,6 +180,8 @@
     '时': 'hr', '秒': 'sec',
     '隐藏特殊页': 'Hide utility pages',
     '收起复习/日历/活跃/速记/树状/学习/专注，只留最近·收藏·分组': 'Hide Review, Calendar, Activity, Quick Notes, Tree, Study, and Focus; keep Recent, Favorites, and Groups.',
+    '禁用研究入口': 'Disable research entry',
+    '「研究」标签从顶栏移除，只有这里能重新打开': 'Remove the Research tab from the top bar; only this switch brings it back',
     '精简目标树编辑': 'Simplify Goal Tree editing',
     '强制按解锁顺序': 'Enforce unlock order',
     '开启后，完成前项才能勾选或推进后项': 'When enabled, finish prerequisites before completing or advancing later tasks.',

@@ -14,10 +14,15 @@
           ? 'scenic' : 'simple';
         document.documentElement.dataset.startTheme = theme;
         document.documentElement.dataset.startBackground = backgroundStyle;
+        // 齿轮面板的「禁用研究入口」出厂即开启。先读它：顶栏首帧就要用它隐藏研究入口，而且
+        // 上次停在研究页时不能恢复——那会进入一个已经没有入口的工作区。
+        var researchEntryDisabled = localStorage.getItem('canvas:researchEntryDisabled') !== '0';
         var storedWorkspace = localStorage.getItem('canvas:startWorkspace:v1');
         var workspace = storedWorkspace === 'notes' || storedWorkspace === 'research' || storedWorkspace === 'career'
           ? storedWorkspace : 'canvas';
+        if (researchEntryDisabled && workspace === 'research') workspace = 'canvas';
         document.documentElement.dataset.startWorkspace = workspace;
+        document.documentElement.dataset.researchEntryDisabled = researchEntryDisabled ? '1' : '0';
         window.RelatumBoot = window.RelatumBoot || {};
         window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
         if (workspace === 'notes') {
@@ -66,6 +71,7 @@
         document.documentElement.dataset.startTheme = 'light';
         document.documentElement.dataset.startBackground = 'simple';
         document.documentElement.dataset.startWorkspace = 'canvas';
+        document.documentElement.dataset.researchEntryDisabled = '1';
         document.documentElement.dataset.uiLanguage = 'zh-CN';
       }
     })();
@@ -261,6 +267,14 @@
                 <small>收起复习/日历/活跃/速记/树状/学习/专注，只留最近·收藏·分组</small>
               </span>
               <input type="checkbox" data-role="hide-special-toggle">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="start-setting-toggle">
+              <span>
+                <strong>禁用研究入口</strong>
+                <small>「研究」标签从顶栏移除，只有这里能重新打开</small>
+              </span>
+              <input type="checkbox" data-role="research-entry-toggle" checked>
               <i aria-hidden="true"></i>
             </label>
             <label class="start-setting-toggle">

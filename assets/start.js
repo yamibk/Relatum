@@ -71,6 +71,7 @@
   const startPageActivityToggle = document.querySelector('[data-role="start-page-activity-toggle"]');
   const startPageActivityStatsToggle = document.querySelector('[data-role="start-page-activity-stats-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
+  const researchEntryToggle = document.querySelector('[data-role="research-entry-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
   const treePageRootTitleToggle = document.querySelector('[data-role="tree-page-root-title-toggle"]');
@@ -166,6 +167,7 @@
   const START_PAGE_ACTIVITY_ENABLED_KEY = 'canvas:startPageActivityEnabled:v1';
   const START_PAGE_ACTIVITY_STATS_VISIBLE_KEY = 'canvas:startPageActivityStatsVisible:v1';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
+  const RESEARCH_ENTRY_DISABLED_KEY = 'canvas:researchEntryDisabled';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
   const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1';
@@ -184,6 +186,10 @@
   let activeStartWorkspace = Object.prototype.hasOwnProperty.call(
     START_WORKSPACE_ORDER, document.body.dataset.startWorkspace,
   ) ? document.body.dataset.startWorkspace : 'canvas';
+  // 「研究」入口的出厂默认是禁用。启动判定（首帧顶栏与冷启动恢复）同步依赖它，所以
+  // 在这里就读取；视觉状态仍由 applyResearchEntryDisabled 在初始化块里统一应用。
+  let researchEntryDisabled = false;
+  try { researchEntryDisabled = localStorage.getItem(RESEARCH_ENTRY_DISABLED_KEY) !== '0'; } catch (e) {}
   let workspaceSwitchPromise = Promise.resolve(true);
   let noteWorkspaceLoader = null;
   let careerWorkspaceLoader = null;
@@ -465,6 +471,11 @@
   }
 
   function setStartWorkspace(next, options = {}) {
+    // 「研究」入口禁用后在前端彻底消失。这里是所有进入动作的收口：顶栏点击、方向键和
+    // 外部 RelatumStartWorkspace.set() 都经过它，所以没有入口也就没有任何路径能进去。
+    if (next === 'research' && researchEntryDisabled) {
+      return Promise.resolve(false);
+    }
     workspaceSwitchPromise = workspaceSwitchPromise
       .catch(() => false)
       .then(() => performStartWorkspace(next, options));
@@ -475,10 +486,14 @@
     button.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
-      const index = workspaceButtons.indexOf(button);
-      const next = event.key === 'Home' ? 0 : event.key === 'End' ? workspaceButtons.length - 1
-        : (index + (event.key === 'ArrowRight' ? 1 : -1) + workspaceButtons.length) % workspaceButtons.length;
-      workspaceButtons[next].focus(); setStartWorkspace(workspaceButtons[next].dataset.startWorkspace);
+      // 被禁用的「研究」入口不能成为方向键落点：Home / End 也按实际可用顺序取首尾。
+      const reachable = workspaceButtons.filter((item) => !item.disabled);
+      if (!reachable.length) return;
+      const index = reachable.indexOf(button);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? reachable.length - 1
+        : ((index < 0 ? 0 : index) + (event.key === 'ArrowRight' ? 1 : -1)
+          + reachable.length) % reachable.length;
+      reachable[next].focus(); setStartWorkspace(reachable[next].dataset.startWorkspace);
     });
     button.addEventListener('click', (event) => {
       const workspace = button.dataset.startWorkspace;
@@ -489,6 +504,8 @@
       if (workspace === 'career' && event.detail > 0) button.blur();
     });
   });
+  // 入口被隐藏时，上次停在研究页也不能恢复：那会进入一个已经没有入口的工作区。
+  if (researchEntryDisabled && activeStartWorkspace === 'research') activeStartWorkspace = 'canvas';
   syncWorkspaceControls(activeStartWorkspace);
   workspacePanels.forEach((panel) => {
     const active = panel.dataset.startWorkspacePanel === activeStartWorkspace;
@@ -805,6 +822,28 @@
     }
   }
 
+  // 「禁用研究入口」：出厂默认开启（只有显式存过 '0' 才放开）。开启后「研究」标签直接
+  // 从顶栏消失，三列网格、滑块宽度与档位由 CSS 一起收一档（见 styles.css 顶栏区块），
+  // 所以按钮位置不再保留。用户切换开关时若正停在研究页立刻退回「画布」，避免停在一个
+  // 已经没有入口的工作区；启动时的同类回退在顶栏 boot 分支做，不在这里重复切页。
+  function applyResearchEntryDisabled(disabled, persist) {
+    researchEntryDisabled = !!disabled;
+    if (researchEntryToggle) researchEntryToggle.checked = researchEntryDisabled;
+    document.documentElement.dataset.researchEntryDisabled = researchEntryDisabled ? '1' : '0';
+    workspaceButtons.forEach((button) => {
+      if (button.dataset.startWorkspace !== 'research') return;
+      button.disabled = researchEntryDisabled;
+    });
+    if (persist) {
+      try {
+        localStorage.setItem(RESEARCH_ENTRY_DISABLED_KEY, researchEntryDisabled ? '1' : '0');
+      } catch (e) {}
+    }
+    if (persist && researchEntryDisabled && activeStartWorkspace === 'research') {
+      setStartWorkspace('canvas');
+    }
+  }
+
   function applyGoalTreeSimpleMode(simple, persist) {
     const active = simple !== false;
     if (goalTreeSimpleToggle) goalTreeSimpleToggle.checked = active;
@@ -1082,6 +1121,8 @@
   let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
   try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
   applyHideSpecialPages(hideSpecialInit, false);
+  // 出厂即禁用研究入口，只有显式存过 '0' 才放开（值在声明处已按偏好读取，这里只应用状态）。
+  applyResearchEntryDisabled(researchEntryDisabled, false);
   let goalTreeSimpleInit = true;
   try { goalTreeSimpleInit = localStorage.getItem(GOAL_TREE_SIMPLE_KEY) !== '0'; } catch (e) {}
   applyGoalTreeSimpleMode(goalTreeSimpleInit, false);
@@ -1404,6 +1445,11 @@
   if (hideSpecialToggle) {
     hideSpecialToggle.addEventListener('change', () => {
       applyHideSpecialPages(hideSpecialToggle.checked, true);
+    });
+  }
+  if (researchEntryToggle) {
+    researchEntryToggle.addEventListener('change', () => {
+      applyResearchEntryDisabled(researchEntryToggle.checked, true);
     });
   }
   if (goalTreeSimpleToggle) {
@@ -2189,6 +2235,7 @@
       START_PAGE_ACTIVITY_ENABLED_KEY,    // 学习/树状/速记计时（开）
       START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, // 显示三页统计数字（关）
       HIDE_SPECIAL_KEY,                   // 隐藏特殊页（关）
+      RESEARCH_ENTRY_DISABLED_KEY,        // 禁用研究入口（关）
       GOAL_TREE_SIMPLE_KEY,               // 精简目标树编辑（开）
       GOAL_TREE_ENFORCE_UNLOCK_KEY,       // 强制按解锁顺序（关）
       TREE_PAGE_ROOT_TITLE_HIDDEN_KEY,    // 隐藏根节点标题（关）
@@ -2215,6 +2262,7 @@
     applyStartPageActivityEnabled(true, false);
     applyStartPageActivityStatsVisible(false, false);
     applyHideSpecialPages(false, false);
+    applyResearchEntryDisabled(true, false);   // 出厂默认：研究入口禁用
     applyGoalTreeSimpleMode(true, false);
     applyGoalTreeUnlockEnforcement(false, false);
     applyTreePageRootTitleHidden(false, false);
