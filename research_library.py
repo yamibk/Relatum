@@ -110,6 +110,21 @@ def validate_project(project, project_id):
                 raise ResearchError("研究连线集合无效")
             records(links)
             by_id = {rep["id"]: rep for rep in reps}
+            done = set()
+            for rep in reps:
+                if "collapsed" in rep and type(rep["collapsed"]) is not bool:
+                    raise ResearchError("分支折叠状态无效")
+                parent = rep.get("parentId")
+                if parent is not None and (not isinstance(parent, str) or parent not in by_id):
+                    raise ResearchError("分支父级引用无效")
+            for rep in reps:
+                chain, current = set(), rep
+                while current and current["id"] not in done:
+                    if current["id"] in chain:
+                        raise ResearchError("分支不能循环归属")
+                    chain.add(current["id"])
+                    current = by_id.get(current.get("parentId"))
+                done.update(chain)
             for link in links:
                 relation_id, source_id, target_id = (link.get(key) for key in ("relationId", "sourceId", "targetId"))
                 if any(not isinstance(value, str) for value in (relation_id, source_id, target_id)):
@@ -201,8 +216,15 @@ class ResearchStore:
             request_id = valid_id(body.get("requestId"))
             project = copy.deepcopy(validate_project(body.get("project"), project_id))
             project.pop("_storage", None)
-            digest = hashlib.sha256(encode(project).encode("utf-8")).hexdigest()
             current, fingerprint = self._read(project_id)
+            deleted = set(current.get('_deletedObjectIds', []))
+            if any(obj['id'] in deleted for obj in project['objects']):
+                raise ResearchError("项目包含已永久删除的对象，请重新打开项目", 409, "conflict")
+            if deleted:
+                project['_deletedObjectIds'] = sorted(deleted)
+            else:
+                project.pop('_deletedObjectIds', None)
+            digest = hashlib.sha256(encode(project).encode("utf-8")).hexdigest()
             if current.get("_storage") == {"requestId": request_id, "digest": digest}:
                 return {"revision": current["revision"], "fingerprint": fingerprint}
             if (type(body.get("expectedRevision")) is not int
@@ -217,3 +239,52 @@ class ResearchStore:
             self.atomic_text(self._path(project_id), encode(project))
             _, fingerprint = self._read(project_id)
             return {"revision": project["revision"], "fingerprint": fingerprint}
+
+    @staticmethod
+    def _remove_object(project, object_id):
+        project['objects'] = [obj for obj in project['objects'] if obj['id'] != object_id]
+        relations = {rel['id'] for rel in project['relations'] if any(end.get('objectId') == object_id for end in rel.get('ends', []))}
+        project['relations'] = [rel for rel in project['relations'] if rel['id'] not in relations]
+        for view in project['views']:
+            removed = {rep['id'] for rep in view.get('representations', []) if rep['objectId'] == object_id}
+            if 'representations' in view:
+                view['representations'] = [rep for rep in view['representations'] if rep['id'] not in removed]
+                for rep in view['representations']:
+                    if rep.get('parentId') in removed:
+                        rep.pop('parentId', None)
+            if 'links' in view:
+                view['links'] = [link for link in view['links'] if link.get('relationId') not in relations
+                                 and link.get('sourceId') not in removed and link.get('targetId') not in removed]
+
+    def delete_object(self, body):
+        with self.lock:
+            project_id, object_id = valid_id(body.get('projectId')), valid_id(body.get('objectId'))
+            project, fingerprint = self._read(project_id)
+            deleted = set(project.get('_deletedObjectIds', []))
+            if object_id not in deleted:
+                if body.get('expectedRevision') != project['revision'] or body.get('expectedFingerprint') != fingerprint:
+                    raise ResearchError('项目已修改，请重新打开后删除', 409, 'conflict')
+                if not any(obj['id'] == object_id for obj in project['objects']):
+                    raise ResearchError('对象不存在', 404, 'not_found')
+            # Only this project's managed recovery files. No recycling or new backup.
+            folder = self._path(project_id).parent
+            for recovery in folder.glob('recovery-*.json'):
+                if recovery.is_symlink() or recovery.resolve().parent != folder.resolve():
+                    raise ResearchError('恢复副本路径无效', 403, 'unsafe_path')
+                try:
+                    data = json.loads(recovery.read_bytes())
+                    validate_project(data, project_id)
+                except (ValueError, ResearchError):
+                    raise ResearchError('恢复副本损坏，未完成永久删除', 409, 'delete_failed')
+                if any(obj['id'] == object_id for obj in data['objects']):
+                    self._remove_object(data, object_id)
+                    data.pop('_storage', None)
+                    self.atomic_text(recovery, encode(data))
+            if object_id not in deleted:
+                self._remove_object(project, object_id)
+                deleted.add(object_id)
+                project['_deletedObjectIds'] = sorted(deleted)
+                project.pop('_storage', None)
+                project['revision'] += 1
+                self.atomic_text(self._path(project_id), encode(project))
+            return self.load(project_id)

@@ -10709,7 +10709,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
-        if path in {"/api/research/create", "/api/research/save"}:
+        if path in {"/api/research/create", "/api/research/save", "/api/research/delete-object"}:
             # Same-origin JSON only; these local routes never execute project content.
             origin = self.headers.get("Origin")
             host = self.headers.get("Host", "")
@@ -10720,7 +10720,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if "application/json" not in self.headers.get("Content-Type", "").lower():
                 return self._send_json(415, {"error": "研究请求必须使用 JSON"})
             try:
-                result = RESEARCH_STORE.create() if path.endswith("/create") else RESEARCH_STORE.save(body)
+                result = (RESEARCH_STORE.create() if path.endswith("/create") else
+                          RESEARCH_STORE.delete_object(body) if path.endswith('/delete-object') else RESEARCH_STORE.save(body))
                 return self._send_json(200, result)
             except ResearchError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})

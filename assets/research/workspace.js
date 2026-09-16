@@ -7,6 +7,8 @@ export function createResearchWorkspace({ host }) {
   let model = null, saver = null, active = false, disposed = false, loadPromise = null;
   let selected = null, selectedRep = null, unsubscribe = null, releaseWriter = null;
   let selectedRelation = null, connectionSource = null;
+  let creationType = 'note';
+  let deleting = false;
   let readOnly = false, status = 'saved', errorMessage = '', view = 'canvas';
   let composing = null, settle = null, settled = null, editGroup = null;
   const controller = new AbortController();
@@ -26,12 +28,15 @@ export function createResearchWorkspace({ host }) {
         <button data-action="canvas" aria-pressed="true">自由画布</button><button data-action="table" aria-pressed="false">对象表</button>
         <p class="research-section-label">项目对象</p><div class="research-object-list" data-user-content></div>
         <p class="research-directory-note">同一对象可以在多处呈现。</p></aside>
-      <div class="research-surface"><div class="research-canvas" tabindex="0" aria-label="研究画布">
+      <div class="research-surface"><div class="research-creation"><span>双击创建</span>
+        <button data-create-type="note" aria-pressed="true">记录</button><button data-create-type="variable" aria-pressed="false">变量</button><button data-create-type="formula" aria-pressed="false">公式</button>
+        </div><div class="research-canvas" tabindex="0" aria-label="研究画布">
         <div class="research-canvas-empty"><strong>从一个想法开始</strong><p>双击空白记录想法，添加变量与公式。</p></div>
         <div class="research-scene" data-user-content></div></div>
-        <div class="research-table-wrap" hidden><table><thead><tr><th>符号</th><th>名称</th><th>单位</th><th>呈现</th></tr></thead><tbody data-user-content></tbody></table></div>
+        <div class="research-table-wrap" hidden><table><thead><tr><th>符号</th><th>名称</th><th>单位</th><th>呈现</th><th>操作</th></tr></thead><tbody data-user-content></tbody></table></div>
         <div class="research-surface-footer"><span data-role="gesture-hint">拖动空白平移 · Ctrl + 滚轮缩放</span><button data-action="fit">适应视野</button><button data-action="home">回到原点</button></div></div>
-      <aside class="research-inspector"><p class="research-section-label">当前对象</p><p data-role="selection-empty">选择一个对象以编辑属性。</p>
+      <aside class="research-inspector"><div class="research-inspector-heading"><p class="research-section-label">当前对象</p><button data-action="delete-object" disabled title="立即永久删除对象及关联数据，不可恢复。">永久删除</button></div>
+        <p data-role="selection-empty">选择一个对象以编辑属性。</p>
         <form hidden><label>名称<input name="label" maxlength="2000" autocomplete="off"></label>
           <label>符号<input name="symbol" maxlength="2000" autocomplete="off"></label>
           <label>单位<input name="unit" maxlength="2000" autocomplete="off"></label>
@@ -40,6 +45,8 @@ export function createResearchWorkspace({ host }) {
           <p class="research-draft-hint" hidden>源文自动保存；公式只排版，不执行计算。</p>
           <p class="research-object-id" data-user-content></p>
           <button type="button" data-action="locate">定位到画布</button><button type="button" data-action="reference">添加画布引用</button><button type="button" data-action="remove">从视图移除</button>
+          <button type="button" data-action="child">添加子分支 · Tab</button><button type="button" data-action="sibling">添加同级分支 · Enter</button>
+          <button type="button" data-action="layout">整理此分支</button><button type="button" data-action="collapse">折叠分支</button><button type="button" data-action="detach">脱离父分支</button>
         </form><p data-role="unknown-type" hidden>此对象类型暂不可编辑，原始内容会保留。</p>
         <div class="research-relation-editor" hidden><label>连线名称<input name="relationLabel" maxlength="2000" autocomplete="off" data-user-content></label>
           <button data-action="delete-relation">删除关系</button></div>
@@ -53,25 +60,27 @@ export function createResearchWorkspace({ host }) {
   const inputs = new Map();
   let forceFields = false;
   const scene = createCanvas($('.research-canvas'), {
-    active: () => alive() && !readOnly && !composing,
+    active: () => alive() && !readOnly && !deleting && !saver?.deleting && !composing,
     visible: alive,
     select: (id, rep) => { selectedRelation = null; selected = id; selectedRep = rep; render(); },
     selectRelation: id => { selected = null; selectedRep = null; selectedRelation = id; render(); },
     connecting: () => !!connectionSource,
     cancelConnect: () => { connectionSource = null; render(); },
-    connect: targetId => {
+    connect: (targetId, draggedSource = null) => {
       const reps = model.snapshot().views.find(item => item.id === 'view-main').representations;
-      const source = reps.find(rep => rep.id === connectionSource), target = reps.find(rep => rep.id === targetId);
+      const source = reps.find(rep => rep.id === (draggedSource || connectionSource)), target = reps.find(rep => rep.id === targetId);
       if (!source || !target || source.objectId === target.objectId) return;
-      const sourceId = connectionSource; connectionSource = null;
+      const sourceId = source.id; connectionSource = null;
       selected = null; selectedRep = null; selectedRelation = newId('relation');
       dispatch({ type: 'createRelation', viewId: 'view-main', relationId: selectedRelation, sourceId, targetId });
       $('[name="relationLabel"]').focus();
     },
     move: (id, x, y) => dispatch({ type: 'moveRepresentation', viewId: 'view-main', representationId: id, x, y }),
     remove: () => selectedRelation ? dispatch({ type: 'removeRelation', relationId: selectedRelation }) : removeRepresentation(),
-    create: position => addDraft('note', position),
-    edit: () => selectedRelation ? $('[name="relationLabel"]').focus() : fields.find(field => !field.closest('label').hidden && field.name === 'source')?.focus(),
+    create: position => addDraft(creationType, position),
+    branch: (kind, checkOnly) => addBranch(kind, checkOnly),
+    edit: () => selectedRelation ? $('[name="relationLabel"]').focus()
+      : (fields.find(field => !field.closest('label').hidden && field.name === 'source') || $('[name="label"]')).focus(),
   });
   function dirtyDesktop() {
     if (alive()) window.CanvasDesktop?.setDirty(!!saver?.dirty || !!composing);
@@ -81,6 +90,8 @@ export function createResearchWorkspace({ host }) {
     $('.research-status [role="status"]').textContent = readOnly ? tr('此窗口只读：研究项目已在另一窗口编辑。')
       : errorMessage || (model ? tr(messages[status]) : tr('尚未创建项目'));
     $('[data-action="retry"]').hidden = !model || status !== 'error';
+    $('[data-action="retry"]').textContent = tr(saver?.deleting ? '重试删除' : '重试保存');
+    if (saver?.deleting && status === 'error') $('.research-status [role="status"]').textContent = tr('删除尚未确认完成，请重试。');
     $('[data-action="export"]').hidden = !model;
     dirtyDesktop();
   }
@@ -89,6 +100,7 @@ export function createResearchWorkspace({ host }) {
     const project = model.snapshot();
     const oldFocused = document.activeElement?.dataset.selectObject;
     const obj = project.objects.find(item => item.id === selected);
+    $('[data-action="delete-object"]').disabled = !obj || readOnly;
     if (!obj) { selected = null; selectedRep = null; }
     const reps = project.views.find(item => item.id === 'view-main')?.representations || [];
     if (!reps.some(rep => rep.id === selectedRep)) selectedRep = null;
@@ -106,7 +118,10 @@ export function createResearchWorkspace({ host }) {
     connectButton.disabled = readOnly || !selectedRep || reps.every(rep => rep.objectId === selected);
     connectButton.setAttribute('aria-pressed', String(!!connectionSource));
     $('.research-canvas').classList.toggle('is-connecting', !!connectionSource);
-    $('[data-role="gesture-hint"]').textContent = tr(connectionSource ? '点击另一个节点连接 · Esc 取消' : '拖动空白平移 · Ctrl + 滚轮缩放');
+    $('[data-role="gesture-hint"]').textContent = tr(connectionSource ? '点击另一个节点连接 · Esc 取消' : 'Alt 拖动节点连线 · 拖动空白平移 · Ctrl + 滚轮缩放');
+    for (const button of host.querySelectorAll('[data-create-type]')) {
+      button.disabled = readOnly; button.setAttribute('aria-pressed', String(button.dataset.createType === creationType));
+    }
     $('[data-action="undo"]').disabled = readOnly || !model.canUndo;
     $('[data-action="redo"]').disabled = readOnly || !model.canRedo;
     const list = $('.research-object-list');
@@ -127,7 +142,11 @@ export function createResearchWorkspace({ host }) {
         if (value === null) cell.append(makeButton()); else cell.textContent = value;
         row.append(cell);
       }
-      rows.append(row);
+      const cell = document.createElement('td'), deleteButton = document.createElement('button');
+      deleteButton.type = 'button'; deleteButton.textContent = tr('永久删除'); deleteButton.dataset.deleteObject = item.id;
+      deleteButton.title = tr('立即永久删除对象及关联数据，不可恢复。');
+      deleteButton.disabled = readOnly; deleteButton.setAttribute('aria-label', `${tr('永久删除')} ${item.payload.label || item.id}`);
+      cell.append(deleteButton); row.append(cell); rows.append(row);
     }
     if (oldFocused && alive()) {
       const surface = view === 'table' ? rows : list;
@@ -164,12 +183,19 @@ export function createResearchWorkspace({ host }) {
       $('[data-action="reference"]').disabled = readOnly;
       $('[data-action="remove"]').disabled = readOnly || !selectedRep;
       $('[data-action="locate"]').disabled = !reps.some(rep => rep.objectId === selected);
+      const rep = reps.find(rep => rep.id === selectedRep), hasChildren = reps.some(item => item.parentId === selectedRep);
+      for (const name of ['child', 'sibling', 'layout', 'collapse', 'detach']) {
+        $(`[data-action="${name}"]`).disabled = readOnly || !rep || (['sibling', 'detach'].includes(name) && !rep.parentId)
+          || (['layout', 'collapse'].includes(name) && !hasChildren);
+      }
+      $('[data-action="collapse"]').textContent = tr(rep?.collapsed ? '展开分支' : '折叠分支');
     }
     forceFields = false;
+    for (const surface of host.querySelectorAll('.research-body, .research-actions')) surface.inert = deleting || !!saver?.deleting;
     renderStatus();
   }
   function dispatch(command, group) {
-    if (!alive() || readOnly || !model) return;
+    if (!alive() || readOnly || deleting || saver?.deleting || !model) return;
     try { model.dispatch(command, group); }
     catch (error) { errorMessage = error.message; renderStatus(); }
   }
@@ -183,7 +209,7 @@ export function createResearchWorkspace({ host }) {
     dispatch({ type: 'updateObject', objectId: selected, changes: { [field.name]: field.value } }, editGroup);
   }
   for (const field of fields) {
-    const input = bindTextInput(field, { signal: controller.signal, commit: commitField, canEdit: () => alive() && !readOnly && !composing });
+    const input = bindTextInput(field, { signal: controller.signal, commit: commitField, canEdit: () => alive() && !readOnly && !deleting && !saver?.deleting && !composing });
     inputs.set(field, input);
     field.addEventListener('focus', () => { editGroup = newId('edit'); }, events);
     field.addEventListener('input', event => { if (!event.isComposing) input.record(); }, events);
@@ -208,8 +234,28 @@ export function createResearchWorkspace({ host }) {
     switchView('canvas');
     selectedRelation = null; selected = newId(kind); selectedRep = null;
     dispatch({ type: 'createObject', objectType: `core.${kind}`, objectId: selected, viewId: 'view-main', ...position,
-      payload: { label: tr(kind === 'note' ? '自由记录' : '公式草稿') } });
-    $('textarea[name="source"]').focus();
+      payload: kind === 'variable' ? { label: tr('变量'), symbol: `q${model.snapshot().objects.length + 1}` }
+        : { label: tr(kind === 'note' ? '自由记录' : '公式草稿') } });
+    selectedRep = model.snapshot().views.find(item => item.id === 'view-main').representations.find(rep => rep.objectId === selected)?.id;
+    render();
+    $(kind === 'variable' ? '[name="symbol"]' : 'textarea[name="source"]').focus();
+  }
+  function addBranch(kind, checkOnly = false) {
+    if (!model || readOnly || !selectedRep || connectionSource) return false;
+    const reps = model.snapshot().views.find(item => item.id === 'view-main').representations;
+    const current = reps.find(rep => rep.id === selectedRep);
+    const parent = kind === 'sibling' ? reps.find(rep => rep.id === current?.parentId) : current;
+    if (!parent) return false;
+    if (checkOnly) return true;
+    const size = scene.sizes()[parent.id] || { width: 280, height: 160 };
+    const siblings = reps.filter(rep => rep.parentId === parent.id);
+    const y = siblings.reduce((bottom, rep) => Math.max(bottom, rep.y + (scene.sizes()[rep.id]?.height || 160) + 32), parent.y);
+    selected = newId('note'); selectedRep = null; selectedRelation = null;
+    dispatch({ type: 'createBranch', objectType: 'core.note', objectId: selected, viewId: 'view-main', parentId: parent.id,
+      x: parent.x + size.width + 80, y, payload: { label: tr('自由记录') } });
+    selectedRep = model.snapshot().views.find(item => item.id === 'view-main').representations.find(rep => rep.objectId === selected)?.id;
+    render(); scene.fit(selectedRep); $('[name="label"]').focus(); $('[name="label"]').select();
+    return true;
   }
   function history(redo) {
     scene.cancel(); connectionSource = null; editGroup = null; forceFields = true;
@@ -255,7 +301,23 @@ export function createResearchWorkspace({ host }) {
     if (!alive()) return;
     const button = event.target.closest('button'); if (!button || button.disabled) return;
     const action = button.dataset.action;
+    const deleteTarget = button.dataset.deleteObject || selected;
     await finishInput(); if (!alive()) return;
+    if (button.dataset.deleteObject || action === 'delete-object') {
+      if (readOnly || !model?.snapshot().objects.some(obj => obj.id === deleteTarget)) return;
+      if (deleting || saver?.deleting) return;
+      const id = deleteTarget; scene.cancel(); connectionSource = null;
+      deleting = true; render();
+      try {
+        if (await saver.deleteObject(id)) {
+          for (const [field, input] of inputs) input.sync(null, '', true);
+          selected = null; selectedRep = null; selectedRelation = null;
+        }
+      } finally { deleting = false; render(); }
+      if (view === 'canvas') $('.research-canvas').focus(); else $('[data-action="table"]').focus();
+      return;
+    }
+    if (button.dataset.createType) { creationType = button.dataset.createType; connectionSource = null; switchView('canvas'); $('.research-canvas').focus(); return; }
     if (button.dataset.selectObject) { connectionSource = null; selectedRelation = null; selected = button.dataset.selectObject; selectedRep = null; render(); return; }
     if (button.dataset.selectRelation) { connectionSource = null; selected = null; selectedRep = null; selectedRelation = button.dataset.selectRelation; render(); return; }
     try {
@@ -281,7 +343,15 @@ export function createResearchWorkspace({ host }) {
       else if (action === 'locate') {
         const reps = model.snapshot().views.find(item => item.id === 'view-main').representations;
         selectedRep = (reps.find(rep => rep.id === selectedRep) || reps.find(rep => rep.objectId === selected))?.id;
+        if (!readOnly) dispatch({ type: 'revealRepresentation', viewId: 'view-main', representationId: selectedRep });
         switchView('canvas'); scene.fit(selectedRep);
+      }
+      else if (action === 'child' || action === 'sibling') addBranch(action);
+      else if (['layout', 'collapse', 'detach'].includes(action)) {
+        scene.cancel();
+        dispatch({ type: ({ layout: 'layoutBranch', collapse: 'toggleBranch', detach: 'setBranchParent' })[action],
+          viewId: 'view-main', representationId: selectedRep, sizes: scene.sizes(), parentId: null });
+        $('.research-canvas').focus();
       }
       else if (action === 'fit') scene.fit();
       else if (action === 'undo' && !readOnly) history(false);
@@ -297,7 +367,7 @@ export function createResearchWorkspace({ host }) {
     } catch (error) { errorMessage = error.message; renderStatus(); }
   }, events);
   host.addEventListener('keydown', event => {
-    if (!alive() || event.isComposing || composing || event.keyCode === 229) return;
+    if (!alive() || deleting || saver?.deleting || event.isComposing || composing || event.keyCode === 229) return;
     const key = event.key.toLowerCase(), mod = event.ctrlKey || event.metaKey;
     if (mod && key === 's') { event.preventDefault(); flush(); return; }
     if (event.target.closest('input, textarea, select, [contenteditable]')) return;
@@ -306,7 +376,13 @@ export function createResearchWorkspace({ host }) {
       history(key === 'y' || event.shiftKey);
     }
   }, events);
-  async function flush() { await finishInput(); return saver ? saver.flush() : true; }
+  async function flush() {
+    await finishInput();
+    const wasDeleting = saver?.deleting;
+    const result = saver ? await saver.flush() : true;
+    if (wasDeleting && result) { for (const [field, input] of inputs) input.sync(null, '', true); render(); }
+    return result;
+  }
   const onHide = () => { if (alive()) { scene.cancel(); flush(); } };
   window.addEventListener('blur', onHide, events);
   document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); }, events);

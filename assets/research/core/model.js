@@ -1,4 +1,5 @@
 /** Research format v1. Object identity is independent of view representations. */
+import { branchIds, treeIndex, layoutBranch } from './tree.js';
 const clone = value => structuredClone(value);
 export const newId = prefix => `${prefix}-${crypto.randomUUID()}`;
 
@@ -47,12 +48,17 @@ export class ResearchModel {
   constructor(project, registry = coreTypes()) {
     if (project.format !== 'relatum-research' || project.formatVersion !== 1) throw new Error('Unsupported research format');
     this.#doc = clone(project);
+    for (const view of this.#doc.views) if (view.type === 'core.canvas') treeIndex(view.representations);
     this.#registry = registry;
   }
   get revision() { return this.#doc.revision; }
   get canUndo() { return this.#undo.length > 0; }
   get canRedo() { return this.#redo.length > 0; }
   snapshot() { return clone(this.#doc); }
+  replaceAfterDeletion(project) {
+    this.#doc = clone(project); this.#undo = []; this.#redo = []; this.#bytes = 0;
+    for (const listener of this.#listeners) listener({ revision: this.revision });
+  }
   subscribe(listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   #publish(patches) {
     this.#doc.revision += 1;
@@ -96,14 +102,21 @@ export class ResearchModel {
       if (![command.x, command.y].every(value => Number.isFinite(value) && Math.abs(value) <= 1e9)) throw new Error('Invalid position');
       return { x: command.x, y: command.y };
     };
-    if (command.type === 'createObject') {
+    if (command.type === 'createObject' || command.type === 'createBranch') {
       const descriptor = this.#registry.get(command.objectType);
       if (!descriptor) throw new Error('Unavailable object type');
       if (this.#doc.objects.some(item => item.id === command.objectId)) throw new Error('Duplicate object ID');
       const payload = { ...descriptor.defaults(), ...command.payload };
       descriptor.validate(command.payload || {});
       const target = view(command.viewId);
-      target.representations.push({ id: newId('rep'), objectId: command.objectId, ...position(), presentation: 'compact' });
+      let parent = null;
+      if (command.type === 'createBranch') {
+        parent = target.representations.find(rep => rep.id === command.parentId);
+        if (!parent) throw new Error('Unknown branch parent');
+        parent.collapsed = false;
+      }
+      target.representations.push({ id: newId('rep'), objectId: command.objectId, ...position(), presentation: 'compact',
+        ...(parent ? { parentId: parent.id } : {}) });
       patch('objects', command.objectId, { id: command.objectId, type: command.objectType, typeVersion: descriptor.version, payload });
       patch('views', target.id, target);
     } else if (command.type === 'updateObject') {
@@ -117,16 +130,44 @@ export class ResearchModel {
       const target = view(command.viewId);
       target.representations.push({ id: newId('rep'), objectId: command.objectId, ...position(), presentation: 'compact' });
       patch('views', target.id, target);
+    } else if (['setBranchParent', 'toggleBranch', 'layoutBranch', 'revealRepresentation'].includes(command.type)) {
+      const target = view(command.viewId);
+      const rep = target.representations.find(item => item.id === command.representationId);
+      if (!rep) throw new Error('Unknown representation');
+      if (command.type === 'setBranchParent') {
+        if (command.parentId == null) delete rep.parentId;
+        else rep.parentId = command.parentId;
+        treeIndex(target.representations);
+      } else if (command.type === 'toggleBranch') rep.collapsed = !rep.collapsed;
+      else if (command.type === 'revealRepresentation') {
+        const { byId } = treeIndex(target.representations);
+        let parent = byId.get(rep.parentId);
+        while (parent) { parent.collapsed = false; parent = byId.get(parent.parentId); }
+      } else {
+        const positions = layoutBranch(target.representations, rep.id, command.sizes);
+        for (const item of target.representations) if (positions.has(item.id)) Object.assign(item, positions.get(item.id));
+      }
+      for (const item of target.representations) if (![item.x, item.y].every(n => Number.isFinite(n) && Math.abs(n) <= 1e9)) throw new Error('Invalid position');
+      patch('views', target.id, target);
     } else if (['moveRepresentation', 'removeRepresentation'].includes(command.type)) {
       const target = view(command.viewId);
       const index = target.representations.findIndex(item => item.id === command.representationId);
       if (index < 0) throw new Error('Unknown representation');
       if (command.type === 'removeRepresentation') {
         target.representations.splice(index, 1);
+        for (const rep of target.representations) if (rep.parentId === command.representationId) delete rep.parentId;
         // Removing a visual reference never deletes an object-level relationship.
         if (target.links) target.links = target.links.filter(link => link.sourceId !== command.representationId && link.targetId !== command.representationId);
       }
-      else Object.assign(target.representations[index], position());
+      else {
+        const origin = target.representations[index], next = position();
+        const dx = next.x - origin.x, dy = next.y - origin.y;
+        const ids = new Set(branchIds(target.representations, origin.id));
+        for (const rep of target.representations) if (ids.has(rep.id)) {
+          rep.x += dx; rep.y += dy;
+          if (![rep.x, rep.y].every(n => Number.isFinite(n) && Math.abs(n) <= 1e9)) throw new Error('Invalid position');
+        }
+      }
       patch('views', target.id, target);
     } else if (command.type === 'createRelation') {
       const target = view(command.viewId);

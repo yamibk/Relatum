@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { ResearchModel } from '../assets/research/core/model.js';
 import { createSaveQueue } from '../assets/research/core/persistence.js';
+import { branchIds, hiddenBranches, layoutBranch } from '../assets/research/core/tree.js';
 
 const blank = () => ({ format: 'relatum-research', formatVersion: 1, projectId: 'project-main', revision: 0,
   title: 'Test', objects: [], relations: [], views: [{ id: 'view-main', type: 'core.canvas', representations: [] }],
@@ -99,3 +100,67 @@ graph.undo(); assert.equal(graph.snapshot().relations[0].label, '证据 → 假�
 assert.equal(graph.snapshot().views[0].links[0].sourceId, a.id);
 assert.equal(new ResearchModel(graph.snapshot()).snapshot().relations[0].ends[1].objectId, 'b');
 console.log('Research relationship identity, atomic history and visual removal passed');
+
+const tree = new ResearchModel(graph.snapshot());
+const command = (type, extra = {}) => tree.dispatch({ type, viewId: 'view-main', representationId: a.id, ...extra });
+command('createBranch', { objectType: 'core.note', objectId: 'child', parentId: a.id, x: 400, y: 40 });
+const child = tree.snapshot().views[0].representations.at(-1);
+command('createBranch', { objectType: 'core.note', objectId: 'grandchild', parentId: child.id, x: 800, y: 50 });
+const grand = tree.snapshot().views[0].representations.at(-1);
+const initialTree = tree.snapshot();
+assert.deepEqual(new Set(branchIds(initialTree.views[0].representations, a.id)), new Set([a.id, child.id, grand.id]));
+for (const parentId of [grand.id, a.id, 'missing']) {
+  assert.throws(() => command('setBranchParent', { parentId }));
+  assert.deepEqual(tree.snapshot(), initialTree);
+}
+command('moveRepresentation', { x: 100, y: 80 });
+assert.equal(tree.snapshot().views[0].representations.find(rep => rep.id === grand.id).x, 900);
+assert.equal(tree.snapshot().views[0].representations.find(rep => rep.id === alias.id).x, alias.x);
+assert.deepEqual(tree.snapshot().relations, initialTree.relations);
+tree.undo(); assert.deepEqual(tree.snapshot().views, initialTree.views);
+command('toggleBranch');
+assert.deepEqual(hiddenBranches(tree.snapshot().views[0].representations), new Set([child.id, grand.id]));
+command('revealRepresentation', { representationId: grand.id });
+assert.equal(hiddenBranches(tree.snapshot().views[0].representations).size, 0);
+const beforeLayout = tree.snapshot();
+command('layoutBranch');
+assert.equal(tree.snapshot().views[0].representations.find(rep => rep.id === grand.id).x, 720);
+tree.undo(); assert.deepEqual(tree.snapshot().views, beforeLayout.views);
+command('removeRepresentation', { representationId: child.id });
+assert.equal(tree.snapshot().views[0].representations.find(rep => rep.id === grand.id).parentId, undefined);
+assert.equal(tree.snapshot().objects.length, beforeLayout.objects.length);
+tree.undo(); assert.deepEqual(tree.snapshot().views, beforeLayout.views);
+command('setBranchParent', { representationId: child.id, parentId: null });
+assert.equal(branchIds(tree.snapshot().views[0].representations, a.id).length, 1);
+tree.undo();
+const persistedTree = new ResearchModel(tree.snapshot());
+assert.deepEqual(persistedTree.snapshot(), tree.snapshot());
+// Unequal card heights and multiple sibling subtrees must not overlap.
+const fixture = [{ id: 'r', x: 10, y: 20 }, { id: 'c1', parentId: 'r' }, { id: 'c2', parentId: 'r' }, { id: 'g', parentId: 'c1' }];
+const dimensions = { r: { width: 180, height: 90 }, c1: { width: 280, height: 340 }, c2: { width: 280, height: 300 }, g: { width: 180, height: 400 } };
+const layout = layoutBranch(fixture, 'r', dimensions);
+assert.deepEqual(layout.get('r'), { x: 10, y: 20 });
+assert(layout.get('c2').y >= layout.get('c1').y + 340 + 32);
+const deep = Array.from({ length: 12000 }, (_, n) => ({ id: String(n), ...(n ? { parentId: String(n - 1) } : {}), x: 0, y: 0 }));
+assert.equal(branchIds(deep, '0').length, 12000);
+assert.equal(layoutBranch(deep, '0').size, 12000);
+console.log('Research branch hierarchy, layout, deep traversal, history and relationship isolation passed');
+
+const deletingModel = new ResearchModel(graph.snapshot());
+deletingModel.dispatch({ type: 'updateObject', objectId: 'a', changes: { label: 'unsaved' } });
+let deletionAttempts = 0, deletionBody;
+const deletingQueue = createSaveQueue(deletingModel, { project: graph.snapshot(), fingerprint: 'before' }, () => {}, async (route, body) => {
+  if (route === 'save') return { revision: body.project.revision, fingerprint: 'flushed' };
+  assert.equal(body.expectedFingerprint, 'flushed');
+  if (!deletionAttempts++) { deletionBody = structuredClone(body); throw new Error('response lost'); }
+  assert.deepEqual(body, deletionBody);
+  const project = blank(); project.revision = 99;
+  return { project, fingerprint: 'deleted' };
+});
+assert.equal(await deletingQueue.deleteObject('a'), false);
+assert(deletingQueue.deleting); assert(deletingQueue.dirty);
+assert.equal(await deletingQueue.flush(), true);
+assert.equal(deletingModel.canUndo, false); assert.equal(deletingModel.canRedo, false);
+deletingModel.undo(); assert.equal(deletingModel.snapshot().objects.length, 0);
+assert.equal(deletingQueue.dirty, false); deletingQueue.dispose();
+console.log('Permanent deletion flush, uncertain retry and history removal passed');

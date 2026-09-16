@@ -4,6 +4,14 @@
   const STORAGE_KEY = 'canvas:toolbarLanguage';
   const EN = {
     '研究': 'Research', '研究工作区': 'Research workspace', '研究画布': 'Research canvas',
+    '双击创建': 'Double-click to create',
+    '立即永久删除对象及关联数据，不可恢复。': 'Immediately delete this object and its relationships permanently. Cannot be recovered.',
+    '重试删除': 'Retry deletion', '删除尚未确认完成，请重试。': 'Deletion is not confirmed complete. Please retry.',
+    '永久删除': 'Permanently delete',
+    '公式': 'Formula',
+    '添加子分支 · Tab': 'Add child · Tab', '添加同级分支 · Enter': 'Add sibling · Enter',
+    '整理此分支': 'Arrange branch', '折叠分支': 'Collapse branch', '展开分支': 'Expand branch', '脱离父分支': 'Detach branch',
+    'Alt 拖动节点连线 · 拖动空白平移 · Ctrl + 滚轮缩放': 'Alt-drag to connect · Drag background to pan · Ctrl + wheel to zoom',
     '连接节点': 'Connect nodes', '连线名称': 'Connection name', '删除关系': 'Delete relationship',
     '普通关系': 'Relationships', '定位到画布': 'Locate on canvas', '适应视野': 'Fit to view',
     '点击另一个节点连接 · Esc 取消': 'Click another node to connect · Esc to cancel',

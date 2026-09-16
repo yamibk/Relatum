@@ -30,6 +30,47 @@ class ResearchLibraryTests(unittest.TestCase):
         return {"projectId": project["projectId"], "project": project, "requestId": request_id,
                 "expectedRevision": loaded["project"]["revision"], "expectedFingerprint": loaded["fingerprint"]}
 
+    def test_permanent_object_deletion(self):
+        body = self.request(self.store.create())
+        project = body['project']
+        project['objects'] = [{'id': ident, 'type': 'core.note', 'typeVersion': 1,
+                               'payload': {'label': ident, 'source': 'secret' if ident == 'a' else 'keep'}} for ident in ['a', 'b']]
+        project['relations'] = [{'id': 'rel', 'type': 'core.association', 'typeVersion': 1, 'label': 'link', 'ends': [{'objectId': 'a'}, {'objectId': 'b'}]}]
+        project['views'][0]['representations'] = [{'id': 'ra', 'objectId': 'a', 'x': 0, 'y': 0}, {'id': 'rb', 'objectId': 'b', 'x': 300, 'y': 0, 'parentId': 'ra'}]
+        project['views'][0]['links'] = [{'id': 'link', 'relationId': 'rel', 'sourceId': 'ra', 'targetId': 'rb'}]
+        self.store.save(body)
+        recovery = self.root / 'project-main/recovery-test.json'
+        recovery.write_text(json.dumps(project), encoding='utf-8')
+        loaded = self.store.load('project-main')
+        request = {'projectId': 'project-main', 'objectId': 'a', 'expectedRevision': loaded['project']['revision'], 'expectedFingerprint': loaded['fingerprint']}
+        result = self.store.delete_object(request)
+        self.assertEqual(result, self.store.delete_object(request))
+        self.assertEqual([obj['id'] for obj in result['project']['objects']], ['b'])
+        self.assertEqual(result['project']['relations'], [])
+        self.assertNotIn('parentId', result['project']['views'][0]['representations'][0])
+        self.assertNotIn('secret', recovery.read_text(encoding='utf-8'))
+        self.assertNotIn('secret', (self.root / 'project-main/project.json').read_text(encoding='utf-8'))
+        with self.assertRaises(ResearchError): self.store.save(body)
+        self.assertEqual(len(list(recovery.parent.glob('recovery-*.json'))), 1)
+        next_body = self.request(result, revision=result['project']['revision'] + 1, request_id='next')
+        next_body['project'].pop('_deletedObjectIds')
+        saved = self.store.save(next_body)
+        self.assertEqual(saved, self.store.save(next_body))
+        self.assertEqual(self.store.load('project-main')['project']['_deletedObjectIds'], ['a'])
+
+    def test_branch_validation_and_roundtrip(self):
+        body = self.request(self.store.create())
+        body['project']['objects'] = [{'id': 'note', 'type': 'core.note', 'typeVersion': 1, 'payload': {'label': '', 'source': ''}}]
+        reps = [{'id': 'root', 'objectId': 'note', 'x': 0, 'y': 0, 'collapsed': True},
+                {'id': 'child', 'objectId': 'note', 'x': 300, 'y': 0, 'parentId': 'root'}]
+        body['project']['views'][0]['representations'] = reps
+        for changes in ({'parentId': 'child'}, {'parentId': 'missing'}, {'parentId': []}, {'collapsed': 1}):
+            bad = copy.deepcopy(body)
+            bad['project']['views'][0]['representations'][0].update(changes)
+            with self.assertRaises(ResearchError): self.store.save(bad)
+        self.store.save(body)
+        self.assertEqual(self.store.load('project-main')['project']['views'][0]['representations'], reps)
+
     def test_read_does_not_create_and_creation_is_explicit(self):
         self.assertEqual(self.store.projects(), {"projects": []})
         self.assertFalse(self.root.exists())

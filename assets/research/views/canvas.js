@@ -1,7 +1,8 @@
 /** A DOM scene with one camera. Gestures only preview until pointer-up. */
 import { createContentRenderer } from './content.js';
+import { branchIds, hiddenBranches } from '../core/tree.js';
 
-export function createCanvas(host, { select, selectRelation, connect, connecting, cancelConnect, move, remove, active, visible, create, edit }) {
+export function createCanvas(host, { select, selectRelation, connect, connecting, cancelConnect, move, remove, active, visible, create, edit, branch }) {
   const scene = host.querySelector('.research-scene');
   const controller = new AbortController();
   const options = { signal: controller.signal };
@@ -9,7 +10,8 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
   const sizes = new Map(), edges = new Map();
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg'); svg.classList.add('research-links'); scene.append(svg);
-  let links = [];
+  let links = [], representations = [];
+  const preview = document.createElementNS(svgNS, 'path'); preview.classList.add('research-link-preview'); svg.append(preview);
   const camera = { x: 40, y: 40, scale: 1 };
   let gesture = null;
   const content = createContentRenderer(() => visible() && !host.hidden);
@@ -35,15 +37,16 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
     }
   }
   const observer = new ResizeObserver(entries => {
-    for (const entry of entries) sizes.set(entry.target.dataset.representation, { width: entry.target.offsetWidth, height: entry.target.offsetHeight });
+    for (const entry of entries) if (entry.target.offsetWidth && entry.target.offsetHeight) sizes.set(entry.target.dataset.representation, { width: entry.target.offsetWidth, height: entry.target.offsetHeight });
     if (visible() && !host.hidden) drawLinks();
   });
   function cancel() {
     if (!gesture) return;
-    if (gesture.card) {
-      gesture.card.style.left = `${gesture.x}px`; gesture.card.style.top = `${gesture.y}px`;
+    if (gesture.members) {
+      for (const item of gesture.members) { item.card.style.left = `${item.x}px`; item.card.style.top = `${item.y}px`; }
       drawLinks();
-    } else { camera.x = gesture.x; camera.y = gesture.y; transform(); }
+    } else if (!gesture.connection) { camera.x = gesture.x; camera.y = gesture.y; transform(); }
+    preview.removeAttribute('d');
     const pointerId = gesture.pointerId; gesture = null;
     if (host.hasPointerCapture(pointerId)) host.releasePointerCapture(pointerId);
   }
@@ -57,23 +60,42 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
     if (edge) { selectRelation(edge.dataset.relation); return; }
     if (card) select(card.dataset.object, card.dataset.representation);
     else select(null, null);
+    if (card && event.altKey) {
+      gesture = { pointerId: event.pointerId, connection: card.dataset.representation,
+        startX: event.clientX, startY: event.clientY };
+      host.setPointerCapture(event.pointerId); return;
+    }
     gesture = { pointerId: event.pointerId, card, startX: event.clientX, startY: event.clientY,
       x: card ? parseFloat(card.style.left) : camera.x, y: card ? parseFloat(card.style.top) : camera.y };
+    if (card) gesture.members = branchIds(representations, card.dataset.representation).map(id => cards.get(id)).filter(Boolean)
+      .map(item => ({ card: item, x: parseFloat(item.style.left), y: parseFloat(item.style.top) }));
     host.setPointerCapture(event.pointerId);
   }, options);
   host.addEventListener('pointermove', event => {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
     const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
+    if (gesture.connection) {
+      const a = world(gesture.startX, gesture.startY), b = world(event.clientX, event.clientY);
+      preview.setAttribute('d', `M ${a.x} ${a.y} L ${b.x} ${b.y}`); return;
+    }
     if (gesture.card) {
-      gesture.card.style.left = `${gesture.x + dx / camera.scale}px`;
-      gesture.card.style.top = `${gesture.y + dy / camera.scale}px`;
+      for (const item of gesture.members) {
+        item.card.style.left = `${item.x + dx / camera.scale}px`;
+        item.card.style.top = `${item.y + dy / camera.scale}px`;
+      }
       drawLinks();
     } else { camera.x = gesture.x + dx; camera.y = gesture.y + dy; transform(); }
   }, options);
   host.addEventListener('pointerup', event => {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
     const ended = gesture; gesture = null;
+    preview.removeAttribute('d');
     if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+    if (ended.connection) {
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-representation]');
+      if (target && host.contains(target) && Math.hypot(event.clientX - ended.startX, event.clientY - ended.startY) > 4) connect(target.dataset.representation, ended.connection);
+      return;
+    }
     if (ended.card) move(ended.card.dataset.representation, parseFloat(ended.card.style.left), parseFloat(ended.card.style.top));
   }, options);
   host.addEventListener('lostpointercapture', cancel, options);
@@ -82,7 +104,7 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
   host.addEventListener('dblclick', event => {
     if (!active() || event.button !== 0) return;
     cancel();
-    if (connecting() || event.target.closest('[data-relation]')) return;
+    if (event.altKey || connecting() || event.target.closest('[data-relation]')) return;
     const card = event.target.closest('[data-representation]');
     if (card) { select(card.dataset.object, card.dataset.representation); edit(); }
     else create(world(event.clientX, event.clientY));
@@ -90,7 +112,9 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
   host.addEventListener('keydown', event => {
     if (!active()) return;
     if (event.key === 'Escape') { cancel(); cancelConnect(); return; }
-    if (event.key === 'Enter') { event.preventDefault(); edit(); return; }
+    if (gesture || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'Tab' && !event.shiftKey && branch('child', true)) { event.preventDefault(); branch('child'); return; }
+    if (event.key === 'Enter') { event.preventDefault(); if (!event.shiftKey && branch('sibling', true)) branch('sibling'); else edit(); return; }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); remove(); }
   }, options);
   host.addEventListener('wheel', event => {
@@ -127,9 +151,10 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
       return point;
     },
     home() { cancel(); Object.assign(camera, { x: 40, y: 40, scale: 1 }); transform(); },
+    sizes() { return Object.fromEntries(sizes); },
     fit(representationId = null) {
       cancel();
-      const targets = representationId ? [cards.get(representationId)].filter(Boolean) : [...cards.values()];
+      const targets = (representationId ? [cards.get(representationId)].filter(Boolean) : [...cards.values()]).filter(card => !card.hidden);
       if (!targets.length) return;
       const bounds = targets.map(card => ({ x: parseFloat(card.style.left), y: parseFloat(card.style.top), width: card.offsetWidth, height: card.offsetHeight }));
       const left = Math.min(...bounds.map(b => b.x)), top = Math.min(...bounds.map(b => b.y));
@@ -143,6 +168,8 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
     render(project, selectedId, selectedRep, selectedRelation) {
       const objects = new Map(project.objects.map(obj => [obj.id, obj]));
       const reps = project.views.find(view => view.id === 'view-main')?.representations || [];
+      representations = reps;
+      const hidden = hiddenBranches(reps);
       const live = new Set(reps.map(rep => rep.id));
       for (const [id, card] of cards) if (!live.has(id)) { observer.unobserve(card); card.remove(); cards.delete(id); sizes.delete(id); }
       for (const rep of reps) {
@@ -155,6 +182,8 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
           scene.append(card); cards.set(rep.id, card); observer.observe(card);
         }
         card.style.left = `${rep.x}px`; card.style.top = `${rep.y}px`;
+        card.hidden = hidden.has(rep.id);
+        card.classList.toggle('is-collapsed', !!rep.collapsed);
         card.classList.toggle('is-selected', selectedRep ? selectedRep === rep.id : selectedId === obj.id);
         card.style.zIndex = card.classList.contains('is-selected') ? '1' : '0';
         const draft = ['core.note', 'core.formula'].includes(obj.type) && obj.typeVersion === 1;
@@ -169,15 +198,19 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
       const relations = new Map(project.relations.map(relation => [relation.id, relation]));
       links = (project.views.find(view => view.id === 'view-main')?.links || []).filter(link => {
         const relation = relations.get(link.relationId);
-        return relation?.type === 'core.association' && relation.typeVersion === 1;
+        return relation?.type === 'core.association' && relation.typeVersion === 1 && !hidden.has(link.sourceId) && !hidden.has(link.targetId);
       });
+      links = [...links, ...reps.filter(rep => rep.parentId && !hidden.has(rep.id)).map(rep => ({
+        id: `branch:${rep.id}`, sourceId: rep.parentId, targetId: rep.id, branch: true,
+      }))];
       const liveLinks = new Set(links.map(link => link.id));
       for (const [id, edge] of edges) if (!liveLinks.has(id)) { edge.remove(); edges.delete(id); }
       for (const link of links) {
         let group = edges.get(link.id);
         if (!group) {
           group = document.createElementNS(svgNS, 'g'); group.classList.add('research-link');
-          group.dataset.relation = link.relationId;
+          if (!link.branch) group.dataset.relation = link.relationId;
+          group.classList.toggle('is-branch', !!link.branch);
           const path = document.createElementNS(svgNS, 'path');
           const hit = document.createElementNS(svgNS, 'path'); hit.classList.add('research-link-hit');
           group.append(path, hit, document.createElementNS(svgNS, 'text')); svg.append(group); edges.set(link.id, group);

@@ -37,6 +37,13 @@ body[data-start-theme="dark"] .research-workspace {
 .research-canvas { position: relative; overflow: hidden; flex: 1; min-height: 180px; touch-action: none; }
 .research-links { position: absolute; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .research-link path { fill: none; stroke: var(--research-muted); stroke-width: 1.5; }
+.research-link-preview { fill: none; stroke: var(--research-ink); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.research-link.is-branch path { stroke-dasharray: 4 3; pointer-events: none; }
+.research-link.is-branch .research-link-hit { display: none; }
+.research-card.is-collapsed::after { content: '…'; font-size: 18px; text-align: right; }
+.research-creation { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--research-line); }
+.research-creation span { font-size: 11px; color: var(--research-muted); }
+.research-creation [aria-pressed="true"] { background: var(--research-ink); color: var(--research-paper); }
 .research-link .research-link-hit { stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
 .research-link.is-selected path:not(.research-link-hit) { stroke: var(--research-accent); stroke-width: 2.5; }
 .research-link text { fill: var(--research-ink); stroke: var(--research-paper); stroke-width: 5; paint-order: stroke; font-size: 12px; text-anchor: middle; pointer-events: auto; cursor: pointer; }
@@ -73,6 +80,9 @@ body[data-start-theme="dark"] .research-workspace {
 .research-surface-footer button + button { margin-left: 0; }
 .research-inspector [data-role="relations-label"] { margin-top: 24px; }
 .research-inspector { border-left: 1px solid var(--research-line); }
+.research-inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 15px; }
+.research-inspector-heading .research-section-label { margin: 0; letter-spacing: 0; }
+.research-inspector-heading button { padding: 5px 7px; font-size: 11px; }
 .research-inspector form { display: grid; gap: 15px; }
 .research-inspector label { display: grid; gap: 7px; font-size: 11px; color: var(--research-muted); }
 .research-inspector input, .research-inspector select { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--research-line); background: var(--research-surface); border-radius: 5px; box-sizing: border-box; color: var(--research-ink); }
