@@ -30,6 +30,33 @@ class ResearchLibraryTests(unittest.TestCase):
         return {"projectId": project["projectId"], "project": project, "requestId": request_id,
                 "expectedRevision": loaded["project"]["revision"], "expectedFingerprint": loaded["fingerprint"]}
 
+    def test_multiple_projects_and_idempotent_create(self):
+        first = self.store.create({'projectId': 'project-z', 'title': 'First'})
+        second = self.store.create({'projectId': 'project-a', 'title': 'Second'})
+        self.assertEqual(first, self.store.create({'projectId': 'project-z', 'title': 'Ignored retry'}))
+        self.assertEqual([item['id'] for item in self.store.projects()['projects']], ['project-z', 'project-a'])
+        body = self.request(first)
+        body['project']['title'] = 'Renamed'
+        body['project']['createdAt'] = 1
+        self.store.save(body)
+        self.assertEqual(self.store.load('project-z')['project']['createdAt'], first['project']['createdAt'])
+        self.assertEqual(self.store.load('project-a'), second)
+        self.assertEqual([item['id'] for item in self.store.projects()['projects']], ['project-z', 'project-a'])
+        with self.assertRaises(ResearchError): self.store.save(self.request(first, request_id='stale'))
+        self.assertEqual(self.store.load('project-a'), second)
+
+    def test_legacy_order_invalid_create_and_corrupt_project(self):
+        legacy = self.store.create()['project']
+        legacy.pop('createdAt')
+        self.store.atomic_text(self.root / 'project-main/project.json', json.dumps(legacy))
+        self.store.create({'projectId': 'project-a', 'title': 'New'})
+        self.assertEqual(self.store.projects()['projects'][0]['id'], 'project-main')
+        for body in [{'projectId': '../escape'}, {'projectId': 'bad', 'title': ' '}, {'projectId': 'bad', 'title': 'x' * 501}]:
+            with self.assertRaises(ResearchError): self.store.create(body)
+        self.store.atomic_text(self.root / 'project-broken/project.json', '{broken')
+        self.assertTrue(next(item for item in self.store.projects()['projects'] if item['id'] == 'project-broken')['error'])
+        with self.assertRaises(ResearchError): self.store.create({'projectId': 'project-broken', 'title': 'Do not overwrite'})
+
     def test_permanent_object_deletion(self):
         body = self.request(self.store.create())
         project = body['project']

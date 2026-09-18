@@ -35,6 +35,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await post('save', { projectId: project.projectId, requestId: 'fixture', expectedRevision: 0, expectedFingerprint: loaded.fingerprint, project });
     browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await context.addInitScript(() => localStorage.setItem('canvas:researchEntryDisabled', '0'));
     const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(base); await page.locator('button[data-start-workspace="research"]').click();
     const host = page.locator('#start-research-workspace'), action = name => host.locator(`[data-action="${name}"]`);

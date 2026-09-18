@@ -21,7 +21,7 @@
     '在自由空间摆放想法、变量与公式。': 'Arrange ideas, variables and formulas in a free space.',
     '记录正文（Markdown）': 'Note source (Markdown)', '公式源文（LaTeX）': 'Formula source (LaTeX)',
     '源文自动保存；公式只排版，不执行计算。': 'Source saves automatically. Formulas are displayed, without computation.',
-    '新建研究项目': 'Create research project', '试用阶段': 'Experimental', '＋ 变量': '+ Variable', '变量': 'Variable',
+    '新建研究项目': 'Create research project', '研究项目': 'Research project', '项目名称': 'Project name', '重命名项目': 'Rename project', '研究项目切换': 'Research projects', '切换研究项目': 'Switch research project', '试用阶段': 'Experimental', '＋ 变量': '+ Variable', '变量': 'Variable',
     '自由画布': 'Free canvas', '对象表': 'Object table', '项目对象': 'Project objects',
     '同一对象可以在多处呈现。': 'One object can appear in multiple places.',
     '从一个变量开始': 'Start with a variable', '添加变量，再逐步组织你的研究。': 'Add a variable, then build up your research.',

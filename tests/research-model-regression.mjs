@@ -1,12 +1,35 @@
 import assert from 'node:assert/strict';
 import { ResearchModel } from '../assets/research/core/model.js';
 import { createSaveQueue } from '../assets/research/core/persistence.js';
+import { createSessionCache } from '../assets/research/core/session-cache.js';
 import { branchIds, hiddenBranches, layoutBranch } from '../assets/research/core/tree.js';
 
 const blank = () => ({ format: 'relatum-research', formatVersion: 1, projectId: 'project-main', revision: 0,
   title: 'Test', objects: [], relations: [], views: [{ id: 'view-main', type: 'core.canvas', representations: [] }],
   resources: [], pluginRequirements: [], future: { payload: ['preserve'] } });
 const model = new ResearchModel(blank());
+const cache = createSessionCache({ maxEntries: 2, maxBytes: 100 });
+const session = size => ({ model: { estimatedBytes: size } });
+cache.set('a', session(30)); cache.set('b', session(40));
+const reused = cache.take('a'); cache.set('a', reused); cache.set('c', session(30));
+assert.equal(cache.take('b'), undefined, 'evict least recently used saved session');
+assert.equal(cache.size, 2); assert.equal(cache.estimatedBytes, 60);
+cache.set('d', session(80)); assert.equal(cache.size, 1); assert.equal(cache.estimatedBytes, 80);
+cache.set('oversized', session(101)); assert.equal(cache.size, 1);
+cache.clear(); assert.equal(cache.size, 0); assert.equal(cache.estimatedBytes, 0);
+const historySize = new ResearchModel(blank());
+const emptySize = historySize.estimatedBytes;
+historySize.dispatch({ type: 'renameProject', title: 'Other' });
+assert(historySize.estimatedBytes > emptySize);
+historySize.undo(); assert(historySize.estimatedBytes > emptySize, 'redo history must also count toward cache budget');
+const renamed = new ResearchModel(blank());
+renamed.dispatch({ type: 'renameProject', title: '  项目二  ' });
+assert.equal(renamed.snapshot().title, '项目二');
+renamed.undo(); assert.equal(renamed.snapshot().title, 'Test');
+renamed.redo(); assert.equal(renamed.snapshot().title, '项目二');
+assert.equal(model.snapshot().title, 'Test');
+assert.throws(() => renamed.dispatch({ type: 'renameProject', title: ' ' }));
+assert.throws(() => renamed.dispatch({ type: 'renameProject', title: 'x'.repeat(501) }));
 const add = id => model.dispatch({ type: 'createObject', objectType: 'core.variable', objectId: id, viewId: 'view-main', x: 10, y: 20 });
 add('var-a');
 assert.equal(model.revision, 1);

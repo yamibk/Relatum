@@ -2,6 +2,7 @@ import { ResearchModel, newId } from './core/model.js';
 import { researchRequest, createSaveQueue } from './core/persistence.js';
 import { createCanvas } from './views/canvas.js';
 import { bindTextInput } from './core/text-input.js';
+import { createSessionCache } from './core/session-cache.js';
 
 export function createResearchWorkspace({ host }) {
   let model = null, saver = null, active = false, disposed = false, loadPromise = null;
@@ -11,13 +12,16 @@ export function createResearchWorkspace({ host }) {
   let deleting = false;
   let readOnly = false, status = 'saved', errorMessage = '', view = 'canvas';
   let composing = null, settle = null, settled = null, editGroup = null;
+  let projects = [], operation = null, pendingCreate = null, switching = false, loading = false;
+  const sessions = createSessionCache();
+  const lastProjectKey = 'relatum:research:lastProject:v1';
   const controller = new AbortController();
   const events = { signal: controller.signal };
   const $ = selector => host.querySelector(selector);
   const tr = text => window.RelatumI18n?.t(text) || text;
   const alive = () => active && !disposed && document.body.dataset.startWorkspace === 'research';
   host.innerHTML = `
-    <header class="research-header"><div><span class="research-kicker">RELATUM · RESEARCH</span><h1 data-role="project-title">研究</h1></div>
+    <header class="research-header"><div class="research-title"><span class="research-kicker">RELATUM · RESEARCH</span><div class="research-title-row"><h1 data-role="project-title">研究</h1><input data-role="project-name" maxlength="500" aria-label="项目名称" data-user-content hidden><button data-action="rename-project" title="重命名项目" hidden>✎</button></div></div>
       <span class="research-badge">试用阶段</span><div class="research-actions">
       <button data-action="create">新建研究项目</button><button data-action="add" hidden>＋ 变量</button>
       <button data-action="note" hidden>＋ 记录</button><button data-action="formula" hidden>＋ 公式</button>
@@ -54,13 +58,14 @@ export function createResearchWorkspace({ host }) {
     </div>
     <div class="research-welcome"><span class="research-welcome-mark">q</span><h2>为思考留一张白纸</h2>
       <p>在自由空间摆放想法、变量与公式。</p><p>所有研究内容保存在本机。</p></div>
+    <nav class="research-project-rail" aria-label="研究项目切换"><button data-action="toggle-projects" title="切换研究项目" aria-expanded="false">‹</button><div class="research-project-panel"><div class="research-project-list" data-user-content></div><button data-action="new-project" title="新建研究项目">＋</button></div></nav>
     <footer class="research-status"><span role="status" aria-live="polite" data-i18n-managed></span>
       <button data-action="retry">重试保存</button><button data-action="export">导出当前草稿</button></footer>`;
   const fields = [...Array.from($('form').elements).filter(element => element.name), $('[name="relationLabel"]')];
   const inputs = new Map();
   let forceFields = false;
   const scene = createCanvas($('.research-canvas'), {
-    active: () => alive() && !readOnly && !deleting && !saver?.deleting && !composing,
+    active: () => alive() && !switching && !readOnly && !deleting && !saver?.deleting && !composing,
     visible: alive,
     select: (id, rep) => { selectedRelation = null; selected = id; selectedRep = rep; render(); },
     selectRelation: id => { selected = null; selectedRep = null; selectedRelation = id; render(); },
@@ -83,12 +88,12 @@ export function createResearchWorkspace({ host }) {
       : (fields.find(field => !field.closest('label').hidden && field.name === 'source') || $('[name="label"]')).focus(),
   });
   function dirtyDesktop() {
-    if (alive()) window.CanvasDesktop?.setDirty(!!saver?.dirty || !!composing);
+    if (alive()) window.CanvasDesktop?.setDirty(!!saver?.dirty || !!composing || switching || !nameInput.hidden);
   }
   function renderStatus() {
     const messages = { saved: '已保存到本机', saving: '正在保存…', dirty: '未保存', error: '保存失败，草稿仍保留', conflict: '保存冲突，草稿已保留' };
-    $('.research-status [role="status"]').textContent = readOnly ? tr('此窗口只读：研究项目已在另一窗口编辑。')
-      : errorMessage || (model ? tr(messages[status]) : tr('尚未创建项目'));
+    $('.research-status [role="status"]').textContent = errorMessage || (readOnly ? tr('此窗口只读：研究项目已在另一窗口编辑。')
+      : (model ? tr(messages[status]) : tr('尚未创建项目')));
     $('[data-action="retry"]').hidden = !model || status !== 'error';
     $('[data-action="retry"]').textContent = tr(saver?.deleting ? '重试删除' : '重试保存');
     if (saver?.deleting && status === 'error') $('.research-status [role="status"]').textContent = tr('删除尚未确认完成，请重试。');
@@ -96,6 +101,7 @@ export function createResearchWorkspace({ host }) {
     dirtyDesktop();
   }
   function render() {
+    renderProjects();
     if (!model) { renderStatus(); return; }
     const project = model.snapshot();
     const oldFocused = document.activeElement?.dataset.selectObject;
@@ -109,6 +115,8 @@ export function createResearchWorkspace({ host }) {
     if (!relation) selectedRelation = null;
     $('[data-role="project-title"]').textContent = project.title;
     $('[data-role="project-title"]').setAttribute('data-user-content', '');
+    $('[data-action="rename-project"]').hidden = false;
+    $('[data-action="rename-project"]').disabled = readOnly || switching;
     $('.research-body').hidden = false; $('.research-welcome').hidden = true;
     $('[data-action="create"]').hidden = true; $('[data-action="add"]').hidden = false;
     for (const name of ['add', 'note', 'formula']) {
@@ -191,7 +199,7 @@ export function createResearchWorkspace({ host }) {
       $('[data-action="collapse"]').textContent = tr(rep?.collapsed ? '展开分支' : '折叠分支');
     }
     forceFields = false;
-    for (const surface of host.querySelectorAll('.research-body, .research-actions')) surface.inert = deleting || !!saver?.deleting;
+    for (const surface of host.querySelectorAll('.research-body, .research-actions')) surface.inert = switching || deleting || !!saver?.deleting;
     renderStatus();
   }
   function dispatch(command, group) {
@@ -225,7 +233,31 @@ export function createResearchWorkspace({ host }) {
   async function finishInput() {
     if (composing) { composing.blur(); if (settled) await settled; }
     if (fields.includes(document.activeElement)) commitField(document.activeElement);
+    finishRename();
   }
+  const nameInput = $('[data-role="project-name"]');
+  function finishRename(cancel = false) {
+    if (nameInput.hidden || composing === nameInput) return;
+    if (!cancel && nameInput.value.trim()) dispatch({ type: 'renameProject', title: nameInput.value });
+    nameInput.hidden = true; $('[data-role="project-title"]').hidden = false;
+    dirtyDesktop();
+  }
+  nameInput.addEventListener('compositionstart', () => {
+    composing = nameInput; settled = new Promise(resolve => { settle = resolve; }); dirtyDesktop();
+  }, events);
+  nameInput.addEventListener('compositionend', () => {
+    composing = null;
+    if (document.activeElement !== nameInput) finishRename();
+    settle?.(); settle = null; settled = null; dirtyDesktop();
+  }, events);
+  nameInput.addEventListener('blur', () => finishRename(), events);
+  nameInput.addEventListener('keydown', event => {
+    if (event.isComposing || composing || event.keyCode === 229) return;
+    if (['Enter', 'Escape'].includes(event.key)) {
+      event.preventDefault(); event.stopPropagation(); finishRename(event.key === 'Escape');
+      $('[data-action="rename-project"]').focus();
+    }
+  }, events);
   function removeRepresentation() {
     if (selectedRep) dispatch({ type: 'removeRepresentation', viewId: 'view-main', representationId: selectedRep });
   }
@@ -269,40 +301,143 @@ export function createResearchWorkspace({ host }) {
     $('.research-surface-footer').hidden = next !== 'canvas';
     if (model) render();
   }
-  async function attach(loaded) {
-    if (disposed) return;
-    model = new ResearchModel(loaded.project);
-    // The lock belongs to this document, even while its workspace is hidden.
-    if (navigator.locks) {
-      await new Promise((resolve, reject) => {
-        navigator.locks.request(`relatum-research:${loaded.project.projectId}`, { ifAvailable: true }, lock => {
-          readOnly = !lock; resolve();
-          if (lock) return new Promise(release => { releaseWriter = release; });
-        }).catch(reject);
-      });
+  function renderProjects() {
+    const current = model;
+    if (current) {
+      const item = projects.find(item => item.id === current.projectId);
+      if (item) item.title = current.title;
     }
-    if (disposed) { releaseWriter?.(); return; }
+    const list = $('.research-project-list');
+    const live = new Set(projects.map(item => item.id));
+    for (const button of list.children) if (!live.has(button.dataset.projectId)) button.remove();
+    projects.forEach((item, index) => {
+      let button = Array.from(list.children).find(button => button.dataset.projectId === item.id);
+      if (!button) { button = document.createElement('button'); button.dataset.projectId = item.id; list.append(button); }
+      const label = item.title || item.error || item.id;
+      if (button.textContent !== String(index + 1)) button.textContent = String(index + 1);
+      if (button.dataset.projectTitle !== label) { button.title = label; button.dataset.projectTitle = label; }
+      button.setAttribute('aria-label', `${index + 1} · ${label}`);
+      button.setAttribute('aria-current', String(current?.projectId === item.id));
+      button.disabled = loading || switching || deleting || !!saver?.deleting;
+      if (list.children[index] !== button) list.insertBefore(button, list.children[index]);
+    });
+    $('[data-action="new-project"]').disabled = loading || switching || deleting || !!saver?.deleting;
+    $('[data-action="create"]').disabled = loading || switching;
+  }
+  async function refreshProjects() {
+    projects = (await researchRequest('projects')).projects;
+    renderProjects();
+  }
+  const rail = $('.research-project-rail'), railToggle = $('[data-action="toggle-projects"]');
+  const syncRail = () => railToggle.setAttribute('aria-expanded', String(rail.matches(':hover, :focus-within') || rail.classList.contains('is-open')));
+  rail.addEventListener('pointerenter', syncRail, events);
+  rail.addEventListener('pointerleave', syncRail, events);
+  rail.addEventListener('focusin', syncRail, events);
+  rail.addEventListener('focusout', () => queueMicrotask(syncRail), events);
+  host.addEventListener('pointerdown', event => {
+    if (!rail.contains(event.target)) { rail.classList.remove('is-open'); syncRail(); }
+  }, events);
+  rail.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      rail.classList.remove('is-open'); document.activeElement?.blur(); syncRail(); return;
+    }
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const buttons = Array.from(rail.querySelectorAll('button:not(:disabled)'));
+    const index = buttons.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+    event.preventDefault(); event.stopPropagation(); buttons[next]?.focus();
+  }, events);
+  async function writerLock(id) {
+    if (!navigator.locks) return { readOnly: false, release: null };
+    return new Promise((resolve, reject) => {
+      navigator.locks.request(`relatum-research:${id}`, { ifAvailable: true }, lock => {
+        if (!lock) { resolve({ readOnly: true, release: null }); return; }
+        return new Promise(release => resolve({ readOnly: false, release }));
+      }).catch(reject);
+    });
+  }
+  function attach(loaded, writer, cached) {
+    const reusable = cached?.fingerprint === loaded.fingerprint;
+    model = reusable ? cached.model : new ResearchModel(loaded.project);
+    readOnly = writer.readOnly; releaseWriter = writer.release;
+    selected = null; selectedRep = null; selectedRelation = null; connectionSource = null; editGroup = null;
+    for (const input of inputs.values()) input.sync(null, '', true);
+    status = 'saved'; errorMessage = ''; forceFields = true;
     saver = createSaveQueue(model, loaded, (next, error) => {
       status = next; errorMessage = error ? (window.RelatumI18n?.language === 'en' ? tr(next === 'conflict' ? '保存冲突，草稿已保留' : '保存失败，草稿仍保留') : error.message) : '';
       renderStatus();
     });
     unsubscribe = model.subscribe(() => { saver.schedule(); if (alive()) render(); });
-    render();
+    scene.setCamera(cached?.camera);
+    switchView(cached?.view || 'canvas');
+    try { localStorage.setItem(lastProjectKey, loaded.project.projectId); } catch {}
+  }
+  async function openProject(id) {
+    if (model?.projectId === id) return true;
+    const writer = await writerLock(id);
+    let loaded;
+    try {
+      loaded = await researchRequest(`project?id=${encodeURIComponent(id)}`);
+      // Validate before giving up the current session and its lock.
+      new ResearchModel(loaded.project);
+    } catch (error) { writer.release?.(); throw error; }
+    if (disposed) { writer.release?.(); return false; }
+    scene.pause();
+    const cached = sessions.take(id);
+    if (model) sessions.set(model.projectId, { model, fingerprint: saver.fingerprint, camera: scene.getCamera(), view });
+    unsubscribe?.(); saver?.dispose(); releaseWriter?.();
+    attach(loaded, writer, cached);
+    return true;
+  }
+  function changeProject(id, create = false) {
+    if (operation) return operation;
+    switching = true; renderProjects(); scene.cancel();
+    operation = (async () => {
+      try {
+        if (!(await flushCurrent())) return false;
+        render();
+        if (create) {
+          pendingCreate ||= { projectId: newId('project'), title: `${tr('研究项目')} ${projects.length + 1}` };
+          const loaded = await researchRequest('create', pendingCreate);
+          id = loaded.project.projectId;
+          await refreshProjects();
+        }
+        const result = await openProject(id);
+        if (create && result) pendingCreate = null;
+        return result;
+      } catch (error) { errorMessage = error.message; renderStatus(); return false; }
+      finally { switching = false; operation = null; render(); }
+    })();
+    return operation;
   }
   async function load() {
     if (model) return;
-    if (!loadPromise) loadPromise = (async () => {
-      try { await attach(await researchRequest('project?id=project-main')); }
-      catch (error) { if (error.code !== 'not_found') throw error; }
-    })().catch(error => { loadPromise = null; throw error; });
+    if (loadPromise) return loadPromise;
+    loading = true; renderProjects();
+    loadPromise = (async () => {
+      await refreshProjects();
+      let last; try { last = localStorage.getItem(lastProjectKey); } catch {}
+      const target = projects.find(item => item.id === last && !item.error) || projects.find(item => !item.error);
+      if (target) await openProject(target.id);
+      else if (projects.length) { errorMessage = projects[0].error; renderStatus(); }
+    })().finally(() => { loadPromise = null; loading = false; render(); });
     return loadPromise;
   }
   host.addEventListener('click', async event => {
     if (!alive()) return;
     const button = event.target.closest('button'); if (!button || button.disabled) return;
     const action = button.dataset.action;
+    if (action === 'toggle-projects') {
+      const open = $('.research-project-rail').classList.toggle('is-open');
+      button.setAttribute('aria-expanded', String(open)); return;
+    }
+    if (loading || switching || deleting || (saver?.deleting && action !== 'retry')) return;
+    if (button.dataset.projectId || action === 'new-project' || action === 'create') {
+      await changeProject(button.dataset.projectId, action === 'new-project' || action === 'create'); return;
+    }
     const deleteTarget = button.dataset.deleteObject || selected;
-    await finishInput(); if (!alive()) return;
+    const actionModel = model;
+    await finishInput(); if (!alive() || switching || actionModel !== model || button.disabled) return;
     if (button.dataset.deleteObject || action === 'delete-object') {
       if (readOnly || !model?.snapshot().objects.some(obj => obj.id === deleteTarget)) return;
       if (deleting || saver?.deleting) return;
@@ -321,9 +456,10 @@ export function createResearchWorkspace({ host }) {
     if (button.dataset.selectObject) { connectionSource = null; selectedRelation = null; selected = button.dataset.selectObject; selectedRep = null; render(); return; }
     if (button.dataset.selectRelation) { connectionSource = null; selected = null; selectedRep = null; selectedRelation = button.dataset.selectRelation; render(); return; }
     try {
-      if (action === 'create') {
-        button.disabled = true;
-        try { await attach(await researchRequest('create', {})); } finally { button.disabled = false; }
+      if (action === 'rename-project' && !readOnly) {
+        nameInput.value = model.snapshot().title; nameInput.hidden = false;
+        $('[data-role="project-title"]').hidden = true; nameInput.focus(); nameInput.select();
+        dirtyDesktop();
       } else if (action === 'add') {
         selectedRelation = null; selected = newId('var'); selectedRep = null;
         const position = view === 'canvas' ? scene.center() : { x: 0, y: 0 };
@@ -367,7 +503,7 @@ export function createResearchWorkspace({ host }) {
     } catch (error) { errorMessage = error.message; renderStatus(); }
   }, events);
   host.addEventListener('keydown', event => {
-    if (!alive() || deleting || saver?.deleting || event.isComposing || composing || event.keyCode === 229) return;
+    if (!alive() || switching || deleting || saver?.deleting || event.isComposing || composing || event.keyCode === 229) return;
     const key = event.key.toLowerCase(), mod = event.ctrlKey || event.metaKey;
     if (mod && key === 's') { event.preventDefault(); flush(); return; }
     if (event.target.closest('input, textarea, select, [contenteditable]')) return;
@@ -376,18 +512,24 @@ export function createResearchWorkspace({ host }) {
       history(key === 'y' || event.shiftKey);
     }
   }, events);
-  async function flush() {
+  async function flushCurrent() {
     await finishInput();
+    if (switching) render();
     const wasDeleting = saver?.deleting;
     const result = saver ? await saver.flush() : true;
     if (wasDeleting && result) { for (const [field, input] of inputs) input.sync(null, '', true); render(); }
     return result;
   }
+  async function flush() {
+    if (loadPromise) await loadPromise.catch(() => {});
+    if (operation && !(await operation)) return false;
+    return flushCurrent();
+  }
   const onHide = () => { if (alive()) { scene.cancel(); flush(); } };
   window.addEventListener('blur', onHide, events);
   document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); }, events);
   window.addEventListener('beforeunload', event => {
-    if (saver?.dirty || composing) { event.preventDefault(); event.returnValue = ''; flush(); }
+    if (saver?.dirty || composing || operation || !nameInput.hidden) { event.preventDefault(); event.returnValue = ''; flush(); }
   }, events);
   document.addEventListener('relatum:languagechange', render, events);
   const removeCloseHandler = window.CanvasDesktop?.addBeforeCloseHandler(flush);
@@ -396,7 +538,7 @@ export function createResearchWorkspace({ host }) {
     load,
     async activate() {
       active = true;
-      try { await load(); if (alive()) { render(); window.CanvasDesktop?.setResearchWorkspaceActive(true); } }
+      try { if (model) await refreshProjects(); else await load(); if (alive()) { render(); window.CanvasDesktop?.setResearchWorkspaceActive(true); } }
       catch (error) { errorMessage = error.message; renderStatus(); throw error; }
     },
     flush,
@@ -404,8 +546,11 @@ export function createResearchWorkspace({ host }) {
     async deactivate() { scene.cancel(); if (!(await flush())) return false; this.suspend(); return true; },
     async dispose() {
       if (!(await flush())) return false;
-      disposed = true; this.suspend(); unsubscribe?.(); saver?.dispose(); scene.dispose(); controller.abort(); releaseWriter?.(); removeCloseHandler?.(); return true;
+      disposed = true; this.suspend(); unsubscribe?.(); saver?.dispose(); sessions.clear(); scene.dispose(); controller.abort(); releaseWriter?.(); removeCloseHandler?.();
+      for (const input of inputs.values()) input.sync(null, '', true);
+      inputs.clear(); model = null; saver = null; unsubscribe = null; releaseWriter = null; projects = []; pendingCreate = null;
+      host.replaceChildren(); return true;
     },
-    get dirty() { return !!saver?.dirty || !!composing; },
+    get dirty() { return !!saver?.dirty || !!composing || !!operation || !nameInput.hidden; },
   };
 }

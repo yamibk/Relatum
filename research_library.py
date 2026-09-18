@@ -5,6 +5,7 @@ import json
 import math
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -46,6 +47,8 @@ def validate_project(project, project_id):
         raise ResearchError("研究修订号无效")
     if not isinstance(project.get("title"), str) or len(project["title"]) > 500:
         raise ResearchError("研究项目标题无效")
+    if "createdAt" in project and (type(project["createdAt"]) is not int or not 0 <= project["createdAt"] < 2**53):
+        raise ResearchError("研究项目创建时间无效")
     for key in ("objects", "relations", "views", "resources", "pluginRequirements"):
         if not isinstance(project.get(key), list):
             raise ResearchError("研究项目缺少集合：" + key)
@@ -191,19 +194,25 @@ class ResearchStore:
                     if folder.is_dir() and ID.fullmatch(folder.name):
                         try:
                             project, _ = self._read(folder.name)
-                            items.append({"id": folder.name, "title": project["title"]})
+                            items.append({"id": folder.name, "title": project["title"], "createdAt": project.get("createdAt", 0)})
                         except ResearchError as error:
                             items.append({"id": folder.name, "error": str(error)})
+            items.sort(key=lambda item: (item.get("createdAt", 0), item["id"]))
             return {"projects": items}
 
-    def create(self):
+    def create(self, body=None):
         with self.lock:
-            project_id = "project-main"
+            body = {} if body is None else body
+            project_id = valid_id(body.get("projectId", "project-main"))
+            title = body.get("title", "研究项目")
+            if not isinstance(title, str) or not title.strip() or len(title) > 500:
+                raise ResearchError("研究项目标题无效")
             path = self._path(project_id)
             if path.exists():
                 return self.load(project_id)
             project = {"format": "relatum-research", "formatVersion": 1,
-                       "projectId": project_id, "revision": 0, "title": "研究项目",
+                       "projectId": project_id, "revision": 0, "title": title.strip(),
+                       "createdAt": max(time.time_ns() // 1000000, max((item.get("createdAt", 0) for item in self.projects()["projects"]), default=0) + 1),
                        "objects": [], "relations": [], "resources": [], "pluginRequirements": [],
                        "views": [{"id": "view-main", "type": "core.canvas", "representations": []},
                                  {"id": "view-table", "type": "core.objectTable", "representations": []}]}
@@ -217,6 +226,10 @@ class ResearchStore:
             project = copy.deepcopy(validate_project(body.get("project"), project_id))
             project.pop("_storage", None)
             current, fingerprint = self._read(project_id)
+            if "createdAt" in current:
+                project["createdAt"] = current["createdAt"]
+            else:
+                project.pop("createdAt", None)
             deleted = set(current.get('_deletedObjectIds', []))
             if any(obj['id'] in deleted for obj in project['objects']):
                 raise ResearchError("项目包含已永久删除的对象，请重新打开项目", 409, "conflict")

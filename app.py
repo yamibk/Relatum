@@ -10720,7 +10720,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if "application/json" not in self.headers.get("Content-Type", "").lower():
                 return self._send_json(415, {"error": "研究请求必须使用 JSON"})
             try:
-                result = (RESEARCH_STORE.create() if path.endswith("/create") else
+                result = (RESEARCH_STORE.create(body) if path.endswith("/create") else
                           RESEARCH_STORE.delete_object(body) if path.endswith('/delete-object') else RESEARCH_STORE.save(body))
                 return self._send_json(200, result)
             except ResearchError as err:

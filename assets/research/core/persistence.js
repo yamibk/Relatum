@@ -46,6 +46,7 @@ export function createSaveQueue(model, loaded, onStatus, request = researchReque
     return running;
   }
   return {
+    get fingerprint() { return fingerprint; },
     get dirty() { return dirty() || !!deletion; },
     get deleting() { return !!deletion; },
     async deleteObject(objectId) {

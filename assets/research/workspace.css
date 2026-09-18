@@ -1,4 +1,5 @@
 .research-workspace {
+  position: relative;
   --research-paper: #fff; --research-surface: #fff; --research-ink: #171717;
   --research-muted: #707070; --research-line: #e5e5e5; --research-accent: #171717;
   --research-hover: #f5f5f5;
@@ -6,6 +7,21 @@
   display: flex; flex-direction: column; color: var(--research-ink); background: var(--research-paper);
   overflow: hidden; font-size: 13px;
 }
+.research-title { min-width: 0; max-width: 40%; }
+.research-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.research-title-row h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-title-row input { min-width: 80px; width: 100%; border: 1px solid var(--research-line); border-radius: 5px; background: var(--research-paper); padding: 6px; }
+.research-title-row button { flex: none; padding: 3px 7px; }
+.research-workspace .research-body { margin-right: 58px; }
+.research-project-rail { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); width: 44px; max-height: 65%; display: flex; flex-direction: column; align-items: stretch; z-index: 4; }
+.research-project-rail > button { color: var(--research-muted); }
+.research-project-panel { display: none; min-height: 0; flex-direction: column; padding: 5px; gap: 5px; background: var(--research-paper); border: 1px solid var(--research-line); border-radius: 15px; box-shadow: 0 4px 18px #0000000d; }
+.research-project-rail:hover .research-project-panel, .research-project-rail:focus-within .research-project-panel, .research-project-rail.is-open .research-project-panel { display: flex; }
+.research-project-list { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+.research-workspace .research-project-rail button { padding: 7px 0; min-height: 34px; flex-shrink: 0; border-color: transparent; }
+.research-project-list button[aria-current="true"] { background: var(--research-ink); color: var(--research-paper); }
+.research-workspace .research-project-list button[aria-current="true"]:hover { background: var(--research-ink); }
+.research-project-panel > button { background: var(--research-hover); }
 body[data-start-theme="dark"] .research-workspace {
   --research-paper: #111; --research-surface: #111; --research-ink: #f5f5f5;
   --research-muted: #a3a3a3; --research-line: #333; --research-accent: #fff;

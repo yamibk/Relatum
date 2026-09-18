@@ -129,6 +129,8 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
   }, { ...options, passive: false });
   transform();
   return {
+    getCamera() { return { ...camera }; },
+    setCamera(value) { cancel(); Object.assign(camera, value || { x: 40, y: 40, scale: 1 }); transform(); },
     center() {
       const box = host.getBoundingClientRect();
       const point = world(box.left + box.width / 2 - 140, box.top + box.height / 2 - 70);
@@ -221,6 +223,10 @@ export function createCanvas(host, { select, selectRelation, connect, connecting
       drawLinks();
       host.querySelector('.research-canvas-empty').hidden = reps.length > 0;
     },
-    dispose() { cancel(); content.cancel(); observer.disconnect(); controller.abort(); cards.clear(); edges.clear(); },
+    dispose() {
+      cancel(); content.cancel(); observer.disconnect(); controller.abort();
+      cards.clear(); edges.clear(); sizes.clear(); links = []; representations = [];
+      scene.replaceChildren();
+    },
   };
 }

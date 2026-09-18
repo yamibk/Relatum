@@ -52,6 +52,13 @@ export class ResearchModel {
     this.#registry = registry;
   }
   get revision() { return this.#doc.revision; }
+  get projectId() { return this.#doc.projectId; }
+  get title() { return this.#doc.title; }
+  // Serialized-size estimate, not an exact JavaScript heap measurement.
+  get estimatedBytes() {
+    return JSON.stringify(this.#doc).length * 2
+      + [...this.#undo, ...this.#redo].reduce((total, entry) => total + entry.bytes * 2, 0);
+  }
   get canUndo() { return this.#undo.length > 0; }
   get canRedo() { return this.#redo.length > 0; }
   snapshot() { return clone(this.#doc); }
@@ -70,6 +77,10 @@ export class ResearchModel {
   }
   #apply(patches, forward) {
     for (const patch of patches) {
+      if (patch.collection === 'project') {
+        this.#doc[patch.id] = clone(forward ? patch.after : patch.before);
+        continue;
+      }
       const records = this.#doc[patch.collection];
       const index = records.findIndex(item => item.id === patch.id);
       const value = forward ? patch.after : patch.before;
@@ -102,7 +113,11 @@ export class ResearchModel {
       if (![command.x, command.y].every(value => Number.isFinite(value) && Math.abs(value) <= 1e9)) throw new Error('Invalid position');
       return { x: command.x, y: command.y };
     };
-    if (command.type === 'createObject' || command.type === 'createBranch') {
+    if (command.type === 'renameProject') {
+      if (typeof command.title !== 'string' || !command.title.trim() || command.title.length > 500) throw new Error('Invalid project title');
+      const title = command.title.trim();
+      if (title !== this.#doc.title) patches.push({ collection: 'project', id: 'title', before: this.#doc.title, after: title });
+    } else if (command.type === 'createObject' || command.type === 'createBranch') {
       const descriptor = this.#registry.get(command.objectType);
       if (!descriptor) throw new Error('Unavailable object type');
       if (this.#doc.objects.some(item => item.id === command.objectId)) throw new Error('Duplicate object ID');

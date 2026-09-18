@@ -28,6 +28,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await context.addInitScript(() => {
+      localStorage.setItem('canvas:researchEntryDisabled', '0');
       window.__closeCalls = 0;
       window.pywebview = { api: { set_dirty() {}, set_note_workspace_active() {}, set_research_workspace_active() {},
         get_window_state: async () => ({ maximized: false }), close_window: async () => { window.__closeCalls++; } } };
@@ -43,6 +44,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await action('create').waitFor({ state: 'visible' });
     assert(!fs.existsSync(path.join(root, 'research')), 'opening empty workspace must not create data');
     await action('create').click(); await action('add').waitFor({ state: 'visible' });
+    const projectId = await page.evaluate(() => localStorage.getItem('relatum:research:lastProject:v1'));
     await action('add').click();
     await host.locator('.research-card').waitFor();
     const label = host.locator('input[name="label"]');
@@ -70,7 +72,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await action('undo').click(); await action('canvas').click(); assert.equal(await host.locator('.research-card').count(), 1);
     await action('reference').click(); assert.equal(await host.locator('.research-card').count(), 2);
     assert.equal(await page.evaluate(() => window.RelatumResearchWorkspace.flush()), true);
-    const saved = await (await fetch(`${base}/api/research/project?id=project-main`)).json();
+    const saved = await (await fetch(`${base}/api/research/project?id=${projectId}`)).json();
     assert.equal(saved.project.objects.length, 1);
     assert.equal(saved.project.views[0].representations.length, 2);
     assert.equal(saved.project.objects[0].payload.label, '发电商出力');
@@ -108,14 +110,14 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       element.value = 'zhong'; element.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
     });
     await sleep(650);
-    let disk = JSON.parse(fs.readFileSync(path.join(root, 'research/project-main/project.json'), 'utf8'));
+    let disk = JSON.parse(fs.readFileSync(path.join(root, 'research', projectId, 'project.json'), 'utf8'));
     assert.equal(disk.objects[0].payload.label, '发电商出力');
     await label.evaluate(element => {
       element.value = '中文变量'; element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文变量' }));
     });
     await page.locator('[data-window-action="close"]').first().click();
     await page.waitForFunction(() => window.__closeCalls === 1);
-    disk = JSON.parse(fs.readFileSync(path.join(root, 'research/project-main/project.json'), 'utf8'));
+    disk = JSON.parse(fs.readFileSync(path.join(root, 'research', projectId, 'project.json'), 'utf8'));
     assert.equal(disk.objects[0].payload.label, '中文变量');
 
     // A failed save blocks switching, preserves input, and can be retried.
@@ -153,7 +155,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       el.value = '同一份记录zhong'; el.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
     });
     await sleep(650);
-    disk = JSON.parse(fs.readFileSync(path.join(root, 'research/project-main/project.json'), 'utf8'));
+    disk = JSON.parse(fs.readFileSync(path.join(root, 'research', projectId, 'project.json'), 'utf8'));
     assert.equal(disk.objects.find(obj => obj.id === noteId).payload.source, '同一份记录');
     await action('formula').click();
     assert.equal(await host.locator('.research-object-id').innerText(), noteId);
@@ -228,7 +230,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await host.locator('.research-object-list button').first().click();
 
     // External rewrite with unchanged revision is detected by byte fingerprint.
-    const file = path.join(root, 'research/project-main/project.json');
+    const file = path.join(root, 'research', projectId, 'project.json');
     disk = JSON.parse(fs.readFileSync(file, 'utf8')); disk.title = '外部版本';
     fs.writeFileSync(file, JSON.stringify(disk));
     await label.fill('冲突草稿');
