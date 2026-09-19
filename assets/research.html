@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relatum Research</title>
+  <link rel="stylesheet" href="research/research.css">
+  <script src="research/research-workspace.js" defer></script>
+</head>
+<body>
+  <main class="research-stage" data-research-stage>
+    <div class="research-viewport" data-research-viewport tabindex="0" role="application" aria-label="研究画布">
+      <canvas class="research-edges" data-research-edges aria-hidden="true"></canvas>
+      <div class="research-surface" data-research-surface></div>
+      <svg class="research-active-edges" data-research-active-edges aria-hidden="true"></svg>
+      <div class="research-selection-frame" data-research-selection-frame hidden></div>
+      <div class="research-minimap" data-research-minimap hidden aria-hidden="true">
+        <div class="research-minimap-nodes" data-research-minimap-nodes></div>
+        <div class="research-minimap-viewbox" data-research-minimap-viewbox></div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

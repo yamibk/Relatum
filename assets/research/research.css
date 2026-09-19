@@ -1,0 +1,208 @@
+:root {
+  color-scheme: light dark;
+  background: transparent;
+  --research-ink: #252724;
+  --research-paper: rgba(255, 254, 250, 0.96);
+  --research-line: rgba(37, 39, 36, 0.62);
+  --research-soft-line: rgba(37, 39, 36, 0.18);
+  --research-selection: #11120f;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.research-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.research-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  background: transparent;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+}
+
+.research-viewport.is-space-held {
+  cursor: grab;
+}
+
+.research-viewport.is-panning {
+  cursor: grabbing;
+}
+
+.research-edges,
+.research-active-edges,
+.research-selection-frame,
+.research-minimap {
+  position: absolute;
+}
+
+.research-edges,
+.research-active-edges {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.research-edges {
+  z-index: 1;
+}
+
+.research-active-edges {
+  z-index: 3;
+}
+
+.research-active-edges line {
+  fill: none;
+  stroke: var(--research-line);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.research-active-edges line.is-preview {
+  stroke-dasharray: 5 5;
+  opacity: 0.72;
+}
+
+.research-surface {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+}
+
+.research-node {
+  position: absolute;
+  box-sizing: border-box;
+  width: 168px;
+  min-height: 64px;
+  padding: 15px 17px;
+  border: 1px solid rgba(37, 39, 36, 0.7);
+  border-radius: 13px;
+  color: var(--research-ink);
+  background: var(--research-paper);
+  box-shadow: 0 5px 17px rgba(42, 39, 31, 0.08);
+  transform-origin: 0 0;
+  cursor: grab;
+}
+
+.research-node:hover {
+  border-color: rgba(17, 18, 15, 0.9);
+}
+
+.research-node.is-selected {
+  border-color: var(--research-selection);
+  box-shadow: 0 0 0 1px var(--research-selection), 0 7px 20px rgba(42, 39, 31, 0.11);
+}
+
+.research-node.is-dragging {
+  cursor: grabbing;
+}
+
+.research-node.is-editing {
+  cursor: text;
+  user-select: text;
+}
+
+.research-node-text {
+  min-height: 1.35em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: 500 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+  outline: none;
+}
+
+.research-node-text[contenteditable="true"] {
+  cursor: text;
+  user-select: text;
+}
+
+.research-selection-frame {
+  z-index: 4;
+  border: 1px solid rgba(17, 18, 15, 0.72);
+  background: rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+}
+
+.research-minimap {
+  z-index: 5;
+  left: 18px;
+  bottom: 18px;
+  width: 156px;
+  height: 104px;
+  overflow: hidden;
+  border: 1px solid var(--research-soft-line);
+  border-radius: 10px;
+  background: rgba(255, 254, 250, 0.84);
+  box-shadow: 0 5px 18px rgba(42, 39, 31, 0.08);
+}
+
+.research-minimap-nodes,
+.research-minimap-viewbox {
+  position: absolute;
+}
+
+.research-minimap-nodes {
+  inset: 0;
+}
+
+.research-minimap-node {
+  position: absolute;
+  min-width: 2px;
+  min-height: 2px;
+  border-radius: 1px;
+  background: rgba(37, 39, 36, 0.68);
+}
+
+.research-minimap-viewbox {
+  border: 1px solid rgba(17, 18, 15, 0.86);
+  background: rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --research-ink: #f4f0e5;
+    --research-paper: rgba(20, 25, 22, 0.96);
+    --research-line: rgba(244, 240, 229, 0.68);
+    --research-soft-line: rgba(244, 240, 229, 0.2);
+    --research-selection: #f4f0e5;
+  }
+
+  .research-minimap {
+    background: rgba(17, 21, 19, 0.9);
+  }
+
+  .research-minimap-node {
+    background: rgba(244, 240, 229, 0.72);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .research-node {
+    scroll-behavior: auto;
+  }
+}

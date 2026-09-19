@@ -186,6 +186,9 @@
   ) ? document.body.dataset.startWorkspace : 'canvas';
   let workspaceSwitchPromise = Promise.resolve(true);
   let noteWorkspaceLoader = null;
+  let researchWorkspaceLoader = null;
+  let researchWorkspaceFrame = null;
+  let researchWorkspaceApi = null;
   let careerWorkspaceLoader = null;
   let noteWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false;
@@ -235,6 +238,53 @@
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
       .then(() => window.CanvasNoteWorkspace);
     return noteWorkspaceLoader;
+  }
+
+  function disposeResearchWorkspace() {
+    const workspace = researchWorkspaceApi;
+    const frame = researchWorkspaceFrame;
+    researchWorkspaceApi = null;
+    researchWorkspaceFrame = null;
+    researchWorkspaceLoader = null;
+    if (workspace && typeof workspace.dispose === 'function') {
+      try { workspace.dispose(); } catch (e) {}
+    }
+    if (frame && frame.isConnected) frame.remove();
+  }
+
+  function loadResearchWorkspace() {
+    if (researchWorkspaceApi) return Promise.resolve(researchWorkspaceApi);
+    if (researchWorkspaceLoader) return researchWorkspaceLoader;
+    const host = document.querySelector('#start-research-workspace');
+    if (!host) return Promise.reject(new Error('研究工作区容器不存在'));
+
+    researchWorkspaceLoader = new Promise((resolve, reject) => {
+      const frame = document.createElement('iframe');
+      researchWorkspaceFrame = frame;
+      frame.className = 'research-workspace-frame';
+      frame.src = 'research.html';
+      frame.title = englishUI() ? 'Research workspace' : '研究工作区';
+      frame.setAttribute('aria-label', frame.title);
+
+      const fail = (error) => {
+        if (researchWorkspaceFrame === frame) disposeResearchWorkspace();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      };
+      frame.addEventListener('load', () => {
+        let workspace = null;
+        try { workspace = frame.contentWindow && frame.contentWindow.RelatumResearchWorkspace; } catch (e) {}
+        if (!workspace || typeof workspace.activate !== 'function'
+          || typeof workspace.suspend !== 'function' || typeof workspace.dispose !== 'function') {
+          fail(new Error('research.html 没有完成初始化'));
+          return;
+        }
+        researchWorkspaceApi = workspace;
+        resolve(workspace);
+      }, { once: true });
+      frame.addEventListener('error', () => fail(new Error('research.html 加载失败')), { once: true });
+      host.appendChild(frame);
+    });
+    return researchWorkspaceLoader;
   }
 
   function loadCareerWorkspace() {
@@ -384,6 +434,10 @@
       const canLeave = await window.CanvasNoteWorkspace.deactivate();
       if (canLeave === false) return false;
     }
+    if (name !== previous && previous === 'research' && researchWorkspaceApi
+      && typeof researchWorkspaceApi.suspend === 'function') {
+      await researchWorkspaceApi.suspend();
+    }
     activeStartWorkspace = name;
     syncWorkspaceControls(name);
     syncStartPageActivity();
@@ -402,6 +456,21 @@
           syncStartPageActivity();
           showWorkspacePanel('canvas', 'notes', false);
           showNotice(englishUI() ? 'Notes unavailable' : '笔记工作区暂时无法打开', error.message || String(error));
+        }
+        return false;
+      }
+    } else if (name === 'research') {
+      try {
+        const researchWorkspace = await loadResearchWorkspace();
+        if (activeStartWorkspace === 'research') await researchWorkspace.activate();
+        else await researchWorkspace.suspend();
+      } catch (error) {
+        if (activeStartWorkspace === 'research') {
+          activeStartWorkspace = 'canvas';
+          syncWorkspaceControls('canvas');
+          syncStartPageActivity();
+          showWorkspacePanel('canvas', 'research', false);
+          showNotice(englishUI() ? 'Research workspace unavailable' : '研究工作区暂时无法打开', error.message || String(error));
         }
         return false;
       }
@@ -467,7 +536,8 @@
     get current() { return activeStartWorkspace; },
     set: setStartWorkspace,
   };
-  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'career') {
+  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'research'
+    || activeStartWorkspace === 'career') {
     setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
   }
   else {
@@ -475,6 +545,7 @@
     scheduleNoteWorkspaceIdleWarmup();
   }
   if (activeStartWorkspace === 'notes') scheduleCareerWorkspaceIdleWarmup();
+  window.addEventListener('pagehide', disposeResearchWorkspace, { once: true });
 
   function preloadEditorBackground(background) {
     if (!background || typeof background !== 'object') return;
