@@ -19,7 +19,7 @@
   transition: opacity 220ms ease-out;
 }
 
-/* ─── 起步页 · 画布 / 笔记 / 研究 / 生涯 ───────────────────── */
+/* ─── 起步页 · 画布 / 笔记 / 研究（空白重建位）/ 生涯 ───────── */
 .start-workspace-switch {
   position: relative;
   display: inline-grid;
@@ -69,20 +69,6 @@
 body[data-start-workspace="notes"] .start-workspace-slider { transform: translateX(calc(100% + 1px)); }
 body[data-start-workspace="research"] .start-workspace-slider { transform: translateX(calc(200% + 2px)); }
 body[data-start-workspace="career"] .start-workspace-slider { transform: translateX(calc(300% + 3px)); }
-
-/* 齿轮面板「禁用研究入口」（出厂默认开启）：「研究」标签直接从前端消失。隐藏按钮必须
-   同时收一档几何，否则最后一格会空着、滑块也会停在原来的第四格位置：
-   三格时滑块宽 = (100% - 6px 内边距 - 2px 间隙) / 3，档位只剩笔记(100%)与生涯(200%)。
-   研究页不会出现（开启时自动回画布，冷启动也不恢复该页），所以不需要 research 档位。 */
-html[data-research-entry-disabled="1"] .start-workspace-switch { grid-template-columns: repeat(3, minmax(48px, 1fr)); }
-html[data-research-entry-disabled="1"] .start-workspace-switch button[data-start-workspace="research"] { display: none; }
-html[data-research-entry-disabled="1"] .start-workspace-slider { width: calc((100% - 8px) / 3); }
-html[data-research-entry-disabled="1"] body[data-start-workspace="career"] .start-workspace-slider { transform: translateX(calc(200% + 2px)); }
-/* 开启开关时研究页要先走完保存链才会真正离开（performStartWorkspace 是异步的），
-   这段时间 data-start-workspace 仍是 research。三格布局下 research 的档位正好等于
-   生涯的位置，会看着像选中了生涯；这里把滑块收成「不选中」并钉在画布档，
-   等切回画布时不会补一段位移。 */
-html[data-research-entry-disabled="1"] body[data-start-workspace="research"] .start-workspace-slider { opacity: 0; transform: none; }
 
 .start-workspace-switch button {
   position: relative;
@@ -946,8 +932,6 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host {
   .brand-wrap { gap: 7px; }
   .brand-wrap .brand { display: none; }
   .start-workspace-switch { grid-template-columns: repeat(4, 45px); }
-  /* 研究入口隐藏时窄屏同样只排三格，否则会露出一格空位。 */
-  html[data-research-entry-disabled="1"] .start-workspace-switch { grid-template-columns: repeat(3, 45px); }
   .start-workspace-switch button { padding-inline: 7px; }
   .note-workspace { grid-template-columns: minmax(0, 1fr); margin: 0 10px 10px; border-radius: 16px; }
   .note-tree-pane {

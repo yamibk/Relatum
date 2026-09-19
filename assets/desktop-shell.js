@@ -71,7 +71,7 @@
 
   window.CanvasDesktop = {
     setDirty(value) {
-      pendingDirty = !!value || !!window.RelatumResearchWorkspace?.dirty;
+      pendingDirty = !!value;
       // 冷启动期间 dirty 会高频变化，只保留最终值；pywebviewready 处理器会统一同步。
       // 否则每次键入都排一个闭包，桥接就绪时又集中发出数百次重复调用。
       if (bridgeReady()) withApi((api) => api.set_dirty(pendingDirty));
@@ -87,9 +87,6 @@
       if (beforeCloseHandler && await beforeCloseHandler() === false) return false;
       for (const handler of beforeCloseHandlers) if (await handler() === false) return false;
       return true;
-    },
-    setResearchWorkspaceActive(value) {
-      withApi((api) => { if (api.set_research_workspace_active) api.set_research_workspace_active(!!value); });
     },
     setNoteWorkspaceActive(value) {
       withApi((api) => api.set_note_workspace_active(!!value));

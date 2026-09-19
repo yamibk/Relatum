@@ -405,7 +405,6 @@ class DesktopBridge:
         self.maximized = False
         self.dirty = False
         self.note_workspace_active = False
-        self.research_workspace_active = False
         self.wallpaper: WallpaperController | None = None
         self._quit_callback = None
         self._lock = threading.Lock()
@@ -417,10 +416,6 @@ class DesktopBridge:
     def set_note_workspace_active(self, value: bool) -> None:
         with self._lock:
             self.note_workspace_active = bool(value)
-
-    def set_research_workspace_active(self, value: bool) -> None:
-        with self._lock:
-            self.research_workspace_active = bool(value)
 
     def minimize(self) -> None:
         # 走原生 ShowWindow，保留最小化到任务栏的过渡动画。
@@ -856,7 +851,7 @@ def main() -> int:
                 return
         with bridge._lock:
             dirty = bridge.dirty
-            note_workspace_active = bridge.note_workspace_active or bridge.research_workspace_active
+            note_workspace_active = bridge.note_workspace_active
         if dirty:
             show_main_window()
             if note_workspace_active:
@@ -943,7 +938,7 @@ def main() -> int:
         if quitting:
             return None
         with bridge._lock:
-            note_workspace_active = bridge.note_workspace_active or bridge.research_workspace_active
+            note_workspace_active = bridge.note_workspace_active
             dirty = bridge.dirty
         if note_workspace_active and dirty:
             # Alt+F4 / 系统关闭不绕过笔记保存链。首次关闭被拦下，
