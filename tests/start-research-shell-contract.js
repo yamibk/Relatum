@@ -29,6 +29,9 @@ assert(!/<(?:script|link)\b[^>]+(?:src|href)=["'][^"']*research/i.test(html),
 assert(start.includes('function loadResearchWorkspace()'));
 assert(start.includes("document.createElement('iframe')") && start.includes("frame.src = 'research.html'"),
   'the same-origin Research iframe must be created on demand');
+assert(!start.includes('frame.title =')
+  && start.includes("frame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区')"),
+  'the full-page iframe must keep an accessible name without a native title tooltip');
 assert(start.includes("previous === 'research'") && start.includes('await researchWorkspaceApi.suspend()'),
   'leaving Research must suspend its active resources');
 assert(start.includes("name === 'research'") && start.includes('await researchWorkspace.activate()'),
@@ -44,8 +47,25 @@ assert(researchHtml.includes('<link rel="stylesheet" href="research/research.css
 assert(researchHtml.includes('<script src="research/research-workspace.js" defer></script>'));
 assert(/<main class="research-stage" data-research-stage>[\s\S]*data-research-viewport[\s\S]*data-research-surface[\s\S]*<\/main>/.test(researchHtml),
   'the Research shell must contain the isolated canvas stage');
-assert(!/<(?:h[1-6]|p|button|input|textarea)\b/i.test(researchHtml),
-  'the Research canvas shell must not add visible controls or copy');
+assert(researchHtml.includes('data-research-add-search') && researchHtml.includes('data-research-inspector'),
+  'the V2 shell must expose searchable node creation and an explicit property inspector');
+const researchButtons = researchHtml.match(/<button\b/g) || [];
+assert.strictEqual(researchButtons.length, 14,
+  'the Research shell must keep page, wiring, simulation, and help controls intentionally bounded');
+assert(researchHtml.includes('data-research-page-add') && researchHtml.includes('data-research-page-delete'),
+  'the Research shell must expose its isolated in-memory page controls');
+assert(researchHtml.includes('data-research-compute-dock')
+  && researchHtml.includes('data-research-mode="select"')
+  && researchHtml.includes('data-research-mode="relation"')
+  && researchHtml.includes('data-research-mode="wire"')
+  && researchHtml.includes('data-research-run')
+  && researchHtml.includes('data-research-pause')
+  && researchHtml.includes('data-research-step')
+  && researchHtml.includes('data-research-reset')
+  && researchHtml.includes('data-research-speed')
+  && researchHtml.includes('data-research-trace') && researchHtml.includes('data-research-trace-clear')
+  && researchHtml.includes('data-research-help-open') && researchHtml.includes('data-research-help-overlay'),
+  'the Research shell must expose relation/wire modes, simulation controls, and bounded trace inspection');
 assert(/html,\s*\nbody\s*\{[\s\S]*?background:\s*transparent/.test(researchStyles)
   && /\.research-stage\s*\{[\s\S]*?background:\s*transparent/.test(researchStyles),
   'the iframe document and stage must stay transparent');
@@ -65,12 +85,13 @@ assert(!researchWorkspace.includes('requestAnimationFrame(')
   && !researchWorkspace.includes('setTimeout('),
   'the lifecycle bridge must leave rendering loops to the active-only canvas runtime');
 
-const nonResearchRuntime = [app, desktop, shell].join('\n');
+assert(app.includes('/api/research/workspace'),
+  'Research persistence must use its isolated backend namespace');
+const nonResearchBridge = [desktop, shell].join('\n');
 [
-  '/api/research/',
   'set_research_workspace_active',
   'setResearchWorkspaceActive',
   'research_workspace_active',
-].forEach((needle) => assert(!nonResearchRuntime.includes(needle), 'unexpected Research backend or desktop bridge: ' + needle));
+].forEach((needle) => assert(!nonResearchBridge.includes(needle), 'unexpected Research desktop bridge: ' + needle));
 
 console.log('start research shell contract passed');

@@ -1,12 +1,13 @@
 const HISTORY_LIMIT = 50;
-const NODE_WIDTH = 168;
-const NODE_HEIGHT = 64;
+const NODE_WIDTH = 176;
+const NODE_HEIGHT = 72;
+
+function clone(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
 
 function cloneState(state) {
-  return {
-    nodes: state.nodes.map((node) => ({ ...node })),
-    edges: state.edges.map((edge) => ({ ...edge })),
-  };
+  return { nodes: state.nodes.map(clone), edges: state.edges.map(clone) };
 }
 
 function sameState(left, right) {
@@ -20,35 +21,55 @@ function id(prefix) {
   return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 }
 
-function normalizeNode(source) {
+function normalizeNode(source, registry) {
   const node = source && typeof source === 'object' ? source : {};
-  return {
+  const type = String(node.type || 'note');
+  const defaults = registry && registry.createNode(type, node) || {
+    type, label: String(node.label || ''), config: clone(node.config || {}), statePolicy: 'reset',
+  };
+  const normalized = {
     id: String(node.id || id('node')),
+    type: defaults.type,
+    label: String(node.label || defaults.label || ''),
     x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0,
     y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0,
     width: Math.max(96, Number(node.width) || NODE_WIDTH),
     height: Math.max(48, Number(node.height) || NODE_HEIGHT),
-    text: String(node.text || ''),
+    config: registry ? registry.normalizeConfig(type, node.config) : clone(node.config || {}),
+    statePolicy: defaults.statePolicy === 'persist' ? 'persist' : 'reset',
   };
+  if (normalized.statePolicy === 'persist' && node.savedState && typeof node.savedState === 'object') {
+    normalized.savedState = clone(node.savedState);
+  }
+  return normalized;
 }
 
-function normalizeEdge(source, nodeIds) {
+function edgeEndpoints(edge) {
+  return edge && edge.kind === 'wire'
+    ? [String(edge.from && edge.from.nodeId || ''), String(edge.to && edge.to.nodeId || '')]
+    : [String(edge && edge.fromNodeId || ''), String(edge && edge.toNodeId || '')];
+}
+
+function normalizeEdge(source, nodeById, registry) {
   const edge = source && typeof source === 'object' ? source : {};
-  const from = String(edge.from || '');
-  const to = String(edge.to || '');
-  if (!from || !to || from === to || !nodeIds.has(from) || !nodeIds.has(to)) return null;
-  return {
-    id: String(edge.id || id('edge')),
-    from,
-    to,
-    role: edge.role === 'data' ? 'data' : 'visual',
-    fromPort: String(edge.fromPort || 'out'),
-    toPort: String(edge.toPort || 'in'),
-  };
+  if (edge.kind === 'wire') {
+    const from = { nodeId: String(edge.from && edge.from.nodeId || ''), portId: String(edge.from && edge.from.portId || '') };
+    const to = { nodeId: String(edge.to && edge.to.nodeId || ''), portId: String(edge.to && edge.to.portId || '') };
+    if (!from.nodeId || !to.nodeId || from.nodeId === to.nodeId
+      || !nodeById.has(from.nodeId) || !nodeById.has(to.nodeId)) return null;
+    if (registry && !registry.compatiblePorts(nodeById.get(from.nodeId), from.portId, nodeById.get(to.nodeId), to.portId)) return null;
+    return { id: String(edge.id || id('edge')), kind: 'wire', from, to };
+  }
+  const fromNodeId = String(edge.fromNodeId || edge.from || '');
+  const toNodeId = String(edge.toNodeId || edge.to || '');
+  if (!fromNodeId || !toNodeId || fromNodeId === toNodeId
+    || !nodeById.has(fromNodeId) || !nodeById.has(toNodeId)) return null;
+  return { id: String(edge.id || id('edge')), kind: 'relation', fromNodeId, toNodeId };
 }
 
 export class ResearchModel {
-  constructor(initialState = {}) {
+  constructor(initialState = {}, registry = null) {
+    this.registry = registry;
     this.listeners = new Set();
     this.nodeById = new Map();
     this.edgeById = new Map();
@@ -60,13 +81,26 @@ export class ResearchModel {
   }
 
   restore(nextState, notify = true) {
-    const rawNodes = Array.isArray(nextState.nodes) ? nextState.nodes : [];
-    const nodes = rawNodes.map(normalizeNode);
-    const nodeIds = new Set(nodes.map((node) => node.id));
-    const seenEdges = new Set();
-    const edges = (Array.isArray(nextState.edges) ? nextState.edges : [])
-      .map((edge) => normalizeEdge(edge, nodeIds))
-      .filter((edge) => edge && !seenEdges.has(edge.id) && seenEdges.add(edge.id));
+    const nodes = (Array.isArray(nextState && nextState.nodes) ? nextState.nodes : [])
+      .map((node) => normalizeNode(node, this.registry));
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const seen = new Set();
+    const occupied = new Set();
+    const edges = (Array.isArray(nextState && nextState.edges) ? nextState.edges : [])
+      .map((edge) => normalizeEdge(edge, nodeById, this.registry))
+      .filter((edge) => {
+        if (!edge || seen.has(edge.id)) return false;
+        if (edge.kind === 'wire') {
+          const port = this.registry && this.registry.port(nodeById.get(edge.to.nodeId).type, edge.to.portId, 'input');
+          if (port && port.channel === 'value') {
+            const key = edge.to.nodeId + '\n' + edge.to.portId;
+            if (occupied.has(key)) return false;
+            occupied.add(key);
+          }
+        }
+        seen.add(edge.id);
+        return true;
+      });
     this.state = { nodes, edges };
     this.reindex();
     if (notify) this.emit({ kind: 'restore', topology: true });
@@ -82,30 +116,18 @@ export class ResearchModel {
     });
     this.state.edges.forEach((edge) => {
       this.edgeById.set(edge.id, edge);
-      if (this.edgesByNodeId.has(edge.from)) this.edgesByNodeId.get(edge.from).add(edge.id);
-      if (this.edgesByNodeId.has(edge.to)) this.edgesByNodeId.get(edge.to).add(edge.id);
+      edgeEndpoints(edge).forEach((nodeId) => {
+        if (this.edgesByNodeId.has(nodeId)) this.edgesByNodeId.get(nodeId).add(edge.id);
+      });
     });
   }
 
-  snapshot() {
-    return cloneState(this.state);
-  }
-
-  nodes() {
-    return this.state.nodes.slice();
-  }
-
-  edges() {
-    return this.state.edges.slice();
-  }
-
-  node(nodeId) {
-    return this.nodeById.get(String(nodeId)) || null;
-  }
-
-  edge(edgeId) {
-    return this.edgeById.get(String(edgeId)) || null;
-  }
+  snapshot() { return cloneState(this.state); }
+  nodes() { return this.state.nodes.slice(); }
+  edges() { return this.state.edges.slice(); }
+  isEmpty() { return !this.state.nodes.length && !this.state.edges.length; }
+  node(nodeId) { return this.nodeById.get(String(nodeId)) || null; }
+  edge(edgeId) { return this.edgeById.get(String(edgeId)) || null; }
 
   incidentEdgeIds(nodeIds) {
     const result = new Set();
@@ -116,18 +138,9 @@ export class ResearchModel {
     return result;
   }
 
-  subscribe(listener) {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  emit(change) {
-    this.listeners.forEach((listener) => listener(change || {}));
-  }
-
-  capture() {
-    return this.snapshot();
-  }
+  subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  emit(change) { this.listeners.forEach((listener) => listener(change || {})); }
+  capture() { return this.snapshot(); }
 
   commitFrom(before, change = {}) {
     const after = this.snapshot();
@@ -152,7 +165,7 @@ export class ResearchModel {
   createNode(source = {}) {
     let created = null;
     this.mutate((state) => {
-      created = normalizeNode({ ...source, id: source.id || id('node') });
+      created = normalizeNode({ ...source, id: source.id || id('node') }, this.registry);
       while (this.nodeById.has(created.id)) created.id = id('node');
       state.nodes.push(created);
     }, { kind: 'node-create', topology: true, nodeIds: [] });
@@ -162,19 +175,31 @@ export class ResearchModel {
   updateNode(nodeId, patch, options = {}) {
     const node = this.node(nodeId);
     if (!node) return false;
+    const nextType = Object.prototype.hasOwnProperty.call(patch, 'type') ? String(patch.type || '') : node.type;
+    if (this.registry && !this.registry.definition(nextType)) return false;
+    const topology = nextType !== node.type || Object.prototype.hasOwnProperty.call(patch, 'config');
     const apply = () => {
-      if (Object.prototype.hasOwnProperty.call(patch, 'x') && Number.isFinite(Number(patch.x))) node.x = Number(patch.x);
-      if (Object.prototype.hasOwnProperty.call(patch, 'y') && Number.isFinite(Number(patch.y))) node.y = Number(patch.y);
+      if (Number.isFinite(Number(patch.x))) node.x = Number(patch.x);
+      if (Number.isFinite(Number(patch.y))) node.y = Number(patch.y);
       if (Object.prototype.hasOwnProperty.call(patch, 'width')) node.width = Math.max(96, Number(patch.width) || node.width);
       if (Object.prototype.hasOwnProperty.call(patch, 'height')) node.height = Math.max(48, Number(patch.height) || node.height);
-      if (Object.prototype.hasOwnProperty.call(patch, 'text')) node.text = String(patch.text || '');
+      if (Object.prototype.hasOwnProperty.call(patch, 'label')) node.label = String(patch.label || '');
+      if (Object.prototype.hasOwnProperty.call(patch, 'type')) node.type = nextType;
+      if (Object.prototype.hasOwnProperty.call(patch, 'config')) {
+        node.config = this.registry ? this.registry.normalizeConfig(nextType, patch.config) : clone(patch.config || {});
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'statePolicy')) {
+        const definition = this.registry && this.registry.definition(nextType);
+        node.statePolicy = definition && definition.stateful && patch.statePolicy === 'persist' ? 'persist' : 'reset';
+        if (node.statePolicy !== 'persist') delete node.savedState;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'savedState')) {
+        if (node.statePolicy === 'persist' && patch.savedState && typeof patch.savedState === 'object') node.savedState = clone(patch.savedState);
+        else delete node.savedState;
+      }
     };
-    const change = { kind: 'node-update', nodeIds: [node.id], live: !!options.live };
-    if (options.live) {
-      apply();
-      this.emit(change);
-      return true;
-    }
+    const change = { kind: 'node-update', nodeIds: [node.id], live: !!options.live, topology };
+    if (options.live) { apply(); this.emit(change); return true; }
     return this.mutate(apply, change);
   }
 
@@ -183,50 +208,104 @@ export class ResearchModel {
     Object.entries(positions || {}).forEach(([nodeId, point]) => {
       const node = this.node(nodeId);
       if (!node || !point) return;
-      const x = Number(point.x);
-      const y = Number(point.y);
+      const x = Number(point.x); const y = Number(point.y);
       if (!Number.isFinite(x) || !Number.isFinite(y) || (node.x === x && node.y === y)) return;
-      node.x = x;
-      node.y = y;
-      changed.push(node.id);
+      node.x = x; node.y = y; changed.push(node.id);
     });
     if (changed.length) this.emit({ kind: 'node-move', nodeIds: changed, live: !!options.live });
     return changed;
   }
 
+  valueDescriptor(nodeId, portId, seen = new Set()) {
+    const key = String(nodeId) + '\n' + String(portId);
+    if (seen.has(key)) return null;
+    seen.add(key);
+    const node = this.node(nodeId);
+    if (!node) return null;
+    const typed = (value) => value && typeof value === 'object' && value.type
+      ? { type: value.type, ...(value.type === 'bits' ? { width: Number(value.width) } : {}) } : null;
+    const incoming = (inputPortId) => {
+      const edge = this.state.edges.find((candidate) => candidate.kind === 'wire'
+        && candidate.to.nodeId === node.id && candidate.to.portId === inputPortId);
+      return edge ? this.valueDescriptor(edge.from.nodeId, edge.from.portId, seen) : null;
+    };
+    if (node.type === 'constant' && portId === 'out') return typed(node.config.value);
+    if (node.type === 'toggle' && portId === 'out') return { type: 'boolean' };
+    if (node.type === 'current-time' && portId === 'out') return { type: 'time' };
+    if (node.type === 'timer') return portId === 'time' ? { type: 'number' }
+      : portId === 'running' ? { type: 'boolean' } : null;
+    if ((node.type === 'register' || node.type === 'counter') && portId === 'out') return typed(node.config.initial);
+    if (node.type === 'compare' && portId === 'out') return { type: 'boolean' };
+    if (node.type === 'convert' && portId === 'out') return {
+      type: node.config.toType, ...(node.config.toType === 'bits' ? { width: Number(node.config.width) } : {}),
+    };
+    if ((node.type === 'math' || node.type === 'logic') && portId === 'out') return incoming('a');
+    if (node.type === 'select' && portId === 'out') return incoming('whenTrue') || incoming('whenFalse');
+    if (node.type === 'bits' && portId === 'out') {
+      if (node.config.operation === 'slice' || node.config.operation === 'resize') return { type: 'bits', width: Number(node.config.width) };
+      const left = incoming('a'); const right = incoming('b');
+      if (node.config.operation === 'concat' && left && right && left.type === 'bits' && right.type === 'bits') {
+        return { type: 'bits', width: left.width + right.width };
+      }
+      return left;
+    }
+    return null;
+  }
+
+  canCreateWire(fromNodeId, fromPortId, toNodeId, toPortId) {
+    const fromNode = this.node(fromNodeId); const toNode = this.node(toNodeId);
+    if (!fromNode || !toNode || fromNode.id === toNode.id || !this.registry
+      || !this.registry.compatiblePorts(fromNode, fromPortId, toNode, toPortId)) return false;
+    const port = this.registry.port(toNode.type, toPortId, 'input');
+    if (port && port.channel === 'value') {
+      if (this.state.edges.some((edge) => edge.kind === 'wire'
+        && edge.to.nodeId === toNode.id && edge.to.portId === String(toPortId))) return false;
+      const descriptor = this.valueDescriptor(fromNode.id, fromPortId);
+      if (descriptor && descriptor.type === 'bits' && port.bitsWidths.length
+        && !port.bitsWidths.includes(descriptor.width)) return false;
+      if (descriptor && port.matchGroup) {
+        const definition = this.registry.definition(toNode.type);
+        const peerIds = definition.ports.filter((candidate) => candidate.direction === 'input'
+          && candidate.matchGroup === port.matchGroup && candidate.id !== port.id).map((candidate) => candidate.id);
+        const peerEdge = this.state.edges.find((edge) => edge.kind === 'wire' && edge.to.nodeId === toNode.id
+          && peerIds.includes(edge.to.portId));
+        const peer = peerEdge && this.valueDescriptor(peerEdge.from.nodeId, peerEdge.from.portId);
+        if (peer && (peer.type !== descriptor.type
+          || peer.type === 'bits' && peer.width !== descriptor.width)) return false;
+      }
+      if (descriptor && ((toNode.type === 'register' && toPortId === 'data')
+        || (toNode.type === 'counter' && toPortId === 'loadValue'))) {
+        const expected = toNode.config && toNode.config.initial;
+        if (expected && (expected.type !== descriptor.type
+          || expected.type === 'bits' && Number(expected.width) !== descriptor.width)) return false;
+      }
+    }
+    return true;
+  }
+
   createEdge(from, to, source = {}) {
-    from = String(from || '');
-    to = String(to || '');
-    if (!this.nodeById.has(from) || !this.nodeById.has(to) || from === to) return null;
-    const duplicate = this.state.edges.find((edge) => edge.from === from && edge.to === to);
+    const kind = source.kind === 'wire' ? 'wire' : 'relation';
+    const candidate = kind === 'wire' ? {
+      ...source, kind, from: { nodeId: String(from), portId: String(source.fromPortId || source.fromPort || '') },
+      to: { nodeId: String(to), portId: String(source.toPortId || source.toPort || '') },
+    } : { ...source, kind, fromNodeId: String(from), toNodeId: String(to) };
+    if (kind === 'wire' && !this.canCreateWire(from, candidate.from.portId, to, candidate.to.portId)) return null;
+    const normalized = normalizeEdge(candidate, this.nodeById, this.registry);
+    if (!normalized) return null;
+    const duplicate = this.state.edges.find((edge) => JSON.stringify({ ...edge, id: '' }) === JSON.stringify({ ...normalized, id: '' }));
     if (duplicate) return duplicate;
     let created = null;
     this.mutate((state) => {
-      created = normalizeEdge({ ...source, id: source.id || id('edge'), from, to }, this.nodeById);
-      while (created && this.edgeById.has(created.id)) created.id = id('edge');
-      if (created) state.edges.push(created);
+      created = { ...normalized, id: source.id || id('edge') };
+      while (this.edgeById.has(created.id)) created.id = id('edge');
+      state.edges.push(created);
     }, { kind: 'edge-create', topology: true, edgeIds: [] });
     return created;
   }
 
-  createLinkedNode(from, nodeSource = {}, edgeSource = {}) {
-    from = String(from || '');
-    if (!this.nodeById.has(from)) return null;
-    let created = null;
-    this.mutate((state) => {
-      created = normalizeNode({ ...nodeSource, id: nodeSource.id || id('node') });
-      while (this.nodeById.has(created.id)) created.id = id('node');
-      state.nodes.push(created);
-      const nodeIds = new Set(this.nodeById.keys());
-      nodeIds.add(created.id);
-      const edge = normalizeEdge({
-        ...edgeSource,
-        id: edgeSource.id || id('edge'),
-        from,
-        to: created.id,
-      }, nodeIds);
-      if (edge) state.edges.push(edge);
-    }, { kind: 'linked-node-create', topology: true, nodeIds: [], edgeIds: [] });
+  createLinkedNode(from, nodeSource = {}) {
+    const created = this.createNode(nodeSource);
+    if (created) this.createEdge(from, created.id, { kind: 'relation' });
     return created;
   }
 
@@ -236,26 +315,24 @@ export class ResearchModel {
     if (!nodes.size && !edges.size) return false;
     return this.mutate((state) => {
       state.nodes = state.nodes.filter((node) => !nodes.has(node.id));
-      state.edges = state.edges.filter((edge) => !edges.has(edge.id)
-        && !nodes.has(edge.from) && !nodes.has(edge.to));
+      state.edges = state.edges.filter((edge) => {
+        const [from, to] = edgeEndpoints(edge);
+        return !edges.has(edge.id) && !nodes.has(from) && !nodes.has(to);
+      });
     }, { kind: 'remove', topology: true, nodeIds: [...nodes], edgeIds: [...edges] });
   }
 
   undo() {
     if (this.historyIndex <= 0) return false;
-    this.historyIndex -= 1;
-    this.restore(this.history[this.historyIndex], true);
-    return true;
+    this.historyIndex -= 1; this.restore(this.history[this.historyIndex], true); return true;
   }
 
   redo() {
     if (this.historyIndex >= this.history.length - 1) return false;
-    this.historyIndex += 1;
-    this.restore(this.history[this.historyIndex], true);
-    return true;
+    this.historyIndex += 1; this.restore(this.history[this.historyIndex], true); return true;
   }
 }
 
-export function createResearchModel(initialState) {
-  return new ResearchModel(initialState);
+export function createResearchModel(initialState, registry) {
+  return new ResearchModel(initialState, registry);
 }

@@ -1,0 +1,184 @@
+{
+  "version": 2,
+  "categories": [
+    { "id": "knowledge", "label": "知识" },
+    { "id": "input", "label": "输入" },
+    { "id": "combinational", "label": "组合" },
+    { "id": "state", "label": "状态" },
+    { "id": "display", "label": "显示" }
+  ],
+  "nodes": [
+    {
+      "type": "note", "category": "knowledge", "label": "笔记", "defaultLabel": "新笔记",
+      "ports": [], "configFields": []
+    },
+    {
+      "type": "constant", "category": "input", "label": "常量", "defaultLabel": "常量",
+      "ports": [{ "id": "out", "direction": "output", "channel": "value", "types": ["any"] }],
+      "configFields": [{ "key": "value", "label": "值", "type": "typedValue", "default": { "type": "number", "value": 0 } }]
+    },
+    {
+      "type": "button", "category": "input", "label": "按钮", "defaultLabel": "按钮",
+      "interactive": true,
+      "ports": [{ "id": "fire", "direction": "output", "channel": "event", "types": ["pulse"] }],
+      "configFields": []
+    },
+    {
+      "type": "toggle", "category": "input", "label": "开关", "defaultLabel": "开关",
+      "interactive": true, "stateful": true,
+      "ports": [{ "id": "out", "direction": "output", "channel": "value", "types": ["boolean"] }],
+      "configFields": [{ "key": "initial", "label": "初始状态", "type": "boolean", "default": false }]
+    },
+    {
+      "type": "current-time", "category": "input", "label": "当前时间", "defaultLabel": "当前时间",
+      "ports": [{ "id": "out", "direction": "output", "channel": "value", "types": ["time"] }],
+      "configFields": [{ "key": "precisionMs", "label": "刷新精度（ms）", "type": "integer", "min": 250, "max": 60000, "default": 1000 }]
+    },
+    {
+      "type": "clock", "category": "input", "label": "时钟", "defaultLabel": "时钟",
+      "stateful": true,
+      "ports": [
+        { "id": "enabled", "direction": "input", "channel": "value", "types": ["boolean"], "required": false },
+        { "id": "tick", "direction": "output", "channel": "event", "types": ["pulse"] }
+      ],
+      "configFields": [{ "key": "periodMs", "label": "周期（ms）", "type": "integer", "min": 16, "max": 3600000, "default": 1000 }]
+    },
+    {
+      "type": "math", "category": "combinational", "label": "数学", "defaultLabel": "数学",
+      "ports": [
+        { "id": "a", "direction": "input", "channel": "value", "types": ["number", "bits"], "required": true, "matchGroup": "operands" },
+        { "id": "b", "direction": "input", "channel": "value", "types": ["number", "bits"], "required": true, "matchGroup": "operands" },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["number", "bits"] }
+      ],
+      "configFields": [{ "key": "operation", "label": "运算", "type": "select", "default": "add", "options": ["add", "subtract", "multiply", "divide", "modulo"] }]
+    },
+    {
+      "type": "logic", "category": "combinational", "label": "逻辑", "defaultLabel": "逻辑",
+      "ports": [
+        { "id": "a", "direction": "input", "channel": "value", "types": ["boolean", "bits"], "required": true, "matchGroup": "operands" },
+        { "id": "b", "direction": "input", "channel": "value", "types": ["boolean", "bits"], "required": false, "matchGroup": "operands" },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["boolean", "bits"] }
+      ],
+      "configFields": [{ "key": "operation", "label": "运算", "type": "select", "default": "and", "options": ["and", "or", "xor", "not"] }]
+    },
+    {
+      "type": "compare", "category": "combinational", "label": "比较", "defaultLabel": "比较",
+      "ports": [
+        { "id": "a", "direction": "input", "channel": "value", "types": ["number", "boolean", "string", "time", "bits"], "required": true, "matchGroup": "operands" },
+        { "id": "b", "direction": "input", "channel": "value", "types": ["number", "boolean", "string", "time", "bits"], "required": true, "matchGroup": "operands" },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["boolean"] }
+      ],
+      "configFields": [{ "key": "operation", "label": "比较", "type": "select", "default": "equal", "options": ["equal", "not-equal", "less", "less-equal", "greater", "greater-equal"] }]
+    },
+    {
+      "type": "select", "category": "combinational", "label": "选择", "defaultLabel": "选择",
+      "ports": [
+        { "id": "condition", "direction": "input", "channel": "value", "types": ["boolean"], "required": true },
+        { "id": "whenTrue", "direction": "input", "channel": "value", "types": ["any"], "required": true, "matchGroup": "branches" },
+        { "id": "whenFalse", "direction": "input", "channel": "value", "types": ["any"], "required": true, "matchGroup": "branches" },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["any"] }
+      ],
+      "configFields": []
+    },
+    {
+      "type": "convert", "category": "combinational", "label": "转换", "defaultLabel": "转换",
+      "ports": [
+        { "id": "in", "direction": "input", "channel": "value", "types": ["any"], "required": true },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["any"] }
+      ],
+      "configFields": [
+        { "key": "toType", "label": "目标类型", "type": "select", "default": "number", "options": ["number", "boolean", "string", "bits"] },
+        { "key": "width", "label": "位宽", "type": "integer", "min": 1, "max": 64, "default": 8 }
+      ]
+    },
+    {
+      "type": "bits", "category": "combinational", "label": "Bits", "defaultLabel": "Bits",
+      "ports": [
+        { "id": "a", "direction": "input", "channel": "value", "types": ["bits"], "required": true },
+        { "id": "b", "direction": "input", "channel": "value", "types": ["bits", "number"], "required": false },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["bits"] }
+      ],
+      "configFields": [
+        { "key": "operation", "label": "操作", "type": "select", "default": "shift-left", "options": ["shift-left", "shift-right", "concat", "slice", "resize"] },
+        { "key": "start", "label": "起始位", "type": "integer", "min": 0, "max": 63, "default": 0 },
+        { "key": "width", "label": "输出位宽", "type": "integer", "min": 1, "max": 64, "default": 8 }
+      ]
+    },
+    {
+      "type": "register", "category": "state", "label": "寄存器", "defaultLabel": "寄存器",
+      "stateful": true,
+      "ports": [
+        { "id": "data", "direction": "input", "channel": "value", "types": ["any"], "required": true },
+        { "id": "write", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "reset", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["any"] }
+      ],
+      "configFields": [{ "key": "initial", "label": "初始值", "type": "typedValue", "default": { "type": "number", "value": 0 } }]
+    },
+    {
+      "type": "counter", "category": "state", "label": "计数器", "defaultLabel": "计数器",
+      "stateful": true,
+      "ports": [
+        { "id": "loadValue", "direction": "input", "channel": "value", "types": ["number", "bits"], "required": false },
+        { "id": "inc", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "dec", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "reset", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "load", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "out", "direction": "output", "channel": "value", "types": ["number", "bits"] }
+      ],
+      "configFields": [
+        { "key": "initial", "label": "初始值", "type": "typedValue", "default": { "type": "number", "value": 0 } },
+        { "key": "overflow", "label": "溢出方式", "type": "select", "default": "wrap", "options": ["wrap", "saturate"] }
+      ]
+    },
+    {
+      "type": "edge-detector", "category": "state", "label": "边沿检测", "defaultLabel": "边沿检测",
+      "stateful": true,
+      "ports": [
+        { "id": "in", "direction": "input", "channel": "value", "types": ["boolean", "bits"], "bitsWidths": [1], "required": true },
+        { "id": "rise", "direction": "output", "channel": "event", "types": ["pulse"] },
+        { "id": "fall", "direction": "output", "channel": "event", "types": ["pulse"] },
+        { "id": "change", "direction": "output", "channel": "event", "types": ["pulse"] }
+      ],
+      "configFields": []
+    },
+    {
+      "type": "timer", "category": "state", "label": "计时器", "defaultLabel": "计时器",
+      "stateful": true,
+      "ports": [
+        { "id": "preset", "direction": "input", "channel": "value", "types": ["number"], "required": false },
+        { "id": "start", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "pause", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "reset", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true },
+        { "id": "time", "direction": "output", "channel": "value", "types": ["number"] },
+        { "id": "running", "direction": "output", "channel": "value", "types": ["boolean"] },
+        { "id": "done", "direction": "output", "channel": "event", "types": ["pulse"] }
+      ],
+      "configFields": [
+        { "key": "mode", "label": "模式", "type": "select", "default": "countdown", "options": ["countdown", "countup"] },
+        { "key": "durationMs", "label": "时长（ms）", "type": "integer", "min": 1, "max": 359999000, "default": 1500000 },
+        { "key": "precisionMs", "label": "显示精度（ms）", "type": "integer", "min": 16, "max": 60000, "default": 1000 }
+      ]
+    },
+    {
+      "type": "monitor", "category": "display", "label": "监视器", "defaultLabel": "监视器",
+      "ports": [{ "id": "in", "direction": "input", "channel": "value", "types": ["any"], "required": true }],
+      "configFields": []
+    },
+    {
+      "type": "probe", "category": "display", "label": "探针", "defaultLabel": "探针",
+      "ports": [
+        { "id": "value", "direction": "input", "channel": "value", "types": ["any"], "required": false },
+        { "id": "pulse", "direction": "input", "channel": "event", "types": ["pulse"], "required": false, "multiple": true }
+      ],
+      "configFields": [
+        { "key": "historyLimit", "label": "轨迹上限", "type": "integer", "min": 16, "max": 256, "default": 64 }
+      ]
+    },
+    {
+      "type": "lamp", "category": "display", "label": "指示灯", "defaultLabel": "指示灯",
+      "ports": [{ "id": "in", "direction": "input", "channel": "value", "types": ["boolean", "bits"], "required": true }],
+      "configFields": []
+    }
+  ]
+}

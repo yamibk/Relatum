@@ -1,8 +1,11 @@
+import { formatResearchValue } from './research-values.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const EDGE_GRID_SIZE = 512;
 const MIN_SCALE = 0.18;
 const MAX_SCALE = 3.5;
 const DRAG_THRESHOLD = 4;
+const INTERACTION_MODES = new Set(['select', 'relation', 'wire']);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -20,9 +23,34 @@ function isEditableTarget(target) {
   return !!(target && target.closest && target.closest('[contenteditable="true"], input, textarea, select'));
 }
 
+function twoDigits(value) {
+  return String(Math.max(0, Math.floor(value))).padStart(2, '0');
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(Number(milliseconds) || 0) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return twoDigits(hours) + ':' + twoDigits(minutes) + ':' + twoDigits(seconds);
+}
+
+function formatClock(timestamp) {
+  const date = new Date(Number(timestamp));
+  if (!Number.isFinite(date.getTime())) return '--:--:--';
+  return twoDigits(date.getHours()) + ':' + twoDigits(date.getMinutes()) + ':' + twoDigits(date.getSeconds());
+}
+
 export function createResearchCanvas(options) {
   const stage = options.stage;
-  const model = options.model;
+  let model = options.model;
+  const registry = options.registry;
+  const onCreationToolChange = typeof options.onCreationToolChange === 'function'
+    ? options.onCreationToolChange
+    : null;
+  const onViewChange = typeof options.onViewChange === 'function' ? options.onViewChange : null;
+  const onSelectionChange = typeof options.onSelectionChange === 'function' ? options.onSelectionChange : null;
+  const onNodeAction = typeof options.onNodeAction === 'function' ? options.onNodeAction : null;
   const viewport = stage && stage.querySelector('[data-research-viewport]');
   const surface = stage && stage.querySelector('[data-research-surface]');
   const edgesCanvas = stage && stage.querySelector('[data-research-edges]');
@@ -33,27 +61,38 @@ export function createResearchCanvas(options) {
   const minimapViewbox = stage && stage.querySelector('[data-research-minimap-viewbox]');
 
   if (!viewport || !surface || !edgesCanvas || !activeSvg || !selectionFrame
-    || !minimap || !minimapNodes || !minimapViewbox || !model) {
+    || !minimap || !minimapNodes || !minimapViewbox || !model || !registry) {
     throw new Error('研究画布 DOM 不完整');
   }
 
   const context = edgesCanvas.getContext('2d');
   const nodeElements = new Map();
+  const minimapNodeElements = new Map();
   const edgePathCache = new Map();
   const edgeSpatialGrid = new Map();
+  const removalGhosts = new Set();
   const selectedNodeIds = new Set();
   const selectedEdgeIds = new Set();
-  let camera = { x: 0, y: 0, scale: 1 };
+  const initialView = options.view && typeof options.view === 'object' ? options.view : {};
+  let camera = {
+    x: Number.isFinite(Number(initialView.x)) ? Number(initialView.x) : 0,
+    y: Number.isFinite(Number(initialView.y)) ? Number(initialView.y) : 0,
+    scale: clamp(Number.isFinite(Number(initialView.scale)) ? Number(initialView.scale) : 1, MIN_SCALE, MAX_SCALE),
+  };
   let minimapMapping = null;
   let active = false;
   let disposed = false;
   let activeController = null;
   let resizeObserver = null;
+  let unsubscribe = null;
   let drawRaf = 0;
   let gesture = null;
   let editing = null;
   let spaceHeld = false;
   let lastPointer = null;
+  let computeProjection = {};
+  let pendingNodeType = 'note';
+  let interactionMode = 'select';
 
   function viewportRect() {
     return viewport.getBoundingClientRect();
@@ -82,6 +121,18 @@ export function createResearchCanvas(options) {
     return { x: node.x + node.width / 2, y: node.y + node.height / 2 };
   }
 
+  function portWorldPoint(node, port, direction) {
+    if (!node) return { x: 0, y: 0 };
+    const definition = registry.definition(node.type);
+    if (!definition) return nodeCenter(node);
+    const ports = definition.ports.filter((item) => item.direction === direction);
+    const index = Math.max(0, ports.findIndex((item) => item.id === port));
+    return {
+      x: direction === 'input' ? node.x : node.x + node.width,
+      y: node.y + node.height * ((index + 1) / (ports.length + 1)),
+    };
+  }
+
   function applyCamera() {
     surface.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
     scheduleDraw();
@@ -90,12 +141,15 @@ export function createResearchCanvas(options) {
   }
 
   function setCamera(next) {
-    camera = {
+    const changed = {
       x: Number.isFinite(next.x) ? next.x : camera.x,
       y: Number.isFinite(next.y) ? next.y : camera.y,
       scale: clamp(Number.isFinite(next.scale) ? next.scale : camera.scale, MIN_SCALE, MAX_SCALE),
     };
+    if (changed.x === camera.x && changed.y === camera.y && changed.scale === camera.scale) return;
+    camera = changed;
     applyCamera();
+    if (onViewChange) onViewChange({ ...camera });
   }
 
   function zoomAt(nextScale, screenPoint) {
@@ -163,10 +217,115 @@ export function createResearchCanvas(options) {
     text.className = 'research-node-text';
     text.dataset.nodeText = '';
     element.appendChild(text);
+    const result = document.createElement('div');
+    result.className = 'research-node-result';
+    result.dataset.computeResult = '';
+    result.hidden = true;
+    element.appendChild(result);
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'research-node-action';
+    action.dataset.nodeAction = '';
+    action.hidden = true;
+    element.appendChild(action);
     surface.appendChild(element);
     nodeElements.set(node.id, element);
     renderNode(node);
     return element;
+  }
+
+  function syncComputeDecorations(element, node) {
+    const definition = registry.definition(node.type);
+    const executable = !!definition && node.type !== 'note';
+    element.classList.toggle('is-compute', executable);
+    element.dataset.computeKind = node.type;
+    element.dataset.nodeType = node.type;
+    let badge = element.querySelector('[data-compute-badge]');
+    let ports = element.querySelector('[data-compute-ports]');
+    if (!executable) {
+      if (badge) badge.remove();
+      if (ports) ports.remove();
+      const result = element.querySelector('[data-compute-result]');
+      if (result) result.hidden = true;
+      element.classList.remove('is-compute-error', 'has-compute-output');
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'research-node-compute-badge';
+      badge.dataset.computeBadge = '';
+      element.prepend(badge);
+    }
+    badge.textContent = definition.label || node.type;
+    const inputPorts = definition.ports.filter((port) => port.direction === 'input');
+    const outputPorts = definition.ports.filter((port) => port.direction === 'output');
+    const signature = definition.ports.map((port) => `${port.direction}:${port.channel}:${port.id}`).join('|');
+    if (!ports) {
+      ports = document.createElement('div');
+      ports.className = 'research-node-ports';
+      ports.dataset.computePorts = '';
+      element.appendChild(ports);
+    }
+    if (ports.dataset.portSignature !== signature) {
+      ports.dataset.portSignature = signature;
+      ports.replaceChildren();
+      if (definition) {
+        inputPorts.forEach((port, index) => {
+          const handle = document.createElement('span');
+          handle.className = 'research-port is-input is-' + port.channel;
+          handle.dataset.researchPort = port.id;
+          handle.dataset.researchPortChannel = port.channel;
+          handle.dataset.researchPortDirection = 'input';
+          handle.dataset.portLabel = `${port.id} · ${port.channel === 'event' ? 'Pulse' : port.types.join('/')}`;
+          handle.setAttribute('aria-label', `输入端口 ${port.id} · ${port.channel}`);
+          handle.title = `${port.id} · ${port.channel === 'event' ? '事件' : port.types.join('/')}`;
+          handle.style.top = ((index + 1) / (inputPorts.length + 1) * 100) + '%';
+          ports.appendChild(handle);
+        });
+        outputPorts.forEach((port, index) => {
+          const handle = document.createElement('span');
+          handle.className = 'research-port is-output is-' + port.channel;
+          handle.dataset.researchPort = port.id;
+          handle.dataset.researchPortChannel = port.channel;
+          handle.dataset.researchPortDirection = 'output';
+          handle.dataset.portLabel = `${port.id} · ${port.channel === 'event' ? 'Pulse' : port.types.join('/')}`;
+          handle.setAttribute('aria-label', `输出端口 ${port.id} · ${port.channel}`);
+          handle.title = `${port.id} · ${port.channel === 'event' ? '事件' : port.types.join('/')}`;
+          handle.style.top = ((index + 1) / (outputPorts.length + 1) * 100) + '%';
+          ports.appendChild(handle);
+        });
+      }
+    }
+    const projection = computeProjection[node.id] || null;
+    const result = element.querySelector('[data-compute-result]');
+    const output = projection && projection.output;
+    const trace = projection && Array.isArray(projection.trace) ? projection.trace : [];
+    result.hidden = !projection || (node.type !== 'probe' && !output && !projection.error && !projection.lastPulse);
+    element.classList.toggle('is-compute-error', !!(projection && projection.error));
+    element.classList.toggle('has-compute-output', !!output);
+    if (!result.hidden) {
+      if (projection.error) result.textContent = '错误 · ' + projection.error.message;
+      else if (node.type === 'probe') {
+        const latest = trace[trace.length - 1];
+        if (!latest) result.textContent = '轨迹 · 0/' + (projection.traceLimit || node.config.historyLimit || 64);
+        else if (latest.kind === 'event') result.textContent = `Pulse #${latest.sequence} · t=${latest.simulationTime}ms`;
+        else result.textContent = `= ${formatResearchValue(latest.value)} · t=${latest.simulationTime}ms`;
+      }
+      else if (!output && projection.lastPulse) result.textContent = 'Pulse · #' + projection.lastPulse.sequence;
+      else if (node.type === 'timer' && output.type === 'number') result.textContent = '= ' + formatDuration(output.value);
+      else result.textContent = '= ' + formatResearchValue(output);
+      if (node.type === 'timer' && projection.outputs && projection.outputs.running) {
+        result.textContent += projection.outputs.running.value ? ' · 运行中' : ' · 已暂停';
+      }
+    }
+    const action = element.querySelector('[data-node-action]');
+    if (action) {
+      action.hidden = !definition.interactive;
+      action.textContent = node.type === 'button' ? '触发' : '切换';
+      action.setAttribute('aria-label', node.type === 'button' ? '触发按钮' : '切换开关');
+    }
+    element.classList.toggle('is-lamp-on', node.type === 'lamp' && output
+      && (output.type === 'boolean' ? output.value : output.type === 'bits' && output.value !== '0x0'));
   }
 
   function renderNode(node) {
@@ -176,9 +335,10 @@ export function createResearchCanvas(options) {
     element.style.width = node.width + 'px';
     element.style.minHeight = node.height + 'px';
     element.classList.toggle('is-selected', selectedNodeIds.has(node.id));
-    element.setAttribute('aria-label', node.text || '节点');
+    element.setAttribute('aria-label', node.label || '节点');
     const text = element.querySelector('[data-node-text]');
-    if (!editing || editing.nodeId !== node.id) text.textContent = node.text;
+    if (!editing || editing.nodeId !== node.id) text.textContent = node.label;
+    syncComputeDecorations(element, node);
   }
 
   function syncNodeElements() {
@@ -197,13 +357,15 @@ export function createResearchCanvas(options) {
   }
 
   function edgeGeometry(edge) {
-    const from = model.node(edge.from);
-    const to = model.node(edge.to);
+    const wire = edge.kind === 'wire';
+    const from = model.node(wire ? edge.from.nodeId : edge.fromNodeId);
+    const to = model.node(wire ? edge.to.nodeId : edge.toNodeId);
     if (!from || !to) return null;
-    const start = nodeCenter(from);
-    const end = nodeCenter(to);
+    const start = wire ? portWorldPoint(from, edge.from.portId, 'output') : nodeCenter(from);
+    const end = wire ? portWorldPoint(to, edge.to.portId, 'input') : nodeCenter(to);
     return {
       id: edge.id,
+      kind: edge.kind,
       start,
       end,
       bounds: {
@@ -224,13 +386,37 @@ export function createResearchCanvas(options) {
     const maxX = Math.floor(geometry.bounds.right / EDGE_GRID_SIZE);
     const minY = Math.floor(geometry.bounds.top / EDGE_GRID_SIZE);
     const maxY = Math.floor(geometry.bounds.bottom / EDGE_GRID_SIZE);
+    geometry.gridKeys = [];
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         const key = gridKey(x, y);
         if (!edgeSpatialGrid.has(key)) edgeSpatialGrid.set(key, new Set());
         edgeSpatialGrid.get(key).add(geometry.id);
+        geometry.gridKeys.push(key);
       }
     }
+  }
+
+  function removeEdgeFromGrid(geometry) {
+    (geometry && geometry.gridKeys || []).forEach((key) => {
+      const bucket = edgeSpatialGrid.get(key);
+      if (!bucket) return;
+      bucket.delete(geometry.id);
+      if (!bucket.size) edgeSpatialGrid.delete(key);
+    });
+  }
+
+  function refreshEdgeCache(edgeIds) {
+    edgeIds.forEach((edgeId) => {
+      const previous = edgePathCache.get(edgeId);
+      if (previous) removeEdgeFromGrid(previous);
+      edgePathCache.delete(edgeId);
+      const edge = model.edge(edgeId);
+      const geometry = edge && edgeGeometry(edge);
+      if (!geometry) return;
+      edgePathCache.set(edgeId, geometry);
+      addEdgeToGrid(geometry);
+    });
   }
 
   function rebuildEdgeCache() {
@@ -278,10 +464,12 @@ export function createResearchCanvas(options) {
       right: Math.max(topLeft.x, bottomRight.x),
       bottom: Math.max(topLeft.y, bottomRight.y),
     });
-    const movingEdges = gesture && gesture.type === 'node-drag' ? gesture.edgeIds : null;
+    const movingEdges = gesture && gesture.type === 'node-drag' && gesture.moved
+      ? gesture.edgeIds : null;
     const rootStyle = getComputedStyle(document.documentElement);
     const selectedStroke = rootStyle.getPropertyValue('--research-selection').trim() || '#11120f';
     const regularStroke = rootStyle.getPropertyValue('--research-line').trim() || 'rgba(37,39,36,.62)';
+    const dataStroke = rootStyle.getPropertyValue('--research-data-line').trim() || '#456553';
     candidates.forEach((edgeId) => {
       if (movingEdges && movingEdges.has(edgeId)) return;
       const geometry = edgePathCache.get(edgeId);
@@ -291,38 +479,125 @@ export function createResearchCanvas(options) {
       context.beginPath();
       context.moveTo(start.x, start.y);
       context.lineTo(end.x, end.y);
-      context.lineWidth = selectedEdgeIds.has(edgeId) ? 2.4 : 1.35;
-      context.strokeStyle = selectedEdgeIds.has(edgeId) ? selectedStroke : regularStroke;
+      context.lineWidth = selectedEdgeIds.has(edgeId) ? 2.4 : geometry.kind === 'wire' ? 1.8 : 1.35;
+      context.strokeStyle = selectedEdgeIds.has(edgeId) ? selectedStroke
+        : geometry.kind === 'wire' ? dataStroke : regularStroke;
       context.stroke();
     });
+  }
+
+  function drawEdgesImmediately() {
+    if (!active) return;
+    if (drawRaf) cancelAnimationFrame(drawRaf);
+    drawRaf = 0;
+    drawEdges();
   }
 
   function clearActiveEdges() {
     activeSvg.replaceChildren();
   }
 
-  function appendActiveLine(start, end, preview) {
+  function appendActiveLine(start, end, preview, dataLine = false) {
     const line = document.createElementNS(SVG_NS, 'line');
     line.setAttribute('x1', String(start.x));
     line.setAttribute('y1', String(start.y));
     line.setAttribute('x2', String(end.x));
     line.setAttribute('y2', String(end.y));
     if (preview) line.classList.add('is-preview');
+    if (dataLine) line.classList.add('is-data');
     activeSvg.appendChild(line);
+    return line;
+  }
+
+  function reducedMotionPreferred() {
+    return typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function clearRemovalGhosts() {
+    removalGhosts.forEach((ghost) => {
+      if (ghost.getAnimations) ghost.getAnimations().forEach((animation) => animation.cancel());
+      ghost.remove();
+    });
+    removalGhosts.clear();
+  }
+
+  function animateRemoval(nodeIds, edgeIds) {
+    if (reducedMotionPreferred()) return;
+    nodeIds.forEach((nodeId) => {
+      const element = nodeElements.get(nodeId);
+      if (!element || typeof element.animate !== 'function' || !element.isConnected) return;
+      const ghost = element.cloneNode(true);
+      ghost.classList.remove('is-selected', 'is-dragging', 'is-editing');
+      ghost.classList.add('is-removal-ghost');
+      ghost.setAttribute('aria-hidden', 'true');
+      ghost.style.pointerEvents = 'none';
+      surface.appendChild(ghost);
+      removalGhosts.add(ghost);
+      ghost.animate(
+        [{ transform: 'scale(1)' }, { transform: 'scale(0.86)' }],
+        { duration: 190, easing: 'cubic-bezier(0.4, 0, 1, 1)', composite: 'add' },
+      );
+      const fade = ghost.animate(
+        [{ opacity: 1 }, { opacity: 0 }],
+        { duration: 190, easing: 'cubic-bezier(0.4, 0, 1, 1)' },
+      );
+      const done = () => {
+        ghost.remove();
+        removalGhosts.delete(ghost);
+      };
+      fade.onfinish = done;
+      fade.oncancel = done;
+    });
+    edgeIds.forEach((edgeId) => {
+      const geometry = edgePathCache.get(edgeId);
+      if (!geometry) return;
+      const line = appendActiveLine(
+        worldToScreen(geometry.start),
+        worldToScreen(geometry.end),
+        false,
+        geometry.kind === 'wire',
+      );
+      line.classList.add('is-removal-ghost');
+      removalGhosts.add(line);
+      if (typeof line.animate !== 'function') {
+        line.remove();
+        removalGhosts.delete(line);
+        return;
+      }
+      const fade = line.animate(
+        [{ opacity: 1 }, { opacity: 0 }],
+        { duration: 190, easing: 'cubic-bezier(0.4, 0, 1, 1)' },
+      );
+      const done = () => {
+        line.remove();
+        removalGhosts.delete(line);
+      };
+      fade.onfinish = done;
+      fade.oncancel = done;
+    });
   }
 
   function renderActiveEdges() {
     clearActiveEdges();
     if (!gesture) return;
-    if (gesture.type === 'node-drag') {
+    if (gesture.type === 'node-drag' && gesture.moved) {
       gesture.edgeIds.forEach((edgeId) => {
         const edge = model.edge(edgeId);
         const geometry = edge && edgeGeometry(edge);
-        if (geometry) appendActiveLine(worldToScreen(geometry.start), worldToScreen(geometry.end), false);
+        if (geometry) appendActiveLine(worldToScreen(geometry.start), worldToScreen(geometry.end), false, geometry.kind === 'wire');
       });
     } else if (gesture.type === 'edge-create') {
       const from = model.node(gesture.fromId);
       if (from) appendActiveLine(worldToScreen(nodeCenter(from)), gesture.current, true);
+    } else if (gesture.type === 'data-edge-create') {
+      const from = model.node(gesture.fromId);
+      if (from) appendActiveLine(
+        worldToScreen(portWorldPoint(from, gesture.fromPort, 'output')),
+        gesture.current,
+        true,
+        true,
+      );
     }
   }
 
@@ -354,12 +629,40 @@ export function createResearchCanvas(options) {
       element.classList.toggle('is-selected', selectedNodeIds.has(nodeId));
     });
     scheduleDraw();
+    if (onSelectionChange) onSelectionChange({
+      nodeIds: Array.from(selectedNodeIds), edgeIds: Array.from(selectedEdgeIds),
+      primaryNode: selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
+    });
   }
 
   function clearSelection() {
     selectedNodeIds.clear();
     selectedEdgeIds.clear();
     renderSelection();
+  }
+
+  function setCreationTool(nextType) {
+    const normalized = registry.definition(String(nextType || '')) ? String(nextType) : 'note';
+    if (pendingNodeType === normalized) return pendingNodeType;
+    pendingNodeType = normalized;
+    viewport.dataset.researchCreationTool = pendingNodeType;
+    if (onCreationToolChange) onCreationToolChange(pendingNodeType);
+    return pendingNodeType;
+  }
+
+  function getCreationTool() {
+    return pendingNodeType;
+  }
+
+  function setInteractionMode(nextMode) {
+    const normalized = INTERACTION_MODES.has(String(nextMode || '')) ? String(nextMode) : 'select';
+    interactionMode = normalized;
+    viewport.dataset.researchInteractionMode = normalized;
+    return interactionMode;
+  }
+
+  function getInteractionMode() {
+    return interactionMode;
   }
 
   function selectOnlyNode(nodeId) {
@@ -370,17 +673,22 @@ export function createResearchCanvas(options) {
   }
 
   function createNodeAt(worldPoint, options = {}) {
+    const type = String(options.type || pendingNodeType || 'note');
+    const defaults = registry.createNode(type, options);
+    if (!defaults) return null;
     const source = {
       x: worldPoint.x - 84,
       y: worldPoint.y - 32,
-      text: options.text || '',
+      ...defaults,
+      width: options.width,
+      height: options.height,
     };
     const node = options.fromId
       ? model.createLinkedNode(options.fromId, source)
       : model.createNode(source);
     if (!node) return null;
     selectOnlyNode(node.id);
-    if (options.edit !== false) beginEdit(node.id, options.replaceText);
+    if (options.edit !== false && type === 'note') beginEdit(node.id, options.replaceText);
     return node;
   }
 
@@ -390,11 +698,11 @@ export function createResearchCanvas(options) {
     if (!node || !element) return false;
     if (editing && editing.nodeId !== nodeId) commitEdit();
     const text = element.querySelector('[data-node-text]');
-    editing = { nodeId, originalText: node.text };
+    editing = { nodeId, originalText: node.label };
     element.classList.add('is-editing');
     text.contentEditable = 'true';
     text.spellcheck = false;
-    text.textContent = replaceText == null ? node.text : String(replaceText);
+    text.textContent = replaceText == null ? node.label : String(replaceText);
     text.focus({ preventScroll: true });
     const selection = window.getSelection();
     if (selection) {
@@ -424,8 +732,19 @@ export function createResearchCanvas(options) {
     const height = element ? Math.max(64, Math.ceil(element.scrollHeight)) : 64;
     editing = null;
     finishEditElement(state.nodeId);
-    model.updateNode(state.nodeId, { text: value, height });
+    model.updateNode(state.nodeId, { label: value, height });
     return true;
+  }
+
+  function createTypedNode(type, worldPoint) {
+    if (!registry.definition(type)) return null;
+    if (editing) commitEdit();
+    let point = worldPoint;
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) {
+      const rect = viewportRect();
+      point = screenToWorld({ x: rect.width / 2, y: rect.height / 2 });
+    }
+    return createNodeAt({ x: Number(point.x), y: Number(point.y) }, { type, edit: false });
   }
 
   function cancelEdit() {
@@ -506,6 +825,36 @@ export function createResearchCanvas(options) {
     renderActiveEdges();
   }
 
+  function clearWireTargets() {
+    surface.querySelectorAll('.research-port.is-compatible, .research-port.is-incompatible').forEach((port) => {
+      port.classList.remove('is-compatible', 'is-incompatible');
+    });
+  }
+
+  function markWireTargets(fromId, fromPort) {
+    clearWireTargets();
+    surface.querySelectorAll('[data-research-port-direction="input"]').forEach((port) => {
+      const target = port.closest('[data-node-id]');
+      const compatible = target && model.canCreateWire(fromId, fromPort, target.dataset.nodeId, port.dataset.researchPort);
+      port.classList.add(compatible ? 'is-compatible' : 'is-incompatible');
+    });
+  }
+
+  function startDataEdgeCreate(event, nodeId, fromPort) {
+    selectedEdgeIds.clear();
+    if (!selectedNodeIds.has(nodeId)) selectOnlyNode(nodeId);
+    gesture = {
+      type: 'data-edge-create',
+      pointerId: event.pointerId,
+      fromId: nodeId,
+      fromPort,
+      current: eventPoint(event),
+    };
+    viewport.setPointerCapture(event.pointerId);
+    markWireTargets(nodeId, fromPort);
+    renderActiveEdges();
+  }
+
   function startBackgroundGesture(event) {
     const point = eventPoint(event);
     const edgeId = hitEdge(point);
@@ -558,11 +907,32 @@ export function createResearchCanvas(options) {
       return;
     }
     if (event.button !== 0) return;
+    const action = event.target.closest('[data-node-action]');
+    if (action) {
+      event.preventDefault(); event.stopPropagation();
+      const actionNode = action.closest('[data-node-id]');
+      if (actionNode && onNodeAction) onNodeAction(actionNode.dataset.nodeId);
+      return;
+    }
+    const port = event.target.closest('[data-research-port]');
+    if (port) {
+      event.preventDefault();
+      event.stopPropagation();
+      const nodeElement = port.closest('[data-node-id]');
+      if (!nodeElement) return;
+      const nodeId = nodeElement.dataset.nodeId;
+      if (interactionMode === 'wire' && port.dataset.researchPortDirection === 'output') {
+        startDataEdgeCreate(event, nodeId, port.dataset.researchPort);
+      } else {
+        selectOnlyNode(nodeId);
+      }
+      return;
+    }
     const nodeElement = event.target.closest('[data-node-id]');
     if (nodeElement) {
       event.preventDefault();
       const nodeId = nodeElement.dataset.nodeId;
-      if (event.altKey) startEdgeCreate(event, nodeId);
+      if (interactionMode === 'relation') startEdgeCreate(event, nodeId);
       else startNodeDrag(event, nodeId);
       return;
     }
@@ -582,7 +952,7 @@ export function createResearchCanvas(options) {
       });
       return;
     }
-    if (gesture.type === 'edge-create') {
+    if (gesture.type === 'edge-create' || gesture.type === 'data-edge-create') {
       gesture.current = point;
       renderActiveEdges();
       return;
@@ -591,6 +961,7 @@ export function createResearchCanvas(options) {
       gesture.current = point;
       if (!gesture.moved && Math.hypot(point.x - gesture.start.x, point.y - gesture.start.y) >= DRAG_THRESHOLD) {
         gesture.moved = true;
+        drawEdgesImmediately();
       }
       if (gesture.moved) updateFrame(gesture.start, point);
       return;
@@ -600,6 +971,7 @@ export function createResearchCanvas(options) {
       const dy = (point.y - gesture.start.y) / camera.scale;
       if (!gesture.moved && Math.hypot(point.x - gesture.start.x, point.y - gesture.start.y) >= DRAG_THRESHOLD) {
         gesture.moved = true;
+        drawEdgesImmediately();
       }
       if (!gesture.moved) return;
       const positions = {};
@@ -617,6 +989,17 @@ export function createResearchCanvas(options) {
     return nodeElement ? nodeElement.dataset.nodeId : null;
   }
 
+  function targetInputPortAt(clientX, clientY) {
+    const element = document.elementFromPoint(clientX, clientY);
+    const port = element && element.closest
+      && element.closest('[data-research-port-direction="input"]');
+    const nodeElement = port && port.closest('[data-node-id]');
+    return port && nodeElement ? {
+      nodeId: nodeElement.dataset.nodeId,
+      port: port.dataset.researchPort,
+    } : null;
+  }
+
   function finishGesture(event, commit = true) {
     if (!gesture) return;
     const state = gesture;
@@ -625,18 +1008,32 @@ export function createResearchCanvas(options) {
       viewport.releasePointerCapture(state.pointerId);
     }
     viewport.classList.remove('is-panning');
+    clearWireTargets();
     nodeElements.forEach((element) => element.classList.remove('is-dragging'));
     selectionFrame.hidden = true;
-    clearActiveEdges();
     if (state.type === 'node-drag' && state.moved) {
       if (commit) model.commitFrom(state.before, { kind: 'node-move', nodeIds: Object.keys(state.positions), alreadyEmitted: true });
       else model.restore(state.before, true);
-      rebuildEdgeCache();
+      refreshEdgeCache(state.edgeIds);
       redrawMinimap();
-      scheduleDraw();
+      drawEdgesImmediately();
+      clearActiveEdges();
     } else if (state.type === 'edge-create' && commit && event) {
+      clearActiveEdges();
       const targetId = targetNodeAt(event.clientX, event.clientY);
-      if (targetId && targetId !== state.fromId) model.createEdge(state.fromId, targetId);
+      if (targetId && targetId !== state.fromId) model.createEdge(state.fromId, targetId, { kind: 'relation' });
+    } else if (state.type === 'data-edge-create' && commit && event) {
+      clearActiveEdges();
+      const target = targetInputPortAt(event.clientX, event.clientY);
+      if (target && model.canCreateWire(state.fromId, state.fromPort, target.nodeId, target.port)) {
+        model.createEdge(state.fromId, target.nodeId, {
+          kind: 'wire',
+          fromPortId: state.fromPort,
+          toPortId: target.port,
+        });
+      }
+    } else {
+      clearActiveEdges();
     }
   }
 
@@ -655,7 +1052,8 @@ export function createResearchCanvas(options) {
     }
     if (event.target === viewport || event.target === surface || event.target === edgesCanvas) {
       event.preventDefault();
-      createNodeAt(screenToWorld(eventPoint(event)));
+      const worldPoint = screenToWorld(eventPoint(event));
+      createTypedNode(pendingNodeType, worldPoint);
     }
   }
 
@@ -671,17 +1069,17 @@ export function createResearchCanvas(options) {
     const child = createNodeAt({
       x: node.x + node.width + 92 + 84,
       y: node.y + node.height / 2,
-    }, { edit: false, fromId: node.id });
+    }, { type: 'note', edit: false, fromId: node.id });
     if (!child) return;
     beginEdit(child.id);
   }
 
   function createSibling(node) {
-    const incoming = model.edges().find((edge) => edge.to === node.id);
+    const incoming = model.edges().find((edge) => edge.kind === 'relation' && edge.toNodeId === node.id);
     const sibling = createNodeAt({
       x: node.x + node.width / 2,
       y: node.y + node.height + 76 + 32,
-    }, { edit: false, fromId: incoming ? incoming.from : null });
+    }, { type: 'note', edit: false, fromId: incoming ? incoming.fromNodeId : null });
     if (!sibling) return;
     beginEdit(sibling.id);
   }
@@ -736,13 +1134,17 @@ export function createResearchCanvas(options) {
     }
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (gesture) finishGesture(null, false);
+      if (interactionMode !== 'select') setInteractionMode('select');
+      else if (gesture) finishGesture(null, false);
       else clearSelection();
       return;
     }
     if ((event.key === 'Delete' || event.key === 'Backspace')
       && (selectedNodeIds.size || selectedEdgeIds.size)) {
       event.preventDefault();
+      const removedEdgeIds = model.incidentEdgeIds(selectedNodeIds);
+      selectedEdgeIds.forEach((edgeId) => removedEdgeIds.add(edgeId));
+      animateRemoval(new Set(selectedNodeIds), removedEdgeIds);
       model.remove(selectedNodeIds, selectedEdgeIds);
       clearSelection();
       return;
@@ -773,7 +1175,7 @@ export function createResearchCanvas(options) {
       && (event.key === 'n' || event.key === 'N')) {
       event.preventDefault();
       const rect = viewportRect();
-      createNodeAt(screenToWorld(lastPointer || { x: rect.width / 2, y: rect.height / 2 }));
+      createNodeAt(screenToWorld(lastPointer || { x: rect.width / 2, y: rect.height / 2 }), { type: 'note' });
       return;
     }
     const step = 42;
@@ -809,6 +1211,7 @@ export function createResearchCanvas(options) {
     const nodes = model.nodes();
     minimap.hidden = !nodes.length;
     minimapNodes.replaceChildren();
+    minimapNodeElements.clear();
     if (!nodes.length) {
       minimapMapping = null;
       return;
@@ -836,6 +1239,7 @@ export function createResearchCanvas(options) {
       dot.dataset.minimapNodeId = node.id;
       positionMinimapNode(dot, node);
       minimapNodes.appendChild(dot);
+      minimapNodeElements.set(node.id, dot);
     });
     updateMinimapViewbox();
   }
@@ -852,7 +1256,7 @@ export function createResearchCanvas(options) {
     if (!minimapMapping) return;
     nodeIds.forEach((nodeId) => {
       const node = model.node(nodeId);
-      const dot = minimapNodes.querySelector(`[data-minimap-node-id="${CSS.escape(nodeId)}"]`);
+      const dot = minimapNodeElements.get(nodeId);
       if (node && dot) positionMinimapNode(dot, node);
     });
   }
@@ -904,16 +1308,62 @@ export function createResearchCanvas(options) {
       renderActiveEdges();
       return;
     }
-    rebuildEdgeCache();
+    refreshEdgeCache(model.incidentEdgeIds(new Set(nodeIds)));
     redrawMinimap();
     scheduleDraw();
   }
 
-  const unsubscribe = model.subscribe(onModelChange);
+  unsubscribe = model.subscribe(onModelChange);
   syncNodeElements();
   rebuildEdgeCache();
   redrawMinimap();
   applyCamera();
+
+  function getViewState() {
+    return { x: camera.x, y: camera.y, scale: camera.scale };
+  }
+
+  function setComputeProjection(nextProjection) {
+    computeProjection = nextProjection && typeof nextProjection === 'object' ? nextProjection : {};
+    model.nodes().forEach(renderNode);
+  }
+
+  function setModel(nextModel, viewState = {}) {
+    if (!nextModel || disposed) return false;
+    if (editing) commitEdit();
+    if (gesture) finishGesture(null, true);
+    if (unsubscribe) unsubscribe();
+    unsubscribe = null;
+    if (drawRaf) cancelAnimationFrame(drawRaf);
+    drawRaf = 0;
+    selectedNodeIds.clear();
+    selectedEdgeIds.clear();
+    nodeElements.forEach((element) => element.remove());
+    nodeElements.clear();
+    clearRemovalGhosts();
+    edgePathCache.clear();
+    edgeSpatialGrid.clear();
+    clearActiveEdges();
+    selectionFrame.hidden = true;
+    minimapNodes.replaceChildren();
+    minimapNodeElements.clear();
+    minimap.hidden = true;
+    minimapMapping = null;
+    computeProjection = {};
+    model = nextModel;
+    unsubscribe = model.subscribe(onModelChange);
+    camera = {
+      x: Number.isFinite(Number(viewState.x)) ? Number(viewState.x) : 0,
+      y: Number.isFinite(Number(viewState.y)) ? Number(viewState.y) : 0,
+      scale: clamp(Number.isFinite(Number(viewState.scale)) ? Number(viewState.scale) : 1, MIN_SCALE, MAX_SCALE),
+    };
+    syncNodeElements();
+    rebuildEdgeCache();
+    redrawMinimap();
+    applyCamera();
+    if (active) drawEdgesImmediately();
+    return true;
+  }
 
   function activate() {
     if (disposed || active) return !disposed;
@@ -961,15 +1411,31 @@ export function createResearchCanvas(options) {
     if (disposed) return true;
     suspend();
     disposed = true;
-    unsubscribe();
+    if (unsubscribe) unsubscribe();
+    unsubscribe = null;
     nodeElements.clear();
+    minimapNodeElements.clear();
     edgePathCache.clear();
     edgeSpatialGrid.clear();
+    clearRemovalGhosts();
     surface.replaceChildren();
     clearActiveEdges();
     context.clearRect(0, 0, edgesCanvas.width, edgesCanvas.height);
     return true;
   }
 
-  return Object.freeze({ activate, suspend, dispose });
+  return Object.freeze({
+    activate,
+    suspend,
+    dispose,
+    getViewState,
+    setModel,
+    createNodeOfType: createTypedNode,
+    getInteractionMode,
+    getCreationTool,
+    getSelectedNode: () => selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
+    setInteractionMode,
+    setCreationTool,
+    setComputeProjection,
+  });
 }

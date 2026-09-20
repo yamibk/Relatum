@@ -18,11 +18,11 @@
     if (runtime) return Promise.resolve(runtime);
     if (runtimePromise) return runtimePromise;
     runtimePromise = import('./research-editor.js')
-      .then(function (module) {
+      .then(async function (module) {
         if (!module || typeof module.createResearchEditor !== 'function') {
           throw new Error('research-editor.js 没有完成初始化');
         }
-        runtime = module.createResearchEditor(stage);
+        runtime = await module.createResearchEditor(stage);
         if (!runtime || typeof runtime.activate !== 'function'
           || typeof runtime.suspend !== 'function' || typeof runtime.dispose !== 'function') {
           throw new Error('研究画布生命周期不可用');

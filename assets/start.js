@@ -263,8 +263,7 @@
       researchWorkspaceFrame = frame;
       frame.className = 'research-workspace-frame';
       frame.src = 'research.html';
-      frame.title = englishUI() ? 'Research workspace' : '研究工作区';
-      frame.setAttribute('aria-label', frame.title);
+      frame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区');
 
       const fail = (error) => {
         if (researchWorkspaceFrame === frame) disposeResearchWorkspace();

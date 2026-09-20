@@ -43,6 +43,7 @@ from ai_plan import (
     parse_plan,
 )
 from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, NotesStore
+from research_store import ResearchConflictError, ResearchStoreError, ResearchWorkspaceStore
 
 # 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
 # 旁边；具有 MSIX 包身份时改用 %LOCALAPPDATA%\Relatum，避免写只读安装目录。
@@ -113,6 +114,7 @@ COUNTDOWN_FILE = DATA / "countdown.json"   # 日历页轻量倒数日：目标�
 TEMPLATES_FILE = DATA / "templates.json"   # 「模板」库：常用节点组的可复用快照（全局，所有画布共用，不进 .canvas）
 REVIEW_DB_FILE = DATA / "review.db"   # 独立复习卡片、调度状态与复习事件；不扫描、不改写 .canvas
 CAREER_REPORT_FILE = DATA / "career-report.json"   # 「生涯」使用报告的冻结本地快照
+RESEARCH_WORKSPACE_DIR = DATA / "research-workspace"   # 独立研究文档；不复用 .canvas / 最近列表
 
 DEFAULT_PORT = 8765
 PORT_ATTEMPTS = 20
@@ -421,6 +423,9 @@ def _atomic_copy_file(source: Path, target: Path) -> None:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+RESEARCH_STORE = ResearchWorkspaceStore(RESEARCH_WORKSPACE_DIR, atomic_json=_atomic_write_json)
 
 
 NOTES_STORE = NotesStore(
@@ -10507,6 +10512,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "root": _norm(ROOT),
                 "pid": os.getpid(),
             })
+        if parsed.path == "/api/research/workspace":
+            try:
+                with _cross_process_mutation_lock():
+                    with DATA_MUTATION_LOCK:
+                        payload = RESEARCH_STORE.load()
+            except OSError as err:
+                return self._send_json(500, {"error": f"读取研究数据失败：{err}", "code": "read-failed"})
+            return self._send_json(200, payload)
         if parsed.path == "/api/notes-tree":
             try:
                 with NOTES_MUTATION_LOCK:
@@ -10708,6 +10721,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(200, {
                 "version": CAREER_REPORT_SCHEMA, "exists": True, "report": report,
             })
+        if path == "/api/research/workspace":
+            return self._api_research_workspace_save(body)
         if path == "/api/note-create":
             return self._api_note_create(body)
         if path == "/api/note-save":
@@ -10944,6 +10959,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(404, {"error": "未知接口"})
 
     # ── API 实现 ──
+    def _api_research_workspace_save(self, body: dict):
+        try:
+            result = RESEARCH_STORE.save(body.get("document"), body.get("revision", ""))
+        except ResearchConflictError as err:
+            return self._send_json(409, {
+                "error": str(err), "code": err.code, "currentRevision": err.revision,
+            })
+        except ResearchStoreError as err:
+            return self._send_json(400, {
+                "error": str(err), "code": err.code, "issues": err.issues,
+            })
+        except OSError as err:
+            return self._send_json(500, {"error": f"保存研究数据失败：{err}", "code": "write-failed"})
+        return self._send_json(200, result)
+
     def _send_notes_error(self, err: NotesError):
         return self._send_json(err.status, {"error": str(err), "code": err.code})
 

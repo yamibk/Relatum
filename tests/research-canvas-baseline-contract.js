@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const root = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
@@ -12,80 +13,109 @@ const workspace = read('assets/research/research-workspace.js');
 const editor = read('assets/research/research-editor.js');
 const canvas = read('assets/research/research-canvas.js');
 const modelSource = read('assets/research/research-model.js');
+const pagesSource = read('assets/research/research-pages.js');
+const schemaSource = read('assets/research/research-schema.js');
+const computeSource = read('assets/research/research-compute.js');
+const runtimeSource = read('assets/research/research-runtime.js');
+const registrySource = read('assets/research/research-registry.js');
+const persistenceSource = read('assets/research/research-persistence.js');
 
 [
-  'data-research-viewport',
-  'data-research-edges',
-  'data-research-surface',
-  'data-research-active-edges',
-  'data-research-selection-frame',
-  'data-research-minimap',
-].forEach((needle) => assert(html.includes(needle), 'missing Research canvas layer: ' + needle));
-assert(!/<(?:h[1-6]|p|button|input|textarea)\b/i.test(html),
-  'the in-memory baseline must not add visible copy or controls');
+  'data-research-viewport', 'data-research-edges', 'data-research-surface', 'data-research-active-edges',
+  'data-research-selection-frame', 'data-research-minimap', 'data-research-page-rail', 'data-research-page-hotspot',
+  'data-research-trace', 'data-research-trace-list', 'data-research-trace-clear',
+  'data-research-page-list', 'data-research-page-add', 'data-research-page-delete',
+  'data-research-compute-dock', 'data-research-add-palette', 'data-research-add-search',
+  'data-research-inspector', 'data-research-run', 'data-research-pause', 'data-research-step',
+  'data-research-reset', 'data-research-speed', 'data-research-help-open', 'data-research-help-overlay',
+  'data-research-persistence-status',
+].forEach((needle) => assert(html.includes(needle), 'missing Research V2 shell element: ' + needle));
+assert(html.includes('持续值') && html.includes('事件 Pulse') && html.includes('两种连线')
+  && html.includes('组合逻辑始终自动更新'), 'help must describe V2 values, pulses, wiring, and simulation');
+assert(!html.includes('data-research-creation-tool="countdown"') && !html.includes('data-research-creation-tool="countup"')
+  && !html.includes('data-research-creation-tool="delay"'), 'legacy timer and Delay tools must be removed');
 
-assert(workspace.includes("import('./research-editor.js')"),
-  'the lifecycle shell must load the editor inside the iframe only');
-assert(editor.includes("import { createResearchModel } from './research-model.js'")
-  && editor.includes("import { createResearchCanvas } from './research-canvas.js'"),
-  'the editor must keep the model and projection separated');
+assert(workspace.includes("import('./research-editor.js')") && workspace.includes('runtime = await module.createResearchEditor(stage)'));
+[
+  "import { createResearchModel } from './research-model.js'",
+  "import { createResearchPageSession } from './research-pages.js'",
+  "import { loadResearchRegistry } from './research-registry.js'",
+  'createResearchComputeRuntime', 'updateResearchComputeRuntime', 'createResearchSimulationController',
+  "import { createResearchCanvas } from './research-canvas.js'",
+  "import { loadResearchWorkspace, saveResearchWorkspace } from './research-persistence.js'",
+  'snapshotPersistentResearchState',
+].forEach((needle) => assert(editor.includes(needle), 'missing editor V2 integration: ' + needle));
 
 [
-  'const EDGE_GRID_SIZE = 512',
-  'const edgePathCache = new Map()',
-  'const edgeSpatialGrid = new Map()',
-  "gesture.type === 'node-drag'",
-  "gesture.type === 'edge-create'",
-  "gesture.type === 'box'",
-  'function fitToContent()',
-  'function redrawMinimap()',
-  'model.undo()',
-  'model.redo()',
-  "event.code === 'Space'",
-].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas baseline: ' + needle));
+  'const EDGE_GRID_SIZE = 512', 'const edgePathCache = new Map()', 'const edgeSpatialGrid = new Map()',
+  "gesture.type === 'node-drag'", "gesture.type === 'edge-create'", "gesture.type === 'data-edge-create'",
+  "gesture.type === 'box'", 'function fitToContent()', 'function redrawMinimap()', 'model.undo()', 'model.redo()',
+  "event.code === 'Space'", 'function getViewState()', 'function setModel(nextModel, viewState = {})',
+  'drawEdgesImmediately();', 'refreshEdgeCache(state.edgeIds);', 'const minimapNodeElements = new Map()',
+  'function animateRemoval(nodeIds, edgeIds)', 'function setComputeProjection(nextProjection)',
+  'function createTypedNode(type, worldPoint)', 'function setCreationTool(nextType)', 'function getCreationTool()',
+  'function setInteractionMode(nextMode)', 'createNodeOfType: createTypedNode',
+].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
+assert(!canvas.includes('if (event.altKey') && !canvas.includes('Alt +'), 'hidden Alt-drag relation creation must be gone');
 assert(styles.includes('.research-node') && styles.includes('.research-active-edges')
-  && styles.includes('.research-minimap'), 'the Research styles must remain independently scoped');
+  && styles.includes('.research-minimap') && styles.includes('.research-add-palette')
+  && styles.includes('.research-inspector') && styles.includes('.research-port.is-compatible'),
+  'V2 surfaces and compatibility highlighting must remain independently scoped');
 
-const runtimeSources = [workspace, editor, canvas, modelSource].join('\n');
 [
-  'fetch(',
-  'XMLHttpRequest',
-  'localStorage',
-  'sessionStorage',
-  '/api/',
-  'GraphGL',
-  'WebGL',
-  'CanvasModule',
-].forEach((needle) => assert(!runtimeSources.includes(needle), 'forbidden M1 dependency: ' + needle));
+  'function scheduleCompute(pageId = renderedPageId)', 'page.runtime.topologyDirty = true',
+  'page.runtime.dirtyNodeIds.add(String(id))', 'simulation.setVisible(!document.hidden)',
+  'simulation.activate()', 'simulation.suspend()', 'simulation.dispose()',
+  'session.toDocument((record) =>', 'flushSave({ force: true, keepalive: true })',
+].forEach((needle) => assert(editor.includes(needle), 'missing V2 editor lifecycle: ' + needle));
+assert(persistenceSource.includes("const WORKSPACE_ENDPOINT = '/api/research/workspace'")
+  && persistenceSource.includes('keepalive: options.keepalive === true'));
+
+const computeCoreSources = [schemaSource, computeSource, runtimeSource].join('\n');
+['document.', 'window.', 'fetch(', 'localStorage', 'sessionStorage', '/api/', 'eval(', 'new Function']
+  .forEach((needle) => assert(!computeCoreSources.includes(needle), 'forbidden compute-core dependency: ' + needle));
+const modelCore = [modelSource, pagesSource, schemaSource, computeSource].join('\n');
+['fetch(', 'localStorage', 'sessionStorage', '/api/']
+  .forEach((needle) => assert(!modelCore.includes(needle), 'persistent core must stay transport-independent: ' + needle));
+assert(registrySource.includes("fetch(new URL('./research-node-definitions.json', import.meta.url))"),
+  'the frontend registry must load the shared declarative definition file');
 
 async function verifyModel() {
-  const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(modelSource, 'utf8').toString('base64');
-  const { createResearchModel } = await import(moduleUrl);
-  const model = createResearchModel({ nodes: [], edges: [] });
-  const first = model.createNode({ id: 'a', x: 10, y: 20, text: 'A' });
-  const second = model.createNode({ id: 'b', x: 220, y: 20, text: 'B' });
-  assert(first && second && model.node('a') && model.node('b'), 'nodes must be indexed by id');
-  const edge = model.createEdge('a', 'b', { id: 'ab' });
-  assert(edge && edge.fromPort === 'out' && edge.toPort === 'in', 'edges must keep explicit ports');
-  assert(model.incidentEdgeIds(new Set(['a'])).has('ab'), 'incident edges must use the adjacency index');
-  const linked = model.createLinkedNode('b', { id: 'c', x: 430, y: 20, text: 'C' }, { id: 'bc' });
-  assert(linked && model.edge('bc') && model.edge('bc').to === 'c', 'linked node creation must be one model transaction');
-
+  const definitions = JSON.parse(read('assets/research/research-node-definitions.json'));
+  const [{ createResearchRegistry }, { createResearchModel }] = await Promise.all([
+    import(pathToFileURL(path.join(root, 'assets/research/research-registry.js')).href),
+    import(pathToFileURL(path.join(root, 'assets/research/research-model.js')).href),
+  ]);
+  const registry = createResearchRegistry(definitions);
+  const model = createResearchModel({ nodes: [], edges: [] }, registry);
+  const make = (id, type, x) => ({ id, x, y: 20, width: 176, height: 72, ...registry.createNode(type) });
+  const constant = model.createNode({ ...make('constant', 'constant', 10), config: { value: { type: 'number', value: 1 } } });
+  const math = model.createNode(make('math', 'math', 220));
+  const button = model.createNode(make('button', 'button', 430));
+  assert(constant && math && button && model.node('math'));
+  const firstWire = model.createEdge('constant', 'math', {
+    id: 'wire-a', kind: 'wire', fromPortId: 'out', toPortId: 'a',
+  });
+  assert(firstWire && firstWire.kind === 'wire');
+  assert(!model.createEdge('button', 'math', {
+    id: 'wrong-channel', kind: 'wire', fromPortId: 'fire', toPortId: 'b',
+  }), 'event-to-value wires must be rejected before history');
+  assert(!model.createEdge('constant', 'math', {
+    id: 'occupied', kind: 'wire', fromPortId: 'out', toPortId: 'a',
+  }), 'occupied value input must reject a second wire');
+  const relation = model.createEdge('constant', 'button', { id: 'relation', kind: 'relation' });
+  assert(relation && relation.kind === 'relation');
   const beforeMove = model.capture();
-  model.moveNodes({ a: { x: 90, y: 110 } }, { live: true });
+  model.moveNodes({ constant: { x: 90, y: 110 } }, { live: true });
   model.commitFrom(beforeMove, { kind: 'node-move', alreadyEmitted: true });
-  assert.strictEqual(model.node('a').x, 90, 'live movement must update the canonical model');
-  assert(model.undo() && model.node('a').x === 10, 'undo must restore the previous model snapshot');
-  assert(model.redo() && model.node('a').x === 90, 'redo must restore the moved model snapshot');
-
-  model.remove(new Set(['a']), new Set());
-  assert(!model.node('a') && !model.edge('ab'), 'removing a node must remove incident edges');
-  assert(model.undo() && model.node('a') && model.edge('ab'), 'removal must be undoable');
+  assert.strictEqual(model.node('constant').x, 90);
+  assert(model.undo() && model.node('constant').x === 10);
+  assert(model.redo() && model.node('constant').x === 90);
+  model.remove(new Set(['constant']), new Set());
+  assert(!model.node('constant') && !model.edge('wire-a') && !model.edge('relation'));
+  assert(model.undo() && model.node('constant') && model.edge('wire-a'));
 }
 
-verifyModel()
-  .then(() => console.log('research canvas baseline contract passed'))
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
+verifyModel().then(() => console.log('research canvas baseline contract passed')).catch((error) => {
+  console.error(error); process.exitCode = 1;
+});

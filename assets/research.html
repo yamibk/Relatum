@@ -19,6 +19,115 @@
         <div class="research-minimap-viewbox" data-research-minimap-viewbox></div>
       </div>
     </div>
+    <nav class="research-page-rail" data-research-page-rail aria-label="研究页面">
+      <div class="research-page-list" data-research-page-list>
+        <span class="research-page-orb" data-research-page-orb aria-hidden="true"></span>
+      </div>
+      <button type="button" class="research-page-add" data-research-page-add aria-label="新建研究页">＋</button>
+    </nav>
+    <div class="research-page-hotspot" data-research-page-hotspot aria-hidden="true"></div>
+    <button type="button" class="research-page-delete" data-research-page-delete
+      aria-label="删除当前空白研究页" hidden>
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M6 6.5v9h8v-9M4.5 5h11M8 5V3.5h4V5M8.5 8.5V13M11.5 8.5V13"/>
+      </svg>
+    </button>
+    <div class="research-compute-dock" data-research-compute-dock role="toolbar" aria-label="研究工具与仿真控制">
+      <button type="button" data-research-mode="select" aria-pressed="true">选择</button>
+      <button type="button" data-research-add aria-expanded="false">＋ 添加</button>
+      <button type="button" data-research-mode="relation" aria-pressed="false">关系线</button>
+      <button type="button" data-research-mode="wire" aria-pressed="false">导线</button>
+      <span class="research-compute-separator" aria-hidden="true"></span>
+      <button type="button" data-research-run aria-label="运行仿真">运行</button>
+      <button type="button" data-research-pause aria-label="暂停仿真">暂停</button>
+      <button type="button" data-research-step aria-label="单步到下一个时序边界">单步</button>
+      <button type="button" data-research-reset aria-label="复位当前页">复位</button>
+      <label class="research-speed-label">速度
+        <select data-research-speed aria-label="仿真速度">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+        </select>
+      </label>
+    </div>
+    <section class="research-add-palette" data-research-add-palette hidden aria-label="添加研究节点">
+      <input type="search" data-research-add-search placeholder="搜索节点" aria-label="搜索节点">
+      <div data-research-add-list></div>
+    </section>
+    <aside class="research-inspector" data-research-inspector hidden aria-label="节点属性">
+      <header><strong data-research-inspector-title>节点属性</strong><button type="button" data-research-inspector-close aria-label="关闭属性">×</button></header>
+      <div data-research-inspector-fields></div>
+      <section class="research-trace" data-research-trace hidden aria-label="运行轨迹">
+        <div class="research-trace-head">
+          <strong>运行轨迹</strong>
+          <button type="button" data-research-trace-clear>清空</button>
+        </div>
+        <p data-research-trace-summary></p>
+        <ol data-research-trace-list></ol>
+      </section>
+    </aside>
+    <div class="research-persistence-status" data-research-persistence-status role="status"
+      aria-live="polite" hidden></div>
+    <button type="button" class="research-help-fab" data-research-help-open
+      aria-label="研究计算使用说明" aria-expanded="false" aria-controls="research-help-panel">?</button>
+    <div class="research-help-overlay" data-research-help-overlay hidden>
+      <section class="research-help-card" id="research-help-panel" role="dialog" aria-modal="true"
+        aria-labelledby="research-help-title">
+        <header class="research-help-head">
+          <div>
+            <span>研究工作区</span>
+            <h2 id="research-help-title">计算怎么用？</h2>
+          </div>
+          <button type="button" class="research-help-close" data-research-help-close aria-label="关闭说明">×</button>
+        </header>
+        <section class="research-help-starter" aria-label="三步完成第一次计算">
+          <strong>三步完成第一次计算</strong>
+          <div>
+            <span><b>1</b> 在“添加”中选择节点，双击空白放置</span>
+            <span><b>2</b> 切换到“导线”，从输出端口拖到兼容输入</span>
+            <span><b>3</b> 组合逻辑自动更新，时钟与计时器由运行栏控制</span>
+          </div>
+        </section>
+        <div class="research-help-grid">
+          <section>
+            <h3>节点与端口</h3>
+            <dl>
+              <div><dt>持续值</dt><dd>number、boolean、string、time 和 1–64 位 Bits 会沿导线自动传播。</dd></div>
+              <div><dt>事件 Pulse</dt><dd>按钮、时钟、计时完成和边沿检测用瞬时事件驱动状态节点。</dd></div>
+              <div><dt>寄存器</dt><dd>在 write 事件到来时同步采样 data，是反馈环的明确状态边界。</dd></div>
+              <div><dt>计时器</dt><dd>合并倒计时/正计时，可由 start、pause、reset 事件控制。</dd></div>
+              <div><dt>探针</dt><dd>可同时观察一路稳定值和多路 Pulse，选中后在属性面板查看有界运行轨迹。</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>两种连线</h3>
+            <dl>
+              <div><dt>导线模式</dt><dd>从输出端口拖到高亮的兼容输入，只有导线参与执行。</dd></div>
+              <div><dt>关系线模式</dt><dd>从一个节点主体拖到另一个，只用于表达知识关系。</dd></div>
+              <div><dt>输入顺序</dt><dd>由端口决定；移动节点不会改变算式。</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>自动计算与错误</h3>
+            <dl>
+              <div><dt>自动计算</dt><dd>连接或修改完成后自动更新，只把结果放进运行投影。</dd></div>
+              <div><dt>运行栏</dt><dd>组合逻辑始终自动更新；运行、暂停、单步与复位只控制时序与事件。</dd></div>
+              <div><dt>红色结果</dt><dd>表示类型错误、除零、端口冲突或循环。</dd></div>
+              <div><dt>尚未接完</dt><dd>保持安静；输入完整后才显示结果或真实错误。</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>画布操作</h3>
+            <dl>
+              <div><dt><kbd>双击空白</kbd></dt><dd>按底栏当前黑色工具放置对应节点。</dd></div>
+              <div><dt><kbd>N</kbd> / <kbd>Esc</kbd></dt><dd>新建笔记节点 / 返回选择模式。</dd></div>
+              <div><dt><kbd>Space</kbd> + 拖动</dt><dd>平移画布；滚轮定点缩放。</dd></div>
+              <div><dt><kbd>?</kbd> / <kbd>Esc</kbd></dt><dd>打开或关闭本说明。</dd></div>
+            </dl>
+          </section>
+        </div>
+        <footer class="research-help-foot">计算节点使用显式类型与端口；节点标题和空间位置都不是执行依据。</footer>
+      </section>
+    </div>
   </main>
 </body>
 </html>
