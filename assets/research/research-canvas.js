@@ -19,6 +19,22 @@ function distanceToSegment(point, start, end) {
   return Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t));
 }
 
+export function researchRectBoundaryPoint(bounds, toward) {
+  const left = Number(bounds && bounds.left);
+  const top = Number(bounds && bounds.top);
+  const right = Number(bounds && bounds.right);
+  const bottom = Number(bounds && bounds.bottom);
+  if (![left, top, right, bottom].every(Number.isFinite)) return { x: 0, y: 0 };
+  const center = { x: (left + right) / 2, y: (top + bottom) / 2 };
+  const dx = Number(toward && toward.x) - center.x;
+  const dy = Number(toward && toward.y) - center.y;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || (!dx && !dy)) return center;
+  const halfWidth = Math.max(0.5, (right - left) / 2);
+  const halfHeight = Math.max(0.5, (bottom - top) / 2);
+  const ratio = Math.max(Math.abs(dx) / halfWidth, Math.abs(dy) / halfHeight);
+  return { x: center.x + dx / ratio, y: center.y + dy / ratio };
+}
+
 function isEditableTarget(target) {
   return !!(target && target.closest && target.closest('[contenteditable="true"], input, textarea, select'));
 }
@@ -67,6 +83,7 @@ export function createResearchCanvas(options) {
 
   const context = edgesCanvas.getContext('2d');
   const nodeElements = new Map();
+  const nodeLayoutCache = new Map();
   const minimapNodeElements = new Map();
   const edgePathCache = new Map();
   const edgeSpatialGrid = new Map();
@@ -83,7 +100,8 @@ export function createResearchCanvas(options) {
   let active = false;
   let disposed = false;
   let activeController = null;
-  let resizeObserver = null;
+  let viewportResizeObserver = null;
+  let nodeResizeObserver = null;
   let unsubscribe = null;
   let drawRaf = 0;
   let gesture = null;
@@ -117,19 +135,57 @@ export function createResearchCanvas(options) {
     };
   }
 
+  function nodeVisualBounds(node) {
+    const layout = node && nodeLayoutCache.get(node.id);
+    const width = layout && layout.width || node && node.width || 0;
+    const height = layout && layout.height || node && node.height || 0;
+    return {
+      left: node.x,
+      top: node.y,
+      right: node.x + width,
+      bottom: node.y + height,
+    };
+  }
+
   function nodeCenter(node) {
-    return { x: node.x + node.width / 2, y: node.y + node.height / 2 };
+    const bounds = nodeVisualBounds(node);
+    return { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 };
+  }
+
+  function measureNodeLayout(nodeId) {
+    const node = model.node(nodeId);
+    const element = nodeElements.get(nodeId);
+    if (!node || !element || !element.isConnected) return false;
+    const width = element.offsetWidth || node.width;
+    const height = element.offsetHeight || node.height;
+    const ports = new Map();
+    element.querySelectorAll('[data-research-port]').forEach((handle) => {
+      const direction = handle.dataset.researchPortDirection;
+      const portId = handle.dataset.researchPort;
+      const x = handle.offsetLeft + handle.offsetWidth / 2;
+      const y = handle.offsetTop;
+      ports.set(direction + '\n' + portId, { x, y });
+    });
+    const previous = nodeLayoutCache.get(nodeId);
+    const signature = Array.from(ports, ([key, point]) => `${key}:${point.x}:${point.y}`).join('|');
+    if (previous && previous.width === width && previous.height === height && previous.signature === signature) return false;
+    nodeLayoutCache.set(nodeId, { width, height, ports, signature });
+    return true;
   }
 
   function portWorldPoint(node, port, direction) {
     if (!node) return { x: 0, y: 0 };
+    const layout = nodeLayoutCache.get(node.id);
+    const measured = layout && layout.ports.get(direction + '\n' + port);
+    if (measured) return { x: node.x + measured.x, y: node.y + measured.y };
     const definition = registry.definition(node.type);
     if (!definition) return nodeCenter(node);
     const ports = definition.ports.filter((item) => item.direction === direction);
     const index = Math.max(0, ports.findIndex((item) => item.id === port));
+    const bounds = nodeVisualBounds(node);
     return {
-      x: direction === 'input' ? node.x : node.x + node.width,
-      y: node.y + node.height * ((index + 1) / (ports.length + 1)),
+      x: direction === 'input' ? bounds.left : bounds.right,
+      y: bounds.top + (bounds.bottom - bounds.top) * ((index + 1) / (ports.length + 1)),
     };
   }
 
@@ -230,6 +286,7 @@ export function createResearchCanvas(options) {
     element.appendChild(action);
     surface.appendChild(element);
     nodeElements.set(node.id, element);
+    if (nodeResizeObserver) nodeResizeObserver.observe(element);
     renderNode(node);
     return element;
   }
@@ -339,6 +396,7 @@ export function createResearchCanvas(options) {
     const text = element.querySelector('[data-node-text]');
     if (!editing || editing.nodeId !== node.id) text.textContent = node.label;
     syncComputeDecorations(element, node);
+    if (!nodeLayoutCache.has(node.id)) measureNodeLayout(node.id);
   }
 
   function syncNodeElements() {
@@ -346,8 +404,10 @@ export function createResearchCanvas(options) {
     const liveIds = new Set(nodes.map((node) => node.id));
     nodeElements.forEach((element, nodeId) => {
       if (liveIds.has(nodeId)) return;
+      if (nodeResizeObserver) nodeResizeObserver.unobserve(element);
       element.remove();
       nodeElements.delete(nodeId);
+      nodeLayoutCache.delete(nodeId);
       selectedNodeIds.delete(nodeId);
     });
     nodes.forEach(renderNode);
@@ -361,8 +421,12 @@ export function createResearchCanvas(options) {
     const from = model.node(wire ? edge.from.nodeId : edge.fromNodeId);
     const to = model.node(wire ? edge.to.nodeId : edge.toNodeId);
     if (!from || !to) return null;
-    const start = wire ? portWorldPoint(from, edge.from.portId, 'output') : nodeCenter(from);
-    const end = wire ? portWorldPoint(to, edge.to.portId, 'input') : nodeCenter(to);
+    const fromCenter = nodeCenter(from);
+    const toCenter = nodeCenter(to);
+    const start = wire ? portWorldPoint(from, edge.from.portId, 'output')
+      : researchRectBoundaryPoint(nodeVisualBounds(from), toCenter);
+    const end = wire ? portWorldPoint(to, edge.to.portId, 'input')
+      : researchRectBoundaryPoint(nodeVisualBounds(to), fromCenter);
     return {
       id: edge.id,
       kind: edge.kind,
@@ -465,7 +529,9 @@ export function createResearchCanvas(options) {
       bottom: Math.max(topLeft.y, bottomRight.y),
     });
     const movingEdges = gesture && gesture.type === 'node-drag' && gesture.moved
-      ? gesture.edgeIds : null;
+      ? gesture.edgeIds
+      : gesture && gesture.type === 'data-edge-create' && gesture.rewireEdgeId
+        ? new Set([gesture.rewireEdgeId]) : null;
     const rootStyle = getComputedStyle(document.documentElement);
     const selectedStroke = rootStyle.getPropertyValue('--research-selection').trim() || '#11120f';
     const regularStroke = rootStyle.getPropertyValue('--research-line').trim() || 'rgba(37,39,36,.62)';
@@ -497,7 +563,7 @@ export function createResearchCanvas(options) {
     activeSvg.replaceChildren();
   }
 
-  function appendActiveLine(start, end, preview, dataLine = false) {
+  function appendActiveLine(start, end, preview, dataLine = false, invalid = false) {
     const line = document.createElementNS(SVG_NS, 'line');
     line.setAttribute('x1', String(start.x));
     line.setAttribute('y1', String(start.y));
@@ -505,6 +571,7 @@ export function createResearchCanvas(options) {
     line.setAttribute('y2', String(end.y));
     if (preview) line.classList.add('is-preview');
     if (dataLine) line.classList.add('is-data');
+    if (invalid) line.classList.add('is-invalid');
     activeSvg.appendChild(line);
     return line;
   }
@@ -589,15 +656,32 @@ export function createResearchCanvas(options) {
       });
     } else if (gesture.type === 'edge-create') {
       const from = model.node(gesture.fromId);
-      if (from) appendActiveLine(worldToScreen(nodeCenter(from)), gesture.current, true);
+      if (from) {
+        const rect = viewportRect();
+        const targetId = targetNodeAt(rect.left + gesture.current.x, rect.top + gesture.current.y);
+        const target = targetId && targetId !== from.id ? model.node(targetId) : null;
+        const toward = target ? nodeCenter(target) : screenToWorld(gesture.current);
+        const start = researchRectBoundaryPoint(nodeVisualBounds(from), toward);
+        const end = target
+          ? researchRectBoundaryPoint(nodeVisualBounds(target), nodeCenter(from))
+          : toward;
+        appendActiveLine(worldToScreen(start), worldToScreen(end), true);
+      }
     } else if (gesture.type === 'data-edge-create') {
       const from = model.node(gesture.fromId);
-      if (from) appendActiveLine(
-        worldToScreen(portWorldPoint(from, gesture.fromPort, 'output')),
-        gesture.current,
-        true,
-        true,
-      );
+      const target = gesture.target && model.node(gesture.target.nodeId);
+      if (from) {
+        const end = target
+          ? worldToScreen(portWorldPoint(target, gesture.target.port, gesture.target.direction))
+          : gesture.current;
+        appendActiveLine(
+          worldToScreen(portWorldPoint(from, gesture.fromPort, gesture.fromDirection)),
+          end,
+          true,
+          true,
+          !!gesture.target && !gesture.targetValid,
+        );
+      }
     }
   }
 
@@ -831,27 +915,71 @@ export function createResearchCanvas(options) {
     });
   }
 
-  function markWireTargets(fromId, fromPort) {
+  function normalizeWireCandidate(start, target) {
+    if (!start || !target || start.direction === target.direction) return null;
+    const from = start.direction === 'output' ? start : target;
+    const to = start.direction === 'input' ? start : target;
+    if (from.direction !== 'output' || to.direction !== 'input') return null;
+    return { from, to };
+  }
+
+  function wireCandidateIsValid(state, target) {
+    const candidate = normalizeWireCandidate({
+      nodeId: state.fromId,
+      port: state.fromPort,
+      direction: state.fromDirection,
+    }, target);
+    return !!candidate && model.canCreateWire(
+      candidate.from.nodeId,
+      candidate.from.port,
+      candidate.to.nodeId,
+      candidate.to.port,
+      { ignoreEdgeId: state.rewireEdgeId },
+    );
+  }
+
+  function markWireTargets(state) {
     clearWireTargets();
-    surface.querySelectorAll('[data-research-port-direction="input"]').forEach((port) => {
-      const target = port.closest('[data-node-id]');
-      const compatible = target && model.canCreateWire(fromId, fromPort, target.dataset.nodeId, port.dataset.researchPort);
+    surface.querySelectorAll('[data-research-port]').forEach((port) => {
+      const targetNode = port.closest('[data-node-id]');
+      if (!targetNode) return;
+      const target = {
+        nodeId: targetNode.dataset.nodeId,
+        port: port.dataset.researchPort,
+        direction: port.dataset.researchPortDirection,
+      };
+      if (target.nodeId === state.fromId && target.port === state.fromPort
+        && target.direction === state.fromDirection) return;
+      const compatible = wireCandidateIsValid(state, target);
       port.classList.add(compatible ? 'is-compatible' : 'is-incompatible');
     });
   }
 
-  function startDataEdgeCreate(event, nodeId, fromPort) {
+  function startDataEdgeCreate(event, nodeId, fromPort, fromDirection) {
     selectedEdgeIds.clear();
     if (!selectedNodeIds.has(nodeId)) selectOnlyNode(nodeId);
+    const node = model.node(nodeId);
+    const startPort = node && registry.port(node.type, fromPort, fromDirection);
+    if (!startPort) return;
+    const rewireEdge = fromDirection === 'input' && startPort.channel === 'value'
+      ? model.edges().find((edge) => edge.kind === 'wire'
+        && edge.to.nodeId === nodeId && edge.to.portId === fromPort)
+      : null;
     gesture = {
       type: 'data-edge-create',
       pointerId: event.pointerId,
       fromId: nodeId,
       fromPort,
+      fromDirection,
+      fromChannel: startPort.channel,
+      rewireEdgeId: rewireEdge ? rewireEdge.id : '',
+      target: null,
+      targetValid: false,
       current: eventPoint(event),
     };
     viewport.setPointerCapture(event.pointerId);
-    markWireTargets(nodeId, fromPort);
+    markWireTargets(gesture);
+    if (gesture.rewireEdgeId) drawEdgesImmediately();
     renderActiveEdges();
   }
 
@@ -921,8 +1049,13 @@ export function createResearchCanvas(options) {
       const nodeElement = port.closest('[data-node-id]');
       if (!nodeElement) return;
       const nodeId = nodeElement.dataset.nodeId;
-      if (interactionMode === 'wire' && port.dataset.researchPortDirection === 'output') {
-        startDataEdgeCreate(event, nodeId, port.dataset.researchPort);
+      if (interactionMode === 'wire') {
+        startDataEdgeCreate(
+          event,
+          nodeId,
+          port.dataset.researchPort,
+          port.dataset.researchPortDirection,
+        );
       } else {
         selectOnlyNode(nodeId);
       }
@@ -952,8 +1085,15 @@ export function createResearchCanvas(options) {
       });
       return;
     }
-    if (gesture.type === 'edge-create' || gesture.type === 'data-edge-create') {
+    if (gesture.type === 'edge-create') {
       gesture.current = point;
+      renderActiveEdges();
+      return;
+    }
+    if (gesture.type === 'data-edge-create') {
+      gesture.current = point;
+      gesture.target = targetPortAt(event.clientX, event.clientY);
+      gesture.targetValid = !!gesture.target && wireCandidateIsValid(gesture, gesture.target);
       renderActiveEdges();
       return;
     }
@@ -989,14 +1129,15 @@ export function createResearchCanvas(options) {
     return nodeElement ? nodeElement.dataset.nodeId : null;
   }
 
-  function targetInputPortAt(clientX, clientY) {
+  function targetPortAt(clientX, clientY) {
     const element = document.elementFromPoint(clientX, clientY);
     const port = element && element.closest
-      && element.closest('[data-research-port-direction="input"]');
+      && element.closest('[data-research-port]');
     const nodeElement = port && port.closest('[data-node-id]');
     return port && nodeElement ? {
       nodeId: nodeElement.dataset.nodeId,
       port: port.dataset.researchPort,
+      direction: port.dataset.researchPortDirection,
     } : null;
   }
 
@@ -1024,16 +1165,39 @@ export function createResearchCanvas(options) {
       if (targetId && targetId !== state.fromId) model.createEdge(state.fromId, targetId, { kind: 'relation' });
     } else if (state.type === 'data-edge-create' && commit && event) {
       clearActiveEdges();
-      const target = targetInputPortAt(event.clientX, event.clientY);
-      if (target && model.canCreateWire(state.fromId, state.fromPort, target.nodeId, target.port)) {
-        model.createEdge(state.fromId, target.nodeId, {
-          kind: 'wire',
-          fromPortId: state.fromPort,
-          toPortId: target.port,
-        });
+      const target = targetPortAt(event.clientX, event.clientY);
+      const candidate = normalizeWireCandidate({
+        nodeId: state.fromId,
+        port: state.fromPort,
+        direction: state.fromDirection,
+      }, target);
+      if (candidate && model.canCreateWire(
+        candidate.from.nodeId,
+        candidate.from.port,
+        candidate.to.nodeId,
+        candidate.to.port,
+        { ignoreEdgeId: state.rewireEdgeId },
+      )) {
+        if (state.rewireEdgeId) {
+          model.reconnectWire(
+            state.rewireEdgeId,
+            candidate.from.nodeId,
+            candidate.from.port,
+            candidate.to.nodeId,
+            candidate.to.port,
+          );
+        } else {
+          model.createEdge(candidate.from.nodeId, candidate.to.nodeId, {
+            kind: 'wire',
+            fromPortId: candidate.from.port,
+            toPortId: candidate.to.port,
+          });
+        }
       }
+      drawEdgesImmediately();
     } else {
       clearActiveEdges();
+      if (state.type === 'data-edge-create') drawEdgesImmediately();
     }
   }
 
@@ -1293,6 +1457,7 @@ export function createResearchCanvas(options) {
   function onModelChange(change) {
     if (change.topology) {
       syncNodeElements();
+      model.nodes().forEach((node) => measureNodeLayout(node.id));
       rebuildEdgeCache();
       redrawMinimap();
       renderSelection();
@@ -1310,6 +1475,18 @@ export function createResearchCanvas(options) {
     }
     refreshEdgeCache(model.incidentEdgeIds(new Set(nodeIds)));
     redrawMinimap();
+    scheduleDraw();
+  }
+
+  function handleNodeResize(entries) {
+    const changedNodeIds = new Set();
+    entries.forEach((entry) => {
+      const nodeId = entry.target && entry.target.dataset.nodeId;
+      if (nodeId && measureNodeLayout(nodeId)) changedNodeIds.add(nodeId);
+    });
+    if (!changedNodeIds.size) return;
+    refreshEdgeCache(model.incidentEdgeIds(changedNodeIds));
+    if (gesture) renderActiveEdges();
     scheduleDraw();
   }
 
@@ -1338,8 +1515,10 @@ export function createResearchCanvas(options) {
     drawRaf = 0;
     selectedNodeIds.clear();
     selectedEdgeIds.clear();
+    if (nodeResizeObserver) nodeResizeObserver.disconnect();
     nodeElements.forEach((element) => element.remove());
     nodeElements.clear();
+    nodeLayoutCache.clear();
     clearRemovalGhosts();
     edgePathCache.clear();
     edgeSpatialGrid.clear();
@@ -1384,8 +1563,10 @@ export function createResearchCanvas(options) {
       viewport.classList.remove('is-space-held');
       if (gesture) finishGesture(null, true);
     }, { signal });
-    resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(resizeCanvas) : null;
-    if (resizeObserver) resizeObserver.observe(viewport);
+    viewportResizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(resizeCanvas) : null;
+    if (viewportResizeObserver) viewportResizeObserver.observe(viewport);
+    nodeResizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(handleNodeResize) : null;
+    if (nodeResizeObserver) nodeElements.forEach((element) => nodeResizeObserver.observe(element));
     resizeCanvas();
     scheduleDraw();
     return true;
@@ -1397,8 +1578,10 @@ export function createResearchCanvas(options) {
     if (gesture) finishGesture(null, true);
     if (activeController) activeController.abort();
     activeController = null;
-    if (resizeObserver) resizeObserver.disconnect();
-    resizeObserver = null;
+    if (viewportResizeObserver) viewportResizeObserver.disconnect();
+    viewportResizeObserver = null;
+    if (nodeResizeObserver) nodeResizeObserver.disconnect();
+    nodeResizeObserver = null;
     if (drawRaf) cancelAnimationFrame(drawRaf);
     drawRaf = 0;
     active = false;
@@ -1414,6 +1597,7 @@ export function createResearchCanvas(options) {
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
     nodeElements.clear();
+    nodeLayoutCache.clear();
     minimapNodeElements.clear();
     edgePathCache.clear();
     edgeSpatialGrid.clear();

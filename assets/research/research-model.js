@@ -252,13 +252,15 @@ export class ResearchModel {
     return null;
   }
 
-  canCreateWire(fromNodeId, fromPortId, toNodeId, toPortId) {
+  canCreateWire(fromNodeId, fromPortId, toNodeId, toPortId, options = {}) {
     const fromNode = this.node(fromNodeId); const toNode = this.node(toNodeId);
+    const ignoreEdgeId = String(options.ignoreEdgeId || '');
     if (!fromNode || !toNode || fromNode.id === toNode.id || !this.registry
       || !this.registry.compatiblePorts(fromNode, fromPortId, toNode, toPortId)) return false;
     const port = this.registry.port(toNode.type, toPortId, 'input');
     if (port && port.channel === 'value') {
       if (this.state.edges.some((edge) => edge.kind === 'wire'
+        && edge.id !== ignoreEdgeId
         && edge.to.nodeId === toNode.id && edge.to.portId === String(toPortId))) return false;
       const descriptor = this.valueDescriptor(fromNode.id, fromPortId);
       if (descriptor && descriptor.type === 'bits' && port.bitsWidths.length
@@ -267,7 +269,8 @@ export class ResearchModel {
         const definition = this.registry.definition(toNode.type);
         const peerIds = definition.ports.filter((candidate) => candidate.direction === 'input'
           && candidate.matchGroup === port.matchGroup && candidate.id !== port.id).map((candidate) => candidate.id);
-        const peerEdge = this.state.edges.find((edge) => edge.kind === 'wire' && edge.to.nodeId === toNode.id
+        const peerEdge = this.state.edges.find((edge) => edge.kind === 'wire' && edge.id !== ignoreEdgeId
+          && edge.to.nodeId === toNode.id
           && peerIds.includes(edge.to.portId));
         const peer = peerEdge && this.valueDescriptor(peerEdge.from.nodeId, peerEdge.from.portId);
         if (peer && (peer.type !== descriptor.type
@@ -281,6 +284,26 @@ export class ResearchModel {
       }
     }
     return true;
+  }
+
+  reconnectWire(edgeId, fromNodeId, fromPortId, toNodeId, toPortId) {
+    const existing = this.edge(edgeId);
+    if (!existing || existing.kind !== 'wire') return null;
+    const from = { nodeId: String(fromNodeId), portId: String(fromPortId) };
+    const to = { nodeId: String(toNodeId), portId: String(toPortId) };
+    if (existing.from.nodeId === from.nodeId && existing.from.portId === from.portId
+      && existing.to.nodeId === to.nodeId && existing.to.portId === to.portId) return existing;
+    if (!this.canCreateWire(from.nodeId, from.portId, to.nodeId, to.portId, { ignoreEdgeId: existing.id })) return null;
+    const normalized = normalizeEdge({ id: existing.id, kind: 'wire', from, to }, this.nodeById, this.registry);
+    if (!normalized) return null;
+    const duplicate = this.state.edges.some((edge) => edge.id !== existing.id
+      && JSON.stringify({ ...edge, id: '' }) === JSON.stringify({ ...normalized, id: '' }));
+    if (duplicate) return null;
+    const changed = this.mutate((state) => {
+      const index = state.edges.findIndex((edge) => edge.id === existing.id);
+      if (index >= 0) state.edges[index] = normalized;
+    }, { kind: 'edge-reconnect', topology: true, edgeIds: [existing.id] });
+    return changed ? this.edge(existing.id) : null;
   }
 
   createEdge(from, to, source = {}) {

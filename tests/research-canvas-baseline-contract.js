@@ -52,6 +52,7 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   "gesture.type === 'box'", 'function fitToContent()', 'function redrawMinimap()', 'model.undo()', 'model.redo()',
   "event.code === 'Space'", 'function getViewState()', 'function setModel(nextModel, viewState = {})',
   'drawEdgesImmediately();', 'refreshEdgeCache(state.edgeIds);', 'const minimapNodeElements = new Map()',
+  'const nodeLayoutCache = new Map()', 'new ResizeObserver(handleNodeResize)', 'function normalizeWireCandidate(start, target)',
   'function animateRemoval(nodeIds, edgeIds)', 'function setComputeProjection(nextProjection)',
   'function createTypedNode(type, worldPoint)', 'function setCreationTool(nextType)', 'function getCreationTool()',
   'function setInteractionMode(nextMode)', 'createNodeOfType: createTypedNode',
@@ -59,7 +60,8 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
 assert(!canvas.includes('if (event.altKey') && !canvas.includes('Alt +'), 'hidden Alt-drag relation creation must be gone');
 assert(styles.includes('.research-node') && styles.includes('.research-active-edges')
   && styles.includes('.research-minimap') && styles.includes('.research-add-palette')
-  && styles.includes('.research-inspector') && styles.includes('.research-port.is-compatible'),
+  && styles.includes('.research-inspector') && styles.includes('.research-port.is-compatible')
+  && styles.includes('.research-active-edges line.is-invalid'),
   'V2 surfaces and compatibility highlighting must remain independently scoped');
 
 [
@@ -82,14 +84,27 @@ assert(registrySource.includes("fetch(new URL('./research-node-definitions.json'
 
 async function verifyModel() {
   const definitions = JSON.parse(read('assets/research/research-node-definitions.json'));
-  const [{ createResearchRegistry }, { createResearchModel }] = await Promise.all([
+  const [{ createResearchRegistry }, { createResearchModel }, { researchRectBoundaryPoint }] = await Promise.all([
     import(pathToFileURL(path.join(root, 'assets/research/research-registry.js')).href),
     import(pathToFileURL(path.join(root, 'assets/research/research-model.js')).href),
+    import(pathToFileURL(path.join(root, 'assets/research/research-canvas.js')).href),
   ]);
+  assert.deepStrictEqual(researchRectBoundaryPoint(
+    { left: 10, top: 20, right: 110, bottom: 80 }, { x: 210, y: 50 },
+  ), { x: 110, y: 50 }, 'horizontal relations must stop at the node border');
+  assert.deepStrictEqual(researchRectBoundaryPoint(
+    { left: 10, top: 20, right: 110, bottom: 80 }, { x: 60, y: 140 },
+  ), { x: 60, y: 80 }, 'vertical relations must stop at the node border');
+  const diagonal = researchRectBoundaryPoint(
+    { left: 10, top: 20, right: 110, bottom: 80 }, { x: 160, y: 110 },
+  );
+  assert.strictEqual(diagonal.x, 110);
+  assert.strictEqual(diagonal.y, 80);
   const registry = createResearchRegistry(definitions);
   const model = createResearchModel({ nodes: [], edges: [] }, registry);
   const make = (id, type, x) => ({ id, x, y: 20, width: 176, height: 72, ...registry.createNode(type) });
   const constant = model.createNode({ ...make('constant', 'constant', 10), config: { value: { type: 'number', value: 1 } } });
+  const alternate = model.createNode({ ...make('alternate', 'constant', 120), config: { value: { type: 'number', value: 2 } } });
   const math = model.createNode(make('math', 'math', 220));
   const button = model.createNode(make('button', 'button', 430));
   assert(constant && math && button && model.node('math'));
@@ -103,6 +118,22 @@ async function verifyModel() {
   assert(!model.createEdge('constant', 'math', {
     id: 'occupied', kind: 'wire', fromPortId: 'out', toPortId: 'a',
   }), 'occupied value input must reject a second wire');
+  const reconnected = model.reconnectWire('wire-a', 'alternate', 'out', 'math', 'a');
+  assert(reconnected && reconnected.id === 'wire-a' && reconnected.from.nodeId === 'alternate',
+    'reconnecting a value input must preserve the edge identity');
+  assert(model.undo() && model.edge('wire-a').from.nodeId === 'constant',
+    'one undo must restore the original wire source');
+  assert(model.redo() && model.edge('wire-a').from.nodeId === 'alternate',
+    'one redo must restore the replacement source');
+  const beforeInvalidReconnect = model.capture();
+  const beforeInvalidHistory = model.historyIndex;
+  assert(!model.reconnectWire('wire-a', 'button', 'fire', 'math', 'a'),
+    'invalid reconnections must be rejected');
+  assert.deepStrictEqual(model.capture(), beforeInvalidReconnect,
+    'invalid reconnections must not mutate the model');
+  assert.strictEqual(model.historyIndex, beforeInvalidHistory,
+    'invalid reconnections must not enter history');
+  assert(model.reconnectWire('wire-a', 'constant', 'out', 'math', 'a'));
   const relation = model.createEdge('constant', 'button', { id: 'relation', kind: 'relation' });
   assert(relation && relation.kind === 'relation');
   const beforeMove = model.capture();

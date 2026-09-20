@@ -61,6 +61,29 @@ async function selectPage(page, index) {
   }, index + 1);
 }
 
+async function boxCenter(locator) {
+  const box = await locator.boundingBox();
+  assert(box, 'interactive Research element must have a browser box');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
+}
+
+async function moveWirePointer(page, from, to) {
+  const start = await boxCenter(from);
+  const end = await boxCenter(to);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 8 });
+  return { start, end };
+}
+
+async function waitForSaveAfter(page, saves, previousCount) {
+  for (let attempt = 0; attempt < 20 && saves.length <= previousCount; attempt += 1) {
+    await page.waitForTimeout(50);
+  }
+  assert(saves.length > previousCount, 'the coalesced Research save must complete');
+  return saves.at(-1);
+}
+
 async function runAcceptance(playwright, url, options = {}) {
   const browser = await playwright.chromium.launch({
     headless: options.headless !== false,
@@ -86,6 +109,63 @@ async function runAcceptance(playwright, url, options = {}) {
 
     await expectResult(page, 'fa-sum-monitor', EXPECTED.fullAdder.sum);
     await expectResult(page, 'fa-carry-monitor', EXPECTED.fullAdder.carry);
+
+    // Both port directions may start a wire gesture. Rewiring from an occupied
+    // value input must retain the existing edge identity and remain one undo step.
+    await page.locator('[data-research-mode="wire"]').click();
+    const xorInputA = page.locator('[data-node-id="fa-xor-1"] [data-research-port="a"]');
+    const cinOutput = page.locator('[data-node-id="fa-cin"] [data-research-port="out"]');
+    const savesBeforeReconnect = saves.length;
+    await moveWirePointer(page, xorInputA, cinOutput);
+    assert.equal(await page.locator('[data-research-active-edges] line.is-invalid').count(), 0,
+      'a compatible reverse wire gesture must remain valid');
+    await page.mouse.up();
+    let savedDocument = await waitForSaveAfter(page, saves, savesBeforeReconnect);
+    let savedWire = savedDocument.pages[0].edges.find((edge) => edge.id === 'fa-a-xor');
+    assert.equal(savedWire.from.nodeId, 'fa-cin');
+    assert.equal(savedWire.to.nodeId, 'fa-xor-1');
+    const savesBeforeUndo = saves.length;
+    await page.locator('[data-research-viewport]').press('Control+z');
+    savedDocument = await waitForSaveAfter(page, saves, savesBeforeUndo);
+    savedWire = savedDocument.pages[0].edges.find((edge) => edge.id === 'fa-a-xor');
+    assert.equal(savedWire.from.nodeId, 'fa-a', 'one undo must restore the old source');
+
+    // A wire preview starts at the rendered port center even when the node grew
+    // to show a result. Invalid occupied targets remain hittable and turn red.
+    const outputCenter = await boxCenter(page.locator('[data-node-id="fa-a"] [data-research-port="out"]'));
+    await page.mouse.move(outputCenter.x, outputCenter.y);
+    await page.mouse.down();
+    await page.mouse.move(outputCenter.x + 40, outputCenter.y + 50, { steps: 4 });
+    const activeWire = page.locator('[data-research-active-edges] line.is-data');
+    assert(Math.abs(Number(await activeWire.getAttribute('x1')) - outputCenter.x) < 0.75);
+    assert(Math.abs(Number(await activeWire.getAttribute('y1')) - outputCenter.y) < 0.75);
+    await page.mouse.up();
+    const savesBeforeInvalid = saves.length;
+    await moveWirePointer(page, page.locator('[data-node-id="fa-a"] [data-research-port="out"]'), xorInputA);
+    assert.equal(await page.locator('[data-research-active-edges] line.is-invalid').count(), 1,
+      'an occupied value input must show a red invalid preview');
+    await page.mouse.up();
+    await page.waitForTimeout(450);
+    assert.equal(saves.length, savesBeforeInvalid, 'an invalid wire gesture must not schedule persistence');
+
+    // Relation previews and committed relation geometry use the rendered node
+    // borders rather than disappearing beneath each node center.
+    await page.locator('[data-research-mode="relation"]').click();
+    const relationFrom = await boxCenter(page.locator('[data-node-id="fa-a"]'));
+    const relationTo = await boxCenter(page.locator('[data-node-id="fa-carry-monitor"]'));
+    await page.mouse.move(relationFrom.x, relationFrom.y);
+    await page.mouse.down();
+    await page.mouse.move(relationTo.x, relationTo.y, { steps: 8 });
+    const relationPreview = page.locator('[data-research-active-edges] line.is-preview');
+    const relationX1 = Number(await relationPreview.getAttribute('x1'));
+    const relationX2 = Number(await relationPreview.getAttribute('x2'));
+    const relationFromRight = relationFrom.box.x + relationFrom.box.width;
+    assert(relationX1 >= relationFromRight - 1 && relationX1 <= relationFromRight + 1,
+      'relation source must stop at its right border');
+    assert(relationX2 >= relationTo.box.x - 1 && relationX2 <= relationTo.box.x + 1,
+      'relation target must stop at its left border');
+    await page.mouse.up();
+    report.circuits.wiring = { reverseStart: true, atomicReconnect: true, invalidPreview: true, borderGeometry: true };
 
     // Configuration uses the same visible inspector a person uses. Changing Cin
     // must immediately propagate through both downstream logic branches.
