@@ -130,8 +130,6 @@ export async function createResearchEditor(stage) {
   let pageSwitchMotionId = 0;
   let sidePanelCollapsed = false;
   let dockCollapsed = false;
-  let sidePanelContentKey = 'library';
-  let panelContentTransitionTimer = 0;
   let panelHitGuardTimer = 0;
   let subcircuitCloseTimer = 0;
   let subcircuitReturnFocus = null;
@@ -644,39 +642,8 @@ export async function createResearchEditor(stage) {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
-  function finishPanelContentTransition() {
-    if (panelContentTransitionTimer) clearTimeout(panelContentTransitionTimer);
-    panelContentTransitionTimer = 0;
-    sidePanelBody.classList.remove('is-content-entering');
-    inspectorTitle.classList.remove('is-content-entering');
-    sidePanel.querySelectorAll('.research-side-panel-content-ghost').forEach((ghost) => ghost.remove());
-  }
-
-  function animatePanelContent() {
-    finishPanelContentTransition();
-    if (sidePanelCollapsed || prefersReducedMotion()) return;
-    const ghost = sidePanelBody.cloneNode(true);
-    ghost.className = 'research-side-panel-content-ghost';
-    ghost.setAttribute('aria-hidden', 'true');
-    ghost.setAttribute('inert', '');
-    ghost.querySelectorAll('*').forEach((element) => {
-      element.removeAttribute('id');
-      Array.from(element.attributes).forEach((attribute) => {
-        if (attribute.name.startsWith('data-research-')) element.removeAttribute(attribute.name);
-      });
-    });
-    ghost.scrollTop = sidePanelBody.scrollTop;
-    sidePanel.appendChild(ghost);
+  function setPanelView(view, title) {
     sidePanelBody.scrollTop = 0;
-    sidePanelBody.classList.add('is-content-entering');
-    inspectorTitle.classList.add('is-content-entering');
-    panelContentTransitionTimer = setTimeout(finishPanelContentTransition, 220);
-  }
-
-  function setPanelView(view, title, contentKey = view) {
-    const changed = sidePanelContentKey !== contentKey;
-    if (changed) animatePanelContent();
-    sidePanelContentKey = contentKey;
     nodeLibrary.hidden = view !== 'library';
     inspector.hidden = view !== 'inspector';
     selectionSummary.hidden = view !== 'selection';
@@ -685,7 +652,6 @@ export async function createResearchEditor(stage) {
 
   function setSidePanelCollapsed(collapsed, persist = true) {
     sidePanelCollapsed = !!collapsed;
-    if (sidePanelCollapsed) finishPanelContentTransition();
     if (sidePanelCollapsed && sidePanel.contains(document.activeElement)) {
       viewport.focus({ preventScroll: true });
     }
@@ -723,7 +689,7 @@ export async function createResearchEditor(stage) {
   }
 
   function showLibrary(options = {}) {
-    setPanelView('library', '研究 · 添加节点', 'library');
+    setPanelView('library', '研究 · 添加节点');
     renderPalette(paletteSearch.value);
     renderTrace(null);
     if (options.expand) setSidePanelCollapsed(false);
@@ -1001,7 +967,7 @@ export async function createResearchEditor(stage) {
     if (!node) { showLibrary(); return; }
     const definition = registry.definition(node.type);
     if (!definition) { showLibrary(); return; }
-    setPanelView('inspector', definition.label + ' · 属性', 'node:' + node.id);
+    setPanelView('inspector', definition.label + ' · 属性');
     const fragment = document.createDocumentFragment();
     fragment.appendChild(inspectorHeading('基本信息'));
     const labelRow = document.createElement('label'); labelRow.textContent = '标签';
@@ -1077,7 +1043,7 @@ export async function createResearchEditor(stage) {
 
   function renderEdgeInspector(edge) {
     if (!edge) { showLibrary(); return; }
-    setPanelView('inspector', (edge.kind === 'wire' ? '导线' : '关系线') + ' · 属性', 'edge:' + edge.id);
+    setPanelView('inspector', (edge.kind === 'wire' ? '导线' : '关系线') + ' · 属性');
     renderTrace(null);
     const fragment = document.createDocumentFragment();
     fragment.appendChild(inspectorHeading('基本信息'));
@@ -1100,9 +1066,7 @@ export async function createResearchEditor(stage) {
   }
 
   function renderSelectionSummary(selection) {
-    const selectionKey = 'selection:' + selection.nodeIds.slice().sort().join(',')
-      + '|' + selection.edgeIds.slice().sort().join(',');
-    setPanelView('selection', '选区 · 属性', selectionKey);
+    setPanelView('selection', '选区 · 属性');
     renderTrace(null);
     inspectorFields.replaceChildren();
     const nodeCount = selection.nodeIds.length;
@@ -1337,7 +1301,6 @@ export async function createResearchEditor(stage) {
   function suspend() {
     if (disposed) return true;
     settlePageSwitchMotion(); resetRailWheel(); clearRailTransients();
-    finishPanelContentTransition();
     simulation.suspend(); cancelCompute();
     if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0; rail.classList.remove('is-revealed');
     if (panelHitGuardTimer) clearTimeout(panelHitGuardTimer); panelHitGuardTimer = 0; sidePanel.classList.remove('is-hit-guarded');

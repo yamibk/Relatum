@@ -1489,9 +1489,6 @@ body {
 }
 
 .research-side-panel-head strong { flex: 1 1 auto; min-width: 0; font: 700 13px/1.2 ui-sans-serif, system-ui; }
-.research-side-panel-head strong.is-content-entering {
-  animation: research-panel-title-in 180ms cubic-bezier(.22, .74, .24, 1) both;
-}
 .research-side-panel-head button {
   flex: 0 0 auto;
   width: 26px;
@@ -1517,36 +1514,6 @@ body {
 }
 
 .research-side-panel-body::-webkit-scrollbar { display: none; }
-
-.research-side-panel-body.is-content-entering {
-  animation: research-panel-content-in 200ms cubic-bezier(.22, .74, .24, 1) both;
-}
-
-.research-side-panel-content-ghost {
-  position: absolute;
-  z-index: 2;
-  inset: 52px 0 0;
-  box-sizing: border-box;
-  padding: 16px;
-  overflow: hidden;
-  pointer-events: none;
-  animation: research-panel-content-out 150ms cubic-bezier(.4, 0, 1, 1) both;
-}
-
-@keyframes research-panel-content-in {
-  from { opacity: .34; transform: translateY(5px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes research-panel-content-out {
-  from { opacity: 1; transform: translateY(0); }
-  to { opacity: 0; transform: translateY(-3px); }
-}
-
-@keyframes research-panel-title-in {
-  from { opacity: .35; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 
 .research-node-library[hidden], .research-inspector[hidden], .research-selection-summary[hidden], .research-trace[hidden] { display: none; }
 .research-node-library > input { width: 100%; height: 42px; padding: 0 13px; outline: none; }
