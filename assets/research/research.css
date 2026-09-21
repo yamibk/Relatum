@@ -1475,6 +1475,14 @@ body {
   transition: transform 320ms cubic-bezier(.3, 0, .16, 1), opacity 240ms ease, visibility 0s linear 320ms;
 }
 
+.research-side-panel-pref-collapsed .research-side-panel {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(calc(-100% - 34px)) scale(.985);
+  transition: none;
+}
+
 .research-side-panel.is-hit-guarded { pointer-events: none; }
 
 .research-side-panel-head {

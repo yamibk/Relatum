@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Relatum Research</title>
+  <script>
+    try {
+      if (localStorage.getItem('research:sidePanelCollapsed:v1') === '1') {
+        document.documentElement.classList.add('research-side-panel-pref-collapsed');
+      }
+    } catch (_error) {}
+  </script>
   <link rel="stylesheet" href="research/research.css">
   <script src="research/research-i18n-en.js" defer></script>
   <script src="i18n.js" defer></script>

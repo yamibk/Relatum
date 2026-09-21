@@ -659,6 +659,7 @@ export async function createResearchEditor(stage) {
     sidePanel.setAttribute('aria-hidden', sidePanelCollapsed ? 'true' : 'false');
     sidePanel.toggleAttribute('inert', sidePanelCollapsed);
     addButton.setAttribute('aria-expanded', sidePanelCollapsed ? 'false' : 'true');
+    document.documentElement.classList.remove('research-side-panel-pref-collapsed');
     if (persist) {
       try { localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, sidePanelCollapsed ? '1' : '0'); } catch (_error) {}
     }
