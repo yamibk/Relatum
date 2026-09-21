@@ -8,6 +8,9 @@
   --research-invalid-line: #b34e48;
   --research-soft-line: rgba(24, 24, 24, 0.18);
   --research-selection: #111111;
+  --research-grid-line: rgba(24, 24, 24, 0.09);
+  --research-axis-line: rgba(24, 24, 24, 0.48);
+  --research-axis-label: rgba(24, 24, 24, 0.68);
 }
 
 html,
@@ -451,24 +454,34 @@ body {
   transform: scale(0.6);
 }
 
-.research-page-delete {
-  appearance: none;
+.research-corner-actions {
   position: absolute;
-  z-index: 11;
-  right: 54px;
+  z-index: 20;
+  right: 18px;
   bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.research-page-delete,
+.research-origin-fab,
+.research-settings-fab,
+.research-help-fab {
+  appearance: none;
   display: grid;
+  flex: 0 0 auto;
   width: 28px;
   height: 28px;
   place-items: center;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  color: rgba(24, 24, 24, 0.42);
-  background: rgba(255, 255, 255, 0.74);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.055);
+  border: 1px solid rgba(24, 24, 24, 0.12);
+  border-radius: 50%;
+  color: rgba(24, 24, 24, 0.5);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.08);
   cursor: pointer;
-  transition: color 150ms ease, background 150ms ease, transform 130ms ease, opacity 150ms ease;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 150ms ease;
 }
 
 .research-page-delete[hidden] {
@@ -476,9 +489,12 @@ body {
 }
 
 .research-page-delete:hover,
-.research-page-delete:focus-visible {
-  color: rgba(24, 24, 24, 0.78);
-  background: rgba(255, 255, 255, 0.97);
+.research-page-delete:focus-visible,
+.research-origin-fab:hover,
+.research-origin-fab:focus-visible {
+  color: var(--research-ink);
+  border-color: rgba(24, 24, 24, 0.23);
+  background: #ffffff;
   outline: none;
 }
 
@@ -492,6 +508,17 @@ body {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.research-origin-fab:active { transform: scale(0.94); }
+.research-origin-fab svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -638,21 +665,6 @@ body {
 .research-persistence-status[hidden] { display: none; }
 
 .research-settings-fab {
-  position: absolute;
-  z-index: 20;
-  right: 54px;
-  bottom: 18px;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid rgba(24, 24, 24, 0.12);
-  border-radius: 50%;
-  color: rgba(24, 24, 24, 0.5);
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.08);
-  cursor: pointer;
   transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
@@ -783,19 +795,23 @@ body {
 .research-settings-slider output { color: var(--research-ink); font-variant-numeric: tabular-nums; }
 .research-settings-slider input { width: 100%; margin: 0; accent-color: #1d1d1d; cursor: pointer; }
 
+.research-settings-check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  color: rgba(24, 24, 24, .62);
+  font-size: 12px;
+}
+.research-settings-check:hover,
+.research-settings-check:focus-within { background: rgba(24, 24, 24, .035); }
+.research-settings-check:has(input:disabled) { opacity: .45; }
+.research-settings-check input { width: 15px; height: 15px; margin: 0; accent-color: #1d1d1d; cursor: pointer; }
+.research-settings-check input:disabled { cursor: default; }
+
 .research-help-fab {
-  position: absolute;
-  z-index: 20;
-  right: 18px;
-  bottom: 18px;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid rgba(24, 24, 24, 0.12);
-  border-radius: 50%;
-  color: rgba(24, 24, 24, 0.5);
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.08);
   font-size: 14px;
   line-height: 1;
   transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
@@ -1179,6 +1195,9 @@ body {
     --research-invalid-line: #ff7b75;
     --research-soft-line: rgba(242, 242, 242, 0.2);
     --research-selection: #f5f5f5;
+    --research-grid-line: rgba(242, 242, 242, 0.11);
+    --research-axis-line: rgba(242, 242, 242, 0.55);
+    --research-axis-label: rgba(242, 242, 242, 0.72);
   }
 
   .research-minimap {
@@ -1190,6 +1209,7 @@ body {
   }
 
   .research-zoom-indicator,
+  .research-origin-fab,
   .research-settings-fab,
   .research-settings-panel,
   .research-settings-reset-confirm {
@@ -1200,6 +1220,8 @@ body {
   }
   .research-zoom-indicator:hover,
   .research-zoom-indicator:focus-visible,
+  .research-origin-fab:hover,
+  .research-origin-fab:focus-visible,
   .research-settings-fab:hover,
   .research-settings-fab:focus-visible,
   .research-settings-fab[aria-expanded="true"] {
@@ -1208,13 +1230,17 @@ body {
     background: #141414;
   }
   .research-settings-slider > span,
+  .research-settings-check,
   .research-settings-reset > button,
   .research-settings-reset-confirm > span { color: rgba(242, 242, 242, .58); }
   .research-settings-slider:hover,
   .research-settings-slider:focus-within,
+  .research-settings-check:hover,
+  .research-settings-check:focus-within,
   .research-settings-reset button:hover,
   .research-settings-reset button:focus-visible { color: #f2f2f2; background: rgba(242, 242, 242, .07); }
   .research-settings-slider input { accent-color: #f2f2f2; }
+  .research-settings-check input { accent-color: #f2f2f2; }
   .research-settings-reset-confirm [data-research-settings-reset-accept] { color: #181818; background: #f2f2f2; }
   .research-settings-reset-confirm [data-research-settings-reset-accept]:hover,
   .research-settings-reset-confirm [data-research-settings-reset-accept]:focus-visible { color: #181818; background: #fff; }
@@ -1266,6 +1292,7 @@ body {
   .research-node.is-compute-error .research-node-result { color: #f49a91; }
 
   .research-compute-row,
+  .research-origin-fab,
   .research-settings-fab,
   .research-help-fab,
   .research-persistence-status {
@@ -1389,6 +1416,7 @@ body {
   .research-page-button,
   .research-page-add,
   .research-page-delete,
+  .research-origin-fab,
   .research-compute-dock button,
   .research-compute-row,
   .research-side-panel,
@@ -1751,7 +1779,6 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .research-side-panel-head strong,
-  .research-side-panel-content-ghost,
   .research-subcircuit-overlay,
   .research-subcircuit-overlay.is-closing,
   .research-subcircuit-dialog,

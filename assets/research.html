@@ -40,12 +40,30 @@
       <button type="button" class="research-page-add" data-research-page-add aria-label="新建研究页">＋</button>
     </nav>
     <div class="research-page-hotspot" data-research-page-hotspot aria-hidden="true"></div>
-    <button type="button" class="research-page-delete" data-research-page-delete
-      aria-label="删除当前空白研究页" hidden>
-      <svg viewBox="0 0 20 20" aria-hidden="true">
-        <path d="M6 6.5v9h8v-9M4.5 5h11M8 5V3.5h4V5M8.5 8.5V13M11.5 8.5V13"/>
-      </svg>
-    </button>
+    <div class="research-corner-actions" data-research-corner-actions>
+      <button type="button" class="research-page-delete" data-research-page-delete
+        aria-label="删除当前空白研究页" hidden>
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M6 6.5v9h8v-9M4.5 5h11M8 5V3.5h4V5M8.5 8.5V13M11.5 8.5V13"/>
+        </svg>
+      </button>
+      <button type="button" class="research-origin-fab" data-research-center-origin
+        aria-label="将坐标原点移到画面中心" title="将坐标原点移到画面中心">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8.5 7 10 5h4l1.5 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3.5Z"/>
+          <circle cx="12" cy="13" r="3.5"/>
+        </svg>
+      </button>
+      <button type="button" class="research-settings-fab" data-research-settings-open
+        aria-label="研究画布设置" aria-expanded="false" aria-controls="research-settings-panel">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button type="button" class="research-help-fab" data-research-help-open
+        aria-label="研究计算使用说明" aria-expanded="false" aria-controls="research-help-panel">?</button>
+    </div>
     <div class="research-compute-dock" data-research-compute-dock>
       <div class="research-compute-row" id="research-compute-row" role="toolbar" aria-label="研究工具与仿真控制">
         <button type="button" data-research-add aria-expanded="true" aria-controls="research-side-panel">＋ 添加</button>
@@ -120,13 +138,6 @@
     </div>
     <div class="research-persistence-status" data-research-persistence-status role="status"
       aria-live="polite" hidden></div>
-    <button type="button" class="research-settings-fab" data-research-settings-open
-      aria-label="研究画布设置" aria-expanded="false" aria-controls="research-settings-panel">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    </button>
     <section class="research-settings-panel" id="research-settings-panel" data-research-settings-panel
       role="dialog" aria-label="研究画布设置" hidden>
       <header class="research-settings-head">
@@ -137,7 +148,7 @@
           <div class="research-settings-reset-confirm" id="research-settings-reset-confirm"
             data-research-settings-reset-confirm role="alertdialog" aria-label="恢复默认设置？" hidden>
             <strong>恢复默认设置？</strong>
-            <span>只重置研究画布的三项本机手感设置。</span>
+            <span>重置研究画布的五项本机设置。</span>
             <div>
               <button type="button" data-research-settings-reset-cancel>取消</button>
               <button type="button" data-research-settings-reset-accept>恢复默认</button>
@@ -157,9 +168,15 @@
         <span>滚轮缩放速度 <output data-research-zoom-speed-value>1×</output></span>
         <input type="range" data-research-zoom-speed min="0.5" max="3" step="0.1" value="1">
       </label>
+      <label class="research-settings-check">
+        <span>显示 xOy 坐标</span>
+        <input type="checkbox" data-research-coordinates-visible>
+      </label>
+      <label class="research-settings-check">
+        <span>显示坐标轴数字</span>
+        <input type="checkbox" data-research-coordinate-labels-visible disabled>
+      </label>
     </section>
-    <button type="button" class="research-help-fab" data-research-help-open
-      aria-label="研究计算使用说明" aria-expanded="false" aria-controls="research-help-panel">?</button>
     <div class="research-help-overlay" data-research-help-overlay hidden>
       <section class="research-help-card" id="research-help-panel" role="dialog" aria-modal="true"
         aria-labelledby="research-help-title">

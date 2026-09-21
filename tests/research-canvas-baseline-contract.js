@@ -31,6 +31,7 @@ const tutorialExamplesSource = read('assets/research/research-tutorial-examples.
   'data-research-compute-dock', 'data-research-dock-collapse', 'data-research-side-panel',
   'data-research-zoom-indicator', 'data-research-settings-open', 'data-research-settings-panel',
   'data-research-pan-speed', 'data-research-pan-inertia', 'data-research-zoom-speed',
+  'data-research-center-origin', 'data-research-coordinates-visible', 'data-research-coordinate-labels-visible',
   'data-research-node-library', 'data-research-add-search',
   'data-research-inspector', 'data-research-run', 'data-research-pause', 'data-research-step',
   'data-research-reset', 'data-research-speed', 'data-research-help-open', 'data-research-help-overlay',
@@ -70,6 +71,9 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   'function updateMinimapViewport()', 'const minimapNodeElements = new Map()',
   "localStorage.getItem('research:panSpeed:v1')", "localStorage.getItem('research:panInertia:v1')",
   "localStorage.getItem('research:zoomSpeed:v1')", 'resetInteractionPreferences',
+  "const COORDINATES_VISIBLE_KEY = 'research:coordinatesVisible:v1'",
+  "const COORDINATE_LABELS_VISIBLE_KEY = 'research:coordinateLabelsVisible:v1'",
+  'function drawCoordinatePlane(rect)', 'function centerOrigin()',
   'function focusNodes(', 'function selectNodes(', 'getVisibleWorldRect: visibleWorldRect',
 ].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
 assert(canvas.includes("event.altKey && connectionKind === 'wire'")
@@ -81,9 +85,9 @@ assert(styles.includes('.research-node') && styles.includes('.research-active-ed
   && styles.includes('.research-minimap') && styles.includes('.research-side-panel')
   && styles.includes('.research-viewport-hud') && styles.includes('.research-settings-panel')
   && styles.includes('.research-compute-dock.is-collapsed')
-  && styles.includes('height: min(615px, calc(100% - 88px))')
-  && styles.includes('.research-side-panel-content-ghost')
-  && styles.includes('@keyframes research-panel-content-out')
+  && styles.includes('height: min(635px, calc(100% - 88px))')
+  && !styles.includes('.research-side-panel-content-ghost')
+  && !styles.includes('@keyframes research-panel-content-out')
   && styles.includes('.research-node { border-color: rgba(242, 242, 242, .68); }')
   && styles.includes('.research-inspector') && styles.includes('.research-port.is-compatible')
   && styles.includes('.research-active-edges line.is-invalid'),
@@ -100,9 +104,9 @@ assert(styles.includes('.research-node') && styles.includes('.research-active-ed
   "const COMPUTE_DOCK_COLLAPSED_KEY = 'research:computeDockCollapsed:v1'",
   "const CONNECTION_KIND_KEY = 'research:connectionKind:v1'",
   'function renderEdgeInspector(edge)', 'function renderSelectionSummary(selection)',
-  'function guardPanelHitTesting()', 'function finishPanelContentTransition()',
+  'function guardPanelHitTesting()',
   'function openSettingsPanel()', 'function closeSettingsPanel(options = {})',
-  "'node:' + node.id", "'edge:' + edge.id", "event.key === 'Tab'",
+  "event.key === 'Tab'",
 ].forEach((needle) => assert(editor.includes(needle), 'missing M5.1 interaction contract: ' + needle));
 assert(editor.includes('deferred: !!meta.simulation && !meta.step && !meta.reset'),
   'continuous simulation projection rendering must be coalesced without delaying Step or Reset');
@@ -143,6 +147,12 @@ async function verifyModel() {
     import(pathToFileURL(path.join(root, 'assets/research/research-model.js')).href),
     import(pathToFileURL(path.join(root, 'assets/research/research-canvas.js')).href),
   ]);
+  const canvasModule = await import(pathToFileURL(path.join(root, 'assets/research/research-canvas.js')).href);
+  assert.strictEqual(canvasModule.researchCoordinateStep(1), 100);
+  assert.strictEqual(canvasModule.researchCoordinateStep(2), 50);
+  assert.strictEqual(canvasModule.researchCoordinateStep(0.2), 500);
+  assert.strictEqual(canvasModule.formatResearchCoordinate(-0, 1), '0');
+  assert.strictEqual(canvasModule.formatResearchCoordinate(-20, 10), '-20');
   assert.deepStrictEqual(researchRectBoundaryPoint(
     { left: 10, top: 20, right: 110, bottom: 80 }, { x: 210, y: 50 },
   ), { x: 110, y: 50 }, 'horizontal relations must stop at the node border');

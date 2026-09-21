@@ -83,6 +83,9 @@ export async function createResearchEditor(stage) {
   const panSpeedValue = required('[data-research-pan-speed-value]');
   const panInertiaValue = required('[data-research-pan-inertia-value]');
   const zoomSpeedValue = required('[data-research-zoom-speed-value]');
+  const coordinatesVisibleInput = required('[data-research-coordinates-visible]');
+  const coordinateLabelsVisibleInput = required('[data-research-coordinate-labels-visible]');
+  const centerOriginButton = required('[data-research-center-origin]');
   const persistenceStatus = required('[data-research-persistence-status]');
 
   let loadedWorkspace;
@@ -152,6 +155,8 @@ export async function createResearchEditor(stage) {
     panSpeedValue,
     panInertiaValue,
     zoomSpeedValue,
+    coordinatesVisibleInput,
+    coordinateLabelsVisibleInput,
     onViewChange: (view) => {
       if (session.setPageView(renderedPageId, view)) scheduleSave();
     },
@@ -314,10 +319,10 @@ export async function createResearchEditor(stage) {
     saveTimer = 0; saveRetryTimer = 0;
     if (saveInFlight) { saveDirty = true; return saveInFlight; }
     const document = currentDocument(); const expectedRevision = persistenceRevision;
-    saveDirty = false; setPersistenceStatus('正在保存…', 'saving');
+    saveDirty = false;
     let completed = false;
     saveInFlight = saveResearchWorkspace(document, expectedRevision, options).then((result) => {
-      persistenceRevision = String(result.revision || ''); completed = true; setPersistenceStatus('已保存', 'saved'); return result;
+      persistenceRevision = String(result.revision || ''); completed = true; setPersistenceStatus(''); return result;
     }).catch((error) => {
       saveDirty = true;
       if (disposed) return null;
@@ -1202,6 +1207,7 @@ export async function createResearchEditor(stage) {
     }, { signal });
     railAdd.addEventListener('click', createPage, { signal });
     pageDelete.addEventListener('click', deletePage, { signal });
+    centerOriginButton.addEventListener('click', () => canvas.centerOrigin(), { signal });
     settingsOpen.addEventListener('click', () => {
       if (settingsPanel.hidden || settingsPanel.classList.contains('is-closing')) openSettingsPanel();
       else closeSettingsPanel();

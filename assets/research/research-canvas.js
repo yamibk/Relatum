@@ -10,6 +10,8 @@ const DRAG_THRESHOLD = 4;
 const PROJECTION_NODES_PER_FRAME = 128;
 const PROJECTION_FRAME_BUDGET_MS = 4;
 const CONNECTION_KINDS = new Set(['relation', 'wire']);
+const COORDINATES_VISIBLE_KEY = 'research:coordinatesVisible:v1';
+const COORDINATE_LABELS_VISIBLE_KEY = 'research:coordinateLabelsVisible:v1';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -23,6 +25,26 @@ function tickFrames(timestamp, previousTimestamp) {
   let frames = previousTimestamp ? (timestamp - previousTimestamp) / FRAME_MS : 1;
   if (!(frames > 0)) frames = 1;
   return clamp(frames, 0.35, 3);
+}
+
+export function researchCoordinateStep(scale, targetPixels = 80) {
+  const safeScale = Math.max(0.0001, Math.abs(Number(scale)) || 1);
+  const raw = Math.max(Number.MIN_VALUE, (Number(targetPixels) || 80) / safeScale);
+  const power = Math.pow(10, Math.floor(Math.log10(raw)));
+  const normalized = raw / power;
+  const factor = normalized < Math.sqrt(2) ? 1
+    : normalized < Math.sqrt(10) ? 2
+      : normalized < Math.sqrt(50) ? 5 : 10;
+  return factor * power;
+}
+
+export function formatResearchCoordinate(value, step) {
+  const clean = Math.abs(value) < Math.abs(step) / 1000 ? 0 : value;
+  if (clean !== 0 && (Math.abs(clean) >= 1e6 || Math.abs(clean) < 1e-4)) {
+    return clean.toExponential(2).replace(/\.00e/, 'e').replace(/(\.\d)0e/, '$1e');
+  }
+  const decimals = Math.max(0, Math.min(6, -Math.floor(Math.log10(Math.abs(step) || 1))));
+  return clean.toFixed(decimals).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
 }
 
 function distanceToSegment(point, start, end) {
@@ -94,6 +116,8 @@ export function createResearchCanvas(options) {
   const panSpeedInput = options.panSpeedInput || null;
   const panInertiaInput = options.panInertiaInput || null;
   const zoomSpeedInput = options.zoomSpeedInput || null;
+  const coordinatesVisibleInput = options.coordinatesVisibleInput || null;
+  const coordinateLabelsVisibleInput = options.coordinateLabelsVisibleInput || null;
   const panSpeedValue = options.panSpeedValue || null;
   const panInertiaValue = options.panInertiaValue || null;
   const zoomSpeedValue = options.zoomSpeedValue || null;
@@ -129,6 +153,8 @@ export function createResearchCanvas(options) {
   let panSpeed = 8;
   let panInertia = 0.15;
   let zoomSpeed = 1;
+  let coordinatesVisible = false;
+  let coordinateLabelsVisible = false;
   let minimapMapping = null;
   let minimapNodeMapping = null;
   let minimapViewboxRect = null;
@@ -163,6 +189,8 @@ export function createResearchCanvas(options) {
     if (Number.isFinite(storedPanInertia) && storedPanInertia >= 0 && storedPanInertia <= 1) panInertia = storedPanInertia;
     const storedZoomSpeed = Number.parseFloat(localStorage.getItem('research:zoomSpeed:v1'));
     if (Number.isFinite(storedZoomSpeed) && storedZoomSpeed >= 0.5 && storedZoomSpeed <= 3) zoomSpeed = storedZoomSpeed;
+    coordinatesVisible = localStorage.getItem(COORDINATES_VISIBLE_KEY) === '1';
+    coordinateLabelsVisible = localStorage.getItem(COORDINATE_LABELS_VISIBLE_KEY) === '1';
   } catch (_error) {}
   viewport.dataset.researchCreationTool = pendingCreation.type;
   viewport.dataset.researchConnectionKind = connectionKind;
@@ -352,6 +380,12 @@ export function createResearchCanvas(options) {
   function resetZoom() {
     const rect = viewportRect();
     zoomAt(1, { x: rect.width / 2, y: rect.height / 2 });
+  }
+
+  function centerOrigin() {
+    const rect = viewportRect();
+    animateCamera({ x: rect.width / 2, y: rect.height / 2, scale: targetCamera.scale });
+    return true;
   }
 
   function fitToContent() {
@@ -770,6 +804,7 @@ export function createResearchCanvas(options) {
     const ratio = Math.max(1, window.devicePixelRatio || 1);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, rect.width, rect.height);
+    drawCoordinatePlane(rect);
     const topLeft = screenToWorld({ x: 0, y: 0 });
     const bottomRight = screenToWorld({ x: rect.width, y: rect.height });
     const candidates = edgeIdsInBounds({
@@ -800,6 +835,91 @@ export function createResearchCanvas(options) {
         : geometry.kind === 'wire' ? dataStroke : regularStroke;
       context.stroke();
     });
+  }
+
+  function drawCoordinatePlane(rect) {
+    if (!coordinatesVisible || !(rect.width > 0) || !(rect.height > 0)) return;
+    const step = researchCoordinateStep(camera.scale);
+    const topLeft = screenToWorld({ x: 0, y: 0 });
+    const bottomRight = screenToWorld({ x: rect.width, y: rect.height });
+    const minX = Math.min(topLeft.x, bottomRight.x);
+    const maxX = Math.max(topLeft.x, bottomRight.x);
+    const minY = Math.min(topLeft.y, bottomRight.y);
+    const maxY = Math.max(topLeft.y, bottomRight.y);
+    const firstX = Math.ceil(minX / step) * step;
+    const firstY = Math.ceil(minY / step) * step;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const gridStroke = rootStyle.getPropertyValue('--research-grid-line').trim() || 'rgba(24,24,24,.09)';
+    const axisStroke = rootStyle.getPropertyValue('--research-axis-line').trim() || 'rgba(24,24,24,.48)';
+    const labelFill = rootStyle.getPropertyValue('--research-axis-label').trim() || 'rgba(24,24,24,.68)';
+
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = gridStroke;
+    context.beginPath();
+    for (let x = firstX; x <= maxX + step * 0.001; x += step) {
+      const screenX = Math.round(worldToScreen({ x, y: 0 }).x) + 0.5;
+      context.moveTo(screenX, 0);
+      context.lineTo(screenX, rect.height);
+    }
+    for (let y = firstY; y <= maxY + step * 0.001; y += step) {
+      const screenY = Math.round(worldToScreen({ x: 0, y }).y) + 0.5;
+      context.moveTo(0, screenY);
+      context.lineTo(rect.width, screenY);
+    }
+    context.stroke();
+
+    const origin = worldToScreen({ x: 0, y: 0 });
+    context.strokeStyle = axisStroke;
+    context.lineWidth = 1.35;
+    context.beginPath();
+    if (origin.y >= 0 && origin.y <= rect.height) {
+      const y = Math.round(origin.y) + 0.5;
+      context.moveTo(0, y); context.lineTo(rect.width, y);
+    }
+    if (origin.x >= 0 && origin.x <= rect.width) {
+      const x = Math.round(origin.x) + 0.5;
+      context.moveTo(x, 0); context.lineTo(x, rect.height);
+    }
+    context.stroke();
+
+    if (coordinateLabelsVisible) {
+      context.fillStyle = labelFill;
+      context.font = '11px ui-monospace, "Cascadia Mono", Consolas, monospace';
+      context.textBaseline = 'top';
+      if (origin.y >= 0 && origin.y <= rect.height) {
+        const labelY = origin.y > rect.height - 20 ? origin.y - 16 : origin.y + 4;
+        context.textAlign = 'center';
+        for (let x = firstX; x <= maxX + step * 0.001; x += step) {
+          if (Math.abs(x) < step / 1000) continue;
+          const screenX = worldToScreen({ x, y: 0 }).x;
+          if (screenX < 18 || screenX > rect.width - 18) continue;
+          context.fillText(formatResearchCoordinate(x, step), screenX, labelY);
+        }
+        context.textAlign = 'right';
+        context.fillText('x', rect.width - 6, Math.max(2, labelY));
+      }
+      if (origin.x >= 0 && origin.x <= rect.width) {
+        const labelX = origin.x < 42 ? origin.x + 34 : origin.x - 5;
+        context.textAlign = 'right';
+        context.textBaseline = 'middle';
+        for (let y = firstY; y <= maxY + step * 0.001; y += step) {
+          if (Math.abs(y) < step / 1000) continue;
+          const screenY = worldToScreen({ x: 0, y }).y;
+          if (screenY < 12 || screenY > rect.height - 12) continue;
+          context.fillText(formatResearchCoordinate(-y, step), labelX, screenY);
+        }
+        context.textAlign = 'left';
+        context.textBaseline = 'top';
+        context.fillText('y', Math.min(rect.width - 12, origin.x + 5), 5);
+      }
+      if (origin.x >= 0 && origin.x <= rect.width && origin.y >= 0 && origin.y <= rect.height) {
+        context.textAlign = 'left';
+        context.textBaseline = 'top';
+        context.fillText('0', origin.x + 5, origin.y + 5);
+      }
+    }
+    context.restore();
   }
 
   function drawEdgesImmediately() {
@@ -1556,6 +1676,11 @@ export function createResearchCanvas(options) {
     if (panSpeedValue) panSpeedValue.textContent = String(panSpeed);
     if (panInertiaValue) panInertiaValue.textContent = Math.round(panInertia * 100) + '%';
     if (zoomSpeedValue) zoomSpeedValue.textContent = Number(zoomSpeed.toFixed(1)) + '×';
+    if (coordinatesVisibleInput) coordinatesVisibleInput.checked = coordinatesVisible;
+    if (coordinateLabelsVisibleInput) {
+      coordinateLabelsVisibleInput.checked = coordinateLabelsVisible;
+      coordinateLabelsVisibleInput.disabled = !coordinatesVisible;
+    }
   }
 
   function saveInteractionPreference(key, value) {
@@ -1586,20 +1711,37 @@ export function createResearchCanvas(options) {
       syncInteractionPreferenceControls();
       saveInteractionPreference('research:zoomSpeed:v1', value);
     }, { signal });
+    if (coordinatesVisibleInput) coordinatesVisibleInput.addEventListener('change', () => {
+      coordinatesVisible = coordinatesVisibleInput.checked;
+      syncInteractionPreferenceControls();
+      saveInteractionPreference(COORDINATES_VISIBLE_KEY, coordinatesVisible ? '1' : '0');
+      scheduleDraw();
+    }, { signal });
+    if (coordinateLabelsVisibleInput) coordinateLabelsVisibleInput.addEventListener('change', () => {
+      coordinateLabelsVisible = coordinateLabelsVisibleInput.checked;
+      syncInteractionPreferenceControls();
+      saveInteractionPreference(COORDINATE_LABELS_VISIBLE_KEY, coordinateLabelsVisible ? '1' : '0');
+      scheduleDraw();
+    }, { signal });
   }
 
   function resetInteractionPreferences() {
     panSpeed = 8;
     panInertia = .15;
     zoomSpeed = 1;
+    coordinatesVisible = false;
+    coordinateLabelsVisible = false;
     cancelPanInertia();
     try {
       localStorage.removeItem('research:panSpeed:v1');
       localStorage.removeItem('research:panInertia:v1');
       localStorage.removeItem('research:zoomSpeed:v1');
+      localStorage.removeItem(COORDINATES_VISIBLE_KEY);
+      localStorage.removeItem(COORDINATE_LABELS_VISIBLE_KEY);
     } catch (_error) {}
     syncInteractionPreferenceControls();
-    return { panSpeed, panInertia, zoomSpeed };
+    scheduleDraw();
+    return { panSpeed, panInertia, zoomSpeed, coordinatesVisible, coordinateLabelsVisible };
   }
 
   function createSibling(node) {
@@ -2193,6 +2335,7 @@ export function createResearchCanvas(options) {
     setConnectionKind,
     setCreationTool,
     setComputeProjection,
+    centerOrigin,
     resetInteractionPreferences,
   });
 }
