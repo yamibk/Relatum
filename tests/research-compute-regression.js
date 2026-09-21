@@ -24,7 +24,7 @@ async function main() {
   const registry = createResearchRegistry(definitions);
   const browserFixture = buildResearchCircuitFixture();
   const fixtureValidation = schema.validateResearchDocument(browserFixture, registry);
-  assert(fixtureValidation.ok, 'browser acceptance circuits must remain a valid public V2 document: '
+  assert(fixtureValidation.ok, 'browser acceptance circuits must remain a valid public V3 document: '
     + fixtureValidation.errors.map((error) => error.code).join(', '));
   assert.strictEqual(browserFixture.pages.length, 4, 'browser fixture must keep one independent page per acceptance circuit');
   let x = 0;
@@ -50,9 +50,9 @@ async function main() {
     pages: [{ id: 'research-page-1', nodes: baseNodes, edges: baseEdges, view: { x: 12, y: 30, scale: 1.2 } }],
     activePageId: 'research-page-1',
   }, registry);
-  assert.strictEqual(document.researchVersion, 2);
-  assert(schema.validateResearchDocument(document, registry).ok, 'V2 typed graph must validate');
-  assert(!schema.validateResearchDocument({ ...document, researchVersion: 1 }, registry).ok, 'V1 must be rejected');
+  assert.strictEqual(document.researchVersion, 3);
+  assert(schema.validateResearchDocument(document, registry).ok, 'V3 typed graph must validate');
+  assert(!schema.validateResearchDocument({ ...document, researchVersion: 2 }, registry).ok, 'V2 must be rejected');
 
   const duplicate = structuredClone(document);
   duplicate.pages[0].edges.push(wire('duplicate', 'six', 'out', 'add', 'a'));

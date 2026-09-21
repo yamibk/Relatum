@@ -1,6 +1,7 @@
 import {
   bitsBigInt, bitsValue, copyResearchValue, sameResearchValue, truthyResearchValue,
 } from './research-values.js';
+import { expandResearchGraph } from './research-subcircuits.js';
 
 const STATE_TYPES = new Set(['toggle', 'clock', 'register', 'counter', 'edge-detector', 'timer']);
 const MAX_PULSES_PER_BATCH = 1000;
@@ -36,6 +37,8 @@ function probeLimit(node) {
 }
 
 function traceSource(runtime, nodeId, portId) {
+  const alias = runtime.compiled.endpointAliases && runtime.compiled.endpointAliases.get(portKey(nodeId, portId));
+  if (alias) return { ...alias };
   const node = runtime.compiled.nodeById.get(String(nodeId));
   return { nodeId: String(nodeId), portId: String(portId), label: node ? String(node.label || node.id) : String(nodeId) };
 }
@@ -156,13 +159,14 @@ function syncStateRecords(compiled, target, simulationTime, allowSaved = true) {
 
 export function compileResearchGraph(source = {}, registry) {
   if (!registry) throw new TypeError('编译研究图需要节点注册表');
-  const nodes = Array.isArray(source.nodes) ? source.nodes : [];
-  const edges = Array.isArray(source.edges) ? source.edges : [];
+  const expanded = expandResearchGraph(source, registry);
+  const nodes = expanded.nodes;
+  const edges = expanded.edges;
   const nodeById = new Map();
   const incomingValues = new Map();
   const outgoingValues = new Map();
   const outgoingEvents = new Map();
-  const errors = [];
+  const errors = expanded.errors.slice();
   nodes.forEach((node) => {
     if (!node || !node.id) return;
     const id = String(node.id);
@@ -183,8 +187,8 @@ export function compileResearchGraph(source = {}, registry) {
     const fromPortId = String(edge.from && edge.from.portId || '');
     const toPortId = String(edge.to && edge.to.portId || '');
     const fromNode = nodeById.get(fromId); const toNode = nodeById.get(toId);
-    const fromPort = fromNode && registry.port(fromNode.type, fromPortId, 'output');
-    const toPort = toNode && registry.port(toNode.type, toPortId, 'input');
+    const fromPort = fromNode && registry.port(fromNode, fromPortId, 'output');
+    const toPort = toNode && registry.port(toNode, toPortId, 'input');
     if (!fromNode || !toNode || !fromPort || !toPort || !registry.compatiblePorts(fromNode, fromPortId, toNode, toPortId)) {
       errors.push(errorValue('incompatible-wire', '导线端口不兼容', { edgeId: String(edge.id || ''), nodeId: toId || fromId }));
       return;
@@ -276,6 +280,8 @@ export function compileResearchGraph(source = {}, registry) {
   const stateNodeIds = Array.from(nodeById.values()).filter((node) => STATE_TYPES.has(node.type)).map((node) => String(node.id));
   return {
     registry, nodeById, incomingValues, outgoingValues, outgoingEvents, order, errors, stateNodeIds,
+    publicInstances: expanded.publicInstances, endpointAliases: expanded.endpointAliases,
+    stateLocations: expanded.stateLocations,
     stats: { nodeCount: nodeById.size, wireCount, relationCount, stateNodeCount: stateNodeIds.length },
   };
 }
@@ -490,7 +496,42 @@ function recompute(runtime, dirtyIds = null, options = {}) {
   return pulses;
 }
 
+function syncPublicInstanceProjection(runtime) {
+  const instances = runtime.compiled.publicInstances || new Map();
+  instances.forEach((record, nodeId) => {
+    const item = projectionItem();
+    let firstOutput = null;
+    record.ports.forEach((endpoint, portId) => {
+      if (endpoint.channel === 'event') {
+        if (endpoint.direction === 'output') {
+          const leaf = runtime.projection[endpoint.nodeId];
+          if (leaf && leaf.lastPulse && (!item.lastPulse || leaf.lastPulse.sequence > item.lastPulse.sequence)) {
+            item.lastPulse = { ...leaf.lastPulse };
+          }
+        }
+        return;
+      }
+      const value = endpoint.direction === 'output'
+        ? copyResearchValue(runtime.portValues.get(portKey(endpoint.nodeId, endpoint.portId)))
+        : readInput(runtime, endpoint.nodeId, endpoint.portId);
+      if (!value) return;
+      if (endpoint.direction === 'output') {
+        item.outputs[portId] = value;
+        if (!firstOutput) firstOutput = value;
+      } else item.inputs[portId] = value;
+    });
+    for (const leafId of record.leafIds) {
+      const leaf = runtime.projection[leafId];
+      if (leaf && leaf.error && leaf.error.code !== 'missing-input') { item.error = leaf.error; break; }
+    }
+    item.output = firstOutput;
+    item.status = item.error ? 'error' : firstOutput || item.lastPulse ? 'ok' : 'idle';
+    runtime.projection[nodeId] = item;
+  });
+}
+
 function buildResult(runtime, extra = {}) {
+  syncPublicInstanceProjection(runtime);
   const errors = runtime.compiled.errors.slice();
   if (runtime.runtimeError) errors.push(runtime.runtimeError);
   Object.values(runtime.projection).forEach((item) => { if (item && item.error && item.error.code !== 'missing-input') errors.push(item.error); });
@@ -720,17 +761,35 @@ export function refreshResearchWallTime(runtime, timestamp = Date.now()) {
 
 export function snapshotPersistentResearchState(runtime) {
   const result = {};
+  const serializedState = (node, state) => {
+    if (node.type === 'clock') return { remainingMs: Math.max(0, state.nextTick - runtime.simulationTime) };
+    if (node.type === 'toggle') return { current: state.current };
+    if (node.type === 'register' || node.type === 'counter') return { current: copyResearchValue(state.current) };
+    if (node.type === 'edge-detector') return { previous: state.previous };
+    if (node.type === 'timer') return {
+      durationMs: state.durationMs, elapsedMs: state.elapsedMs, running: state.running, done: state.done,
+    };
+    return null;
+  };
+  const assignNested = (location, value) => {
+    let tree = result[location.topNodeId] || (result[location.topNodeId] = { nodes: {}, instances: {} });
+    const segments = location.segments.slice();
+    const nodeId = segments.pop();
+    segments.forEach((instanceId) => {
+      tree.instances[instanceId] ||= { nodes: {}, instances: {} };
+      tree = tree.instances[instanceId];
+    });
+    tree.nodes[nodeId] = value;
+  };
   runtime.compiled.stateNodeIds.forEach((nodeId) => {
     const node = runtime.compiled.nodeById.get(nodeId);
     if (node.statePolicy !== 'persist') return;
     const state = runtime.stateByNodeId.get(nodeId);
-    if (node.type === 'clock') result[nodeId] = { remainingMs: Math.max(0, state.nextTick - runtime.simulationTime) };
-    else if (node.type === 'toggle') result[nodeId] = { current: state.current };
-    else if (node.type === 'register' || node.type === 'counter') result[nodeId] = { current: copyResearchValue(state.current) };
-    else if (node.type === 'edge-detector') result[nodeId] = { previous: state.previous };
-    else if (node.type === 'timer') result[nodeId] = {
-      durationMs: state.durationMs, elapsedMs: state.elapsedMs, running: state.running, done: state.done,
-    };
+    const value = serializedState(node, state);
+    if (!value) return;
+    const location = runtime.compiled.stateLocations && runtime.compiled.stateLocations.get(nodeId);
+    if (location) assignNested(location, value);
+    else result[nodeId] = value;
   });
   runtime.persistentDirty = false;
   return result;

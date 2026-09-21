@@ -53,7 +53,8 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   "event.code === 'Space'", 'function getViewState()', 'function setModel(nextModel, viewState = {})',
   'drawEdgesImmediately();', 'refreshEdgeCache(state.edgeIds);', 'const minimapNodeElements = new Map()',
   'const nodeLayoutCache = new Map()', 'new ResizeObserver(handleNodeResize)', 'function normalizeWireCandidate(start, target)',
-  'function animateRemoval(nodeIds, edgeIds)', 'function setComputeProjection(nextProjection)',
+  'function animateRemoval(nodeIds, edgeIds)', 'function setComputeProjection(nextProjection, options = {})',
+  'const PROJECTION_NODES_PER_FRAME = 128', 'function renderProjectionSlice()',
   'function createTypedNode(type, worldPoint)', 'function setCreationTool(nextType)', 'function getCreationTool()',
   'function setInteractionMode(nextMode)', 'createNodeOfType: createTypedNode',
 ].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
@@ -70,6 +71,19 @@ assert(styles.includes('.research-node') && styles.includes('.research-active-ed
   'simulation.activate()', 'simulation.suspend()', 'simulation.dispose()',
   'session.toDocument((record) =>', 'flushSave({ force: true, keepalive: true })',
 ].forEach((needle) => assert(editor.includes(needle), 'missing V2 editor lifecycle: ' + needle));
+assert(editor.includes('deferred: !!meta.simulation && !meta.step && !meta.reset'),
+  'continuous simulation projection rendering must be coalesced without delaying Step or Reset');
+[
+  "rail.addEventListener('wheel'", "rail.classList.add('is-flipping')",
+  "element.classList.add('is-flip')", "ghost.classList.add('is-ghost')",
+  "viewport.classList.add('is-page-switching')", 'function tickPageSwitchMotion(',
+  'function previewRailTarget(', 'prefers-reduced-motion: reduce',
+].forEach((needle) => assert(editor.includes(needle), 'missing Research page-rail interaction: ' + needle));
+assert(styles.includes('.research-page-orb.no-transition')
+  && styles.includes('.research-page-rail.is-flipping')
+  && styles.includes('.research-page-button.is-ghost')
+  && styles.includes('.research-viewport.is-page-switching'),
+  'Research page-rail animation classes must remain independently scoped');
 assert(persistenceSource.includes("const WORKSPACE_ENDPOINT = '/api/research/workspace'")
   && persistenceSource.includes('keepalive: options.keepalive === true'));
 

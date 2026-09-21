@@ -91,7 +91,7 @@ async function runAcceptance(playwright, url, options = {}) {
   });
   const report = { browser: browser.version(), circuits: {}, errors: [] };
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'no-preference' });
     const page = await context.newPage();
     page.setDefaultTimeout(10000);
     page.on('pageerror', (error) => report.errors.push(error.message));
@@ -106,6 +106,23 @@ async function runAcceptance(playwright, url, options = {}) {
     await page.evaluate(() => RelatumResearchWorkspace.activate());
     await page.locator('[data-node-id="fa-a"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('[data-research-page-id]').count(), 4);
+
+    const rail = page.locator('[data-research-page-rail]');
+    await page.locator('[data-research-page-hotspot]').hover();
+    await rail.waitFor({ state: 'visible' });
+    await rail.dispatchEvent('wheel', { deltaX: 0, deltaY: 30 });
+    assert.equal(await page.locator('[data-research-viewport]').evaluate((element) => element.classList.contains('is-page-switching')), true,
+      'vertical wheel navigation must start the Research page transition');
+    await page.waitForFunction(() => document.querySelector('[data-research-page-id].is-active')?.textContent.trim() === '2');
+    await page.waitForFunction(() => !document.querySelector('[data-research-viewport]').classList.contains('is-page-switching'));
+    await rail.dispatchEvent('wheel', { deltaX: 40, deltaY: 5 });
+    await page.waitForTimeout(40);
+    assert.equal((await page.locator('[data-research-page-id].is-active').textContent()).trim(), '2',
+      'horizontal wheel gestures must not switch Research pages');
+    await rail.dispatchEvent('wheel', { deltaX: 0, deltaY: -30 });
+    await page.waitForFunction(() => document.querySelector('[data-research-page-id].is-active')?.textContent.trim() === '1');
+    await page.waitForFunction(() => !document.querySelector('[data-research-viewport]').classList.contains('is-page-switching'));
+    report.circuits.pageRail = { verticalWheel: true, horizontalIgnored: true, animated: true };
 
     await expectResult(page, 'fa-sum-monitor', EXPECTED.fullAdder.sum);
     await expectResult(page, 'fa-carry-monitor', EXPECTED.fullAdder.carry);
@@ -138,7 +155,9 @@ async function runAcceptance(playwright, url, options = {}) {
     await page.mouse.move(outputCenter.x + 40, outputCenter.y + 50, { steps: 4 });
     const activeWire = page.locator('[data-research-active-edges] line.is-data');
     assert(Math.abs(Number(await activeWire.getAttribute('x1')) - outputCenter.x) < 0.75);
-    assert(Math.abs(Number(await activeWire.getAttribute('y1')) - outputCenter.y) < 0.75);
+    const activeWireY = Number(await activeWire.getAttribute('y1'));
+    assert(Math.abs(activeWireY - outputCenter.y) < 0.75,
+      `wire preview y1 ${activeWireY} must match rendered port center ${outputCenter.y}`);
     await page.mouse.up();
     const savesBeforeInvalid = saves.length;
     await moveWirePointer(page, page.locator('[data-node-id="fa-a"] [data-research-port="out"]'), xorInputA);
@@ -243,8 +262,32 @@ async function runAcceptance(playwright, url, options = {}) {
     assert(!saves.some((snapshot) => JSON.stringify(snapshot).includes('traceByNodeId')
       || JSON.stringify(snapshot).includes('"trace"')), 'runtime probe history must never enter saved documents');
     assert.deepEqual(report.errors, []);
+    await page.evaluate(() => RelatumResearchWorkspace.dispose());
+    await page.waitForTimeout(50);
     report.savedSnapshots = saves.length;
     await context.close();
+
+    const reducedContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    const reducedPage = await reducedContext.newPage();
+    reducedPage.setDefaultTimeout(10000);
+    reducedPage.on('pageerror', (error) => report.errors.push('reduced-motion: ' + error.message));
+    await installFixtureRoute(reducedPage, fixture);
+    await reducedPage.goto(url.replace(/\/$/, '') + '/research.html');
+    await reducedPage.waitForFunction(() => !!window.RelatumResearchWorkspace);
+    await reducedPage.evaluate(() => RelatumResearchWorkspace.activate());
+    await reducedPage.locator('[data-research-page-hotspot]').hover();
+    await reducedPage.locator('[data-research-page-rail]').waitFor({ state: 'visible' });
+    await reducedPage.locator('[data-research-page-id]').nth(1).click();
+    assert.deepEqual(await reducedPage.locator('[data-research-viewport]').evaluate((element) => ({
+      switching: element.classList.contains('is-page-switching'),
+      opacity: element.style.opacity,
+      transform: element.style.transform,
+    })), { switching: false, opacity: '', transform: '' },
+    'reduced motion must switch Research pages without transient viewport animation');
+    await reducedPage.evaluate(() => RelatumResearchWorkspace.dispose());
+    await reducedContext.close();
+    report.circuits.pageRail.reducedMotion = true;
+    assert.deepEqual(report.errors, []);
     return report;
   } finally {
     await browser.close();

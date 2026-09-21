@@ -38,7 +38,8 @@ function normalizeNode(source, registry) {
     config: registry ? registry.normalizeConfig(type, node.config) : clone(node.config || {}),
     statePolicy: defaults.statePolicy === 'persist' ? 'persist' : 'reset',
   };
-  if (normalized.statePolicy === 'persist' && node.savedState && typeof node.savedState === 'object') {
+  if ((normalized.statePolicy === 'persist' || normalized.type === 'subcircuit')
+    && node.savedState && typeof node.savedState === 'object') {
     normalized.savedState = clone(node.savedState);
   }
   return normalized;
@@ -91,7 +92,7 @@ export class ResearchModel {
       .filter((edge) => {
         if (!edge || seen.has(edge.id)) return false;
         if (edge.kind === 'wire') {
-          const port = this.registry && this.registry.port(nodeById.get(edge.to.nodeId).type, edge.to.portId, 'input');
+          const port = this.registry && this.registry.port(nodeById.get(edge.to.nodeId), edge.to.portId, 'input');
           if (port && port.channel === 'value') {
             const key = edge.to.nodeId + '\n' + edge.to.portId;
             if (occupied.has(key)) return false;
@@ -194,7 +195,8 @@ export class ResearchModel {
         if (node.statePolicy !== 'persist') delete node.savedState;
       }
       if (Object.prototype.hasOwnProperty.call(patch, 'savedState')) {
-        if (node.statePolicy === 'persist' && patch.savedState && typeof patch.savedState === 'object') node.savedState = clone(patch.savedState);
+        if ((node.statePolicy === 'persist' || nextType === 'subcircuit')
+          && patch.savedState && typeof patch.savedState === 'object') node.savedState = clone(patch.savedState);
         else delete node.savedState;
       }
     };
@@ -230,6 +232,12 @@ export class ResearchModel {
       return edge ? this.valueDescriptor(edge.from.nodeId, edge.from.portId, seen) : null;
     };
     if (node.type === 'constant' && portId === 'out') return typed(node.config.value);
+    if (node.type === 'subcircuit') {
+      const port = this.registry && this.registry.port(node, portId, 'output');
+      if (!port || port.channel !== 'value' || !port.types || port.types.length !== 1 || port.types[0] === 'any') return null;
+      return { type: port.types[0], ...(port.types[0] === 'bits' && port.bitsWidths.length === 1
+        ? { width: Number(port.bitsWidths[0]) } : {}) };
+    }
     if (node.type === 'toggle' && portId === 'out') return { type: 'boolean' };
     if (node.type === 'current-time' && portId === 'out') return { type: 'time' };
     if (node.type === 'timer') return portId === 'time' ? { type: 'number' }
@@ -257,7 +265,7 @@ export class ResearchModel {
     const ignoreEdgeId = String(options.ignoreEdgeId || '');
     if (!fromNode || !toNode || fromNode.id === toNode.id || !this.registry
       || !this.registry.compatiblePorts(fromNode, fromPortId, toNode, toPortId)) return false;
-    const port = this.registry.port(toNode.type, toPortId, 'input');
+    const port = this.registry.port(toNode, toPortId, 'input');
     if (port && port.channel === 'value') {
       if (this.state.edges.some((edge) => edge.kind === 'wire'
         && edge.id !== ignoreEdgeId
@@ -266,8 +274,7 @@ export class ResearchModel {
       if (descriptor && descriptor.type === 'bits' && port.bitsWidths.length
         && !port.bitsWidths.includes(descriptor.width)) return false;
       if (descriptor && port.matchGroup) {
-        const definition = this.registry.definition(toNode.type);
-        const peerIds = definition.ports.filter((candidate) => candidate.direction === 'input'
+        const peerIds = this.registry.portsFor(toNode).filter((candidate) => candidate.direction === 'input'
           && candidate.matchGroup === port.matchGroup && candidate.id !== port.id).map((candidate) => candidate.id);
         const peerEdge = this.state.edges.find((edge) => edge.kind === 'wire' && edge.id !== ignoreEdgeId
           && edge.to.nodeId === toNode.id
@@ -343,6 +350,14 @@ export class ResearchModel {
         return !edges.has(edge.id) && !nodes.has(from) && !nodes.has(to);
       });
     }, { kind: 'remove', topology: true, nodeIds: [...nodes], edgeIds: [...edges] });
+  }
+
+  replaceState(nextState, change = {}) {
+    const before = this.capture();
+    this.restore(nextState, false);
+    const committed = this.commitFrom(before, { kind: 'replace-state', topology: true, ...change, alreadyEmitted: true });
+    if (committed) this.emit({ kind: 'replace-state', topology: true, ...change });
+    return committed;
   }
 
   undo() {

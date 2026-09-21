@@ -37,7 +37,8 @@ function normalizeField(field, value) {
 
 export function createResearchRegistry(document) {
   const source = document && typeof document === 'object' ? document : {};
-  if (source.version !== 2 || !Array.isArray(source.nodes)) throw new Error('研究节点注册表版本无效');
+  if (source.version !== 3 || !Array.isArray(source.nodes)) throw new Error('研究节点注册表版本无效');
+  let subcircuitCatalog = null;
   const categories = Array.isArray(source.categories) ? source.categories.map((item) => ({ ...item })) : [];
   const byType = new Map();
   source.nodes.forEach((definition) => {
@@ -63,16 +64,30 @@ export function createResearchRegistry(document) {
     return byType.get(String(type || '')) || null;
   }
 
-  function port(type, portId, direction = '') {
-    const item = definition(type);
-    return item ? item.ports.find((candidate) => candidate.id === String(portId || '')
-      && (!direction || candidate.direction === direction)) || null : null;
+  function portsFor(nodeOrType) {
+    const node = nodeOrType && typeof nodeOrType === 'object' ? nodeOrType : null;
+    if (node && node.type === 'subcircuit') {
+      return subcircuitCatalog ? subcircuitCatalog.portsForNode(node) : [];
+    }
+    const item = definition(node ? node.type : nodeOrType);
+    return item ? item.ports : [];
+  }
+
+  function port(nodeOrType, portId, direction = '') {
+    return portsFor(nodeOrType).find((candidate) => candidate.id === String(portId || '')
+      && (!direction || candidate.direction === direction)) || null;
   }
 
   function normalizeConfig(type, config = {}) {
     const item = definition(type);
     if (!item) return {};
     const input = config && typeof config === 'object' ? config : {};
+    if (item.dynamicPorts === 'subcircuit') {
+      return {
+        definitionId: String(input.definitionId || ''),
+        revision: Math.max(1, Math.round(Number(input.revision) || 1)),
+      };
+    }
     const result = {};
     item.configFields.forEach((field) => {
       result[field.key] = normalizeField(field, input[field.key]);
@@ -88,14 +103,14 @@ export function createResearchRegistry(document) {
       label: String(overrides.label || item.defaultLabel || item.label || item.type),
       config: normalizeConfig(item.type, overrides.config),
       statePolicy: item.stateful && overrides.statePolicy === 'persist' ? 'persist' : 'reset',
-      ...(item.stateful && overrides.statePolicy === 'persist' && overrides.savedState
+      ...((item.stateful && overrides.statePolicy === 'persist' || item.dynamicPorts === 'subcircuit') && overrides.savedState
         ? { savedState: clone(overrides.savedState) } : {}),
     };
   }
 
   function compatiblePorts(fromNode, fromPortId, toNode, toPortId) {
-    const fromPort = port(fromNode && fromNode.type, fromPortId, 'output');
-    const toPort = port(toNode && toNode.type, toPortId, 'input');
+    const fromPort = port(fromNode, fromPortId, 'output');
+    const toPort = port(toNode, toPortId, 'input');
     if (!fromPort || !toPort || fromPort.channel !== toPort.channel) return false;
     if (fromPort.channel === 'event') return true;
     if (fromPort.types.includes('any') || toPort.types.includes('any')) return true;
@@ -103,15 +118,18 @@ export function createResearchRegistry(document) {
   }
 
   return Object.freeze({
-    version: 2,
+    version: 3,
     categories,
     definitions: () => Array.from(byType.values()),
     definition,
+    portsFor,
     port,
     normalizeConfig,
     normalizeTypedValue,
     createNode,
     compatiblePorts,
+    setSubcircuitCatalog(catalog) { subcircuitCatalog = catalog || null; },
+    subcircuitCatalog: () => subcircuitCatalog,
   });
 }
 

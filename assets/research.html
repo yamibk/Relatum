@@ -37,6 +37,7 @@
       <button type="button" data-research-add aria-expanded="false">＋ 添加</button>
       <button type="button" data-research-mode="relation" aria-pressed="false">关系线</button>
       <button type="button" data-research-mode="wire" aria-pressed="false">导线</button>
+      <button type="button" data-research-subcircuit-create hidden>封装为子电路</button>
       <span class="research-compute-separator" aria-hidden="true"></span>
       <button type="button" data-research-run aria-label="运行仿真">运行</button>
       <button type="button" data-research-pause aria-label="暂停仿真">暂停</button>
@@ -65,6 +66,28 @@
         <ol data-research-trace-list></ol>
       </section>
     </aside>
+    <div class="research-subcircuit-overlay" data-research-subcircuit-overlay hidden>
+      <section class="research-subcircuit-dialog" role="dialog" aria-modal="true" aria-labelledby="research-subcircuit-title">
+        <header>
+          <strong id="research-subcircuit-title">从选区发布子电路</strong>
+          <button type="button" data-research-subcircuit-cancel aria-label="关闭">×</button>
+        </header>
+        <label>发布方式
+          <select data-research-subcircuit-target>
+            <option value="new">新建定义</option>
+          </select>
+        </label>
+        <label data-research-subcircuit-name-row>名称
+          <input type="text" data-research-subcircuit-name maxlength="120" value="新子电路">
+        </label>
+        <p data-research-subcircuit-summary></p>
+        <div class="research-subcircuit-ports" data-research-subcircuit-ports></div>
+        <footer>
+          <button type="button" data-research-subcircuit-cancel>取消</button>
+          <button type="button" data-research-subcircuit-confirm>发布并替换选区</button>
+        </footer>
+      </section>
+    </div>
     <div class="research-persistence-status" data-research-persistence-status role="status"
       aria-live="polite" hidden></div>
     <button type="button" class="research-help-fab" data-research-help-open

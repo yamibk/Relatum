@@ -28,6 +28,7 @@ export class ResearchPageSession {
       throw new Error('研究分页需要模型工厂');
     }
     this.createModel = options.createModel;
+    this.subcircuitCatalog = options.subcircuitCatalog || null;
     this.nextPageNumber = 1;
     this.pageRecords = [];
     this.activePageId = '';
@@ -86,7 +87,8 @@ export class ResearchPageSession {
 
   toDocument(stateProvider = null) {
     return {
-      researchVersion: 2,
+      researchVersion: 3,
+      subcircuits: this.subcircuitCatalog ? this.subcircuitCatalog.snapshot() : [],
       pages: this.pageRecords.map((page) => {
         const snapshot = page.model.snapshot();
         const persisted = typeof stateProvider === 'function' ? stateProvider(page) || {} : {};

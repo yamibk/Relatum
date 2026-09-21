@@ -52,7 +52,8 @@ def calculation_document():
         {"id": "knowledge", "kind": "relation", "fromNodeId": "five", "toNodeId": "monitor"},
     ]
     return {
-        "researchVersion": 2,
+        "researchVersion": 3,
+        "subcircuits": [],
         "pages": [{
             "id": "research-page-1", "title": "", "nodes": nodes, "edges": edges,
             "view": {"x": 31, "y": -12, "scale": 1.25}, "simulation": {"speed": 2},
@@ -70,7 +71,7 @@ class ResearchWorkspaceStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_save_and_reopen_preserves_v2_graph_camera_speed_and_explicit_state(self):
+    def test_save_and_reopen_preserves_v3_graph_camera_speed_and_explicit_state(self):
         initial = self.store.load()
         self.assertEqual(initial["revision"], "")
         saved = self.store.save(calculation_document(), initial["revision"])
@@ -82,23 +83,101 @@ class ResearchWorkspaceStoreTests(unittest.TestCase):
         self.assertNotIn('"history"', text)
         self.assertNotIn('"eventQueue"', text)
 
-    def test_v1_is_discarded_without_migration_or_backup_and_first_save_overwrites(self):
+    def test_old_version_is_discarded_without_migration_or_backup_and_first_save_overwrites(self):
         self.root.mkdir(parents=True)
-        legacy = {"researchVersion": 1, "pages": [{"id": "old", "nodes": [{"secret": "old"}]}]}
+        legacy = {"researchVersion": 2, "pages": [{"id": "old", "nodes": [{"secret": "old"}]}]}
         atomic_json(self.store.primary, legacy)
         loaded = self.store.load()
         self.assertTrue(loaded["legacyDiscarded"])
-        self.assertEqual(loaded["document"]["researchVersion"], 2)
+        self.assertEqual(loaded["document"]["researchVersion"], 3)
         self.assertEqual(loaded["document"]["pages"][0]["nodes"], [])
         self.store.save(calculation_document(), loaded["revision"])
         self.assertEqual(self.store.load()["document"], calculation_document())
-        self.assertFalse(self.store.backup.exists(), "V1 must not be copied into a migration backup")
+        self.assertFalse(self.store.backup.exists(), "old Research data must not be copied into a migration backup")
 
     def test_stale_revision_is_rejected(self):
         saved = self.store.save(calculation_document(), "")
         with self.assertRaises(ResearchConflictError) as captured:
             self.store.save(calculation_document(), "")
         self.assertEqual(captured.exception.revision, saved["revision"])
+
+    def test_subcircuit_definitions_dynamic_ports_and_instance_state_round_trip(self):
+        document = calculation_document()
+        document["subcircuits"] = [{
+            "id": "adder", "name": "Adder", "latestRevision": 1,
+            "revisions": [{
+                "revision": 1,
+                "ports": [
+                    {"id": "a", "name": "a", "direction": "input", "channel": "value",
+                     "valueType": "number", "nodeId": "op", "portId": "a"},
+                    {"id": "b", "name": "b", "direction": "input", "channel": "value",
+                     "valueType": "number", "nodeId": "op", "portId": "b"},
+                    {"id": "out", "name": "out", "direction": "output", "channel": "value",
+                     "valueType": "number", "nodeId": "op", "portId": "out"},
+                ],
+                "nodes": [node("op", "math", {"operation": "add"})], "edges": [],
+            }],
+        }]
+        instance = node("instance", "subcircuit", {"definitionId": "adder", "revision": 1},
+                        saved_state={"nodes": {}, "instances": {}})
+        document["pages"][0]["nodes"].append(instance)
+        document["pages"][0]["edges"].extend([
+            wire("five-instance", "five", "out", "instance", "a"),
+            wire("six-instance", "six", "out", "instance", "b"),
+        ])
+        saved = self.store.save(document, "")["document"]
+        self.assertEqual(saved["subcircuits"][0]["revisions"][0]["ports"][2]["id"], "out")
+        stored_instance = next(item for item in saved["pages"][0]["nodes"] if item["id"] == "instance")
+        self.assertEqual(stored_instance["savedState"], {"nodes": {}, "instances": {}})
+
+    def test_recursive_subcircuit_revision_is_rejected(self):
+        document = calculation_document()
+        reference = node("self", "subcircuit", {"definitionId": "recursive", "revision": 1})
+        document["subcircuits"] = [{
+            "id": "recursive", "name": "Recursive", "latestRevision": 1,
+            "revisions": [{"revision": 1, "ports": [], "nodes": [reference], "edges": []}],
+        }]
+        with self.assertRaises(ResearchStoreError) as captured:
+            self.store.save(document, "")
+        self.assertTrue(any(issue["code"] == "subcircuit-cycle" for issue in captured.exception.issues))
+
+    def test_published_subcircuit_revision_is_immutable_but_new_revision_can_be_appended(self):
+        document = calculation_document()
+        revision = {
+            "revision": 1,
+            "ports": [{
+                "id": "out", "name": "out", "direction": "output", "channel": "value",
+                "valueType": "number", "nodeId": "value", "portId": "out",
+            }],
+            "nodes": [node("value", "constant", {"value": {"type": "number", "value": 1}})],
+            "edges": [],
+        }
+        document["subcircuits"] = [{
+            "id": "constant-module", "name": "Constant module", "latestRevision": 1,
+            "revisions": [revision],
+        }]
+        first = self.store.save(document, "")
+
+        mutated = json.loads(json.dumps(first["document"]))
+        mutated["subcircuits"][0]["revisions"][0]["nodes"][0]["config"]["value"]["value"] = 2
+        with self.assertRaises(ResearchStoreError) as captured:
+            self.store.save(mutated, first["revision"])
+        self.assertTrue(any(issue["code"] == "immutable-subcircuit-revision"
+                            for issue in captured.exception.issues))
+        self.assertEqual(self.store.load()["document"], first["document"])
+
+        appended = json.loads(json.dumps(first["document"]))
+        second_revision = json.loads(json.dumps(revision))
+        second_revision["revision"] = 2
+        second_revision["nodes"][0]["config"]["value"]["value"] = 2
+        appended["subcircuits"][0]["revisions"].append(second_revision)
+        with self.assertRaises(ResearchStoreError) as captured:
+            self.store.save(appended, first["revision"])
+        self.assertTrue(any(issue["code"] == "invalid-latest-revision"
+                            for issue in captured.exception.issues))
+        appended["subcircuits"][0]["latestRevision"] = 2
+        saved = self.store.save(appended, first["revision"])
+        self.assertEqual(saved["document"]["subcircuits"][0]["latestRevision"], 2)
 
     def test_invalid_ports_channels_cardinality_bits_and_speed_never_replace_primary(self):
         saved = self.store.save(calculation_document(), "")

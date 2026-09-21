@@ -1,13 +1,18 @@
 {
-  "version": 2,
+  "version": 3,
   "categories": [
     { "id": "knowledge", "label": "知识" },
     { "id": "input", "label": "输入" },
     { "id": "combinational", "label": "组合" },
     { "id": "state", "label": "状态" },
-    { "id": "display", "label": "显示" }
+    { "id": "display", "label": "显示" },
+    { "id": "subcircuit", "label": "子电路" }
   ],
   "nodes": [
+    {
+      "type": "subcircuit", "category": "subcircuit", "label": "子电路", "defaultLabel": "子电路",
+      "dynamicPorts": "subcircuit", "ports": [], "configFields": []
+    },
     {
       "type": "note", "category": "knowledge", "label": "笔记", "defaultLabel": "新笔记",
       "ports": [], "configFields": []

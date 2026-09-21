@@ -63,7 +63,8 @@ async function verifyPages() {
   const hydrated = createResearchPageSession({
     createModel,
     document: {
-      researchVersion: 2,
+      researchVersion: 3,
+      subcircuits: [],
       pages: [
         { id: 'research-page-4', nodes: [persistent, transient], edges: [], view: { x: 9, y: 7, scale: 1.2 }, simulation: { speed: 4 } },
         { id: 'custom-page', nodes: [], edges: [], view: { x: -4, y: 2, scale: 0.75 }, simulation: { speed: 0.5 } },
@@ -76,7 +77,7 @@ async function verifyPages() {
   hydrated.page('research-page-4').runtime.computeProjection = { saved: { status: 'ok' } };
   const serialized = hydrated.toDocument((page) => page.id === 'research-page-4'
     ? { 'saved-register': { current: { type: 'number', value: 11 } } } : {});
-  assert.strictEqual(serialized.researchVersion, 2);
+  assert.strictEqual(serialized.researchVersion, 3);
   assert.deepStrictEqual(serialized.pages[0].view, { x: 9, y: 7, scale: 1.2 });
   assert.deepStrictEqual(serialized.pages[0].simulation, { speed: 4 });
   assert.strictEqual(serialized.pages[0].nodes[0].savedState.current.value, 11);

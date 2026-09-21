@@ -269,6 +269,7 @@ body {
 
 .research-viewport.is-page-switching {
   pointer-events: none;
+  will-change: opacity, transform;
 }
 
 .research-page-rail {
@@ -1017,6 +1018,42 @@ body {
 .research-viewport[data-research-interaction-mode="relation"] .research-node { cursor: crosshair; }
 .research-viewport[data-research-interaction-mode="wire"] .research-node { cursor: default; }
 
+.research-subcircuit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 19, 17, .32);
+}
+.research-subcircuit-overlay[hidden] { display: none; }
+.research-subcircuit-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid rgba(24, 24, 24, .16);
+  border-radius: 16px;
+  color: var(--research-ink);
+  background: rgba(249, 248, 243, .99);
+  box-shadow: 0 24px 70px rgba(18, 19, 17, .24);
+}
+.research-subcircuit-dialog header,
+.research-subcircuit-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.research-subcircuit-dialog header button { border: 0; color: inherit; background: transparent; font-size: 20px; cursor: pointer; }
+.research-subcircuit-dialog > label { display: grid; gap: 6px; margin-top: 14px; color: rgba(24, 24, 24, .62); font: 650 11px/1.2 ui-sans-serif, system-ui; }
+.research-subcircuit-dialog input,
+.research-subcircuit-dialog select { min-height: 34px; padding: 6px 8px; border: 1px solid rgba(24,24,24,.16); border-radius: 8px; color: inherit; background: transparent; }
+.research-subcircuit-dialog > p { color: rgba(24,24,24,.56); font: 600 11px/1.5 ui-sans-serif, system-ui; }
+.research-subcircuit-ports { display: grid; gap: 8px; margin: 14px 0; }
+.research-subcircuit-port-row { display: grid; grid-template-columns: 72px 1fr 110px 70px; gap: 8px; align-items: center; }
+.research-subcircuit-port-row.has-port-match { grid-template-columns: 54px minmax(110px, 1fr) 92px 62px minmax(120px, 1fr); }
+.research-subcircuit-port-row > span { font: 650 10px/1.2 ui-sans-serif, system-ui; }
+.research-subcircuit-dialog footer { justify-content: flex-end; margin-top: 16px; }
+.research-subcircuit-dialog footer button { padding: 8px 12px; border: 1px solid rgba(24,24,24,.16); border-radius: 9px; color: inherit; background: rgba(24,24,24,.04); cursor: pointer; }
+.research-subcircuit-dialog footer button:last-child { color: #f7f3e8; background: #253a2d; }
+
 @media (prefers-color-scheme: dark) {
   .research-speed-label { color: rgba(242, 242, 242, .58); }
   .research-speed-label select,
@@ -1032,4 +1069,7 @@ body {
   .research-add-palette h3, .research-inspector-fields > label { color: rgba(242, 242, 242, .56); }
   .research-add-palette button, .research-node-action { color: rgba(242, 242, 242, .76); border-color: rgba(242, 242, 242, .14); background: rgba(242, 242, 242, .055); }
   .research-add-palette button:hover, .research-add-palette button:focus-visible { color: #181818; background: #f2f2f2; }
+  .research-subcircuit-dialog { color: #f2f2f2; border-color: rgba(242,242,242,.16); background: #151815; }
+  .research-subcircuit-dialog > label, .research-subcircuit-dialog > p { color: rgba(242,242,242,.58); }
+  .research-subcircuit-dialog input, .research-subcircuit-dialog select, .research-subcircuit-dialog footer button { border-color: rgba(242,242,242,.16); color: #f2f2f2; background: rgba(242,242,242,.05); }
 }

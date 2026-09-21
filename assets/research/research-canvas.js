@@ -5,6 +5,8 @@ const EDGE_GRID_SIZE = 512;
 const MIN_SCALE = 0.18;
 const MAX_SCALE = 3.5;
 const DRAG_THRESHOLD = 4;
+const PROJECTION_NODES_PER_FRAME = 128;
+const PROJECTION_FRAME_BUDGET_MS = 4;
 const INTERACTION_MODES = new Set(['select', 'relation', 'wire']);
 
 function clamp(value, min, max) {
@@ -109,6 +111,9 @@ export function createResearchCanvas(options) {
   let spaceHeld = false;
   let lastPointer = null;
   let computeProjection = {};
+  let projectionRaf = 0;
+  let projectionNodeIds = [];
+  let projectionCursor = 0;
   let pendingNodeType = 'note';
   let interactionMode = 'select';
 
@@ -158,12 +163,15 @@ export function createResearchCanvas(options) {
     if (!node || !element || !element.isConnected) return false;
     const width = element.offsetWidth || node.width;
     const height = element.offsetHeight || node.height;
+    const elementRect = element.getBoundingClientRect();
+    const scale = Math.max(0.0001, camera.scale);
     const ports = new Map();
     element.querySelectorAll('[data-research-port]').forEach((handle) => {
       const direction = handle.dataset.researchPortDirection;
       const portId = handle.dataset.researchPort;
-      const x = handle.offsetLeft + handle.offsetWidth / 2;
-      const y = handle.offsetTop;
+      const handleRect = handle.getBoundingClientRect();
+      const x = (handleRect.left + handleRect.width / 2 - elementRect.left) / scale;
+      const y = (handleRect.top + handleRect.height / 2 - elementRect.top) / scale;
       ports.set(direction + '\n' + portId, { x, y });
     });
     const previous = nodeLayoutCache.get(nodeId);
@@ -180,7 +188,7 @@ export function createResearchCanvas(options) {
     if (measured) return { x: node.x + measured.x, y: node.y + measured.y };
     const definition = registry.definition(node.type);
     if (!definition) return nodeCenter(node);
-    const ports = definition.ports.filter((item) => item.direction === direction);
+    const ports = registry.portsFor(node).filter((item) => item.direction === direction);
     const index = Math.max(0, ports.findIndex((item) => item.id === port));
     const bounds = nodeVisualBounds(node);
     return {
@@ -314,9 +322,10 @@ export function createResearchCanvas(options) {
       element.prepend(badge);
     }
     badge.textContent = definition.label || node.type;
-    const inputPorts = definition.ports.filter((port) => port.direction === 'input');
-    const outputPorts = definition.ports.filter((port) => port.direction === 'output');
-    const signature = definition.ports.map((port) => `${port.direction}:${port.channel}:${port.id}`).join('|');
+    const dynamicPorts = registry.portsFor(node);
+    const inputPorts = dynamicPorts.filter((port) => port.direction === 'input');
+    const outputPorts = dynamicPorts.filter((port) => port.direction === 'output');
+    const signature = dynamicPorts.map((port) => `${port.direction}:${port.channel}:${port.id}`).join('|');
     if (!ports) {
       ports = document.createElement('div');
       ports.className = 'research-node-ports';
@@ -959,7 +968,7 @@ export function createResearchCanvas(options) {
     selectedEdgeIds.clear();
     if (!selectedNodeIds.has(nodeId)) selectOnlyNode(nodeId);
     const node = model.node(nodeId);
-    const startPort = node && registry.port(node.type, fromPort, fromDirection);
+    const startPort = node && registry.port(node, fromPort, fromDirection);
     if (!startPort) return;
     const rewireEdge = fromDirection === 'input' && startPort.channel === 'value'
       ? model.edges().find((edge) => edge.kind === 'wire'
@@ -1500,9 +1509,49 @@ export function createResearchCanvas(options) {
     return { x: camera.x, y: camera.y, scale: camera.scale };
   }
 
-  function setComputeProjection(nextProjection) {
+  function cancelProjectionRender() {
+    if (projectionRaf) cancelAnimationFrame(projectionRaf);
+    projectionRaf = 0;
+    projectionNodeIds = [];
+    projectionCursor = 0;
+  }
+
+  function renderProjectionNode(nodeId) {
+    const node = model.node(nodeId);
+    const element = nodeElements.get(nodeId);
+    if (node && element) syncComputeDecorations(element, node);
+  }
+
+  function renderProjectionSlice() {
+    projectionRaf = 0;
+    if (disposed || !projectionNodeIds.length) return;
+    const started = performance.now();
+    let rendered = 0;
+    while (projectionCursor < projectionNodeIds.length && rendered < PROJECTION_NODES_PER_FRAME) {
+      renderProjectionNode(projectionNodeIds[projectionCursor++]);
+      rendered += 1;
+      if (performance.now() - started >= PROJECTION_FRAME_BUDGET_MS) break;
+    }
+    if (projectionCursor < projectionNodeIds.length) {
+      projectionRaf = requestAnimationFrame(renderProjectionSlice);
+      return;
+    }
+    projectionNodeIds = [];
+    projectionCursor = 0;
+  }
+
+  function setComputeProjection(nextProjection, options = {}) {
     computeProjection = nextProjection && typeof nextProjection === 'object' ? nextProjection : {};
-    model.nodes().forEach(renderNode);
+    if (!options.deferred) {
+      cancelProjectionRender();
+      model.nodes().forEach((node) => renderProjectionNode(node.id));
+      return;
+    }
+    if (!projectionNodeIds.length) {
+      projectionNodeIds = model.nodes().map((node) => node.id);
+      projectionCursor = 0;
+    }
+    if (!projectionRaf) projectionRaf = requestAnimationFrame(renderProjectionSlice);
   }
 
   function setModel(nextModel, viewState = {}) {
@@ -1513,6 +1562,7 @@ export function createResearchCanvas(options) {
     unsubscribe = null;
     if (drawRaf) cancelAnimationFrame(drawRaf);
     drawRaf = 0;
+    cancelProjectionRender();
     selectedNodeIds.clear();
     selectedEdgeIds.clear();
     if (nodeResizeObserver) nodeResizeObserver.disconnect();
@@ -1584,6 +1634,7 @@ export function createResearchCanvas(options) {
     nodeResizeObserver = null;
     if (drawRaf) cancelAnimationFrame(drawRaf);
     drawRaf = 0;
+    cancelProjectionRender();
     active = false;
     spaceHeld = false;
     viewport.classList.remove('is-space-held', 'is-panning');
@@ -1615,9 +1666,16 @@ export function createResearchCanvas(options) {
     getViewState,
     setModel,
     createNodeOfType: createTypedNode,
+    createNodeWithOptions: (options = {}, worldPoint = null) => {
+      const rect = viewportRect();
+      const point = worldPoint || screenToWorld({ x: rect.width / 2, y: rect.height / 2 });
+      return createNodeAt(point, { ...options, edit: false });
+    },
     getInteractionMode,
     getCreationTool,
     getSelectedNode: () => selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
+    getSelection: () => ({ nodeIds: Array.from(selectedNodeIds), edgeIds: Array.from(selectedEdgeIds) }),
+    clearSelection,
     setInteractionMode,
     setCreationTool,
     setComputeProjection,

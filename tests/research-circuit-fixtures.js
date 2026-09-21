@@ -143,7 +143,7 @@ function timerPage() {
 
 function buildResearchCircuitFixture() {
   const pages = [fullAdderPage(), aluPage(), programCounterPage(), timerPage()];
-  return { researchVersion: 2, pages, activePageId: pages[0].id };
+  return { researchVersion: 3, subcircuits: [], pages, activePageId: pages[0].id };
 }
 
 const EXPECTED = Object.freeze({
