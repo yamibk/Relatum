@@ -24,8 +24,12 @@ assert(store.includes('normalize_research_document(source)'),
 assert(editor.includes('SAVE_DELAY_MS = 350') && editor.includes('saveDirty = true')
   && editor.includes('scheduleSave()'),
   'the editor must coalesce automatic saves');
-assert(!editor.includes('localStorage') && !editor.includes('sessionStorage'),
-  'Research persistence must not fall back to browser storage');
+assert(!editor.includes('sessionStorage')
+  && !/localStorage\.(?:setItem|getItem)\([^\n]*(?:workspace|document|pages|nodes|edges)/.test(editor),
+  'Research document persistence must not fall back to browser storage');
+assert(editor.includes('research:sidePanelCollapsed:v1')
+  && editor.includes('research:computeDockCollapsed:v1')
+  && editor.includes('research:connectionKind:v1'),
+  'browser storage may only retain the explicit local interaction preferences');
 
 console.log('research persistence contract passed');
-

@@ -14,9 +14,14 @@
       <div class="research-surface" data-research-surface></div>
       <svg class="research-active-edges" data-research-active-edges aria-hidden="true"></svg>
       <div class="research-selection-frame" data-research-selection-frame hidden></div>
-      <div class="research-minimap" data-research-minimap hidden aria-hidden="true">
-        <div class="research-minimap-nodes" data-research-minimap-nodes></div>
-        <div class="research-minimap-viewbox" data-research-minimap-viewbox></div>
+      <div class="research-viewport-hud">
+        <button type="button" class="research-zoom-indicator" data-research-zoom-indicator
+          aria-label="恢复为 100% 缩放" title="点击恢复为 100% 缩放（Ctrl+0）">100%</button>
+        <div class="research-minimap" data-research-minimap hidden
+          aria-label="研究小地图：点击跳转，拖动取景框平移">
+          <div class="research-minimap-nodes" data-research-minimap-nodes></div>
+          <div class="research-minimap-viewbox" data-research-minimap-viewbox></div>
+        </div>
       </div>
     </div>
     <nav class="research-page-rail" data-research-page-rail aria-label="研究页面">
@@ -32,39 +37,55 @@
         <path d="M6 6.5v9h8v-9M4.5 5h11M8 5V3.5h4V5M8.5 8.5V13M11.5 8.5V13"/>
       </svg>
     </button>
-    <div class="research-compute-dock" data-research-compute-dock role="toolbar" aria-label="研究工具与仿真控制">
-      <button type="button" data-research-mode="select" aria-pressed="true">选择</button>
-      <button type="button" data-research-add aria-expanded="false">＋ 添加</button>
-      <button type="button" data-research-mode="relation" aria-pressed="false">关系线</button>
-      <button type="button" data-research-mode="wire" aria-pressed="false">导线</button>
-      <button type="button" data-research-subcircuit-create hidden>封装为子电路</button>
-      <span class="research-compute-separator" aria-hidden="true"></span>
-      <button type="button" data-research-run aria-label="运行仿真">运行</button>
-      <button type="button" data-research-pause aria-label="暂停仿真">暂停</button>
-      <button type="button" data-research-step aria-label="单步到下一个时序边界">单步</button>
-      <button type="button" data-research-reset aria-label="复位当前页">复位</button>
-      <label class="research-speed-label">速度
-        <select data-research-speed aria-label="仿真速度">
-          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
-          <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
-        </select>
-      </label>
+    <div class="research-compute-dock" data-research-compute-dock>
+      <div class="research-compute-row" id="research-compute-row" role="toolbar" aria-label="研究工具与仿真控制">
+        <button type="button" data-research-add aria-expanded="true" aria-controls="research-side-panel">＋ 添加</button>
+        <button type="button" data-research-connection-kind="relation" aria-pressed="false">关系线</button>
+        <button type="button" data-research-connection-kind="wire" aria-pressed="true">导线</button>
+        <span class="research-compute-separator" aria-hidden="true"></span>
+        <button type="button" data-research-run aria-label="运行仿真">运行</button>
+        <button type="button" data-research-pause aria-label="暂停仿真">暂停</button>
+        <button type="button" data-research-step aria-label="单步到下一个时序边界">单步</button>
+        <button type="button" data-research-reset aria-label="复位当前页">复位</button>
+        <label class="research-speed-label">速度
+          <select data-research-speed aria-label="仿真速度">
+            <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" class="research-dock-collapse" data-research-dock-collapse
+        aria-label="收起下方工具栏" aria-expanded="true" aria-controls="research-compute-row">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
+      </button>
     </div>
-    <section class="research-add-palette" data-research-add-palette hidden aria-label="添加研究节点">
-      <input type="search" data-research-add-search placeholder="搜索节点" aria-label="搜索节点">
-      <div data-research-add-list></div>
-    </section>
-    <aside class="research-inspector" data-research-inspector hidden aria-label="节点属性">
-      <header><strong data-research-inspector-title>节点属性</strong><button type="button" data-research-inspector-close aria-label="关闭属性">×</button></header>
-      <div data-research-inspector-fields></div>
-      <section class="research-trace" data-research-trace hidden aria-label="运行轨迹">
-        <div class="research-trace-head">
-          <strong>运行轨迹</strong>
-          <button type="button" data-research-trace-clear>清空</button>
-        </div>
-        <p data-research-trace-summary></p>
-        <ol data-research-trace-list></ol>
-      </section>
+    <aside class="research-side-panel" id="research-side-panel" data-research-side-panel
+      role="group" aria-label="研究节点与属性">
+      <header class="research-side-panel-head">
+        <strong data-research-inspector-title>研究 · 添加节点</strong>
+        <button type="button" data-research-inspector-close aria-label="收起研究面板">×</button>
+      </header>
+      <div class="research-side-panel-body">
+        <section class="research-node-library" data-research-node-library aria-label="添加研究节点">
+          <input type="search" data-research-add-search placeholder="搜索节点" aria-label="搜索节点">
+          <div data-research-add-list></div>
+        </section>
+        <section class="research-inspector" data-research-inspector hidden aria-label="对象属性">
+          <div class="research-inspector-fields" data-research-inspector-fields></div>
+          <section class="research-trace" data-research-trace hidden aria-label="运行轨迹">
+            <div class="research-trace-head">
+              <strong>运行轨迹</strong>
+              <button type="button" data-research-trace-clear>清空</button>
+            </div>
+            <p data-research-trace-summary></p>
+            <ol data-research-trace-list></ol>
+          </section>
+        </section>
+        <section class="research-selection-summary" data-research-selection-summary hidden aria-label="选区属性">
+          <p data-research-selection-copy></p>
+          <button type="button" data-research-subcircuit-create>封装为子电路</button>
+        </section>
+      </div>
     </aside>
     <div class="research-subcircuit-overlay" data-research-subcircuit-overlay hidden>
       <section class="research-subcircuit-dialog" role="dialog" aria-modal="true" aria-labelledby="research-subcircuit-title">
@@ -90,6 +111,44 @@
     </div>
     <div class="research-persistence-status" data-research-persistence-status role="status"
       aria-live="polite" hidden></div>
+    <button type="button" class="research-settings-fab" data-research-settings-open
+      aria-label="研究画布设置" aria-expanded="false" aria-controls="research-settings-panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+    <section class="research-settings-panel" id="research-settings-panel" data-research-settings-panel
+      role="dialog" aria-label="研究画布设置" hidden>
+      <header class="research-settings-head">
+        <strong>研究画布设置</strong>
+        <div class="research-settings-reset" data-research-settings-reset>
+          <button type="button" data-research-settings-reset-open aria-expanded="false"
+            aria-controls="research-settings-reset-confirm">恢复默认</button>
+          <div class="research-settings-reset-confirm" id="research-settings-reset-confirm"
+            data-research-settings-reset-confirm role="alertdialog" aria-label="恢复默认设置？" hidden>
+            <strong>恢复默认设置？</strong>
+            <span>只重置研究画布的三项本机手感设置。</span>
+            <div>
+              <button type="button" data-research-settings-reset-cancel>取消</button>
+              <button type="button" data-research-settings-reset-accept>恢复默认</button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <label class="research-settings-slider">
+        <span>方向键平移速度 <output data-research-pan-speed-value>8</output></span>
+        <input type="range" data-research-pan-speed min="1" max="20" step="1" value="8">
+      </label>
+      <label class="research-settings-slider">
+        <span>拖拽惯性 <output data-research-pan-inertia-value>15%</output></span>
+        <input type="range" data-research-pan-inertia min="0" max="1" step="0.05" value="0.15">
+      </label>
+      <label class="research-settings-slider">
+        <span>滚轮缩放速度 <output data-research-zoom-speed-value>1×</output></span>
+        <input type="range" data-research-zoom-speed min="0.5" max="3" step="0.1" value="1">
+      </label>
+    </section>
     <button type="button" class="research-help-fab" data-research-help-open
       aria-label="研究计算使用说明" aria-expanded="false" aria-controls="research-help-panel">?</button>
     <div class="research-help-overlay" data-research-help-overlay hidden>
@@ -105,8 +164,8 @@
         <section class="research-help-starter" aria-label="三步完成第一次计算">
           <strong>三步完成第一次计算</strong>
           <div>
-            <span><b>1</b> 在“添加”中选择节点，双击空白放置</span>
-            <span><b>2</b> 切换到“导线”，从任一端口拖到兼容的另一端</span>
+            <span><b>1</b> 在左侧面板选择节点，双击空白放置</span>
+            <span><b>2</b> 选择“导线”，按住 Alt 从端口拖到兼容端口</span>
             <span><b>3</b> 组合逻辑自动更新，时钟与计时器由运行栏控制</span>
           </div>
         </section>
@@ -124,8 +183,8 @@
           <section>
             <h3>两种连线</h3>
             <dl>
-              <div><dt>导线模式</dt><dd>输入或输出端口都能起线，方向会自动整理；非法目标只显示红色预览。</dd></div>
-              <div><dt>关系线模式</dt><dd>从一个节点主体拖到另一个，只用于表达知识关系。</dd></div>
+              <div><dt>导线</dt><dd>选中后按 Alt 从输入或输出端口起线，方向自动整理；非法目标只显示红色预览。</dd></div>
+              <div><dt>关系线</dt><dd>选中后按 Alt 从一个节点主体拖到另一个，只用于表达知识关系。</dd></div>
               <div><dt>输入顺序</dt><dd>由端口决定；从已连接的值输入拖出可移动原导线。</dd></div>
             </dl>
           </section>
@@ -141,8 +200,9 @@
           <section>
             <h3>画布操作</h3>
             <dl>
-              <div><dt><kbd>双击空白</kbd></dt><dd>按底栏当前黑色工具放置对应节点。</dd></div>
-              <div><dt><kbd>N</kbd> / <kbd>Esc</kbd></dt><dd>新建笔记节点 / 返回选择模式。</dd></div>
+              <div><dt><kbd>双击空白</kbd></dt><dd>放置左侧面板中当前选中的节点或子电路。</dd></div>
+              <div><dt><kbd>Tab</kbd></dt><dd>展开或收起左侧节点与属性面板。</dd></div>
+              <div><dt><kbd>N</kbd> / <kbd>Esc</kbd></dt><dd>新建笔记节点 / 取消手势或清除选择。</dd></div>
               <div><dt><kbd>Space</kbd> + 拖动</dt><dd>平移画布；滚轮定点缩放。</dd></div>
               <div><dt><kbd>?</kbd> / <kbd>Esc</kbd></dt><dd>打开或关闭本说明。</dd></div>
             </dl>

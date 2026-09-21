@@ -25,7 +25,10 @@ const persistenceSource = read('assets/research/research-persistence.js');
   'data-research-selection-frame', 'data-research-minimap', 'data-research-page-rail', 'data-research-page-hotspot',
   'data-research-trace', 'data-research-trace-list', 'data-research-trace-clear',
   'data-research-page-list', 'data-research-page-add', 'data-research-page-delete',
-  'data-research-compute-dock', 'data-research-add-palette', 'data-research-add-search',
+  'data-research-compute-dock', 'data-research-dock-collapse', 'data-research-side-panel',
+  'data-research-zoom-indicator', 'data-research-settings-open', 'data-research-settings-panel',
+  'data-research-pan-speed', 'data-research-pan-inertia', 'data-research-zoom-speed',
+  'data-research-node-library', 'data-research-add-search',
   'data-research-inspector', 'data-research-run', 'data-research-pause', 'data-research-step',
   'data-research-reset', 'data-research-speed', 'data-research-help-open', 'data-research-help-overlay',
   'data-research-persistence-status',
@@ -49,18 +52,32 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
 [
   'const EDGE_GRID_SIZE = 512', 'const edgePathCache = new Map()', 'const edgeSpatialGrid = new Map()',
   "gesture.type === 'node-drag'", "gesture.type === 'edge-create'", "gesture.type === 'data-edge-create'",
-  "gesture.type === 'box'", 'function fitToContent()', 'function redrawMinimap()', 'model.undo()', 'model.redo()',
+  "gesture.type === 'box'", 'function fitToContent()', 'function redrawMinimap(', 'model.undo()', 'model.redo()',
   "event.code === 'Space'", 'function getViewState()', 'function setModel(nextModel, viewState = {})',
   'drawEdgesImmediately();', 'refreshEdgeCache(state.edgeIds);', 'const minimapNodeElements = new Map()',
   'const nodeLayoutCache = new Map()', 'new ResizeObserver(handleNodeResize)', 'function normalizeWireCandidate(start, target)',
   'function animateRemoval(nodeIds, edgeIds)', 'function setComputeProjection(nextProjection, options = {})',
   'const PROJECTION_NODES_PER_FRAME = 128', 'function renderProjectionSlice()',
-  'function createTypedNode(type, worldPoint)', 'function setCreationTool(nextType)', 'function getCreationTool()',
-  'function setInteractionMode(nextMode)', 'createNodeOfType: createTypedNode',
+  'function createTypedNode(type, worldPoint)', 'function setCreationTool(nextCreation)', 'function getCreationTool()',
+  'function setConnectionKind(nextKind)', 'function getConnectionKind()', 'createNodeOfType: createTypedNode',
+  'let targetCamera = { ...camera }', 'function tickCamera(timestamp)', 'function startPanInertia(state)',
+  'function updateMinimapViewport()', 'const minimapNodeElements = new Map()',
+  "localStorage.getItem('research:panSpeed:v1')", "localStorage.getItem('research:panInertia:v1')",
+  "localStorage.getItem('research:zoomSpeed:v1')", 'resetInteractionPreferences',
 ].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
-assert(!canvas.includes('if (event.altKey') && !canvas.includes('Alt +'), 'hidden Alt-drag relation creation must be gone');
+assert(canvas.includes("event.altKey && connectionKind === 'wire'")
+  && canvas.includes("event.altKey && connectionKind === 'relation'")
+  && canvas.includes('stableBlankDoubleClick(event)'),
+  'Alt-drag must use the selected connection kind and blank double-clicks must be stable');
+assert(!canvas.includes("event.key === 'Tab' && !event.altKey"), 'bare Tab must no longer create a relation child');
 assert(styles.includes('.research-node') && styles.includes('.research-active-edges')
-  && styles.includes('.research-minimap') && styles.includes('.research-add-palette')
+  && styles.includes('.research-minimap') && styles.includes('.research-side-panel')
+  && styles.includes('.research-viewport-hud') && styles.includes('.research-settings-panel')
+  && styles.includes('.research-compute-dock.is-collapsed')
+  && styles.includes('height: min(615px, calc(100% - 88px))')
+  && styles.includes('.research-side-panel-content-ghost')
+  && styles.includes('@keyframes research-panel-content-out')
+  && styles.includes('.research-node { border-color: rgba(242, 242, 242, .68); }')
   && styles.includes('.research-inspector') && styles.includes('.research-port.is-compatible')
   && styles.includes('.research-active-edges line.is-invalid'),
   'V2 surfaces and compatibility highlighting must remain independently scoped');
@@ -71,6 +88,15 @@ assert(styles.includes('.research-node') && styles.includes('.research-active-ed
   'simulation.activate()', 'simulation.suspend()', 'simulation.dispose()',
   'session.toDocument((record) =>', 'flushSave({ force: true, keepalive: true })',
 ].forEach((needle) => assert(editor.includes(needle), 'missing V2 editor lifecycle: ' + needle));
+[
+  "const SIDE_PANEL_COLLAPSED_KEY = 'research:sidePanelCollapsed:v1'",
+  "const COMPUTE_DOCK_COLLAPSED_KEY = 'research:computeDockCollapsed:v1'",
+  "const CONNECTION_KIND_KEY = 'research:connectionKind:v1'",
+  'function renderEdgeInspector(edge)', 'function renderSelectionSummary(selection)',
+  'function guardPanelHitTesting()', 'function finishPanelContentTransition()',
+  'function openSettingsPanel()', 'function closeSettingsPanel(options = {})',
+  "'node:' + node.id", "'edge:' + edge.id", "event.key === 'Tab'",
+].forEach((needle) => assert(editor.includes(needle), 'missing M5.1 interaction contract: ' + needle));
 assert(editor.includes('deferred: !!meta.simulation && !meta.step && !meta.reset'),
   'continuous simulation projection rendering must be coalesced without delaying Step or Reset');
 [

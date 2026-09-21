@@ -50,14 +50,16 @@ assert(/<main class="research-stage" data-research-stage>[\s\S]*data-research-vi
 assert(researchHtml.includes('data-research-add-search') && researchHtml.includes('data-research-inspector'),
   'the V2 shell must expose searchable node creation and an explicit property inspector');
 const researchButtons = researchHtml.match(/<button\b/g) || [];
-assert.strictEqual(researchButtons.length, 18,
-  'the Research shell must keep page, wiring, simulation, and help controls intentionally bounded');
+assert.strictEqual(researchButtons.length, 23,
+  'the Research shell must keep page, wiring, simulation, view settings, and help controls intentionally bounded');
 assert(researchHtml.includes('data-research-page-add') && researchHtml.includes('data-research-page-delete'),
   'the Research shell must expose its isolated in-memory page controls');
 assert(researchHtml.includes('data-research-compute-dock')
-  && researchHtml.includes('data-research-mode="select"')
-  && researchHtml.includes('data-research-mode="relation"')
-  && researchHtml.includes('data-research-mode="wire"')
+  && researchHtml.includes('data-research-connection-kind="relation"')
+  && researchHtml.includes('data-research-connection-kind="wire"')
+  && researchHtml.includes('data-research-dock-collapse')
+  && researchHtml.includes('data-research-side-panel')
+  && researchHtml.includes('data-research-node-library')
   && researchHtml.includes('data-research-run')
   && researchHtml.includes('data-research-pause')
   && researchHtml.includes('data-research-step')
@@ -65,8 +67,12 @@ assert(researchHtml.includes('data-research-compute-dock')
   && researchHtml.includes('data-research-speed')
   && researchHtml.includes('data-research-trace') && researchHtml.includes('data-research-trace-clear')
   && researchHtml.includes('data-research-subcircuit-create') && researchHtml.includes('data-research-subcircuit-overlay')
+  && researchHtml.includes('data-research-zoom-indicator') && researchHtml.includes('data-research-settings-open')
+  && researchHtml.includes('data-research-pan-speed') && researchHtml.includes('data-research-pan-inertia')
+  && researchHtml.includes('data-research-zoom-speed')
   && researchHtml.includes('data-research-help-open') && researchHtml.includes('data-research-help-overlay'),
-  'the Research shell must expose relation/wire modes, simulation controls, and bounded trace inspection');
+  'the Research shell must expose connection preferences, collapsible panels, simulation controls, and bounded trace inspection');
+assert(!researchHtml.includes('data-research-mode='), 'connection kinds must not remain exclusive interaction modes');
 assert(/html,\s*\nbody\s*\{[\s\S]*?background:\s*transparent/.test(researchStyles)
   && /\.research-stage\s*\{[\s\S]*?background:\s*transparent/.test(researchStyles),
   'the iframe document and stage must stay transparent');

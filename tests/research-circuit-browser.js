@@ -70,10 +70,16 @@ async function boxCenter(locator) {
 async function moveWirePointer(page, from, to) {
   const start = await boxCenter(from);
   const end = await boxCenter(to);
+  await page.keyboard.down('Alt');
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 8 });
   return { start, end };
+}
+
+async function finishConnectionPointer(page) {
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
 }
 
 async function waitForSaveAfter(page, saves, previousCount) {
@@ -107,6 +113,265 @@ async function runAcceptance(playwright, url, options = {}) {
     await page.locator('[data-node-id="fa-a"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('[data-research-page-id]').count(), 4);
 
+    const sidePanel = page.locator('[data-research-side-panel]');
+    const computeDock = page.locator('[data-research-compute-dock]');
+    const libraryPanelBox = await sidePanel.boundingBox();
+    assert(libraryPanelBox, 'the unified side panel must be visible by default');
+    await page.locator('[data-node-id="fa-sum"]').click();
+    await page.locator('[data-research-inspector]').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.research-side-panel-content-ghost').count(), 1,
+      'switching from the node library to properties must retain an outgoing content layer');
+    const propertyPanelBox = await sidePanel.boundingBox();
+    assert(propertyPanelBox
+      && Math.round(propertyPanelBox.width) === Math.round(libraryPanelBox.width)
+      && Math.round(propertyPanelBox.height) === Math.round(libraryPanelBox.height),
+    'the node library and property inspector must use the same outer frame');
+    await page.waitForTimeout(240);
+    assert.equal(await page.locator('.research-side-panel-content-ghost').count(), 0,
+      'the outgoing panel content layer must be removed after its finite transition');
+    await page.locator('[data-research-viewport]').press('Escape');
+    await page.locator('[data-research-node-library]').waitFor({ state: 'visible' });
+    await page.locator('[data-research-help-open]').click();
+    await page.locator('[data-research-help-close]').click();
+    assert.equal(await page.locator('[data-research-help-overlay]').evaluate((element) => (
+      !element.hidden && element.classList.contains('is-closing')
+    )), true, 'the help overlay must retain its visible closing frame');
+    await page.waitForFunction(() => document.querySelector('[data-research-help-overlay]').hidden);
+    const initialDockBox = await computeDock.boundingBox();
+    assert(initialDockBox && Math.round(initialDockBox.width) === 520 && Math.round(initialDockBox.height) === 44,
+      'the expanded compute dock must retain its fixed 520 × 44 frame');
+    await page.locator('[data-research-viewport]').focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), true,
+      'bare Tab must collapse the unified side panel');
+    assert.equal(await page.evaluate(() => localStorage.getItem('research:sidePanelCollapsed:v1')), '1');
+    await page.evaluate(() => RelatumResearchWorkspace.suspend());
+    await page.evaluate(() => RelatumResearchWorkspace.activate());
+    assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), true,
+      'suspend/activate must retain the side-panel choice');
+    await page.locator('[data-research-dock-collapse]').click();
+    assert.equal(await computeDock.evaluate((element) => element.classList.contains('is-collapsed')), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem('research:computeDockCollapsed:v1')), '1');
+    await page.evaluate(() => RelatumResearchWorkspace.dispose());
+    await page.reload();
+    await page.waitForFunction(() => !!window.RelatumResearchWorkspace);
+    await page.evaluate(() => RelatumResearchWorkspace.activate());
+    await page.locator('[data-node-id="fa-a"]').waitFor({ state: 'visible' });
+    assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), true,
+      'a refresh must restore the collapsed side panel');
+    assert.equal(await computeDock.evaluate((element) => element.classList.contains('is-collapsed')), true,
+      'a refresh must restore the collapsed compute dock');
+
+    // Research view preferences are local-only and independent from the main canvas.
+    await page.locator('[data-research-settings-open]').click();
+    await page.locator('[data-research-settings-panel]').waitFor({ state: 'visible' });
+    await page.locator('[data-research-help-open]').click();
+    assert.equal(await page.locator('[data-research-settings-panel]').evaluate((element) => element.hidden), true,
+      'opening Research help must immediately close the settings surface');
+    await page.locator('[data-research-settings-open]').evaluate((element) => element.click());
+    assert.equal(await page.locator('[data-research-help-overlay]').evaluate((element) => element.hidden), true,
+      'opening Research settings must immediately close the help overlay');
+    const setRange = async (selector, value) => page.locator(selector).evaluate((element, nextValue) => {
+      element.value = String(nextValue);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await setRange('[data-research-pan-speed]', 12);
+    await setRange('[data-research-pan-inertia]', 0.6);
+    await setRange('[data-research-zoom-speed]', 2.2);
+    assert.deepEqual(await page.evaluate(() => ({
+      panSpeed: localStorage.getItem('research:panSpeed:v1'),
+      panInertia: localStorage.getItem('research:panInertia:v1'),
+      zoomSpeed: localStorage.getItem('research:zoomSpeed:v1'),
+      canvasPanSpeed: localStorage.getItem('canvas:panSpeed'),
+    })), { panSpeed: '12', panInertia: '0.6', zoomSpeed: '2.2', canvasPanSpeed: null },
+    'Research view preferences must use their own localStorage namespace');
+    await page.locator('[data-research-settings-open]').click();
+    await page.waitForFunction(() => document.querySelector('[data-research-settings-panel]').hidden);
+    await page.evaluate(() => RelatumResearchWorkspace.dispose());
+    await page.reload();
+    await page.waitForFunction(() => !!window.RelatumResearchWorkspace);
+    await page.evaluate(() => RelatumResearchWorkspace.activate());
+    await page.locator('[data-node-id="fa-a"]').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.evaluate(() => ({
+      panSpeed: document.querySelector('[data-research-pan-speed]').value,
+      panInertia: document.querySelector('[data-research-pan-inertia]').value,
+      zoomSpeed: document.querySelector('[data-research-zoom-speed]').value,
+    })), { panSpeed: '12', panInertia: '0.6', zoomSpeed: '2.2' },
+    'a refresh must restore all Research view preferences');
+
+    const researchViewport = page.locator('[data-research-viewport]');
+    const viewBox = await researchViewport.boundingBox();
+    assert(viewBox, 'Research viewport must remain visible for view interaction checks');
+    const anchor = { x: viewBox.x + viewBox.width * .72, y: viewBox.y + viewBox.height * .38 };
+    const beforeWheel = await page.evaluate(({ x, y }) => {
+      const surface = document.querySelector('[data-research-surface]');
+      const matrix = new DOMMatrix(getComputedStyle(surface).transform);
+      window.__researchMinimapNodeIdentity = document.querySelector('[data-research-minimap-node-id]')
+        || document.querySelector('[data-minimap-node-id]')
+        || document.querySelector('.research-minimap-node');
+      return {
+        transform: surface.style.transform,
+        worldX: (x - matrix.e) / matrix.a,
+        worldY: (y - matrix.f) / matrix.d,
+      };
+    }, anchor);
+    const immediateWheelTransform = await page.evaluate(({ x, y }) => {
+      const viewport = document.querySelector('[data-research-viewport]');
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaY: -100, clientX: x, clientY: y,
+      }));
+      return document.querySelector('[data-research-surface]').style.transform;
+    }, anchor);
+    assert.equal(immediateWheelTransform, beforeWheel.transform,
+      'normal-motion wheel zoom must begin through the camera RAF instead of jumping immediately');
+    await page.waitForTimeout(300);
+    const afterWheel = await page.evaluate(({ x, y }) => {
+      const surface = document.querySelector('[data-research-surface]');
+      const matrix = new DOMMatrix(getComputedStyle(surface).transform);
+      return {
+        transform: surface.style.transform,
+        worldX: (x - matrix.e) / matrix.a,
+        worldY: (y - matrix.f) / matrix.d,
+        sameMinimapNode: window.__researchMinimapNodeIdentity === document.querySelector('.research-minimap-node'),
+      };
+    }, anchor);
+    assert.notEqual(afterWheel.transform, beforeWheel.transform, 'wheel zoom must visibly advance across animation frames');
+    assert(Math.abs(afterWheel.worldX - beforeWheel.worldX) < .15
+      && Math.abs(afterWheel.worldY - beforeWheel.worldY) < .15,
+    'continuous wheel zoom must preserve the pointer anchor');
+    assert.equal(afterWheel.sameMinimapNode, true,
+      'camera animation must retain minimap node DOM instead of rebuilding it per frame');
+
+    const panStart = { x: viewBox.x + viewBox.width * .62, y: viewBox.y + viewBox.height * .56 };
+    await page.keyboard.down('Space');
+    await page.mouse.move(panStart.x, panStart.y);
+    await page.mouse.down();
+    await page.mouse.move(panStart.x + 110, panStart.y + 24);
+    await page.mouse.up();
+    await page.keyboard.up('Space');
+    const releasedTransform = await page.locator('[data-research-surface]').evaluate((element) => element.style.transform);
+    await page.waitForTimeout(120);
+    const inertialTransform = await page.locator('[data-research-surface]').evaluate((element) => element.style.transform);
+    assert.notEqual(inertialTransform, releasedTransform, 'a quick canvas drag must continue with configured inertia');
+
+    await setRange('[data-research-pan-inertia]', 0);
+    await page.keyboard.down('Space');
+    await page.mouse.move(panStart.x, panStart.y);
+    await page.mouse.down();
+    await page.mouse.move(panStart.x - 70, panStart.y - 18);
+    await page.mouse.up();
+    await page.keyboard.up('Space');
+    const zeroInertiaRelease = await page.locator('[data-research-surface]').evaluate((element) => element.style.transform);
+    await page.waitForTimeout(100);
+    assert.equal(await page.locator('[data-research-surface]').evaluate((element) => element.style.transform), zeroInertiaRelease,
+      'setting drag inertia to zero must stop exactly at pointer release');
+
+    const translationX = async () => page.locator('[data-research-surface]').evaluate((element) => (
+      new DOMMatrix(getComputedStyle(element).transform).e
+    ));
+    await researchViewport.focus();
+    await page.keyboard.press('Control+1');
+    await page.waitForTimeout(300);
+    await setRange('[data-research-pan-speed]', 1);
+    const slowPanStart = await translationX();
+    await page.keyboard.down('ArrowRight');
+    await page.waitForTimeout(120);
+    await page.keyboard.up('ArrowRight');
+    const slowPanDistance = Math.abs((await translationX()) - slowPanStart);
+    await page.keyboard.press('Control+1');
+    await page.waitForTimeout(300);
+    await setRange('[data-research-pan-speed]', 20);
+    const fastPanStart = await translationX();
+    await page.keyboard.down('ArrowRight');
+    await page.waitForTimeout(120);
+    await page.keyboard.up('ArrowRight');
+    const fastPanDistance = Math.abs((await translationX()) - fastPanStart);
+    assert(fastPanDistance > slowPanDistance * 4,
+      'the keyboard pan-speed preference must materially change frame-normalized movement');
+
+    const minimap = page.locator('[data-research-minimap]');
+    const minimapBox = await minimap.boundingBox();
+    const minimapViewboxBox = await page.locator('[data-research-minimap-viewbox]').boundingBox();
+    assert(minimapBox && minimapViewboxBox, 'the upgraded minimap and its viewport frame must remain visible');
+    const minimapTarget = minimapViewboxBox.x - minimapBox.x > minimapBox.width / 2
+      ? { x: minimapBox.x + 8, y: minimapBox.y + 8 }
+      : { x: minimapBox.x + minimapBox.width - 8, y: minimapBox.y + minimapBox.height - 8 };
+    const beforeMinimapJump = await page.locator('[data-research-surface]').evaluate((element) => element.style.transform);
+    await page.mouse.click(minimapTarget.x, minimapTarget.y);
+    await page.waitForTimeout(300);
+    assert.notEqual(await page.locator('[data-research-surface]').evaluate((element) => element.style.transform), beforeMinimapJump,
+      'clicking outside the minimap viewport frame must smoothly center the camera');
+
+    await page.evaluate(() => {
+      localStorage.setItem('canvas:panSpeed', '19');
+      localStorage.setItem('canvas:panInertia', '0.85');
+      localStorage.setItem('canvas:zoomSpeed', '2.7');
+    });
+    await page.locator('[data-research-settings-open]').click();
+    await page.locator('[data-research-settings-reset-open]').click();
+    await page.locator('[data-research-settings-reset-accept]').click();
+    assert.deepEqual(await page.evaluate(() => ({
+      research: [
+        localStorage.getItem('research:panSpeed:v1'),
+        localStorage.getItem('research:panInertia:v1'),
+        localStorage.getItem('research:zoomSpeed:v1'),
+      ],
+      canvas: [
+        localStorage.getItem('canvas:panSpeed'),
+        localStorage.getItem('canvas:panInertia'),
+        localStorage.getItem('canvas:zoomSpeed'),
+      ],
+      controls: [
+        document.querySelector('[data-research-pan-speed]').value,
+        document.querySelector('[data-research-pan-inertia]').value,
+        document.querySelector('[data-research-zoom-speed]').value,
+      ],
+    })), { research: [null, null, null], canvas: ['19', '0.85', '2.7'], controls: ['8', '0.15', '1'] },
+    'restoring Research defaults must not mutate main-canvas preferences');
+    await page.locator('[data-research-settings-open]').click();
+    await page.waitForFunction(() => document.querySelector('[data-research-settings-panel]').hidden);
+    await researchViewport.focus();
+    await page.keyboard.press('Control+1');
+    await page.waitForTimeout(300);
+    report.circuits.viewport = {
+      smoothZoom: true, anchoredZoom: true, dragInertia: true, zeroInertia: true,
+      adjustableKeyboardPan: true, minimapPersistentNodes: true, minimapJump: true, isolatedPreferences: true,
+    };
+
+    await page.locator('[data-research-dock-collapse]').click();
+    await page.locator('[data-research-viewport]').focus();
+    await page.keyboard.press('Tab');
+    await page.locator('[data-research-add-search]').focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), false,
+      'Tab inside the panel must keep native keyboard navigation');
+    await page.locator('[data-research-inspector-close]').click();
+
+    const countBeforeNodeDoubleClick = await page.locator('[data-node-id]').count();
+    await page.locator('[data-node-id="fa-a"]').dblclick();
+    assert.equal(await page.locator('[data-node-id]').count(), countBeforeNodeDoubleClick,
+      'double-clicking a node must never create another node');
+    assert.equal(await page.locator('[data-node-id="fa-a"] [data-node-text][contenteditable="true"]').count(), 1,
+      'double-clicking a node must enter inline label editing');
+    await page.keyboard.press('Escape');
+    const viewportBox = await page.locator('[data-research-viewport]').boundingBox();
+    assert(viewportBox, 'Research viewport must remain visible');
+    await page.mouse.dblclick(viewportBox.x + viewportBox.width - 180, viewportBox.y + viewportBox.height - 170);
+    assert.equal(await page.locator('[data-node-id]').count(), countBeforeNodeDoubleClick + 1,
+      'a stable blank-canvas double-click must create exactly one selected type');
+    await page.locator('[data-node-id="fa-a"]').click();
+    await page.locator('[data-node-id="fa-b"]').click({ modifiers: ['Control'] });
+    const multiSelectDockBox = await computeDock.boundingBox();
+    assert(multiSelectDockBox && Math.round(multiSelectDockBox.width) === Math.round(initialDockBox.width)
+      && Math.round(multiSelectDockBox.height) === Math.round(initialDockBox.height),
+    'multi-selection must not resize the compute dock');
+    await page.locator('[data-research-run]').click();
+    const runningDockBox = await computeDock.boundingBox();
+    assert(runningDockBox && Math.round(runningDockBox.width) === Math.round(initialDockBox.width)
+      && Math.round(runningDockBox.height) === Math.round(initialDockBox.height),
+    'run state must not resize the compute dock');
+    await page.locator('[data-research-pause]').click();
+
     const rail = page.locator('[data-research-page-rail]');
     await page.locator('[data-research-page-hotspot]').hover();
     await rail.waitFor({ state: 'visible' });
@@ -127,16 +392,30 @@ async function runAcceptance(playwright, url, options = {}) {
     await expectResult(page, 'fa-sum-monitor', EXPECTED.fullAdder.sum);
     await expectResult(page, 'fa-carry-monitor', EXPECTED.fullAdder.carry);
 
+    const plainDragNode = await boxCenter(page.locator('[data-node-id="fa-b"]'));
+    await page.mouse.move(plainDragNode.x, plainDragNode.y);
+    await page.mouse.down();
+    await page.mouse.move(plainDragNode.x + 12, plainDragNode.y + 8, { steps: 4 });
+    assert.equal(await page.locator('[data-research-active-edges] line.is-preview').count(), 0,
+      'ordinary node dragging must not start any connection preview');
+    await page.mouse.up();
+    await page.waitForTimeout(450);
+    assert.equal(saves.at(-1).pages[0].edges.length, fixture.pages[0].edges.length,
+      'ordinary node dragging must not persist a connection');
+
     // Both port directions may start a wire gesture. Rewiring from an occupied
     // value input must retain the existing edge identity and remain one undo step.
-    await page.locator('[data-research-mode="wire"]').click();
+    await page.locator('button[data-research-connection-kind="wire"]').click();
     const xorInputA = page.locator('[data-node-id="fa-xor-1"] [data-research-port="a"]');
     const cinOutput = page.locator('[data-node-id="fa-cin"] [data-research-port="out"]');
+    await page.waitForTimeout(450);
     const savesBeforeReconnect = saves.length;
     await moveWirePointer(page, xorInputA, cinOutput);
+    assert.equal(await page.locator('[data-research-active-edges] line.is-data').count(), 1,
+      'Alt-drag from an exact port must start a wire preview');
     assert.equal(await page.locator('[data-research-active-edges] line.is-invalid').count(), 0,
       'a compatible reverse wire gesture must remain valid');
-    await page.mouse.up();
+    await finishConnectionPointer(page);
     let savedDocument = await waitForSaveAfter(page, saves, savesBeforeReconnect);
     let savedWire = savedDocument.pages[0].edges.find((edge) => edge.id === 'fa-a-xor');
     assert.equal(savedWire.from.nodeId, 'fa-cin');
@@ -150,6 +429,7 @@ async function runAcceptance(playwright, url, options = {}) {
     // A wire preview starts at the rendered port center even when the node grew
     // to show a result. Invalid occupied targets remain hittable and turn red.
     const outputCenter = await boxCenter(page.locator('[data-node-id="fa-a"] [data-research-port="out"]'));
+    await page.keyboard.down('Alt');
     await page.mouse.move(outputCenter.x, outputCenter.y);
     await page.mouse.down();
     await page.mouse.move(outputCenter.x + 40, outputCenter.y + 50, { steps: 4 });
@@ -158,20 +438,22 @@ async function runAcceptance(playwright, url, options = {}) {
     const activeWireY = Number(await activeWire.getAttribute('y1'));
     assert(Math.abs(activeWireY - outputCenter.y) < 0.75,
       `wire preview y1 ${activeWireY} must match rendered port center ${outputCenter.y}`);
-    await page.mouse.up();
+    await finishConnectionPointer(page);
     const savesBeforeInvalid = saves.length;
     await moveWirePointer(page, page.locator('[data-node-id="fa-a"] [data-research-port="out"]'), xorInputA);
     assert.equal(await page.locator('[data-research-active-edges] line.is-invalid').count(), 1,
       'an occupied value input must show a red invalid preview');
-    await page.mouse.up();
+    await finishConnectionPointer(page);
     await page.waitForTimeout(450);
     assert.equal(saves.length, savesBeforeInvalid, 'an invalid wire gesture must not schedule persistence');
 
     // Relation previews and committed relation geometry use the rendered node
     // borders rather than disappearing beneath each node center.
-    await page.locator('[data-research-mode="relation"]').click();
+    await page.locator('button[data-research-connection-kind="relation"]').click();
+    assert.equal(await page.evaluate(() => localStorage.getItem('research:connectionKind:v1')), 'relation');
     const relationFrom = await boxCenter(page.locator('[data-node-id="fa-a"]'));
     const relationTo = await boxCenter(page.locator('[data-node-id="fa-carry-monitor"]'));
+    await page.keyboard.down('Alt');
     await page.mouse.move(relationFrom.x, relationFrom.y);
     await page.mouse.down();
     await page.mouse.move(relationTo.x, relationTo.y, { steps: 8 });
@@ -183,13 +465,23 @@ async function runAcceptance(playwright, url, options = {}) {
       'relation source must stop at its right border');
     assert(relationX2 >= relationTo.box.x - 1 && relationX2 <= relationTo.box.x + 1,
       'relation target must stop at its left border');
-    await page.mouse.up();
+    await finishConnectionPointer(page);
+    const selectedDockBox = await computeDock.boundingBox();
+    assert(selectedDockBox && Math.round(selectedDockBox.width) === Math.round(initialDockBox.width)
+      && Math.round(selectedDockBox.height) === Math.round(initialDockBox.height),
+    'selection and connection changes must not resize the compute dock');
     report.circuits.wiring = { reverseStart: true, atomicReconnect: true, invalidPreview: true, borderGeometry: true };
 
     // Configuration uses the same visible inspector a person uses. Changing Cin
     // must immediately propagate through both downstream logic branches.
     await page.locator('[data-node-id="fa-cin"]').click();
+    await page.locator('[data-research-viewport]').focus();
+    await page.keyboard.press('Tab');
     const cin = page.locator('[data-research-inspector-fields] input[type="checkbox"]');
+    await cin.focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), false,
+      'Tab in an inspector control must not collapse the unified panel');
     await cin.uncheck();
     await expectResult(page, 'fa-sum-monitor', '= false');
     await expectResult(page, 'fa-carry-monitor', '= true');
@@ -233,6 +525,7 @@ async function runAcceptance(playwright, url, options = {}) {
 
     await selectPage(page, 3);
     await expectResult(page, 'timer-counter-monitor', '= 0');
+    await page.locator('[data-research-inspector-close]').click();
     await page.locator('[data-node-id="timer-start"] [data-node-action]').click();
     await page.locator('[data-research-run]').click();
     await page.waitForFunction(() => {
@@ -275,6 +568,37 @@ async function runAcceptance(playwright, url, options = {}) {
     await reducedPage.goto(url.replace(/\/$/, '') + '/research.html');
     await reducedPage.waitForFunction(() => !!window.RelatumResearchWorkspace);
     await reducedPage.evaluate(() => RelatumResearchWorkspace.activate());
+    await reducedPage.locator('[data-node-id="fa-sum"]').waitFor({ state: 'visible' });
+    const reducedViewportBox = await reducedPage.locator('[data-research-viewport]').boundingBox();
+    assert(reducedViewportBox, 'reduced-motion Research viewport must remain visible');
+    const reducedWheel = await reducedPage.evaluate(({ x, y }) => {
+      const viewport = document.querySelector('[data-research-viewport]');
+      const surface = document.querySelector('[data-research-surface]');
+      const before = surface.style.transform;
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaY: -100, clientX: x, clientY: y,
+      }));
+      return { before, after: surface.style.transform };
+    }, { x: reducedViewportBox.x + reducedViewportBox.width / 2, y: reducedViewportBox.y + reducedViewportBox.height / 2 });
+    assert.notEqual(reducedWheel.after, reducedWheel.before,
+      'reduced motion must apply wheel zoom immediately without an animated intermediate state');
+    const reducedPanStart = {
+      x: reducedViewportBox.x + reducedViewportBox.width * .66,
+      y: reducedViewportBox.y + reducedViewportBox.height * .62,
+    };
+    await reducedPage.keyboard.down('Space');
+    await reducedPage.mouse.move(reducedPanStart.x, reducedPanStart.y);
+    await reducedPage.mouse.down();
+    await reducedPage.mouse.move(reducedPanStart.x + 90, reducedPanStart.y + 20);
+    await reducedPage.mouse.up();
+    await reducedPage.keyboard.up('Space');
+    const reducedRelease = await reducedPage.locator('[data-research-surface]').evaluate((element) => element.style.transform);
+    await reducedPage.waitForTimeout(90);
+    assert.equal(await reducedPage.locator('[data-research-surface]').evaluate((element) => element.style.transform), reducedRelease,
+      'reduced motion must disable post-release canvas inertia');
+    await reducedPage.locator('[data-node-id="fa-sum"]').click();
+    assert.equal(await reducedPage.locator('.research-side-panel-content-ghost').count(), 0,
+      'reduced motion must switch panel content without an outgoing animation layer');
     await reducedPage.locator('[data-research-page-hotspot]').hover();
     await reducedPage.locator('[data-research-page-rail]').waitFor({ state: 'visible' });
     await reducedPage.locator('[data-research-page-id]').nth(1).click();
@@ -287,6 +611,7 @@ async function runAcceptance(playwright, url, options = {}) {
     await reducedPage.evaluate(() => RelatumResearchWorkspace.dispose());
     await reducedContext.close();
     report.circuits.pageRail.reducedMotion = true;
+    report.circuits.viewport.reducedMotion = true;
     assert.deepEqual(report.errors, []);
     return report;
   } finally {

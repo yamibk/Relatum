@@ -4,13 +4,25 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const EDGE_GRID_SIZE = 512;
 const MIN_SCALE = 0.18;
 const MAX_SCALE = 3.5;
+const CAMERA_EASE = 0.32;
+const FRAME_MS = 1000 / 60;
 const DRAG_THRESHOLD = 4;
 const PROJECTION_NODES_PER_FRAME = 128;
 const PROJECTION_FRAME_BUDGET_MS = 4;
-const INTERACTION_MODES = new Set(['select', 'relation', 'wire']);
+const CONNECTION_KINDS = new Set(['relation', 'wire']);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function frameRatio(ratio, frames) {
+  return 1 - Math.pow(1 - ratio, frames);
+}
+
+function tickFrames(timestamp, previousTimestamp) {
+  let frames = previousTimestamp ? (timestamp - previousTimestamp) / FRAME_MS : 1;
+  if (!(frames > 0)) frames = 1;
+  return clamp(frames, 0.35, 3);
 }
 
 function distanceToSegment(point, start, end) {
@@ -77,9 +89,16 @@ export function createResearchCanvas(options) {
   const minimap = stage && stage.querySelector('[data-research-minimap]');
   const minimapNodes = stage && stage.querySelector('[data-research-minimap-nodes]');
   const minimapViewbox = stage && stage.querySelector('[data-research-minimap-viewbox]');
+  const zoomIndicator = stage && stage.querySelector('[data-research-zoom-indicator]');
+  const panSpeedInput = options.panSpeedInput || null;
+  const panInertiaInput = options.panInertiaInput || null;
+  const zoomSpeedInput = options.zoomSpeedInput || null;
+  const panSpeedValue = options.panSpeedValue || null;
+  const panInertiaValue = options.panInertiaValue || null;
+  const zoomSpeedValue = options.zoomSpeedValue || null;
 
   if (!viewport || !surface || !edgesCanvas || !activeSvg || !selectionFrame
-    || !minimap || !minimapNodes || !minimapViewbox || !model || !registry) {
+    || !minimap || !minimapNodes || !minimapViewbox || !zoomIndicator || !model || !registry) {
     throw new Error('研究画布 DOM 不完整');
   }
 
@@ -98,11 +117,28 @@ export function createResearchCanvas(options) {
     y: Number.isFinite(Number(initialView.y)) ? Number(initialView.y) : 0,
     scale: clamp(Number.isFinite(Number(initialView.scale)) ? Number(initialView.scale) : 1, MIN_SCALE, MAX_SCALE),
   };
+  let targetCamera = { ...camera };
+  let cameraRaf = 0;
+  let cameraTickTimestamp = 0;
+  let panInertiaRaf = 0;
+  let panVelocity = null;
+  let arrowPanRaf = 0;
+  let arrowTickTimestamp = 0;
+  const pressedPanKeys = new Set();
+  let panSpeed = 8;
+  let panInertia = 0.15;
+  let zoomSpeed = 1;
   let minimapMapping = null;
+  let minimapNodeMapping = null;
+  let minimapViewboxRect = null;
+  let minimapRebaseTimer = 0;
+  let minimapSize = { width: 180, height: 120 };
+  let contentBoundsCache = null;
   let active = false;
   let disposed = false;
   let activeController = null;
   let viewportResizeObserver = null;
+  let minimapResizeObserver = null;
   let nodeResizeObserver = null;
   let unsubscribe = null;
   let drawRaf = 0;
@@ -114,8 +150,21 @@ export function createResearchCanvas(options) {
   let projectionRaf = 0;
   let projectionNodeIds = [];
   let projectionCursor = 0;
-  let pendingNodeType = 'note';
-  let interactionMode = 'select';
+  let pendingCreation = { type: 'note' };
+  let connectionKind = 'wire';
+  let altHeld = false;
+  const primaryPresses = [];
+
+  try {
+    const storedPanSpeed = Number.parseInt(localStorage.getItem('research:panSpeed:v1'), 10);
+    if (Number.isFinite(storedPanSpeed) && storedPanSpeed >= 1 && storedPanSpeed <= 20) panSpeed = storedPanSpeed;
+    const storedPanInertia = Number.parseFloat(localStorage.getItem('research:panInertia:v1'));
+    if (Number.isFinite(storedPanInertia) && storedPanInertia >= 0 && storedPanInertia <= 1) panInertia = storedPanInertia;
+    const storedZoomSpeed = Number.parseFloat(localStorage.getItem('research:zoomSpeed:v1'));
+    if (Number.isFinite(storedZoomSpeed) && storedZoomSpeed >= 0.5 && storedZoomSpeed <= 3) zoomSpeed = storedZoomSpeed;
+  } catch (_error) {}
+  viewport.dataset.researchCreationTool = pendingCreation.type;
+  viewport.dataset.researchConnectionKind = connectionKind;
 
   function viewportRect() {
     return viewport.getBoundingClientRect();
@@ -199,27 +248,100 @@ export function createResearchCanvas(options) {
 
   function applyCamera() {
     surface.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
+    const zoomText = Math.round(camera.scale * 100) + '%';
+    if (zoomIndicator.textContent !== zoomText) zoomIndicator.textContent = zoomText;
     scheduleDraw();
     renderActiveEdges();
-    updateMinimapViewbox();
+    updateMinimapViewport();
   }
 
-  function setCamera(next) {
+  function notifyViewChange() {
+    if (onViewChange) onViewChange({ ...targetCamera });
+  }
+
+  function cancelCameraAnimation() {
+    if (cameraRaf) cancelAnimationFrame(cameraRaf);
+    cameraRaf = 0;
+    cameraTickTimestamp = 0;
+  }
+
+  function cancelPanInertia() {
+    if (panInertiaRaf) cancelAnimationFrame(panInertiaRaf);
+    panInertiaRaf = 0;
+    panVelocity = null;
+  }
+
+  function setCamera(next, options = {}) {
     const changed = {
       x: Number.isFinite(next.x) ? next.x : camera.x,
       y: Number.isFinite(next.y) ? next.y : camera.y,
       scale: clamp(Number.isFinite(next.scale) ? next.scale : camera.scale, MIN_SCALE, MAX_SCALE),
     };
-    if (changed.x === camera.x && changed.y === camera.y && changed.scale === camera.scale) return;
+    if (!options.preserveInertia) cancelPanInertia();
+    cancelCameraAnimation();
+    targetCamera = { ...changed };
+    if (changed.x === camera.x && changed.y === camera.y && changed.scale === camera.scale) return false;
     camera = changed;
     applyCamera();
-    if (onViewChange) onViewChange({ ...camera });
+    notifyViewChange();
+    return true;
+  }
+
+  function freezeCameraForInteraction() {
+    if (!cameraRaf) return;
+    cancelCameraAnimation();
+    targetCamera = { ...camera };
+    applyCamera();
+    notifyViewChange();
+  }
+
+  function tickCamera(timestamp) {
+    cameraRaf = 0;
+    const scaleDistance = targetCamera.scale - camera.scale;
+    const xDistance = targetCamera.x - camera.x;
+    const yDistance = targetCamera.y - camera.y;
+    if (Math.abs(scaleDistance) < .0008 && Math.abs(xDistance) < .4 && Math.abs(yDistance) < .4) {
+      camera = { ...targetCamera };
+      cameraTickTimestamp = 0;
+      applyCamera();
+      return;
+    }
+    const ratio = frameRatio(CAMERA_EASE, tickFrames(timestamp, cameraTickTimestamp));
+    cameraTickTimestamp = timestamp;
+    camera = {
+      x: camera.x + xDistance * ratio,
+      y: camera.y + yDistance * ratio,
+      scale: camera.scale + scaleDistance * ratio,
+    };
+    applyCamera();
+    cameraRaf = requestAnimationFrame(tickCamera);
+  }
+
+  function animateCamera(next) {
+    const changed = {
+      x: Number.isFinite(next.x) ? next.x : targetCamera.x,
+      y: Number.isFinite(next.y) ? next.y : targetCamera.y,
+      scale: clamp(Number.isFinite(next.scale) ? next.scale : targetCamera.scale, MIN_SCALE, MAX_SCALE),
+    };
+    cancelPanInertia();
+    targetCamera = changed;
+    notifyViewChange();
+    if (reducedMotionPreferred()) {
+      cancelCameraAnimation();
+      camera = { ...targetCamera };
+      applyCamera();
+      return;
+    }
+    if (!cameraRaf) cameraRaf = requestAnimationFrame(tickCamera);
   }
 
   function zoomAt(nextScale, screenPoint) {
     const scale = clamp(nextScale, MIN_SCALE, MAX_SCALE);
-    const world = screenToWorld(screenPoint);
-    setCamera({
+    const world = {
+      x: (screenPoint.x - targetCamera.x) / targetCamera.scale,
+      y: (screenPoint.y - targetCamera.y) / targetCamera.scale,
+    };
+    animateCamera({
       x: screenPoint.x - world.x * scale,
       y: screenPoint.y - world.y * scale,
       scale,
@@ -234,7 +356,7 @@ export function createResearchCanvas(options) {
   function fitToContent() {
     const nodes = model.nodes();
     if (!nodes.length) {
-      setCamera({ x: 0, y: 0, scale: 1 });
+      animateCamera({ x: 0, y: 0, scale: 1 });
       return;
     }
     const bounds = nodes.reduce((result, node) => ({
@@ -249,11 +371,77 @@ export function createResearchCanvas(options) {
       Math.max(1, rect.width - padding * 2) / Math.max(1, bounds.right - bounds.left),
       Math.max(1, rect.height - padding * 2) / Math.max(1, bounds.bottom - bounds.top),
     ), MIN_SCALE, 1.5);
-    setCamera({
+    animateCamera({
       x: rect.width / 2 - ((bounds.left + bounds.right) / 2) * scale,
       y: rect.height / 2 - ((bounds.top + bounds.bottom) / 2) * scale,
       scale,
     });
+  }
+
+  function startPanInertia(state) {
+    cancelPanInertia();
+    if (!state || state.velocityX == null || !(panInertia > 0) || reducedMotionPreferred()) return;
+    const now = performance.now();
+    if (state.lastMoveTimestamp == null || now - state.lastMoveTimestamp > 60) return;
+    let velocityX = state.velocityX * panInertia;
+    let velocityY = state.velocityY * panInertia;
+    const speed = Math.hypot(velocityX, velocityY);
+    if (speed < .06) return;
+    if (speed > 5) {
+      const ratio = 5 / speed;
+      velocityX *= ratio;
+      velocityY *= ratio;
+    }
+    panVelocity = { x: velocityX, y: velocityY };
+    let previous = now;
+    const step = (timestamp) => {
+      panInertiaRaf = 0;
+      if (!active || reducedMotionPreferred()) { panVelocity = null; return; }
+      let elapsed = timestamp - previous;
+      previous = timestamp;
+      if (!(elapsed > 0)) elapsed = 16.7;
+      elapsed = Math.min(40, elapsed);
+      const friction = Math.exp(-.0045 * elapsed);
+      setCamera({
+        x: camera.x + panVelocity.x * elapsed,
+        y: camera.y + panVelocity.y * elapsed,
+        scale: camera.scale,
+      }, { preserveInertia: true });
+      panVelocity.x *= friction;
+      panVelocity.y *= friction;
+      if (Math.hypot(panVelocity.x, panVelocity.y) > .015) {
+        panInertiaRaf = requestAnimationFrame(step);
+      } else panVelocity = null;
+    };
+    panInertiaRaf = requestAnimationFrame(step);
+  }
+
+  function stopArrowPan() {
+    if (arrowPanRaf) cancelAnimationFrame(arrowPanRaf);
+    arrowPanRaf = 0;
+    arrowTickTimestamp = 0;
+    pressedPanKeys.clear();
+  }
+
+  function startArrowPan() {
+    if (arrowPanRaf) return;
+    cancelPanInertia();
+    freezeCameraForInteraction();
+    const tick = (timestamp) => {
+      arrowPanRaf = 0;
+      let x = 0;
+      let y = 0;
+      if (pressedPanKeys.has('ArrowLeft')) x += panSpeed;
+      if (pressedPanKeys.has('ArrowRight')) x -= panSpeed;
+      if (pressedPanKeys.has('ArrowUp')) y += panSpeed;
+      if (pressedPanKeys.has('ArrowDown')) y -= panSpeed;
+      if (!x && !y) { arrowTickTimestamp = 0; return; }
+      const frames = tickFrames(timestamp, arrowTickTimestamp);
+      arrowTickTimestamp = timestamp;
+      setCamera({ x: camera.x + x * frames, y: camera.y + y * frames, scale: camera.scale });
+      arrowPanRaf = requestAnimationFrame(tick);
+    };
+    arrowPanRaf = requestAnimationFrame(tick);
   }
 
   function resizeCanvas() {
@@ -268,7 +456,7 @@ export function createResearchCanvas(options) {
       edgesCanvas.style.height = rect.height + 'px';
     }
     scheduleDraw();
-    updateMinimapViewbox();
+    updateMinimapViewport();
   }
 
   function createNodeElement(node) {
@@ -725,6 +913,7 @@ export function createResearchCanvas(options) {
     if (onSelectionChange) onSelectionChange({
       nodeIds: Array.from(selectedNodeIds), edgeIds: Array.from(selectedEdgeIds),
       primaryNode: selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
+      primaryEdge: selectedEdgeIds.size === 1 ? model.edge(Array.from(selectedEdgeIds)[0]) : null,
     });
   }
 
@@ -734,28 +923,40 @@ export function createResearchCanvas(options) {
     renderSelection();
   }
 
-  function setCreationTool(nextType) {
-    const normalized = registry.definition(String(nextType || '')) ? String(nextType) : 'note';
-    if (pendingNodeType === normalized) return pendingNodeType;
-    pendingNodeType = normalized;
-    viewport.dataset.researchCreationTool = pendingNodeType;
-    if (onCreationToolChange) onCreationToolChange(pendingNodeType);
-    return pendingNodeType;
+  function normalizedCreationDescriptor(source) {
+    const candidate = typeof source === 'string' ? { type: source } : source && typeof source === 'object' ? source : {};
+    const type = registry.definition(String(candidate.type || '')) ? String(candidate.type) : 'note';
+    const descriptor = { type };
+    if (candidate.label != null) descriptor.label = String(candidate.label);
+    if (candidate.config && typeof candidate.config === 'object') descriptor.config = JSON.parse(JSON.stringify(candidate.config));
+    if (Number.isFinite(Number(candidate.width))) descriptor.width = Number(candidate.width);
+    if (Number.isFinite(Number(candidate.height))) descriptor.height = Number(candidate.height);
+    return descriptor;
+  }
+
+  function setCreationTool(nextCreation) {
+    const normalized = normalizedCreationDescriptor(nextCreation);
+    const before = JSON.stringify(pendingCreation);
+    pendingCreation = normalized;
+    viewport.dataset.researchCreationTool = pendingCreation.type;
+    if (before !== JSON.stringify(pendingCreation) && onCreationToolChange) {
+      onCreationToolChange(getCreationTool());
+    }
+    return getCreationTool();
   }
 
   function getCreationTool() {
-    return pendingNodeType;
+    return JSON.parse(JSON.stringify(pendingCreation));
   }
 
-  function setInteractionMode(nextMode) {
-    const normalized = INTERACTION_MODES.has(String(nextMode || '')) ? String(nextMode) : 'select';
-    interactionMode = normalized;
-    viewport.dataset.researchInteractionMode = normalized;
-    return interactionMode;
+  function setConnectionKind(nextKind) {
+    connectionKind = CONNECTION_KINDS.has(String(nextKind || '')) ? String(nextKind) : 'wire';
+    viewport.dataset.researchConnectionKind = connectionKind;
+    return connectionKind;
   }
 
-  function getInteractionMode() {
-    return interactionMode;
+  function getConnectionKind() {
+    return connectionKind;
   }
 
   function selectOnlyNode(nodeId) {
@@ -766,7 +967,7 @@ export function createResearchCanvas(options) {
   }
 
   function createNodeAt(worldPoint, options = {}) {
-    const type = String(options.type || pendingNodeType || 'note');
+    const type = String(options.type || pendingCreation.type || 'note');
     const defaults = registry.createNode(type, options);
     if (!defaults) return null;
     const source = {
@@ -1022,20 +1223,47 @@ export function createResearchCanvas(options) {
   }
 
   function startPan(event) {
+    const point = eventPoint(event);
     gesture = {
       type: 'pan',
       pointerId: event.pointerId,
-      start: eventPoint(event),
+      start: point,
       camera: { ...camera },
+      velocityX: null,
+      velocityY: null,
+      lastMoveX: point.x,
+      lastMoveY: point.y,
+      lastMoveTimestamp: performance.now(),
     };
     viewport.classList.add('is-panning');
     viewport.setPointerCapture(event.pointerId);
   }
 
+  function recordPrimaryPress(event) {
+    if (event.button !== 0) return;
+    const node = event.target.closest && event.target.closest('[data-node-id]');
+    const blank = event.target === viewport || event.target === surface || event.target === edgesCanvas;
+    primaryPresses.push({ kind: node ? 'node' : blank ? 'blank' : 'other', at: performance.now() });
+    while (primaryPresses.length > 2) primaryPresses.shift();
+  }
+
+  function stableBlankDoubleClick(event) {
+    if (!(event.target === viewport || event.target === surface || event.target === edgesCanvas)) return false;
+    if (event.detail === 0) return true;
+    if (primaryPresses.length < 2) return false;
+    const pair = primaryPresses.slice(-2);
+    return pair.every((press) => press.kind === 'blank') && pair[1].at - pair[0].at <= 650;
+  }
+
   function onPointerDown(event) {
     if (event.button !== 0 && event.button !== 1) return;
+    cancelPanInertia();
+    freezeCameraForInteraction();
+    if (event.altKey) viewport.classList.add('is-alt-connecting');
+    recordPrimaryPress(event);
     lastPointer = eventPoint(event);
     if (editing && !event.target.closest(`[data-node-id="${CSS.escape(editing.nodeId)}"]`)) commitEdit();
+    if (event.target.closest && event.target.closest('[data-research-zoom-indicator]')) return;
     if (isEditableTarget(event.target)) return;
     viewport.focus({ preventScroll: true });
     if (event.button === 1 || (event.button === 0 && spaceHeld)) {
@@ -1058,27 +1286,27 @@ export function createResearchCanvas(options) {
       const nodeElement = port.closest('[data-node-id]');
       if (!nodeElement) return;
       const nodeId = nodeElement.dataset.nodeId;
-      if (interactionMode === 'wire') {
+      if (event.altKey && connectionKind === 'wire') {
         startDataEdgeCreate(
           event,
           nodeId,
           port.dataset.researchPort,
           port.dataset.researchPortDirection,
         );
-      } else {
-        selectOnlyNode(nodeId);
-      }
+      } else selectOnlyNode(nodeId);
       return;
     }
     const nodeElement = event.target.closest('[data-node-id]');
     if (nodeElement) {
       event.preventDefault();
       const nodeId = nodeElement.dataset.nodeId;
-      if (interactionMode === 'relation') startEdgeCreate(event, nodeId);
+      if (event.altKey && connectionKind === 'relation') startEdgeCreate(event, nodeId);
+      else if (event.altKey) selectOnlyNode(nodeId);
       else startNodeDrag(event, nodeId);
       return;
     }
     event.preventDefault();
+    if (event.altKey) return;
     startBackgroundGesture(event);
   }
 
@@ -1087,6 +1315,17 @@ export function createResearchCanvas(options) {
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     const point = eventPoint(event);
     if (gesture.type === 'pan') {
+      const now = performance.now();
+      const elapsed = now - gesture.lastMoveTimestamp;
+      if (elapsed > 0) {
+        const velocityX = (point.x - gesture.lastMoveX) / elapsed;
+        const velocityY = (point.y - gesture.lastMoveY) / elapsed;
+        gesture.velocityX = gesture.velocityX == null ? velocityX : gesture.velocityX * .4 + velocityX * .6;
+        gesture.velocityY = gesture.velocityY == null ? velocityY : gesture.velocityY * .4 + velocityY * .6;
+      }
+      gesture.lastMoveX = point.x;
+      gesture.lastMoveY = point.y;
+      gesture.lastMoveTimestamp = now;
       setCamera({
         x: gesture.camera.x + point.x - gesture.start.x,
         y: gesture.camera.y + point.y - gesture.start.y,
@@ -1134,6 +1373,7 @@ export function createResearchCanvas(options) {
 
   function targetNodeAt(clientX, clientY) {
     const element = document.elementFromPoint(clientX, clientY);
+    if (element && element.closest && element.closest('[data-research-port]')) return null;
     const nodeElement = element && element.closest && element.closest('[data-node-id]');
     return nodeElement ? nodeElement.dataset.nodeId : null;
   }
@@ -1161,7 +1401,10 @@ export function createResearchCanvas(options) {
     clearWireTargets();
     nodeElements.forEach((element) => element.classList.remove('is-dragging'));
     selectionFrame.hidden = true;
-    if (state.type === 'node-drag' && state.moved) {
+    if (!altHeld) viewport.classList.remove('is-alt-connecting');
+    if (state.type === 'pan' && commit && event) {
+      startPanInertia(state);
+    } else if (state.type === 'node-drag' && state.moved) {
       if (commit) model.commitFrom(state.before, { kind: 'node-move', nodeIds: Object.keys(state.positions), alreadyEmitted: true });
       else model.restore(state.before, true);
       refreshEdgeCache(state.edgeIds);
@@ -1216,17 +1459,19 @@ export function createResearchCanvas(options) {
   }
 
   function onDoubleClick(event) {
-    const nodeElement = event.target.closest('[data-node-id]');
+    const hitElement = document.elementFromPoint(event.clientX, event.clientY);
+    const nodeElement = event.target.closest('[data-node-id]')
+      || hitElement && hitElement.closest && hitElement.closest('[data-node-id]');
     if (nodeElement) {
       event.preventDefault();
       selectOnlyNode(nodeElement.dataset.nodeId);
       beginEdit(nodeElement.dataset.nodeId);
       return;
     }
-    if (event.target === viewport || event.target === surface || event.target === edgesCanvas) {
+    if (stableBlankDoubleClick(event)) {
       event.preventDefault();
       const worldPoint = screenToWorld(eventPoint(event));
-      createTypedNode(pendingNodeType, worldPoint);
+      createNodeAt(worldPoint, { ...getCreationTool(), edit: false });
     }
   }
 
@@ -1234,17 +1479,61 @@ export function createResearchCanvas(options) {
     event.preventDefault();
     const point = eventPoint(event);
     const direction = event.deltaY > 0 ? -1 : 1;
-    const factor = Math.exp(direction * Math.min(Math.abs(event.deltaY), 200) / 200 * Math.log(1.1));
-    zoomAt(camera.scale * factor, point);
+    const factor = Math.exp(direction * Math.min(Math.abs(event.deltaY), 200) / 200 * Math.log(1.1) * zoomSpeed);
+    zoomAt(targetCamera.scale * factor, point);
   }
 
-  function createChild(node) {
-    const child = createNodeAt({
-      x: node.x + node.width + 92 + 84,
-      y: node.y + node.height / 2,
-    }, { type: 'note', edit: false, fromId: node.id });
-    if (!child) return;
-    beginEdit(child.id);
+  function syncInteractionPreferenceControls() {
+    if (panSpeedInput) panSpeedInput.value = String(panSpeed);
+    if (panInertiaInput) panInertiaInput.value = String(panInertia);
+    if (zoomSpeedInput) zoomSpeedInput.value = String(zoomSpeed);
+    if (panSpeedValue) panSpeedValue.textContent = String(panSpeed);
+    if (panInertiaValue) panInertiaValue.textContent = Math.round(panInertia * 100) + '%';
+    if (zoomSpeedValue) zoomSpeedValue.textContent = Number(zoomSpeed.toFixed(1)) + '×';
+  }
+
+  function saveInteractionPreference(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch (_error) {}
+  }
+
+  function installInteractionPreferenceListeners(signal) {
+    syncInteractionPreferenceControls();
+    if (panSpeedInput) panSpeedInput.addEventListener('input', () => {
+      const value = Number.parseInt(panSpeedInput.value, 10);
+      if (!Number.isFinite(value) || value < 1 || value > 20) return;
+      panSpeed = value;
+      syncInteractionPreferenceControls();
+      saveInteractionPreference('research:panSpeed:v1', value);
+    }, { signal });
+    if (panInertiaInput) panInertiaInput.addEventListener('input', () => {
+      const value = Number.parseFloat(panInertiaInput.value);
+      if (!Number.isFinite(value) || value < 0 || value > 1) return;
+      panInertia = value;
+      if (panInertia === 0) cancelPanInertia();
+      syncInteractionPreferenceControls();
+      saveInteractionPreference('research:panInertia:v1', value);
+    }, { signal });
+    if (zoomSpeedInput) zoomSpeedInput.addEventListener('input', () => {
+      const value = Number.parseFloat(zoomSpeedInput.value);
+      if (!Number.isFinite(value) || value < .5 || value > 3) return;
+      zoomSpeed = value;
+      syncInteractionPreferenceControls();
+      saveInteractionPreference('research:zoomSpeed:v1', value);
+    }, { signal });
+  }
+
+  function resetInteractionPreferences() {
+    panSpeed = 8;
+    panInertia = .15;
+    zoomSpeed = 1;
+    cancelPanInertia();
+    try {
+      localStorage.removeItem('research:panSpeed:v1');
+      localStorage.removeItem('research:panInertia:v1');
+      localStorage.removeItem('research:zoomSpeed:v1');
+    } catch (_error) {}
+    syncInteractionPreferenceControls();
+    return { panSpeed, panInertia, zoomSpeed };
   }
 
   function createSibling(node) {
@@ -1258,6 +1547,12 @@ export function createResearchCanvas(options) {
   }
 
   function onKeyDown(event) {
+    if (event.defaultPrevented) return;
+    if (event.key === 'Alt') {
+      altHeld = true;
+      viewport.classList.add('is-alt-connecting');
+      return;
+    }
     const modifier = event.ctrlKey || event.metaKey;
     if (editing) {
       if (event.key === 'Escape') {
@@ -1307,8 +1602,7 @@ export function createResearchCanvas(options) {
     }
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (interactionMode !== 'select') setInteractionMode('select');
-      else if (gesture) finishGesture(null, false);
+      if (gesture) finishGesture(null, false);
       else clearSelection();
       return;
     }
@@ -1329,11 +1623,6 @@ export function createResearchCanvas(options) {
       beginEdit(onlyNode.id);
       return;
     }
-    if (onlyNode && event.key === 'Tab' && !event.altKey && !modifier) {
-      event.preventDefault();
-      createChild(onlyNode);
-      return;
-    }
     if (onlyNode && event.key === 'Enter' && !event.altKey && !modifier) {
       event.preventDefault();
       createSibling(onlyNode);
@@ -1351,116 +1640,237 @@ export function createResearchCanvas(options) {
       createNodeAt(screenToWorld(lastPointer || { x: rect.width / 2, y: rect.height / 2 }), { type: 'note' });
       return;
     }
-    const step = 42;
-    const panKeys = {
-      ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step],
-    };
+    const panKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
     const wasd = !onlyNode && event.key.length === 1
       ? { a: 'ArrowLeft', d: 'ArrowRight', w: 'ArrowUp', s: 'ArrowDown' }[event.key.toLowerCase()]
       : null;
-    const pan = panKeys[wasd || event.key];
-    if (pan && !event.altKey && !modifier) {
+    const panKey = wasd || event.key;
+    if (panKeys.has(panKey) && !event.altKey && !modifier) {
       event.preventDefault();
-      setCamera({ x: camera.x + pan[0], y: camera.y + pan[1], scale: camera.scale });
+      pressedPanKeys.add(panKey);
+      startArrowPan();
     }
   }
 
   function onKeyUp(event) {
-    if (event.code !== 'Space') return;
-    spaceHeld = false;
-    viewport.classList.remove('is-space-held');
-  }
-
-  function minimapBounds(nodes) {
-    return nodes.reduce((result, node) => ({
-      left: Math.min(result.left, node.x),
-      top: Math.min(result.top, node.y),
-      right: Math.max(result.right, node.x + node.width),
-      bottom: Math.max(result.bottom, node.y + node.height),
-    }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
-  }
-
-  function redrawMinimap() {
-    const nodes = model.nodes();
-    minimap.hidden = !nodes.length;
-    minimapNodes.replaceChildren();
-    minimapNodeElements.clear();
-    if (!nodes.length) {
-      minimapMapping = null;
+    if (event.key === 'Alt') {
+      altHeld = false;
+      viewport.classList.remove('is-alt-connecting');
       return;
     }
-    const bounds = minimapBounds(nodes);
-    const padding = 8;
-    const width = 156;
-    const height = 104;
-    const scale = Math.min(
-      (width - padding * 2) / Math.max(1, bounds.right - bounds.left),
-      (height - padding * 2) / Math.max(1, bounds.bottom - bounds.top),
-    );
-    const drawWidth = (bounds.right - bounds.left) * scale;
-    const drawHeight = (bounds.bottom - bounds.top) * scale;
-    minimapMapping = {
-      scale,
-      left: bounds.left,
-      top: bounds.top,
-      offsetX: (width - drawWidth) / 2,
-      offsetY: (height - drawHeight) / 2,
-    };
-    nodes.forEach((node) => {
-      const dot = document.createElement('div');
-      dot.className = 'research-minimap-node';
-      dot.dataset.minimapNodeId = node.id;
-      positionMinimapNode(dot, node);
-      minimapNodes.appendChild(dot);
-      minimapNodeElements.set(node.id, dot);
-    });
-    updateMinimapViewbox();
+    if (event.code === 'Space') {
+      spaceHeld = false;
+      viewport.classList.remove('is-space-held');
+    }
+    const panKey = event.key.length === 1
+      ? { a: 'ArrowLeft', d: 'ArrowRight', w: 'ArrowUp', s: 'ArrowDown' }[event.key.toLowerCase()]
+      : event.key;
+    if (panKey && pressedPanKeys.has(panKey)) {
+      pressedPanKeys.delete(panKey);
+      if (!pressedPanKeys.size) stopArrowPan();
+    }
   }
 
-  function positionMinimapNode(dot, node) {
-    if (!minimapMapping || !dot || !node) return;
-    dot.style.left = minimapMapping.offsetX + (node.x - minimapMapping.left) * minimapMapping.scale + 'px';
-    dot.style.top = minimapMapping.offsetY + (node.y - minimapMapping.top) * minimapMapping.scale + 'px';
-    dot.style.width = Math.max(2, node.width * minimapMapping.scale) + 'px';
-    dot.style.height = Math.max(2, node.height * minimapMapping.scale) + 'px';
+  function visibleWorldRect() {
+    const rect = viewportRect();
+    return {
+      left: -camera.x / camera.scale,
+      top: -camera.y / camera.scale,
+      right: (rect.width - camera.x) / camera.scale,
+      bottom: (rect.height - camera.y) / camera.scale,
+    };
+  }
+
+  function computeMinimapMapping() {
+    if (!contentBoundsCache) {
+      contentBoundsCache = model.nodes().reduce((result, node) => {
+        const bounds = nodeVisualBounds(node);
+        return {
+          left: Math.min(result.left, bounds.left),
+          top: Math.min(result.top, bounds.top),
+          right: Math.max(result.right, bounds.right),
+          bottom: Math.max(result.bottom, bounds.bottom),
+        };
+      }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+    }
+    const visible = visibleWorldRect();
+    const left = Math.min(contentBoundsCache.left, visible.left) - 60;
+    const top = Math.min(contentBoundsCache.top, visible.top) - 60;
+    const right = Math.max(contentBoundsCache.right, visible.right) + 60;
+    const bottom = Math.max(contentBoundsCache.bottom, visible.bottom) + 60;
+    const width = Math.max(1, right - left);
+    const height = Math.max(1, bottom - top);
+    const scale = Math.min(minimapSize.width / width, minimapSize.height / height);
+    return {
+      scale,
+      left,
+      top,
+      offsetX: (minimapSize.width - width * scale) / 2,
+      offsetY: (minimapSize.height - height * scale) / 2,
+    };
+  }
+
+  function sameMinimapMapping(first, second) {
+    return !!first && !!second
+      && Math.abs(first.left - second.left) < .5
+      && Math.abs(first.top - second.top) < .5
+      && Math.abs(first.offsetX - second.offsetX) < .5
+      && Math.abs(first.offsetY - second.offsetY) < .5
+      && Math.abs(first.scale - second.scale) < .0001;
+  }
+
+  function positionMinimapNode(dot, node, mapping = minimapMapping) {
+    if (!mapping || !dot || !node) return;
+    const bounds = nodeVisualBounds(node);
+    dot.style.left = mapping.offsetX + (bounds.left - mapping.left) * mapping.scale + 'px';
+    dot.style.top = mapping.offsetY + (bounds.top - mapping.top) * mapping.scale + 'px';
+    dot.style.width = Math.max(2, (bounds.right - bounds.left) * mapping.scale) + 'px';
+    dot.style.height = Math.max(2, (bounds.bottom - bounds.top) * mapping.scale) + 'px';
+  }
+
+  function placeMinimapViewbox() {
+    if (!minimapMapping || minimap.hidden) return;
+    const visible = visibleWorldRect();
+    const left = minimapMapping.offsetX + (visible.left - minimapMapping.left) * minimapMapping.scale;
+    const top = minimapMapping.offsetY + (visible.top - minimapMapping.top) * minimapMapping.scale;
+    const width = Math.max(4, (visible.right - visible.left) * minimapMapping.scale);
+    const height = Math.max(4, (visible.bottom - visible.top) * minimapMapping.scale);
+    minimapViewboxRect = { left, top, width, height };
+    minimapViewbox.style.left = left + 'px';
+    minimapViewbox.style.top = top + 'px';
+    minimapViewbox.style.width = width + 'px';
+    minimapViewbox.style.height = height + 'px';
+  }
+
+  function redrawMinimap(change = null, reuseBounds = false) {
+    if (minimapRebaseTimer) clearTimeout(minimapRebaseTimer);
+    minimapRebaseTimer = 0;
+    const nodes = model.nodes();
+    minimap.hidden = !nodes.length;
+    if (!nodes.length) {
+      minimapNodes.replaceChildren();
+      minimapNodeElements.clear();
+      minimapMapping = null;
+      minimapNodeMapping = null;
+      minimapViewboxRect = null;
+      contentBoundsCache = null;
+      return;
+    }
+    if (!reuseBounds) contentBoundsCache = null;
+    const nextMapping = computeMinimapMapping();
+    const changedNodeIds = new Set(change && Array.isArray(change.nodeIds) ? change.nodeIds : []);
+    const incremental = !!change && !change.topology
+      && sameMinimapMapping(nextMapping, minimapNodeMapping);
+    minimapMapping = nextMapping;
+    minimapNodeMapping = nextMapping;
+    minimapNodes.style.transform = '';
+    const seen = new Set();
+    nodes.forEach((node) => {
+      seen.add(node.id);
+      let dot = minimapNodeElements.get(node.id);
+      if (!dot) {
+        dot = document.createElement('div');
+        dot.className = 'research-minimap-node';
+        dot.dataset.minimapNodeId = node.id;
+        minimapNodes.appendChild(dot);
+        minimapNodeElements.set(node.id, dot);
+      }
+      if (!incremental || changedNodeIds.has(node.id)) positionMinimapNode(dot, node, nextMapping);
+    });
+    minimapNodeElements.forEach((dot, nodeId) => {
+      if (!seen.has(nodeId)) { dot.remove(); minimapNodeElements.delete(nodeId); }
+    });
+    placeMinimapViewbox();
   }
 
   function updateMinimapNodes(nodeIds) {
-    if (!minimapMapping) return;
+    if (!minimapNodeMapping) return;
     nodeIds.forEach((nodeId) => {
       const node = model.node(nodeId);
       const dot = minimapNodeElements.get(nodeId);
-      if (node && dot) positionMinimapNode(dot, node);
+      if (node && dot) positionMinimapNode(dot, node, minimapNodeMapping);
     });
+    placeMinimapViewbox();
   }
 
-  function updateMinimapViewbox() {
-    if (!minimapMapping || minimap.hidden) return;
+  function updateMinimapViewport() {
+    if (minimap.hidden || !minimapNodeMapping || !model.nodes().length) return;
+    const next = computeMinimapMapping();
+    minimapMapping = next;
+    const base = minimapNodeMapping;
+    const scale = next.scale / base.scale;
+    const x = next.offsetX + (base.left - next.left) * next.scale - base.offsetX * scale;
+    const y = next.offsetY + (base.top - next.top) * next.scale - base.offsetY * scale;
+    minimapNodes.style.transformOrigin = '0 0';
+    minimapNodes.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    placeMinimapViewbox();
+    if (minimapRebaseTimer) clearTimeout(minimapRebaseTimer);
+    minimapRebaseTimer = 0;
+    if (active) {
+      minimapRebaseTimer = setTimeout(() => {
+        minimapRebaseTimer = 0;
+        if (!sameMinimapMapping(minimapMapping, minimapNodeMapping)) redrawMinimap(null, true);
+      }, 160);
+    }
+  }
+
+  function minimapToWorld(x, y) {
+    if (!minimapMapping) return { x: 0, y: 0 };
+    return {
+      x: minimapMapping.left + (x - minimapMapping.offsetX) / minimapMapping.scale,
+      y: minimapMapping.top + (y - minimapMapping.offsetY) / minimapMapping.scale,
+    };
+  }
+
+  function centerCameraOnWorld(point, immediate = false) {
     const rect = viewportRect();
-    const world = screenToWorld({ x: 0, y: 0 });
-    minimapViewbox.style.left = minimapMapping.offsetX
-      + (world.x - minimapMapping.left) * minimapMapping.scale + 'px';
-    minimapViewbox.style.top = minimapMapping.offsetY
-      + (world.y - minimapMapping.top) * minimapMapping.scale + 'px';
-    minimapViewbox.style.width = Math.max(3, rect.width / camera.scale * minimapMapping.scale) + 'px';
-    minimapViewbox.style.height = Math.max(3, rect.height / camera.scale * minimapMapping.scale) + 'px';
+    const next = {
+      x: rect.width / 2 - point.x * targetCamera.scale,
+      y: rect.height / 2 - point.y * targetCamera.scale,
+      scale: targetCamera.scale,
+    };
+    if (immediate) setCamera(next);
+    else animateCamera(next);
   }
 
   function onMinimapPointerDown(event) {
     if (!minimapMapping || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    cancelPanInertia();
+    freezeCameraForInteraction();
     const rect = minimap.getBoundingClientRect();
-    const world = {
-      x: minimapMapping.left + (event.clientX - rect.left - minimapMapping.offsetX) / minimapMapping.scale,
-      y: minimapMapping.top + (event.clientY - rect.top - minimapMapping.offsetY) / minimapMapping.scale,
+    const local = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const inside = minimapViewboxRect
+      && local.x >= minimapViewboxRect.left
+      && local.x <= minimapViewboxRect.left + minimapViewboxRect.width
+      && local.y >= minimapViewboxRect.top
+      && local.y <= minimapViewboxRect.top + minimapViewboxRect.height;
+    const world = minimapToWorld(local.x, local.y);
+    let offsetX = 0;
+    let offsetY = 0;
+    if (inside) {
+      const view = viewportRect();
+      offsetX = world.x - (view.width / 2 - camera.x) / camera.scale;
+      offsetY = world.y - (view.height / 2 - camera.y) / camera.scale;
+    } else centerCameraOnWorld(world, false);
+    const pointerId = event.pointerId;
+    minimap.setPointerCapture(pointerId);
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      const point = minimapToWorld(moveEvent.clientX - rect.left, moveEvent.clientY - rect.top);
+      centerCameraOnWorld({ x: point.x - offsetX, y: point.y - offsetY }, true);
     };
-    const view = viewportRect();
-    setCamera({
-      x: view.width / 2 - world.x * camera.scale,
-      y: view.height / 2 - world.y * camera.scale,
-      scale: camera.scale,
-    });
+    const onUp = (upEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      if (minimap.hasPointerCapture(pointerId)) minimap.releasePointerCapture(pointerId);
+      minimap.removeEventListener('pointermove', onMove);
+      minimap.removeEventListener('pointerup', onUp);
+      minimap.removeEventListener('pointercancel', onUp);
+    };
+    minimap.addEventListener('pointermove', onMove);
+    minimap.addEventListener('pointerup', onUp);
+    minimap.addEventListener('pointercancel', onUp);
   }
 
   function onModelChange(change) {
@@ -1483,7 +1893,7 @@ export function createResearchCanvas(options) {
       return;
     }
     refreshEdgeCache(model.incidentEdgeIds(new Set(nodeIds)));
-    redrawMinimap();
+    redrawMinimap(change);
     scheduleDraw();
   }
 
@@ -1496,6 +1906,7 @@ export function createResearchCanvas(options) {
     if (!changedNodeIds.size) return;
     refreshEdgeCache(model.incidentEdgeIds(changedNodeIds));
     if (gesture) renderActiveEdges();
+    redrawMinimap({ topology: false, nodeIds: Array.from(changedNodeIds) });
     scheduleDraw();
   }
 
@@ -1506,7 +1917,7 @@ export function createResearchCanvas(options) {
   applyCamera();
 
   function getViewState() {
-    return { x: camera.x, y: camera.y, scale: camera.scale };
+    return { ...targetCamera };
   }
 
   function cancelProjectionRender() {
@@ -1562,6 +1973,11 @@ export function createResearchCanvas(options) {
     unsubscribe = null;
     if (drawRaf) cancelAnimationFrame(drawRaf);
     drawRaf = 0;
+    cancelCameraAnimation();
+    cancelPanInertia();
+    stopArrowPan();
+    if (minimapRebaseTimer) clearTimeout(minimapRebaseTimer);
+    minimapRebaseTimer = 0;
     cancelProjectionRender();
     selectedNodeIds.clear();
     selectedEdgeIds.clear();
@@ -1578,6 +1994,9 @@ export function createResearchCanvas(options) {
     minimapNodeElements.clear();
     minimap.hidden = true;
     minimapMapping = null;
+    minimapNodeMapping = null;
+    minimapViewboxRect = null;
+    contentBoundsCache = null;
     computeProjection = {};
     model = nextModel;
     unsubscribe = model.subscribe(onModelChange);
@@ -1586,6 +2005,7 @@ export function createResearchCanvas(options) {
       y: Number.isFinite(Number(viewState.y)) ? Number(viewState.y) : 0,
       scale: clamp(Number.isFinite(Number(viewState.scale)) ? Number(viewState.scale) : 1, MIN_SCALE, MAX_SCALE),
     };
+    targetCamera = { ...camera };
     syncNodeElements();
     rebuildEdgeCache();
     redrawMinimap();
@@ -1606,15 +2026,28 @@ export function createResearchCanvas(options) {
     viewport.addEventListener('dblclick', onDoubleClick, { signal });
     viewport.addEventListener('wheel', onWheel, { passive: false, signal });
     minimap.addEventListener('pointerdown', onMinimapPointerDown, { signal });
+    zoomIndicator.addEventListener('click', resetZoom, { signal });
+    installInteractionPreferenceListeners(signal);
     window.addEventListener('keydown', onKeyDown, { capture: true, signal });
     window.addEventListener('keyup', onKeyUp, { capture: true, signal });
     window.addEventListener('blur', () => {
       spaceHeld = false;
-      viewport.classList.remove('is-space-held');
+      altHeld = false;
+      viewport.classList.remove('is-space-held', 'is-alt-connecting');
+      stopArrowPan();
+      cancelPanInertia();
       if (gesture) finishGesture(null, true);
     }, { signal });
     viewportResizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(resizeCanvas) : null;
     if (viewportResizeObserver) viewportResizeObserver.observe(viewport);
+    minimapResizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      const width = minimap.clientWidth;
+      const height = minimap.clientHeight;
+      if (!width || !height || (width === minimapSize.width && height === minimapSize.height)) return;
+      minimapSize = { width, height };
+      redrawMinimap();
+    }) : null;
+    if (minimapResizeObserver) minimapResizeObserver.observe(minimap);
     nodeResizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(handleNodeResize) : null;
     if (nodeResizeObserver) nodeElements.forEach((element) => nodeResizeObserver.observe(element));
     resizeCanvas();
@@ -1630,14 +2063,26 @@ export function createResearchCanvas(options) {
     activeController = null;
     if (viewportResizeObserver) viewportResizeObserver.disconnect();
     viewportResizeObserver = null;
+    if (minimapResizeObserver) minimapResizeObserver.disconnect();
+    minimapResizeObserver = null;
     if (nodeResizeObserver) nodeResizeObserver.disconnect();
     nodeResizeObserver = null;
     if (drawRaf) cancelAnimationFrame(drawRaf);
     drawRaf = 0;
-    cancelProjectionRender();
+    cancelCameraAnimation();
+    cancelPanInertia();
+    stopArrowPan();
+    if (minimapRebaseTimer) clearTimeout(minimapRebaseTimer);
+    minimapRebaseTimer = 0;
     active = false;
+    camera = { ...targetCamera };
+    applyCamera();
+    if (minimapRebaseTimer) clearTimeout(minimapRebaseTimer);
+    minimapRebaseTimer = 0;
+    cancelProjectionRender();
     spaceHeld = false;
-    viewport.classList.remove('is-space-held', 'is-panning');
+    altHeld = false;
+    viewport.classList.remove('is-space-held', 'is-panning', 'is-alt-connecting');
     return true;
   }
 
@@ -1671,13 +2116,14 @@ export function createResearchCanvas(options) {
       const point = worldPoint || screenToWorld({ x: rect.width / 2, y: rect.height / 2 });
       return createNodeAt(point, { ...options, edit: false });
     },
-    getInteractionMode,
+    getConnectionKind,
     getCreationTool,
     getSelectedNode: () => selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
     getSelection: () => ({ nodeIds: Array.from(selectedNodeIds), edgeIds: Array.from(selectedEdgeIds) }),
     clearSelection,
-    setInteractionMode,
+    setConnectionKind,
     setCreationTool,
     setComputeProjection,
+    resetInteractionPreferences,
   });
 }

@@ -18,6 +18,9 @@ import {
 
 const SAVE_DELAY_MS = 350;
 const SAVE_RETRY_MS = 1800;
+const SIDE_PANEL_COLLAPSED_KEY = 'research:sidePanelCollapsed:v1';
+const COMPUTE_DOCK_COLLAPSED_KEY = 'research:computeDockCollapsed:v1';
+const CONNECTION_KIND_KEY = 'research:connectionKind:v1';
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 
@@ -36,14 +39,19 @@ export async function createResearchEditor(stage) {
   const railAdd = required('[data-research-page-add]');
   const pageDelete = required('[data-research-page-delete]');
   const dock = required('[data-research-compute-dock]');
+  const dockCollapse = required('[data-research-dock-collapse]');
   const addButton = required('[data-research-add]');
-  const palette = required('[data-research-add-palette]');
+  const sidePanel = required('[data-research-side-panel]');
+  const sidePanelBody = required('.research-side-panel-body');
+  const nodeLibrary = required('[data-research-node-library]');
   const paletteSearch = required('[data-research-add-search]');
   const paletteList = required('[data-research-add-list]');
   const inspector = required('[data-research-inspector]');
   const inspectorTitle = required('[data-research-inspector-title]');
   const inspectorFields = required('[data-research-inspector-fields]');
   const inspectorClose = required('[data-research-inspector-close]');
+  const selectionSummary = required('[data-research-selection-summary]');
+  const selectionCopy = required('[data-research-selection-copy]');
   const tracePanel = required('[data-research-trace]');
   const traceSummary = required('[data-research-trace-summary]');
   const traceList = required('[data-research-trace-list]');
@@ -60,6 +68,18 @@ export async function createResearchEditor(stage) {
   const helpOpen = required('[data-research-help-open]');
   const helpOverlay = required('[data-research-help-overlay]');
   const helpClose = required('[data-research-help-close]');
+  const settingsOpen = required('[data-research-settings-open]');
+  const settingsPanel = required('[data-research-settings-panel]');
+  const settingsResetOpen = required('[data-research-settings-reset-open]');
+  const settingsResetConfirm = required('[data-research-settings-reset-confirm]');
+  const settingsResetCancel = required('[data-research-settings-reset-cancel]');
+  const settingsResetAccept = required('[data-research-settings-reset-accept]');
+  const panSpeedInput = required('[data-research-pan-speed]');
+  const panInertiaInput = required('[data-research-pan-inertia]');
+  const zoomSpeedInput = required('[data-research-zoom-speed]');
+  const panSpeedValue = required('[data-research-pan-speed-value]');
+  const panInertiaValue = required('[data-research-pan-inertia-value]');
+  const zoomSpeedValue = required('[data-research-zoom-speed-value]');
   const persistenceStatus = required('[data-research-persistence-status]');
 
   let loadedWorkspace;
@@ -90,6 +110,8 @@ export async function createResearchEditor(stage) {
   let computeRevision = 0;
   let selectedNodeId = '';
   let selectedNodeIds = [];
+  let selectedEdgeId = '';
+  let selectedEdgeIds = [];
   let pendingSubcircuit = null;
   let saveTimer = 0;
   let saveRetryTimer = 0;
@@ -103,22 +125,44 @@ export async function createResearchEditor(stage) {
   let railWheelTimer = 0;
   let pageSwitchMotion = null;
   let pageSwitchMotionId = 0;
+  let sidePanelCollapsed = false;
+  let dockCollapsed = false;
+  let sidePanelContentKey = 'library';
+  let panelContentTransitionTimer = 0;
+  let panelHitGuardTimer = 0;
+  let subcircuitCloseTimer = 0;
+  let subcircuitReturnFocus = null;
+  let helpCloseTimer = 0;
+  let settingsCloseTimer = 0;
   let persistenceRevision = String(loadedWorkspace.revision || '');
+
+  try {
+    sidePanelCollapsed = localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === '1';
+    dockCollapsed = localStorage.getItem(COMPUTE_DOCK_COLLAPSED_KEY) === '1';
+  } catch (_error) {}
 
   const canvas = createResearchCanvas({
     stage,
     registry,
     model: session.activePage().model,
     view: session.activePage().view,
+    panSpeedInput,
+    panInertiaInput,
+    zoomSpeedInput,
+    panSpeedValue,
+    panInertiaValue,
+    zoomSpeedValue,
     onViewChange: (view) => {
       if (session.setPageView(renderedPageId, view)) scheduleSave();
     },
-    onCreationToolChange: () => {},
+    onCreationToolChange: () => renderPalette(paletteSearch.value),
     onSelectionChange: (selection) => {
       selectedNodeIds = selection.nodeIds.slice();
+      selectedEdgeIds = selection.edgeIds.slice();
       subcircuitCreate.hidden = selectedNodeIds.length === 0;
       selectedNodeId = selection.primaryNode ? selection.primaryNode.id : '';
-      renderInspector(selection.primaryNode);
+      selectedEdgeId = selection.primaryEdge ? selection.primaryEdge.id : '';
+      renderSelectionPanel(selection);
     },
     onNodeAction: (nodeId) => {
       const page = session.page(renderedPageId);
@@ -219,6 +263,7 @@ export async function createResearchEditor(stage) {
       } else (change && change.nodeIds || []).forEach((id) => page.runtime.dirtyNodeIds.add(String(id)));
       scheduleCompute(page.id);
       if (selectedNodeId) renderInspector(page.model.node(selectedNodeId));
+      else if (selectedEdgeId) renderEdgeInspector(page.model.edge(selectedEdgeId));
     });
   }
 
@@ -441,13 +486,14 @@ export async function createResearchEditor(stage) {
     if (!page) return false;
     const current = session.page(renderedPageId);
     if (current) session.setPageView(current.id, canvas.getViewState());
-    session.activatePage(page.id); renderedPageId = page.id; selectedNodeId = '';
+    session.activatePage(page.id); renderedPageId = page.id; selectedNodeId = ''; selectedNodeIds = [];
+    selectedEdgeId = ''; selectedEdgeIds = [];
     canvas.setModel(page.model, page.view); bindModel();
     const runtime = ensureRuntime(page); canvas.setComputeProjection(page.runtime.computeProjection);
     speedSelect.value = String(page.simulation.speed);
     simulation.selectPage(page.id, page.simulation.speed);
     if (options.renderRail !== false) renderRail();
-    updateDeleteVisibility(); renderInspector(null); scheduleSave();
+    updateDeleteVisibility(); showLibrary(); scheduleSave();
     return !!runtime;
   }
 
@@ -576,8 +622,104 @@ export async function createResearchEditor(stage) {
     switchPage(result.active.id, { direction: -1, railAlreadyRendered: true });
   }
 
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function finishPanelContentTransition() {
+    if (panelContentTransitionTimer) clearTimeout(panelContentTransitionTimer);
+    panelContentTransitionTimer = 0;
+    sidePanelBody.classList.remove('is-content-entering');
+    inspectorTitle.classList.remove('is-content-entering');
+    sidePanel.querySelectorAll('.research-side-panel-content-ghost').forEach((ghost) => ghost.remove());
+  }
+
+  function animatePanelContent() {
+    finishPanelContentTransition();
+    if (sidePanelCollapsed || prefersReducedMotion()) return;
+    const ghost = sidePanelBody.cloneNode(true);
+    ghost.className = 'research-side-panel-content-ghost';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.setAttribute('inert', '');
+    ghost.querySelectorAll('*').forEach((element) => {
+      element.removeAttribute('id');
+      Array.from(element.attributes).forEach((attribute) => {
+        if (attribute.name.startsWith('data-research-')) element.removeAttribute(attribute.name);
+      });
+    });
+    ghost.scrollTop = sidePanelBody.scrollTop;
+    sidePanel.appendChild(ghost);
+    sidePanelBody.scrollTop = 0;
+    sidePanelBody.classList.add('is-content-entering');
+    inspectorTitle.classList.add('is-content-entering');
+    panelContentTransitionTimer = setTimeout(finishPanelContentTransition, 220);
+  }
+
+  function setPanelView(view, title, contentKey = view) {
+    const changed = sidePanelContentKey !== contentKey;
+    if (changed) animatePanelContent();
+    sidePanelContentKey = contentKey;
+    nodeLibrary.hidden = view !== 'library';
+    inspector.hidden = view !== 'inspector';
+    selectionSummary.hidden = view !== 'selection';
+    inspectorTitle.textContent = title;
+  }
+
+  function setSidePanelCollapsed(collapsed, persist = true) {
+    sidePanelCollapsed = !!collapsed;
+    if (sidePanelCollapsed) finishPanelContentTransition();
+    if (sidePanelCollapsed && sidePanel.contains(document.activeElement)) {
+      viewport.focus({ preventScroll: true });
+    }
+    sidePanel.classList.toggle('is-collapsed', sidePanelCollapsed);
+    sidePanel.setAttribute('aria-hidden', sidePanelCollapsed ? 'true' : 'false');
+    sidePanel.toggleAttribute('inert', sidePanelCollapsed);
+    addButton.setAttribute('aria-expanded', sidePanelCollapsed ? 'false' : 'true');
+    if (persist) {
+      try { localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, sidePanelCollapsed ? '1' : '0'); } catch (_error) {}
+    }
+  }
+
+  function setDockCollapsed(collapsed, persist = true) {
+    dockCollapsed = !!collapsed;
+    dock.classList.toggle('is-collapsed', dockCollapsed);
+    const row = dock.querySelector('.research-compute-row');
+    if (row) {
+      row.setAttribute('aria-hidden', dockCollapsed ? 'true' : 'false');
+      row.toggleAttribute('inert', dockCollapsed);
+    }
+    dockCollapse.setAttribute('aria-expanded', dockCollapsed ? 'false' : 'true');
+    dockCollapse.setAttribute('aria-label', dockCollapsed ? '展开下方工具栏' : '收起下方工具栏');
+    if (persist) {
+      try { localStorage.setItem(COMPUTE_DOCK_COLLAPSED_KEY, dockCollapsed ? '1' : '0'); } catch (_error) {}
+    }
+  }
+
+  function guardPanelHitTesting() {
+    if (panelHitGuardTimer) clearTimeout(panelHitGuardTimer);
+    sidePanel.classList.add('is-hit-guarded');
+    panelHitGuardTimer = setTimeout(() => {
+      panelHitGuardTimer = 0;
+      sidePanel.classList.remove('is-hit-guarded');
+    }, 360);
+  }
+
+  function showLibrary(options = {}) {
+    setPanelView('library', '研究 · 添加节点', 'library');
+    renderPalette(paletteSearch.value);
+    renderTrace(null);
+    if (options.expand) setSidePanelCollapsed(false);
+    if (options.focusSearch) requestAnimationFrame(() => paletteSearch.focus({ preventScroll: true }));
+  }
+
   function renderPalette(query = '') {
     query = String(query || '').trim().toLowerCase();
+    let creation = canvas.getCreationTool();
+    if (creation.type === 'subcircuit' && (!creation.config
+      || !subcircuitCatalog.revision(creation.config.definitionId, creation.config.revision))) {
+      canvas.setCreationTool('note');
+      return;
+    }
     const fragment = document.createDocumentFragment();
     registry.categories.forEach((category) => {
       if (category.id === 'subcircuit') return;
@@ -589,7 +731,10 @@ export async function createResearchEditor(stage) {
       const row = document.createElement('div');
       definitions.forEach((definition) => {
         const button = document.createElement('button'); button.type = 'button';
-        button.dataset.researchNodeType = definition.type; button.textContent = definition.label; row.appendChild(button);
+        button.dataset.researchNodeType = definition.type; button.textContent = definition.label;
+        const selected = creation.type === definition.type && creation.type !== 'subcircuit';
+        button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        row.appendChild(button);
       });
       section.appendChild(row); fragment.appendChild(section);
     });
@@ -604,16 +749,15 @@ export async function createResearchEditor(stage) {
         button.dataset.researchSubcircuitId = definition.id;
         button.dataset.researchSubcircuitRevision = String(definition.latestRevision);
         button.textContent = `${definition.name} · r${definition.latestRevision}`;
-        button.title = '单击放置实例；右键删除未被引用的最新修订'; row.appendChild(button);
+        const selected = creation.type === 'subcircuit' && creation.config
+          && creation.config.definitionId === definition.id
+          && Number(creation.config.revision) === Number(definition.latestRevision);
+        button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        button.title = '单击选择，双击画布空白处放置；右键删除未被引用的最新修订'; row.appendChild(button);
       });
       section.appendChild(row); fragment.appendChild(section);
     }
     paletteList.replaceChildren(fragment);
-  }
-
-  function setPaletteOpen(open) {
-    palette.hidden = !open; addButton.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) { renderPalette(paletteSearch.value); requestAnimationFrame(() => paletteSearch.focus({ preventScroll: true })); }
   }
 
   function renderSubcircuitDraft() {
@@ -666,6 +810,10 @@ export async function createResearchEditor(stage) {
 
   function openSubcircuitDialog() {
     if (!selectedNodeIds.length) return;
+    if (subcircuitCloseTimer) clearTimeout(subcircuitCloseTimer);
+    subcircuitCloseTimer = 0;
+    subcircuitOverlay.classList.remove('is-closing');
+    subcircuitReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const options = [new Option('新建定义', 'new')];
     subcircuitCatalog.definitions().forEach((definition) => options.push(new Option(`发布 ${definition.name} 的新修订`, definition.id)));
     subcircuitTarget.replaceChildren(...options); subcircuitTarget.value = 'new';
@@ -675,8 +823,23 @@ export async function createResearchEditor(stage) {
     requestAnimationFrame(() => subcircuitName.focus({ preventScroll: true }));
   }
 
-  function closeSubcircuitDialog() {
-    subcircuitOverlay.hidden = true; pendingSubcircuit = null; subcircuitPorts.replaceChildren();
+  function closeSubcircuitDialog(options = {}) {
+    if (subcircuitOverlay.hidden || subcircuitOverlay.classList.contains('is-closing')) return;
+    pendingSubcircuit = null;
+    const finish = () => {
+      if (subcircuitCloseTimer) clearTimeout(subcircuitCloseTimer);
+      subcircuitCloseTimer = 0;
+      subcircuitOverlay.hidden = true;
+      subcircuitOverlay.classList.remove('is-closing');
+      subcircuitPorts.replaceChildren();
+      if (options.restoreFocus !== false && subcircuitReturnFocus && subcircuitReturnFocus.isConnected) {
+        subcircuitReturnFocus.focus({ preventScroll: true });
+      }
+      subcircuitReturnFocus = null;
+    };
+    if (prefersReducedMotion()) { finish(); return; }
+    subcircuitOverlay.classList.add('is-closing');
+    subcircuitCloseTimer = setTimeout(finish, 190);
   }
 
   function readSubcircuitPorts() {
@@ -734,15 +897,19 @@ export async function createResearchEditor(stage) {
     }
     const instance = replaceSelectionWithSubcircuit(page.model, pendingSubcircuit.nodeIds, definition, revision);
     if (!instance) { setPersistenceStatus('选区已经变化，请重新封装', 'error'); return; }
-    closeSubcircuitDialog(); canvas.clearSelection(); renderPalette(paletteSearch.value); scheduleSave(0);
+    closeSubcircuitDialog({ restoreFocus: false }); canvas.clearSelection(); renderPalette(paletteSearch.value); scheduleSave(0);
   }
 
-  function setMode(mode) {
-    canvas.setInteractionMode(mode);
-    dock.querySelectorAll('[data-research-mode]').forEach((button) => {
-      const selected = button.dataset.researchMode === mode;
+  function setConnectionKind(kind, persist = true) {
+    const selectedKind = canvas.setConnectionKind(kind);
+    dock.querySelectorAll('[data-research-connection-kind]').forEach((button) => {
+      const selected = button.dataset.researchConnectionKind === selectedKind;
       button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
+    if (persist) {
+      try { localStorage.setItem(CONNECTION_KIND_KEY, selectedKind); } catch (_error) {}
+    }
+    return selectedKind;
   }
 
   function syncRunControls(state) {
@@ -805,18 +972,27 @@ export async function createResearchEditor(stage) {
     traceList.replaceChildren(fragment);
   }
 
+  function inspectorHeading(text) {
+    const heading = document.createElement('div');
+    heading.className = 'research-inspector-heading';
+    heading.textContent = text;
+    return heading;
+  }
+
   function renderInspector(node) {
-    if (!node) { inspector.hidden = true; inspectorFields.replaceChildren(); renderTrace(null); return; }
+    if (!node) { showLibrary(); return; }
     const definition = registry.definition(node.type);
-    if (!definition) { inspector.hidden = true; return; }
-    inspector.hidden = false; inspectorTitle.textContent = definition.label + ' · 属性';
+    if (!definition) { showLibrary(); return; }
+    setPanelView('inspector', definition.label + ' · 属性', 'node:' + node.id);
     const fragment = document.createDocumentFragment();
+    fragment.appendChild(inspectorHeading('基本信息'));
     const labelRow = document.createElement('label'); labelRow.textContent = '标签';
     const labelInput = document.createElement('input'); labelInput.type = 'text'; labelInput.value = node.label;
     const commitLabel = () => session.page(renderedPageId).model.updateNode(node.id, { label: labelInput.value });
     labelInput.addEventListener('change', commitLabel); labelInput.addEventListener('blur', commitLabel);
     labelRow.appendChild(labelInput); fragment.appendChild(labelRow);
     if (node.type === 'subcircuit') {
+      fragment.appendChild(inspectorHeading('子电路修订'));
       const item = subcircuitCatalog.definition(node.config.definitionId);
       const info = document.createElement('p');
       info.className = 'research-subcircuit-version';
@@ -837,6 +1013,7 @@ export async function createResearchEditor(stage) {
         fragment.appendChild(upgrade);
       }
     }
+    if (definition.configFields.length) fragment.appendChild(inspectorHeading('节点配置'));
     definition.configFields.forEach((field) => {
       const row = document.createElement('label'); row.textContent = field.label;
       const commit = (value) => {
@@ -858,27 +1035,145 @@ export async function createResearchEditor(stage) {
       fragment.appendChild(row);
     });
     if (definition.stateful) {
+      fragment.appendChild(inspectorHeading('状态'));
       const row = document.createElement('label'); row.className = 'research-persist-row'; row.textContent = '重开后保留状态';
       const input = document.createElement('input'); input.type = 'checkbox'; input.checked = node.statePolicy === 'persist';
       input.addEventListener('change', () => session.page(renderedPageId).model.updateNode(node.id, { statePolicy: input.checked ? 'persist' : 'reset' }));
       row.appendChild(input); fragment.appendChild(row);
     }
+    fragment.appendChild(inspectorHeading('操作'));
+    const publish = document.createElement('button'); publish.type = 'button';
+    publish.dataset.researchSubcircuitCreate = '';
+    publish.textContent = '封装当前节点为子电路';
+    publish.addEventListener('click', openSubcircuitDialog);
+    fragment.appendChild(publish);
     inspectorFields.replaceChildren(fragment);
     renderTrace(node);
+  }
+
+  function edgeEndpointLabel(nodeId, portId) {
+    const page = session.page(renderedPageId);
+    const node = page && page.model.node(nodeId);
+    return (node && node.label || nodeId) + (portId ? '.' + portId : '');
+  }
+
+  function renderEdgeInspector(edge) {
+    if (!edge) { showLibrary(); return; }
+    setPanelView('inspector', (edge.kind === 'wire' ? '导线' : '关系线') + ' · 属性', 'edge:' + edge.id);
+    renderTrace(null);
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(inspectorHeading('基本信息'));
+    const type = document.createElement('p'); type.className = 'research-inspector-readonly';
+    type.textContent = '类型：' + (edge.kind === 'wire' ? '类型化导线' : '知识关系线');
+    const endpoints = document.createElement('p'); endpoints.className = 'research-inspector-readonly';
+    endpoints.textContent = edge.kind === 'wire'
+      ? `${edgeEndpointLabel(edge.from.nodeId, edge.from.portId)} → ${edgeEndpointLabel(edge.to.nodeId, edge.to.portId)}`
+      : `${edgeEndpointLabel(edge.fromNodeId)} → ${edgeEndpointLabel(edge.toNodeId)}`;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'research-edge-delete';
+    remove.textContent = '删除这条连线';
+    remove.addEventListener('click', () => {
+      const page = session.page(renderedPageId);
+      if (!page || !page.model.edge(edge.id)) return;
+      page.model.remove(new Set(), new Set([edge.id]));
+      canvas.clearSelection();
+    });
+    fragment.append(type, endpoints, inspectorHeading('操作'), remove);
+    inspectorFields.replaceChildren(fragment);
+  }
+
+  function renderSelectionSummary(selection) {
+    const selectionKey = 'selection:' + selection.nodeIds.slice().sort().join(',')
+      + '|' + selection.edgeIds.slice().sort().join(',');
+    setPanelView('selection', '选区 · 属性', selectionKey);
+    renderTrace(null);
+    inspectorFields.replaceChildren();
+    const nodeCount = selection.nodeIds.length;
+    const edgeCount = selection.edgeIds.length;
+    selectionCopy.textContent = `已选 ${nodeCount} 个节点${edgeCount ? `、${edgeCount} 条连线` : ''}。可把节点选区发布为可复用子电路。`;
+    subcircuitCreate.hidden = nodeCount === 0;
+  }
+
+  function renderSelectionPanel(selection) {
+    if (selection.primaryNode && selection.nodeIds.length === 1 && !selection.edgeIds.length) {
+      renderInspector(selection.primaryNode); return;
+    }
+    if (selection.primaryEdge && selection.edgeIds.length === 1 && !selection.nodeIds.length) {
+      renderEdgeInspector(selection.primaryEdge); return;
+    }
+    if (selection.nodeIds.length || selection.edgeIds.length) {
+      renderSelectionSummary(selection); return;
+    }
+    showLibrary();
+  }
+
+  function closeSettingsResetConfirmation() {
+    settingsResetConfirm.hidden = true;
+    settingsResetOpen.setAttribute('aria-expanded', 'false');
+  }
+
+  function openSettingsPanel() {
+    if (!helpOverlay.hidden) closeHelpOverlay({ focus: false, immediate: true });
+    if (settingsCloseTimer) clearTimeout(settingsCloseTimer);
+    settingsCloseTimer = 0;
+    settingsPanel.classList.remove('is-closing');
+    settingsPanel.hidden = false;
+    settingsOpen.setAttribute('aria-expanded', 'true');
+  }
+
+  function closeSettingsPanel(options = {}) {
+    if (settingsPanel.hidden || (settingsPanel.classList.contains('is-closing') && !options.immediate)) return;
+    settingsOpen.setAttribute('aria-expanded', 'false');
+    closeSettingsResetConfirmation();
+    const finish = () => {
+      if (settingsCloseTimer) clearTimeout(settingsCloseTimer);
+      settingsCloseTimer = 0;
+      settingsPanel.hidden = true;
+      settingsPanel.classList.remove('is-closing');
+      if (options.focus !== false) settingsOpen.focus({ preventScroll: true });
+    };
+    if (options.immediate || prefersReducedMotion()) { finish(); return; }
+    settingsPanel.classList.add('is-closing');
+    settingsCloseTimer = setTimeout(finish, 150);
+  }
+
+  function openHelpOverlay() {
+    closeSettingsPanel({ focus: false, immediate: true });
+    if (helpCloseTimer) clearTimeout(helpCloseTimer);
+    helpCloseTimer = 0;
+    helpOverlay.classList.remove('is-closing');
+    helpOverlay.hidden = false;
+    helpOpen.setAttribute('aria-expanded', 'true');
+    helpClose.focus({ preventScroll: true });
+  }
+
+  function closeHelpOverlay(options = {}) {
+    if (helpOverlay.hidden || (helpOverlay.classList.contains('is-closing') && !options.immediate)) return;
+    helpOpen.setAttribute('aria-expanded', 'false');
+    const finish = () => {
+      if (helpCloseTimer) clearTimeout(helpCloseTimer);
+      helpCloseTimer = 0;
+      helpOverlay.hidden = true;
+      helpOverlay.classList.remove('is-closing');
+      if (options.focus !== false) helpOpen.focus({ preventScroll: true });
+    };
+    if (options.immediate || prefersReducedMotion()) { finish(); return; }
+    helpOverlay.classList.add('is-closing');
+    helpCloseTimer = setTimeout(finish, 190);
   }
 
   function installListeners() {
     activeController = new AbortController(); const signal = activeController.signal;
     dock.addEventListener('click', (event) => {
-      if (event.target.closest('[data-research-subcircuit-create]')) { openSubcircuitDialog(); return; }
-      const mode = event.target.closest('[data-research-mode]');
-      if (mode) { setMode(mode.dataset.researchMode); setPaletteOpen(false); return; }
-      if (event.target.closest('[data-research-add]')) { setPaletteOpen(palette.hidden); return; }
+      const kind = event.target.closest('[data-research-connection-kind]');
+      if (kind) { setConnectionKind(kind.dataset.researchConnectionKind); viewport.focus({ preventScroll: true }); return; }
+      if (event.target.closest('[data-research-add]')) { showLibrary({ expand: true, focusSearch: true }); return; }
       if (event.target.closest('[data-research-run]')) simulation.run();
       else if (event.target.closest('[data-research-pause]')) { simulation.pause(); scheduleSave(0); }
       else if (event.target.closest('[data-research-step]')) simulation.step();
       else if (event.target.closest('[data-research-reset]')) simulation.reset();
     }, { signal });
+    dockCollapse.addEventListener('click', () => setDockCollapsed(!dockCollapsed), { signal });
+    subcircuitCreate.addEventListener('click', openSubcircuitDialog, { signal });
     speedSelect.addEventListener('change', () => {
       const speed = Number(speedSelect.value); simulation.setSpeed(speed);
       if (session.setPageSpeed(renderedPageId, speed)) scheduleSave();
@@ -889,17 +1184,17 @@ export async function createResearchEditor(stage) {
       if (reusable) {
         const definition = subcircuitCatalog.definition(reusable.dataset.researchSubcircuitId);
         if (!definition) return;
-        canvas.createNodeWithOptions({
+        canvas.setCreationTool({
           type: 'subcircuit', label: definition.name,
           config: { definitionId: definition.id, revision: definition.latestRevision },
           width: 192,
           height: Math.max(80, 48 + (subcircuitCatalog.revision(definition.id, definition.latestRevision).ports.length * 18)),
         });
-        setMode('select'); setPaletteOpen(false); viewport.focus({ preventScroll: true }); return;
+        renderPalette(paletteSearch.value); viewport.focus({ preventScroll: true }); return;
       }
       const button = event.target.closest('[data-research-node-type]');
       if (!button) return;
-      canvas.setCreationTool(button.dataset.researchNodeType); setMode('select'); setPaletteOpen(false); viewport.focus({ preventScroll: true });
+      canvas.setCreationTool(button.dataset.researchNodeType); renderPalette(paletteSearch.value); viewport.focus({ preventScroll: true });
     }, { signal });
     paletteList.addEventListener('contextmenu', (event) => {
       const button = event.target.closest('[data-research-subcircuit-id]');
@@ -922,7 +1217,7 @@ export async function createResearchEditor(stage) {
       button.addEventListener('click', closeSubcircuitDialog, { signal });
     });
     subcircuitOverlay.addEventListener('mousedown', (event) => { if (event.target === subcircuitOverlay) closeSubcircuitDialog(); }, { signal });
-    inspectorClose.addEventListener('click', () => { inspector.hidden = true; }, { signal });
+    inspectorClose.addEventListener('click', () => setSidePanelCollapsed(true), { signal });
     traceClear.addEventListener('click', () => {
       const page = session.page(renderedPageId);
       const node = page && page.model.node(selectedNodeId);
@@ -938,21 +1233,55 @@ export async function createResearchEditor(stage) {
     }, { signal });
     railAdd.addEventListener('click', createPage, { signal });
     pageDelete.addEventListener('click', deletePage, { signal });
-    helpOpen.addEventListener('click', () => { helpOverlay.hidden = false; helpOpen.setAttribute('aria-expanded', 'true'); helpClose.focus({ preventScroll: true }); }, { signal });
-    helpClose.addEventListener('click', () => { helpOverlay.hidden = true; helpOpen.setAttribute('aria-expanded', 'false'); helpOpen.focus({ preventScroll: true }); }, { signal });
-    helpOverlay.addEventListener('mousedown', (event) => { if (event.target === helpOverlay) helpClose.click(); }, { signal });
+    settingsOpen.addEventListener('click', () => {
+      if (settingsPanel.hidden || settingsPanel.classList.contains('is-closing')) openSettingsPanel();
+      else closeSettingsPanel();
+    }, { signal });
+    settingsResetOpen.addEventListener('click', () => {
+      const opening = settingsResetConfirm.hidden;
+      settingsResetConfirm.hidden = !opening;
+      settingsResetOpen.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      if (opening) settingsResetCancel.focus({ preventScroll: true });
+    }, { signal });
+    settingsResetCancel.addEventListener('click', () => {
+      closeSettingsResetConfirmation();
+      settingsResetOpen.focus({ preventScroll: true });
+    }, { signal });
+    settingsResetAccept.addEventListener('click', () => {
+      canvas.resetInteractionPreferences();
+      closeSettingsResetConfirmation();
+      settingsResetOpen.focus({ preventScroll: true });
+    }, { signal });
+    helpOpen.addEventListener('click', openHelpOverlay, { signal });
+    helpClose.addEventListener('click', closeHelpOverlay, { signal });
+    helpOverlay.addEventListener('mousedown', (event) => { if (event.target === helpOverlay) closeHelpOverlay(); }, { signal });
+    document.addEventListener('pointerdown', (event) => {
+      if (settingsPanel.hidden || settingsPanel.contains(event.target) || settingsOpen.contains(event.target)) return;
+      closeSettingsPanel({ focus: false });
+    }, { capture: true, signal });
     document.addEventListener('visibilitychange', () => {
       simulation.setVisible(!document.hidden);
       if (document.hidden) scheduleSave(0);
     }, { signal });
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !subcircuitOverlay.hidden) { event.preventDefault(); closeSubcircuitDialog(); }
-      else if (event.key === 'Escape' && !helpOverlay.hidden) { event.preventDefault(); helpClose.click(); }
+      if (event.key === 'Escape' && !settingsResetConfirm.hidden) {
+        event.preventDefault(); closeSettingsResetConfirmation(); settingsResetOpen.focus({ preventScroll: true });
+      }
+      else if (event.key === 'Escape' && !settingsPanel.hidden) { event.preventDefault(); closeSettingsPanel(); }
+      else if (event.key === 'Escape' && !subcircuitOverlay.hidden) { event.preventDefault(); closeSubcircuitDialog(); }
+      else if (event.key === 'Escape' && !helpOverlay.hidden) { event.preventDefault(); closeHelpOverlay(); }
       else if (event.key === '?' && helpOverlay.hidden && !event.target.closest('input,select,textarea,[contenteditable="true"]')) { event.preventDefault(); helpOpen.click(); }
+      else if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+        && !event.isComposing && event.keyCode !== 229 && subcircuitOverlay.hidden && helpOverlay.hidden && settingsPanel.hidden
+        && !event.target.closest('input,select,textarea,button,[contenteditable="true"]')
+        && !sidePanel.contains(event.target)) {
+        event.preventDefault();
+        setSidePanelCollapsed(!sidePanelCollapsed);
+      }
     }, { capture: true, signal });
     stage.addEventListener('pointerdown', (event) => {
-      if (!palette.hidden && !palette.contains(event.target) && !addButton.contains(event.target)) setPaletteOpen(false);
-    }, { signal });
+      if (event.button === 0 && event.target.closest('[data-node-id]')) guardPanelHitTesting();
+    }, { capture: true, signal });
     const revealRail = () => {
       if (railHideTimer) clearTimeout(railHideTimer);
       railHideTimer = 0;
@@ -991,10 +1320,14 @@ export async function createResearchEditor(stage) {
     }, { passive: false, signal });
   }
 
-  bindModel(); renderRail({ initial: true }); renderPalette(); updateDeleteVisibility();
+  let initialConnectionKind = 'wire';
+  try { initialConnectionKind = localStorage.getItem(CONNECTION_KIND_KEY) === 'relation' ? 'relation' : 'wire'; } catch (_error) {}
+  bindModel(); renderRail({ initial: true }); showLibrary(); updateDeleteVisibility();
   ensureRuntime(session.activePage()); canvas.setComputeProjection(session.activePage().runtime.computeProjection);
   simulation.selectPage(renderedPageId, session.activePage().simulation.speed);
-  setMode('select');
+  setConnectionKind(initialConnectionKind, false);
+  setSidePanelCollapsed(sidePanelCollapsed, false);
+  setDockCollapsed(dockCollapsed, false);
 
   function activate() {
     if (disposed || active) return !disposed;
@@ -1004,8 +1337,26 @@ export async function createResearchEditor(stage) {
   function suspend() {
     if (disposed) return true;
     settlePageSwitchMotion(); resetRailWheel(); clearRailTransients();
+    finishPanelContentTransition();
     simulation.suspend(); cancelCompute();
     if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0; rail.classList.remove('is-revealed');
+    if (panelHitGuardTimer) clearTimeout(panelHitGuardTimer); panelHitGuardTimer = 0; sidePanel.classList.remove('is-hit-guarded');
+    if (subcircuitCloseTimer) {
+      clearTimeout(subcircuitCloseTimer); subcircuitCloseTimer = 0;
+      subcircuitOverlay.hidden = true; subcircuitOverlay.classList.remove('is-closing');
+      subcircuitPorts.replaceChildren(); pendingSubcircuit = null; subcircuitReturnFocus = null;
+    }
+    if (helpCloseTimer) {
+      clearTimeout(helpCloseTimer); helpCloseTimer = 0;
+      helpOverlay.hidden = true; helpOverlay.classList.remove('is-closing');
+    }
+    helpOpen.setAttribute('aria-expanded', 'false');
+    if (settingsCloseTimer) clearTimeout(settingsCloseTimer);
+    settingsCloseTimer = 0;
+    settingsPanel.hidden = true;
+    settingsPanel.classList.remove('is-closing');
+    settingsOpen.setAttribute('aria-expanded', 'false');
+    closeSettingsResetConfirmation();
     if (activeController) activeController.abort(); activeController = null;
     session.setPageView(renderedPageId, canvas.getViewState());
     scheduleSave(0);
@@ -1017,6 +1368,10 @@ export async function createResearchEditor(stage) {
     suspend(); flushSave({ force: true, keepalive: true }); disposed = true;
     if (saveTimer) clearTimeout(saveTimer); if (saveRetryTimer) clearTimeout(saveRetryTimer); if (saveStatusTimer) clearTimeout(saveStatusTimer);
     if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0;
+    if (panelHitGuardTimer) clearTimeout(panelHitGuardTimer); panelHitGuardTimer = 0;
+    if (subcircuitCloseTimer) clearTimeout(subcircuitCloseTimer); subcircuitCloseTimer = 0;
+    if (helpCloseTimer) clearTimeout(helpCloseTimer); helpCloseTimer = 0;
+    if (settingsCloseTimer) clearTimeout(settingsCloseTimer); settingsCloseTimer = 0;
     simulation.dispose(); if (modelUnsubscribe) modelUnsubscribe(); modelUnsubscribe = null;
     return canvas.dispose();
   }

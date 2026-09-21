@@ -66,7 +66,14 @@ async function run(playwright, url, options = {}) {
     await page.locator('[data-node-id="op1"]').waitFor({ state: 'visible' });
 
     await page.locator('[data-node-id="op1"]').click();
-    await page.locator('[data-research-subcircuit-create]').click();
+    await page.locator('[data-research-subcircuit-create]:visible').click();
+    const panelCollapsedBeforeModalTab = await page.locator('[data-research-side-panel]')
+      .evaluate((element) => element.classList.contains('is-collapsed'));
+    await page.locator('[data-research-subcircuit-name]').focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.locator('[data-research-side-panel]')
+      .evaluate((element) => element.classList.contains('is-collapsed')), panelCollapsedBeforeModalTab,
+    'Tab inside the subcircuit modal must retain native dialog navigation');
     await page.locator('[data-research-subcircuit-name]').fill('Reusable adder');
     assert.equal(await page.locator('[data-port-id]').count(), 3);
     const beforeCreate = saves.length;
@@ -81,7 +88,7 @@ async function run(playwright, url, options = {}) {
     report.create = true;
 
     await page.locator('[data-node-id="op2"]').click();
-    await page.locator('[data-research-subcircuit-create]').click();
+    await page.locator('[data-research-subcircuit-create]:visible').click();
     await page.locator('[data-research-subcircuit-target]').selectOption(definitionId);
     const beforeRevision = saves.length;
     await page.locator('[data-research-subcircuit-confirm]').click();
@@ -103,6 +110,12 @@ async function run(playwright, url, options = {}) {
     const reusable = page.locator('[data-research-subcircuit-id="' + definitionId + '"]');
     await reusable.waitFor({ state: 'visible' });
     const beforeReuse = saves.length; await reusable.click();
+    await page.waitForTimeout(100);
+    assert.equal(saves.length, beforeReuse, 'selecting a reusable subcircuit must not place it immediately');
+    await page.locator('[data-research-inspector-close]').click();
+    const viewportBox = await page.locator('[data-research-viewport]').boundingBox();
+    assert(viewportBox, 'Research viewport must remain visible');
+    await page.mouse.dblclick(viewportBox.x + viewportBox.width * 0.72, viewportBox.y + viewportBox.height * 0.72);
     saved = await waitForSave(page, saves, beforeReuse);
     assert.equal(saved.pages[0].nodes.filter((item) => item.type === 'subcircuit').length, 3);
     report.reuse = true;

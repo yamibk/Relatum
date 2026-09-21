@@ -115,8 +115,18 @@ class PublicResearchBuilder {
   node(id) { return this.page.locator(`[data-node-id="${id}"]`); }
 
   async closeInspector() {
-    const inspector = this.page.locator('[data-research-inspector]');
-    if (await inspector.isVisible()) await this.page.locator('[data-research-inspector-close]').click();
+    const panel = this.page.locator('[data-research-side-panel]');
+    if (await panel.isVisible() && !(await panel.evaluate((element) => element.classList.contains('is-collapsed')))) {
+      await this.page.locator('[data-research-inspector-close]').click();
+    }
+  }
+
+  async openInspector() {
+    const panel = this.page.locator('[data-research-side-panel]');
+    if (await panel.evaluate((element) => element.classList.contains('is-collapsed'))) {
+      await this.viewport().focus();
+      await this.page.keyboard.press('Tab');
+    }
   }
 
   async chooseTool(type) {
@@ -136,6 +146,7 @@ class PublicResearchBuilder {
   async createNode(type, label, point, config = {}) {
     await this.closeInspector();
     await this.chooseTool(type);
+    await this.closeInspector();
     const before = new Set(await this.page.locator('[data-node-id]').evaluateAll((items) => items.map((item) => item.dataset.nodeId)));
     await this.page.evaluate(({ x, y }) => {
       const viewport = document.querySelector('[data-research-viewport]');
@@ -165,6 +176,7 @@ class PublicResearchBuilder {
   }
 
   async setLabel(label) {
+    await this.openInspector();
     const input = this.page.locator('[data-research-inspector-fields] label').first().locator('input');
     await input.fill(label);
     await input.evaluate((element) => element.blur());
@@ -178,6 +190,7 @@ class PublicResearchBuilder {
   }
 
   async setField(label, value) {
+    await this.openInspector();
     const row = this.field(label);
     await row.waitFor({ state: 'visible' });
     if (value && typeof value === 'object' && value.kind === 'typed') {
@@ -209,6 +222,7 @@ class PublicResearchBuilder {
 
   async selectNode(id) {
     await this.node(id).click();
+    await this.openInspector();
   }
 
   async selectNodes(ids) {
@@ -219,7 +233,7 @@ class PublicResearchBuilder {
   }
 
   async setWireMode() {
-    const button = this.page.locator('[data-research-mode="wire"]');
+    const button = this.page.locator('button[data-research-connection-kind="wire"]');
     if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
   }
 
@@ -238,6 +252,7 @@ class PublicResearchBuilder {
     const start = await startLocator.boundingBox();
     let end = await endLocator.boundingBox();
     assert(start && end, `wire endpoints must be visible: ${fromNodeId}.${fromPort} -> ${toNodeId}.${toPort}`);
+    await this.page.keyboard.down('Alt');
     await this.page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
     await this.page.mouse.down();
     await this.page.waitForTimeout(20);
@@ -245,6 +260,7 @@ class PublicResearchBuilder {
     assert(end, `wire target must remain visible: ${toNodeId}.${toPort}`);
     await this.page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 8 });
     await this.page.mouse.up();
+    await this.page.keyboard.up('Alt');
     await this.page.waitForTimeout(20);
     if (record) this.requestedWires.push({ fromNodeId, fromPort, toNodeId, toPort });
     this.actions.wiresCreated += 1;
@@ -281,7 +297,6 @@ class PublicResearchBuilder {
 
   async moveNode(id, point) {
     await this.closeInspector();
-    await this.page.locator('[data-research-mode="select"]').click();
     const box = await this.node(id).boundingBox();
     const viewport = await this.viewport().boundingBox();
     assert(box && viewport, 'node and viewport must be visible for public dragging');
@@ -300,24 +315,36 @@ class PublicResearchBuilder {
     await this.page.locator('[data-research-add]').click();
     await this.page.locator('[data-research-add-search]').fill('');
     await this.page.locator(`[data-research-subcircuit-id="${definitionId}"]`).evaluate((button) => button.click());
+    assert.equal(await this.page.locator('[data-node-id]').count(), before.size,
+      'selecting a reusable subcircuit must not place it immediately');
+    await this.closeInspector();
+    await this.page.evaluate(({ x, y }) => {
+      const viewport = document.querySelector('[data-research-viewport]');
+      const rect = viewport.getBoundingClientRect();
+      const clientX = rect.left + x;
+      const clientY = rect.top + y;
+      const target = document.elementFromPoint(clientX, clientY);
+      target.dispatchEvent(new MouseEvent('dblclick', {
+        bubbles: true, cancelable: true, clientX, clientY, button: 0,
+      }));
+    }, point);
     await this.page.waitForFunction((known) => Array.from(document.querySelectorAll('[data-node-id]'))
       .some((item) => !known.includes(item.dataset.nodeId)), Array.from(before));
     const ids = await this.page.locator('[data-node-id]').evaluateAll((items) => items.map((item) => item.dataset.nodeId));
     const id = ids.find((candidate) => !before.has(candidate));
-    assert(id, 'public palette click must create a subcircuit instance');
+    assert(id, 'public blank-canvas double-click must create the selected subcircuit instance');
     this.actions.instancesCreated += 1;
     if (label) await this.setLabel(label);
     await this.closeInspector();
-    await this.moveNode(id, point);
     return id;
   }
 
   async publish(ids, options) {
     await this.ensureRequestedWires();
     await this.closeInspector();
-    await this.page.locator('[data-research-mode="select"]').click();
     await this.selectNodes(ids);
-    await this.page.locator('[data-research-subcircuit-create]').click();
+    await this.openInspector();
+    await this.page.locator('[data-research-subcircuit-create]:visible').click();
     if (options.targetId) {
       await this.page.locator('[data-research-subcircuit-target]').selectOption(options.targetId);
     } else {
@@ -358,7 +385,6 @@ class PublicResearchBuilder {
 
   async clearPage() {
     await this.closeInspector();
-    await this.page.locator('[data-research-mode="select"]').click();
     await this.viewport().press('Control+a');
     await this.viewport().press('Delete');
     await this.page.waitForFunction(() => document.querySelectorAll('[data-node-id]').length === 0);
@@ -701,6 +727,11 @@ async function stepAndMeasure(page, probeId, expectedEventCount) {
 
 async function verifyProgram(page, core, steps, expectedInitialInstruction, expectedAccValues, samples = null) {
   await page.locator(`[data-node-id="${core.probe}"]`).click();
+  const panel = page.locator('[data-research-side-panel]');
+  if (await panel.evaluate((element) => element.classList.contains('is-collapsed'))) {
+    await page.locator('[data-research-viewport]').focus();
+    await page.keyboard.press('Tab');
+  }
   await page.locator('[data-research-trace]').waitFor({ state: 'visible' });
   await expectNodeResult(page, core.pcMonitor, '= 0 · 4b');
   await expectNodeResult(page, core.accMonitor, '= 0 · 4b');
