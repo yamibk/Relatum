@@ -1202,8 +1202,8 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   min-height: 0;
   overflow: hidden;
   margin-left: 14px;
-  padding-left: 3px;
-  border-left: 1px solid rgba(42, 42, 39, .115);
+  padding-left: 2px;
+  border-left: 2px solid rgba(42, 42, 39, .26);
 }
 .note-tree-children-shell {
   display: grid;
@@ -1853,7 +1853,7 @@ body.start-page[data-start-theme="dark"] .note-workspace { border: 0; box-shadow
 body.start-page[data-start-theme="dark"] .note-tree-pane,
 body.start-page[data-start-theme="dark"] .note-links-pane { border-color: rgba(235,240,235,.075); }
 body.start-page[data-start-theme="dark"] .note-tree-rename { color: #edf0ea; background: #202321; border-color: rgba(210,225,211,.3); }
-body.start-page[data-start-theme="dark"] .note-tree-children { border-left-color: rgba(235,240,235,.13); }
+body.start-page[data-start-theme="dark"] .note-tree-children { border-left-color: rgba(235,240,235,.28); }
 body.start-page[data-start-theme="dark"] .note-tree-row.active,
 body.start-page[data-start-theme="dark"] .note-tree-row.opening { color: #f1f3ee; background: rgba(235,240,235,.11); }
 body.start-page[data-start-theme="dark"] .note-tree-row:focus-visible { outline-color: rgba(221, 231, 219, .42); }

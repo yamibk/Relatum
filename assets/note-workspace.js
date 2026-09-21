@@ -598,9 +598,114 @@
   async function openWikiFromEditor(rawTarget) {
     await ensureLinks();
     const outgoing = outgoingForWiki(rawTarget);
-    if (outgoing && outgoing.path) { openNote(outgoing.path); return; }
+    if (outgoing && outgoing.path) {
+      const writtenTarget = String(rawTarget || '').split('|', 1)[0];
+      const hashAt = writtenTarget.indexOf('#');
+      const fragment = hashAt >= 0 ? writtenTarget.slice(hashAt + 1) : '';
+      if (await openNote(outgoing.path)) scheduleHeadingJump(fragment);
+      return;
+    }
     if (outgoing && outgoing.state === 'ambiguous') { showToast(tr('ambiguous'), 'warning'); return; }
     confirmCreateWiki(rawTarget);
+  }
+
+  function normalizedLinkTarget(rawTarget) {
+    let target = String(rawTarget || '').trim();
+    if (target.startsWith('<') && target.endsWith('>')) target = target.slice(1, -1).trim();
+    const titled = /^(\S+)[ \t]+(?:"[^"]*"|'[^']*')$/.exec(target);
+    return titled ? titled[1] : target;
+  }
+
+  function decodedLinkPart(value) {
+    try { return decodeURIComponent(String(value || '')); }
+    catch (error) { return String(value || ''); }
+  }
+
+  function resolveRelativeNotePath(notePath, rawPath) {
+    const parts = parentPath(notePath).split('/').filter(Boolean);
+    for (const rawPart of decodedLinkPart(rawPath).replace(/\\/g, '/').split('/')) {
+      const part = rawPart.trim();
+      if (!part || part === '.') continue;
+      if (part === '..') { if (!parts.length) return ''; parts.pop(); }
+      else parts.push(part);
+    }
+    return parts.join('/');
+  }
+
+  function headingPosition(source, rawFragment) {
+    const wanted = decodedLinkPart(rawFragment).replace(/^#/, '').trim().toLocaleLowerCase();
+    if (!wanted) return { offset: 0, line: 0 };
+    const slug = (value) => String(value || '').trim().toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s+/g, '-');
+    const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+    let offset = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      const parsed = window.MarkdownMini && window.MarkdownMini.structure
+        ? window.MarkdownMini.structure.parseHeading(lines[index]) : null;
+      if (parsed && (parsed.text.trim().toLocaleLowerCase() === wanted || slug(parsed.text) === wanted)) {
+        return { offset, line: index };
+      }
+      offset += lines[index].length + 1;
+    }
+    return null;
+  }
+
+  function jumpToHeading(fragment) {
+    if (!state.current || !fragment) return false;
+    const position = headingPosition(state.current.content, fragment);
+    if (!position) return false;
+    if (state.viewMode === 'reading' && readingHost) {
+      const heading = readingHost.querySelector('[data-ln="' + position.line + '"]');
+      if (heading) heading.scrollIntoView({ block: 'start' });
+      return !!heading;
+    }
+    if (liveEditor && typeof liveEditor.revealPosition === 'function') {
+      liveEditor.revealPosition(position.offset);
+      return true;
+    }
+    fallbackEditor.focus();
+    fallbackEditor.setSelectionRange(position.offset, position.offset);
+    return true;
+  }
+
+  function scheduleHeadingJump(fragment) {
+    if (!fragment) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => jumpToHeading(fragment)));
+  }
+
+  async function openLocalNoteFile(target) {
+    if (!state.current) return false;
+    try {
+      await post('/api/open-external', { kind: 'note-file', note: state.current.path, target });
+      return true;
+    } catch (error) {
+      showToast(error.message || tr('externalOpenFailed'), 'error');
+      return false;
+    }
+  }
+
+  async function openMarkdownTarget(rawTarget) {
+    const target = normalizedLinkTarget(rawTarget);
+    if (!target || !state.current) return false;
+    if (/^(?:https?:|mailto:)/i.test(target)) {
+      try { await post('/api/open-external', { kind: 'url', target }); return true; }
+      catch (error) { showToast(error.message || tr('externalOpenFailed'), 'error'); return false; }
+    }
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) {
+      showToast(tr('externalOpenFailed'), 'error');
+      return false;
+    }
+    const hashAt = target.indexOf('#');
+    const pathPart = (hashAt >= 0 ? target.slice(0, hashAt) : target).split('?', 1)[0];
+    const fragment = hashAt >= 0 ? target.slice(hashAt + 1) : '';
+    if (!pathPart) return jumpToHeading(fragment);
+    const resolved = resolveRelativeNotePath(state.current.path, pathPart);
+    const entry = findEntry(resolved);
+    if (/\.md$/i.test(resolved) && entry && entry.kind === 'note') {
+      if (await openNote(resolved)) scheduleHeadingJump(fragment);
+      return true;
+    }
+    return openLocalNoteFile(pathPart);
   }
 
   function normalizeViewMode(mode) {
@@ -852,7 +957,8 @@
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
           onOpenWiki: (target) => openWikiFromEditor(target),
-          onOpenExternal: (target) => post('/api/open-external', { kind: 'url', target }).catch(() => showToast(tr('externalOpenFailed'), 'error')),
+          onOpenExternal: (target) => openMarkdownTarget(target),
+          onOpenLocalFile: (target) => openLocalNoteFile(target),
           onImageFiles: (files) => uploadImages(files),
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
           imageTextDefaults: { size: state.imageText.size, color: state.imageText.color },
@@ -870,10 +976,13 @@
       readingHost.addEventListener('click', (event) => {
         const wiki = event.target.closest('[data-wikilink]');
         if (wiki) { event.preventDefault(); openWikiFromEditor(wiki.dataset.wikilink || ''); return; }
+        const imageFrame = event.target.closest('.md-local-image');
+        const image = imageFrame && imageFrame.querySelector('[data-note-image]');
+        if (image) { event.preventDefault(); openLocalNoteFile(image.dataset.noteImage || ''); return; }
         const link = event.target.closest('[data-href]');
         if (link) {
           event.preventDefault();
-          post('/api/open-external', { kind: 'url', target: link.dataset.href || '' }).catch(() => showToast(tr('externalOpenFailed'), 'error'));
+          openMarkdownTarget(link.dataset.href || '');
         }
       });
     }

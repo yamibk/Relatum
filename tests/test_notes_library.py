@@ -364,6 +364,19 @@ class NotesLibraryTests(unittest.TestCase):
         with self.assertRaises(NotesError):
             self.store.resolve_image("folder/Picture.md", "../../outside.png")
 
+    def test_note_link_target_resolves_files_inside_vault_only(self):
+        self.store.create("folder", "Index", "note", create_parents=True)
+        attachment = self.root / "shared.pdf"
+        attachment.write_bytes(b"pdf")
+        self.assertEqual(
+            self.store.resolve_link_target("folder/Index.md", "../shared.pdf#page=2"),
+            attachment,
+        )
+        with self.assertRaises(NotesError):
+            self.store.resolve_link_target("folder/Index.md", "../../outside.pdf")
+        with self.assertRaises(NotesError):
+            self.store.resolve_link_target("folder/Index.md", "https://example.com/file.pdf")
+
     def test_move_failure_rolls_back_note_assets_and_rewrites(self):
         self.store.create("", "Index", "note", content="[[Old]]")
         self.store.create("", "Old", "note", content="body")

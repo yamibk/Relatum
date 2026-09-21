@@ -662,7 +662,7 @@
     if (links.length === 0) return html;
     return html.replace(/\x00LINK(\d+)\x00/g, function (_, idx) {
       const link = links[+idx];
-      const isUrl = /^https?:\/\//i.test(link.target);
+      const isUrl = /^(?:https?:\/\/|mailto:)/i.test(link.target);
       const icon = isUrl ? LINK_ICON_URL : LINK_ICON_FILE;
       return '<a class="node-link" data-kind="' + (isUrl ? 'url' : 'file') + '"'
         + ' data-href="' + escapeHtml(link.target) + '"'

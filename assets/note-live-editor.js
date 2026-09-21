@@ -1162,6 +1162,11 @@
     };
     frame.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || event.target.closest('.note-live-image-resize-handle')) return;
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault(); event.stopPropagation();
+        options.onOpenLocalFile(parsed.target);
+        return;
+      }
       select(event);
     });
 
@@ -2360,7 +2365,7 @@
       imageUrl(notePath, target) {
         return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '');
       },
-      onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onImageFiles() {},
+      onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onOpenLocalFile() {}, onImageFiles() {},
       onImageSelectionChange() {}, onImageTextDefaultsChange() {},
       imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
@@ -3150,6 +3155,12 @@
       view.focus();
     }
 
+    function revealPosition(position) {
+      const target = clamp(position, 0, view.state.doc.length);
+      view.dispatch({ selection: EditorSelection.cursor(target), scrollIntoView: true });
+      view.focus();
+    }
+
     function setImageTextMode(active) {
       if (inputPending()) return false;
       return imageTextController.setActive(active, view);
@@ -3243,7 +3254,7 @@
     }
 
     return {
-      setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection,
+      setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
       whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },

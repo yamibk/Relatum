@@ -1473,6 +1473,34 @@ class NotesStore:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
         return target, media_type
 
+    def resolve_link_target(self, note: object, source: object) -> Path:
+        """Resolve a Markdown file link relative to its note, within the vault."""
+        note_rel = self.normalize_path(note)
+        note_path = self._absolute(note_rel)
+        self._read_note_bytes(note_path)
+        if not isinstance(source, str) or not source.strip():
+            raise NotesError("缺少链接路径")
+        raw = urllib.parse.unquote(source.strip().split("#", 1)[0].split("?", 1)[0])
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", raw) or raw.startswith(("/", "\\")):
+            raise NotesError("只允许笔记库内的本地链接", status=403, code="unsafe_path")
+        parts = list(PurePosixPath(note_path.parent.relative_to(self.root).as_posix()).parts)
+        for part in raw.replace("\\", "/").split("/"):
+            if not part or part == ".":
+                continue
+            if part == "..":
+                if not parts:
+                    raise NotesError("链接路径越界", status=403, code="unsafe_path")
+                parts.pop()
+                continue
+            parts.append(part)
+        normalized = self.normalize_path("/".join(parts), allow_assets=True)
+        target = self._absolute(normalized, allow_assets=True)
+        if not target.is_file():
+            raise NotesError("链接文件不存在", status=404, code="not_found")
+        if _is_reparse(target):
+            raise NotesError("链接文件不能是链接或重解析点", status=403, code="unsafe_path")
+        return target
+
     def cleanup_unused_images(self, note: object, expected_revision: object) -> dict:
         """Permanently delete unused images in this note's companion directory.
 

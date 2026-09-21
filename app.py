@@ -12718,7 +12718,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_open_external(self, body: dict):
         """C2：用系统默认程序打开一个网址或本地文件。
 
-        kind='url'  → 只允许 http/https，调 webbrowser.open（浏览器自带防护）。
+        kind='url'  → 只允许 http/https/mailto，调 webbrowser.open（系统处理程序自带防护）。
+        kind='note-file' → 相对当前 Markdown 笔记解析，只允许笔记库内普通文件；
         kind='file' → 相对路径相对 baseDir（当前 .canvas 目录）解析；
                       规范化后做后缀黑名单 + 存在性检查，再 os.startfile。
         """
@@ -12730,11 +12731,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if kind == "url":
             low = target.lower()
-            if not (low.startswith("http://") or low.startswith("https://")):
+            if not (low.startswith("http://") or low.startswith("https://") or low.startswith("mailto:")):
                 return self._send_json(400, {"error": "不是有效网址"})
             try:
                 webbrowser.open(target)
             except Exception as err:  # noqa: BLE001
+                return self._send_json(500, {"error": f"打开失败：{err}"})
+            return self._send_json(200, {"ok": True})
+
+        if kind == "note-file":
+            try:
+                with NOTES_MUTATION_LOCK:
+                    p = NOTES_STORE.resolve_link_target(body.get("note"), target)
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
+            ext = p.suffix.lower()
+            if ext in DANGEROUS_EXTS:
+                return self._send_json(
+                    403, {"error": f"出于安全，不允许打开可执行 / 脚本文件（{ext}）"}
+                )
+            opener = getattr(os, "startfile", None)
+            if opener is None:
+                return self._send_json(500, {"error": "当前系统不支持打开外部文件"})
+            try:
+                opener(str(p))
+            except OSError as err:
                 return self._send_json(500, {"error": f"打开失败：{err}"})
             return self._send_json(200, {"ok": True})
 

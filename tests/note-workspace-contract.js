@@ -233,6 +233,12 @@ assert(notes.includes('function whenEditorInputSettled()')
 assert(!live.includes('defaultHighlightStyle') && !live.includes('syntaxHighlighting('), 'Relatum source roles must replace CodeMirror default heading/link decoration');
 assert(live.includes("kind: 'callout'") && live.includes("kind === 'callout'"), 'Obsidian-style Callout blocks must have a stable projection');
 assert(live.includes('/api/note-asset?note='), 'Live Preview local images must use the authorized note asset endpoint');
+assert(notes.includes("kind: 'note-file'") && notes.includes('function openMarkdownTarget(rawTarget)'),
+  'Markdown file links must use the note-vault path sandbox instead of the URL opener');
+assert(notes.includes('function jumpToHeading(fragment)') && live.includes('revealPosition'),
+  'Markdown heading fragments must navigate in both reading and editor views');
+assert(live.includes('onOpenLocalFile(parsed.target)') && notes.includes("closest('.md-local-image')"),
+  'local images must open explicitly from Live Preview and reading mode');
 assert(live.includes('EditorView.updateListener') && live.includes('if (!update.docChanged'), 'only document transactions may enter the save chain');
 assert(live.includes('securityLevel') === false, 'Mermaid security policy belongs to the shared renderer');
 assert(/securityLevel:\s*'strict'/.test(mermaid) && /flowchart:\s*\{[\s\S]*?htmlLabels:\s*false/.test(mermaid),
