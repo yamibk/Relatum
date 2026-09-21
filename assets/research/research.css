@@ -1259,8 +1259,10 @@ body {
   min-height: 0;
   padding: 16px;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
+
+.research-side-panel-body::-webkit-scrollbar { display: none; }
 
 .research-side-panel-body.is-content-entering {
   animation: research-panel-content-in 200ms cubic-bezier(.22, .74, .24, 1) both;
