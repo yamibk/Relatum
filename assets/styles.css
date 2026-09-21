@@ -8521,6 +8521,7 @@ body.desktop-window-transitioning .desktop-window-btn[data-window-action="maximi
 }
 
 .start-page.desktop-host .desktop-settings-trigger { display: grid; place-items: center; }
+body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-trigger { display: none; }
 .desktop-settings-trigger:hover { color: var(--text); background: rgba(255, 255, 255, 0.86); transform: translateY(-2px); }
 
 .start-theme-toggle {

@@ -339,6 +339,54 @@ export class ResearchModel {
     return created;
   }
 
+  insertGraph(source = {}, change = {}) {
+    const sourceNodes = Array.isArray(source.nodes) ? source.nodes : [];
+    const sourceEdges = Array.isArray(source.edges) ? source.edges : [];
+    if (!sourceNodes.length) return null;
+    const localIds = new Set();
+    const idMap = new Map();
+    const createdNodes = [];
+    for (const raw of sourceNodes) {
+      const localId = String(raw && raw.id || '');
+      const type = String(raw && raw.type || '');
+      if (!localId || localIds.has(localId) || !type
+        || this.registry && !this.registry.definition(type)) return null;
+      localIds.add(localId);
+      const nextId = id('node');
+      idMap.set(localId, nextId);
+      createdNodes.push(normalizeNode({ ...clone(raw), id: nextId }, this.registry));
+    }
+    const candidate = new ResearchModel({
+      nodes: this.state.nodes.concat(createdNodes),
+      edges: this.state.edges,
+    }, this.registry);
+    const createdEdgeIds = [];
+    for (const raw of sourceEdges) {
+      const kind = raw && String(raw.kind || '');
+      if (kind !== 'wire' && kind !== 'relation') return null;
+      const fromLocal = kind === 'wire' ? String(raw.from && raw.from.nodeId || '')
+        : String(raw.fromNodeId || raw.from || '');
+      const toLocal = kind === 'wire' ? String(raw.to && raw.to.nodeId || '')
+        : String(raw.toNodeId || raw.to || '');
+      const from = idMap.get(fromLocal); const to = idMap.get(toLocal);
+      if (!from || !to) return null;
+      const edgeSource = kind === 'wire' ? {
+        kind,
+        fromPortId: String(raw.from && raw.from.portId || ''),
+        toPortId: String(raw.to && raw.to.portId || ''),
+      } : { kind };
+      const created = candidate.createEdge(from, to, edgeSource);
+      if (!created || createdEdgeIds.includes(created.id)) return null;
+      createdEdgeIds.push(created.id);
+    }
+    const nextState = candidate.snapshot();
+    const nodeIds = createdNodes.map((node) => node.id);
+    const committed = this.replaceState(nextState, {
+      kind: 'graph-insert', topology: true, nodeIds, edgeIds: createdEdgeIds, ...change,
+    });
+    return committed ? { nodeIds, edgeIds: createdEdgeIds, idMap: Object.fromEntries(idMap) } : null;
+  }
+
   remove(nodeIds, edgeIds) {
     const nodes = new Set(Array.from(nodeIds || [], String));
     const edges = new Set(Array.from(edgeIds || [], String));

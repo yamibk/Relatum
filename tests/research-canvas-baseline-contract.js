@@ -19,6 +19,9 @@ const computeSource = read('assets/research/research-compute.js');
 const runtimeSource = read('assets/research/research-runtime.js');
 const registrySource = read('assets/research/research-registry.js');
 const persistenceSource = read('assets/research/research-persistence.js');
+const tutorialSource = read('assets/research/research-tutorial.js');
+const tutorialContentSource = read('assets/research/research-tutorial-content.js');
+const tutorialExamplesSource = read('assets/research/research-tutorial-examples.js');
 
 [
   'data-research-viewport', 'data-research-edges', 'data-research-surface', 'data-research-active-edges',
@@ -31,10 +34,12 @@ const persistenceSource = read('assets/research/research-persistence.js');
   'data-research-node-library', 'data-research-add-search',
   'data-research-inspector', 'data-research-run', 'data-research-pause', 'data-research-step',
   'data-research-reset', 'data-research-speed', 'data-research-help-open', 'data-research-help-overlay',
-  'data-research-persistence-status',
+  'data-research-persistence-status', 'data-research-tutorial-root',
 ].forEach((needle) => assert(html.includes(needle), 'missing Research V2 shell element: ' + needle));
-assert(html.includes('持续值') && html.includes('事件 Pulse') && html.includes('两种连线')
-  && html.includes('组合逻辑始终自动更新'), 'help must describe V2 values, pulses, wiring, and simulation');
+assert(tutorialContentSource.includes("page('intro-values'") && tutorialContentSource.includes('number、boolean、string、time')
+  && tutorialContentSource.includes('Pulse') && tutorialContentSource.includes("page('intro-connections'")
+  && tutorialContentSource.includes("page('intro-simulation'"),
+  'tutorial content must explain values, pulses, wiring, and simulation');
 assert(!html.includes('data-research-creation-tool="countdown"') && !html.includes('data-research-creation-tool="countup"')
   && !html.includes('data-research-creation-tool="delay"'), 'legacy timer and Delay tools must be removed');
 
@@ -45,6 +50,7 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   "import { loadResearchRegistry } from './research-registry.js'",
   'createResearchComputeRuntime', 'updateResearchComputeRuntime', 'createResearchSimulationController',
   "import { createResearchCanvas } from './research-canvas.js'",
+  "import { createResearchTutorial } from './research-tutorial.js'",
   "import { loadResearchWorkspace, saveResearchWorkspace } from './research-persistence.js'",
   'snapshotPersistentResearchState',
 ].forEach((needle) => assert(editor.includes(needle), 'missing editor V2 integration: ' + needle));
@@ -64,6 +70,7 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   'function updateMinimapViewport()', 'const minimapNodeElements = new Map()',
   "localStorage.getItem('research:panSpeed:v1')", "localStorage.getItem('research:panInertia:v1')",
   "localStorage.getItem('research:zoomSpeed:v1')", 'resetInteractionPreferences',
+  'function focusNodes(', 'function selectNodes(', 'getVisibleWorldRect: visibleWorldRect',
 ].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
 assert(canvas.includes("event.altKey && connectionKind === 'wire'")
   && canvas.includes("event.altKey && connectionKind === 'relation'")
@@ -112,6 +119,13 @@ assert(styles.includes('.research-page-orb.no-transition')
   'Research page-rail animation classes must remain independently scoped');
 assert(persistenceSource.includes("const WORKSPACE_ENDPOINT = '/api/research/workspace'")
   && persistenceSource.includes('keepalive: options.keepalive === true'));
+assert(tutorialSource.includes("const PROGRESS_KEY = 'research:tutorialProgress:v1'")
+  && tutorialSource.includes('model.insertGraph(placed')
+  && tutorialSource.includes('canvas.focusNodes(result.nodeIds)'),
+  'tutorial must remember progress and insert/focus examples through the model');
+assert(tutorialExamplesSource.includes('RESEARCH_TUTORIAL_EXAMPLE_IDS')
+  && modelSource.includes('insertGraph(source = {}, change = {})'),
+  'tutorial examples and atomic model insertion must remain separately scoped');
 
 const computeCoreSources = [schemaSource, computeSource, runtimeSource].join('\n');
 ['document.', 'window.', 'fetch(', 'localStorage', 'sessionStorage', '/api/', 'eval(', 'new Function']

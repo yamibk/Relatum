@@ -157,58 +157,11 @@
         <header class="research-help-head">
           <div>
             <span>研究工作区</span>
-            <h2 id="research-help-title">计算怎么用？</h2>
+            <h2 id="research-help-title">研究工作区教程</h2>
           </div>
           <button type="button" class="research-help-close" data-research-help-close aria-label="关闭说明">×</button>
         </header>
-        <section class="research-help-starter" aria-label="三步完成第一次计算">
-          <strong>三步完成第一次计算</strong>
-          <div>
-            <span><b>1</b> 在左侧面板选择节点，双击空白放置</span>
-            <span><b>2</b> 选择“导线”，按住 Alt 从端口拖到兼容端口</span>
-            <span><b>3</b> 组合逻辑自动更新，时钟与计时器由运行栏控制</span>
-          </div>
-        </section>
-        <div class="research-help-grid">
-          <section>
-            <h3>节点与端口</h3>
-            <dl>
-              <div><dt>持续值</dt><dd>number、boolean、string、time 和 1–64 位 Bits 会沿导线自动传播。</dd></div>
-              <div><dt>事件 Pulse</dt><dd>按钮、时钟、计时完成和边沿检测用瞬时事件驱动状态节点。</dd></div>
-              <div><dt>寄存器</dt><dd>在 write 事件到来时同步采样 data，是反馈环的明确状态边界。</dd></div>
-              <div><dt>计时器</dt><dd>合并倒计时/正计时，可由 start、pause、reset 事件控制。</dd></div>
-              <div><dt>探针</dt><dd>可同时观察一路稳定值和多路 Pulse，选中后在属性面板查看有界运行轨迹。</dd></div>
-            </dl>
-          </section>
-          <section>
-            <h3>两种连线</h3>
-            <dl>
-              <div><dt>导线</dt><dd>选中后按 Alt 从输入或输出端口起线，方向自动整理；非法目标只显示红色预览。</dd></div>
-              <div><dt>关系线</dt><dd>选中后按 Alt 从一个节点主体拖到另一个，只用于表达知识关系。</dd></div>
-              <div><dt>输入顺序</dt><dd>由端口决定；从已连接的值输入拖出可移动原导线。</dd></div>
-            </dl>
-          </section>
-          <section>
-            <h3>自动计算与错误</h3>
-            <dl>
-              <div><dt>自动计算</dt><dd>连接或修改完成后自动更新，只把结果放进运行投影。</dd></div>
-              <div><dt>运行栏</dt><dd>组合逻辑始终自动更新；运行、暂停、单步与复位只控制时序与事件。</dd></div>
-              <div><dt>红色结果</dt><dd>表示类型错误、除零、端口冲突或循环。</dd></div>
-              <div><dt>尚未接完</dt><dd>保持安静；输入完整后才显示结果或真实错误。</dd></div>
-            </dl>
-          </section>
-          <section>
-            <h3>画布操作</h3>
-            <dl>
-              <div><dt><kbd>双击空白</kbd></dt><dd>放置左侧面板中当前选中的节点或子电路。</dd></div>
-              <div><dt><kbd>Tab</kbd></dt><dd>展开或收起左侧节点与属性面板。</dd></div>
-              <div><dt><kbd>N</kbd> / <kbd>Esc</kbd></dt><dd>新建笔记节点 / 取消手势或清除选择。</dd></div>
-              <div><dt><kbd>Space</kbd> + 拖动</dt><dd>平移画布；滚轮定点缩放。</dd></div>
-              <div><dt><kbd>?</kbd> / <kbd>Esc</kbd></dt><dd>打开或关闭本说明。</dd></div>
-            </dl>
-          </section>
-        </div>
-        <footer class="research-help-foot">计算节点使用显式类型与端口；节点标题和空间位置都不是执行依据。</footer>
+        <div data-research-tutorial-root></div>
       </section>
     </div>
   </main>

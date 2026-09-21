@@ -10,6 +10,7 @@ import { loadResearchRegistry } from './research-registry.js';
 import { validateResearchDocument } from './research-schema.js';
 import { loadResearchWorkspace, saveResearchWorkspace } from './research-persistence.js';
 import { formatResearchValue } from './research-values.js';
+import { createResearchTutorial } from './research-tutorial.js';
 import {
   buildSubcircuitRevisionFromSelection, canUpgradeSubcircuitInstance,
   collectSubcircuitReferences, createResearchSubcircuitCatalog,
@@ -68,6 +69,7 @@ export async function createResearchEditor(stage) {
   const helpOpen = required('[data-research-help-open]');
   const helpOverlay = required('[data-research-help-overlay]');
   const helpClose = required('[data-research-help-close]');
+  const tutorialRoot = required('[data-research-tutorial-root]');
   const settingsOpen = required('[data-research-settings-open]');
   const settingsPanel = required('[data-research-settings-panel]');
   const settingsResetOpen = required('[data-research-settings-reset-open]');
@@ -132,7 +134,6 @@ export async function createResearchEditor(stage) {
   let panelHitGuardTimer = 0;
   let subcircuitCloseTimer = 0;
   let subcircuitReturnFocus = null;
-  let helpCloseTimer = 0;
   let settingsCloseTimer = 0;
   let persistenceRevision = String(loadedWorkspace.revision || '');
 
@@ -183,6 +184,20 @@ export async function createResearchEditor(stage) {
       if (page) applyProjection(page, result, meta);
     },
     onStateChange: (_pageId, state) => syncRunControls(state),
+  });
+
+  const tutorial = createResearchTutorial({
+    openButton: helpOpen,
+    overlay: helpOverlay,
+    closeButton: helpClose,
+    root: tutorialRoot,
+    canvas,
+    getModel: () => {
+      const page = session.page(renderedPageId);
+      return page ? page.model : null;
+    },
+    beforeOpen: () => closeSettingsPanel({ focus: false, immediate: true }),
+    onInserted: (title) => setPersistenceStatus(`已生成“${title}”，可按 Ctrl+Z 整组撤销`, 'saved'),
   });
 
   function visibleProjection(projection) {
@@ -1112,7 +1127,7 @@ export async function createResearchEditor(stage) {
   }
 
   function openSettingsPanel() {
-    if (!helpOverlay.hidden) closeHelpOverlay({ focus: false, immediate: true });
+    if (tutorial.isOpen()) tutorial.close({ focus: false, immediate: true });
     if (settingsCloseTimer) clearTimeout(settingsCloseTimer);
     settingsCloseTimer = 0;
     settingsPanel.classList.remove('is-closing');
@@ -1136,33 +1151,9 @@ export async function createResearchEditor(stage) {
     settingsCloseTimer = setTimeout(finish, 150);
   }
 
-  function openHelpOverlay() {
-    closeSettingsPanel({ focus: false, immediate: true });
-    if (helpCloseTimer) clearTimeout(helpCloseTimer);
-    helpCloseTimer = 0;
-    helpOverlay.classList.remove('is-closing');
-    helpOverlay.hidden = false;
-    helpOpen.setAttribute('aria-expanded', 'true');
-    helpClose.focus({ preventScroll: true });
-  }
-
-  function closeHelpOverlay(options = {}) {
-    if (helpOverlay.hidden || (helpOverlay.classList.contains('is-closing') && !options.immediate)) return;
-    helpOpen.setAttribute('aria-expanded', 'false');
-    const finish = () => {
-      if (helpCloseTimer) clearTimeout(helpCloseTimer);
-      helpCloseTimer = 0;
-      helpOverlay.hidden = true;
-      helpOverlay.classList.remove('is-closing');
-      if (options.focus !== false) helpOpen.focus({ preventScroll: true });
-    };
-    if (options.immediate || prefersReducedMotion()) { finish(); return; }
-    helpOverlay.classList.add('is-closing');
-    helpCloseTimer = setTimeout(finish, 190);
-  }
-
   function installListeners() {
     activeController = new AbortController(); const signal = activeController.signal;
+    tutorial.activate(signal);
     dock.addEventListener('click', (event) => {
       const kind = event.target.closest('[data-research-connection-kind]');
       if (kind) { setConnectionKind(kind.dataset.researchConnectionKind); viewport.focus({ preventScroll: true }); return; }
@@ -1252,9 +1243,6 @@ export async function createResearchEditor(stage) {
       closeSettingsResetConfirmation();
       settingsResetOpen.focus({ preventScroll: true });
     }, { signal });
-    helpOpen.addEventListener('click', openHelpOverlay, { signal });
-    helpClose.addEventListener('click', closeHelpOverlay, { signal });
-    helpOverlay.addEventListener('mousedown', (event) => { if (event.target === helpOverlay) closeHelpOverlay(); }, { signal });
     document.addEventListener('pointerdown', (event) => {
       if (settingsPanel.hidden || settingsPanel.contains(event.target) || settingsOpen.contains(event.target)) return;
       closeSettingsPanel({ focus: false });
@@ -1269,10 +1257,9 @@ export async function createResearchEditor(stage) {
       }
       else if (event.key === 'Escape' && !settingsPanel.hidden) { event.preventDefault(); closeSettingsPanel(); }
       else if (event.key === 'Escape' && !subcircuitOverlay.hidden) { event.preventDefault(); closeSubcircuitDialog(); }
-      else if (event.key === 'Escape' && !helpOverlay.hidden) { event.preventDefault(); closeHelpOverlay(); }
-      else if (event.key === '?' && helpOverlay.hidden && !event.target.closest('input,select,textarea,[contenteditable="true"]')) { event.preventDefault(); helpOpen.click(); }
+      else if (event.key === '?' && !tutorial.isOpen() && !event.target.closest('input,select,textarea,[contenteditable="true"]')) { event.preventDefault(); tutorial.open(); }
       else if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
-        && !event.isComposing && event.keyCode !== 229 && subcircuitOverlay.hidden && helpOverlay.hidden && settingsPanel.hidden
+        && !event.isComposing && event.keyCode !== 229 && subcircuitOverlay.hidden && !tutorial.isOpen() && settingsPanel.hidden
         && !event.target.closest('input,select,textarea,button,[contenteditable="true"]')
         && !sidePanel.contains(event.target)) {
         event.preventDefault();
@@ -1346,11 +1333,7 @@ export async function createResearchEditor(stage) {
       subcircuitOverlay.hidden = true; subcircuitOverlay.classList.remove('is-closing');
       subcircuitPorts.replaceChildren(); pendingSubcircuit = null; subcircuitReturnFocus = null;
     }
-    if (helpCloseTimer) {
-      clearTimeout(helpCloseTimer); helpCloseTimer = 0;
-      helpOverlay.hidden = true; helpOverlay.classList.remove('is-closing');
-    }
-    helpOpen.setAttribute('aria-expanded', 'false');
+    tutorial.suspend();
     if (settingsCloseTimer) clearTimeout(settingsCloseTimer);
     settingsCloseTimer = 0;
     settingsPanel.hidden = true;
@@ -1370,9 +1353,8 @@ export async function createResearchEditor(stage) {
     if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0;
     if (panelHitGuardTimer) clearTimeout(panelHitGuardTimer); panelHitGuardTimer = 0;
     if (subcircuitCloseTimer) clearTimeout(subcircuitCloseTimer); subcircuitCloseTimer = 0;
-    if (helpCloseTimer) clearTimeout(helpCloseTimer); helpCloseTimer = 0;
     if (settingsCloseTimer) clearTimeout(settingsCloseTimer); settingsCloseTimer = 0;
-    simulation.dispose(); if (modelUnsubscribe) modelUnsubscribe(); modelUnsubscribe = null;
+    tutorial.dispose(); simulation.dispose(); if (modelUnsubscribe) modelUnsubscribe(); modelUnsubscribe = null;
     return canvas.dispose();
   }
 

@@ -472,13 +472,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 复习页进入时根层保持静止，不得把整页当成完成的矩形贴图横移；日历先短促淡出并轻移，复习页标题、操作区、统计、纸面和纸面内容依次渐入。分层时长跟随起步页翻页速度，`start.js` 的清理延迟必须覆盖最长一层；自由复习和计划复习切到下一张卡片时直接完整展示，不再叠加卡片内部入场动画。
 - 默认最近页不把特殊页数据请求放进首屏阻塞链；起步页脚本就绪后，学习、活跃和独立树状页分别在浏览器空闲时预读 `/api/study`、当前年度 `/api/study-activity` 与 `/api/tree-page`，首次进入复用相同缓存或在途 Promise。速记仍在首次进入或执行跨页动作时加载并复用同一个在途 Promise。任何首次加载完成前都不得用空前端状态覆盖服务端数据。
 
-### 研究（M5.2 视口手感、M5.1 前端操作统一与 V3 可复用子电路）
+### 研究（M5.3 多章节教程、M5.2 视口手感、M5.1 前端操作统一与 V3 可复用子电路）
 
 - 顶栏保留“研究”入口和四栏切换顺序，`assets/index.html` 初始不得静态包含 iframe、研究脚本或研究样式；首次进入后只复用同一个同源 iframe。
 - `research.html` 承载透明单画布、分页栏、固定可折叠工具/运行栏、左侧统一节点/属性面板、左下角缩放/小地图、保存状态和右下角设置/说明；`research-workspace.js` 只向父页公开 `activate`、`suspend`、`dispose`，并在激活时导入独立运行时、等待 `/api/research/workspace` 读取。输入监听、ResizeObserver、绘制/计算/相机帧与仿真句柄只在激活期存在；隐藏、离页和销毁必须取消过期回调、惯性、缩放缓动与小地图校准，销毁保存用 keepalive 收尾。
 - `researchVersion:3` 不兼容 V1/V2：旧研究文件读取为空白 V3，首次保存直接覆盖且不备份旧格式。顶层除 `pages` 外保存不可变 `subcircuits` 定义修订；普通节点继续使用 `{id,type,label,x,y,width,height,config,statePolicy,savedState?}`，子电路实例使用动态端口和递归 `savedState` 状态树。边仍只能是 `relation` 或显式端口 `wire`。关系线不执行；值输入单连接、事件输入多来源、输出可扇出。建线即时拒绝错误方向、value/event 通道、声明类型、已知 Bits 位宽、同组输入不匹配和占用；合法重接保留 edge ID 并只写一条历史。
 - `research-node-definitions.json` 是前端建节点/画端口/属性控件与 Python 端口白名单的共同声明源。稳定值只有 number/boolean/string/time/Bits<1–64>，Pulse 不持久化；转换必须显式使用 Convert。组合变化自动增量传播，组合环报错；Register/Counter/Timer 等状态边界允许反馈。同一 Pulse 批次必须让所有状态节点读取旧状态、暂存后统一提交，保证同步寄存器语义；批次上限为 1000 Pulse / 10000 次求值。
-- 节点族固定为 Note、Constant、Button、Toggle、Current Time、Clock、Math、Logic、Compare、Select、Convert、Bits、Register、Counter、Edge Detector、Timer、Monitor、Lamp。Timer 统一正/倒计时并由 start/pause/reset 事件控制；旧四则一级按钮、倒/正计时、Delay 和 Result 不得恢复。底栏的关系线/导线仅选择 Alt 手势类型，不再切换普通指针模式：关系线必须 Alt 从节点主体拖到节点主体并落在渲染后边框，导线必须 Alt 从真实输入/输出端口拖到兼容端口中心；反向手势只调整交互方向，不改变持久 wire 的输出到输入语义。普通左键始终选择、拖动或执行节点按钮。标题只改 label，真实行为只在属性面板修改 config；裸 `Tab` 只开合左侧面板，不创建关系子节点。
+- 节点族固定为 Note、Constant、Button、Toggle、Current Time、Clock、Math、Logic、Compare、Select、Convert、Bits、Register、Counter、Edge Detector、Timer、Monitor、Probe、Lamp、Subcircuit。Timer 统一正/倒计时并由 start/pause/reset 事件控制；旧四则一级按钮、倒/正计时、Delay 和 Result 不得恢复。底栏的关系线/导线仅选择 Alt 手势类型，不再切换普通指针模式：关系线必须 Alt 从节点主体拖到节点主体并落在渲染后边框，导线必须 Alt 从真实输入/输出端口拖到兼容端口中心；反向手势只调整交互方向，不改变持久 wire 的输出到输入语义。普通左键始终选择、拖动或执行节点按钮。标题只改 label，真实行为只在属性面板修改 config；裸 `Tab` 只开合左侧面板，不创建关系子节点。
+- 右下角“？”与 `?` 快捷键按需打开 39 页、4 章中文教程，不在首次进入时自动弹出。目录、箭头键和前后翻页共用进度，最后阅读页只保存到 `research:tutorialProgress:v1`，不写研究文档。8 个实战页的本地模板经真实注册表/端口整批校验后，由 `ResearchModel.insertGraph()` 重映射 ID 并一次提交到当前页；失败不留半成品，成功后整组选中/聚焦，一次撤销或重做覆盖整组。教程控制、文案与模板分别在 `research-tutorial.js`、`research-tutorial-content.js`、`research-tutorial-examples.js`，不调 AI、不联网、不增后端接口。
 - 每页独立保存模型、镜头和倍率，运行时另存编译计划、仿真时间、事件序列、状态、投影和统计。组合逻辑始终自动；Clock/Timer 受运行栏控制，Current Time 独立使用墙上时间。冷启动暂停，切页/隐藏/离页冻结且返回恢复运行意图；Button 在暂停时仍立即执行完整批次。状态默认重开复位，只有节点显式 `statePolicy:"persist"` 才把离散状态保存为 `savedState`；复位必须覆盖持久状态。
 - 研究相机定向复用主画布的目标/当前双状态、帧率归一化 RAF 缓动、指针锚定滚轮缩放、空格/中键拖拽 EMA 测速与时间无关惯性、连续方向键/WASD 平移；不把主画布整体抽成共享模块。低动态下缩放即时到达且无松手惯性。三项设置独立保存为 `research:panSpeed:v1`（默认 8）、`research:panInertia:v1`（默认 0.15）、`research:zoomSpeed:v1`（默认 1），不得读写对应 `canvas:*` 键。
 - 研究小地图固定 `180px × 120px`，映射包含节点和当前视口，取景框至少 4px；节点缩略块必须使用常驻 DOM 索引。相机移动只变换缩略节点层并移动取景框，停止后校准，节点拖动只更新受影响缩略块；不得恢复相机每帧重建全部小地图节点。点击框外平滑居中，拖动取景框保持抓取偏移并即时平移。
@@ -658,6 +659,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ## 11. 验证清单
 
 研究工作区改动：`node tests/start-research-shell-contract.js`、`node tests/research-canvas-baseline-contract.js`、`node tests/research-pages-regression.js`、`node tests/research-compute-regression.js`、`node tests/research-subcircuits-regression.js`、`node tests/research-runtime-regression.js`、`node tests/research-persistence-contract.js`、`python -m unittest tests.test_research_store -v`、`node tests/research-fork-baseline-contract.js`。可选真实 Edge 验收再运行 `node tests/research-circuit-browser.js <本地 URL>`、`node tests/research-subcircuits-browser.js <本地 URL>`、`node tests/research-cpu-browser.js <本地 URL> [report.json]` 与 `node tests/research-time-slicing-browser.js <本地 URL> [report.json]`。研究壳契约确认首屏零研究资源、首次进入按需挂载与生命周期；画布契约确认显式端口、索引、历史、连续投影分片和 DOM/Canvas2D/SVG 交接；分页回归确认逐页模型/历史/镜头隔离；计算与子电路回归确认严格类型、确定性事件、递归展开、无环嵌套、实例状态隔离、修订固定/升级、选区替换和 V3 持久化；CPU 浏览器验收确认公开 UI 搭建、两版程序结果、状态清空、Probe 顺序、25 实例展开、刷新恢复与运行态非持久化；时间分片浏览器验收确认 1,000 个主动时间源的完整批次、协作让出、帧响应、暂停/恢复和调度状态非持久化；分叉契约确认原编辑器不反向引用研究代码。浏览器夹具必须拦截研究接口，不改真实用户数据。
+研究教程改动还要运行 `node tests/research-tutorial-regression.js`，确认 39 页/4 章、20 种节点与 8 个模板的唯一映射、真实端口校验、ID 重映射、一次撤销/重做和非法整批回滚。
 
 文档-only 改动：
 

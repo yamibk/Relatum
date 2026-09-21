@@ -131,6 +131,36 @@ async function runAcceptance(playwright, url, options = {}) {
       'the outgoing panel content layer must be removed after its finite transition');
     await page.locator('[data-research-viewport]').press('Escape');
     await page.locator('[data-research-node-library]').waitFor({ state: 'visible' });
+
+    // The Research tutorial is opt-in, remembers its page locally, and inserts examples atomically.
+    const nodesBeforeTutorialExample = await page.locator('[data-node-id]').count();
+    await page.locator('[data-research-help-open]').click();
+    assert.equal(await page.locator('[data-tutorial-page]').count(), 39,
+      'the Research tutorial must expose all 39 pages');
+    assert.equal(await page.locator('.research-tutorial-chapter').count(), 4,
+      'the Research tutorial must expose all four chapters');
+    await page.locator('[data-tutorial-page="28"]').click();
+    assert.equal(await page.evaluate(() => localStorage.getItem('research:tutorialProgress:v1')), 'case-click-counter',
+      'the tutorial must remember the last page outside the Research document');
+    await page.locator('[data-research-help-overlay]').press('ArrowLeft');
+    await page.locator('[data-research-help-overlay]').press('ArrowRight');
+    assert.equal(await page.locator('.research-tutorial-position').textContent(), '29 / 39');
+    await page.locator('[data-tutorial-example="click-counter"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-research-help-overlay]').hidden);
+    assert.equal(await page.locator('[data-node-id]').count(), nodesBeforeTutorialExample + 5,
+      'generating the click-counter example must add its five nodes to the current page');
+    assert.equal(await page.locator('.research-node.is-selected').count(), 5,
+      'all generated nodes must be selected as one group');
+    await page.locator('[data-research-viewport]').focus();
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.locator('[data-node-id]').count(), nodesBeforeTutorialExample,
+      'one undo must remove the whole generated example');
+    await page.keyboard.press('Control+Shift+z');
+    assert.equal(await page.locator('[data-node-id]').count(), nodesBeforeTutorialExample + 5,
+      'one redo must restore the whole generated example');
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.locator('[data-node-id]').count(), nodesBeforeTutorialExample,
+      'the browser fixture must leave the original page content intact');
     await page.locator('[data-research-help-open]').click();
     await page.locator('[data-research-help-close]').click();
     assert.equal(await page.locator('[data-research-help-overlay]').evaluate((element) => (

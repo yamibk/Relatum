@@ -378,6 +378,54 @@ export function createResearchCanvas(options) {
     });
   }
 
+  function focusNodes(nodeIds, options = {}) {
+    const ids = new Set(Array.from(nodeIds || [], String));
+    const nodes = model.nodes().filter((node) => ids.has(node.id));
+    if (!nodes.length) return false;
+    const bounds = nodes.reduce((result, node) => ({
+      left: Math.min(result.left, node.x),
+      top: Math.min(result.top, node.y),
+      right: Math.max(result.right, node.x + node.width),
+      bottom: Math.max(result.bottom, node.y + node.height),
+    }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+    const rect = viewportRect();
+    const viewportBounds = viewport.getBoundingClientRect();
+    const frame = { left: 0, top: 0, right: rect.width, bottom: rect.height };
+    const occluders = [
+      stage.querySelector('[data-research-side-panel]'),
+      stage.querySelector('[data-research-compute-dock]'),
+    ].filter((element) => element && !element.hidden && getComputedStyle(element).visibility !== 'hidden');
+    occluders.forEach((element) => {
+      const occupied = element.getBoundingClientRect();
+      const horizontalOverlap = occupied.right > viewportBounds.left && occupied.left < viewportBounds.right;
+      const verticalOverlap = occupied.bottom > viewportBounds.top && occupied.top < viewportBounds.bottom;
+      if (!horizontalOverlap || !verticalOverlap) return;
+      if (occupied.top >= viewportBounds.top + rect.height * .55) {
+        frame.bottom = Math.min(frame.bottom, occupied.top - viewportBounds.top - 18);
+      } else if (occupied.left <= viewportBounds.left + rect.width * .35) {
+        frame.left = Math.max(frame.left, occupied.right - viewportBounds.left + 18);
+      } else if (occupied.right >= viewportBounds.right - rect.width * .35) {
+        frame.right = Math.min(frame.right, occupied.left - viewportBounds.left - 18);
+      }
+    });
+    if (frame.right - frame.left < 180 || frame.bottom - frame.top < 160) {
+      frame.left = 0; frame.top = 0; frame.right = rect.width; frame.bottom = rect.height;
+    }
+    const padding = Math.max(24, Number(options.padding) || 72);
+    const scale = clamp(Math.min(
+      Math.max(1, frame.right - frame.left - padding * 2) / Math.max(1, bounds.right - bounds.left),
+      Math.max(1, frame.bottom - frame.top - padding * 2) / Math.max(1, bounds.bottom - bounds.top),
+    ), MIN_SCALE, 1.25);
+    const next = {
+      x: (frame.left + frame.right) / 2 - ((bounds.left + bounds.right) / 2) * scale,
+      y: (frame.top + frame.bottom) / 2 - ((bounds.top + bounds.bottom) / 2) * scale,
+      scale,
+    };
+    if (options.immediate || reducedMotionPreferred()) setCamera(next);
+    else animateCamera(next);
+    return true;
+  }
+
   function startPanInertia(state) {
     cancelPanInertia();
     if (!state || state.velocityX == null || !(panInertia > 0) || reducedMotionPreferred()) return;
@@ -921,6 +969,15 @@ export function createResearchCanvas(options) {
     selectedNodeIds.clear();
     selectedEdgeIds.clear();
     renderSelection();
+  }
+
+  function selectNodes(nodeIds) {
+    const requested = new Set(Array.from(nodeIds || [], String));
+    selectedNodeIds.clear();
+    selectedEdgeIds.clear();
+    model.nodes().forEach((node) => { if (requested.has(node.id)) selectedNodeIds.add(node.id); });
+    renderSelection();
+    return Array.from(selectedNodeIds);
   }
 
   function normalizedCreationDescriptor(source) {
@@ -2109,6 +2166,7 @@ export function createResearchCanvas(options) {
     suspend,
     dispose,
     getViewState,
+    getVisibleWorldRect: visibleWorldRect,
     setModel,
     createNodeOfType: createTypedNode,
     createNodeWithOptions: (options = {}, worldPoint = null) => {
@@ -2121,6 +2179,8 @@ export function createResearchCanvas(options) {
     getSelectedNode: () => selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
     getSelection: () => ({ nodeIds: Array.from(selectedNodeIds), edgeIds: Array.from(selectedEdgeIds) }),
     clearSelection,
+    selectNodes,
+    focusNodes,
     setConnectionKind,
     setCreationTool,
     setComputeProjection,
