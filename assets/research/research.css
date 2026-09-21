@@ -501,7 +501,7 @@ body {
   z-index: 14;
   left: 50%;
   bottom: 18px;
-  width: min(520px, calc(100% - 132px));
+  width: min(540px, calc(100% - 132px));
   height: 44px;
   transform: translateX(-50%);
   pointer-events: none;
@@ -1451,7 +1451,7 @@ body {
   left: 16px;
   box-sizing: border-box;
   width: min(232px, calc(100% - 32px));
-  height: min(615px, calc(100% - 88px));
+  height: min(635px, calc(100% - 88px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
