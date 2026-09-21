@@ -278,6 +278,9 @@
           return;
         }
         researchWorkspaceApi = workspace;
+        if (typeof workspace.setLanguage === 'function') {
+          workspace.setLanguage(englishUI() ? 'en' : 'zh-CN');
+        }
         resolve(workspace);
       }, { once: true });
       frame.addEventListener('error', () => fail(new Error('research.html 加载失败')), { once: true });
@@ -285,6 +288,15 @@
     });
     return researchWorkspaceLoader;
   }
+
+  document.addEventListener('relatum:languagechange', () => {
+    if (researchWorkspaceFrame) {
+      researchWorkspaceFrame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区');
+    }
+    if (researchWorkspaceApi && typeof researchWorkspaceApi.setLanguage === 'function') {
+      researchWorkspaceApi.setLanguage(englishUI() ? 'en' : 'zh-CN');
+    }
+  });
 
   function loadCareerWorkspace() {
     if (window.RelatumCareerReport) return Promise.resolve(window.RelatumCareerReport);

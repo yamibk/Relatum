@@ -9,19 +9,19 @@ function nodePage(id, kicker, title, lead, ports, settings, realExample, pitfall
 }
 
 const intro = [
-  page('intro-purpose', 'intro', '01 · 研究工作区', '它不是普通流程图，而是一张可执行的知识画布',
-    '研究工作区把“解释关系”和“可计算关系”放在同一张无限画布上：笔记与关系线负责表达含义，类型化节点与导线负责得到可验证的结果。', [
+  page('intro-purpose', 'intro', '01 · 研究工作区', '研究工作区能做什么',
+    '研究工作区把说明和计算放在同一张画布上。笔记与关系线用于整理思路，类型化节点与导线用于计算和验证结果。', [
       { title: '两层结构', body: '知识层由 Note 与关系线组成，适合写假设、证据和结论；计算层由值、Pulse、状态节点和导线组成，适合计算、计时、数字逻辑与可重复实验。两层可以相邻摆放，但只有导线会进入执行图。' },
       { title: '什么时候使用', body: '当一个问题需要明确输入、转换、状态和输出，并希望每一步都能被观察时使用研究工作区。只想自由记录长文或整理卡片时，笔记与普通画布更合适。' },
-      { title: '可信边界', body: '节点只执行内建语义，不运行脚本、不访问网络，也不会偷偷读取整页。标题和空间位置只帮助阅读，不决定执行顺序。' },
+      { title: '执行边界', body: '节点只执行内建功能，不运行脚本、不访问网络，也不读取整页内容。标题和位置只影响阅读，不决定执行顺序。' },
     ]),
   page('intro-operation', 'intro', '02 · 基本操作', '从添加节点到检查属性',
     '先在左侧“添加”面板单击一种节点，再双击稳定空白处放置；单击节点查看属性，双击节点只编辑标题。', [
       { title: '选择与移动', body: '普通左键负责选择和拖动。拖空白框选多个节点；Ctrl/Cmd+A 全选；Delete 或 Backspace 删除选区；Ctrl/Cmd+Z 与 Ctrl/Cmd+Shift+Z 撤销、重做。' },
       { title: '画布与面板', body: '按住 Space 或中键拖动画布，滚轮以指针为中心缩放。Tab 收起或恢复左侧统一面板；左下角比例可恢复 100%，小地图用于远距离定位。' },
-      { title: '先改标题还是配置', body: '标题只是给人看的标签。数学运算、位宽、初始值和计时长度必须在属性面板修改，改标题不会改变行为。' },
+      { title: '标题与配置', body: '标题只用于识别节点。数学运算、位宽、初始值和计时长度要在属性面板中修改；改标题不会改变节点行为。' },
     ]),
-  page('intro-connections', 'intro', '03 · 两种连线', '关系线表达“有关”，导线表达“把值或事件送过去”',
+  page('intro-connections', 'intro', '03 · 两种连线', '关系线与导线',
     '底栏只记忆下一次 Alt 拖拽要创建的连线种类；普通左键始终保留为选择和移动。', [
       { title: '关系线', body: '选择“关系线”，按住 Alt 从一个节点主体拖到另一个节点主体。它没有方向和端口类型，不参与计算，适合连接问题、证据、反例和结论。' },
       { title: '导线', body: '选择“导线”，按住 Alt 从真实端口拖到兼容端口。可以从输入端反向起线，系统会整理为输出到输入。值输入只允许一条来源，Pulse 输入允许多个来源。' },
@@ -206,10 +206,10 @@ const advanced = [
 ];
 
 export const RESEARCH_TUTORIAL_CHAPTERS = Object.freeze([
-  { id: 'intro', label: '入门', description: '先建立值、事件与运行控制的共同语言。' },
-  { id: 'nodes', label: '节点', description: '逐一理解 20 种内建节点。' },
-  { id: 'cases', label: '实战', description: '生成并拆解 8 套可运行节点群。' },
-  { id: 'advanced', label: '进阶', description: '处理反馈、调试、持久状态与大型电路。' },
+  { id: 'intro', label: '入门', description: '先了解值、事件和运行控制。' },
+  { id: 'nodes', label: '节点', description: '逐一了解 20 种内建节点。' },
+  { id: 'cases', label: '实战', description: '生成并检查 8 个可运行示例。' },
+  { id: 'advanced', label: '进阶', description: '了解反馈、调试、状态保留和大型电路。' },
 ]);
 
 export const RESEARCH_TUTORIAL_PAGES = Object.freeze([...intro, ...nodes, ...cases, ...advanced]);

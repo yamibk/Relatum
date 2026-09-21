@@ -313,6 +313,7 @@ body {
   z-index: 12;
   top: 50%;
   right: 18px;
+  box-sizing: border-box;
   display: flex;
   max-height: calc(100% - 96px);
   flex-direction: column;
@@ -374,7 +375,7 @@ body {
   box-shadow: 0 6px 14px rgba(26, 26, 26, 0.16);
   pointer-events: none;
   will-change: transform;
-  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 239ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .research-page-orb.no-transition {
@@ -424,7 +425,7 @@ body {
 }
 
 .research-page-rail.is-flipping {
-  transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease,
+  transition: height 239ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease,
     transform 220ms ease, visibility 0s linear 0s;
 }
 
@@ -435,7 +436,7 @@ body {
 .research-page-button.is-flip,
 .research-page-add.is-flip,
 .research-page-button.is-ghost {
-  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
+  transition: transform 239ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
 }
 
 .research-page-button.is-ghost {
@@ -572,7 +573,7 @@ body {
   outline: none;
 }
 
-.research-compute-dock button:active { transform: scale(0.94); }
+.research-compute-row button:active { transform: scale(0.94); }
 
 .research-compute-dock button.is-active,
 .research-compute-dock button.is-active:hover,

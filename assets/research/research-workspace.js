@@ -70,10 +70,19 @@
     return true;
   }
 
+  function setLanguage(language) {
+    if (global.RelatumI18n && typeof global.RelatumI18n.setLanguage === 'function') {
+      global.RelatumI18n.setLanguage(language, false);
+      return true;
+    }
+    return false;
+  }
+
   global.RelatumResearchWorkspace = Object.freeze({
     activate: activate,
     suspend: suspend,
     dispose: dispose,
+    setLanguage: setLanguage,
   });
 
   setPhase('suspended');

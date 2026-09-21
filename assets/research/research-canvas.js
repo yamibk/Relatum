@@ -75,6 +75,7 @@ export function createResearchCanvas(options) {
   const stage = options.stage;
   let model = options.model;
   const registry = options.registry;
+  const T = (source) => window.RelatumI18n ? window.RelatumI18n.t(source) : String(source || '');
   const onCreationToolChange = typeof options.onCreationToolChange === 'function'
     ? options.onCreationToolChange
     : null;
@@ -516,6 +517,7 @@ export function createResearchCanvas(options) {
     const text = document.createElement('div');
     text.className = 'research-node-text';
     text.dataset.nodeText = '';
+    text.dataset.userContent = '';
     element.appendChild(text);
     const result = document.createElement('div');
     result.className = 'research-node-result';
@@ -633,12 +635,15 @@ export function createResearchCanvas(options) {
   function renderNode(node) {
     let element = nodeElements.get(node.id);
     if (!element) element = createNodeElement(node);
+    const definition = registry.definition(node.type);
+    const usesDefaultLabel = !!(definition && node.label === definition.defaultLabel);
     element.style.transform = `translate(${node.x}px, ${node.y}px)`;
     element.style.width = node.width + 'px';
     element.style.minHeight = node.height + 'px';
     element.classList.toggle('is-selected', selectedNodeIds.has(node.id));
     element.setAttribute('aria-label', node.label || '节点');
     const text = element.querySelector('[data-node-text]');
+    text.toggleAttribute('data-user-content', !usesDefaultLabel);
     if (!editing || editing.nodeId !== node.id) text.textContent = node.label;
     syncComputeDecorations(element, node);
     if (!nodeLayoutCache.has(node.id)) measureNodeLayout(node.id);
@@ -1049,11 +1054,14 @@ export function createResearchCanvas(options) {
     if (!node || !element) return false;
     if (editing && editing.nodeId !== nodeId) commitEdit();
     const text = element.querySelector('[data-node-text]');
-    editing = { nodeId, originalText: node.label };
+    const definition = registry.definition(node.type);
+    const displayedDefault = definition && node.label === definition.defaultLabel ? T(node.label) : '';
+    editing = { nodeId, originalText: node.label, displayedDefault };
     element.classList.add('is-editing');
+    text.dataset.userContent = '';
     text.contentEditable = 'true';
     text.spellcheck = false;
-    text.textContent = replaceText == null ? node.label : String(replaceText);
+    text.textContent = replaceText == null ? (displayedDefault || node.label) : String(replaceText);
     text.focus({ preventScroll: true });
     const selection = window.getSelection();
     if (selection) {
@@ -1079,7 +1087,8 @@ export function createResearchCanvas(options) {
     const state = editing;
     const element = nodeElements.get(state.nodeId);
     const text = element && element.querySelector('[data-node-text]');
-    const value = text ? text.textContent.replace(/\r\n?/g, '\n') : state.originalText;
+    let value = text ? text.textContent.replace(/\r\n?/g, '\n') : state.originalText;
+    if (state.displayedDefault && value === state.displayedDefault) value = state.originalText;
     const height = element ? Math.max(64, Math.ceil(element.scrollHeight)) : 64;
     editing = null;
     finishEditElement(state.nodeId);

@@ -27,6 +27,7 @@ function clone(value) { return value == null ? value : JSON.parse(JSON.stringify
 
 export async function createResearchEditor(stage) {
   if (!stage) throw new Error('研究工作区舞台不存在');
+  const T = (source) => window.RelatumI18n ? window.RelatumI18n.t(source) : String(source || '');
   const registry = await loadResearchRegistry();
   const required = (selector) => {
     const element = stage.querySelector(selector);
@@ -585,10 +586,12 @@ export async function createResearchEditor(stage) {
     const fromIndex = session.indexOf(renderedPageId);
     const toIndex = session.indexOf(page.id);
     const direction = options.direction || (toIndex < fromIndex ? -1 : 1);
-    previewRailTarget(page.id);
+    // 数字、高亮与滑块已经在点击瞬间完成目标态同步；页面交换到透明点时
+    // 不要重建 rail，否则新滑块会截断仍在进行的位移动画并直接跳到终点。
+    const railAlreadyRendered = options.railAlreadyRendered === true || previewRailTarget(page.id);
     if (prefersReducedMotion()) {
       viewport.style.opacity = ''; viewport.style.transform = ''; viewport.classList.remove('is-page-switching');
-      return applyPageNow(page.id, { renderRail: !options.railAlreadyRendered });
+      return applyPageNow(page.id, { renderRail: !railAlreadyRendered });
     }
     const motion = {
       id: ++pageSwitchMotionId,
@@ -603,7 +606,7 @@ export async function createResearchEditor(stage) {
       currentOpacity: Number.isFinite(startOpacity) ? startOpacity : 1,
       currentOffset: Number.isFinite(startOffset) ? startOffset : 0,
       outDuration: Math.max(24, 80 * Math.max(0.2, Math.min(1, startOpacity))),
-      railAlreadyRendered: options.railAlreadyRendered === true,
+      railAlreadyRendered,
     };
     pageSwitchMotion = motion;
     viewport.classList.add('is-page-switching');
@@ -832,7 +835,7 @@ export async function createResearchEditor(stage) {
     const options = [new Option('新建定义', 'new')];
     subcircuitCatalog.definitions().forEach((definition) => options.push(new Option(`发布 ${definition.name} 的新修订`, definition.id)));
     subcircuitTarget.replaceChildren(...options); subcircuitTarget.value = 'new';
-    subcircuitName.value = '新子电路';
+    subcircuitName.value = T('新子电路');
     if (!renderSubcircuitDraft()) return;
     subcircuitOverlay.hidden = false;
     requestAnimationFrame(() => subcircuitName.focus({ preventScroll: true }));
@@ -906,7 +909,7 @@ export async function createResearchEditor(stage) {
       revision = subcircuitCatalog.addRevision(pendingSubcircuit.targetId, revisionSource);
       definition = subcircuitCatalog.definition(pendingSubcircuit.targetId);
     } else {
-      const name = subcircuitName.value.trim() || '新子电路';
+      const name = subcircuitName.value.trim() || T('新子电路');
       const created = subcircuitCatalog.addDefinition(name, revisionSource);
       definition = subcircuitCatalog.definition(created.id); revision = definition.revisions[0];
     }
@@ -1163,7 +1166,17 @@ export async function createResearchEditor(stage) {
       else if (event.target.closest('[data-research-step]')) simulation.step();
       else if (event.target.closest('[data-research-reset]')) simulation.reset();
     }, { signal });
-    dockCollapse.addEventListener('click', () => setDockCollapsed(!dockCollapsed), { signal });
+    // 主键按下即切换，避免快速连续操作时按钮自身的旋转/命中变化取消 click。
+    // 键盘与辅助技术产生的 detail=0 click 仍保留标准按钮行为。
+    dockCollapse.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      setDockCollapsed(!dock.classList.contains('is-collapsed'));
+    }, { signal });
+    dockCollapse.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (event.detail === 0) setDockCollapsed(!dock.classList.contains('is-collapsed'));
+    }, { signal });
     subcircuitCreate.addEventListener('click', openSubcircuitDialog, { signal });
     speedSelect.addEventListener('change', () => {
       const speed = Number(speedSelect.value); simulation.setSpeed(speed);
@@ -1197,7 +1210,7 @@ export async function createResearchEditor(stage) {
       const references = collectSubcircuitReferences(pages, subcircuitCatalog);
       const key = definition.id + '@' + definition.latestRevision;
       if (references.has(key)) { setPersistenceStatus('该修订仍被页面或其他子电路引用，不能删除', 'error'); return; }
-      if (!window.confirm(`删除“${definition.name}”的 r${definition.latestRevision}？此操作不进入页面撤销。`)) return;
+      if (!window.confirm(T(`删除“${definition.name}”的 r${definition.latestRevision}？此操作不进入页面撤销。`))) return;
       if (subcircuitCatalog.removeRevision(definition.id, definition.latestRevision, references)) {
         renderPalette(paletteSearch.value); scheduleSave(0);
       }

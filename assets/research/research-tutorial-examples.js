@@ -204,6 +204,14 @@ export const RESEARCH_TUTORIAL_EXAMPLE_IDS = Object.freeze(Object.keys(BUILDERS)
 
 export function buildResearchTutorialExample(exampleId) {
   const builder = BUILDERS[String(exampleId || '')];
-  return builder ? clone(builder()) : null;
+  const template = builder ? clone(builder()) : null;
+  const i18n = window.RelatumI18n;
+  if (!template || !i18n || i18n.language !== 'en') return template;
+  template.title = i18n.t(template.title);
+  template.nodes.forEach((item) => {
+    item.label = i18n.t(item.label);
+    const typedValue = item.config && item.config.value;
+    if (typedValue && typedValue.type === 'string') typedValue.value = i18n.t(typedValue.value);
+  });
+  return template;
 }
-

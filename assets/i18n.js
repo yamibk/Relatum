@@ -1144,6 +1144,8 @@
     '［进行中］': '[In progress]',
     '学习任务': 'Study tasks'
   };
+  // 独立工作区可在加载本文件前注册自己的词典；主页面不加载时没有额外开销。
+  if (window.RelatumResearchEnglish) Object.assign(EN, window.RelatumResearchEnglish);
 
   const AUTO_EXCLUDE = [
     '[contenteditable]', 'input', 'textarea', '.notes-surface', '.review-body',
@@ -1488,6 +1490,10 @@
     match = source.match(/^学习任务第\s*(\d+)\s*页$/);
     if (match) return 'Study task page ' + match[1];
 
+    if (typeof window.RelatumResearchTranslateDynamic === 'function') {
+      const translated = window.RelatumResearchTranslateDynamic(source);
+      if (translated !== source) return translated;
+    }
     return source;
   }
 
