@@ -1025,33 +1025,36 @@ export function createResearchCanvas(options) {
         if (geometry) appendActiveLine(worldToScreen(geometry.start), worldToScreen(geometry.end), false, geometry.kind === 'wire');
       });
     } else if (gesture.type === 'edge-create') {
-      const from = model.node(gesture.fromId);
-      if (from) {
-        const rect = viewportRect();
-        const targetId = targetNodeAt(rect.left + gesture.current.x, rect.top + gesture.current.y);
-        const target = targetId && targetId !== from.id ? model.node(targetId) : null;
+      const rect = viewportRect();
+      const targetId = targetNodeAt(rect.left + gesture.current.x, rect.top + gesture.current.y);
+      const target = targetId ? model.node(targetId) : null;
+      const valid = !target || !!relationCandidates(gesture.fromIds, targetId);
+      gesture.fromIds.forEach((fromId) => {
+        const from = model.node(fromId);
+        if (!from) return;
         const toward = target ? nodeCenter(target) : screenToWorld(gesture.current);
         const start = researchRectBoundaryPoint(nodeVisualBounds(from), toward);
         const end = target
           ? researchRectBoundaryPoint(nodeVisualBounds(target), nodeCenter(from))
           : toward;
-        appendActiveLine(worldToScreen(start), worldToScreen(end), true);
-      }
+        appendActiveLine(worldToScreen(start), worldToScreen(end), true, false, !valid);
+      });
     } else if (gesture.type === 'data-edge-create') {
-      const from = model.node(gesture.fromId);
       const target = gesture.target && model.node(gesture.target.nodeId);
-      if (from) {
+      gesture.starts.forEach((startEndpoint) => {
+        const from = model.node(startEndpoint.nodeId);
+        if (!from) return;
         const end = target
           ? worldToScreen(portWorldPoint(target, gesture.target.port, gesture.target.direction))
           : gesture.current;
         appendActiveLine(
-          worldToScreen(portWorldPoint(from, gesture.fromPort, gesture.fromDirection)),
+          worldToScreen(portWorldPoint(from, startEndpoint.port, startEndpoint.direction)),
           end,
           true,
           true,
-          !!gesture.target && !gesture.targetValid,
+          !gesture.startValid || !!gesture.target && !gesture.targetValid,
         );
-      }
+      });
     }
   }
 
@@ -1292,13 +1295,30 @@ export function createResearchCanvas(options) {
     viewport.setPointerCapture(event.pointerId);
   }
 
+  function selectedConnectionNodeIds(nodeId) {
+    if (!selectedNodeIds.has(nodeId)) {
+      selectOnlyNode(nodeId);
+      return [nodeId];
+    }
+    return [nodeId, ...Array.from(selectedNodeIds).filter((selectedId) => selectedId !== nodeId)];
+  }
+
+  function relationCandidates(fromIds, targetId) {
+    if (!targetId || !Array.isArray(fromIds) || !fromIds.length) return null;
+    const candidates = fromIds.map((fromNodeId) => ({
+      kind: 'relation', fromNodeId, toNodeId: targetId,
+    }));
+    return model.canCreateEdges(candidates) ? candidates : null;
+  }
+
   function startEdgeCreate(event, nodeId) {
     selectedEdgeIds.clear();
-    if (!selectedNodeIds.has(nodeId)) selectOnlyNode(nodeId);
+    const fromIds = selectedConnectionNodeIds(nodeId);
     gesture = {
       type: 'edge-create',
       pointerId: event.pointerId,
       fromId: nodeId,
+      fromIds,
       current: eventPoint(event),
     };
     viewport.setPointerCapture(event.pointerId);
@@ -1319,19 +1339,31 @@ export function createResearchCanvas(options) {
     return { from, to };
   }
 
+  function wireCandidates(state, target) {
+    if (!state.startValid || !target) return null;
+    const normalized = state.starts.map((start) => normalizeWireCandidate(start, target));
+    if (normalized.some((candidate) => !candidate)) return null;
+    return normalized.map((candidate) => ({
+      kind: 'wire',
+      from: { nodeId: candidate.from.nodeId, portId: candidate.from.port },
+      to: { nodeId: candidate.to.nodeId, portId: candidate.to.port },
+    }));
+  }
+
   function wireCandidateIsValid(state, target) {
-    const candidate = normalizeWireCandidate({
-      nodeId: state.fromId,
-      port: state.fromPort,
-      direction: state.fromDirection,
-    }, target);
-    return !!candidate && model.canCreateWire(
-      candidate.from.nodeId,
-      candidate.from.port,
-      candidate.to.nodeId,
-      candidate.to.port,
-      { ignoreEdgeId: state.rewireEdgeId },
-    );
+    const candidates = wireCandidates(state, target);
+    if (!candidates) return false;
+    if (state.rewireEdgeId && candidates.length === 1) {
+      const candidate = candidates[0];
+      return model.canCreateWire(
+        candidate.from.nodeId,
+        candidate.from.portId,
+        candidate.to.nodeId,
+        candidate.to.portId,
+        { ignoreEdgeId: state.rewireEdgeId },
+      );
+    }
+    return model.canCreateEdges(candidates);
   }
 
   function markWireTargets(state) {
@@ -1353,11 +1385,19 @@ export function createResearchCanvas(options) {
 
   function startDataEdgeCreate(event, nodeId, fromPort, fromDirection) {
     selectedEdgeIds.clear();
-    if (!selectedNodeIds.has(nodeId)) selectOnlyNode(nodeId);
+    const fromIds = selectedConnectionNodeIds(nodeId);
     const node = model.node(nodeId);
     const startPort = node && registry.port(node, fromPort, fromDirection);
     if (!startPort) return;
-    const rewireEdge = fromDirection === 'input' && startPort.channel === 'value'
+    const starts = fromIds.map((selectedId) => {
+      const selected = model.node(selectedId);
+      const port = selected && registry.port(selected, fromPort, fromDirection);
+      return port && port.channel === startPort.channel
+        ? { nodeId: selectedId, port: fromPort, direction: fromDirection }
+        : null;
+    }).filter(Boolean);
+    const startValid = starts.length === fromIds.length;
+    const rewireEdge = starts.length === 1 && fromDirection === 'input' && startPort.channel === 'value'
       ? model.edges().find((edge) => edge.kind === 'wire'
         && edge.to.nodeId === nodeId && edge.to.portId === fromPort)
       : null;
@@ -1368,6 +1408,8 @@ export function createResearchCanvas(options) {
       fromPort,
       fromDirection,
       fromChannel: startPort.channel,
+      starts,
+      startValid,
       rewireEdgeId: rewireEdge ? rewireEdge.id : '',
       target: null,
       targetValid: false,
@@ -1602,36 +1644,24 @@ export function createResearchCanvas(options) {
     } else if (state.type === 'edge-create' && commit && event) {
       clearActiveEdges();
       const targetId = targetNodeAt(event.clientX, event.clientY);
-      if (targetId && targetId !== state.fromId) model.createEdge(state.fromId, targetId, { kind: 'relation' });
+      const candidates = relationCandidates(state.fromIds, targetId);
+      if (candidates) model.createEdges(candidates);
     } else if (state.type === 'data-edge-create' && commit && event) {
       clearActiveEdges();
       const target = targetPortAt(event.clientX, event.clientY);
-      const candidate = normalizeWireCandidate({
-        nodeId: state.fromId,
-        port: state.fromPort,
-        direction: state.fromDirection,
-      }, target);
-      if (candidate && model.canCreateWire(
-        candidate.from.nodeId,
-        candidate.from.port,
-        candidate.to.nodeId,
-        candidate.to.port,
-        { ignoreEdgeId: state.rewireEdgeId },
-      )) {
+      const candidates = wireCandidates(state, target);
+      if (candidates && wireCandidateIsValid(state, target)) {
         if (state.rewireEdgeId) {
+          const candidate = candidates[0];
           model.reconnectWire(
             state.rewireEdgeId,
             candidate.from.nodeId,
-            candidate.from.port,
+            candidate.from.portId,
             candidate.to.nodeId,
-            candidate.to.port,
+            candidate.to.portId,
           );
         } else {
-          model.createEdge(candidate.from.nodeId, candidate.to.nodeId, {
-            kind: 'wire',
-            fromPortId: candidate.from.port,
-            toPortId: candidate.to.port,
-          });
+          model.createEdges(candidates);
         }
       }
       drawEdgesImmediately();

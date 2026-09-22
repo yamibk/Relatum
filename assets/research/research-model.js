@@ -218,7 +218,7 @@ export class ResearchModel {
     return changed;
   }
 
-  valueDescriptor(nodeId, portId, seen = new Set()) {
+  valueDescriptor(nodeId, portId, seen = new Set(), edges = this.state.edges) {
     const key = String(nodeId) + '\n' + String(portId);
     if (seen.has(key)) return null;
     seen.add(key);
@@ -227,9 +227,9 @@ export class ResearchModel {
     const typed = (value) => value && typeof value === 'object' && value.type
       ? { type: value.type, ...(value.type === 'bits' ? { width: Number(value.width) } : {}) } : null;
     const incoming = (inputPortId) => {
-      const edge = this.state.edges.find((candidate) => candidate.kind === 'wire'
+      const edge = edges.find((candidate) => candidate.kind === 'wire'
         && candidate.to.nodeId === node.id && candidate.to.portId === inputPortId);
-      return edge ? this.valueDescriptor(edge.from.nodeId, edge.from.portId, seen) : null;
+      return edge ? this.valueDescriptor(edge.from.nodeId, edge.from.portId, seen, edges) : null;
     };
     if (node.type === 'constant' && portId === 'out') return typed(node.config.value);
     if (node.type === 'subcircuit') {
@@ -263,23 +263,24 @@ export class ResearchModel {
   canCreateWire(fromNodeId, fromPortId, toNodeId, toPortId, options = {}) {
     const fromNode = this.node(fromNodeId); const toNode = this.node(toNodeId);
     const ignoreEdgeId = String(options.ignoreEdgeId || '');
+    const edges = Array.isArray(options.edges) ? options.edges : this.state.edges;
     if (!fromNode || !toNode || fromNode.id === toNode.id || !this.registry
       || !this.registry.compatiblePorts(fromNode, fromPortId, toNode, toPortId)) return false;
     const port = this.registry.port(toNode, toPortId, 'input');
     if (port && port.channel === 'value') {
-      if (this.state.edges.some((edge) => edge.kind === 'wire'
+      if (edges.some((edge) => edge.kind === 'wire'
         && edge.id !== ignoreEdgeId
         && edge.to.nodeId === toNode.id && edge.to.portId === String(toPortId))) return false;
-      const descriptor = this.valueDescriptor(fromNode.id, fromPortId);
+      const descriptor = this.valueDescriptor(fromNode.id, fromPortId, new Set(), edges);
       if (descriptor && descriptor.type === 'bits' && port.bitsWidths.length
         && !port.bitsWidths.includes(descriptor.width)) return false;
       if (descriptor && port.matchGroup) {
         const peerIds = this.registry.portsFor(toNode).filter((candidate) => candidate.direction === 'input'
           && candidate.matchGroup === port.matchGroup && candidate.id !== port.id).map((candidate) => candidate.id);
-        const peerEdge = this.state.edges.find((edge) => edge.kind === 'wire' && edge.id !== ignoreEdgeId
+        const peerEdge = edges.find((edge) => edge.kind === 'wire' && edge.id !== ignoreEdgeId
           && edge.to.nodeId === toNode.id
           && peerIds.includes(edge.to.portId));
-        const peer = peerEdge && this.valueDescriptor(peerEdge.from.nodeId, peerEdge.from.portId);
+        const peer = peerEdge && this.valueDescriptor(peerEdge.from.nodeId, peerEdge.from.portId, new Set(), edges);
         if (peer && (peer.type !== descriptor.type
           || peer.type === 'bits' && peer.width !== descriptor.width)) return false;
       }
@@ -291,6 +292,73 @@ export class ResearchModel {
       }
     }
     return true;
+  }
+
+  prepareEdges(sources, createIds = false) {
+    const input = Array.isArray(sources) ? sources : [];
+    const workingEdges = this.state.edges.slice();
+    const created = [];
+    const accepted = [];
+    const sameEdge = (left, right) => JSON.stringify({ ...left, id: '' }) === JSON.stringify({ ...right, id: '' });
+    for (let index = 0; index < input.length; index += 1) {
+      const source = input[index] && typeof input[index] === 'object' ? input[index] : {};
+      const kind = source.kind === 'wire' ? 'wire' : 'relation';
+      const candidate = kind === 'wire' ? {
+        ...source,
+        id: source.id || (createIds ? id('edge') : `batch-edge-${index}`),
+        kind,
+        from: {
+          nodeId: String(source.from && source.from.nodeId || ''),
+          portId: String(source.from && source.from.portId || ''),
+        },
+        to: {
+          nodeId: String(source.to && source.to.nodeId || ''),
+          portId: String(source.to && source.to.portId || ''),
+        },
+      } : {
+        ...source,
+        id: source.id || (createIds ? id('edge') : `batch-edge-${index}`),
+        kind,
+        fromNodeId: String(source.fromNodeId || ''),
+        toNodeId: String(source.toNodeId || ''),
+      };
+      if (kind === 'wire' && !this.canCreateWire(
+        candidate.from.nodeId,
+        candidate.from.portId,
+        candidate.to.nodeId,
+        candidate.to.portId,
+        { edges: workingEdges },
+      )) return null;
+      const normalized = normalizeEdge(candidate, this.nodeById, this.registry);
+      if (!normalized) return null;
+      const duplicate = workingEdges.find((edge) => sameEdge(edge, normalized));
+      if (duplicate) {
+        accepted.push(duplicate);
+        continue;
+      }
+      if (createIds) {
+        while (workingEdges.some((edge) => edge.id === normalized.id)) normalized.id = id('edge');
+      }
+      workingEdges.push(normalized);
+      created.push(normalized);
+      accepted.push(normalized);
+    }
+    return { workingEdges, created, accepted };
+  }
+
+  canCreateEdges(sources) {
+    return !!this.prepareEdges(sources, false);
+  }
+
+  createEdges(sources) {
+    const prepared = this.prepareEdges(sources, true);
+    if (!prepared) return null;
+    if (!prepared.created.length) return [];
+    const edgeIds = prepared.created.map((edge) => edge.id);
+    const changed = this.mutate((state) => {
+      state.edges = prepared.workingEdges;
+    }, { kind: 'edge-create-batch', topology: true, edgeIds });
+    return changed ? edgeIds.map((edgeId) => this.edge(edgeId)).filter(Boolean) : [];
   }
 
   reconnectWire(edgeId, fromNodeId, fromPortId, toNodeId, toPortId) {

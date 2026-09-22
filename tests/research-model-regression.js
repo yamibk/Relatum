@@ -108,6 +108,67 @@ async function run() {
     'model duplication must use the 28px fallback offset when no placement delta is supplied',
   );
   assert(model.undo());
+
+  const batch = createResearchModel({
+    nodes: [
+      { id: 'note-a', type: 'note', label: 'A', x: 0, y: 0, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+      { id: 'note-b', type: 'note', label: 'B', x: 0, y: 100, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+      { id: 'note-target', type: 'note', label: 'Target', x: 300, y: 50, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+      { id: 'button-a', type: 'button', label: 'A', x: 0, y: 200, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+      { id: 'button-b', type: 'button', label: 'B', x: 0, y: 300, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+      { id: 'counter', type: 'counter', label: 'Counter', x: 300, y: 250, width: 176, height: 72,
+        config: { initial: { type: 'number', value: 0 }, overflow: 'wrap' }, statePolicy: 'reset' },
+      { id: 'constant-a', type: 'constant', label: '1', x: 0, y: 400, width: 176, height: 72,
+        config: { value: { type: 'number', value: 1 } }, statePolicy: 'reset' },
+      { id: 'constant-b', type: 'constant', label: '2', x: 0, y: 500, width: 176, height: 72,
+        config: { value: { type: 'number', value: 2 } }, statePolicy: 'reset' },
+      { id: 'monitor-a', type: 'monitor', label: 'M1', x: 300, y: 400, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+      { id: 'monitor-b', type: 'monitor', label: 'M2', x: 300, y: 500, width: 176, height: 72, config: {}, statePolicy: 'reset' },
+    ],
+    edges: [],
+  }, registry);
+  const relationHistory = batch.historyIndex;
+  const relations = batch.createEdges([
+    { kind: 'relation', fromNodeId: 'note-a', toNodeId: 'note-target' },
+    { kind: 'relation', fromNodeId: 'note-b', toNodeId: 'note-target' },
+  ]);
+  assert.equal(relations.length, 2);
+  assert.equal(batch.historyIndex, relationHistory + 1, 'one multi-relation gesture must create one history entry');
+  assert(batch.undo());
+  assert.equal(batch.edges().length, 0, 'one undo must remove the complete multi-relation batch');
+  assert(batch.redo());
+
+  const pulseHistory = batch.historyIndex;
+  const pulses = batch.createEdges([
+    wire('', 'button-a', 'fire', 'counter', 'inc'),
+    wire('', 'button-b', 'fire', 'counter', 'inc'),
+  ]);
+  assert.equal(pulses.length, 2, 'Pulse inputs must accept multiple selected sources');
+  assert.equal(batch.historyIndex, pulseHistory + 1, 'one multi-wire gesture must create one history entry');
+
+  const beforeInvalidBatch = batch.capture();
+  const beforeInvalidBatchHistory = batch.historyIndex;
+  assert.equal(batch.canCreateEdges([
+    wire('', 'constant-a', 'out', 'monitor-a', 'in'),
+    wire('', 'constant-b', 'out', 'monitor-a', 'in'),
+  ]), false, 'a value input must reject multiple selected sources as one batch');
+  assert.equal(batch.createEdges([
+    wire('', 'constant-a', 'out', 'monitor-a', 'in'),
+    wire('', 'constant-b', 'out', 'monitor-a', 'in'),
+  ]), null);
+  assert.deepEqual(batch.capture(), beforeInvalidBatch, 'an invalid multi-wire batch must not partially mutate the graph');
+  assert.equal(batch.historyIndex, beforeInvalidBatchHistory, 'an invalid multi-wire batch must not enter history');
+
+  const fanoutHistory = batch.historyIndex;
+  const fanout = batch.createEdges([
+    wire('', 'constant-a', 'out', 'monitor-a', 'in'),
+    wire('', 'constant-a', 'out', 'monitor-b', 'in'),
+  ]);
+  assert.equal(fanout.length, 2, 'one output must fan out to multiple selected value inputs');
+  assert.equal(batch.historyIndex, fanoutHistory + 1);
+  assert(batch.undo());
+  assert.equal(batch.edges().filter((edge) => edge.kind === 'wire' && edge.from.nodeId === 'constant-a').length, 0,
+    'one undo must remove the complete fan-out batch');
   console.log('research model regression passed');
 }
 

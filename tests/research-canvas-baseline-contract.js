@@ -77,7 +77,13 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   'function drawCoordinatePlane(rect)', 'function centerOrigin()',
   'function focusNodes(', 'function selectNodes(', 'getVisibleWorldRect: visibleWorldRect',
   'function duplicateSelection()', 'duplicateSelection,',
+  'function selectedConnectionNodeIds(nodeId)', 'function relationCandidates(fromIds, targetId)',
+  'function wireCandidates(state, target)', 'model.canCreateEdges(candidates)', 'model.createEdges(candidates)',
 ].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
+assert(modelSource.includes('prepareEdges(sources, createIds = false)')
+  && modelSource.includes('canCreateEdges(sources)')
+  && modelSource.includes('createEdges(sources)'),
+  'multi-connection batches must validate and commit atomically in the model');
 assert(modelSource.includes('duplicateNodes(nodeIds, options = {})')
   && modelSource.includes("kind: 'selection-duplicate'")
   && canvas.includes("event.key === 'd' || event.key === 'D'"),
