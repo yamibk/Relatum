@@ -33,6 +33,7 @@ const tutorialExamplesSource = read('assets/research/research-tutorial-examples.
   'data-research-pan-speed', 'data-research-pan-inertia', 'data-research-zoom-speed',
   'data-research-center-origin', 'data-research-coordinates-visible', 'data-research-coordinate-labels-visible',
   'data-research-node-library', 'data-research-add-search',
+  'data-research-selection-duplicate',
   'data-research-inspector', 'data-research-run', 'data-research-pause', 'data-research-step',
   'data-research-reset', 'data-research-speed', 'data-research-help-open', 'data-research-help-overlay',
   'data-research-persistence-status', 'data-research-tutorial-root',
@@ -75,7 +76,15 @@ assert(workspace.includes("import('./research-editor.js')") && workspace.include
   "const COORDINATE_LABELS_VISIBLE_KEY = 'research:coordinateLabelsVisible:v1'",
   'function drawCoordinatePlane(rect)', 'function centerOrigin()',
   'function focusNodes(', 'function selectNodes(', 'getVisibleWorldRect: visibleWorldRect',
+  'function duplicateSelection()', 'duplicateSelection,',
 ].forEach((needle) => assert(canvas.includes(needle), 'missing Research canvas behavior: ' + needle));
+assert(modelSource.includes('duplicateNodes(nodeIds, options = {})')
+  && modelSource.includes("kind: 'selection-duplicate'")
+  && canvas.includes("event.key === 'd' || event.key === 'D'"),
+  'selection duplication must stay atomic and expose Ctrl/Cmd+D through the canvas');
+assert(canvas.indexOf('if (isEditableTarget(event.target)) return;')
+  < canvas.indexOf("event.key === 'd' || event.key === 'D'"),
+  'selection duplication must not intercept editable targets');
 assert(canvas.includes("event.altKey && connectionKind === 'wire'")
   && canvas.includes("event.altKey && connectionKind === 'relation'")
   && canvas.includes('stableBlankDoubleClick(event)'),

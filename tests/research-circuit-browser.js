@@ -119,16 +119,13 @@ async function runAcceptance(playwright, url, options = {}) {
     assert(libraryPanelBox, 'the unified side panel must be visible by default');
     await page.locator('[data-node-id="fa-sum"]').click();
     await page.locator('[data-research-inspector]').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('.research-side-panel-content-ghost').count(), 1,
-      'switching from the node library to properties must retain an outgoing content layer');
+    assert.equal(await page.locator('.research-side-panel-content-ghost').count(), 0,
+      'switching from the node library to properties must replace content immediately');
     const propertyPanelBox = await sidePanel.boundingBox();
     assert(propertyPanelBox
       && Math.round(propertyPanelBox.width) === Math.round(libraryPanelBox.width)
       && Math.round(propertyPanelBox.height) === Math.round(libraryPanelBox.height),
     'the node library and property inspector must use the same outer frame');
-    await page.waitForTimeout(240);
-    assert.equal(await page.locator('.research-side-panel-content-ghost').count(), 0,
-      'the outgoing panel content layer must be removed after its finite transition');
     await page.locator('[data-research-viewport]').press('Escape');
     await page.locator('[data-research-node-library]').waitFor({ state: 'visible' });
 
@@ -168,8 +165,8 @@ async function runAcceptance(playwright, url, options = {}) {
     )), true, 'the help overlay must retain its visible closing frame');
     await page.waitForFunction(() => document.querySelector('[data-research-help-overlay]').hidden);
     const initialDockBox = await computeDock.boundingBox();
-    assert(initialDockBox && Math.round(initialDockBox.width) === 520 && Math.round(initialDockBox.height) === 44,
-      'the expanded compute dock must retain its fixed 520 × 44 frame');
+    assert(initialDockBox && Math.round(initialDockBox.width) === 540 && Math.round(initialDockBox.height) === 44,
+      'the expanded compute dock must retain its fixed 540 × 44 frame');
     await page.locator('[data-research-viewport]').focus();
     await page.keyboard.press('Tab');
     assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), true,
@@ -395,6 +392,78 @@ async function runAcceptance(playwright, url, options = {}) {
     assert(multiSelectDockBox && Math.round(multiSelectDockBox.width) === Math.round(initialDockBox.width)
       && Math.round(multiSelectDockBox.height) === Math.round(initialDockBox.height),
     'multi-selection must not resize the compute dock');
+
+    // A Research selection duplicates atomically at the latest canvas pointer position.
+    await page.locator('[data-research-viewport]').press('Escape');
+    await page.locator('[data-node-id="fa-a"]').click();
+    await page.locator('[data-node-id="fa-xor-1"]').click({ modifiers: ['Control'] });
+    const duplicateSourceIds = new Set(['fa-a', 'fa-xor-1']);
+    const nodeCountBeforeDuplicate = await page.locator('[data-node-id]').count();
+    const duplicateAnchor = {
+      x: viewportBox.x + viewportBox.width * 0.62,
+      y: viewportBox.y + viewportBox.height * 0.72,
+    };
+    await page.mouse.move(duplicateAnchor.x, duplicateAnchor.y);
+    await page.locator('[data-research-viewport]').focus();
+    const savesBeforeDuplicate = saves.length;
+    await page.keyboard.press('Control+d');
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-node-id]').length === expected,
+      nodeCountBeforeDuplicate + 2);
+    const duplicatedIds = await page.locator('.research-node.is-selected').evaluateAll((items) => (
+      items.map((item) => item.dataset.nodeId)
+    ));
+    assert.equal(duplicatedIds.length, 2, 'the new duplicate group must become the complete selection');
+    assert(duplicatedIds.every((id) => !duplicateSourceIds.has(id)), 'source nodes must no longer be selected');
+    const duplicateBoxes = await page.locator('.research-node.is-selected').evaluateAll((items) => items.map((item) => {
+      const rect = item.getBoundingClientRect();
+      return { left: rect.left, top: rect.top };
+    }));
+    assert(Math.abs(Math.min(...duplicateBoxes.map((box) => box.left)) - duplicateAnchor.x) < 3
+      && Math.abs(Math.min(...duplicateBoxes.map((box) => box.top)) - duplicateAnchor.y) < 3,
+    'the duplicated group top-left must use the latest pointer position as its anchor');
+    const duplicateSave = await waitForSaveAfter(page, saves, savesBeforeDuplicate);
+    const duplicatedIdSet = new Set(duplicatedIds);
+    const duplicatedInternalEdges = duplicateSave.pages[0].edges.filter((edge) => {
+      const endpoints = edge.kind === 'wire'
+        ? [edge.from.nodeId, edge.to.nodeId] : [edge.fromNodeId, edge.toNodeId];
+      return endpoints.every((nodeId) => duplicatedIdSet.has(nodeId));
+    });
+    assert.equal(duplicatedInternalEdges.length, 1,
+      'only the selected pair internal wire must be duplicated; all crossing wires stay external');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-node-id]').length === expected,
+      nodeCountBeforeDuplicate);
+    await page.keyboard.press('Control+Shift+z');
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-node-id]').length === expected,
+      nodeCountBeforeDuplicate + 2);
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-node-id]').length === expected,
+      nodeCountBeforeDuplicate);
+
+    await page.locator('[data-research-viewport]').press('Escape');
+    await page.locator('[data-node-id="fa-a"]').click();
+    await page.locator('[data-research-viewport]').focus();
+    if (await sidePanel.evaluate((element) => element.classList.contains('is-collapsed'))) {
+      await page.keyboard.press('Tab');
+    }
+    await page.mouse.move(duplicateAnchor.x + 30, duplicateAnchor.y + 30);
+    await page.locator('[data-research-inspector] [data-research-selection-duplicate]').click();
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-node-id]').length === expected,
+      nodeCountBeforeDuplicate + 1);
+    assert.equal(await page.locator('.research-node.is-selected').count(), 1,
+      'the single-node inspector action must select its new copy');
+    await page.locator('[data-research-viewport]').focus();
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction((expected) => document.querySelectorAll('[data-node-id]').length === expected,
+      nodeCountBeforeDuplicate);
+    if (!(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')))) {
+      await page.locator('[data-research-inspector-close]').click();
+    }
+    report.circuits.duplication = {
+      pointerAnchored: true, internalEdgesOnly: true, selectedCopies: true, atomicUndoRedo: true,
+      inspectorAction: true,
+    };
+
     await page.locator('[data-research-run]').click();
     const runningDockBox = await computeDock.boundingBox();
     assert(runningDockBox && Math.round(runningDockBox.width) === Math.round(initialDockBox.width)

@@ -54,6 +54,7 @@ export async function createResearchEditor(stage) {
   const inspectorClose = required('[data-research-inspector-close]');
   const selectionSummary = required('[data-research-selection-summary]');
   const selectionCopy = required('[data-research-selection-copy]');
+  const selectionDuplicate = required('[data-research-selection-duplicate]');
   const tracePanel = required('[data-research-trace]');
   const traceSummary = required('[data-research-trace-summary]');
   const traceList = required('[data-research-trace-list]');
@@ -164,6 +165,7 @@ export async function createResearchEditor(stage) {
     onSelectionChange: (selection) => {
       selectedNodeIds = selection.nodeIds.slice();
       selectedEdgeIds = selection.edgeIds.slice();
+      selectionDuplicate.hidden = selectedNodeIds.length === 0;
       subcircuitCreate.hidden = selectedNodeIds.length === 0;
       selectedNodeId = selection.primaryNode ? selection.primaryNode.id : '';
       selectedEdgeId = selection.primaryEdge ? selection.primaryEdge.id : '';
@@ -1032,11 +1034,15 @@ export async function createResearchEditor(stage) {
       row.appendChild(input); fragment.appendChild(row);
     }
     fragment.appendChild(inspectorHeading('操作'));
+    const duplicate = document.createElement('button'); duplicate.type = 'button';
+    duplicate.dataset.researchSelectionDuplicate = '';
+    duplicate.textContent = '复制当前节点';
+    duplicate.addEventListener('click', () => canvas.duplicateSelection());
     const publish = document.createElement('button'); publish.type = 'button';
     publish.dataset.researchSubcircuitCreate = '';
     publish.textContent = '封装当前节点为子电路';
     publish.addEventListener('click', openSubcircuitDialog);
-    fragment.appendChild(publish);
+    fragment.append(duplicate, publish);
     inspectorFields.replaceChildren(fragment);
     renderTrace(node);
   }
@@ -1077,7 +1083,8 @@ export async function createResearchEditor(stage) {
     inspectorFields.replaceChildren();
     const nodeCount = selection.nodeIds.length;
     const edgeCount = selection.edgeIds.length;
-    selectionCopy.textContent = `已选 ${nodeCount} 个节点${edgeCount ? `、${edgeCount} 条连线` : ''}。可把节点选区发布为可复用子电路。`;
+    selectionCopy.textContent = `已选 ${nodeCount} 个节点${edgeCount ? `、${edgeCount} 条连线` : ''}。可复制节点选区，或发布为可复用子电路。`;
+    selectionDuplicate.hidden = nodeCount === 0;
     subcircuitCreate.hidden = nodeCount === 0;
   }
 
@@ -1192,6 +1199,7 @@ export async function createResearchEditor(stage) {
     });
     subcircuitOverlay.addEventListener('mousedown', (event) => { if (event.target === subcircuitOverlay) closeSubcircuitDialog(); }, { signal });
     inspectorClose.addEventListener('click', () => setSidePanelCollapsed(true), { signal });
+    selectionDuplicate.addEventListener('click', () => canvas.duplicateSelection(), { signal });
     traceClear.addEventListener('click', () => {
       const page = session.page(renderedPageId);
       const node = page && page.model.node(selectedNodeId);

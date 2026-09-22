@@ -17,7 +17,7 @@ const intro = [
     ]),
   page('intro-operation', 'intro', '02 · 基本操作', '从添加节点到检查属性',
     '先在左侧“添加”面板单击一种节点，再双击稳定空白处放置；单击节点查看属性，双击节点只编辑标题。', [
-      { title: '选择与移动', body: '普通左键负责选择和拖动。拖空白框选多个节点；Ctrl/Cmd+A 全选；Delete 或 Backspace 删除选区；Ctrl/Cmd+Z 与 Ctrl/Cmd+Shift+Z 撤销、重做。' },
+      { title: '选择与移动', body: '普通左键负责选择和拖动。拖空白框选多个节点；Ctrl/Cmd+A 全选；Ctrl/Cmd+D 在最近鼠标位置复制选区；Delete 或 Backspace 删除选区；Ctrl/Cmd+Z 与 Ctrl/Cmd+Shift+Z 撤销、重做。' },
       { title: '画布与面板', body: '按住 Space 或中键拖动画布，滚轮以指针为中心缩放。Tab 收起或恢复左侧统一面板；左下角比例可恢复 100%，小地图用于远距离定位。' },
       { title: '标题与配置', body: '标题只用于识别节点。数学运算、位宽、初始值和计时长度要在属性面板中修改；改标题不会改变节点行为。' },
     ]),

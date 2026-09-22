@@ -1497,9 +1497,11 @@ export function createResearchCanvas(options) {
   }
 
   function onPointerMove(event) {
-    lastPointer = eventPoint(event);
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
     const point = eventPoint(event);
+    const rect = viewport.getBoundingClientRect();
+    if (event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom) lastPointer = point;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
     if (gesture.type === 'pan') {
       const now = performance.now();
       const elapsed = now - gesture.lastMoveTimestamp;
@@ -1754,6 +1756,25 @@ export function createResearchCanvas(options) {
     beginEdit(sibling.id);
   }
 
+  function duplicateSelection() {
+    if (!selectedNodeIds.size) return null;
+    const selected = Array.from(selectedNodeIds, (nodeId) => model.node(nodeId)).filter(Boolean);
+    if (!selected.length) return null;
+    const minimumX = Math.min(...selected.map((node) => node.x));
+    const minimumY = Math.min(...selected.map((node) => node.y));
+    let dx = 28;
+    let dy = 28;
+    if (lastPointer) {
+      const anchor = screenToWorld(lastPointer);
+      dx = anchor.x - minimumX;
+      dy = anchor.y - minimumY;
+    }
+    const result = model.duplicateNodes(selectedNodeIds, { dx, dy });
+    if (!result) return null;
+    selectNodes(result.nodeIds);
+    return result;
+  }
+
   function onKeyDown(event) {
     if (event.defaultPrevented) return;
     if (event.key === 'Alt') {
@@ -1782,6 +1803,11 @@ export function createResearchCanvas(options) {
     if (modifier && (event.key === 'y' || event.key === 'Y')) {
       event.preventDefault();
       model.redo();
+      return;
+    }
+    if (modifier && (event.key === 'd' || event.key === 'D')) {
+      event.preventDefault();
+      duplicateSelection();
       return;
     }
     if (modifier && (event.key === 'a' || event.key === 'A')) {
@@ -2329,6 +2355,7 @@ export function createResearchCanvas(options) {
     getCreationTool,
     getSelectedNode: () => selectedNodeIds.size === 1 ? model.node(Array.from(selectedNodeIds)[0]) : null,
     getSelection: () => ({ nodeIds: Array.from(selectedNodeIds), edgeIds: Array.from(selectedEdgeIds) }),
+    duplicateSelection,
     clearSelection,
     selectNodes,
     focusNodes,

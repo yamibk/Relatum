@@ -387,6 +387,29 @@ export class ResearchModel {
     return committed ? { nodeIds, edgeIds: createdEdgeIds, idMap: Object.fromEntries(idMap) } : null;
   }
 
+  duplicateNodes(nodeIds, options = {}) {
+    const requested = new Set(Array.from(nodeIds || [], String));
+    const sourceNodes = this.state.nodes.filter((node) => requested.has(node.id));
+    if (!sourceNodes.length) return null;
+    const selectedIds = new Set(sourceNodes.map((node) => node.id));
+    const dx = Number.isFinite(Number(options.dx)) ? Number(options.dx) : 28;
+    const dy = Number.isFinite(Number(options.dy)) ? Number(options.dy) : 28;
+    const nodes = sourceNodes.map((node) => {
+      const copy = clone(node);
+      copy.x += dx;
+      copy.y += dy;
+      delete copy.savedState;
+      return copy;
+    });
+    const edges = this.state.edges.filter((edge) => {
+      const [from, to] = edgeEndpoints(edge);
+      return selectedIds.has(from) && selectedIds.has(to);
+    }).map(clone);
+    return this.insertGraph({ nodes, edges }, {
+      kind: 'selection-duplicate', sourceNodeIds: sourceNodes.map((node) => node.id),
+    });
+  }
+
   remove(nodeIds, edgeIds) {
     const nodes = new Set(Array.from(nodeIds || [], String));
     const edges = new Set(Array.from(edgeIds || [], String));

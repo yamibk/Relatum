@@ -36,6 +36,8 @@
     '运行轨迹': 'Runtime trace',
     '清空': 'Clear',
     '选区属性': 'Selection properties',
+    '复制选区': 'Duplicate selection',
+    '复制当前节点': 'Duplicate current node',
     '封装为子电路': 'Create subcircuit',
     '从选区发布子电路': 'Publish subcircuit from selection',
     '关闭': 'Close',
@@ -249,7 +251,7 @@
     '当一个问题需要明确输入、转换、状态和输出，并希望每一步都能被观察时使用研究工作区。只想自由记录长文或整理卡片时，笔记与普通画布更合适。': 'Use this workspace for explicit inputs, transformations, state, and outputs that you want to inspect. Use Notes or the regular canvas for free-form writing and cards.',
     '节点只执行内建功能，不运行脚本、不访问网络，也不读取整页内容。标题和位置只影响阅读，不决定执行顺序。': 'Nodes only run built-in operations. They do not run scripts, access the network, or read the whole page. Labels and position do not determine execution order.',
     '先在左侧“添加”面板单击一种节点，再双击稳定空白处放置；单击节点查看属性，双击节点只编辑标题。': 'Click a node type in Add, then double-click stable empty space to place it. Click a node to inspect it; double-click it to edit its label.',
-    '普通左键负责选择和拖动。拖空白框选多个节点；Ctrl/Cmd+A 全选；Delete 或 Backspace 删除选区；Ctrl/Cmd+Z 与 Ctrl/Cmd+Shift+Z 撤销、重做。': 'Use the primary button to select and drag. Drag empty space to box-select. Ctrl/Cmd+A selects all; Delete removes the selection; Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z undo and redo.',
+    '普通左键负责选择和拖动。拖空白框选多个节点；Ctrl/Cmd+A 全选；Ctrl/Cmd+D 在最近鼠标位置复制选区；Delete 或 Backspace 删除选区；Ctrl/Cmd+Z 与 Ctrl/Cmd+Shift+Z 撤销、重做。': 'Use the primary button to select and drag. Drag empty space to box-select. Ctrl/Cmd+A selects all; Ctrl/Cmd+D duplicates the selection at the latest pointer position; Delete removes it; Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z undo and redo.',
     '按住 Space 或中键拖动画布，滚轮以指针为中心缩放。Tab 收起或恢复左侧统一面板；左下角比例可恢复 100%，小地图用于远距离定位。': 'Hold Space or the middle button to pan. The wheel zooms around the pointer. Tab toggles the left panel; the zoom control resets to 100%; the minimap helps with navigation.',
     '标题只用于识别节点。数学运算、位宽、初始值和计时长度要在属性面板中修改；改标题不会改变节点行为。': 'A label only identifies a node. Change operations, bit width, initial values, and timer duration in Properties. Renaming a node does not change its behavior.',
     '底栏只记忆下一次 Alt 拖拽要创建的连线种类；普通左键始终保留为选择和移动。': 'The bottom bar chooses the connection created by the next Alt-drag. A normal primary-button drag always selects or moves.',
@@ -607,8 +609,8 @@
     if (match) return `No entries · limit ${match[1]}`;
     match = source.match(/^(.+)\s*·\s*属性$/);
     if (match) return `${EN[match[1]] || match[1]} · Properties`;
-    match = source.match(/^已选\s*(\d+)\s*个节点(?:、(\d+)\s*条连线)?。可把节点选区发布为可复用子电路。$/);
-    if (match) return `${match[1]} nodes${match[2] ? ` and ${match[2]} connections` : ''} selected. Publish the node selection as a reusable subcircuit.`;
+    match = source.match(/^已选\s*(\d+)\s*个节点(?:、(\d+)\s*条连线)?。可复制节点选区，或发布为可复用子电路。$/);
+    if (match) return `${match[1]} nodes${match[2] ? ` and ${match[2]} connections` : ''} selected. Duplicate the selection or publish it as a reusable subcircuit.`;
     match = source.match(/^(\d+)\s*个节点、(\d+)\s*条内部连线、(\d+)\s*个边界端口$/);
     if (match) return `${match[1]} nodes, ${match[2]} internal wires, ${match[3]} boundary ports`;
     match = source.match(/^有\s*(\d+)\s*条连线不兼容，无法升级$/);

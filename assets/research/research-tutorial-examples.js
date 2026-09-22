@@ -205,7 +205,7 @@ export const RESEARCH_TUTORIAL_EXAMPLE_IDS = Object.freeze(Object.keys(BUILDERS)
 export function buildResearchTutorialExample(exampleId) {
   const builder = BUILDERS[String(exampleId || '')];
   const template = builder ? clone(builder()) : null;
-  const i18n = window.RelatumI18n;
+  const i18n = globalThis.RelatumI18n;
   if (!template || !i18n || i18n.language !== 'en') return template;
   template.title = i18n.t(template.title);
   template.nodes.forEach((item) => {
