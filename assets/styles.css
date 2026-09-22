@@ -23467,6 +23467,12 @@ html.dark-semantic-ui {
   transform: translateY(-1px);
 }
 
+.background-guide-choice:disabled {
+  opacity: 0.48;
+  cursor: default;
+  transform: none;
+}
+
 .background-guide-choice.active {
   border-color: var(--text-secondary);
   box-shadow: 0 0 0 2px var(--focus-ring);
@@ -25119,10 +25125,19 @@ body.canvas-readonly .settings-fab {
   --canvas-background-opacity: 0;
   --canvas-background-scale: 1;
   --canvas-background-position: 50% 50%;
+  --canvas-coordinate-grid: rgba(24, 24, 24, 0.09);
+  --canvas-coordinate-axis: rgba(24, 24, 24, 0.48);
+  --canvas-coordinate-label: rgba(24, 24, 24, 0.68);
   background: var(--canvas-background-fill);
   position: relative;
   cursor: default;
   transition: background var(--duration) var(--easing);
+}
+
+.editor-page[data-background-tone="dark"] .canvas-viewport {
+  --canvas-coordinate-grid: rgba(247, 246, 242, 0.13);
+  --canvas-coordinate-axis: rgba(247, 246, 242, 0.58);
+  --canvas-coordinate-label: rgba(247, 246, 242, 0.78);
 }
 
 /* 辅助底纹只覆盖当前视口。平移时由 canvas.js 更新合成位移，图案不会扩展成
@@ -30028,6 +30043,19 @@ mark[data-hl="gray"]   { background: rgba(183, 190, 187, 0.42); }
   z-index: 1;
 }
 
+.canvas-coordinate-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.canvas-coordinate-canvas[hidden] {
+  display: none;
+}
+
 .canvas-ink-layer {
   position: absolute;
   top: 0;
@@ -31030,6 +31058,53 @@ html.dark-semantic-ui {
   display: none !important;
 }
 
+.canvas-origin-fab {
+  position: absolute;
+  right: 162px;
+  bottom: 14px;
+  z-index: 20;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.66);
+  backdrop-filter: blur(16px) saturate(1.5);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: right 220ms var(--easing-soft),
+              color var(--duration) var(--easing-soft),
+              border-color var(--duration) var(--easing-soft),
+              background var(--duration) var(--easing-soft),
+              transform var(--duration) var(--easing-soft);
+}
+
+.assets-clean-btn[hidden] ~ .canvas-origin-fab {
+  right: 126px;
+}
+
+.canvas-origin-fab:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.85);
+  transform: translateY(-2px);
+}
+
+.canvas-origin-fab:active {
+  transform: translateY(0) scale(0.94);
+}
+
+.canvas-origin-fab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .help-fab {
   position: absolute;
   right: 14px;
@@ -31204,6 +31279,32 @@ html.dark-semantic-ui {
               box-shadow 180ms var(--easing-soft);
 }
 
+.settings-coordinate-controls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+}
+
+.settings-coordinate-controls > .settings-slider,
+.settings-coordinate-controls > .settings-coordinate-check {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 10px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.30);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.34);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+}
+
+.settings-coordinate-controls input:disabled,
+.settings-coordinate-controls input:disabled + span {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .settings-pop > .settings-slider:hover,
 .settings-pop > .settings-slider:focus-within {
   border-color: rgba(28, 28, 30, 0.09);
@@ -31255,6 +31356,7 @@ body[data-mode-submode="full"]:not(.side-panels-collapsed) .settings-pop {
     padding: 14px;
   }
   .settings-pop > * { grid-column: 1 / -1; }
+  .settings-coordinate-controls { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ── 公式工作流 ① · LaTeX 符号 / 模板快捷面板 ──
@@ -31459,6 +31561,7 @@ html.dark-semantic-ui {
 }
 
 .editor-page[data-background-tone="dark"] .help-fab,
+.editor-page[data-background-tone="dark"] .canvas-origin-fab,
 .editor-page[data-background-tone="dark"] .formula-fab {
   color: rgba(239, 245, 242, 0.72);
   border-color: rgba(226, 239, 234, 0.18);
@@ -31468,6 +31571,7 @@ html.dark-semantic-ui {
 }
 
 .editor-page[data-background-tone="dark"] .help-fab:hover,
+.editor-page[data-background-tone="dark"] .canvas-origin-fab:hover,
 .editor-page[data-background-tone="dark"] .formula-fab:hover,
 .editor-page[data-background-tone="dark"] .formula-fab.active {
   color: #f3f7f5;
@@ -31857,6 +31961,14 @@ mjx-container.eq-jump-flash {
 .editor-page[data-background-tone="dark"] .settings-pop .settings-check:hover,
 .editor-page[data-background-tone="dark"] .settings-pop .settings-check:focus-within {
   background: rgba(255, 255, 255, 0.055);
+}
+
+.editor-page[data-background-tone="dark"] .settings-coordinate-controls > .settings-slider,
+.editor-page[data-background-tone="dark"] .settings-coordinate-controls > .settings-coordinate-check {
+  color: rgba(231, 239, 235, 0.74);
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .settings-check:hover,
@@ -34179,6 +34291,205 @@ html.dark-semantic-ui {
 
 .confirm-overlay[hidden] {
   display: none;
+}
+
+.assets-clean-dialog {
+  z-index: 132;
+  background: rgba(24, 23, 20, 0.2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: assets-clean-backdrop-in 160ms ease-out both;
+}
+
+.assets-clean-card {
+  width: min(456px, calc(100vw - 32px));
+  padding: 26px 26px 22px;
+  color: #252520;
+  background: #fbfaf6;
+  border: 1px solid rgba(37, 37, 32, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 24px 64px rgba(35, 33, 28, 0.2), 0 2px 10px rgba(35, 33, 28, 0.08);
+  animation: assets-clean-card-in 190ms var(--easing-soft) both;
+}
+
+.assets-clean-dialog-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.assets-clean-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: #994b44;
+  background: #f4e8e4;
+  border-radius: 13px;
+}
+
+.assets-clean-dialog-head h2 {
+  margin: 0 0 5px;
+  color: inherit;
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+.assets-clean-dialog-head p {
+  margin: 0;
+  color: #77736b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.assets-clean-dialog-details {
+  display: grid;
+  gap: 9px;
+  margin: 22px 0 14px;
+  padding: 14px 15px;
+  background: #f3f1eb;
+  border: 1px solid rgba(37, 37, 32, 0.065);
+  border-radius: 13px;
+}
+
+.assets-clean-dialog-details p {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  color: #514f49;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.assets-clean-dialog-details p > span:first-child {
+  width: 5px;
+  height: 5px;
+  background: #8f8b82;
+  border-radius: 50%;
+  transform: translateY(-1px);
+}
+
+.assets-clean-dialog-safe {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #55715d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.assets-clean-dialog-safe svg { flex: 0 0 auto; }
+
+.assets-clean-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.assets-clean-dialog-warning {
+  color: #9b554e;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.assets-clean-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.assets-clean-confirm {
+  padding: 9px 18px;
+  color: #fffaf7;
+  background: #a44e47;
+  border-radius: 999px;
+  box-shadow: 0 5px 14px rgba(133, 56, 50, 0.18);
+}
+
+.assets-clean-confirm:hover:not(:disabled) {
+  background: #8f413b;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(133, 56, 50, 0.24);
+}
+
+.assets-clean-confirm:active:not(:disabled) { transform: translateY(0); }
+
+.assets-clean-confirm:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(164, 78, 71, 0.18), 0 5px 14px rgba(133, 56, 50, 0.18);
+}
+
+.assets-clean-dialog button:disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
+@keyframes assets-clean-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes assets-clean-card-in {
+  from { opacity: 0; transform: translateY(7px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog {
+  background: rgba(3, 8, 7, 0.54);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-card {
+  color: #f1f3ed;
+  background: #17201e;
+  border-color: rgba(232, 241, 235, 0.14);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-head p {
+  color: rgba(226, 235, 229, 0.6);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-icon {
+  color: #efaaa2;
+  background: rgba(181, 80, 71, 0.16);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-details {
+  background: #202a27;
+  border-color: rgba(230, 239, 233, 0.085);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-details p {
+  color: rgba(235, 241, 236, 0.78);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-details p > span:first-child {
+  background: rgba(235, 241, 236, 0.46);
+}
+
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-safe { color: #a9c5ae; }
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog-warning { color: #e5a39c; }
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog .btn-text { color: rgba(238, 242, 237, 0.68); }
+html.dark-semantic-ui body.editor-page[data-background-tone="dark"] .assets-clean-dialog .btn-text:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+
+@media (max-width: 520px) {
+  .assets-clean-card { padding: 22px 20px 19px; }
+  .assets-clean-dialog-footer { align-items: flex-end; }
+  .assets-clean-dialog-warning { max-width: 95px; white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assets-clean-dialog,
+  .assets-clean-card { animation: none; }
 }
 
 .confirm-box {

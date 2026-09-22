@@ -27,41 +27,120 @@
   }
 
   const cleanBtn = document.querySelector('[data-role="assets-clean-btn"]');
-  if (cleanBtn) {
-    cleanBtn.addEventListener('click', async function() {
-      if (!filePath) return;
-      const ok = window.confirm('将删除当前画布 .assets 文件夹里「没有任何节点引用」的图片 / 附件，并裁剪已删除节点留下的阅读批注。\n不影响仍在画布中的内容，但清理后不可恢复。\n\n确定清理吗？');
-      if (!ok) return;
-      cleanBtn.disabled = true;
-      try {
-        // 先落盘，确保按「当前画布内容」判定哪些是孤儿，避免误删刚引用、尚未保存的文件
-        if (typeof save === 'function' && !(await save())) {
-          throw new Error('当前画布尚未成功保存，已取消清理');
-        }
-        const resp = await fetch('/api/clean-assets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: filePath })
-        });
-        const json = await resp.json();
-        if (resp.ok) {
-          cleanBtn.hidden = true;
-          const fileCount = Number(json.removed) || 0;
-          const annotationCount = Number(json.prunedAnnotations) || 0;
-          const parts = [];
-          if (fileCount) parts.push(fileCount + ' 个未用文件');
-          if (annotationCount) parts.push(annotationCount + ' 条无主批注');
-          setState(parts.length ? ('已清理 ' + parts.join('、')) : '没有需要清理的内容');
-        } else {
-          setState(json.error || '清理失败');
-        }
-      } catch (err) {
-        setState('清理失败');
-        console.warn('[画布] 清理附件失败', err);
-      } finally {
-        cleanBtn.disabled = false;
-      }
+  const cleanDialog = document.querySelector('[data-role="assets-clean-dialog"]');
+  const cleanDialogCancel = cleanDialog && cleanDialog.querySelector('[data-role="assets-clean-cancel"]');
+  const cleanDialogConfirm = cleanDialog && cleanDialog.querySelector('[data-role="assets-clean-confirm"]');
+  let cleanDialogBusy = false;
+  let cleanDialogReturnFocus = null;
+
+  function setCanvasOverlayOpen(open) {
+    if (window.CanvasModule && typeof window.CanvasModule.setExternalOverlayOpen === 'function') {
+      window.CanvasModule.setExternalOverlayOpen(!!open);
+    }
+  }
+
+  function closeAssetsCleanDialog(restoreFocus) {
+    if (!cleanDialog || cleanDialog.hidden || cleanDialogBusy) return;
+    cleanDialog.hidden = true;
+    cleanDialog.removeAttribute('aria-busy');
+    setCanvasOverlayOpen(false);
+    const returnTarget = cleanDialogReturnFocus;
+    cleanDialogReturnFocus = null;
+    if (restoreFocus !== false && returnTarget && returnTarget.isConnected && !returnTarget.hidden) {
+      window.requestAnimationFrame(() => returnTarget.focus({ preventScroll: true }));
+    }
+  }
+
+  function openAssetsCleanDialog() {
+    if (!cleanDialog || !filePath || cleanDialogBusy) return;
+    cleanDialogReturnFocus = document.activeElement;
+    cleanDialog.hidden = false;
+    setCanvasOverlayOpen(true);
+    window.requestAnimationFrame(() => {
+      if (cleanDialogConfirm) cleanDialogConfirm.focus({ preventScroll: true });
     });
+  }
+
+  async function cleanUnusedAssets() {
+    if (!filePath || cleanDialogBusy) return;
+    cleanDialogBusy = true;
+    if (cleanDialog) cleanDialog.setAttribute('aria-busy', 'true');
+    if (cleanDialogCancel) cleanDialogCancel.disabled = true;
+    if (cleanDialogConfirm) {
+      cleanDialogConfirm.disabled = true;
+      cleanDialogConfirm.textContent = toolbarCopy('assetsCleanWorking');
+    }
+    cleanBtn.disabled = true;
+    try {
+      // 先落盘，确保按「当前画布内容」判定哪些是孤儿，避免误删刚引用、尚未保存的文件
+      if (typeof save === 'function' && !(await save())) {
+        throw new Error('当前画布尚未成功保存，已取消清理');
+      }
+      const resp = await fetch('/api/clean-assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath })
+      });
+      const json = await resp.json();
+      if (resp.ok) {
+        cleanBtn.hidden = true;
+        const fileCount = Number(json.removed) || 0;
+        const annotationCount = Number(json.prunedAnnotations) || 0;
+        const parts = [];
+        if (fileCount) parts.push(fileCount + ' 个未用文件');
+        if (annotationCount) parts.push(annotationCount + ' 条无主批注');
+        setState(parts.length ? ('已清理 ' + parts.join('、')) : '没有需要清理的内容');
+      } else {
+        setState(json.error || '清理失败');
+      }
+    } catch (err) {
+      setState('清理失败');
+      console.warn('[画布] 清理附件失败', err);
+    } finally {
+      cleanDialogBusy = false;
+      if (cleanDialogCancel) cleanDialogCancel.disabled = false;
+      if (cleanDialogConfirm) {
+        cleanDialogConfirm.disabled = false;
+        cleanDialogConfirm.textContent = toolbarCopy('assetsCleanAccept');
+      }
+      cleanBtn.disabled = false;
+      closeAssetsCleanDialog(true);
+    }
+  }
+
+  if (cleanBtn) {
+    cleanBtn.addEventListener('click', openAssetsCleanDialog);
+  }
+  if (cleanDialogCancel) cleanDialogCancel.addEventListener('click', () => closeAssetsCleanDialog(true));
+  if (cleanDialogConfirm) cleanDialogConfirm.addEventListener('click', cleanUnusedAssets);
+  if (cleanDialog) {
+    cleanDialog.addEventListener('mousedown', (event) => {
+      if (event.target === cleanDialog) closeAssetsCleanDialog(true);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (cleanDialog.hidden) return;
+      if (event.key === 'Escape' && !cleanDialogBusy) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeAssetsCleanDialog(true);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [cleanDialogCancel, cleanDialogConfirm].filter((button) => button && !button.disabled);
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }, true);
   }
   const titleEl = document.querySelector('[data-role="title"]');
   const stateEl = document.querySelector('[data-role="save-state"]');
@@ -80,6 +159,7 @@
   const viewportEl = document.querySelector('[data-role="canvas-viewport"]');
   const guideLayerEl = document.querySelector('[data-role="canvas-guide-layer"]');
   const topbarGuideLayerEl = document.querySelector('[data-role="editor-topbar-guide"]');
+  let coordinatesTakeoverActive = false;
   const topBarEl = document.querySelector('.editor-top-bar');
   const pageEl = document.body;
   const openingCoverEl = document.querySelector('[data-role="editor-opening-cover"]');
@@ -378,6 +458,12 @@
       archiveTitle: '归档：收走已划删除线的正文节点，未划线节点保留在当前画布',
       modeGroup: '工作模式', actionGroup: '画布操作', languageLabel: '界面语言',
       settingsTitle: '设置', helpTitle: '快捷键速查（?）', helpAria: '快捷键速查',
+      assetsCleanTitle: '清理未使用的附件？', assetsCleanIntro: '只会整理当前画布的附件目录。',
+      assetsCleanFiles: '删除没有任何节点引用的图片和附件',
+      assetsCleanAnnotations: '清除已删除节点遗留的阅读批注',
+      assetsCleanSafe: '画布中正在使用的内容不会受影响。', assetsCleanWarning: '此操作无法撤销',
+      assetsCleanAccept: '清理附件', assetsCleanWorking: '正在清理…',
+      assetsCleanButtonTitle: '存在未使用的附件，点击查看清理范围',
       formulaTitle: '插入公式 / 数学符号', formulaAria: '插入公式与数学符号',
       textDockAria: '文字格式', textDockCollapse: '收起文字工具栏', textDockExpand: '展开文字工具栏',
       richBodyEditor: '正文富文本编辑器',
@@ -395,6 +481,10 @@
       textBindToggle: '绑定到所选节点 / 解除跟随', textConvertMindmap: '将文本框转为所选节点的导图子节点',
       canvasSettings: '画布设置', panSpeed: '方向键平移速度', panInertia: '拖拽惯性',
       zoomSpeed: '滚轮缩放速度',
+      coordinatesVisible: '显示 xOy 坐标', axisOpacity: '坐标轴直线透明度',
+      coordinateLabelsVisible: '显示坐标轴数字', centerCoordinateOrigin: '将坐标原点移到画面中心',
+      guideHint: '随画布移动和缩放，可与任意背景同时使用。',
+      coordinateGuideTakeoverHint: '坐标显示中，辅助底纹已临时停用；关闭 xOy 坐标后恢复。',
       branchDelay: '分支预展开延迟', indexDelay: '目录出现延迟',
       tooltipHoverDelay: '提示框出现延迟', tooltipHideDelay: '提示框消失延迟',
       codeLanguage: '新建代码节点语言', penPressure: '手写笔压感总开关（含批注钢笔）',
@@ -685,6 +775,12 @@
       archiveTitle: 'Archive body nodes with strikethrough; keep all other nodes on this canvas',
       modeGroup: 'Workspace mode', actionGroup: 'Canvas actions', languageLabel: 'Interface language',
       settingsTitle: 'Settings', helpTitle: 'Keyboard shortcuts (?)', helpAria: 'Keyboard shortcuts',
+      assetsCleanTitle: 'Clean unused attachments?', assetsCleanIntro: 'Only this canvas’s attachment folder will be cleaned.',
+      assetsCleanFiles: 'Delete images and attachments not referenced by any node',
+      assetsCleanAnnotations: 'Remove reading annotations left by deleted nodes',
+      assetsCleanSafe: 'Content still used on the canvas will not be affected.', assetsCleanWarning: 'This cannot be undone',
+      assetsCleanAccept: 'Clean attachments', assetsCleanWorking: 'Cleaning…',
+      assetsCleanButtonTitle: 'Unused attachments found; review what will be cleaned',
       formulaTitle: 'Insert formulas / math symbols', formulaAria: 'Insert formulas and math symbols',
       textDockAria: 'Text formatting', textDockCollapse: 'Collapse text toolbar', textDockExpand: 'Expand text toolbar',
       richBodyEditor: 'Rich text body editor',
@@ -702,6 +798,10 @@
       textBindToggle: 'Bind to selected node / stop following', textConvertMindmap: 'Convert text box to child of selected node',
       canvasSettings: 'Canvas Settings', panSpeed: 'Arrow-key pan speed', panInertia: 'Drag momentum',
       zoomSpeed: 'Scroll zoom speed',
+      coordinatesVisible: 'Show xOy coordinates', axisOpacity: 'Axis line opacity',
+      coordinateLabelsVisible: 'Show axis numbers', centerCoordinateOrigin: 'Center the coordinate origin',
+      guideHint: 'Moves and zooms with the canvas and works with every background.',
+      coordinateGuideTakeoverHint: 'Coordinate mode temporarily replaces the guide. Turn off xOy coordinates to restore it.',
       branchDelay: 'Branch preview delay', indexDelay: 'Index preview delay',
       tooltipHoverDelay: 'Tooltip delay', tooltipHideDelay: 'Tooltip hide delay',
       codeLanguage: 'Default code language', penPressure: 'Pen pressure (including annotations)',
@@ -7708,6 +7808,9 @@
       { role: 'pan-speed', value: '8', event: 'input', key: 'canvas:panSpeed' },
       { role: 'pan-inertia', value: '0.15', event: 'input', key: 'canvas:panInertia' },
       { role: 'zoom-speed', value: '1', event: 'input', key: 'canvas:zoomSpeed' },
+      { role: 'coordinates-visible', checked: false, event: 'change', key: 'canvas:coordinatesVisible:v1' },
+      { role: 'axis-opacity', value: '1', event: 'input', key: 'canvas:axisOpacity:v1' },
+      { role: 'coordinate-labels-visible', checked: false, event: 'change', key: 'canvas:coordinateLabelsVisible:v1' },
       { role: 'mindmap-hover-delay', value: '500', event: 'input', key: 'canvas:mindmapHoverDelay' },
       { role: 'index-hover-delay', value: '400', event: 'input', key: 'canvas:indexHoverDelay' },
       { role: 'tooltip-hover-delay', value: '3500', event: 'input', key: 'canvas:tooltipHoverDelay' },
@@ -9609,11 +9712,21 @@
   function syncGuidePanel() {
     if (!backgroundPanel) return;
     const guide = normalizeGuide(guidePreference);
-    backgroundPanel.querySelectorAll('[data-guide-type]').forEach((button) => {
+    const guideButtons = backgroundPanel.querySelectorAll('[data-guide-type]');
+    guideButtons.forEach((button) => {
       const active = button.dataset.guideType === guide.type;
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.disabled = coordinatesTakeoverActive;
     });
+    const group = backgroundPanel.querySelector('[data-role="background-guides"]');
+    if (group) group.setAttribute('aria-disabled', coordinatesTakeoverActive ? 'true' : 'false');
+    const hint = backgroundPanel.querySelector('[data-role="background-guide-hint"]');
+    if (hint) {
+      const key = coordinatesTakeoverActive ? 'coordinateGuideTakeoverHint' : 'guideHint';
+      hint.dataset.editorI18n = key;
+      hint.textContent = toolbarCopy(key);
+    }
   }
 
   function syncBackgroundPanel(bg, imageError) {
@@ -9948,14 +10061,27 @@
     const guide = normalizeGuide(guidePreference);
     guidePreference = guide;
     viewportEl.dataset.guideType = guide.type;
-    guideLayerEl.hidden = guide.type === 'none';
+    viewportEl.dataset.coordinateTakeover = coordinatesTakeoverActive ? 'true' : 'false';
+    guideLayerEl.hidden = coordinatesTakeoverActive || guide.type === 'none';
     if (topbarGuideLayerEl) {
       topbarGuideLayerEl.dataset.guideType = guide.type;
-      topbarGuideLayerEl.hidden = guide.type === 'none';
+      topbarGuideLayerEl.hidden = coordinatesTakeoverActive || guide.type === 'none';
     }
     syncGuidePanel();
     document.dispatchEvent(new CustomEvent('canvas:guide-visual-refresh'));
   }
+
+  function setCoordinateTakeoverActive(active) {
+    const next = !!active;
+    if (coordinatesTakeoverActive === next) {
+      syncGuidePanel();
+      return;
+    }
+    coordinatesTakeoverActive = next;
+    renderGuide();
+  }
+
+  document.addEventListener('editor:languagechange', syncGuidePanel);
 
   function setBackground(next, deferred) {
     if (canvasData === null) return;
@@ -10101,7 +10227,10 @@
       });
     });
     backgroundPanel.querySelectorAll('[data-guide-type]').forEach((button) => {
-      button.addEventListener('click', () => setGuide({ type: button.dataset.guideType }));
+      button.addEventListener('click', () => {
+        if (coordinatesTakeoverActive) return;
+        setGuide({ type: button.dataset.guideType });
+      });
     });
     const chooseImage = backgroundPanel.querySelector('[data-action="background-image-pick"]');
     if (chooseImage) {
@@ -10341,6 +10470,7 @@
           viewport: viewportEl,
           guideLayer: guideLayerEl,
           topbarGuideLayer: topbarGuideLayerEl,
+          coordinateCanvas: document.querySelector('[data-role="canvas-coordinate-canvas"]'),
           surface: document.querySelector('[data-role="canvas-surface"]'),
           emptyHint: document.querySelector('[data-role="empty-hint"]'),
           edgesLayer: document.querySelector('[data-role="canvas-edges"]'),
@@ -10351,6 +10481,12 @@
           panSpeedInput: document.querySelector('[data-role="pan-speed"]'),
           panInertiaInput: document.querySelector('[data-role="pan-inertia"]'),
           zoomSpeedInput: document.querySelector('[data-role="zoom-speed"]'),
+          coordinatesVisibleInput: document.querySelector('[data-role="coordinates-visible"]'),
+          axisOpacityInput: document.querySelector('[data-role="axis-opacity"]'),
+          axisOpacityValue: document.querySelector('[data-role="axis-opacity-val"]'),
+          coordinateLabelsVisibleInput: document.querySelector('[data-role="coordinate-labels-visible"]'),
+          centerOriginButton: document.querySelector('[data-role="canvas-origin-btn"]'),
+          onCoordinatesVisibilityChange: setCoordinateTakeoverActive,
           locateBtn: document.querySelector('[data-role="locate-recent"]'),
           spaceLocateInput: document.querySelector('[data-role="enable-space-locate"]'),
           shortcutsOverlay: document.querySelector('[data-role="shortcuts"]'),

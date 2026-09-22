@@ -149,7 +149,7 @@
           <div class="research-settings-reset-confirm" id="research-settings-reset-confirm"
             data-research-settings-reset-confirm role="alertdialog" aria-label="恢复默认设置？" hidden>
             <strong>恢复默认设置？</strong>
-            <span>重置研究画布的五项本机设置。</span>
+            <span>重置研究画布的六项本机设置。</span>
             <div>
               <button type="button" data-research-settings-reset-cancel>取消</button>
               <button type="button" data-research-settings-reset-accept>恢复默认</button>
@@ -172,6 +172,10 @@
       <label class="research-settings-check">
         <span>显示 xOy 坐标</span>
         <input type="checkbox" data-research-coordinates-visible>
+      </label>
+      <label class="research-settings-slider">
+        <span>坐标轴直线透明度 <output data-research-axis-opacity-value>100%</output></span>
+        <input type="range" data-research-axis-opacity min="0" max="1" step="0.05" value="1" disabled>
       </label>
       <label class="research-settings-check">
         <span>显示坐标轴数字</span>

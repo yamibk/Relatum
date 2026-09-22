@@ -81,9 +81,11 @@ export async function createResearchEditor(stage) {
   const panSpeedInput = required('[data-research-pan-speed]');
   const panInertiaInput = required('[data-research-pan-inertia]');
   const zoomSpeedInput = required('[data-research-zoom-speed]');
+  const axisOpacityInput = required('[data-research-axis-opacity]');
   const panSpeedValue = required('[data-research-pan-speed-value]');
   const panInertiaValue = required('[data-research-pan-inertia-value]');
   const zoomSpeedValue = required('[data-research-zoom-speed-value]');
+  const axisOpacityValue = required('[data-research-axis-opacity-value]');
   const coordinatesVisibleInput = required('[data-research-coordinates-visible]');
   const coordinateLabelsVisibleInput = required('[data-research-coordinate-labels-visible]');
   const centerOriginButton = required('[data-research-center-origin]');
@@ -153,9 +155,11 @@ export async function createResearchEditor(stage) {
     panSpeedInput,
     panInertiaInput,
     zoomSpeedInput,
+    axisOpacityInput,
     panSpeedValue,
     panInertiaValue,
     zoomSpeedValue,
+    axisOpacityValue,
     coordinatesVisibleInput,
     coordinateLabelsVisibleInput,
     onViewChange: (view) => {

@@ -406,6 +406,7 @@
     <div class="canvas-dual-shared-background" data-role="dual-shared-background" aria-hidden="true"></div>
     <div class="canvas-viewport" data-role="canvas-viewport">
       <div class="canvas-guide-layer" data-role="canvas-guide-layer" aria-hidden="true" hidden></div>
+      <canvas class="canvas-coordinate-canvas" data-role="canvas-coordinate-canvas" aria-hidden="true" hidden></canvas>
       <canvas class="canvas-edges-canvas" data-role="canvas-edges-canvas" aria-hidden="true"></canvas>
       <div class="canvas-toolbox auto-hide" data-role="canvas-toolbox" aria-label="画布工具">
         <button type="button" class="canvas-tool-btn active" data-canvas-tool="select" title="选择 / 移动">
@@ -549,10 +550,20 @@
         双击空白处，写下第一个想法
       </div>
             <button type="button" class="assets-clean-btn" data-role="assets-clean-btn"
-              title="存在未使用的附件文件，点击打开文件夹自行清理" aria-label="清理附件" hidden>
+              data-editor-i18n-title="assetsCleanButtonTitle" data-editor-i18n-aria="assetsCleanAccept"
+              title="存在未使用的附件，点击查看清理范围" aria-label="清理附件" hidden>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
              stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"></path>
+        </svg>
+      </button>
+      <button type="button" class="canvas-origin-fab" data-role="canvas-origin-btn"
+              data-editor-i18n-title="centerCoordinateOrigin" data-editor-i18n-aria="centerCoordinateOrigin"
+              title="将坐标原点移到画面中心" aria-label="将坐标原点移到画面中心">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8.5 7 10 5h4l1.5 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3.5Z"/>
+          <circle cx="12" cy="13" r="3.5"/>
         </svg>
       </button>
       <button type="button" class="help-fab" data-role="help-btn"
@@ -634,6 +645,25 @@
                    data-role="zoom-speed" min="0.5" max="3" step="0.1" value="1">
             <span class="settings-slider-tick" style="--default-pos:20%" title="默认 1×"></span>
           </div>
+        </div>
+        <div class="settings-coordinate-controls">
+          <label class="settings-check settings-coordinate-check">
+            <input type="checkbox" data-role="coordinates-visible">
+            <span data-editor-i18n="coordinatesVisible">显示 xOy 坐标</span>
+          </label>
+          <div class="editor-slider settings-slider settings-axis-opacity">
+            <span class="editor-slider-label"><span data-editor-i18n="axisOpacity">坐标轴直线透明度</span>
+              <span class="editor-slider-val" data-role="axis-opacity-val">100%</span></span>
+            <div class="settings-slider-track-wrap">
+              <input type="range" class="editor-slider-input" data-role="axis-opacity"
+                     min="0" max="1" step="0.05" value="1" disabled>
+              <span class="settings-slider-tick" style="--default-pos:100%" title="默认 100%"></span>
+            </div>
+          </div>
+          <label class="settings-check settings-coordinate-check">
+            <input type="checkbox" data-role="coordinate-labels-visible" disabled>
+            <span data-editor-i18n="coordinateLabelsVisible">显示坐标轴数字</span>
+          </label>
         </div>
         <div class="editor-slider settings-slider" title="悬停已收起的脑图节点多久后临时展开分支（最左=瞬发）">
           <span class="editor-slider-label"><span data-editor-i18n="branchDelay">分支预展开延迟</span>
@@ -1994,7 +2024,7 @@
 
       <section class="background-section background-guide-section">
         <div class="sp-subhead">辅助底纹（可叠加）</div>
-        <div class="background-guides" role="group" aria-label="辅助底纹">
+        <div class="background-guides" data-role="background-guides" role="group" aria-label="辅助底纹">
           <button type="button" class="background-guide-choice" data-guide-type="none" title="无底纹">
             <span>无底纹</span>
           </button>
@@ -2011,7 +2041,8 @@
             <span>主次方格</span>
           </button>
         </div>
-        <div class="background-guide-hint">随画布移动和缩放，可与任意背景同时使用。</div>
+        <div class="background-guide-hint" data-role="background-guide-hint"
+             data-editor-i18n="guideHint">随画布移动和缩放，可与任意背景同时使用。</div>
       </section>
 
       <section class="background-section">
@@ -3456,6 +3487,46 @@
   <div class="node-menu" data-role="edge-menu" hidden>
     <button type="button" class="node-menu-item" data-action="edge-edit">编辑文字（双击）</button>
     <button type="button" class="node-menu-item" data-action="edge-delete">删除连线（Delete）</button>
+  </div>
+
+  <!-- 清理未使用附件：替代浏览器原生 confirm，并明确删除范围。 -->
+  <div class="confirm-overlay assets-clean-dialog" data-role="assets-clean-dialog" hidden>
+    <section class="assets-clean-card" role="alertdialog" aria-modal="true"
+             aria-labelledby="assets-clean-dialog-title" aria-describedby="assets-clean-dialog-copy">
+      <header class="assets-clean-dialog-head">
+        <span class="assets-clean-dialog-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/>
+            <path d="M7 7l.7 12a1.5 1.5 0 0 0 1.5 1.4h5.6a1.5 1.5 0 0 0 1.5-1.4L17 7M10 11v5M14 11v5"/>
+          </svg>
+        </span>
+        <div>
+          <h2 id="assets-clean-dialog-title" data-editor-i18n="assetsCleanTitle">清理未使用的附件？</h2>
+          <p id="assets-clean-dialog-copy" data-editor-i18n="assetsCleanIntro">只会整理当前画布的附件目录。</p>
+        </div>
+      </header>
+      <div class="assets-clean-dialog-details">
+        <p><span aria-hidden="true"></span><span data-editor-i18n="assetsCleanFiles">删除没有任何节点引用的图片和附件</span></p>
+        <p><span aria-hidden="true"></span><span data-editor-i18n="assetsCleanAnnotations">清除已删除节点遗留的阅读批注</span></p>
+      </div>
+      <p class="assets-clean-dialog-safe">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.2"/><path d="m6.8 10 2.1 2.1 4.4-4.5"/>
+        </svg>
+        <span data-editor-i18n="assetsCleanSafe">画布中正在使用的内容不会受影响。</span>
+      </p>
+      <footer class="assets-clean-dialog-footer">
+        <span class="assets-clean-dialog-warning" data-editor-i18n="assetsCleanWarning">此操作无法撤销</span>
+        <div class="assets-clean-dialog-actions">
+          <button type="button" class="btn-text" data-role="assets-clean-cancel"
+                  data-editor-i18n="cancel">取消</button>
+          <button type="button" class="btn assets-clean-confirm" data-role="assets-clean-confirm"
+                  data-editor-i18n="assetsCleanAccept">清理附件</button>
+        </div>
+      </footer>
+    </section>
   </div>
 
   <!-- 打开本地文件前的确认框（C2）-->

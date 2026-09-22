@@ -12,6 +12,7 @@ const PROJECTION_FRAME_BUDGET_MS = 4;
 const CONNECTION_KINDS = new Set(['relation', 'wire']);
 const COORDINATES_VISIBLE_KEY = 'research:coordinatesVisible:v1';
 const COORDINATE_LABELS_VISIBLE_KEY = 'research:coordinateLabelsVisible:v1';
+const AXIS_OPACITY_KEY = 'research:axisOpacity:v1';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -116,11 +117,13 @@ export function createResearchCanvas(options) {
   const panSpeedInput = options.panSpeedInput || null;
   const panInertiaInput = options.panInertiaInput || null;
   const zoomSpeedInput = options.zoomSpeedInput || null;
+  const axisOpacityInput = options.axisOpacityInput || null;
   const coordinatesVisibleInput = options.coordinatesVisibleInput || null;
   const coordinateLabelsVisibleInput = options.coordinateLabelsVisibleInput || null;
   const panSpeedValue = options.panSpeedValue || null;
   const panInertiaValue = options.panInertiaValue || null;
   const zoomSpeedValue = options.zoomSpeedValue || null;
+  const axisOpacityValue = options.axisOpacityValue || null;
 
   if (!viewport || !surface || !edgesCanvas || !activeSvg || !selectionFrame
     || !minimap || !minimapNodes || !minimapViewbox || !zoomIndicator || !model || !registry) {
@@ -153,6 +156,7 @@ export function createResearchCanvas(options) {
   let panSpeed = 8;
   let panInertia = 0.15;
   let zoomSpeed = 1;
+  let axisOpacity = 1;
   let coordinatesVisible = false;
   let coordinateLabelsVisible = false;
   let minimapMapping = null;
@@ -189,6 +193,8 @@ export function createResearchCanvas(options) {
     if (Number.isFinite(storedPanInertia) && storedPanInertia >= 0 && storedPanInertia <= 1) panInertia = storedPanInertia;
     const storedZoomSpeed = Number.parseFloat(localStorage.getItem('research:zoomSpeed:v1'));
     if (Number.isFinite(storedZoomSpeed) && storedZoomSpeed >= 0.5 && storedZoomSpeed <= 3) zoomSpeed = storedZoomSpeed;
+    const storedAxisOpacity = Number.parseFloat(localStorage.getItem(AXIS_OPACITY_KEY));
+    if (Number.isFinite(storedAxisOpacity) && storedAxisOpacity >= 0 && storedAxisOpacity <= 1) axisOpacity = storedAxisOpacity;
     coordinatesVisible = localStorage.getItem(COORDINATES_VISIBLE_KEY) === '1';
     coordinateLabelsVisible = localStorage.getItem(COORDINATE_LABELS_VISIBLE_KEY) === '1';
   } catch (_error) {}
@@ -871,6 +877,7 @@ export function createResearchCanvas(options) {
 
     const origin = worldToScreen({ x: 0, y: 0 });
     context.strokeStyle = axisStroke;
+    context.globalAlpha = axisOpacity;
     context.lineWidth = 1.35;
     context.beginPath();
     if (origin.y >= 0 && origin.y <= rect.height) {
@@ -882,6 +889,7 @@ export function createResearchCanvas(options) {
       context.moveTo(x, 0); context.lineTo(x, rect.height);
     }
     context.stroke();
+    context.globalAlpha = 1;
 
     if (coordinateLabelsVisible) {
       context.fillStyle = labelFill;
@@ -1705,9 +1713,14 @@ export function createResearchCanvas(options) {
     if (panSpeedInput) panSpeedInput.value = String(panSpeed);
     if (panInertiaInput) panInertiaInput.value = String(panInertia);
     if (zoomSpeedInput) zoomSpeedInput.value = String(zoomSpeed);
+    if (axisOpacityInput) {
+      axisOpacityInput.value = String(axisOpacity);
+      axisOpacityInput.disabled = !coordinatesVisible;
+    }
     if (panSpeedValue) panSpeedValue.textContent = String(panSpeed);
     if (panInertiaValue) panInertiaValue.textContent = Math.round(panInertia * 100) + '%';
     if (zoomSpeedValue) zoomSpeedValue.textContent = Number(zoomSpeed.toFixed(1)) + '×';
+    if (axisOpacityValue) axisOpacityValue.textContent = Math.round(axisOpacity * 100) + '%';
     if (coordinatesVisibleInput) coordinatesVisibleInput.checked = coordinatesVisible;
     if (coordinateLabelsVisibleInput) {
       coordinateLabelsVisibleInput.checked = coordinateLabelsVisible;
@@ -1743,6 +1756,14 @@ export function createResearchCanvas(options) {
       syncInteractionPreferenceControls();
       saveInteractionPreference('research:zoomSpeed:v1', value);
     }, { signal });
+    if (axisOpacityInput) axisOpacityInput.addEventListener('input', () => {
+      const value = Number.parseFloat(axisOpacityInput.value);
+      if (!Number.isFinite(value) || value < 0 || value > 1) return;
+      axisOpacity = value;
+      syncInteractionPreferenceControls();
+      saveInteractionPreference(AXIS_OPACITY_KEY, value);
+      scheduleDraw();
+    }, { signal });
     if (coordinatesVisibleInput) coordinatesVisibleInput.addEventListener('change', () => {
       coordinatesVisible = coordinatesVisibleInput.checked;
       syncInteractionPreferenceControls();
@@ -1761,6 +1782,7 @@ export function createResearchCanvas(options) {
     panSpeed = 8;
     panInertia = .15;
     zoomSpeed = 1;
+    axisOpacity = 1;
     coordinatesVisible = false;
     coordinateLabelsVisible = false;
     cancelPanInertia();
@@ -1768,12 +1790,13 @@ export function createResearchCanvas(options) {
       localStorage.removeItem('research:panSpeed:v1');
       localStorage.removeItem('research:panInertia:v1');
       localStorage.removeItem('research:zoomSpeed:v1');
+      localStorage.removeItem(AXIS_OPACITY_KEY);
       localStorage.removeItem(COORDINATES_VISIBLE_KEY);
       localStorage.removeItem(COORDINATE_LABELS_VISIBLE_KEY);
     } catch (_error) {}
     syncInteractionPreferenceControls();
     scheduleDraw();
-    return { panSpeed, panInertia, zoomSpeed, coordinatesVisible, coordinateLabelsVisible };
+    return { panSpeed, panInertia, zoomSpeed, axisOpacity, coordinatesVisible, coordinateLabelsVisible };
   }
 
   function createSibling(node) {

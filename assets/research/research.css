@@ -785,6 +785,7 @@ body {
 }
 .research-settings-slider:hover,
 .research-settings-slider:focus-within { background: rgba(24, 24, 24, .035); }
+.research-settings-slider:has(input:disabled) { opacity: .45; }
 .research-settings-slider > span {
   display: flex;
   justify-content: space-between;
@@ -794,6 +795,7 @@ body {
 }
 .research-settings-slider output { color: var(--research-ink); font-variant-numeric: tabular-nums; }
 .research-settings-slider input { width: 100%; margin: 0; accent-color: #1d1d1d; cursor: pointer; }
+.research-settings-slider input:disabled { cursor: default; }
 
 .research-settings-check {
   display: flex;

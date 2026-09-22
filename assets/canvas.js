@@ -851,6 +851,8 @@
     const emptyHint = opts.emptyHint || null;
     const edgesLayer = opts.edgesLayer || null;
     const edgesCanvas = opts.edgesCanvas || null;
+    const coordinateCanvas = opts.coordinateCanvas || null;
+    const coordinateCtx = coordinateCanvas ? coordinateCanvas.getContext('2d') : null;
     const guideLayer = opts.guideLayer || null;
     const topbarGuideLayer = opts.topbarGuideLayer || null;
     const inkLayer = opts.inkLayer || null;
@@ -860,6 +862,13 @@
     const panSpeedInput = opts.panSpeedInput || null;
     const panInertiaInput = opts.panInertiaInput || null;
     const zoomSpeedInput = opts.zoomSpeedInput || null;
+    const coordinatesVisibleInput = opts.coordinatesVisibleInput || null;
+    const axisOpacityInput = opts.axisOpacityInput || null;
+    const axisOpacityValue = opts.axisOpacityValue || null;
+    const coordinateLabelsVisibleInput = opts.coordinateLabelsVisibleInput || null;
+    const centerOriginButton = opts.centerOriginButton || null;
+    const onCoordinatesVisibilityChange = typeof opts.onCoordinatesVisibilityChange === 'function'
+      ? opts.onCoordinatesVisibilityChange : function () {};
     const locateBtn = opts.locateBtn || null;
     const spaceLocateInput = opts.spaceLocateInput || null;
     // 速查表浮层（Y1 轮）
@@ -1467,6 +1476,11 @@
     let panSpeed = 8;                   // 像素/帧（@60fps ≈ 480 px/秒）
     let panInertia = 0.15;              // 空格拖拽松手惯性倍率；0=关闭，1=旧版完整惯性
     let zoomSpeed = 1.0;                // 滚轮缩放速度倍率（0.5-3.0）
+    let coordinatesVisible = false;     // 本机视觉偏好，不写入 .canvas
+    let axisOpacity = 1;
+    let coordinateLabelsVisible = false;
+    let coordinateStyleKey = '';
+    let coordinateColors = null;
     let spaceLocateEnabled = false;     // 短按空格定位最近节点；不影响空格+拖拽平移（默认关闭，齿轮里打开）
     const horizontalScrollState = new WeakMap(); // MD 宽内容：Shift+滚轮目标值 + RAF 缓动
     let spaceUsedForPan = false;        // 本次空格按住期间是否拖动过（区分"短按定位" vs "按住平移"）
@@ -1595,6 +1609,10 @@
       if (Number.isFinite(pi) && pi >= 0 && pi <= 1) panInertia = pi;
       const zs = parseFloat(localStorage.getItem('canvas:zoomSpeed'));
       if (Number.isFinite(zs) && zs >= 0.5 && zs <= 3) zoomSpeed = zs;
+      coordinatesVisible = localStorage.getItem('canvas:coordinatesVisible:v1') === '1';
+      coordinateLabelsVisible = localStorage.getItem('canvas:coordinateLabelsVisible:v1') === '1';
+      const ao = parseFloat(localStorage.getItem('canvas:axisOpacity:v1'));
+      if (Number.isFinite(ao) && ao >= 0 && ao <= 1) axisOpacity = ao;
       const sl = localStorage.getItem('canvas:spaceLocateEnabled');
       if (sl === '0') spaceLocateEnabled = false;
       else if (sl === '1') spaceLocateEnabled = true;
@@ -4209,6 +4227,140 @@
       return ((value % divisor) + divisor) % divisor;
     }
 
+    function coordinateStep(scale, targetPixels) {
+      const safeScale = Math.max(0.0001, Math.abs(Number(scale)) || 1);
+      const raw = Math.max(Number.MIN_VALUE, (Number(targetPixels) || 80) / safeScale);
+      const power = Math.pow(10, Math.floor(Math.log10(raw)));
+      const normalized = raw / power;
+      const factor = normalized < Math.sqrt(2) ? 1
+        : normalized < Math.sqrt(10) ? 2
+          : normalized < Math.sqrt(50) ? 5 : 10;
+      return factor * power;
+    }
+
+    function formatCoordinate(value, step) {
+      const clean = Math.abs(value) < Math.abs(step) / 1000 ? 0 : value;
+      if (clean !== 0 && (Math.abs(clean) >= 1e6 || Math.abs(clean) < 1e-4)) {
+        return clean.toExponential(2).replace(/\.00e/, 'e').replace(/(\.\d)0e/, '$1e');
+      }
+      const decimals = Math.max(0, Math.min(6, -Math.floor(Math.log10(Math.abs(step) || 1))));
+      return clean.toFixed(decimals).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+    }
+
+    function currentCoordinateColors() {
+      const tone = document.body && document.body.dataset.backgroundTone === 'dark' ? 'dark' : 'light';
+      if (coordinateColors && coordinateStyleKey === tone) return coordinateColors;
+      const style = getComputedStyle(viewport);
+      coordinateStyleKey = tone;
+      coordinateColors = {
+        grid: style.getPropertyValue('--canvas-coordinate-grid').trim()
+          || (tone === 'dark' ? 'rgba(247,246,242,.13)' : 'rgba(24,24,24,.09)'),
+        axis: style.getPropertyValue('--canvas-coordinate-axis').trim()
+          || (tone === 'dark' ? 'rgba(247,246,242,.58)' : 'rgba(24,24,24,.48)'),
+        label: style.getPropertyValue('--canvas-coordinate-label').trim()
+          || (tone === 'dark' ? 'rgba(247,246,242,.78)' : 'rgba(24,24,24,.68)'),
+      };
+      return coordinateColors;
+    }
+
+    function renderCoordinatePlane() {
+      if (!coordinateCanvas || !coordinateCtx) return;
+      const rect = cachedViewportRect();
+      const width = rect.width || 1;
+      const height = rect.height || 1;
+      const dpr = window.devicePixelRatio || 1;
+      const needWidth = Math.max(1, Math.round(width * dpr));
+      const needHeight = Math.max(1, Math.round(height * dpr));
+      if (coordinateCanvas.width !== needWidth) coordinateCanvas.width = needWidth;
+      if (coordinateCanvas.height !== needHeight) coordinateCanvas.height = needHeight;
+      coordinateCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      coordinateCtx.clearRect(0, 0, width, height);
+      coordinateCanvas.hidden = !coordinatesVisible;
+      if (!coordinatesVisible || !(rect.width > 0) || !(rect.height > 0)) return;
+
+      const step = coordinateStep(curScale, 80);
+      const minX = (-curPanX) / curScale;
+      const maxX = (width - curPanX) / curScale;
+      const minY = (-curPanY) / curScale;
+      const maxY = (height - curPanY) / curScale;
+      const firstX = Math.ceil(Math.min(minX, maxX) / step) * step;
+      const firstY = Math.ceil(Math.min(minY, maxY) / step) * step;
+      const colors = currentCoordinateColors();
+
+      coordinateCtx.save();
+      coordinateCtx.lineWidth = 1;
+      coordinateCtx.strokeStyle = colors.grid;
+      coordinateCtx.beginPath();
+      for (let x = firstX; x <= Math.max(minX, maxX) + step * 0.001; x += step) {
+        const screenX = Math.round(curPanX + x * curScale) + 0.5;
+        coordinateCtx.moveTo(screenX, 0);
+        coordinateCtx.lineTo(screenX, height);
+      }
+      for (let y = firstY; y <= Math.max(minY, maxY) + step * 0.001; y += step) {
+        const screenY = Math.round(curPanY + y * curScale) + 0.5;
+        coordinateCtx.moveTo(0, screenY);
+        coordinateCtx.lineTo(width, screenY);
+      }
+      coordinateCtx.stroke();
+
+      const originX = curPanX;
+      const originY = curPanY;
+      coordinateCtx.strokeStyle = colors.axis;
+      coordinateCtx.globalAlpha = axisOpacity;
+      coordinateCtx.lineWidth = 1.35;
+      coordinateCtx.beginPath();
+      if (originY >= 0 && originY <= height) {
+        const y = Math.round(originY) + 0.5;
+        coordinateCtx.moveTo(0, y);
+        coordinateCtx.lineTo(width, y);
+      }
+      if (originX >= 0 && originX <= width) {
+        const x = Math.round(originX) + 0.5;
+        coordinateCtx.moveTo(x, 0);
+        coordinateCtx.lineTo(x, height);
+      }
+      coordinateCtx.stroke();
+      coordinateCtx.globalAlpha = 1;
+
+      if (coordinateLabelsVisible) {
+        coordinateCtx.fillStyle = colors.label;
+        coordinateCtx.font = '11px ui-monospace, "Cascadia Mono", Consolas, monospace';
+        coordinateCtx.textBaseline = 'top';
+        if (originY >= 0 && originY <= height) {
+          const labelY = originY > height - 20 ? originY - 16 : originY + 4;
+          coordinateCtx.textAlign = 'center';
+          for (let x = firstX; x <= Math.max(minX, maxX) + step * 0.001; x += step) {
+            if (Math.abs(x) < step / 1000) continue;
+            const screenX = curPanX + x * curScale;
+            if (screenX < 18 || screenX > width - 18) continue;
+            coordinateCtx.fillText(formatCoordinate(x, step), screenX, labelY);
+          }
+          coordinateCtx.textAlign = 'right';
+          coordinateCtx.fillText('x', width - 6, Math.max(2, labelY));
+        }
+        if (originX >= 0 && originX <= width) {
+          const labelX = originX < 42 ? originX + 34 : originX - 5;
+          coordinateCtx.textAlign = 'right';
+          coordinateCtx.textBaseline = 'middle';
+          for (let y = firstY; y <= Math.max(minY, maxY) + step * 0.001; y += step) {
+            if (Math.abs(y) < step / 1000) continue;
+            const screenY = curPanY + y * curScale;
+            if (screenY < 12 || screenY > height - 12) continue;
+            coordinateCtx.fillText(formatCoordinate(-y, step), labelX, screenY);
+          }
+          coordinateCtx.textAlign = 'left';
+          coordinateCtx.textBaseline = 'top';
+          coordinateCtx.fillText('y', Math.min(width - 12, originX + 5), 5);
+        }
+        if (originX >= 0 && originX <= width && originY >= 0 && originY <= height) {
+          coordinateCtx.textAlign = 'left';
+          coordinateCtx.textBaseline = 'top';
+          coordinateCtx.fillText('0', originX + 5, originY + 5);
+        }
+      }
+      coordinateCtx.restore();
+    }
+
     function updateGuideViewport() {
       if (!guideLayer || guideLayer.hidden || viewport.dataset.guideType === 'none') return;
       let step = GUIDE_BASE_STEP * curScale;
@@ -4258,6 +4410,7 @@
       surface.style.transform =
         'translate(' + curPanX + 'px, ' + curPanY + 'px) scale(' + curScale + ')';
       updateGuideViewport();
+      renderCoordinatePlane();
       // 连线透明命中条宽度按缩放反向缩放，使其在屏幕上恒定（~22px）→ 缩小画布也好点中
       if (edgesLayer && !EDGE_GEOMETRY_HIT) {
         edgesLayer.style.setProperty('--edge-hit-w', Math.max(14, 22 / curScale).toFixed(2));
@@ -4277,6 +4430,11 @@
       guideStepCache = '';
       guideOffsetCache = '';
       updateGuideViewport();
+    });
+    document.addEventListener('canvas:edge-visual-refresh', function () {
+      coordinateStyleKey = '';
+      coordinateColors = null;
+      renderCoordinatePlane();
     });
 
     function setViewportImmediate(s, px, py) {
@@ -4396,6 +4554,22 @@
       targetPanY = 0;
       rememberViewport();
       requestTick();
+    }
+
+    function centerCoordinateOrigin() {
+      const rect = cachedViewportRect();
+      const panX = rect.width / 2;
+      const panY = rect.height / 2;
+      if (prefersReducedMotion()) {
+        setViewportImmediate(targetScale, panX, panY);
+        rememberViewport();
+        return true;
+      }
+      targetPanX = panX;
+      targetPanY = panY;
+      rememberViewport();
+      requestTick();
+      return true;
     }
 
     // Ctrl+1 / 初始打开：缩放并平移到刚好容纳所有节点
@@ -25906,6 +26080,7 @@
       ? new ResizeObserver(function () {
         refreshViewportRect();
         lastCullPanX = NaN;
+        renderCoordinatePlane();
         requestEdgesCanvasRender();
       })
       : null;
@@ -25938,6 +26113,24 @@
         e.stopPropagation();
         resetViewport();
       });
+    }
+
+    function syncCoordinatePreferenceControls() {
+      if (coordinatesVisibleInput) coordinatesVisibleInput.checked = coordinatesVisible;
+      if (axisOpacityInput) {
+        axisOpacityInput.value = String(axisOpacity);
+        axisOpacityInput.disabled = !coordinatesVisible;
+      }
+      if (axisOpacityValue) axisOpacityValue.textContent = Math.round(axisOpacity * 100) + '%';
+      if (coordinateLabelsVisibleInput) {
+        coordinateLabelsVisibleInput.checked = coordinateLabelsVisible;
+        coordinateLabelsVisibleInput.disabled = !coordinatesVisible;
+      }
+      if (coordinateCanvas) coordinateCanvas.hidden = !coordinatesVisible;
+    }
+
+    function saveCoordinatePreference(key, value) {
+      try { localStorage.setItem(key, String(value)); } catch (e) {}
     }
 
     // ── W 轮：顶栏控件 ────────────────────
@@ -25978,6 +26171,45 @@
         }
       });
     }
+    if (axisOpacityInput) {
+      axisOpacityInput.addEventListener('input', function () {
+        const value = parseFloat(axisOpacityInput.value);
+        if (!Number.isFinite(value) || value < 0 || value > 1) return;
+        axisOpacity = value;
+        syncCoordinatePreferenceControls();
+        saveCoordinatePreference('canvas:axisOpacity:v1', value);
+        renderCoordinatePlane();
+      });
+    }
+    if (coordinatesVisibleInput) {
+      coordinatesVisibleInput.addEventListener('change', function () {
+        coordinatesVisible = !!coordinatesVisibleInput.checked;
+        syncCoordinatePreferenceControls();
+        saveCoordinatePreference('canvas:coordinatesVisible:v1', coordinatesVisible ? '1' : '0');
+        renderCoordinatePlane();
+        onCoordinatesVisibilityChange(coordinatesVisible);
+      });
+    }
+    if (coordinateLabelsVisibleInput) {
+      coordinateLabelsVisibleInput.addEventListener('change', function () {
+        coordinateLabelsVisible = !!coordinateLabelsVisibleInput.checked;
+        syncCoordinatePreferenceControls();
+        saveCoordinatePreference(
+          'canvas:coordinateLabelsVisible:v1', coordinateLabelsVisible ? '1' : '0',
+        );
+        renderCoordinatePlane();
+      });
+    }
+    if (centerOriginButton) {
+      centerOriginButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        centerOriginButton.blur();
+        centerCoordinateOrigin();
+      });
+    }
+    syncCoordinatePreferenceControls();
+    onCoordinatesVisibilityChange(coordinatesVisible);
+    renderCoordinatePlane();
     if (locateBtn) {
       locateBtn.addEventListener('click', function (e) {
         e.preventDefault();
