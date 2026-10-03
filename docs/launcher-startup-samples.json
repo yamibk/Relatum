@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-03",
+  "platform": "Windows 11 10.0.26200",
+  "profile": "notes only, fresh data root and WebView profile, OS caches retained",
+  "unit": "milliseconds",
+  "beforeCommit": "df233d4",
+  "before": {
+    "launcher": [
+      { "webview": 970, "home": 1447 },
+      { "webview": 1009, "home": 1490 },
+      { "webview": 1036, "home": 1630 },
+      { "webview": 1027, "home": 1506 },
+      { "webview": 1051, "home": 1540 }
+    ],
+    "direct": [
+      { "webview": 863, "home": 1272 },
+      { "webview": 830, "home": 1300 },
+      { "webview": 822, "home": 1285 },
+      { "webview": 880, "home": 1346 },
+      { "webview": 809, "home": 1281 }
+    ]
+  },
+  "after": {
+    "launcher": [
+      { "webview": 1243, "home": 1744 },
+      { "webview": 808, "home": 1252 },
+      { "webview": 867, "home": 1305 },
+      { "webview": 837, "home": 1275 },
+      { "webview": 846, "home": 1309 }
+    ],
+    "direct": [
+      { "webview": 5195, "home": 5614 },
+      { "webview": 864, "home": 1290 },
+      { "webview": 841, "home": 1273 },
+      { "webview": 827, "home": 1263 },
+      { "webview": 802, "home": 1221 }
+    ]
+  }
+}

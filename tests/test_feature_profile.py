@@ -57,20 +57,19 @@ class FeatureProfileTests(unittest.TestCase):
             profile = self.only("notes")
             features.save_preferences(root, profile)
             with patch.object(launcher.subprocess, "Popen") as spawn, patch.object(launcher, "desktop_instance_running", return_value=False):
-                self.assertFalse(launcher.quick_launch(root))
+                self.assertIsNone(launcher.quick_launch(root))
                 features.save_launcher_settings(root, True)
-                self.assertTrue(launcher.quick_launch(root))
-                self.assertEqual(spawn.call_count, 1)
-                command = spawn.call_args.args[0]
+                command = launcher.quick_launch(root)
+                spawn.assert_not_called()
                 handoff = features.LaunchProfile.decode(command[command.index(features.HANDOFF_ARGUMENT) + 1])
                 self.assertTrue(handoff.enabled("notes"))
                 self.assertFalse(handoff.enabled("canvas.editor"))
                 features.save_launcher_settings(root, False)
-                self.assertFalse(launcher.quick_launch(root))
+                self.assertIsNone(launcher.quick_launch(root))
                 features.save_launcher_settings(root, True)
                 (root / "data" / features.PROFILE_FILENAME).write_text("bad", encoding="utf8")
-                self.assertFalse(launcher.quick_launch(root))
-                self.assertEqual(spawn.call_count, 1)
+                self.assertIsNone(launcher.quick_launch(root))
+                spawn.assert_not_called()
             target = root / "data" / features.LAUNCHER_SETTINGS_FILENAME
             for raw in ("bad", "[]", '{"version":true,"skipSelection":true}', '{"version":1,"skipSelection":"yes"}'):
                 target.write_text(raw, encoding="utf8")
@@ -85,15 +84,24 @@ class FeatureProfileTests(unittest.TestCase):
             features.save_preferences(root, self.only("canvas", "canvas.editor"), str(file))
             features.save_launcher_settings(root, True)
             with patch.object(launcher.subprocess, "Popen") as spawn, patch.object(launcher, "desktop_instance_running", return_value=False):
-                self.assertTrue(launcher.quick_launch(root))
-                self.assertEqual(spawn.call_args.args[0][-1], str(file.resolve()))
+                self.assertEqual(launcher.quick_launch(root)[-1], str(file.resolve()))
                 file.unlink()
-                self.assertFalse(launcher.quick_launch(root))
-                self.assertEqual(spawn.call_count, 1)
+                self.assertIsNone(launcher.quick_launch(root))
+                spawn.assert_not_called()
             features.save_preferences(root, self.only("notes"))
             with patch.object(launcher, "desktop_instance_running", return_value=True), patch.object(launcher.subprocess, "Popen") as spawn, patch("ctypes.windll.user32.MessageBoxW", return_value=1):
-                self.assertTrue(launcher.quick_launch(root))
+                self.assertTrue(features.LaunchProfile.decode(launcher.quick_launch(root)[1]).restricted)
                 spawn.assert_not_called()
+
+    def test_quick_main_enters_desktop_in_process(self):
+        import desktop
+        with tempfile.TemporaryDirectory() as directory, patch.object(launcher, "launcher_root", return_value=Path(directory)), patch.object(launcher.sys, "argv", ["launcher.py"]), patch.object(desktop, "main", return_value=7) as main, patch.object(launcher.subprocess, "Popen") as spawn:
+            features.save_preferences(Path(directory), self.only("notes"))
+            features.save_launcher_settings(Path(directory), True)
+            self.assertEqual(launcher.main(), 7)
+            self.assertTrue(features.LaunchProfile.decode(launcher.sys.argv[2]).restricted)
+            main.assert_called_once_with()
+            spawn.assert_not_called()
 
     def test_desktop_setting_persists_without_changing_features(self):
         import desktop

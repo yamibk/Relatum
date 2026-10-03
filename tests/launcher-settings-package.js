@@ -33,15 +33,6 @@ function start(exe, port) {
   return process;
 }
 async function connect(port, app) {
-  if (app.spawnfile.endsWith('RelatumLauncher.exe')) {
-    for (let i = 0; i < 60; i++) {
-      const { stdout } = await execute('powershell.exe', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter 'ParentProcessId = ${app.pid}').ProcessId`], { windowsHide: true });
-      const child = Number(stdout.trim());
-      if (child) { pids.add(child); break; }
-      await sleep(100);
-    }
-    assert(pids.size, 'quick launcher creates main process');
-  }
   let ready = false;
   for (let i = 0; i < 200; i++) {
     try { if ((await fetch(`http://127.0.0.1:${port}/json/version`)).ok) { ready = true; break; } } catch (_) {}
@@ -73,6 +64,7 @@ async function setToggle(page, value) {
   assert.deepEqual(JSON.parse(fs.readFileSync(profileFile, 'utf8')), profile, 'setting keeps feature choices');
 }
 async function closeMain(page, port) {
+  await page.waitForFunction(() => typeof window.pywebview?.api?.close_window === 'function');
   await page.evaluate(async () => { await window.CanvasDesktop.flushBeforeClose(); window.pywebview.api.close_window(); });
   let closed = false;
   for (let i = 0; i < 100; i++) {
@@ -98,7 +90,9 @@ async function closeMain(page, port) {
     const quick = start('RelatumLauncher.exe', port);
     page = await connect(port, quick);
     await page.waitForFunction(() => window.CanvasNoteWorkspace && window.RelatumStartWorkspace.current === 'notes');
-    assert.equal(quick.exitCode, 0, 'quick launcher exits without showing chooser');
+    assert.equal(quick.exitCode, null, 'quick launcher hosts the main window in the same process');
+    const { stdout: children } = await execute('powershell.exe', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter 'ParentProcessId = ${quick.pid}').Name`], { windowsHide: true });
+    assert(!children.includes('Relatum.exe'), 'no second main executable');
     const runtime = await page.evaluate(async () => (await fetch('/api/runtime')).json());
     assert(runtime.launcherMode && runtime.features.notes && !runtime.features['canvas.editor']);
     assert.equal(await page.locator('button[data-start-workspace="notes"]').textContent(), 'Notes');

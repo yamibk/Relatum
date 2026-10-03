@@ -546,7 +546,9 @@
     document.body.classList.remove('note-focus-restoring');
     document.body.classList.add('note-focus-transitioning');
     document.body.classList.toggle('note-focus-mode', state.focusMode);
-    try { localStorage.setItem(NOTE_FOCUS_KEY, state.focusMode ? '1' : '0'); } catch (error) {}
+    if (window.RelatumFeatureRuntime.singleWorkspace !== 'notes') {
+      try { localStorage.setItem(NOTE_FOCUS_KEY, state.focusMode ? '1' : '0'); } catch (error) {}
+    }
     updateFocusToggle();
     document.dispatchEvent(new CustomEvent('relatum:note-focuschange', { detail: { active: state.focusMode } }));
     requestAnimationFrame(() => { if (seq === state.focusMotionSeq) requestEditorMeasure(); });
@@ -2274,8 +2276,10 @@
   function initializeWorkspace() {
     if (state.initialized) return Promise.resolve(true);
     if (state.initializePromise) return state.initializePromise;
+    window.RelatumStartupMark?.('notes-initialize-start');
     const initialize = (async () => {
       if (!(await refreshTree(false))) return false;
+      window.RelatumStartupMark?.('notes-tree-ready');
       state.initialized = true;
       let path = ''; try { path = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
       let activeTab = state.tabs.includes(state.activeTab) ? state.activeTab : '';
@@ -2298,6 +2302,7 @@
     const initialized = await initializeWorkspace();
     revealColdBoot();
     if (!initialized) return false;
+    window.RelatumStartupMark?.('notes-ready');
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
     else scheduleExternalSync();
     if (state.current) {

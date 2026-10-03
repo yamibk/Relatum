@@ -7,12 +7,33 @@ from unittest.mock import patch
 from pathlib import Path
 
 import launcher
-from feature_profile import PROFILE_FILENAME, LaunchProfile, read_preferences
+from feature_profile import PROFILE_FILENAME, LaunchProfile, read_preferences, save_preferences, save_launcher_settings, FEATURES
 from desktop_instance import DesktopInstanceCoordinator, desktop_instance_running
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows native launcher")
 class NativeLauncherTests(unittest.TestCase):
+    def test_quick_main_rejects_existing_real_instance(self):
+        import desktop
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = LaunchProfile({key: key == 'notes' for key in FEATURES}, restricted=True)
+            save_preferences(root, profile)
+            save_launcher_settings(root, True)
+            original = (root / 'data' / PROFILE_FILENAME).read_bytes()
+            commands = []
+            primary = DesktopInstanceCoordinator(root, lambda command: commands.append(command) or {'ok': True})
+            try:
+                self.assertTrue(primary.acquire_or_forward(None)['primary'])
+                with patch.object(launcher, 'launcher_root', return_value=root), patch.object(desktop.app, 'ROOT', root), patch.object(sys, 'argv', ['launcher.py']), patch.object(desktop, '_webview2_runtime_available', return_value=True), patch.object(desktop, '_message_box', return_value=1) as message, patch.object(launcher.subprocess, 'Popen') as spawn:
+                    self.assertEqual(launcher.main(), 1)
+                    self.assertIn('已在运行', message.call_args.args[0])
+                    spawn.assert_not_called()
+                self.assertFalse(commands)
+                self.assertEqual(original, (root / 'data' / PROFILE_FILENAME).read_bytes())
+            finally:
+                primary.close()
+
     def test_real_mutex_rejects_launcher_forwarding(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

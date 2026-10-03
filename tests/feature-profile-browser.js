@@ -47,6 +47,14 @@ const cases = [
       await context.addInitScript(() => {
         localStorage.setItem('canvas:startWorkspace:v1', 'notes');
         localStorage.setItem('canvas:hideSpecialPages', '1');
+        localStorage.setItem('canvas:noteFocusMode:v1', '0');
+        window.pywebview = { api: { set_dirty() {}, set_note_workspace_active() {}, get_window_state: async () => ({ maximized: false }), close_window() {}, minimize_window() {}, toggle_maximize_window() {} } };
+        function firstHeader() {
+          const header = document.querySelector('body > .top-bar');
+          if (!header) { requestAnimationFrame(firstHeader); return; }
+          window.__firstHeader = { height: header.getBoundingClientRect().height, opacity: getComputedStyle(header).opacity };
+        }
+        requestAnimationFrame(firstHeader);
       });
       try {
         let ready = false;
@@ -62,7 +70,7 @@ const cases = [
         const runtime = await (await fetch(base + '/api/runtime')).json();
         const enabled = id => runtime.features[id];
         const home = catalog.features.some(item => item.id !== 'canvas.editor' && item.id.startsWith('canvas.') && enabled(item.id));
-        const url = name === 'editor' ? base + '/editor.html?file=' + encodeURIComponent(canvas) : base + (enabled('canvas.study') ? '/?view=study' : '/');
+        const url = name === 'editor' ? base + '/editor.html?file=' + encodeURIComponent(canvas) : base + (enabled('canvas.study') ? '/?desktop=1&view=study' : '/?desktop=1');
         await page.goto(url, { waitUntil: 'load' });
         if (name === 'full' || name === 'notes' && enabled('notes')) await page.waitForFunction(() => window.CanvasNoteWorkspace);
         if (name === 'research') await page.waitForFunction(() => document.querySelector('iframe')?.contentWindow.RelatumResearchWorkspace);
@@ -71,6 +79,43 @@ const cases = [
         await sleep(2400); // includes the existing idle prewarm jobs
         assert.deepEqual(errors, [], `${name}: page errors`);
         if (name !== 'editor') {
+          const single = await page.evaluate(() => window.RelatumFeatureRuntime.singleWorkspace);
+          const header = page.locator('body > .top-bar');
+          const toggle = page.locator('[data-note-action="toggle-focus"]');
+          if (single === 'notes') {
+            assert((await page.evaluate(() => window.__firstHeader.height)) < 1, 'single notes hidden on first paint');
+            assert(await header.evaluate(el => el.inert), 'hidden notes header cannot trap keyboard focus');
+            assert(await page.locator('.desktop-note-focus-close').isVisible(), 'pinned window controls');
+            await toggle.click();
+            assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '0', 'session restore preserves personal preference');
+            assert(!(await header.evaluate(el => el.inert)), 'restored header accessible');
+            await page.reload();
+            await page.waitForFunction(() => window.CanvasNoteWorkspace && !document.documentElement.classList.contains('note-boot-pending'));
+            assert((await header.boundingBox()).height < 1, 'new single notes page hides again');
+            await toggle.click();
+          } else if (single) {
+            assert.equal(await page.evaluate(() => window.__firstHeader.opacity), '0', `${single}: hidden first paint`);
+            for (const theme of ['light', 'dark']) {
+              await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+              await page.mouse.move(500, 2);
+              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', `${single}: mouse edge reveals ${theme}`);
+              await page.mouse.move(500, 300);
+              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', `${single}: mouse leaves`);
+              await header.locator('button').first().focus();
+              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', `${single}: keyboard focus reveals`);
+              await page.keyboard.press('Escape');
+              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', `${single}: escape retracts`);
+              await header.dispatchEvent('pointerdown', { pointerType: 'touch' });
+              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', `${single}: touch reveals`);
+              if (single === 'research') await page.frameLocator('iframe').locator('body').dispatchEvent('pointerdown', { pointerType: 'touch' });
+              else await page.locator('body').dispatchEvent('pointerdown', { pointerType: 'touch' });
+              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', `${single}: outside touch retracts`);
+            }
+            await header.locator('button').first().focus();
+          } else {
+            assert.equal(single, '', 'full or multiple workspaces retain existing rules');
+            assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1');
+          }
           const labels = { 'zh-CN': { canvas: '画布', notes: '笔记', research: '研究', career: '生涯' }, en: { canvas: 'Canvas', notes: 'Notes', research: 'Research', career: 'Career' } };
           for (const language of ['en', 'zh-CN']) {
             await page.evaluate(language => window.RelatumI18n.setLanguage(language), language);

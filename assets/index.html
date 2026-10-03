@@ -20,7 +20,8 @@
         workspace = window.RelatumFeatureRuntime.workspace(workspace);
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
-        window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
+        window.RelatumBoot.noteFocusMode = window.RelatumFeatureRuntime.singleWorkspace === 'notes'
+          || localStorage.getItem('canvas:noteFocusMode:v1') === '1';
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
           window.RelatumBoot = window.RelatumBoot || {};

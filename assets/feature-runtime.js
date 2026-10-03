@@ -8,9 +8,15 @@
     ? requested : ['canvas', 'notes', 'research', 'career'].find(workspaceEnabled) || '';
   const viewEnabled = name => !profile || !profile.restricted || (profile.views[name]
     ? enabled(profile.views[name]) : enabled('canvas.library'));
-  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, viewEnabled });
-  if (!profile || !profile.restricted) return;
   const workspaces = ['canvas', 'notes', 'research', 'career'].filter(workspaceEnabled);
+  const singleWorkspace = profile && profile.restricted && workspaces.length === 1 ? workspaces[0] : '';
+  document.documentElement.dataset.singleWorkspace = singleWorkspace;
+  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, viewEnabled, singleWorkspace });
+  if (new URLSearchParams(location.search).get('startupTrace') === '1') {
+    window.RelatumStartupMark = name => performance.mark('relatum:' + name);
+    window.RelatumStartupMark('document-entry');
+  }
+  if (!profile || !profile.restricted) return;
   if (workspaces.length) {
     document.documentElement.style.setProperty('--start-workspace-count', String(workspaces.length));
     document.documentElement.style.setProperty('--start-workspace-slider-width', 'calc((100% - ' + (workspaces.length + 5) + 'px) / ' + workspaces.length + ')');

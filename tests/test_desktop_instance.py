@@ -331,6 +331,22 @@ class DesktopActivationRouterTests(unittest.TestCase):
 
 
 class DesktopEntryBypassTests(unittest.TestCase):
+    def test_launcher_basename_dispatch_and_special_modes(self):
+        # Exercise the actual pre-import dispatcher without constructing a GUI.
+        from pathlib import Path
+        prefix = Path(desktop.__file__).read_text(encoding="utf-8").split("\nimport app\n", 1)[0]
+        import launcher
+        for flags in (["--no-browser"], ["--port", "9999"], ["--allow-dir", "."], ["--countdown-wallpaper-child"]):
+            with self.subTest(flags=flags), mock.patch.object(desktop.sys, "frozen", True, create=True), mock.patch.object(desktop.sys, "executable", "C:/test/RelatumLauncher.exe"), mock.patch.object(desktop.sys, "argv", ["RelatumLauncher.exe", *flags]), mock.patch.object(launcher, "quick_launch") as quick, mock.patch.object(launcher, "main") as chooser:
+                exec(compile(prefix, desktop.__file__, "exec"), {"__name__": "__main__"})
+                quick.assert_not_called()
+                chooser.assert_not_called()
+        arguments = ["--launch-profile", '{"version":1,"features":{"notes":true}}']
+        with mock.patch.object(desktop.sys, "frozen", True, create=True), mock.patch.object(desktop.sys, "executable", "C:/test/RelatumLauncher.exe"), mock.patch.object(desktop.sys, "argv", ["RelatumLauncher.exe"]), mock.patch.object(launcher, "quick_launch", return_value=arguments), mock.patch.object(launcher, "main") as chooser:
+            exec(compile(prefix, desktop.__file__, "exec"), {"__name__": "__main__"})
+            self.assertEqual(desktop.sys.argv[1:], arguments)
+            chooser.assert_not_called()
+
     def test_wallpaper_child_bypasses_main_instance_coordinator(self):
         with mock.patch.object(desktop.sys, "argv", ["desktop.py", "--countdown-wallpaper-child"]), \
                 mock.patch.object(desktop, "_run_wallpaper_child_from_args", return_value=7), \

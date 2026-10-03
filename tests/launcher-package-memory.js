@@ -35,7 +35,8 @@ async function run(name, choices, round) {
   // A poisoned saved selection proves direct Relatum.exe does not read it.
   fs.mkdirSync(path.join(root, 'data'));
   fs.writeFileSync(path.join(root, 'data/launcher-profile.json'), JSON.stringify(profile(['notes'])));
-  const app = spawn(path.join(release, 'Relatum.exe'), args, { cwd: release, env: { ...process.env, RELATUM_DATA_ROOT: root, LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` }, windowsHide: true, stdio: 'ignore' });
+  if (name === 'notes') fs.writeFileSync(path.join(root, 'data/launcher-settings.json'), JSON.stringify({ version: 1, skipSelection: true }));
+  const app = spawn(path.join(release, name === 'notes' ? 'RelatumLauncher.exe' : 'Relatum.exe'), name === 'notes' ? [] : args, { cwd: release, env: { ...process.env, RELATUM_DATA_ROOT: root, LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` }, windowsHide: true, stdio: 'ignore' });
   let browser;
   try {
     let ready = false;
@@ -50,7 +51,7 @@ async function run(name, choices, round) {
     let page = context.pages()[0];
     for (let i = 0; !page && i < 50; i++) { await sleep(100); page = context.pages()[0]; }
     assert(page, 'main native page exists');
-    await page.waitForFunction(() => window.RelatumStartWorkspace && window.pywebview?.api);
+    await page.waitForFunction(() => window.RelatumStartWorkspace && typeof window.pywebview?.api?.close_window === 'function');
     if (name === 'notes') await page.waitForFunction(() => window.CanvasNoteWorkspace);
     await sleep(10000); // full idle prewarm settles; fresh WebView profile on every run
     const state = await page.evaluate(async () => ({
@@ -82,12 +83,12 @@ async function run(name, choices, round) {
       });
       assert(note.path, 'native notes creation');
       await page.reload({ waitUntil: 'load' });
-      await page.waitForFunction(() => window.CanvasNoteWorkspace && window.pywebview?.api);
+      await page.waitForFunction(() => window.CanvasNoteWorkspace && typeof window.pywebview?.api?.close_window === 'function');
       await page.locator('[data-note-path="' + note.path + '"]').first().click();
       const editor = page.locator('.cm-content');
       await editor.click();
       await page.keyboard.type('Launcher close verification');
-      await page.evaluate(async () => { await window.CanvasDesktop.flushBeforeClose(); window.pywebview.api.close_window(); });
+      await page.locator('.desktop-note-focus-close').click();
       await new Promise(resolve => app.exitCode !== null ? resolve() : app.once('exit', resolve));
       assert(fs.readFileSync(path.join(root, 'notes', note.path), 'utf8').includes('Launcher close verification'));
     } else {

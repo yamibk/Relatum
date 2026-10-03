@@ -1,4 +1,4 @@
-"""Native Windows resource chooser; never starts the HTTP server or WebView2."""
+"""Native resource chooser, with an in-process desktop entry for saved sessions."""
 from __future__ import annotations
 
 import os
@@ -15,12 +15,20 @@ def launcher_root() -> Path:
     return Path(override).expanduser().resolve() if override else (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 
 
-def launch_command(profile: LaunchProfile, file: str = "") -> list[str]:
+def session_arguments(profile: LaunchProfile, file: str = "") -> list[str]:
     profile.validate()
     if not profile.has_home and not file:
         raise ProfileError("仅启用画布编辑器时，请先选择一个 .canvas 文件")
     if file and (not profile.enabled("canvas.editor") or not Path(file).is_file() or Path(file).suffix.lower() != ".canvas"):
         raise ProfileError("请选择有效的 .canvas 文件，并启用画布编辑器")
+    arguments = [HANDOFF_ARGUMENT, profile.encode()]
+    if file:
+        arguments.append(str(Path(file).resolve()))
+    return arguments
+
+
+def launch_command(profile: LaunchProfile, file: str = "") -> list[str]:
+    arguments = session_arguments(profile, file)
     if getattr(sys, "frozen", False):
         executable = Path(sys.executable).resolve().with_name("Relatum.exe")
         if not executable.is_file():
@@ -28,9 +36,7 @@ def launch_command(profile: LaunchProfile, file: str = "") -> list[str]:
         command = [str(executable)]
     else:
         command = [sys.executable, str(Path(__file__).resolve().with_name("desktop.py"))]
-    command.extend([HANDOFF_ARGUMENT, profile.encode()])
-    if file:
-        command.append(str(Path(file).resolve()))
+    command.extend(arguments)
     return command
 
 
@@ -199,33 +205,34 @@ def create_form(root: Path):
     return form
 
 
-def quick_launch(root: Path) -> bool:
-    """Return false to open the chooser when saved choices cannot be launched."""
+def quick_launch(root: Path) -> list[str] | None:
+    """Resolve a saved session without importing WinForms or spawning a process.
+
+    The desktop entry still strictly decodes these arguments and acquires the
+    shared instance mutex. None means the chooser must repair the saved choices.
+    """
     if not read_launcher_settings(root)["skipSelection"]:
-        return False
+        return None
     profile, warning = read_preferences(root)
     if warning or not (Path(root) / "data" / PROFILE_FILENAME).is_file():
-        return False
+        return None
     file = saved_canvas(root) if not profile.has_home else ""
     try:
-        command = launch_command(profile, file)
+        return session_arguments(profile, file)
     except (OSError, ProfileError):
-        return False
-    if desktop_instance_running(root):
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(None, "Relatum 已在运行。请先退出已有窗口，再启动。", "Relatum Launcher", 0x40)
-        return True
-    subprocess.Popen(command, cwd=str(root), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return True
+        return None
 
 
-def main() -> int:
+def main(*, choose_only: bool = False) -> int:
     if sys.platform != "win32":
         raise RuntimeError("Relatum Launcher 仅支持 Windows 桌面版")
     root = launcher_root()
     try:
-        if quick_launch(root):
-            return 0
+        arguments = None if choose_only else quick_launch(root)
+        if arguments is not None:
+            sys.argv = [sys.argv[0], *arguments]
+            from desktop import main as desktop_main
+            return desktop_main()
     except OSError as err:
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, str(err), "Relatum Launcher", 0x10)

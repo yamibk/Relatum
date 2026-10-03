@@ -72,6 +72,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
 | `desktop_instance.py` | Windows 桌面主程序单实例协调；按数据根持有命名互斥锁，通过带认证的本地命名管道转交窗口激活或 `.canvas` 打开请求，并管理 `%TEMP%` 中的短期状态文件。 |
 | `launcher.py`、`feature_profile.py`、`assets/feature-catalog.json` | 便携版原生 WinForms 启动器、版本 1 选择配置与统一功能清单。清单声明默认值、父项/依赖、首页入口、脚本/页面归属及独占 API；主进程仅接受命令行会话配置，没有 HTTP 配置写入入口。 |
+| `startup_trace.py` | 验证用启动分段记录；仅设置 `RELATUM_STARTUP_TRACE` 时向指定 JSONL 写入阶段、PID 和时间。普通启动不写文件、不设置计时器；首页诊断使用同次启动注入的 `startupTrace=1` 与 Performance marks。 |
 | `assets/feature-runtime.js`、`assets/start-workspace-runtime.js`、`assets/start-shell.js` | 服务端先注入有效功能选择，首绘恢复跳过禁用工作区；共用工作区生命周期负责笔记/研究/生涯加载、切换和预热。没有画布首页时只加载轻量共用外壳，保留主题、笔记字号、桌面尺寸与生涯设置。 |
 | `assets/study-activity.js` | 从学习运行时拆出的活跃页；独立加载年度历史、热力图和足迹星图并保持原有空闲预热。学习脚本只通过可选的 `StudyActivity.reload()` 通知失效。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
@@ -653,8 +654,9 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 10. 桌面壳和打包
 
-- 便携版提供 `RelatumLauncher.exe`：原生 WinForms，默认恢复选择并等待确认；客户端设置可启用免弹窗，启动器读取独立偏好后直接拉起主进程。选择窗口自身不启动 HTTP 服务或 WebView2。`desktop.py` 根据 EXE 文件名在导入主服务前分派启动器，两个 EXE 共享同一归档和 `_internal`。源码可用构建环境的 Python 运行 `launcher.py` 或 `desktop.py --launcher`。MSIX 不含启动器，客户端隐藏免弹窗设置。
+- 便携版提供 `RelatumLauncher.exe`：原生 WinForms，默认恢复选择并等待确认；手动确认保持启动独立 `Relatum.exe`。免弹窗且保存组合有效时，在当前进程进入桌面主程序，不创建选择窗口、不再次启动 EXE，任务管理器主进程名为 `RelatumLauncher.exe`。`quick_launch()` 只返回经过入口/文件校验的会话参数，桌面入口仍严格解码为受限会话并持有同一实例锁。选择缺失/损坏或仅编辑器的文件失效时恢复选择窗口。选择窗口自身不启动 HTTP 服务或 WebView2。`desktop.py` 在导入主服务前根据 EXE 名称分派，但动态背景子进程与服务标志必须优先，避免同进程主窗启动的子进程误入选择窗口。两个 EXE 共享归档和 `_internal`。源码可运行 `launcher.py` 或 `desktop.py --launcher`。MSIX 不含启动器，客户端隐藏免弹窗设置。
 - 精简模式的导航列数和滑块位移按实际启用工作区计算，首绘即生效；中英文切换及窄窗口必须保持滑块与当前按钮对齐。`assets/desktop-shell.js` 共用免弹窗控件逻辑，画布首页与轻量外壳一致。
+- `assets/feature-runtime.js` 根据受限会话实际可进入的首页工作区计算 `singleWorkspace`，恰好一个时在首绘前设置根节点状态。笔记复用专注类与现有恢复按钮、浮动窗口控制，但此时切换不得写 `canvas:noteFocusMode:v1`；隐藏顶栏用 `inert` 跳过键盘焦点。画布和研究借用生涯顶部感应样式，鼠标、触控和键盘焦点可展开；研究 iframe 内的外点也会收回触控展开状态。只影响首页顶栏；编辑器、完整会话和多个工作区保留原规则。
 - 会话通过私有命令行 `--launch-profile` 传入并严格校验；无有效入口、格式损坏、未启用编辑器却指定画布，以及仅编辑器却未选现有文件时停止。已有主实例时启动器不转交或改变会话；主进程再次检查互斥锁防竞态。直接运行主 EXE 始终请求完整模式，遇到已有精简窗口提示先退出。
 - 新增可禁用功能时先在清单登记稳定 ID、`default:true`、父项或 `requires`、脚本/页面、独占读写路径/前缀；共享脚本和写入使用 OR 归属。画布首页入口需 `home:true`，并在首页路由登记对应激活器；新增工作区入口需同时接入共用生命周期。启动器自动显示清单选项。依赖缺失、循环和重复 ID 在启动时拒绝。不要用隐藏 CSS 代替资源边界。
 
@@ -664,7 +666,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 主实例状态只短期写在 `%TEMP%/relatum-desktop-<ROOT哈希>.json`，含随机管道和认证材料；正常退出仅删除仍属于自己的状态，异常退出后的陈旧文件由下一主实例覆盖。IPC 只接受窗口激活与已重新验证的 `.canvas` 路径，不得扩成通用控制面。
 - Windows 下做了无边框窗口：隐藏原生标题栏、保留系统最小化/最大化动画、DWM 圆角、关闭时检查 dirty。
 - `desktop-shell.js` 负责窗口按钮、pywebview ready 队列、dirty 标记和桌面 session 标识。
-- 动态背景禁用时不创建 `WallpaperController`；启用时，背景 WebView2 由 `Relatum.exe` 的隔离子进程承载，不能再与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
+- 动态背景禁用时不创建 `WallpaperController`；启用时，背景 WebView2 由当前 EXE 的隔离子进程承载（完整/手动模式为 `Relatum.exe`，免弹窗模式为 `RelatumLauncher.exe`），子进程标志优先于启动器分派，不能与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
 - WebView2 用户数据默认在 `%LOCALAPPDATA%\Canvas\WebView2`；启动时给 HTTP 磁盘缓存和媒体缓存分别设置 64MiB / 32MiB 参数上限。这不是整个用户目录或 Code/GPU Cache 的硬总上限，不要为清缓存误删 Cookies、localStorage 等用户状态。
 - 窗口状态版本是 `2`，尺寸以逻辑像素原子保存到 `data/window-state.json`。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则最大化启动后的首次还原会使用样式切换前留下的错误 normal placement。
 - 构建脚本输出 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、各自同级 `.exe.config` 和共用 `_internal/`；MSIX 暂存包排除启动器及其配置。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
@@ -674,6 +676,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 ## 11. 验证清单
 
 启动器与加载边界改动：运行 `python -m unittest tests.test_feature_profile tests.test_launcher_native tests.test_desktop_instance tests.test_windows_wallpaper tests.test_runtime_paths`；配置 `RELATUM_PYTHON`、`RELATUM_PLAYWRIGHT`、`RELATUM_EDGE_PATH` 后运行 `node tests/feature-profile-browser.js`。真实便携包使用 `node tests/launcher-package-memory.js <发布目录> <报告JSON> 3` 覆盖冷启动进程树、普通单实例与笔记关闭保存；`node tests/launcher-settings-package.js <发布目录>` 验证客户端勾选免弹窗、启动器直接启动与取消后恢复选择窗口。所有验证都使用一次性数据根，关闭全部测试进程后清理。具体测量口径见 `docs/launcher-verification.md`。
+
+启动提速与单工作区顶栏改动还需运行 `node tests/launcher-entry-package.js <发布目录>` 覆盖实际 EXE 的四类首页/多工作区/编辑器与配置回退；`node tests/launcher-startup-package.js <发布目录> <报告JSON> 5` 用相同仅笔记配置交替测试启动器和直接会话入口，保存首页就绪及 WebView2 中位数/最慢一次、原生阶段和笔记 Performance marks。首页就绪要求笔记文件树恢复、冷启动遮挡解除与桥接可调用；不清操作系统文件缓存，也不把新 EXE 首次运行波动剔除。`RELATUM_STARTUP_TRACE` 只用于验证，普通运行不要设置。`RELATUM_SERVER_EXE` 可指向 `RelatumLauncher.exe` 验证服务模式先于启动器分派。
 
 研究工作区改动：`node tests/start-research-shell-contract.js`、`node tests/research-canvas-baseline-contract.js`、`node tests/research-pages-regression.js`、`node tests/research-compute-regression.js`、`node tests/research-subcircuits-regression.js`、`node tests/research-runtime-regression.js`、`node tests/research-persistence-contract.js`、`python -m unittest tests.test_research_store -v`、`node tests/research-fork-baseline-contract.js`。可选真实 Edge 验收再运行 `node tests/research-circuit-browser.js <本地 URL>`、`node tests/research-subcircuits-browser.js <本地 URL>`、`node tests/research-cpu-browser.js <本地 URL> [report.json]` 与 `node tests/research-time-slicing-browser.js <本地 URL> [report.json]`。研究壳契约确认首屏零研究资源、首次进入按需挂载与生命周期；画布契约确认显式端口、索引、历史、连续投影分片和 DOM/Canvas2D/SVG 交接；分页回归确认逐页模型/历史/镜头隔离；计算与子电路回归确认严格类型、确定性事件、递归展开、无环嵌套、实例状态隔离、修订固定/升级、选区替换和 V3 持久化；CPU 浏览器验收确认公开 UI 搭建、两版程序结果、状态清空、Probe 顺序、25 实例展开、刷新恢复与运行态非持久化；时间分片浏览器验收确认 1,000 个主动时间源的完整批次、协作让出、帧响应、暂停/恢复和调度状态非持久化；分叉契约确认原编辑器不反向引用研究代码。浏览器夹具必须拦截研究接口，不改真实用户数据。
 研究教程改动还要运行 `node tests/research-tutorial-regression.js`，确认 39 页/4 章、20 种节点与 8 个模板的唯一映射、真实端口校验、ID 重映射、一次撤销/重做和非法整批回滚。

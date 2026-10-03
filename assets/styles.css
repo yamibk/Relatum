@@ -9382,8 +9382,11 @@ body.start-page.note-focus-restoring > .top-bar { transition: none !important; }
 
 /* 生涯报告使用完整窗口阅读：顶栏默认收在窗口上沿，顶部保留一条感应区。
    鼠标移入或键盘焦点进入顶栏后完整展开，离开后自动收回。 */
-body.start-page[data-start-workspace="career"] > .top-bar {
+body.start-page[data-start-workspace="career"] > .top-bar,
+html[data-single-workspace="canvas"] body.start-page > .top-bar,
+html[data-single-workspace="research"] body.start-page > .top-bar {
   position: fixed;
+  z-index: 200;
   inset: 0 0 auto;
   width: 100%;
   box-sizing: border-box;
@@ -9392,10 +9395,16 @@ body.start-page[data-start-workspace="career"] > .top-bar {
   transition: opacity 180ms ease,
               transform 320ms cubic-bezier(.22, 1, .36, 1);
 }
-body.start-page[data-start-workspace="career"] > .top-bar:hover,
-body.start-page[data-start-workspace="career"] > .top-bar:has(:focus-visible) {
+body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-within, .top-edge-revealed),
+html[data-single-workspace="canvas"] body.start-page > .top-bar:is(:hover, :focus-within, .top-edge-revealed),
+html[data-single-workspace="research"] body.start-page > .top-bar:is(:hover, :focus-within, .top-edge-revealed) {
   opacity: 1;
   transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.start-page[data-start-workspace="career"] > .top-bar,
+  html[data-single-workspace="canvas"] body.start-page > .top-bar,
+  html[data-single-workspace="research"] body.start-page > .top-bar { transition: none !important; }
 }
 
 .start-page.canvas-route-leaving > .top-bar {

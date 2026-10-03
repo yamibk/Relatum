@@ -129,6 +129,10 @@ Relatum 是一款开源、本地优先的自由知识画布和学习工作台。
 
 默认每次打开启动器都等待用户确认。在 Relatum 的“客户端设置”中勾选“启动 RelatumLauncher 时不再弹窗”，之后双击启动器会直接按上次选择启动；取消勾选即可恢复选择窗口。此偏好独立原子保存到 `data/launcher-settings.json`（`{version:1, skipSelection:布尔值}`），不会改动功能选择。选择配置缺失或损坏时仍显示选择窗口。仅编辑器模式会复用上次确认的画布路径；文件失效时恢复选择窗口。
 
+免弹窗时主窗口直接在启动器当前进程运行，任务管理器显示 `RelatumLauncher.exe`，省去再次启动主 EXE 的等待；手动确认仍打开 `Relatum.exe`。两种方式共用功能限制、单实例和关闭保存流程。
+
+本次只有一个可进入的首页工作区时，顶栏会自动收起：笔记使用现有专注模式，点击“显示顶部栏”恢复，右上角保留窗口控制；画布、研究和生涯从窗口顶部移入鼠标、触控点击或键盘聚焦即可展开，离开后收回。笔记恢复选择只影响本次会话，下次单工作区启动仍自动收起，不覆盖原来的专注偏好。仅编辑器模式、直接完整启动或多个工作区保持原有规则。
+
 禁用功能不会加载脚本、初始化或预热，入口、翻页、快捷键和专属写入接口也会被限制；已启用功能保留原有预热，历史统计仍可读取其他功能的数据。发布包保留全部资源，选择只影响本次运行，禁用不会删除用户内容。
 
 画布管理和编辑器可以分别选择。如果只保留编辑器，启动前必须选择现有 `.canvas`。已有 Relatum 主窗口时，请先退出；启动器保留当前选择并提示。直接运行 `Relatum.exe` 不读取启动器的配置；已有精简模式窗口时会提示先退出，再进入完整模式。
@@ -205,6 +209,8 @@ Relatum/
 python -m unittest tests.test_feature_profile tests.test_launcher_native tests.test_desktop_instance tests.test_windows_wallpaper tests.test_runtime_paths
 node tests/feature-profile-browser.js
 node tests/launcher-settings-package.js <发布目录>
+node tests/launcher-entry-package.js <发布目录>
+node tests/launcher-startup-package.js <发布目录> <启动报告JSON路径> 5
 node tests/launcher-package-memory.js <发布目录> <报告JSON路径> 3
 ```
 

@@ -6,6 +6,29 @@
   const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
   const workspaceButtons = Array.from(document.querySelectorAll('button[data-start-workspace]'));
   const workspaceStage = document.querySelector('.start-workspace-stage');
+  const header = document.querySelector('body > .top-bar');
+  function syncHeaderAccess() {
+    if (!header) return;
+    const hidden = document.body.dataset.startWorkspace === 'notes' && document.body.classList.contains('note-focus-mode');
+    header.inert = hidden;
+    header.setAttribute('aria-hidden', String(hidden));
+  }
+  document.addEventListener('relatum:note-focuschange', syncHeaderAccess);
+  if (header) {
+    // Touch has no hover. Keep the edge bar open until the next outside press.
+    header.addEventListener('pointerdown', event => {
+      if (event.pointerType === 'touch') header.classList.add('top-edge-revealed');
+    });
+    header.addEventListener('pointerleave', event => {
+      if (event.pointerType === 'mouse') header.classList.remove('top-edge-revealed');
+    });
+    document.addEventListener('pointerdown', event => {
+      if (!header.contains(event.target)) header.classList.remove('top-edge-revealed');
+    });
+    header.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { header.classList.remove('top-edge-revealed'); event.target.blur(); }
+    });
+  }
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
   const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, research: 2, career: 3 };
   let activeStartWorkspace = features.workspace(document.body.dataset.startWorkspace);
@@ -20,6 +43,7 @@
     if (!features.enabled('notes')) return Promise.reject(new Error('本次启动未启用笔记'));
     if (window.CanvasNoteWorkspace) return Promise.resolve(window.CanvasNoteWorkspace);
     if (noteWorkspaceLoader) return noteWorkspaceLoader;
+    window.RelatumStartupMark?.('notes-load-start');
     const loadScript = (src, ready) => {
       if (ready()) return Promise.resolve(true);
       return new Promise((resolve, reject) => {
@@ -35,7 +59,7 @@
       .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
-      .then(() => window.CanvasNoteWorkspace);
+      .then(() => { window.RelatumStartupMark?.('notes-scripts-ready'); return window.CanvasNoteWorkspace; });
     return noteWorkspaceLoader;
   }
 
@@ -78,6 +102,8 @@
           return;
         }
         researchWorkspaceApi = workspace;
+        // Events inside an iframe do not bubble to the homepage document.
+        frame.contentDocument.addEventListener('pointerdown', () => header?.classList.remove('top-edge-revealed'));
         if (typeof workspace.setLanguage === 'function') {
           workspace.setLanguage(englishUI() ? 'en' : 'zh-CN');
         }
@@ -161,6 +187,7 @@
   function syncWorkspaceControls(name) {
     document.documentElement.dataset.startWorkspace = name;
     document.body.dataset.startWorkspace = name;
+    syncHeaderAccess();
     if (name !== 'notes') {
       document.documentElement.classList.remove('note-boot-pending');
       if (window.RelatumBoot && window.RelatumBoot.noteRevealTimer) {

@@ -19,14 +19,23 @@ import sys
 import threading
 from ctypes import wintypes
 from pathlib import Path
+from startup_trace import mark as startup_mark
+
+startup_mark("python-entry")
 
 # Dispatch before importing the server, wallpaper or WebView2 runtime.
-if __name__ == "__main__" and (
+if __name__ == "__main__" and not any(arg in {
+    "--countdown-wallpaper-child", "--no-browser", "--port", "--allow-dir"
+} for arg in sys.argv[1:]) and (
     (getattr(sys, "frozen", False) and Path(sys.executable).name.lower() == "relatumlauncher.exe")
     or "--launcher" in sys.argv[1:]
 ):
-    from launcher import main as launcher_main
-    sys.exit(launcher_main())
+    from launcher import main as launcher_main, launcher_root, quick_launch
+    arguments = quick_launch(launcher_root())
+    startup_mark("launcher-session-resolved")
+    if arguments is None:
+        sys.exit(launcher_main(choose_only=True))
+    sys.argv = [sys.argv[0], *arguments]
 
 import app
 from feature_profile import HANDOFF_ARGUMENT, FULL_PROFILE, LaunchProfile, ProfileError, read_launcher_settings, save_launcher_settings
@@ -37,6 +46,7 @@ try:
     import webview
 except ImportError:
     webview = None
+startup_mark("desktop-imports-ready")
 
 # ── Win32 常量（无边框 + 系统窗口过渡 + 圆角所需的最小集） ──
 GWL_STYLE = -16
@@ -576,7 +586,7 @@ def _open_url(port: int, initial_file: Path | None) -> str:
     import urllib.parse
     base = f"http://127.0.0.1:{port}/"
     if initial_file is None:
-        return base + "index.html?desktop=1"
+        return base + "index.html?desktop=1" + ("&startupTrace=1" if os.environ.get("RELATUM_STARTUP_TRACE") else "")
     return base + "editor.html?desktop=1&file=" + urllib.parse.quote(str(initial_file))
 
 
@@ -736,6 +746,7 @@ def main() -> int:
     except ProfileError as err:
         _message_box(f"启动器配置无效：\n{err}", 0x10)
         return 1
+    startup_mark("session-validated")
 
     if webview is None:
         _message_box("桌面窗口组件未安装，无法启动 Relatum。")
@@ -811,6 +822,7 @@ def main() -> int:
         daemon=True,
     )
     server_thread.start()
+    startup_mark("server-ready")
     server_stop_lock = threading.Lock()
     server_stopped = False
 
@@ -860,6 +872,7 @@ def main() -> int:
         _message_box(f"桌面窗口创建失败：\n{err}", 0x10)
         return 1
     bridge._window = window
+    startup_mark("window-created")
     lifecycle_lock = threading.RLock()
     lifecycle = {"quitting": False}
 
@@ -935,6 +948,7 @@ def main() -> int:
     ) if profile.enabled("calendar.wallpaper") else None
 
     def on_shown() -> None:
+        startup_mark("window-shown")
         _install_frameless(window)
         # 安装无边框样式会重算非客户区。先在普通态重新落实保存的逻辑尺寸，
         # 再按需最大化，确保稍后 SW_RESTORE 使用的是准确的 normal placement。
@@ -947,6 +961,7 @@ def main() -> int:
         _apply_corners(window, maximized=bridge.maximized)
 
     def on_loaded() -> None:
+        startup_mark("document-loaded")
         # 页面加载完成、WebView2 完成首次绘制后再补一次圆角，确保立即显形。
         _apply_corners(window, maximized=bridge.maximized)
         activation_router.mark_ready()
