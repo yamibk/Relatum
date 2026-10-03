@@ -546,9 +546,7 @@
     document.body.classList.remove('note-focus-restoring');
     document.body.classList.add('note-focus-transitioning');
     document.body.classList.toggle('note-focus-mode', state.focusMode);
-    if (window.RelatumFeatureRuntime.singleWorkspace !== 'notes') {
-      try { localStorage.setItem(NOTE_FOCUS_KEY, state.focusMode ? '1' : '0'); } catch (error) {}
-    }
+    try { localStorage.setItem(NOTE_FOCUS_KEY, state.focusMode ? '1' : '0'); } catch (error) {}
     updateFocusToggle();
     document.dispatchEvent(new CustomEvent('relatum:note-focuschange', { detail: { active: state.focusMode } }));
     requestAnimationFrame(() => { if (seq === state.focusMotionSeq) requestEditorMeasure(); });

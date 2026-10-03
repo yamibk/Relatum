@@ -88,7 +88,7 @@ async function run(name, choices, round) {
       const editor = page.locator('.cm-content');
       await editor.click();
       await page.keyboard.type('Launcher close verification');
-      await page.locator('.desktop-note-focus-close').click();
+      await page.locator('.desktop-window-controls [data-window-action="close"]').click();
       await new Promise(resolve => app.exitCode !== null ? resolve() : app.once('exit', resolve));
       assert(fs.readFileSync(path.join(root, 'notes', note.path), 'utf8').includes('Launcher close verification'));
     } else {

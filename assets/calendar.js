@@ -63,6 +63,8 @@
     countdownProgressMode: initialCountdownProgressMode,
     countdownProgressPositionFrame: 0,
     countdownProgressBreathTimer: 0,
+    dateRangeOverlay: null,
+    dateRangeTrigger: null,
     resumeAfterPageShow: false,
     expandedDays: new Set(),  // 当天任务超过 10 条时，记录哪些天被展开过；换天自动收起
   };
@@ -475,6 +477,7 @@
       if (error && error.name === 'AbortError') return;
       if (!wasLoaded) {
         state.loaded = false;
+        closeDateRange(false);
         root.innerHTML = '<div class="calendar-error"><strong>日历没有加载成功</strong><span>'
           + escapeHtml(error.message) + '</span></div>';
       } else {
@@ -631,6 +634,177 @@
     const end = parseCalendarDate(endDay);
     if (!start || !end) return NaN;
     return Math.round((end.time - start.time) / 86400000);
+  }
+
+  function dateRangeInput(which, part, value) {
+    const label = (which === 'start' ? '开始日期' : '结束日期') + '·'
+      + ({ year: '年', month: '月', day: '日' })[part];
+    const length = part === 'year' ? 4 : 2;
+    return '<label class="calendar-date-range-part"><input type="text" inputmode="numeric"'
+      + ' autocomplete="off" maxlength="' + length + '" data-date-range="' + which + '-' + part + '"'
+      + ' aria-label="' + escapeHtml(uiText(label)) + '" value="' + escapeHtml(value) + '">'
+      + '<span data-i18n="日期·' + ({ year: '年', month: '月', day: '日' })[part] + '"'
+      + ' data-i18n-zh="' + ({ year: '年', month: '月', day: '日' })[part] + '">'
+      + escapeHtml(uiText('日期·' + ({ year: '年', month: '月', day: '日' })[part])) + '</span></label>';
+  }
+
+  function dateRangeGroup(which, date) {
+    const parsed = parseCalendarDate(date);
+    const title = which === 'start' ? '开始日期' : '结束日期';
+    return '<div class="calendar-date-range-group" role="group" aria-label="'
+      + escapeHtml(uiText(title)) + '">'
+      + dateRangeInput(which, 'year', parsed.year)
+      + dateRangeInput(which, 'month', parsed.month)
+      + dateRangeInput(which, 'day', parsed.day) + '</div>';
+  }
+
+  function formatDateRangeDay(value, includeYear) {
+    const parsed = parseCalendarDate(value);
+    if (!parsed) return '';
+    if (window.RelatumI18n && window.RelatumI18n.language === 'en') {
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return months[parsed.month - 1] + ' ' + parsed.day + (includeYear ? ', ' + parsed.year : '');
+    }
+    return (includeYear ? parsed.year + '年' : '') + parsed.month + '月' + parsed.day + '日';
+  }
+
+  function closeDateRange(restoreFocus) {
+    const overlay = state.dateRangeOverlay;
+    const trigger = state.dateRangeTrigger;
+    state.dateRangeOverlay = null;
+    state.dateRangeTrigger = null;
+    if (overlay) overlay.remove();
+    if (restoreFocus && trigger && trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function refreshDateRange() {
+    const overlay = state.dateRangeOverlay;
+    if (!overlay) return;
+    const field = (key) => overlay.querySelector('[data-date-range="' + key + '"]').value.trim();
+    const summary = overlay.querySelector('[data-date-range-summary]');
+    const list = overlay.querySelector('[data-date-range-list]');
+    const english = window.RelatumI18n && window.RelatumI18n.language === 'en';
+    list.replaceChildren();
+    summary.classList.remove('is-error');
+    const startParts = ['year', 'month', 'day'].map((part) => field('start-' + part));
+    const endParts = ['year', 'month', 'day'].map((part) => field('end-' + part));
+    if (startParts.concat(endParts).some((part) => !part)) {
+      summary.textContent = english ? 'Total: —' : '总共：—';
+      return;
+    }
+    const asDate = (parts) => {
+      if (parts.some((part) => !/^\d+$/.test(part))) return '';
+      const [year, month, day] = parts.map(Number);
+      if (year < 1 || year > 9999) return '';
+      return String(year).padStart(4, '0') + '-'
+        + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    };
+    const start = asDate(startParts);
+    const end = asDate(endParts);
+    const error = (message) => {
+      summary.textContent = uiText(message);
+      summary.classList.add('is-error');
+    };
+    if (!parseCalendarDate(start) || !parseCalendarDate(end)) {
+      error('日期无效');
+      return;
+    }
+    const days = calendarDateDistance(start, end) + 1;
+    if (days < 1) {
+      error('结束早于开始');
+      return;
+    }
+    const roundsText = field('rounds');
+    if (!roundsText) {
+      summary.textContent = english ? 'Total: ' + days + (days === 1 ? ' day' : ' days')
+        : '总共：' + days + '天';
+      return;
+    }
+    const rounds = Number(roundsText);
+    if (!/^\d{1,2}$/.test(roundsText) || rounds < 1 || rounds > 99) {
+      error('轮次无效');
+      return;
+    }
+    const ranges = [];
+    for (let index = 0; index < rounds; index += 1) {
+      const from = shiftCalendarDate(start, index * days);
+      const to = shiftCalendarDate(start, (index + 1) * days - 1);
+      if (!parseCalendarDate(from) || !parseCalendarDate(to)) {
+        error('日期超出范围');
+        return;
+      }
+      ranges.push([from, to]);
+    }
+    const includeYear = ranges[0][0].slice(0, 4) !== ranges[ranges.length - 1][1].slice(0, 4);
+    const fragment = document.createDocumentFragment();
+    ranges.forEach(([from, to]) => {
+      const row = document.createElement('div');
+      row.className = 'calendar-date-range-item';
+      row.textContent = formatDateRangeDay(from, includeYear) + ' ～ '
+        + formatDateRangeDay(to, includeYear);
+      fragment.appendChild(row);
+    });
+    list.appendChild(fragment);
+    summary.textContent = english
+      ? 'Total: ' + days + (days === 1 ? ' day' : ' days') + ' × ' + rounds
+        + (rounds === 1 ? ' round' : ' rounds')
+      : '总共：' + days + '天 × ' + rounds + '轮';
+  }
+
+  function openDateRange(trigger) {
+    closeDateRange(false);
+    const today = localDay(new Date());
+    const end = shiftCalendarDate(today, 6);
+    const overlay = document.createElement('div');
+    overlay.className = 'calendar-date-range-overlay';
+    overlay.setAttribute('data-calendar-date-range', '');
+    overlay.innerHTML = '<section class="calendar-date-range-card" role="dialog" aria-modal="true"'
+      + ' aria-label="' + escapeHtml(uiText('日期间隔')) + '">'
+      + '<button type="button" class="calendar-date-range-close" data-date-range-close'
+      + ' aria-label="' + escapeHtml(uiText('关闭日期间隔')) + '">×</button>'
+      + '<div class="calendar-date-range-scroll"><div class="calendar-date-range-dates">'
+      + dateRangeGroup('start', today)
+      + '<span class="calendar-date-range-to" data-i18n="至">' + escapeHtml(uiText('至')) + '</span>'
+      + dateRangeGroup('end', end) + '</div>'
+      + '<label class="calendar-date-range-rounds"><span data-i18n="日期·连续" data-i18n-zh="连续">'
+      + escapeHtml(uiText('日期·连续')) + '</span><input type="text" inputmode="numeric" autocomplete="off"'
+      + ' maxlength="2" data-date-range="rounds" aria-label="'
+      + escapeHtml(uiText('连续轮次')) + '"><span data-i18n="轮">'
+      + escapeHtml(uiText('轮')) + '</span></label>'
+      + '<div class="calendar-date-range-summary" data-date-range-summary role="status"'
+      + ' aria-live="polite"></div><div class="calendar-date-range-list"'
+      + ' data-date-range-list></div></div></section>';
+    document.body.appendChild(overlay);
+    state.dateRangeOverlay = overlay;
+    state.dateRangeTrigger = trigger;
+    overlay.addEventListener('pointerdown', (event) => {
+      if (event.target === overlay) closeDateRange(true);
+    });
+    overlay.querySelector('[data-date-range-close]').addEventListener('click', () => closeDateRange(true));
+    overlay.querySelectorAll('input').forEach((input) => {
+      input.addEventListener('input', refreshDateRange);
+      input.addEventListener('focus', () => input.select());
+    });
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeDateRange(true);
+      } else if (event.key === 'Tab') {
+        const focusables = Array.from(overlay.querySelectorAll('button, input'));
+        const position = focusables.indexOf(document.activeElement);
+        if (event.shiftKey && position === 0) {
+          event.preventDefault();
+          focusables[focusables.length - 1].focus();
+        } else if (!event.shiftKey && position === focusables.length - 1) {
+          event.preventDefault();
+          focusables[0].focus();
+        }
+      }
+    });
+    refreshDateRange();
+    overlay.querySelector('[data-date-range="start-year"]').focus({ preventScroll: true });
   }
 
   function formatCountdownProgressDate(value) {
@@ -1626,6 +1800,17 @@
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>'
       + '</button>';
   }
+  function renderDateRangeTrigger() {
+    return '<button type="button" class="calendar-date-range-trigger" data-date-range-open'
+      + ' aria-label="' + escapeHtml(uiText('计算日期间隔')) + '" title="'
+      + escapeHtml(uiText('计算日期间隔')) + '">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"'
+      + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<rect x="2.5" y="5" width="7" height="9" rx="1.4"/>'
+      + '<rect x="14.5" y="10" width="7" height="9" rx="1.4"/>'
+      + '<path d="M9.5 9.5h3.5m-2 0 2-2m-2 2 2 2"/>'
+      + '</svg></button>';
+  }
   async function refreshCalendar(btn) {
     if (btn) btn.classList.add('is-refreshing');
     try {
@@ -1639,11 +1824,13 @@
   }
 
   function render(motion) {
+    closeDateRange(false);
     root.innerHTML = '<div class="calendar-page-head"><div class="calendar-head-main">'
       + '<div class="calendar-title-row"><div class="calendar-title-stack">'
       + '<p class="study-eyebrow">CALENDAR</p><h1>日历</h1></div>'
       + renderCountdownProgress() + '</div>'
-      + '</div><div class="calendar-head-tools">' + renderCountdown()
+      + '</div><div class="calendar-head-tools"><div class="calendar-head-upper">'
+      + renderCountdown() + renderDateRangeTrigger() + '</div>'
       + '<div class="calendar-search-row">' + renderSearch() + renderRefresh() + '</div>'
       + '</div></div><div class="calendar-layout"><div>' + renderCalendar()
       + '</div><div class="calendar-day-column">' + renderDiary() + renderDayRecords(true) + '</div></div>';
@@ -2261,8 +2448,8 @@
     if (!next) return;
     if (current) current.replaceWith(next);
     else {
-      const tools = root.querySelector('.calendar-head-tools');
-      if (tools) tools.insertBefore(next, tools.firstChild);
+      const upper = root.querySelector('.calendar-head-upper');
+      if (upper) upper.insertBefore(next, upper.firstChild);
     }
     bindCountdownControls(next);
     if (next.hidden || prefersReduced) return;
@@ -2333,6 +2520,8 @@
     bindCountdownProgressControls(root);
     const refresh = root.querySelector('[data-calendar-refresh]');
     if (refresh) refresh.addEventListener('click', () => refreshCalendar(refresh));
+    const dateRange = root.querySelector('[data-date-range-open]');
+    if (dateRange) dateRange.addEventListener('click', () => openDateRange(dateRange));
     const search = root.querySelector('[data-calendar-search]');
     if (search) {
       search.addEventListener('input', () => showSearch(search.value));
@@ -2593,6 +2782,31 @@
     syncCountdownProgress();
   });
 
+  document.addEventListener('relatum:languagechange', () => {
+    const trigger = root.querySelector('[data-date-range-open]');
+    if (trigger) {
+      trigger.setAttribute('aria-label', uiText('计算日期间隔'));
+      trigger.title = uiText('计算日期间隔');
+    }
+    const overlay = state.dateRangeOverlay;
+    if (!overlay) return;
+    overlay.querySelector('[role="dialog"]').setAttribute('aria-label', uiText('日期间隔'));
+    overlay.querySelector('[data-date-range-close]').setAttribute('aria-label', uiText('关闭日期间隔'));
+    ['start', 'end'].forEach((which) => {
+      const title = which === 'start' ? '开始日期' : '结束日期';
+      const group = overlay.querySelector('[data-date-range="' + which + '-year"]').parentElement.parentElement;
+      group.setAttribute('aria-label', uiText(title));
+      ['year', 'month', 'day'].forEach((part) => {
+        const suffix = ({ year: '年', month: '月', day: '日' })[part];
+        overlay.querySelector('[data-date-range="' + which + '-' + part + '"]')
+          .setAttribute('aria-label', uiText(title + '·' + suffix));
+      });
+    });
+    overlay.querySelector('[data-date-range="rounds"]')
+      .setAttribute('aria-label', uiText('连续轮次'));
+    refreshDateRange();
+  });
+
   document.addEventListener('pointerdown', (event) => {
     if (state.countdownProgressPopover
       && !state.countdownProgressPopover.contains(event.target)
@@ -2665,6 +2879,7 @@
     state.active = false;
     stopCountdownProgressBreath();
     closeCountdownProgressSettings(false, true);
+    closeDateRange(false);
     cancelCalendarNetworkWork();
     captureCurrentDraft();
     state.drafts.forEach((draft) => {
@@ -2729,6 +2944,7 @@
     closeCountdownClock();
     stopCountdownProgressBreath();
     closeCountdownProgressSettings(false, true);
+    closeDateRange(false);
     captureCurrentDraft();
     state.drafts.forEach((draft) => {
       if (!draft.deleting && draft.version > draft.savedVersion) queueDiarySave(draft.day, true);

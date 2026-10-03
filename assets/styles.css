@@ -9382,9 +9382,7 @@ body.start-page.note-focus-restoring > .top-bar { transition: none !important; }
 
 /* 生涯报告使用完整窗口阅读：顶栏默认收在窗口上沿，顶部保留一条感应区。
    鼠标移入或键盘焦点进入顶栏后完整展开，离开后自动收回。 */
-body.start-page[data-start-workspace="career"] > .top-bar,
-html[data-single-workspace="canvas"] body.start-page > .top-bar,
-html[data-single-workspace="research"] body.start-page > .top-bar {
+body.start-page[data-start-workspace="career"] > .top-bar {
   position: fixed;
   z-index: 200;
   inset: 0 0 auto;
@@ -9395,16 +9393,12 @@ html[data-single-workspace="research"] body.start-page > .top-bar {
   transition: opacity 180ms ease,
               transform 320ms cubic-bezier(.22, 1, .36, 1);
 }
-body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-within, .top-edge-revealed),
-html[data-single-workspace="canvas"] body.start-page > .top-bar:is(:hover, :focus-within, .top-edge-revealed),
-html[data-single-workspace="research"] body.start-page > .top-bar:is(:hover, :focus-within, .top-edge-revealed) {
+body.start-page[data-start-workspace="career"] > .top-bar:is(:hover, :focus-within, .top-edge-revealed) {
   opacity: 1;
   transform: translateY(0);
 }
 @media (prefers-reduced-motion: reduce) {
-  body.start-page[data-start-workspace="career"] > .top-bar,
-  html[data-single-workspace="canvas"] body.start-page > .top-bar,
-  html[data-single-workspace="research"] body.start-page > .top-bar { transition: none !important; }
+  body.start-page[data-start-workspace="career"] > .top-bar { transition: none !important; }
 }
 
 .start-page.canvas-route-leaving > .top-bar {
@@ -39249,7 +39243,127 @@ body.trash-page[data-start-theme="dark"] .context-menu {
 .calendar-head-tools {
   /* 倒数日在首次 /api/calendar 响应后才确定；固定两行工具区高度，
      让搜索行在有无倒数日时都保持位置，不推动下方月历。 */
-  display: grid; align-content: end; width: min(360px, 38vw); min-height: 82px; gap: 4px;
+  display: grid; align-content: end; width: min(408px, 42vw); min-height: 82px; gap: 4px;
+}
+.calendar-head-upper {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  min-width: 0; min-height: 42px;
+}
+.calendar-head-upper .calendar-countdown { flex: 1 1 auto; min-width: 0; }
+.calendar-date-range-trigger {
+  display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px;
+  padding: 0; border: 1px solid var(--border); border-radius: 15px;
+  background: var(--surface); color: var(--text-secondary); cursor: pointer;
+  transition: color 160ms var(--easing-soft), border-color 160ms var(--easing-soft),
+    transform 160ms var(--easing-soft);
+}
+.calendar-date-range-trigger:hover {
+  color: var(--text); border-color: var(--border-strong); transform: translateY(-1px);
+}
+.calendar-date-range-trigger:focus-visible {
+  outline: 2px solid var(--text); outline-offset: 3px;
+}
+.calendar-date-range-trigger svg { width: 18px; height: 18px; }
+.calendar-date-range-overlay {
+  position: fixed; inset: 0; z-index: 12050; display: grid; place-items: center;
+  grid-template-columns: minmax(0, 1fr); padding: 16px; background: rgba(19, 21, 19, .4);
+}
+.calendar-date-range-card {
+  position: relative; display: flex; width: 520px; height: 420px;
+  max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); box-sizing: border-box;
+  border: 1px solid rgba(30, 34, 30, .06); border-radius: 24px;
+  background: #fcfcfa; color: #1a1a1a;
+  box-shadow: 0 24px 70px rgba(25, 27, 24, .22);
+  animation: calendarDateRangeIn 190ms var(--easing-page) both;
+}
+.calendar-date-range-close {
+  position: absolute; z-index: 1; right: 19px; top: 16px;
+  display: grid; place-items: center; width: 34px; height: 34px;
+  padding: 0; border: 0; border-radius: 10px; background: transparent;
+  color: #757a76; font: 24px/1 var(--font-ui); cursor: pointer;
+}
+.calendar-date-range-close:hover { color: #1a1a1a; background: rgba(28, 32, 28, .055); }
+.calendar-date-range-close:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.calendar-date-range-scroll {
+  width: 100%; height: 100%; box-sizing: border-box; overflow-y: auto; overflow-x: hidden;
+  padding: 74px 35px 34px; scrollbar-width: none; -ms-overflow-style: none;
+  overscroll-behavior: contain;
+}
+.calendar-date-range-scroll::-webkit-scrollbar { display: none; }
+.calendar-date-range-dates { display: flex; align-items: center; gap: 13px; }
+html[data-ui-language="en"] .calendar-date-range-dates {
+  align-items: flex-start; flex-direction: column; gap: 10px;
+}
+.calendar-date-range-group { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.calendar-date-range-part {
+  display: inline-flex; align-items: baseline; gap: 3px; white-space: nowrap;
+  color: #737873; font-size: 12px;
+}
+.calendar-date-range-part input,
+.calendar-date-range-rounds input {
+  box-sizing: border-box; height: 38px; padding: 0 5px;
+  border: 1px solid rgba(28, 32, 28, .13); border-radius: 9px;
+  outline: none; background: transparent; color: #1a1a1a;
+  font: 600 15px/1 var(--font-ui); font-variant-numeric: tabular-nums; text-align: center;
+}
+.calendar-date-range-part input { width: 35px; }
+.calendar-date-range-part input[data-date-range$="year"] { width: 57px; }
+.calendar-date-range-part input:focus-visible,
+.calendar-date-range-rounds input:focus-visible {
+  border-color: rgba(28, 32, 28, .52); box-shadow: 0 0 0 3px rgba(28, 32, 28, .055);
+}
+.calendar-date-range-to { color: #858a85; font-size: 13px; }
+.calendar-date-range-rounds {
+  display: inline-flex; align-items: center; gap: 9px; margin-top: 30px;
+  color: #737873; font-size: 13px;
+}
+.calendar-date-range-rounds input { width: 54px; }
+.calendar-date-range-summary {
+  margin-top: 36px; color: #1a1a1a; font-size: 19px; font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.calendar-date-range-summary.is-error { color: #a04b44; font-size: 14px; }
+.calendar-date-range-list {
+  display: grid; gap: 2px; margin-top: 17px; color: #535a54;
+  font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.calendar-date-range-list:empty { display: none; }
+.calendar-date-range-item { min-height: 27px; line-height: 27px; }
+body.start-page[data-start-theme="dark"] .calendar-date-range-card {
+  border-color: rgba(242, 241, 237, .12); background: #202723; color: #f2f1ed;
+}
+body.start-page[data-start-theme="dark"] .calendar-date-range-close,
+body.start-page[data-start-theme="dark"] .calendar-date-range-part,
+body.start-page[data-start-theme="dark"] .calendar-date-range-to,
+body.start-page[data-start-theme="dark"] .calendar-date-range-rounds,
+body.start-page[data-start-theme="dark"] .calendar-date-range-list { color: rgba(242, 241, 237, .65); }
+body.start-page[data-start-theme="dark"] .calendar-date-range-close:hover {
+  color: #f2f1ed; background: rgba(242, 241, 237, .08);
+}
+body.start-page[data-start-theme="dark"] .calendar-date-range-part input,
+body.start-page[data-start-theme="dark"] .calendar-date-range-rounds input {
+  border-color: rgba(242, 241, 237, .2); color: #f2f1ed;
+}
+body.start-page[data-start-theme="dark"] .calendar-date-range-part input:focus-visible,
+body.start-page[data-start-theme="dark"] .calendar-date-range-rounds input:focus-visible {
+  border-color: rgba(242, 241, 237, .68); box-shadow: 0 0 0 3px rgba(242, 241, 237, .08);
+}
+body.start-page[data-start-theme="dark"] .calendar-date-range-summary { color: #f2f1ed; }
+body.start-page[data-start-theme="dark"] .calendar-date-range-summary.is-error { color: #e7aaa0; }
+@keyframes calendarDateRangeIn {
+  from { opacity: 0; transform: translateY(9px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (max-width: 560px) {
+  .calendar-date-range-scroll { padding: 65px 25px 28px; }
+  .calendar-date-range-dates { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .calendar-date-range-to { margin-left: 2px; }
+  .calendar-date-range-rounds { margin-top: 22px; }
+  .calendar-date-range-summary { margin-top: 27px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .calendar-date-range-card { animation: none; }
+  .calendar-date-range-trigger { transition: none; }
 }
 .calendar-search-row {
   display: flex; align-items: stretch; width: 100%; gap: 4px;

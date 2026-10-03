@@ -9,9 +9,7 @@
   const viewEnabled = name => !profile || !profile.restricted || (profile.views[name]
     ? enabled(profile.views[name]) : enabled('canvas.library'));
   const workspaces = ['canvas', 'notes', 'research', 'career'].filter(workspaceEnabled);
-  const singleWorkspace = profile && profile.restricted && workspaces.length === 1 ? workspaces[0] : '';
-  document.documentElement.dataset.singleWorkspace = singleWorkspace;
-  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, viewEnabled, singleWorkspace });
+  window.RelatumFeatureRuntime = Object.freeze({ enabled, workspaceEnabled, workspace, viewEnabled });
   if (new URLSearchParams(location.search).get('startupTrace') === '1') {
     window.RelatumStartupMark = name => performance.mark('relatum:' + name);
     window.RelatumStartupMark('document-entry');

@@ -48,15 +48,13 @@ async function run(name, ids, fallback = false) {
         // The minimal fixture is normalized and autosaved after the reveal.
         // Let that existing save finish before requesting native destruction.
         await sleep(2200);
-        assert.equal(await page.evaluate(() => document.documentElement.dataset.singleWorkspace), '');
+        assert.equal(await page.evaluate(() => document.documentElement.dataset.singleWorkspace), undefined);
         assert((await page.locator('.editor-top-bar').boundingBox()).height > 20, 'editor toolbar unchanged');
       } else {
         if (name === 'research') await page.waitForFunction(() => document.querySelector('iframe')?.contentWindow.RelatumResearchWorkspace);
         if (name === 'career') await page.waitForFunction(() => window.RelatumCareerReport);
         if (name === 'notes-career') await page.waitForFunction(() => window.CanvasNoteWorkspace);
-        const single = await page.evaluate(() => window.RelatumFeatureRuntime.singleWorkspace);
-        assert.equal(single, name === 'notes-career' ? '' : name);
-        assert.equal(await page.locator('body > .top-bar').evaluate(el => getComputedStyle(el).opacity), name === 'notes-career' ? '1' : '0');
+        assert.equal(await page.locator('body > .top-bar').evaluate(el => getComputedStyle(el).opacity), name === 'career' ? '0' : '1');
       }
       await page.evaluate(async () => { await window.CanvasDesktop.flushBeforeClose(); window.pywebview.api.close_window(); });
       await Promise.race([

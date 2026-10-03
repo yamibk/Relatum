@@ -79,42 +79,12 @@ const cases = [
         await sleep(2400); // includes the existing idle prewarm jobs
         assert.deepEqual(errors, [], `${name}: page errors`);
         if (name !== 'editor') {
-          const single = await page.evaluate(() => window.RelatumFeatureRuntime.singleWorkspace);
           const header = page.locator('body > .top-bar');
-          const toggle = page.locator('[data-note-action="toggle-focus"]');
-          if (single === 'notes') {
-            assert((await page.evaluate(() => window.__firstHeader.height)) < 1, 'single notes hidden on first paint');
-            assert(await header.evaluate(el => el.inert), 'hidden notes header cannot trap keyboard focus');
-            assert(await page.locator('.desktop-note-focus-close').isVisible(), 'pinned window controls');
-            await toggle.click();
-            assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '0', 'session restore preserves personal preference');
-            assert(!(await header.evaluate(el => el.inert)), 'restored header accessible');
-            await page.reload();
-            await page.waitForFunction(() => window.CanvasNoteWorkspace && !document.documentElement.classList.contains('note-boot-pending'));
-            assert((await header.boundingBox()).height < 1, 'new single notes page hides again');
-            await toggle.click();
-          } else if (single) {
-            assert.equal(await page.evaluate(() => window.__firstHeader.opacity), '0', `${single}: hidden first paint`);
-            for (const theme of ['light', 'dark']) {
-              await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
-              await page.mouse.move(500, 2);
-              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', `${single}: mouse edge reveals ${theme}`);
-              await page.mouse.move(500, 300);
-              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', `${single}: mouse leaves`);
-              await header.locator('button').first().focus();
-              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', `${single}: keyboard focus reveals`);
-              await page.keyboard.press('Escape');
-              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', `${single}: escape retracts`);
-              await header.dispatchEvent('pointerdown', { pointerType: 'touch' });
-              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', `${single}: touch reveals`);
-              if (single === 'research') await page.frameLocator('iframe').locator('body').dispatchEvent('pointerdown', { pointerType: 'touch' });
-              else await page.locator('body').dispatchEvent('pointerdown', { pointerType: 'touch' });
-              assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', `${single}: outside touch retracts`);
-            }
+          if (name === 'career') {
+            assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '0', 'career keeps its existing edge header');
             await header.locator('button').first().focus();
           } else {
-            assert.equal(single, '', 'full or multiple workspaces retain existing rules');
-            assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1');
+            assert.equal(await header.evaluate(el => getComputedStyle(el).opacity), '1', 'workspace count does not hide the header');
           }
           const labels = { 'zh-CN': { canvas: '画布', notes: '笔记', research: '研究', career: '生涯' }, en: { canvas: 'Canvas', notes: 'Notes', research: 'Research', career: 'Career' } };
           for (const language of ['en', 'zh-CN']) {
