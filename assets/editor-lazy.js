@@ -47,6 +47,7 @@
 
   let aiRuntimePromise = null;
   function ensureAIRuntime() {
+    if (!window.RelatumFeatureRuntime.enabled('editor.ai')) return Promise.resolve(false);
     if (!aiRuntimePromise) {
       aiRuntimePromise = loadScript('ai.js').then(() => {
         window.RelatumAIReady = true;
@@ -56,7 +57,7 @@
   }
 
   const aiToggle = document.querySelector('[data-role="ai-toggle"]');
-  if (aiToggle) {
+  if (aiToggle && window.RelatumFeatureRuntime.enabled('editor.ai')) {
     let aiOpening = false;
     const openAIWhenReady = (event) => {
       if (window.RelatumAIReady) return;
@@ -81,6 +82,7 @@
 
   let graphRuntimePromise = null;
   function ensureGraphRuntime() {
+    if (!window.RelatumFeatureRuntime.enabled('editor.graph')) return Promise.resolve(false);
     if (!graphRuntimePromise) {
       graphRuntimePromise = loadScriptsInOrder(['graph-gl.js', 'graph-engine.js', 'graph-view.js'])
         .then(() => document.dispatchEvent(new CustomEvent('editor:graph-runtime-ready')));
@@ -89,7 +91,7 @@
   }
 
   const graphToggle = document.querySelector('[data-action="graph"]');
-  if (graphToggle) {
+  if (graphToggle && window.RelatumFeatureRuntime.enabled('editor.graph')) {
     graphToggle.disabled = false;
     let graphOpening = false;
     const openGraphWhenReady = (event) => {

@@ -10,6 +10,7 @@ class RuntimePathTests(unittest.TestCase):
     def test_msix_uses_local_app_data(self):
         local_app_data = (Path.cwd() / "test-local-app-data").resolve()
         with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data)}, clear=False):
+            os.environ.pop("RELATUM_DATA_ROOT", None)
             self.assertEqual(
                 app._resolve_user_root(packaged=True),
                 local_app_data / "Relatum",

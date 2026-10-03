@@ -2,7 +2,7 @@
 # ----------------------------------------------------------------------------
 # Bundles the pywebview/WebView2 shell (desktop.py) + local server (app.py) +
 # assets/ into a standalone exe.
-# Output: sibling folder "Relatum-release\" containing Relatum.exe + _internal\.
+# Output: Relatum.exe + RelatumLauncher.exe share one _internal directory.
 # Clean distribution: NO user data is packaged (canvases\ / notes\ / data\ are created by
 # the exe next to itself on first run), so the release is safe to share / upload.
 #
@@ -170,6 +170,10 @@ if (((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $Rele
 Remove-TreeInside $Release $ReleaseParent
 Move-Item -LiteralPath $BuiltDir -Destination $Release
 Copy-Item -LiteralPath $RuntimeConfig -Destination (Join-Path $Release ($ExeName + '.exe.config'))
+# The same bootloader dispatches by filename before importing app/webview.
+# Sharing its archive also keeps both executables and runtime dependencies in sync.
+Copy-Item -LiteralPath (Join-Path $Release ($ExeName + '.exe')) -Destination (Join-Path $Release 'RelatumLauncher.exe')
+Copy-Item -LiteralPath $RuntimeConfig -Destination (Join-Path $Release 'RelatumLauncher.exe.config')
 
 # -- 6. Validate the clean distributable and remove temporary PyInstaller files. --
 $ReleaseExe = Join-Path $Release ($ExeName + '.exe')
@@ -179,6 +183,9 @@ $ReleaseAssets = Join-Path $ReleaseInternal 'assets'
 $ReleaseTtf = Join-Path $ReleaseAssets 'fonts\kose-font.ttf'
 if (-not (Test-Path -LiteralPath $ReleaseExe)) { throw ('Release exe missing: ' + $ReleaseExe) }
 if (-not (Test-Path -LiteralPath $ReleaseConfig)) { throw ('Runtime config missing from release: ' + $ReleaseConfig) }
+if (-not (Test-Path -LiteralPath (Join-Path $Release 'RelatumLauncher.exe'))) { throw 'Launcher missing from release.' }
+if (-not (Test-Path -LiteralPath (Join-Path $Release 'RelatumLauncher.exe.config'))) { throw 'Launcher runtime config missing.' }
+if (-not (Test-Path -LiteralPath (Join-Path $ReleaseAssets 'feature-catalog.json'))) { throw 'Feature catalog missing.' }
 if (-not (Test-Path -LiteralPath $ReleaseAssets)) { throw ('Release assets missing: ' + $ReleaseAssets) }
 if (Test-Path -LiteralPath $ReleaseTtf) { throw ('Build-only TTF leaked into release: ' + $ReleaseTtf) }
 if ((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $ReleaseData) -or
@@ -190,5 +197,6 @@ if (-not $KeepBuildArtifacts) { Remove-TreeInside $BuildRoot $BuildParent }
 Write-Host ''
 Write-Host ('Build complete: ' + $Release)
 Write-Host ('Double-click ' + $ExeName + '.exe to launch. Keep ' + $ExeName + '.exe.config beside it when sharing.')
+Write-Host 'Use RelatumLauncher.exe to select resources or reuse your saved quick-start choice.'
 Write-Host 'Zip the whole release folder to share (no Python needed on the target machine).'
 Write-Host 'Contains no canvas/note/preference data - safe to share or upload.'

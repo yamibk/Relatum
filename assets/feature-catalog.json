@@ -1,0 +1,400 @@
+{
+  "version": 1,
+  "features": [
+    {
+      "id": "canvas",
+      "label": "画布工作区",
+      "description": "画布文件管理、编辑器与七个特殊页面的总开关。",
+      "default": true
+    },
+    {
+      "id": "canvas.library",
+      "parent": "canvas",
+      "home": true,
+      "label": "画布文件管理",
+      "description": "最近、分组、收藏、导入与回收站。可与编辑器分别选择。",
+      "writePaths": [
+        "/api/new",
+        "/api/pick",
+        "/api/import-canvas-file",
+        "/api/import-canvas-folder",
+        "/api/import-canvas",
+        "/api/recent-sync",
+        "/api/remove",
+        "/api/group-create",
+        "/api/group-rename",
+        "/api/group-delete",
+        "/api/file-set-group",
+        "/api/favorite-toggle",
+        "/api/groups-reorder",
+        "/api/reorder-files",
+        "/api/trash",
+        "/api/trash-list",
+        "/api/trash-empty",
+        "/api/restore"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.editor",
+      "parent": "canvas",
+      "label": ".canvas 编辑器",
+      "description": "打开和编辑画布。仅启用编辑器时需要先选择现有文件。",
+      "scripts": [
+        "canvas.js",
+        "editor.js",
+        "editor-lazy.js",
+        "dual-viewer.js",
+        "canvas-changes.js",
+        "ruler.js",
+        "canvas-import.js",
+        "dual-clipboard.js",
+        "node-matrix.js",
+        "canvas-timer.js",
+        "canvas-scenes.js",
+        "canvas-taskbook.js",
+        "markdown-notebook.js",
+        "richtext.js",
+        "markdown-table.js",
+        "editor-onboarding.js",
+        "editor-onboarding.css",
+        "table-editor.js"
+      ],
+      "pages": [
+        "editor.html",
+        "dual-viewer.html"
+      ],
+      "readPaths": [
+        "/api/load",
+        "/api/templates",
+        "/api/canvas-import-source",
+        "/api/canvas-import-library",
+        "/api/canvas-dual-open"
+      ],
+      "writePaths": [
+        "/api/save",
+        "/api/clean-assets",
+        "/api/export-markdown",
+        "/api/export-png",
+        "/api/import-markdown",
+        "/api/canvas-import-assets",
+        "/api/import-canvas-image",
+        "/api/upload-canvas-image",
+        "/api/upload-canvas-attachment",
+        "/api/save-canvas-annotation",
+        "/api/save-node-annotations",
+        "/api/templates-save",
+        "/api/viewport",
+        "/api/open",
+        "/api/taskbook-archive",
+        "/api/canvas-dual-open",
+        "/api/canvas-import-library",
+        "/api/canvas-import-source"
+      ],
+      "default": true
+    },
+    {
+      "id": "editor.ai",
+      "parent": "canvas.editor",
+      "label": "AI 助手",
+      "description": "AI 对话与受控画布计划；关闭后不加载或预热 AI。",
+      "scripts": [
+        "ai.js",
+        "ai-canvas-plan.js"
+      ],
+      "readPrefixes": [
+        "/api/ai-"
+      ],
+      "writePrefixes": [
+        "/api/ai-"
+      ],
+      "default": true
+    },
+    {
+      "id": "editor.graph",
+      "parent": "canvas.editor",
+      "label": "画布图谱",
+      "description": "编辑器图谱浮层；关闭后不加载或预热图谱。",
+      "scripts": [
+        "graph-view.js"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.review",
+      "parent": "canvas",
+      "label": "复习",
+      "description": "独立卡片库与复习。",
+      "view": "review",
+      "home": true,
+      "role": "review-view",
+      "scripts": [
+        "review.js"
+      ],
+      "writePrefixes": [
+        "/api/review-"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.calendar",
+      "parent": "canvas",
+      "label": "日历",
+      "description": "日历、日记、记账与倒数日。",
+      "view": "calendar",
+      "home": true,
+      "role": "calendar-view",
+      "scripts": [
+        "calendar.js",
+        "ledger.js",
+        "ledger-model.js",
+        "countdown.js"
+      ],
+      "pages": [
+        "countdown.html"
+      ],
+      "writePrefixes": [
+        "/api/ledger-"
+      ],
+      "writePaths": [
+        "/api/diary-save",
+        "/api/diary-delete",
+        "/api/countdown-save"
+      ],
+      "default": true
+    },
+    {
+      "id": "calendar.wallpaper",
+      "parent": "canvas.calendar",
+      "label": "动态桌面背景",
+      "description": "允许倒数日启动独立桌面背景进程。关闭后不创建背景宿主。",
+      "default": true
+    },
+    {
+      "id": "canvas.activity",
+      "parent": "canvas",
+      "label": "活跃",
+      "description": "活跃热力图与足迹星图。",
+      "view": "cadence",
+      "home": true,
+      "role": "cadence-view",
+      "scripts": [
+        "study-activity.js",
+        "study-graph.js"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.quicknotes",
+      "parent": "canvas",
+      "label": "速记",
+      "description": "速记便签墙。",
+      "view": "notes",
+      "home": true,
+      "role": "notes-view",
+      "scripts": [
+        "notes.js"
+      ],
+      "writePaths": [
+        "/api/notes-save",
+        "/api/notes-archive"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.tree",
+      "parent": "canvas",
+      "label": "树状",
+      "description": "独立树状页。",
+      "view": "tree",
+      "home": true,
+      "role": "tree-page-view",
+      "scripts": [
+        "tree-page.js"
+      ],
+      "writePrefixes": [
+        "/api/tree-page"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.study",
+      "parent": "canvas",
+      "label": "学习",
+      "description": "学习任务、目标树和路线。",
+      "view": "study",
+      "home": true,
+      "role": "study-view",
+      "scripts": [
+        "study.js",
+        "study-route.js",
+        "study-goal-tree.js"
+      ],
+      "writePrefixes": [
+        "/api/study-"
+      ],
+      "default": true
+    },
+    {
+      "id": "canvas.focus",
+      "parent": "canvas",
+      "label": "专注",
+      "description": "专注钟、每日任务与声音。",
+      "view": "focus",
+      "home": true,
+      "role": "focus-view",
+      "scripts": [
+        "focus.js"
+      ],
+      "writePrefixes": [
+        "/api/focus-",
+        "/api/daily-"
+      ],
+      "default": true
+    },
+    {
+      "id": "notes",
+      "label": "笔记工作区",
+      "description": "Markdown 文件树、多标签编辑与阅读。",
+      "scripts": [
+        "note-workspace.js",
+        "note-live-editor.js",
+        "note-shortcuts.js",
+        "vendor/codemirror/relatum-codemirror.min.js"
+      ],
+      "readPaths": [
+        "/api/note",
+        "/api/notes-tree"
+      ],
+      "readPrefixes": [
+        "/api/note-"
+      ],
+      "writePrefixes": [
+        "/api/note-"
+      ],
+      "default": true
+    },
+    {
+      "id": "research",
+      "label": "研究工作区",
+      "description": "研究画布、子电路和仿真。",
+      "scripts": [
+        "research/"
+      ],
+      "pages": [
+        "research.html"
+      ],
+      "readPrefixes": [
+        "/api/research/"
+      ],
+      "writePrefixes": [
+        "/api/research/"
+      ],
+      "default": true
+    },
+    {
+      "id": "career",
+      "label": "生涯工作区",
+      "description": "本地冻结使用报告。关闭后不预载报告。",
+      "scripts": [
+        "career-report.js"
+      ],
+      "writePrefixes": [
+        "/api/career-report"
+      ],
+      "default": true
+    }
+  ],
+  "sharedScripts": {
+    "graph-gl.js": [
+      "canvas.activity",
+      "editor.graph"
+    ],
+    "graph-engine.js": [
+      "canvas.activity",
+      "editor.graph"
+    ],
+    "study-palette.js": [
+      "canvas.tree",
+      "canvas.study",
+      "canvas.calendar"
+    ],
+    "start-sticky-notes.js": [
+      "canvas.library",
+      "canvas.study",
+      "canvas.activity",
+      "canvas.calendar",
+      "canvas.review",
+      "canvas.focus"
+    ],
+    "start.js": [
+      "canvas.library",
+      "canvas.review",
+      "canvas.calendar",
+      "canvas.activity",
+      "canvas.quicknotes",
+      "canvas.tree",
+      "canvas.study",
+      "canvas.focus"
+    ],
+    "start-shell.js": [
+      "notes",
+      "research",
+      "career"
+    ],
+    "font-loader.js": [
+      "canvas.editor",
+      "canvas.tree"
+    ],
+    "sticky-palette.js": [
+      "canvas.editor",
+      "canvas.quicknotes",
+      "canvas.tree",
+      "canvas.library",
+      "canvas.study",
+      "canvas.activity",
+      "canvas.calendar",
+      "canvas.review",
+      "canvas.focus"
+    ],
+    "markdown.js": [
+      "canvas.editor",
+      "notes",
+      "canvas.quicknotes",
+      "canvas.study",
+      "canvas.tree",
+      "canvas.calendar"
+    ],
+    "mermaid-renderer.js": [
+      "canvas.editor",
+      "notes",
+      "canvas.quicknotes",
+      "canvas.study",
+      "canvas.tree",
+      "canvas.calendar"
+    ]
+  },
+  "sharedWrites": {
+    "/api/rename": [
+      "canvas.editor",
+      "canvas.library"
+    ],
+    "/api/archive-canvas": [
+      "canvas.editor",
+      "canvas.library"
+    ],
+    "/api/start-page-activity": [
+      "canvas.study",
+      "canvas.tree",
+      "canvas.quicknotes"
+    ],
+    "/api/start-sticky-notes-save": [
+      "canvas.library",
+      "canvas.study",
+      "canvas.activity",
+      "canvas.calendar",
+      "canvas.review",
+      "canvas.focus"
+    ]
+  }
+}

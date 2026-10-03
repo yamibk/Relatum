@@ -1149,7 +1149,7 @@
     if (sessionSourceEl) {
       const source = session.source;
       const isTaskbook = source && source.kind === 'taskbook'
-        && source.canvasPath && source.rootId;
+        && source.canvasPath && source.rootId && window.RelatumFeatureRuntime.enabled('canvas.editor');
       sessionSourceEl.hidden = !isTaskbook;
       sessionSourceEl.dataset.canvasPath = isTaskbook ? source.canvasPath : '';
       sessionSourceEl.dataset.rootId = isTaskbook ? source.rootId : '';
@@ -4228,6 +4228,7 @@
     if (action.dataset.action === 'focus-session-save') saveSessionEdit();
     if (action.dataset.action === 'focus-session-delete') deleteSessionEdit();
     if (action.dataset.action === 'focus-session-open-source' && sessionSourceEl) {
+      if (!window.RelatumFeatureRuntime.enabled('canvas.editor')) return;
       const canvasPath = sessionSourceEl.dataset.canvasPath || '';
       const rootId = sessionSourceEl.dataset.rootId || '';
       const nodeId = sessionSourceEl.dataset.nodeId || '';

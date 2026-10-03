@@ -23,7 +23,7 @@
 .start-workspace-switch {
   position: relative;
   display: inline-grid;
-  grid-template-columns: repeat(4, minmax(48px, 1fr));
+  grid-template-columns: repeat(var(--start-workspace-count, 4), minmax(48px, 1fr));
   gap: 1px;
   padding: 3px;
   border: 1px solid transparent;
@@ -71,7 +71,7 @@
   top: 3px;
   bottom: 3px;
   left: 3px;
-  width: calc((100% - 9px) / 4);
+  width: var(--start-workspace-slider-width, calc((100% - 9px) / 4));
   border-radius: 9px;
   background: #181817;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16), 0 4px 10px rgba(0, 0, 0, 0.08),
@@ -945,7 +945,7 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host {
   .top-bar { padding-inline: 18px; }
   .brand-wrap { gap: 7px; }
   .brand-wrap .brand { display: none; }
-  .start-workspace-switch { grid-template-columns: repeat(4, 45px); }
+  .start-workspace-switch { grid-template-columns: repeat(var(--start-workspace-count, 4), 45px); }
   .start-workspace-switch button { padding-inline: 7px; }
   .note-workspace { grid-template-columns: minmax(0, 1fr); margin: 0 10px 10px; border-radius: 16px; }
   .note-tree-pane {
@@ -3156,6 +3156,9 @@ body.start-page[data-start-theme="dark"] .study-route-guide footer button { colo
   background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 .desktop-language-setting > span { display: grid; gap: 3px; }
+.desktop-launcher-setting[hidden] { display: none; }
+.desktop-launcher-setting input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--text); cursor: pointer; }
+.desktop-launcher-setting input:disabled { cursor: default; }
 .desktop-language-setting strong { font-size: 13px; color: var(--text); }
 .desktop-language-setting small { font-size: 11px; color: var(--muted); line-height: 1.45; }
 .desktop-language-setting select {

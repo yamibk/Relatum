@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-09-22。
+> 最后按源码校准：2026-10-03。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -71,6 +71,9 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
 | `desktop_instance.py` | Windows 桌面主程序单实例协调；按数据根持有命名互斥锁，通过带认证的本地命名管道转交窗口激活或 `.canvas` 打开请求，并管理 `%TEMP%` 中的短期状态文件。 |
+| `launcher.py`、`feature_profile.py`、`assets/feature-catalog.json` | 便携版原生 WinForms 启动器、版本 1 选择配置与统一功能清单。清单声明默认值、父项/依赖、首页入口、脚本/页面归属及独占 API；主进程仅接受命令行会话配置，没有 HTTP 配置写入入口。 |
+| `assets/feature-runtime.js`、`assets/start-workspace-runtime.js`、`assets/start-shell.js` | 服务端先注入有效功能选择，首绘恢复跳过禁用工作区；共用工作区生命周期负责笔记/研究/生涯加载、切换和预热。没有画布首页时只加载轻量共用外壳，保留主题、笔记字号、桌面尺寸与生涯设置。 |
+| `assets/study-activity.js` | 从学习运行时拆出的活跃页；独立加载年度历史、热力图和足迹星图并保持原有空闲预热。学习脚本只通过可选的 `StudyActivity.reload()` 通知失效。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
 | `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`；构建暂存时会把本次选定的 EXE 图标同步为运行时窗口/任务栏/托盘共用的 `assets/app-icon.ico`，避免 Windows 在不同路径显示两套图标。脚本保持 ASCII。 |
 | `build-msix.ps1` | Microsoft Store x64 MSIX 打包；复用便携版产物，生成匹配商店身份的清单与图标，输出 `Relatum-store/*.msixupload`。脚本保持 ASCII。 |
@@ -78,7 +81,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `index.html` | 起步页壳，书脊导航、最近画布、树状/学习/速记/日历/复习/专注入口。 |
 | `editor.html` | 画布编辑器壳，工具栏、各模式面板、读者浮层、AI 面板、图谱浮层。 |
 | `trash.html` | 回收站管理页。 |
-| `assets/start.js` | 起步页状态、顶层“画布 / 笔记 / 研究 / 生涯”工作区切换、最近/分组/收藏（列表数字归类、方向键、退格、回车、搜索及画布帮助快捷键仅在顶层画布工作区响应；速记墙全局键盘入口同样检查顶层工作区，避免隐藏页面抢占笔记/生涯输入）、页面切换、主题/背景/翻页速度，以及学习/树状/速记三页的可选前台计时；“研究”首次进入时才创建同源透明 iframe，离开暂停、返回激活、页面销毁时释放，不进入首屏或空闲预热链。顶层工作区切换会清理中断的旧动画状态，并以方向感明确的前后双层交接保持快速连续切换稳定；进入或离开全屏生涯工作区时按切换前后的真实舞台顶边补偿离场页，避免顶栏退出/进入文档流造成纵向跳帧。齿轮面板还用 `canvas:darkCardPresentation:v1` 分别保存树状页与学习页深色彩色卡片的底色、边框/侧条强度和“智能/白/黑”字体颜色，两页均默认底色 15%、边框/侧条 100%、白字，浅色模式只禁用控件而不改值。笔记和生涯运行时均按需加载，首屏稳定后的空闲阶段会预载生涯轻量运行时与冻结快照，首次切换通常直接显示结果。活跃页、学习进度视图与专注每日任务视图在内部错峰入场未完成时离页，会先冻结当前内部动画帧，等外层退场隐藏后再清理，避免元素瞬间补齐。 |
+| `assets/start.js` | 画布首页状态、通过共用工作区运行时协调顶层“画布 / 笔记 / 研究 / 生涯”切换、最近/分组/收藏（列表数字归类、方向键、退格、回车、搜索及画布帮助快捷键仅在顶层画布工作区响应；速记墙全局键盘入口同样检查顶层工作区，避免隐藏页面抢占笔记/生涯输入）、页面切换、主题/背景/翻页速度，以及学习/树状/速记三页的可选前台计时；“研究”首次进入时才创建同源透明 iframe，离开暂停、返回激活、页面销毁时释放，不进入首屏或空闲预热链。顶层工作区切换会清理中断的旧动画状态，并以方向感明确的前后双层交接保持快速连续切换稳定；进入或离开全屏生涯工作区时按切换前后的真实舞台顶边补偿离场页，避免顶栏退出/进入文档流造成纵向跳帧。齿轮面板还用 `canvas:darkCardPresentation:v1` 分别保存树状页与学习页深色彩色卡片的底色、边框/侧条强度和“智能/白/黑”字体颜色，两页均默认底色 15%、边框/侧条 100%、白字，浅色模式只禁用控件而不改值。笔记和生涯运行时均按需加载，首屏稳定后的空闲阶段会预载生涯轻量运行时与冻结快照，首次切换通常直接显示结果。活跃页、学习进度视图与专注每日任务视图在内部错峰入场未完成时离页，会先冻结当前内部动画帧，等外层退场隐藏后再清理，避免元素瞬间补齐。 |
 | `assets/research.html`、`assets/research/`、`research_store.py` | 起步页“研究”的同源透明 iframe、独立研究画布与 V3 可组合运行时。`research-workspace.js` 提供 `activate` / `suspend` / `dispose` / `setLanguage`；研究 iframe 加载共用 `i18n.js`，由 `research-i18n-en.js` 注册研究专用静态与动态英文词典，主页面语言切换会显式同步 iframe。工作区外壳、动态属性、运行错误、39 页教程和教程生成示例均跟随中英文；教程中文保持直接说明式表达。教程示例在英文模式下写入英文预设标题，普通用户标题不自动翻译。`researchVersion:3` 在分页图之外保存不可变 `subcircuits[]` 定义/修订，实例节点用 `{definitionId,revision}` 固定修订并从定义动态解析类型化 value/Pulse 端口。V1/V2 不迁移，读取后显示空白 V3，首次保存覆盖研究文件且不备份。选区可按跨界导线封装为新定义或现有定义的新修订；替换是一次页面历史，撤销恢复节点但保留定义。实例默认使用最新修订，旧实例不自动变化；属性面板只在已连接端口保持兼容时允许手动升级。定义支持最多 32 层无环嵌套，运行时按实例路径递归展开，隔离内部状态、事件、Probe 与持久状态树，展开后继续受单页节点/连线预算约束。未被页面或其他定义引用的最新修订可从左侧节点列表右键删除。M5.1 把添加列表、单节点/连线属性和多选摘要合并为左侧统一面板：首次使用默认展开；已记忆的收起状态在首帧前同步应用，避免启动闪现；裸按 `Tab` 或关闭按钮开合且不因选区变化强制展开；节点库、单选属性、连线属性与多选摘要共用固定 `232px × 635px` 外框（窄窗按可用高度钳制），切换对象或内容类型时立即替换，不播放淡入、位移或旧层退场动画；面板、控件和模态层使用简洁黑白表面，深色为高不透明度墨绿黑，深色节点使用暖白细描边，不堆叠装饰性灰底、渐变或分隔线。内建节点与子电路均先单击选中，再双击稳定空白放置，节点双击只编辑标签。M5.4 为单节点属性、多选摘要和 `Ctrl/Cmd+D` 增加同一组选区复制入口：副本保留标签、配置、尺寸、状态策略及固定子电路修订，只复制两端都在选区内的关系线/导线并清除整棵 `savedState`；副本组以最近一次画布内鼠标位置为包围盒左上角并成为新选区，无鼠标锚点时右下偏移 28px，整组只写一条历史。不提供系统剪贴板、跨页或跨会话粘贴。关系线/导线只表示记忆的 Alt 手势类型：关系线严格节点主体到主体，导线严格真实端口到兼容端口，普通左键始终选择/拖动/操作。起点属于多选时，关系线从全部已选节点连向同一目标；导线要求全部已选节点具有同名同方向端口，可由多输入反向起线实现输出扇出，或在 Pulse 目标允许多来源时由多输出汇入。整组先完整校验，任一候选非法即统一红色预览且不写模型；成功批次只写一条历史，单线值输入重接继续沿用原行为。固定 `540px × 44px` 底栏可收起为侧边箭头；收起箭头用主键按下直接切换，连续点击可随时反转，键盘激活仍走标准 `click`。右侧悬浮分页器沿用树状页的滑块与 FLIP 节奏；换页只更新既有滑块，不在页面交换中途重建，新增/删除页时容器按 `border-box` 外高从旧尺寸自然过渡到新尺寸。交互本机偏好键为 `research:sidePanelCollapsed:v1`、`research:computeDockCollapsed:v1`、`research:connectionKind:v1`、`research:panSpeed:v1`、`research:panInertia:v1`、`research:zoomSpeed:v1`、`research:coordinatesVisible:v1`、`research:coordinateLabelsVisible:v1`，不得写入研究文档，也不得改写主画布 `canvas:*` 偏好。M5.2 定向移植主画布相机手感，并使用包含当前视口、常驻节点 DOM、停止后校准的 `180px × 120px` 小地图；低动态下缩放即时且不产生松手惯性。坐标层用 Canvas2D 绘制随相机移动的自适应方格、数学方向 x/y 轴和可选数字；原点相机保留缩放并居中世界原点。右下角空白页删除、原点相机、设置与帮助处于同一操作区，删除按钮仅在第 2 页起的空页显示。正常自动保存全程静默，不显示“正在保存”或“已保存”，错误与恢复警告保留。`research-node-definitions.json` 仍是内建节点共同声明源，`research-subcircuits.js` 负责目录、依赖、选区封装、升级兼容和递归展开。稳定值为 number/boolean/string/time/Bits<1–64>，Pulse 只在运行时存在；组合传播、同步状态批次、运行栏、Probe、分页隔离、Canvas2D/SVG 几何和状态保留规则继续沿用 V2。连续仿真的投影展示会合并最新结果并按每帧最多 128 个节点、最多 4 ms 刷新；单步、复位和编辑仍同步呈现，渲染分片不改变模型或事件批次。`GET/POST /api/research/workspace` 仍只写 `data/research-workspace/workspace.json`，保留原子写入、SHA-256 冲突、有效 V3 备份与损坏隔离。显式图分析延期到出现具体工作流后再设计 Graph Snapshot/节点引用；动作节点仍未实现。 |
 | `assets/note-workspace.js` | 起步页多标签笔记工作区适配层；与顶栏同底色的两栏、右侧覆盖式链接/历史栏、带持久化全部展开/收起入口的文件树（只要任一文件夹已展开，入口即显示并执行“全部收起”；仅全部收起时显示“全部展开”）、共享实时预览/源码编辑表面、右上角实时预览/源码一键切换、按需安全阅读面、350ms 串行自动保存、外部修订、拖放导入、图片粘贴和系统资源管理器/回收站操作。主页背景为“沉浸”时，笔记壳、文件树、标签栏和正文使用分层的高不透明度纸面露出环境背景，常驻表面不使用 `backdrop-filter`；“简洁”保持全窗口实色纸面。文件树普通单击在当前标签中切换笔记；单击或右键空白处会清除文件夹选择并将后续新建目标明确切到笔记库根目录，但不关闭当前笔记；标签栏 `+` 只创建可恢复的空白标签，不创建 `.md`，用户随后点击文件才在该标签打开；`Ctrl/Cmd+N` 新建笔记，`Ctrl/Cmd+T` 新建标签。标签栏按路径复用常驻 DOM，只增删和移动真实变化的标签；切换文件时标签标题立即更新，不使用淡入或位移动画。未命中正文缓存时先更新树、路径与标签反馈，再暂时淡化并锁住旧编辑表面，等本地读取完成立即恢复。标签栏提供常驻的一键关闭全部入口，必须等待当前及缓存待保存文档沿既有保存链落盘，失败时保留全部标签。笔记专注按钮使用本机 `canvas:noteFocusMode:v1` 记忆收起顶栏的选择；冷启动在顶栏首绘前恢复，切到画布或生涯时只暂停显示、回到笔记后继续生效。快速反复切换用序号淘汰过期过渡收尾，低动态偏好下直接切换；桌面版专注时右上角浮动显示最小化、最大化／还原与关闭按钮，复用原顶栏操作，关闭仍经过笔记保存链。每篇正文上方的行内标题直接编辑 `.md` 文件名，重名由非遮挡警告提示；标题及其占位随正文滚走，不能固定挤占视口。词数/字符数以正文右下角悬浮层显示，不独占布局行。文件创建或恢复当前文档时必须自动展开完整父级路径；行内改名提交不得吞掉紧接的一次树点击。图片文字工具用 `canvas:noteImageTextDefaults:v1` 记忆最近明确选择的字号和颜色，创建新框时复用；显式开关在输入链等待前固定目标状态并用序号淘汰过期操作，选中图片外的整页空白（包括 CodeMirror 之外的最右侧区域）统一视为外点并立即关闭；“合并为图片”生成新的原尺寸 PNG 并替换选中引用、清除文字元数据；右侧“删除文本框数据”清空选中图片及本篇未渲染的残留文字数据。两者不创建备份，清理本篇对应历史数据并重置本篇撤销与缓存，保留原图文件。 |
 | `assets/career-report.js` | 起步页「生涯」冻结使用报告适配层；首次进入时按需加载，只读 `data/career-report.json` 快照并用原生 HTML/CSS/SVG 绘制使用概况、画布、笔记、学习、使用习惯与数据范围六章。“使用习惯”复用已有快照展示月度画布时长、当前笔记最后修改月份、双链/孤立笔记以及打卡/日记日期；专注和复习仍保留在快照与数据来源状态中，但不占主要图表。“月度使用”和“使用时间较多的画布”使用普通纸面，不使用深色强调面板。进入生涯后全局顶栏自动收至窗口上沿，鼠标或触控点击入口时释放工作区按钮焦点，鼠标移入顶部感应区或键盘焦点进入时临时展开。传统离散鼠标滚轮可由左上角齿轮的“生涯滚动手感”启用 RAF 惯性，触控板、键盘、滚动条、横向手势和缩放手势保持原生；低动态偏好、0% 惯性、离开工作区、页面隐藏、语言重绘或重新生成时必须停止惯性。“滚动时暂停揭示”默认关闭：关闭时元素进入视口便立即揭示；开启时惯性停止且连续 50ms（默认，“揭示等待”滑条 20–160ms 可调）无滚动后才批量揭示并恢复数字动画。快速越过的屏外章节不会空播，首次进入仍保留完整错峰。统计数字共用一条动画帧、按显示刷新率逐帧更新，折线、柱形、星期分布、节点类型与篇幅分布点阵、月度矩阵、关系图和时间线保留有限错峰动画；其他高密度每日条码与热力格使用整组展开，且有 `prefers-reduced-motion` 静态降级。离开工作区、语言重绘或重新生成时必须清理观察器、计时器和动画任务。图表可悬停/键盘聚焦，但数值只能由页底“重新生成”替换。不调用 AI、不联网、不保存正文或绝对路径。 |
@@ -151,6 +154,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | Markdown 笔记库 | `notes/`；普通文件夹和 `.md` 是正文，粘贴图片位于同目录 `<笔记名>.assets/images/`。独占行图片的文字框数据以同一行 `<!--relatum:image-text:v1:<base64url-json>-->` 注释保存在 `.md`，不新增侧车文件。伴生目录默认不显示在文件树，但与笔记一起移动、重命名和移入 Windows 系统回收站。没有正文数据库或发布索引。 |
 | 笔记恢复历史 | `data/note-recovery/`；按逻辑笔记路径保存完整 Markdown 快照，普通快照最短间隔 5 分钟，保留 7 天；外部碰撞、历史恢复和高风险覆盖前强制快照。 |
 | 最近、分组、收藏 | `data/recent.json`（v3）；上一次有效快照为 `data/recent.backup.json`，损坏原件隔离成 `data/recent.corrupt-<时间>.json` |
+| 启动器选择 | `data/launcher-profile.json`，结构 `{version:1, features:{功能ID:布尔值}, canvasFile?:绝对路径}`；只在确认启动时使用唯一临时文件与 `os.replace` 保存。父项关闭不改子项原始选择；缺失功能使用清单默认值，首次全部启用。损坏配置显示警告与默认值，取消不覆盖；普通 `Relatum.exe` 不读取它。 |
+| 启动器弹窗偏好 | `data/launcher-settings.json`，结构 `{version:1, skipSelection:布尔值}`，默认 false；客户端设置通过原生 `DesktopBridge` 原子保存，不提供 HTTP 写入口。勾选直接使用之前的功能选择；取消恢复选择窗口。选择缺失/损坏、仅编辑器的画布文件失效时回到选择窗口，已有主实例仍提示退出。 |
 | 背景偏好、辅助底纹与上传背景 | `data/background.json`（v2：`background` + 可选 `guide`）、`data/backgrounds/` |
 | 画布视口 | `data/viewport.json` |
 | 学习任务 | `data/study.json`（v6）；任务含标题、`active/done` 状态、单位进度、任务点、时间戳与 `taskPage`（1–99，旧 v6 缺失时归入第 1 页）；可选 `color` 保存任务卡片颜色，只允许严格 `#rrggbb`，空串为默认色，缺失时缺省为空串，旧数据无需迁移；可选 `taskPageNotes` 按页码保存非空的单行说明。`temporaryTaskIds[]` 按加入顺序全局引用临时任务侧栏中的未完成任务，完成、回收、归档或悬空引用在规范化时自动清理；`goalTrees[]` 保存多棵 `{version:2,id,title,nodes[],links[]}` 路线，`activeTreeId` 保存当前树。数字任务页只分组显示与排序，临时任务、回收站、活跃统计和目标树继续跨页共享，归档只处理当前页。每个目标树节点恰有一条主链接，附加解锁条件使用非主 `requires`；不再写入 `goalTree` 兼容镜像。v6 不迁移旧学习数据，读到旧版本只报不兼容且不覆盖原文件。 |
@@ -290,6 +295,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - AI：`/api/ai-chat`、`/api/ai-plan`、`/api/ai-test`、`/api/ai-config`
 
 ### HTTP 与并发边界
+
+- 启动器会话按 `feature-catalog.json` 拦截禁用资源和独占 API，返回 403；静态路径按标准库实际 Windows 路径翻译与大小写归一检查，HEAD 同样受限。首页 HTML 不输出禁用模块的 DOM/脚本，直接 `?view=` 指向禁用特殊页也拒绝。共享历史 GET 保持可读；现有路径授权和危险扩展黑名单继续执行。
 
 - JSON 请求体硬上限是 160MiB；超过 8MiB 的 JSON 同一时刻只接纳一个，保存时走流式原子 JSON 编码；图片/附件仍各自执行 40MiB / 100MiB 的解码后限制。Base64 协议会产生高于请求体大小的瞬时内存峰值，不要把 160MiB 误解成进程内存上限。
 - 画布资源读取由 `_send_local_file` 分块发送并支持单段 `Range`，不要重新改成 `read_bytes()` 整文件进内存。
@@ -541,7 +548,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 普通视图按根节点、月份、任务组织；概览视图按年份、月份、任务组织。
 - 图谱是只读展示，不负责跳转画布编辑定位。
 - 普通/概览分段滑块必须在动态中英翻译完成后按最终按钮尺寸重定位，不能沿用中文宽度裁切英文 `Normal`。
-- 起步页空闲时由 `study.js` 预读当前年度 `/api/study-activity` 并预渲染隐藏的活跃页；预热、首次进入与 `awaitReady()` 必须复用同一进行中请求。隐藏星图保持 `active:false`，不得运行 RAF 或主题监听；真正翻入后再校准年份书脊、分段滑块和可见尺寸。预热失败保持静默并由首次进入重试，不预读额外历史年份。
+- 启用活跃功能时，起步页空闲由 `study-activity.js` 预读当前年度 `/api/study-activity` 并预渲染隐藏的活跃页；预热、首次进入与 `awaitReady()` 必须复用同一进行中请求。隐藏星图保持 `active:false`，不得运行 RAF 或主题监听；真正翻入后再校准年份书脊、分段滑块和可见尺寸。预热失败保持静默并由首次进入重试，不预读额外历史年份。
 - 起步页空闲时由 `tree-page.js` 预读 `/api/tree-page`，但不在隐藏且无可靠视口尺寸时提前执行树布局；脚本、数据缓存和进行中请求由首次进入直接复用，先用缓存同步绘制，再静默复检最新快照。空闲预热失败不提示，首次进入会重新请求；不得因预热重复发出并行快照请求，也不得把它加进首屏阻塞链。
 
 ### 速记 `notes.js`
@@ -646,20 +653,27 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 10. 桌面壳和打包
 
+- 便携版提供 `RelatumLauncher.exe`：原生 WinForms，默认恢复选择并等待确认；客户端设置可启用免弹窗，启动器读取独立偏好后直接拉起主进程。选择窗口自身不启动 HTTP 服务或 WebView2。`desktop.py` 根据 EXE 文件名在导入主服务前分派启动器，两个 EXE 共享同一归档和 `_internal`。源码可用构建环境的 Python 运行 `launcher.py` 或 `desktop.py --launcher`。MSIX 不含启动器，客户端隐藏免弹窗设置。
+- 精简模式的导航列数和滑块位移按实际启用工作区计算，首绘即生效；中英文切换及窄窗口必须保持滑块与当前按钮对齐。`assets/desktop-shell.js` 共用免弹窗控件逻辑，画布首页与轻量外壳一致。
+- 会话通过私有命令行 `--launch-profile` 传入并严格校验；无有效入口、格式损坏、未启用编辑器却指定画布，以及仅编辑器却未选现有文件时停止。已有主实例时启动器不转交或改变会话；主进程再次检查互斥锁防竞态。直接运行主 EXE 始终请求完整模式，遇到已有精简窗口提示先退出。
+- 新增可禁用功能时先在清单登记稳定 ID、`default:true`、父项或 `requires`、脚本/页面、独占读写路径/前缀；共享脚本和写入使用 OR 归属。画布首页入口需 `home:true`，并在首页路由登记对应激活器；新增工作区入口需同时接入共用生命周期。启动器自动显示清单选项。依赖缺失、循环和重复 ID 在启动时拒绝。不要用隐藏 CSS 代替资源边界。
+
 - 桌面方案是 pywebview + WebView2，不是 Electron。
 - `desktop.py` 会先启动本地服务，再打开 `index.html?desktop=1` 或 `editor.html?desktop=1&file=...`。
 - Windows 普通桌面启动按 `ROOT` 保持一个主实例：第二次启动不再创建服务和 WebView2，而是通过 `desktop_instance.py` 的本地认证命名管道唤醒已有窗口。传入另一张有效 `.canvas` 时，当前窗口干净才在原窗口切换；当前画布 dirty 时只唤醒并拒绝切换；传入同一画布只唤醒、不刷新。窗口尚未就绪时只保留最后一条有效请求。动态背景子进程及 `--no-browser` / `--port` / `--allow-dir` 服务模式不参与这项主实例限制。
 - 主实例状态只短期写在 `%TEMP%/relatum-desktop-<ROOT哈希>.json`，含随机管道和认证材料；正常退出仅删除仍属于自己的状态，异常退出后的陈旧文件由下一主实例覆盖。IPC 只接受窗口激活与已重新验证的 `.canvas` 路径，不得扩成通用控制面。
 - Windows 下做了无边框窗口：隐藏原生标题栏、保留系统最小化/最大化动画、DWM 圆角、关闭时检查 dirty。
 - `desktop-shell.js` 负责窗口按钮、pywebview ready 队列、dirty 标记和桌面 session 标识。
-- 倒数日动态背景仍只发布一个 `Relatum.exe`，但背景 WebView2 必须由该 EXE 的隔离子进程承载，不能再与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
+- 动态背景禁用时不创建 `WallpaperController`；启用时，背景 WebView2 由 `Relatum.exe` 的隔离子进程承载，不能再与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
 - WebView2 用户数据默认在 `%LOCALAPPDATA%\Canvas\WebView2`；启动时给 HTTP 磁盘缓存和媒体缓存分别设置 64MiB / 32MiB 参数上限。这不是整个用户目录或 Code/GPU Cache 的硬总上限，不要为清缓存误删 Cookies、localStorage 等用户状态。
 - 窗口状态版本是 `2`，尺寸以逻辑像素原子保存到 `data/window-state.json`。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则最大化启动后的首次还原会使用样式切换前留下的错误 normal placement。
-- 构建脚本输出 `Relatum-release/Relatum.exe`、同级 `Relatum.exe.config` 和 `_internal/`。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
+- 构建脚本输出 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、各自同级 `.exe.config` 和共用 `_internal/`；MSIX 暂存包排除启动器及其配置。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
 - 构建会整体替换 `Relatum-release/`；若目录内已有 `canvases/`、`notes/` 或 `data/`，默认拒绝覆盖，除非显式 `-ForceReplaceUserData`。
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
 
 ## 11. 验证清单
+
+启动器与加载边界改动：运行 `python -m unittest tests.test_feature_profile tests.test_launcher_native tests.test_desktop_instance tests.test_windows_wallpaper tests.test_runtime_paths`；配置 `RELATUM_PYTHON`、`RELATUM_PLAYWRIGHT`、`RELATUM_EDGE_PATH` 后运行 `node tests/feature-profile-browser.js`。真实便携包使用 `node tests/launcher-package-memory.js <发布目录> <报告JSON> 3` 覆盖冷启动进程树、普通单实例与笔记关闭保存；`node tests/launcher-settings-package.js <发布目录>` 验证客户端勾选免弹窗、启动器直接启动与取消后恢复选择窗口。所有验证都使用一次性数据根，关闭全部测试进程后清理。具体测量口径见 `docs/launcher-verification.md`。
 
 研究工作区改动：`node tests/start-research-shell-contract.js`、`node tests/research-canvas-baseline-contract.js`、`node tests/research-pages-regression.js`、`node tests/research-compute-regression.js`、`node tests/research-subcircuits-regression.js`、`node tests/research-runtime-regression.js`、`node tests/research-persistence-contract.js`、`python -m unittest tests.test_research_store -v`、`node tests/research-fork-baseline-contract.js`。可选真实 Edge 验收再运行 `node tests/research-circuit-browser.js <本地 URL>`、`node tests/research-subcircuits-browser.js <本地 URL>`、`node tests/research-cpu-browser.js <本地 URL> [report.json]` 与 `node tests/research-time-slicing-browser.js <本地 URL> [report.json]`。研究壳契约确认首屏零研究资源、首次进入按需挂载与生命周期；画布契约确认显式端口、索引、历史、连续投影分片和 DOM/Canvas2D/SVG 交接；分页回归确认逐页模型/历史/镜头隔离；计算与子电路回归确认严格类型、确定性事件、递归展开、无环嵌套、实例状态隔离、修订固定/升级、选区替换和 V3 持久化；CPU 浏览器验收确认公开 UI 搭建、两版程序结果、状态清空、Probe 顺序、25 实例展开、刷新恢复与运行态非持久化；时间分片浏览器验收确认 1,000 个主动时间源的完整批次、协作让出、帧响应、暂停/恢复和调度状态非持久化；分叉契约确认原编辑器不反向引用研究代码。浏览器夹具必须拦截研究接口，不改真实用户数据。
 研究教程改动还要运行 `node tests/research-tutorial-regression.js`，确认 39 页/4 章、20 种节点与 8 个模板的唯一映射、真实端口校验、ID 重映射、一次撤销/重做和非法整批回滚。
@@ -891,7 +905,7 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 - 先读 `README.md` 的“构建 Windows 桌面版”章节。
 - 只在用户要求或任务确实需要时运行 `build-desktop.ps1`。
 - 改动主实例、窗口激活或桌面 IPC 时运行 `python -m unittest .\tests\test_desktop_instance.py .\tests\test_windows_wallpaper.py .\tests\test_runtime_paths.py`，并用同一数据根连续启动多次验证只有一个主窗口；WebView2 的浏览器/GPU/渲染器子进程不算重复主实例。
-- 验收 `Relatum-release/Relatum.exe`、同级 `Relatum.exe.config`、`_internal/assets/`，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
+- 验收 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、两份同级 `.exe.config`、`_internal/assets/feature-catalog.json` 与全部资产，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
 
 ## 12. 常见坑
 

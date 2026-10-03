@@ -17,6 +17,7 @@
         var storedWorkspace = localStorage.getItem('canvas:startWorkspace:v1');
         var workspace = storedWorkspace === 'notes' || storedWorkspace === 'research' || storedWorkspace === 'career'
           ? storedWorkspace : 'canvas';
+        workspace = window.RelatumFeatureRuntime.workspace(workspace);
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
         window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
@@ -65,7 +66,7 @@
       } catch (e) {
         document.documentElement.dataset.startTheme = 'light';
         document.documentElement.dataset.startBackground = 'simple';
-        document.documentElement.dataset.startWorkspace = 'canvas';
+        document.documentElement.dataset.startWorkspace = window.RelatumFeatureRuntime.workspace('canvas');
         document.documentElement.dataset.uiLanguage = 'zh-CN';
       }
     })();
@@ -83,6 +84,7 @@
   <script>
     // 专注页位于脚本队列末端。页面解析时就并行读取其轻量数据，第一次翻页与后续翻页共用缓存。
     (function () {
+      if (!window.RelatumFeatureRuntime.enabled('canvas.focus')) return;
       function preloadJson(path) {
         return fetch(path, { credentials: 'same-origin' }).then(function (response) {
           if (!response.ok) throw new Error('preload failed');
@@ -1923,6 +1925,13 @@
           <option value="en">English</option>
         </select>
       </label>
+      <label class="desktop-language-setting desktop-launcher-setting" data-role="launcher-setting" hidden>
+        <span>
+          <strong>启动 RelatumLauncher 时不再弹窗</strong>
+          <small>按上次选择直接启动；取消勾选可恢复功能选择窗口</small>
+        </span>
+        <input type="checkbox" data-role="launcher-skip-selection" disabled>
+      </label>
       <div class="desktop-size-presets" data-role="desktop-size-presets">
         <button type="button" data-width="900" data-height="600">
           <strong>紧凑</strong><span>900 × 600</span>
@@ -1954,16 +1963,19 @@
   <script src="i18n.js" defer></script>
   <script src="desktop-shell.js" defer></script>
   <script src="sticky-palette.js" defer></script>
+  <script src="start-workspace-runtime.js" defer></script>
+  <script src="start-shell.js" defer></script>
   <script src="start.js" defer></script>
   <script src="start-sticky-notes.js" defer></script>
-  <script src="graph-gl.js" defer></script>
-  <script src="graph-engine.js" defer></script>
+  <script src="graph-gl.js" data-feature="canvas.activity" defer></script>
+  <script src="graph-engine.js" data-feature="canvas.activity" defer></script>
   <script src="study-graph.js" defer></script>
   <script src="study-goal-tree.js" defer></script>
   <script src="study-palette.js" defer></script>
-  <script src="font-loader.js" defer></script>
+  <script src="font-loader.js" data-feature="canvas.tree" defer></script>
   <script src="tree-page.js" defer></script>
   <script src="study.js" defer></script>
+  <script src="study-activity.js" defer></script>
   <script src="study-route.js" defer></script>
   <script src="notes.js" defer></script>
   <script src="mermaid-renderer.js" defer></script>

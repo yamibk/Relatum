@@ -7,7 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const html = read('assets/index.html');
-const start = read('assets/start.js');
+const start = read('assets/start.js') + read('assets/start-workspace-runtime.js');
 const notes = read('assets/note-workspace.js');
 const live = read('assets/note-live-editor.js');
 const markdown = read('assets/markdown.js');

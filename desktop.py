@@ -20,7 +20,16 @@ import threading
 from ctypes import wintypes
 from pathlib import Path
 
+# Dispatch before importing the server, wallpaper or WebView2 runtime.
+if __name__ == "__main__" and (
+    (getattr(sys, "frozen", False) and Path(sys.executable).name.lower() == "relatumlauncher.exe")
+    or "--launcher" in sys.argv[1:]
+):
+    from launcher import main as launcher_main
+    sys.exit(launcher_main())
+
 import app
+from feature_profile import HANDOFF_ARGUMENT, FULL_PROFILE, LaunchProfile, ProfileError, read_launcher_settings, save_launcher_settings
 from desktop_instance import DesktopInstanceCoordinator
 from windows_wallpaper import WallpaperController, run_wallpaper_child
 
@@ -424,6 +433,17 @@ class DesktopBridge:
     def get_window_state(self) -> dict:
         return {"maximized": self.maximized}
 
+    def get_launcher_settings(self) -> dict:
+        supported = not getattr(sys, "frozen", False) or Path(sys.executable).resolve().with_name("RelatumLauncher.exe").is_file()
+        with self._lock:
+            return {"supported": supported, **read_launcher_settings(app.ROOT)}
+
+    def set_launcher_skip_selection(self, value: bool) -> dict:
+        if not self.get_launcher_settings()["supported"]:
+            raise ProfileError("当前安装版不包含 RelatumLauncher")
+        with self._lock:
+            return {"supported": True, **save_launcher_settings(app.ROOT, value)}
+
     def get_restored_size(self) -> dict:
         width, height = _clamp_size(
             self.restored_width,
@@ -580,7 +600,8 @@ def _current_window_canvas(window) -> Path | None:
 class DesktopActivationRouter:
     """Validate and apply activation commands received from later launches."""
 
-    def __init__(self) -> None:
+    def __init__(self, profile=FULL_PROFILE) -> None:
+        self._profile = profile
         self._lock = threading.RLock()
         self._window = None
         self._bridge: DesktopBridge | None = None
@@ -605,6 +626,10 @@ class DesktopActivationRouter:
 
     def handle(self, command: dict) -> dict:
         raw = str(command.get("file") or "").strip()
+        if self._profile.restricted and any(not self._profile.enabled(key) for key in self._profile.choices):
+            return {"ok": False, "status": "restricted-session", "error": "当前窗口使用启动器的精简配置。请先退出，再直接运行 Relatum.exe 进入完整模式。"}
+        if raw and not self._profile.enabled("canvas.editor"):
+            return {"ok": False, "status": "feature-disabled", "error": "当前会话未启用画布编辑器，请退出后重新启动"}
         target = None
         if raw:
             try:
@@ -702,8 +727,15 @@ def main() -> int:
         return app.main()
 
     parser = argparse.ArgumentParser(description="Relatum 桌面客户端")
+    parser.add_argument(HANDOFF_ARGUMENT, default=None, help=argparse.SUPPRESS)
     parser.add_argument("file", nargs="?", default=None, help="要直接打开的 .canvas 文件路径")
     args = parser.parse_args()
+
+    try:
+        profile = LaunchProfile.decode(args.launch_profile) if args.launch_profile is not None else FULL_PROFILE
+    except ProfileError as err:
+        _message_box(f"启动器配置无效：\n{err}", 0x10)
+        return 1
 
     if webview is None:
         _message_box("桌面窗口组件未安装，无法启动 Relatum。")
@@ -718,15 +750,24 @@ def main() -> int:
         return 1
 
     initial_file = app.resolve_initial_file(args.file)
-    activation_router = DesktopActivationRouter()
+    if profile.restricted and (args.file and initial_file is None or initial_file and not profile.enabled("canvas.editor") or not profile.has_home and initial_file is None):
+        _message_box("此配置需要一张有效的 .canvas 文件，并且必须启用画布编辑器。", 0x30)
+        return 1
+    activation_router = DesktopActivationRouter(profile)
     instance = DesktopInstanceCoordinator(app.ROOT, activation_router.handle)
     try:
-        instance_result = instance.acquire_or_forward(initial_file)
+        instance_result = instance.acquire_or_forward(initial_file, allow_forward=not profile.restricted)
     except Exception as err:
         _message_box(f"Relatum 单实例协调启动失败：\n{err}", 0x10)
         return 1
     if not instance_result.get("primary"):
         status = str(instance_result.get("status") or "")
+        if status == "already-running":
+            _message_box("Relatum 已在运行。请先退出已有窗口，再通过启动器启动。", 0x30)
+            return 1
+        if status == "restricted-session":
+            _message_box(str(instance_result.get("error") or "请先退出精简模式窗口，再启动完整模式。"), 0x30)
+            return 1
         if status == "blocked-dirty":
             _message_box(
                 "Relatum 已在运行。\n\n当前窗口有未保存的修改，已保留当前画布，未切换到另一张画布。",
@@ -756,6 +797,7 @@ def main() -> int:
     try:
         port = app.find_free_port(app.DEFAULT_PORT)
         server = app.CanvasServer(("127.0.0.1", port), app.Handler)
+        server.launch_profile = profile
     except Exception as err:
         instance.close()
         _message_box(f"Relatum 启动失败：\n{err}", 0x10)
@@ -890,7 +932,7 @@ def main() -> int:
         show_main=show_main_window,
         request_quit=request_quit_from_tray,
         fatal_error=wallpaper_fatal_error,
-    )
+    ) if profile.enabled("calendar.wallpaper") else None
 
     def on_shown() -> None:
         _install_frameless(window)

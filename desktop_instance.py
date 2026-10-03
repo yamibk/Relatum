@@ -38,6 +38,21 @@ def instance_state_path(root: Path, temp_dir: Path | None = None) -> Path:
     return base / f"relatum-desktop-{instance_root_key(root)}.json"
 
 
+def desktop_instance_running(root: Path) -> bool:
+    """Probe the kernel mutex, including a primary still starting up."""
+    if sys.platform != "win32":
+        return False
+    kernel32 = ctypes.windll.kernel32
+    DesktopInstanceCoordinator._configure_kernel32(kernel32)
+    kernel32.SetLastError(0)
+    handle = kernel32.CreateMutexW(None, False, f"Local\\RelatumMain-{instance_root_key(root)}")
+    if not handle:
+        raise OSError("无法检查 Relatum 运行状态")
+    exists = int(kernel32.GetLastError()) == ERROR_ALREADY_EXISTS
+    kernel32.CloseHandle(handle)
+    return exists
+
+
 class DesktopInstanceCoordinator:
     """Own the primary-instance mutex and authenticated activation pipe."""
 
@@ -79,7 +94,7 @@ class DesktopInstanceCoordinator:
         self._close_lock = threading.Lock()
         self._closed = False
 
-    def acquire_or_forward(self, file_path: Path | None) -> dict:
+    def acquire_or_forward(self, file_path: Path | None, *, allow_forward: bool = True) -> dict:
         """Become primary, or forward activation to the existing primary."""
         if sys.platform != "win32":
             return {"primary": True, "ok": True, "status": "unsupported"}
@@ -95,6 +110,8 @@ class DesktopInstanceCoordinator:
         already_exists = int(kernel32.GetLastError()) == ERROR_ALREADY_EXISTS
         if already_exists:
             kernel32.CloseHandle(handle)
+            if not allow_forward:
+                return {"primary": False, "ok": False, "status": "already-running"}
             command = {
                 "type": "activate",
                 "file": str(file_path) if file_path is not None else "",

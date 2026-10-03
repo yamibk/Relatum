@@ -6,7 +6,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'assets', 'index.html'), 'utf8');
 const start = fs.readFileSync(path.join(root, 'assets', 'start.js'), 'utf8');
-const study = fs.readFileSync(path.join(root, 'assets', 'study.js'), 'utf8');
+const study = fs.readFileSync(path.join(root, 'assets', 'study.js'), 'utf8') + fs.readFileSync(path.join(root, 'assets', 'study-activity.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'assets', 'styles.css'), 'utf8');
 
 [
@@ -31,11 +31,10 @@ assert(calendarTab >= 0 && cadenceTab > calendarTab && notesTab > cadenceTab
 
 assert(start.includes('const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7'),
   'tree page must occupy the fifth special-page position');
-assert(start.includes('7 张前置页') && start.includes('if (specialPagesHidden)'),
+assert(start.includes('7 张前置页') && start.includes('return specialPagesHidden ? []'),
   'Hide utility pages must skip all seven special pages');
-assert(start.includes("if (delta > 0) setTreePageActive(true); // 速记 → 树状")
-  && start.includes("else setNotesActive(true);             // 树状 → 速记")
-  && start.includes("else setTreePageActive(true);          // 学习 → 树状"),
+assert(start.includes('notes: setNotesActive, tree: setTreePageActive, study: setStudyActive')
+  && start.includes('Object.keys(pageActivators).filter(features.viewEnabled)'),
   'wheel navigation must place Notes immediately before Tree');
 assert(start.includes("['tree', document.querySelector('.tree-page-embedded')]")
   && start.includes('element.inert = !active')

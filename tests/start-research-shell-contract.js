@@ -7,7 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const html = read('assets/index.html');
-const start = read('assets/start.js');
+const start = read('assets/start.js') + read('assets/start-workspace-runtime.js');
 const styles = read('assets/styles.css');
 const researchHtml = read('assets/research.html');
 const researchStyles = read('assets/research/research.css');
@@ -36,8 +36,8 @@ assert(start.includes("previous === 'research'") && start.includes('await resear
   'leaving Research must suspend its active resources');
 assert(start.includes("name === 'research'") && start.includes('await researchWorkspace.activate()'),
   'entering Research must activate the loaded workspace');
-assert(start.includes("showWorkspacePanel('canvas', 'research', false)"),
-  'a failed Research load must return to the canvas workspace');
+assert(start.includes("showWorkspacePanel(fallback, 'research', false)") && start.includes('features.workspaceEnabled(item)'),
+  'a failed Research load must return to an enabled workspace');
 assert(!start.includes('scheduleResearchWorkspaceIdleWarmup'),
   'Research must not gain an idle warmup path');
 assert(start.includes("window.addEventListener('pagehide', disposeResearchWorkspace, { once: true })"),

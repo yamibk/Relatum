@@ -6,6 +6,7 @@
 
 (function () {
   'use strict';
+  const features = window.RelatumFeatureRuntime;
 
   const main = document.querySelector('.start-main');
   const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
@@ -82,8 +83,8 @@
   const darkCardInkSwitches = Array.from(document.querySelectorAll('[data-role="dark-card-ink-switch"]'));
   const librarySearchToggle = document.querySelector('[data-role="library-search-toggle"]');
   const initialView = new URLSearchParams(window.location.search).get('view') || '';
-  let initialStudy = initialView === 'study';
-  let initialCalendar = initialView === 'calendar';
+  let initialStudy = initialView === 'study' && features.viewEnabled('study');
+  let initialCalendar = initialView === 'calendar' && features.viewEnabled('calendar');
 
   if (!main || !emptyView || !recentView || !dots || !fileList || !ctxMenu) return;
 
@@ -179,22 +180,6 @@
   const DARK_CARD_INK_DEFAULT = 'light';
   const LIBRARY_SEARCH_ENABLED_KEY = 'canvas:librarySearchEnabled';
   let startTurnSpeed = START_SPEED_DEFAULT;
-  const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
-  const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, research: 2, career: 3 };
-  let activeStartWorkspace = Object.prototype.hasOwnProperty.call(
-    START_WORKSPACE_ORDER, document.body.dataset.startWorkspace,
-  ) ? document.body.dataset.startWorkspace : 'canvas';
-  let workspaceSwitchPromise = Promise.resolve(true);
-  let noteWorkspaceLoader = null;
-  let researchWorkspaceLoader = null;
-  let researchWorkspaceFrame = null;
-  let researchWorkspaceApi = null;
-  let careerWorkspaceLoader = null;
-  let noteWorkspaceWarmupHandle = 0;
-  let noteWorkspaceWarmupScheduled = false;
-  let careerWorkspaceWarmupHandle = 0;
-  let careerWorkspaceWarmupScheduled = false;
-  let workspaceTransitionTimer = 0;
   let notesInertia = NOTES_INERTIA_DEFAULT;
   let darkCardPresentation = null;
   let startViewTransitionTimer = 0;
@@ -217,346 +202,14 @@
   function englishUI() {
     return !!(window.RelatumI18n && window.RelatumI18n.language === 'en');
   }
-
-  function loadNoteWorkspace() {
-    if (window.CanvasNoteWorkspace) return Promise.resolve(window.CanvasNoteWorkspace);
-    if (noteWorkspaceLoader) return noteWorkspaceLoader;
-    const loadScript = (src, ready) => {
-      if (ready()) return Promise.resolve(true);
-      return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = src;
-        script.async = true;
-        script.onload = () => ready() ? resolve(true) : reject(new Error(src + ' 没有完成初始化'));
-        script.onerror = () => reject(new Error(src + ' 加载失败'));
-        document.head.appendChild(script);
-      });
-    };
-    noteWorkspaceLoader = loadScript('vendor/codemirror/relatum-codemirror.min.js', () => !!window.RelatumCodeMirror)
-      .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
-      .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
-      .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
-      .then(() => window.CanvasNoteWorkspace);
-    return noteWorkspaceLoader;
-  }
-
-  function disposeResearchWorkspace() {
-    const workspace = researchWorkspaceApi;
-    const frame = researchWorkspaceFrame;
-    researchWorkspaceApi = null;
-    researchWorkspaceFrame = null;
-    researchWorkspaceLoader = null;
-    if (workspace && typeof workspace.dispose === 'function') {
-      try { workspace.dispose(); } catch (e) {}
-    }
-    if (frame && frame.isConnected) frame.remove();
-  }
-
-  function loadResearchWorkspace() {
-    if (researchWorkspaceApi) return Promise.resolve(researchWorkspaceApi);
-    if (researchWorkspaceLoader) return researchWorkspaceLoader;
-    const host = document.querySelector('#start-research-workspace');
-    if (!host) return Promise.reject(new Error('研究工作区容器不存在'));
-
-    researchWorkspaceLoader = new Promise((resolve, reject) => {
-      const frame = document.createElement('iframe');
-      researchWorkspaceFrame = frame;
-      frame.className = 'research-workspace-frame';
-      frame.src = 'research.html';
-      frame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区');
-
-      const fail = (error) => {
-        if (researchWorkspaceFrame === frame) disposeResearchWorkspace();
-        reject(error instanceof Error ? error : new Error(String(error)));
-      };
-      frame.addEventListener('load', () => {
-        let workspace = null;
-        try { workspace = frame.contentWindow && frame.contentWindow.RelatumResearchWorkspace; } catch (e) {}
-        if (!workspace || typeof workspace.activate !== 'function'
-          || typeof workspace.suspend !== 'function' || typeof workspace.dispose !== 'function') {
-          fail(new Error('research.html 没有完成初始化'));
-          return;
-        }
-        researchWorkspaceApi = workspace;
-        if (typeof workspace.setLanguage === 'function') {
-          workspace.setLanguage(englishUI() ? 'en' : 'zh-CN');
-        }
-        resolve(workspace);
-      }, { once: true });
-      frame.addEventListener('error', () => fail(new Error('research.html 加载失败')), { once: true });
-      host.appendChild(frame);
-    });
-    return researchWorkspaceLoader;
-  }
-
-  document.addEventListener('relatum:languagechange', () => {
-    if (researchWorkspaceFrame) {
-      researchWorkspaceFrame.setAttribute('aria-label', englishUI() ? 'Research workspace' : '研究工作区');
-    }
-    if (researchWorkspaceApi && typeof researchWorkspaceApi.setLanguage === 'function') {
-      researchWorkspaceApi.setLanguage(englishUI() ? 'en' : 'zh-CN');
-    }
+  const workspaceRuntime = window.RelatumWorkspaceRuntime.create({
+    turnSpeed: () => startTurnSpeed,
+    onChange: () => syncStartPageActivity(),
+    onCanvasReveal: () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (workspaceRuntime.current === 'canvas') syncActiveSpineOrb({ animate: false });
+    })),
+    notice: (title, message) => showNotice(title, message),
   });
-
-  function loadCareerWorkspace() {
-    if (window.RelatumCareerReport) return Promise.resolve(window.RelatumCareerReport);
-    if (careerWorkspaceLoader) return careerWorkspaceLoader;
-    careerWorkspaceLoader = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'career-report.js';
-      script.async = true;
-      script.onload = () => window.RelatumCareerReport
-        ? resolve(window.RelatumCareerReport)
-        : reject(new Error('career-report.js 没有完成初始化'));
-      script.onerror = () => reject(new Error('career-report.js 加载失败'));
-      document.head.appendChild(script);
-    });
-    return careerWorkspaceLoader;
-  }
-
-  function scheduleNoteWorkspaceIdleWarmup() {
-    if (activeStartWorkspace !== 'canvas' || noteWorkspaceWarmupScheduled || window.CanvasNoteWorkspace) return;
-    noteWorkspaceWarmupScheduled = true;
-    const warmup = () => {
-      noteWorkspaceWarmupHandle = 0;
-      if (activeStartWorkspace !== 'canvas') return;
-      loadNoteWorkspace()
-        .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
-        .catch(() => {});
-    };
-    const queueWarmup = () => {
-      if (typeof window.requestIdleCallback === 'function') {
-        noteWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 2400 });
-      } else {
-        noteWorkspaceWarmupHandle = window.setTimeout(warmup, 900);
-      }
-    };
-    if (document.readyState === 'complete') queueWarmup();
-    else window.addEventListener('load', queueWarmup, { once: true });
-  }
-
-  // 生涯报告本身已经是冻结磁盘快照。首屏稳定后在空闲时间提前加载轻量运行时
-  // 和快照，避免用户第一次切换到第三工作区时再看到本地读取占位。
-  function scheduleCareerWorkspaceIdleWarmup() {
-    if (careerWorkspaceWarmupScheduled || (window.RelatumCareerReport && window.RelatumCareerReport.report)) return;
-    careerWorkspaceWarmupScheduled = true;
-    const warmup = () => {
-      careerWorkspaceWarmupHandle = 0;
-      loadCareerWorkspace()
-        .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
-        .catch(() => { careerWorkspaceWarmupScheduled = false; });
-    };
-    const queueWarmup = () => {
-      if (typeof window.requestIdleCallback === 'function') {
-        careerWorkspaceWarmupHandle = window.requestIdleCallback(warmup, { timeout: 1600 });
-      } else {
-        careerWorkspaceWarmupHandle = window.setTimeout(warmup, 700);
-      }
-    };
-    if (document.readyState === 'complete') queueWarmup();
-    else window.addEventListener('load', queueWarmup, { once: true });
-  }
-
-  function syncWorkspaceControls(name) {
-    document.documentElement.dataset.startWorkspace = name;
-    document.body.dataset.startWorkspace = name;
-    if (name !== 'notes') {
-      document.documentElement.classList.remove('note-boot-pending');
-      if (window.RelatumBoot && window.RelatumBoot.noteRevealTimer) {
-        clearTimeout(window.RelatumBoot.noteRevealTimer);
-        window.RelatumBoot.noteRevealTimer = 0;
-      }
-    }
-    workspaceButtons.forEach((button) => {
-      const active = button.dataset.startWorkspace === name;
-      button.classList.toggle('active', active);
-      if (button.getAttribute('role') === 'tab') {
-        button.setAttribute('aria-selected', active ? 'true' : 'false');
-        button.tabIndex = active ? 0 : -1;
-      }
-    });
-  }
-
-  function showWorkspacePanel(name, previous, animate, previousStageTop) {
-    clearTimeout(workspaceTransitionTimer);
-    document.body.classList.remove('start-workspace-turning');
-    const nextPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === name);
-    const previousPanel = workspacePanels.find((panel) => panel.dataset.startWorkspacePanel === previous);
-    if (!nextPanel) return;
-    workspacePanels.forEach((panel) => {
-      panel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
-      panel.style.removeProperty('--workspace-layout-shift-y');
-      if (panel !== nextPanel && panel !== previousPanel) {
-        panel.hidden = true;
-      }
-    });
-    nextPanel.hidden = false;
-    nextPanel.inert = false;
-    if (!animate || !previousPanel || previousPanel === nextPanel
-      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      if (previousPanel && previousPanel !== nextPanel) {
-        previousPanel.hidden = true;
-        previousPanel.inert = false;
-      }
-      if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
-      return;
-    }
-    const forward = START_WORKSPACE_ORDER[name] > START_WORKSPACE_ORDER[previous];
-    const directionClass = forward ? 'workspace-forward' : 'workspace-back';
-    if (workspaceStage && Number.isFinite(previousStageTop)) {
-      const layoutShiftY = previousStageTop - workspaceStage.getBoundingClientRect().top;
-      if (Math.abs(layoutShiftY) > 0.5) {
-        previousPanel.style.setProperty('--workspace-layout-shift-y', `${layoutShiftY}px`);
-      }
-    }
-    previousPanel.hidden = false;
-    previousPanel.inert = true;
-    previousPanel.classList.add('workspace-leaving', directionClass);
-    nextPanel.classList.add('workspace-entering', directionClass);
-    document.body.classList.add('start-workspace-turning');
-    workspaceTransitionTimer = window.setTimeout(() => {
-      previousPanel.hidden = true;
-      previousPanel.inert = false;
-      previousPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
-      nextPanel.classList.remove('workspace-entering', 'workspace-leaving', 'workspace-forward', 'workspace-back');
-      previousPanel.style.removeProperty('--workspace-layout-shift-y');
-      document.body.classList.remove('start-workspace-turning');
-      if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
-    }, Math.max(220, startTurnSpeed) + 140);
-    if (name === 'canvas') syncCanvasWorkspaceSpineAfterReveal();
-  }
-
-  // 画布工作区隐藏时，书脊目标的 DOMRect 会退化为零尺寸；此时留下的游标形状
-  // 不能复用于再次进入画布。等待共享网格完成两帧布局后，重新同步黑色游标与
-  // 彩色跟随层；动画收尾处还会再校准一次，避免过渡结束后出现一帧跳位。
-  function syncCanvasWorkspaceSpineAfterReveal() {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (activeStartWorkspace !== 'canvas') return;
-      syncActiveSpineOrb({ animate: false });
-    }));
-  }
-
-  async function performStartWorkspace(next, options = {}) {
-    const name = Object.prototype.hasOwnProperty.call(START_WORKSPACE_ORDER, next) ? next : 'canvas';
-    const previous = activeStartWorkspace;
-    const previousStageTop = workspaceStage ? workspaceStage.getBoundingClientRect().top : 0;
-    if (name !== previous && previous === 'notes' && window.CanvasNoteWorkspace
-      && typeof window.CanvasNoteWorkspace.deactivate === 'function') {
-      const canLeave = await window.CanvasNoteWorkspace.deactivate();
-      if (canLeave === false) return false;
-    }
-    if (name !== previous && previous === 'research' && researchWorkspaceApi
-      && typeof researchWorkspaceApi.suspend === 'function') {
-      await researchWorkspaceApi.suspend();
-    }
-    activeStartWorkspace = name;
-    syncWorkspaceControls(name);
-    syncStartPageActivity();
-    showWorkspacePanel(name, previous, options.animate !== false && name !== previous, previousStageTop);
-    if (options.persist !== false) {
-      try { localStorage.setItem(START_WORKSPACE_KEY, name); } catch (e) {}
-    }
-    if (name === 'notes') {
-      try {
-        const notesWorkspace = await loadNoteWorkspace();
-        if (activeStartWorkspace === 'notes') await notesWorkspace.activate();
-      } catch (error) {
-        if (activeStartWorkspace === 'notes') {
-          activeStartWorkspace = 'canvas';
-          syncWorkspaceControls('canvas');
-          syncStartPageActivity();
-          showWorkspacePanel('canvas', 'notes', false);
-          showNotice(englishUI() ? 'Notes unavailable' : '笔记工作区暂时无法打开', error.message || String(error));
-        }
-        return false;
-      }
-    } else if (name === 'research') {
-      try {
-        const researchWorkspace = await loadResearchWorkspace();
-        if (activeStartWorkspace === 'research') await researchWorkspace.activate();
-        else await researchWorkspace.suspend();
-      } catch (error) {
-        if (activeStartWorkspace === 'research') {
-          activeStartWorkspace = 'canvas';
-          syncWorkspaceControls('canvas');
-          syncStartPageActivity();
-          showWorkspacePanel('canvas', 'research', false);
-          showNotice(englishUI() ? 'Research workspace unavailable' : '研究工作区暂时无法打开', error.message || String(error));
-        }
-        return false;
-      }
-    } else if (name === 'career') {
-      try {
-        const careerWorkspace = await loadCareerWorkspace();
-        if (activeStartWorkspace === 'career') await careerWorkspace.activate();
-      } catch (error) {
-        if (activeStartWorkspace === 'career') {
-          activeStartWorkspace = 'canvas';
-          syncWorkspaceControls('canvas');
-          syncStartPageActivity();
-          showWorkspacePanel('canvas', 'career', false);
-          showNotice(englishUI() ? 'Career report unavailable' : '生涯报告暂时无法打开', error.message || String(error));
-        }
-        return false;
-      }
-    } else if (name === 'canvas') {
-      scheduleCareerWorkspaceIdleWarmup();
-      scheduleNoteWorkspaceIdleWarmup();
-    }
-    document.dispatchEvent(new CustomEvent('relatum:start-workspacechange', {
-      detail: { workspace: name, previous },
-    }));
-    return true;
-  }
-
-  function setStartWorkspace(next, options = {}) {
-    workspaceSwitchPromise = workspaceSwitchPromise
-      .catch(() => false)
-      .then(() => performStartWorkspace(next, options));
-    return workspaceSwitchPromise;
-  }
-
-  workspaceButtons.forEach((button) => {
-    button.addEventListener('keydown', (event) => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault();
-      const reachable = workspaceButtons.filter((item) => !item.disabled);
-      if (!reachable.length) return;
-      const index = reachable.indexOf(button);
-      const next = event.key === 'Home' ? 0 : event.key === 'End' ? reachable.length - 1
-        : ((index < 0 ? 0 : index) + (event.key === 'ArrowRight' ? 1 : -1)
-          + reachable.length) % reachable.length;
-      reachable[next].focus(); setStartWorkspace(reachable[next].dataset.startWorkspace);
-    });
-    button.addEventListener('click', (event) => {
-      const workspace = button.dataset.startWorkspace;
-      setStartWorkspace(workspace);
-      // 鼠标 / 触控点击进入生涯后释放按钮焦点，否则 :focus-visible 会让
-      // 带全宽模糊层的顶栏持续展开。键盘激活的 click.detail 为 0，继续
-      // 保留焦点，供键盘用户通过顶栏切换工作区。
-      if (workspace === 'career' && event.detail > 0) button.blur();
-    });
-  });
-  syncWorkspaceControls(activeStartWorkspace);
-  workspacePanels.forEach((panel) => {
-    const active = panel.dataset.startWorkspacePanel === activeStartWorkspace;
-    panel.hidden = !active;
-    panel.inert = !active;
-  });
-  window.RelatumStartWorkspace = {
-    get current() { return activeStartWorkspace; },
-    set: setStartWorkspace,
-  };
-  if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'research'
-    || activeStartWorkspace === 'career') {
-    setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
-  }
-  else {
-    scheduleCareerWorkspaceIdleWarmup();
-    scheduleNoteWorkspaceIdleWarmup();
-  }
-  if (activeStartWorkspace === 'notes') scheduleCareerWorkspaceIdleWarmup();
-  window.addEventListener('pagehide', disposeResearchWorkspace, { once: true });
 
   function preloadEditorBackground(background) {
     if (!background || typeof background !== 'object') return;
@@ -577,7 +230,7 @@
 
   // 编辑器首帧需要在 /api/load 返回前选好深浅等待底色。起步页提前同步语义，
   // 并在空闲时预热当前背景，让进入编辑器时尽量直接命中浏览器缓存。
-  fetch('/api/background-preference', { cache: 'no-store' })
+  if (features.enabled('canvas.editor')) fetch('/api/background-preference', { cache: 'no-store' })
     .then((resp) => resp.ok ? resp.json() : null)
     .then((json) => {
       const tone = json && json.configured && json.background && json.background.tone === 'dark'
@@ -842,7 +495,7 @@
   // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
   // 7 张前置页（复习/日历/活跃/速记/树状/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
   function applyHideSpecialPages(hidden, persist) {
-    specialPagesHidden = !!hidden;
+    specialPagesHidden = !!hidden && features.enabled('canvas.library');
     if (hideSpecialToggle) hideSpecialToggle.checked = specialPagesHidden;
     document.body.dataset.hideSpecial = specialPagesHidden ? '1' : '0';
     if (persist) {
@@ -1405,7 +1058,7 @@
       if (open && !notesConsole.contains(event.target)) setOpen(false, false);
     });
     document.addEventListener('keydown', (event) => {
-      if (activeStartWorkspace !== 'canvas') return;
+      if (workspaceRuntime.current !== 'canvas') return;
       if (helpOpen && event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -2066,7 +1719,7 @@
   }
 
   document.addEventListener('keydown', (event) => {
-    if (activeStartWorkspace !== 'canvas') return;
+    if (workspaceRuntime.current !== 'canvas') return;
     const target = event.target;
     const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
       || target.tagName === 'SELECT' || target.isContentEditable);
@@ -2428,7 +2081,7 @@
   }
 
   function currentStartPageActivityTarget() {
-    if (!startPageActivityEnabled || activeStartWorkspace !== 'canvas') return '';
+    if (!startPageActivityEnabled || workspaceRuntime.current !== 'canvas') return '';
     const view = bookView ? String(bookView.dataset.viewName || '') : '';
     return START_PAGE_ACTIVITY_VIEWS.has(view) ? view : '';
   }
@@ -2633,6 +2286,7 @@
   }
 
   function showView(name) {
+    if (!features.viewEnabled(name)) return;
     // 'cadence'（活跃热力图页）与 'study' 共用同一套书页舞台布局壳，只用 cadence-active 切换浮层，
     // 这样 [data-start-state="study"] 那批布局 CSS 仍然生效，无需为 cadence 再写一套。
     const previous = bookView ? (bookView.dataset.viewName || '') : '';
@@ -3105,6 +2759,7 @@
   }
 
   function setStudyActive(active) {
+    if (active && !features.viewEnabled('study')) return;
     studyActive = !!active;
     if (studyActive) {
       cadenceActive = false;
@@ -3126,6 +2781,7 @@
   }
 
   function setCadenceActive(active) {
+    if (active && !features.viewEnabled('cadence')) return;
     cadenceActive = !!active;
     if (cadenceActive) {
       studyActive = false;
@@ -3146,6 +2802,7 @@
   }
 
   function setTreePageActive(active) {
+    if (active && !features.viewEnabled('tree')) return;
     treePageActive = !!active;
     if (treePageActive) {
       studyActive = false;
@@ -3170,6 +2827,7 @@
   }
 
   function setNotesActive(active) {
+    if (active && !features.viewEnabled('notes')) return;
     notesActive = !!active;
     if (notesActive) {
       studyActive = false;
@@ -3190,6 +2848,7 @@
   }
 
   function setReviewActive(active) {
+    if (active && !features.viewEnabled('review')) return;
     reviewActive = !!active;
     if (reviewActive) {
       studyActive = false;
@@ -3209,6 +2868,7 @@
   }
 
   function setCalendarActive(active) {
+    if (active && !features.viewEnabled('calendar')) return;
     calendarActive = !!active;
     if (calendarActive) {
       studyActive = false;
@@ -3230,6 +2890,7 @@
   }
 
   function setFocusActive(active, options) {
+    if (active && !features.viewEnabled('focus')) return;
     focusActive = !!active;
     if (focusActive) {
       studyActive = false;
@@ -3288,6 +2949,10 @@
   document.addEventListener('canvasfocus:ready', finishPendingFocusActivation);
 
   function gotoEditor(path, sourceItem, fresh) {
+    if (!features.enabled('canvas.editor')) {
+      showNotice('画布编辑器未启用', '请退出后通过启动器启用画布编辑器。');
+      return;
+    }
     if (document.body.classList.contains('canvas-route-leaving')) return;
     let nextUrl = 'editor.html?file=' + encodeURIComponent(path);
     if (fresh) nextUrl += '&fresh=1';   // 新建画布首次打开：编辑器据此进简洁模式 + 弹提示
@@ -5018,7 +4683,7 @@
   ctxMenu.addEventListener('click', (e) => e.stopPropagation());
 
   document.addEventListener('keydown', (e) => {
-    if (activeStartWorkspace !== 'canvas' || main.dataset.state !== 'recent' || !librarySearchInput || !librarySearchEnabled) return;
+    if (workspaceRuntime.current !== 'canvas' || main.dataset.state !== 'recent' || !librarySearchInput || !librarySearchEnabled) return;
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== 'f') return;
     e.preventDefault();
     librarySearchInput.focus();
@@ -5027,7 +4692,7 @@
 
   // ── 3d：键盘归类（↑↓ 选中、数字键移动、Enter 打开）──
   document.addEventListener('keydown', (e) => {
-    if (activeStartWorkspace !== 'canvas' || main.dataset.state !== 'recent') return;
+    if (workspaceRuntime.current !== 'canvas' || main.dataset.state !== 'recent') return;
     if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     if (startNotice && !startNotice.hidden) return;           // 提示层显示时暂停底层快捷键
     const t = e.target;
@@ -5357,6 +5022,7 @@
   })();
 
   function pageOrder() {
+    if (!features.enabled('canvas.library')) return [];
     return ['', FAVORITES_PAGE]
       .concat(lastGroups.map((g) => g.id), [INBOX_PAGE]);
   }
@@ -5367,6 +5033,7 @@
 
   // 翻到某页（带整页横滑 + 淡入淡出；方向由页序决定，循环翻页时由 forwardHint 指定）
   function navigateTo(gid, forwardHint) {
+    if (!features.enabled('canvas.library')) return;
     if (librarySearchActive()) librarySearchRestoreScroll = 0;
     if (studyActive || cadenceActive || treePageActive || notesActive || calendarActive || reviewActive || focusActive) {
       activeGroup = gid; saveActive(); selectedIndex = -1;
@@ -5409,83 +5076,34 @@
   }
 
   // 相对当前页循环翻 ±1（到尾翻回头、到头翻到尾）。
+  const pageActivators = {
+    review: setReviewActive, calendar: setCalendarActive, cadence: setCadenceActive,
+    notes: setNotesActive, tree: setTreePageActive, study: setStudyActive, focus: setFocusActive,
+  };
+  function availableSpecialPages() {
+    return specialPagesHidden ? [] : Object.keys(pageActivators).filter(features.viewEnabled);
+  }
+  let initialPageOpened = false;
+  function openInitialPage() {
+    if (initialPageOpened) return;
+    initialPageOpened = true;
+    const requested = features.viewEnabled(initialView) && pageActivators[initialView] ? initialView : '';
+    const target = requested || (!features.enabled('canvas.library') ? availableSpecialPages()[0] : '');
+    if (!target) return;
+    const activate = () => pageActivators[target](true);
+    if (document.readyState === 'complete') activate();
+    else window.addEventListener('load', activate, { once: true });
+  }
   function flipBy(delta) {
-    // 隐藏特殊页：滚轮只在普通书页（最近 / 收藏 / 自定义分组 / 未分组）之间循环，前置页一律跳过。
-    if (specialPagesHidden) {
-      const order = pageOrder();
-      const N = order.length;
-      if (N === 0) return;
-      let cur = order.indexOf(activeGroup);
-      if (cur < 0) cur = 0;
-      let next = (cur + delta) % N;
-      if (next < 0) next += N;
-      navigateTo(order[next], delta > 0);
-      return;
-    }
-    // 页序（左→右）：复习 ← 日历 ← 活跃热力图 ← 速记 ← 树状 ← 学习 ← 专注 ← 最近 ← 自定义分组…
-    if (reviewActive) {
-      if (delta > 0) {
-        setCalendarActive(true);             // 复习 → 日历
-      } else {
-        const order = pageOrder();           // 复习 → 最后一张书页，补齐首尾循环
-        reviewActive = false;
-        calendarActive = false;
-        notesActive = false;
-        cadenceActive = false;
-        treePageActive = false;
-        studyActive = false;
-        focusActive = false;
-        activeGroup = order[order.length - 1] || '';
-        saveActive();
-        selectedIndex = -1;
-        render({ staggerEnter: true });
-        showView(listViewName());
-        if (bookStage) bookStage.scrollTop = 0;
-      }
-      return;
-    }
-    if (calendarActive) {
-      if (delta > 0) setCadenceActive(true); // 日历 → 活跃热力图
-      else setReviewActive(true);            // 日历 → 复习
-      return;
-    }
-    if (cadenceActive) {
-      if (delta > 0) setNotesActive(true);   // 活跃热力图 → 速记
-      else setCalendarActive(true);          // 活跃热力图 → 日历
-      return;
-    }
-    if (notesActive) {
-      if (delta > 0) setTreePageActive(true); // 速记 → 树状
-      else setCadenceActive(true);            // 速记 → 活跃热力图
-      return;
-    }
-    if (treePageActive) {
-      if (delta > 0) setStudyActive(true);   // 树状 → 学习
-      else setNotesActive(true);             // 树状 → 速记
-      return;
-    }
-    if (studyActive) {
-      if (delta > 0) setFocusActive(true);   // 学习 → 专注
-      else setTreePageActive(true);          // 学习 → 树状
-      return;
-    }
-    if (focusActive) {
-      if (delta > 0) navigateTo('', true);   // 专注 → 最近
-      else setStudyActive(true);             // 专注 → 学习
-      return;
-    }
-    if (activeGroup === '' && delta < 0) {
-      setFocusActive(true);                  // 最近 → 专注
-      return;
-    }
-    const order = pageOrder();
-    const N = order.length;
-    if (N === 0) return;
-    let cur = order.indexOf(activeGroup);
-    if (cur < 0) cur = 0;
-    let next = (cur + delta) % N;
-    if (next < 0) next += N;
-    navigateTo(order[next], delta > 0);     // 动画方向跟随滚动方向，循环也不突兀
+    const order = availableSpecialPages().map(view => ({ view }))
+      .concat(pageOrder().map(group => ({ group })));
+    if (!order.length) return;
+    const currentView = bookView && bookView.dataset.viewName;
+    let current = order.findIndex(item => item.view ? item.view === currentView : !pageActivators[currentView] && item.group === activeGroup);
+    if (current < 0) current = 0;
+    const next = order[(current + delta + order.length) % order.length];
+    if (next.view) pageActivators[next.view](true);
+    else navigateTo(next.group, delta > 0);
   }
 
   // 两套滚动系统：
@@ -5533,6 +5151,10 @@
 
   // ── 拉取数据 ───────────────────────────────────
   async function refresh() {
+    if (!features.enabled('canvas.library')) {
+      openInitialPage();
+      return true;
+    }
     const requestId = ++recentRefreshSeq;
     const preserveSearchResults = librarySearchActive() && fileList.querySelector('.recent-item, .group-empty');
     try {
@@ -5581,6 +5203,7 @@
         initialStudy = false;
         initialCalendar = false;
       }
+      openInitialPage();
       return true;
     } catch (err) {
       if (requestId === recentRefreshSeq) showView('empty');
@@ -5592,7 +5215,7 @@
   // 拖到书脊的分组圆点 → 导入那个组（圆点 drop 会 stopPropagation，不会被这里重复处理）。
   // 内部组间/组内调序拖动用 text/plain，dtHasFiles 为假，完全不受影响。
   function startPageAcceptsCanvasDrop() {
-    return activeStartWorkspace === 'canvas'
+    return features.enabled('canvas.library') && workspaceRuntime.current === 'canvas'
       && !studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
       && !reviewActive && !focusActive;   // 仅在「最近/分组」列表视图接收
   }

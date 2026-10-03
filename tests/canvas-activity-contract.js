@@ -7,7 +7,7 @@ const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const editor = read('assets', 'editor.js');
 const editorHtml = read('assets', 'editor.html');
 const start = read('assets', 'start.js');
-const study = read('assets', 'study.js');
+const study = read('assets', 'study.js') + read('assets', 'study-activity.js');
 const graph = read('assets', 'study-graph.js');
 const styles = read('assets', 'styles.css');
 const i18n = read('assets', 'i18n.js');

@@ -11,7 +11,7 @@ const editor = read('assets/editor.js');
 const canvas = read('assets/canvas.js');
 const styles = read('assets/styles.css');
 const backend = read('app.py');
-const study = read('assets/study.js');
+const study = read('assets/study.js') + read('assets/study-activity.js');
 const startPage = read('assets/start.js');
 const agents = read('AGENTS.md');
 
@@ -143,7 +143,7 @@ assert(!html.includes('data-role="checklist-delay"'));
 assert(!html.includes('显示节点任务清单'));
 assert(!startPage.includes('节点旁的任务清单'));
 assert(!startPage.includes('任务清单出现延迟'));
-assert(startPage.includes('任务簿节点计时'));
+assert(startPage.includes('任务簿完成副本'));
 
 assert(styles.includes('.taskbook-library {'));
 assert(styles.includes('.taskbook-help-toggle {'));

@@ -97,6 +97,12 @@
     setRestoredSize(width, height) {
       return callApi('set_restored_size', width, height);
     },
+    getLauncherSettings() {
+      return callApi('get_launcher_settings');
+    },
+    setLauncherSkipSelection(value) {
+      return callApi('set_launcher_skip_selection', !!value);
+    },
     getCountdownWallpaperState() {
       return callApi('get_countdown_wallpaper_state');
     },
@@ -107,6 +113,37 @@
       return callApi('stop_countdown_wallpaper');
     },
   };
+
+  const launcherSetting = document.querySelector('[data-role="launcher-setting"]');
+  const launcherToggle = document.querySelector('[data-role="launcher-skip-selection"]');
+  if (launcherSetting && launcherToggle) {
+    let savedSkipSelection = false;
+    async function syncLauncherSetting() {
+      try {
+        const settings = await window.CanvasDesktop.getLauncherSettings();
+        launcherSetting.hidden = !settings.supported;
+        savedSkipSelection = settings.skipSelection === true;
+        launcherToggle.checked = savedSkipSelection;
+        launcherToggle.disabled = !settings.supported;
+      } catch (error) { launcherSetting.hidden = true; }
+    }
+    launcherToggle.addEventListener('change', async () => {
+      launcherToggle.disabled = true;
+      try {
+        const settings = await window.CanvasDesktop.setLauncherSkipSelection(launcherToggle.checked);
+        savedSkipSelection = settings.skipSelection === true;
+      } catch (error) {
+        const message = '保存启动器设置失败，请重试。';
+        window.alert(window.RelatumI18n ? window.RelatumI18n.t(message) : message);
+      } finally {
+        launcherToggle.checked = savedSkipSelection;
+        launcherToggle.disabled = false;
+      }
+    });
+    const settingsOpen = document.querySelector('[data-action="desktop-settings-open"]');
+    if (settingsOpen) settingsOpen.addEventListener('click', syncLauncherSetting);
+    syncLauncherSetting();
+  }
 
   const controls = document.createElement('div');
   controls.className = 'desktop-window-controls';

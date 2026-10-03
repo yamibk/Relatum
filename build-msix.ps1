@@ -103,6 +103,10 @@ if (-not $MakeAppx) {
 Remove-TreeInside $StageRoot $BuildParent
 New-Item -ItemType Directory -Path $StageRoot | Out-Null
 Copy-Item -Path (Join-Path $PortableRelease '*') -Destination $StageRoot -Recurse -Force
+foreach ($launcherFile in @('RelatumLauncher.exe', 'RelatumLauncher.exe.config')) {
+    $launcherStagePath = Join-Path $StageRoot $launcherFile
+    if (Test-Path -LiteralPath $launcherStagePath) { Remove-Item -LiteralPath $launcherStagePath -Force }
+}
 
 $Manifest = (Get-Content -LiteralPath $ManifestTemplate -Raw).Replace('__VERSION__', $Version)
 [System.IO.File]::WriteAllText(

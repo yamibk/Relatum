@@ -124,7 +124,7 @@ for (const forbidden of ['月预算', '趋势图', '搜索账', '批量账', '�
 // 自定义色不替代收入/支出语义；全量快照请求具备乱序保护与取消，空闲时整本预热。
 assert(ledger.includes("entry.type === 'income'") && ledger.includes("income ? T('收入') : T('支出')")
   && ledger.includes('const signedCents = income ? entry.amountCents : -entry.amountCents'), 'income/expense text and sign semantics are missing');
-assert(ledger.includes('RelatumStudyPalette.createPopoverController'), 'shared animated palette controller is not reused');
+assert(ledger.includes('const palette = window.RelatumStudyPalette;') && ledger.includes('palette.createPopoverController'), 'shared animated palette controller is not reused');
 assert(styles.includes('.study-route-color-palette') && styles.includes('grid-template-columns: repeat(4, 1fr)'), 'shared palette is not 4 by 3');
 assert(!styles.includes('.ledger-color-popover'), 'duplicate ledger-only palette remains');
 assert(ledger.includes('new AbortController()') && ledger.includes('requestSeq'), 'stale full-snapshot response protection is missing');

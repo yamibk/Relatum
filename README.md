@@ -117,11 +117,21 @@ Relatum 是一款开源、本地优先的自由知识画布和学习工作台。
 
 1. [下载最新版 `Relatum-release.zip`](https://github.com/yamibk/Relatum/releases/latest/download/Relatum-release.zip)。
 2. 将 ZIP 完整解压到一个可写目录。
-3. 双击 `Relatum.exe`。
+3. 双击 `Relatum.exe` 进入完整模式，或双击同图标的 `RelatumLauncher.exe` 选择本次功能后启动。
 
 支持 Windows 10/11。目标电脑需要 Microsoft Edge WebView2 Runtime，Windows 10/11 通常已经安装。
 
 > 请不要在旧版本目录中直接覆盖更新。建议先保留旧目录中的 `data/`、`canvases/` 和 `notes/`，确认新版正常后再迁移个人数据。
+
+### 使用资源选择启动器
+
+`RelatumLauncher.exe` 提供 16 个开关：四个工作区、画布管理、画布编辑器、七个特殊页面，以及 AI、图谱和动态桌面背景。关闭父项会保留子项的勾选记忆，本次不加载它们。选择在点击“启动 Relatum”时原子保存到应用数据目录的 `data/launcher-profile.json`（版本 1）；取消不保存。配置损坏会提示并显示默认选择，新增功能默认启用。
+
+默认每次打开启动器都等待用户确认。在 Relatum 的“客户端设置”中勾选“启动 RelatumLauncher 时不再弹窗”，之后双击启动器会直接按上次选择启动；取消勾选即可恢复选择窗口。此偏好独立原子保存到 `data/launcher-settings.json`（`{version:1, skipSelection:布尔值}`），不会改动功能选择。选择配置缺失或损坏时仍显示选择窗口。仅编辑器模式会复用上次确认的画布路径；文件失效时恢复选择窗口。
+
+禁用功能不会加载脚本、初始化或预热，入口、翻页、快捷键和专属写入接口也会被限制；已启用功能保留原有预热，历史统计仍可读取其他功能的数据。发布包保留全部资源，选择只影响本次运行，禁用不会删除用户内容。
+
+画布管理和编辑器可以分别选择。如果只保留编辑器，启动前必须选择现有 `.canvas`。已有 Relatum 主窗口时，请先退出；启动器保留当前选择并提示。直接运行 `Relatum.exe` 不读取启动器的配置；已有精简模式窗口时会提示先退出，再进入完整模式。
 
 ### 从源码运行
 
@@ -153,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
-输出位于项目同级的 `Relatum-release/`。构建脚本不会把 `data/`、`canvases/` 或 `notes/` 打进发布包。
+输出位于项目同级的 `Relatum-release/`，包含同图标的 `Relatum.exe`、`RelatumLauncher.exe`、各自的 `.exe.config` 和共用 `_internal/`。请分发整个目录。构建脚本不会把 `data/`、`canvases/` 或 `notes/` 打进发布包。
 
 ### 构建 Microsoft Store 包
 
@@ -166,6 +176,7 @@ powershell -ExecutionPolicy Bypass -File .\build-msix.ps1
 输出位于项目同级的 `Relatum-store/`。向合作伙伴中心上传其中的
 `Relatum_<版本>_x64.msixupload`。商店安装版把画布和设置保存在
 `%LOCALAPPDATA%\Relatum`；源码模式和 GitHub 便携版的数据位置保持不变。
+此次启动器只用于便携版；MSIX 暂存包会排除启动器 EXE 和它的 `.exe.config`。
 
 ## 项目结构
 
@@ -174,6 +185,8 @@ Relatum/
 ├─ app.py                    本地 HTTP 服务与数据 API
 ├─ notes_library.py          Markdown 笔记库、双链索引与路径安全层
 ├─ desktop.py                Windows 桌面外壳
+├─ launcher.py               原生 WinForms 资源选择窗口
+├─ feature_profile.py        功能依赖、会话配置与加载/访问边界
 ├─ windows_wallpaper.py      隔离的倒数日动态背景子进程、WorkerW 挂载与托盘生命周期
 ├─ assets/                   HTML、CSS、JavaScript 与运行资源
 ├─ packaging/                图标、字体和桌面构建辅助工具
@@ -185,6 +198,17 @@ Relatum/
 ```
 
 ## 开发与验证
+
+启动器验证使用一次性 `RELATUM_DATA_ROOT`，不会读取真实用户库。安装桌面构建依赖后运行：
+
+```powershell
+python -m unittest tests.test_feature_profile tests.test_launcher_native tests.test_desktop_instance tests.test_windows_wallpaper tests.test_runtime_paths
+node tests/feature-profile-browser.js
+node tests/launcher-settings-package.js <发布目录>
+node tests/launcher-package-memory.js <发布目录> <报告JSON路径> 3
+```
+
+浏览器验证使用本机已有 Playwright 和 Edge：`RELATUM_PLAYWRIGHT` 指定 Playwright 模块绝对路径，`RELATUM_EDGE_PATH` 指定 Edge EXE，`RELATUM_PYTHON` 指定 Python。打包验证直接连接实际 WebView2，覆盖普通单实例、笔记关闭保存和三次冷启动的进程树内存中位数。测量方法和结果见 [启动器验证说明](docs/launcher-verification.md)。
 
 项目不需要 npm，也没有前端构建步骤。提交修改前至少运行：
 

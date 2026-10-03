@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const html = read('assets/index.html');
-const start = read('assets/start.js');
+const start = read('assets/start.js') + read('assets/start-workspace-runtime.js');
 const career = read('assets/career-report.js');
 const css = read('assets/styles.css');
 const i18n = read('assets/i18n.js');

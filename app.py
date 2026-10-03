@@ -44,6 +44,7 @@ from ai_plan import (
 )
 from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, NotesStore
 from research_store import ResearchConflictError, ResearchStoreError, ResearchWorkspaceStore
+from feature_profile import FEATURES, FULL_PROFILE, LaunchProfile, ProfileError, render_html
 
 # 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
 # 旁边；具有 MSIX 包身份时改用 %LOCALAPPDATA%\Relatum，避免写只读安装目录。
@@ -10333,6 +10334,44 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ASSETS), **kwargs)
 
+    @property
+    def launch_profile(self):
+        return getattr(self.server, "launch_profile", FULL_PROFILE)
+
+    def send_head(self):
+        # Match SimpleHTTP's actual Windows path translation, including case,
+        # percent escapes and backslashes, so aliases cannot bypass the filter.
+        target = Path(self.translate_path(self.path))
+        if target.is_dir() and (target / "index.html").is_file():
+            target = target / "index.html"
+        try:
+            name = target.relative_to(ASSETS).as_posix().lower()
+        except ValueError:
+            self.send_error(403, "Resource outside application assets")
+            return None
+        if target.is_dir():
+            name = name.rstrip("/") + "/"
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        requested_view = query.get("view", [""])[0]
+        view_owner = next((key for key, item in FEATURES.items() if item.get("view") == requested_view), None)
+        if name == "index.html" and self.launch_profile.restricted and view_owner and not self.launch_profile.enabled(view_owner):
+            self.send_error(403, "Page disabled for this session")
+            return None
+        if not self.launch_profile.resource_allowed(name):
+            self.send_error(403, "Feature disabled for this session")
+            return None
+        if name in {"index.html", "editor.html", "research.html", "dual-viewer.html", "trash.html", "countdown.html"}:
+            import io
+            source = (ASSETS / name).read_text(encoding="utf-8")
+            body = render_html(source, self.launch_profile, name).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return io.BytesIO(body)
+        return super().send_head()
+
     def log_message(self, format, *args):  # noqa: A002 - stdlib 签名
         msg = format % args
         if "favicon" in msg:
@@ -10506,11 +10545,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ── 路由 ──
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        if not self.launch_profile.api_allowed(parsed.path):
+            return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         if parsed.path == "/api/runtime":
             return self._send_json(200, {
                 "schema": RUNTIME_SCHEMA,
                 "root": _norm(ROOT),
                 "pid": os.getpid(),
+                "launcherMode": self.launch_profile.restricted,
+                "features": {key: self.launch_profile.enabled(key) for key in self.launch_profile.choices},
             })
         if parsed.path == "/api/research/workspace":
             try:
@@ -10677,6 +10720,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        if not self.launch_profile.write_allowed(path):
+            self.close_connection = True
+            return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         raw_length = str(self.headers.get("Content-Length") or "").strip()
         large_body = raw_length.isdigit() and int(raw_length) > LARGE_JSON_BODY_BYTES
         self._large_request_body = large_body
@@ -13314,6 +13360,7 @@ def resolve_initial_file(raw: str | None) -> Path | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="画布 — 本地画布工具")
+    parser.add_argument("--launch-profile", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "file", nargs="?", default=None,
         help="要直接打开的 .canvas 文件路径（协议 A）",
@@ -13334,6 +13381,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    try:
+        profile = LaunchProfile.decode(args.launch_profile) if args.launch_profile is not None else FULL_PROFILE
+    except ProfileError as err:
+        print(f"启动器配置无效：{err}", file=sys.stderr)
+        return 1
+
     for raw_dir in args.allow_dir:
         d = Path(raw_dir).resolve()
         if d.is_dir():
@@ -13343,6 +13396,9 @@ def main() -> int:
 
     ensure_dirs()
     initial_file = resolve_initial_file(args.file)
+    if profile.restricted and ((args.file and initial_file is None) or (initial_file and not profile.enabled("canvas.editor")) or (not profile.has_home and initial_file is None)):
+        print("此配置需要有效的 .canvas 文件和已启用的编辑器", file=sys.stderr)
+        return 1
     if initial_file is not None:
         register_recent(initial_file)
 
@@ -13374,6 +13430,7 @@ def main() -> int:
 
     try:
         with CanvasServer(("127.0.0.1", port), Handler) as httpd:
+            httpd.launch_profile = profile
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n  已停止")

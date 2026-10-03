@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const html = read('assets', 'index.html');
 const start = read('assets', 'start.js');
-const study = read('assets', 'study.js');
+const study = read('assets', 'study.js') + read('assets', 'study-activity.js');
 const styles = read('assets', 'styles.css');
 const i18n = read('assets', 'i18n.js');
 const backend = read('app.py');
@@ -41,7 +41,7 @@ assert(start.includes('let startPageActivityStatsVisibleInit = false;')
   "document.addEventListener('visibilitychange'",
   'keepalive: !!keepalive',
   '30000',
-  "activeStartWorkspace !== 'canvas'",
+  "workspaceRuntime.current !== 'canvas'",
   'window.RelatumStartPageActivity = Object.freeze({',
   'waitForStartPageActivityIdle(3000)',
 ].forEach((needle) => assert(start.includes(needle), 'missing start-page timer contract: ' + needle));

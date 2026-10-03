@@ -305,6 +305,7 @@
   }
 
   async function refreshWallpaperState() {
+    if (!window.RelatumFeatureRuntime.enabled('calendar.wallpaper')) return;
     if (wallpaperMode || !window.CanvasDesktop
         || typeof window.CanvasDesktop.getCountdownWallpaperState !== 'function') return;
     try {

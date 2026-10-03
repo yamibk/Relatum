@@ -1160,6 +1160,7 @@
   let leavingToStart = false;
   if (backBtn) {
     backBtn.addEventListener('click', async () => {
+      if (!window.RelatumFeatureRuntime.workspace('')) return;
       if (leavingToStart || pageEl.classList.contains('start-route-leaving')) return;
       leavingToStart = true;
       commitPendingCanvasEdits();
@@ -1178,7 +1179,7 @@
         if (enteredFromStart && window.history.length > 1) {
           window.history.back();
         } else {
-          window.location.href = FROM_STUDY ? 'index.html?view=study' : 'index.html';
+          window.location.href = FROM_STUDY && window.RelatumFeatureRuntime.enabled('canvas.study') ? 'index.html?view=study' : 'index.html';
         }
         // beforeunload 确认框若被用户取消，当前文档不会离开；稍后自动恢复可操作状态。
         window.setTimeout(() => {
