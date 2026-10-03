@@ -162,6 +162,28 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertNotIn('src="start.js"', html)
         self.assertNotIn('data-start-workspace-panel="canvas"', html)
 
+    def test_tree_and_study_share_goal_tree_model(self):
+        source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
+        for name, keys in (("tree", ("canvas", "canvas.tree")), ("study", ("canvas", "canvas.study")), ("neither", ("notes",))):
+            with self.subTest(name=name):
+                profile = self.only(*keys)
+                html = features.render_html(source, profile, "index.html")
+                model = 'src="study-goal-tree.js"'
+                expected = name != "neither"
+                self.assertEqual(profile.resource_allowed("study-goal-tree.js"), expected)
+                self.assertEqual(model in html, expected)
+                for resource in ("study.js", "study-route.js"):
+                    self.assertEqual(profile.resource_allowed(resource), name == "study")
+                    self.assertEqual(f'src="{resource}"' in html, name == "study")
+                self.assertEqual('src="tree-page.js"' in html, name == "tree")
+                if name == "tree":
+                    self.assertLess(html.index(model), html.index('src="tree-page.js"'))
+                    self.assertTrue(profile.api_allowed("/api/tree-page"))
+                    self.assertTrue(profile.write_allowed("/api/tree-page-command"))
+                    self.assertFalse(profile.write_allowed("/api/study-task-update"))
+                elif name == "study":
+                    self.assertLess(html.index(model), html.index('src="study-route.js"'))
+
     def test_full_launch_cannot_reuse_restricted_window(self):
         from desktop import DesktopActivationRouter
         router = DesktopActivationRouter(self.only("notes"))

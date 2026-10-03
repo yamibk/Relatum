@@ -227,8 +227,7 @@
       "role": "study-view",
       "scripts": [
         "study.js",
-        "study-route.js",
-        "study-goal-tree.js"
+        "study-route.js"
       ],
       "writePrefixes": [
         "/api/study-"
@@ -318,6 +317,10 @@
       "canvas.tree",
       "canvas.study",
       "canvas.calendar"
+    ],
+    "study-goal-tree.js": [
+      "canvas.tree",
+      "canvas.study"
     ],
     "start-sticky-notes.js": [
       "canvas.library",

@@ -659,6 +659,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - `assets/feature-runtime.js` 根据受限会话实际可进入的首页工作区计算 `singleWorkspace`，恰好一个时在首绘前设置根节点状态。笔记复用专注类与现有恢复按钮、浮动窗口控制，但此时切换不得写 `canvas:noteFocusMode:v1`；隐藏顶栏用 `inert` 跳过键盘焦点。画布和研究借用生涯顶部感应样式，鼠标、触控和键盘焦点可展开；研究 iframe 内的外点也会收回触控展开状态。只影响首页顶栏；编辑器、完整会话和多个工作区保留原规则。
 - 会话通过私有命令行 `--launch-profile` 传入并严格校验；无有效入口、格式损坏、未启用编辑器却指定画布，以及仅编辑器却未选现有文件时停止。已有主实例时启动器不转交或改变会话；主进程再次检查互斥锁防竞态。直接运行主 EXE 始终请求完整模式，遇到已有精简窗口提示先退出。
 - 新增可禁用功能时先在清单登记稳定 ID、`default:true`、父项或 `requires`、脚本/页面、独占读写路径/前缀；共享脚本和写入使用 OR 归属。画布首页入口需 `home:true`，并在首页路由登记对应激活器；新增工作区入口需同时接入共用生命周期。启动器自动显示清单选项。依赖缺失、循环和重复 ID 在启动时拒绝。不要用隐藏 CSS 代替资源边界。
+- `study-goal-tree.js` 是学习与独立树状页共用的无 DOM 模型，在清单 `sharedScripts` 中归属 `canvas.study` / `canvas.tree`；任一启用就加载，不能登记为学习独占或随关闭学习一起移除。模型仍先于两个页面运行时加载；树状页继续独立读写 `data/tree-page.json`。相关配置检查使用 `tests.test_feature_profile` 中的三种组合（仅树状、仅学习、两者关闭）。
 
 - 桌面方案是 pywebview + WebView2，不是 Electron。
 - `desktop.py` 会先启动本地服务，再打开 `index.html?desktop=1` 或 `editor.html?desktop=1&file=...`。
