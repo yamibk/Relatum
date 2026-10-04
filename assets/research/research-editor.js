@@ -1,6 +1,9 @@
 import { createResearchModel } from './research-model.js';
 import { createResearchPageSession } from './research-pages.js';
 import { createResearchCanvas } from './research-canvas.js';
+import { SYMBOL_TYPES, LINE_COLORS } from './research-orthogonal.js';
+import { SYMBOL_LABELS, defaultSymbol, symbolTemplateDefaults } from './research-symbols.js';
+import { buildSymbolControls, renderSymbolPreview } from './research-symbol-controls.js';
 import {
   activateResearchNode, clearResearchTrace, createResearchComputeRuntime, snapshotPersistentResearchState,
   updateResearchComputeRuntime,
@@ -22,6 +25,9 @@ const SAVE_RETRY_MS = 1800;
 const SIDE_PANEL_COLLAPSED_KEY = 'research:sidePanelCollapsed:v1';
 const COMPUTE_DOCK_COLLAPSED_KEY = 'research:computeDockCollapsed:v1';
 const CONNECTION_KIND_KEY = 'research:connectionKind:v1';
+const EDITOR_MODE_KEY = 'research:editorMode:v1';
+const QUICK_SYMBOLS = ['rectangle', 'capacitor', 'inductor', 'voltage-source', 'current-source', 'switch', 'lamp', 'dot', 'ground'];
+const COLOR_LABELS = { mono: '黑白色', blue: '蓝色', red: '红色', green: '绿色' };
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 
@@ -90,6 +96,20 @@ export async function createResearchEditor(stage) {
   const coordinateLabelsVisibleInput = required('[data-research-coordinate-labels-visible]');
   const centerOriginButton = required('[data-research-center-origin]');
   const persistenceStatus = required('[data-research-persistence-status]');
+  const modeSelect = required('button[data-research-editor-mode]');
+  const modeMenu = required('[data-research-mode-menu]');
+  const modeLabel = required('[data-research-mode-label]');
+  const defaultDockTools = required('[data-research-default-tools]');
+  const orthogonalDockTools = required('[data-research-orthogonal-tools]');
+  const quickSymbols = required('[data-research-quick-symbols]');
+  const unitLengthInput = required('[data-research-unit-length]');
+  const lineWidthInput = required('[data-research-line-width]');
+  const endpointSizeInput = required('[data-research-endpoint-size]');
+  let editorMode = 'default';
+  let presetDialog = null, presetContextMenu = null, symbolPreview = null;
+  let dockResizeAnimation = null;
+  let decorationControlCommit = false, renderedDecorationId = '';
+  try { if (localStorage.getItem(EDITOR_MODE_KEY) === 'orthogonal') editorMode = 'orthogonal'; } catch (_error) {}
 
   let loadedWorkspace;
   let persistenceBlocked = false;
@@ -173,6 +193,7 @@ export async function createResearchEditor(stage) {
       subcircuitCreate.hidden = selectedNodeIds.length === 0;
       selectedNodeId = selection.primaryNode ? selection.primaryNode.id : '';
       selectedEdgeId = selection.primaryEdge ? selection.primaryEdge.id : '';
+      if (editorMode === 'orthogonal') { renderDecorationSelection(selection); return; }
       renderSelectionPanel(selection);
     },
     onNodeAction: (nodeId) => {
@@ -197,6 +218,7 @@ export async function createResearchEditor(stage) {
   });
 
   const tutorial = createResearchTutorial({
+    canInsert: () => editorMode === 'default',
     openButton: helpOpen,
     overlay: helpOverlay,
     closeButton: helpClose,
@@ -252,6 +274,7 @@ export async function createResearchEditor(stage) {
   }
 
   function scheduleCompute(pageId = renderedPageId) {
+    if (editorMode === 'orthogonal') return;
     if (computeFrame) cancelAnimationFrame(computeFrame);
     const revision = ++computeRevision;
     computeFrame = requestAnimationFrame(() => {
@@ -280,7 +303,9 @@ export async function createResearchEditor(stage) {
     const page = session.page(renderedPageId);
     modelUnsubscribe = page.model.subscribe((change) => {
       updateDeleteVisibility();
+      if (change.decorationsOnly && change.live) return;
       scheduleSave();
+      if (change.decorationsOnly) return;
       if (change && change.kind === 'node-move') return;
       if (change && change.topology) {
         page.runtime.topologyDirty = true;
@@ -517,6 +542,7 @@ export async function createResearchEditor(stage) {
     const runtime = ensureRuntime(page); canvas.setComputeProjection(page.runtime.computeProjection);
     speedSelect.value = String(page.simulation.speed);
     simulation.selectPage(page.id, page.simulation.speed);
+    if (editorMode === 'orthogonal') simulation.pause();
     if (options.renderRail !== false) renderRail();
     updateDeleteVisibility(); showLibrary(); scheduleSave();
     return !!runtime;
@@ -584,6 +610,7 @@ export async function createResearchEditor(stage) {
   }
 
   function switchPage(pageId, options = {}) {
+    cancelSymbolPreview(); cancelDockResize(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
     const page = session.page(pageId);
     if (!page) return false;
     if (!pageSwitchMotion && page.id === renderedPageId) return false;
@@ -658,6 +685,7 @@ export async function createResearchEditor(stage) {
     nodeLibrary.hidden = view !== 'library';
     inspector.hidden = view !== 'inspector';
     selectionSummary.hidden = view !== 'selection';
+    delete inspectorTitle.dataset.i18nSourceText;
     inspectorTitle.textContent = title;
   }
 
@@ -677,6 +705,7 @@ export async function createResearchEditor(stage) {
   }
 
   function setDockCollapsed(collapsed, persist = true) {
+    closeModeMenu();
     dockCollapsed = !!collapsed;
     dock.classList.toggle('is-collapsed', dockCollapsed);
     const row = dock.querySelector('.research-compute-row');
@@ -701,7 +730,8 @@ export async function createResearchEditor(stage) {
   }
 
   function showLibrary(options = {}) {
-    setPanelView('library', '研究 · 添加节点');
+    setPanelView('library', editorMode === 'orthogonal' ? T('研究 · 装饰绘图') : '研究 · 添加节点');
+    inspectorTitle.dataset.i18nSourceText = editorMode === 'orthogonal' ? '研究 · 装饰绘图' : '研究 · 添加节点';
     renderPalette(paletteSearch.value);
     renderTrace(null);
     if (options.expand) setSidePanelCollapsed(false);
@@ -709,6 +739,7 @@ export async function createResearchEditor(stage) {
   }
 
   function renderPalette(query = '') {
+    if (editorMode === 'orthogonal') { renderDecorationPalette(query); return; }
     query = String(query || '').trim().toLowerCase();
     let creation = canvas.getCreationTool();
     if (creation.type === 'subcircuit' && (!creation.config
@@ -749,7 +780,7 @@ export async function createResearchEditor(stage) {
           && creation.config.definitionId === definition.id
           && Number(creation.config.revision) === Number(definition.latestRevision);
         button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-        button.title = '单击选择，双击画布空白处放置；右键删除未被引用的最新修订'; row.appendChild(button);
+        row.appendChild(button);
       });
       section.appendChild(row); fragment.appendChild(section);
     }
@@ -788,7 +819,7 @@ export async function createResearchEditor(stage) {
       row.append(direction, name, type, width);
       if (previous) {
         row.classList.add('has-port-match');
-        const match = document.createElement('select'); match.dataset.portMatch = ''; match.title = '复用旧修订的稳定端口 ID';
+        const match = document.createElement('select'); match.dataset.portMatch = '';
         const fresh = document.createElement('option'); fresh.value = ''; fresh.textContent = '新端口'; match.appendChild(fresh);
         previous.ports.filter((candidate) => candidate.direction === port.direction && candidate.channel === port.channel).forEach((candidate) => {
           const option = document.createElement('option'); option.value = candidate.id;
@@ -897,6 +928,7 @@ export async function createResearchEditor(stage) {
   }
 
   function setConnectionKind(kind, persist = true) {
+    if (editorMode === 'orthogonal' && persist) return canvas.getConnectionKind();
     const selectedKind = canvas.setConnectionKind(kind);
     dock.querySelectorAll('[data-research-connection-kind]').forEach((button) => {
       const selected = button.dataset.researchConnectionKind === selectedKind;
@@ -1082,6 +1114,7 @@ export async function createResearchEditor(stage) {
   }
 
   function renderSelectionSummary(selection) {
+    delete selectionCopy.dataset.i18nSourceText;
     setPanelView('selection', '选区 · 属性');
     renderTrace(null);
     inspectorFields.replaceChildren();
@@ -1103,6 +1136,291 @@ export async function createResearchEditor(stage) {
       renderSelectionSummary(selection); return;
     }
     showLibrary();
+  }
+
+  function syncDecorationSettings() {
+    const tools = canvas.getDecorationTools();
+    unitLengthInput.value = String(tools.unitLength); lineWidthInput.value = String(tools.width);
+    stage.querySelector('[data-research-unit-length-value]').textContent = tools.unitLength + 'px';
+    stage.querySelector('[data-research-line-width-value]').textContent = tools.width + 'px';
+    endpointSizeInput.value = String(tools.endpointDiameter);
+    stage.querySelector('[data-research-endpoint-size-value]').textContent = tools.endpointDiameter + 'px';
+  }
+
+  function decorationText(element, source) {
+    element.dataset.i18nSourceText = source; element.textContent = T(source);
+  }
+
+  function setEditorMode(mode, persist = true) {
+    const previousDock = active && editorMode !== mode ? dock.getBoundingClientRect() : null;
+    cancelDockResize();
+    cancelSymbolPreview(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
+    editorMode = mode === 'orthogonal' ? 'orthogonal' : 'default';
+    dock.classList.toggle('is-orthogonal', editorMode === 'orthogonal');
+    defaultDockTools.hidden = editorMode === 'orthogonal'; orthogonalDockTools.hidden = editorMode !== 'orthogonal';
+    syncDecorationDock();
+    modeSelect.dataset.value = editorMode;
+    decorationText(modeLabel, editorMode === 'orthogonal' ? '直角模式' : '默认模式');
+    modeMenu.querySelectorAll('[data-research-mode-option]').forEach((button) => {
+      button.setAttribute('aria-checked', button.dataset.researchModeOption === editorMode ? 'true' : 'false');
+    });
+    if (editorMode === 'orthogonal') { simulation.pause(); cancelCompute(); }
+    canvas.setEditorMode(editorMode);
+    showLibrary();
+    if (editorMode === 'default') scheduleCompute();
+    if (previousDock) animateDockResize(previousDock);
+    if (persist) { try { localStorage.setItem(EDITOR_MODE_KEY, editorMode); } catch (_error) {} }
+  }
+
+  function cancelDockResize() {
+    if (dockResizeAnimation) dockResizeAnimation.cancel();
+    dockResizeAnimation = null;
+  }
+  function animateDockResize(before) {
+    if (prefersReducedMotion() || !dock.animate) return;
+    const after = dock.getBoundingClientRect(), parent = stage.getBoundingClientRect();
+    if (Math.abs(before.width - after.width) < .5 && Math.abs(before.left - after.left) < .5) return;
+    const frame = (rect) => ({ width: rect.width + 'px', left: rect.left - parent.left + rect.width / 2 + 'px', minWidth: '0px', maxWidth: 'none' });
+    const animation = dock.animate([frame(before), frame(after)], { duration: 260, easing: 'cubic-bezier(.22,1,.36,1)' });
+    dockResizeAnimation = animation;
+    animation.finished.then(() => { if (dockResizeAnimation === animation) dockResizeAnimation = null; }, () => {});
+  }
+
+  function syncDecorationDock() {
+    if (!quickSymbols.childElementCount) QUICK_SYMBOLS.forEach((type) => {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.researchQuickSymbol = type;
+      decorationText(button, type === 'rectangle' ? '电阻' : type === 'switch' ? '电路开关' : SYMBOL_LABELS[type]);
+      quickSymbols.appendChild(button);
+    });
+    const tools = canvas.getDecorationTools();
+    orthogonalDockTools.querySelectorAll('button').forEach((button) => {
+      const selected = button.dataset.researchQuickSymbol
+        ? !tools.presetId && button.dataset.researchQuickSymbol === tools.symbol
+        : button.dataset.researchQuickLineStyle === tools.lineStyle;
+      button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+  }
+
+  function renderDecorationPalette(query = '') {
+    syncDecorationDock();
+    const tools = canvas.getDecorationTools(), fragment = document.createDocumentFragment();
+    const group = (title, key, entries) => {
+      const section = document.createElement('section'); section.className = 'research-decoration-tool-group';
+      const heading = document.createElement('strong'); decorationText(heading, title); section.appendChild(heading);
+      const choices = document.createElement('div');
+      entries.forEach(([value, label]) => {
+        if (query && !label.toLowerCase().includes(query.toLowerCase()) && !T(label).toLowerCase().includes(query.toLowerCase())) return;
+        const button = document.createElement('button'); button.type = 'button'; decorationText(button, label);
+        button.dataset.researchDecorationTool = key; button.dataset.value = value;
+        button.classList.toggle('is-active', tools[key] === value);
+        button.setAttribute('aria-pressed', tools[key] === value ? 'true' : 'false'); choices.appendChild(button);
+      });
+      section.appendChild(choices); fragment.appendChild(section);
+    };
+    const section = document.createElement('section'); section.className = 'research-decoration-tool-group';
+    const heading = document.createElement('strong'); decorationText(heading, '装饰符号'); section.appendChild(heading);
+    const grid = document.createElement('div'); grid.className = 'research-symbol-grid';
+    const matches = (name) => !query || name.toLowerCase().includes(query.toLowerCase()) || T(name).toLowerCase().includes(query.toLowerCase());
+    const tile = (name, template, selected, preset = false) => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'research-symbol-tile';
+      button.setAttribute('aria-label', preset ? name : T(name));
+      if (!preset) button.dataset.i18nSourceAriaLabel = name;
+      else button.dataset.userContent = '';
+      button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      renderSymbolPreview(button, template); grid.appendChild(button); return button;
+    };
+    SYMBOL_TYPES.forEach((type) => {
+      if (!matches(SYMBOL_LABELS[type])) return;
+      const button = tile(SYMBOL_LABELS[type], defaultSymbol(type), !tools.presetId && tools.symbol === type);
+      button.dataset.researchDecorationTool = 'symbol'; button.dataset.value = type;
+    });
+    canvas.getDecorationPresetStore().list().forEach((preset) => {
+      if (!matches(preset.name)) return;
+      const button = tile(preset.name, preset.template, tools.presetId === preset.id, true);
+      button.dataset.researchDecorationPreset = preset.id;
+    });
+    const add = document.createElement('button'); add.type = 'button'; add.className = 'research-symbol-tile'; add.textContent = '＋';
+    add.dataset.researchPresetAdd = '';
+    add.setAttribute('aria-label', T('新建预设')); add.dataset.i18nSourceAriaLabel = '新建预设'; grid.appendChild(add);
+    section.appendChild(grid); fragment.appendChild(section);
+    group('线段', 'arrowhead', [['none', '默认线段'], ['end', '单向箭头']]);
+    group('线段类型', 'lineStyle', [['solid', '实线'], ['dashed', '虚线']]);
+    group('线段颜色', 'color', LINE_COLORS.map((color) => [color, COLOR_LABELS[color]]));
+    paletteList.replaceChildren(fragment);
+  }
+
+  function renderDecorationSelection(selection) {
+    const ids = selection.decorationIds || [];
+    if (!ids.length) { renderedDecorationId = ''; showLibrary(); return; }
+    subcircuitCreate.hidden = true;
+    if (ids.length !== 1 || !selection.primaryDecoration) {
+      renderedDecorationId = '';
+      setPanelView('selection', T('研究 · 装饰选区'));
+      decorationText(inspectorTitle, '研究 · 装饰选区');
+      decorationText(selectionCopy, '已选装饰对象：' + ids.length);
+      selectionDuplicate.hidden = false; return;
+    }
+    // A property commit updates the existing controls in place. Rebuilding on
+    // blur would remove the button the user is about to click (e.g. Save preset).
+    if (decorationControlCommit && renderedDecorationId === selection.primaryDecoration.id && !inspector.hidden) return;
+    const d = { ...selection.primaryDecoration }; renderedDecorationId = d.id;
+    setPanelView('inspector', T(d.kind === 'line' ? '研究 · 装饰线段' : '研究 · 装饰符号'));
+    decorationText(inspectorTitle, d.kind === 'line' ? '研究 · 装饰线段' : '研究 · 装饰符号');
+    renderTrace(null); inspectorFields.replaceChildren();
+    const update = (patch) => {
+      decorationControlCommit = true;
+      try {
+        let changed;
+        if (symbolPreview) {
+          const pending = symbolPreview; symbolPreview = null;
+          pending.model.updateDecorations({ [d.id]: patch }, { live: true });
+          changed = pending.model.commitFrom(pending.before, { kind: 'decoration-edit', decorationsOnly: true });
+        } else changed = canvas.updateDecoration(d.id, patch);
+        Object.assign(d, patch); return changed;
+      } finally { decorationControlCommit = false; }
+    };
+    const field = (title, control) => {
+      const label = document.createElement('label'); label.className = 'research-decoration-field';
+      const text = document.createElement('span'); decorationText(text, title);
+      label.append(text, control); inspectorFields.appendChild(label);
+    };
+    const numeric = (title, key, min, max, step = 1) => {
+      const input = document.createElement('input'); input.type = 'number'; input.min = min; input.max = max; input.step = step;
+      input.value = d[key];
+      input.addEventListener('change', () => {
+        const value = Number(input.value);
+        if (!input.value.trim() || !Number.isFinite(value) || value < min || value > max || !update({ [key]: value })) input.value = d[key];
+      }); field(title, input);
+    };
+    const choice = (title, key, entries) => {
+      const select = document.createElement('select');
+      entries.forEach(([value, text]) => { const option = document.createElement('option'); option.value = value; decorationText(option, text); select.appendChild(option); });
+      select.value = String(d[key]); select.addEventListener('change', () => update({ [key]: key === 'rotation' ? Number(select.value) : select.value })); field(title, select);
+    };
+    if (d.kind === 'line') {
+      numeric('单位数', 'units', 1, 100000);
+      numeric('线宽', 'width', 1, 6, .5);
+      choice('线段', 'arrowhead', [['none', '默认线段'], ['end', '单向箭头']]);
+      choice('线段类型', 'lineStyle', [['solid', '实线'], ['dashed', '虚线']]);
+      choice('线段颜色', 'color', LINE_COLORS.map((color) => [color, COLOR_LABELS[color]]));
+    } else {
+      buildSymbolControls(inspectorFields, d, { T,
+        onChange: update,
+        onPreview: (patch, control) => {
+          const model = session.page(renderedPageId).model;
+          if (!symbolPreview) symbolPreview = { model, before: model.capture(), control, objectId: d.id };
+          model.updateDecorations({ [d.id]: patch }, { live: true });
+        }, onCancelPreview: cancelSymbolPreview,
+      });
+    }
+    const actions = document.createElement('div'); actions.className = 'research-decoration-actions'; inspectorFields.appendChild(actions);
+    if (d.kind === 'symbol') {
+      const preset = document.createElement('button'); preset.type = 'button'; decorationText(preset, '保存为预设');
+      preset.dataset.researchSavePreset = ''; preset.addEventListener('click', () => openPresetDialog(d)); actions.appendChild(preset);
+    }
+    const duplicate = document.createElement('button'); duplicate.type = 'button'; decorationText(duplicate, '复制选区');
+    duplicate.addEventListener('click', () => canvas.duplicateSelection()); actions.appendChild(duplicate);
+  }
+
+  function cancelSymbolPreview() {
+    if (!symbolPreview) return;
+    const previous = symbolPreview; symbolPreview = null;
+    if (previous.control?.type === 'number') {
+      const original = previous.before.decorations.find((d) => d.id === previous.objectId);
+      previous.control.value = original?.[previous.control.dataset.symbolField] ?? 0;
+    }
+    previous.model.restore(previous.before, true);
+  }
+  function closeModeMenu(focus = false) {
+    dock.classList.remove('is-menu-open');
+    modeMenu.classList.remove('is-open'); modeMenu.inert = true; modeSelect.setAttribute('aria-expanded', 'false');
+    if (focus) modeSelect.focus({ preventScroll: true });
+  }
+  function openModeMenu() {
+    cancelSymbolPreview(); canvas.cancelDecorationGesture(); closePresetContextMenu();
+    const anchor = modeSelect.getBoundingClientRect(), parent = dock.getBoundingClientRect();
+    modeMenu.style.left = Math.max(8, Math.min(anchor.left, window.innerWidth - 164)) - parent.left + 'px';
+    dock.classList.add('is-menu-open');
+    modeMenu.inert = false; modeMenu.classList.add('is-open'); modeSelect.setAttribute('aria-expanded', 'true');
+    modeMenu.querySelector('[aria-checked="true"]').focus({ preventScroll: true });
+  }
+  function closePresetDialog() {
+    if (!presetDialog) return;
+    const dialog = presetDialog; presetDialog = null; dialog.close(); dialog.remove();
+  }
+  function openPresetDialog(template = canvas.getDecorationSymbolTemplate(), existing = null) {
+    cancelSymbolPreview(); canvas.cancelDecorationGesture(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
+    const returnFocus = document.activeElement;
+    let draft = symbolTemplateDefaults(template);
+    const dialog = document.createElement('dialog'); dialog.className = 'research-preset-dialog'; dialog.dataset.researchPresetDialog = '';
+    const form = document.createElement('form'), header = document.createElement('header'), title = document.createElement('h2');
+    title.id = 'research-preset-title'; decorationText(title, existing ? '编辑预设' : '新建预设'); dialog.setAttribute('aria-labelledby', title.id);
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', T('取消')); close.dataset.i18nSourceAriaLabel = '取消';
+    const dismiss = () => { closePresetDialog(); if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true }); };
+    close.addEventListener('click', dismiss); header.append(title, close); form.appendChild(header);
+    const nameRow = document.createElement('label'); nameRow.className = 'research-decoration-field';
+    const caption = document.createElement('span'); decorationText(caption, '预设名称');
+    const name = document.createElement('input'); name.type = 'text'; name.required = true; name.maxLength = 120; name.value = existing?.name || '';
+    name.dataset.researchPresetName = ''; nameRow.append(caption, name); form.appendChild(nameRow);
+    const preview = document.createElement('div'); preview.className = 'research-preset-preview'; preview.dataset.researchPresetPreview = ''; form.appendChild(preview);
+    const controls = document.createElement('div'); controls.className = 'research-preset-fields'; form.appendChild(controls);
+    const rebuild = () => {
+      controls.replaceChildren(); renderSymbolPreview(preview, draft);
+      buildSymbolControls(controls, draft, { T, inDialog: true, allowType: true,
+        onTypeChange: (type) => { const defaults = defaultSymbol(type); draft = { ...draft, type, width: defaults.width, height: defaults.height }; rebuild(); },
+        onChange: (patch) => { Object.assign(draft, patch); renderSymbolPreview(preview, draft); },
+        onPreview: (patch) => renderSymbolPreview(preview, { ...draft, ...patch }),
+        onCancelPreview: () => renderSymbolPreview(preview, draft),
+      });
+    }; rebuild();
+    dialog.addEventListener('research:themechange', () => renderSymbolPreview(preview, draft));
+    const error = document.createElement('p'); error.className = 'research-preset-error'; error.hidden = true; error.setAttribute('role', 'alert'); form.appendChild(error);
+    const footer = document.createElement('footer'), cancel = document.createElement('button'), save = document.createElement('button');
+    cancel.type = 'button'; decorationText(cancel, '取消'); cancel.addEventListener('click', dismiss);
+    save.type = 'submit'; save.className = 'research-preset-save'; save.dataset.researchPresetSave = ''; decorationText(save, '保存'); footer.append(cancel, save); form.appendChild(footer);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (form.contains(document.activeElement)) document.activeElement.blur();
+      if (!form.reportValidity()) return;
+      try {
+        const preset = canvas.getDecorationPresetStore().save(name.value, draft, existing?.id || '');
+        canvas.setDecorationTools({ symbol: preset.template.type, presetId: preset.id });
+        closePresetDialog(); showLibrary({ expand: true }); viewport.focus({ preventScroll: true });
+      } catch (_error) { decorationText(error, '预设未能保存，请检查输入或本机存储空间。'); error.hidden = false; }
+    });
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); dismiss(); });
+    dialog.addEventListener('click', (event) => { const rect = dialog.getBoundingClientRect();
+      if (event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) dismiss(); });
+    dialog.appendChild(form); stage.appendChild(dialog); presetDialog = dialog; dialog.showModal(); name.focus();
+  }
+  function closePresetContextMenu(focus = false) {
+    if (!presetContextMenu) return;
+    const { element, trigger } = presetContextMenu; presetContextMenu = null; element.remove();
+    if (focus && trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+  function openPresetContextMenu(trigger, x, y) {
+    const preset = canvas.getDecorationPresetStore().find(trigger.dataset.researchDecorationPreset); if (!preset) return;
+    closePresetContextMenu(); closeModeMenu();
+    const element = document.createElement('div'); element.className = 'research-preset-menu'; element.setAttribute('role', 'menu');
+    const entries = [['编辑预设', () => openPresetDialog(preset.template, preset)], ['删除预设', () => {
+      try {
+        canvas.getDecorationPresetStore().remove(preset.id);
+        if (canvas.getDecorationTools().presetId === preset.id) canvas.setDecorationTools({ presetId: '', symbol: 'rectangle' });
+        renderDecorationPalette(paletteSearch.value); paletteSearch.focus({ preventScroll: true });
+      } catch (_error) { setPersistenceStatus(T('预设未能保存，请检查输入或本机存储空间。'), 'error'); }
+    }]];
+    entries.forEach(([title, action]) => { const button = document.createElement('button'); button.type = 'button'; button.setAttribute('role', 'menuitem'); decorationText(button, title);
+      button.addEventListener('click', () => { closePresetContextMenu(); action(); }); element.appendChild(button); });
+    stage.appendChild(element); element.style.left = Math.max(8, Math.min(x, window.innerWidth - element.offsetWidth - 8)) + 'px';
+    element.style.top = Math.max(8, Math.min(y, window.innerHeight - element.offsetHeight - 8)) + 'px';
+    presetContextMenu = { element, trigger }; element.firstElementChild.focus({ preventScroll: true });
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePresetContextMenu(true); }
+      else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault(); const buttons = [...element.children], i = buttons.indexOf(document.activeElement);
+        buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (i + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length].focus();
+      } else if (event.key === 'Tab') closePresetContextMenu();
+    });
   }
 
   function closeSettingsResetConfirmation() {
@@ -1138,7 +1456,48 @@ export async function createResearchEditor(stage) {
   function installListeners() {
     activeController = new AbortController(); const signal = activeController.signal;
     tutorial.activate(signal);
+    modeSelect.addEventListener('click', () => { modeMenu.classList.contains('is-open') ? closeModeMenu(true) : openModeMenu(); }, { signal });
+    modeSelect.addEventListener('keydown', (event) => {
+      if (['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); openModeMenu(); }
+    }, { signal });
+    modeMenu.addEventListener('click', (event) => {
+      const option = event.target.closest('[data-research-mode-option]'); if (!option) return;
+      if (option.dataset.researchModeOption !== editorMode) setEditorMode(option.dataset.researchModeOption);
+      else closeModeMenu();
+      modeSelect.focus({ preventScroll: true });
+    }, { signal });
+    modeMenu.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeModeMenu(true); }
+      else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault(); const buttons = [...modeMenu.children], i = buttons.indexOf(document.activeElement);
+        buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (i + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length].focus({ preventScroll: true });
+      } else if (event.key === 'Tab') closeModeMenu();
+    }, { signal });
+    window.addEventListener('resize', () => { cancelDockResize(); closeModeMenu(); closePresetContextMenu(); }, { signal });
+    matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => { if (prefersReducedMotion()) cancelDockResize(); }, { signal });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (editorMode === 'orthogonal' && !nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
+      if (presetDialog) {
+        // Rebuild the preview using the unchanged draft when the theme switches.
+        presetDialog.dispatchEvent(new Event('research:themechange'));
+      }
+    }, { signal });
+    dock.querySelector('.research-compute-row').addEventListener('scroll', () => closeModeMenu(), { signal });
+    unitLengthInput.addEventListener('input', () => { canvas.setDecorationTools({ unitLength: Number(unitLengthInput.value) }); syncDecorationSettings(); }, { signal });
+    lineWidthInput.addEventListener('input', () => { canvas.setDecorationTools({ width: Number(lineWidthInput.value) }); syncDecorationSettings(); }, { signal });
+    endpointSizeInput.addEventListener('input', () => { canvas.setDecorationTools({ endpointDiameter: Number(endpointSizeInput.value) }); syncDecorationSettings(); }, { signal });
     dock.addEventListener('click', (event) => {
+      if (event.target.closest('[data-research-add]')) { showLibrary({ expand: true, focusSearch: true }); return; }
+      const quickSymbol = event.target.closest('[data-research-quick-symbol]');
+      const quickLine = event.target.closest('[data-research-quick-line-style]');
+      if (editorMode === 'orthogonal' && (quickSymbol || quickLine)) {
+        canvas.setDecorationTools(quickSymbol ? { symbol: quickSymbol.dataset.researchQuickSymbol, presetId: '' }
+          : { lineStyle: quickLine.dataset.researchQuickLineStyle });
+        syncDecorationDock();
+        if (quickSymbol) showLibrary(); else if (!nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
+        viewport.focus({ preventScroll: true }); return;
+      }
+      if (editorMode === 'orthogonal') return;
       const kind = event.target.closest('[data-research-connection-kind]');
       if (kind) { setConnectionKind(kind.dataset.researchConnectionKind); viewport.focus({ preventScroll: true }); return; }
       if (event.target.closest('[data-research-add]')) { showLibrary({ expand: true, focusSearch: true }); return; }
@@ -1160,11 +1519,26 @@ export async function createResearchEditor(stage) {
     }, { signal });
     subcircuitCreate.addEventListener('click', openSubcircuitDialog, { signal });
     speedSelect.addEventListener('change', () => {
+      if (editorMode === 'orthogonal') { speedSelect.value = String(session.page(renderedPageId).simulation.speed); return; }
       const speed = Number(speedSelect.value); simulation.setSpeed(speed);
       if (session.setPageSpeed(renderedPageId, speed)) scheduleSave();
     }, { signal });
     paletteSearch.addEventListener('input', () => renderPalette(paletteSearch.value), { signal });
     paletteList.addEventListener('click', (event) => {
+      if (event.target.closest('[data-research-preset-add]')) { openPresetDialog(); return; }
+      const presetTile = event.target.closest('[data-research-decoration-preset]');
+      if (presetTile) {
+        const preset = canvas.getDecorationPresetStore().find(presetTile.dataset.researchDecorationPreset);
+        if (preset) canvas.setDecorationTools({ symbol: preset.template.type, presetId: preset.id });
+        renderDecorationPalette(paletteSearch.value); viewport.focus({ preventScroll: true }); return;
+      }
+      const tool = event.target.closest('[data-research-decoration-tool]');
+      if (tool) {
+        canvas.setDecorationTools({ [tool.dataset.researchDecorationTool]: tool.dataset.value,
+          ...(tool.dataset.researchDecorationTool === 'symbol' ? { presetId: '' } : {}) });
+        renderDecorationPalette(paletteSearch.value); viewport.focus({ preventScroll: true }); return;
+      }
+      if (editorMode === 'orthogonal') return;
       const reusable = event.target.closest('[data-research-subcircuit-id]');
       if (reusable) {
         const definition = subcircuitCatalog.definition(reusable.dataset.researchSubcircuitId);
@@ -1182,6 +1556,8 @@ export async function createResearchEditor(stage) {
       canvas.setCreationTool(button.dataset.researchNodeType); renderPalette(paletteSearch.value); viewport.focus({ preventScroll: true });
     }, { signal });
     paletteList.addEventListener('contextmenu', (event) => {
+      const presetTile = event.target.closest('[data-research-decoration-preset]');
+      if (presetTile) { event.preventDefault(); openPresetContextMenu(presetTile, event.clientX, event.clientY); return; }
       const button = event.target.closest('[data-research-subcircuit-id]');
       if (!button) return;
       event.preventDefault();
@@ -1194,6 +1570,12 @@ export async function createResearchEditor(stage) {
       if (!window.confirm(T(`删除“${definition.name}”的 r${definition.latestRevision}？此操作不进入页面撤销。`))) return;
       if (subcircuitCatalog.removeRevision(definition.id, definition.latestRevision, references)) {
         renderPalette(paletteSearch.value); scheduleSave(0);
+      }
+    }, { signal });
+    paletteList.addEventListener('keydown', (event) => {
+      const tile = event.target.closest('[data-research-decoration-preset]');
+      if (tile && (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey))) {
+        event.preventDefault(); const rect = tile.getBoundingClientRect(); openPresetContextMenu(tile, rect.right, rect.bottom);
       }
     }, { signal });
     subcircuitTarget.addEventListener('change', renderSubcircuitDraft, { signal });
@@ -1236,18 +1618,31 @@ export async function createResearchEditor(stage) {
     }, { signal });
     settingsResetAccept.addEventListener('click', () => {
       canvas.resetInteractionPreferences();
+      canvas.resetDecorationTools(); syncDecorationSettings();
+      if (editorMode === 'orthogonal') renderDecorationPalette(paletteSearch.value);
       closeSettingsResetConfirmation();
       settingsResetOpen.focus({ preventScroll: true });
     }, { signal });
     document.addEventListener('pointerdown', (event) => {
+      if (!modeSelect.contains(event.target) && !modeMenu.contains(event.target)) closeModeMenu();
+      if (presetContextMenu && !presetContextMenu.element.contains(event.target)) closePresetContextMenu();
+      if (symbolPreview && symbolPreview.control !== event.target) {
+        if (symbolPreview.control?.type === 'number') symbolPreview.control.blur();
+        else if (!event.target.closest('input[type="color"]')) cancelSymbolPreview();
+      }
       if (settingsPanel.hidden || settingsPanel.contains(event.target) || settingsOpen.contains(event.target)) return;
       closeSettingsPanel({ focus: false });
     }, { capture: true, signal });
     document.addEventListener('visibilitychange', () => {
+      if (document.hidden) cancelDockResize();
+      if (document.hidden && editorMode === 'orthogonal') { cancelSymbolPreview(); canvas.cancelDecorationGesture(); closeModeMenu(); closePresetContextMenu(); }
       simulation.setVisible(!document.hidden);
       if (document.hidden) scheduleSave(0);
     }, { signal });
     window.addEventListener('keydown', (event) => {
+      if (presetDialog) return;
+      if (modeMenu.classList.contains('is-open') && event.key === 'Escape') { event.preventDefault(); closeModeMenu(true); return; }
+      if (event.key === 'Escape' && symbolPreview) { event.preventDefault(); cancelSymbolPreview(); }
       if (event.key === 'Escape' && !settingsResetConfirm.hidden) {
         event.preventDefault(); closeSettingsResetConfirmation(); settingsResetOpen.focus({ preventScroll: true });
       }
@@ -1311,14 +1706,17 @@ export async function createResearchEditor(stage) {
   setConnectionKind(initialConnectionKind, false);
   setSidePanelCollapsed(sidePanelCollapsed, false);
   setDockCollapsed(dockCollapsed, false);
+  syncDecorationSettings(); setEditorMode(editorMode, false);
 
   function activate() {
     if (disposed || active) return !disposed;
+    if (editorMode === 'orthogonal' && !nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
     active = true; installListeners(); canvas.activate(); simulation.activate(); scheduleCompute(); return true;
   }
 
   function suspend() {
     if (disposed) return true;
+    cancelSymbolPreview(); cancelDockResize(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
     settlePageSwitchMotion(); resetRailWheel(); clearRailTransients();
     simulation.suspend(); cancelCompute();
     if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0; rail.classList.remove('is-revealed');

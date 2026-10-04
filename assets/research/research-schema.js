@@ -2,6 +2,8 @@ import {
   createResearchSubcircuitCatalog, expandResearchGraph, validateSubcircuitDependencies,
 } from './research-subcircuits.js';
 
+import { normalizeDecorations } from './research-orthogonal.js';
+
 export const RESEARCH_VERSION = 3;
 
 function issue(code, path, message, extra = {}) {
@@ -130,6 +132,7 @@ function normalizePage(source, registry, errors, path, fallbackId) {
     title: String(page.title || ''),
     nodes,
     edges,
+    decorations: normalizeDecorations(page.decorations === undefined ? [] : page.decorations, errors, `${path}.decorations`),
     view: {
       x: finite(view.x), y: finite(view.y),
       scale: Math.min(3.5, Math.max(0.18, finite(view.scale, 1))),

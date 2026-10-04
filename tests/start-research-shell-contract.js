@@ -50,7 +50,7 @@ assert(/<main class="research-stage" data-research-stage>[\s\S]*data-research-vi
 assert(researchHtml.includes('data-research-add-search') && researchHtml.includes('data-research-inspector'),
   'the V2 shell must expose searchable node creation and an explicit property inspector');
 const researchButtons = researchHtml.match(/<button\b/g) || [];
-assert.strictEqual(researchButtons.length, 25,
+assert.strictEqual(researchButtons.length, 30,
   'the Research shell must keep page, wiring, simulation, view settings, and help controls intentionally bounded');
 assert(researchHtml.includes('data-research-page-add') && researchHtml.includes('data-research-page-delete'),
   'the Research shell must expose its isolated in-memory page controls');

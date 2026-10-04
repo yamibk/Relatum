@@ -459,7 +459,8 @@ export function replaceSelectionWithSubcircuit(model, nodeIds, definition, revis
     if (relationKeys.has(key)) return;
     relationKeys.add(key); nextEdges.push(next);
   });
-  const nextState = { nodes: snapshot.nodes.filter((node) => !selected.has(node.id)).concat(instance), edges: nextEdges };
+  const nextState = { nodes: snapshot.nodes.filter((node) => !selected.has(node.id)).concat(instance),
+    edges: nextEdges, decorations: snapshot.decorations || [] };
   if (!model.replaceState(nextState, { kind: 'subcircuit-encapsulate', nodeIds: [instance.id] })) return null;
   return instance;
 }

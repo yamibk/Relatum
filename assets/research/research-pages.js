@@ -55,7 +55,7 @@ export class ResearchPageSession {
     return {
       id: pageId,
       title: String(source.title || ''),
-      model: this.createModel({ nodes: source.nodes, edges: source.edges }),
+      model: this.createModel({ nodes: source.nodes, edges: source.edges, decorations: source.decorations }),
       view: normalizeView(source.view),
       simulation: normalizeSimulation(source.simulation),
       runtime: {
@@ -90,7 +90,8 @@ export class ResearchPageSession {
       researchVersion: 3,
       subcircuits: this.subcircuitCatalog ? this.subcircuitCatalog.snapshot() : [],
       pages: this.pageRecords.map((page) => {
-        const snapshot = page.model.snapshot();
+        const snapshot = typeof page.model.persistenceSnapshot === 'function'
+          ? page.model.persistenceSnapshot() : page.model.snapshot();
         const persisted = typeof stateProvider === 'function' ? stateProvider(page) || {} : {};
         return {
           id: page.id,
@@ -102,6 +103,7 @@ export class ResearchPageSession {
             return persisted[node.id] ? { ...node, savedState: persisted[node.id] } : node;
           }),
           edges: snapshot.edges,
+          decorations: snapshot.decorations || [],
           view: normalizeView(page.view),
           simulation: normalizeSimulation(page.simulation),
         };

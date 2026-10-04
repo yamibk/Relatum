@@ -1,4 +1,6 @@
 import { formatResearchValue } from './research-values.js';
+import { createDecorationCanvas } from './research-decoration-canvas.js';
+import { decorationBounds } from './research-orthogonal.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const EDGE_GRID_SIZE = 512;
@@ -185,6 +187,9 @@ export function createResearchCanvas(options) {
   let connectionKind = 'wire';
   let altHeld = false;
   const primaryPresses = [];
+  const decorations = createDecorationCanvas({ viewport, model, eventPoint, screenToWorld,
+    getCamera: () => camera, scheduleDraw, onSelectionChange,
+    onEditLabel: () => stage.querySelector('[data-research-decoration-label]')?.focus({ preventScroll: true }) });
 
   try {
     const storedPanSpeed = Number.parseInt(localStorage.getItem('research:panSpeed:v1'), 10);
@@ -395,7 +400,9 @@ export function createResearchCanvas(options) {
   }
 
   function fitToContent() {
-    const nodes = model.nodes();
+    const nodes = model.nodes().concat(model.decorations().map((d) => {
+      const b = decorationBounds(d); return { x: b.left, y: b.top, width: b.right - b.left, height: b.bottom - b.top };
+    }));
     if (!nodes.length) {
       animateCamera({ x: 0, y: 0, scale: 1 });
       return;
@@ -622,7 +629,6 @@ export function createResearchCanvas(options) {
           handle.dataset.researchPortDirection = 'input';
           handle.dataset.portLabel = `${port.id} · ${port.channel === 'event' ? 'Pulse' : port.types.join('/')}`;
           handle.setAttribute('aria-label', `输入端口 ${port.id} · ${port.channel}`);
-          handle.title = `${port.id} · ${port.channel === 'event' ? '事件' : port.types.join('/')}`;
           handle.style.top = ((index + 1) / (inputPorts.length + 1) * 100) + '%';
           ports.appendChild(handle);
         });
@@ -634,7 +640,6 @@ export function createResearchCanvas(options) {
           handle.dataset.researchPortDirection = 'output';
           handle.dataset.portLabel = `${port.id} · ${port.channel === 'event' ? 'Pulse' : port.types.join('/')}`;
           handle.setAttribute('aria-label', `输出端口 ${port.id} · ${port.channel}`);
-          handle.title = `${port.id} · ${port.channel === 'event' ? '事件' : port.types.join('/')}`;
           handle.style.top = ((index + 1) / (outputPorts.length + 1) * 100) + '%';
           ports.appendChild(handle);
         });
@@ -806,6 +811,7 @@ export function createResearchCanvas(options) {
 
   function drawEdges() {
     drawRaf = 0;
+    decorations.draw();
     const rect = viewportRect();
     const ratio = Math.max(1, window.devicePixelRatio || 1);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -1102,6 +1108,7 @@ export function createResearchCanvas(options) {
   }
 
   function clearSelection() {
+    if (decorations.isEnabled()) { decorations.clear(); return; }
     selectedNodeIds.clear();
     selectedEdgeIds.clear();
     renderSelection();
@@ -1508,6 +1515,7 @@ export function createResearchCanvas(options) {
       return;
     }
     if (event.button !== 0) return;
+    if (decorations.pointerDown(event)) return;
     const action = event.target.closest('[data-node-action]');
     if (action) {
       event.preventDefault(); event.stopPropagation();
@@ -1547,6 +1555,7 @@ export function createResearchCanvas(options) {
   }
 
   function onPointerMove(event) {
+    if (decorations.pointerMove(event)) return;
     const point = eventPoint(event);
     const rect = viewport.getBoundingClientRect();
     if (event.clientX >= rect.left && event.clientX <= rect.right
@@ -1680,11 +1689,18 @@ export function createResearchCanvas(options) {
   }
 
   function onPointerUp(event) {
+    if (event.type === 'pointercancel') {
+      decorations.cancel();
+      if (gesture) finishGesture(null, false);
+      return;
+    }
+    if (decorations.pointerUp(event)) return;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     finishGesture(event, true);
   }
 
   function onDoubleClick(event) {
+    if (decorations.doubleClick(event)) return;
     const hitElement = document.elementFromPoint(event.clientX, event.clientY);
     const nodeElement = event.target.closest('[data-node-id]')
       || hitElement && hitElement.closest && hitElement.closest('[data-node-id]');
@@ -1810,6 +1826,7 @@ export function createResearchCanvas(options) {
   }
 
   function duplicateSelection() {
+    if (decorations.isEnabled()) return decorations.duplicate();
     if (!selectedNodeIds.size) return null;
     const selected = Array.from(selectedNodeIds, (nodeId) => model.node(nodeId)).filter(Boolean);
     if (!selected.length) return null;
@@ -1846,7 +1863,8 @@ export function createResearchCanvas(options) {
       }
       return;
     }
-    if (isEditableTarget(event.target)) return;
+    if (isEditableTarget(event.target) || event.target.closest?.('button, [role="menu"], dialog')) return;
+    if (decorations.keyDown(event)) return;
     if (modifier && (event.key === 'z' || event.key === 'Z')) {
       event.preventDefault();
       if (event.shiftKey) model.redo();
@@ -1970,8 +1988,8 @@ export function createResearchCanvas(options) {
 
   function computeMinimapMapping() {
     if (!contentBoundsCache) {
-      contentBoundsCache = model.nodes().reduce((result, node) => {
-        const bounds = nodeVisualBounds(node);
+      contentBoundsCache = model.nodes().concat(model.decorations()).reduce((result, node) => {
+        const bounds = node.kind ? decorationBounds(node) : nodeVisualBounds(node);
         return {
           left: Math.min(result.left, bounds.left),
           top: Math.min(result.top, bounds.top),
@@ -2008,7 +2026,7 @@ export function createResearchCanvas(options) {
 
   function positionMinimapNode(dot, node, mapping = minimapMapping) {
     if (!mapping || !dot || !node) return;
-    const bounds = nodeVisualBounds(node);
+    const bounds = node.kind ? decorationBounds(node) : nodeVisualBounds(node);
     dot.style.left = mapping.offsetX + (bounds.left - mapping.left) * mapping.scale + 'px';
     dot.style.top = mapping.offsetY + (bounds.top - mapping.top) * mapping.scale + 'px';
     dot.style.width = Math.max(2, (bounds.right - bounds.left) * mapping.scale) + 'px';
@@ -2032,7 +2050,7 @@ export function createResearchCanvas(options) {
   function redrawMinimap(change = null, reuseBounds = false) {
     if (minimapRebaseTimer) clearTimeout(minimapRebaseTimer);
     minimapRebaseTimer = 0;
-    const nodes = model.nodes();
+    const nodes = model.nodes().concat(model.decorations());
     minimap.hidden = !nodes.length;
     if (!nodes.length) {
       minimapNodes.replaceChildren();
@@ -2081,7 +2099,7 @@ export function createResearchCanvas(options) {
   }
 
   function updateMinimapViewport() {
-    if (minimap.hidden || !minimapNodeMapping || !model.nodes().length) return;
+    if (minimap.hidden || !minimapNodeMapping || model.isEmpty()) return;
     const next = computeMinimapMapping();
     minimapMapping = next;
     const base = minimapNodeMapping;
@@ -2161,6 +2179,10 @@ export function createResearchCanvas(options) {
   }
 
   function onModelChange(change) {
+    decorations.modelChanged(change);
+    if (change.decorationsOnly) {
+      redrawMinimap(); scheduleDraw(); return;
+    }
     if (change.topology) {
       syncNodeElements();
       model.nodes().forEach((node) => measureNodeLayout(node.id));
@@ -2255,6 +2277,7 @@ export function createResearchCanvas(options) {
   function setModel(nextModel, viewState = {}) {
     if (!nextModel || disposed) return false;
     if (editing) commitEdit();
+    decorations.cancel();
     if (gesture) finishGesture(null, true);
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
@@ -2286,6 +2309,7 @@ export function createResearchCanvas(options) {
     contentBoundsCache = null;
     computeProjection = {};
     model = nextModel;
+    decorations.setModel(nextModel);
     unsubscribe = model.subscribe(onModelChange);
     camera = {
       x: Number.isFinite(Number(viewState.x)) ? Number(viewState.x) : 0,
@@ -2306,6 +2330,7 @@ export function createResearchCanvas(options) {
     active = true;
     activeController = new AbortController();
     const signal = activeController.signal;
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleDraw, { signal });
     viewport.addEventListener('pointerdown', onPointerDown, { signal });
     viewport.addEventListener('pointermove', onPointerMove, { signal });
     viewport.addEventListener('pointerup', onPointerUp, { signal });
@@ -2318,6 +2343,7 @@ export function createResearchCanvas(options) {
     window.addEventListener('keydown', onKeyDown, { capture: true, signal });
     window.addEventListener('keyup', onKeyUp, { capture: true, signal });
     window.addEventListener('blur', () => {
+      decorations.cancel();
       spaceHeld = false;
       altHeld = false;
       viewport.classList.remove('is-space-held', 'is-alt-connecting');
@@ -2344,6 +2370,7 @@ export function createResearchCanvas(options) {
 
   function suspend() {
     if (disposed) return true;
+    decorations.cancel();
     if (editing) commitEdit();
     if (gesture) finishGesture(null, true);
     if (activeController) activeController.abort();
@@ -2377,6 +2404,7 @@ export function createResearchCanvas(options) {
     if (disposed) return true;
     suspend();
     disposed = true;
+    decorations.dispose();
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
     nodeElements.clear();
@@ -2415,6 +2443,20 @@ export function createResearchCanvas(options) {
     setConnectionKind,
     setCreationTool,
     setComputeProjection,
+    setEditorMode: (mode) => {
+      if (editing) commitEdit();
+      if (gesture) finishGesture(null, false);
+      selectedNodeIds.clear(); selectedEdgeIds.clear(); renderSelection();
+      decorations.setEnabled(mode === 'orthogonal');
+    },
+    getDecorationTools: decorations.getTools,
+    setDecorationTools: decorations.setTools,
+    resetDecorationTools: decorations.resetTools,
+    cancelDecorationGesture: decorations.cancel,
+    getDecorationSelection: decorations.selection,
+    updateDecoration: (id, patch) => model.updateDecorations({ [id]: patch }),
+    getDecorationSymbolTemplate: () => decorations.getSymbolTemplate(),
+    getDecorationPresetStore: () => decorations.getPresetStore(),
     centerOrigin,
     resetInteractionPreferences,
   });

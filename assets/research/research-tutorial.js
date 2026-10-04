@@ -272,6 +272,7 @@ export function createResearchTutorial(options = {}) {
   }
 
   function insertExample(exampleId) {
+    if (options.canInsert && !options.canInsert()) { showError('请切换到默认模式后生成计算示例。'); return; }
     const template = buildResearchTutorialExample(exampleId);
     const model = typeof options.getModel === 'function' ? options.getModel() : null;
     const canvas = options.canvas;

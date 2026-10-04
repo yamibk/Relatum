@@ -634,13 +634,6 @@ body {
 .research-dock-collapse svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
 .research-compute-dock.is-collapsed .research-dock-collapse { transform: translateY(-50%) rotate(180deg); }
 
-.research-compute-separator {
-  width: 1px;
-  height: 18px;
-  margin: 0 2px;
-  background: var(--research-soft-line);
-}
-
 .research-persistence-status {
   position: absolute;
   z-index: 20;
@@ -1677,7 +1670,6 @@ body {
 .research-port.is-output::after { right: 14px; }
 .research-port.is-event::after { transform: translateY(-50%) rotate(-45deg); }
 .research-node.is-selected .research-port::after,
-.research-port:hover::after,
 .research-port.is-compatible::after { opacity: 1; }
 .research-node.is-selected .research-port,
 .research-viewport.is-alt-connecting[data-research-connection-kind="wire"] .research-port,

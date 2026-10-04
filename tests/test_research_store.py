@@ -63,6 +63,52 @@ def calculation_document():
 
 
 class ResearchWorkspaceStoreTests(unittest.TestCase):
+    def test_decorations_roundtrip_legacy_compatibility_and_invalid_input(self):
+        document = calculation_document()
+        decoration = {'id': 'line', 'kind': 'line', 'x': 10, 'y': 20, 'direction': 1,
+                      'units': 4, 'unitLength': 40, 'width': 2.5, 'lineStyle': 'dashed',
+                      'color': 'green', 'arrowhead': 'end'}
+        symbol = {'id': 'lamp', 'kind': 'symbol', 'type': 'lamp', 'x': 50, 'y': 60,
+                  'width': 32, 'height': 32, 'rotation': 2, 'label': '灯 L1'}
+        document['pages'][0]['decorations'] = [decoration, symbol]
+        saved = self.store.save(document, '')
+        self.assertEqual(self.store.load()['document'], document)
+        for field, value in [('direction', 8), ('units', 1.2), ('unitLength', 0), ('x', float('inf')),
+                             ('width', True), ('color', 'purple'), ('arrowhead', 'both')]:
+            invalid = json.loads(json.dumps(document))
+            invalid['pages'][0]['decorations'][0][field] = value
+            with self.assertRaises(ResearchStoreError):
+                self.store.save(invalid, saved['revision'])
+            self.assertEqual(self.store.load()['document'], document)
+        duplicate = json.loads(json.dumps(document))
+        duplicate['pages'][0]['decorations'].append(decoration)
+        with self.assertRaises(ResearchStoreError):
+            self.store.save(duplicate, saved['revision'])
+        reopened = ResearchWorkspaceStore(self.root, atomic_json=atomic_json).load()
+        self.assertEqual(reopened['document']['pages'][0]['decorations'], [decoration, symbol])
+
+    def test_symbol_styles_and_new_components_roundtrip_without_migration(self):
+        document = calculation_document()
+        types = ('capacitor', 'inductor', 'switch', 'ground', 'ac-voltage-source', 'diode',
+                 'op-amp', 'transformer', 'controlled-voltage-source', 'controlled-current-source', 'dot')
+        symbols = [{'id': kind, 'kind': 'symbol', 'type': kind, 'x': 100, 'y': 100,
+                    'width': 8 if kind == 'dot' else 32, 'height': 8 if kind == 'dot' else 24,
+                    'rotation': 1, 'rotationDegrees': 37.5, 'label': '测试 <R1>', 'color': '#123456',
+                    'strokeWidth': 2.5, 'labelColor': '#ff0000', 'labelFontSize': 18,
+                    'labelOffsetX': -50, 'labelOffsetY': 80} for kind in types]
+        document['pages'][0]['decorations'] = symbols
+        saved = self.store.save(document, '')
+        self.assertEqual(self.store.load()['document'], document)
+        self.assertEqual(ResearchWorkspaceStore(self.root, atomic_json=atomic_json).load()['document'], document)
+        for key, value in (('color', 'url(x)'), ('labelColor', '#fff'), ('strokeWidth', 7),
+                           ('rotationDegrees', 360), ('rotationDegrees', True), ('labelFontSize', 7),
+                           ('labelOffsetY', float('inf')), ('type', 'freehand')):
+            invalid = json.loads(json.dumps(document))
+            invalid['pages'][0]['decorations'][0][key] = value
+            with self.assertRaises(ResearchStoreError):
+                self.store.save(invalid, saved['revision'])
+            self.assertEqual(self.store.load()['document'], document)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "research-workspace"

@@ -1,3 +1,5 @@
+import { normalizeDecorations, subtractLineSpan } from './research-orthogonal.js';
+
 const HISTORY_LIMIT = 50;
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 72;
@@ -7,7 +9,7 @@ function clone(value) {
 }
 
 function cloneState(state) {
-  return { nodes: state.nodes.map(clone), edges: state.edges.map(clone) };
+  return { nodes: state.nodes.map(clone), edges: state.edges.map(clone), decorations: state.decorations.map(clone) };
 }
 
 function sameState(left, right) {
@@ -75,6 +77,7 @@ export class ResearchModel {
     this.nodeById = new Map();
     this.edgeById = new Map();
     this.edgesByNodeId = new Map();
+    this.decorationById = new Map();
     this.state = { nodes: [], edges: [] };
     this.restore(initialState, false);
     this.history = [this.snapshot()];
@@ -102,12 +105,16 @@ export class ResearchModel {
         seen.add(edge.id);
         return true;
       });
-    this.state = { nodes, edges };
+    const previousGraph = notify ? JSON.stringify({ nodes: this.state.nodes, edges: this.state.edges }) : '';
+    this.state = { nodes, edges, decorations: normalizeDecorations(nextState && nextState.decorations || []) };
     this.reindex();
-    if (notify) this.emit({ kind: 'restore', topology: true });
+    if (notify) this.emit({ kind: 'restore', topology: true,
+      decorationsOnly: previousGraph === JSON.stringify({ nodes, edges }) });
   }
 
   reindex() {
+    this.decorationById.clear();
+    this.state.decorations.forEach((d) => this.decorationById.set(d.id, d));
     this.nodeById.clear();
     this.edgeById.clear();
     this.edgesByNodeId.clear();
@@ -124,9 +131,67 @@ export class ResearchModel {
   }
 
   snapshot() { return cloneState(this.state); }
+  persistenceSnapshot() {
+    const snapshot = this.snapshot();
+    // A save already queued by another action must never persist a drag preview.
+    snapshot.decorations = this.history[this.historyIndex].decorations.map(clone);
+    return snapshot;
+  }
   nodes() { return this.state.nodes.slice(); }
   edges() { return this.state.edges.slice(); }
-  isEmpty() { return !this.state.nodes.length && !this.state.edges.length; }
+  isEmpty() { return !this.state.nodes.length && !this.state.edges.length && !this.state.decorations.length; }
+  decorations() { return this.state.decorations.slice(); }
+  decoration(decorationId) { return this.decorationById.get(String(decorationId)) || null; }
+
+  createDecoration(source) {
+    const [created] = normalizeDecorations([{ ...source, id: id('decoration') }]);
+    if (!created) return null;
+    this.mutate((state) => state.decorations.push(created), { kind: 'decoration-create', decorationsOnly: true });
+    return created;
+  }
+
+  updateDecorations(patches, options = {}) {
+    const replacements = new Map();
+    for (const [objectId, patch] of Object.entries(patches)) {
+      const current = this.decoration(objectId);
+      if (!current) continue;
+      const [next] = normalizeDecorations([{ ...current, ...patch, id: objectId }]);
+      if (!next) return false;
+      replacements.set(objectId, next);
+    }
+    const apply = (state) => { state.decorations = state.decorations.map((d) => replacements.get(d.id) || d); };
+    const change = { kind: 'decoration-update', decorationsOnly: true, live: !!options.live };
+    if (options.live) { apply(this.state); this.reindex(); this.emit(change); return true; }
+    return this.mutate(apply, change);
+  }
+
+  replaceDecorationSpan(source) {
+    const [created] = normalizeDecorations([{ ...source, id: id('decoration') }]);
+    if (!created) return null;
+    this.mutate((state) => {
+      state.decorations = state.decorations.flatMap((d) => {
+        const tails = subtractLineSpan(d, created);
+        return tails === null ? [d] : tails.map((tail, i) => ({ ...tail, id: i === 0 ? d.id : id('decoration') }));
+      });
+      state.decorations.push(created);
+    }, { kind: 'decoration-span-replace', decorationsOnly: true });
+    return created;
+  }
+
+  removeDecorations(objectIds) {
+    const selected = new Set(objectIds);
+    return this.mutate((state) => { state.decorations = state.decorations.filter((d) => !selected.has(d.id)); },
+      { kind: 'decoration-remove', decorationsOnly: true });
+  }
+
+  duplicateDecorations(objectIds, dx = 28, dy = 28) {
+    const selected = new Set(objectIds);
+    const copies = this.state.decorations.filter((d) => selected.has(d.id))
+      .map((d) => ({ ...clone(d), id: id('decoration'), x: d.x + dx, y: d.y + dy }));
+    if (!copies.length) return [];
+    this.mutate((state) => state.decorations.push(...copies), { kind: 'decoration-duplicate', decorationsOnly: true });
+    return copies.map((d) => d.id);
+  }
   node(nodeId) { return this.nodeById.get(String(nodeId)) || null; }
   edge(edgeId) { return this.edgeById.get(String(edgeId)) || null; }
 
@@ -427,6 +492,7 @@ export class ResearchModel {
     const candidate = new ResearchModel({
       nodes: this.state.nodes.concat(createdNodes),
       edges: this.state.edges,
+      decorations: this.state.decorations,
     }, this.registry);
     const createdEdgeIds = [];
     for (const raw of sourceEdges) {

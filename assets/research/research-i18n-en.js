@@ -2,6 +2,64 @@
   'use strict';
 
   const EN = {
+    '矩形／电阻': 'Rectangle / Resistor',
+    '电阻': 'Resistor',
+    '电容': 'Capacitor', '电感': 'Inductor', '电路开关': 'Switch', '接地': 'Ground',
+    '交流电压源': 'AC voltage source', '二极管': 'Diode', '运放': 'Op amp', '变压器': 'Transformer',
+    '受控电压源': 'Controlled voltage source', '受控电流源': 'Controlled current source',
+    '符号': 'Symbol', '类型': 'Type', '颜色': 'Color', '文字': 'Text',
+    '文字颜色': 'Text color', '字号': 'Font size', 'X 偏移': 'X offset', 'Y 偏移': 'Y offset',
+    '居中': 'Center', '跟随符号': 'Follow symbol', '自定义颜色': 'Custom color',
+    '正角度顺时针；文字保持正向。': 'Positive angles rotate clockwise; text stays upright.',
+    '以符号中心为原点，X 向右为正。': 'Origin at the symbol center; positive X points right.',
+    '以符号中心为原点，Y 向上为正。': 'Origin at the symbol center; positive Y points up.',
+    '端点大小': 'Endpoint size',
+    '只调整装饰线端点的显示大小，不改变线段数据。': 'Adjusts decoration endpoint display size without changing line data.',
+    '新建预设': 'New preset', '编辑预设': 'Edit preset', '删除预设': 'Delete preset',
+    '预设名称': 'Preset name', '保存为预设': 'Save as preset', '保存': 'Save',
+    '预设未能保存，请检查输入或本机存储空间。': 'Could not save the preset. Check the input or available local storage.',
+    '请切换到默认模式后生成计算示例。': 'Switch to Default mode before generating a computation example.',
+    '直角装饰绘图': 'Orthogonal decoration drawing',
+    '底栏切到直角模式后，Alt＋左键从空白拖出按单位跳变的横竖或45°线段；左侧选符号后双击放置。每个单位分界处都有端点，附近放置或拖动可吸附，吸附只对齐、不绑定。从端点拉到端点可以用当前预设替换覆盖的共线部分，未覆盖的两侧保留。右下角单位长度和线宽只改变后续新线，端点大小即时改变显示；装饰不参与计算，切入时暂停仿真。': 'Switch the bottom toolbar to Orthogonal mode. Alt + left-drag from empty space draws horizontal, vertical or 45° lines in whole units. Choose a symbol on the left and double-click to place it. Unit boundaries support placement and movement snapping without binding. Drag between endpoints to replace the covered collinear span; uncovered tails are preserved. Unit length and line width settings affect new lines only; endpoint size updates the display immediately. Decorations do not compute, and entering this mode pauses simulation.',
+    '符号与自定义预设': 'Symbols and custom presets',
+    '符号属性可修改尺寸、颜色、线宽、任意旋转角度和标注。文字默认居中，X/Y 偏移以符号中心为原点，向右和向上为正，文字保持正向。列表末尾的＋或属性中的“保存为预设”可创建本机共用模板，右键预设可编辑或删除；已有符号不会跟随预设变化。': 'Symbol properties include size, color, stroke width, arbitrary rotation and labels. Text is centered by default. X/Y offsets use the symbol center as their origin, with positive directions right and up; text stays upright. Use + at the end of the library or Save as preset in properties to create a shared local template. Right-click a preset to edit or delete it; existing symbols remain independent.',
+    '研究操作模式': 'Research editing mode',
+    '默认模式': 'Default mode',
+    '直角模式': 'Orthogonal mode',
+    '研究 · 装饰绘图': 'Research · Decoration tools',
+    '研究 · 装饰选区': 'Research · Decoration selection',
+    '研究 · 装饰线段': 'Research · Decorative line',
+    '研究 · 装饰符号': 'Research · Decorative symbol',
+    '装饰符号': 'Symbols',
+    '矩形': 'Rectangle',
+    '电流源': 'Current source',
+    '电压源': 'Voltage source',
+    '灯泡': 'Lamp',
+    '圆点': 'Dot',
+    '线段': 'Line',
+    '默认线段': 'Plain line',
+    '单向箭头': 'One-way arrow',
+    '线段类型': 'Line style',
+    '实线': 'Solid',
+    '虚线': 'Dashed',
+    '线段颜色': 'Line color',
+    '黑白色': 'Monochrome',
+    '蓝色': 'Blue',
+    '红色': 'Red',
+    '绿色': 'Green',
+    '单位长度': 'Unit length',
+    '单位数': 'Unit count',
+    '新线宽度': 'New line width',
+    '线宽': 'Line width',
+    '宽度': 'Width',
+    '高度': 'Height',
+    '旋转': 'Rotation',
+    '标注': 'Label',
+    '已选装饰对象：': 'Selected decorations: ',
+    '只影响后续绘制；尺寸按 100% 缩放计。': 'Applies to new drawings only; sizes are measured at 100% zoom.',
+    '重置研究画布与装饰绘图的本机设置。': 'Reset local canvas and decoration drawing settings.',
+    'Alt＋左键拖动画线；双击放置符号。端点吸附只对齐，不绑定。': 'Alt + left-drag draws a line; double-click places a symbol. Snapping aligns without binding.',
+    '从端点拉到端点可替换覆盖的共线部分；其余线段保留。': 'Drag between endpoints to replace the covered collinear span; the remaining parts are preserved.',
     // Workspace shell
     '研究画布': 'Research canvas',
     '恢复为 100% 缩放': 'Reset zoom to 100%',
@@ -594,7 +652,9 @@
   global.RelatumResearchEnglish = Object.freeze(EN);
 
   global.RelatumResearchTranslateDynamic = function (source) {
-    let match = source.match(/^研究页\s*(\d+)$/);
+    let match = source.match(/^已选装饰对象：(\d+)$/);
+    if (match) return `Selected decorations: ${match[1]}`;
+    match = source.match(/^研究页\s*(\d+)$/);
     if (match) return `Research page ${match[1]}`;
     match = source.match(/^输入端口\s+(.+)\s+·\s+(.+)$/);
     if (match) return `Input port ${match[1]} · ${match[2]}`;

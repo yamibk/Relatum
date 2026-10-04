@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -495,9 +496,71 @@ def _normalize_page(source, index: int, issues: list[dict], catalog=None, path_o
         speed = 1
     return {
         "id": page_id, "title": str(page.get("title") or ""), "nodes": nodes, "edges": edges,
+        **({'decorations': _normalize_decorations(page['decorations'], issues, f'{path}.decorations')}
+           if 'decorations' in page else {}),
         "view": {"x": _finite(view.get("x"), 0, issues, f"{path}.view.x"), "y": _finite(view.get("y"), 0, issues, f"{path}.view.y"), "scale": min(3.5, max(0.18, _finite(view.get("scale"), 1, issues, f"{path}.view.scale")))},
         "simulation": {"speed": speed},
     }
+
+
+def _normalize_decorations(source, issues: list[dict], path: str) -> list[dict]:
+    if not isinstance(source, list):
+        issues.append(_issue('invalid-decorations', path, '装饰对象必须是数组'))
+        return []
+    if len(source) > MAX_NODES_PER_PAGE + MAX_EDGES_PER_PAGE:
+        issues.append(_issue('too-many-decorations', path, '装饰对象数量超过安全上限'))
+        return []
+    result, seen = [], set()
+
+    def number(value, low=None, high=None, integer=False):
+        return (not isinstance(value, bool) and isinstance(value, (int, float))
+                and math.isfinite(value) and (low is None or value >= low)
+                and (high is None or value <= high) and (not integer or int(value) == value))
+
+    for index, raw in enumerate(source):
+        valid = (isinstance(raw, dict) and isinstance(raw.get('id'), str)
+                 and 0 < len(raw['id']) <= MAX_ID_LENGTH and raw['id'] not in seen
+                 and number(raw.get('x'), -1e9, 1e9) and number(raw.get('y'), -1e9, 1e9))
+        normalized = None
+        if valid and raw.get('kind') == 'line':
+            valid = (number(raw.get('direction'), 0, 7, True) and number(raw.get('units'), 1, 100000, True)
+                     and number(raw.get('unitLength'), 16, 160) and number(raw.get('width'), 1, 6)
+                     and raw.get('lineStyle') in ('solid', 'dashed')
+                     and raw.get('color') in ('mono', 'blue', 'red', 'green')
+                     and raw.get('arrowhead') in ('none', 'end'))
+            keys = ('id', 'kind', 'x', 'y', 'direction', 'units', 'unitLength', 'width', 'lineStyle', 'color', 'arrowhead')
+        elif valid and raw.get('kind') == 'symbol':
+            minimum = 6 if raw.get('type') == 'dot' else 8
+            valid = (raw.get('type') in ('rectangle', 'current-source', 'voltage-source', 'lamp', 'dot',
+                                       'capacitor', 'inductor', 'switch', 'ground', 'ac-voltage-source',
+                                       'diode', 'op-amp', 'transformer', 'controlled-voltage-source', 'controlled-current-source')
+                     and number(raw.get('width'), minimum, 640) and number(raw.get('height'), minimum, 640)
+                     and number(raw.get('rotation'), 0, 7, True)
+                     and isinstance(raw.get('label'), str) and len(raw['label']) <= 10000)
+            keys = ('id', 'kind', 'type', 'x', 'y', 'width', 'height', 'rotation', 'label')
+            def color(value, inherit=False):
+                return (isinstance(value, str) and
+                        (value in ('mono', 'blue', 'red', 'green') or (inherit and value == 'inherit')
+                         or re.fullmatch(r'#[0-9a-fA-F]{6}', value) is not None))
+
+            for key, low, high in (('strokeWidth', 1, 6), ('rotationDegrees', 0, 359.999999999),
+                                   ('labelFontSize', 8, 72), ('labelOffsetX', -1e9, 1e9), ('labelOffsetY', -1e9, 1e9)):
+                if key in raw:
+                    valid = valid and number(raw[key], low, high)
+                    keys += (key,)
+            for key in ('color', 'labelColor'):
+                if key in raw:
+                    valid = valid and color(raw[key], key == 'labelColor')
+                    keys += (key,)
+        else:
+            valid = False
+        if valid:
+            normalized = {key: raw[key] for key in keys}
+            result.append(normalized)
+            seen.add(raw['id'])
+        else:
+            issues.append(_issue('invalid-decoration', f'{path}[{index}]', '装饰对象数据无效'))
+    return result
 
 
 def _normalize_subcircuits(source, issues: list[dict]):

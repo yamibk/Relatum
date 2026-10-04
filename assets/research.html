@@ -12,6 +12,7 @@
     } catch (_error) {}
   </script>
   <link rel="stylesheet" href="research/research.css">
+  <link rel="stylesheet" href="research/research-decorations.css">
   <script src="research/research-i18n-en.js" defer></script>
   <script src="i18n.js" defer></script>
   <script src="research/research-workspace.js" defer></script>
@@ -25,7 +26,7 @@
       <div class="research-selection-frame" data-research-selection-frame hidden></div>
       <div class="research-viewport-hud">
         <button type="button" class="research-zoom-indicator" data-research-zoom-indicator
-          aria-label="恢复为 100% 缩放" title="点击恢复为 100% 缩放（Ctrl+0）">100%</button>
+          aria-label="恢复为 100% 缩放">100%</button>
         <div class="research-minimap" data-research-minimap hidden
           aria-label="研究小地图：点击跳转，拖动取景框平移">
           <div class="research-minimap-nodes" data-research-minimap-nodes></div>
@@ -48,7 +49,7 @@
         </svg>
       </button>
       <button type="button" class="research-origin-fab" data-research-center-origin
-        aria-label="将坐标原点移到画面中心" title="将坐标原点移到画面中心">
+        aria-label="将坐标原点移到画面中心">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M8.5 7 10 5h4l1.5 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3.5Z"/>
           <circle cx="12" cy="13" r="3.5"/>
@@ -66,20 +67,35 @@
     </div>
     <div class="research-compute-dock" data-research-compute-dock>
       <div class="research-compute-row" id="research-compute-row" role="toolbar" aria-label="研究工具与仿真控制">
+        <button type="button" class="research-mode-trigger" data-research-editor-mode
+          aria-label="研究操作模式" aria-haspopup="menu" aria-expanded="false" aria-controls="research-mode-menu">
+          <span data-research-mode-label>默认模式</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+        </button>
         <button type="button" data-research-add aria-expanded="true" aria-controls="research-side-panel">＋ 添加</button>
-        <button type="button" data-research-connection-kind="relation" aria-pressed="false">关系线</button>
-        <button type="button" data-research-connection-kind="wire" aria-pressed="true">导线</button>
-        <span class="research-compute-separator" aria-hidden="true"></span>
-        <button type="button" data-research-run aria-label="运行仿真">运行</button>
-        <button type="button" data-research-pause aria-label="暂停仿真">暂停</button>
-        <button type="button" data-research-step aria-label="单步到下一个时序边界">单步</button>
-        <button type="button" data-research-reset aria-label="复位当前页">复位</button>
-        <label class="research-speed-label">速度
-          <select data-research-speed aria-label="仿真速度">
-            <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
-            <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
-          </select>
-        </label>
+        <div class="research-dock-tools" data-research-default-tools>
+          <button type="button" data-research-connection-kind="relation" aria-pressed="false">关系线</button>
+          <button type="button" data-research-connection-kind="wire" aria-pressed="true">导线</button>
+          <button type="button" data-research-run aria-label="运行仿真">运行</button>
+          <button type="button" data-research-pause aria-label="暂停仿真">暂停</button>
+          <button type="button" data-research-step aria-label="单步到下一个时序边界">单步</button>
+          <button type="button" data-research-reset aria-label="复位当前页">复位</button>
+          <label class="research-speed-label">速度
+            <select data-research-speed aria-label="仿真速度">
+              <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+            </select>
+          </label>
+        </div>
+        <div class="research-dock-tools research-orthogonal-tools" data-research-orthogonal-tools hidden>
+          <button type="button" data-research-quick-line-style="solid" aria-pressed="true">实线</button>
+          <button type="button" data-research-quick-line-style="dashed" aria-pressed="false">虚线</button>
+          <div class="research-dock-tools research-quick-symbols" data-research-quick-symbols></div>
+        </div>
+      </div>
+      <div class="research-mode-menu" id="research-mode-menu" data-research-mode-menu role="menu" aria-label="研究操作模式" inert>
+        <button type="button" role="menuitemradio" data-research-mode-option="default" aria-checked="true">默认模式</button>
+        <button type="button" role="menuitemradio" data-research-mode-option="orthogonal" aria-checked="false">直角模式</button>
       </div>
       <button type="button" class="research-dock-collapse" data-research-dock-collapse
         aria-label="收起下方工具栏" aria-expanded="true" aria-controls="research-compute-row">
@@ -149,7 +165,7 @@
           <div class="research-settings-reset-confirm" id="research-settings-reset-confirm"
             data-research-settings-reset-confirm role="alertdialog" aria-label="恢复默认设置？" hidden>
             <strong>恢复默认设置？</strong>
-            <span>重置研究画布的六项本机设置。</span>
+            <span>重置研究画布与装饰绘图的本机设置。</span>
             <div>
               <button type="button" data-research-settings-reset-cancel>取消</button>
               <button type="button" data-research-settings-reset-accept>恢复默认</button>
@@ -157,6 +173,18 @@
           </div>
         </div>
       </header>
+      <label class="research-settings-slider">
+        <span>单位长度 <output data-research-unit-length-value>40px</output></span>
+        <input type="range" data-research-unit-length min="16" max="160" step="4" value="40">
+      </label>
+      <label class="research-settings-slider">
+        <span>新线宽度 <output data-research-line-width-value>2px</output></span>
+        <input type="range" data-research-line-width min="1" max="6" step="0.5" value="2">
+      </label>
+      <label class="research-settings-slider">
+        <span>端点大小 <output data-research-endpoint-size-value>4px</output></span>
+        <input type="range" data-research-endpoint-size min="2" max="5.5" step="0.5" value="4">
+      </label>
       <label class="research-settings-slider">
         <span>方向键平移速度 <output data-research-pan-speed-value>8</output></span>
         <input type="range" data-research-pan-speed min="1" max="20" step="1" value="8">

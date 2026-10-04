@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-03。
+> 最后按源码校准：2026-10-04。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -482,7 +482,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 复习页进入时根层保持静止，不得把整页当成完成的矩形贴图横移；日历先短促淡出并轻移，复习页标题、操作区、统计、纸面和纸面内容依次渐入。分层时长跟随起步页翻页速度，`start.js` 的清理延迟必须覆盖最长一层；自由复习和计划复习切到下一张卡片时直接完整展示，不再叠加卡片内部入场动画。
 - 默认最近页不把特殊页数据请求放进首屏阻塞链；起步页脚本就绪后，学习、活跃和独立树状页分别在浏览器空闲时预读 `/api/study`、当前年度 `/api/study-activity` 与 `/api/tree-page`，首次进入复用相同缓存或在途 Promise。速记仍在首次进入或执行跨页动作时加载并复用同一个在途 Promise。任何首次加载完成前都不得用空前端状态覆盖服务端数据。
 
-### 研究（M5.3 多章节教程、M5.2 视口手感、M5.1 前端操作统一与 V3 可复用子电路）
+### 研究（直角装饰绘图、多章节教程、视口手感与 V3 可复用子电路）
+
+- 底栏模式选择器提供“默认模式 / 直角模式”，使用透明无边框文字/箭头入口及向上展开的菜单；菜单位于横向滚动行外，支持方向键、Enter、Esc 和焦点恢复。默认模式显示原关系线/导线与运行栏；直角模式显示专属的实线/虚线和电阻、电容、电感、电压源、电流源、电路开关、灯泡、圆点、接地快捷入口，与左侧符号库同步选中状态。直角底栏按中英文内容自然加宽，保留 44px 高度、收起与窄窗横向滚动，按钮文字不压缩或省略；切换模式用 260ms 有限宽度/位置动画从实际当前尺寸伸缩，快速反向切换从当前帧续接，尺寸测量后恢复 CSS 自然宽度。状态、手势取消与左侧内容立即切换；离页、隐藏、缩放窗口或低动态偏好取消底栏动画。底栏无竖向分隔线，悬停/菜单采用约 140ms 轻量过渡，低动态下即时切换。两套对象同页显示，只能编辑当前模式的对象。进入直角模式暂停仿真，隐藏的原控件事件在该模式无副作用，返回默认模式不会自动运行。默认节点、端口与子电路仍沿用原协议，直角装饰不参与计算。
+- 直角模式用 Alt＋左键从空白拖出横竖及四个 45°方向的离散线段；斜向一步的横纵位移各等于单位长度。每次拖出一个整线对象，所有单位分界处显示小端点，首尾手柄可重新量化伸缩。端点附近起线与双击/拖动符号采用 12 屏幕像素辅助吸附，只对齐不绑定；线终点吸附须同时满足方向和单位长度约束。从两个吸附端点覆盖已有共线部分时，用当前预设样式替换该部分，沿用原段单位网格并保留两侧未覆盖部分，整批只产生一条撤销历史；交叉线不受影响。
+- 左侧装饰库用 SVG 网格提供矩形/电阻、电流源、电压源、灯泡、圆点、电容、电感、开关、接地、交流电压源、二极管、运放、变压器、受控电压源与受控电流源；选中图标以实线外框表示，悬停/键盘焦点保持透明背景与图标原色，不继承旧节点按钮的白字样式。研究界面取消原生 title 悬停文字提示，符号中英文名称仍保留 aria-label，面板不常驻手势说明。绘制选项继续提供默认线段/单向箭头、实线/虚线与黑白/蓝/红/绿。符号独立拖动，支持 0.1°任意角度（顺时针为正）及 ±45°快捷调整、尺寸、颜色、线宽和纯文本标注；文字默认位于符号中心，支持独立颜色、8–72px 字号及世界 X/Y 偏移（X 向右、Y 向上为正），不随符号旋转。X/Y 的有效键盘输入立即预览标注、边界和预设 SVG；失焦/Enter 只提交一次历史，Esc 恢复编辑前值，空值/非法数字不写数据。圆点新建默认 8px、最小 6px，已有尺寸不改写。符号内部的装饰线及端点仅在绘制层裁掉，开放形状元件有独立遮线区域。黑白色随主题切换，彩色提供深浅变体，自定义颜色按十六进制原值显示。单位长度默认 40px（16–160，步长 4），新线宽度默认 2px（1–6，步长 0.5），只影响后续新线。端点大小是即时作用于所有装饰线的本机显示偏好，默认直径 4px（2–5.5，步长 0.5，包含对比轮廓），不改线对象。恢复默认一并重置这些绘制/显示设置。尺寸以 100% 缩放的世界像素保存。
+- 符号列表末尾“＋”与单选属性“保存为预设”共用带 SVG 实时预览的编辑浮窗。自定义预设使用 `research:decorationPresets:v1`（`{version:1,presets:[{id,name,template}]}`）保存于本机并跨页共用；右键/键盘菜单可编辑、删除。创建实例复制完整参数及新 ID，不绑定预设；预设修改、删除不影响已有实例、不进入页面历史。选中的预设 ID 记入绘制偏好，删除该预设后回到矩形模板。恢复默认保留预设库，存储失败保留草稿并提示。不支持上传 SVG、手绘或组合对象预设。
+- V3 每页可选 `decorations[]`，缺失按空数组读取；线保存位置/方向/单位数/单位长度/线宽/虚实/颜色/箭头，符号保存类型/中心/尺寸/旋转/标注，并可选保存 `color`、`strokeWidth`、`rotationDegrees`、`labelColor`、`labelFontSize`、`labelOffsetX/Y`。`rotationDegrees` 优先，缺失时按旧 `rotation × 45°` 渲染；新建/旋转编辑同时写最近的旧步进值。缺失样式使用默认值，不批量迁移。前后端共同校验，仍使用原研究 API、冲突检查和备份。两套内容共用页面历史、复制与空页判断；`persistenceSnapshot()` 排除装饰拖动和颜色预览，取消、切模式、换页、隐藏或离开时恢复未提交编辑。仅装饰变更不触发计算失效。模式及绘制偏好存 `research:editorMode:v1`、`research:decorationTools:v1`，预设单独保存，不写主画布偏好。
+- `assets/research/research-orthogonal.js` 是纯几何/校验/空间候选索引层；`research-symbols.js` 共用 Canvas/SVG 符号路径、遮线区域、旋转和文字边界，文字测量通过浏览器注入 Canvas 适配器并缓存；`research-decoration-presets.js` 负责本机模板校验与保存，`research-symbol-controls.js` 共用实例/预设属性控件。`research-decoration-canvas.js` 负责装饰交互与独立 Canvas2D 绘制，缓存 Path2D、只绘制可见区，符号裁线保留透明坐标背景。单位端点不创建 DOM，也不逐端点建立空间索引；小地图与内容边界包含标注，相机移动复用已有索引与小地图层。
 
 - 顶栏保留“研究”入口和四栏切换顺序，`assets/index.html` 初始不得静态包含 iframe、研究脚本或研究样式；首次进入后只复用同一个同源 iframe。
 - `research.html` 承载透明单画布、分页栏、固定可折叠工具/运行栏、左侧统一节点/属性面板、左下角缩放/小地图、保存状态和右下角设置/说明；`research-workspace.js` 只向父页公开 `activate`、`suspend`、`dispose`，并在激活时导入独立运行时、等待 `/api/research/workspace` 读取。输入监听、ResizeObserver、绘制/计算/相机帧与仿真句柄只在激活期存在；隐藏、离页和销毁必须取消过期回调、惯性、缩放缓动与小地图校准，销毁保存用 keepalive 收尾。
@@ -683,6 +690,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 研究工作区改动：`node tests/start-research-shell-contract.js`、`node tests/research-canvas-baseline-contract.js`、`node tests/research-pages-regression.js`、`node tests/research-compute-regression.js`、`node tests/research-subcircuits-regression.js`、`node tests/research-runtime-regression.js`、`node tests/research-persistence-contract.js`、`python -m unittest tests.test_research_store -v`、`node tests/research-fork-baseline-contract.js`。可选真实 Edge 验收再运行 `node tests/research-circuit-browser.js <本地 URL>`、`node tests/research-subcircuits-browser.js <本地 URL>`、`node tests/research-cpu-browser.js <本地 URL> [report.json]` 与 `node tests/research-time-slicing-browser.js <本地 URL> [report.json]`。研究壳契约确认首屏零研究资源、首次进入按需挂载与生命周期；画布契约确认显式端口、索引、历史、连续投影分片和 DOM/Canvas2D/SVG 交接；分页回归确认逐页模型/历史/镜头隔离；计算与子电路回归确认严格类型、确定性事件、递归展开、无环嵌套、实例状态隔离、修订固定/升级、选区替换和 V3 持久化；CPU 浏览器验收确认公开 UI 搭建、两版程序结果、状态清空、Probe 顺序、25 实例展开、刷新恢复与运行态非持久化；时间分片浏览器验收确认 1,000 个主动时间源的完整批次、协作让出、帧响应、暂停/恢复和调度状态非持久化；分叉契约确认原编辑器不反向引用研究代码。浏览器夹具必须拦截研究接口，不改真实用户数据。
 研究教程改动还要运行 `node tests/research-tutorial-regression.js`，确认 39 页/4 章、20 种节点与 8 个模板的唯一映射、真实端口校验、ID 重映射、一次撤销/重做和非法整批回滚。
+直角装饰绘图与预设改动还要运行 `node tests/research-orthogonal-regression.js`、`node tests/research-symbols-regression.js` 和 `node tests/research-orthogonal-browser.js`。后者用临时 `RELATUM_DATA_ROOT` 启动真实 API，覆盖专属底栏/左侧选项同步、中英文完整文字、模式菜单、底栏伸缩的中间帧/快速反向切换/动画降级、无原生悬停提示及 SVG 悬停原色、端点滑条、符号遮线、任意旋转/标注、X/Y 实时预览/单次历史/Esc 恢复/预览不落盘、颜色预览取消、预设创建/编辑/删除/存储失败/重开、深浅主题、窄窗滚动与右下按钮避让、高 DPI 和 1500 条线的拖动/缩放，最后跑原电路浏览器回归；`--subcircuits` 在同一隔离服务上跑子电路浏览器验收。运行需配置 `RELATUM_PLAYWRIGHT`、`RELATUM_PYTHON` 与可选 `RELATUM_EDGE_PATH`，不能使用真实用户数据根。
 
 文档-only 改动：
 
@@ -705,6 +713,8 @@ node .\tests\ai-panel-v2-contract.js
 ```
 
 前端 JS 改动：
+
+直角装饰绘图另运行 `node tests/research-orthogonal-regression.js` 与 `node tests/research-orthogonal-browser.js`。后者配置 `RELATUM_PLAYWRIGHT`、`RELATUM_PYTHON`、`RELATUM_EDGE_PATH`，自行创建临时 `RELATUM_DATA_ROOT` 并启动真实 API，覆盖模式隔离、仿真控件无副作用、离散绘制、局部替换/撤销、吸附、符号标注与独立移动、线端伸缩/取消、设置仅作用新线、模式切换取消、复制/删除/恢复、主题/窄窗、重载与磁盘往返；结束关闭服务，并复用原电路浏览器回归的接口夹具。禁止指向真实用户数据。
 
 ```powershell
 node --check .\assets\canvas.js
