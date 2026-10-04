@@ -39323,6 +39323,11 @@ html[data-ui-language="en"] .calendar-date-range-dates {
   font-variant-numeric: tabular-nums;
 }
 .calendar-date-range-summary.is-error { color: #a04b44; font-size: 14px; }
+.calendar-date-range-summary,
+.calendar-date-range-list {
+  -webkit-user-select: text;
+  user-select: text;
+}
 .calendar-date-range-list {
   display: grid; gap: 2px; margin-top: 17px; color: #535a54;
   font-size: 13px; font-variant-numeric: tabular-nums;
