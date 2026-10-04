@@ -528,7 +528,7 @@ body {
   z-index: 14;
   left: 50%;
   bottom: 18px;
-  width: min(760px, calc(100% - 132px));
+  width: min(640px, calc(100% - 132px));
   height: 44px;
   transform: translateX(-50%);
   pointer-events: none;
