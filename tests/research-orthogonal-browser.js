@@ -404,7 +404,7 @@ async function run() {
       return { start, middle, moving, immediateMode, end: dock.getBoundingClientRect().width, mode: mode.dataset.value };
     });
     assert.equal(animatedDock.immediateMode, 'default'); assert(animatedDock.moving);
-    assert(animatedDock.middle < animatedDock.start && animatedDock.middle > 540, 'mode resize must pass through an intermediate width: ' + JSON.stringify(animatedDock));
+    assert(animatedDock.middle < animatedDock.start && animatedDock.middle > 760, 'mode resize must pass through an intermediate width: ' + JSON.stringify(animatedDock));
     assert.equal(animatedDock.mode, 'orthogonal'); assert.equal(animatedDock.end, animatedDock.start, 'rapid reversal must finish at the new natural width');
     await visual.emulateMedia({ reducedMotion: 'reduce' });
     await visual.locator('[data-research-mode-option="default"]').evaluate((e) => e.click());
