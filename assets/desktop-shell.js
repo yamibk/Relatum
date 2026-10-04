@@ -159,6 +159,23 @@
   // Notes focus mode hides the title bar; keep its window controls in the same
   // top-right position and send them through the original action handlers.
   const focusControls = document.body.classList.contains('start-page') ? document.createElement('div') : null;
+  const noteDragBars = Array.from(document.querySelectorAll('#start-notes-workspace .note-tree-pane > .note-pane-head, #start-notes-workspace .note-tab-bar'));
+  const dragInteractiveSelector = 'button, input, select, textarea, a, [contenteditable], .editor-file-name, .note-tab, [role="tab"], [draggable="true"], [role="menu"], [role="dialog"], [role="listbox"]';
+  function noteFocusActive() {
+    return document.body.dataset.startWorkspace === 'notes' && document.body.classList.contains('note-focus-mode');
+  }
+  function syncNoteDragRegions() {
+    const enabled = noteFocusActive() && !document.body.classList.contains('desktop-maximized');
+    noteDragBars.forEach((region) => region.classList.toggle('pywebview-drag-region', enabled));
+  }
+  noteDragBars.forEach((region) => {
+    region.addEventListener('mousedown', (event) => {
+      if (noteFocusActive() && (event.button !== 0 || event.target.closest(dragInteractiveSelector))) event.stopPropagation();
+    });
+    region.addEventListener('dblclick', (event) => {
+      if (noteFocusActive() && event.button === 0 && !event.target.closest(dragInteractiveSelector)) toggleMaximize();
+    });
+  });
   if (focusControls) {
     focusControls.className = 'desktop-note-focus-controls';
     focusControls.setAttribute('aria-label', '窗口控制');
@@ -170,9 +187,9 @@
     document.body.appendChild(focusControls);
   }
   function syncFocusControls() {
+    syncNoteDragRegions();
     if (!focusControls) return;
-    const visible = document.body.dataset.startWorkspace === 'notes'
-      && document.body.classList.contains('note-focus-mode');
+    const visible = noteFocusActive();
     focusControls.inert = !visible;
     focusControls.setAttribute('aria-hidden', String(!visible));
     focusControls.querySelectorAll('button').forEach((button) => {
@@ -207,6 +224,7 @@
     // pywebview 的拖拽区会直接调用 SetWindowPos；最大化时必须撤销标记，避免窗口被
     // 整体移出显示器工作区并在顶部露出空条。还原后再恢复正常的标题栏拖动。
     bar.classList.toggle('pywebview-drag-region', !maximized);
+    syncNoteDragRegions();
   }
 
   window.addEventListener('canvasdesktop:window-state', (event) => {

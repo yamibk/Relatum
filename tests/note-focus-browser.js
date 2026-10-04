@@ -40,9 +40,16 @@ async function freePort() {
       if (localStorage.getItem('canvas:startWorkspace:v1') === null) localStorage.setItem('canvas:startWorkspace:v1', 'notes');
       if (localStorage.getItem('canvas:noteFocusMode:v1') === null) localStorage.setItem('canvas:noteFocusMode:v1', '1');
       window.__closeCalls = 0;
+      window.__maximizeCalls = 0; window.__minimizeCalls = 0; window.__maximized = false;
+      window.__dragStarts = 0;
+      document.addEventListener('mousedown', event => {
+        if (event.target.closest('.pywebview-drag-region')) window.__dragStarts++;
+      });
       window.pywebview = { api: {
         set_dirty() {}, set_note_workspace_active() {},
         get_window_state: async () => ({ maximized: false }),
+        minimize: async () => { window.__minimizeCalls++; },
+        toggle_maximize: async () => { window.__maximizeCalls++; window.__maximized = !window.__maximized; return { maximized: window.__maximized }; },
         close_window: async () => {
           window.__closeCalls += 1;
           if (window.__holdClose) await new Promise(resolve => { window.__releaseClose = resolve; });
@@ -64,6 +71,58 @@ async function freePort() {
     await page.waitForFunction(() => window.CanvasNoteWorkspace && document.querySelector('.desktop-note-focus-close'));
     const floating = page.locator('.desktop-note-focus-close');
     const toggle = page.locator('[data-note-action="toggle-focus"]');
+    const dragSelectors = ['.note-tree-pane > .note-pane-head', '.note-tab-bar'];
+    async function expectDragMarkers(enabled) {
+      assert.deepEqual(await page.evaluate(selectors => selectors.map(selector => document.querySelector('#start-notes-workspace ' + selector).classList.contains('pywebview-drag-region')), dragSelectors), [enabled, enabled]);
+    }
+    async function blankPoint(selector) {
+      const rect = await page.locator('#start-notes-workspace ' + selector).boundingBox();
+      return { x: rect.x + 4, y: rect.y + 3 };
+    }
+    async function expectBlankDrag() {
+      const before = await page.evaluate(() => __dragStarts);
+      for (const selector of dragSelectors) {
+        const point = await blankPoint(selector);
+        await page.mouse.move(point.x, point.y); await page.mouse.down();
+        await page.mouse.move(point.x + 2, point.y + 1); await page.mouse.up();
+      }
+      assert.equal(await page.evaluate(() => __dragStarts), before + 2);
+    }
+    await expectDragMarkers(true);
+    await expectBlankDrag();
+    const secondaryStarts = await page.evaluate(() => __dragStarts);
+    for (const selector of dragSelectors) {
+      const point = await blankPoint(selector);
+      await page.mouse.click(point.x, point.y, { button: 'right' });
+      await page.mouse.click(point.x, point.y, { button: 'middle' });
+    }
+    assert.equal(await page.evaluate(() => __dragStarts), secondaryStarts, 'only the primary mouse button may start dragging');
+    const protectedStarts = await page.evaluate(() => __dragStarts);
+    await page.locator('.note-library-focus-button svg').first().dispatchEvent('mousedown', { button: 0 });
+    await page.locator('.note-expand-all svg').first().dispatchEvent('mousedown', { button: 0 });
+    await page.evaluate(() => {
+      const header = document.querySelector('.note-tree-pane > .note-pane-head');
+      const menu = document.createElement('div'); menu.setAttribute('role', 'menu'); menu.innerHTML = '<span>menu item</span>';
+      header.appendChild(menu); menu.firstChild.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); menu.remove();
+    });
+    assert.equal(await page.evaluate(() => __dragStarts), protectedStarts, 'buttons, disabled buttons and popup descendants must not drag the window');
+    await page.locator('.note-library-focus-button svg').first().dispatchEvent('dblclick', { button: 0 });
+    assert.equal(await page.evaluate(() => __maximizeCalls), 0);
+    let point = await blankPoint(dragSelectors[0]);
+    await page.mouse.dblclick(point.x, point.y);
+    await page.waitForFunction(() => __maximizeCalls === 1 && document.body.classList.contains('desktop-maximized'));
+    await expectDragMarkers(false);
+    const maximizedStarts = await page.evaluate(() => __dragStarts);
+    point = await blankPoint(dragSelectors[1]);
+    await page.mouse.click(point.x, point.y);
+    assert.equal(await page.evaluate(() => __dragStarts), maximizedStarts);
+    await page.mouse.dblclick(point.x, point.y);
+    await page.waitForFunction(() => __maximizeCalls === 2 && !document.body.classList.contains('desktop-maximized'));
+    await expectDragMarkers(true);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('canvasdesktop:window-state', { detail: { maximized: true } })));
+    await expectDragMarkers(false);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('canvasdesktop:window-state', { detail: { maximized: false } })));
+    await expectDragMarkers(true);
     assert.equal(await floating.getAttribute('aria-hidden'), 'false');
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
     assert(await floating.isVisible());
@@ -71,13 +130,16 @@ async function freePort() {
     await sleep(500);
     await page.screenshot({ path: path.join(root, 'focus-light.png') });
     await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; });
+    await expectBlankDrag();
     await page.screenshot({ path: path.join(root, 'focus-dark.png') });
     await page.setViewportSize({ width: 720, height: 500 });
+    await expectBlankDrag();
     await page.screenshot({ path: path.join(root, 'focus-narrow.png') });
     await page.evaluate(() => { document.body.dataset.startTheme = 'light'; });
     await page.setViewportSize({ width: 1280, height: 800 });
 
     await toggle.click();
+    await expectDragMarkers(false);
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '0');
     assert.equal(await floating.getAttribute('aria-hidden'), 'true');
     assert.equal(await floating.evaluate(node => getComputedStyle(node).pointerEvents), 'none');
@@ -97,6 +159,7 @@ async function freePort() {
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '1');
     assert.equal(await page.locator('body').evaluate(node => node.classList.contains('note-focus-transitioning')), false);
     assert.equal(await floating.getAttribute('aria-hidden'), 'false');
+    await expectDragMarkers(true);
     assert(await page.locator('.top-bar').evaluate(node => node.getBoundingClientRect().height < 1));
     await toggle.click();
     await sleep(80);
@@ -113,6 +176,7 @@ async function freePort() {
 
     await page.evaluate(() => document.querySelector('[data-start-workspace="canvas"]').click());
     await page.waitForFunction(() => document.body.dataset.startWorkspace === 'canvas');
+    await expectDragMarkers(false);
     assert.equal(await floating.getAttribute('aria-hidden'), 'true');
     assert(await page.locator('.top-bar').evaluate(node => node.getBoundingClientRect().height > 40));
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -121,6 +185,7 @@ async function freePort() {
     assert.equal(await page.locator('.desktop-note-focus-close').getAttribute('aria-hidden'), 'true');
     await page.locator('[data-start-workspace="notes"]').click();
     await page.waitForFunction(() => document.body.dataset.startWorkspace === 'notes');
+    await expectDragMarkers(true);
     assert.equal(await floating.getAttribute('aria-hidden'), 'false');
 
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -129,8 +194,27 @@ async function freePort() {
     await page.waitForFunction(() => window.CanvasNoteWorkspace?.currentPath !== undefined);
     await page.locator('.note-head-actions [data-note-action="new-note"]').click();
     await page.waitForFunction(() => !!CanvasNoteWorkspace.currentPath);
+    await expectDragMarkers(true);
+    const tabStarts = await page.evaluate(() => __dragStarts), maximizeCalls = await page.evaluate(() => __maximizeCalls);
+    await page.locator('.note-tab-label').first().dispatchEvent('mousedown', { button: 0 });
+    await page.locator('.note-tab-label').first().dispatchEvent('dblclick', { button: 0 });
+    assert.equal(await page.evaluate(() => __dragStarts), tabStarts);
+    assert.equal(await page.evaluate(() => __maximizeCalls), maximizeCalls, 'tab double clicks must not maximize');
+    await page.locator('.desktop-note-focus-controls [data-window-action="minimize"]').click();
+    assert.equal(await page.evaluate(() => __minimizeCalls), 1);
     const notePath = await page.evaluate(() => CanvasNoteWorkspace.currentPath);
     assert(notePath && notePath.endsWith('.md'));
+    await page.locator('[data-note-action="new-tab"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.note-tab').length === 2);
+    const tabsBefore = await page.locator('.note-tab').evaluateAll(nodes => nodes.map(node => node.dataset.noteTabPath));
+    const sortingStarts = await page.evaluate(() => __dragStarts);
+    await page.locator('.note-tab').first().dragTo(page.locator('.note-tab').last());
+    assert.deepEqual(await page.locator('.note-tab').evaluateAll(nodes => nodes.map(node => node.dataset.noteTabPath)), tabsBefore.slice().reverse());
+    assert.equal(await page.evaluate(() => __dragStarts), sortingStarts, 'sorting tabs must not start window dragging');
+    await page.locator('.note-tab').filter({ hasText: path.basename(notePath, '.md') }).click();
+    await page.waitForFunction(note => CanvasNoteWorkspace.currentPath === note, notePath);
+    await page.locator('.note-tab.is-blank .note-tab-close').click();
+    await page.waitForFunction(() => document.querySelectorAll('.note-tab').length === 1);
     await page.locator('.cm-content').click();
     await page.keyboard.type('Saved before close');
     await floating.click();
@@ -153,6 +237,13 @@ async function freePort() {
     assert.equal(await floating.evaluate(node => getComputedStyle(node).transitionDuration), '0s');
     assert.equal(await page.locator('.top-bar').evaluate(node => getComputedStyle(node).transitionDuration), '0s');
     assert.deepEqual(errors, []);
+    const browserContext = await browser.newContext();
+    await browserContext.addInitScript(() => { localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteFocusMode:v1', '1'); });
+    const browserPage = await browserContext.newPage();
+    await browserPage.goto(`http://127.0.0.1:${port}/`);
+    assert.equal(await browserPage.locator('#start-notes-workspace .pywebview-drag-region').count(), 0);
+    assert.equal(await browserPage.locator('.desktop-note-focus-controls').count(), 0);
+    await browserContext.close();
     await context.close();
     console.log('note focus desktop browser: ok');
   } finally {
