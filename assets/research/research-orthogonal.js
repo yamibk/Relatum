@@ -150,7 +150,7 @@ export function quantizeWithSnap(start, target, unitLength, index, scale = 1, ex
 
 // Replace only collinear spans bounded by existing unit endpoints. Crossings
 // and uncovered tails keep their original appearance and direction.
-export function subtractLineSpan(original, replacement) {
+export function cutLineSpan(original, replacement) {
   if (original.kind !== 'line') return null;
   const [dx, dy] = DIRECTIONS[original.direction];
   const end = linePoint(replacement);
@@ -164,7 +164,11 @@ export function subtractLineSpan(original, replacement) {
   const first = Math.round(low), last = Math.round(high), tails = [];
   if (first > 0) tails.push({ ...original, units: first, arrowhead: 'none' });
   if (last < original.units) tails.push({ ...original, ...linePoint(original, last), units: original.units - last });
-  return tails;
+  return { tails, removed: { ...original, ...linePoint(original, first), units: last - first, arrowhead: 'none' } };
+}
+
+export function subtractLineSpan(original, replacement) {
+  return cutLineSpan(original, replacement)?.tails ?? null;
 }
 
 export function replacementWithSnap(start, target, index, scale = 1) {

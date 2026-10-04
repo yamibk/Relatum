@@ -114,6 +114,22 @@ class ResearchWorkspaceStoreTests(unittest.TestCase):
         self.root = Path(self.temporary.name) / "research-workspace"
         self.store = ResearchWorkspaceStore(self.root, atomic_json=atomic_json)
 
+    def test_label_markdown_bool_roundtrip_and_legacy_absence(self):
+        document = calculation_document()
+        legacy = dict(id='legacy', kind='symbol', type='lamp', x=100, y=100,
+                      width=32, height=32, rotation=0, label='$U_{s1}$\n**R1**')
+        document['pages'][0]['decorations'] = [legacy,
+            dict(legacy, id='enabled', labelMarkdown=True), dict(legacy, id='literal', labelMarkdown=False)]
+        saved = self.store.save(document, '')
+        self.assertEqual(ResearchWorkspaceStore(self.root, atomic_json=atomic_json).load()['document'], document)
+        self.assertNotIn('labelMarkdown', saved['document']['pages'][0]['decorations'][0])
+        for value in ('true', 1, 0, None, [], {}):
+            invalid = json.loads(json.dumps(document))
+            invalid['pages'][0]['decorations'][0]['labelMarkdown'] = value
+            with self.subTest(value=value), self.assertRaises(ResearchStoreError):
+                self.store.save(invalid, saved['revision'])
+            self.assertEqual(self.store.load()['document'], document)
+
     def tearDown(self):
         self.temporary.cleanup()
 

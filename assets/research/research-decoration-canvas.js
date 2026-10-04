@@ -1,9 +1,10 @@
 import { DecorationIndex, decorationBounds, hitDecoration, intersects, linePoint,
-  quantizeWithSnap, replacementWithSnap, SYMBOL_TYPES } from './research-orthogonal.js';
+  quantizeWithSnap, replacementWithSnap, cutLineSpan, SYMBOL_TYPES } from './research-orthogonal.js';
 import { defaultSymbol, symbolGeometry, symbolAngle, symbolColor, symbolTextMetrics, setSymbolTextMeasurer } from './research-symbols.js';
 import { createDecorationPresetStore } from './research-decoration-presets.js';
+import { createResearchLabelLayer } from './research-label-renderer.js';
 
-const DEFAULTS = Object.freeze({ symbol: 'rectangle', arrowhead: 'none', lineStyle: 'solid',
+const DEFAULTS = Object.freeze({ symbol: 'rectangle', arrowhead: 'none', lineStyle: 'solid', lineAction: 'draw',
   color: 'mono', unitLength: 40, width: 2, presetId: '', endpointDiameter: 4 });
 const KEY = 'research:decorationTools:v1';
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -25,6 +26,9 @@ export function createDecorationCanvas(options) {
   let model = options.model, index = new DecorationIndex(model.decorations());
   let enabled = false, selected = new Set(), gesture = null, snap = null, lastPointer = null;
   let presses = [], tools = { ...DEFAULTS };
+  const labels = createResearchLabelLayer(viewport, { scheduleDraw, onMetricsChange: (ids) => {
+    index.rebuild(model.decorations()); options.onMetricsChange?.(ids); scheduleDraw();
+  } });
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
     if (SYMBOL_TYPES.includes(saved.symbol)) tools.symbol = saved.symbol;
@@ -45,8 +49,11 @@ export function createDecorationCanvas(options) {
   }
   function notify() { scheduleDraw(); if (onSelectionChange) onSelectionChange(selection()); }
   function setTools(patch) {
+    cancel();
+    if (['solid', 'dashed'].includes(patch.lineStyle)) patch = { ...patch, lineAction: 'draw' };
     tools = { ...tools, ...patch };
-    try { localStorage.setItem(KEY, JSON.stringify(tools)); } catch (_error) {}
+    const { lineAction, ...saved } = tools;
+    try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (_error) {}
     scheduleDraw();
     return { ...tools };
   }
@@ -62,11 +69,12 @@ export function createDecorationCanvas(options) {
   function modelChanged(change) {
     if (!change.decorationsOnly && !change.topology) return;
     index.rebuild(model.decorations());
+    labels.retain(model.decorations());
     selected = new Set([...selected].filter((id) => model.decoration(id)));
     if (enabled && !change.live) notify();
     scheduleDraw();
   }
-  function setModel(next) { cancel(); model = next; index.rebuild(model.decorations()); selected.clear(); presses = []; }
+  function setModel(next) { cancel(); labels.clear(); model = next; index.rebuild(model.decorations()); selected.clear(); presses = []; }
   function setEnabled(next) {
     cancel(); enabled = !!next; selected.clear();
     viewport.dataset.researchEditorMode = enabled ? 'orthogonal' : 'default';
@@ -93,8 +101,10 @@ export function createDecorationCanvas(options) {
     if (event.altKey) {
       if (object && object.kind === 'symbol') return true;
       snap = nearest(point);
+      if (tools.lineAction === 'delete' && !snap) return true;
       const start = snap || point;
-      gesture = { type: 'create', pointerId: event.pointerId, start, startSnapped: !!snap, preview: null, style: { ...tools } };
+      gesture = { type: tools.lineAction === 'delete' ? 'erase' : 'create', pointerId: event.pointerId,
+        start, startSnapped: !!snap, preview: null, style: { ...tools } };
     } else {
       let handle = null;
       if (selected.size === 1) {
@@ -131,7 +141,13 @@ export function createDecorationCanvas(options) {
     lastPointer = world(event);
     if (!gesture || gesture.pointerId !== event.pointerId) return false;
     const point = lastPointer, scale = getCamera().scale;
-    if (gesture.type === 'create') {
+    if (gesture.type === 'erase') {
+      const next = replacementWithSnap(gesture.start, point, index, scale);
+      snap = next?.snap || null;
+      gesture.preview = next ? { ...gesture.style, ...next.line, kind: 'line' } : null;
+      gesture.removed = next ? index.query(decorationBounds(gesture.preview))
+        .map((d) => cutLineSpan(d, gesture.preview)?.removed).filter(Boolean) : [];
+    } else if (gesture.type === 'create') {
       // Restyling an existing span keeps its unit grid, even if the default for
       // newly drawn lines has changed since that span was created.
       const next = gesture.startSnapped && replacementWithSnap(gesture.start, point, index, scale)
@@ -170,7 +186,9 @@ export function createDecorationCanvas(options) {
     pointerMove(event);
     const previous = gesture; gesture = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
-    if (previous.type === 'create' && previous.preview && previous.preview.units > 0) {
+    if (previous.type === 'erase' && previous.preview) {
+      model.eraseDecorationSpan(previous.preview);
+    } else if (previous.type === 'create' && previous.preview && previous.preview.units > 0) {
       const created = previous.startSnapped && previous.endSnapped
         ? model.replaceDecorationSpan(previous.preview) : model.createDecoration(previous.preview);
       if (created) selected = new Set([created.id]);
@@ -261,12 +279,14 @@ export function createDecorationCanvas(options) {
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       geometry.paths.forEach((path) => { if (geometry.filled) ctx.fill(path); else ctx.stroke(path); });
     });
-    if (d.label) {
+    if (d.label && (d.labelMarkdown === false || !labels.hasLabel(d.id))) {
       const m = symbolTextMetrics(d);
       ctx.save();
       ctx.fillStyle = !d.labelColor || d.labelColor === 'inherit' ? color : symbolColor(d.labelColor, ink, dark);
       ctx.font = `${d.labelFontSize ?? 14}px ui-sans-serif, system-ui`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
-      ctx.fillText(d.label, d.x + (d.labelOffsetX ?? 0), d.y - (d.labelOffsetY ?? 0) + (m.ascent - m.descent) / 2);
+      const rows = d.label.split('\n'), size = d.labelFontSize ?? 14;
+      rows.forEach((line, i) => ctx.fillText(line, d.x + (d.labelOffsetX ?? 0),
+        d.y - (d.labelOffsetY ?? 0) + (m.ascent - m.descent) / 2 + (i - (rows.length - 1) / 2) * size * 1.35));
       ctx.restore();
     }
   }
@@ -287,8 +307,13 @@ export function createDecorationCanvas(options) {
       ctx.setTransform(ratio * camera.scale, 0, 0, ratio * camera.scale, ratio * camera.x, ratio * camera.y);
     });
     const objects = index.query(visible), symbols = objects.filter((d) => d.kind === 'symbol');
+    labels.sync(symbols, camera, dark);
     objects.forEach((d) => { if (d.kind === 'line') drawLine(lineContext, d, colors[d.color], paper, visible); });
-    if (gesture && gesture.preview && gesture.preview.units) {
+    if (gesture?.type === 'erase') {
+      lineContext.globalAlpha = .85;
+      gesture.removed?.forEach((d) => drawLine(lineContext, d, colors.red, paper, visible));
+      lineContext.globalAlpha = 1;
+    } else if (gesture && gesture.preview && gesture.preview.units) {
       lineContext.globalAlpha = .7; drawLine(lineContext, gesture.preview, colors[gesture.preview.color], paper, visible); lineContext.globalAlpha = 1;
     }
     lineContext.globalCompositeOperation = 'destination-out';
@@ -320,6 +345,7 @@ export function createDecorationCanvas(options) {
     getSymbolTemplate, getPresetStore: () => presets,
     resetTools: () => setTools({ ...DEFAULTS }),
     isEnabled: () => enabled,
-    dispose: () => { cancel(); canvas.remove(); },
+    activate: labels.activate, suspend: labels.suspend,
+    dispose: () => { cancel(); labels.dispose(); canvas.remove(); },
   };
 }

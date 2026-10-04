@@ -1,7 +1,55 @@
-import { defaultSymbol, SYMBOL_LABELS, SYMBOL_TYPES, symbolSvgMarkup } from './research-symbols.js';
+import { defaultSymbol, SYMBOL_LABELS, SYMBOL_TYPES, symbolSvgMarkup, symbolShapeBounds, symbolLabelBounds } from './research-symbols.js';
+import { createResearchLabelLayer } from './research-label-renderer.js';
+
+const previews = new WeakMap();
+export function disposeSymbolPreviews(root) {
+  for (const container of [root, ...root.querySelectorAll('[data-research-symbol-preview]')]) {
+    const preview = previews.get(container);
+    if (preview) { preview.labels.dispose(); preview.observer.disconnect(); cancelAnimationFrame(preview.frame); previews.delete(container); }
+  }
+}
+export function suspendSymbolPreviews(root) {
+  for (const container of root.querySelectorAll('[data-research-symbol-preview]')) {
+    const preview = previews.get(container);
+    if (preview) { preview.labels.suspend(); preview.observer.disconnect(); cancelAnimationFrame(preview.frame); preview.frame = 0; }
+  }
+}
 
 export function renderSymbolPreview(container, template) {
-  container.innerHTML = symbolSvgMarkup(template, matchMedia('(prefers-color-scheme: dark)').matches);
+  let preview = previews.get(container);
+  if (!preview) {
+    container.dataset.researchSymbolPreview = '';
+    const shape = document.createElement('div'); shape.className = 'research-symbol-preview-shape';
+    shape.dataset.userContent = '';
+    container.replaceChildren(shape);
+    preview = { shape, frame: 0, template };
+    const schedule = () => {
+      if (!preview.frame) preview.frame = requestAnimationFrame(() => {
+        preview.frame = 0; if (container.isConnected) draw();
+      });
+    };
+    const draw = () => {
+      const d = { ...defaultSymbol(preview.template.type), ...preview.template, x: 0, y: 0, id: 'preview' };
+      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      const b = symbolShapeBounds(d);
+      if (d.label) { const l = symbolLabelBounds(d);
+        b.left = Math.min(b.left, l.left); b.right = Math.max(b.right, l.right);
+        b.top = Math.min(b.top, l.top); b.bottom = Math.max(b.bottom, l.bottom); }
+      b.left -= 4; b.top -= 4; b.right += 4; b.bottom += 4;
+      const markup = symbolSvgMarkup(d.labelMarkdown === false || !preview.labels.hasLabel('preview') ? d : { ...d, label: '' }, dark);
+      if (preview.markup !== markup) { shape.innerHTML = markup; preview.markup = markup; }
+      const w = b.right - b.left, h = b.bottom - b.top;
+      shape.firstElementChild.setAttribute('viewBox', `${b.left} ${b.top} ${w} ${h}`);
+      const width = container.clientWidth, height = container.clientHeight, scale = Math.min(width / w, height / h) || 1;
+      preview.labels.sync(width > 0 && height > 0 && container.isConnected ? [d] : [], { scale, x: (width - w * scale) / 2 - b.left * scale,
+        y: (height - h * scale) / 2 - b.top * scale }, dark);
+    };
+    preview.draw = draw;
+    preview.labels = createResearchLabelLayer(container, { scheduleDraw: schedule, onMetricsChange: schedule });
+    preview.observer = new ResizeObserver(schedule); preview.observer.observe(container);
+    previews.set(container, preview);
+  }
+  preview.template = template; preview.observer.observe(container); preview.labels.activate(); preview.draw();
 }
 
 // Live offsets and colors share the instance/preset preview path. Only a
@@ -96,15 +144,55 @@ export function buildSymbolControls(container, template, options) {
     button.addEventListener('click', () => { input.value = ((state.rotationDegrees + delta + 360) % 360); input.dispatchEvent(new Event('change')); }); actions.appendChild(button);
   }
   angle.appendChild(actions);
-  const label = group('标注'), value = document.createElement('input'); value.type = 'text'; value.value = state.label; value.maxLength = 10000;
+  const label = group('标注'), value = document.createElement('textarea'); value.rows = 3; value.value = state.label; value.maxLength = 10000;
   value.dataset.researchDecorationLabel = ''; value.dataset.symbolField = 'label';
-  value.addEventListener('change', () => commit({ label: value.value }));
-  value.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing && !options.inDialog) { event.preventDefault(); value.blur(); } });
+  let composing = false, dirty = false, previewing = false, pendingCommit = false, lastPreview = state.label;
+  const waiters = [];
+  const previewLabel = () => {
+    if (composing || value.value === lastPreview) return;
+    lastPreview = value.value; previewing = true;
+    onPreview?.({ label: value.value }, value);
+  };
+  const labelEditor = {
+    isComposing: () => composing,
+    commit() {
+      if (composing) { pendingCommit = true; return new Promise((resolve) => waiters.push(resolve)); }
+      if (dirty) { dirty = previewing = false; lastPreview = value.value; commit({ label: value.value }); }
+      return Promise.resolve();
+    },
+    cancel() {
+      const hadPreview = previewing; dirty = previewing = pendingCommit = false;
+      value.value = lastPreview = state.label;
+      if (hadPreview) onCancelPreview?.();
+    },
+  };
+  value.addEventListener('compositionstart', () => { composing = true; });
+  value.addEventListener('compositionend', () => {
+    composing = false; dirty = true; previewLabel();
+    if (pendingCommit) { pendingCommit = false; labelEditor.commit(); }
+    for (const resolve of waiters.splice(0)) resolve();
+  });
+  value.addEventListener('input', (event) => { dirty = true; if (!event.isComposing) previewLabel(); });
+  value.addEventListener('blur', () => labelEditor.commit());
+  value.addEventListener('keydown', (event) => {
+    if (event.isComposing || composing) return;
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); labelEditor.cancel(); }
+    else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault(); labelEditor.commit(); value.blur();
+    }
+  });
   field(label, '文字', value);
+  const markdownRow = document.createElement('label'); markdownRow.className = 'research-label-markdown';
+  const markdown = document.createElement('input'); markdown.type = 'checkbox'; markdown.checked = state.labelMarkdown !== false;
+  markdown.dataset.symbolField = 'labelMarkdown';
+  markdown.addEventListener('change', () => commit({ labelMarkdown: markdown.checked }));
+  const markdownText = document.createElement('span'); text(markdownText, '开启 Markdown 渲染');
+  markdownRow.append(markdown, markdownText); label.appendChild(markdownRow);
   const typography = pair(label); color(typography, '文字颜色', 'labelColor', true); numeric(typography, '字号', 'labelFontSize', 8, 72);
   const offsets = pair(label);
   const x = numeric(offsets, 'X 偏移', 'labelOffsetX', -1e9, 1e9, 1, '以符号中心为原点，X 向右为正。');
   const y = numeric(offsets, 'Y 偏移', 'labelOffsetY', -1e9, 1e9, 1, '以符号中心为原点，Y 向上为正。');
   const center = document.createElement('button'); center.type = 'button'; center.className = 'research-label-center'; text(center, '居中');
   center.addEventListener('click', () => { x.value = y.value = 0; commit({ labelOffsetX: 0, labelOffsetY: 0 }); }); label.appendChild(center);
+  return labelEditor;
 }

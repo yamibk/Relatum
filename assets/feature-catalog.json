@@ -361,6 +361,7 @@
       "canvas.focus"
     ],
     "markdown.js": [
+      "research",
       "canvas.editor",
       "notes",
       "canvas.quicknotes",

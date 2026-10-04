@@ -184,6 +184,25 @@ export class ResearchModel {
       { kind: 'decoration-remove', decorationsOnly: true });
   }
 
+  eraseDecorationSpan(source) {
+    // Only the geometry matters; deletion is never a persisted line style.
+    const [span] = normalizeDecorations([{ id: 'erase-span', kind: 'line',
+      x: source?.x, y: source?.y, direction: source?.direction,
+      units: source?.units, unitLength: source?.unitLength,
+      width: 1, lineStyle: 'solid', color: 'mono', arrowhead: 'none' }]);
+    if (!span) return false;
+    let changed = false;
+    const remaining = this.state.decorations.flatMap((d) => {
+      const tails = subtractLineSpan(d, span);
+      if (tails === null) return [d];
+      changed = true;
+      return tails.map((tail, i) => ({ ...tail, id: i === 0 ? d.id : id('decoration') }));
+    });
+    if (!changed) return false;
+    return this.mutate((state) => { state.decorations = remaining; },
+      { kind: 'decoration-span-erase', decorationsOnly: true });
+  }
+
   duplicateDecorations(objectIds, dx = 28, dy = 28) {
     const selected = new Set(objectIds);
     const copies = this.state.decorations.filter((d) => selected.has(d.id))

@@ -53,7 +53,11 @@
   async function suspend() {
     if (disposed) return true;
     desiredPhase = 'suspended';
-    if (runtime) runtime.suspend();
+    if (runtime) await runtime.suspend();
+    if (desiredPhase !== 'suspended') {
+      if (desiredPhase === 'active' && !disposed) runtime?.activate();
+      return false;
+    }
     if (stage) stage.inert = true;
     setPhase('suspended');
     return true;

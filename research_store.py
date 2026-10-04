@@ -552,6 +552,9 @@ def _normalize_decorations(source, issues: list[dict], path: str) -> list[dict]:
                 if key in raw:
                     valid = valid and color(raw[key], key == 'labelColor')
                     keys += (key,)
+            if 'labelMarkdown' in raw:
+                valid = valid and type(raw['labelMarkdown']) is bool
+                keys += ('labelMarkdown',)
         else:
             valid = False
         if valid:

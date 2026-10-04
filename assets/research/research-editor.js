@@ -3,7 +3,7 @@ import { createResearchPageSession } from './research-pages.js';
 import { createResearchCanvas } from './research-canvas.js';
 import { SYMBOL_TYPES, LINE_COLORS } from './research-orthogonal.js';
 import { SYMBOL_LABELS, defaultSymbol, symbolTemplateDefaults } from './research-symbols.js';
-import { buildSymbolControls, renderSymbolPreview } from './research-symbol-controls.js';
+import { buildSymbolControls, renderSymbolPreview, disposeSymbolPreviews, suspendSymbolPreviews } from './research-symbol-controls.js';
 import {
   activateResearchNode, clearResearchTrace, createResearchComputeRuntime, snapshotPersistentResearchState,
   updateResearchComputeRuntime,
@@ -107,6 +107,13 @@ export async function createResearchEditor(stage) {
   const endpointSizeInput = required('[data-research-endpoint-size]');
   let editorMode = 'default';
   let presetDialog = null, presetContextMenu = null, symbolPreview = null;
+  let symbolLabelEditor = null;
+  function finishLabelEdit(retry) {
+    if (symbolLabelEditor?.isComposing()) {
+      symbolLabelEditor.commit().then(() => { if (!disposed) retry(); }); return false;
+    }
+    symbolLabelEditor?.commit(); return true;
+  }
   let dockResizeAnimation = null;
   let decorationControlCommit = false, renderedDecorationId = '';
   try { if (localStorage.getItem(EDITOR_MODE_KEY) === 'orthogonal') editorMode = 'orthogonal'; } catch (_error) {}
@@ -610,6 +617,7 @@ export async function createResearchEditor(stage) {
   }
 
   function switchPage(pageId, options = {}) {
+    if (!finishLabelEdit(() => switchPage(pageId, options))) return true;
     cancelSymbolPreview(); cancelDockResize(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
     const page = session.page(pageId);
     if (!page) return false;
@@ -1152,6 +1160,7 @@ export async function createResearchEditor(stage) {
   }
 
   function setEditorMode(mode, persist = true) {
+    if (!finishLabelEdit(() => setEditorMode(mode, persist))) return;
     const previousDock = active && editorMode !== mode ? dock.getBoundingClientRect() : null;
     cancelDockResize();
     cancelSymbolPreview(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
@@ -1196,7 +1205,9 @@ export async function createResearchEditor(stage) {
     orthogonalDockTools.querySelectorAll('button').forEach((button) => {
       const selected = button.dataset.researchQuickSymbol
         ? !tools.presetId && button.dataset.researchQuickSymbol === tools.symbol
-        : button.dataset.researchQuickLineStyle === tools.lineStyle;
+        : button.dataset.researchQuickLineAction
+          ? button.dataset.researchQuickLineAction === tools.lineAction
+          : tools.lineAction === 'draw' && button.dataset.researchQuickLineStyle === tools.lineStyle;
       button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
   }
@@ -1208,12 +1219,13 @@ export async function createResearchEditor(stage) {
       const section = document.createElement('section'); section.className = 'research-decoration-tool-group';
       const heading = document.createElement('strong'); decorationText(heading, title); section.appendChild(heading);
       const choices = document.createElement('div');
-      entries.forEach(([value, label]) => {
+      entries.forEach(([value, label, toolKey = key]) => {
         if (query && !label.toLowerCase().includes(query.toLowerCase()) && !T(label).toLowerCase().includes(query.toLowerCase())) return;
         const button = document.createElement('button'); button.type = 'button'; decorationText(button, label);
-        button.dataset.researchDecorationTool = key; button.dataset.value = value;
-        button.classList.toggle('is-active', tools[key] === value);
-        button.setAttribute('aria-pressed', tools[key] === value ? 'true' : 'false'); choices.appendChild(button);
+        button.dataset.researchDecorationTool = toolKey; button.dataset.value = value;
+        const active = tools[toolKey] === value && (toolKey !== 'lineStyle' || tools.lineAction === 'draw');
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false'); choices.appendChild(button);
       });
       section.appendChild(choices); fragment.appendChild(section);
     };
@@ -1244,9 +1256,9 @@ export async function createResearchEditor(stage) {
     add.setAttribute('aria-label', T('新建预设')); add.dataset.i18nSourceAriaLabel = '新建预设'; grid.appendChild(add);
     section.appendChild(grid); fragment.appendChild(section);
     group('线段', 'arrowhead', [['none', '默认线段'], ['end', '单向箭头']]);
-    group('线段类型', 'lineStyle', [['solid', '实线'], ['dashed', '虚线']]);
+    group('线段类型', 'lineStyle', [['solid', '实线'], ['dashed', '虚线'], ['delete', '删除', 'lineAction']]);
     group('线段颜色', 'color', LINE_COLORS.map((color) => [color, COLOR_LABELS[color]]));
-    paletteList.replaceChildren(fragment);
+    disposeSymbolPreviews(paletteList); paletteList.replaceChildren(fragment);
   }
 
   function renderDecorationSelection(selection) {
@@ -1304,7 +1316,7 @@ export async function createResearchEditor(stage) {
       choice('线段类型', 'lineStyle', [['solid', '实线'], ['dashed', '虚线']]);
       choice('线段颜色', 'color', LINE_COLORS.map((color) => [color, COLOR_LABELS[color]]));
     } else {
-      buildSymbolControls(inspectorFields, d, { T,
+      symbolLabelEditor = buildSymbolControls(inspectorFields, d, { T,
         onChange: update,
         onPreview: (patch, control) => {
           const model = session.page(renderedPageId).model;
@@ -1325,9 +1337,9 @@ export async function createResearchEditor(stage) {
   function cancelSymbolPreview() {
     if (!symbolPreview) return;
     const previous = symbolPreview; symbolPreview = null;
-    if (previous.control?.type === 'number') {
+    if (previous.control?.type === 'number' || previous.control?.tagName === 'TEXTAREA') {
       const original = previous.before.decorations.find((d) => d.id === previous.objectId);
-      previous.control.value = original?.[previous.control.dataset.symbolField] ?? 0;
+      previous.control.value = original?.[previous.control.dataset.symbolField] ?? '';
     }
     previous.model.restore(previous.before, true);
   }
@@ -1337,6 +1349,7 @@ export async function createResearchEditor(stage) {
     if (focus) modeSelect.focus({ preventScroll: true });
   }
   function openModeMenu() {
+    if (!finishLabelEdit(openModeMenu)) return;
     cancelSymbolPreview(); canvas.cancelDecorationGesture(); closePresetContextMenu();
     const anchor = modeSelect.getBoundingClientRect(), parent = dock.getBoundingClientRect();
     modeMenu.style.left = Math.max(8, Math.min(anchor.left, window.innerWidth - 164)) - parent.left + 'px';
@@ -1346,12 +1359,14 @@ export async function createResearchEditor(stage) {
   }
   function closePresetDialog() {
     if (!presetDialog) return;
-    const dialog = presetDialog; presetDialog = null; dialog.close(); dialog.remove();
+    const dialog = presetDialog; presetDialog = null; disposeSymbolPreviews(dialog); dialog.close(); dialog.remove();
   }
   function openPresetDialog(template = canvas.getDecorationSymbolTemplate(), existing = null) {
+    if (!finishLabelEdit(() => openPresetDialog(template, existing))) return;
     cancelSymbolPreview(); canvas.cancelDecorationGesture(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
     const returnFocus = document.activeElement;
     let draft = symbolTemplateDefaults(template);
+    let presetLabelEditor = null;
     const dialog = document.createElement('dialog'); dialog.className = 'research-preset-dialog'; dialog.dataset.researchPresetDialog = '';
     const form = document.createElement('form'), header = document.createElement('header'), title = document.createElement('h2');
     title.id = 'research-preset-title'; decorationText(title, existing ? '编辑预设' : '新建预设'); dialog.setAttribute('aria-labelledby', title.id);
@@ -1366,7 +1381,7 @@ export async function createResearchEditor(stage) {
     const controls = document.createElement('div'); controls.className = 'research-preset-fields'; form.appendChild(controls);
     const rebuild = () => {
       controls.replaceChildren(); renderSymbolPreview(preview, draft);
-      buildSymbolControls(controls, draft, { T, inDialog: true, allowType: true,
+      presetLabelEditor = buildSymbolControls(controls, draft, { T, inDialog: true, allowType: true,
         onTypeChange: (type) => { const defaults = defaultSymbol(type); draft = { ...draft, type, width: defaults.width, height: defaults.height }; rebuild(); },
         onChange: (patch) => { Object.assign(draft, patch); renderSymbolPreview(preview, draft); },
         onPreview: (patch) => renderSymbolPreview(preview, { ...draft, ...patch }),
@@ -1378,9 +1393,11 @@ export async function createResearchEditor(stage) {
     const footer = document.createElement('footer'), cancel = document.createElement('button'), save = document.createElement('button');
     cancel.type = 'button'; decorationText(cancel, '取消'); cancel.addEventListener('click', dismiss);
     save.type = 'submit'; save.className = 'research-preset-save'; save.dataset.researchPresetSave = ''; decorationText(save, '保存'); footer.append(cancel, save); form.appendChild(footer);
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (form.contains(document.activeElement)) document.activeElement.blur();
+      await presetLabelEditor?.commit();
+      if (!dialog.isConnected) return;
       if (!form.reportValidity()) return;
       try {
         const preset = canvas.getDecorationPresetStore().save(name.value, draft, existing?.id || '');
@@ -1490,9 +1507,11 @@ export async function createResearchEditor(stage) {
       if (event.target.closest('[data-research-add]')) { showLibrary({ expand: true, focusSearch: true }); return; }
       const quickSymbol = event.target.closest('[data-research-quick-symbol]');
       const quickLine = event.target.closest('[data-research-quick-line-style]');
-      if (editorMode === 'orthogonal' && (quickSymbol || quickLine)) {
+      const quickLineAction = event.target.closest('[data-research-quick-line-action]');
+      if (editorMode === 'orthogonal' && (quickSymbol || quickLine || quickLineAction)) {
         canvas.setDecorationTools(quickSymbol ? { symbol: quickSymbol.dataset.researchQuickSymbol, presetId: '' }
-          : { lineStyle: quickLine.dataset.researchQuickLineStyle });
+          : quickLineAction ? { lineAction: quickLineAction.dataset.researchQuickLineAction }
+            : { lineStyle: quickLine.dataset.researchQuickLineStyle });
         syncDecorationDock();
         if (quickSymbol) showLibrary(); else if (!nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
         viewport.focus({ preventScroll: true }); return;
@@ -1627,7 +1646,7 @@ export async function createResearchEditor(stage) {
       if (!modeSelect.contains(event.target) && !modeMenu.contains(event.target)) closeModeMenu();
       if (presetContextMenu && !presetContextMenu.element.contains(event.target)) closePresetContextMenu();
       if (symbolPreview && symbolPreview.control !== event.target) {
-        if (symbolPreview.control?.type === 'number') symbolPreview.control.blur();
+        if (symbolPreview.control?.type === 'number' || symbolPreview.control?.tagName === 'TEXTAREA') symbolPreview.control.blur();
         else if (!event.target.closest('input[type="color"]')) cancelSymbolPreview();
       }
       if (settingsPanel.hidden || settingsPanel.contains(event.target) || settingsOpen.contains(event.target)) return;
@@ -1635,14 +1654,21 @@ export async function createResearchEditor(stage) {
     }, { capture: true, signal });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) cancelDockResize();
-      if (document.hidden && editorMode === 'orthogonal') { cancelSymbolPreview(); canvas.cancelDecorationGesture(); closeModeMenu(); closePresetContextMenu(); }
+      if (document.hidden && editorMode === 'orthogonal') {
+        if (symbolPreview?.control?.tagName === 'TEXTAREA') symbolLabelEditor?.commit(); else cancelSymbolPreview();
+        canvas.cancelDecorationGesture(); closeModeMenu(); closePresetContextMenu();
+      }
       simulation.setVisible(!document.hidden);
       if (document.hidden) scheduleSave(0);
     }, { signal });
     window.addEventListener('keydown', (event) => {
       if (presetDialog) return;
+      if (event.isComposing || event.keyCode === 229 || (symbolLabelEditor?.isComposing() && event.target.tagName === 'TEXTAREA')) return;
       if (modeMenu.classList.contains('is-open') && event.key === 'Escape') { event.preventDefault(); closeModeMenu(true); return; }
-      if (event.key === 'Escape' && symbolPreview) { event.preventDefault(); cancelSymbolPreview(); }
+      if (event.key === 'Escape' && symbolPreview) {
+        event.preventDefault();
+        if (symbolPreview.control?.tagName === 'TEXTAREA') symbolLabelEditor?.cancel(); else cancelSymbolPreview();
+      }
       if (event.key === 'Escape' && !settingsResetConfirm.hidden) {
         event.preventDefault(); closeSettingsResetConfirmation(); settingsResetOpen.focus({ preventScroll: true });
       }
@@ -1716,6 +1742,8 @@ export async function createResearchEditor(stage) {
 
   function suspend() {
     if (disposed) return true;
+    if (symbolLabelEditor?.isComposing()) return symbolLabelEditor.commit().then(() => suspend());
+    symbolLabelEditor?.commit(); suspendSymbolPreviews(stage);
     cancelSymbolPreview(); cancelDockResize(); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
     settlePageSwitchMotion(); resetRailWheel(); clearRailTransients();
     simulation.suspend(); cancelCompute();
@@ -1741,6 +1769,8 @@ export async function createResearchEditor(stage) {
 
   function dispose() {
     if (disposed) return true;
+    if (symbolLabelEditor?.isComposing()) return symbolLabelEditor.commit().then(() => dispose());
+    symbolLabelEditor?.commit(); disposeSymbolPreviews(stage);
     suspend(); flushSave({ force: true, keepalive: true }); disposed = true;
     if (saveTimer) clearTimeout(saveTimer); if (saveRetryTimer) clearTimeout(saveRetryTimer); if (saveStatusTimer) clearTimeout(saveStatusTimer);
     if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0;

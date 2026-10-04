@@ -19,6 +19,24 @@ const Notebook = global.RelatumMarkdownNotebook;
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'styles.css'), 'utf8');
 assert(Markdown && Markdown.structure && typeof Markdown.renderResult === 'function');
 
+const label = Markdown.renderLabelResult('**bold** *italic* ~~gone~~ `code` ==bright==\n$U_{s1}$');
+assert.equal(label.error, false);
+for (const tag of ['<strong>bold</strong>', '<em>italic</em>', '<del>gone</del>', '<code>code</code>', '<mark', '<br>'])
+  assert(label.html.includes(tag), tag);
+assert.equal(label.features.math, true);
+assert.equal(label.features.mermaid, false);
+for (const source of ['U_{s1}', '`$U_{s1}$`', '\\$U_{s1}\\$', '$unfinished'])
+  assert.equal(Markdown.renderLabelResult(source).features.math, false, source);
+assert.equal(Markdown.renderLabelResult('`**x**`').html, '<code>**x**</code>');
+assert.equal(Markdown.renderLabelResult('\\*literal\\*').html, '*literal*');
+const blocks = Markdown.renderLabelResult('before\n$$\nU_{s1}\n$$\nafter');
+assert.equal(blocks.features.math, true);
+assert(!blocks.html.includes('<br>'), 'display math owns its line boundaries, without source-mapping blank rows');
+const literalBlocks = Markdown.renderLabelResult('# heading\n- item\n[a](https://example.com)\n![img](x)\n<script>x</script><svg onload="evil()"></svg>');
+assert(!/<(?:h[1-6]|ul|ol|li|a|img|script|svg)\b/.test(literalBlocks.html));
+assert(literalBlocks.html.includes('&lt;script&gt;'));
+assert.equal((literalBlocks.html.match(/<br>/g) || []).length, 4);
+
 ['- ', '* ', '+ ', '1. ', '1) ', '- [ ] ', '- [x] '].forEach((source) => {
   const result = Markdown.renderResult(source);
   assert.strictEqual(result.error, false, source);

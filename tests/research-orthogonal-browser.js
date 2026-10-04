@@ -101,7 +101,7 @@ async function run() {
     await tool('symbol', 'lamp'); await page.mouse.dblclick(541, 302);
     decorations = (await snapshot()).pages[0].decorations;
     let lamp = decorations.find((d) => d.type === 'lamp'); assert(lamp); assert.equal(lamp.x, 540); assert.equal(lamp.y, 300);
-    await page.locator('[data-research-decoration-label]').fill('L1'); await page.locator('[data-research-decoration-label]').press('Enter');
+    await page.locator('[data-research-decoration-label]').fill('L1'); await page.locator('[data-research-decoration-label]').press('Control+Enter');
     assert.equal((await snapshot()).pages[0].decorations.find((d) => d.type === 'lamp').label, 'L1');
     // A symbol moves independently and the line geometry stays fixed.
     await page.mouse.move(540, 300); await page.mouse.down(); await page.mouse.move(540, 370, { steps: 4 }); await page.mouse.up();
@@ -131,6 +131,85 @@ async function run() {
     const restyled = (await snapshot()).pages[0].decorations.find((d) => d.kind === 'line' && d.x === 420 && d.y === 300);
     assert.equal(restyled.units, 1); assert.equal(restyled.unitLength, 40);
     assert.equal(restyled.width, 4); assert.equal(restyled.color, 'red');
+    // Reproduce a circuit's unwanted vertical tail below a horizontal branch.
+    await tool('lineStyle', 'solid'); await tool('color', 'mono'); await tool('arrowhead', 'none');
+    await draw(760, 200, 760, 600); await draw(760, 520, 920, 520);
+    await tool('symbol', 'rectangle'); await page.mouse.dblclick(760, 280);
+    const beforeErase = (await snapshot()).pages[0].decorations;
+    const vertical = beforeErase.find((d) => d.kind === 'line' && d.x === 760 && d.y === 200);
+    const branch = beforeErase.find((d) => d.kind === 'line' && d.x === 760 && d.y === 520);
+    const eraseButton = page.locator('[data-research-quick-line-action="delete"]');
+    const erasePalette = page.locator('[data-research-decoration-tool="lineAction"][data-value="delete"]');
+    await eraseButton.click(); await page.locator('[data-research-add]').click();
+    assert.equal(await erasePalette.getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('[data-research-quick-line-style="solid"]').getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.locator('[data-research-decoration-tool="lineStyle"][data-value="solid"]').getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('research:decorationTools:v1')).lineAction), undefined);
+    const beginErase = async () => {
+      await page.keyboard.down('Alt'); await page.mouse.move(760, 600); await page.mouse.down();
+      await page.mouse.move(760, 520, { steps: 4 });
+    };
+    const finishErase = async () => { await page.mouse.up(); await page.keyboard.up('Alt'); };
+    await beginErase();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const previewColor = await page.locator('[data-research-decorations]').evaluate((e) =>
+      [...e.getContext('2d').getImageData(760, 560, 1, 1).data]);
+    assert(previewColor[0] > previewColor[1] + 20 && previewColor[3] > 0, 'only the erased tail must preview in red');
+    assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase, 'erase preview must not reach auto-save');
+    await page.screenshot({ path: path.join(root, 'erase-preview.png') });
+    await page.keyboard.press('Escape'); await finishErase();
+    assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase);
+    // Cancellation never turns a pending deletion into a release-time commit.
+    for (const cancel of [
+      () => page.locator('[data-research-viewport]').dispatchEvent('pointercancel', { pointerId: 1 }),
+      () => page.evaluate(() => window.dispatchEvent(new Event('blur'))),
+      () => page.evaluate(() => RelatumResearchWorkspace.suspend()),
+      () => page.locator('[data-research-decoration-tool="color"][data-value="mono"]').evaluate((e) => e.click()),
+      () => mode.evaluate((e) => e.click()),
+    ]) {
+      await beginErase(); await cancel(); await finishErase();
+      await page.evaluate(() => RelatumResearchWorkspace.activate());
+      await page.keyboard.press('Escape');
+      assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase);
+    }
+    // Changing page and mode also cancels, preserving the original page's tail.
+    await beginErase(); await page.locator('[data-research-page-add]').evaluate((e) => e.click()); await finishErase();
+    await page.locator('[data-research-page-delete]').click();
+    assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase);
+    await beginErase(); await mode.evaluate((e) => e.click());
+    await page.locator('[data-research-mode-option="default"]').evaluate((e) => e.click()); await finishErase();
+    await chooseMode('orthogonal');
+    assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase);
+    await draw(760, 560, 760, 600); // No existing start endpoint.
+    await draw(760, 600, 820, 600); // No valid end endpoint.
+    await draw(760, 600, 760, 600); // Zero-length range.
+    assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase);
+    await beginErase(); await finishErase();
+    const afterTailErase = (await snapshot()).pages[0].decorations;
+    assert.equal(afterTailErase.find((d) => d.id === vertical.id).units, 4);
+    assert.deepEqual(afterTailErase.find((d) => d.id === branch.id), branch);
+    assert.deepEqual(afterTailErase.filter((d) => d.kind === 'symbol'), beforeErase.filter((d) => d.kind === 'symbol'));
+    assert.equal(await eraseButton.getAttribute('aria-pressed'), 'true');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await snapshot()).pages[0].decorations, beforeErase);
+    await page.keyboard.press('Control+Shift+z'); assert.deepEqual((await snapshot()).pages[0].decorations, afterTailErase);
+    await draw(760, 520, 840, 520); // Delete remains active for the next range.
+    assert.equal((await snapshot()).pages[0].decorations.find((d) => d.id === branch.id).x, 840);
+    await page.keyboard.press('Control+z'); assert.deepEqual((await snapshot()).pages[0].decorations, afterTailErase);
+    await page.keyboard.press('Control+Shift+z');
+    const beforeDiagonalErase = (await snapshot()).pages[0].decorations;
+    await draw(420, 480, 500, 560);
+    const diagonalTail = (await snapshot()).pages[0].decorations.find((d) => d.id === diagonal.id);
+    assert.deepEqual([diagonalTail.x, diagonalTail.y, diagonalTail.units, diagonalTail.direction], [500, 560, 1, 1]);
+    await page.keyboard.press('Control+z'); assert.deepEqual((await snapshot()).pages[0].decorations, beforeDiagonalErase);
+    await page.keyboard.press('Control+Shift+z');
+    await page.screenshot({ path: path.join(root, 'erase-result.png') });
+    // Either line-style entry exits deletion and restores the existing draw path.
+    await page.locator('[data-research-quick-line-style="dashed"]').click();
+    assert.equal(await eraseButton.getAttribute('aria-pressed'), 'false');
+    await page.locator('[data-research-add]').click(); await erasePalette.click();
+    assert.equal(await eraseButton.getAttribute('aria-pressed'), 'true');
+    await tool('lineStyle', 'dashed'); await tool('color', 'red'); await tool('arrowhead', 'end');
+    assert.equal(await eraseButton.getAttribute('aria-pressed'), 'false');
     // Cancelling a live move on mode switch must not auto-save its preview.
     await page.mouse.move(540, 370); await page.mouse.down(); await page.mouse.move(600, 420);
     await mode.evaluate((e) => e.click());
@@ -150,13 +229,28 @@ async function run() {
     const persisted = (await snapshot()).pages[0].decorations;
     await page.screenshot({ path: path.join(root, 'light.png') });
     await page.emulateMedia({ colorScheme: 'dark' });
+    await eraseButton.click();
+    await page.keyboard.down('Alt'); await page.mouse.move(920, 520); await page.mouse.down(); await page.mouse.move(840, 520);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const darkPreview = await page.locator('[data-research-decorations]').evaluate((e) =>
+      [...e.getContext('2d').getImageData(880, 520, 1, 1).data]);
+    assert(darkPreview[0] > darkPreview[1] + 20 && darkPreview[3] > 0, 'dark-mode erase preview must remain red');
+    await page.screenshot({ path: path.join(root, 'erase-preview-dark.png') });
+    await page.keyboard.press('Escape'); await finishErase();
+    assert.deepEqual((await snapshot()).pages[0].decorations, persisted);
     await page.locator('[data-research-zoom-indicator]').click(); await sleep(100);
     await page.screenshot({ path: path.join(root, 'dark.png') });
     await page.setViewportSize({ width: 720, height: 600 });
+    await page.locator('[data-research-add]').click();
+    assert.equal(await erasePalette.getAttribute('aria-pressed'), 'true');
+    assert.equal(await eraseButton.getAttribute('aria-pressed'), 'true');
     await page.screenshot({ path: path.join(root, 'narrow.png') });
     await page.setViewportSize({ width: 1280, height: 800 });
+    await eraseButton.click();
     await page.reload(); await page.evaluate(() => RelatumResearchWorkspace.activate());
     assert.equal(await mode.getAttribute('data-value'), 'orthogonal');
+    assert.equal(await eraseButton.getAttribute('aria-pressed'), 'false', 'reopening must exit the transient deletion tool');
+    assert.equal(await page.locator('[data-research-quick-line-style="dashed"]').getAttribute('aria-pressed'), 'true');
     assert.deepEqual((await snapshot()).pages[0].decorations, persisted);
     assert.equal(await page.locator('[data-research-unit-length]').inputValue(), '80');
     assert.equal(await page.locator('[data-research-minimap]').isVisible(), true);
@@ -165,12 +259,14 @@ async function run() {
     // Language must roundtrip even for controls created while English is active.
     await page.evaluate(() => RelatumResearchWorkspace.setLanguage('en'));
     await page.waitForFunction(() => document.querySelector('[data-research-quick-symbol="voltage-source"]').textContent === 'Voltage source');
+    assert.equal(await eraseButton.textContent(), 'Delete');
     assert(await page.locator('.research-compute-row').evaluate((row) =>
       [...row.querySelectorAll('[data-research-orthogonal-tools] button')].every((button) => button.scrollWidth <= button.clientWidth)),
     'English toolbar names must retain their complete width');
     await page.screenshot({ path: path.join(root, 'toolbar-english.png') });
     await toolbarFits();
     await page.locator('[data-research-add]').click();
+    assert.equal(await erasePalette.textContent(), 'Delete');
     assert.equal(await page.locator('[data-research-decoration-tool="symbol"][data-value="lamp"]').getAttribute('aria-label'), 'Lamp');
     assert.equal(await page.locator('[data-research-decoration-tool="symbol"][data-value="switch"]').getAttribute('aria-label'), 'Switch');
     await page.mouse.click(540, 370);
@@ -271,9 +367,9 @@ async function run() {
     const dialog = page.locator('[data-research-preset-dialog]');
     await dialog.locator('[data-research-preset-name]').fill('My capacitor');
     assert((await dialog.locator('[data-research-preset-preview]').innerHTML()).includes('rotate(37.5)'));
-    assert.equal(await dialog.locator('svg text').textContent(), 'C<&2');
+    await page.waitForFunction(() => document.querySelector('[data-research-preset-preview] .research-symbol-label')?.textContent === 'C<&2');
     await dialog.locator('[data-symbol-field="labelOffsetX"]').fill('-75');
-    assert.equal(await dialog.locator('svg text').getAttribute('x'), '-75', 'preset SVG offset must preview without blur');
+    await page.waitForFunction(() => document.querySelector('[data-research-preset-preview] .research-symbol-label')?.style.left === '-75px');
     await dialog.locator('[data-symbol-field="labelOffsetX"]').fill('-50'); await dialog.locator('[data-symbol-field="labelOffsetX"]').press('Tab');
     assert(await dialog.locator('[data-research-preset-save]').evaluate((e) => {
       const b = e.getBoundingClientRect(); return b.bottom < innerHeight && b.top > 0; }), 'preset actions must stay visible without scrolling');

@@ -165,8 +165,8 @@ async function runAcceptance(playwright, url, options = {}) {
     )), true, 'the help overlay must retain its visible closing frame');
     await page.waitForFunction(() => document.querySelector('[data-research-help-overlay]').hidden);
     const initialDockBox = await computeDock.boundingBox();
-    assert(initialDockBox && Math.round(initialDockBox.width) === 540 && Math.round(initialDockBox.height) === 44,
-      'the expanded compute dock must retain its fixed 540 × 44 frame');
+    assert(initialDockBox && Math.round(initialDockBox.width) === 640 && Math.round(initialDockBox.height) === 44,
+      'the expanded compute dock must retain its fixed 640 × 44 frame');
     await page.locator('[data-research-viewport]').focus();
     await page.keyboard.press('Tab');
     assert.equal(await sidePanel.evaluate((element) => element.classList.contains('is-collapsed')), true,

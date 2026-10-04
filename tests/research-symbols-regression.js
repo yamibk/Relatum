@@ -19,6 +19,8 @@ async function main() {
   const old = { id: 'old', kind: 'symbol', type: 'rectangle', x: 100, y: 100, width: 32, height: 14, rotation: 2, label: '' };
   assert.equal(symbols.symbolAngle(old), Math.PI / 2);
   assert.deepEqual(geometry.normalizeDecorations([old]), [old], 'missing style fields must stay optional');
+  assert.equal(symbols.defaultSymbol('lamp').labelMarkdown, true);
+  assert.equal(presets.normalizeSymbolTemplate(old).labelMarkdown, true, 'new presets interpret missing legacy flag as enabled');
   assert.equal(presets.normalizeSymbolTemplate(old).rotationDegrees, 90, 'preset creation must preserve legacy rotation');
   const rotated = at('rectangle', { rotationDegrees: 22.5 });
   assert.equal(symbols.symbolAngle(rotated), Math.PI / 8);
@@ -35,7 +37,7 @@ async function main() {
   assert(symbols.symbolSvgMarkup(at('rectangle', { label: '<script>"&' })).includes('&lt;script&gt;&quot;&amp;'));
   assert.equal(symbols.defaultSymbol('dot').width, 8);
   for (const patch of [{ width: 5 }, { color: 'url(x)' }, { strokeWidth: 7 }, { rotationDegrees: 360 },
-    { labelColor: '#fff' }, { labelFontSize: 7 }, { labelOffsetX: Infinity }]) {
+    { labelColor: '#fff' }, { labelFontSize: 7 }, { labelOffsetX: Infinity }, { labelMarkdown: 'true' }, { labelMarkdown: 1 }, { labelMarkdown: null }]) {
     assert.equal(geometry.normalizeDecorations([at('dot', patch)]).length, 0);
   }
   const memory = new Map(), storage = { getItem: (key) => memory.get(key), setItem: (key, value) => memory.set(key, value) };
@@ -53,10 +55,29 @@ async function main() {
   const ids = model.duplicateDecorations([d.id], 28, 28); assert.equal(ids.length, 1);
   assert.equal(model.decoration(ids[0]).labelColor, '#ff0000');
   assert.equal(model.decoration(ids[0]).rotationDegrees, 13.5);
+  model.updateDecorations({ [d.id]: { labelMarkdown: false } });
+  const copy = model.duplicateDecorations([d.id], 20, 20)[0];
+  assert.equal(model.decoration(copy).labelMarkdown, false);
+  const disabled = store.save('Literal', model.decoration(d.id));
+  assert.equal(presets.createDecorationPresetStore(storage).find(disabled.id).template.labelMarkdown, false);
+  store.remove(disabled.id); model.removeDecorations([copy]);
+  const multiline = at('lamp', { label: 'A\nAB', labelMarkdown: false, labelFontSize: 20 });
+  const plainBounds = symbols.symbolLabelBounds(multiline);
+  assert.equal(plainBounds.right - plainBounds.left, 20);
+  assert.equal(plainBounds.bottom - plainBounds.top, 47);
+  const formula = at('lamp', { label: '$U_{s1}$', labelFontSize: 20 });
+  assert(symbols.setSymbolLabelMetrics(formula, 31, 25));
+  assert(!symbols.setSymbolLabelMetrics(formula, 31, 25));
+  assert.deepEqual(symbols.symbolLabelBounds(formula), { left: 84.5, right: 115.5, top: 87.5, bottom: 112.5 });
+  assert(geometry.hitDecoration(formula, { x: 114, y: 111 }, 0));
   store.remove(p.id); assert.equal(store.list().length, 0); assert.equal(model.decorations().length, 2);
   const failing = presets.createDecorationPresetStore({ getItem: storage.getItem, setItem: () => { throw new Error('quota'); } });
   assert.throws(() => failing.save('Draft', labeled)); assert.equal(failing.list().length, 0);
   memory.set(presets.PRESETS_KEY, '{broken'); assert.equal(presets.createDecorationPresetStore(storage).list().length, 0);
+  const legacyPresets = JSON.stringify({ version: 1, presets: [{ id: 'old-preset', name: 'Old', template: old }] });
+  memory.set(presets.PRESETS_KEY, legacyPresets);
+  assert.equal(presets.createDecorationPresetStore(storage).find('old-preset').template.labelMarkdown, true);
+  assert.equal(memory.get(presets.PRESETS_KEY), legacyPresets, 'reading old presets must not rewrite the local library');
   console.log('research symbols/presets regression passed');
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

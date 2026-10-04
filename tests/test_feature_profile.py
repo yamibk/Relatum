@@ -21,6 +21,11 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertFalse(profile.canvas_home)
         self.assertTrue(features.FULL_PROFILE.enabled("editor.ai"))
 
+    def test_research_labels_have_lightweight_offline_markdown(self):
+        profile = self.only('research')
+        self.assertTrue(profile.resource_allowed('assets/markdown.js'))
+        self.assertTrue(profile.resource_allowed('assets/vendor/mathjax/tex-mml-chtml.js'))
+
     def test_save_restore_corruption_and_new_default(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

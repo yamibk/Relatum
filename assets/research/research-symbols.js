@@ -8,7 +8,7 @@ export const SYMBOL_TYPES = Object.freeze(Object.keys(SYMBOL_LABELS));
 const SIZES = { rectangle: [32, 14], dot: [8, 8], capacitor: [32, 24], inductor: [40, 16],
   switch: [32, 16], ground: [24, 24], diode: [32, 24], 'op-amp': [40, 32], transformer: [40, 40] };
 export const SYMBOL_STYLE_DEFAULTS = Object.freeze({ color: 'mono', strokeWidth: 2,
-  labelColor: 'inherit', labelFontSize: 14, labelOffsetX: 0, labelOffsetY: 0 });
+  labelColor: 'inherit', labelFontSize: 14, labelOffsetX: 0, labelOffsetY: 0, labelMarkdown: true });
 export function defaultSymbol(type = 'rectangle') {
   const [width, height] = SIZES[type] || [32, 32];
   return { type, width, height, rotation: 0, rotationDegrees: 0, label: '', ...SYMBOL_STYLE_DEFAULTS };
@@ -24,6 +24,7 @@ export function validSymbolStyle(d) {
   const number = (key, low, high) => d[key] === undefined ||
     (typeof d[key] === 'number' && Number.isFinite(d[key]) && d[key] >= low && d[key] <= high);
   return (d.color === undefined || validSymbolColor(d.color))
+    && (d.labelMarkdown === undefined || typeof d.labelMarkdown === 'boolean')
     && (d.labelColor === undefined || validSymbolColor(d.labelColor, true))
     && number('strokeWidth', 1, 6) && number('rotationDegrees', 0, 359.999999999)
     && number('labelFontSize', 8, 72) && number('labelOffsetX', -1e9, 1e9) && number('labelOffsetY', -1e9, 1e9);
@@ -38,11 +39,25 @@ export function symbolColor(value, ink = 'currentColor', dark = false) {
 // conservative fallback. Measurements are reused across indexing and drawing.
 let textMeasurer = null;
 const textCache = new Map();
+const labelMetrics = new Map();
+export const symbolLabelKey = (d) => JSON.stringify([d.labelMarkdown !== false, d.labelFontSize ?? 14, d.label]);
+export function setSymbolLabelMetrics(d, width, height) {
+  if (!(width > 0 && height > 0)) return false;
+  const key = symbolLabelKey(d), previous = labelMetrics.get(key);
+  if (previous && Math.abs(previous.width - width) < .1 && Math.abs(previous.height - height) < .1) return false;
+  if (labelMetrics.size >= 2048) labelMetrics.delete(labelMetrics.keys().next().value);
+  labelMetrics.set(key, { width, height, ascent: height * .8, descent: height * .2 }); return true;
+}
 export function setSymbolTextMeasurer(measure) { textMeasurer = measure; textCache.clear(); }
 export function symbolTextMetrics(d) {
+  if (d.labelMarkdown !== false && labelMetrics.has(symbolLabelKey(d))) return labelMetrics.get(symbolLabelKey(d));
   const size = d.labelFontSize ?? 14, key = size + ':' + d.label;
   if (!textCache.has(key)) {
-    const metrics = textMeasurer ? textMeasurer(d.label, size) : { width: d.label.length * size * .7, ascent: size * .8, descent: size * .2 };
+    const rows = d.label.split('\n').map((line) => textMeasurer ? textMeasurer(line, size)
+      : { width: line.length * size * .7, ascent: size * .8, descent: size * .2 });
+    const ascent = Math.max(...rows.map((m) => m.ascent)), descent = Math.max(...rows.map((m) => m.descent));
+    const metrics = { width: Math.max(...rows.map((m) => m.width)), ascent, descent,
+      height: ascent + descent + (rows.length - 1) * size * 1.35 };
     if (textCache.size >= 2048) textCache.delete(textCache.keys().next().value);
     textCache.set(key, metrics);
   }
@@ -51,7 +66,7 @@ export function symbolTextMetrics(d) {
 export function symbolLabelBounds(d) {
   const m = symbolTextMetrics(d), x = d.x + (d.labelOffsetX ?? 0), y = d.y - (d.labelOffsetY ?? 0);
   return { left: x - m.width / 2, right: x + m.width / 2,
-    top: y - (m.ascent + m.descent) / 2, bottom: y + (m.ascent + m.descent) / 2 };
+    top: y - (m.height ?? m.ascent + m.descent) / 2, bottom: y + (m.height ?? m.ascent + m.descent) / 2 };
 }
 export function symbolShapeBounds(d) {
   const angle = symbolAngle(d), pad = (d.strokeWidth ?? 2) / 2 + 1;
@@ -132,5 +147,7 @@ export function symbolSvgMarkup(template, dark = false) {
   const ink = symbolColor(d.color, 'currentColor', dark), labelInk = d.labelColor === 'inherit' ? ink : symbolColor(d.labelColor, 'currentColor', dark);
   const paths = geometry.paths.map((p) => `<path d="${p}"/>`).join('');
   const m = d.label ? symbolTextMetrics(d) : null;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.left - 4} ${b.top - 4} ${b.right - b.left + 8} ${b.bottom - b.top + 8}" aria-hidden="true"><g transform="rotate(${d.rotationDegrees})" stroke="${ink}" stroke-width="${d.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" fill="${geometry.filled ? ink : 'none'}">${paths}</g>${d.label ? `<text x="${d.labelOffsetX}" y="${-d.labelOffsetY + (m.ascent - m.descent) / 2}" text-anchor="middle" fill="${labelInk}" font-size="${d.labelFontSize}" font-family="ui-sans-serif, system-ui">${escapeText(d.label)}</text>` : ''}</svg>`;
+  const rows = d.label.split('\n'), lineHeight = d.labelFontSize * 1.35;
+  const text = d.label ? `<text x="${d.labelOffsetX}" y="${-d.labelOffsetY + (m.ascent - m.descent) / 2 - (rows.length - 1) * lineHeight / 2}" text-anchor="middle" fill="${labelInk}" font-size="${d.labelFontSize}" font-family="ui-sans-serif, system-ui">${rows.map((row, i) => `<tspan x="${d.labelOffsetX}" dy="${i ? lineHeight : 0}">${escapeText(row)}</tspan>`).join('')}</text>` : '';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.left - 4} ${b.top - 4} ${b.right - b.left + 8} ${b.bottom - b.top + 8}" aria-hidden="true"><g transform="rotate(${d.rotationDegrees})" stroke="${ink}" stroke-width="${d.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" fill="${geometry.filled ? ink : 'none'}">${paths}</g>${text}</svg>`;
 }

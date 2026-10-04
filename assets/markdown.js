@@ -573,17 +573,17 @@
   }
 
   // ── 数学公式：先抠 $$块$$ 再抠 $行内$（占位符回填时再 escape，MathJax 读 textContent 会 decode）──
-  function protectMath(src) {
+  function protectMath(src, preserveLines) {
     const maths = [];
     let s = src.replace(/\\\[([\s\S]+?)\\\]/g, function (m, content) {
       maths.push({ content: content, delimiter: 'bracket-block' });
-      const nl = (m.match(/\n/g) || []).length;
+      const nl = preserveLines === false ? 0 : (m.match(/\n/g) || []).length;
       return '\x00DMATH' + (maths.length - 1) + '\x00' + (nl ? '\n'.repeat(nl) : '');
     });
     s = s.replace(/(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$/g, function (m, content) {
       maths.push({ content: content, delimiter: 'dollar-block' });
       // 同 protectCode：占位符补足等量换行，保住多行 $$…$$ 之后内容的源码行号（修点击定位错位）
-      const nl = (m.match(/\n/g) || []).length;
+      const nl = preserveLines === false ? 0 : (m.match(/\n/g) || []).length;
       return '\x00DMATH' + (maths.length - 1) + '\x00' + (nl ? '\n'.repeat(nl) : '');   // 块级（独占一行 → 居中展示）
     });
     s = s.replace(/\\\(([\s\S]+?)\\\)/g, function (_, content) {
@@ -1092,6 +1092,28 @@
     return renderResult(src, options).html;
   }
 
+  // Short labels share the safe inline grammar, but never create links, images,
+  // block structures or diagrams. Protect code and math before styling text.
+  function renderLabelResult(src) {
+    const source = normalizeSource(src);
+    try {
+      const code = protectInlineCode(source);
+      const math = protectMath(code.protected, false);
+      const escapes = protectEscapes(math.protected);
+      let html = renderInlineSafe(escapes.protected).replace(/\n/g, '<br>');
+      html = restoreMath(html, math.maths);
+      // Display math already starts/ends a line; source-line padding belongs
+      // to body click mapping, not the compact label's visual line breaks.
+      html = html.replace(/<br>(?=<div class="md-math-block">)/g, '').replace(/(<\/div>)<br>/g, '$1');
+      html = restoreEscapes(html, escapes.chars);
+      html = restoreInlineCode(html, code.codes);
+      return { html: html, features: { math: math.maths.length > 0, mermaid: false }, error: false };
+    } catch (error) {
+      return { html: escapeHtml(source).replace(/\n/g, '<br>'),
+        features: { math: false, mermaid: false }, error: true };
+    }
+  }
+
   // ── Y2 轮：标记符号区间（给编辑态实时高亮用）────────────
   // 在原始源码上算出"应该变浅灰的标记符号"的字符区间 [start, end)（end 不含）。
   // 偏移基于原始 text 的字符位置（含 \n），和 contenteditable 的 textContent 偏移一致。
@@ -1172,6 +1194,7 @@
   global.MarkdownMini = {
     render: render,
     renderResult: renderResult,
+    renderLabelResult: renderLabelResult,
     renderInline: renderInlineSafe,
     escapeHtml: escapeHtml,
     highlightCode: highlightCode,

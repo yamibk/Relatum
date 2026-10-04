@@ -189,6 +189,7 @@ export function createResearchCanvas(options) {
   const primaryPresses = [];
   const decorations = createDecorationCanvas({ viewport, model, eventPoint, screenToWorld,
     getCamera: () => camera, scheduleDraw, onSelectionChange,
+    onMetricsChange: (ids) => redrawMinimap({ topology: false, nodeIds: ids }),
     onEditLabel: () => stage.querySelector('[data-research-decoration-label]')?.focus({ preventScroll: true }) });
 
   try {
@@ -2327,6 +2328,7 @@ export function createResearchCanvas(options) {
 
   function activate() {
     if (disposed || active) return !disposed;
+    decorations.activate();
     active = true;
     activeController = new AbortController();
     const signal = activeController.signal;
@@ -2370,6 +2372,7 @@ export function createResearchCanvas(options) {
 
   function suspend() {
     if (disposed) return true;
+    decorations.suspend();
     decorations.cancel();
     if (editing) commitEdit();
     if (gesture) finishGesture(null, true);
