@@ -39336,11 +39336,6 @@ html[data-ui-language="en"] .calendar-date-range-dates {
   font-variant-numeric: tabular-nums;
 }
 .calendar-date-range-summary.is-error { color: #a04b44; font-size: 14px; }
-.calendar-date-range-summary,
-.calendar-date-range-list {
-  -webkit-user-select: text;
-  user-select: text;
-}
 .calendar-date-range-list {
   display: grid; gap: 2px; margin-top: 17px; color: #535a54;
   font-size: 13px; font-variant-numeric: tabular-nums;
@@ -41089,8 +41084,8 @@ html[data-countdown-wallpaper="1"] .countdown-flip[data-length="5"] { font-size:
   .countdown-flip.go .countdown-flap-bottom { animation-duration: 0.001s !important; animation-delay: 0s !important; }
 }
 
-/* 起步页是应用工作台，不提供正文选取语义。禁止双击文字产生浏览器蓝色选区；
-   真正承担输入的控件、日记编辑区与便签编辑区仍保留正常光标和文字选择。 */
+/* 起步页是应用工作台，默认禁止双击文字产生浏览器蓝色选区；
+   输入控件、日记与便签编辑区、日期间隔计算结果保留文字选择。 */
 body.start-page,
 body.start-page * {
   -webkit-user-select: none;
@@ -41098,7 +41093,10 @@ body.start-page * {
 }
 body.start-page input,
 body.start-page textarea,
-body.start-page [contenteditable]:not([contenteditable="false"]) {
+body.start-page [contenteditable]:not([contenteditable="false"]),
+body.start-page .calendar-date-range-summary,
+body.start-page .calendar-date-range-list,
+body.start-page .calendar-date-range-list * {
   -webkit-user-select: text;
   user-select: text;
 }

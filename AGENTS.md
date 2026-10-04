@@ -591,7 +591,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ### 日历 `calendar.js`
 
-- 日期间隔浮窗的总天数摘要与日期段列表由 `assets/styles.css` 显式允许文本选择，支持鼠标选中后复制。
+- 日期间隔浮窗的总天数摘要与日期段列表（含列表子元素）在 `assets/styles.css` 的起步页全局禁选规则后显式允许文本选择，并由 `assets/start-sticky-notes.js` 的 `selectstart` 拦截器放行，支持鼠标选中后复制；修改时须同时保留样式和事件两处例外。
 
 - 日历页内部是“日历 / 记账”两个固定 grid 叠层。`CanvasCalendar.toggleMode()` 是唯一切换入口，切换时立即让退场层 `inert` / `aria-hidden=true`，有限交叉淡化结束后再设 `hidden`；离开外层页面会取消两个模块的请求、计时器、临时编辑和动画，低动态偏好下立即完成。
 - 日记是每天一个 Markdown 文件，带 frontmatter：`title/date/tags/updatedAt`。
