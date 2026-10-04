@@ -1,5 +1,5 @@
 // Pure decoration geometry. Coordinates are world pixels, never simulation ports.
-import { SYMBOL_TYPES, SYMBOL_STYLE_KEYS, validSymbolStyle, symbolAngle, symbolShapeBounds, symbolLabelBounds } from './research-symbols.js';
+import { SYMBOL_TYPES, SYMBOL_STYLE_KEYS, validSymbolStyle, symbolAngle, symbolBounds, symbolLabelBounds } from './research-symbols.js';
 export { SYMBOL_TYPES } from './research-symbols.js';
 export const LINE_COLORS = ['mono', 'blue', 'red', 'green'];
 export const MAX_UNITS = 100000;
@@ -66,11 +66,7 @@ export function decorationBounds(d) {
     return { left: Math.min(d.x, end.x) - margin, top: Math.min(d.y, end.y) - margin,
       right: Math.max(d.x, end.x) + margin, bottom: Math.max(d.y, end.y) + margin };
   }
-  const b = symbolShapeBounds(d);
-  if (d.label) { const label = symbolLabelBounds(d);
-    b.left = Math.min(b.left, label.left); b.right = Math.max(b.right, label.right);
-    b.top = Math.min(b.top, label.top); b.bottom = Math.max(b.bottom, label.bottom); }
-  return b;
+  return symbolBounds(d);
 }
 
 export function intersects(a, b) {
@@ -85,7 +81,7 @@ export function hitDecoration(d, p, tolerance) {
   }
   const angle = -symbolAngle(d), dx = p.x - d.x, dy = p.y - d.y;
   const x = dx * Math.cos(angle) - dy * Math.sin(angle), y = dx * Math.sin(angle) + dy * Math.cos(angle);
-  if (Math.abs(x) <= d.width / 2 + tolerance && Math.abs(y) <= d.height / 2 + tolerance) return true;
+  if (d.type !== 'text' && Math.abs(x) <= d.width / 2 + tolerance && Math.abs(y) <= d.height / 2 + tolerance) return true;
   const b = d.label ? symbolLabelBounds(d) : null;
   return !!b && p.x >= b.left - tolerance && p.x <= b.right + tolerance
     && p.y >= b.top - tolerance && p.y <= b.bottom + tolerance;

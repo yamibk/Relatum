@@ -193,6 +193,7 @@ export async function createResearchEditor(stage) {
       if (session.setPageView(renderedPageId, view)) scheduleSave();
     },
     onCreationToolChange: () => renderPalette(paletteSearch.value),
+    onEditDecorationLabel: () => setSidePanelCollapsed(false),
     onSelectionChange: (selection) => {
       selectedNodeIds = selection.nodeIds.slice();
       selectedEdgeIds = selection.edgeIds.slice();
@@ -1239,7 +1240,10 @@ export async function createResearchEditor(stage) {
       if (!preset) button.dataset.i18nSourceAriaLabel = name;
       else button.dataset.userContent = '';
       button.classList.toggle('is-active', selected); button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-      renderSymbolPreview(button, template); grid.appendChild(button); return button;
+      if (!preset && template.type === 'text') {
+        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true"><path d="M7 8H25 M16 8V25 M12 25H20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+      } else renderSymbolPreview(button, template);
+      grid.appendChild(button); return button;
     };
     SYMBOL_TYPES.forEach((type) => {
       if (!matches(SYMBOL_LABELS[type])) return;
@@ -1276,14 +1280,21 @@ export async function createResearchEditor(stage) {
     // blur would remove the button the user is about to click (e.g. Save preset).
     if (decorationControlCommit && renderedDecorationId === selection.primaryDecoration.id && !inspector.hidden) return;
     const d = { ...selection.primaryDecoration }; renderedDecorationId = d.id;
-    setPanelView('inspector', T(d.kind === 'line' ? '研究 · 装饰线段' : '研究 · 装饰符号'));
-    decorationText(inspectorTitle, d.kind === 'line' ? '研究 · 装饰线段' : '研究 · 装饰符号');
+    const title = d.kind === 'line' ? '研究 · 装饰线段' : d.type === 'text' ? '研究 · 文本框' : '研究 · 装饰符号';
+    setPanelView('inspector', T(title));
+    decorationText(inspectorTitle, title);
     renderTrace(null); inspectorFields.replaceChildren();
     const update = (patch) => {
       decorationControlCommit = true;
       try {
         let changed;
-        if (symbolPreview) {
+        if (d.type === 'text' && typeof patch.label === 'string' && !patch.label.trim()) {
+          // Discard the draft marker before notifying selection changes. The
+          // previous committed snapshot remains the undo/save source.
+          const model = symbolPreview?.model || session.page(renderedPageId).model;
+          symbolPreview = null;
+          changed = model.removeDecorations([d.id]);
+        } else if (symbolPreview) {
           const pending = symbolPreview; symbolPreview = null;
           pending.model.updateDecorations({ [d.id]: patch }, { live: true });
           changed = pending.model.commitFrom(pending.before, { kind: 'decoration-edit', decorationsOnly: true });

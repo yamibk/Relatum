@@ -3,7 +3,7 @@ export const SYMBOL_LABELS = Object.freeze({ rectangle: '矩形／电阻', 'curr
   'voltage-source': '电压源', lamp: '灯泡', dot: '圆点', capacitor: '电容', inductor: '电感',
   switch: '电路开关', ground: '接地', 'ac-voltage-source': '交流电压源', diode: '二极管',
   'op-amp': '运放', transformer: '变压器', 'controlled-voltage-source': '受控电压源',
-  'controlled-current-source': '受控电流源' });
+  'controlled-current-source': '受控电流源', text: '文本框' });
 export const SYMBOL_TYPES = Object.freeze(Object.keys(SYMBOL_LABELS));
 const SIZES = { rectangle: [32, 14], dot: [8, 8], capacitor: [32, 24], inductor: [40, 16],
   switch: [32, 16], ground: [24, 24], diode: [32, 24], 'op-amp': [40, 32], transformer: [40, 40] };
@@ -11,7 +11,9 @@ export const SYMBOL_STYLE_DEFAULTS = Object.freeze({ color: 'mono', strokeWidth:
   labelColor: 'inherit', labelFontSize: 14, labelOffsetX: 0, labelOffsetY: 0, labelMarkdown: true });
 export function defaultSymbol(type = 'rectangle') {
   const [width, height] = SIZES[type] || [32, 32];
-  return { type, width, height, rotation: 0, rotationDegrees: 0, label: '', ...SYMBOL_STYLE_DEFAULTS };
+  return { type, width, height, rotation: 0, rotationDegrees: 0,
+    label: type === 'text' ? '文字' : '', ...SYMBOL_STYLE_DEFAULTS,
+    ...(type === 'text' ? { labelColor: 'mono' } : {}) };
 }
 export function symbolTemplateDefaults(raw) {
   return { ...defaultSymbol(raw.type), ...raw, rotationDegrees: raw.rotationDegrees ?? (raw.rotation ?? 0) * 45 };
@@ -75,6 +77,18 @@ export function symbolShapeBounds(d) {
   return { left: d.x - x, right: d.x + x, top: d.y - y, bottom: d.y + y };
 }
 
+// Text-only decorations have no hidden body contributing to their bounds.
+export function symbolBounds(d) {
+  if (d.type === 'text') return symbolLabelBounds(d);
+  const b = symbolShapeBounds(d);
+  if (d.label) {
+    const label = symbolLabelBounds(d);
+    b.left = Math.min(b.left, label.left); b.right = Math.max(b.right, label.right);
+    b.top = Math.min(b.top, label.top); b.bottom = Math.max(b.bottom, label.bottom);
+  }
+  return b;
+}
+
 // Paths use actual world dimensions. Each body has an independent closed mask,
 // so open symbols (capacitors, switches, coils) also erase underlying wire ink.
 export function symbolGeometry(d) {
@@ -89,6 +103,7 @@ export function symbolGeometry(d) {
   const circle = ellipse(), box = rectangle(-.5, -.5, 1, 1);
   let mask = circle, paths = [], filled = d.type === 'dot';
   switch (d.type) {
+    case 'text': mask = ''; break;
     case 'rectangle': mask = box; paths = [box]; break;
     case 'dot': paths = [circle]; break;
     case 'current-source': paths = [circle, segment(-.5, 0, .5, 0)]; break;
@@ -140,10 +155,7 @@ export function symbolGeometry(d) {
 const escapeText = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 export function symbolSvgMarkup(template, dark = false) {
   const d = { ...symbolTemplateDefaults(template), x: 0, y: 0 };
-  const geometry = symbolGeometry(d), b = symbolShapeBounds(d);
-  if (d.label) { const label = symbolLabelBounds(d);
-    b.left = Math.min(b.left, label.left); b.right = Math.max(b.right, label.right);
-    b.top = Math.min(b.top, label.top); b.bottom = Math.max(b.bottom, label.bottom); }
+  const geometry = symbolGeometry(d), b = symbolBounds(d);
   const ink = symbolColor(d.color, 'currentColor', dark), labelInk = d.labelColor === 'inherit' ? ink : symbolColor(d.labelColor, 'currentColor', dark);
   const paths = geometry.paths.map((p) => `<path d="${p}"/>`).join('');
   const m = d.label ? symbolTextMetrics(d) : null;

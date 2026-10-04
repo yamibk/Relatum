@@ -533,7 +533,7 @@ def _normalize_decorations(source, issues: list[dict], path: str) -> list[dict]:
             minimum = 6 if raw.get('type') == 'dot' else 8
             valid = (raw.get('type') in ('rectangle', 'current-source', 'voltage-source', 'lamp', 'dot',
                                        'capacitor', 'inductor', 'switch', 'ground', 'ac-voltage-source',
-                                       'diode', 'op-amp', 'transformer', 'controlled-voltage-source', 'controlled-current-source')
+                                       'diode', 'op-amp', 'transformer', 'controlled-voltage-source', 'controlled-current-source', 'text')
                      and number(raw.get('width'), minimum, 640) and number(raw.get('height'), minimum, 640)
                      and number(raw.get('rotation'), 0, 7, True)
                      and isinstance(raw.get('label'), str) and len(raw['label']) <= 10000)

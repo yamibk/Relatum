@@ -290,7 +290,7 @@ async function run() {
     assert.equal((await snapshot()).activePageId, 'research-page-1');
     // SVG library, transparent mode entry and accessible keyboard menu.
     await page.locator('[data-research-add]').click();
-    assert.equal(await page.locator('[data-research-decoration-tool="symbol"] svg').count(), 15);
+    assert.equal(await page.locator('[data-research-decoration-tool="symbol"] svg').count(), 16);
     assert.equal(await page.locator('[title]').count(), 0, 'Research must not create hover text tooltips');
     const hoverTile = page.locator('[data-research-decoration-tool="symbol"][data-value="voltage-source"]');
     const inkBefore = await hoverTile.evaluate((e) => getComputedStyle(e).color);

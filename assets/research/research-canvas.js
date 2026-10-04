@@ -190,7 +190,13 @@ export function createResearchCanvas(options) {
   const decorations = createDecorationCanvas({ viewport, model, eventPoint, screenToWorld,
     getCamera: () => camera, scheduleDraw, onSelectionChange,
     onMetricsChange: (ids) => redrawMinimap({ topology: false, nodeIds: ids }),
-    onEditLabel: () => stage.querySelector('[data-research-decoration-label]')?.focus({ preventScroll: true }) });
+    getDefaultTextLabel: () => T('文字'),
+    onEditLabel: (selectAll = false) => {
+      if (selectAll) options.onEditDecorationLabel?.();
+      const input = stage.querySelector('[data-research-decoration-label]');
+      input?.focus({ preventScroll: true });
+      if (selectAll) input?.select();
+    } });
 
   try {
     const storedPanSpeed = Number.parseInt(localStorage.getItem('research:panSpeed:v1'), 10);

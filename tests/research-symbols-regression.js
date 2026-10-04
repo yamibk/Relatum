@@ -10,11 +10,14 @@ async function main() {
     moduleAt('research-symbols.js'), moduleAt('research-orthogonal.js'), moduleAt('research-decoration-presets.js'),
     moduleAt('research-model.js'), moduleAt('research-registry.js')]);
   const at = (type, patch = {}) => ({ ...symbols.defaultSymbol(type), id: type, kind: 'symbol', x: 100, y: 100, ...patch });
-  assert.equal(symbols.SYMBOL_TYPES.length, 15);
+  assert.equal(symbols.SYMBOL_TYPES.length, 16);
   for (const type of symbols.SYMBOL_TYPES) {
     const d = at(type), g = symbols.symbolGeometry(d);
-    assert(g.paths.length && g.mask); assert(geometry.normalizeDecorations([d]).length);
-    const svg = symbols.symbolSvgMarkup(d); assert(svg.includes('<path')); assert(!svg.includes('NaN'));
+    if (type === 'text') { assert.equal(g.paths.length, 0); assert.equal(g.mask, ''); }
+    else assert(g.paths.length && g.mask);
+    assert(geometry.normalizeDecorations([d]).length);
+    const svg = symbols.symbolSvgMarkup(d);
+    assert.equal(svg.includes('<path'), type !== 'text'); assert(!svg.includes('NaN'));
   }
   const old = { id: 'old', kind: 'symbol', type: 'rectangle', x: 100, y: 100, width: 32, height: 14, rotation: 2, label: '' };
   assert.equal(symbols.symbolAngle(old), Math.PI / 2);
@@ -32,6 +35,11 @@ async function main() {
   assert.deepEqual(symbols.symbolLabelBounds(labeled), { left: 35, right: 65, top: 10, bottom: 30 });
   assert(geometry.hitDecoration(labeled, { x: 50, y: 20 }, 0));
   assert.equal(geometry.decorationBounds(labeled).top, 10);
+  const textOnly = at('text', { label: 'ABC', labelOffsetX: -50, labelOffsetY: 80,
+    labelFontSize: 20, width: 640, height: 640, rotationDegrees: 37.5 });
+  assert.deepEqual(geometry.decorationBounds(textOnly), symbols.symbolLabelBounds(textOnly));
+  assert(geometry.hitDecoration(textOnly, { x: 50, y: 20 }, 0));
+  assert(!geometry.hitDecoration(textOnly, { x: 100, y: 100 }, 0), 'hidden body must not intercept clicks');
   assert(symbols.symbolSvgMarkup(labeled).includes('rotate(37.5)'));
   assert(symbols.symbolSvgMarkup(labeled).includes('fill="#ff0000"'));
   assert(symbols.symbolSvgMarkup(at('rectangle', { label: '<script>"&' })).includes('&lt;script&gt;&quot;&amp;'));

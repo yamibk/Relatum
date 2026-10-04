@@ -90,7 +90,7 @@ class ResearchWorkspaceStoreTests(unittest.TestCase):
     def test_symbol_styles_and_new_components_roundtrip_without_migration(self):
         document = calculation_document()
         types = ('capacitor', 'inductor', 'switch', 'ground', 'ac-voltage-source', 'diode',
-                 'op-amp', 'transformer', 'controlled-voltage-source', 'controlled-current-source', 'dot')
+                 'op-amp', 'transformer', 'controlled-voltage-source', 'controlled-current-source', 'dot', 'text')
         symbols = [{'id': kind, 'kind': 'symbol', 'type': kind, 'x': 100, 'y': 100,
                     'width': 8 if kind == 'dot' else 32, 'height': 8 if kind == 'dot' else 24,
                     'rotation': 1, 'rotationDegrees': 37.5, 'label': '测试 <R1>', 'color': '#123456',

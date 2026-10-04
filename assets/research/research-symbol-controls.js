@@ -1,4 +1,4 @@
-import { defaultSymbol, SYMBOL_LABELS, SYMBOL_TYPES, symbolSvgMarkup, symbolShapeBounds, symbolLabelBounds } from './research-symbols.js';
+import { defaultSymbol, SYMBOL_LABELS, SYMBOL_TYPES, symbolSvgMarkup, symbolBounds } from './research-symbols.js';
 import { createResearchLabelLayer } from './research-label-renderer.js';
 
 const previews = new WeakMap();
@@ -31,10 +31,7 @@ export function renderSymbolPreview(container, template) {
     const draw = () => {
       const d = { ...defaultSymbol(preview.template.type), ...preview.template, x: 0, y: 0, id: 'preview' };
       const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-      const b = symbolShapeBounds(d);
-      if (d.label) { const l = symbolLabelBounds(d);
-        b.left = Math.min(b.left, l.left); b.right = Math.max(b.right, l.right);
-        b.top = Math.min(b.top, l.top); b.bottom = Math.max(b.bottom, l.bottom); }
+      const b = symbolBounds(d);
       b.left -= 4; b.top -= 4; b.right += 4; b.bottom += 4;
       const markup = symbolSvgMarkup(d.labelMarkdown === false || !preview.labels.hasLabel('preview') ? d : { ...d, label: '' }, dark);
       if (preview.markup !== markup) { shape.innerHTML = markup; preview.markup = markup; }
@@ -124,26 +121,29 @@ export function buildSymbolControls(container, template, options) {
     picker.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.stopPropagation(); cancel(); } });
     controls.append(select, picker); field(parent, title, controls);
   }
-  const symbol = group('符号');
+  const textOnly = state.type === 'text';
+  const symbol = !textOnly || options.allowType ? group('符号') : null;
   if (options.allowType) {
     const select = document.createElement('select'); select.dataset.symbolField = 'type';
     SYMBOL_TYPES.forEach((type) => { const option = document.createElement('option'); option.value = type; text(option, SYMBOL_LABELS[type]); select.appendChild(option); });
     select.value = state.type;
     select.addEventListener('change', () => options.onTypeChange(select.value)); field(symbol, '类型', select);
   }
-  const dimensions = pair(symbol);
-  numeric(dimensions, '宽度', 'width', state.type === 'dot' ? 6 : 8, 640);
-  numeric(dimensions, '高度', 'height', state.type === 'dot' ? 6 : 8, 640);
-  const appearance = pair(symbol); color(appearance, '颜色', 'color'); numeric(appearance, '线宽', 'strokeWidth', 1, 6, .5);
-  state.rotationDegrees = template.rotationDegrees ?? template.rotation * 45;
-  const angle = pair(symbol);
-  const input = numeric(angle, '旋转', 'rotationDegrees', 0, 360, .1, '正角度顺时针；文字保持正向。');
-  const actions = document.createElement('div'); actions.className = 'research-rotation-actions';
-  for (const delta of [-45, 45]) {
-    const button = document.createElement('button'); button.type = 'button'; button.textContent = `${delta > 0 ? '+' : '−'}45°`;
-    button.addEventListener('click', () => { input.value = ((state.rotationDegrees + delta + 360) % 360); input.dispatchEvent(new Event('change')); }); actions.appendChild(button);
+  if (!textOnly) {
+    const dimensions = pair(symbol);
+    numeric(dimensions, '宽度', 'width', state.type === 'dot' ? 6 : 8, 640);
+    numeric(dimensions, '高度', 'height', state.type === 'dot' ? 6 : 8, 640);
+    const appearance = pair(symbol); color(appearance, '颜色', 'color'); numeric(appearance, '线宽', 'strokeWidth', 1, 6, .5);
+    state.rotationDegrees = template.rotationDegrees ?? template.rotation * 45;
+    const angle = pair(symbol);
+    const input = numeric(angle, '旋转', 'rotationDegrees', 0, 360, .1, '正角度顺时针；文字保持正向。');
+    const actions = document.createElement('div'); actions.className = 'research-rotation-actions';
+    for (const delta of [-45, 45]) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = `${delta > 0 ? '+' : '−'}45°`;
+      button.addEventListener('click', () => { input.value = ((state.rotationDegrees + delta + 360) % 360); input.dispatchEvent(new Event('change')); }); actions.appendChild(button);
+    }
+    angle.appendChild(actions);
   }
-  angle.appendChild(actions);
   const label = group('标注'), value = document.createElement('textarea'); value.rows = 3; value.value = state.label; value.maxLength = 10000;
   value.dataset.researchDecorationLabel = ''; value.dataset.symbolField = 'label';
   let composing = false, dirty = false, previewing = false, pendingCommit = false, lastPreview = state.label;
@@ -188,7 +188,8 @@ export function buildSymbolControls(container, template, options) {
   markdown.addEventListener('change', () => commit({ labelMarkdown: markdown.checked }));
   const markdownText = document.createElement('span'); text(markdownText, '开启 Markdown 渲染');
   markdownRow.append(markdown, markdownText); label.appendChild(markdownRow);
-  const typography = pair(label); color(typography, '文字颜色', 'labelColor', true); numeric(typography, '字号', 'labelFontSize', 8, 72);
+  if (textOnly && state.labelColor === 'inherit') state.labelColor = state.color;
+  const typography = pair(label); color(typography, '文字颜色', 'labelColor', !textOnly); numeric(typography, '字号', 'labelFontSize', 8, 72);
   const offsets = pair(label);
   const x = numeric(offsets, 'X 偏移', 'labelOffsetX', -1e9, 1e9, 1, '以符号中心为原点，X 向右为正。');
   const y = numeric(offsets, 'Y 偏移', 'labelOffsetY', -1e9, 1e9, 1, '以符号中心为原点，Y 向上为正。');

@@ -206,8 +206,15 @@ export function createDecorationCanvas(options) {
     if (event.detail !== 0 && (presses.length !== 2 || !presses.every((p) => p.kind === 'blank')
       || presses[1].at - presses[0].at > 650)) return true;
     const point = world(event), center = nearest(point) || point;
-    const created = model.createDecoration({ ...getSymbolTemplate(), kind: 'symbol', ...center });
-    if (created) selected = new Set([created.id]); notify(); return true;
+    const template = { ...getSymbolTemplate() };
+    if (template.type === 'text' && (!tools.presetId || !template.label.trim())) {
+      template.label = options.getDefaultTextLabel?.() || '文字';
+    }
+    const created = model.createDecoration({ ...template, kind: 'symbol', ...center });
+    if (created) selected = new Set([created.id]);
+    notify();
+    if (created?.type === 'text') options.onEditLabel?.(true);
+    return true;
   }
   function duplicate() {
     const objects = [...selected].map((id) => model.decoration(id)).filter(Boolean);
@@ -238,13 +245,19 @@ export function createDecorationCanvas(options) {
     return !modifier && !['Alt', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'w', 'a', 's', 'd'].includes(event.key);
   }
 
-  function getSymbolTemplate() { return presets.find(tools.presetId)?.template || defaultSymbol(tools.symbol); }
+  function getSymbolTemplate() {
+    const preset = presets.find(tools.presetId);
+    if (preset) return preset.template;
+    const template = defaultSymbol(tools.symbol);
+    if (template.type === 'text') template.label = options.getDefaultTextLabel?.() || '文字';
+    return template;
+  }
   function pathsFor(d) {
     const key = `${d.type}:${d.width}:${d.height}`;
     if (!pathCache.has(key)) {
       const g = symbolGeometry(d);
       if (pathCache.size >= 1024) pathCache.delete(pathCache.keys().next().value);
-      pathCache.set(key, { ...g, mask: new Path2D(g.mask), paths: g.paths.map((path) => new Path2D(path)) });
+      pathCache.set(key, { ...g, mask: g.mask ? new Path2D(g.mask) : null, paths: g.paths.map((path) => new Path2D(path)) });
     }
     return pathCache.get(key);
   }
@@ -317,7 +330,10 @@ export function createDecorationCanvas(options) {
       lineContext.globalAlpha = .7; drawLine(lineContext, gesture.preview, colors[gesture.preview.color], paper, visible); lineContext.globalAlpha = 1;
     }
     lineContext.globalCompositeOperation = 'destination-out';
-    symbols.forEach((d) => symbolFrame(lineContext, d, () => { lineContext.fill(pathsFor(d).mask); }));
+    symbols.forEach((d) => {
+      const mask = pathsFor(d).mask;
+      if (mask) symbolFrame(lineContext, d, () => lineContext.fill(mask));
+    });
     lineContext.globalCompositeOperation = 'source-over';
     context.save(); context.setTransform(1, 0, 0, 1, 0, 0); context.drawImage(lines, 0, 0); context.restore();
     symbols.forEach((d) => drawSymbol(context, d, ink, dark));
