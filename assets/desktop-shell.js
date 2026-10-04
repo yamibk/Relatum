@@ -86,6 +86,7 @@
     async flushBeforeClose() {
       if (beforeCloseHandler && await beforeCloseHandler() === false) return false;
       for (const handler of beforeCloseHandlers) if (await handler() === false) return false;
+      if (window.RelatumDesktopPreferences && await window.RelatumDesktopPreferences.flush() === false) return false;
       return true;
     },
     setNoteWorkspaceActive(value) {

@@ -38,8 +38,9 @@ if __name__ == "__main__" and not any(arg in {
     sys.argv = [sys.argv[0], *arguments]
 
 import app
-from feature_profile import HANDOFF_ARGUMENT, FULL_PROFILE, LaunchProfile, ProfileError, read_launcher_settings, save_launcher_settings
+from feature_profile import HANDOFF_ARGUMENT, FULL_PROFILE, LaunchProfile, ProfileError, read_launcher_settings, save_launcher_settings, save_preferences
 from desktop_instance import DesktopInstanceCoordinator
+from desktop_preferences import DesktopPreferences
 from windows_wallpaper import WallpaperController, run_wallpaper_child
 
 try:
@@ -427,6 +428,25 @@ class DesktopBridge:
         self.wallpaper: WallpaperController | None = None
         self._quit_callback = None
         self._lock = threading.Lock()
+        self._preferences = None
+        self._close_after_flush = False
+        self._quit_after_flush = False
+
+    def update_window_preferences(self, delta: dict) -> dict:
+        return self._preferences.update(delta) if self._preferences is not None else {"ok": True}
+
+    def flush_window_preferences(self) -> dict:
+        return self._preferences.flush() if self._preferences is not None else {"ok": True}
+
+    def close_after_flush(self) -> None:
+        self.flush_window_preferences()
+        self._close_after_flush = True
+        self.close_window()
+
+    def quit_after_flush(self) -> None:
+        self.flush_window_preferences()
+        self._quit_after_flush = True
+        self.quit_application()
 
     def set_dirty(self, value: bool) -> None:
         with self._lock:
@@ -452,7 +472,8 @@ class DesktopBridge:
         if not self.get_launcher_settings()["supported"]:
             raise ProfileError("当前安装版不包含 RelatumLauncher")
         with self._lock:
-            return {"supported": True, **save_launcher_settings(app.ROOT, value)}
+            with app._cross_process_mutation_lock():
+                return {"supported": True, **save_launcher_settings(app.ROOT, value)}
 
     def get_restored_size(self) -> dict:
         width, height = _clamp_size(
@@ -738,6 +759,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Relatum 桌面客户端")
     parser.add_argument(HANDOFF_ARGUMENT, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--remember-launch-choice", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("file", nargs="?", default=None, help="要直接打开的 .canvas 文件路径")
     args = parser.parse_args()
 
@@ -765,7 +787,7 @@ def main() -> int:
         _message_box("此配置需要一张有效的 .canvas 文件，并且必须启用画布编辑器。", 0x30)
         return 1
     activation_router = DesktopActivationRouter(profile)
-    instance = DesktopInstanceCoordinator(app.ROOT, activation_router.handle)
+    instance = DesktopInstanceCoordinator(app.ROOT, activation_router.handle, workspaces=profile.workspaces if profile.restricted else None)
     try:
         instance_result = instance.acquire_or_forward(initial_file, allow_forward=not profile.restricted)
     except Exception as err:
@@ -773,6 +795,13 @@ def main() -> int:
         return 1
     if not instance_result.get("primary"):
         status = str(instance_result.get("status") or "")
+        if status == "workspace-conflict":
+            detail = instance_result["error"]
+            if profile.restricted:
+                from launcher import main as launcher_main
+                return launcher_main(choose_only=True, initial_profile=profile, initial_file=str(initial_file or ""), notice=detail)
+            _message_box(detail, 0x30)
+            return 1
         if status == "already-running":
             _message_box("Relatum 已在运行。请先退出已有窗口，再通过启动器启动。", 0x30)
             return 1
@@ -806,9 +835,14 @@ def main() -> int:
 
     # 先起本地服务，拿到端口。
     try:
-        port = app.find_free_port(app.DEFAULT_PORT)
-        server = app.CanvasServer(("127.0.0.1", port), app.Handler)
+        server = app.bind_canvas_server()
+        port = server.server_address[1]
         server.launch_profile = profile
+        preferences = DesktopPreferences(app.ROOT, profile.session_key)
+        server.desktop_preferences = preferences
+        if args.remember_launch_choice and profile.restricted:
+            with app._cross_process_mutation_lock():
+                save_preferences(app.ROOT, profile, str(initial_file or ""))
     except Exception as err:
         instance.close()
         _message_box(f"Relatum 启动失败：\n{err}", 0x10)
@@ -844,6 +878,9 @@ def main() -> int:
             server_thread.join(timeout=1.0)
 
     # 恢复上次的窗口大小 / 位置。
+    global WINDOW_STATE_FILE
+    WINDOW_STATE_FILE = (app.DATA / "window-state.json" if not profile.restricted else
+                         app.DATA / "desktop-sessions" / profile.session_key / "window-state.json")
     saved = _read_window_state() or {}
     width, height = _clamp_size(
         int(saved.get("width") or DEFAULT_WIDTH),
@@ -855,6 +892,7 @@ def main() -> int:
     start_maximized = bool(saved.get("maximized"))
 
     bridge = DesktopBridge(width, height)
+    bridge._preferences = preferences
     try:
         window = webview.create_window(
             "Relatum",
@@ -875,6 +913,16 @@ def main() -> int:
     startup_mark("window-created")
     lifecycle_lock = threading.RLock()
     lifecycle = {"quitting": False}
+
+    def evaluate_later(script: str) -> None:
+        # WinForms closing runs on its UI thread. A synchronous JS evaluation
+        # there prevents WebView2 from delivering the bridge callbacks we await.
+        def run():
+            try:
+                window.evaluate_js(script)
+            except Exception:
+                pass
+        threading.Thread(target=run, name="relatum-close-flush", daemon=True).start()
 
     def show_main_window() -> None:
         try:
@@ -904,6 +952,16 @@ def main() -> int:
         with lifecycle_lock:
             if lifecycle["quitting"]:
                 return
+        if not bridge._quit_after_flush:
+            try:
+                evaluate_later(
+                    "Promise.resolve(window.RelatumDesktopPreferences ? window.RelatumDesktopPreferences.flush() : true).then(function(ok){"
+                    "if(ok !== false && window.pywebview && window.pywebview.api){window.pywebview.api.quit_after_flush();}});"
+                )
+            except Exception:
+                pass
+            return
+        bridge._quit_after_flush = False
         with bridge._lock:
             dirty = bridge.dirty
             note_workspace_active = bridge.note_workspace_active
@@ -911,7 +969,7 @@ def main() -> int:
             show_main_window()
             if note_workspace_active:
                 try:
-                    window.evaluate_js(
+                    evaluate_later(
                         "Promise.resolve(window.CanvasDesktop && "
                         "window.CanvasDesktop.flushBeforeClose()).then(function(ok){"
                         "if(ok !== false && window.pywebview && window.pywebview.api){"
@@ -994,6 +1052,17 @@ def main() -> int:
             return False
         if quitting:
             return None
+        if not bridge._close_after_flush:
+            try:
+                evaluate_later(
+                    "Promise.resolve(window.CanvasDesktop ? window.CanvasDesktop.flushBeforeClose() : "
+                    "window.RelatumDesktopPreferences ? window.RelatumDesktopPreferences.flush() : true).then(function(ok){"
+                    "if(ok !== false && window.pywebview && window.pywebview.api){window.pywebview.api.close_after_flush();}});"
+                )
+            except Exception:
+                pass
+            return False
+        bridge._close_after_flush = False
         with bridge._lock:
             note_workspace_active = bridge.note_workspace_active
             dirty = bridge.dirty
@@ -1001,7 +1070,7 @@ def main() -> int:
             # Alt+F4 / 系统关闭不绕过笔记保存链。首次关闭被拦下，
             # 前端冲刷成功后再调 close_window；写盘失败则窗口保持打开。
             try:
-                window.evaluate_js(
+                evaluate_later(
                     "Promise.resolve(window.CanvasDesktop && "
                     "window.CanvasDesktop.flushBeforeClose()).then(function(ok){"
                     "if(ok !== false && window.pywebview && window.pywebview.api){"
@@ -1025,6 +1094,9 @@ def main() -> int:
             storage = app.ROOT / "WebView2"
         else:
             storage = (Path(local) / "Canvas" / "WebView2") if local else (app.DATA / "webview")
+        if profile.restricted:
+            from desktop_instance import instance_root_key
+            storage = storage / "sessions" / instance_root_key(app.ROOT) / profile.session_key
         storage.mkdir(parents=True, exist_ok=True)
         _apply_webview_cache_limits()
         icon = app.ASSETS / "app-icon.ico"
@@ -1039,6 +1111,10 @@ def main() -> int:
         # closed 事件通常已先执行；finally 兜底覆盖启动失败或事件未触发。
         if bridge.wallpaper is not None:
             bridge.wallpaper.stop()
+        try:
+            preferences.flush()
+        except OSError:
+            pass
         stop_server()
         instance.close()
     return 0

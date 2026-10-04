@@ -56,7 +56,7 @@ class FeatureProfileTests(unittest.TestCase):
             self.assertFalse(features.read_launcher_settings(root)["skipSelection"])
             profile = self.only("notes")
             features.save_preferences(root, profile)
-            with patch.object(launcher.subprocess, "Popen") as spawn, patch.object(launcher, "desktop_instance_running", return_value=False):
+            with patch.object(launcher.subprocess, "Popen") as spawn:
                 self.assertIsNone(launcher.quick_launch(root))
                 features.save_launcher_settings(root, True)
                 command = launcher.quick_launch(root)
@@ -83,13 +83,13 @@ class FeatureProfileTests(unittest.TestCase):
             file.write_text('{"nodes":[],"edges":[]}', encoding="utf8")
             features.save_preferences(root, self.only("canvas", "canvas.editor"), str(file))
             features.save_launcher_settings(root, True)
-            with patch.object(launcher.subprocess, "Popen") as spawn, patch.object(launcher, "desktop_instance_running", return_value=False):
+            with patch.object(launcher.subprocess, "Popen") as spawn:
                 self.assertEqual(launcher.quick_launch(root)[-1], str(file.resolve()))
                 file.unlink()
                 self.assertIsNone(launcher.quick_launch(root))
                 spawn.assert_not_called()
             features.save_preferences(root, self.only("notes"))
-            with patch.object(launcher, "desktop_instance_running", return_value=True), patch.object(launcher.subprocess, "Popen") as spawn, patch("ctypes.windll.user32.MessageBoxW", return_value=1):
+            with patch.object(launcher.subprocess, "Popen") as spawn:
                 self.assertTrue(features.LaunchProfile.decode(launcher.quick_launch(root)[1]).restricted)
                 spawn.assert_not_called()
 

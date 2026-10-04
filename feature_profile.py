@@ -21,6 +21,7 @@ PROFILE_VERSION = 1
 PROFILE_FILENAME = "launcher-profile.json"
 LAUNCHER_SETTINGS_FILENAME = "launcher-settings.json"
 HANDOFF_ARGUMENT = "--launch-profile"
+WORKSPACE_IDS = ("canvas", "notes", "research", "career")
 CANVAS_HOME_IDS = tuple(key for key, item in FEATURES.items() if item.get("home") and item.get("parent") == "canvas")
 VOID_TAGS = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 
@@ -79,6 +80,15 @@ class LaunchProfile:
     @property
     def has_home(self) -> bool:
         return self.canvas_home or any(self.enabled(key) for key in ("notes", "research", "career"))
+
+    @property
+    def workspaces(self) -> tuple[str, ...]:
+        canvas = ("canvas",) if self.canvas_home or self.enabled("canvas.editor") else ()
+        return canvas + tuple(key for key in WORKSPACE_IDS[1:] if self.enabled(key))
+
+    @property
+    def session_key(self) -> str:
+        return "-".join(self.workspaces) if self.restricted else "full"
 
     def validate(self) -> None:
         if not self.has_home and not self.enabled("canvas.editor"):

@@ -226,6 +226,8 @@ def _cross_process_mutation_lock():
         if handle:
             wait_result = kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)
             acquired = wait_result in (0x00000000, 0x00000080)  # object / abandoned
+        if not acquired:
+            raise OSError("无法取得 Relatum 数据写入锁")
         _CROSS_PROCESS_MUTATION_STATE.depth = 1
         yield
     finally:
@@ -10363,7 +10365,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if name in {"index.html", "editor.html", "research.html", "dual-viewer.html", "trash.html", "countdown.html"}:
             import io
             source = (ASSETS / name).read_text(encoding="utf-8")
-            body = render_html(source, self.launch_profile, name).encode("utf-8")
+            source = render_html(source, self.launch_profile, name)
+            preferences = getattr(self.server, "desktop_preferences", None)
+            if preferences is not None:
+                source = source.replace("<head>", "<head>\n" + preferences.bootstrap(), 1)
+            body = source.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -13331,8 +13337,26 @@ def find_free_port(start: int, attempts: int = PORT_ATTEMPTS) -> int:
 
 
 class CanvasServer(http.server.ThreadingHTTPServer):
-    allow_reuse_address = True
+    allow_reuse_address = sys.platform != "win32"
     daemon_threads = True
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def bind_canvas_server(start: int = DEFAULT_PORT, attempts: int = PORT_ATTEMPTS):
+    """Reserve the listening socket itself, never probe then race another launch."""
+    for port in range(start, start + attempts):
+        try:
+            server = CanvasServer(("127.0.0.1", port), Handler)
+        except OSError as err:
+            if getattr(err, "winerror", None) not in (10048, 10013) and err.errno not in (48, 98, 10048):
+                raise
+            continue
+        return server
+    raise RuntimeError(f"找不到可用端口（尝试了 {start} 到 {start + attempts - 1}）")
 
 
 def banner(url: str) -> None:

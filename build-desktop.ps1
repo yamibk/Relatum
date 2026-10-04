@@ -19,7 +19,8 @@
 param(
     [switch]$SkipInstall,
     [switch]$KeepBuildArtifacts,
-    [switch]$ForceReplaceUserData
+    [switch]$ForceReplaceUserData,
+    [string]$OutputDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,10 @@ $ExeName = 'Relatum'
 $ReleaseLeaf = $ExeName + '-release'
 $ReleaseParent = Split-Path $ProjectRoot -Parent
 $Release = Join-Path $ReleaseParent $ReleaseLeaf
+if ($OutputDirectory) {
+    $Release = [System.IO.Path]::GetFullPath($OutputDirectory)
+    $ReleaseParent = Split-Path $Release -Parent
+}
 
 function Assert-NativeSuccess([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw ($Step + ' failed (exit ' + $LASTEXITCODE + ').') }

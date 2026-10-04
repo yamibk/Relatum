@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from feature_profile import CATALOG, FEATURES, HANDOFF_ARGUMENT, PROFILE_FILENAME, RESOURCE_ROOT, LaunchProfile, ProfileError, read_preferences, save_preferences, read_launcher_settings, saved_canvas
-from desktop_instance import desktop_instance_running
+from desktop_instance import workspace_conflicts, conflict_message
 
 
 def launcher_root() -> Path:
@@ -36,11 +36,12 @@ def launch_command(profile: LaunchProfile, file: str = "") -> list[str]:
         command = [str(executable)]
     else:
         command = [sys.executable, str(Path(__file__).resolve().with_name("desktop.py"))]
+    command.append("--remember-launch-choice")
     command.extend(arguments)
     return command
 
 
-def create_form(root: Path):
+def create_form(root: Path, *, initial_profile=None, initial_file="", notice=""):
     # Imported only by the launcher. pythonnet and WinForms already ship with
     # the desktop application; this adds no frontend framework or runtime.
     import clr
@@ -50,6 +51,8 @@ def create_form(root: Path):
     from System.Windows.Forms import Button, CheckBox, DialogResult, DockStyle, FlowDirection, FlowLayoutPanel, Form, FormStartPosition, Label, MessageBox, MessageBoxButtons, MessageBoxIcon, OpenFileDialog, Padding, Panel, AutoScaleMode, Screen
 
     saved, warning = read_preferences(root)
+    if initial_profile is not None:
+        saved = initial_profile
     form = Form()
     form.Text = "Relatum Launcher"
     available_height = Screen.PrimaryScreen.WorkingArea.Height
@@ -86,12 +89,12 @@ def create_form(root: Path):
     detail = Label()
     detail.Dock = DockStyle.Fill
     detail.Padding = Padding(18, 18, 8, 8)
-    detail.Text = warning or "点击或聚焦选项查看说明。\n\n关闭父项会暂时禁用子项，子项原有勾选会保留。\n\nAI、图谱依赖画布编辑器；动态背景依赖日历。"
+    detail.Text = notice or warning or "点击或聚焦选项查看说明。\n\n可重复启动，分别打开不同工作区。同一工作区只能在一个窗口中运行。\n\n关闭父项会暂时禁用子项，子项原有勾选会保留。"
     body.Controls.Add(detail)
     body.Controls.Add(choices_panel)
     buttons = {}
     changing = [False]
-    selected_file = [""]
+    selected_file = [initial_file]
 
     def current():
         return LaunchProfile({key: bool(button.Checked) for key, button in buttons.items()}, restricted=True)
@@ -136,7 +139,7 @@ def create_form(root: Path):
     pick.Location = Point(24, 10)
     pick.Size = Size(140, 32)
     file_label = Label()
-    file_label.Text = "未指定画布 · 默认进入已启用工作区"
+    file_label.Text = initial_file or "未指定画布 · 默认进入已启用工作区"
     file_label.AutoEllipsis = True
     file_label.Location = Point(175, 17)
     file_label.Size = Size(450, 26)
@@ -178,15 +181,15 @@ def create_form(root: Path):
         try:
             profile = current()
             profile.validate()
-            if desktop_instance_running(root):
-                MessageBox.Show(form, "Relatum 已在运行。请先退出已有窗口，再按启动。\n当前选择会保留在启动器中。", "Relatum Launcher", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            conflicts = workspace_conflicts(root, profile.workspaces)
+            if conflicts:
+                MessageBox.Show(form, conflict_message(conflicts), "Relatum Launcher", MessageBoxButtons.OK, MessageBoxIcon.Information)
                 return
             if not profile.has_home and not selected_file[0]:
                 choose_file()
                 if not selected_file[0]:
                     return
             command = launch_command(profile, selected_file[0])
-            save_preferences(root, profile, selected_file[0])
             subprocess.Popen(command, cwd=str(root), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             form.Close()
         except (OSError, ProfileError) as err:
@@ -223,7 +226,7 @@ def quick_launch(root: Path) -> list[str] | None:
         return None
 
 
-def main(*, choose_only: bool = False) -> int:
+def main(*, choose_only: bool = False, initial_profile=None, initial_file="", notice="") -> int:
     if sys.platform != "win32":
         raise RuntimeError("Relatum Launcher 仅支持 Windows 桌面版")
     root = launcher_root()
@@ -245,7 +248,7 @@ def main(*, choose_only: bool = False) -> int:
     def run():
         try:
             Application.EnableVisualStyles()
-            Application.Run(create_form(root))
+            Application.Run(create_form(root, initial_profile=initial_profile, initial_file=initial_file, notice=notice))
         except Exception as err:
             errors.append(err)
     thread = Thread(ThreadStart(run))

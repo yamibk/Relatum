@@ -70,7 +70,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | `notes_library.py` | `ROOT/notes/` 托管 Markdown 笔记库的无 HTTP 数据层；负责安全相对路径、增量文档/双链索引、无感修订保存、库外恢复历史、移动改写与回滚、伴生图片、回收站目标校验、外部拖入暂存，以及生涯统计所需的图片文字元数据解码。 |
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
-| `desktop_instance.py` | Windows 桌面主程序单实例协调；按数据根持有命名互斥锁，通过带认证的本地命名管道转交窗口激活或 `.canvas` 打开请求，并管理 `%TEMP%` 中的短期状态文件。 |
+| `desktop_instance.py` | Windows 工作区占用协调；按数据根用启动协调锁原子占用有效顶层工作区，允许互不重叠的窗口并存。完整模式独占四工作区并保留认证命名管道激活/画布打开；每窗管理自己的短期状态。 |
+| `desktop_preferences.py`、`assets/desktop-preferences.js` | 桌面组合独立的本机偏好快照；页面脚本前恢复 `canvas:*` / `research:*`，研究 iframe 转交主桥，合并变更、350ms 延迟原子保存、关闭前冲刷。快照不依赖端口，不保存正文。 |
 | `launcher.py`、`feature_profile.py`、`assets/feature-catalog.json` | 便携版原生 WinForms 启动器、版本 1 选择配置与统一功能清单。清单声明默认值、父项/依赖、首页入口、脚本/页面归属及独占 API；主进程仅接受命令行会话配置，没有 HTTP 配置写入入口。 |
 | `startup_trace.py` | 验证用启动分段记录；仅设置 `RELATUM_STARTUP_TRACE` 时向指定 JSONL 写入阶段、PID 和时间。普通启动不写文件、不设置计时器；首页诊断使用同次启动注入的 `startupTrace=1` 与 Performance marks。 |
 | `assets/feature-runtime.js`、`assets/start-workspace-runtime.js`、`assets/start-shell.js` | 服务端先注入有效功能选择，首绘恢复跳过禁用工作区；共用工作区生命周期负责笔记/研究/生涯加载、切换和预热。没有画布首页时只加载轻量共用外壳，保留主题、笔记字号、桌面尺寸与生涯设置。 |
@@ -155,7 +156,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | Markdown 笔记库 | `notes/`；普通文件夹和 `.md` 是正文，粘贴图片位于同目录 `<笔记名>.assets/images/`。独占行图片的文字框数据以同一行 `<!--relatum:image-text:v1:<base64url-json>-->` 注释保存在 `.md`，不新增侧车文件。伴生目录默认不显示在文件树，但与笔记一起移动、重命名和移入 Windows 系统回收站。没有正文数据库或发布索引。 |
 | 笔记恢复历史 | `data/note-recovery/`；按逻辑笔记路径保存完整 Markdown 快照，普通快照最短间隔 5 分钟，保留 7 天；外部碰撞、历史恢复和高风险覆盖前强制快照。 |
 | 最近、分组、收藏 | `data/recent.json`（v3）；上一次有效快照为 `data/recent.backup.json`，损坏原件隔离成 `data/recent.corrupt-<时间>.json` |
-| 启动器选择 | `data/launcher-profile.json`，结构 `{version:1, features:{功能ID:布尔值}, canvasFile?:绝对路径}`；只在确认启动时使用唯一临时文件与 `os.replace` 保存。父项关闭不改子项原始选择；缺失功能使用清单默认值，首次全部启用。损坏配置显示警告与默认值，取消不覆盖；普通 `Relatum.exe` 不读取它。 |
+| 启动器选择 | `data/launcher-profile.json`，结构 `{version:1, features:{功能ID:布尔值}, canvasFile?:绝对路径}`；手动确认通过私有 `--remember-launch-choice` 交给主进程，取得占用并建立服务后才原子保存，冲突不覆盖。父项关闭不改子项选择；缺失功能取清单默认值。损坏配置提示并显示默认选择，取消不覆盖；普通 `Relatum.exe` 不读取。 |
 | 启动器弹窗偏好 | `data/launcher-settings.json`，结构 `{version:1, skipSelection:布尔值}`，默认 false；客户端设置通过原生 `DesktopBridge` 原子保存，不提供 HTTP 写入口。勾选直接使用之前的功能选择；取消恢复选择窗口。选择缺失/损坏、仅编辑器的画布文件失效时回到选择窗口，已有主实例仍提示退出。 |
 | 背景偏好、辅助底纹与上传背景 | `data/background.json`（v2：`background` + 可选 `guide`）、`data/backgrounds/` |
 | 画布视口 | `data/viewport.json` |
@@ -179,6 +180,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 | 生涯使用报告 | `data/career-report.json`（v1）；只在用户首次生成或页底“重新生成”时扫描现有本地账本与内容库，以原子替换保存统计期、数据源状态、图表序列、聚合值和少量项目名称。普通打开只读快照，不会重新统计；生成失败时保留旧快照。画布、专注和起步页三类真实计时始终独立保存，不合并成可能重叠的“总时长”；当前库存、完成记录和推断日期也保持分开。快照中的专注与复习字段继续用于兼容和来源状态，当前主要报告不为其保留独立图表。快照不保存 Markdown/日记/速记正文、绝对路径或素材，不调用 AI 也不联网 |
 | AI 配置 | `data/ai.json`，含 Key、模型、baseUrl |
 | 桌面窗口状态 | `data/window-state.json` |
+| 精简窗口状态与偏好 | `data/desktop-sessions/<组合>/window-state.json` 与 `preferences.json`；组合按 `canvas-notes-research-career` 固定顺序取有效工作区，不含子功能选择。完整模式窗口状态保留原路径，偏好在 `desktop-sessions/full/preferences.json`，首次从旧缓存导入；新精简组合默认值。精简 WebView2 缓存在原缓存目录下 `sessions/<数据根哈希>/<组合>/`。 |
 
 全新用户尚无 `data/background.json` 且当前画布也没有旧版背景字段时，编辑器出厂默认使用“月灰”纯色、横线纸底纹、全屏沉浸、浅色背景语义，并关闭标题栏可读性保护；首次加载后会把这组全局背景偏好写入 `data/background.json`。辅助底纹是独立的全局可选偏好；新用户缺省为横线纸，迁移只有旧版背景字段的画布时仍保持无底纹；可选无底纹、横线、点格、方格或主次方格，与原背景共存而不写入 `.canvas`。
 
@@ -666,19 +668,20 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 便携版提供 `RelatumLauncher.exe`：原生 WinForms，默认恢复选择并等待确认；手动确认保持启动独立 `Relatum.exe`。免弹窗且保存组合有效时，在当前进程进入桌面主程序，不创建选择窗口、不再次启动 EXE，任务管理器主进程名为 `RelatumLauncher.exe`。`quick_launch()` 只返回经过入口/文件校验的会话参数，桌面入口仍严格解码为受限会话并持有同一实例锁。选择缺失/损坏或仅编辑器的文件失效时恢复选择窗口。选择窗口自身不启动 HTTP 服务或 WebView2。`desktop.py` 在导入主服务前根据 EXE 名称分派，但动态背景子进程与服务标志必须优先，避免同进程主窗启动的子进程误入选择窗口。两个 EXE 共享归档和 `_internal`。源码可运行 `launcher.py` 或 `desktop.py --launcher`。MSIX 不含启动器，客户端隐藏免弹窗设置。
 - 精简模式的导航列数和滑块位移按实际启用工作区计算，首绘即生效；中英文切换及窄窗口必须保持滑块与当前按钮对齐。`assets/desktop-shell.js` 共用免弹窗控件逻辑，画布首页与轻量外壳一致。
 - 已取消启动器单工作区自动隐藏顶栏：画布和研究顶栏正常显示；笔记专注按钮继续读写个人偏好 `canvas:noteFocusMode:v1`，隐藏时用 `inert` 跳过键盘焦点；生涯保留现有顶部感应机制。免弹窗同进程启动优化继续生效。
-- 会话通过私有命令行 `--launch-profile` 传入并严格校验；无有效入口、格式损坏、未启用编辑器却指定画布，以及仅编辑器却未选现有文件时停止。已有主实例时启动器不转交或改变会话；主进程再次检查互斥锁防竞态。直接运行主 EXE 始终请求完整模式，遇到已有精简窗口提示先退出。
+- 会话通过私有命令行 `--launch-profile` 传入并严格校验；无入口、无效配置、未启用编辑器却指定画布、仅编辑器无有效画布时停止。启动器可重复启动，互不重叠的有效顶层工作区各开进程/窗口，最多四主窗；画布子页面不单独多开。重叠整次拒绝，保留选择并显示冲突；免弹窗或竞态冲突恢复选择窗口。直接主 EXE 始终请求完整模式，遇到精简窗口提示先退出。
 - 新增可禁用功能时先在清单登记稳定 ID、`default:true`、父项或 `requires`、脚本/页面、独占读写路径/前缀；共享脚本和写入使用 OR 归属。画布首页入口需 `home:true`，并在首页路由登记对应激活器；新增工作区入口需同时接入共用生命周期。启动器自动显示清单选项。依赖缺失、循环和重复 ID 在启动时拒绝。不要用隐藏 CSS 代替资源边界。
 - `study-goal-tree.js` 是学习与独立树状页共用的无 DOM 模型，在清单 `sharedScripts` 中归属 `canvas.study` / `canvas.tree`；任一启用就加载，不能登记为学习独占或随关闭学习一起移除。模型仍先于两个页面运行时加载；树状页继续独立读写 `data/tree-page.json`。相关配置检查使用 `tests.test_feature_profile` 中的三种组合（仅树状、仅学习、两者关闭）。
 
 - 桌面方案是 pywebview + WebView2，不是 Electron。
 - `desktop.py` 会先启动本地服务，再打开 `index.html?desktop=1` 或 `editor.html?desktop=1&file=...`。
 - Windows 普通桌面启动按 `ROOT` 保持一个主实例：第二次启动不再创建服务和 WebView2，而是通过 `desktop_instance.py` 的本地认证命名管道唤醒已有窗口。传入另一张有效 `.canvas` 时，当前窗口干净才在原窗口切换；当前画布 dirty 时只唤醒并拒绝切换；传入同一画布只唤醒、不刷新。窗口尚未就绪时只保留最后一条有效请求。动态背景子进程及 `--no-browser` / `--port` / `--allow-dir` 服务模式不参与这项主实例限制。
-- 主实例状态只短期写在 `%TEMP%/relatum-desktop-<ROOT哈希>.json`，含随机管道和认证材料；正常退出仅删除仍属于自己的状态，异常退出后的陈旧文件由下一主实例覆盖。IPC 只接受窗口激活与已重新验证的 `.canvas` 路径，不得扩成通用控制面。
+- 完整实例状态在 `%TEMP%/relatum-desktop-<ROOT哈希>.json`，精简实例加 `-<组合>` 后缀；协议版本 2 校验数据根、组合、工作区和令牌，含随机管道及认证材料。退出仅删自身状态并释放自身占用；异常退出后内核释放占用，重启覆盖陈旧状态。IPC 仅窗口激活与重新校验的 `.canvas` 路径。关闭的 JavaScript 冲刷从后台线程调度，不能在 WinForms UI 关闭事件内同步等待桥接回调。
 - Windows 下做了无边框窗口：隐藏原生标题栏、保留系统最小化/最大化动画、DWM 圆角、关闭时检查 dirty。
 - `desktop-shell.js` 负责窗口按钮、pywebview ready 队列、dirty 标记和桌面 session 标识。
+- 桌面服务直接绑定空闲端口，Windows 独占地址绑定，避免两个服务复用同一端口；关闭只停自身服务。跨进程写锁创建/等待失败必须拒绝写入。
 - 动态背景禁用时不创建 `WallpaperController`；启用时，背景 WebView2 由当前 EXE 的隔离子进程承载（完整/手动模式为 `Relatum.exe`，免弹窗模式为 `RelatumLauncher.exe`），子进程标志优先于启动器分派，不能与主窗口共享 WinForms UI 线程。主进程通过本地 Windows 命名管道管理启动、切换、删除通知和停止，并独立持有托盘与数据根互斥锁。子进程向 `Progman` 请求一次桌面壁纸宿主后，必须找到拥有 `SHELLDLL_DefView` 的顶层窗口及其后方、同属 Explorer 且覆盖主屏的专用 `WorkerW`；`SHELLDLL_DefView` / `SysListView32` 会绘制静态壁纸，绝不能作为背景父窗口，也不能按类名选择任意小型 `WorkerW`。挂载成功后才允许主进程返回 `active:true`；不能调用会强制 `Activate()` 的 `window.show()`。它不替换系统静态壁纸，只支持 Windows 主显示器和本次运行，不自启、不持久化。动态背景启用时关闭主窗只隐藏到托盘；托盘“取消桌面背景”会停止子进程并重新显示主窗，“退出 Relatum”仍执行 dirty 确认。子进程启动失败、Explorer 宿主丢失或同一数据根已有背景实例时必须安全停止，不能留下普通悬窗或虚假的启用状态。
 - WebView2 用户数据默认在 `%LOCALAPPDATA%\Canvas\WebView2`；启动时给 HTTP 磁盘缓存和媒体缓存分别设置 64MiB / 32MiB 参数上限。这不是整个用户目录或 Code/GPU Cache 的硬总上限，不要为清缓存误删 Cookies、localStorage 等用户状态。
-- 窗口状态版本是 `2`，尺寸以逻辑像素原子保存到 `data/window-state.json`。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则最大化启动后的首次还原会使用样式切换前留下的错误 normal placement。
+- 窗口状态版本是 `2`，尺寸以逻辑像素原子保存；完整模式使用 `data/window-state.json`，精简模式使用上述组合路径。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则首次还原会使用样式切换前留下的错误 normal placement。
 - 构建脚本输出 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、各自同级 `.exe.config` 和共用 `_internal/`；MSIX 暂存包排除启动器及其配置。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
 - 构建会整体替换 `Relatum-release/`；若目录内已有 `canvases/`、`notes/` 或 `data/`，默认拒绝覆盖，除非显式 `-ForceReplaceUserData`。
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
@@ -921,7 +924,7 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 
 - 先读 `README.md` 的“构建 Windows 桌面版”章节。
 - 只在用户要求或任务确实需要时运行 `build-desktop.ps1`。
-- 改动主实例、窗口激活或桌面 IPC 时运行 `python -m unittest .\tests\test_desktop_instance.py .\tests\test_windows_wallpaper.py .\tests\test_runtime_paths.py`，并用同一数据根连续启动多次验证只有一个主窗口；WebView2 的浏览器/GPU/渲染器子进程不算重复主实例。
+- 改主实例、激活或 IPC 时运行 `python -m unittest tests.test_desktop_instance tests.test_desktop_preferences tests.test_launcher_native tests.test_windows_wallpaper tests.test_runtime_paths` 与 `node tests/desktop-preferences-regression.js`。同根完整模式重复启动只有一个主窗口；精简互不重叠最多四主窗，重叠整次拒绝。`node tests/workspace-multiopen-package.js <发布目录> <报告JSON> all` 验实际四窗、保存、换端口偏好、异常重启及三轮完整/两窗/四窗资源测量；`RELATUM_SOURCE=1` 与 `RELATUM_PYTHON` 可对源码目录运行 `qa`。WebView2 子进程不算主实例。构建可用 `-OutputDirectory <新目录>` 保留旧发布包和用户数据。
 - 验收 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、两份同级 `.exe.config`、`_internal/assets/feature-catalog.json` 与全部资产，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
 
 ## 12. 常见坑

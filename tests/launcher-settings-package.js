@@ -95,11 +95,14 @@ async function closeMain(page, port) {
     assert(!children.includes('Relatum.exe'), 'no second main executable');
     const runtime = await page.evaluate(async () => (await fetch('/api/runtime')).json());
     assert(runtime.launcherMode && runtime.features.notes && !runtime.features['canvas.editor']);
+    assert.equal(await page.locator('button[data-start-workspace="notes"]').textContent(), '笔记', 'new combination uses independent default language');
+    await page.evaluate(() => window.RelatumI18n.setLanguage('en'));
     assert.equal(await page.locator('button[data-start-workspace="notes"]').textContent(), 'Notes');
     await setToggle(page, false);
     await page.evaluate(() => window.RelatumI18n.setLanguage('zh-CN'));
     if (process.env.RELATUM_SETTINGS_PREVIEW) await page.screenshot({ path: process.env.RELATUM_SETTINGS_PREVIEW });
     await closeMain(page, port);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'data/desktop-sessions/full/preferences.json'), 'utf8')).values['canvas:toolbarLanguage'], 'en', 'notes language does not overwrite full preferences');
     const chooser = start('RelatumLauncher.exe', await freePort());
     await sleep(2500);
     assert.equal(chooser.exitCode, null, 'unchecking restores chooser');

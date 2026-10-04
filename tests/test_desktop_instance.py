@@ -87,6 +87,14 @@ class _FakeKernel32:
         self.next_handle = 100
         self.handles = {}
         self.counts = {}
+        self.admission = threading.RLock()
+
+    def WaitForSingleObject(self, handle, timeout):
+        return 0 if self.admission.acquire(timeout=timeout / 1000) else 0x102
+
+    def ReleaseMutex(self, handle):
+        self.admission.release()
+        return True
 
     def SetLastError(self, value):
         self.last_error = int(value)
@@ -167,6 +175,63 @@ class DesktopInstanceCoordinatorTests(unittest.TestCase):
         primary.close()
         self.assertFalse(primary.state_path.exists())
         replacement = self.coordinator(root, lambda _command: {})
+        self.addCleanup(replacement.close)
+        self.assertTrue(replacement.acquire_or_forward(None)["primary"])
+
+    def test_disjoint_workspaces_overlap_and_restart(self):
+        root = self.temp_path / "runtime"
+        owners = []
+        for key in ("canvas", "notes", "research", "career"):
+            owner = self.coordinator(root, lambda _: {}, workspaces=(key,))
+            self.addCleanup(owner.close)
+            self.assertTrue(owner.acquire_or_forward(None)["primary"])
+            owners.append(owner)
+        self.assertEqual(len({owner.state_path for owner in owners}), 4)
+        duplicate = self.coordinator(root, lambda _: {}, workspaces=("notes", "career"))
+        self.assertEqual(duplicate.acquire_or_forward(None)["workspaces"], ["notes", "career"])
+        full = self.coordinator(root, lambda _: {})
+        self.assertEqual(full.acquire_or_forward(None)["status"], "workspace-conflict")
+        owners[1].close()
+        replacement = self.coordinator(root, lambda _: {}, workspaces=("notes",))
+        self.addCleanup(replacement.close)
+        self.assertTrue(replacement.acquire_or_forward(None)["primary"])
+        self.assertTrue(owners[0].state_path.exists())
+
+    def test_partial_overlap_does_not_reserve_free_workspace(self):
+        root = self.temp_path / "runtime"
+        owner = self.coordinator(root, lambda _: {}, workspaces=("notes",))
+        self.addCleanup(owner.close)
+        owner.acquire_or_forward(None)
+        rejected = self.coordinator(root, lambda _: {}, workspaces=("canvas", "notes"))
+        self.assertEqual(rejected.acquire_or_forward(None)["workspaces"], ["notes"])
+        canvas = self.coordinator(root, lambda _: {}, workspaces=("canvas",))
+        self.addCleanup(canvas.close)
+        self.assertTrue(canvas.acquire_or_forward(None)["primary"])
+
+    def test_racing_launches_only_one_acquires_overlap(self):
+        root = self.temp_path / "runtime"
+        contenders = [self.coordinator(root, lambda _: {}, workspaces=("notes",)) for _ in range(2)]
+        results = []
+        barrier = threading.Barrier(2)
+        def acquire(owner):
+            barrier.wait()
+            results.append(owner.acquire_or_forward(None))
+        threads = [threading.Thread(target=acquire, args=(owner,)) for owner in contenders]
+        for owner in contenders:
+            self.addCleanup(owner.close)
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=3)
+        self.assertEqual(sum(result["primary"] for result in results), 1)
+
+    def test_listener_failure_releases_every_workspace(self):
+        root = self.temp_path / "runtime"
+        owner = self.coordinator(root, lambda _: {}, workspaces=("canvas", "notes"))
+        with mock.patch.object(owner, "_start_listener", side_effect=OSError("failed")):
+            with self.assertRaises(OSError):
+                owner.acquire_or_forward(None)
+        replacement = self.coordinator(root, lambda _: {}, workspaces=("canvas", "notes"))
         self.addCleanup(replacement.close)
         self.assertTrue(replacement.acquire_or_forward(None)["primary"])
 

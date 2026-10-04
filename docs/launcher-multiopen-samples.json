@@ -1,0 +1,1187 @@
+{
+  "measuredAt": "2026-10-04T04:05:02.070Z",
+  "platform": "10.0.26200",
+  "qa": {
+    "passed": true
+  },
+  "samples": [
+    {
+      "name": "full",
+      "round": 1,
+      "privateMiB": 380.8828125,
+      "workingMiB": 620.9375,
+      "idleCpuOneCorePercent": 0.4646084823117162,
+      "idleIntervalMs": 6726.093299999993,
+      "startupsMs": [
+        5571.711800000005
+      ],
+      "processes": [
+        {
+          "id": 5196,
+          "name": "Relatum",
+          "private": 75681792,
+          "working": 118165504,
+          "cpuMs": 4390.625
+        },
+        {
+          "id": 20612,
+          "name": "msedgewebview2",
+          "private": 43450368,
+          "working": 137998336,
+          "cpuMs": 1406.25
+        },
+        {
+          "id": 25944,
+          "name": "msedgewebview2",
+          "private": 2703360,
+          "working": 11542528,
+          "cpuMs": 78.125
+        },
+        {
+          "id": 16860,
+          "name": "msedgewebview2",
+          "private": 104177664,
+          "working": 123408384,
+          "cpuMs": 2203.125
+        },
+        {
+          "id": 20596,
+          "name": "msedgewebview2",
+          "private": 13901824,
+          "working": 44355584,
+          "cpuMs": 953.125
+        },
+        {
+          "id": 23176,
+          "name": "msedgewebview2",
+          "private": 7745536,
+          "working": 20312064,
+          "cpuMs": 171.875
+        },
+        {
+          "id": 31692,
+          "name": "msedgewebview2",
+          "private": 151724032,
+          "working": 195317760,
+          "cpuMs": 3703.125
+        }
+      ]
+    },
+    {
+      "name": "two",
+      "round": 1,
+      "privateMiB": 576.55859375,
+      "workingMiB": 1051.2265625,
+      "idleCpuOneCorePercent": 2.4905694903230553,
+      "idleIntervalMs": 6901.032099999982,
+      "startupsMs": [
+        5725.256099999999,
+        6214.1235000000015
+      ],
+      "processes": [
+        {
+          "id": 27556,
+          "name": "Relatum",
+          "private": 74465280,
+          "working": 116035584,
+          "cpuMs": 4171.875
+        },
+        {
+          "id": 29400,
+          "name": "Relatum",
+          "private": 74711040,
+          "working": 116088832,
+          "cpuMs": 4468.75
+        },
+        {
+          "id": 21820,
+          "name": "msedgewebview2",
+          "private": 41992192,
+          "working": 137248768,
+          "cpuMs": 1234.375
+        },
+        {
+          "id": 26584,
+          "name": "msedgewebview2",
+          "private": 2703360,
+          "working": 11542528,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 13552,
+          "name": "msedgewebview2",
+          "private": 98459648,
+          "working": 117862400,
+          "cpuMs": 2046.875
+        },
+        {
+          "id": 32880,
+          "name": "msedgewebview2",
+          "private": 13213696,
+          "working": 43634688,
+          "cpuMs": 703.125
+        },
+        {
+          "id": 11316,
+          "name": "msedgewebview2",
+          "private": 7716864,
+          "working": 20267008,
+          "cpuMs": 140.625
+        },
+        {
+          "id": 2956,
+          "name": "msedgewebview2",
+          "private": 57196544,
+          "working": 96489472,
+          "cpuMs": 1218.75
+        },
+        {
+          "id": 4084,
+          "name": "msedgewebview2",
+          "private": 41529344,
+          "working": 137170944,
+          "cpuMs": 1343.75
+        },
+        {
+          "id": 11804,
+          "name": "msedgewebview2",
+          "private": 2686976,
+          "working": 11530240,
+          "cpuMs": 78.125
+        },
+        {
+          "id": 32608,
+          "name": "msedgewebview2",
+          "private": 95870976,
+          "working": 115417088,
+          "cpuMs": 2156.25
+        },
+        {
+          "id": 25352,
+          "name": "msedgewebview2",
+          "private": 13524992,
+          "working": 43683840,
+          "cpuMs": 875
+        },
+        {
+          "id": 17256,
+          "name": "msedgewebview2",
+          "private": 7729152,
+          "working": 20287488,
+          "cpuMs": 156.25
+        },
+        {
+          "id": 7512,
+          "name": "msedgewebview2",
+          "private": 72765440,
+          "working": 115032064,
+          "cpuMs": 1671.875
+        }
+      ]
+    },
+    {
+      "name": "four",
+      "round": 1,
+      "privateMiB": 1193.4453125,
+      "workingMiB": 2159.1171875,
+      "idleCpuOneCorePercent": 6.462883366652711,
+      "idleIntervalMs": 7011.189499999979,
+      "startupsMs": [
+        5649.26449999999,
+        6107.8550000000105,
+        5602.143500000006,
+        5687.747499999998
+      ],
+      "processes": [
+        {
+          "id": 19856,
+          "name": "Relatum",
+          "private": 76120064,
+          "working": 116535296,
+          "cpuMs": 4062.5
+        },
+        {
+          "id": 33088,
+          "name": "Relatum",
+          "private": 74706944,
+          "working": 116150272,
+          "cpuMs": 4328.125
+        },
+        {
+          "id": 33100,
+          "name": "Relatum",
+          "private": 74702848,
+          "working": 116338688,
+          "cpuMs": 4625
+        },
+        {
+          "id": 30996,
+          "name": "Relatum",
+          "private": 74440704,
+          "working": 115916800,
+          "cpuMs": 4328.125
+        },
+        {
+          "id": 26652,
+          "name": "msedgewebview2",
+          "private": 40861696,
+          "working": 136433664,
+          "cpuMs": 1406.25
+        },
+        {
+          "id": 32424,
+          "name": "msedgewebview2",
+          "private": 3620864,
+          "working": 20623360,
+          "cpuMs": 109.375
+        },
+        {
+          "id": 32456,
+          "name": "msedgewebview2",
+          "private": 97218560,
+          "working": 116645888,
+          "cpuMs": 2109.375
+        },
+        {
+          "id": 28536,
+          "name": "msedgewebview2",
+          "private": 13303808,
+          "working": 43712512,
+          "cpuMs": 671.875
+        },
+        {
+          "id": 11868,
+          "name": "msedgewebview2",
+          "private": 7733248,
+          "working": 20291584,
+          "cpuMs": 140.625
+        },
+        {
+          "id": 19072,
+          "name": "msedgewebview2",
+          "private": 56573952,
+          "working": 95932416,
+          "cpuMs": 1093.75
+        },
+        {
+          "id": 11752,
+          "name": "msedgewebview2",
+          "private": 43274240,
+          "working": 139595776,
+          "cpuMs": 1437.5
+        },
+        {
+          "id": 31724,
+          "name": "msedgewebview2",
+          "private": 3600384,
+          "working": 20611072,
+          "cpuMs": 78.125
+        },
+        {
+          "id": 22324,
+          "name": "msedgewebview2",
+          "private": 96022528,
+          "working": 115572736,
+          "cpuMs": 2234.375
+        },
+        {
+          "id": 28968,
+          "name": "msedgewebview2",
+          "private": 14639104,
+          "working": 44019712,
+          "cpuMs": 937.5
+        },
+        {
+          "id": 11396,
+          "name": "msedgewebview2",
+          "private": 7757824,
+          "working": 20303872,
+          "cpuMs": 171.875
+        },
+        {
+          "id": 24048,
+          "name": "msedgewebview2",
+          "private": 71647232,
+          "working": 116637696,
+          "cpuMs": 1984.375
+        },
+        {
+          "id": 22064,
+          "name": "msedgewebview2",
+          "private": 42070016,
+          "working": 137203712,
+          "cpuMs": 1187.5
+        },
+        {
+          "id": 32100,
+          "name": "msedgewebview2",
+          "private": 2707456,
+          "working": 11534336,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 20656,
+          "name": "msedgewebview2",
+          "private": 148611072,
+          "working": 167600128,
+          "cpuMs": 1859.375
+        },
+        {
+          "id": 31628,
+          "name": "msedgewebview2",
+          "private": 13959168,
+          "working": 44404736,
+          "cpuMs": 953.125
+        },
+        {
+          "id": 12552,
+          "name": "msedgewebview2",
+          "private": 7700480,
+          "working": 20291584,
+          "cpuMs": 187.5
+        },
+        {
+          "id": 24152,
+          "name": "msedgewebview2",
+          "private": 46780416,
+          "working": 90148864,
+          "cpuMs": 1140.625
+        },
+        {
+          "id": 25032,
+          "name": "msedgewebview2",
+          "private": 41000960,
+          "working": 135217152,
+          "cpuMs": 1296.875
+        },
+        {
+          "id": 27824,
+          "name": "msedgewebview2",
+          "private": 2637824,
+          "working": 11505664,
+          "cpuMs": 46.875
+        },
+        {
+          "id": 15020,
+          "name": "msedgewebview2",
+          "private": 109809664,
+          "working": 128987136,
+          "cpuMs": 1531.25
+        },
+        {
+          "id": 13044,
+          "name": "msedgewebview2",
+          "private": 13180928,
+          "working": 43548672,
+          "cpuMs": 765.625
+        },
+        {
+          "id": 26736,
+          "name": "msedgewebview2",
+          "private": 7733248,
+          "working": 20295680,
+          "cpuMs": 218.75
+        },
+        {
+          "id": 6920,
+          "name": "msedgewebview2",
+          "private": 59002880,
+          "working": 97939456,
+          "cpuMs": 1296.875
+        }
+      ]
+    },
+    {
+      "name": "full",
+      "round": 2,
+      "privateMiB": 377.0625,
+      "workingMiB": 618.80859375,
+      "idleCpuOneCorePercent": 0.46983170057170004,
+      "idleIntervalMs": 6651.317900000024,
+      "startupsMs": [
+        5666.977599999984
+      ],
+      "processes": [
+        {
+          "id": 16440,
+          "name": "Relatum",
+          "private": 75087872,
+          "working": 117641216,
+          "cpuMs": 5000
+        },
+        {
+          "id": 13292,
+          "name": "msedgewebview2",
+          "private": 43065344,
+          "working": 138575872,
+          "cpuMs": 1484.375
+        },
+        {
+          "id": 19416,
+          "name": "msedgewebview2",
+          "private": 2695168,
+          "working": 11538432,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 4644,
+          "name": "msedgewebview2",
+          "private": 105705472,
+          "working": 125063168,
+          "cpuMs": 2250
+        },
+        {
+          "id": 26700,
+          "name": "msedgewebview2",
+          "private": 14135296,
+          "working": 44535808,
+          "cpuMs": 1140.625
+        },
+        {
+          "id": 32304,
+          "name": "msedgewebview2",
+          "private": 7745536,
+          "working": 20299776,
+          "cpuMs": 187.5
+        },
+        {
+          "id": 20552,
+          "name": "msedgewebview2",
+          "private": 146944000,
+          "working": 191213568,
+          "cpuMs": 3265.625
+        }
+      ]
+    },
+    {
+      "name": "two",
+      "round": 2,
+      "privateMiB": 574.5234375,
+      "workingMiB": 1049.98828125,
+      "idleCpuOneCorePercent": 3.57875827738159,
+      "idleIntervalMs": 6985.66320000001,
+      "startupsMs": [
+        5553.336800000019,
+        6183.7729999999865
+      ],
+      "processes": [
+        {
+          "id": 24208,
+          "name": "Relatum",
+          "private": 74149888,
+          "working": 115552256,
+          "cpuMs": 4312.5
+        },
+        {
+          "id": 13792,
+          "name": "Relatum",
+          "private": 74383360,
+          "working": 116006912,
+          "cpuMs": 4437.5
+        },
+        {
+          "id": 7616,
+          "name": "msedgewebview2",
+          "private": 41127936,
+          "working": 136368128,
+          "cpuMs": 1500
+        },
+        {
+          "id": 26572,
+          "name": "msedgewebview2",
+          "private": 2682880,
+          "working": 11534336,
+          "cpuMs": 31.25
+        },
+        {
+          "id": 25384,
+          "name": "msedgewebview2",
+          "private": 98754560,
+          "working": 118255616,
+          "cpuMs": 2109.375
+        },
+        {
+          "id": 24044,
+          "name": "msedgewebview2",
+          "private": 13357056,
+          "working": 43782144,
+          "cpuMs": 656.25
+        },
+        {
+          "id": 33688,
+          "name": "msedgewebview2",
+          "private": 7729152,
+          "working": 20287488,
+          "cpuMs": 140.625
+        },
+        {
+          "id": 28152,
+          "name": "msedgewebview2",
+          "private": 57237504,
+          "working": 96428032,
+          "cpuMs": 1312.5
+        },
+        {
+          "id": 11612,
+          "name": "msedgewebview2",
+          "private": 41369600,
+          "working": 136728576,
+          "cpuMs": 1500
+        },
+        {
+          "id": 7760,
+          "name": "msedgewebview2",
+          "private": 2699264,
+          "working": 11538432,
+          "cpuMs": 46.875
+        },
+        {
+          "id": 16360,
+          "name": "msedgewebview2",
+          "private": 95973376,
+          "working": 115380224,
+          "cpuMs": 2312.5
+        },
+        {
+          "id": 32476,
+          "name": "msedgewebview2",
+          "private": 13611008,
+          "working": 43954176,
+          "cpuMs": 937.5
+        },
+        {
+          "id": 9800,
+          "name": "msedgewebview2",
+          "private": 7716864,
+          "working": 20287488,
+          "cpuMs": 156.25
+        },
+        {
+          "id": 15552,
+          "name": "msedgewebview2",
+          "private": 71639040,
+          "working": 114888704,
+          "cpuMs": 1890.625
+        }
+      ]
+    },
+    {
+      "name": "four",
+      "round": 2,
+      "privateMiB": 1191.4140625,
+      "workingMiB": 2158.0625,
+      "idleCpuOneCorePercent": 3.323826987242926,
+      "idleIntervalMs": 7051.359800000035,
+      "startupsMs": [
+        5753.181500000006,
+        6380.032199999958,
+        5592.178799999994,
+        5589.4235000000335
+      ],
+      "processes": [
+        {
+          "id": 30124,
+          "name": "Relatum",
+          "private": 74842112,
+          "working": 116420608,
+          "cpuMs": 4218.75
+        },
+        {
+          "id": 29576,
+          "name": "Relatum",
+          "private": 74715136,
+          "working": 116211712,
+          "cpuMs": 4562.5
+        },
+        {
+          "id": 11984,
+          "name": "Relatum",
+          "private": 75194368,
+          "working": 116461568,
+          "cpuMs": 4375
+        },
+        {
+          "id": 23944,
+          "name": "Relatum",
+          "private": 74612736,
+          "working": 115892224,
+          "cpuMs": 4046.875
+        },
+        {
+          "id": 5724,
+          "name": "msedgewebview2",
+          "private": 40919040,
+          "working": 136417280,
+          "cpuMs": 1359.375
+        },
+        {
+          "id": 5456,
+          "name": "msedgewebview2",
+          "private": 3592192,
+          "working": 20594688,
+          "cpuMs": 109.375
+        },
+        {
+          "id": 33132,
+          "name": "msedgewebview2",
+          "private": 97267712,
+          "working": 116662272,
+          "cpuMs": 2093.75
+        },
+        {
+          "id": 21092,
+          "name": "msedgewebview2",
+          "private": 13238272,
+          "working": 43651072,
+          "cpuMs": 843.75
+        },
+        {
+          "id": 31800,
+          "name": "msedgewebview2",
+          "private": 7745536,
+          "working": 20328448,
+          "cpuMs": 171.875
+        },
+        {
+          "id": 10492,
+          "name": "msedgewebview2",
+          "private": 57356288,
+          "working": 96559104,
+          "cpuMs": 1234.375
+        },
+        {
+          "id": 13852,
+          "name": "msedgewebview2",
+          "private": 41484288,
+          "working": 137236480,
+          "cpuMs": 1468.75
+        },
+        {
+          "id": 2516,
+          "name": "msedgewebview2",
+          "private": 3604480,
+          "working": 20615168,
+          "cpuMs": 78.125
+        },
+        {
+          "id": 28980,
+          "name": "msedgewebview2",
+          "private": 96256000,
+          "working": 115597312,
+          "cpuMs": 2234.375
+        },
+        {
+          "id": 17452,
+          "name": "msedgewebview2",
+          "private": 13574144,
+          "working": 43966464,
+          "cpuMs": 781.25
+        },
+        {
+          "id": 12208,
+          "name": "msedgewebview2",
+          "private": 7737344,
+          "working": 20279296,
+          "cpuMs": 250
+        },
+        {
+          "id": 21256,
+          "name": "msedgewebview2",
+          "private": 72261632,
+          "working": 116989952,
+          "cpuMs": 1781.25
+        },
+        {
+          "id": 7452,
+          "name": "msedgewebview2",
+          "private": 43282432,
+          "working": 137449472,
+          "cpuMs": 1421.875
+        },
+        {
+          "id": 11648,
+          "name": "msedgewebview2",
+          "private": 2686976,
+          "working": 11526144,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 30996,
+          "name": "msedgewebview2",
+          "private": 147906560,
+          "working": 167444480,
+          "cpuMs": 2000
+        },
+        {
+          "id": 30884,
+          "name": "msedgewebview2",
+          "private": 14159872,
+          "working": 44457984,
+          "cpuMs": 812.5
+        },
+        {
+          "id": 33636,
+          "name": "msedgewebview2",
+          "private": 7757824,
+          "working": 20332544,
+          "cpuMs": 187.5
+        },
+        {
+          "id": 13096,
+          "name": "msedgewebview2",
+          "private": 48193536,
+          "working": 92254208,
+          "cpuMs": 1062.5
+        },
+        {
+          "id": 26928,
+          "name": "msedgewebview2",
+          "private": 41160704,
+          "working": 135344128,
+          "cpuMs": 1203.125
+        },
+        {
+          "id": 25280,
+          "name": "msedgewebview2",
+          "private": 2682880,
+          "working": 11517952,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 17480,
+          "name": "msedgewebview2",
+          "private": 109768704,
+          "working": 128970752,
+          "cpuMs": 1515.625
+        },
+        {
+          "id": 32880,
+          "name": "msedgewebview2",
+          "private": 13242368,
+          "working": 43638784,
+          "cpuMs": 687.5
+        },
+        {
+          "id": 21164,
+          "name": "msedgewebview2",
+          "private": 7741440,
+          "working": 20299776,
+          "cpuMs": 156.25
+        },
+        {
+          "id": 19048,
+          "name": "msedgewebview2",
+          "private": 56303616,
+          "working": 95772672,
+          "cpuMs": 1140.625
+        }
+      ]
+    },
+    {
+      "name": "full",
+      "round": 3,
+      "privateMiB": 381.41015625,
+      "workingMiB": 620.9375,
+      "idleCpuOneCorePercent": 0.9146489681164519,
+      "idleIntervalMs": 6833.222599999979,
+      "startupsMs": [
+        5425.2796999999555
+      ],
+      "processes": [
+        {
+          "id": 18252,
+          "name": "Relatum",
+          "private": 76517376,
+          "working": 117706752,
+          "cpuMs": 4671.875
+        },
+        {
+          "id": 4056,
+          "name": "msedgewebview2",
+          "private": 43307008,
+          "working": 138661888,
+          "cpuMs": 1531.25
+        },
+        {
+          "id": 31260,
+          "name": "msedgewebview2",
+          "private": 2646016,
+          "working": 11517952,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 29764,
+          "name": "msedgewebview2",
+          "private": 104296448,
+          "working": 123715584,
+          "cpuMs": 2171.875
+        },
+        {
+          "id": 32408,
+          "name": "msedgewebview2",
+          "private": 14155776,
+          "working": 44429312,
+          "cpuMs": 1062.5
+        },
+        {
+          "id": 16996,
+          "name": "msedgewebview2",
+          "private": 7749632,
+          "working": 20324352,
+          "cpuMs": 203.125
+        },
+        {
+          "id": 13916,
+          "name": "msedgewebview2",
+          "private": 151265280,
+          "working": 194744320,
+          "cpuMs": 3500
+        }
+      ]
+    },
+    {
+      "name": "two",
+      "round": 3,
+      "privateMiB": 576.01953125,
+      "workingMiB": 1051.2421875,
+      "idleCpuOneCorePercent": 4.072286038182153,
+      "idleIntervalMs": 6906.440200000012,
+      "startupsMs": [
+        5717.655700000003,
+        6351.768500000006
+      ],
+      "processes": [
+        {
+          "id": 29112,
+          "name": "Relatum",
+          "private": 74481664,
+          "working": 116084736,
+          "cpuMs": 4484.375
+        },
+        {
+          "id": 31088,
+          "name": "Relatum",
+          "private": 74604544,
+          "working": 116293632,
+          "cpuMs": 4609.375
+        },
+        {
+          "id": 7012,
+          "name": "msedgewebview2",
+          "private": 41312256,
+          "working": 136654848,
+          "cpuMs": 1421.875
+        },
+        {
+          "id": 12800,
+          "name": "msedgewebview2",
+          "private": 2707456,
+          "working": 11546624,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 14640,
+          "name": "msedgewebview2",
+          "private": 96890880,
+          "working": 116334592,
+          "cpuMs": 2140.625
+        },
+        {
+          "id": 6152,
+          "name": "msedgewebview2",
+          "private": 13410304,
+          "working": 43819008,
+          "cpuMs": 671.875
+        },
+        {
+          "id": 4168,
+          "name": "msedgewebview2",
+          "private": 7725056,
+          "working": 20275200,
+          "cpuMs": 125
+        },
+        {
+          "id": 20240,
+          "name": "msedgewebview2",
+          "private": 58781696,
+          "working": 96854016,
+          "cpuMs": 1296.875
+        },
+        {
+          "id": 21572,
+          "name": "msedgewebview2",
+          "private": 42983424,
+          "working": 139075584,
+          "cpuMs": 1234.375
+        },
+        {
+          "id": 21820,
+          "name": "msedgewebview2",
+          "private": 2691072,
+          "working": 11538432,
+          "cpuMs": 78.125
+        },
+        {
+          "id": 31504,
+          "name": "msedgewebview2",
+          "private": 95883264,
+          "working": 115245056,
+          "cpuMs": 2156.25
+        },
+        {
+          "id": 21168,
+          "name": "msedgewebview2",
+          "private": 13496320,
+          "working": 43823104,
+          "cpuMs": 781.25
+        },
+        {
+          "id": 22840,
+          "name": "msedgewebview2",
+          "private": 7737344,
+          "working": 20283392,
+          "cpuMs": 125
+        },
+        {
+          "id": 19300,
+          "name": "msedgewebview2",
+          "private": 71294976,
+          "working": 114479104,
+          "cpuMs": 1875
+        }
+      ]
+    },
+    {
+      "name": "four",
+      "round": 3,
+      "privateMiB": 1187.765625,
+      "workingMiB": 2154.08203125,
+      "idleCpuOneCorePercent": 7.801226558945805,
+      "idleIntervalMs": 7010.115599999961,
+      "startupsMs": [
+        5670.391200000013,
+        6124.093799999973,
+        5696.773099999991,
+        5760.782100000011
+      ],
+      "processes": [
+        {
+          "id": 19340,
+          "name": "Relatum",
+          "private": 74358784,
+          "working": 115601408,
+          "cpuMs": 4390.625
+        },
+        {
+          "id": 23308,
+          "name": "Relatum",
+          "private": 74551296,
+          "working": 116011008,
+          "cpuMs": 4468.75
+        },
+        {
+          "id": 13368,
+          "name": "Relatum",
+          "private": 74764288,
+          "working": 116203520,
+          "cpuMs": 4593.75
+        },
+        {
+          "id": 21568,
+          "name": "Relatum",
+          "private": 74436608,
+          "working": 115757056,
+          "cpuMs": 4171.875
+        },
+        {
+          "id": 20580,
+          "name": "msedgewebview2",
+          "private": 42696704,
+          "working": 137093120,
+          "cpuMs": 1375
+        },
+        {
+          "id": 4340,
+          "name": "msedgewebview2",
+          "private": 3620864,
+          "working": 20602880,
+          "cpuMs": 93.75
+        },
+        {
+          "id": 6236,
+          "name": "msedgewebview2",
+          "private": 97005568,
+          "working": 116514816,
+          "cpuMs": 2125
+        },
+        {
+          "id": 17452,
+          "name": "msedgewebview2",
+          "private": 13287424,
+          "working": 43589632,
+          "cpuMs": 765.625
+        },
+        {
+          "id": 14788,
+          "name": "msedgewebview2",
+          "private": 7753728,
+          "working": 20307968,
+          "cpuMs": 156.25
+        },
+        {
+          "id": 25684,
+          "name": "msedgewebview2",
+          "private": 56549376,
+          "working": 96837632,
+          "cpuMs": 1375
+        },
+        {
+          "id": 30656,
+          "name": "msedgewebview2",
+          "private": 41689088,
+          "working": 137510912,
+          "cpuMs": 1468.75
+        },
+        {
+          "id": 32336,
+          "name": "msedgewebview2",
+          "private": 3592192,
+          "working": 20594688,
+          "cpuMs": 93.75
+        },
+        {
+          "id": 16744,
+          "name": "msedgewebview2",
+          "private": 96264192,
+          "working": 115630080,
+          "cpuMs": 2125
+        },
+        {
+          "id": 33616,
+          "name": "msedgewebview2",
+          "private": 13549568,
+          "working": 43892736,
+          "cpuMs": 718.75
+        },
+        {
+          "id": 27196,
+          "name": "msedgewebview2",
+          "private": 7741440,
+          "working": 20287488,
+          "cpuMs": 203.125
+        },
+        {
+          "id": 24348,
+          "name": "msedgewebview2",
+          "private": 69742592,
+          "working": 114364416,
+          "cpuMs": 1984.375
+        },
+        {
+          "id": 2944,
+          "name": "msedgewebview2",
+          "private": 42319872,
+          "working": 137576448,
+          "cpuMs": 1515.625
+        },
+        {
+          "id": 32880,
+          "name": "msedgewebview2",
+          "private": 2691072,
+          "working": 11526144,
+          "cpuMs": 62.5
+        },
+        {
+          "id": 10544,
+          "name": "msedgewebview2",
+          "private": 148107264,
+          "working": 167276544,
+          "cpuMs": 1890.625
+        },
+        {
+          "id": 11564,
+          "name": "msedgewebview2",
+          "private": 14004224,
+          "working": 44310528,
+          "cpuMs": 828.125
+        },
+        {
+          "id": 3588,
+          "name": "msedgewebview2",
+          "private": 7733248,
+          "working": 20324352,
+          "cpuMs": 156.25
+        },
+        {
+          "id": 30956,
+          "name": "msedgewebview2",
+          "private": 46809088,
+          "working": 90873856,
+          "cpuMs": 1203.125
+        },
+        {
+          "id": 26308,
+          "name": "msedgewebview2",
+          "private": 41668608,
+          "working": 136015872,
+          "cpuMs": 1578.125
+        },
+        {
+          "id": 12124,
+          "name": "msedgewebview2",
+          "private": 2686976,
+          "working": 11522048,
+          "cpuMs": 78.125
+        },
+        {
+          "id": 29016,
+          "name": "msedgewebview2",
+          "private": 109854720,
+          "working": 129060864,
+          "cpuMs": 1468.75
+        },
+        {
+          "id": 12608,
+          "name": "msedgewebview2",
+          "private": 13287424,
+          "working": 43511808,
+          "cpuMs": 765.625
+        },
+        {
+          "id": 29188,
+          "name": "msedgewebview2",
+          "private": 7712768,
+          "working": 20271104,
+          "cpuMs": 171.875
+        },
+        {
+          "id": 14872,
+          "name": "msedgewebview2",
+          "private": 56983552,
+          "working": 95649792,
+          "cpuMs": 1078.125
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "full": {
+      "privateMiB": 380.8828125,
+      "workingMiB": 620.9375,
+      "idleCpuOneCorePercent": 0.46983170057170004,
+      "startupMedianMs": 5571.711800000005
+    },
+    "two": {
+      "privateMiB": 576.01953125,
+      "workingMiB": 1051.2265625,
+      "idleCpuOneCorePercent": 3.57875827738159,
+      "startupMedianMs": 6183.7729999999865
+    },
+    "four": {
+      "privateMiB": 1191.4140625,
+      "workingMiB": 2158.0625,
+      "idleCpuOneCorePercent": 6.462883366652711,
+      "startupMedianMs": 5696.773099999991
+    }
+  }
+}
