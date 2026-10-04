@@ -102,7 +102,7 @@ function loadLiveDecorationProbe() {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -116,6 +116,15 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+// The fast path must generate precisely the original grammar, including
+// Setext headings, hard breaks, escapes, links and emphasis spanning lines.
+for (const suffix of ['', '\n---', '\n===', '\n**bold**', '\n[link](https://example.com)', '\nhttps://example.com www.example.com test@example.com', '\nwith  \na hard break', '\n\\*escaped*']) {
+  const text = 'ordinary English words and 中文笔记。\n'.repeat(3000) + suffix;
+  const parser = liveProbe.RelatumCodeMirror.markdownLanguage.parser;
+  const normal = parser.parse(text);
+  const optimized = parser.configure(liveProbe.__relatumLiveTest.plainParagraphExtension).parse(text);
+  assert.strictEqual(optimized.toString(), normal.toString(), 'plain paragraph shortcut must preserve syntax nodes: ' + suffix);
+}
 function runEmptyQuoteExit(source, cursor = source.length) {
   let state = liveProbe.RelatumCodeMirror.EditorState.create({
     doc: source,

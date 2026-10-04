@@ -890,6 +890,19 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host {
   font-weight: 700;
 }
 .note-context-menu button.danger { color: #ad5048; }
+.note-context-menu[data-source="body"], .note-context-submenu {
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.note-context-menu button[data-note-submenu]::after { content: '›'; float: right; }
+.note-context-menu button:focus-visible, .note-context-menu button.is-open { outline: none; background: rgba(25, 25, 23, .08); }
+.note-context-menu button:disabled { opacity: .4; cursor: default; background: transparent; }
+.note-context-menu[aria-busy="true"] { cursor: wait; }
+body.start-page[data-start-theme="dark"] .note-context-menu button:focus-visible,
+body.start-page[data-start-theme="dark"] .note-context-menu button.is-open { background: rgba(255, 255, 255, .1); }
 .note-context-separator { display: block; height: 1px; margin: 5px 4px; background: rgba(35, 35, 32, 0.08); }
 
 .note-toast {

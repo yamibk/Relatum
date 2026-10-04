@@ -22,6 +22,33 @@ class NotesLibraryTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_link_index_does_not_retain_note_bodies(self):
+        self.store.create('', 'Target', 'note', content='target')
+        for index in range(16):
+            self.store.create('', f'Large-{index}', 'note', content='plain text\n' * 24000 + '[[Target]]')
+        self.assertEqual(len(self.store.links('Target.md')['backlinks']), 16)
+        self.assertEqual(len(self.store._document_cache), 17)
+        self.assertTrue(all('text' not in item and 'raw' not in item for item in self.store._document_cache.values()))
+        with mock.patch.object(self.store, '_read_note_bytes', wraps=self.store._read_note_bytes) as reads:
+            self.store.links('Target.md')
+            self.assertEqual(reads.call_count, 1, 'unchanged link index must not reread every body')
+
+    def test_move_rejects_body_changed_after_indexing_before_writing(self):
+        self.store.create('', 'Target', 'note', content='target')
+        self.store.create('', 'Source', 'note', content='[[Target]] original')
+        original = self.store._documents
+        def indexed_then_changed():
+            documents = original()
+            (self.root / 'Source.md').write_text('external [[Target]] new', encoding='utf-8')
+            return documents
+        with mock.patch.object(self.store, '_documents', side_effect=indexed_then_changed):
+            with self.assertRaises(NotesError) as caught:
+                self.store.move('Target.md', 'Renamed.md')
+        self.assertEqual(caught.exception.code, 'conflict')
+        self.assertTrue((self.root / 'Target.md').exists())
+        self.assertFalse((self.root / 'Renamed.md').exists())
+        self.assertEqual((self.root / 'Source.md').read_text(encoding='utf-8'), 'external [[Target]] new')
+
     def test_cleanup_unused_images_preserves_live_shared_and_nonimage_files(self):
         png, asset, _, _, _, _, _ = self.image_text_fixture()
         folder = (self.root / asset).parent

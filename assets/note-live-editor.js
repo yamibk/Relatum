@@ -12,6 +12,24 @@
   const RICH_BLOCK_LIMIT = 256 * 1024;
   const MAX_RICH_LINE = 64 * 1024;
   const VIEWPORT_PARSE_SLICE = 12;
+  // @lezer/markdown's public leaf-parser extension API. A long paragraph with
+  // no inline syntax needs the same Paragraph node but no expensive inline pass.
+  // Setext/table/reference parsers still get their normal precedence.
+  // https://github.com/lezer-parser/markdown#user-content-blockparser
+  const plainParagraphExtension = { parseBlock: [{ name: 'RelatumPlainParagraph',
+    leaf(cx, leaf) {
+      const plain = (text) => !/[\\`*_~\[\]<>!&$|]/.test(text) && !/ {2,}$/.test(text);
+      let simple = plain(leaf.content);
+      return {
+        nextLine(context, line) { simple = simple && plain(line.text); return false; },
+        finish(context, block) {
+          if (!simple || block.content.length < MAX_RICH_LINE) return false;
+          context.addLeafElement(block, context.elt('Paragraph', block.start, block.start + block.content.length));
+          return true;
+        },
+      };
+    },
+  }] };
   const MERMAID_LANGS = new Set([
     'mermaid', 'flowchart', 'graph', 'flow', 'sequence', 'sequencediagram',
     'timeline', 'gantt', 'class', 'classdiagram', 'state', 'statediagram',
@@ -163,6 +181,7 @@
       from: start, to: end,
       enter(node) {
         if (node.name === 'Table') {
+          if (node.to - node.from > RICH_BLOCK_LIMIT) return false;
           const source = doc.sliceString(node.from, node.to);
           if (source.length <= RICH_BLOCK_LIMIT && !rangeHasLongLine(doc, node.from, node.to)) push({ from: node.from, to: node.to, kind: 'table', source });
           return false;
@@ -186,6 +205,7 @@
           return false;
         }
         if (node.name === 'Blockquote') {
+          if (node.to - node.from > RICH_BLOCK_LIMIT) return false;
           const source = doc.sliceString(node.from, node.to);
           const callout = parseCalloutSource(source);
           if (callout && source.length <= RICH_BLOCK_LIMIT && !rangeHasLongLine(doc, node.from, node.to)) push(Object.assign({ from: node.from, to: node.to, kind: 'callout', source }, callout));
@@ -302,7 +322,7 @@
     [clamp(from, 0, doc.length), clamp(to, 0, doc.length)].forEach((position) => {
       let node = tree.resolveInner(position, position === doc.length ? -1 : 1);
       while (node.parent && node.parent.name !== 'Document') node = node.parent;
-      if (node && node.name !== 'Document') {
+      if (node && node.name !== 'Document' && node.to - node.from <= RICH_BLOCK_LIMIT) {
         start = doc.lineAt(Math.min(start.from, node.from));
         end = doc.lineAt(Math.max(end.to, node.to));
       }
@@ -332,7 +352,9 @@
     if (!blockSyntaxMayChange(transaction, previous, bounds)) {
       return mapped.sort((a, b) => a.from - b.from || a.to - b.to);
     }
-    const expanded = expandScanRange(transaction.state, scanFrom, scanTo);
+    // Large pastes are projected lazily, like initial document loads. Their
+    // distant blocks are discovered by the viewport plugin when scrolled into view.
+    const expanded = expandScanRange(transaction.state, scanFrom, Math.min(scanTo, scanFrom + RICH_BLOCK_LIMIT));
     mapped.forEach((spec) => {
       if (spec.from <= expanded.to && spec.to >= expanded.from) reusable.push(spec);
     });
@@ -1311,6 +1333,17 @@
     return markdownMini.renderResult(source, { localImages: true });
   }
 
+  function releaseReadingDocument(host) {
+    if (!host) return;
+    host.dataset.noteReadingEpoch = String((Number(host.dataset.noteReadingEpoch) || 0) + 1);
+    if (window.MathJax && typeof window.MathJax.typesetClear === 'function') {
+      try { window.MathJax.typesetClear([host]); } catch (error) {}
+    }
+    if (host.__relatumImageTextSizer) host.__relatumImageTextSizer.destroy();
+    delete host.__relatumImageTextSizer;
+    host.replaceChildren();
+  }
+
   function renderMarkdown(host, source, notePath, options) {
     if (!host) throw new Error('Markdown reading host is required');
     const safeOptions = Object.assign({
@@ -1318,12 +1351,8 @@
         return '/api/note-asset?note=' + encodeURIComponent(path || '') + '&src=' + encodeURIComponent(target || '');
       },
     }, options || {});
-    const epoch = String((Number(host.dataset.noteReadingEpoch) || 0) + 1);
-    host.dataset.noteReadingEpoch = epoch;
-    if (window.MathJax && typeof window.MathJax.typesetClear === 'function') {
-      try { window.MathJax.typesetClear([host]); } catch (error) {}
-    }
-    if (host.__relatumImageTextSizer) host.__relatumImageTextSizer.destroy();
+    releaseReadingDocument(host);
+    const epoch = host.dataset.noteReadingEpoch;
     const imageTextSizer = createImageTextSizer();
     host.__relatumImageTextSizer = imageTextSizer;
     const result = safeIsolatedResult(String(source || ''));
@@ -1351,7 +1380,9 @@
     if (result.features && result.features.math) {
       ensureMathJax().then((math) => {
         if (!current()) return;
-        return math.typesetPromise([content]);
+        return math.typesetPromise([content]).finally(() => {
+          if (!current() && typeof math.typesetClear === 'function') math.typesetClear([content]);
+        });
       }).catch(() => { if (current()) host.classList.add('is-failed'); });
     }
     return result;
@@ -1649,7 +1680,7 @@
     const field = StateField.define({
       create(state) {
         const tree = syntaxTree(state);
-        const parsedTo = typeof tree.length === 'number' ? Math.min(state.doc.length, tree.length) : state.doc.length;
+        const parsedTo = Math.min(RICH_BLOCK_LIMIT, typeof tree.length === 'number' ? Math.min(state.doc.length, tree.length) : state.doc.length);
         const specs = scanBlockSpecs(state, 0, parsedTo);
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const selectedImageIds = selectedBlockImageIds(specs, state);
@@ -2287,22 +2318,96 @@
   }
 
   function wrapCodeBlock(view) {
+    return insertBlockCommand(view, 'code-block', false);
+  }
+
+  // Menu operations work on source ranges, never on the projected Markdown DOM.
+  function paragraphLines(state) {
+    const numbers = new Set();
+    state.selection.ranges.forEach((range) => {
+      const first = state.doc.lineAt(range.from).number;
+      const last = state.doc.lineAt(range.to > range.from ? range.to - 1 : range.to).number;
+      for (let number = first; number <= last; number += 1) numbers.add(number);
+    });
+    return Array.from(numbers).sort((a, b) => a - b).map((number) => state.doc.line(number));
+  }
+
+  function protectedParagraph(state, lines) {
+    let protectedRange = false;
+    const from = lines[0].from, to = lines[lines.length - 1].to;
+    const tree = syntaxTree(state);
+    if (typeof tree.length === 'number' && tree.length < to) return true;
+    tree.iterate({ from, to, enter(node) {
+      if (/^(FencedCode|CodeBlock|IndentedCode|Table|Image|HTMLBlock|HorizontalRule)$/.test(node.name)
+          && node.from <= to && node.to >= from) { protectedRange = true; return false; }
+    } });
+    return protectedRange || lines.some((line) => /<!--relatum:image-text:|^\s*(?:!\[|!\[\[|`{3,}|~{3,}|\|)/.test(line.text));
+  }
+
+  function paragraphParts(text) {
+    const indent = /^\s*/.exec(text)[0];
+    let body = text.slice(indent.length);
+    const quote = /^(?:>\s*)+/.exec(body);
+    if (quote) body = body.slice(quote[0].length);
+    const marker = /^(?:#{1,6}\s+|(?:[-+*]|\d+[.)])\s+(?:\[([ xX])\]\s+)?)/.exec(body);
+    return { indent, quote: quote ? quote[0] : '', body: marker ? body.slice(marker[0].length) : body,
+      checked: marker && marker[1], marker: marker ? marker[0] : '', quotedBody: body };
+  }
+
+  function paragraphCommand(view, kind) {
+    const lines = paragraphLines(view.state);
+    if (protectedParagraph(view.state, lines)) return false;
+    let ordinal = 0;
+    const changes = [];
+    lines.forEach((line) => {
+      if (!line.text.trim() && !view.state.selection.main.empty) return;
+      const parts = paragraphParts(line.text);
+      let text;
+      if (kind === 'quote') text = parts.indent + (parts.quote || '> ') + parts.quotedBody;
+      else {
+        const prefix = kind === 'bullet' ? '- ' : kind === 'ordered' ? (++ordinal) + '. '
+          : kind === 'task' ? '- [' + (parts.checked && parts.checked.toLowerCase() === 'x' ? 'x' : ' ') + '] '
+            : /^heading-[1-6]$/.test(kind) ? '#'.repeat(Number(kind.slice(-1))) + ' ' : '';
+        text = parts.indent + (kind === 'body' ? '' : parts.quote) + prefix + parts.body;
+      }
+      if (text !== line.text) changes.push({ from: line.from, to: line.to, insert: text });
+    });
+    if (!changes.length) return true;
+    const changeSet = view.state.changes(changes);
+    view.dispatch({ changes: changeSet, selection: view.state.selection.map(changeSet),
+      userEvent: 'input.note-command', scrollIntoView: true });
+    return true;
+  }
+
+  function insertBlockCommand(view, kind, english) {
     const transaction = view.state.changeByRange((range) => {
       const doc = view.state.doc;
       const selected = doc.sliceString(range.from, range.to);
-      const leadingBreak = range.from > 0 && doc.sliceString(range.from - 1, range.from) !== '\n' ? '\n' : '';
-      const trailingBreak = range.to < doc.length && doc.sliceString(range.to, range.to + 1) !== '\n' ? '\n' : '';
-      const bodyBreak = selected ? (selected.endsWith('\n') ? '' : '\n') : '\n';
-      const insert = leadingBreak + '```\n' + selected + bodyBreak + '```' + trailingBreak;
-      const contentFrom = range.from + leadingBreak.length + 4;
-      return {
-        changes: { from: range.from, to: range.to, insert },
-        range: selected
-          ? EditorSelection.range(contentFrom, contentFrom + selected.length)
-          : EditorSelection.cursor(contentFrom),
-      };
+      const independent = kind === 'table' || kind === 'rule';
+      const from = independent ? doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to : range.from;
+      const to = independent ? from : range.to;
+      const leading = from > 0 ? (doc.sliceString(Math.max(0, from - 2), from).endsWith('\n\n') ? ''
+        : doc.sliceString(from - 1, from) === '\n' ? '\n' : '\n\n') : '';
+      const trailing = to < doc.length ? (doc.sliceString(to, to + 2).startsWith('\n\n') ? ''
+        : doc.sliceString(to, to + 1) === '\n' ? '\n' : '\n\n') : '';
+      let block, offset;
+      if (kind === 'table') {
+        const title = english ? 'Heading' : '表头';
+        block = '| ' + title + ' 1 | ' + title + ' 2 |\n| --- | --- |\n|  |  |\n|  |  |'; offset = 2;
+      } else if (kind === 'rule') { block = '---'; offset = block.length; }
+      else if (kind === 'callout') {
+        block = '> [!note]\n> ' + selected.replace(/\n/g, '\n> '); offset = 12;
+      } else if (kind === 'math') { block = '$$\n' + selected + (selected.endsWith('\n') ? '' : '\n') + '$$'; offset = 3; }
+      else {
+        const matches = selected.match(/`+/g) || [];
+        const fence = '`'.repeat(matches.reduce((length, match) => Math.max(length, match.length + 1), 3));
+        block = fence + '\n' + selected + (selected.endsWith('\n') ? '' : '\n') + fence; offset = fence.length + 1;
+      }
+      const contentFrom = from + leading.length + offset;
+      return { changes: { from, to, insert: leading + block + trailing },
+        range: kind === 'code-block' && selected ? EditorSelection.range(contentFrom, contentFrom + selected.length) : EditorSelection.cursor(contentFrom) };
     });
-    view.dispatch(Object.assign({}, transaction, { userEvent: 'input' }));
+    view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true }));
     return true;
   }
 
@@ -2359,6 +2464,11 @@
     let pendingDocumentState = null;
     let pendingDocumentWait = false;
     let sourceMode = !!options.sourceMode;
+    let serializedDoc = null, serializedValue = '';
+    function serializedDocument(doc) {
+      if (serializedDoc !== doc) { serializedDoc = doc; serializedValue = doc.toString(); }
+      return serializedValue;
+    }
     const coordinator = { epoch: 1, field: null, spec() { return null; } };
     const imageTextSizer = createImageTextSizer();
     const safeOptions = Object.assign({
@@ -2366,7 +2476,7 @@
         return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '');
       },
       onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onOpenLocalFile() {}, onImageFiles() {},
-      onImageSelectionChange() {}, onImageTextDefaultsChange() {},
+      onImageSelectionChange() {}, onImageTextDefaultsChange() {}, onContextMenu() {}, onCommandContextChanged() {},
       imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
     const inputSession = {
@@ -2476,7 +2586,7 @@
         if (!this.pending()) this.capture(view);
         const doc = this.committedDoc || view.state.doc;
         return {
-          value: doc.toString(),
+          value: serializedDocument(doc),
           anchor: this.committedAnchor,
           head: this.committedHead,
           scrollTop: this.pending() ? this.committedScrollTop : view.scrollDOM.scrollTop,
@@ -2886,7 +2996,7 @@
         scrollTop: view.scrollDOM.scrollTop,
         length: view.state.doc.length,
       };
-      if (includeValue) meta.value = view.state.doc.toString();
+      if (includeValue) meta.value = serializedDocument(view.state.doc);
       safeOptions.onDocChanged(meta);
     }
 
@@ -2895,7 +3005,7 @@
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
-        markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [] }),
+        markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [], extensions: [plainParagraphExtension] }),
         relatumCodeHighlighting || [],
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(imageTextInputHandlers),
@@ -2932,6 +3042,7 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged || update.selectionSet) safeOptions.onCommandContextChanged();
           if (imageTextController.active && update.docChanged
               && update.transactions.some((transaction) => transaction.isUserEvent('undo') || transaction.isUserEvent('redo'))) {
             const range = exactSelectedImageRange(update.state);
@@ -2960,6 +3071,30 @@
           notifyDocChanged(update.view, includeValue);
         }),
         EditorView.domEventHandlers({
+          contextmenu(event, view) {
+            if (imageTextController.active) return false;
+            event.preventDefault();
+            if (inputPending()) return true;
+            const keyboard = event.clientX === 0 && event.clientY === 0;
+            const position = keyboard ? view.state.selection.main.head : view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+            if (position == null) return true;
+            if (!keyboard && !view.state.selection.ranges.some((range) => !range.empty && position >= range.from && position <= range.to)) {
+              view.dispatch({ selection: EditorSelection.cursor(position) });
+            }
+            const rect = view.coordsAtPos(view.state.selection.main.head);
+            safeOptions.onContextMenu({ x: keyboard && rect ? rect.left : event.clientX,
+              y: keyboard && rect ? rect.bottom : event.clientY, context: commandContext() });
+            return true;
+          },
+          keydown(event, view) {
+            if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return false;
+            if (imageTextController.active) return false;
+            event.preventDefault();
+            if (inputPending()) return true;
+            const rect = view.coordsAtPos(view.state.selection.main.head);
+            safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext() });
+            return true;
+          },
           focus(event, view) {
             if (!inputSession.pending()) view.dispatch({ effects: focusEffect.of(true) });
             return false;
@@ -2978,6 +3113,10 @@
             return false;
           },
           mousedown(event, view) {
+            if (event.button === 2 && !imageTextController.active) {
+              event.preventDefault();
+              return true;
+            }
             if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return false;
             const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
             if (position == null) return false;
@@ -3143,6 +3282,51 @@
       return inputSession.snapshot(view);
     }
 
+    function commandContext() {
+      return { doc: view.state.doc, selection: view.state.selection, path: currentPath };
+    }
+    function validCommandContext(context) {
+      return !destroyed && !inputPending() && !imageTextController.active && (!context
+        || (context.doc === view.state.doc && context.path === currentPath && context.selection.eq(view.state.selection)));
+    }
+    function queryCommand(name, context) {
+      if (!validCommandContext(context)) return { enabled: false, checked: false };
+      if (name === 'copy' || name === 'cut') return { enabled: view.state.selection.ranges.some((range) => !range.empty), checked: false };
+      if (name === 'insert:table' || name === 'insert:rule') {
+        const ends = view.state.selection.ranges.map((range) => view.state.doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to);
+        return { enabled: new Set(ends).size === ends.length, checked: false };
+      }
+      if (name.startsWith('paragraph:')) {
+        const kind = name.slice(10), lines = paragraphLines(view.state);
+        const meaningful = lines.filter((line) => line.text.trim());
+        const matches = (line) => {
+          const p = paragraphParts(line.text);
+          if (kind === 'quote') return !!p.quote;
+          if (kind === 'body') return !p.quote && !p.marker;
+          if (kind === 'task') return p.checked != null;
+          if (kind === 'bullet') return /^[-+*]\s/.test(p.marker) && p.checked == null;
+          if (kind === 'ordered') return /^\d+[.)]\s/.test(p.marker);
+          return p.marker.startsWith('#'.repeat(Number(kind.slice(-1))) + ' ');
+        };
+        return { enabled: !protectedParagraph(view.state, lines), checked: meaningful.length > 0 && meaningful.every(matches) };
+      }
+      return { enabled: true, checked: false };
+    }
+    function executeCommand(name, context, text) {
+      if (!queryCommand(name, context).enabled) return false;
+      let done;
+      if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
+      else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en');
+      else if (name === 'cut' || name === 'paste' || name === 'paste-plain') {
+        const transaction = view.state.changeByRange((range) => ({ changes: { from: range.from, to: range.to, insert: text || '' },
+          range: EditorSelection.cursor(range.from + (text || '').length) }));
+        view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true })); done = true;
+      } else if (name === 'select-all') { view.dispatch({ selection: EditorSelection.range(0, view.state.doc.length) }); done = true; }
+      else if (shortcutRuns[name]) done = shortcutRuns[name](view);
+      if (done) view.focus();
+      return !!done;
+    }
+
     function replaceSelection(text) {
       if (inputPending()) {
         const path = currentPath;
@@ -3256,10 +3440,12 @@
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
       whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
+      commandContext, queryCommand, executeCommand,
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
       destroy() {
         destroyed = true;
+        serializedDoc = null; serializedValue = '';
         if (imageTextController.adapter) imageTextController.adapter.cancelDraft(true);
         imageTextController.setActive(false);
         imageTextSizer.destroy();
@@ -3289,4 +3475,5 @@
     richBlockEditPosition,
   };
   window.RelatumNoteLiveEditor = { create, renderMarkdown };
+  window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
 })();

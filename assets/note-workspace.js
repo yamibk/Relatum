@@ -59,6 +59,9 @@
   const libraryResetButton = $('[data-note-library-action="reset-open"]');
   const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
   let liveEditor = null;
+  let bodyMenuContext = null, bodyMenuSubmenu = null, bodyMenuParent = null;
+  let statisticsTimer = 0, statisticsFrame = 0, statisticsJob = null;
+  let prefetchEpoch = 0, prefetchRunning = false, hoverPrefetchTimer = 0, hoverPrefetchPath = '';
 
   const ACTIVE_PATH_KEY = 'canvas:noteActivePath:v1';
   const ACTIVE_TAB_KEY = 'canvas:noteActiveTab:v1';
@@ -86,6 +89,7 @@
   const TREE_MOTION_MS = 220;
   const FOCUS_MOTION_MS = 320;
   const DOCUMENT_CACHE_LIMIT = 24;
+  const DOCUMENT_CACHE_BYTES = 16 * 1024 * 1024;
   const BLANK_TAB_PREFIX = 'relatum:blank-tab:';
   const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
   const COPY = {
@@ -154,7 +158,7 @@
     historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
-    externalSyncTimer: 0, externalSyncFailures: 0, externalSyncChain: Promise.resolve(true), recycleRunning: false,
+    externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0, titleScrollFrame: 0, titleResizeObserver: null,
     viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
     treeSort: 'modified-desc', newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
@@ -559,6 +563,11 @@
   }
 
   function setEditorDocument(documentState) {
+    closeContextMenu();
+    if (!documentState) {
+      cancelStatistics();
+      if (window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
+    }
     const payload = {
       value: documentState && documentState.content || '',
       notePath: documentState && documentState.path || '',
@@ -572,10 +581,12 @@
     }
     syncInlineTitleScroll(payload.scrollTop);
     if (liveEditor) liveEditor.setDocument(payload);
-    fallbackEditor.value = payload.value;
-    fallbackEditor.scrollTop = payload.scrollTop;
-    requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
-    if (state.viewMode === 'reading') renderReadingDocument(payload);
+    if (!liveEditor) {
+      fallbackEditor.value = payload.value;
+      fallbackEditor.scrollTop = payload.scrollTop;
+      requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
+    } else fallbackEditor.value = '';
+    if (state.viewMode === 'reading' && documentState) renderReadingDocument(payload);
     requestAnimationFrame(() => requestAnimationFrame(scheduleInlineTitleScroll));
   }
 
@@ -921,12 +932,14 @@
   async function setViewMode(mode) {
     const next = normalizeViewMode(mode);
     if (next === state.viewMode) return;
+    closeContextMenu();
     if (editorInputPending()) await whenEditorInputSettled();
     if (next === state.viewMode) return;
     if (liveEditor) liveEditor.setImageTextMode(false);
     if (state.current) rememberEditorState(state.current);
     if (next === 'reading' && state.current) flushSave(state.current);
     state.viewMode = next;
+    if (next !== 'reading' && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
     try { localStorage.setItem(NOTE_VIEW_KEY, next); } catch (error) {}
     if (liveEditor) liveEditor.setSourceMode(next === 'source');
     if (state.current) {
@@ -963,6 +976,8 @@
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
           imageTextDefaults: { size: state.imageText.size, color: state.imageText.color },
           onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults),
+          onContextMenu: (payload) => openBodyContextMenu(payload),
+          onCommandContextChanged: () => { if (bodyMenuContext) closeContextMenu(); },
         });
         liveEditor.view.scrollDOM.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       } catch (error) {
@@ -1221,11 +1236,64 @@
     const visible = visibleNoteSource(value);
     return { words: wordCount(visible), characters: visible.length };
   }
+  function cancelStatistics() {
+    clearTimeout(statisticsTimer); statisticsTimer = 0;
+    if (statisticsFrame) cancelAnimationFrame(statisticsFrame);
+    statisticsFrame = 0; statisticsJob = null;
+  }
+  function scheduleStatistics(target, delay) {
+    if (!target || target.countedGeneration === target.editGeneration || !state.active || document.hidden) return;
+    if (statisticsJob && statisticsJob.target === target && statisticsJob.generation === target.editGeneration) return;
+    cancelStatistics();
+    const job = statisticsJob = { target, generation: target.editGeneration, index: 0, count: 0, characters: 0,
+      inWord: false, joiner: false, line: '', lineIndex: 0, unicodeWord: /[\p{L}\p{N}]/u };
+    statisticsTimer = setTimeout(() => {
+      statisticsTimer = 0;
+      if (statisticsJob !== job || target !== state.current || !state.active || document.hidden || editorInputPending()) { cancelStatistics(); return; }
+      job.source = editorSnapshot().value;
+      const step = () => {
+        statisticsFrame = 0;
+        if (statisticsJob !== job || target !== state.current || target.editGeneration !== job.generation || !state.active || document.hidden) return;
+        const deadline = performance.now() + 4;
+        let processed = 0;
+        while (job.lineIndex < job.line.length || job.index < job.source.length) {
+          if (job.lineIndex >= job.line.length) {
+            const end = job.source.indexOf('\n', job.index);
+            const to = end < 0 ? job.source.length : end;
+            const line = job.source.slice(job.index, to);
+            job.line = line.includes('<!--relatum:image-text:') ? visibleNoteSource(line) : line;
+            if (end >= 0) job.line += '\n';
+            job.lineIndex = 0; job.index = end < 0 ? job.source.length : end + 1;
+            if (!job.line.length) continue;
+          }
+          const code = job.line.codePointAt(job.lineIndex);
+          const size = code > 0xffff ? 2 : 1;
+          job.characters += size; job.lineIndex += size;
+          if (isCjkCodePoint(code)) {
+            if (job.inWord) job.count += 1;
+            job.count += 1; job.inWord = false; job.joiner = false;
+          } else {
+            const word = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+              || (code > 127 && job.unicodeWord.test(String.fromCodePoint(code)));
+            const joiner = code === 39 || code === 0x2019 || code === 45 || code === 95;
+            if (word) { job.inWord = true; job.joiner = false; }
+            else if (joiner && job.inWord && !job.joiner) job.joiner = true;
+            else { if (job.inWord) job.count += 1; job.inWord = false; job.joiner = false; }
+          }
+          if (++processed % 256 === 0 && performance.now() >= deadline) { statisticsFrame = requestAnimationFrame(step); return; }
+        }
+        target.wordCount = job.count + (job.inWord ? 1 : 0); target.characterCount = job.characters;
+        target.countedGeneration = job.generation; statisticsJob = null;
+        updateDocumentStats(null, target.characterCount, target.wordCount);
+      };
+      statisticsFrame = requestAnimationFrame(step);
+    }, delay == null ? 500 : delay);
+  }
   function updateDocumentStats(value, knownLength, knownWords) {
     const statistics = typeof value === 'string' ? noteStatistics(value) : null;
     const characters = Number.isFinite(knownLength) ? knownLength : statistics ? statistics.characters : 0;
     const words = Number.isFinite(knownWords) ? knownWords : statistics ? statistics.words : null;
-    if (wordCountEl && Number.isFinite(words)) wordCountEl.textContent = tr('words', { count: words.toLocaleString() });
+    if (wordCountEl && (statistics || knownWords !== undefined)) wordCountEl.textContent = tr('words', { count: Number.isFinite(words) ? words.toLocaleString() : '—' });
     if (characterCountEl) characterCountEl.textContent = tr('characters', { count: Math.max(0, characters).toLocaleString() });
   }
   function desktopDirty(value) { if (window.CanvasDesktop && typeof window.CanvasDesktop.setDirty === 'function') window.CanvasDesktop.setDirty(!!value); }
@@ -1249,7 +1317,12 @@
     }
     document.documentElement.classList.remove('note-boot-pending');
   }
-  function closeContextMenu() { if (contextMenu) { contextMenu.hidden = true; contextMenu.dataset.source = ''; contextMenu.replaceChildren(); } }
+  function closeContextMenu() {
+    bodyMenuContext = null; bodyMenuParent = null;
+    if (bodyMenuSubmenu) bodyMenuSubmenu.remove();
+    bodyMenuSubmenu = null;
+    if (contextMenu) { contextMenu.hidden = true; contextMenu.dataset.source = ''; contextMenu.replaceChildren(); }
+  }
   function persistExpanded() { try { localStorage.setItem(EXPANDED_KEY, JSON.stringify(Array.from(state.expanded))); } catch (error) {} }
   function expandTreePath(path, includeSelf) {
     const parts = String(path || '').split('/').filter(Boolean);
@@ -1312,11 +1385,11 @@
     const generation = ++state.documentGeneration;
     const entry = findEntry(data.path);
     const content = data.content || '';
-    const statistics = noteStatistics(content);
     return {
       path: data.path, content, revision: data.revision || '', outgoing: [], backlinks: [],
+      hasImageText: content.includes('<!--relatum:image-text:'),
       editGeneration: generation, persistedGeneration: generation, selectionStart: 0, selectionEnd: 0, scrollTop: 0,
-      wordCount: statistics.words, characterCount: statistics.characters, countedGeneration: generation,
+      wordCount: null, characterCount: content.length, countedGeneration: 0,
       treeModifiedNs: entry && entry.modifiedNs || 0, treeSize: entry && entry.size || 0,
     };
   }
@@ -1324,11 +1397,13 @@
     if (!documentState || !documentState.path) return;
     state.documentCache.delete(documentState.path);
     state.documentCache.set(documentState.path, documentState);
-    if (state.documentCache.size <= DOCUMENT_CACHE_LIMIT) return;
+    let bytes = Array.from(state.documentCache.values()).reduce((sum, item) => sum + item.content.length * 2, 0);
+    if (state.documentCache.size <= DOCUMENT_CACHE_LIMIT && bytes <= DOCUMENT_CACHE_BYTES) return;
     for (const [path, candidate] of state.documentCache) {
-      if (state.documentCache.size <= DOCUMENT_CACHE_LIMIT) break;
+      if (state.documentCache.size <= DOCUMENT_CACHE_LIMIT && bytes <= DOCUMENT_CACHE_BYTES) break;
       if (candidate === state.current || hasPendingEdits(candidate)) continue;
       state.documentCache.delete(path);
+      bytes -= candidate.content.length * 2;
     }
   }
   function fetchDocument(path) {
@@ -1341,16 +1416,12 @@
     if (!documentState || state.current !== documentState) return;
     const snapshot = editorSnapshot();
     documentState.content = snapshot.value;
+    documentState.hasImageText = snapshot.value.includes('<!--relatum:image-text:');
     documentState.selectionStart = snapshot.anchor || 0;
     documentState.selectionEnd = snapshot.head ?? snapshot.anchor ?? 0;
     documentState.scrollTop = snapshot.scrollTop || 0;
     rememberViewState(documentState.path, snapshot);
-    if (documentState.countedGeneration !== documentState.editGeneration) {
-      const statistics = noteStatistics(snapshot.value);
-      documentState.wordCount = statistics.words;
-      documentState.characterCount = statistics.characters;
-      documentState.countedGeneration = documentState.editGeneration;
-    }
+    scheduleStatistics(documentState);
     cacheDocument(documentState);
     updateDocumentStats(null, documentState.characterCount, documentState.wordCount);
   }
@@ -1575,16 +1646,37 @@
   }
   function scheduleDocumentPrefetch() {
     clearTimeout(state.prefetchTimer);
-    const candidates = flattenEntries(state.entries, []).filter((entry) => entry.kind === 'note' && Number(entry.size || 0) <= 512 * 1024 && !state.documentCache.has(entry.path)).slice(0, 12);
-    if (!candidates.length) return;
-    state.prefetchTimer = setTimeout(async () => {
+    if (!state.active || document.hidden) return;
+    state.prefetchTimer = setTimeout(runDocumentPrefetch, 350);
+  }
+  function stopDocumentPrefetch() {
+    prefetchEpoch += 1; clearTimeout(state.prefetchTimer); clearTimeout(hoverPrefetchTimer);
+    state.prefetchTimer = 0; hoverPrefetchTimer = 0; hoverPrefetchPath = '';
+  }
+  async function runDocumentPrefetch() {
+    state.prefetchTimer = 0;
+    if (prefetchRunning || !state.active || document.hidden || editorInputPending()) return;
+    const epoch = prefetchEpoch;
+    const viewport = treeEl.getBoundingClientRect();
+    const paths = Array.from(treeEl.querySelectorAll('.note-tree-row')).filter((row) => {
+      const rect = row.getBoundingClientRect(); return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+    }).map((row) => row.dataset.notePath);
+    if (hoverPrefetchPath) paths.unshift(hoverPrefetchPath);
+    const candidates = Array.from(new Set(paths)).map(findEntry).filter((entry) => entry && entry.kind === 'note'
+      && Number(entry.size || 0) <= 512 * 1024 && !state.documentCache.has(entry.path)).slice(0, 4);
+    prefetchRunning = true;
+    try {
       for (const entry of candidates) {
-        if (!state.active || state.documentCache.has(entry.path)) continue;
-        try { const data = await fetchDocument(entry.path); if (!state.documentCache.has(entry.path)) cacheDocument(makeDocument(data)); }
-        catch (error) {}
+        if (epoch !== prefetchEpoch || !state.active || document.hidden || editorInputPending()) break;
+        if (state.documentCache.has(entry.path)) continue;
+        try {
+          const data = await fetchDocument(entry.path);
+          if (epoch === prefetchEpoch && state.active && !document.hidden && !state.documentCache.has(entry.path)
+              && findEntry(entry.path)?.modifiedNs === entry.modifiedNs) cacheDocument(makeDocument(data));
+        } catch (error) {}
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-    }, 40);
+    } finally { prefetchRunning = false; }
   }
   function rewriteEntryPaths(entry, source, destination) { if (entry.path === source) entry.path = destination; else if (entry.path.startsWith(source + '/')) entry.path = destination + entry.path.slice(source.length); if (entry.kind === 'folder') (entry.children || []).forEach((child) => rewriteEntryPaths(child, source, destination)); }
   function remapCachedPaths(source, destination) { const remapped = new Map(); state.documentCache.forEach((documentState, cachedPath) => { let nextPath = cachedPath; if (cachedPath === source) nextPath = destination; else if (cachedPath.startsWith(source + '/')) nextPath = destination + cachedPath.slice(source.length); documentState.path = nextPath; remapped.set(nextPath, documentState); }); state.documentCache = remapped; }
@@ -1697,7 +1789,12 @@
       } else label.textContent = entry.name;
       row.append(toggle, treeIcon(entry.kind), label);
       row.addEventListener('click', async () => { const clickedPath = entry.path; if (!(await finishInlineTitle())) return; if (state.renamePath && !(await finishInlineRename())) return; closeContextMenu(); const liveEntry = findEntry(clickedPath); if (!liveEntry) return; state.rootTargeted = false; state.selectedPath = liveEntry.path; if (liveEntry.kind === 'folder') { state.selectedFolder = liveEntry.path; setFolderExpanded(liveEntry.path, !state.expanded.has(liveEntry.path)); } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); } });
-      row.addEventListener('pointerenter', () => { if (entry.kind !== 'note' || state.documentCache.has(entry.path)) return; fetchDocument(entry.path).then((data) => { if (!state.documentCache.has(entry.path)) cacheDocument(makeDocument(data)); }).catch(() => {}); });
+      row.addEventListener('pointerenter', () => {
+        if (entry.kind !== 'note' || Number(entry.size || 0) > 512 * 1024 || state.documentCache.has(entry.path)) return;
+        clearTimeout(hoverPrefetchTimer);
+        hoverPrefetchTimer = setTimeout(() => { hoverPrefetchPath = entry.path; runDocumentPrefetch(); }, 150);
+      });
+      row.addEventListener('pointerleave', () => { clearTimeout(hoverPrefetchTimer); hoverPrefetchPath = ''; });
       row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); state.rootTargeted = false; state.selectedPath = entry.path; state.selectedFolder = entry.kind === 'folder' ? entry.path : parentPath(entry.path); updateTreeSelection(); openContextMenu(entry, event.clientX, event.clientY); });
       row.addEventListener('dragstart', (event) => { state.draggedPath = entry.path; row.classList.add('dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-relatum-note-path', entry.path); });
       row.addEventListener('dragend', () => { state.draggedPath = ''; row.classList.remove('dragging'); root.querySelectorAll('.note-drop-target').forEach((item) => item.classList.remove('note-drop-target')); });
@@ -1777,6 +1874,9 @@
     try {
       const result = await request('/api/notes-tree'); if (seq !== state.refreshSeq) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
+      const signature = JSON.stringify(flattenEntries(entries, []).map((entry) => [entry.path, entry.modifiedNs, entry.size]));
+      if (signature !== state.treeMetadataSignature) { state.externalSyncUnchanged = 0; state.treeMetadataSignature = signature; }
+      else if (options && options.background) state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1);
       const structureChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
       const orderChanged = state.renderedOrder !== treeOrderSignature(entries);
       const previousTabs = state.tabs.slice();
@@ -1839,6 +1939,7 @@
   }
 
   function applyDocument(data, options) {
+    closeContextMenu(); resetExternalSyncActivity(); cancelStatistics();
     state.imageTextCleanupPath = '';
     const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
       ? editorSnapshot()
@@ -1867,29 +1968,31 @@
     try { localStorage.setItem(ACTIVE_PATH_KEY, documentState.path); } catch (error) {}
     if (treeExpanded) renderTree(); else updateTreeSelection(); renderLinks(); updateEditorVisibility();
     if (root.classList.contains('links-overlay-open')) ensureLinks();
+    scheduleStatistics(documentState); scheduleDocumentPrefetch();
   }
   function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
   function hasPendingEdits(documentState) { const target = documentState || state.current; return !!target && target.persistedGeneration < target.editGeneration; }
   function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(), typeof delay === 'number' ? delay : SAVE_DELAY); }
   function markChanged(meta) {
     if (!state.current) return;
+    resetExternalSyncActivity();
     const changeMeta = meta || {};
     state.editGeneration += 1;
     state.current.editGeneration = ++state.documentGeneration;
     if (typeof changeMeta.value === 'string') {
-      const statistics = noteStatistics(changeMeta.value);
       state.current.content = changeMeta.value;
-      state.current.wordCount = statistics.words;
-      state.current.characterCount = statistics.characters;
-      state.current.countedGeneration = state.current.editGeneration;
+      state.current.hasImageText = changeMeta.value.includes('<!--relatum:image-text:');
+      if (!state.current.hasImageText) state.current.characterCount = changeMeta.value.length;
     }
     if (Number.isFinite(changeMeta.anchor)) state.current.selectionStart = changeMeta.anchor;
     if (Number.isFinite(changeMeta.head)) state.current.selectionEnd = changeMeta.head;
     else if (Number.isFinite(changeMeta.anchor)) state.current.selectionEnd = changeMeta.anchor;
     if (Number.isFinite(changeMeta.scrollTop)) state.current.scrollTop = changeMeta.scrollTop;
+    if (Number.isFinite(changeMeta.length) && !state.current.hasImageText) state.current.characterCount = changeMeta.length;
     cacheDocument(state.current);
     if (typeof changeMeta.value === 'string') updateDocumentStats(null, state.current.characterCount, state.current.wordCount);
-    else if (Number.isFinite(changeMeta.length) && !String(state.current.content || '').includes('<!--relatum:image-text:')) updateDocumentStats(null, changeMeta.length);
+    else if (Number.isFinite(changeMeta.length) && !state.current.hasImageText) updateDocumentStats(null, changeMeta.length);
+    scheduleStatistics(state.current);
     desktopDirty(true);
     scheduleSave();
   }
@@ -2146,6 +2249,132 @@
   }
   function separator() { const line = document.createElement('span'); line.className = 'note-context-separator'; return line; }
   function showContext(items, x, y, source) { contextMenu.replaceChildren(...items); contextMenu.dataset.source = source || ''; contextMenu.hidden = false; contextMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 250)) + 'px'; contextMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - contextMenu.offsetHeight - 8)) + 'px'; }
+  const BODY_COMMAND_LABELS = {
+    bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
+    body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
+    rule: ['分隔线', 'Horizontal rule'], 'code-block': ['代码块', 'Code block'], math: ['数学块', 'Math block'],
+    cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
+    'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
+  };
+  function bodyCommandLabel(name) {
+    const kind = name.split(':').pop();
+    if (/^heading-[1-6]$/.test(kind)) return language() === 'en' ? 'Heading ' + kind.slice(-1) : kind.slice(-1) + '级标题';
+    return BODY_COMMAND_LABELS[kind][language() === 'en' ? 1 : 0];
+  }
+  function fitBodyMenu(menu, x, y) {
+    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8)) + 'px';
+  }
+  function menuButtons(menu) { return Array.from(menu.children).filter((item) => item.tagName === 'BUTTON' && !item.disabled); }
+  function closeBodySubmenu() {
+    if (bodyMenuParent) { bodyMenuParent.setAttribute('aria-expanded', 'false'); bodyMenuParent.classList.remove('is-open'); }
+    if (bodyMenuSubmenu) bodyMenuSubmenu.remove();
+    bodyMenuSubmenu = null; bodyMenuParent = null;
+  }
+  async function runBodyCommand(name) {
+    const context = bodyMenuContext;
+    if (!context || !liveEditor || !liveEditor.queryCommand(name, context).enabled || contextMenu.getAttribute('aria-busy') === 'true') return;
+    contextMenu.setAttribute('aria-busy', 'true');
+    try {
+      if (name === 'copy' || name === 'cut') {
+        const text = context.selection.ranges.map((range) => context.doc.sliceString(range.from, range.to)).join('\n');
+        await navigator.clipboard.writeText(text);
+        if (bodyMenuContext !== context) return;
+        if (name === 'cut') liveEditor.executeCommand(name, context, '');
+        else liveEditor.focus();
+      } else if (name === 'paste' || name === 'paste-plain') {
+        if (name === 'paste' && navigator.clipboard.read) {
+          let items = [];
+          try { items = await navigator.clipboard.read(); } catch (error) { /* Text-only hosts still support readText. */ }
+          if (bodyMenuContext !== context) return;
+          const images = [];
+          for (const item of items) {
+            const type = item.types.find((candidate) => /^image\//.test(candidate));
+            if (type) images.push(new File([await item.getType(type)], 'image.' + (type === 'image/jpeg' ? 'jpg' : 'png'), { type }));
+          }
+          if (images.length) {
+            await uploadImages(images, context);
+            if (bodyMenuContext === context) closeContextMenu();
+            return;
+          }
+        }
+        const text = await navigator.clipboard.readText();
+        if (bodyMenuContext !== context) return;
+        if (text) liveEditor.executeCommand(name, context, text);
+      } else liveEditor.executeCommand(name, context);
+      if (bodyMenuContext === context) closeContextMenu();
+    } catch (error) {
+      showToast(language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
+    } finally { contextMenu.removeAttribute('aria-busy'); }
+  }
+  function bodyCommandButton(name) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = bodyCommandLabel(name); button.dataset.noteCommand = name;
+    const status = liveEditor.queryCommand(name, bodyMenuContext);
+    button.disabled = !status.enabled;
+    button.setAttribute('role', name.startsWith('paragraph:') ? 'menuitemradio' : 'menuitem');
+    if (name.startsWith('paragraph:')) { button.setAttribute('aria-checked', String(status.checked)); button.classList.toggle('active', status.checked); }
+    button.addEventListener('click', () => runBodyCommand(name));
+    return button;
+  }
+  function openBodySubmenu(parent, focusFirst) {
+    if (bodyMenuParent === parent) { if (focusFirst) menuButtons(bodyMenuSubmenu)[0]?.focus(); return; }
+    closeBodySubmenu();
+    const paragraph = parent.dataset.noteSubmenu === 'paragraph';
+    const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
+      : ['table', 'callout', 'rule', 'code-block', 'math'];
+    const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
+    submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
+    commands.forEach((kind, index) => {
+      if ((paragraph && (index === 3 || index === 10)) || (!paragraph && index === 3)) submenu.appendChild(separator());
+      submenu.appendChild(bodyCommandButton((paragraph ? 'paragraph:' : 'insert:') + kind));
+    });
+    contextMenu.appendChild(submenu); bodyMenuSubmenu = submenu; bodyMenuParent = parent;
+    parent.setAttribute('aria-expanded', 'true'); parent.classList.add('is-open');
+    const rect = parent.getBoundingClientRect(), rootRect = contextMenu.getBoundingClientRect();
+    const x = rootRect.right + submenu.offsetWidth <= window.innerWidth - 8 ? rootRect.right - 2 : rootRect.left - submenu.offsetWidth + 2;
+    fitBodyMenu(submenu, x, rect.top - 6);
+    if (focusFirst) menuButtons(submenu)[0]?.focus();
+  }
+  function openBodyContextMenu(payload) {
+    if (!state.active || !state.current || state.viewMode === 'reading' || state.imageTextBusy || state.assetCleanupBusy) return;
+    closeContextMenu(); bodyMenuContext = payload.context;
+    const items = ['paragraph', 'insert'].map((kind) => {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = bodyCommandLabel(kind);
+      button.dataset.noteSubmenu = kind; button.setAttribute('role', 'menuitem');
+      button.setAttribute('aria-haspopup', 'menu'); button.setAttribute('aria-expanded', 'false');
+      button.addEventListener('pointerenter', () => openBodySubmenu(button, false));
+      button.addEventListener('click', () => openBodySubmenu(button, true));
+      return button;
+    });
+    items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
+    showContext(items, payload.x, payload.y, 'body'); fitBodyMenu(contextMenu, payload.x, payload.y);
+    menuButtons(contextMenu)[0]?.focus();
+  }
+  if (contextMenu) {
+    contextMenu.addEventListener('pointerdown', (event) => { if (bodyMenuContext) event.preventDefault(); });
+    contextMenu.addEventListener('pointerover', (event) => {
+      if (bodyMenuContext && event.target.closest('[data-note-command]')?.parentElement === contextMenu) closeBodySubmenu();
+    });
+    contextMenu.addEventListener('keydown', (event) => {
+      if (!bodyMenuContext) return;
+      const current = document.activeElement, menu = current && current.parentElement;
+      const buttons = menuButtons(menu === bodyMenuSubmenu ? bodyMenuSubmenu : contextMenu);
+      const index = buttons.indexOf(current);
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault(); event.stopPropagation();
+        buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault(); buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus();
+      } else if (event.key === 'ArrowRight' && current?.dataset.noteSubmenu) {
+        event.preventDefault(); openBodySubmenu(current, true);
+      } else if (event.key === 'ArrowLeft' && bodyMenuSubmenu) {
+        event.preventDefault(); const parent = bodyMenuParent; closeBodySubmenu(); parent.focus();
+      } else if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault(); event.stopPropagation(); closeContextMenu(); liveEditor.focus();
+      }
+    });
+  }
   function openContextMenu(entry, x, y, options) {
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: '' })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: '' })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal('', false))], x, y); return; }
     state.selectedPath = entry.path;
@@ -2192,7 +2421,23 @@
   async function restoreHistory() { if (!state.historyVersion) return; try { const result = await post('/api/note-history-restore', { path: state.historyPath, version: state.historyVersion.id }); if (state.current && state.current.path === result.path) applyDocument(result); showToast(tr('restored')); openHistory(result.path); } catch (error) { showToast(error.message || tr('versionUnavailable'), 'error'); } }
 
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
-  async function uploadImages(files) { if (!state.current || !files.length) return; for (const file of files) { try { const result = await post('/api/note-upload-image', { path: state.current.path, name: file.name || 'image.png', mediaType: file.type || '', data: await fileToBase64(file) }); const insertion = '![' + (result.name || file.name || 'image') + '](' + result.path + ')\n'; replaceEditorSelection(insertion); } catch (error) { showToast(error.message || tr('uploadFailed'), 'error'); } } }
+  async function uploadImages(files, commandContext) {
+    if (!state.current || !files.length) return;
+    const path = state.current.path;
+    const insertions = [];
+    for (const file of files) {
+      try {
+        const result = await post('/api/note-upload-image', { path, name: file.name || 'image.png', mediaType: file.type || '', data: await fileToBase64(file) });
+        if (!state.current || state.current.path !== path) return;
+        const insertion = '![' + (result.name || file.name || 'image') + '](' + result.path + ')\n';
+        if (commandContext) {
+          if (bodyMenuContext !== commandContext || !liveEditor.queryCommand('paste', commandContext).enabled) return;
+          insertions.push(insertion);
+        } else replaceEditorSelection(insertion);
+      } catch (error) { showToast(error.message || tr('uploadFailed'), 'error'); }
+    }
+    if (insertions.length && bodyMenuContext === commandContext) liveEditor.executeCommand('paste', commandContext, insertions.join(''));
+  }
   function entryFiles(entry, prefix) { return new Promise((resolve) => { if (entry.isFile) { entry.file((file) => resolve([{ path: prefix + file.name, file }]), () => resolve([])); return; } if (!entry.isDirectory) { resolve([]); return; } const reader = entry.createReader(); const children = []; const read = () => reader.readEntries(async (batch) => { if (!batch.length) { resolve((await Promise.all(children.map((child) => entryFiles(child, prefix + entry.name + '/')))).flat()); return; } children.push(...batch); read(); }, () => resolve([])); read(); }); }
   async function filesFromTransfer(transfer) { const items = Array.from(transfer && transfer.items || []); const entries = items.map((item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean); if (entries.length) return (await Promise.all(entries.map((entry) => entryFiles(entry, '')))).flat(); return Array.from(transfer && transfer.files || []).map((file) => ({ path: file.name, file })); }
   async function importDataTransfer(transfer, destination) { if (state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
@@ -2207,7 +2452,7 @@
     const revision = state.current && state.current.revision;
     const previousModifiedNs = state.current && state.current.treeModifiedNs || 0;
     const previousSize = state.current && state.current.treeSize || 0;
-    const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors });
+    const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors, background: !!settings.background });
     if (!refreshed) return false;
     if (state.imageTextBusy || seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
@@ -2239,8 +2484,13 @@
     state.externalSyncTimer = 0;
   }
   function externalSyncDelay() {
-    const index = Math.min(Math.max(0, state.externalSyncFailures - 1), EXTERNAL_SYNC_DELAYS.length - 1);
+    const index = state.externalSyncFailures ? Math.min(state.externalSyncFailures - 1, EXTERNAL_SYNC_DELAYS.length - 1) : state.externalSyncUnchanged;
     return EXTERNAL_SYNC_DELAYS[index];
+  }
+  function resetExternalSyncActivity() {
+    const slowed = state.externalSyncUnchanged > 0;
+    state.externalSyncUnchanged = 0;
+    if (state.active && !document.hidden && (slowed || !state.externalSyncTimer)) scheduleExternalSync();
   }
   function scheduleExternalSync(delay) {
     stopExternalSync();
@@ -2295,6 +2545,8 @@
   async function activate() {
     const wasInitialized = state.initialized;
     state.active = true;
+    state.externalSyncUnchanged = 0;
+    if (state.current && state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true);
     root.classList.add('active');
     const initialized = await initializeWorkspace();
@@ -2304,13 +2556,20 @@
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
     else scheduleExternalSync();
     if (state.current) {
+      scheduleStatistics(state.current); scheduleDocumentPrefetch();
+      if (state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
       requestAnimationFrame(() => {
         if (state.active && state.current) focusEditor();
       });
     }
     return true;
   }
-  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  // Retain the outgoing page until the workspace's slide finishes, then release
+  // the reading DOM. Rapidly switching back must not clear the newly active page.
+  new MutationObserver(() => {
+    if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
+  }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
 
   root.addEventListener('click', async (event) => {
     if (state.imageTextBusy) return;
@@ -2566,13 +2825,15 @@
     persistViewStates();
     return save;
   }
-  window.addEventListener('blur', flushWorkspaceState);
-  window.addEventListener('focus', () => { if (state.active && !document.hidden) triggerExternalSync({ silentErrors: true }); });
+  window.addEventListener('blur', () => { closeContextMenu(); flushWorkspaceState(); });
+  window.addEventListener('resize', closeContextMenu);
+  document.addEventListener('relatum:languagechange', closeContextMenu);
+  window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { stopExternalSync(); flushWorkspaceState(); }
-    else if (state.active) triggerExternalSync({ silentErrors: true });
+    if (document.hidden) { closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
+    else if (state.active) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { stopExternalSync(); flushWorkspaceState(); });
+  window.addEventListener('pagehide', () => { closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); });
   window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(); });
   document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);

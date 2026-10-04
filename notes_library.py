@@ -588,8 +588,6 @@ class NotesStore:
                 continue
             document = {
                 "path": relative,
-                "raw": raw,
-                "text": text,
                 "revision": _revision(raw),
                 "mentions": _wiki_mentions(text),
                 "signature": signature,
@@ -611,8 +609,6 @@ class NotesStore:
         text = self._decode_note(content)
         self._document_cache[relative] = {
             "path": relative,
-            "raw": content,
-            "text": text,
             "revision": _revision(content),
             "mentions": _wiki_mentions(text),
             "signature": signature,
@@ -621,6 +617,13 @@ class NotesStore:
     def invalidate(self) -> None:
         """在文件被系统回收站或外部批量操作移动后清空增量缓存。"""
         self._document_cache.clear()
+
+    def _indexed_text(self, relative: str, document: dict) -> str:
+        """Read a body only for explicit statistics/rewrites, guarding index offsets."""
+        raw = self._read_note_bytes(self._absolute(relative))
+        if _revision(raw) != document["revision"]:
+            raise NotesError("笔记已被外部修改，请刷新后重试", status=409, code="conflict")
+        return self._decode_note(raw)
 
     @staticmethod
     def _resolver(paths: list[str]) -> tuple[dict[str, str], dict[str, list[str]]]:
@@ -724,7 +727,7 @@ class NotesStore:
         folder_names: set[str] = set()
         modified_months: dict[str, int] = {}
         for relative, document in documents.items():
-            text = str(document.get("text") or "")
+            text = self._indexed_text(relative, document)
             visible_text = note_visible_text(text)
             words = _visible_word_count(visible_text)
             lengths.append({
@@ -1107,7 +1110,7 @@ class NotesStore:
         warnings: list[str] = []
 
         for old_source, document in documents.items():
-            text = document["text"]
+            text = None
             replacements: list[tuple[int, int, str]] = []
             for mention in document["mentions"]:
                 old_target, old_state = self._resolve_wiki(mention["base"], old_exact, old_stems)
@@ -1127,10 +1130,14 @@ class NotesStore:
                 replacements.append((mention["start"], mention["end"], "[[" + inner + "]]"))
 
             new_source = mapping[old_source]
+            if replacements:
+                text = self._indexed_text(old_source, document)
             if old_source in moved_targets:
                 old_stem = PurePosixPath(old_source).stem
                 new_stem = PurePosixPath(new_source).stem
                 if old_stem != new_stem:
+                    if text is None:
+                        text = self._indexed_text(old_source, document)
                     for match in _IMAGE_RE.finditer(text):
                         target = match.group(2).strip()
                         old_prefix = old_stem + ".assets/"

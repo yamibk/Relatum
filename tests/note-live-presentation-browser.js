@@ -224,7 +224,10 @@ body { margin: 0; }
     await settle();
     assert.equal(await page.evaluate(() => editor.snapshot().value), '公式 $x^2字$ 结尾');
 
-    await page.evaluate(() => editor.setDocument({value:'$$x^2$$', notePath:'ime-block-math.md'}));
+    // The editor still has focus from the preceding IME test. A caret at zero
+    // intentionally exposes the formula source, so start outside the math block
+    // before testing a click on its projected widget.
+    await page.evaluate(() => editor.setDocument({value:'$$x^2$$\n\nafter', notePath:'ime-block-math.md', anchor:14, head:14}));
     await settle();
     await page.locator('[aria-label="点击编辑 math 源码"]').click();
     await settle();
@@ -236,7 +239,7 @@ body { margin: 0; }
     }
     await cdp.send('Input.insertText', {text:'汉'});
     await settle();
-    assert.equal(await page.evaluate(() => editor.snapshot().value), '$$汉x^2$$');
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '$$汉x^2$$\n\nafter');
 
     // Images remain projected, but text insertion beside them must keep an
     // empty text caret and must not select/replace the image source range.
@@ -320,6 +323,9 @@ body { margin: 0; }
       return parsed && parsed.imageTextItems && parsed.imageTextItems[0] && parsed.imageTextItems[0].text;
     });
     assert.equal(imageTextValue, '字');
+    // Synthetic textarea.blur() leaves focus on body, unlike a real click back
+    // into the editor. Send undo to CodeMirror rather than the browser document.
+    await page.evaluate(() => editor.focus());
     await page.keyboard.press('Control+z');
     await page.evaluate(() => editor.setImageTextMode(false));
     await settle();
