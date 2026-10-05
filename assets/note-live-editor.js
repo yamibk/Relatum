@@ -2464,6 +2464,7 @@
     let pendingDocumentState = null;
     let pendingDocumentWait = false;
     let sourceMode = !!options.sourceMode;
+    let pastePlain = false;
     let serializedDoc = null, serializedValue = '';
     function serializedDocument(doc) {
       if (serializedDoc !== doc) { serializedDoc = doc; serializedValue = doc.toString(); }
@@ -2477,6 +2478,7 @@
       },
       onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onOpenLocalFile() {}, onImageFiles() {},
       onImageSelectionChange() {}, onImageTextDefaultsChange() {}, onContextMenu() {}, onCommandContextChanged() {},
+      clipboardText(text) { return text; },
       imageTextDefaults: { size: 'md', color: 'white' },
     }, options);
     const inputSession = {
@@ -3087,6 +3089,7 @@
             return true;
           },
           keydown(event, view) {
+            pastePlain = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
             if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return false;
             if (imageTextController.active) return false;
             event.preventDefault();
@@ -3095,11 +3098,13 @@
             safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext() });
             return true;
           },
+          keyup() { pastePlain = false; return false; },
           focus(event, view) {
             if (!inputSession.pending()) view.dispatch({ effects: focusEffect.of(true) });
             return false;
           },
           blur(event, view) {
+            pastePlain = false;
             if (inputSession.pending()) inputSession.end(view);
             else view.dispatch({ effects: focusEffect.of(false) });
             return false;
@@ -3128,12 +3133,20 @@
             else safeOptions.onOpenExternal(normalizedImageTarget(link.target));
             return true;
           },
-          paste(event) {
+          paste(event, view) {
+            const plain = pastePlain;
+            pastePlain = false;
             const files = Array.from(event.clipboardData && event.clipboardData.items || [])
               .filter((item) => item.kind === 'file' && /^image\//i.test(item.type || ''))
               .map((item) => item.getAsFile()).filter(Boolean);
-            if (!files.length) return false;
-            event.preventDefault(); safeOptions.onImageFiles(files); return true;
+            if (files.length) { event.preventDefault(); safeOptions.onImageFiles(files); return true; }
+            if (plain || !event.clipboardData || view.state.readOnly || inputPending() || imageTextController.active) return false;
+            const text = event.clipboardData.getData('text/plain');
+            const markdown = safeOptions.clipboardText(text, event.clipboardData.getData('text/html'));
+            if (markdown === text) return false;
+            event.preventDefault();
+            view.dispatch(Object.assign({}, view.state.replaceSelection(markdown), { userEvent: 'input.paste', scrollIntoView: true }));
+            return true;
           },
           dragover(event) {
             const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);

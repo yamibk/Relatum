@@ -606,6 +606,26 @@
     markChanged(editorSnapshot());
   }
 
+  function clipboardLinkMarkdown(text, html) {
+    const address = String(text || '').trim();
+    if (!/^https?:\/\/[^\s<>]+$/i.test(address) || !html || html.length > 128 * 1024) return text;
+    try {
+      // Template contents stay inert, including scripts and external resources.
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      const links = template.content.querySelectorAll('a[href]');
+      if (links.length !== 1) return text;
+      const link = links[0];
+      const target = new URL(link.getAttribute('href'));
+      if (target.href !== new URL(address).href) return text;
+      const title = (link.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!title || title === address || title.length > 4096) return text;
+      const label = title.replace(/[\\\[\]`*_~<>]/g, '\\$&');
+      const destination = address.replace(/[\\()]/g, (character) => ({ '\\': '%5C', '(': '%28', ')': '%29' })[character]);
+      return '[' + label + '](' + destination + ')';
+    } catch (error) { return text; }
+  }
+
   async function openWikiFromEditor(rawTarget) {
     await ensureLinks();
     const outgoing = outgoingForWiki(rawTarget);
@@ -973,6 +993,7 @@
           onOpenExternal: (target) => openMarkdownTarget(target),
           onOpenLocalFile: (target) => openLocalNoteFile(target),
           onImageFiles: (files) => uploadImages(files),
+          clipboardText: clipboardLinkMarkdown,
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
           imageTextDefaults: { size: state.imageText.size, color: state.imageText.color },
           onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults),
@@ -1006,13 +1027,23 @@
       state.titleResizeObserver.observe(inlineTitleShell);
     }
     fallbackEditor.addEventListener('input', () => markChanged(editorSnapshot()));
+    let fallbackPastePlain = false;
     fallbackEditor.addEventListener('keydown', (event) => {
+      fallbackPastePlain = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
       if (runFallbackShortcut(event)) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); flushSave(); }
     });
+    fallbackEditor.addEventListener('keyup', () => { fallbackPastePlain = false; });
+    fallbackEditor.addEventListener('blur', () => { fallbackPastePlain = false; });
     fallbackEditor.addEventListener('paste', (event) => {
+      const plain = fallbackPastePlain;
+      fallbackPastePlain = false;
       const files = Array.from(event.clipboardData && event.clipboardData.items || []).filter((item) => item.kind === 'file' && /^image\//i.test(item.type || '')).map((item) => item.getAsFile()).filter(Boolean);
-      if (files.length) { event.preventDefault(); uploadImages(files); }
+      if (files.length) { event.preventDefault(); uploadImages(files); return; }
+      if (plain || !event.clipboardData) return;
+      const text = event.clipboardData.getData('text/plain');
+      const markdown = clipboardLinkMarkdown(text, event.clipboardData.getData('text/html'));
+      if (markdown !== text) { event.preventDefault(); replaceEditorSelection(markdown); }
     });
     fallbackEditor.addEventListener('dragover', (event) => { if (Array.from(event.dataTransfer && event.dataTransfer.files || []).some((file) => /^image\//i.test(file.type || '') || IMAGE_RE.test(file.name || ''))) event.preventDefault(); });
     fallbackEditor.addEventListener('drop', (event) => {
@@ -2283,6 +2314,7 @@
         if (name === 'cut') liveEditor.executeCommand(name, context, '');
         else liveEditor.focus();
       } else if (name === 'paste' || name === 'paste-plain') {
+        let clipboardText = null, clipboardHtml = '';
         if (name === 'paste' && navigator.clipboard.read) {
           let items = [];
           try { items = await navigator.clipboard.read(); } catch (error) { /* Text-only hosts still support readText. */ }
@@ -2297,8 +2329,17 @@
             if (bodyMenuContext === context) closeContextMenu();
             return;
           }
+          for (const item of items) {
+            if (!item.types.includes('text/plain')) continue;
+            try {
+              clipboardText = await (await item.getType('text/plain')).text();
+              if (item.types.includes('text/html')) clipboardHtml = await (await item.getType('text/html')).text();
+            } catch (error) { /* Preserve available text when rich clipboard data is unavailable. */ }
+            break;
+          }
         }
-        const text = await navigator.clipboard.readText();
+        const rawText = clipboardText == null ? await navigator.clipboard.readText() : clipboardText;
+        const text = name === 'paste' ? clipboardLinkMarkdown(rawText, clipboardHtml) : rawText;
         if (bodyMenuContext !== context) return;
         if (text) liveEditor.executeCommand(name, context, text);
       } else liveEditor.executeCommand(name, context);
