@@ -23,48 +23,19 @@
     return value === 'left' || value === 'center' || value === 'right' ? value : '';
   }
 
-  function rowHasDelimiter(line) {
-    const text = String(line || '');
-    let escaped = false;
-    let ticks = 0;
-    let math = 0;
-    let square = 0;
-    let round = 0;
-    let curly = 0;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\') { escaped = true; continue; }
-      if (ch === '`') {
-        let run = 1;
-        while (text[i + run] === '`') run++;
-        ticks = ticks === run ? 0 : (ticks ? ticks : run);
-        i += run - 1;
-        continue;
-      }
-      if (ticks) continue;
-      if (ch === '$') {
-        let run = 1;
-        while (text[i + run] === '$') run++;
-        math = math === run ? 0 : (math ? math : run);
-        i += run - 1;
-        continue;
-      }
-      if (math) continue;
-      if (ch === '[') square++;
-      else if (ch === ']' && square) square--;
-      else if (ch === '(') round++;
-      else if (ch === ')' && round) round--;
-      else if (ch === '{') curly++;
-      else if (ch === '}' && curly) curly--;
-      else if (ch === '|' && square === 0 && round === 0 && curly === 0) return true;
-    }
-    return false;
+  function rowHasDelimiter(line, expectedWidth) {
+    const text = String(line || '').trim();
+    if (text.indexOf('|') < 0) return false;
+    if (text[0] === '|' || splitRow(text, expectedWidth).length > 1) return true;
+    if (!text.endsWith('|')) return false;
+    let escapes = 0;
+    for (let i = text.length - 2; i >= 0 && text[i] === '\\'; i--) escapes++;
+    return escapes % 2 === 0;
   }
 
   // 只把语法顶层的 | 当作列分隔符。公式、代码、链接、自定义富文本标记里的 |
   // 都属于单元格内容；\| 会还原成用户真正想输入的竖线。
-  function splitRow(line) {
+  function splitRow(line, expectedWidth) {
     const text = String(line == null ? '' : line).trim();
     const cells = [];
     let buf = '';
@@ -121,6 +92,22 @@
     cells.push(buf.trim());
     if (cells.length > 1 && cells[0] === '' && text.charAt(0) === '|') cells.shift();
     if (cells.length > 1 && cells[cells.length - 1] === '' && text.charAt(text.length - 1) === '|') cells.pop();
+    // Provisional inline syntax must never consume the next cell. Canonical
+    // writes escape cell pipes, so raw delimiters can recover an incomplete
+    // construct or a construct accidentally paired across neighbouring cells.
+    if (ticks || math || square || round || curly || expectedWidth && cells.length < expectedWidth) {
+      const literal = [];
+      let value = '';
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] === '\\' && text[i + 1] === '|') { value += '|'; i++; }
+        else if (text[i] === '|') { literal.push(value.trim()); value = ''; }
+        else value += text[i];
+      }
+      literal.push(value.trim());
+      if (literal.length > 1 && literal[0] === '' && text[0] === '|') literal.shift();
+      if (literal.length > 1 && literal[literal.length - 1] === '' && text.endsWith('|')) literal.pop();
+      if (ticks || math || square || round || curly || literal.length === expectedWidth) return literal;
+    }
     return cells;
   }
 
@@ -171,17 +158,18 @@
 
   function parseLines(lines, startLine, options) {
     const start = Math.max(0, Number(startLine) || 0);
-    if (start + 1 >= lines.length || !rowHasDelimiter(lines[start]) || !isSeparatorLine(lines[start + 1])) {
+    if (start + 1 >= lines.length || !isSeparatorLine(lines[start + 1])) {
       return { ok: false, error: '这里不是有效的 Markdown 表格' };
     }
-    const header = splitRow(lines[start]);
     const align = splitRow(lines[start + 1]).map(separatorAlign);
+    if (!rowHasDelimiter(lines[start], align.length)) return { ok: false, error: '这里不是有效的 Markdown 表格' };
+    const header = splitRow(lines[start], align.length);
     const rows = [];
     let endLine = start + 2;
     while (endLine < lines.length) {
       const line = lines[endLine];
-      if (!String(line).trim() || !rowHasDelimiter(line) || isSeparatorLine(line)) break;
-      rows.push(splitRow(line));
+      if (!String(line).trim() || !rowHasDelimiter(line, align.length)) break;
+      rows.push(splitRow(line, align.length));
       endLine++;
     }
     const model = normalizeModel({ header: header, rows: rows, align: align }, {
@@ -214,47 +202,10 @@
 
   function escapeCell(value) {
     const text = normalizeNewlines(value).replace(/\n+/g, ' ');
-    let out = '';
-    let ticks = 0;
-    let math = 0;
-    let square = 0;
-    let round = 0;
-    let curly = 0;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (ch === '\\' && text[i + 1] === '|') {
-        out += '\\|';
-        i++;
-        continue;
-      }
-      if (ch === '`') {
-        let run = 1;
-        while (text[i + run] === '`') run++;
-        out += '`'.repeat(run);
-        ticks = ticks === run ? 0 : (ticks ? ticks : run);
-        i += run - 1;
-        continue;
-      }
-      if (!ticks && ch === '$') {
-        let run = 1;
-        while (text[i + run] === '$') run++;
-        out += '$'.repeat(run);
-        math = math === run ? 0 : (math ? math : run);
-        i += run - 1;
-        continue;
-      }
-      if (!ticks && !math) {
-        if (ch === '[') square++;
-        else if (ch === ']' && square) square--;
-        else if (ch === '(') round++;
-        else if (ch === ')' && round) round--;
-        else if (ch === '{') curly++;
-        else if (ch === '}' && curly) curly--;
-        if (ch === '|' && square === 0 && round === 0 && curly === 0) out += '\\';
-      }
-      out += ch;
-    }
-    return out.trim();
+    // GFM also requires literal pipes in code/math/link cells to be escaped.
+    // This keeps incremental editing and reopening unambiguous even before the
+    // user has closed the current inline construct.
+    return text.replace(/\\?\|/g, '\\|').trim();
   }
 
   function separatorFor(align) {

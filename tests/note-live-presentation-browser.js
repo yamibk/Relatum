@@ -32,8 +32,8 @@ body { margin: 0; }
 .note-document-body { --note-inline-title-space: 24px; }
 </style></head><body class="start-page" data-start-theme="light">
 <main class="note-document-pane"><div class="note-document-body"><div class="note-live-editor-host" id="editor"></div></div></main>
-<script src="markdown.js"></script><script src="mermaid-renderer.js"></script>
-<script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-live-editor.js"></script>
+<script src="markdown-table.js"></script><script src="markdown.js"></script><script src="mermaid-renderer.js"></script>
+<script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-table-editor.js"></script><script src="note-live-editor.js"></script>
 <script>window.editor = RelatumNoteLiveEditor.create(document.getElementById('editor'), {value: ${JSON.stringify(sample)}, notePath:'sample.md', imageUrl(){return '/fixture.png';}});</script>
 </body></html>`;
 
@@ -152,6 +152,71 @@ body { margin: 0; }
       }
     }
 
+    // Native Callout line padding must be included in CM's measured geometry,
+    // while a body caret keeps the rendered header and one continuous surface.
+    const calloutFixture = '> [!hint] **中文写作提示**\n> 正文起点。' + '这段较长的中文正文会自然换行，编辑和指针仍按实际高度定位。'.repeat(6)
+      + '\n>\n> 最后一行正文\n\n后方定位段落';
+    const calloutChecks = [];
+    for (const theme of ['light', 'dark']) {
+      await page.setViewportSize({width:620,height:960});
+      await page.evaluate(({source, theme}) => {
+        document.documentElement.style.removeProperty('--note-font-scale');
+        document.body.dataset.startTheme = theme;
+        editor.setDocument({value:source, notePath:'callout.md', anchor:source.length, head:source.length});
+        editor.view.contentDOM.blur();
+      }, {source:calloutFixture, theme});
+      await settle();
+      const textPoint = token => page.evaluate(token => {
+        const line = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line')).find(el => el.textContent.includes(token));
+        if (!line) return null;
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode, offset = node.textContent.indexOf(token);
+          if (offset < 0) continue;
+          const range = document.createRange();
+          range.setStart(node, offset + 1); range.setEnd(node, offset + 2);
+          const rect = range.getBoundingClientRect();
+          return {x:rect.left + 1, y:(rect.top + rect.bottom)/2};
+        }
+        return null;
+      }, token);
+      const bodyPoint = await textPoint('正文起点');
+      assert(bodyPoint, 'callout body must have a real native text rectangle');
+      await page.mouse.click(bodyPoint.x, bodyPoint.y);
+      await settle();
+      const card = await page.evaluate(() => {
+        const lines = Array.from(document.querySelectorAll('.note-live-callout-line'));
+        const body = lines.find(line => line.textContent.includes('正文起点'));
+        return {title:document.querySelectorAll('.note-live-callout-title-widget').length,
+          backgrounds:lines.map(line => getComputedStyle(line).backgroundColor),
+          rows:lines.length, wrappedHeight:body.getBoundingClientRect().height,
+          lineHeight:parseFloat(getComputedStyle(body).lineHeight),
+          source:editor.snapshot().value, line:editor.view.state.doc.lineAt(editor.snapshot().head).text};
+      });
+      assert.equal(card.title, 1, 'a body click must preserve the callout title and icon');
+      assert.equal(card.rows, 4, 'every Callout line including blank quote rows must join the card');
+      assert.equal(new Set(card.backgrounds).size, 1, 'the active line must use exactly the same background as its neighbors');
+      assert(!['transparent','rgba(0, 0, 0, 0)'].includes(card.backgrounds[0]), 'the card must have a visible continuous surface');
+      assert(card.wrappedHeight > card.lineHeight * 2, 'long Callout prose must have naturally measured wrapped height');
+      assert(card.line.includes('正文起点') && card.source === calloutFixture, 'body clicks must retain both native caret and exact Markdown');
+      await page.screenshot({path:path.join(output, 'callout-' + theme + '.png')});
+      const afterPoint = await textPoint('后方定位段落');
+      await page.mouse.click(afterPoint.x, afterPoint.y);
+      await settle();
+      const after = await page.evaluate(() => {
+        const view = editor.view, caret = view.coordsAtPos(view.state.selection.main.head);
+        return {line:view.state.doc.lineAt(view.state.selection.main.head).text, caret};
+      });
+      assert(after.line.includes('后方定位段落'), 'a click below a wrapped Callout must land in the following paragraph');
+      assert(Math.abs((after.caret.top + after.caret.bottom)/2 - afterPoint.y) < 5, 'Callout padding must not shift later pointer coordinates');
+      await page.locator('.note-live-callout-title-widget').click();
+      await settle();
+      assert.equal(await page.locator('.note-live-callout-title-widget').count(), 0, 'a title click must enter its native Markdown line');
+      assert((await page.evaluate(() => editor.view.state.doc.lineAt(editor.view.state.selection.main.head).text)).includes('[!hint]'),
+        'the title cursor must remain inside the original header');
+      calloutChecks.push({theme, rows:card.rows, wrappedHeight:card.wrappedHeight, background:card.backgrounds[0], afterClick:true});
+    }
+
     await page.setViewportSize({width:1280,height:960});
     await page.evaluate(() => {
       document.documentElement.style.removeProperty('--note-font-scale');
@@ -257,6 +322,27 @@ body { margin: 0; }
     const imageAdjacent = await page.evaluate(() => editor.snapshot());
     assert.equal(imageAdjacent.value, imeImageSource.replace('后文', '后输入文'));
     assert.equal(imageAdjacent.anchor, imageAdjacent.head);
+
+    const calloutImeSource = '> [!tip] 输入法标题\n> 甲乙\n\n后文';
+    await page.evaluate(source => {
+      const at = source.indexOf('甲乙') + 1;
+      editor.setDocument({value:source, notePath:'ime-callout.md', anchor:at, head:at});
+      editor.focus();
+    }, calloutImeSource);
+    for (const text of ['z', 'zh', 'zhong']) {
+      await cdp.send('Input.imeSetComposition', {text,selectionStart:text.length,selectionEnd:text.length});
+    }
+    assert.equal(await page.evaluate(() => editor.snapshot().value), calloutImeSource,
+      'Callout snapshots must never persist provisional Pinyin');
+    assert.equal(await page.locator('.note-live-callout-title-widget').count(), 1,
+      'Callout titles must remain projected during native body composition');
+    await cdp.send('Input.insertText', {text:'中'});
+    await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), calloutImeSource.replace('甲乙', '甲中乙'));
+    assert.equal(await page.locator('.note-live-callout-title-widget').count(), 1);
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.evaluate(() => editor.snapshot().value), calloutImeSource,
+      'one undo must remove the Callout candidate without altering its syntax');
     await cdp.detach();
 
     // Images stay visual while selected, align with text, and commit one
@@ -400,7 +486,7 @@ body { margin: 0; }
     await page.waitForFunction(() => document.documentElement.dataset.noteLivePerformance);
     const typingProbe = await page.evaluate(() => JSON.parse(document.documentElement.dataset.noteLivePerformance));
     assert.deepEqual(errors, []);
-    const report = {output,metrics,clickChecks,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
+    const report = {output,metrics,clickChecks,calloutChecks,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report,null,2));
     console.log(JSON.stringify(report));
   } finally {

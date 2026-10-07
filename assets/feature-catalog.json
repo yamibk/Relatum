@@ -256,6 +256,8 @@
       "label": "笔记工作区",
       "description": "Markdown 文件树、多标签编辑与阅读。",
       "scripts": [
+        "markdown-table.js",
+        "note-table-editor.js",
         "note-workspace.js",
         "note-live-editor.js",
         "note-shortcuts.js",

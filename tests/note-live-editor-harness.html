@@ -49,8 +49,10 @@
     <div class="note-live-editor-host" data-role="editor"></div>
   </main>
   <script src="markdown.js"></script>
+  <script src="markdown-table.js"></script>
   <script src="mermaid-renderer.js"></script>
   <script src="vendor/codemirror/relatum-codemirror.min.js"></script>
+  <script src="note-table-editor.js"></script>
   <script src="note-live-editor.js?ime-session-15"></script>
   <script>
     (function () {
@@ -275,18 +277,25 @@
                   resolve(result);
                   return;
                 }
-                table.click();
+                var firstCell = table.querySelector('td[data-table-row][data-table-col]');
+                if (firstCell) {
+                  var cellRect = firstCell.getBoundingClientRect();
+                  var cellPoint = { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: cellRect.left + 20, clientY: cellRect.top + 16 };
+                  firstCell.dispatchEvent(new PointerEvent('pointerdown', cellPoint));
+                  firstCell.dispatchEvent(new PointerEvent('pointerup', cellPoint));
+                }
                 setTimeout(function () {
-                  result.tableRevealed = !editor.view.contentDOM.querySelector('.note-live-rich-block.is-table');
-                  result.codeLinesAfterTableReveal = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-code-line').length;
-                  result.codeTokensAfterTableReveal = editor.view.contentDOM.querySelectorAll('[class*="note-live-code-"]:not(.note-live-code-line)').length;
-                  result.headingsAfterTableReveal = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-heading').length;
-                  result.rawFencesAfterTableReveal = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line')).filter(function (line) {
+                  result.tableRemainsProjected = !!editor.view.contentDOM.querySelector('.note-live-rich-block.is-table');
+                  result.tableCellEditor = !!editor.view.contentDOM.querySelector('textarea.note-table-cell-editor');
+                  result.codeLinesAfterTableEdit = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-code-line').length;
+                  result.codeTokensAfterTableEdit = editor.view.contentDOM.querySelectorAll('[class*="note-live-code-"]:not(.note-live-code-line)').length;
+                  result.headingsAfterTableEdit = editor.view.contentDOM.querySelectorAll('.cm-line.note-live-heading').length;
+                  result.rawFencesAfterTableEdit = Array.from(editor.view.contentDOM.querySelectorAll('.cm-line')).filter(function (line) {
                     return /^```/.test(line.textContent.trim());
                   }).length;
-                  result.complete = result.complete && result.tableRevealed && result.headingsAfterTableReveal >= 1
-                    && result.rawFencesAfterTableReveal === 0 && result.codeLinesAfterTableReveal >= 4
-                    && result.codeTokensAfterTableReveal > 0;
+                  result.complete = result.complete && result.tableRemainsProjected && result.tableCellEditor
+                    && result.headingsAfterTableEdit >= 1 && result.rawFencesAfterTableEdit === 0
+                    && result.codeLinesAfterTableEdit >= 4 && result.codeTokensAfterTableEdit > 0;
                   document.documentElement.dataset.noteLiveMixed = JSON.stringify(result);
                   resolve(result);
                 }, 120);

@@ -142,6 +142,18 @@
     };
   }
 
+  function calloutPresentationType(type) {
+    const value = String(type || 'note').toLowerCase();
+    const aliases = {
+      summary: 'abstract', tldr: 'abstract', hint: 'tip', important: 'tip', faq: 'question',
+      help: 'question', check: 'success', done: 'success', caution: 'warning', attention: 'warning',
+      fail: 'failure', missing: 'failure', error: 'danger', cite: 'quote', infobox: 'info',
+    };
+    const canonical = aliases[value] || value;
+    return /^(?:note|abstract|info|todo|tip|success|question|warning|failure|danger|bug|example|quote)$/.test(canonical)
+      ? canonical : 'note';
+  }
+
   function completeSpec(spec, prior) {
     const source = String(spec.source || '');
     return Object.assign({}, spec, {
@@ -171,6 +183,10 @@
     const seen = new Set();
     const protectedBlocks = [];
     const push = (spec) => {
+      if (spec.kind === 'table') {
+        const sameStart = raw.find((item) => item.kind === 'table' && item.from === spec.from);
+        if (sameStart) { Object.assign(sameStart, spec); return; }
+      }
       const key = spec.kind + ':' + spec.from + ':' + spec.to;
       if (seen.has(key)) return;
       seen.add(key); raw.push(spec);
@@ -243,6 +259,28 @@
       const protectedBlock = protectedBlocks.find((range) => range.from <= line.from && range.to >= line.to);
       if (protectedBlock) { number = doc.lineAt(protectedBlock.to).number + 1; continue; }
       if (line.length > MAX_RICH_LINE) { number += 1; continue; }
+      // Lezer's GFM grammar and our shared grammar differ on literal pipes in
+      // code/math. Use the same bounded table parser as the renderer/writer,
+      // outside code, HTML and quoted blocks, so cell edits cannot lose their grid.
+      const tableSyntax = window.MarkdownTable;
+      if (tableSyntax && line.from <= end && number < doc.lines && !/^\s*(?:>|[-+*]\s|\d+[.)]\s)/.test(line.text)
+          && tableSyntax.rowHasDelimiter(line.text) && tableSyntax.isSeparatorLine(doc.line(number + 1).text)) {
+        const lines = [line.text, doc.line(number + 1).text];
+        let next = number + 2, length = lines[0].length + lines[1].length + 1;
+        while (next <= doc.lines && length <= RICH_BLOCK_LIMIT) {
+          const candidate = doc.line(next);
+          if (candidate.length > MAX_RICH_LINE || !candidate.text.trim() || !tableSyntax.rowHasDelimiter(candidate.text)) break;
+          length += candidate.length + 1; lines.push(candidate.text); next++;
+        }
+        if (length <= RICH_BLOCK_LIMIT) {
+          const parsed = tableSyntax.parseLines(lines, 0, { ensureBodyRow: false });
+          if (parsed.ok && parsed.endLine === lines.length) {
+            const tableTo = doc.line(number + lines.length - 1).to;
+            if (tableTo >= start) push({ from: line.from, to: tableTo, kind: 'table', source: doc.sliceString(line.from, tableTo) });
+            number += lines.length; continue;
+          }
+        }
+      }
       const standaloneImage = parseStandaloneImage(line.text);
       if (standaloneImage && standaloneImage.target && !isRemoteTarget(standaloneImage.target)) {
         push({
@@ -1359,6 +1397,12 @@
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
+    // Notes present every table row as data, including the first Markdown row.
+    content.querySelectorAll('table th').forEach((header) => {
+      const cell = document.createElement('td');
+      Array.from(header.attributes).forEach((attribute) => cell.setAttribute(attribute.name, attribute.value));
+      cell.append(...header.childNodes); header.replaceWith(cell);
+    });
     content.querySelectorAll('[data-note-image]').forEach((image) => {
       image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '');
       const frame = image.closest('.md-local-image');
@@ -1560,11 +1604,13 @@
     toDOM(view) {
       const wrap = document.createElement('span');
       wrap.className = 'note-live-callout-title-widget';
-      wrap.dataset.callout = this.spec.type || 'note';
+      wrap.dataset.callout = calloutPresentationType(this.spec.type);
       wrap.tabIndex = 0;
       wrap.setAttribute('aria-label', '点击编辑 Callout 源码');
       const rendered = document.createElement('span');
-      rendered.innerHTML = safeIsolatedResult(this.spec.source).html;
+      // Render only the header. The body remains native CodeMirror text, and
+      // must not be parsed again just to draw its title or while it is edited.
+      rendered.innerHTML = safeIsolatedResult(this.spec.source.split('\n', 1)[0]).html;
       const title = rendered.querySelector('.md-callout-title');
       if (title) {
         Array.from(title.childNodes).forEach((node) => wrap.appendChild(node.cloneNode(true)));
@@ -1673,7 +1719,13 @@
   }
 
   function blockIsProjected(spec, activeIds) {
-    return usesBlockReplacement(spec) && (spec.kind === 'image' || !activeIds.has(spec.id));
+    return usesBlockReplacement(spec) && (spec.kind === 'image' || spec.kind === 'table' || !activeIds.has(spec.id));
+  }
+
+  function blockWidget(spec, path, options, coordinator, selected) {
+    return spec.kind === 'table' && options.tableController && window.MarkdownTable.parse(spec.source).ok
+      ? options.tableController.widget(spec, path, coordinator)
+      : new RichBlockWidget(spec, path, options, coordinator, selected);
   }
 
   function createBlockField(notePath, options, coordinator, inputSession) {
@@ -1685,7 +1737,7 @@
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const selectedImageIds = selectedBlockImageIds(specs, state);
         const decorations = Decoration.set(specs.filter(usesBlockReplacement).map((spec) => Decoration.replace({
-          widget: new RichBlockWidget(spec, notePath(), options, coordinator,
+          widget: blockWidget(spec, notePath(), options, coordinator,
             selectedImageIds.has(spec.id)),
           block: true, inclusive: false, blockId: spec.id,
         }).range(spec.from, spec.to)), true);
@@ -1754,7 +1806,7 @@
           decorations = decorations.update({
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
             add: specs.filter((spec) => blockIsProjected(spec, activeIds) && refresh.has(spec.id)).map((spec) => Decoration.replace({
-              widget: new RichBlockWidget(spec, notePath(), options, coordinator,
+              widget: blockWidget(spec, notePath(), options, coordinator,
                 selectedImageIds.has(spec.id)),
               block: true, inclusive: false, blockId: spec.id,
             }).range(spec.from, spec.to)),
@@ -1900,15 +1952,17 @@
         if (spec.kind !== 'callout' || spec.to < first.from || spec.from > last.to) return;
         const startLine = view.state.doc.lineAt(spec.from);
         const endLine = view.state.doc.lineAt(Math.max(spec.from, spec.to - 1));
-        const active = blockValue.activeIds.has(spec.id) || constructActive(view, spec.from, spec.to);
-        const type = String(spec.type || 'note').replace(/[^a-z0-9-]/g, '') || 'note';
+        // A caret in the body should not dismantle the title. Both title and
+        // body stay in CodeMirror-owned line boxes, including wrapped lines.
+        const headerActive = constructActive(view, startLine.from, startLine.to);
+        const type = calloutPresentationType(spec.type);
         for (let number = Math.max(first.number, startLine.number); number <= Math.min(last.number, endLine.number); number += 1) {
           let className = 'note-live-callout-line is-callout-' + type;
           if (number === startLine.number) className += ' note-live-callout-first';
           if (number === endLine.number) className += ' note-live-callout-last';
           lineClass(view.state.doc.line(number).from, className);
         }
-        if (!active && startLine.number >= first.number && startLine.number <= last.number) {
+        if (!headerActive && startLine.number >= first.number && startLine.number <= last.number) {
           const header = /^(\s*(?:>\s*)+)(\[![A-Za-z][\w-]*\][+-]?\s*.*)$/.exec(startLine.text);
           if (header) {
             const from = startLine.from + header[1].length;
@@ -2078,7 +2132,8 @@
             const line = view.state.doc.lineAt(nodeRef.from);
             const spec = blockSpecs.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
             if (!spec) lineClass(line.from, 'note-live-quote-line');
-            sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, spec ? 'callout' : 'quote');
+            if (spec) sourceMark(nodeRef.from, nodeRef.to, line.from, line.to, 'callout');
+            else sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'quote');
           } else if (nodeRef.name === 'TableDelimiter') {
             const unit = ancestorOf(node, /^Table$/) || node;
             sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'table');
@@ -2392,8 +2447,7 @@
         : doc.sliceString(to, to + 1) === '\n' ? '\n' : '\n\n') : '';
       let block, offset;
       if (kind === 'table') {
-        const title = english ? 'Heading' : '表头';
-        block = '| ' + title + ' 1 | ' + title + ' 2 |\n| --- | --- |\n|  |  |\n|  |  |'; offset = 2;
+        block = '|  |  |\n| --- | --- |\n|  |  |\n|  |  |'; offset = 2;
       } else if (kind === 'rule') { block = '---'; offset = block.length; }
       else if (kind === 'callout') {
         block = '> [!note]\n> ' + selected.replace(/\n/g, '\n> '); offset = 12;
@@ -2404,7 +2458,7 @@
         block = fence + '\n' + selected + (selected.endsWith('\n') ? '' : '\n') + fence; offset = fence.length + 1;
       }
       const contentFrom = from + leading.length + offset;
-      return { changes: { from, to, insert: leading + block + trailing },
+      return { changes: { from, to, insert: leading + block + (kind === 'table' && to === doc.length ? '\n\n' : trailing) },
         range: kind === 'code-block' && selected ? EditorSelection.range(contentFrom, contentFrom + selected.length) : EditorSelection.cursor(contentFrom) };
     });
     view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true }));
@@ -2827,6 +2881,50 @@
     safeOptions.imageTextController = imageTextController;
     safeOptions.imageTextSizer = imageTextSizer;
     safeOptions.coordinator = coordinator;
+    safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }));
+    safeOptions.prepareTableCell = (surface, content, result, source) => {
+      content.querySelectorAll('[data-note-image]').forEach((image) => {
+        image.src = safeOptions.imageUrl(currentPath, image.dataset.noteImage || '');
+      });
+      if (!result.features || !result.features.math) return;
+      const current = () => surface.current() && content.isConnected && content.dataset.source === source;
+      ensureMathJax().then(async (math) => {
+        await whenInputSettled();
+        if (!current()) return;
+        await math.typesetPromise([content]);
+        if (!current()) { math.typesetClear([content]); return; }
+        await whenInputSettled();
+        if (current()) surface.view.requestMeasure();
+      }).catch(() => { if (current()) content.classList.add('is-failed'); });
+    };
+    const tableController = window.RelatumNoteTableEditor
+      ? window.RelatumNoteTableEditor.createController(safeOptions) : null;
+    safeOptions.tableController = tableController;
+    // A block replacement has a visual cursor at its end even when that source
+    // position is still on its last Markdown row. Body input needs a real line.
+    safeOptions.onTableBodyRequest = (id, side) => {
+      const run = () => {
+        if (destroyed || sourceMode) return;
+        const spec = tableController && tableController.spec(id);
+        if (!spec) return;
+        const doc = view.state.doc;
+        let position, changes;
+        if (side === 'after') {
+          const tail = doc.sliceString(spec.to);
+          if (/^\n?$/.test(tail)) {
+            const insert = tail ? '\n' : '\n\n';
+            changes = { from: doc.length, insert }; position = doc.length + insert.length;
+          } else position = spec.to + (tail.startsWith('\n\n') ? 2 : 1);
+        } else {
+          if (spec.from === 0) { changes = { from: 0, insert: '\n\n' }; position = 0; }
+          else position = doc.lineAt(Math.max(0, spec.from - 1)).from;
+        }
+        view.dispatch({ ...(changes ? { changes, userEvent: 'input.table-boundary' } : {}),
+          selection: EditorSelection.cursor(position), scrollIntoView: true });
+        view.focus();
+      };
+      tableController.routeBody(run);
+    };
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
@@ -3072,7 +3170,16 @@
           ));
           notifyDocChanged(update.view, includeValue);
         }),
-        EditorView.domEventHandlers({
+        // Resolve rich-block body boundaries before default arrows/IME keys
+        // consume the event while the caret still points at hidden source.
+        Prec.highest(EditorView.domEventHandlers({
+          beforeinput(event, view) {
+            if (!sourceMode && tableController && !inputPending() && event.inputType.startsWith('insert')) {
+              const boundary = tableController.boundary(view);
+              if (boundary) safeOptions.onTableBodyRequest(boundary.id, boundary.side);
+            }
+            return false;
+          },
           contextmenu(event, view) {
             if (imageTextController.active) return false;
             event.preventDefault();
@@ -3090,6 +3197,14 @@
           },
           keydown(event, view) {
             pastePlain = (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v';
+            if (!sourceMode && tableController && !inputPending() && !event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              const boundary = tableController.boundary(view);
+              if (boundary && (event.key.length === 1 || event.key === 'Enter' || event.key === 'Process' || event.keyCode === 229 || /^Arrow(?:Down|Right|Up|Left)$/.test(event.key))) {
+                if (/^Arrow/.test(event.key)) boundary.side = /Up|Left/.test(event.key) ? 'before' : 'after';
+                safeOptions.onTableBodyRequest(boundary.id, boundary.side);
+                if (/^Arrow/.test(event.key)) { event.preventDefault(); return true; }
+              }
+            }
             if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return false;
             if (imageTextController.active) return false;
             event.preventDefault();
@@ -3110,6 +3225,10 @@
             return false;
           },
           compositionstart(event, view) {
+            if (!sourceMode && tableController && !inputPending()) {
+              const boundary = tableController.boundary(view);
+              if (boundary) safeOptions.onTableBodyRequest(boundary.id, boundary.side);
+            }
             inputSession.begin(view);
             return false;
           },
@@ -3121,6 +3240,21 @@
             if (event.button === 2 && !imageTextController.active) {
               event.preventDefault();
               return true;
+            }
+            if (!sourceMode && tableController && event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+              const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+              const hit = tableController.bodyHit(event, position);
+              if (hit) { event.preventDefault(); safeOptions.onTableBodyRequest(hit.id, hit.side); return true; }
+              if (tableController.pending() && position != null) {
+                event.preventDefault();
+                const path = currentPath, epoch = coordinator.epoch;
+                tableController.routeBody((target) => {
+                  if (destroyed || path !== currentPath || epoch !== coordinator.epoch || target == null) return;
+                  view.dispatch({ selection: EditorSelection.cursor(target) }); view.focus();
+                }, view, position);
+                return true;
+              }
+              tableController.routeBody(() => {});
             }
             if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return false;
             const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
@@ -3134,6 +3268,10 @@
             return true;
           },
           paste(event, view) {
+            if (!sourceMode && tableController && !inputPending()) {
+              const boundary = tableController.boundary(view);
+              if (boundary) safeOptions.onTableBodyRequest(boundary.id, boundary.side);
+            }
             const plain = pastePlain;
             pastePlain = false;
             const files = Array.from(event.clipboardData && event.clipboardData.items || [])
@@ -3159,7 +3297,7 @@
             if (!files.length) return false;
             event.preventDefault(); safeOptions.onImageFiles(files); return true;
           },
-        }),
+        })),
       ];
       return EditorState.create({
         doc: String(value || ''),
@@ -3200,6 +3338,7 @@
       }
       pendingDocumentState = null;
       const seq = ++documentSetSeq;
+      if (tableController) tableController.close();
       coordinator.epoch += 1;
       imageTextController.setActive(false);
       if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
@@ -3258,6 +3397,7 @@
       }
       if (next === sourceMode) return;
       sourceMode = next;
+      if (tableController) tableController.close();
       if (next) imageTextController.setActive(false);
       coordinator.epoch += 1;
       const imageRange = next ? null : imageRangeForLiveMode(view.state);
@@ -3336,7 +3476,10 @@
         view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true })); done = true;
       } else if (name === 'select-all') { view.dispatch({ selection: EditorSelection.range(0, view.state.doc.length) }); done = true; }
       else if (shortcutRuns[name]) done = shortcutRuns[name](view);
-      if (done) view.focus();
+      if (done) {
+        view.focus();
+        if (name === 'insert:table' && !sourceMode && tableController) tableController.editAtSelection(view);
+      }
       return !!done;
     }
 
@@ -3443,11 +3586,13 @@
     }
 
     function inputPending() {
-      return inputSession.pending() || imageTextController.draftActive || !!imageTextController.switchFrame;
+      return inputSession.pending() || imageTextController.draftActive || !!imageTextController.switchFrame
+        || !!(tableController && tableController.pending());
     }
 
     function whenInputSettled() {
-      return Promise.all([inputSession.whenSettled(), imageTextController.whenSettled()]);
+      return Promise.all([inputSession.whenSettled(), imageTextController.whenSettled(),
+        tableController ? tableController.whenSettled() : Promise.resolve(true)]);
     }
 
     return {
@@ -3462,6 +3607,7 @@
         if (imageTextController.adapter) imageTextController.adapter.cancelDraft(true);
         imageTextController.setActive(false);
         imageTextSizer.destroy();
+        if (tableController) tableController.destroy();
         inputSession.destroy();
         delete view.__relatumInputSession;
         host.classList.remove('is-composing', 'has-image-selection', 'is-image-text-mode');

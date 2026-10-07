@@ -35,6 +35,24 @@ assert.strictEqual(roundTrip.model.rows[0][2], '$a|b$');
 assert.strictEqual(roundTrip.model.rows[2][2], '[资料](https://example.com/a|b)');
 
 const blankDefault = table.createDefault(3, 3, '');
+for (const partial of ['[', '(', '{', '$', '`', '---', '[incomplete', '`a|', '$a|']) {
+  const model = { header: [partial, '邻格'], rows: [[partial, '保留'], ['后行', '内容']], align: ['', ''] };
+  const written = table.serialize(model);
+  const restored = table.parse(written);
+  assert.strictEqual(restored.ok, true, 'incomplete inline syntax must stay a valid table: ' + partial);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(restored.model)), model, 'incremental cell input cannot consume neighbouring data: ' + partial);
+}
+const pairedAcrossCells = { header: ['[', ']'], rows: [['`', '`'], ['$', '$']], align: ['', ''] };
+assert.deepStrictEqual(JSON.parse(JSON.stringify(table.parse(table.serialize(pairedAcrossCells)).model)), pairedAcrossCells,
+  'inline syntax cannot pair across canonical cell boundaries');
+const noOuterPipes = table.parse('Foo [ | Beta\n--- | ---\nOne | Two');
+assert.strictEqual(noOuterPipes.ok, true, 'GFM tables without outer pipes accept incomplete inline input');
+assert.deepStrictEqual(Array.from(noOuterPipes.model.header), ['Foo [', 'Beta']);
+assert.deepStrictEqual(Array.from(table.parse('$ | $\n--- | ---').model.header), ['$', '$'],
+  'separator width disambiguates paired provisional syntax without outer pipes');
+const hyphenRow = { header: ['A'], rows: [['---'], ['keep']], align: [''] };
+assert.deepStrictEqual(JSON.parse(JSON.stringify(table.parse(table.serialize(hyphenRow)).model)), hyphenRow,
+  'a row of hyphens after the separator is editable table data');
 assert.deepStrictEqual(Array.from(blankDefault.header), ['', '', '']);
 assert.strictEqual(blankDefault.rows.length, 2);
 assert.deepStrictEqual(Array.from(blankDefault.rows[0]), ['', '', '']);

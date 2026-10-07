@@ -276,6 +276,36 @@ assert.strictEqual(codeLanguageDecoration.spec.widget.label, 'c');
 assert.strictEqual(codeLanguageDecoration.spec.widget.code, 'int a = 5, b = 5;\nint c, d;',
   'copying the language badge must copy only code, without either fence');
 
+const calloutSource = '> [!hint] **写作提示**\n> 第一行正文\n>\n> 第二行正文\n\n后方普通段落';
+function calloutDecorationProbe(cursor, focused = true) {
+  const state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: calloutSource,
+    selection: liveProbe.RelatumCodeMirror.EditorSelection.cursor(cursor),
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), blockField],
+  });
+  return { state, records: decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+    state, visibleRanges: [{ from: 0, to: state.doc.length }], hasFocus: focused, composing: false,
+  }, blockField, () => 'callout.md', probeOptions), state.doc.length) };
+}
+const calloutBodyProbe = calloutDecorationProbe(calloutSource.indexOf('第一行') + 2);
+const calloutLineRecords = calloutBodyProbe.records.filter((item) => /(?:^|\s)note-live-callout-line(?:\s|$)/.test(item.spec.class || ''));
+assert.strictEqual(calloutLineRecords.length, 4, 'callout cards must decorate every native line, including blank quote lines');
+assert(calloutLineRecords.every((item) => /(?:^|\s)is-callout-tip(?:\s|$)/.test(item.spec.class || '')),
+  'Obsidian callout aliases must use the same canonical color as the rendered icon');
+assert(calloutBodyProbe.records.some((item) => item.spec.widget && item.spec.widget.constructor.name === 'CalloutTitleWidget'),
+  'editing a callout body must retain the rendered title and icon');
+assert(calloutBodyProbe.records.some((item) => item.from === calloutSource.indexOf('> 第一行')
+  && item.spec.class === 'note-live-source-mark is-callout'),
+  'the current quote line must expose its source marker for native text editing');
+assert(calloutBodyProbe.records.some((item) => item.from === calloutSource.indexOf('> 第二行')
+  && !item.spec.class && !item.spec.widget),
+  'editing one callout line must keep other quote markers hidden');
+const calloutTitleProbe = calloutDecorationProbe(calloutSource.indexOf('写作提示'));
+assert(!calloutTitleProbe.records.some((item) => item.spec.widget && item.spec.widget.constructor.name === 'CalloutTitleWidget'),
+  'editing the callout title must expose its Markdown in its original native line');
+assert.strictEqual(calloutTitleProbe.state.doc.toString(), calloutSource,
+  'callout projections must never rewrite source text');
+
 const longCodeSource = '```c\n' + 'int value = 42;\n'.repeat(6000) + '```';
 const longCodeState = liveProbe.RelatumCodeMirror.EditorState.create({
   doc: longCodeSource,
@@ -489,7 +519,7 @@ assert(editorSource.includes("frame.className = 'note-live-image-frame '")
   && editorSource.includes("handle.setPointerCapture(event.pointerId)")
   && editorSource.includes("userEvent: 'input'"),
   'image widgets must remain visual, use pointer capture, and commit one editor transaction');
-assert(editorSource.includes("spec.kind === 'image' || !activeIds.has(spec.id)"),
+assert(editorSource.includes("spec.kind === 'image' || spec.kind === 'table' || !activeIds.has(spec.id)"),
   'selected block images must remain projected instead of exposing their Markdown source');
 assert(stylesSource.includes('.note-live-rich-block.is-image { width: 100%; margin-right: 0; margin-left: 0; text-align: left;')
   && stylesSource.includes('.note-reading-content .md-local-image { position: relative; display: grid; justify-items: start;'),
@@ -559,6 +589,8 @@ assert(editorSource.includes("return spec && spec.kind !== 'callout'"),
   'Live Preview callouts must remain CodeMirror-owned lines instead of block replacements');
 assert(stylesSource.includes('.note-live-callout-first') && stylesSource.includes('.note-live-callout-last'),
   'line-native Live Preview callouts must keep explicit continuous-card corners');
+assert(stylesSource.includes('.cm-line.note-live-callout-line.cm-activeLine'),
+  'the active callout line must retain the continuous card background');
 assert(!stylesSource.includes('.cm-line:has(+ .note-live-rich-block.is-callout)'),
   'Callout spacing must never rewrite CodeMirror-managed line heights and corrupt pointer hit testing');
 assert(!/\.note-live-setext-marker-line\.is-hidden\s*\{[^}]*(?:height|line-height)\s*:\s*0/s.test(stylesSource),
