@@ -2390,7 +2390,8 @@
     });
     items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
     showContext(items, payload.x, payload.y, 'body'); fitBodyMenu(contextMenu, payload.x, payload.y);
-    menuButtons(contextMenu)[0]?.focus();
+    contextMenu.tabIndex = -1;
+    contextMenu.focus({ preventScroll: true });
   }
   if (contextMenu) {
     contextMenu.addEventListener('pointerdown', (event) => { if (bodyMenuContext) event.preventDefault(); });
@@ -2404,7 +2405,9 @@
       const index = buttons.indexOf(current);
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault(); event.stopPropagation();
-        buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+        const next = index < 0 ? (event.key === 'ArrowDown' ? 0 : buttons.length - 1)
+          : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+        buttons[next]?.focus();
       } else if (event.key === 'Home' || event.key === 'End') {
         event.preventDefault(); buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus();
       } else if (event.key === 'ArrowRight' && current?.dataset.noteSubmenu) {
