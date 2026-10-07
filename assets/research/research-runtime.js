@@ -53,7 +53,11 @@ export function createResearchSimulationController(options = {}) {
       if (scheduledGeneration !== generation) return;
       wallTimerId = null;
       const runtime = getRuntime(selectedPageId);
-      if (runtime) { refreshResearchWallTime(runtime, readNow()); onUpdate(selectedPageId, runtime.result, { wall: true }); }
+      if (runtime) {
+        const previousResult = runtime.result;
+        const result = refreshResearchWallTime(runtime, readNow());
+        if (result !== previousResult) onUpdate(selectedPageId, result, { wall: true });
+      }
       scheduleWall();
     }, 1000);
   }

@@ -13,9 +13,10 @@ const wire = (id, fromNodeId, fromPortId, toNodeId, toPortId) => ({
 
 async function main() {
   const definitions = JSON.parse(fs.readFileSync(path.join(root, 'assets/research/research-node-definitions.json'), 'utf8'));
-  const [{ createResearchRegistry }, compute, { createResearchSimulationController }] = await Promise.all([
+  const [{ createResearchRegistry }, compute, { createResearchSimulationController }, { createResearchSubcircuitCatalog }] = await Promise.all([
     moduleAt('assets/research/research-registry.js'), moduleAt('assets/research/research-compute.js'),
     moduleAt('assets/research/research-runtime.js'),
+    moduleAt('assets/research/research-subcircuits.js'),
   ]);
   const registry = createResearchRegistry(definitions);
   const node = (id, type, config = {}, extra = {}) => ({
@@ -51,6 +52,18 @@ async function main() {
   controller.selectPage('page-a', 1);
   controller.activate();
   assert.strictEqual(controller.stats().running, false, 'cold start must be paused');
+  const initialResult = runtimes.get('page-a').result;
+  const initialUpdateCount = updates.length;
+  for (let index = 0; index < 3; index += 1) {
+    assert.strictEqual(pending.size, 1, 'a paused page must retain its wall-time timer');
+    const wallTimer = Array.from(pending.values())[0];
+    assert.strictEqual(wallTimer.delay, 1000);
+    now += wallTimer.delay;
+    wallTimer.callback();
+    assert.strictEqual(runtimes.get('page-a').wallTime, now, 'silent wall refreshes must still update wall time');
+    assert.strictEqual(runtimes.get('page-a').result, initialResult, 'a graph without current-time must retain the unchanged result');
+    assert.strictEqual(updates.length, initialUpdateCount, 'a static graph must not publish periodic projection updates');
+  }
   assert.strictEqual(controller.step(), true);
   assert.strictEqual(runtimes.get('page-a').projection['counter-a'].output.value, 1, 'step must advance through the next clock boundary');
   assert(updates.at(-1).detail.step, 'step must publish a complete update');
@@ -125,6 +138,85 @@ async function main() {
   assert.strictEqual(controller.stats().active, false, 'disposed callbacks must be inert');
   assert(controller.stats().cancellationCount > 0);
   assert(states.length > 0);
+
+  const wallRegistry = createResearchRegistry(definitions);
+  const timeNode = node('wall-time', 'current-time', { precisionMs: 1000 });
+  const catalog = createResearchSubcircuitCatalog([{
+    id: 'wall-module', name: 'Wall time', latestRevision: 1, revisions: [{
+      revision: 1,
+      ports: [{ id: 'now', name: 'now', direction: 'output', channel: 'value', valueType: 'time', nodeId: timeNode.id, portId: 'out' }],
+      nodes: [timeNode], edges: [],
+    }],
+  }]);
+  wallRegistry.setSubcircuitCatalog(catalog);
+  const timeInstance = {
+    id: 'wall-instance', x: 0, y: 0, width: 192, height: 90,
+    ...wallRegistry.createNode('subcircuit', { config: { definitionId: 'wall-module', revision: 1 } }),
+  };
+  const wallRuntimes = new Map([
+    ['wall-direct', compute.createResearchComputeRuntime({ nodes: [timeNode], edges: [] }, { registry: wallRegistry, wallTime: now })],
+    ['wall-nested', compute.createResearchComputeRuntime({ nodes: [timeInstance], edges: [] }, { registry: wallRegistry, wallTime: now })],
+  ]);
+  const wallPending = new Map();
+  const wallUpdates = [];
+  const wallController = createResearchSimulationController({
+    getRuntime: (pageId) => wallRuntimes.get(pageId), now: () => now,
+    setTimer(callback, delay) {
+      const id = ++nextTimerId;
+      const wrapped = () => { wallPending.delete(id); callback(); };
+      wallPending.set(id, { callback: wrapped, delay });
+      return id;
+    },
+    clearTimer(id) { wallPending.delete(id); },
+    onUpdate(pageId, result, detail) { wallUpdates.push({ pageId, result, detail }); },
+  });
+  const tickWall = () => {
+    assert.strictEqual(wallPending.size, 1, 'a paused time page must retain exactly one timer');
+    const timer = Array.from(wallPending.values())[0];
+    assert.strictEqual(timer.delay, 1000, 'wall-time cadence must remain unchanged');
+    now += timer.delay; timer.callback();
+  };
+  wallController.selectPage('wall-direct'); wallController.activate();
+  const directBefore = wallRuntimes.get('wall-direct').result;
+  tickWall();
+  assert.strictEqual(wallUpdates.length, 1, 'a direct current-time node must publish its wall update');
+  assert(wallUpdates.at(-1).detail.wall);
+  assert.notStrictEqual(wallUpdates.at(-1).result, directBefore);
+  assert.strictEqual(wallUpdates.at(-1).result.projection[timeNode.id].output.value, Math.floor(now / 1000) * 1000);
+  const staleWall = Array.from(wallPending.values())[0].callback;
+  wallController.selectPage('wall-nested');
+  staleWall();
+  assert.strictEqual(wallUpdates.length, 1, 'a stale wall callback must not update the newly selected page');
+  tickWall();
+  assert.strictEqual(wallUpdates.at(-1).pageId, 'wall-nested');
+  assert.strictEqual(wallUpdates.at(-1).result.projection[timeInstance.id].outputs.now.value, Math.floor(now / 1000) * 1000,
+    'current-time inside a subcircuit must continue refreshing the public instance');
+  const suspendedWall = Array.from(wallPending.values())[0].callback;
+  wallController.suspend();
+  assert.strictEqual(wallPending.size, 0);
+  const suspendedUpdates = wallUpdates.length;
+  now += 5000; suspendedWall();
+  assert.strictEqual(wallUpdates.length, suspendedUpdates, 'suspended wall callbacks must remain inert');
+  wallController.activate(); tickWall();
+  assert.strictEqual(wallUpdates.length, suspendedUpdates + 1, 'activation must restore current-time refreshes');
+
+  const nestedRuntime = wallRuntimes.get('wall-nested');
+  compute.updateResearchComputeRuntime(nestedRuntime, { nodes: [], edges: [] }, { topology: true });
+  wallController.refresh();
+  const removedUpdates = wallUpdates.length;
+  tickWall();
+  assert.strictEqual(wallUpdates.length, removedUpdates, 'removing the time instance must stop periodic notifications');
+  assert.strictEqual(nestedRuntime.wallTime, now, 'removing current-time must preserve silent wall-time updates');
+  compute.updateResearchComputeRuntime(nestedRuntime, { nodes: [timeInstance], edges: [] }, { topology: true });
+  wallController.refresh(); tickWall();
+  assert.strictEqual(wallUpdates.length, removedUpdates + 1, 'adding a time instance must resume notifications without a new controller');
+  assert.strictEqual(nestedRuntime.projection[timeInstance.id].outputs.now.value, Math.floor(now / 1000) * 1000);
+  wallController.reset();
+  assert(wallUpdates.at(-1).detail.reset, 'reset must continue publishing synchronously');
+  tickWall();
+  assert(wallUpdates.at(-1).detail.wall, 'reset must retain the wall-time timer');
+  wallController.dispose();
+  assert.strictEqual(wallPending.size, 0);
 
   const manyClocks = [];
   for (let index = 0; index < 1000; index += 1) manyClocks.push(node('many-clock-' + index, 'clock', { periodMs: 1000 }));

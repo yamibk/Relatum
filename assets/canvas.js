@@ -3106,7 +3106,11 @@
     }
 
     function ensureInkData() {
-      data.ink = cloneInk(data.ink);
+      const ink = data.ink;
+      // 初始化、导入和历史恢复已规范化；热路径只读取活体，深拷留给快照。
+      if (!ink || ink.version !== 1 || !Array.isArray(ink.strokes) || !Array.isArray(ink.arrows)) {
+        data.ink = cloneInk(ink);
+      }
       return data.ink;
     }
 
@@ -17085,7 +17089,7 @@
       const arrow = findArrow(id);
       if (!arrow) return;
       // 端点手柄（可拖动整条箭头的两端）。注意：闭包只捕获 id + 索引，操作时用 findArrow 取活体——
-      // ensureInkData 每次都会重克隆 data.ink，直接捕获 arrow 对象会变陈旧（删拐点曾因此失效）
+      // 撤销/重做或导入会替换 data.ink，直接捕获 arrow 对象会变陈旧。
       [['start', arrow.start], ['end', arrow.end]].forEach((pair) => {
         const pt = pair[1];
         const c = document.createElementNS(SVG_NS, 'circle');
@@ -17201,7 +17205,7 @@
       };
     }
     function deleteArrowWaypoint(id, index) {
-      const arrow = findArrow(id);   // 取活体；不可用渲染时捕获的旧对象（ensureInkData 已重克隆）
+      const arrow = findArrow(id);   // 取活体；不可用撤销/导入前渲染时捕获的旧对象
       if (!arrow || !Array.isArray(arrow.waypoints)) return;
       arrow.waypoints.splice(index, 1);
       pushHistory();

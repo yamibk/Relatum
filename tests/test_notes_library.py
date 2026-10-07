@@ -1,14 +1,37 @@
 import base64
 import json
+import os
+import stat
+import subprocess
 import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import notes_library
 from notes_library import NotesError, NotesStore
+
+
+@contextmanager
+def _tree_scan_fixture(original, folder, overrides, observed):
+    with original(folder) as scan:
+        entries = []
+        for entry in scan:
+            target = Path(folder) / entry.name
+            read_stat = mock.Mock(wraps=entry.stat)
+            if target in overrides:
+                value = overrides[target]
+                if isinstance(value, BaseException):
+                    read_stat.side_effect = value
+                else:
+                    read_stat.return_value = value
+            observed[target] = read_stat
+            entries.append(SimpleNamespace(name=entry.name, stat=read_stat))
+        yield entries
 
 
 class NotesLibraryTests(unittest.TestCase):
@@ -232,6 +255,144 @@ class NotesLibraryTests(unittest.TestCase):
         self.store.create("", "大小写", "note")
         with self.assertRaises(NotesError):
             self.store.create("", "大小写.MD", "note")
+
+    def test_tree_preserves_mixed_directory_order_and_metadata(self):
+        for folder in ("课程10", "课程2", "Picture.assets", ".relatum-stage", ".trash"):
+            (self.root / folder).mkdir()
+            (self.root / folder / "Nested.md").write_text("nested", encoding="utf-8")
+        for name in ("笔记10.md", "笔记2.MD", "ignore.txt", ".relatum-hidden.md"):
+            (self.root / name).write_text("正文\nsecond line", encoding="utf-8")
+
+        def note(relative):
+            target = self.root / relative
+            metadata = target.stat()
+            return {"kind": "note", "name": target.stem, "fileName": target.name,
+                    "path": relative, "modifiedNs": metadata.st_mtime_ns,
+                    "createdNs": getattr(metadata, "st_birthtime_ns", metadata.st_ctime_ns),
+                    "size": metadata.st_size}
+
+        expected = {"version": 1, "entries": [
+            {"kind": "folder", "name": folder, "path": folder,
+             "children": [note(folder + "/Nested.md")]}
+            for folder in ("课程2", "课程10")
+        ] + [note("笔记2.MD"), note("笔记10.md")]}
+        self.assertEqual(self.store.tree(), expected)
+
+    def test_tree_reads_one_nonfollowing_stat_per_visible_entry(self):
+        for index in range(20):
+            (self.root / f"Note-{index}.md").write_text("note", encoding="utf-8")
+        (self.root / "Hidden.assets").mkdir()
+        (self.root / "Hidden.assets" / "Nested.md").write_text("hidden", encoding="utf-8")
+        original = os.scandir
+        observed = {}
+        with mock.patch("notes_library.os.scandir", side_effect=lambda folder:
+                        _tree_scan_fixture(original, folder, {}, observed)):
+            self.assertEqual(len(self.store.tree()["entries"]), 20)
+        for target, read_stat in observed.items():
+            if target.name == "Hidden.assets":
+                read_stat.assert_not_called()
+            else:
+                read_stat.assert_called_once_with(follow_symlinks=False)
+        self.assertNotIn(self.root / "Hidden.assets" / "Nested.md", observed)
+
+    def test_tree_skips_disappeared_or_unreadable_entry(self):
+        for name in ("Live.md", "Gone.md", "Locked.md"):
+            (self.root / name).write_text(name, encoding="utf-8")
+        original = os.scandir
+        observed = {}
+        overrides = {self.root / "Gone.md": FileNotFoundError("removed during scan"),
+                     self.root / "Locked.md": PermissionError("locked during scan")}
+        with mock.patch("notes_library.os.scandir", side_effect=lambda folder:
+                        _tree_scan_fixture(original, folder, overrides, observed)):
+            self.assertEqual([entry["path"] for entry in self.store.tree()["entries"]], ["Live.md"])
+
+    def test_tree_reports_directory_enumeration_failure(self):
+        folder = self.root / "Folder"
+        folder.mkdir()
+        original = os.scandir
+        for failing in (self.root, folder):
+            with self.subTest(directory=failing):
+                def scan(target):
+                    if Path(target) == failing:
+                        raise PermissionError("directory unavailable")
+                    return original(target)
+                with mock.patch("notes_library.os.scandir", side_effect=scan):
+                    with self.assertRaises(NotesError) as caught:
+                        self.store.tree()
+                self.assertEqual(caught.exception.code, "read_failed")
+                self.assertEqual(caught.exception.status, 500)
+
+        @contextmanager
+        def interrupted_scan(target):
+            def entries():
+                with original(target) as scan:
+                    yield next(scan)
+                raise OSError("enumeration interrupted")
+            yield entries()
+        with mock.patch("notes_library.os.scandir", side_effect=interrupted_scan):
+            with self.assertRaises(NotesError) as caught:
+                self.store.tree()
+        self.assertEqual(caught.exception.code, "read_failed")
+
+    def test_tree_rejects_symlink_and_windows_reparse_stat(self):
+        (self.root / "Live.md").write_text("live", encoding="utf-8")
+        (self.root / "FileLink.md").write_text("outside", encoding="utf-8")
+        for folder in ("DirectoryLink", "Junction"):
+            (self.root / folder).mkdir()
+            (self.root / folder / "Outside.md").write_text("outside", encoding="utf-8")
+        overrides = {
+            self.root / "FileLink.md": SimpleNamespace(st_mode=stat.S_IFLNK, st_file_attributes=0),
+            self.root / "DirectoryLink": SimpleNamespace(st_mode=stat.S_IFLNK, st_file_attributes=0),
+            self.root / "Junction": SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400),
+        }
+        original = os.scandir
+        observed = {}
+        with mock.patch("notes_library.os.scandir", side_effect=lambda folder:
+                        _tree_scan_fixture(original, folder, overrides, observed)):
+            self.assertEqual([entry["path"] for entry in self.store.tree()["entries"]], ["Live.md"])
+        self.assertFalse(any(target.name == "Outside.md" for target in observed))
+
+    def test_tree_rechecks_directory_before_entering_it(self):
+        folder = self.root / "ChangedFolder"
+        folder.mkdir()
+        (folder / "Outside.md").write_text("outside", encoding="utf-8")
+        original = notes_library._is_reparse
+        # The nonfollowing DirEntry stat still describes an ordinary directory,
+        # but the fresh check sees its replacement before recursion begins.
+        with mock.patch("notes_library._is_reparse", side_effect=lambda path:
+                        Path(path) == folder or original(path)):
+            with mock.patch("notes_library.os.scandir", wraps=os.scandir) as scans:
+                self.assertEqual(self.store.tree()["entries"], [])
+        scans.assert_called_once_with(self.root)
+
+    def test_tree_excludes_real_file_and_directory_symlinks(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        (outside / "Outside.md").write_text("outside", encoding="utf-8")
+        try:
+            (self.root / "FileLink.md").symlink_to(outside / "Outside.md")
+            (self.root / "DirectoryLink").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as err:
+            self.skipTest(f"symlink creation unavailable: {err}")
+        self.assertEqual(self.store.tree()["entries"], [])
+        self.assertEqual((outside / "Outside.md").read_text(encoding="utf-8"), "outside")
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction only")
+    def test_tree_excludes_real_windows_junction(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        (outside / "Outside.md").write_text("outside", encoding="utf-8")
+        junction = self.root / "Junction"
+        created = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                                 capture_output=True, check=False)
+        if created.returncode:
+            self.skipTest("junction creation unavailable")
+        try:
+            self.assertTrue(notes_library._is_reparse(junction))
+            self.assertEqual(self.store.tree()["entries"], [])
+            self.assertEqual((outside / "Outside.md").read_text(encoding="utf-8"), "outside")
+        finally:
+            junction.rmdir()
 
     def test_stale_revision_snapshots_disk_then_editor_wins(self):
         self.store.create("", "A", "note", content="one")

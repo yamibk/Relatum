@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import time
 import unicodedata
 import urllib.parse
@@ -531,37 +532,48 @@ class NotesStore:
         def visit(folder: Path) -> list[dict]:
             result: list[dict] = []
             try:
-                entries = list(folder.iterdir())
+                entries = []
+                with os.scandir(folder) as scan:
+                    for entry in scan:
+                        low = entry.name.casefold()
+                        if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
+                            continue
+                        try:
+                            metadata = entry.stat(follow_symlinks=False)
+                        except OSError:
+                            # An external editor may remove or lock one entry
+                            # while the rest of the directory remains readable.
+                            continue
+                        attrs = int(getattr(metadata, "st_file_attributes", 0) or 0)
+                        if stat.S_ISLNK(metadata.st_mode) or attrs & 0x400:
+                            continue
+                        entries.append((entry, metadata))
             except OSError as err:
                 raise NotesError(f"读取笔记目录失败：{err}", status=500, code="read_failed") from err
-            entries.sort(key=lambda item: (not item.is_dir(), _natural_key(item.name)))
-            for entry in entries:
-                low = entry.name.casefold()
-                if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
-                    continue
-                if _is_reparse(entry):
-                    continue
-                relative = entry.relative_to(self.root).as_posix()
-                if entry.is_dir():
+            entries.sort(key=lambda item: (not stat.S_ISDIR(item[1].st_mode), _natural_key(item[0].name)))
+            for entry, metadata in entries:
+                target = folder / entry.name
+                relative = target.relative_to(self.root).as_posix()
+                if stat.S_ISDIR(metadata.st_mode):
+                    # DirEntry metadata is a snapshot. Recheck each directory
+                    # immediately before descending in case it became a link.
+                    if _is_reparse(target):
+                        continue
                     result.append({
                         "kind": "folder",
                         "name": entry.name,
                         "path": relative,
-                        "children": visit(entry),
+                        "children": visit(target),
                     })
-                elif entry.is_file() and entry.suffix.casefold() == NOTE_SUFFIX:
-                    try:
-                        stat = entry.stat()
-                    except OSError:
-                        continue
+                elif stat.S_ISREG(metadata.st_mode) and target.suffix.casefold() == NOTE_SUFFIX:
                     result.append({
                         "kind": "note",
-                        "name": entry.stem,
+                        "name": target.stem,
                         "fileName": entry.name,
                         "path": relative,
-                        "modifiedNs": stat.st_mtime_ns,
-                        "createdNs": getattr(stat, "st_birthtime_ns", stat.st_ctime_ns),
-                        "size": stat.st_size,
+                        "modifiedNs": metadata.st_mtime_ns,
+                        "createdNs": getattr(metadata, "st_birthtime_ns", metadata.st_ctime_ns),
+                        "size": metadata.st_size,
                     })
             return result
 

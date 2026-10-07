@@ -167,6 +167,7 @@ LARGE_JSON_BODY_BYTES = 8 * 1024 * 1024
 FILE_STREAM_CHUNK_BYTES = 256 * 1024
 VIEWPORT_STATE_LIMIT = 500
 CANVAS_STATS_CACHE_LIMIT = 512
+DIARY_INDEX_CACHE_LIMIT = 4096
 CANVAS_ACTIVITY_SCHEMA = 1
 CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
 START_PAGE_ACTIVITY_SCHEMA = 1
@@ -187,6 +188,9 @@ NOTES_MUTATION_LOCK = threading.RLock()
 LARGE_JSON_BODY_LOCK = threading.Lock()
 CANVAS_STATS_CACHE_LOCK = threading.Lock()
 _CANVAS_STATS_CACHE: dict[str, tuple[tuple[int, int, int, int], int | None]] = {}
+DIARY_INDEX_CACHE_LOCK = threading.RLock()
+_DIARY_INDEX_CACHE: dict[str, tuple[tuple[int, ...], dict]] = {}
+_DIARY_INDEX_CACHE_ROOT: str | None = None
 _CROSS_PROCESS_MUTATION_STATE = threading.local()
 
 
@@ -5582,6 +5586,20 @@ def _diary_decode_value(raw: str, fallback):
     return value
 
 
+def _diary_cache_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _diary_file_signature(path: Path) -> tuple[int, ...]:
+    stat = path.stat()
+    return (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino, stat.st_dev)
+
+
+def _invalidate_diary_index(path: Path) -> None:
+    with DIARY_INDEX_CACHE_LOCK:
+        _DIARY_INDEX_CACHE.pop(_diary_cache_key(path), None)
+
+
 def load_diary(day: str) -> dict | None:
     path = _diary_path(day)
     if not path.is_file():
@@ -5632,7 +5650,9 @@ def save_diary(raw: object) -> dict:
         f"updatedAt: {json.dumps(updated_at)}\n"
         "---\n\n"
     )
-    _atomic_write_text(_diary_path(day), frontmatter + body)
+    path = _diary_path(day)
+    _atomic_write_text(path, frontmatter + body)
+    _invalidate_diary_index(path)
     return {"date": day, "title": title, "tags": tags, "body": body, "updatedAt": updated_at}
 
 
@@ -5640,26 +5660,62 @@ def delete_diary(day: object) -> None:
     path = _diary_path(_calendar_day(day))
     if path.is_file():
         path.unlink()
+    _invalidate_diary_index(path)
 
 
 def diary_index() -> list[dict]:
+    global _DIARY_INDEX_CACHE_ROOT
     entries: list[dict] = []
-    if not DIARY_DIR.exists():
-        return entries
-    for path in DIARY_DIR.glob("*.md"):
-        if not _DIARY_DAY_RE.fullmatch(path.stem):
-            continue
-        item = load_diary(path.stem)
-        if not item:
-            continue
-        plain = re.sub(r"[#>*_`\[\]()~-]+", " ", item["body"])
-        entries.append({
-            "date": item["date"],
-            "title": item["title"],
-            "tags": item["tags"],
-            "updatedAt": item["updatedAt"],
-            "excerpt": re.sub(r"\s+", " ", plain).strip()[:100],
-        })
+    # Neighbor-month requests share this scan. Keep only immutable summary values,
+    # and serialize cache access without taking the general data mutation lock.
+    with DIARY_INDEX_CACHE_LOCK:
+        root_key = _diary_cache_key(DIARY_DIR)
+        if root_key != _DIARY_INDEX_CACHE_ROOT:
+            _DIARY_INDEX_CACHE.clear()
+            _DIARY_INDEX_CACHE_ROOT = root_key
+        if not DIARY_DIR.exists():
+            _DIARY_INDEX_CACHE.clear()
+            return entries
+        live_keys: set[str] = set()
+        for path in DIARY_DIR.glob("*.md"):
+            if not _DIARY_DAY_RE.fullmatch(path.stem):
+                continue
+            key = _diary_cache_key(path)
+            live_keys.add(key)
+            cached = _DIARY_INDEX_CACHE.pop(key, None)
+            try:
+                signature = _diary_file_signature(path)
+            except OSError:
+                continue
+            if cached is not None and cached[0] == signature:
+                summary = cached[1]
+                _DIARY_INDEX_CACHE[key] = cached
+            else:
+                item = load_diary(path.stem)
+                if not item:
+                    continue
+                plain = re.sub(r"[#>*_`\[\]()~-]+", " ", item["body"])
+                summary = {
+                    "date": item["date"],
+                    "title": item["title"],
+                    "tags": tuple(item["tags"]),
+                    "updatedAt": item["updatedAt"],
+                    "excerpt": re.sub(r"\s+", " ", plain).strip()[:100],
+                }
+                try:
+                    after_signature = _diary_file_signature(path)
+                except OSError:
+                    continue
+                # An external editor may replace the file during the read. Such
+                # a result remains best-effort for this response, never reusable.
+                # Keep the warm portion of an oversized library: evicting on
+                # each miss would make the next ordered scan reread every file.
+                if signature == after_signature and len(_DIARY_INDEX_CACHE) < DIARY_INDEX_CACHE_LIMIT:
+                    _DIARY_INDEX_CACHE[key] = (signature, summary)
+            entries.append({**summary, "tags": list(summary["tags"])})
+        for key in list(_DIARY_INDEX_CACHE):
+            if key not in live_keys:
+                _DIARY_INDEX_CACHE.pop(key, None)
     entries.sort(key=lambda item: item["date"], reverse=True)
     return entries
 
