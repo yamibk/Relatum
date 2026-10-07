@@ -2385,13 +2385,12 @@
       button.dataset.noteSubmenu = kind; button.setAttribute('role', 'menuitem');
       button.setAttribute('aria-haspopup', 'menu'); button.setAttribute('aria-expanded', 'false');
       button.addEventListener('pointerenter', () => openBodySubmenu(button, false));
-      button.addEventListener('click', () => openBodySubmenu(button, true));
+      button.addEventListener('click', (event) => openBodySubmenu(button, event.detail === 0));
       return button;
     });
     items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
     showContext(items, payload.x, payload.y, 'body'); fitBodyMenu(contextMenu, payload.x, payload.y);
-    contextMenu.tabIndex = -1;
-    contextMenu.focus({ preventScroll: true });
+    if (payload.keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
   }
   if (contextMenu) {
     contextMenu.addEventListener('pointerdown', (event) => { if (bodyMenuContext) event.preventDefault(); });

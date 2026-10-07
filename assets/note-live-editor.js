@@ -3192,7 +3192,7 @@
             }
             const rect = view.coordsAtPos(view.state.selection.main.head);
             safeOptions.onContextMenu({ x: keyboard && rect ? rect.left : event.clientX,
-              y: keyboard && rect ? rect.bottom : event.clientY, context: commandContext() });
+              y: keyboard && rect ? rect.bottom : event.clientY, context: commandContext(), keyboard });
             return true;
           },
           keydown(event, view) {
@@ -3210,7 +3210,7 @@
             event.preventDefault();
             if (inputPending()) return true;
             const rect = view.coordsAtPos(view.state.selection.main.head);
-            safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext() });
+            safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext(), keyboard: true });
             return true;
           },
           keyup() { pastePlain = false; return false; },
