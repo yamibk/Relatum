@@ -263,7 +263,7 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
       assert.equal(second.head, before.head); assert.equal(second.anchor, before.anchor);
       assert.equal(second.focus, pressed.focus, 'dragging cannot change the input owner');
       assert.equal(first.events, 'none');
-      assert.equal(first.color, theme === 'light' ? 'rgb(155, 114, 255)' : 'rgb(182, 154, 255)');
+      assert.equal(first.color, theme === 'light' ? 'rgb(120, 147, 108)' : 'rgb(173, 203, 165)');
       if (kind === 'row') { assert.equal(first.drop.height, 4); assert.equal(first.drop.width, first.table.width); assert.equal(first.drop.y + 2, first.table.y + first.table.height); }
       else { assert.equal(first.drop.width, 4); assert.equal(first.drop.height, first.table.height); assert.equal(first.drop.x + 2, first.table.x + first.table.width); }
       await page.screenshot({ path: path.join(output, `grip-${kind}-${theme}.png`) });

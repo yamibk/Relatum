@@ -813,7 +813,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-table-grip i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
 .note-table-selection, .note-table-drop { position: absolute; pointer-events: none; z-index: 2; box-sizing: border-box; }
 .note-table-selection { border: 2px solid #78936c; border-radius: 4px; }
-.note-table-drop { background: #9b72ff; border-radius: 2px; z-index: 4; }
+.note-table-drop { background: #78936c; border-radius: 2px; z-index: 4; }
 .note-table.is-table-reordering, .note-table.is-table-reordering .note-table-control { cursor: grabbing; }
 .note-live-rich-block.note-table td.is-table-selected { background: rgba(103,133,88,.14); }
 .note-live-rich-block.note-table td.is-table-editing { box-shadow: inset 0 0 0 1px rgba(103,133,88,.5); padding: 0; }
@@ -827,7 +827,7 @@ body.start-page[data-start-theme="dark"] .note-live-rich-block.note-table { --no
 body.start-page[data-start-theme="dark"] .note-table-control:hover,
 body.start-page[data-start-theme="dark"] .note-table-control:focus-visible { color: #edf0ea; background: rgba(173,203,165,.12); }
 body.start-page[data-start-theme="dark"] .note-live-rich-block.note-table td.is-table-selected { background: rgba(173,203,165,.14); }
-body.start-page[data-start-theme="dark"] .note-table-drop { background: #b69aff; }
+body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5; }
 .note-live-rich-block.is-derive .md-derive { margin: 0; }
 .note-live-rich-block.is-mermaid { min-height: 70px; }
 .note-live-rich-block.is-math { overflow-x: auto; text-align: center; }
