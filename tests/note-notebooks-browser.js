@@ -67,6 +67,9 @@ async function freePort() {
     const right = '[data-role="note-notebook-tree"]';
     const row = (host, value) => page.locator(`${host} .note-tree-row[data-note-path="${value}"]`);
     const rootRow = value => page.locator(`${right} > .note-notebook-root > .note-tree-row[data-note-path="${value}"]`);
+    const toolPositions = () => page.locator('.note-document-tools > button').evaluateAll(buttons => buttons.map(button => {
+      const rect = button.getBoundingClientRect(); return [Math.round(rect.x * 100), Math.round(rect.y * 100)];
+    }));
     const notebookNames = () => page.locator(`${right} > .note-notebook-root > .note-tree-row .note-tree-label`).allTextContents();
     const sync = () => page.evaluate(() => __notebooksTest.triggerExternalSync({ silentErrors: true }));
     const flush = () => page.evaluate(() => __notebooksTest.flushNotebookSettings());
@@ -83,10 +86,17 @@ async function freePort() {
     await row(left, 'Root.md').click();
     await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'Root.md');
     await page.evaluate(() => { window.__originalDoc = __notebooksTest.editor.view.state.doc; window.__originalView = __notebooksTest.editor.view; });
+    const closedToolPositions = await toolPositions();
     await page.locator('[data-note-action="toggle-notebooks"]').click();
+    assert.deepEqual(await toolPositions(), closedToolPositions, 'wide toolbar stays fixed when sidebar opens');
+    for (const mode of ['links', 'history', 'notebooks']) {
+      await page.locator(`[data-note-action="side-${mode}"]`).click();
+      assert.deepEqual(await toolPositions(), closedToolPositions, 'sidebar mode does not move toolbar');
+    }
     assert.deepEqual(await notebookNames(), ['notes', 'Empty', 'Physics']);
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false');
     await rootRow('CustomNotebook/Physics').click();
+    assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false', 'row selection does not expand notebook');
     assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), 'CustomNotebook/Physics');
     assert.equal(await page.evaluate(() => __notebooksTest.editor.view === __originalView && __notebooksTest.editor.view.state.doc === __originalDoc), true, 'classification must preserve editor and document');
     assert.equal(await row(left, 'Root.md').count(), 0);
@@ -94,6 +104,19 @@ async function freePort() {
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'Root.md');
     assert.equal(Math.round((await page.locator('.note-links-pane').boundingBox()).width), 300);
     assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).position), 'relative');
+    await rootRow('CustomNotebook/Physics').press('Enter');
+    await rootRow('CustomNotebook/Physics').press('Space');
+    assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false', 'keyboard activation only selects');
+    const arrowBox = await rootRow('CustomNotebook/Physics').locator('.note-tree-toggle').boundingBox();
+    await page.mouse.click(arrowBox.x - 4, arrowBox.y + arrowBox.height / 2);
+    assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'true', 'near-arrow hit expands notebook');
+    await rootRow('CustomNotebook/Physics').locator('.note-notebook-icon').click();
+    await rootRow('CustomNotebook/Physics').locator('.note-tree-label').click();
+    assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'true', 'icon and label preserve expanded state');
+    await rootRow('CustomNotebook/Physics').press('ArrowLeft');
+    assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false');
+    await rootRow('CustomNotebook/Physics').press('ArrowRight');
+    assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'true');
 
     await row(left, 'CustomNotebook/Physics/Chapter').click();
     assert.equal(await row(right, 'CustomNotebook/Physics/Chapter').getAttribute('aria-expanded'), 'false', 'trees have separate expansion state');
@@ -106,11 +129,17 @@ async function freePort() {
     await page.locator('[data-note-action="toggle-all-notebooks"]').click();
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false');
     assert.equal(await row(left, 'CustomNotebook/Physics/Chapter').getAttribute('aria-expanded'), 'true');
-    for (let i = 0; i < 5; i++) await rootRow('CustomNotebook/Physics').click();
+    for (let i = 0; i < 5; i++) await rootRow('CustomNotebook/Physics').locator('.note-tree-toggle').click();
     await page.waitForTimeout(400);
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'true');
     await rootRow('CustomNotebook/Physics').click({ button: 'right' });
     await page.locator('.note-notebook-colors button[data-color="blue"]').click();
+    await rootRow('').locator('.note-tree-label').click();
+    assert.equal(await rootRow('').getAttribute('aria-expanded'), 'false', 'default notebook selection also preserves expansion');
+    await rootRow('').locator('.note-tree-toggle').click();
+    assert.equal(await rootRow('').getAttribute('aria-expanded'), 'true');
+    await rootRow('').press('ArrowLeft');
+    await rootRow('CustomNotebook/Physics').locator('.note-tree-label').click();
     await flush();
     assert.equal(settings().colors['CustomNotebook/Physics'], 'blue');
     await screenshot('notebooks-light');
@@ -218,7 +247,9 @@ async function freePort() {
     await page.locator('[data-note-action="side-links"]').click();
     assert.equal(await page.locator('[data-role="note-links-content"]').isVisible(), true);
     await page.locator('[data-note-action="side-notebooks"]').click();
+    const narrowOpenToolPositions = await toolPositions();
     await page.locator('[data-note-action="close-links"]').click();
+    assert.deepEqual(await toolPositions(), narrowOpenToolPositions, 'narrow toolbar stays fixed when overlay closes');
     await flush(); assert.equal(settings().ui.open, false);
     await page.locator('[data-note-action="toggle-notebooks"]').click();
     await page.locator('button[data-start-workspace="canvas"]').click();

@@ -1951,6 +1951,13 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-notebook-actions [data-note-action="new-notebook"] { font-size: 21px; font-weight: 400; }
 .note-notebook-tree { padding: 4px 8px 20px; }
 .note-notebook-root > .note-tree-row { min-height: 40px; margin-block: 2px; }
+.note-notebook-root > .note-tree-row { grid-template-columns: 22px 19px minmax(0, 1fr); }
+.note-notebook-root > .note-tree-row > .note-tree-toggle { position: relative; }
+.note-notebook-root > .note-tree-row > .note-tree-toggle::after { content: ""; position: absolute; width: 28px; height: 28px; left: -6px; top: -5px; }
+.note-notebook-root > .note-tree-row:hover .note-tree-toggle { color: var(--text-tertiary); background: transparent; }
+.note-notebook-root > .note-tree-row:active .note-tree-toggle { transform: none; }
+.note-notebook-root > .note-tree-row .note-tree-toggle:hover { color: var(--text-secondary); background: rgba(31, 31, 28, .055); }
+.note-notebook-root > .note-tree-row .note-tree-toggle:active { transform: scale(.86); }
 .note-notebook-root > .note-tree-row.selected-notebook { color: var(--text); background: rgba(30,30,28,.07); font-weight: 650; }
 .note-notebook-icon { width: 19px; height: 21px; flex: 0 0 auto; color: var(--notebook-color, #93978f); }
 .note-notebook-icon[data-color="blue"] { --notebook-color: #5e88bd; }
@@ -1964,6 +1971,7 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-notebook-colors button { width: 20px; height: 20px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: var(--notebook-color, #93978f); cursor: pointer; }
 .note-notebook-colors button[aria-pressed="true"] { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
 @media (min-width: 1121px) {
+  .note-workspace:not(.links-overlay-open) .note-document-head { padding-right: calc(clamp(18px, 3vw, 38px) + 300px); }
   .note-workspace.links-overlay-open { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 300px; }
   .note-workspace.links-overlay-open .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: 300px; box-shadow: none; }
 }

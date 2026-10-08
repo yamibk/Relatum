@@ -2065,7 +2065,7 @@
         input.addEventListener('blur', () => commitInlineRename(entry, input, false)); requestAnimationFrame(() => { input.focus(); input.select(); });
       } else label.textContent = entry.name;
       row.append(toggle, entry.notebook ? notebookIcon(entry.path) : treeIcon(entry.kind), label);
-      row.addEventListener('click', async () => {
+      async function activateRow(expansion) {
         const clickedPath = entry.path;
         if (!(await finishInlineTitle())) return;
         if (state.renamePath && !(await finishInlineRename())) return;
@@ -2074,10 +2074,19 @@
         if (notebookTree) selectNotebook(liveEntry.notebook ? liveEntry.path : notebookRootForPath(liveEntry.path), { rootTarget: !!liveEntry.notebook });
         state.rootTargeted = !!liveEntry.notebook; state.selectedPath = liveEntry.path;
         if (liveEntry.kind === 'folder') {
-          state.selectedFolder = liveEntry.path; setFolderExpanded(liveEntry.path, !expandedPaths.has(liveEntry.path));
+          state.selectedFolder = liveEntry.path;
+          if (!liveEntry.notebook || expansion !== null) {
+            const expanded = typeof expansion === 'boolean' ? expansion : !expandedPaths.has(liveEntry.path);
+            if (expanded !== expandedPaths.has(liveEntry.path)) setFolderExpanded(liveEntry.path, expanded);
+          }
           if (notebookTree && !liveEntry.notebook && expandTreePath(liveEntry.path, false)) renderTree({ keepNotebookTree: true });
           updateTreeSelection();
         } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); }
+      }
+      row.addEventListener('click', (event) => activateRow(entry.notebook && !toggle.contains(event.target) ? null : undefined));
+      if (entry.notebook) row.addEventListener('keydown', (event) => {
+        if (event.target !== row || event.isComposing || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return;
+        event.preventDefault(); event.stopPropagation(); activateRow(event.key === 'ArrowRight');
       });
       row.addEventListener('pointerenter', () => {
         if (entry.kind !== 'note' || Number(entry.size || 0) > 512 * 1024 || state.documentCache.has(entry.path)) return;
