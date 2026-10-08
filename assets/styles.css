@@ -1086,7 +1086,7 @@ body.start-page[data-start-theme="dark"] .note-modal-field input { color: #edf0e
 .note-sort-trigger[aria-expanded="true"],
 .note-library-settings-trigger[aria-expanded="true"] { color: var(--text); background: rgba(25, 25, 23, .075); }
 .note-library-popover {
-  position: absolute; z-index: 680; top: 55px; box-sizing: border-box;
+  position: absolute; z-index: 680; top: 47px; box-sizing: border-box;
   padding: 7px; color: var(--text); background: #fff;
   border: 1px solid rgba(28, 28, 30, .11); border-radius: 12px;
   box-shadow: 0 14px 36px rgba(28, 28, 30, .16);
@@ -1972,8 +1972,7 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 /* 笔记本和链接共用整高右栏；窄窗保留覆盖方式。 */
 .note-workspace { position: relative; --note-chrome-line: rgba(24, 24, 22, .065); --note-side-motion: 230ms cubic-bezier(.22, 1, .36, 1); }
 .note-tab-bar { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; border-bottom-color: var(--note-chrome-line); }
-.note-tree-pane::before { content: ""; box-sizing: border-box; height: 40px; flex: 0 0 40px; border-bottom: 1px solid var(--note-chrome-line); }
-.note-tree-pane > .note-pane-head { box-sizing: border-box; height: 48px; min-height: 48px; flex: 0 0 48px; padding-block: 6px; }
+.note-tree-pane > .note-pane-head { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; padding-block: 5px; border-bottom: 1px solid var(--note-chrome-line); }
 .note-document-head { box-sizing: border-box; height: 48px; min-height: 48px; flex: 0 0 48px; }
 .note-links-pane > .note-links-head { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; padding: 5px 12px; border-bottom: 1px solid var(--note-chrome-line); }
 .note-side-popover.note-settings-pop { width: min(480px, calc(100% - 24px)); }
@@ -2225,6 +2224,7 @@ body.start-page[data-start-background="scenic"] .note-document-head,
 body.start-page[data-start-background="scenic"] .note-tab-bar {
   background: var(--note-scenic-chrome);
 }
+body.start-page[data-start-background="scenic"] .note-tree-pane > .note-pane-head,
 body.start-page[data-start-background="scenic"] .note-tab-bar {
   border-bottom-color: var(--note-scenic-line);
 }

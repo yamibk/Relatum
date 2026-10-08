@@ -97,11 +97,11 @@ async function freePort() {
         const left = rect('.note-tree-pane > .note-pane-head'), main = rect('.note-document-head'), tools = rect('.note-side-toolbar');
         const leftStyle = getComputedStyle(document.querySelector('.note-tree-pane'));
         const sideStyle = getComputedStyle(document.querySelector('.note-links-pane'));
-        return { first: [tabs.height, heading.height, tabs.bottom - heading.bottom], second: [left.height, main.height, tools.height, left.top - main.top, tools.top - main.top],
+        return { first: [left.height, tabs.height, heading.height, left.top - tabs.top, left.bottom - tabs.bottom, tabs.bottom - heading.bottom], second: [main.height, tools.height, tools.top - main.top],
           border: [leftStyle.borderRightColor, sideStyle.borderLeftColor], shadow: sideStyle.boxShadow };
       });
-      assert.deepEqual(geometry.first, [40, 40, 0]);
-      assert.deepEqual(geometry.second, [48, 48, 48, 0, 0]);
+      assert.deepEqual(geometry.first, [40, 40, 40, 0, 0, 0]);
+      assert.deepEqual(geometry.second, [48, 48, 0]);
       assert.equal(geometry.border[0], geometry.border[1]);
       assert.equal(geometry.shadow, 'none');
     }
