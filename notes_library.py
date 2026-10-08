@@ -24,6 +24,8 @@ from note_metadata import note_metadata, valid_tag
 
 
 NOTE_SUFFIX = ".md"
+NOTEBOOK_CONTAINER = "CustomNotebook"
+NOTEBOOK_COLORS = frozenset(("gray", "blue", "cyan", "green", "yellow", "orange", "red", "purple"))
 MAX_NOTE_BYTES = 4 * 1024 * 1024
 MAX_NOTE_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_NOTE_IMPORT_BYTES = 512 * 1024 * 1024
@@ -408,6 +410,136 @@ class NotesStore:
         self.atomic_bytes = atomic_bytes or _default_atomic_bytes
         self._document_cache: dict[str, dict] = {}
         self._metadata_enabled = False
+        self._notebook_settings: dict | None = None
+
+    @staticmethod
+    def _default_notebook_settings() -> dict:
+        return {"version": 1, "colors": {}, "ui": {
+            "open": False, "mode": "notebooks", "selectedRoot": "", "expanded": [],
+        }}
+
+    def _notebook_setting_path(self, raw: object, *, root_only: bool = False) -> str:
+        relative = self.normalize_path(raw, allow_root=not root_only)
+        parts = PurePosixPath(relative).parts
+        if (parts and parts[0].casefold() == NOTEBOOK_CONTAINER.casefold()
+                and (len(parts) < 2 or root_only and len(parts) != 2)):
+            raise NotesError("笔记本路径无效")
+        if root_only and (len(parts) != 2 or parts[0].casefold() != NOTEBOOK_CONTAINER.casefold()):
+            raise NotesError("只允许自定义笔记本的颜色")
+        return relative
+
+    def notebook_settings(self) -> dict:
+        """配置按进程加载一次；笔记本目录不登记在配置中。"""
+        if self._notebook_settings is None:
+            value = self._default_notebook_settings()
+            settings_path = self.root.parent / "data" / "note-notebooks.json"
+            try:
+                if _is_reparse(settings_path.parent) or _is_reparse(settings_path):
+                    raise OSError("不读取链接配置")
+                raw = json.loads(settings_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and raw.get("version") == 1:
+                    for path, color in (raw.get("colors") or {}).items():
+                        try:
+                            relative = self._notebook_setting_path(path, root_only=True)
+                            if color in NOTEBOOK_COLORS:
+                                value["colors"][relative] = color
+                        except (NotesError, TypeError):
+                            continue
+                    self._merge_notebook_ui(value["ui"], raw.get("ui"), strict=False)
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            self._notebook_settings = value
+        return json.loads(json.dumps(self._notebook_settings))
+
+    def _merge_notebook_ui(self, target: dict, patch: object, *, strict: bool) -> None:
+        if not isinstance(patch, dict):
+            if strict:
+                raise NotesError("笔记本界面配置无效")
+            return
+        for key, value in patch.items():
+            try:
+                if key == "open" and isinstance(value, bool):
+                    target[key] = value
+                elif key == "mode" and value in ("notebooks", "links", "history"):
+                    target[key] = value
+                elif key == "selectedRoot" and isinstance(value, str):
+                    target[key] = self._notebook_setting_path(value, root_only=bool(value))
+                elif key == "expanded" and isinstance(value, list):
+                    target[key] = list(dict.fromkeys(self._notebook_setting_path(path) for path in value))
+                else:
+                    raise NotesError("笔记本界面配置无效")
+            except (NotesError, TypeError):
+                if strict:
+                    raise NotesError("笔记本界面配置无效")
+
+    def update_notebook_settings(self, patch: dict) -> dict:
+        if not isinstance(patch, dict):
+            raise NotesError("笔记本配置格式无效")
+        value = self.notebook_settings()
+        if "colors" in patch:
+            colors = patch["colors"]
+            if not isinstance(colors, dict):
+                raise NotesError("笔记本颜色配置无效")
+            for path, color in colors.items():
+                relative = self._notebook_setting_path(path, root_only=True)
+                if color is None:
+                    value["colors"].pop(relative, None)
+                else:
+                    if not isinstance(color, str) or color not in NOTEBOOK_COLORS:
+                        raise NotesError("笔记本颜色无效")
+                    if not self._absolute(relative).is_dir():
+                        raise NotesError("笔记本不存在", status=404, code="not_found")
+                    value["colors"][relative] = color
+        if "ui" in patch:
+            self._merge_notebook_ui(value["ui"], patch["ui"], strict=True)
+        # 前端只传入同一轮成功文件树中缺失的路径；逐个确认不存在，
+        # 不把权限/读取失败当删除，也不为配置再扫描整棵目录。
+        missing = patch.get("pruneMissing", [])
+        pruned = []
+        if not isinstance(missing, list):
+            raise NotesError("失效笔记本路径无效")
+        for raw_path in missing:
+            relative = self._notebook_setting_path(raw_path)
+            if not relative:
+                continue
+            try:
+                target = self._absolute(relative)
+                metadata = target.stat(follow_symlinks=False)
+                absent = not stat.S_ISDIR(metadata.st_mode) or _is_reparse(target)
+                if not absent:
+                    # Windows 的旧大小写路径仍可访问；颜色按真实路径命名，
+                    # 大小写改名同样清理旧键，不留下每轮复查的幽灵配置。
+                    actual = target.resolve(strict=True).relative_to(self.root.resolve()).as_posix()
+                    absent = actual != relative
+            except NotesError as err:
+                if err.code != "unsafe_path":
+                    raise
+                if isinstance(err.__cause__, OSError) and not isinstance(err.__cause__, (FileNotFoundError, NotADirectoryError)):
+                    continue
+                absent = True
+            except (FileNotFoundError, NotADirectoryError):
+                absent = True
+            except ValueError:
+                absent = True
+            except OSError:
+                continue
+            if absent:
+                pruned.append(relative)
+                value["colors"].pop(relative, None)
+                value["ui"]["expanded"] = [path for path in value["ui"]["expanded"]
+                                            if path != relative and not path.startswith(relative + "/")]
+                if value["ui"]["selectedRoot"] == relative:
+                    value["ui"]["selectedRoot"] = ""
+        if value != self._notebook_settings:
+            settings_path = self.root.parent / "data" / "note-notebooks.json"
+            if _is_reparse(settings_path.parent) or _is_reparse(settings_path):
+                raise NotesError("笔记本配置不能是链接或重解析点", status=403, code="unsafe_path")
+            self.atomic_text(settings_path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+            self._notebook_settings = value
+        result = self.notebook_settings()
+        if "pruneMissing" in patch:
+            result["prunedPaths"] = pruned
+        return result
 
     def ensure_root(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -1060,6 +1192,10 @@ class NotesStore:
             clean_name += NOTE_SUFFIX
         relative = PurePosixPath(parent_relative, clean_name).as_posix() if parent_relative else clean_name
         normalized = self.normalize_path(relative)
+        if normalized.casefold() == NOTEBOOK_CONTAINER.casefold():
+            raise NotesError("CustomNotebook 是笔记本专用目录", status=403, code="reserved_notebook_container")
+        if parent_relative.casefold() == NOTEBOOK_CONTAINER.casefold() and requested_kind != "folder":
+            raise NotesError("请在具体笔记本内新建笔记")
         target = self._absolute(normalized)
         parent_target = target.parent
         if create_parents:
@@ -1228,6 +1364,8 @@ class NotesStore:
     def move(self, source: object, destination: object) -> dict:
         source_rel = self.normalize_path(source)
         destination_rel = self.normalize_path(destination)
+        if NOTEBOOK_CONTAINER.casefold() in (source_rel.casefold(), destination_rel.casefold()):
+            raise NotesError("不能移动或改名笔记本容器", status=403, code="reserved_notebook_container")
         if source_rel == destination_rel:
             return {"path": destination_rel, "rewritten": 0, "warnings": []}
         source_path = self._absolute(source_rel)
@@ -1724,6 +1862,8 @@ class NotesStore:
 
     def trash_targets(self, relative: object) -> tuple[str, list[Path]]:
         normalized = self.normalize_path(relative)
+        if normalized.casefold() == NOTEBOOK_CONTAINER.casefold():
+            raise NotesError("不能删除笔记本容器", status=403, code="reserved_notebook_container")
         target = self._absolute(normalized)
         if not target.exists():
             raise NotesError("要移到回收站的项目不存在", status=404, code="not_found")

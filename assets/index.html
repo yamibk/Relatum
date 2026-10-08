@@ -1671,6 +1671,10 @@
           </button>
           <button type="button" class="note-side-button" data-note-action="toggle-links"
             aria-label="显示链接面板">⇄</button>
+          <button type="button" class="note-side-button note-notebooks-toggle" data-note-action="toggle-notebooks"
+            aria-label="笔记本" title="笔记本" aria-expanded="false" aria-controls="note-shared-side-panel">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h10.5v14H5a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 5 3ZM7 3v14M10 6h3M2.5 6h2M2.5 10h2M2.5 14h2"/></svg>
+          </button>
           <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
             aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1757,13 +1761,28 @@
       </footer>
     </section>
 
-    <aside class="note-links-pane" aria-label="笔记链接">
+    <aside class="note-links-pane" id="note-shared-side-panel" aria-label="笔记侧栏" inert>
       <header class="note-pane-head note-links-head">
-        <h2 data-role="note-side-title">链接</h2>
+        <h2 class="note-visually-hidden" data-role="note-side-title">笔记本</h2>
+        <nav class="note-side-modes" aria-label="侧栏视图">
+          <button type="button" data-note-action="side-notebooks">笔记本</button>
+          <button type="button" data-note-action="side-links">链接</button>
+          <button type="button" data-note-action="side-history">历史</button>
+        </nav>
         <button type="button" class="note-side-button" data-note-action="close-links"
-          aria-label="关闭链接面板">×</button>
+          aria-label="关闭侧栏">×</button>
       </header>
-      <div class="note-links-content" data-role="note-links-content">
+      <section class="note-notebooks-content" data-role="note-notebooks-content">
+        <div class="note-notebook-actions">
+          <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本">+</button>
+          <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-notebooks" aria-label="全部展开">
+            <svg class="note-expand-icon note-expand-icon-open" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 8 4.5-4 4.5 4M5.5 12l4.5 4 4.5-4"/></svg>
+            <svg class="note-expand-icon note-expand-icon-close" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 4 4.5 4 4.5-4M5.5 16l4.5-4 4.5 4"/></svg>
+          </button>
+        </div>
+        <div class="note-notebook-tree" data-role="note-notebook-tree" tabindex="0"></div>
+      </section>
+      <div class="note-links-content" data-role="note-links-content" hidden>
         <section class="note-link-section">
           <h3>链接到的笔记 <span data-role="note-outgoing-count">0</span></h3>
           <div class="note-link-list" data-role="note-outgoing"></div>

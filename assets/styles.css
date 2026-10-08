@@ -267,7 +267,8 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   stroke-linejoin: round;
 }
 
-.note-tree-scroll {
+.note-tree-scroll,
+.note-notebook-tree {
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -1418,7 +1419,8 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-image-text-colors [data-image-text-value="gray"] { --image-text-swatch: #777772; }
 .note-image-text-separator { flex: none; width: 1px; height: 18px; background: rgba(37,37,33,.12); }
 .note-image-text-merge { padding-inline: 9px; border: 1px solid rgba(40,40,36,.1); }
-.note-view-toggle svg {
+.note-view-toggle svg,
+.note-notebooks-toggle svg {
   width: 18px;
   height: 18px;
   display: block;
@@ -1937,6 +1939,37 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 }
 .note-workspace.links-overlay-open .note-links-pane { transform: none; }
 .note-links-content { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+/* 笔记本、链接和历史共用整高右栏；窄窗保留覆盖方式。 */
+.note-links-pane { width: min(300px, calc(100vw - 24px)); visibility: hidden; transition: transform 230ms cubic-bezier(.22, 1, .36, 1), visibility 230ms; }
+.note-workspace.links-overlay-open .note-links-pane { visibility: visible; }
+.note-side-modes { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+.note-side-modes button { padding: 5px 0; border: 0; background: transparent; color: var(--text-tertiary); font-family: inherit; font-size: 12px; font-weight: 550; line-height: 1.4; cursor: pointer; }
+.note-side-modes button[aria-pressed="true"] { color: var(--text); }
+.note-notebooks-content { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.note-notebooks-content[hidden] { display: none; }
+.note-notebook-actions { display: flex; justify-content: flex-end; align-items: center; padding: 0 12px 7px; gap: 5px; }
+.note-notebook-actions [data-note-action="new-notebook"] { font-size: 21px; font-weight: 400; }
+.note-notebook-tree { padding: 4px 8px 20px; }
+.note-notebook-root > .note-tree-row { min-height: 40px; margin-block: 2px; }
+.note-notebook-root > .note-tree-row.selected-notebook { color: var(--text); background: rgba(30,30,28,.07); font-weight: 650; }
+.note-notebook-icon { width: 19px; height: 21px; flex: 0 0 auto; color: var(--notebook-color, #93978f); }
+.note-notebook-icon[data-color="blue"] { --notebook-color: #5e88bd; }
+.note-notebook-icon[data-color="cyan"] { --notebook-color: #55a6ae; }
+.note-notebook-icon[data-color="green"] { --notebook-color: #78936c; }
+.note-notebook-icon[data-color="yellow"] { --notebook-color: #d9b95b; }
+.note-notebook-icon[data-color="orange"] { --notebook-color: #d69662; }
+.note-notebook-icon[data-color="red"] { --notebook-color: #c87d78; }
+.note-notebook-icon[data-color="purple"] { --notebook-color: #9d82b8; }
+.note-notebook-colors { display: flex; flex-wrap: wrap; gap: 8px; padding: 9px 11px; max-width: 224px; }
+.note-notebook-colors button { width: 20px; height: 20px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: var(--notebook-color, #93978f); cursor: pointer; }
+.note-notebook-colors button[aria-pressed="true"] { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
+.note-notebook-name { width: 100%; margin: 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; }
+.note-notebook-name-error { min-height: 1.4em; color: #b26961; font-size: 12px; }
+@media (min-width: 1121px) {
+  .note-workspace.links-overlay-open { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 300px; }
+  .note-workspace.links-overlay-open .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: 300px; box-shadow: none; }
+}
+body.start-page[data-start-theme="dark"] .note-notebook-root > .note-tree-row.selected-notebook { background: rgba(235,240,235,.095); }
 .note-history-content { min-height: 0; flex: 1; display: grid; grid-template-rows: minmax(100px, .65fr) minmax(160px, 1.35fr) auto; }
 .note-history-content[hidden], .note-links-content[hidden] { display: none; }
 .note-history-list { min-height: 0; overflow: auto; padding: 8px; }

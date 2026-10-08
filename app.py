@@ -10357,6 +10357,7 @@ CANVAS_AND_DATA_POST_ROUTES = {
     "/api/restore",
 }
 NOTES_POST_ROUTES = {
+    "/api/note-notebooks-settings",
     "/api/note-cleanup-unused-images",
     "/api/note-image-text-merge",
     "/api/note-image-text-cleanup",
@@ -10628,7 +10629,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/notes-tree":
             try:
                 with NOTES_MUTATION_LOCK:
-                    return self._send_json(200, NOTES_STORE.tree())
+                    result = NOTES_STORE.tree()
+                    if urllib.parse.parse_qs(parsed.query).get("notebookSettings", [""])[0] == "1":
+                        result["notebookSettings"] = NOTES_STORE.notebook_settings()
+                    return self._send_json(200, result)
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
         if parsed.path == "/api/note":
@@ -10826,6 +10830,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
+        if path == "/api/note-notebooks-settings":
+            try:
+                return self._send_json(200, NOTES_STORE.update_notebook_settings(body))
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError as err:
+                return self._send_json(500, {"error": f"保存笔记本配置失败：{err}"})
         if path == "/api/career-report-generate":
             try:
                 report = generate_career_report()

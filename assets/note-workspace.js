@@ -5,6 +5,12 @@
   if (!root) return;
   const $ = (selector, scope) => (scope || root).querySelector(selector);
   const treeEl = $('[data-role="note-tree"]');
+  const notebookTreeEl = $('[data-role="note-notebook-tree"]');
+  const notebooksContent = $('[data-role="note-notebooks-content"]');
+  const sidePane = $('.note-links-pane');
+  const NOTEBOOK_CONTAINER = 'CustomNotebook';
+  const NOTEBOOK_COLORS = ['gray', 'blue', 'cyan', 'green', 'yellow', 'orange', 'red', 'purple'];
+  let notebookSettingsTimer = 0, notebookSettingsChain = Promise.resolve(true), notebookSettingsPending = {};
   const tabsEl = $('[data-role="note-tabs"]');
   const newTabButton = $('[data-note-action="new-tab"]');
   const closeAllTabsButton = $('[data-note-action="close-all-tabs"]');
@@ -86,7 +92,6 @@
     root.classList.toggle('note-browser-showing-results', show);
     $('.note-document-body')?.toggleAttribute('inert', show);
     $('.note-document-head')?.toggleAttribute('inert', show);
-    if (show) root.classList.remove('links-overlay-open');
   }
   async function loadNoteBrowser() {
     if (noteBrowser) return noteBrowser;
@@ -139,7 +144,6 @@
   const ACTIVE_TAB_KEY = 'canvas:noteActiveTab:v1';
   const OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1';
   const EXPANDED_KEY = 'canvas:noteExpandedFolders:v1';
-  const LINKS_OPEN_KEY = 'canvas:noteLinksOpen:v1';
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
@@ -224,7 +228,8 @@
     },
   };
   const state = {
-    active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', rootTargeted: false, expanded: new Set(), sideMode: 'links',
+    active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', rootTargeted: false, expanded: new Set(), sideMode: 'notebooks',
+    notebookRoot: '', notebookExpanded: new Set(), notebookColors: {}, notebookSettingsLoaded: false, notebookTreeDirty: true, notebookPruning: new Map(),
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, draggedPath: '', renamePath: '', renameOriginal: '',
     historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
@@ -243,7 +248,6 @@
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
   try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = stored.filter((path) => typeof path === 'string'); } catch (error) {}
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
-  try { if (localStorage.getItem(LINKS_OPEN_KEY) === '1') root.classList.add('links-overlay-open'); } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
   try {
@@ -280,6 +284,143 @@
       reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
+  }
+
+  function notebookCopy(key) {
+    const labels = {
+      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], history: ['历史', 'History'],
+      create: ['新建笔记本', 'New notebook'], close: ['关闭侧栏', 'Close sidebar'],
+      gray: ['灰色', 'Gray'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'],
+      yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'],
+      settingsFailed: ['笔记本配置保存失败', 'Could not save notebook settings'],
+    };
+    return (labels[key] || [key, key])[language() === 'en' ? 1 : 0];
+  }
+  function isNotebookContainer(path) { return String(path).toLowerCase() === NOTEBOOK_CONTAINER.toLowerCase(); }
+  function isNotebookRoot(path) { const parts = String(path).split('/'); return parts.length === 2 && isNotebookContainer(parts[0]); }
+  function notebookRootForPath(path) {
+    const parts = String(path || '').split('/');
+    const candidate = parts.length >= 2 && isNotebookContainer(parts[0]) ? parts.slice(0, 2).join('/') : '';
+    return candidate && findEntry(candidate)?.kind === 'folder' ? candidate : '';
+  }
+  function visibleTreeEntries() {
+    if (state.notebookRoot) return findEntry(state.notebookRoot)?.children || [];
+    return state.entries.filter((entry) => !isNotebookContainer(entry.path));
+  }
+  function notebookRoots() {
+    const container = state.entries.find((entry) => entry.kind === 'folder' && isNotebookContainer(entry.path));
+    return [{ kind: 'folder', name: 'notes', path: '', notebook: true, children: state.entries.filter((entry) => !isNotebookContainer(entry.path)) },
+      ...(container?.children || []).filter((entry) => entry.kind === 'folder').slice().sort((a, b) => a.name.localeCompare(b.name, language(), { numeric: true, sensitivity: 'base' }))
+        .map((entry) => ({ ...entry, notebook: true }))];
+  }
+  function notebookUi() {
+    return { open: root.classList.contains('links-overlay-open'), mode: state.sideMode, selectedRoot: state.notebookRoot, expanded: Array.from(state.notebookExpanded) };
+  }
+  function queueNotebookSettings(patch) {
+    if (!state.notebookSettingsLoaded) return;
+    if (patch.ui) notebookSettingsPending.ui = { ...(notebookSettingsPending.ui || {}), ...patch.ui };
+    if (patch.colors) notebookSettingsPending.colors = { ...(notebookSettingsPending.colors || {}), ...patch.colors };
+    if (patch.pruneMissing) notebookSettingsPending.pruneMissing = Array.from(new Set([...(notebookSettingsPending.pruneMissing || []), ...patch.pruneMissing]));
+    clearTimeout(notebookSettingsTimer);
+    notebookSettingsTimer = setTimeout(flushNotebookSettings, 350);
+  }
+  function flushNotebookSettings(keepalive) {
+    clearTimeout(notebookSettingsTimer); notebookSettingsTimer = 0;
+    if (!Object.keys(notebookSettingsPending).length) return notebookSettingsChain;
+    const patch = notebookSettingsPending; notebookSettingsPending = {};
+    const send = async () => {
+      // 颜色点击后目录可能被外部删除；不让失效颜色阻塞后续状态保存/清理。
+      if (patch.colors) {
+        Object.keys(patch.colors).forEach((path) => { if (findEntry(path)?.kind !== 'folder') delete patch.colors[path]; });
+        if (!Object.keys(patch.colors).length) delete patch.colors;
+      }
+      try {
+        const response = await fetch('/api/note-notebooks-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch), keepalive: keepalive === true });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || notebookCopy('settingsFailed'));
+        (result.prunedPaths || []).forEach((path) => {
+          delete state.notebookColors[path]; state.notebookPruning.delete(path);
+          state.notebookExpanded.forEach((expanded) => { if (expanded === path || expanded.startsWith(path + '/')) state.notebookExpanded.delete(expanded); });
+        });
+        updateNotebookExpandButton();
+        return true;
+      } catch (error) {
+        // 保留较新的操作，失败配置不阻断正文保存，也不启动额外重试计时器。
+        if (patch.ui) notebookSettingsPending.ui = { ...patch.ui, ...(notebookSettingsPending.ui || {}) };
+        if (patch.colors) notebookSettingsPending.colors = { ...patch.colors, ...(notebookSettingsPending.colors || {}) };
+        if (patch.pruneMissing) notebookSettingsPending.pruneMissing = Array.from(new Set([...patch.pruneMissing, ...(notebookSettingsPending.pruneMissing || [])]));
+        if (patch.ui || patch.colors) showToast(error.message || notebookCopy('settingsFailed'), 'error');
+        return false;
+      }
+    };
+    notebookSettingsChain = notebookSettingsChain.catch(() => false).then(send);
+    return notebookSettingsChain;
+  }
+  function restoreNotebookSettings(settings) {
+    const ui = settings?.ui || {};
+    state.notebookColors = settings?.colors || {};
+    state.notebookRoot = ui.selectedRoot || '';
+    state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
+    state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
+    state.sideMode = ['notebooks', 'links', 'history'].includes(ui.mode) ? ui.mode : 'notebooks';
+    root.classList.toggle('links-overlay-open', ui.open === true);
+    state.notebookSettingsLoaded = true;
+    updateSidePanel();
+  }
+  function reconcileNotebooks() {
+    const roots = new Set(notebookRoots().map((entry) => entry.path));
+    const missing = new Set(Object.keys(state.notebookColors).filter((path) => !roots.has(path)));
+    state.notebookExpanded.forEach((path) => { if (path && !findEntry(path)) missing.add(path); });
+    const selectedMissing = !!state.notebookRoot && !roots.has(state.notebookRoot);
+    if (selectedMissing) {
+      missing.add(state.notebookRoot); state.notebookRoot = ''; state.selectedFolder = ''; state.selectedPath = ''; state.rootTargeted = true;
+    }
+    state.notebookPruning.forEach((time, path) => { if (findEntry(path)) state.notebookPruning.delete(path); });
+    const now = Date.now();
+    const paths = Array.from(missing).filter((path) => !state.notebookPruning.has(path) || now - state.notebookPruning.get(path) >= 30000);
+    if (paths.length) {
+      paths.forEach((path) => state.notebookPruning.set(path, now));
+      queueNotebookSettings({ pruneMissing: paths });
+    }
+    return selectedMissing;
+  }
+  function selectNotebook(path, options) {
+    if (path && (!isNotebookRoot(path) || findEntry(path)?.kind !== 'folder')) return false;
+    const changed = state.notebookRoot !== path;
+    state.notebookRoot = path;
+    if (changed || options?.rootTarget) { state.selectedFolder = path; state.selectedPath = path; state.rootTargeted = true; }
+    if (changed) { stopDocumentPrefetch(); queueNotebookSettings({ ui: notebookUi() }); }
+    if (changed && !options?.noRender) renderTree({ keepNotebookTree: true });
+    updateTreeSelection(); updateNotebookSelection(); updateNotebookRootLabel();
+    return changed;
+  }
+  function updateNotebookRootLabel() {
+    const label = $('.note-tree-foot > span');
+    if (label) label.textContent = (language() === 'en' ? 'Local folder · ' : '本地目录 · ') + (state.notebookRoot ? 'notes/' + state.notebookRoot + '/' : 'notes/');
+  }
+  function updateNotebookSelection() {
+    notebookTreeEl?.querySelectorAll('.note-notebook-root > .note-tree-row').forEach((row) => {
+      row.classList.toggle('selected-notebook', row.dataset.notePath === state.notebookRoot);
+    });
+  }
+  function notebookIcon(path) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('note-notebook-icon'); svg.dataset.color = state.notebookColors[path] || 'gray';
+    svg.setAttribute('viewBox', '0 0 20 22'); svg.setAttribute('aria-hidden', 'true');
+    svg.innerHTML = '<rect x="4" y="2" width="13" height="18" rx="2" fill="currentColor"/><path d="M7 2v18M10 6h4M2 6h3M2 11h3M2 16h3" fill="none" stroke="var(--bg)" stroke-width="1.3"/>';
+    return svg;
+  }
+  function updateNotebookExpandButton() {
+    const button = $('[data-note-action="toggle-all-notebooks"]');
+    if (!button) return;
+    const any = state.notebookExpanded.size > 0;
+    button.dataset.allExpanded = String(any); button.setAttribute('aria-pressed', String(any));
+    button.title = tr(any ? 'collapseAll' : 'expandAll'); button.setAttribute('aria-label', button.title);
+  }
+  function toggleAllNotebooks() {
+    if (state.notebookExpanded.size) state.notebookExpanded.clear();
+    else state.notebookExpanded = new Set(flattenEntries(notebookRoots(), []).filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
+    queueNotebookSettings({ ui: notebookUi() }); state.notebookTreeDirty = true; renderNotebookTree();
   }
 
   function commandName(command) {
@@ -1454,7 +1595,7 @@
     }
     return true;
   }
-  function folderPaths() { return flattenEntries(state.entries, []).filter((entry) => entry.kind === 'folder').map((entry) => entry.path); }
+  function folderPaths() { return flattenEntries(visibleTreeEntries(), []).filter((entry) => entry.kind === 'folder').map((entry) => entry.path); }
   function updateExpandAllButton() {
     if (!expandAllButton) return;
     const paths = folderPaths();
@@ -1470,14 +1611,18 @@
     const paths = folderPaths();
     if (!paths.length) return false;
     const collapse = paths.some((path) => state.expanded.has(path));
-    if (collapse) state.expanded.clear();
+    if (collapse) paths.forEach((path) => state.expanded.delete(path));
     else paths.forEach((path) => state.expanded.add(path));
     persistExpanded(); renderTree();
     return true;
   }
   function rebuildEntryIndex() { state.entryIndex = new Map(flattenEntries(state.entries, []).map((entry) => [entry.path, entry])); }
   function findEntry(path) { return state.entryIndex.get(path) || null; }
-  function folderTarget() { return state.rootTargeted ? '' : state.selectedFolder && findEntry(state.selectedFolder) ? state.selectedFolder : state.current ? parentPath(state.current.path) : ''; }
+  function folderTarget() {
+    if (state.rootTargeted) return state.notebookRoot;
+    if (state.selectedFolder && findEntry(state.selectedFolder) && notebookRootForPath(state.selectedFolder) === state.notebookRoot) return state.selectedFolder;
+    return state.current && notebookRootForPath(state.current.path) === state.notebookRoot ? parentPath(state.current.path) : state.notebookRoot;
+  }
   function treeIcon(kind) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.classList.add('note-tree-icon', kind === 'folder' ? 'is-folder' : 'is-note');
@@ -1539,7 +1684,9 @@
     if (!path) { currentPathEl.textContent = tr('select'); currentPathEl.title = ''; return; }
     currentPathEl.title = path;
     const parts = String(path).split('/').filter(Boolean);
-    const rootPart = document.createElement('span'); rootPart.className = 'note-path-crumb is-root'; rootPart.textContent = 'notes'; currentPathEl.appendChild(rootPart);
+    const notebookPath = notebookRootForPath(path);
+    const rootPart = document.createElement('span'); rootPart.className = 'note-path-crumb is-root'; rootPart.textContent = notebookPath ? parts[1] : 'notes'; currentPathEl.appendChild(rootPart);
+    if (notebookPath) parts.splice(0, 2);
     parts.forEach((part, index) => {
       const separator = document.createElement('span'); separator.className = 'note-path-separator'; separator.textContent = '›';
       const crumb = document.createElement('span'); crumb.className = 'note-path-crumb' + (index === parts.length - 1 ? ' is-file' : ' is-folder'); crumb.textContent = part;
@@ -1745,7 +1892,7 @@
   }
   function updateTreeSelection() {
     const activePath = state.openingPath || (state.current && state.current.path) || '';
-    treeEl.querySelectorAll('.note-tree-row').forEach((row) => {
+    root.querySelectorAll('.note-tree-row').forEach((row) => {
       const path = row.dataset.notePath || '';
       const entry = findEntry(path);
       row.classList.toggle('active', !!activePath && path === activePath);
@@ -1754,6 +1901,7 @@
       row.classList.toggle('selected-folder', !!entry && entry.kind === 'folder' && path === state.selectedFolder);
       row.classList.toggle('active-ancestor', !!entry && entry.kind === 'folder' && !!activePath && activePath.startsWith(path + '/'));
     });
+    updateNotebookSelection();
   }
   function scheduleDocumentPrefetch() {
     clearTimeout(state.prefetchTimer);
@@ -1803,7 +1951,7 @@
     rewriteEntryPaths(extracted, source, destination); target.push(extracted); naturalSort(target); return true;
   }
 
-  function beginInlineRename(path) { const entry = findEntry(path); if (!entry) return; state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
+  function beginInlineRename(path) { const entry = findEntry(path); if (!entry || isNotebookRoot(path)) return; selectNotebook(notebookRootForPath(path)); state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
   function commitInlineRename(entry, input, cancel) {
     if (state.renameCommitPromise) return state.renameCommitPromise;
     if (!entry || state.renamePath !== entry.path) return Promise.resolve(!state.renamePath);
@@ -1825,14 +1973,31 @@
     if (!state.renamePath) return true;
     if (state.renameCommitPromise) { await state.renameCommitPromise; return !state.renamePath; }
     const entry = findEntry(state.renamePath);
-    const input = treeEl.querySelector('.note-tree-rename');
+    const input = root.querySelector('.note-tree-rename');
     if (!entry || !input) return false;
     await commitInlineRename(entry, input, false);
     return !state.renamePath;
   }
-  function renderTree() {
+  function renderTree(options) {
     rebuildEntryIndex();
+    renderTreeInto(treeEl, visibleTreeEntries(), state.expanded, false);
+    state.treeRendered = true;
+    state.renderedOrder = treeOrderSignature(state.entries);
+    state.pendingTreeReorder = false;
+    updateNotebookRootLabel();
+    if (!options?.keepNotebookTree) { state.notebookTreeDirty = true; renderNotebookTree(); }
+  }
+  function renderNotebookTree() {
+    if (!notebookTreeEl || !root.classList.contains('links-overlay-open') || state.sideMode !== 'notebooks') return;
+    if (state.notebookTreeDirty) {
+      renderTreeInto(notebookTreeEl, notebookRoots(), state.notebookExpanded, true);
+      state.notebookTreeDirty = false;
+    }
+    updateNotebookSelection(); updateNotebookExpandButton();
+  }
+  function renderTreeInto(treeEl, treeEntries, expandedPaths, notebookTree) {
     const fragment = document.createDocumentFragment();
+    const getEntry = (path) => notebookTree && (path === '' || isNotebookRoot(path)) ? notebookRoots().find((entry) => entry.path === path) : findEntry(path);
     const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     const folderLabel = (entry, expanded) => entry.path + ' · ' + tr(expanded ? 'collapseFolder' : 'expandFolder');
     const directChild = (wrapper, className) => Array.from(wrapper.children).find((child) => child.classList && child.classList.contains(className)) || null;
@@ -1848,7 +2013,7 @@
         Array.from(children.children).forEach((child, index) => child.style.setProperty('--note-child-index', Math.min(index, 7)));
         void shell.offsetHeight;
         requestAnimationFrame(() => {
-          if (!shell.isConnected || !state.expanded.has(entry.path)) return;
+          if (!shell.isConnected || !expandedPaths.has(entry.path)) return;
           shell.classList.add('is-open', 'is-expanding'); shell.setAttribute('aria-hidden', 'false');
           window.setTimeout(() => shell.classList.remove('is-expanding'), TREE_MOTION_MS + 80);
         });
@@ -1857,13 +2022,13 @@
     }
 
     function setFolderExpanded(path, expanded) {
-      const entry = findEntry(path); const wrapper = liveWrapper(path);
+      const entry = getEntry(path); const wrapper = liveWrapper(path);
       if (!entry || entry.kind !== 'folder' || !wrapper) return;
       const row = directChild(wrapper, 'note-tree-row');
       if (!row) return;
-      if (expanded) state.expanded.add(path); else state.expanded.delete(path);
-      persistExpanded(); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded));
-      updateExpandAllButton();
+      if (expanded) expandedPaths.add(path); else expandedPaths.delete(path);
+      if (notebookTree) { queueNotebookSettings({ ui: notebookUi() }); updateNotebookExpandButton(); } else { persistExpanded(); updateExpandAllButton(); }
+      row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded));
       row.classList.toggle('is-expanding', expanded); window.setTimeout(() => row.classList.remove('is-expanding'), TREE_MOTION_MS + 40);
       let shell = directChild(wrapper, 'note-tree-children-shell');
       if (expanded) {
@@ -1872,7 +2037,7 @@
         else if (shell) {
           shell.inert = false; shell.classList.remove('is-collapsing'); void shell.offsetHeight;
           requestAnimationFrame(() => {
-            if (!state.expanded.has(path)) return;
+            if (!expandedPaths.has(path)) return;
             shell.classList.add('is-open', 'is-expanding'); shell.setAttribute('aria-hidden', 'false');
             window.setTimeout(() => shell.classList.remove('is-expanding'), TREE_MOTION_MS + 80);
           });
@@ -1880,49 +2045,60 @@
       } else if (shell) {
         shell.classList.remove('is-open', 'is-expanding'); shell.classList.add('is-collapsing'); shell.setAttribute('aria-hidden', 'true'); shell.inert = true;
         if (reducedMotion()) shell.remove();
-        else window.setTimeout(() => { if (shell.isConnected && !state.expanded.has(path)) shell.remove(); }, TREE_MOTION_MS + 40);
+        else window.setTimeout(() => { if (shell.isConnected && !expandedPaths.has(path)) shell.remove(); }, TREE_MOTION_MS + 40);
       }
       updateTreeSelection();
     }
 
-    function renderLevel(entries, depth, host) { sortedTreeEntries(entries).forEach((entry) => {
+    function renderLevel(entries, depth, host) { (notebookTree && depth === 0 ? entries : sortedTreeEntries(entries)).forEach((entry) => {
       const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry'; wrapper.dataset.path = entry.path; wrapper.style.setProperty('--note-depth', depth);
-      const row = document.createElement('button'); row.type = 'button'; row.className = 'note-tree-row'; row.style.setProperty('--note-depth', depth); row.draggable = state.renamePath !== entry.path; row.dataset.notePath = entry.path;
+      if (entry.notebook) wrapper.classList.add('note-notebook-root');
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'note-tree-row'; row.style.setProperty('--note-depth', depth); row.draggable = !notebookTree && state.renamePath !== entry.path; row.dataset.notePath = entry.path;
       row.title = entry.path; row.setAttribute('aria-label', entry.path);
       const toggle = document.createElement('span'); toggle.className = 'note-tree-toggle'; toggle.setAttribute('aria-hidden', 'true');
-      if (entry.kind === 'folder') { const expanded = state.expanded.has(entry.path); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded)); }
+      if (entry.kind === 'folder') { const expanded = expandedPaths.has(entry.path); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded)); }
       const label = document.createElement('span'); label.className = 'note-tree-label';
-      if (state.renamePath === entry.path) {
+      if (!entry.notebook && state.renamePath === entry.path) {
         const input = document.createElement('input'); input.className = 'note-tree-rename'; input.value = state.renameDraft === null ? state.renameOriginal : state.renameDraft; input.setAttribute('aria-label', tr('rename')); label.appendChild(input);
         input.addEventListener('click', (event) => event.stopPropagation());
         input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Enter') { event.preventDefault(); commitInlineRename(entry, input, false); } else if (event.key === 'Escape') { event.preventDefault(); commitInlineRename(entry, input, true); } });
         input.addEventListener('blur', () => commitInlineRename(entry, input, false)); requestAnimationFrame(() => { input.focus(); input.select(); });
       } else label.textContent = entry.name;
-      row.append(toggle, treeIcon(entry.kind), label);
-      row.addEventListener('click', async () => { const clickedPath = entry.path; if (!(await finishInlineTitle())) return; if (state.renamePath && !(await finishInlineRename())) return; closeContextMenu(); const liveEntry = findEntry(clickedPath); if (!liveEntry) return; state.rootTargeted = false; state.selectedPath = liveEntry.path; if (liveEntry.kind === 'folder') { state.selectedFolder = liveEntry.path; setFolderExpanded(liveEntry.path, !state.expanded.has(liveEntry.path)); } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); } });
+      row.append(toggle, entry.notebook ? notebookIcon(entry.path) : treeIcon(entry.kind), label);
+      row.addEventListener('click', async () => {
+        const clickedPath = entry.path;
+        if (!(await finishInlineTitle())) return;
+        if (state.renamePath && !(await finishInlineRename())) return;
+        if (editorInputPending()) await whenEditorInputSettled();
+        closeContextMenu(); const liveEntry = getEntry(clickedPath); if (!liveEntry) return;
+        if (notebookTree) selectNotebook(liveEntry.notebook ? liveEntry.path : notebookRootForPath(liveEntry.path), { rootTarget: !!liveEntry.notebook });
+        state.rootTargeted = !!liveEntry.notebook; state.selectedPath = liveEntry.path;
+        if (liveEntry.kind === 'folder') {
+          state.selectedFolder = liveEntry.path; setFolderExpanded(liveEntry.path, !expandedPaths.has(liveEntry.path));
+          if (notebookTree && !liveEntry.notebook && expandTreePath(liveEntry.path, false)) renderTree({ keepNotebookTree: true });
+          updateTreeSelection();
+        } else { state.selectedFolder = parentPath(liveEntry.path); state.openingPath = liveEntry.path; renderCurrentPath(liveEntry.path); updateTreeSelection(); openNote(liveEntry.path, { selectionPrimed: true }); }
+      });
       row.addEventListener('pointerenter', () => {
         if (entry.kind !== 'note' || Number(entry.size || 0) > 512 * 1024 || state.documentCache.has(entry.path)) return;
         clearTimeout(hoverPrefetchTimer);
         hoverPrefetchTimer = setTimeout(() => { hoverPrefetchPath = entry.path; runDocumentPrefetch(); }, 150);
       });
       row.addEventListener('pointerleave', () => { clearTimeout(hoverPrefetchTimer); hoverPrefetchPath = ''; });
-      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); state.rootTargeted = false; state.selectedPath = entry.path; state.selectedFolder = entry.kind === 'folder' ? entry.path : parentPath(entry.path); updateTreeSelection(); openContextMenu(entry, event.clientX, event.clientY); });
+      row.addEventListener('contextmenu', (event) => { event.preventDefault(); event.stopPropagation(); if (entry.notebook) { openNotebookContext(entry, event.clientX, event.clientY); return; } if (notebookTree) selectNotebook(notebookRootForPath(entry.path)); state.rootTargeted = false; state.selectedPath = entry.path; state.selectedFolder = entry.kind === 'folder' ? entry.path : parentPath(entry.path); updateTreeSelection(); openContextMenu(entry, event.clientX, event.clientY); });
       row.addEventListener('dragstart', (event) => { state.draggedPath = entry.path; row.classList.add('dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-relatum-note-path', entry.path); });
       row.addEventListener('dragend', () => { state.draggedPath = ''; row.classList.remove('dragging'); root.querySelectorAll('.note-drop-target').forEach((item) => item.classList.remove('note-drop-target')); });
-      row.addEventListener('dragover', (event) => { const external = !state.draggedPath && Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = external ? 'copy' : 'move'; row.classList.add('note-drop-target'); });
+      row.addEventListener('dragover', (event) => { if (notebookTree) return; const external = !state.draggedPath && Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = external ? 'copy' : 'move'; row.classList.add('note-drop-target'); });
       row.addEventListener('dragleave', () => row.classList.remove('note-drop-target'));
-      row.addEventListener('drop', (event) => { event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target'); const destination = entry.kind === 'folder' ? entry.path : parentPath(entry.path); if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination); });
+      row.addEventListener('drop', (event) => { if (notebookTree) return; event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target'); const destination = entry.kind === 'folder' ? entry.path : parentPath(entry.path); if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination); });
       wrapper.appendChild(row);
-      if (state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
-      if (entry.kind === 'folder' && state.expanded.has(entry.path)) createChildrenShell(entry, depth, wrapper, false);
+      if (!entry.notebook && state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
+      if (entry.kind === 'folder' && expandedPaths.has(entry.path)) createChildrenShell(entry, depth, wrapper, false);
       host.appendChild(wrapper);
     }); }
-    renderLevel(state.entries, 0, fragment);
+    renderLevel(treeEntries, 0, fragment);
     if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-tree-empty'; message.textContent = tr('emptyTree'); fragment.appendChild(message); }
-    treeEl.replaceChildren(fragment); updateTreeSelection(); updateExpandAllButton();
-    state.treeRendered = true;
-    state.renderedOrder = treeOrderSignature(state.entries);
-    state.pendingTreeReorder = false;
+    treeEl.replaceChildren(fragment); updateTreeSelection(); if (!notebookTree) updateExpandAllButton();
   }
   function samePathList(left, right) {
     return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -1983,7 +2159,7 @@
   async function refreshTree(announce, options) {
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
     try {
-      const result = await request('/api/notes-tree'); if (seq !== state.refreshSeq) return false;
+      const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (seq !== state.refreshSeq) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
       const signature = JSON.stringify(flattenEntries(entries, []).map((entry) => [entry.path, entry.modifiedNs, entry.size]));
       const browserChanged = signature !== state.treeMetadataSignature;
@@ -1995,6 +2171,10 @@
       // Always refresh metadata for cache validation; unchanged rows retain focus,
       // inline rename drafts and any folder transition already in progress.
       state.entries = entries;
+      rebuildEntryIndex();
+      if (!state.notebookSettingsLoaded) restoreNotebookSettings(result.notebookSettings);
+      const previousNotebookRoot = state.notebookRoot;
+      const notebookMissing = reconcileNotebooks();
       const existingPaths = new Set(flattenEntries(entries, []).map((entry) => entry.path));
       let prunedRecent = false;
       recentFiles.forEach((time, path) => { if (!existingPaths.has(path)) { recentFiles.delete(path); prunedRecent = true; } });
@@ -2006,11 +2186,12 @@
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
       if (state.selectedPath && !flat.some((entry) => entry.path === state.selectedPath)) state.selectedPath = '';
-      if (structureChanged || orderChanged) {
+      if (structureChanged || orderChanged || previousNotebookRoot !== state.notebookRoot) {
         if (state.renamePath && !structureChanged) state.pendingTreeReorder = true;
         else renderTree();
       }
       await reconcileExternalTree(previousTabs);
+      if (notebookMissing) selectNotebook('', { rootTarget: true });
       if (structureChanged) scheduleDocumentPrefetch();
       if (announce) showToast(tr('refreshed'));
       return true;
@@ -2056,6 +2237,8 @@
   }
 
   function applyDocument(data, options) {
+    const notebookChanged = !state.restoringNotebookSelection && selectNotebook(notebookRootForPath(data.path), { noRender: true });
+    if (notebookChanged) state.rootTargeted = false;
     closeContextMenu(); resetExternalSyncActivity(); cancelStatistics();
     state.imageTextCleanupPath = '';
     const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
@@ -2083,8 +2266,8 @@
     const treeExpanded = expandTreePath(documentState.path, false);
     clearSaveError(); desktopDirty(hasPendingEdits(documentState));
     try { localStorage.setItem(ACTIVE_PATH_KEY, documentState.path); } catch (error) {}
-    if (treeExpanded) renderTree(); else updateTreeSelection(); renderLinks(); updateEditorVisibility();
-    if (root.classList.contains('links-overlay-open')) ensureLinks();
+    if (treeExpanded || notebookChanged) renderTree({ keepNotebookTree: true }); else updateTreeSelection(); renderLinks(); updateEditorVisibility();
+    if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') ensureLinks();
     scheduleStatistics(documentState); scheduleDocumentPrefetch();
   }
   function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
@@ -2265,7 +2448,7 @@
     try { const result = await post('/api/note-move', { path: source, destination }); remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); refreshTree(false); return true; }
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
   }
-  function moveEntry(source, folder) { const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
+  function moveEntry(source, folder) { if (notebookRootForPath(source) !== notebookRootForPath(folder)) return; const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
   async function recycleEntry(entry) {
     if (!entry || state.recycleRunning) return;
     state.recycleRunning = true;
@@ -2278,7 +2461,14 @@
     const previousSelectedFolder = state.selectedFolder;
     const previousExpanded = new Set(state.expanded);
     const affects = !!state.current && (state.current.path === entry.path || state.current.path.startsWith(entry.path + '/'));
-    const flushPromise = affects ? flushSave() : Promise.resolve(true);
+    const flushPromise = (async () => {
+      if (affects && !(await flushSave())) return false;
+      for (const documentState of state.documentCache.values()) {
+        if (documentState !== state.current && (documentState.path === entry.path || documentState.path.startsWith(entry.path + '/'))
+            && hasPendingEdits(documentState) && !(await flushSave(documentState))) return false;
+      }
+      return true;
+    })();
     const optimisticEntries = JSON.parse(JSON.stringify(state.entries));
     if (!removeTreeEntry(optimisticEntries, entry.path)) {
       state.recycleRunning = false;
@@ -2309,8 +2499,11 @@
       const treeChanged = !sameTreeStructure(state.entries, serverEntries);
       state.entries = serverEntries;
       rebuildEntryIndex();
-      if (treeChanged) renderTree();
+      const previousNotebookRoot = state.notebookRoot;
+      const notebookMissing = reconcileNotebooks();
+      if (treeChanged || previousNotebookRoot !== state.notebookRoot) renderTree();
       await reconcileExternalTree(previousTabs);
+      if (notebookMissing) selectNotebook('', { rootTarget: true });
       showToast(tr('recycled'));
     } catch (error) {
       if (isMissingError(error)) await refreshTree(false, { silentErrors: true });
@@ -2510,7 +2703,7 @@
     });
   }
   function openContextMenu(entry, x, y, options) {
-    if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: '' })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: '' })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal('', false))], x, y); return; }
+    if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: state.notebookRoot })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: state.notebookRoot })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal(state.notebookRoot, false))], x, y); return; }
     state.selectedPath = entry.path;
     const items = [];
     if (entry.kind === 'note' && options && options.viewModes) {
@@ -2537,10 +2730,88 @@
     showContext(items, x, y, options && options.source);
   }
 
+  function openNotebookContext(entry, x, y) {
+    closeContextMenu();
+    if (!entry.path) return;
+    const colors = document.createElement('div'); colors.className = 'note-notebook-colors';
+    colors.setAttribute('role', 'group'); colors.setAttribute('aria-label', language() === 'en' ? 'Notebook color' : '笔记本颜色');
+    NOTEBOOK_COLORS.forEach((color) => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-notebook-icon'; button.dataset.color = color;
+      button.title = notebookCopy(color); button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-pressed', String((state.notebookColors[entry.path] || 'gray') === color));
+      button.addEventListener('click', () => {
+        closeContextMenu(); state.notebookColors[entry.path] = color;
+        notebookTreeEl.querySelectorAll('.note-notebook-root > .note-tree-row').forEach((row) => {
+          if (row.dataset.notePath === entry.path) row.querySelector('.note-notebook-icon').dataset.color = color;
+        });
+        queueNotebookSettings({ colors: { [entry.path]: color } });
+      });
+      colors.appendChild(button);
+    });
+    showContext([colors, separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
+  }
+  async function createNotebook() {
+    if (!modalHost || !(await finishInlineTitle()) || state.renamePath && !(await finishInlineRename())) return;
+    const previousFocus = document.activeElement;
+    const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay';
+    const dialog = document.createElement('form'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
+    const title = document.createElement('h2'); title.textContent = notebookCopy('create'); title.id = 'note-notebook-create-title'; dialog.setAttribute('aria-labelledby', title.id);
+    const input = document.createElement('input'); input.type = 'text'; input.className = 'note-notebook-name'; input.autocomplete = 'off'; input.maxLength = 120; input.setAttribute('aria-label', notebookCopy('create'));
+    const error = document.createElement('p'); error.className = 'note-notebook-name-error'; error.setAttribute('role', 'alert');
+    const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+    const finish = () => { overlay.remove(); if (previousFocus?.isConnected) previousFocus.focus(); };
+    const cancel = contextButton(tr('cancel'), finish); const submit = document.createElement('button'); submit.type = 'submit'; submit.textContent = tr('create');
+    actions.append(cancel, submit); dialog.append(title, input, error, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay);
+    dialog.addEventListener('keydown', (event) => { if (event.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(); } });
+    dialog.addEventListener('submit', async (event) => {
+      event.preventDefault(); if (submit.disabled) return;
+      const name = input.value.trim();
+      if (!name || /[\\/]/.test(name)) { error.textContent = language() === 'en' ? 'Enter a folder name without paths' : '请输入不含路径的文件夹名称'; input.focus(); return; }
+      submit.disabled = true;
+      try {
+        const result = await post('/api/note-create', { kind: 'folder', parent: NOTEBOOK_CONTAINER, name, createParents: true });
+        state.entries = result.tree?.entries || state.entries; rebuildEntryIndex();
+        selectNotebook(result.path, { rootTarget: true, noRender: true });
+        renderTree(); finish();
+      } catch (failure) { error.textContent = failure.message || tr('readFailed'); submit.disabled = false; input.focus(); }
+    });
+    requestAnimationFrame(() => { overlay.classList.add('visible'); input.focus(); });
+  }
   function modalConfirm(title, copy) { if (!modalHost) return Promise.resolve(false); return new Promise((resolve) => { const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay'; const dialog = document.createElement('section'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); const heading = document.createElement('h2'); heading.textContent = title; const paragraph = document.createElement('p'); paragraph.textContent = copy; const actions = document.createElement('footer'); actions.className = 'note-modal-actions'; const finish = (value) => { overlay.remove(); resolve(value); }; actions.append(contextButton(tr('cancel'), () => finish(false)), contextButton(tr('create'), () => finish(true))); dialog.append(heading, paragraph, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay); requestAnimationFrame(() => overlay.classList.add('visible')); }); }
   async function confirmCreateWiki(rawTarget) { const target = normalizedWikiTarget(rawTarget); if (!target || !(await modalConfirm(tr('unresolvedTitle'), tr('unresolvedCopy', { target })))) return; const parts = target.replace(/\\/g, '/').split('/').filter(Boolean); const name = parts.pop(); const hasPath = parts.length > 0; await createEntry('note', { parent: hasPath ? parts.join('/') : state.current ? parentPath(state.current.path) : '', name, createParents: hasPath }); }
 
-  function setSideMode(mode) { state.sideMode = mode === 'history' ? 'history' : 'links'; root.classList.add('links-overlay-open'); try { localStorage.setItem(LINKS_OPEN_KEY, '1'); } catch (error) {} if (sideTitle) sideTitle.textContent = state.sideMode === 'history' ? tr('history') : language() === 'en' ? 'Links' : '链接'; if (linksContent) linksContent.hidden = state.sideMode !== 'links'; if (historyContent) historyContent.hidden = state.sideMode !== 'history'; if (state.sideMode === 'links') ensureLinks(); }
+  function updateSidePanel() {
+    const open = root.classList.contains('links-overlay-open');
+    if (sidePane) { sidePane.inert = !open; sidePane.setAttribute('aria-label', language() === 'en' ? 'Note sidebar' : '笔记侧栏'); }
+    $('.note-side-modes')?.setAttribute('aria-label', language() === 'en' ? 'Sidebar view' : '侧栏视图');
+    if (sideTitle) sideTitle.textContent = notebookCopy(state.sideMode);
+    if (notebooksContent) notebooksContent.hidden = state.sideMode !== 'notebooks';
+    if (linksContent) linksContent.hidden = state.sideMode !== 'links';
+    if (historyContent) historyContent.hidden = state.sideMode !== 'history';
+    ['notebooks', 'links', 'history'].forEach((mode) => {
+      const button = $('[data-note-action="side-' + mode + '"]');
+      if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
+    });
+    ['notebooks', 'links'].forEach((mode) => {
+      const button = $('[data-note-action="toggle-' + mode + '"]');
+      if (button) { button.setAttribute('aria-expanded', String(open && state.sideMode === mode)); button.setAttribute('aria-label', notebookCopy(mode)); button.title = notebookCopy(mode); }
+    });
+    const add = $('[data-note-action="new-notebook"]');
+    if (add) { add.title = notebookCopy('create'); add.setAttribute('aria-label', add.title); }
+    $('[data-note-action="close-links"]')?.setAttribute('aria-label', notebookCopy('close'));
+    renderNotebookTree();
+  }
+  function setSideOpen(open) {
+    root.classList.toggle('links-overlay-open', open); updateSidePanel(); queueNotebookSettings({ ui: notebookUi() });
+    if (!open) window.setTimeout(() => {
+      if (!root.classList.contains('links-overlay-open') && notebookTreeEl) { notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true; }
+    }, 270);
+  }
+  function setSideMode(mode) {
+    state.sideMode = ['notebooks', 'links', 'history'].includes(mode) ? mode : 'notebooks';
+    setSideOpen(true);
+    if (state.sideMode === 'links') ensureLinks();
+  }
   async function openHistory(path) { state.historyPath = path; state.historyVersion = null; setSideMode('history'); historyPreview.textContent = ''; historyRestore.disabled = true; historyCopy.disabled = true; try { const result = await request('/api/note-history?path=' + encodeURIComponent(path)); const fragment = document.createDocumentFragment(); (result.versions || []).forEach((version) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'note-history-item'; const date = new Date(version.createdAt); button.textContent = Number.isNaN(date.getTime()) ? version.createdAt : date.toLocaleString(); button.addEventListener('click', () => loadHistoryVersion(path, version.id, button)); fragment.appendChild(button); }); if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-link-empty'; message.textContent = tr('noHistory'); fragment.appendChild(message); } historyList.replaceChildren(fragment); } catch (error) { historyList.textContent = error.message || tr('versionUnavailable'); } }
   async function loadHistoryVersion(path, id, button) {
     const epoch = state.imageTextEpoch || 0;
@@ -2668,8 +2939,13 @@
       if (!activeTab && path && findEntry(path) && state.tabs.includes(path)) activeTab = path;
       if (!activeTab) activeTab = state.tabs.find((tabPath) => isBlankTab(tabPath) || !!findEntry(tabPath)) || '';
       if (activeTab && isBlankTab(activeTab)) { state.activeTab = activeTab; persistTabs(); renderTabs(); updateEditorVisibility(); }
-      else if (activeTab) await openNote(activeTab, { reuseActiveTab: false, skipSave: true, noFocus: true, noRecent: true });
+      else if (activeTab) {
+        state.restoringNotebookSelection = true;
+        try { await openNote(activeTab, { reuseActiveTab: false, skipSave: true, noFocus: true, noRecent: true }); }
+        finally { state.restoringNotebookSelection = false; }
+      }
       else { renderTabs(); updateEditorVisibility(); }
+      if (root.classList.contains('links-overlay-open') && state.sideMode === 'history' && state.current) await openHistory(state.current.path);
       if (state.active && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
       document.documentElement.classList.remove('note-browser-restoring');
       return true;
@@ -2702,7 +2978,7 @@
     }
     return true;
   }
-  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); if (noteBrowser) noteBrowser.suspend({ keepView: true }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } await flushNotebookSettings(); browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); if (noteBrowser) noteBrowser.suspend({ keepView: true }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
   // Retain the outgoing page until the workspace's slide finishes, then release
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
@@ -2770,7 +3046,9 @@
     else if (name === 'toggle-sort') setLibraryPanel(state.libraryPanel === 'sort' ? '' : 'sort', { restoreFocus: false });
     else if (name === 'toggle-library-settings') setLibraryPanel(state.libraryPanel === 'settings' ? '' : 'settings', { restoreFocus: false });
     else if (name === 'toggle-all-folders') toggleAllFolders();
-    else if (name === 'reveal-root') reveal('', false);
+    else if (name === 'toggle-all-notebooks') toggleAllNotebooks();
+    else if (name === 'new-notebook') createNotebook();
+    else if (name === 'reveal-root') reveal(state.notebookRoot, false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
     else if (name === 'toggle-source' && state.current) await setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'toggle-settings') { if (!state.settingsOpen) setLibraryPanel('', { restoreFocus: false }); setNoteSettingsOpen(!state.settingsOpen); }
@@ -2783,15 +3061,15 @@
       const rect = action.getBoundingClientRect();
       openContextMenu(entry, rect.right - 220, rect.bottom + 6, { viewModes: true, source: 'current-menu' });
     } else if (name === 'toggle-tree') root.classList.toggle('tree-overlay-open');
-    else if (name === 'toggle-links') {
-      if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') {
-        root.classList.remove('links-overlay-open');
-        try { localStorage.setItem(LINKS_OPEN_KEY, '0'); } catch (error) {}
-      } else setSideMode('links');
-    } else if (name === 'close-links') {
-      root.classList.remove('links-overlay-open');
-      try { localStorage.setItem(LINKS_OPEN_KEY, '0'); } catch (error) {}
-    } else if (name === 'history-restore') restoreHistory();
+    else if (name === 'toggle-links' || name === 'toggle-notebooks') {
+      const mode = name === 'toggle-links' ? 'links' : 'notebooks';
+      if (root.classList.contains('links-overlay-open') && state.sideMode === mode) setSideOpen(false);
+      else setSideMode(mode);
+    } else if (name === 'side-notebooks') setSideMode('notebooks');
+    else if (name === 'side-links') setSideMode('links');
+    else if (name === 'side-history') { if (state.current) openHistory(state.current.path); else setSideMode('history'); }
+    else if (name === 'close-links') setSideOpen(false);
+    else if (name === 'history-restore') restoreHistory();
     else if (name === 'history-copy' && state.historyVersion) copyText(state.historyVersion.content || '');
   });
 
@@ -2887,7 +3165,7 @@
   function selectTreeRoot() {
     state.rootTargeted = true;
     state.selectedPath = '';
-    state.selectedFolder = '';
+    state.selectedFolder = state.notebookRoot;
     updateTreeSelection();
   }
   treeEl.addEventListener('click', async (event) => {
@@ -2907,7 +3185,7 @@
   });
   treeEl.addEventListener('dragover', (event) => { if (event.target.closest('.note-tree-row')) return; const external = Array.from(event.dataTransfer && event.dataTransfer.items || []).some((item) => item.kind === 'file'); if (!state.draggedPath && !external) return; event.preventDefault(); event.dataTransfer.dropEffect = state.draggedPath ? 'move' : 'copy'; treeEl.classList.add('note-drop-root'); });
   treeEl.addEventListener('dragleave', (event) => { if (!treeEl.contains(event.relatedTarget)) treeEl.classList.remove('note-drop-root'); });
-  treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.draggedPath) moveEntry(state.draggedPath, ''); else importDataTransfer(event.dataTransfer, ''); });
+  treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.draggedPath) moveEntry(state.draggedPath, state.notebookRoot); else importDataTransfer(event.dataTransfer, state.notebookRoot); });
   document.addEventListener('pointerdown', (event) => {
     if (contextMenu && !contextMenu.hidden && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
     if (state.libraryPanel && !event.target.closest('.note-library-popover') && !event.target.closest('[data-note-action="toggle-sort"]') && !event.target.closest('[data-note-action="toggle-library-settings"]')) {
@@ -2959,10 +3237,11 @@
     else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); beginInlineRename(state.selectedPath || state.current.path); }
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });
-  function flushWorkspaceState() {
+  function flushWorkspaceState(keepalive) {
     const save = state.active ? flushSave() : Promise.resolve(true);
     persistViewStates();
-    return save;
+    const settings = flushNotebookSettings(keepalive);
+    return Promise.all([save, settings]).then(([saved]) => saved);
   }
   window.addEventListener('blur', () => { closeContextMenu(); flushWorkspaceState(); });
   window.addEventListener('resize', closeContextMenu);
@@ -2972,10 +3251,10 @@
     if (document.hidden) { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
     else if (state.active) { if (noteBrowser && browserIntent) noteBrowser.resume(); state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); });
-  window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(); });
-  document.addEventListener('relatum:languagechange', () => { updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
+  window.addEventListener('pagehide', () => { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(true); });
+  document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
-  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
+  initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();
