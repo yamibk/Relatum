@@ -1722,14 +1722,24 @@ button.note-browser-message, .note-browser-back, .note-browser-more { cursor: po
 .note-browser-showing-results .note-document-head,
 .note-browser-showing-results .note-document-body,
 .note-browser-showing-results .note-document-status { display: none; }
-.note-tag { color: #606060; text-decoration: none; cursor: pointer; }
-.note-tag:hover { text-decoration: underline; }
+.note-tag {
+  padding: .1em .5em;
+  border-radius: 999px;
+  color: #526548;
+  background: rgba(120, 147, 108, .16);
+  text-decoration: none;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  cursor: pointer;
+}
+.note-tag:hover { background: rgba(120, 147, 108, .24); text-decoration: none; }
 .note-frontmatter, .note-live-frontmatter { font-family: var(--note-font-mono); font-size: .9em; color: var(--text); opacity: .75; }
 .note-frontmatter { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: rgba(128, 128, 128, .06); border-radius: 5px; }
 .note-reading-content .md-local-image.is-failed .md-local-image-fallback { display: block; }
 .note-browser-nav-row:focus-visible, .note-browser-result:focus-visible,
 .note-browser-back:focus-visible, .note-browser-more:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
-body.start-page[data-start-theme="dark"] .note-tag,
+body.start-page[data-start-theme="dark"] .note-tag { color: #c1d2ba; background: rgba(150, 178, 135, .18); }
+body.start-page[data-start-theme="dark"] .note-tag:hover { background: rgba(150, 178, 135, .27); }
 body.start-page[data-start-theme="dark"] .note-browser-result-tags span { color: #b8b8b8; }
 body.start-page[data-start-theme="dark"] .note-browser-toggle[aria-pressed="true"],
 body.start-page[data-start-theme="dark"] .note-browser-back:hover,
