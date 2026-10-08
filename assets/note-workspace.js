@@ -68,6 +68,23 @@
   const browserResults = $('[data-role="note-browser-results"]');
   const browserBack = $('[data-role="note-browser-back"]');
   const browserToggle = $('[data-note-action="toggle-browser"]');
+  function browserModeActive() {
+    return root.classList.contains('note-browser-mode') || document.documentElement.classList.contains('note-browser-restoring');
+  }
+  function browserResultsActive() {
+    return root.classList.contains('note-browser-showing-results') || document.documentElement.classList.contains('note-browser-restoring');
+  }
+  function noteActionAvailable(name) {
+    if (browserModeActive() && ['new-note', 'new-folder', 'toggle-sort', 'toggle-all-folders'].includes(name)) return false;
+    if (browserResultsActive() && ['toggle-source', 'toggle-notebooks', 'current-menu'].includes(name)) return false;
+    return true;
+  }
+  function updateBrowserControls() {
+    updateNotebookRootLabel();
+    updateExpandAllButton();
+    updateViewToggle();
+    if (sortTrigger) sortTrigger.disabled = !noteActionAvailable('toggle-sort');
+  }
   const recentFiles = new Map();
   try { JSON.parse(localStorage.getItem('canvas:noteRecentFiles:v1') || '[]').slice(-200).forEach(([path, time]) => { if (typeof path === 'string' && Number.isFinite(time)) recentFiles.set(path, time); }); } catch (error) {}
   function persistRecent() {
@@ -89,7 +106,7 @@
   function showBrowserResults(show) {
     root.classList.toggle('note-browser-showing-results', show);
     $('.note-document-body')?.toggleAttribute('inert', show);
-    $('.note-document-head')?.toggleAttribute('inert', show);
+    updateBrowserControls();
   }
   async function loadNoteBrowser() {
     if (noteBrowser) return noteBrowser;
@@ -123,7 +140,7 @@
       browserNavigation.hidden = !enabled;
       treeEl.inert = enabled;
       try { localStorage.setItem('canvas:noteSidebarView:v1', enabled ? 'browse' : 'tree'); } catch (error) {}
-      document.documentElement.classList.remove('note-browser-restoring'); updateBrowserToggle();
+      document.documentElement.classList.remove('note-browser-restoring'); updateBrowserToggle(); updateBrowserControls();
       if (enabled) await browser.activate({ tag });
       else if (browser) browser.suspend();
       if (!enabled) scheduleInlineTitleScroll();
@@ -131,6 +148,8 @@
       if (sequence !== browserSequence || !state.active) return;
       document.documentElement.classList.remove('note-browser-restoring');
       browserIntent = false; root.classList.remove('note-browser-mode'); browserNavigation.hidden = true; treeEl.inert = false;
+      if (noteBrowser) noteBrowser.suspend();
+      updateBrowserControls();
       updateBrowserToggle(); showToast(error.message || tr('readFailed'), 'error');
     }
   }
@@ -402,7 +421,7 @@
     root.querySelectorAll('[data-note-action="new-note"], [data-note-action="new-folder"], [data-note-action="reveal-root"]').forEach((button) => {
       const key = button.dataset.noteAction === 'new-note' ? 'newNote' : button.dataset.noteAction === 'new-folder' ? 'newFolder' : 'openLibrary';
       const copy = selected ? tr(key) : language() === 'en' ? 'Select a notebook first' : '请先选择笔记本';
-      button.disabled = !selected; button.removeAttribute('title');
+      button.disabled = !selected || !noteActionAvailable(button.dataset.noteAction); button.removeAttribute('title');
       button.dataset.uiTooltip = copy; button.dataset.uiTooltipSource = copy; button.setAttribute('aria-label', copy);
     });
   }
@@ -974,11 +993,13 @@
   }
 
   function updateViewToggle() {
-    if (currentMenuButton) currentMenuButton.disabled = !state.current;
+    if (currentMenuButton) currentMenuButton.disabled = !state.current || !noteActionAvailable('current-menu');
+    const notebooksToggle = $('[data-note-action="toggle-notebooks"]');
+    if (notebooksToggle) notebooksToggle.disabled = !noteActionAvailable('toggle-notebooks');
     if (!viewToggle) return;
     const sourceMode = state.viewMode === 'source';
     const label = tr(sourceMode ? 'switchToLive' : 'switchToSource');
-    viewToggle.disabled = !state.current;
+    viewToggle.disabled = !state.current || !noteActionAvailable('toggle-source');
     viewToggle.setAttribute('aria-pressed', sourceMode ? 'true' : 'false');
     viewToggle.setAttribute('aria-label', label);
     viewToggle.setAttribute('data-ui-tooltip', label);
@@ -1614,7 +1635,7 @@
     const paths = folderPaths();
     const anyExpanded = paths.some((path) => state.expanded.has(path));
     const label = tr(anyExpanded ? 'collapseAll' : 'expandAll');
-    expandAllButton.disabled = !paths.length;
+    expandAllButton.disabled = !paths.length || !noteActionAvailable('toggle-all-folders');
     expandAllButton.dataset.allExpanded = anyExpanded ? 'true' : 'false';
     expandAllButton.dataset.uiTooltip = label;
     expandAllButton.setAttribute('aria-label', label);
@@ -3040,6 +3061,7 @@
       else { renderTabs(); updateEditorVisibility(); }
       if (state.active && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
       document.documentElement.classList.remove('note-browser-restoring');
+      updateBrowserControls();
       return true;
     })();
     state.initializePromise = initialize.finally(() => { state.initializePromise = null; });
@@ -3124,12 +3146,14 @@
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
     const name = action.dataset.noteAction;
+    if (action.disabled || !noteActionAvailable(name)) return;
     if (name === 'toggle-browser') { setBrowserMode(!browserIntent); return; }
     if (name === 'toggle-image-text') {
       toggleImageTextMode(action);
       return;
     }
     if (editorInputPending()) await whenEditorInputSettled();
+    if (action.disabled || !noteActionAvailable(name)) return;
     if (name === 'new-note') createEntry('note');
     else if (name === 'new-tab') openBlankTab();
     else if (name === 'close-all-tabs') { if (await finishInlineTitle()) await closeAllTabs(); }
@@ -3340,12 +3364,12 @@
       return;
     }
     const mod = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
-    if (mod && key === 'n') { event.preventDefault(); createEntry('note'); }
+    if (mod && key === 'n') { event.preventDefault(); if (noteActionAvailable('new-note')) createEntry('note'); }
     else if (mod && key === 't') { event.preventDefault(); openBlankTab(); }
     else if (mod && key === 'w' && state.activeTab) { event.preventDefault(); closeTab(state.activeTab); }
     else if (event.ctrlKey && event.key === 'Tab') { event.preventDefault(); switchTab(event.shiftKey ? -1 : 1); }
     else if (mod && /^[1-9]$/.test(event.key) && state.tabs.length) { event.preventDefault(); const index = event.key === '9' ? state.tabs.length - 1 : Math.min(Number(event.key) - 1, state.tabs.length - 1); activateTab(state.tabs[index]); }
-    else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); beginInlineRename(state.selectedPath || state.current.path); }
+    else if (event.key === 'F2' && (state.selectedPath || state.current)) { event.preventDefault(); if (!browserResultsActive()) beginInlineRename(state.selectedPath || state.current.path); }
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });
   function flushWorkspaceState(keepalive) {
@@ -3367,5 +3391,6 @@
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
+  updateBrowserControls();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

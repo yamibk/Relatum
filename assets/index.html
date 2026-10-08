@@ -1582,11 +1582,11 @@
         </div>
         <div class="note-head-actions">
           <button type="button" class="note-icon-button" data-note-action="new-note"
-            title="新建笔记" aria-label="新建笔记"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-file-plus-corner"/></svg></button>
+            title="新建笔记" aria-label="新建笔记" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-file-plus-corner"/></svg></button>
           <button type="button" class="note-icon-button note-folder-add" data-note-action="new-folder"
-            title="新建文件夹" aria-label="新建文件夹"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-folder-plus"/></svg></button>
+            title="新建文件夹" aria-label="新建文件夹" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-folder-plus"/></svg></button>
           <button type="button" class="note-icon-button note-sort-trigger" data-note-action="toggle-sort"
-            title="排序" aria-label="排序" aria-expanded="false" aria-controls="note-sort-menu"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-arrow-down-wide-narrow"/></svg></button>
+            title="排序" aria-label="排序" aria-expanded="false" aria-controls="note-sort-menu" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-arrow-down-wide-narrow"/></svg></button>
           <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-folders"
             title="全部展开" aria-label="全部展开" aria-pressed="false" disabled>
             <svg class="note-icon note-expand-icon note-expand-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-up-down"/></svg>
@@ -1647,7 +1647,6 @@
           <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-copy-x"/></svg>
         </button>
       </nav>
-      <section class="note-browser-results" data-role="note-browser-results" aria-label="笔记结果" hidden inert></section>
       <header class="note-document-head">
         <div class="note-current-copy">
           <button type="button" class="note-browser-back" data-role="note-browser-back" hidden>返回结果</button>
@@ -1661,13 +1660,14 @@
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g class="note-view-icon note-view-icon-source"><use href="#note-icon-code-xml"/></g><g class="note-view-icon note-view-icon-live"><use href="#note-icon-file-pen-line"/></g></svg>
           </button>
           <button type="button" class="note-side-button note-notebooks-toggle" data-note-action="toggle-notebooks"
-            aria-label="笔记本" title="笔记本" aria-expanded="false" aria-controls="note-shared-side-panel">
+            aria-label="笔记本" title="笔记本" aria-expanded="false" aria-controls="note-shared-side-panel" disabled>
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-notebook-outline"/></svg>
           </button>
           <button type="button" class="note-more-button" data-note-action="current-menu"
             aria-label="当前笔记菜单" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-ellipsis"/></svg></button>
         </div>
       </header>
+      <section class="note-browser-results" data-role="note-browser-results" aria-label="笔记结果" hidden inert></section>
       <div class="note-document-body">
         <div class="note-error-bar" data-role="note-error" role="status" hidden></div>
         <div class="note-inline-title-shell" data-role="note-inline-title-shell" hidden>

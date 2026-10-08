@@ -147,13 +147,9 @@
       const scroll = results.scrollTop;
       const fragment = document.createDocumentFragment();
       const heading = document.createElement('header'); heading.className = 'note-browser-results-head';
-      const mobile = button('', () => root.classList.toggle('tree-overlay-open'), 'note-mobile-pane-button');
-      if (ctx.icon) mobile.appendChild(ctx.icon('panel-left'));
-      mobile.setAttribute('aria-label', ctx.language() === 'en' ? 'Show note navigation' : '显示笔记导航');
-      mobile.title = mobile.getAttribute('aria-label');
       const title = document.createElement('h2'); title.textContent = resultProviderId === 'tags' ? '#' + (resultSelection.label || resultSelection.key) : resultSelection.label || copy(providers.get(resultProviderId).label);
       const count = document.createElement('span'); count.textContent = copy('count').replace('{count}', total);
-      heading.append(mobile, title, count); fragment.appendChild(heading);
+      heading.append(title, count); fragment.appendChild(heading);
       rows.forEach((note) => {
         const row = button('', async () => {
           if (!active || (loading && resetting)) return;
