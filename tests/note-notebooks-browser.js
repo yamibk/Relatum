@@ -52,10 +52,11 @@ async function freePort() {
     source = source.replace('  window.CanvasNoteWorkspace = {',
       '  window.__notebooksTest = {state, editor: liveEditor, flushNotebookSettings, triggerExternalSync};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
-    let treeRequests = 0, settingRequests = 0;
+    let treeRequests = 0, settingRequests = 0, creationRequests = 0;
     page.on('request', request => {
       if (request.url().includes('/api/notes-tree')) treeRequests++;
       if (request.url().includes('/api/note-notebooks-settings')) settingRequests++;
+      if (/\/api\/note-(create|import-begin)$/.test(request.url())) creationRequests++;
     });
     async function enter() {
       await page.goto(url);
@@ -67,6 +68,11 @@ async function freePort() {
     const right = '[data-role="note-notebook-tree"]';
     const row = (host, value) => page.locator(`${host} .note-tree-row[data-note-path="${value}"]`);
     const rootRow = value => page.locator(`${right} > .note-notebook-root > .note-tree-row[data-note-path="${value}"]`);
+    const notebookBlank = page.locator('[data-role="note-notebooks-content"]');
+    async function clickNotebookBlank(button = 'left') {
+      const bounds = await notebookBlank.boundingBox();
+      await notebookBlank.click({ button, position: { x: bounds.width / 2, y: bounds.height - 12 } });
+    }
     const toolPositions = () => page.locator('.note-document-tools > button').evaluateAll(buttons => buttons.map(button => {
       const rect = button.getBoundingClientRect(); return [Math.round(rect.x * 100), Math.round(rect.y * 100)];
     }));
@@ -177,8 +183,103 @@ async function freePort() {
       assert.deepEqual(await toolPositions(), closedToolPositions, 'sidebar mode does not move toolbar');
       await checkSideTools(mode); await checkSettingsPopover();
       assert.equal(await page.locator(`[data-note-action="side-${mode}"]`).getAttribute('aria-pressed'), 'true');
+      if (mode === 'links') {
+        await page.locator('[data-role="note-links-content"]').dispatchEvent('contextmenu', { button: 2 });
+        assert.equal(await page.locator('[data-role="note-context-menu"]').isHidden(), true, 'links blank area does not show notebook actions');
+      }
     }
     assert.deepEqual(await notebookNames(), ['notes', 'Empty', 'Physics']);
+    assert.equal(await page.locator('.note-icon-definitions').count(), 1);
+    assert.deepEqual(await page.locator('.note-workspace svg.note-icon use').evaluateAll(uses =>
+      uses.filter(use => !document.getElementById(use.getAttribute('href').slice(1))).map(use => use.getAttribute('href'))), [], 'all local icon references resolve');
+    for (const [action, icon] of Object.entries({ 'new-note': 'file-plus-corner', 'new-folder': 'folder-plus',
+      'toggle-library-settings': 'folder-cog', 'toggle-settings': 'sliders-horizontal', 'toggle-focus': 'panel-top-close', 'current-menu': 'ellipsis' })) {
+      assert.equal(await page.locator(`[data-note-action="${action}"] svg use`).first().getAttribute('href'), '#note-icon-' + icon);
+    }
+    assert.equal(await page.locator('[data-note-action="toggle-focus"] svg').evaluateAll(items => items.filter(el => getComputedStyle(el).display !== 'none').length), 1);
+    assert.deepEqual(await page.locator('.note-document-tools svg').evaluateAll(items => items.map(el => {
+      const style = getComputedStyle(el); return [el.getAttribute('viewBox'), style.width, style.height, style.strokeLinecap];
+    })), Array(3).fill(['0 0 24 24', '18px', '18px', 'round']));
+    await clickNotebookBlank('right');
+    const blankMenu = page.locator('[data-role="note-context-menu"]');
+    await blankMenu.waitFor();
+    assert.deepEqual(await blankMenu.locator('button').allTextContents(), ['新建笔记本', '在资源管理器中打开']);
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), '', 'blank context menu preserves selection');
+    let revealed;
+    await page.route('**/api/note-reveal', route => {
+      revealed = route.request().postDataJSON();
+      return route.fulfill({ json: { ok: true } });
+    });
+    await blankMenu.locator('button').last().click();
+    await waitFor(() => !!revealed, 'blank explorer action was not dispatched');
+    assert.equal(revealed.path, '', 'blank explorer always targets notes/');
+    await page.unroute('**/api/note-reveal');
+    await rootRow('').locator('.note-tree-label').dblclick();
+    assert.equal(await page.locator(`${right} .note-tree-rename`).count(), 0, 'default notebook cannot rename');
+    await rootRow('CustomNotebook/Physics').locator('.note-notebook-icon').dblclick();
+    assert.equal(await page.locator(`${right} .note-tree-rename`).count(), 0, 'icon double click does not rename');
+    await clickNotebookBlank('right'); await blankMenu.waitFor();
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), 'CustomNotebook/Physics', 'blank context menu also preserves a custom selection');
+    await rootRow('CustomNotebook/Physics').locator('.note-tree-label').dblclick();
+    let renameNotebook = page.locator(`${right} .note-tree-rename`);
+    await renameNotebook.waitFor(); await renameNotebook.fill('Empty'); await renameNotebook.press('Enter');
+    await page.locator(`${right} .note-tree-inline-error`).waitFor();
+    await clickNotebookBlank();
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), 'CustomNotebook/Physics', 'failed rename prevents deselection');
+    assert.equal(await renameNotebook.count(), 1);
+    await renameNotebook.press('Escape');
+    await rootRow('').click();
+    const retained = await page.evaluate(() => ({ tabs: __notebooksTest.state.tabs.slice(),
+      left: [...__notebooksTest.state.expanded], right: [...__notebooksTest.state.notebookExpanded] }));
+    await clickNotebookBlank();
+    await page.waitForFunction(() => __notebooksTest.state.notebookRoot === null);
+    assert.equal(await page.locator(left).innerHTML(), '', 'unselected left tree is entirely empty');
+    assert.equal(await page.locator('.note-tree-foot').isHidden(), true);
+    assert.equal(await page.locator(`${right} .selected-notebook`).count(), 0);
+    assert.equal(await page.evaluate(() => __notebooksTest.editor.view === __originalView && __notebooksTest.editor.view.state.doc === __originalDoc), true);
+    assert.deepEqual(await page.evaluate(() => ({ tabs: __notebooksTest.state.tabs.slice(),
+      left: [...__notebooksTest.state.expanded], right: [...__notebooksTest.state.notebookExpanded] })), retained);
+    for (const action of ['new-note', 'new-folder', 'reveal-root']) {
+      assert.equal(await page.locator(`[data-note-action="${action}"]`).evaluateAll(items => items.every(el => el.disabled && el.dataset.uiTooltip === '请先选择笔记本')), true);
+    }
+    const beforeCreation = creationRequests;
+    await page.locator('.cm-content').click(); await page.keyboard.press('Control+n');
+    await page.locator(left).evaluate(el => {
+      const dataTransfer = new DataTransfer(); dataTransfer.items.add(new File(['blocked'], 'Blocked.md', { type: 'text/markdown' }));
+      el.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer }));
+      el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
+    });
+    await page.waitForTimeout(200);
+    assert.equal(creationRequests, beforeCreation, 'unselected new-note and tree drop make no filesystem request');
+    assert(!fs.existsSync(path.join(notes, 'Blocked.md')));
+    await page.locator('[data-note-action="toggle-browser"]').click();
+    await page.locator('.note-browser-result').first().waitFor();
+    const browserHeading = await page.locator('.note-browser-results-head').textContent();
+    await clickNotebookBlank();
+    await page.waitForFunction(() => !document.querySelector('.note-workspace').classList.contains('note-browser-mode'));
+    assert.equal(await page.locator(left).innerHTML(), '');
+    await page.locator('[data-note-action="toggle-browser"]').click();
+    await page.locator('.note-browser-result').first().waitFor();
+    assert.equal(await page.locator('.note-browser-results-head').textContent(), browserHeading, 'browse conditions survive blank deselection');
+    await clickNotebookBlank();
+    await page.waitForFunction(() => !document.querySelector('.note-workspace').classList.contains('note-browser-mode'));
+    fs.writeFileSync(path.join(notes, 'Root.md'), 'Externally changed note\n');
+    await sync();
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), null, 'external body refresh cannot select a notebook');
+    assert.equal(await page.locator(left).innerHTML(), '');
+    await flush(); assert.equal(settings().ui.selectedRoot, null);
+    await page.reload(); await page.waitForFunction(() => window.__notebooksTest?.state.initialized);
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), null, 'null selection survives restart with an open note');
+    assert.equal(await page.locator(left).innerHTML(), '');
+    assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'Root.md');
+    await page.locator('button[data-start-workspace="canvas"]').click();
+    await page.locator('button[data-start-workspace="notes"]').click();
+    await page.waitForFunction(() => __notebooksTest.state.active);
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), null, 'workspace return keeps null selection');
+    await page.locator('.note-tab[data-note-tab-path="Root.md"]').click();
+    await page.waitForFunction(() => __notebooksTest.state.notebookRoot === '');
+    await row(left, 'Root.md').waitFor();
+    await page.evaluate(() => { window.__originalDoc = __notebooksTest.editor.view.state.doc; window.__originalView = __notebooksTest.editor.view; });
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false');
     await rootRow('CustomNotebook/Physics').click();
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false', 'row selection does not expand notebook');
@@ -237,16 +338,21 @@ async function freePort() {
     await rootRow('').click({ button: 'right' });
     assert.equal(await page.locator('[data-role="note-context-menu"]').isVisible(), false, 'default notes has no delete menu');
 
-    await page.locator('[data-note-action="new-notebook"]').click();
+    await clickNotebookBlank('right');
+    await blankMenu.locator('button').first().click();
     await rootRow('CustomNotebook/Untitled1').waitFor();
+    assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), 'CustomNotebook/Untitled1');
     assert.equal(await page.locator('.note-modal-card').count(), 0, 'creation does not ask for a name');
     await page.locator('[data-note-action="new-notebook"]').click();
     await rootRow('CustomNotebook/Untitled2').waitFor();
     await rootRow('CustomNotebook/Untitled2').click({ button: 'right' });
-    await page.locator('[data-role="note-context-menu"] button').filter({ hasText: /^重命名$/ }).click();
+    assert.equal(await blankMenu.locator('button').filter({ hasText: /^重命名$/ }).count(), 1);
+    await page.locator('.note-notebook-colors button[data-color="purple"]').click(); await flush();
+    await rootRow('CustomNotebook/Untitled2').locator('.note-tree-label').dblclick();
     const notebookRename = page.locator(`${right} .note-tree-rename`);
     await notebookRename.fill('New'); await notebookRename.press('Enter');
     await rootRow('CustomNotebook/New').waitFor();
+    await flush(); assert.equal(settings().colors['CustomNotebook/New'], 'purple', 'double-click rename retains color');
     assert(fs.statSync(path.join(container, 'New')).isDirectory());
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'CustomNotebook/Physics/Chapter/C.md');
     await page.locator('[data-note-action="new-folder"]').click();
@@ -333,6 +439,10 @@ async function freePort() {
     await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; document.body.dataset.startBackground = 'scenic'; });
     await page.evaluate(() => RelatumI18n.setLanguage('en'));
     assert.equal(await page.locator('[data-note-action="side-notebooks"]').textContent(), 'Notebooks');
+    await clickNotebookBlank(); await page.waitForFunction(() => __notebooksTest.state.notebookRoot === null);
+    assert.equal(await page.locator('.note-tree-pane [data-note-action="new-note"]').getAttribute('data-ui-tooltip'), 'Select a notebook first');
+    assert.equal(await page.locator('.note-tree-pane [data-note-action="new-note"]').evaluate(el => getComputedStyle(el).cursor), 'default');
+    await rootRow('').click();
     await page.setViewportSize({ width: 680, height: 800 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     assert.equal(await page.locator('.note-workspace').evaluate(el => getComputedStyle(el).transitionDuration), '0s');

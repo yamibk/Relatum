@@ -79,10 +79,41 @@ class NotebookTests(unittest.TestCase):
         for patch in ({"colors": {"../escape": "blue"}}, {"colors": {"": "blue"}},
                       {"colors": {"CustomNotebook/Physics/sub": "blue"}},
                       {"colors": {"CustomNotebook/Physics": "invalid"}},
-                      {"ui": {"selectedRoot": "ordinary-folder"}}, {"ui": {"expanded": ["../escape"]}}):
+                      {"ui": {"selectedRoot": "ordinary-folder"}}, {"ui": {"expanded": ["../escape"]}},
+                      {"ui": {"selectedRoot": False}}, {"ui": {"selectedRoot": []}}, {"ui": {"selectedRoot": 1}}):
             with self.subTest(patch=patch), self.assertRaises(NotesError):
                 self.store.update_notebook_settings(patch)
         self.assertFalse(self.settings_path.exists())
+
+    def test_unselected_roundtrip_and_partial_merge(self):
+        relative = self.notebook()
+        before = self.store.update_notebook_settings({"colors": {relative: "blue"},
+            "ui": {"selectedRoot": relative, "expanded": ["", relative]}})
+        unselected = self.store.update_notebook_settings({"ui": {"selectedRoot": None}})
+        self.assertIsNone(unselected["ui"]["selectedRoot"])
+        self.assertEqual(unselected["colors"], before["colors"])
+        self.assertEqual(unselected["ui"]["expanded"], before["ui"]["expanded"])
+        merged = self.store.update_notebook_settings({"ui": {"open": True, "mode": "links"}})
+        self.assertIsNone(merged["ui"]["selectedRoot"])
+        self.assertEqual(NotesStore(self.store.root).notebook_settings(), merged)
+        self.assertEqual(json.loads(self.settings_path.read_text(encoding="utf-8")), merged)
+        with mock.patch.object(self.store, "atomic_text", side_effect=AssertionError("unchanged write")):
+            self.assertEqual(self.store.update_notebook_settings({"ui": {"selectedRoot": None}}), merged)
+        (self.store.root / relative).rmdir()
+        pruned = self.store.update_notebook_settings({"pruneMissing": [relative]})
+        self.assertIsNone(pruned["ui"]["selectedRoot"])
+        self.assertEqual(pruned["colors"], {})
+        self.assertEqual(pruned["ui"]["expanded"], [""])
+
+    def test_selected_root_read_defaults_and_null_do_not_rewrite(self):
+        self.settings_path.parent.mkdir()
+        for ui, expected in (({}, ""), ({"selectedRoot": False}, ""),
+                             ({"selectedRoot": "ordinary-folder"}, ""), ({"selectedRoot": None}, None)):
+            with self.subTest(ui=ui):
+                raw = json.dumps({"version": 1, "colors": {}, "ui": ui})
+                self.settings_path.write_text(raw, encoding="utf-8")
+                self.assertEqual(NotesStore(self.store.root).notebook_settings()["ui"]["selectedRoot"], expected)
+                self.assertEqual(self.settings_path.read_text(encoding="utf-8"), raw)
 
     def test_only_confirmed_missing_paths_are_pruned(self):
         relative = self.notebook()

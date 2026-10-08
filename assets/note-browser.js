@@ -43,8 +43,9 @@
     function showDocument() {
       if (!results.hidden) resultScroll = results.scrollTop;
       ctx.showResults(false); results.hidden = true; results.inert = true;
-      back.hidden = !active; back.textContent = copy('return');
+      back.hidden = !active; updateBackLabel();
     }
+    function updateBackLabel() { back.replaceChildren(...(ctx.icon ? [ctx.icon('arrow-left')] : []), document.createTextNode(copy('return'))); }
     function renderNavigation(animateId) {
       const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       nav.setAttribute('aria-label', copy('untitled'));
@@ -66,6 +67,7 @@
             const toggle = document.createElement('span'); toggle.className = 'note-tree-toggle'; toggle.setAttribute('aria-hidden', 'true');
             heading.appendChild(toggle);
           }
+          if (ctx.icon) heading.appendChild(ctx.icon(provider.id === 'tags' ? 'hash' : hierarchical ? 'folder' : 'clock-3', 'note-browser-icon'));
           heading.appendChild(label); wrapper.appendChild(heading);
           const shell = document.createElement('div'); shell.className = 'note-tree-children-shell';
           const children = document.createElement('div'); children.className = 'note-tree-children'; shell.appendChild(children);
@@ -74,7 +76,7 @@
           navigationGroups.set(provider.id, group); nav.appendChild(wrapper);
         }
         const { heading, shell, children } = group;
-        group.label.textContent = (hierarchical ? '' : '◷  ') + copy(provider.label);
+        group.label.textContent = copy(provider.label);
         heading.classList.toggle('is-selected', providerId === provider.id && !hierarchical);
         if (!hierarchical) return;
         const items = navigation.get(provider.id) || [];
@@ -88,7 +90,9 @@
           if (!item) {
             const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry';
             const row = button('', () => select(provider.id, item.tag)); row.classList.add('note-browser-tag-row');
-            const label = document.createElement('span'), count = document.createElement('small'); row.append(label, count); wrapper.appendChild(row);
+            const label = document.createElement('span'), count = document.createElement('small');
+            if (ctx.icon && provider.id === 'tags') row.appendChild(ctx.icon('hash', 'note-browser-icon'));
+            row.append(label, count); wrapper.appendChild(row);
             item = { wrapper, row, label, count, tag }; group.rows.set(tag.key, item);
           }
           item.tag = tag;
@@ -96,7 +100,7 @@
           item.row.style.setProperty('--tag-depth', provider.id === 'tags' ? tag.key.split('/').length - 1 : tag.depth || 0);
           item.wrapper.style.setProperty('--note-child-index', Math.min(index, 7));
           item.row.classList.toggle('is-selected', providerId === provider.id && selection.key === tag.key);
-          item.label.textContent = provider.id === 'tags' ? '# ' + tag.label.split('/').pop() : tag.label;
+          item.label.textContent = provider.id === 'tags' ? tag.label.split('/').pop() : tag.label;
           item.count.textContent = tag.count ?? '';
           if (next === item.wrapper) next = next.nextElementSibling; else children.insertBefore(item.wrapper, next);
         });
@@ -141,8 +145,10 @@
       const scroll = results.scrollTop;
       const fragment = document.createDocumentFragment();
       const heading = document.createElement('header'); heading.className = 'note-browser-results-head';
-      const mobile = button('☰', () => root.classList.toggle('tree-overlay-open'), 'note-mobile-pane-button');
+      const mobile = button('', () => root.classList.toggle('tree-overlay-open'), 'note-mobile-pane-button');
+      if (ctx.icon) mobile.appendChild(ctx.icon('panel-left'));
       mobile.setAttribute('aria-label', ctx.language() === 'en' ? 'Show note navigation' : '显示笔记导航');
+      mobile.title = mobile.getAttribute('aria-label');
       const title = document.createElement('h2'); title.textContent = providerId === 'tags' ? '#' + (selection.label || selection.key) : selection.label || copy(providers.get(providerId).label);
       const count = document.createElement('span'); count.textContent = copy('count').replace('{count}', total);
       heading.append(mobile, title, count); fragment.appendChild(heading);
@@ -212,7 +218,7 @@
       suspend(options) { active = false; pageSequence++; navigationSequences.forEach((value, key) => navigationSequences.set(key, value + 1)); actionSequence++; navigationGroups.forEach((group) => { cancelAnimationFrame(group.frame); clearTimeout(group.timer); }); if (loading) dirty = true; loading = false; if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
       resume() { active = true; renderNavigation(); if (!results.hidden && dirty) refreshResults(); loadNavigation(); },
       dispose() { this.suspend(); disposed = true; back.removeEventListener('click', onBack); nav.replaceChildren(); results.replaceChildren(); },
-      setLanguage() { renderNavigation(); renderResults(); back.textContent = copy('return'); },
+      setLanguage() { renderNavigation(); renderResults(); updateBackLabel(); },
       showDocument,
       invalidate() { dirty = true; providers.forEach((provider) => navigationDirty.add(provider.id)); if (active) { if (!results.hidden) refreshResults(); loadNavigation(); } },
     };

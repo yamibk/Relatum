@@ -462,6 +462,8 @@ class NotesStore:
                     target[key] = value
                 elif key == "mode" and value == "history" and not strict:
                     target[key] = "notebooks"
+                elif key == "selectedRoot" and value is None:
+                    target[key] = None
                 elif key == "selectedRoot" and isinstance(value, str):
                     target[key] = self._notebook_setting_path(value, root_only=bool(value))
                 elif key == "expanded" and isinstance(value, list):

@@ -70,7 +70,7 @@ assert(notes.includes('renameCommitPromise'), 'inline rename completion must be 
 assert(notes.includes('finishInlineRename()'), 'a tree click must finish an active inline rename instead of being swallowed');
 assert(!notes.includes('if (state.renamePath) return;'), 'an active inline rename must not swallow the next tree click');
 assert(notes.includes('function selectTreeRoot()') && notes.includes("treeEl.addEventListener('click'"),
-  'clicking blank tree space must clear the selected folder and target the notes root');
+  'clicking blank left tree space must clear the selected folder and target the selected notebook root');
 assert(notes.includes('state.rootTargeted = true;') && notes.includes("state.selectedFolder = '';"),
   'blank tree selection must explicitly override the current note folder fallback');
 assert(notes.includes('if (!state.rootTargeted) { state.selectedPath = documentState.path;'),
@@ -80,6 +80,19 @@ assert(notes.includes('expandTreePath(result.path, false)'), 'new notes must rev
 assert(notes.includes('row.setAttribute(\'aria-expanded\''), 'folder expansion state must be exposed to UI automation and assistive tech');
 assert(!notes.includes("toggle.textContent = expanded ? '⌄' : '›'"), 'folder disclosure must not depend on font glyph characters');
 assert(notes.includes('function setFolderExpanded'), 'folder disclosure should update only the affected subtree');
+const notebookBlankSource = notes.slice(notes.indexOf('async function finishNotebookInteraction'), notes.indexOf("treeEl.addEventListener('click'"));
+assert(notebookBlankSource.includes("state.sideMode === 'notebooks'")
+  && notebookBlankSource.includes("event.target.closest('.note-tree-row, .note-tree-inline-error')"), 'blank notebook actions exclude tools, links and rows');
+assert(notebookBlankSource.includes("contextButton(notebookCopy('create'), createNotebook)")
+  && notebookBlankSource.includes("contextButton(tr('explorer'), () => reveal('', false))"), 'blank notebook menu creates a notebook or reveals the complete library');
+assert(notebookBlankSource.includes('selectNotebook(null, { rootTarget: true })')
+  && notebookBlankSource.includes('await setBrowserMode(false)'), 'blank deselection exits browsing without changing the document');
+assert(notes.includes('if (state.notebookRoot === null) return []')
+  && notes.includes('if (parent === null) return;') && notes.includes('if (destination === null || state.importRunning) return;'), 'unselected roots cannot render files, create or import');
+assert(notes.includes('Select a notebook first') && notes.includes('请先选择笔记本')
+  && css.includes('.note-workspace .note-tree-foot[hidden] { display: none; }'), 'unselected roots hide paths and explain disabled entries in both languages');
+assert(notes.includes("if (entry.notebook && entry.path) label.addEventListener('dblclick'")
+  && notes.includes("if (event.target.closest('input')) return;"), 'only custom notebook labels begin inline rename');
 assert(notes.includes("shell.className = 'note-tree-children-shell'"), 'folder children need a transition shell');
 for (const obsolete of ['revision_conflict', '磁盘版本已变化', '加载磁盘版本', '另存为副本', '尚未打开笔记', 'note-save-state']) {
   assert(!notes.includes(obsolete) && !html.includes(obsolete), `obsolete note state remains: ${obsolete}`);
@@ -89,7 +102,7 @@ assert(html.includes('data-role="note-reading-view"'), 'Notes needs a safe read-
 assert(html.includes('data-note-action="toggle-source"') && html.includes('data-role="note-view-toggle"'),
   'the document header needs a direct Live Preview/source toggle');
 assert(html.includes('data-note-action="toggle-image-text"') && html.includes('data-role="note-image-text-tools"'),
-  'the document header needs an image-bound text entry and compact toolbar');
+  'the shared sidebar needs an image-bound text entry and compact toolbar');
 assert(/data-role="note-image-text-toggle"[^>]*disabled/.test(html),
   'image text must start disabled until a standalone local image is selected');
 assert(html.includes('data-image-text-action="edit"') && /data-image-text-action="edit"[^>]*disabled/.test(html),
@@ -114,7 +127,7 @@ assert(notes.includes('persistExpanded(); renderTree();'), 'expand-all state mus
 assert(html.includes('data-role="note-word-count"') && html.includes('data-role="note-character-count"'), 'the document footer needs word and character counts');
 assert(html.includes('data-role="note-font-scale"') && html.includes('data-role="note-settings-pop"'),
   'Note settings must own the Markdown font scale control');
-assert(html.includes('data-note-action="toggle-settings"'), 'Note settings need a toolbar gear trigger');
+assert(html.includes('data-note-action="toggle-settings"'), 'Note settings need a shared toolbar sliders trigger');
 const documentTools = html.slice(html.indexOf('<div class="note-document-tools">'), html.indexOf('</header>', html.indexOf('<div class="note-document-tools">')));
 assert.deepEqual(Array.from(documentTools.matchAll(/data-note-action="([^"]+)"/g), match => match[1]),
   ['toggle-source', 'toggle-notebooks', 'current-menu'], 'the document toolbar has exactly three entries');
@@ -151,6 +164,9 @@ assert(notes.includes('editorSnapshot()') && notes.includes('setEditorDocument')
 const applyDocumentSource = notes.slice(notes.indexOf('function applyDocument'), notes.indexOf('function clearCurrent'));
 assert(applyDocumentSource.includes('options.preserveViewState') && applyDocumentSource.includes('editorSnapshot()'),
   'external document refreshes must be able to carry the current editor view state');
+assert(!applyDocumentSource.includes('selectNotebook(') && openNoteSource.includes('!options?.preserveNotebook')
+  && notes.includes('noFocus: true, preserveNotebook: true'), 'background refresh and automatic tab reconciliation cannot select a notebook');
+assert(notes.includes('ui.selectedRoot === null ? null') && notes.includes('selectedRoot: state.notebookRoot'), 'null is persisted independently of the default empty-string root');
 assert(notes.includes("applyDocument(disk, { preserveViewState: true })"),
   'an external revision refresh must preserve the caret selection and scroll position');
 assert(notes.includes("if (settings.metadataOnly && !metadataChanged) return true;"),
@@ -262,6 +278,17 @@ assert(css.includes('.note-tree-children'), 'nested folders need visible hierarc
 assert(css.includes('.note-tree-row[aria-expanded] .note-tree-toggle::before'), 'folder disclosure needs a geometric CSS icon');
 assert(css.includes('.note-tree-children-shell.is-open'), 'nested folders need a height and opacity transition');
 assert(css.includes('.note-tree-icon.is-folder { opacity:'), 'folder icons need the unified SVG treatment');
+const noteShell = html.slice(html.indexOf('<section class="note-workspace'), html.indexOf('</section>', html.indexOf('data-role="note-settings-pop"')));
+const symbols = Array.from(noteShell.matchAll(/<symbol id="(note-icon-[^"]+)" viewBox="0 0 24 24"/g), match => match[1]);
+assert(symbols.length > 20 && new Set(symbols).size === symbols.length, 'the workspace defines a compact unique local icon subset');
+for (const match of noteShell.matchAll(/<use href="#(note-icon-[^"]+)"/g)) assert(symbols.includes(match[1]), `missing icon symbol ${match[1]}`);
+assert(notes.includes("use.setAttribute('href', '#note-icon-' + name)") && notes.includes("noteIcon(kind === 'folder' ? 'folder' : 'file-text'"), 'dynamic trees share static symbol definitions');
+assert(noteShell.includes('#note-icon-folder-cog') && noteShell.includes('#note-icon-sliders-horizontal')
+  && noteShell.includes('#note-icon-panel-top-close') && noteShell.includes('#note-icon-panel-top-open'), 'settings and focus use distinct meaningful icons');
+assert(!notes.includes("close.textContent = '×'") && !notes.includes("separator.textContent = '›'"), 'navigation and close shapes do not depend on font glyphs');
+assert(css.includes('stroke-linecap: round; stroke-linejoin: round') && css.includes('--note-control-focus:')
+  && css.includes('width: 16px; height: 16px; opacity: .8'), 'icons share line geometry, tree scale and visible keyboard focus');
+assert(read('THIRD_PARTY_NOTICES.md').includes('Lucide') && read('THIRD_PARTY_NOTICES.md').includes('Cole Bemis'), 'the local icon subset includes its upstream licenses');
 assert(css.includes('.note-expand-all[data-all-expanded="true"] .note-expand-icon-close'),
   'the expand-all control needs a distinct collapse state');
 assert(css.includes('.note-path-crumb.is-file'), 'the active note header needs a folder breadcrumb');

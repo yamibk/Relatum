@@ -1528,35 +1528,69 @@
 
   <section class="note-workspace start-workspace-panel" id="start-notes-workspace"
     data-start-workspace-panel="notes" aria-label="Markdown 笔记库" hidden>
+    <svg class="note-icon-definitions" xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="note-icon-file-plus-corner" viewBox="0 0 24 24"><path d="M11.35 22H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v5.35" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M14 19h6" /><path d="M17 16v6" /></symbol>
+        <symbol id="note-icon-folder-plus" viewBox="0 0 24 24"><path d="M12 10v6" /><path d="M9 13h6" /><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
+        <symbol id="note-icon-folder-cog" viewBox="0 0 24 24"><path d="M10.3 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.98a2 2 0 0 1 1.69.9l.66 1.2A2 2 0 0 0 12 6h8a2 2 0 0 1 2 2v3.3" /><path d="m14.305 19.53.923-.382" /><path d="m15.228 16.852-.923-.383" /><path d="m16.852 15.228-.383-.923" /><path d="m16.852 20.772-.383.924" /><path d="m19.148 15.228.383-.923" /><path d="m19.53 21.696-.382-.924" /><path d="m20.772 16.852.924-.383" /><path d="m20.772 19.148.924.383" /><circle cx="18" cy="18" r="3" /></symbol>
+        <symbol id="note-icon-sliders-horizontal" viewBox="0 0 24 24"><path d="M10 5H3" /><path d="M12 19H3" /><path d="M14 3v4" /><path d="M16 17v4" /><path d="M21 12h-9" /><path d="M21 19h-5" /><path d="M21 5h-7" /><path d="M8 10v4" /><path d="M8 12H3" /></symbol>
+        <symbol id="note-icon-panel-top-close" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="m9 16 3-3 3 3" /></symbol>
+        <symbol id="note-icon-panel-top-open" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="m15 14-3 3-3-3" /></symbol>
+        <symbol id="note-icon-code-xml" viewBox="0 0 24 24"><path d="m18 16 4-4-4-4" /><path d="m6 8-4 4 4 4" /><path d="m14.5 4-5 16" /></symbol>
+        <symbol id="note-icon-file-pen-line" viewBox="0 0 24 24"><path d="M14.364 13.634a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506l4.013-4.009a1 1 0 0 0-3.004-3.004z" /><path d="M14.487 7.858A1 1 0 0 1 14 7V2" /><path d="M20 19.645V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l2.516 2.516" /><path d="M8 18h1" /></symbol>
+        <symbol id="note-icon-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></symbol>
+        <symbol id="note-icon-plus" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M12 5v14" /></symbol>
+        <symbol id="note-icon-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
+        <symbol id="note-icon-clock-3" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 6v6h4" /></symbol>
+        <symbol id="note-icon-hash" viewBox="0 0 24 24"><line x1="4" x2="20" y1="9" y2="9" /><line x1="4" x2="20" y1="15" y2="15" /><line x1="10" x2="8" y1="3" y2="21" /><line x1="16" x2="14" y1="3" y2="21" /></symbol>
+        <symbol id="note-icon-image-plus" viewBox="0 0 24 24"><path d="M16 5h6" /><path d="M19 2v6" /><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /><circle cx="9" cy="9" r="2" /></symbol>
+        <symbol id="note-icon-square-pen" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" /></symbol>
+        <symbol id="note-icon-trash" viewBox="0 0 24 24"><path d="M10 11v6" /><path d="M14 11v6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></symbol>
+        <symbol id="note-icon-arrow-down-wide-narrow" viewBox="0 0 24 24"><path d="m3 16 4 4 4-4" /><path d="M7 20V4" /><path d="M11 4h10" /><path d="M11 8h7" /><path d="M11 12h4" /></symbol>
+        <symbol id="note-icon-chevrons-up-down" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5" /><path d="m7 9 5-5 5 5" /></symbol>
+        <symbol id="note-icon-chevrons-down-up" viewBox="0 0 24 24"><path d="m7 20 5-5 5 5" /><path d="m7 4 5 5 5-5" /></symbol>
+        <symbol id="note-icon-copy-x" viewBox="0 0 24 24"><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2" /><rect x="8" y="8" width="14" height="14" rx="2" /><path d="m12.5 12.5 5 5" /><path d="m12.5 17.5 5-5" /></symbol>
+        <symbol id="note-icon-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
+        <symbol id="note-icon-file-text" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></symbol>
+        <symbol id="note-icon-rotate-ccw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol>
+        <symbol id="note-icon-panel-left" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></symbol>
+        <symbol id="note-icon-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></symbol>
+        <symbol id="note-icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+        <symbol id="note-icon-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></symbol>
+        <symbol id="note-icon-notebook-outline" viewBox="0 0 24 24"><rect x="5" y="3" width="16" height="18" rx="2"/><path d="M9 3v18M3 7h3M3 12h3M3 17h3M13 7h4"/></symbol>
+        <symbol id="note-icon-notebook-filled" viewBox="0 0 24 24"><rect x="5" y="2" width="16" height="20" rx="2" fill="currentColor" stroke="none"/><path d="M9 3v18M13 7h4" fill="none" stroke="var(--note-notebook-cutout, var(--bg))" stroke-width="1.5"/><path d="M3 7h3M3 12h3M3 17h3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+        <symbol id="note-icon-type-plus" viewBox="0 0 24 24"><path d="M10 4v16M3 7V5a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M7 20h6M19 12v8M15 16h8"/></symbol>
+      </defs>
+    </svg>
     <aside class="note-tree-pane" aria-label="笔记文件树">
       <header class="note-pane-head">
         <div class="note-library-heading">
           <h1 class="note-visually-hidden">笔记库</h1>
           <button type="button" class="note-icon-button note-library-settings-trigger" data-note-action="toggle-library-settings"
             title="笔记库设置" aria-label="笔记库设置" aria-expanded="false" aria-controls="note-library-settings">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.08a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15.08 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/></svg>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-folder-cog"/></svg>
           </button>
           <button type="button" class="note-library-focus-button" data-note-action="toggle-focus"
             title="隐藏顶部栏" aria-label="隐藏顶部栏" aria-pressed="false">
-            <svg class="note-focus-icon note-focus-icon-expand" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.25 3.25h-4v4M12.75 3.25h4v4M7.25 16.75h-4v-4M12.75 16.75h4v-4"/></svg>
-            <svg class="note-focus-icon note-focus-icon-restore" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.25 7.25h4v-4M16.75 7.25h-4v-4M3.25 12.75h4v4M16.75 12.75h-4v4"/></svg>
+            <svg class="note-icon note-focus-icon note-focus-icon-expand" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-panel-top-close"/></svg>
+            <svg class="note-icon note-focus-icon note-focus-icon-restore" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-panel-top-open"/></svg>
           </button>
           <button type="button" class="note-icon-button note-browser-toggle" data-note-action="toggle-browser"
             title="浏览笔记" aria-label="浏览笔记" aria-pressed="false">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25"/><path d="m12.5 12.5 4.25 4.25"/></svg>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-search"/></svg>
           </button>
         </div>
         <div class="note-head-actions">
           <button type="button" class="note-icon-button" data-note-action="new-note"
-            title="新建笔记" aria-label="新建笔记"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.25 2.75h6l3.5 3.5v11H5.25v-14.5Zm6 0v3.5h3.5M7.5 11h5M10 8.5v5"/></svg></button>
+            title="新建笔记" aria-label="新建笔记"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-file-plus-corner"/></svg></button>
           <button type="button" class="note-icon-button note-folder-add" data-note-action="new-folder"
-            title="新建文件夹" aria-label="新建文件夹"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 7V5.25c0-.83.67-1.5 1.5-1.5h3l2 2h6.5c.83 0 1.5.67 1.5 1.5v8c0 .83-.67 1.5-1.5 1.5H4.25c-.83 0-1.5-.67-1.5-1.5V7Z"/><path d="M10 9v5M7.5 11.5h5"/></svg></button>
+            title="新建文件夹" aria-label="新建文件夹"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-folder-plus"/></svg></button>
           <button type="button" class="note-icon-button note-sort-trigger" data-note-action="toggle-sort"
-            title="排序" aria-label="排序" aria-expanded="false" aria-controls="note-sort-menu"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h12M3.5 8h9M3.5 11.5h6M14.5 11v5m-2-2 2 2 2-2"/></svg></button>
+            title="排序" aria-label="排序" aria-expanded="false" aria-controls="note-sort-menu"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-arrow-down-wide-narrow"/></svg></button>
           <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-folders"
             title="全部展开" aria-label="全部展开" aria-pressed="false" disabled>
-            <svg class="note-expand-icon note-expand-icon-open" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 8 4.5-4 4.5 4M5.5 12l4.5 4 4.5-4"/></svg>
-            <svg class="note-expand-icon note-expand-icon-close" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 4 4.5 4 4.5-4M5.5 16l4.5-4 4.5 4"/></svg>
+            <svg class="note-icon note-expand-icon note-expand-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-up-down"/></svg>
+            <svg class="note-icon note-expand-icon note-expand-icon-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-down-up"/></svg>
           </button>
         </div>
       </header>
@@ -1569,7 +1603,7 @@
           <div class="note-settings-reset-area">
             <button type="button" class="note-settings-reset" data-note-library-action="reset-open"
               aria-expanded="false" aria-controls="note-library-reset-confirm">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1M2.8 3.4v3h3"/></svg>
+              <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-rotate-ccw"/></svg>
               <span data-role="note-library-reset-label">恢复默认</span>
             </button>
             <div class="note-settings-reset-confirm" id="note-library-reset-confirm"
@@ -1607,10 +1641,10 @@
       <nav class="note-tab-bar" aria-label="打开的笔记">
         <div class="note-tab-list" data-role="note-tabs" role="tablist"></div>
         <button type="button" class="note-tab-new" data-note-action="new-tab"
-          aria-label="新建标签页" data-ui-tooltip="新建标签页">+</button>
+          aria-label="新建标签页" data-ui-tooltip="新建标签页"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-plus"/></svg></button>
         <button type="button" class="note-tab-close-all" data-note-action="close-all-tabs"
           aria-label="关闭所有笔记标签" data-ui-tooltip="关闭所有笔记标签" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5.5h8M3.5 10h6M3.5 14.5h6m3-2.5 3 3m0-3-3 3"/></svg>
+          <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-copy-x"/></svg>
         </button>
       </nav>
       <section class="note-browser-results" data-role="note-browser-results" aria-label="笔记结果" hidden inert></section>
@@ -1618,23 +1652,20 @@
         <div class="note-current-copy">
           <button type="button" class="note-browser-back" data-role="note-browser-back" hidden>返回结果</button>
           <button type="button" class="note-mobile-pane-button" data-note-action="toggle-tree"
-            aria-label="显示笔记目录">☰</button>
+            aria-label="显示笔记目录"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-panel-left"/></svg></button>
           <p class="note-current-path" data-role="note-current-path">选择一篇笔记</p>
         </div>
         <div class="note-document-tools">
           <button type="button" class="note-side-button note-view-toggle" data-note-action="toggle-source"
             data-role="note-view-toggle" aria-label="切换到源码模式" aria-pressed="false" disabled>
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <g class="note-view-icon note-view-icon-source"><path d="m7 5-4 5 4 5M13 5l4 5-4 5M11.5 3.5l-3 13"/></g>
-              <g class="note-view-icon note-view-icon-live"><path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.5 9h5M7.5 12h5"/></g>
-            </svg>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g class="note-view-icon note-view-icon-source"><use href="#note-icon-code-xml"/></g><g class="note-view-icon note-view-icon-live"><use href="#note-icon-file-pen-line"/></g></svg>
           </button>
           <button type="button" class="note-side-button note-notebooks-toggle" data-note-action="toggle-notebooks"
             aria-label="笔记本" title="笔记本" aria-expanded="false" aria-controls="note-shared-side-panel">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h10.5v14H5a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 5 3ZM7 3v14M10 6h3M2.5 6h2M2.5 10h2M2.5 14h2"/></svg>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-notebook-outline"/></svg>
           </button>
           <button type="button" class="note-more-button" data-note-action="current-menu"
-            aria-label="当前笔记菜单">•••</button>
+            aria-label="当前笔记菜单"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-ellipsis"/></svg></button>
         </div>
       </header>
       <div class="note-document-body">
@@ -1669,24 +1700,21 @@
           <button type="button" data-note-action="side-links">链接</button>
         </nav>
         <button type="button" class="note-side-button" data-note-action="close-links"
-          aria-label="关闭侧栏">×</button>
+          aria-label="关闭侧栏"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-x"/></svg></button>
       </header>
       <div class="note-notebook-actions note-side-toolbar" data-role="note-side-toolbar" role="toolbar" aria-label="笔记工具">
-        <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本">+</button>
+        <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-plus"/></svg></button>
         <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-notebooks" aria-label="全部展开">
-          <svg class="note-expand-icon note-expand-icon-open" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 8 4.5-4 4.5 4M5.5 12l4.5 4 4.5-4"/></svg>
-          <svg class="note-expand-icon note-expand-icon-close" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 4 4.5 4 4.5-4M5.5 16l4.5-4 4.5 4"/></svg>
+          <svg class="note-icon note-expand-icon note-expand-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-up-down"/></svg>
+          <svg class="note-icon note-expand-icon note-expand-icon-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-down-up"/></svg>
         </button>
         <button type="button" class="note-side-button note-image-text-toggle" data-note-action="toggle-image-text"
           data-role="note-image-text-toggle" aria-label="图片文字" aria-pressed="false" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h13v11h-13zM6 12l2.4-2.6 2.1 2 1.5-1.5 2.5 2.6M7 7.5h.01"/><path d="M12.2 5.8h4.3M14.35 3.65v4.3"/></svg>
+          <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-image-plus"/></svg>
         </button>
         <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
           aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15.08 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/>
-          </svg>
+          <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-sliders-horizontal"/></svg>
         </button>
       </div>
       <section class="note-notebooks-content" data-role="note-notebooks-content">
@@ -1705,11 +1733,9 @@
     </aside>
     <section class="note-image-text-tools note-side-popover" data-role="note-image-text-tools" role="toolbar"
       aria-label="图片文字工具" hidden inert>
-      <button type="button" class="note-image-text-action" data-image-text-action="add" title="添加文字">T+</button>
+      <button type="button" class="note-image-text-action" data-image-text-action="add" title="添加文字"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-type-plus"/></svg></button>
       <button type="button" class="note-image-text-action note-image-text-edit" data-image-text-action="edit"
-        aria-label="编辑文字" title="编辑文字" disabled>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5l.7-3 7.9-7.9 2.8 2.8-7.9 7.9zM11.8 5.4l2.8 2.8M4 16h12"/></svg>
-      </button>
+        aria-label="编辑文字" title="编辑文字" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-square-pen"/></svg></button>
       <span class="note-image-text-separator" aria-hidden="true"></span>
       <div class="note-image-text-sizes" role="group" aria-label="字号">
         <button type="button" data-image-text-action="size" data-image-text-value="sm" title="小字号">A</button>
@@ -1733,9 +1759,7 @@
         <button type="button" data-image-text-action="color" data-image-text-value="gray" title="灰色"></button>
       </div>
       <span class="note-image-text-separator" aria-hidden="true"></span>
-      <button type="button" class="note-image-text-action" data-image-text-action="delete" title="删除文字" disabled>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 3.5h4M6.5 6l.6 10h5.8l.6-10M8.5 8.5v5M11.5 8.5v5"/></svg>
-      </button>
+      <button type="button" class="note-image-text-action" data-image-text-action="delete" title="删除文字" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-trash"/></svg></button>
       <button type="button" class="note-image-text-merge" data-image-text-action="merge" title="合并为图片">合并为图片</button>
       <button type="button" class="note-image-text-merge" data-image-text-action="cleanup" title="删除文本框数据">删除文本框数据</button>
     </section>
@@ -1746,7 +1770,7 @@
         <div class="note-settings-reset-area" data-role="note-settings-reset-area">
           <button type="button" class="note-settings-reset" data-note-settings-action="reset-open"
             aria-expanded="false" aria-controls="note-settings-reset-confirm">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1M2.8 3.4v3h3"/></svg>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-rotate-ccw"/></svg>
             <span>恢复默认</span>
           </button>
           <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"

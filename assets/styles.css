@@ -1949,6 +1949,26 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-side-popover.note-settings-pop { width: min(480px, calc(100% - 24px)); }
 .note-side-popover.note-image-text-tools { max-width: min(780px, calc(100% - 24px)); z-index: 650; }
 .note-side-popover { top: 0; right: auto; }
+/* 共用离线图标：工具 18px、树 16px；不改变按钮命中框。 */
+.note-icon-definitions { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+.note-workspace .note-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.note-workspace .note-tree-icon, .note-workspace .note-browser-icon { width: 16px; height: 16px; opacity: .8; }
+.note-workspace .note-icon.note-notebook-icon { width: 19px; height: 21px; stroke: none; }
+.note-workspace .note-icon.note-path-separator { width: 12px; height: 12px; }
+.note-workspace .note-tab-close .note-icon { width: 14px; height: 14px; }
+.note-workspace .note-shortcut-chip .note-icon { width: 12px; height: 12px; }
+.note-workspace .note-browser-back { display: inline-flex; align-items: center; gap: 5px; }
+.note-workspace .note-browser-back[hidden] { display: none; }
+.note-workspace .note-tree-foot[hidden] { display: none; }
+.note-workspace { --note-control-hover: rgba(25,25,23,.055); --note-control-active: rgba(25,25,23,.085); --note-control-focus: rgba(70,88,65,.55); --note-notebook-cutout: var(--bg); }
+.note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-new, .note-tab-close-all, .note-tab-close, .note-library-focus-button, .note-mobile-pane-button, .note-image-text-action, .note-shortcut-add, .note-shortcut-chip button) { transition: color 130ms ease, background-color 130ms ease, opacity 130ms ease, transform 150ms cubic-bezier(.22,1,.36,1); }
+.note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-new, .note-tab-close-all, .note-tab-close, .note-library-focus-button, .note-mobile-pane-button, .note-image-text-action, .note-shortcut-add, .note-shortcut-chip button):hover:not(:disabled) { color: var(--text); background-color: var(--note-control-hover); }
+.note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-new, .note-tab-close-all, .note-tab-close, .note-library-focus-button, .note-mobile-pane-button, .note-image-text-action, .note-shortcut-add, .note-shortcut-chip button):active:not(:disabled) { transform: scale(.94); background-color: var(--note-control-active); }
+.note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-new, .note-tab-close-all, .note-tab-close, .note-library-focus-button, .note-mobile-pane-button, .note-image-text-action, .note-shortcut-add, .note-shortcut-chip button):focus-visible { outline: 1.5px solid var(--note-control-focus); outline-offset: 2px; }
+.note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-close-all, .note-library-focus-button, .note-image-text-action, [data-note-action="new-note"], [data-note-action="new-folder"]):disabled { opacity: .34; cursor: default; }
+.note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-close-all, .note-library-focus-button, .note-image-text-action):disabled:hover { background: transparent; }
+.note-workspace .note-image-text-tools[aria-busy="true"] button:disabled { cursor: wait; }
+body.start-page[data-start-theme="dark"] .note-workspace { --note-control-hover: rgba(235,240,235,.075); --note-control-active: rgba(235,240,235,.12); --note-control-focus: rgba(204,220,197,.7); --note-notebook-cutout: #181a19; }
 .note-links-pane { width: min(300px, calc(100vw - 24px)); visibility: hidden; transition: transform 230ms cubic-bezier(.22, 1, .36, 1), visibility 230ms; }
 .note-workspace.links-overlay-open .note-links-pane { visibility: visible; }
 .note-side-modes { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
@@ -2249,6 +2269,14 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
   .note-tab-close,
   .note-tab-new,
   .note-tab-close-all,
+  .note-workspace .note-icon-button,
+  .note-workspace .note-side-button,
+  .note-workspace .note-more-button,
+  .note-workspace .note-library-focus-button,
+  .note-workspace .note-mobile-pane-button,
+  .note-workspace .note-image-text-action,
+  .note-workspace .note-shortcut-add,
+  .note-workspace .note-shortcut-chip button,
   .note-settings-trigger,
   .note-settings-trigger svg,
   .note-settings-pop,
