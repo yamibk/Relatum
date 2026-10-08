@@ -154,7 +154,7 @@ async function freePort() {
     await expectDragMarkers(true);
     assert.equal(await floating.getAttribute('aria-hidden'), 'false');
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
-    assert.deepEqual(await visibleFocusIcon(), ['#note-icon-focus-contract'], 'show-top-bar uses four inward arrows');
+    assert.deepEqual(await visibleFocusIcon(), ['#note-icon-focus-expand'], 'show-top-bar uses four outward arrows');
     assert(await floating.isVisible());
     assert(await page.evaluate(() => document.elementFromPoint(innerWidth - 23, 20).closest('.desktop-note-focus-close') !== null));
     await sleep(500);
@@ -176,7 +176,7 @@ async function freePort() {
 
     await toggle.click();
     await expectDragMarkers(false);
-    assert.deepEqual(await visibleFocusIcon(), ['#note-icon-focus-expand'], 'hide-top-bar uses four outward arrows');
+    assert.deepEqual(await visibleFocusIcon(), ['#note-icon-focus-contract'], 'hide-top-bar uses four inward arrows');
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '0');
     assert.equal(await floating.getAttribute('aria-hidden'), 'true');
     assert.equal(await floating.evaluate(node => getComputedStyle(node).pointerEvents), 'none');

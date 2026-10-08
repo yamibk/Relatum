@@ -193,7 +193,7 @@ async function freePort() {
     assert.deepEqual(await page.locator('.note-workspace svg.note-icon use').evaluateAll(uses =>
       uses.filter(use => !document.getElementById(use.getAttribute('href').slice(1))).map(use => use.getAttribute('href'))), [], 'all local icon references resolve');
     for (const [action, icon] of Object.entries({ 'new-note': 'file-plus-corner', 'new-folder': 'folder-plus',
-      'toggle-library-settings': 'folder-cog', 'toggle-settings': 'sliders-horizontal', 'toggle-focus': 'focus-expand', 'current-menu': 'ellipsis' })) {
+      'toggle-library-settings': 'folder-cog', 'toggle-settings': 'sliders-horizontal', 'toggle-focus': 'focus-contract', 'current-menu': 'ellipsis' })) {
       assert.equal(await page.locator(`[data-note-action="${action}"] svg use`).first().getAttribute('href'), '#note-icon-' + icon);
     }
     assert.equal(await page.locator('[data-note-action="toggle-focus"] svg').evaluateAll(items => items.filter(el => getComputedStyle(el).display !== 'none').length), 1);
