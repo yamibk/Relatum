@@ -174,6 +174,7 @@
       this.widget = widget; this.view = view; this.controller = widget.controller;
       this.model = syntax.parse(widget.spec.source, { ensureBodyRow: false }).model;
       this.selection = null; this.edit = null; this.phase = 'idle';
+      this.paintedSelection = null;
       this.frame = 0; this.sequence = 0; this.waiters = []; this.disposed = false;
       this.dragCleanup = null;
       const wrap = this.wrap = document.createElement('div');
@@ -233,10 +234,12 @@
         if (this.pending()) return;
         this.cancelGesture(); this.cancelReorderIntent();
         this.removeEditor(); this.selection = null; this.clearMath(this.body); this.shape = shape; this.body.replaceChildren();
+        this.paintedSelection = null; this.wrap.classList.remove('has-table-selection');
         for (let r = 0; r < rows.length; r++) {
           const tr = document.createElement('tr'); tr.dataset.tableDataRow = r;
           for (let c = 0; c < columns; c++) {
             const cell = document.createElement('td'); cell.dataset.tableRow = r; cell.dataset.tableCol = c;
+            cell.setAttribute('aria-selected', 'false');
             cell.style.textAlign = this.model.align[c] || 'left';
             const content = document.createElement('div'); content.className = 'note-table-cell-content';
             cell.appendChild(content); tr.appendChild(cell);
@@ -330,17 +333,48 @@
       this.positionOverlay(control, left, top, width, height);
     }
     paintSelection() {
-      const s = this.bounds();
-      this.wrap.classList.toggle('has-table-selection', !!s);
-      this.body.querySelectorAll('td[data-table-row]').forEach((cell) => {
-        const r = Number(cell.dataset.tableRow), c = Number(cell.dataset.tableCol);
-        cell.classList.toggle('is-table-selected', !!s && r >= s.r0 && r <= s.r1 && c >= s.c0 && c <= s.c1);
-        cell.setAttribute('aria-selected', String(!!s && r >= s.r0 && r <= s.r1 && c >= s.c0 && c <= s.c1));
-      });
-      this.outline.hidden = !s;
+      let s = this.bounds();
+      if (s && (s.r0 < 0 || s.c0 < 0 || s.r1 >= this.body.rows.length || s.c1 >= (this.body.rows[0]?.cells.length || 0))) {
+        this.selection = null; s = null;
+      }
+      const previous = this.paintedSelection;
+      const same = s === previous || !!s && !!previous && s.r0 === previous.r0 && s.r1 === previous.r1
+        && s.c0 === previous.c0 && s.c1 === previous.c1;
+      if (!same) {
+        // Paint only the symmetric difference. Extending a large rectangle by
+        // one cell must not revisit all of its already-selected cells.
+        this.paintSelectionDifference(previous, s, false);
+        this.paintSelectionDifference(s, previous, true);
+        this.paintedSelection = s;
+        if (!!previous !== !!s) this.wrap.classList.toggle('has-table-selection', !!s);
+      }
+      this.positionSelectionOutline(s);
+    }
+    paintSelectionDifference(bounds, other, selected) {
+      if (!bounds) return;
+      const paint = (r0, r1, c0, c1) => {
+        for (let r = r0; r <= r1; r++) {
+          const row = this.body.rows[r]; if (!row) continue;
+          for (let c = c0; c <= c1; c++) {
+            const cell = row.cells[c]; if (!cell) continue;
+            cell.classList.toggle('is-table-selected', selected);
+            cell.setAttribute('aria-selected', String(selected));
+          }
+        }
+      };
+      const r0 = other ? Math.max(bounds.r0, other.r0) : 1, r1 = other ? Math.min(bounds.r1, other.r1) : 0;
+      const c0 = other ? Math.max(bounds.c0, other.c0) : 1, c1 = other ? Math.min(bounds.c1, other.c1) : 0;
+      if (r0 > r1 || c0 > c1) { paint(bounds.r0, bounds.r1, bounds.c0, bounds.c1); return; }
+      paint(bounds.r0, r0 - 1, bounds.c0, bounds.c1);
+      paint(r1 + 1, bounds.r1, bounds.c0, bounds.c1);
+      paint(r0, r1, bounds.c0, c0 - 1);
+      paint(r0, r1, c1 + 1, bounds.c1);
+    }
+    positionSelectionOutline(s) {
+      if (this.outline.hidden !== !s) this.outline.hidden = !s;
       if (s) {
         const g = this.geometry(), first = g.rows[s.r0], last = g.rows[s.r1], left = g.cols[s.c0], right = g.cols[s.c1];
-        if (!first || !last || !left || !right) { this.selection = null; this.outline.hidden = true; return; }
+        if (!first || !last || !left || !right) { this.selection = null; this.paintSelection(); return; }
         const x0 = Math.max(left.left, g.rect.left), x1 = Math.min(right.right, this.scroll.getBoundingClientRect().right);
         this.positionOverlay(this.outline, x0, first.top, Math.max(0, x1 - x0), last.bottom - first.top);
       }

@@ -50,7 +50,7 @@ async function freePort() {
     page.on('pageerror', error => errors.push(error.message));
     let source = fs.readFileSync(path.join(repo, 'assets', 'note-workspace.js'), 'utf8');
     source = source.replace('  window.CanvasNoteWorkspace = {',
-      '  window.__notebooksTest = {state, editor: liveEditor, flushNotebookSettings, triggerExternalSync};\n  window.CanvasNoteWorkspace = {');
+      '  window.__notebooksTest = {state, editor: liveEditor, flushNotebookSettings, triggerExternalSync, treeRowIndexes};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
     let treeRequests = 0, settingRequests = 0, creationRequests = 0;
     page.on('request', request => {
@@ -63,6 +63,9 @@ async function freePort() {
       await page.waitForFunction(() => window.CanvasNoteWorkspace);
       await page.locator('button[data-start-workspace="notes"]').click();
       await page.waitForFunction(() => window.__notebooksTest?.state.initialized && window.__notebooksTest.state.active);
+      // Sidebar geometry is measured after the independent workspace entrance.
+      await page.waitForFunction(() => document.body.dataset.startWorkspace === 'notes'
+        && !document.querySelector('[data-start-workspace-panel="notes"]').classList.contains('workspace-entering'));
     }
     const left = '[data-role="note-tree"]';
     const right = '[data-role="note-notebook-tree"]';
@@ -134,7 +137,20 @@ async function freePort() {
       await page.locator('[data-note-action="toggle-notebooks"]').click(); await settleSide();
     }
     const notebookNames = () => page.locator(`${right} > .note-notebook-root > .note-tree-row .note-tree-label`).allTextContents();
-    const sync = () => page.evaluate(() => __notebooksTest.triggerExternalSync({ silentErrors: true }));
+    async function assertTreeIndexes() {
+      const issues = await page.evaluate(() => {
+        const issues = [];
+        __notebooksTest.treeRowIndexes.forEach((index, host) => {
+          const rows = Array.from(host.querySelectorAll('.note-tree-row'));
+          if (index.rows.size !== rows.length) issues.push('mounted row count');
+          for (const row of rows) if (index.rows.get(row.dataset.notePath) !== row) issues.push('missing row');
+          for (const row of index.rows.values()) if (!host.contains(row)) issues.push('retained detached row');
+        });
+        return issues;
+      });
+      assert.deepEqual(issues, [], 'each tree index contains exactly its mounted rows');
+    }
+    const sync = async () => { await page.evaluate(() => __notebooksTest.triggerExternalSync({ silentErrors: true })); await assertTreeIndexes(); };
     const flush = () => page.evaluate(() => __notebooksTest.flushNotebookSettings());
     async function screenshot(name) {
       if (process.env.RELATUM_ARTIFACT_DIR) {
@@ -203,7 +219,7 @@ async function freePort() {
     await clickNotebookBlank('right');
     const blankMenu = page.locator('[data-role="note-context-menu"]');
     await blankMenu.waitFor();
-    assert.deepEqual(await blankMenu.locator('button').allTextContents(), ['新建笔记本', '在资源管理器中打开']);
+    assert.deepEqual(await blankMenu.locator('button').allTextContents(), ['新建笔记本', '在系统资源管理器中显示']);
     assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), '', 'blank context menu preserves selection');
     let revealed;
     await page.route('**/api/note-reveal', route => {
@@ -225,6 +241,7 @@ async function freePort() {
     await renameNotebook.waitFor(); await renameNotebook.fill('Empty'); await renameNotebook.press('Enter');
     await page.locator(`${right} .note-tree-inline-error`).waitFor();
     await clickNotebookBlank();
+    await page.waitForFunction(() => !__notebooksTest.state.renameCommitPromise);
     assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), 'CustomNotebook/Physics', 'failed rename prevents deselection');
     assert.equal(await renameNotebook.count(), 1);
     await renameNotebook.press('Escape');
@@ -352,6 +369,7 @@ async function freePort() {
     const notebookRename = page.locator(`${right} .note-tree-rename`);
     await notebookRename.fill('New'); await notebookRename.press('Enter');
     await rootRow('CustomNotebook/New').waitFor();
+    await page.waitForFunction(() => !__notebooksTest.state.renameCommitPromise);
     await flush(); assert.equal(settings().colors['CustomNotebook/New'], 'purple', 'double-click rename retains color');
     assert(fs.statSync(path.join(container, 'New')).isDirectory());
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'CustomNotebook/Physics/Chapter/C.md');
@@ -476,6 +494,7 @@ async function freePort() {
     assert.deepEqual(await emptyPositions(), narrowOpenEmptyPositions);
     await toggleAndCheckAnimation();
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    await assertTreeIndexes();
     await page.locator('button[data-start-workspace="canvas"]').click();
     const inactiveRequests = treeRequests;
     await delay(2300); assert.equal(treeRequests, inactiveRequests, 'inactive workspace must stop directory checks');

@@ -725,29 +725,43 @@ class NotesStore:
                 stat = target.stat()
                 signature = (stat.st_mtime_ns, stat.st_size)
                 cached = self._document_cache.get(relative)
-                if cached and cached.get("signature") == signature and (not metadata or 'tags' in cached):
+                if cached and cached.get("signature") == signature and 'mentions' in cached \
+                        and (not metadata or ('tags' in cached and 'excerpt' in cached)):
                     documents[relative] = cached
                     continue
                 raw = self._read_note_bytes(target)
-                text = self._decode_note(raw)
+                documents[relative] = self._index_document(relative, raw, signature, metadata=metadata)
             except (NotesError, OSError):
                 # 一个被外部复制进来的损坏/超大文件不应拖垮其它笔记的链接面板。
                 continue
-            document = {
-                "path": relative,
-                "revision": _revision(raw),
-                "mentions": _wiki_mentions(text),
-                "signature": signature,
-            }
-            if metadata:
-                document.update(note_metadata(text))
-            self._document_cache[relative] = document
-            documents[relative] = document
         for stale in set(self._document_cache) - live_paths:
             self._document_cache.pop(stale, None)
         return documents
 
-    def _cache_document(self, relative: str, content: bytes) -> None:
+    def _index_document(self, relative: str, content: bytes, signature: tuple,
+                        *, metadata: bool, text: str | None = None,
+                        revision: str | None = None) -> dict:
+        revision = revision if revision is not None else _revision(content)
+        cached = self._document_cache.get(relative)
+        # File timestamps can change without changing the bytes. Keep parsed
+        # fields only when the actual content revision matches, never by size.
+        document = dict(cached) if cached and cached.get("revision") == revision else {
+            "path": relative, "revision": revision,
+        }
+        document["signature"] = signature
+        needs_mentions = "mentions" not in document
+        needs_metadata = metadata and ("tags" not in document or "excerpt" not in document)
+        if needs_mentions or needs_metadata:
+            text = text if text is not None else self._decode_note(content)
+            if needs_mentions:
+                document["mentions"] = _wiki_mentions(text)
+            if needs_metadata:
+                document.update(note_metadata(text))
+        self._document_cache[relative] = document
+        return document
+
+    def _cache_document(self, relative: str, content: bytes, *,
+                        text: str | None = None, revision: str | None = None) -> None:
         target = self._absolute(relative)
         try:
             stat = target.stat()
@@ -755,14 +769,7 @@ class NotesStore:
         except OSError:
             self._document_cache.pop(relative, None)
             return
-        text = self._decode_note(content)
-        self._document_cache[relative] = {
-            "path": relative,
-            "revision": _revision(content),
-            "mentions": _wiki_mentions(text),
-            "signature": signature,
-            **note_metadata(text),
-        }
+        self._index_document(relative, content, signature, metadata=True, text=text, revision=revision)
 
     def tags(self) -> dict:
         catalog = {}
@@ -861,26 +868,26 @@ class NotesStore:
         target = self._absolute(normalized)
         raw = self._read_note_bytes(target)
         content = self._decode_note(raw)
-        self._cache_document(normalized, raw)
+        revision = _revision(raw)
+        self._cache_document(normalized, raw, text=content, revision=revision)
         return {
             "path": normalized,
             "content": content,
-            "revision": _revision(raw),
+            "revision": revision,
         }
 
     def links(self, relative: object) -> dict:
         normalized = self.normalize_path(relative)
         target = self._absolute(normalized)
         raw = self._read_note_bytes(target)
-        content = self._decode_note(raw)
         documents = self._documents()
         exact, stems = self._resolver(list(documents))
         outgoing: list[dict] = []
         backlinks: list[dict] = []
         seen_outgoing: set[tuple[str, str]] = set()
-        current = documents.get(normalized, {
-            "mentions": _wiki_mentions(content),
-        })
+        current = documents.get(normalized)
+        if current is None:
+            current = {"mentions": _wiki_mentions(self._decode_note(raw))}
         for mention in current["mentions"]:
             resolved, state = self._resolve_wiki(mention["base"], exact, stems)
             key = (resolved or mention["base"].casefold(), state)
@@ -1129,13 +1136,14 @@ class NotesStore:
         current = self._read_note_bytes(target)
         current_revision = _revision(current)
         if current == encoded:
-            self._cache_document(normalized, current)
+            self._cache_document(normalized, current, text=content, revision=current_revision)
             return {"path": normalized, "revision": current_revision}
         if not target.exists():
             raise NotesError("笔记不存在", status=404, code="not_found")
         self.atomic_text(target, content)
-        self._cache_document(normalized, encoded)
-        return {"path": normalized, "revision": _revision(encoded)}
+        revision = _revision(encoded)
+        self._cache_document(normalized, encoded, text=content, revision=revision)
+        return {"path": normalized, "revision": revision}
 
     def _post_move_paths(self, paths: list[str], source: str, destination: str,
                          source_is_folder: bool) -> dict[str, str]:

@@ -54,6 +54,79 @@ class NotesLibraryTests(unittest.TestCase):
             self.store.links('Target.md')
             self.assertEqual(reads.call_count, 1, 'unchanged link index must not reread every body')
 
+    def test_unchanged_load_save_and_links_reuse_parsed_fields(self):
+        self.store.create('', 'Target', 'note', content='target')
+        content = '#study\n[[Target]]\nbody\n'
+        self.store.create('', 'Cached', 'note', content=content)
+        cached = self.store._document_cache['Cached.md']
+        with mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions, \
+                mock.patch('notes_library.note_metadata', wraps=notes_library.note_metadata) as metadata, \
+                mock.patch.object(self.store, '_decode_note', wraps=self.store._decode_note) as decode, \
+                mock.patch('notes_library._revision', wraps=notes_library._revision) as revision, \
+                mock.patch.object(self.store, 'atomic_text', wraps=self.store.atomic_text) as writes:
+            first = self.store.load('Cached.md')
+            self.assertEqual(self.store.load('Cached.md'), first)
+            self.assertEqual(self.store.save('Cached.md', content, first['revision'])['revision'], first['revision'])
+            self.assertEqual(self.store.links('Cached.md')['outgoing'][0]['path'], 'Target.md')
+            self.assertEqual(mentions.call_count, 0)
+            self.assertEqual(metadata.call_count, 0)
+            self.assertEqual(decode.call_count, 2, 'each load decodes once; save and indexed links need no decode')
+            self.assertEqual(revision.call_count, 4, 'each operation hashes the actual bytes once')
+            writes.assert_not_called()
+        for field in ('mentions', 'tags', 'excerpt'):
+            self.assertIs(self.store._document_cache['Cached.md'][field], cached[field])
+
+    def test_revision_reuse_refreshes_signatures_and_missing_metadata(self):
+        self.store.create('', 'Cached', 'note', content='#study\n[[Target]]')
+        self.store.tags()
+        cached = self.store._document_cache['Cached.md']
+        target = self.root / 'Cached.md'
+        before = target.stat()
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns + 10_000_000))
+        with mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions, \
+                mock.patch('notes_library.note_metadata', wraps=notes_library.note_metadata) as metadata, \
+                mock.patch.object(self.store, '_decode_note', wraps=self.store._decode_note) as decode:
+            self.store.tags()
+            self.assertEqual(mentions.call_count, 0)
+            self.assertEqual(metadata.call_count, 0)
+            self.assertEqual(decode.call_count, 0)
+            self.assertEqual(self.store._document_cache['Cached.md']['signature'][0], target.stat().st_mtime_ns)
+            self.store._document_cache['Cached.md'].pop('excerpt')
+            loaded = self.store.load('Cached.md')
+            self.assertEqual(metadata.call_count, 1)
+            self.assertEqual(mentions.call_count, 0)
+            self.assertEqual(loaded['revision'], cached['revision'])
+            self.store._document_cache['Cached.md'].pop('mentions')
+            self.store.links('Cached.md')
+            self.assertEqual(mentions.call_count, 1)
+            self.assertEqual(metadata.call_count, 1, 'missing links do not invalidate existing metadata')
+
+    def test_loaded_revision_detects_changed_bytes_with_unchanged_file_signature(self):
+        self.store.create('', 'Cached', 'note', content='#old\n[[Old]]')
+        target = self.root / 'Cached.md'
+        before = target.stat()
+        old_revision = self.store._document_cache['Cached.md']['revision']
+        target.write_bytes(b'#new\n[[New]]')
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+        with mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions, \
+                mock.patch('notes_library.note_metadata', wraps=notes_library.note_metadata) as metadata:
+            loaded = self.store.load('Cached.md')
+            self.assertNotEqual(loaded['revision'], old_revision)
+            self.assertEqual(mentions.call_count, 1)
+            self.assertEqual(metadata.call_count, 1)
+        indexed = self.store._document_cache['Cached.md']
+        self.assertEqual(indexed['tags'], [{'key': 'new', 'label': 'new'}])
+        self.assertEqual(indexed['mentions'][0]['base'], 'New')
+
+    def test_link_fallback_only_parses_when_index_entry_is_missing(self):
+        self.store.create('', 'Cached', 'note', content='[[Missing]]')
+        with mock.patch.object(self.store, '_documents', return_value={}), \
+                mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions:
+            self.assertEqual(self.store.links('Cached.md')['outgoing'][0]['state'], 'missing')
+            self.assertEqual(mentions.call_count, 1)
+        (self.root / 'Invalid.md').write_bytes(b'\xff')
+        self.assertNotIn('Invalid.md', self.store._documents(metadata=True))
+
     def test_move_rejects_body_changed_after_indexing_before_writing(self):
         self.store.create('', 'Target', 'note', content='target')
         self.store.create('', 'Source', 'note', content='[[Target]] original')

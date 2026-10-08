@@ -6,6 +6,8 @@
   const $ = (selector, scope) => (scope || root).querySelector(selector);
   const treeEl = $('[data-role="note-tree"]');
   const notebookTreeEl = $('[data-role="note-notebook-tree"]');
+  const treeRowIndexes = new Map([treeEl, notebookTreeEl].filter(Boolean).map((host) =>
+    [host, { rows: new Map(), selectionPaths: new Set(), selectionKey: null }]));
   const notebooksContent = $('[data-role="note-notebooks-content"]');
   const sidePane = $('.note-links-pane');
   const NOTEBOOK_CONTAINER = 'CustomNotebook';
@@ -405,9 +407,7 @@
     });
   }
   function updateNotebookSelection() {
-    notebookTreeEl?.querySelectorAll('.note-notebook-root > .note-tree-row').forEach((row) => {
-      row.classList.toggle('selected-notebook', row.dataset.notePath === state.notebookRoot);
-    });
+    updateTreeSelection();
   }
   function notebookIcon(path) {
     const svg = noteIcon('notebook-filled', 'note-notebook-icon');
@@ -1896,18 +1896,39 @@
     const next = state.tabs[(index + offset + state.tabs.length) % state.tabs.length];
     if (next) activateTab(next);
   }
+  function clearTreeRowIndex(host) {
+    const index = treeRowIndexes.get(host);
+    index.rows.clear(); index.selectionPaths = new Set(); index.selectionKey = null;
+  }
   function updateTreeSelection() {
     const activePath = state.openingPath || (state.current && state.current.path) || '';
-    root.querySelectorAll('.note-tree-row').forEach((row) => {
-      const path = row.dataset.notePath || '';
-      const entry = findEntry(path);
-      row.classList.toggle('active', !!activePath && path === activePath);
-      if (activePath && path === activePath) row.setAttribute('aria-current', 'page'); else row.removeAttribute('aria-current');
-      row.classList.toggle('opening', !!state.openingPath && path === state.openingPath);
-      row.classList.toggle('selected-folder', !!entry && entry.kind === 'folder' && path === state.selectedFolder);
-      row.classList.toggle('active-ancestor', !!entry && entry.kind === 'folder' && !!activePath && activePath.startsWith(path + '/'));
+    const key = JSON.stringify([activePath, state.openingPath, state.selectedFolder, state.notebookRoot]);
+    if (treeRowIndexes.get(treeEl).selectionKey === key
+        && (!notebookTreeEl || treeRowIndexes.get(notebookTreeEl).selectionKey === key)) return;
+    const nextPaths = new Set([activePath, state.selectedFolder]);
+    if (state.notebookRoot !== null) nextPaths.add(state.notebookRoot);
+    for (let path = parentPath(activePath); path; path = parentPath(path)) nextPaths.add(path);
+    treeRowIndexes.forEach((index, host) => {
+      if (index.selectionKey === key) return;
+      const changedPaths = new Set([...index.selectionPaths, ...nextPaths]);
+      changedPaths.forEach((path) => {
+        const row = index.rows.get(path);
+        if (!row) return;
+        const entry = findEntry(path);
+        const active = !!activePath && path === activePath;
+        row.classList.toggle('active', active);
+        if (active) { if (row.getAttribute('aria-current') !== 'page') row.setAttribute('aria-current', 'page'); }
+        else if (row.hasAttribute('aria-current')) row.removeAttribute('aria-current');
+        row.classList.toggle('opening', !!state.openingPath && path === state.openingPath);
+        row.classList.toggle('selected-folder', !!entry && entry.kind === 'folder' && path === state.selectedFolder);
+        row.classList.toggle('active-ancestor', !!entry && entry.kind === 'folder' && !!activePath && activePath.startsWith(path + '/'));
+        if (host === notebookTreeEl && row.parentElement?.classList.contains('note-notebook-root')) {
+          row.classList.toggle('selected-notebook', path === state.notebookRoot);
+        }
+      });
+      index.selectionPaths = nextPaths;
+      index.selectionKey = key;
     });
-    updateNotebookSelection();
   }
   function scheduleDocumentPrefetch() {
     clearTimeout(state.prefetchTimer);
@@ -2002,12 +2023,22 @@
     updateNotebookSelection(); updateNotebookExpandButton();
   }
   function renderTreeInto(treeEl, treeEntries, expandedPaths, notebookTree) {
+    clearTreeRowIndex(treeEl);
+    const rowIndex = treeRowIndexes.get(treeEl);
     const fragment = document.createDocumentFragment();
     const getEntry = (path) => notebookTree && (path === '' || isNotebookRoot(path)) ? notebookRoots().find((entry) => entry.path === path) : findEntry(path);
     const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     const folderLabel = (entry, expanded) => entry.path + ' · ' + tr(expanded ? 'collapseFolder' : 'expandFolder');
     const directChild = (wrapper, className) => Array.from(wrapper.children).find((child) => child.classList && child.classList.contains(className)) || null;
-    const liveWrapper = (path) => Array.from(treeEl.querySelectorAll('.note-tree-entry')).find((item) => item.dataset.path === path) || null;
+    const liveWrapper = (path) => rowIndex.rows.get(path)?.parentElement || null;
+
+    function removeChildrenShell(shell) {
+      shell.querySelectorAll('.note-tree-row').forEach((row) => {
+        if (rowIndex.rows.get(row.dataset.notePath) === row) rowIndex.rows.delete(row.dataset.notePath);
+      });
+      rowIndex.selectionKey = null;
+      shell.remove();
+    }
 
     function createChildrenShell(entry, depth, wrapper, animate) {
       if (!entry.children || !entry.children.length) return null;
@@ -2050,8 +2081,8 @@
         }
       } else if (shell) {
         shell.classList.remove('is-open', 'is-expanding'); shell.classList.add('is-collapsing'); shell.setAttribute('aria-hidden', 'true'); shell.inert = true;
-        if (reducedMotion()) shell.remove();
-        else window.setTimeout(() => { if (shell.isConnected && !expandedPaths.has(path)) shell.remove(); }, TREE_MOTION_MS + 40);
+        if (reducedMotion()) removeChildrenShell(shell);
+        else window.setTimeout(() => { if (shell.isConnected && !expandedPaths.has(path)) removeChildrenShell(shell); }, TREE_MOTION_MS + 40);
       }
       updateTreeSelection();
     }
@@ -2060,6 +2091,7 @@
       const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry'; wrapper.dataset.path = entry.path; wrapper.style.setProperty('--note-depth', depth);
       if (entry.notebook) wrapper.classList.add('note-notebook-root');
       const row = document.createElement('button'); row.type = 'button'; row.className = 'note-tree-row'; row.style.setProperty('--note-depth', depth); row.draggable = !notebookTree && state.renamePath !== entry.path; row.dataset.notePath = entry.path;
+      rowIndex.rows.set(entry.path, row); rowIndex.selectionKey = null;
       row.title = entry.path; row.setAttribute('aria-label', entry.path);
       const toggle = document.createElement('span'); toggle.className = 'note-tree-toggle'; toggle.setAttribute('aria-hidden', 'true');
       if (entry.kind === 'folder') { const expanded = expandedPaths.has(entry.path); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded)); }
@@ -2879,7 +2911,7 @@
     updateImageTextTools();
     if (open) { if (state.sideMode === 'links') ensureLinks(); scheduleSidePopoverPosition(); }
     if (!open) window.setTimeout(() => {
-      if (!root.classList.contains('links-overlay-open') && notebookTreeEl) { notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true; }
+      if (!root.classList.contains('links-overlay-open') && notebookTreeEl) { clearTreeRowIndex(notebookTreeEl); notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true; }
     }, 270);
   }
   function setSideMode(mode) {

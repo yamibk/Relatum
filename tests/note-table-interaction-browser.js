@@ -411,9 +411,50 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
       await page.evaluate(() => { editor.setSourceMode(true); editor.setSourceMode(false); }); await settle();
       assert((await value()).endsWith('正文中文粘贴正文'));
     }
+    const largeTable = ['before', '', '| ' + Array(8).fill('cell').join(' | ') + ' |',
+      '| ' + Array(8).fill('---').join(' | ') + ' |',
+      ...Array.from({ length: 499 }, (_, i) => '| ' + Array(8).fill('row' + i).join(' | ') + ' |'), '', 'after'].join('\n');
+    await reset(largeTable);
+    await page.waitForFunction(() => document.querySelectorAll('.note-table td').length === 4000);
+    const selectionPerformance = await page.evaluate(() => {
+      const surface = document.querySelector('.note-table').__noteTableSurface;
+      const observer = new MutationObserver(() => {});
+      observer.observe(surface.body, { attributes: true, subtree: true });
+      const writes = () => observer.takeRecords().filter(record => record.attributeName === 'aria-selected').length;
+      const sample = callback => {
+        const times = [];
+        for (let i = 0; i < 40; i++) { const start = performance.now(); callback(); times.push(performance.now() - start); }
+        times.sort((a, b) => a - b);
+        return { medianMs: times[20], p95Ms: times[37], writes: writes() };
+      };
+      try {
+        const noSelection = sample(() => surface.paintSelection());
+        const scroll = sample(() => surface.view.scrollDOM.dispatchEvent(new Event('scroll')));
+        surface.selection = { kind: 'cell', r0: 0, r1: 0, c0: 0, c1: 7 }; surface.paintSelection();
+        const initial = writes();
+        surface.selection.r1 = 1; surface.paintSelection(); const extend = writes();
+        surface.selection = { kind: 'cell', r0: 1, r1: 2, c0: 0, c1: 7 }; surface.paintSelection(); const shift = writes();
+        const selectedScroll = sample(() => surface.view.scrollDOM.dispatchEvent(new Event('scroll')));
+        const selected = Array.from(surface.body.querySelectorAll('td.is-table-selected'), cell =>
+          [Number(cell.dataset.tableRow), Number(cell.dataset.tableCol)]);
+        surface.selection = null; surface.paintSelection(); const clear = writes();
+        return { cells: 4000, noSelection, scroll, initial, extend, shift, selectedScroll, selected, clear,
+          remaining: surface.body.querySelectorAll('td.is-table-selected, td[aria-selected="true"]').length };
+      } finally { observer.disconnect(); }
+    });
+    for (const sample of [selectionPerformance.noSelection, selectionPerformance.scroll, selectionPerformance.selectedScroll]) assert.equal(sample.writes, 0);
+    assert.equal(selectionPerformance.initial, 8);
+    assert.equal(selectionPerformance.extend, 8, 'extending writes only the newly selected row');
+    assert.equal(selectionPerformance.shift, 16, 'shifting writes only removed and added rows');
+    assert.deepEqual(selectionPerformance.selected, Array.from({ length: 16 }, (_, i) => [1 + Math.floor(i / 8), i % 8]));
+    assert.equal(selectionPerformance.clear, 16);
+    assert.equal(selectionPerformance.remaining, 0);
+    assert.equal(await value(), largeTable, 'selection and scrolling cannot edit the Markdown');
+    await reset(source);
+    assert.equal(await table.locator('td[aria-selected="false"]').count(), 6, 'new cells start unselected after rebuilding');
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ hits, dragEvidence, errors, textSelection: true, gridSelection: true, reorder: true, settlingBodyClick: true, responsiveBodyPaste: true }, null, 2));
-    console.log(JSON.stringify({ output, status: 'note table interaction browser checks passed' }));
+    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ hits, dragEvidence, errors, selectionPerformance, textSelection: true, gridSelection: true, reorder: true, settlingBodyClick: true, responsiveBodyPaste: true }, null, 2));
+    console.log(JSON.stringify({ output, selectionPerformance, status: 'note table interaction browser checks passed' }));
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));
