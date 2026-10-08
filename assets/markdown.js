@@ -25,6 +25,72 @@
     return String(value == null ? '' : value).replace(/\r\n?/g, '\n');
   }
 
+  function frontmatter(source) {
+    const opener = /^\uFEFF?---\r?\n/.exec(source);
+    if (!opener) return null;
+    const close = /^(?:---|\.\.\.)[ \t]*\r?$/m.exec(source.slice(opener[0].length, 65536));
+    return close ? { from: 0, to: opener[0].length + close.index + close[0].length } : null;
+  }
+
+  function tagRanges(source) {
+    const text = String(source || '');
+    const blocked = [];
+    const header = frontmatter(text);
+    if (header) blocked.push(header);
+    let fence = null, offset = 0;
+    text.split('\n').forEach((line) => {
+      const marker = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        blocked.push({ from: offset, to: offset + line.length });
+        if (new RegExp('^[ \\t]{0,3}' + fence[0] + '{' + fence.length + ',}[ \\t]*\\r?$').test(line)) fence = null;
+      } else if (marker) { fence = marker[1]; blocked.push({ from: offset, to: offset + line.length }); }
+      else if (/^(?: {4}|\t)/.test(line)) blocked.push({ from: offset, to: offset + line.length });
+      offset += line.length + 1;
+    });
+    // Mask before recognizing the next construct: comment/formula markers in
+    // code must never pair with unrelated markers in the following prose.
+    const mask = (value, ranges) => {
+      let cursor = 0; const parts = [];
+      ranges.sort((a, b) => a.from - b.from).forEach((range) => {
+        if (range.to <= cursor) return;
+        const from = Math.max(cursor, range.from);
+        parts.push(value.slice(cursor, from), value.slice(from, range.to).replace(/[^\r\n]/g, ' ')); cursor = range.to;
+      });
+      parts.push(value.slice(cursor)); return parts.join('');
+    };
+    let visible = mask(text, blocked);
+    const guard = (regex) => { visible = visible.replace(regex, (match) => match.replace(/[^\r\n]/g, ' ')); };
+    guard(/(`+)[^`\n]*\1/g);
+    guard(/<!--[\s\S]*?(?:-->|(?![\s\S]))|%%[\s\S]*?(?:%%|(?![\s\S]))/g);
+    visible = mask(visible, mathRanges(visible));
+    guard(/<[^>\n]*>|!?\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\((?:\\.|[^()\n]|\([^()]*\))*\)|https?:\/\/\S+|^[ \t]{0,3}\[[^\]\n]+\]:.*/gm);
+    const result = [];
+    for (const match of visible.matchAll(/#([\p{L}\p{M}\p{N}\p{So}\p{Sk}_/\-\u200d]+)/gu)) {
+      const from = match.index, to = from + match[0].length;
+      const before = visible[from - 1] || '';
+      if (/[\p{L}\p{M}\p{N}_/#!]/u.test(before) || escapedAtSource(visible, from)) continue;
+      const tag = match[1].normalize('NFC');
+      if (/^\p{Nd}+$/u.test(tag) || tag.split('/').some((part) => !part)) continue;
+      result.push({ from, to, tag });
+    }
+    return result;
+  }
+
+  function mathRanges(source) {
+    const result = [];
+    const regex = /\\\[([\s\S]+?)\\\]|(?<!\$)\$\$([\s\S]+?)\$\$(?!\$)|\\\(([^\n]+?)\\\)|(?<!\$)\$([^$\n]+?)\$(?!\$)/g;
+    for (const match of String(source || '').matchAll(regex)) {
+      if (escapedAtSource(source, match.index)) continue;
+      const display = match[1] != null || match[2] != null;
+      const open = match[0].slice(0, display || match[3] != null ? 2 : 1);
+      const close = open === '\\[' ? '\\]' : open === '\\(' ? '\\)' : open;
+      const end = match.index + match[0].length;
+      if (escapedAtSource(source, end - close.length)) continue;
+      result.push({ from: match.index, to: end, body: match[1] ?? match[2] ?? match[3] ?? match[4], display, open, close });
+    }
+    return result;
+  }
+
   function indentWidth(raw) {
     let width = 0;
     const value = String(raw || '');
@@ -117,14 +183,12 @@
           i = close;
           continue;
         }
+        break; // An unfinished code fence remains code while typing.
       }
-      visibleLines.push(lines[i].replace(/`+[^`]*`+/g, ''));
+      visibleLines.push(/^(?: {4}|\t)/.test(lines[i]) ? '' : lines[i].replace(/`+[^`]*`+/g, ''));
     }
-    const visible = visibleLines.join('\n');
-    const math = /\\\[[\s\S]+?\\\]/.test(visible)
-      || /\\\([^\n]+?\\\)/.test(visible)
-      || /(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$/.test(visible)
-      || /(^|[^\\])\$[^$\n]+?(?<!\\)\$/m.test(visible)
+    const visible = visibleLines.join('\n').replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, '');
+    const math = mathRanges(visible).length > 0
       || /\\begin\{([^{}\s]+)\}[\s\S]+?\\end\{\1\}/.test(visible)
       || /\\(?:ref|eqref)\{[^{}\n]+\}/.test(visible);
     return { math: math, mermaid: mermaid };
@@ -574,26 +638,17 @@
 
   // ── 数学公式：先抠 $$块$$ 再抠 $行内$（占位符回填时再 escape，MathJax 读 textContent 会 decode）──
   function protectMath(src, preserveLines) {
+    const ranges = mathRanges(src);
     const maths = [];
-    let s = src.replace(/\\\[([\s\S]+?)\\\]/g, function (m, content) {
-      maths.push({ content: content, delimiter: 'bracket-block' });
-      const nl = preserveLines === false ? 0 : (m.match(/\n/g) || []).length;
-      return '\x00DMATH' + (maths.length - 1) + '\x00' + (nl ? '\n'.repeat(nl) : '');
+    let s = '', cursor = 0;
+    ranges.forEach((range) => {
+      s += src.slice(cursor, range.from);
+      maths.push({ content: range.body, delimiter: range.open === '\\[' ? 'bracket-block' : range.open === '\\(' ? 'paren-inline' : range.display ? 'dollar-block' : 'dollar-inline' });
+      const nl = preserveLines === false || !range.display ? 0 : (src.slice(range.from, range.to).match(/\n/g) || []).length;
+      s += '\x00' + (range.display ? 'DMATH' : 'MATH') + (maths.length - 1) + '\x00' + '\n'.repeat(nl);
+      cursor = range.to;
     });
-    s = s.replace(/(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$/g, function (m, content) {
-      maths.push({ content: content, delimiter: 'dollar-block' });
-      // 同 protectCode：占位符补足等量换行，保住多行 $$…$$ 之后内容的源码行号（修点击定位错位）
-      const nl = preserveLines === false ? 0 : (m.match(/\n/g) || []).length;
-      return '\x00DMATH' + (maths.length - 1) + '\x00' + (nl ? '\n'.repeat(nl) : '');   // 块级（独占一行 → 居中展示）
-    });
-    s = s.replace(/\\\(([\s\S]+?)\\\)/g, function (_, content) {
-      maths.push({ content: content, delimiter: 'paren-inline' });
-      return '\x00MATH' + (maths.length - 1) + '\x00';
-    });
-    s = s.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, function (_, content) {
-      maths.push({ content: content, delimiter: 'dollar-inline' });
-      return '\x00MATH' + (maths.length - 1) + '\x00';     // 行内
-    });
+    s += src.slice(cursor);
     return { protected: s, maths: maths };
   }
   function restoreMath(html, maths) {
@@ -745,7 +800,7 @@
       }).join('') : '';
       return '<span class="md-local-image' + sized + (overlays ? ' has-image-text' : '')
         + '" data-note-image-wrap="' + target + '"' + sizeStyle + '>'
-        + '<img data-note-image="' + target + '" alt="' + alt + '" loading="lazy" decoding="async">'
+        + '<img data-note-image="' + target + '" data-note-image-syntax="' + item.syntax + '" alt="' + alt + '" loading="lazy" decoding="async">'
         + (overlays ? ('<span class="note-image-text-layer">' + overlays + '</span>') : '')
         + '<span class="md-local-image-fallback">' + alt + '</span></span>';
     });
@@ -1059,18 +1114,26 @@
   function renderResult(src) {
     const source = normalizeSource(src);
     if (!source) return { html: '', features: { math: false, mermaid: false }, error: false };
-    const features = scanFeatures(source);
     const options = arguments.length > 1 ? arguments[1] : null;
     const opts = options && typeof options === 'object' ? options : {};
+    const header = opts.noteTags ? frontmatter(source) : null;
+    const body = header ? source.slice(header.to) : source;
+    const features = scanFeatures(body);
     try {
-      const codeGuard = protectCode(source);
+      const codeGuard = protectCode(body);
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
       const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
       const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
       const linkGuard = protectLinks(wikiGuard.protected);
       const mathGuard = protectMath(linkGuard.protected);
       const escapeGuard = protectEscapes(mathGuard.protected);
-      let html = parseBlocks(escapeGuard.protected, true);
+      const tags = opts.noteTags ? tagRanges(escapeGuard.protected) : [];
+      let tagged = escapeGuard.protected;
+      tags.slice().reverse().forEach((tag, index) => {
+        tagged = tagged.slice(0, tag.from) + '\x00NTAG' + (tags.length - index - 1) + '\x00' + tagged.slice(tag.to);
+      });
+      let html = parseBlocks(tagged, true);
+      html = html.replace(/\x00NTAG(\d+)\x00/g, (_, index) => '<a class="note-tag" data-note-tag="' + escapeHtml(tags[+index].tag) + '">' + escapeHtml('#' + tags[+index].tag) + '</a>');
       html = restoreMath(html, mathGuard.maths);
       html = restoreLinks(html, linkGuard.links);
       html = restoreWikiLinks(html, wikiGuard.wikis);
@@ -1078,6 +1141,7 @@
       html = restoreEscapes(html, escapeGuard.chars);
       html = restoreInlineCode(html, inlineCodeGuard.codes);
       html = restoreCode(html, codeGuard.codes);
+      if (header) html = '<pre class="note-frontmatter"><code>' + escapeHtml(source.slice(0, header.to)) + '</code></pre>' + html;
       return { html: html, features: features, error: false };
     } catch (error) {
       return {
@@ -1205,5 +1269,8 @@
     serializeImageBlock: serializeImageBlock,
     imageTextVisibleSource: imageTextVisibleSource,
     structure: structure,
+    frontmatter: frontmatter,
+    tagRanges: tagRanges,
+    mathRanges: mathRanges,
   };
 })(window);

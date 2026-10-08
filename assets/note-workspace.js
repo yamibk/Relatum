@@ -59,6 +59,78 @@
   const libraryResetButton = $('[data-note-library-action="reset-open"]');
   const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
   let liveEditor = null;
+  let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
+  const browserNavigation = $('[data-role="note-browser-navigation"]');
+  const browserResults = $('[data-role="note-browser-results"]');
+  const browserBack = $('[data-role="note-browser-back"]');
+  const browserToggle = $('[data-note-action="toggle-browser"]');
+  const recentFiles = new Map();
+  try { JSON.parse(localStorage.getItem('canvas:noteRecentFiles:v1') || '[]').slice(-200).forEach(([path, time]) => { if (typeof path === 'string' && Number.isFinite(time)) recentFiles.set(path, time); }); } catch (error) {}
+  function persistRecent() {
+    const entries = Array.from(recentFiles).sort((a, b) => b[1] - a[1]).slice(0, 200);
+    recentFiles.clear(); entries.forEach(([path, time]) => recentFiles.set(path, time));
+    try { localStorage.setItem('canvas:noteRecentFiles:v1', JSON.stringify(entries)); } catch (error) {}
+  }
+  function recordRecent(path) { recentFiles.set(path, Date.now()); persistRecent(); }
+  async function beforeBrowse() {
+    if (!(await finishInlineTitle())) return false;
+    if (state.renamePath && !(await finishInlineRename())) return false;
+    if (editorInputPending()) await whenEditorInputSettled();
+    if (!(await flushSave())) return false;
+    rememberEditorState(state.current);
+    closeContextMenu(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
+    if (liveEditor) liveEditor.setImageTextMode(false);
+    return true;
+  }
+  function showBrowserResults(show) {
+    root.classList.toggle('note-browser-showing-results', show);
+    $('.note-document-body')?.toggleAttribute('inert', show);
+    $('.note-document-head')?.toggleAttribute('inert', show);
+    if (show) root.classList.remove('links-overlay-open');
+  }
+  async function loadNoteBrowser() {
+    if (noteBrowser) return noteBrowser;
+    if (!browserLoader) browserLoader = (async () => {
+      if (!window.RelatumNoteBrowser) await new Promise((resolve, reject) => {
+        const script = document.createElement('script'); script.src = 'note-browser.js'; script.async = true;
+        script.onload = resolve; script.onerror = () => reject(new Error(tr('readFailed'))); document.head.appendChild(script);
+      });
+      noteBrowser = window.RelatumNoteBrowser.create({ root, navigation: browserNavigation, results: browserResults, back: browserBack,
+        request, query: (query) => post('/api/note-query', query), language,
+        getEntries: () => flattenEntries(state.entries, []), getRecent: () => Object.fromEntries(recentFiles),
+        beforeBrowse, showResults: showBrowserResults, openNote: (path) => openNote(path),
+      });
+      return noteBrowser;
+    })().catch((error) => { browserLoader = null; throw error; });
+    return browserLoader;
+  }
+  function updateBrowserToggle() {
+    if (!browserToggle) return;
+    const label = language() === 'en' ? (browserIntent ? 'Back to file tree' : 'Browse notes') : (browserIntent ? '返回文件树' : '浏览笔记');
+    browserToggle.setAttribute('aria-label', label); browserToggle.title = label; browserToggle.setAttribute('aria-pressed', String(browserIntent));
+  }
+  async function setBrowserMode(enabled, tag) {
+    if (!state.active) return;
+    const sequence = ++browserSequence; browserIntent = enabled;
+    if (!(await beforeBrowse()) || sequence !== browserSequence) { if (sequence === browserSequence) { browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle(); } return; }
+    try {
+      const browser = enabled ? await loadNoteBrowser() : noteBrowser;
+      if (sequence !== browserSequence || !state.active) return;
+      root.classList.toggle('note-browser-mode', enabled);
+      browserNavigation.hidden = !enabled;
+      treeEl.inert = enabled;
+      try { localStorage.setItem('canvas:noteSidebarView:v1', enabled ? 'browse' : 'tree'); } catch (error) {}
+      document.documentElement.classList.remove('note-browser-restoring'); updateBrowserToggle();
+      if (enabled) await browser.activate({ tag });
+      else if (browser) browser.suspend();
+      if (!enabled) scheduleInlineTitleScroll();
+    } catch (error) {
+      if (sequence !== browserSequence || !state.active) return;
+      document.documentElement.classList.remove('note-browser-restoring');
+      browserIntent = false; root.classList.remove('note-browser-mode'); browserNavigation.hidden = true; treeEl.inert = false;
+      updateBrowserToggle(); showToast(error.message || tr('readFailed'), 'error');
+    }
+  }
   let bodyMenuContext = null, bodyMenuSubmenu = null, bodyMenuParent = null;
   let statisticsTimer = 0, statisticsFrame = 0, statisticsJob = null;
   let prefetchEpoch = 0, prefetchRunning = false, hoverPrefetchTimer = 0, hoverPrefetchPath = '';
@@ -468,6 +540,8 @@
   }
 
   function remapViewStates(source, destination) {
+    Array.from(recentFiles).forEach(([path, time]) => { const next = mapPath(path, source, destination); if (next !== path) { recentFiles.delete(path); recentFiles.set(next, time); } });
+    persistRecent(); if (noteBrowser) noteBrowser.invalidate();
     const entries = Array.from(viewStates);
     entries.forEach(([path]) => { if (mapPath(path, source, destination) !== path) viewStates.delete(path); });
     entries.forEach(([path, view]) => {
@@ -591,6 +665,7 @@
   }
 
   function focusEditor() {
+    if (root.classList.contains('note-browser-showing-results')) return;
     if (state.viewMode === 'reading' && readingHost) readingHost.focus();
     else if (!liveEditor) fallbackEditor.focus();
     else liveEditor.focus();
@@ -704,10 +779,10 @@
     requestAnimationFrame(() => requestAnimationFrame(() => jumpToHeading(fragment)));
   }
 
-  async function openLocalNoteFile(target) {
+  async function openLocalNoteFile(target, imageSyntax) {
     if (!state.current) return false;
     try {
-      await post('/api/open-external', { kind: 'note-file', note: state.current.path, target });
+      await post('/api/open-external', { kind: 'note-file', note: state.current.path, target, imageSyntax });
       return true;
     } catch (error) {
       showToast(error.message || tr('externalOpenFailed'), 'error');
@@ -990,8 +1065,9 @@
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
           onOpenWiki: (target) => openWikiFromEditor(target),
+          onOpenTag: (tag) => setBrowserMode(true, tag),
           onOpenExternal: (target) => openMarkdownTarget(target),
-          onOpenLocalFile: (target) => openLocalNoteFile(target),
+          onOpenLocalFile: (target, syntax) => openLocalNoteFile(target, syntax),
           onImageFiles: (files) => uploadImages(files),
           clipboardText: clipboardLinkMarkdown,
           onImageSelectionChange: (selection) => updateImageTextTools(selection),
@@ -1010,11 +1086,13 @@
     if (readingHost) {
       readingHost.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
       readingHost.addEventListener('click', (event) => {
+        const tag = event.target.closest('[data-note-tag]');
+        if (tag) { event.preventDefault(); setBrowserMode(true, tag.dataset.noteTag); return; }
         const wiki = event.target.closest('[data-wikilink]');
         if (wiki) { event.preventDefault(); openWikiFromEditor(wiki.dataset.wikilink || ''); return; }
         const imageFrame = event.target.closest('.md-local-image');
         const image = imageFrame && imageFrame.querySelector('[data-note-image]');
-        if (image) { event.preventDefault(); openLocalNoteFile(image.dataset.noteImage || ''); return; }
+        if (image) { event.preventDefault(); openLocalNoteFile(image.dataset.noteImage || '', image.dataset.noteImageSyntax); return; }
         const link = event.target.closest('[data-href]');
         if (link) {
           event.preventDefault();
@@ -1601,6 +1679,7 @@
     return true;
   }
   async function openBlankTab(options) {
+    if (noteBrowser) noteBrowser.showDocument();
     const previous = state.current;
     if (previous && editorInputPending()) await whenEditorInputSettled();
     rememberEditorState(previous);
@@ -1616,6 +1695,7 @@
   async function activateTab(tabPath, options) {
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
     if (isBlankTab(tabPath)) {
+      if (noteBrowser) noteBrowser.showDocument();
       const previous = state.current;
       if (previous && editorInputPending()) await whenEditorInputSettled();
       rememberEditorState(previous);
@@ -1906,6 +1986,7 @@
       const result = await request('/api/notes-tree'); if (seq !== state.refreshSeq) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
       const signature = JSON.stringify(flattenEntries(entries, []).map((entry) => [entry.path, entry.modifiedNs, entry.size]));
+      const browserChanged = signature !== state.treeMetadataSignature;
       if (signature !== state.treeMetadataSignature) { state.externalSyncUnchanged = 0; state.treeMetadataSignature = signature; }
       else if (options && options.background) state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1);
       const structureChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
@@ -1914,6 +1995,11 @@
       // Always refresh metadata for cache validation; unchanged rows retain focus,
       // inline rename drafts and any folder transition already in progress.
       state.entries = entries;
+      const existingPaths = new Set(flattenEntries(entries, []).map((entry) => entry.path));
+      let prunedRecent = false;
+      recentFiles.forEach((time, path) => { if (!existingPaths.has(path)) { recentFiles.delete(path); prunedRecent = true; } });
+      if (prunedRecent) persistRecent();
+      if (browserChanged && noteBrowser) noteBrowser.invalidate();
       const flat = flattenEntries(state.entries, []); rebuildEntryIndex();
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
@@ -2040,6 +2126,7 @@
       try {
         const result = await post('/api/note-save', { path, content, revision: target.revision });
         target.revision = result.revision || target.revision;
+        recordRecent(path); if (noteBrowser) noteBrowser.invalidate();
         target.persistedGeneration = Math.max(target.persistedGeneration, generation);
         if (target.editGeneration <= generation) target.content = content;
         cacheDocument(target);
@@ -2069,11 +2156,12 @@
     const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target); return ok;
   }
   async function openNote(path, options) {
+    if (noteBrowser) noteBrowser.showDocument();
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (!path) return false;
     if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled();
     selectNoteTab(path, !(options && options.reuseActiveTab === false));
-    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); return true; }
+    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
     const previous = state.current; rememberEditorState(previous);
     const seq = ++state.openSeq; state.openingPath = path; state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
     renderTabs();
@@ -2083,6 +2171,7 @@
     if (cached && !(options && options.force)) {
       if (!(options && options.skipSave) && previous) flushSave(previous);
       applyDocument(cached);
+      if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current === cached) focusEditor(); });
       return true;
     }
@@ -2094,6 +2183,7 @@
       const shown = state.current && state.current.path === path ? state.current : null;
       if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) applyDocument(data);
       else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); }
+      if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
       return true;
     } catch (error) {
@@ -2124,6 +2214,7 @@
         payload.language = language();
       }
       const result = await post('/api/note-create', payload);
+      if (kind === 'note' && noteBrowser) noteBrowser.showDocument();
       state.entries = result.tree && result.tree.entries || state.entries;
       state.rootTargeted = false;
       state.selectedPath = result.path;
@@ -2577,8 +2668,10 @@
       if (!activeTab && path && findEntry(path) && state.tabs.includes(path)) activeTab = path;
       if (!activeTab) activeTab = state.tabs.find((tabPath) => isBlankTab(tabPath) || !!findEntry(tabPath)) || '';
       if (activeTab && isBlankTab(activeTab)) { state.activeTab = activeTab; persistTabs(); renderTabs(); updateEditorVisibility(); }
-      else if (activeTab) await openNote(activeTab, { reuseActiveTab: false, skipSave: true, noFocus: true });
+      else if (activeTab) await openNote(activeTab, { reuseActiveTab: false, skipSave: true, noFocus: true, noRecent: true });
       else { renderTabs(); updateEditorVisibility(); }
+      if (state.active && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
+      document.documentElement.classList.remove('note-browser-restoring');
       return true;
     })();
     state.initializePromise = initialize.finally(() => { state.initializePromise = null; });
@@ -2588,6 +2681,7 @@
   async function activate() {
     const wasInitialized = state.initialized;
     state.active = true;
+    if (noteBrowser && browserIntent) noteBrowser.resume();
     state.externalSyncUnchanged = 0;
     if (state.current && state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true);
@@ -2595,6 +2689,7 @@
     const initialized = await initializeWorkspace();
     revealColdBoot();
     if (!initialized) return false;
+    if (!root.classList.contains('note-browser-mode') && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
     window.RelatumStartupMark?.('notes-ready');
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
     else scheduleExternalSync();
@@ -2607,7 +2702,7 @@
     }
     return true;
   }
-  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); if (noteBrowser) noteBrowser.suspend({ keepView: true }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
   // Retain the outgoing page until the workspace's slide finishes, then release
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
@@ -2661,6 +2756,7 @@
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
     const name = action.dataset.noteAction;
+    if (name === 'toggle-browser') { setBrowserMode(!browserIntent); return; }
     if (name === 'toggle-image-text') {
       toggleImageTextMode(action);
       return;
@@ -2873,12 +2969,12 @@
   document.addEventListener('relatum:languagechange', closeContextMenu);
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
-    else if (state.active) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
+    if (document.hidden) { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
+    else if (state.active) { if (noteBrowser && browserIntent) noteBrowser.resume(); state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); });
+  window.addEventListener('pagehide', () => { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); });
   window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(); });
-  document.addEventListener('relatum:languagechange', () => { renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };

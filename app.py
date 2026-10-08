@@ -10645,6 +10645,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return self._send_json(200, NOTES_STORE.links(q.get("path", [""])[0]))
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+        if parsed.path == "/api/note-tags":
+            try:
+                with NOTES_MUTATION_LOCK:
+                    return self._send_json(200, NOTES_STORE.tags())
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
         if parsed.path == "/api/note-history":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -10661,6 +10667,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 with NOTES_MUTATION_LOCK:
                     target, media_type = NOTES_STORE.resolve_image(
                         q.get("note", [""])[0], q.get("src", [""])[0],
+                        syntax=q.get("syntax", ["markdown"])[0],
                     )
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
@@ -10833,6 +10840,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_research_workspace_save(body)
         if path == "/api/note-create":
             return self._api_note_create(body)
+        if path == "/api/note-query":
+            try:
+                with NOTES_MUTATION_LOCK:
+                    return self._send_json(200, NOTES_STORE.query(body))
+            except NotesError as err:
+                return self._send_json(err.status, {"error": str(err), "code": err.code})
         if path == "/api/note-save":
             return self._api_note_save(body)
         if path == "/api/note-move":
@@ -12850,7 +12863,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if kind == "note-file":
             try:
                 with NOTES_MUTATION_LOCK:
-                    p = NOTES_STORE.resolve_link_target(body.get("note"), target)
+                    if body.get('imageSyntax') is not None:
+                        p, _ = NOTES_STORE.resolve_image(body.get("note"), target, syntax=body['imageSyntax'])
+                    else:
+                        p = NOTES_STORE.resolve_link_target(body.get("note"), target)
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
             ext = p.suffix.lower()

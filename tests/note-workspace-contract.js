@@ -237,7 +237,7 @@ assert(notes.includes("kind: 'note-file'") && notes.includes('function openMarkd
   'Markdown file links must use the note-vault path sandbox instead of the URL opener');
 assert(notes.includes('function jumpToHeading(fragment)') && live.includes('revealPosition'),
   'Markdown heading fragments must navigate in both reading and editor views');
-assert(live.includes('onOpenLocalFile(parsed.target)') && notes.includes("closest('.md-local-image')"),
+assert(live.includes('onOpenLocalFile(parsed.target, parsed.syntax)') && notes.includes("closest('.md-local-image')"),
   'local images must open explicitly from Live Preview and reading mode');
 assert(live.includes('EditorView.updateListener') && live.includes('if (!update.docChanged'), 'only document transactions may enter the save chain');
 assert(live.includes('securityLevel') === false, 'Mermaid security policy belongs to the shared renderer');

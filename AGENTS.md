@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-07。
+> 最后按源码校准：2026-10-08。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -84,6 +84,8 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 | --- | --- |
 | `app.py` | 本地 HTTP 服务、路由、持久化、导入导出、AI 代理、托管笔记库接口、独立复习卡片数据库、学习/日历/速记/专注数据。 |
 | `notes_library.py` | `ROOT/notes/` 托管 Markdown 笔记库的无 HTTP 数据层；负责安全相对路径、增量文档/双链索引、无感修订保存、库外恢复历史、移动改写与回滚、伴生图片、回收站目标校验、外部拖入暂存，以及生涯统计所需的图片文字元数据解码。 |
+| `note_metadata.py` | 无依赖的只读标签/YAML 识别与纯文本摘要；与前端共用 `tests/note-tag-cases.json` 语法样例，元数据并入笔记库增量索引，不保留正文或另建标签数据库。 |
+| `assets/note-browser.js` | 笔记浏览视图的按需模块；`activate / suspend / dispose / setLanguage` 管理生命周期，`registerProvider({id,label,loadPage,loadNavigation?})` 注册项目内提供者。`label` 为显示名称或内建翻译键；导航项为 `{key,label,count?,depth?}`，结果页为 `{items,total,hasMore,consumed?}`。宿主提供请求、库条目、最近记录、保存边界及打开笔记窄接口；提供者不接管编辑器或正文。 |
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
 | `desktop_instance.py` | Windows 工作区占用协调；按数据根用启动协调锁原子占用有效顶层工作区，允许互不重叠的窗口并存。完整模式独占四工作区并保留认证命名管道激活/画布打开；每窗管理自己的短期状态。 |
@@ -221,6 +223,10 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 
 ### `notes/` 托管 Markdown 笔记库
 
+- 放大镜在左侧专注按钮之后切换文件树/浏览视图，首次显示“最近文件”，标签目录按需展开；文件树专属操作仅在树模式出现。浏览目录复用文件树的 `note-tree-toggle` CSS 箭头（不是文本字符）、旋转/按压效果和 `note-tree-children-shell` 网格展开/收起与子项错峰，低动态直接切换；导航 DOM 按提供者和键保留，连续点击可反转，离场清理动画任务。右侧结果每批 50 篇，含文件名、最多 240 字摘要、库内路径和标签；打开结果复用当前标签，正文“返回结果”恢复筛选、已加载页、滚动和选中项。切换先等待候选提交和既有保存链，失败保留正文；不重建 CodeMirror，保留撤销、选区、滚动和树展开状态。模块复用既有保存/移动/删除/导入/外部检查事件，不新增轮询；离场淘汰过期响应，窄窗沿用覆盖侧栏。
+- 标签来自正文 `#标签` 或文首 YAML `tags` 的缩进列表/方括号列表；支持中文、大小写合并与 `#学习/概率`，父标签包含子标签且数量按笔记去重。代码、公式、链接、注释、转义、标题和纯数字不计标签。文首已闭合 YAML 在预览/阅读中按原文元数据区显示，其他属性不改；源码保持原文。正文标签轻量着色，预览 Ctrl/Cmd 点击、阅读直接点击进入结果。标签首次全库目录读取才枚举索引，未变化文件不重复读取；索引仅加标签和摘要，不常驻全文。
+- 新插入图片继续使用 `![说明](相对路径)` 及原有尺寸语法。wiki 图片先按当前笔记相对路径，再按库根路径，裸文件名最后按全库唯一名称查找；重名明确提示，不猜选。渲染、系统打开、图片文字和清理共用语法信息及同一后端解析，其他笔记的 wiki 引用和歧义候选保守保留；所有查找仍拒绝越界、链接/重解析点及非支持栅格格式。跨软件搬运须携带图片目录，图片文字层需外观通用时可用已有“合并为图片”。
+
 - `notes_library.py` 的文件树用 `os.scandir` 枚举，每个可见条目复用一次不跟随链接的 `stat` 完成类型分类、自然排序和时间/大小元数据；符号链接和所有 Windows 重解析点都排除，进入子目录前再做目录级实时复查。目录枚举失败仍返回 `read_failed`，扫描时消失或不可读的单条目跳过；不缓存整棵树、不改变前台复检间隔。`tests/test_notes_library.py` 覆盖字段/顺序、枚举竞争和链接边界，真实外部同步用 `tests/note-view-state-browser.js` 验证。
 
 - Markdown 文件右键菜单在“打开伴生素材目录”下提供“清理未使用图片”。显式点击后才冲刷当前及缓存待保存笔记，并调用 `/api/note-cleanup-unused-images`；后端校验修订，只在该篇 `<stem>.assets/` 内递归永久删除未引用的 PNG/JPEG/WebP/GIF/BMP，不走回收站、不备份，不改正文、历史或其他类型附件，不删除目录。标准图片、Obsidian 图片、普通文件链接与引用式链接定义均保护对应文件；其他笔记仍在使用的共享图片也保留。围栏代码、行内代码及注释不作为使用依据，缩进内容和引用式定义采取保守保留。路径授权、重解析点及文件变化检查在删除前执行；返回删除数量、释放字节和失败数量，重复执行无副作用。无定时或输入扫描，库内共享引用检查也只随手动操作触发。`tests/test_notes_library.py` 与 `tests/note-image-text-workspace-browser.js` 覆盖删除范围、共享引用、未打开笔记、待保存内容、失败重试和无后台重复请求。
@@ -236,7 +242,7 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 - 编辑器每次输入立即更新 CodeMirror 内存文档与原生撤销栈，普通逐键输入的 `onDocChanged` 只回传选区/滚动元数据，不得每次 `doc.toString()`；图片文字的单次提交、图片对象删除和撤销/重做允许携带一次完整值，以立即按解码后的可见文字校准统计。350ms 空闲保存、`Ctrl+S`、切文档、失焦和关闭冲刷通过 `snapshot()` 取完整 Markdown，再用 SHA-256 修订号、同目录唯一临时文件和 `os.replace` 串行落盘。切文档时点击帧先更新树选中态和路径面包屑，并先发起目标读取；上一文档的快照保存只在后台队列继续，不能阻塞下一篇的显示。当前会话缓存最近打开正文，并在空闲时预读最多 12 篇不超过 512KB 的笔记；缓存只是切换加速层，后台磁盘复检仍是事实来源。只有真实 I/O 错误显示非遮挡错误条并重试。
 - 外部修订在本地无新编辑时静默载入，并把当前选区与滚动位置按新正文长度夹紧后带入新编辑状态，不能因为窗口重新聚焦或工作区切换时恰好发现外部改写而跳回文首；与本地编辑碰撞时先强制把磁盘内容写入 `data/note-recovery/`，再以当前编辑器内容为准，不显示冲突弹窗。正常快照最短间隔 5 分钟，保留 7 天，历史恢复前先快照当前版本。
 - 双链先按精确库内相对路径解析，再按唯一文件名解析；重名或缺失不猜目标。移动/重命名只改写操作前能够唯一指向目标的 `[[双链]]`，保留别名、标题锚点和块引用；短链接移动后仍唯一时保持短写法，否则写新库内路径。文件/目录、伴生素材和引用改写共同暂存并在失败时回滚，歧义链接只返回警告。Relatum 插入到 `<笔记名>.assets/images/` 的图片会随 `.md` 跨文件夹移动并保持可解析；用户手写的库内共享相对路径（例如 `../shared.png`）仍按移动后的笔记位置解释，移动后是否有效取决于目标相对位置。
-- 当前笔记的 `•••` 菜单提供“实时预览 / 源码模式 / 阅读模式”，右上角常驻按钮在实时预览与源码模式之间一键往返；选择保存在本地偏好且切换标签后沿用，三种模式始终共享同一 Markdown 字符串与现有保存链。源码模式继续复用同一个 CodeMirror，只通过 `Compartment.reconfigure()` 原位移除或恢复块组件与行内投影，必须保留正文对象、选区、滚动和原生撤销历史，不能重建编辑器状态或退回逐键复制全文的 textarea；阅读模式必须通过 `MarkdownMini.renderResult(..., {localImages:true})` 的安全结果和 `/api/note-asset` 显示本地图片，公式与 Mermaid 仍走离线按需运行时，不能执行原始 HTML/SVG。实时预览与源码模式都使用 CodeMirror 原生语言感知配对：`[]`、`()`、`{}`、单双引号自动闭合，输入已有闭合符时越过，空配对退格同时删除；`Ctrl/Cmd+B` 包裹选区为加粗，`Ctrl/Cmd+Shift+K` 把选区包成围栏代码块或在光标处插入空围栏；阅读模式不响应编辑键。Markdown 默认续行之前以最高优先级先处理只有引用标记的当前行：单层 `> ` 第二次回车清除标记并退出引用/Callout，嵌套引用每次只退出最深一层，含正文的引用、列表和任务列表仍走默认续行。单表面 Live Preview 由 CodeMirror 6 / Lezer 保持 Markdown 源码与光标位置，只在光标不位于完整语法单元时用 decorations/widgets 显示排版结果；活动单元的定界符由 Relatum 自有标记层染成浅灰/语义色，不得恢复 CodeMirror `defaultHighlightStyle`。有效 Markdown 转义只按 Lezer `Escape` 语法节点把反斜杠染灰，读取渲染仅移除可转义 ASCII 标点前的反斜杠；无效转义、行内代码和围栏代码必须保持原文，不能用全局正则把所有反斜杠当成转义。CodeMirror 初始语法树可能只覆盖长文档前段，因此编辑器必须以短时间片补解析当前视口；滚动恢复、滚动与富块高度变化后要按帧合并刷新，并在有界的前后字符缓冲区内发现附近富块，待组件几何稳定后再补一帧当前可见装饰；不得改回每次滚动扫描整篇。表格、公式等块级替换会把 CodeMirror 的 `visibleRanges` 切成多段；每段都必须继续遍历语法树，跨段重复出现的祖先节点只能去重自身装饰，不能剪掉后一段尚未访问的子树。围栏代码使用离线内置的 C/C++/Arduino、Python、JavaScript/TypeScript、JSON、HTML/CSS、Java、Shell/PowerShell、SQL、LaTeX、MATLAB/Octave、Markdown 解析器和仅作用于代码 token 的自有 HighlightStyle；即使视口从围栏中段开始，可见代码行也必须通过边界祖先解析保留连续底色，活动代码行不得掉色，未知语言退化为普通等宽源码。非活动且带语言的围栏在首行右上角显示作者原样输入的语言标签，点击只复制不含围栏的代码正文并短暂反馈，不能移动选区；光标进入代码单元后隐藏标签，避免遮挡围栏源码。任何富块间距都不得通过 CSS 强改 `.cm-line` 的高度或行高，否则会破坏 CodeMirror 高度图并使后续代码鼠标坐标错行。非活动 ATX 标题必须把开头 `#` 与其后的分隔空白作为同一个隐藏范围，保证 H1–H6 与普通正文严格共用左边缘；光标进入标题后只恢复并染色 `#`，分隔空白保持普通排版。表格和 Obsidian Callout 卡点击后回到原位源码，Callout `-` 缺省折叠正文；Callout 类型、别名、图标与色板按 Obsidian 官方语义区分，未知类型安全退化为 Note，实时预览与阅读模式共用同一视觉。原始 HTML/SVG 始终只显示源码。复杂隔离块可复用 `MarkdownMini` 的安全 HTML，但不能整篇重渲染或回写 HTML。图片只交给 `/api/note-asset`，粘贴/拖入的栅格图片写入 `<stem>.assets/images/` 并插入标准相对 Markdown；公式同时支持 `$...$`、独占行的 `$$...$$` 和多行 `$$` 块，只在闭合、非活动、可见且未超限时按需运行，Mermaid 遵循同一边界；异步结果回写前必须同时校验笔记世代、组件 ID、源码指纹和 DOM 存活。
+- 当前笔记的 `•••` 菜单提供“实时预览 / 源码模式 / 阅读模式”，右上角常驻按钮在实时预览与源码模式之间一键往返；选择保存在本地偏好且切换标签后沿用，三种模式始终共享同一 Markdown 字符串与现有保存链。源码模式继续复用同一个 CodeMirror，只通过 `Compartment.reconfigure()` 原位移除或恢复块组件与行内投影，必须保留正文对象、选区、滚动和原生撤销历史，不能重建编辑器状态或退回逐键复制全文的 textarea；阅读模式必须通过 `MarkdownMini.renderResult(..., {localImages:true,noteTags:true})` 的安全结果和 `/api/note-asset` 显示本地图片，公式与 Mermaid 仍走离线按需运行时，不能执行原始 HTML/SVG。实时预览与源码模式都使用 CodeMirror 原生语言感知配对：`[]`、`()`、`{}`、单双引号自动闭合，输入已有闭合符时越过，空配对退格同时删除；`Ctrl/Cmd+B` 包裹选区为加粗，`Ctrl/Cmd+Shift+K` 把选区包成围栏代码块或在光标处插入空围栏；阅读模式不响应编辑键。Markdown 默认续行之前以最高优先级先处理只有引用标记的当前行：单层 `> ` 第二次回车清除标记并退出引用/Callout，嵌套引用每次只退出最深一层，含正文的引用、列表和任务列表仍走默认续行。单表面 Live Preview 由 CodeMirror 6 / Lezer 保持 Markdown 源码与光标位置，只在光标不位于完整语法单元时用 decorations/widgets 显示排版结果；活动单元的定界符由 Relatum 自有标记层染成浅灰/语义色，不得恢复 CodeMirror `defaultHighlightStyle`。有效 Markdown 转义只按 Lezer `Escape` 语法节点把反斜杠染灰，读取渲染仅移除可转义 ASCII 标点前的反斜杠；无效转义、行内代码和围栏代码必须保持原文，不能用全局正则把所有反斜杠当成转义。CodeMirror 初始语法树可能只覆盖长文档前段，因此编辑器必须以短时间片补解析当前视口；滚动恢复、滚动与富块高度变化后要按帧合并刷新，并在有界的前后字符缓冲区内发现附近富块，待组件几何稳定后再补一帧当前可见装饰；不得改回每次滚动扫描整篇。表格、公式等块级替换会把 CodeMirror 的 `visibleRanges` 切成多段；每段都必须继续遍历语法树，跨段重复出现的祖先节点只能去重自身装饰，不能剪掉后一段尚未访问的子树。围栏代码使用离线内置的 C/C++/Arduino、Python、JavaScript/TypeScript、JSON、HTML/CSS、Java、Shell/PowerShell、SQL、LaTeX、MATLAB/Octave、Markdown 解析器和仅作用于代码 token 的自有 HighlightStyle；即使视口从围栏中段开始，可见代码行也必须通过边界祖先解析保留连续底色，活动代码行不得掉色，未知语言退化为普通等宽源码。非活动且带语言的围栏在首行右上角显示作者原样输入的语言标签，点击只复制不含围栏的代码正文并短暂反馈，不能移动选区；光标进入代码单元后隐藏标签，避免遮挡围栏源码。任何富块间距都不得通过 CSS 强改 `.cm-line` 的高度或行高，否则会破坏 CodeMirror 高度图并使后续代码鼠标坐标错行。非活动 ATX 标题必须把开头 `#` 与其后的分隔空白作为同一个隐藏范围，保证 H1–H6 与普通正文严格共用左边缘；光标进入标题后只恢复并染色 `#`，分隔空白保持普通排版。表格和 Obsidian Callout 卡点击后回到原位源码，Callout `-` 缺省折叠正文；Callout 类型、别名、图标与色板按 Obsidian 官方语义区分，未知类型安全退化为 Note，实时预览与阅读模式共用同一视觉。原始 HTML/SVG 始终只显示源码。复杂隔离块可复用 `MarkdownMini` 的安全 HTML，但不能整篇重渲染或回写 HTML。图片只交给 `/api/note-asset`，粘贴/拖入的栅格图片写入 `<stem>.assets/images/` 并插入标准相对 Markdown；公式同时支持 `$...- 当前笔记的 `•••` 菜单提供“实时预览 / 源码模式 / 阅读模式”，右上角常驻按钮在实时预览与源码模式之间一键往返；选择保存在本地偏好且切换标签后沿用，三种模式始终共享同一 Markdown 字符串与现有保存链。源码模式继续复用同一个 CodeMirror，只通过 `Compartment.reconfigure()` 原位移除或恢复块组件与行内投影，必须保留正文对象、选区、滚动和原生撤销历史，不能重建编辑器状态或退回逐键复制全文的 textarea；阅读模式必须通过 `MarkdownMini.renderResult(..., {localImages:true})` 的安全结果和 `/api/note-asset` 显示本地图片，公式与 Mermaid 仍走离线按需运行时，不能执行原始 HTML/SVG。实时预览与源码模式都使用 CodeMirror 原生语言感知配对：`[]`、`()`、`{}`、单双引号自动闭合，输入已有闭合符时越过，空配对退格同时删除；`Ctrl/Cmd+B` 包裹选区为加粗，`Ctrl/Cmd+Shift+K` 把选区包成围栏代码块或在光标处插入空围栏；阅读模式不响应编辑键。Markdown 默认续行之前以最高优先级先处理只有引用标记的当前行：单层 `> ` 第二次回车清除标记并退出引用/Callout，嵌套引用每次只退出最深一层，含正文的引用、列表和任务列表仍走默认续行。单表面 Live Preview 由 CodeMirror 6 / Lezer 保持 Markdown 源码与光标位置，只在光标不位于完整语法单元时用 decorations/widgets 显示排版结果；活动单元的定界符由 Relatum 自有标记层染成浅灰/语义色，不得恢复 CodeMirror `defaultHighlightStyle`。有效 Markdown 转义只按 Lezer `Escape` 语法节点把反斜杠染灰，读取渲染仅移除可转义 ASCII 标点前的反斜杠；无效转义、行内代码和围栏代码必须保持原文，不能用全局正则把所有反斜杠当成转义。CodeMirror 初始语法树可能只覆盖长文档前段，因此编辑器必须以短时间片补解析当前视口；滚动恢复、滚动与富块高度变化后要按帧合并刷新，并在有界的前后字符缓冲区内发现附近富块，待组件几何稳定后再补一帧当前可见装饰；不得改回每次滚动扫描整篇。表格、公式等块级替换会把 CodeMirror 的 `visibleRanges` 切成多段；每段都必须继续遍历语法树，跨段重复出现的祖先节点只能去重自身装饰，不能剪掉后一段尚未访问的子树。围栏代码使用离线内置的 C/C++/Arduino、Python、JavaScript/TypeScript、JSON、HTML/CSS、Java、Shell/PowerShell、SQL、LaTeX、MATLAB/Octave、Markdown 解析器和仅作用于代码 token 的自有 HighlightStyle；即使视口从围栏中段开始，可见代码行也必须通过边界祖先解析保留连续底色，活动代码行不得掉色，未知语言退化为普通等宽源码。非活动且带语言的围栏在首行右上角显示作者原样输入的语言标签，点击只复制不含围栏的代码正文并短暂反馈，不能移动选区；光标进入代码单元后隐藏标签，避免遮挡围栏源码。任何富块间距都不得通过 CSS 强改 `.cm-line` 的高度或行高，否则会破坏 CodeMirror 高度图并使后续代码鼠标坐标错行。非活动 ATX 标题必须把开头 `#` 与其后的分隔空白作为同一个隐藏范围，保证 H1–H6 与普通正文严格共用左边缘；光标进入标题后只恢复并染色 `#`，分隔空白保持普通排版。表格和 Obsidian Callout 卡点击后回到原位源码，Callout `-` 缺省折叠正文；Callout 类型、别名、图标与色板按 Obsidian 官方语义区分，未知类型安全退化为 Note，实时预览与阅读模式共用同一视觉。原始 HTML/SVG 始终只显示源码。复杂隔离块可复用 `MarkdownMini` 的安全 HTML，但不能整篇重渲染或回写 HTML。图片只交给 `/api/note-asset`，粘贴/拖入的栅格图片写入 `<stem>.assets/images/` 并插入标准相对 Markdown；、`$...$`、`\(...\)`、`\[...\]`，后两者分别为行内和独占行块公式，块公式支持单行/多行且不改写定界符，只在闭合、非活动、可见且未超限时按需运行，Mermaid 遵循同一边界；异步结果回写前必须同时校验笔记世代、组件 ID、源码指纹和 DOM 存活。
 - 图片文字只属于独占行本地图片。有当前笔记时可点击右上角“图片文字”入口；选中图片后提供完整工具，未选中图片时仅在显式点击入口后检查正文是否含专用元数据，有数据则临时显示只允许“删除文本框数据”的菜单；此状态清理仅移除本篇残留，不删除其他在用图片的文字。禁止为此增加定时、输入或选区变化时的全文扫描；进入模式后可一次性放置、选择、拖动、双击纯文本编辑、整框改六档字号/固定字色或删除，点击添加（`T+`）进入待放置后再次点击即取消并恢复此前选中的文字框；待放置时已有文字层不拦截落点，切源码/阅读、换笔记、取消图片选择或按 `Esc` 自动退出。位置保存为图片内部中心点比例，字号按显示宽度的 `5%/8%/12%/18%/26%/36%` 计算；最多 64 框、每框 1000 字符、解码 JSON 最大 48KiB。有效 v1 数据写在图片语法后的 Base64URL JSON 注释中；删除最后一框移除整段注释。未知版本、损坏或超限数据原样只读保留，远程与行内图片不启用。阅读/Live 都用 `textContent` 或已转义 HTML 显示；“合并为图片”与右侧“删除文本框数据”为直接执行的永久操作。
 - 图片文字永久操作先等待输入法提交并暂停保存、切页与外部同步，显式完成整篇 Lezer 解析后确定实际图片行。`/api/note-image-text-merge` / `/api/note-image-text-cleanup` 使用笔记修订、1-based 行号和精确源码定位（无图片选择的清理传 null），复用笔记锁及原子写入，不走普通保存备份。合并用当前 DOM 文字样式、内联 SVG foreignObject 和 Canvas 生成原图尺寸透明 PNG（最长边 16384、最多 64Mi 像素，动态图取当前帧），保存到伴生 images 目录并保留原图及显示尺寸。清理保留其他真实在用图片的文字 ID，删除选中和残留数据，同时原地清理本篇历史对应元数据；失败明确提示并可重试，成功重置当前笔记的撤销、重做、缓存及历史预览。不删除任何原有图片文件，不处理外部备份。
 - 笔记正文右上角的“链接”与 `•••` 之间是笔记工作区齿轮。面板从顶部锚点向下展开，使用高不透明度纸面/墨色表面，不常驻模糊；点击外部、再次点击齿轮或离开工作区关闭，低动态偏好立即切换。它独占笔记正文字号 `canvas:noteFontScale:v1`（80–140%，启动时仍由起步页预先应用）和编辑器快捷键偏好 `canvas:noteShortcuts:v1`；全局起步页齿轮不再显示或重置字号。可配置命令为保存、加粗、斜体、删除线、高光、插入链接、行内代码、围栏代码，其中删除线与高光默认未绑定；一个命令可保存多个组合，缺失表示默认、空数组表示主动取消。主动取消出厂默认组合后必须在 Relatum 的高优先级键位层吞掉该组合，不能继续回落到 CodeMirror 默认命令（尤其不能让取消围栏代码的 `Ctrl/Cmd+Shift+K` 变成删行）；若同一组合重新分配给其他可配置命令，则执行新命令。录制只接受 Ctrl/Cmd、Alt 或独立功能键；储存主修饰键为跨平台 `Mod`，冲突不得覆盖现有笔记命令或 CodeMirror/系统保留组合。改变绑定必须仅通过快捷键 `Compartment` 原位重配，不能丢失正文、光标、滚动或撤销历史；输入法候选期延后到提交后应用。
@@ -248,6 +254,8 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 - 右键笔记或文件夹都有“在系统资源管理器中显示”：文件使用 Explorer `/select` 选中，文件夹直接打开；笔记另有“打开伴生素材目录”。删除走 Windows 系统回收站，笔记与同名 `.assets` 一次移入，不在应用内弹确认框。
 
 ### 浏览器本地偏好
+
+- 笔记浏览另用 `canvas:noteSidebarView:v1` 保存 `tree / browse`，用 `canvas:noteRecentFiles:v1` 保存最多 200 个 `[库内路径, 毫秒时间]`。主动打开和成功保存更新记录；预读、后台检查、启动恢复不更新。最近结果按主动时间与磁盘修改时间的较新者降序；库内移动同步改路径，失效路径从记录及结果移除。偏好沿用桌面快照，不写 `.md`。
 
 很多 UI 偏好存在 `localStorage` / `sessionStorage`，不进 `.canvas`：
 
@@ -280,6 +288,7 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 ### GET
 
 - 运行时与首页：`/api/runtime`、`/api/recent`
+- 笔记浏览：`GET /api/note-tags` 返回含隐式父级的标签目录与去重数量；`/api/note-asset?note=&src=&syntax=wiki` 可选 wiki 查找，缺省仍为标准相对 Markdown。
 - Markdown 笔记库：`/api/notes-tree` 返回隐藏伴生目录的嵌套树；`/api/note?path=` 只返回正文与强修订号；`/api/note-links?path=` 按需返回出链/反链；`/api/note-history?path=&version=` 读取恢复历史；`/api/note-asset?note=&src=` 只流式返回库内授权栅格图片。
 - AI 配置安全视图：`/api/ai-config`
 - 学习/活跃：`/api/study`、`/api/study-activity`；`/api/study` 只返回 v6 学习任务、回收站、`goalTrees[]` 与 `activeTreeId`，不再返回单树 `goalTree` 别名或读取目标树归档；活跃接口保留完成/专注数据，并返回 `canvasDays`、`canvasEntries`、`canvasStats`、`canvasGraph`、`canvasOverviewGraph` 与三页汇总 `startPageStats`，年份是画布、三页计时、完成归档和专注记录的并集。
@@ -293,6 +302,8 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 - 内部画布内容导入：`/api/canvas-import-library` 只列出最近索引中有效的顶层 `canvases/*.canvas`，`/api/canvas-import-source` 通过不透明文件 ID 读取并预检来源；双屏右侧打开使用 `/api/canvas-dual-open` 一次返回同一安全来源的 `data`、路径、标题和 revision，并拒绝当前画布；这些接口都不接受客户端来源路径，也不刷新来源最近时间或视口
 
 ### POST
+
+- 笔记浏览只读查询：`/api/note-query` 接收最多 50 个有序 `paths`，或单个 `tag` 与 `offset / limit`（上限 50）；返回 `items / total / hasMore`，条目含 `path / title / modifiedNs / revision / tags / excerpt`。仍沿用笔记锁与路径沙箱，不写用户数据。
 
 - 生涯报告：`/api/career-report-generate` 无筛选参数，读取全部可用历史并在完整成功后原子替换快照；单项数据源损坏会进入来源状态而不中断其余统计，整体写入失败会保留旧快照。
 - Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-history-restore`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中。
@@ -879,12 +890,16 @@ python -m unittest .\tests\test_markdown_notebook_export.py
 
 ```powershell
 python -m unittest .\tests\test_notes_library.py
+python -m unittest .\tests\test_note_browser.py
+node .\tests\note-tags-regression.js
 node .\tests\note-workspace-contract.js
 node .\tests\note-live-editor-regression.js
 node .\tests\markdown-regression.js
 node .\tests\markdown-global-contract.js
 node .\tests\markdown-fuzz-regression.js
 ```
+
+Markdown 兼容与浏览视图用 `node tests/note-browser-browser.js` 验证，设置 `RELATUM_PLAYWRIGHT`、`RELATUM_PYTHON`、`RELATUM_EDGE_PATH` 后自动启动一次性数据根和真实 Edge。覆盖最近排序/持久化/外部修改/删除、标签父级、分页/返回、源码保留、公式/表格/Callout/阅读链、wiki 图片及重名提示、撤销、保存失败、过期响应、英文/深色/窄窗、展开箭头 DOM 保留/连续反转/低动态，以及冷启动不请求标签目录、普通文字不加载 MathJax。前后端标签排除样例共用 JSON；Python 补充增量索引、双链读取不启动全库标签解析、查询边界、外部修改/移动/删除、wiki 重名与共享图片清理。桌面原生中文输入法仍需手测候选窗；既有实时编辑器浏览器回归继续验证 IME 和表格。
 
 编辑位置记忆与外部自动同步另用 `node tests/note-view-state-browser.js` 验证；测试主机设置 `RELATUM_PLAYWRIGHT`、`RELATUM_PYTHON`、`RELATUM_EDGE_PATH` 后，脚本自动启动隔离数据根与真实笔记 API，覆盖前台自动增删、非活动停轮询、删除当前文档及文件夹子树、不复活已删文件、无变化零重绘、错误后保留树、自身保存后刷新、失焦/回焦、外部修改、关闭重开、缓存淘汰、反向选区、页面重载与新浏览器上下文、文件/文件夹改名及失败回滚、正文缩短、三种视图和位置偏好的数量上限/损坏/写入失败；结束时关闭测试服务。这不替代用户电脑上 WebView2 与其他桌面软件之间的实际切换验收。
 

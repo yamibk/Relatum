@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable
+from note_metadata import note_metadata, valid_tag
 
 
 NOTE_SUFFIX = ".md"
@@ -406,6 +407,7 @@ class NotesStore:
         self.atomic_text = atomic_text or _default_atomic_text
         self.atomic_bytes = atomic_bytes or _default_atomic_bytes
         self._document_cache: dict[str, dict] = {}
+        self._metadata_enabled = False
 
     def ensure_root(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -580,7 +582,10 @@ class NotesStore:
         entries = visit(self.root)
         return {"version": 1, "entries": entries}
 
-    def _documents(self) -> dict[str, dict]:
+    def _documents(self, *, metadata: bool = False) -> dict[str, dict]:
+        # Once explicitly requested, refresh metadata with the existing index
+        # read so link scans cannot force a second body read for changed files.
+        self._metadata_enabled = metadata = metadata or self._metadata_enabled
         documents: dict[str, dict] = {}
         live_paths: set[str] = set()
         for target in self._note_paths():
@@ -590,7 +595,7 @@ class NotesStore:
                 stat = target.stat()
                 signature = (stat.st_mtime_ns, stat.st_size)
                 cached = self._document_cache.get(relative)
-                if cached and cached.get("signature") == signature:
+                if cached and cached.get("signature") == signature and (not metadata or 'tags' in cached):
                     documents[relative] = cached
                     continue
                 raw = self._read_note_bytes(target)
@@ -604,6 +609,8 @@ class NotesStore:
                 "mentions": _wiki_mentions(text),
                 "signature": signature,
             }
+            if metadata:
+                document.update(note_metadata(text))
             self._document_cache[relative] = document
             documents[relative] = document
         for stale in set(self._document_cache) - live_paths:
@@ -624,7 +631,60 @@ class NotesStore:
             "revision": _revision(content),
             "mentions": _wiki_mentions(text),
             "signature": signature,
+            **note_metadata(text),
         }
+
+    def tags(self) -> dict:
+        catalog = {}
+        for relative, document in self._documents(metadata=True).items():
+            seen = set()
+            for tag in document['tags']:
+                parts, labels = tag['key'].split('/'), tag['label'].split('/')
+                for depth in range(1, len(parts) + 1):
+                    key = '/'.join(parts[:depth])
+                    item = catalog.setdefault(key, {'key': key, 'label': '/'.join(labels[:depth]), 'count': 0})
+                    if key not in seen:
+                        item['count'] += 1
+                        seen.add(key)
+        return {'items': sorted(catalog.values(), key=lambda item: item['key'])}
+
+    def query(self, body: object) -> dict:
+        if not isinstance(body, dict) or ('paths' in body) == ('tag' in body):
+            raise NotesError('请指定路径列表或标签')
+        def item(relative, document):
+            return {'path': relative, 'title': PurePosixPath(relative).stem,
+                    'modifiedNs': document['signature'][0], 'revision': document['revision'],
+                    'tags': document['tags'], 'excerpt': document['excerpt']}
+        if 'paths' in body:
+            paths = body['paths']
+            if not isinstance(paths, list) or len(paths) > 50:
+                raise NotesError('每次最多查询 50 篇笔记')
+            normalized = list(dict.fromkeys(self.normalize_path(path) for path in paths))
+            items = []
+            for relative in normalized:
+                target = self._absolute(relative)
+                try:
+                    file_stat = target.stat()
+                    signature = (file_stat.st_mtime_ns, file_stat.st_size)
+                    document = self._document_cache.get(relative)
+                    if not document or document['signature'] != signature or 'tags' not in document:
+                        self._cache_document(relative, self._read_note_bytes(target))
+                        document = self._document_cache[relative]
+                    items.append(item(relative, document))
+                except (FileNotFoundError, NotesError) as error:
+                    if isinstance(error, NotesError) and error.status != 404:
+                        raise
+            return {'items': items, 'total': len(items), 'hasMore': False}
+        tag = valid_tag(body['tag']) if isinstance(body['tag'], str) else None
+        offset, limit = body.get('offset', 0), body.get('limit', 50)
+        if not tag or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
+            raise NotesError('标签或分页参数无效')
+        key = tag.casefold()
+        matching = [(path, doc) for path, doc in self._documents(metadata=True).items()
+                    if any(entry['key'] == key or entry['key'].startswith(key + '/') for entry in doc['tags'])]
+        matching.sort(key=lambda pair: (-pair[1]['signature'][0], pair[0]))
+        return {'items': [item(path, doc) for path, doc in matching[offset:offset+limit]],
+                'total': len(matching), 'hasMore': offset + limit < len(matching)}
 
     def invalidate(self) -> None:
         """在文件被系统回收站或外部批量操作移动后清空增量缓存。"""
@@ -1321,7 +1381,7 @@ class NotesStore:
         # Fences, indented code and display math never project image text.
         valid: dict[int, tuple[str, str, list[dict]]] = {}
         fence = ""
-        math = False
+        math = ''
         for number, line in enumerate(lines):
             bare = line.rstrip("\r\n")
             if rendered is not None:
@@ -1335,8 +1395,12 @@ class NotesStore:
             if rendered is None and marker:
                 fence = marker[1]
                 continue
-            if rendered is None and bare.strip() == "$$":
-                math = not math
+            if rendered is None and bare.strip() in ('$$', '\\[', '\\]'):
+                marker = bare.strip()
+                if math == marker:
+                    math = ''
+                elif not math and marker != '\\]':
+                    math = '$$' if marker == '$$' else '\\]'
                 continue
             if rendered is None and (math or bare.startswith(("    ", "\t"))):
                 continue
@@ -1349,7 +1413,7 @@ class NotesStore:
             if items is None:
                 continue
             try:
-                self.resolve_image(normalized, image_target)
+                self.resolve_image(normalized, image_target, syntax='wiki' if source.strip().startswith('![[') else 'markdown')
             except (NotesError, OSError):
                 continue
             valid[number] = (source, image_target, items)
@@ -1459,10 +1523,11 @@ class NotesStore:
         markdown_path = os.path.relpath(target, note_path.parent).replace("\\", "/")
         return {"path": markdown_path, "name": original_name, "mediaType": expected_type}
 
-    def resolve_image(self, note: object, source: object) -> tuple[Path, str]:
+    def _image_candidates(self, note: object, source: object, syntax: str = 'markdown') -> list[Path]:
         note_rel = self.normalize_path(note)
         note_path = self._absolute(note_rel)
-        self._read_note_bytes(note_path)
+        if syntax not in ('markdown', 'wiki'):
+            raise NotesError('图片语法无效')
         if not isinstance(source, str) or not source.strip():
             raise NotesError("缺少图片路径")
         raw = urllib.parse.unquote(source.strip().split("#", 1)[0])
@@ -1484,8 +1549,34 @@ class NotesStore:
         media_type = NOTE_IMAGE_TYPES.get(target.suffix.casefold())
         if not media_type:
             raise NotesError("不支持这种图片格式", status=403, code="unsupported_type")
-        if not target.is_file():
+        if target.is_file():
+            return [target]
+        if syntax == 'wiki' and '..' not in raw.replace('\\', '/').split('/'):
+            vault_target = self._absolute(self.normalize_path(raw.replace('\\', '/'), allow_assets=True), allow_assets=True)
+            if vault_target.is_file():
+                return [vault_target]
+            if '/' not in raw.replace('\\', '/'):
+                matches = []
+                for base, directories, filenames in os.walk(self.root, followlinks=False):
+                    folder = Path(base)
+                    directories[:] = [name for name in directories if name != '.trash' and not name.startswith('.relatum-') and not _is_reparse(folder / name)]
+                    for name in filenames:
+                        if name.casefold() == raw.casefold():
+                            candidate = folder / name
+                            if not _is_reparse(candidate) and candidate.is_file():
+                                matches.append(self._absolute(candidate.relative_to(self.root).as_posix(), allow_assets=True))
+                return matches
+        return []
+
+    def resolve_image(self, note: object, source: object, *, syntax: str = 'markdown') -> tuple[Path, str]:
+        self._read_note_bytes(self._absolute(self.normalize_path(note)))
+        candidates = self._image_candidates(note, source, syntax)
+        if len(candidates) > 1:
+            raise NotesError('图片文件名不唯一，请使用库内完整路径', status=409, code='ambiguous_image')
+        if not candidates:
             raise NotesError("图片不存在", status=404, code="not_found")
+        target = candidates[0]
+        media_type = NOTE_IMAGE_TYPES[target.suffix.casefold()]
         if _is_reparse(target):
             raise NotesError("图片不能是链接或重解析点", status=403, code="unsafe_path")
         if target.stat().st_size > MAX_NOTE_IMAGE_BYTES:
@@ -1559,7 +1650,16 @@ class NotesStore:
             document_relative = document.relative_to(self.root).as_posix()
             document_raw = raw if document == note_path else self._read_note_bytes(document)
             revisions.append((document, _revision(document_raw)))
-            for source in _attachment_references(self._decode_note(document_raw)):
+            document_text = self._decode_note(document_raw)
+            references = _attachment_references(document_text)
+            wiki_sources = {match[1].split('|', 1)[0].strip() for match in re.finditer(r'(?<!\\)!\[\[([^\]\n]+)\]\]', document_text)}
+            for source in references:
+                if source in wiki_sources:
+                    try:
+                        for image in self._image_candidates(document_relative, source, 'wiki'):
+                            protected.add(image.relative_to(self.root).as_posix().casefold())
+                    except (NotesError, OSError):
+                        pass
                 # Resolve paths without the display-size limit: a referenced
                 # image must be retained even if it is currently too large to load.
                 decoded = urllib.parse.unquote(source.split('#', 1)[0]).replace('\\', '/')

@@ -116,6 +116,19 @@ function decorationRecords(set, length) {
 }
 
 const liveProbe = loadLiveDecorationProbe();
+
+const commentTagSource = '%%\n隐藏段落\n\n#hidden\n%%\n\n#visible';
+const commentTagCoordinator = { field: null, spec() { return null; } };
+const commentTagField = liveProbe.__relatumLiveTest.createBlockField(() => 'tags.md', { coordinator: commentTagCoordinator }, commentTagCoordinator);
+const commentTagState = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: commentTagSource,
+  extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), commentTagField],
+});
+const commentTagRecords = decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+  state: commentTagState, visibleRanges: [{ from: commentTagSource.indexOf('#hidden'), to: commentTagState.doc.length }], hasFocus: false, composing: false,
+}, commentTagField, () => 'tags.md', {}), commentTagState.doc.length);
+assert.deepEqual(Array.from(commentTagRecords.filter(item => item.spec.class === 'note-tag'), item => item.spec.attributes['data-note-tag']), ['visible'],
+  'comment markers above the viewport must still exclude hidden tags');
 // The fast path must generate precisely the original grammar, including
 // Setext headings, hard breaks, escapes, links and emphasis spanning lines.
 for (const suffix of ['', '\n---', '\n===', '\n**bold**', '\n[link](https://example.com)', '\nhttps://example.com www.example.com test@example.com', '\nwith  \na hard break', '\n\\*escaped*']) {

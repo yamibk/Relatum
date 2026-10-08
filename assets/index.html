@@ -21,6 +21,8 @@
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
         window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
+        window.RelatumBoot.noteBrowserMode = localStorage.getItem('canvas:noteSidebarView:v1') === 'browse';
+        if (window.RelatumBoot.noteBrowserMode) document.documentElement.classList.add('note-browser-restoring');
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
           window.RelatumBoot = window.RelatumBoot || {};
@@ -1539,6 +1541,10 @@
             <svg class="note-focus-icon note-focus-icon-expand" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.25 3.25h-4v4M12.75 3.25h4v4M7.25 16.75h-4v-4M12.75 16.75h4v-4"/></svg>
             <svg class="note-focus-icon note-focus-icon-restore" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.25 7.25h4v-4M16.75 7.25h-4v-4M3.25 12.75h4v4M16.75 12.75h-4v4"/></svg>
           </button>
+          <button type="button" class="note-icon-button note-browser-toggle" data-note-action="toggle-browser"
+            title="浏览笔记" aria-label="浏览笔记" aria-pressed="false">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25"/><path d="m12.5 12.5 4.25 4.25"/></svg>
+          </button>
         </div>
         <div class="note-head-actions">
           <button type="button" class="note-icon-button" data-note-action="new-note"
@@ -1590,6 +1596,7 @@
       <div class="note-tree-scroll" data-role="note-tree" tabindex="0">
         <p class="note-tree-loading">正在读取笔记库…</p>
       </div>
+      <nav class="note-browser-navigation" data-role="note-browser-navigation" aria-label="笔记浏览" hidden></nav>
       <footer class="note-tree-foot">
         <span>本地目录 · notes/</span>
         <button type="button" data-note-action="reveal-root">在资源管理器中打开</button>
@@ -1606,8 +1613,10 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5.5h8M3.5 10h6M3.5 14.5h6m3-2.5 3 3m0-3-3 3"/></svg>
         </button>
       </nav>
+      <section class="note-browser-results" data-role="note-browser-results" aria-label="笔记结果" hidden inert></section>
       <header class="note-document-head">
         <div class="note-current-copy">
+          <button type="button" class="note-browser-back" data-role="note-browser-back" hidden>返回结果</button>
           <button type="button" class="note-mobile-pane-button" data-note-action="toggle-tree"
             aria-label="显示笔记目录">☰</button>
           <p class="note-current-path" data-role="note-current-path">选择一篇笔记</p>

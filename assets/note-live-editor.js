@@ -120,6 +120,10 @@
 
   function sameLineBlockMath(text) {
     const source = String(text || '').trim();
+    if (source.startsWith('\\[')) {
+      const range = window.MarkdownMini.mathRanges(source)[0];
+      return range && range.display && range.from === 0 && range.to === source.length && range.body.trim() ? { source, body: range.body } : null;
+    }
     if (source.length <= 4 || !source.startsWith('$$')) return null;
     for (let index = 2; index < source.length - 1; index += 1) {
       if (source[index] !== '$' || source[index + 1] !== '$' || escapedAt(source, index)) continue;
@@ -140,6 +144,16 @@
       title: match[3].trim(),
       collapsed: match[2] === '-',
     };
+  }
+
+  const frontmatterCache = new WeakMap();
+  function documentFrontmatter(doc) {
+    if (frontmatterCache.has(doc)) return frontmatterCache.get(doc);
+    const prefix = doc.sliceString(0, Math.min(doc.length, 6));
+    const value = /^\uFEFF?---\r?\n/.test(prefix)
+      ? window.MarkdownMini.frontmatter(doc.sliceString(0, Math.min(doc.length, 65536))) : null;
+    frontmatterCache.set(doc, value);
+    return value;
   }
 
   function calloutPresentationType(type) {
@@ -182,6 +196,8 @@
     const raw = [];
     const seen = new Set();
     const protectedBlocks = [];
+    const metadata = documentFrontmatter(doc);
+    if (metadata) protectedBlocks.push(metadata);
     const push = (spec) => {
       if (spec.kind === 'table') {
         const sameStart = raw.find((item) => item.kind === 'table' && item.from === spec.from);
@@ -300,10 +316,12 @@
         number += 1;
         continue;
       }
-      if (line.text.trim() !== '$$') { number += 1; continue; }
+      const opener = line.text.trim();
+      if (opener !== '$$' && opener !== '\\[') { number += 1; continue; }
+      const closer = opener === '$$' ? '$$' : '\\]';
       let close = number + 1;
-      while (close <= doc.lines && doc.line(close).from - line.from <= BLOCK_MATH_LIMIT && doc.line(close).text.trim() !== '$$') close += 1;
-      if (close <= doc.lines && doc.line(close).text.trim() === '$$') {
+      while (close <= doc.lines && doc.line(close).from - line.from <= BLOCK_MATH_LIMIT && doc.line(close).text.trim() !== closer) close += 1;
+      if (close <= doc.lines && doc.line(close).text.trim() === closer) {
         const closeLine = doc.line(close);
         const source = doc.sliceString(line.from, closeLine.to);
         const protectedSource = protectedBlocks.some((range) => range.from < closeLine.to && range.to > line.from);
@@ -313,6 +331,9 @@
     }
 
     raw.sort((a, b) => a.from - b.from || b.to - a.to);
+    if (metadata) {
+      for (let index = raw.length - 1; index >= 0; index--) if (raw[index].from < metadata.to) raw.splice(index, 1);
+    }
     const pool = Array.isArray(reusable) ? reusable.slice() : [];
     return raw.map((spec) => {
       const index = pool.findIndex((old) => old.kind === spec.kind && old.from <= spec.to && old.to >= spec.from);
@@ -427,7 +448,7 @@
     if (mathLoadPromise) return mathLoadPromise;
     if (!window.MathJax || typeof window.MathJax !== 'object') {
       window.MathJax = {
-        tex: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']], processEscapes: true },
+        tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']], processEscapes: true },
         startup: { typeset: false },
       };
     }
@@ -485,7 +506,8 @@
     reveal(view, event) {
       if (compositionActive(view)) return;
       if (event) { event.preventDefault(); event.stopPropagation(); }
-      const inside = Math.max(this.from + 1, this.to - 1);
+      const delimiterLength = this.source.startsWith('\\(') ? 2 : 1;
+      const inside = Math.max(this.from + delimiterLength, this.to - delimiterLength);
       // Atomic ranges intentionally clamp a selection that starts inside the
       // hidden source. First touch the boundary so this widget is removed,
       // then place the real caret in the now-visible formula source.
@@ -689,6 +711,18 @@
     return 'image-text-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
   }
 
+  function showImageFailure(image, frame) {
+    const url = image.src;
+    frame.classList.add('is-failed');
+    fetch(url).then((response) => response.json()).then((error) => {
+      if (!frame.isConnected || (image.hasAttribute('src') && image.src !== url) || error.code !== 'ambiguous_image') return;
+      const label = document.documentElement.lang === 'en' ? 'Image name is ambiguous; use a full vault path' : '图片文件名不唯一，请使用库内完整路径';
+      frame.dataset.errorLabel = label;
+      const fallback = frame.querySelector('.md-local-image-fallback');
+      if (fallback) fallback.textContent = label;
+    }).catch(() => {});
+  }
+
   function createInteractiveImage(owner, view, parsed, notePath, options, resolveRange, block) {
     const initial = resolveRange();
     const frame = document.createElement('span');
@@ -701,7 +735,7 @@
     const image = document.createElement('img');
     image.alt = parsed.alt || parsed.target.split('/').pop() || '';
     image.loading = 'lazy'; image.decoding = 'async';
-    image.src = options.imageUrl(notePath, parsed.target);
+    image.src = options.imageUrl(notePath, parsed.target, parsed.syntax);
       image.addEventListener('load', () => {
         if (!frame.isConnected) return;
         if (options.imageTextSizer) options.imageTextSizer.update(frame);
@@ -711,6 +745,7 @@
       if (!frame.isConnected) return;
       frame.classList.add('is-failed');
       frame.dataset.errorLabel = '图片无法加载 · ' + image.alt;
+      if (parsed.syntax === 'wiki') showImageFailure(image, frame);
     }, { once: true });
     frame.appendChild(image);
 
@@ -1224,7 +1259,7 @@
       if (event.button !== 0 || event.target.closest('.note-live-image-resize-handle')) return;
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault(); event.stopPropagation();
-        options.onOpenLocalFile(parsed.target);
+        options.onOpenLocalFile(parsed.target, parsed.syntax);
         return;
       }
       select(event);
@@ -1368,7 +1403,7 @@
     if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
       return { html: '', features: { math: false, mermaid: false }, error: true };
     }
-    return markdownMini.renderResult(source, { localImages: true });
+    return markdownMini.renderResult(source, { localImages: true, noteTags: true });
   }
 
   function releaseReadingDocument(host) {
@@ -1385,8 +1420,8 @@
   function renderMarkdown(host, source, notePath, options) {
     if (!host) throw new Error('Markdown reading host is required');
     const safeOptions = Object.assign({
-      imageUrl(path, target) {
-        return '/api/note-asset?note=' + encodeURIComponent(path || '') + '&src=' + encodeURIComponent(target || '');
+      imageUrl(path, target, syntax) {
+        return '/api/note-asset?note=' + encodeURIComponent(path || '') + '&src=' + encodeURIComponent(target || '') + '&syntax=' + encodeURIComponent(syntax || 'markdown');
       },
     }, options || {});
     releaseReadingDocument(host);
@@ -1404,13 +1439,13 @@
       cell.append(...header.childNodes); header.replaceWith(cell);
     });
     content.querySelectorAll('[data-note-image]').forEach((image) => {
-      image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '');
+      image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '', image.dataset.noteImageSyntax);
       const frame = image.closest('.md-local-image');
       if (frame && frame.classList.contains('has-image-text')) {
         imageTextSizer.observe(frame);
         image.addEventListener('load', () => imageTextSizer.update(frame), { once: true });
       }
-      image.addEventListener('error', () => image.removeAttribute('src'), { once: true });
+      image.addEventListener('error', () => { if (image.dataset.noteImageSyntax === 'wiki' && frame) showImageFailure(image, frame); image.removeAttribute('src'); }, { once: true });
     });
     content.querySelectorAll('input.md-task-box').forEach((box) => { box.disabled = true; });
     host.replaceChildren(content);
@@ -1436,8 +1471,9 @@
     const source = String(spec && spec.source || '');
     const from = Number(spec && spec.from) || 0;
     if (spec && spec.kind === 'math') {
-      const opener = source.indexOf('$$');
-      const closer = source.lastIndexOf('$$');
+      const bracket = source.trim().startsWith('\\[');
+      const opener = source.indexOf(bracket ? '\\[' : '$$');
+      const closer = source.lastIndexOf(bracket ? '\\]' : '$$');
       if (opener >= 0 && closer > opener) {
         let offset = opener + 2;
         if (source[offset] === '\r' && source[offset + 1] === '\n') offset += 2;
@@ -1541,7 +1577,7 @@
         const result = safeIsolatedResult(this.spec.source);
         wrap.innerHTML = result.html;
         wrap.querySelectorAll('[data-note-image]').forEach((image) => {
-          image.src = this.options.imageUrl(this.notePath, image.dataset.noteImage || '');
+          image.src = this.options.imageUrl(this.notePath, image.dataset.noteImage || '', image.dataset.noteImageSyntax);
         });
         if (this.spec.kind === 'callout' && this.spec.collapsed) {
           wrap.classList.add('is-collapsed');
@@ -1946,6 +1982,28 @@
       const first = view.state.doc.lineAt(visible.from);
       const last = view.state.doc.lineAt(visible.to);
       const protectedRanges = lineProtectedRanges(view.state, first.from, last.to);
+      const metadata = documentFrontmatter(view.state.doc);
+      if (metadata) protectedRanges.push(Object.assign({ kind: 'Frontmatter' }, metadata));
+      const visibleTags = [];
+      const scanTags = (from, to) => {
+        if (to <= from || to - from > RICH_BLOCK_LIMIT) return;
+        const source = view.state.doc.sliceString(from, to);
+        if (!/#[^\s#]/u.test(source)) return;
+        // A comment may open above the visible lines. Keep its bounded context
+        // while projecting only this gap; ordinary code never enters this path.
+        const start = Math.max(0, from - (RICH_BLOCK_LIMIT - source.length));
+        const context = start === from ? source : view.state.doc.sliceString(start, from) + source;
+        window.MarkdownMini.tagRanges(context).forEach((tag) => {
+          const tagFrom = tag.from + start, tagTo = tag.to + start;
+          if (tagFrom >= from && tagTo <= to) visibleTags.push(Object.assign({}, tag, { from: tagFrom, to: tagTo }));
+        });
+      };
+      let tagCursor = first.from;
+      protectedRanges.slice().sort((a, b) => a.from - b.from).forEach((range) => {
+        if (range.to <= tagCursor || range.from >= last.to) return;
+        scanTags(tagCursor, Math.min(range.from, last.to)); tagCursor = Math.max(tagCursor, range.to);
+      });
+      scanTags(tagCursor, last.to);
       const tree = syntaxTree(view.state);
       const inactiveCalloutHeaders = [];
       blockSpecs.forEach((spec) => {
@@ -2020,6 +2078,7 @@
           // Protected blocks were handled above, bounded to visible lines. Do
           // not walk all lines again or interpret embedded code as Markdown.
           if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|HTMLTag)$/.test(nodeRef.name)) return false;
+          if (metadata && nodeRef.from < metadata.to && nodeRef.name !== 'Document') return false;
           const node = syntaxNodeForRef(tree, nodeRef);
           const key = nodeRef.name + ':' + nodeRef.from + ':' + nodeRef.to;
           // Rich block replacements split visibleRanges. An ancestor already seen
@@ -2167,6 +2226,7 @@
         }
 
         const localProtected = [];
+        if (metadata && line.from < metadata.to) { lineClass(line.from, 'note-live-frontmatter'); continue; }
         const protect = (from, to) => localProtected.push({ from, to });
         const isProtected = (from, to) => localProtected.some((item) => item.from < to && item.to > from)
           || insideRange(protectedRanges, from, to);
@@ -2204,18 +2264,24 @@
           }
         });
 
-        matches(/\$([^$\n]+)\$/g, (match, from, to) => {
-          if (text[match.index - 1] === '$' || text[match.index + match[0].length] === '$' || escapedAt(text, match.index + match[0].length - 1)) return;
-          if (match[0].length > INLINE_MATH_LIMIT) return;
+        window.MarkdownMini.mathRanges(text).forEach((mathRange) => {
+          const from = line.from + mathRange.from, to = line.from + mathRange.to;
+          if (mathRange.display || isProtected(from, to) || to - from > INLINE_MATH_LIMIT) return;
           protect(from, to);
           if (!constructActive(view, from, to)) add(from, to, Decoration.replace({
-            widget: new InlineMathWidget(match[0], from, to, options.coordinator), relatumAtomic: true,
+            widget: new InlineMathWidget(text.slice(mathRange.from, mathRange.to), from, to, options.coordinator), relatumAtomic: true,
           }));
           else {
             mark(from, to, 'note-live-math-source');
-            mark(from, from + 1, 'note-live-source-mark is-math');
-            mark(to - 1, to, 'note-live-source-mark is-math');
+            mark(from, from + mathRange.open.length, 'note-live-source-mark is-math');
+            mark(to - mathRange.close.length, to, 'note-live-source-mark is-math');
           }
+        });
+
+        visibleTags.forEach((tag) => {
+          const from = tag.from, to = tag.to;
+          if (from < line.from || to > line.to) return;
+          if (!isProtected(from, to)) add(from, to, Decoration.mark({ class: 'note-tag', attributes: { 'data-note-tag': tag.tag } }));
         });
 
         matches(/\{(hl|tc|fs):([a-z]+)\|([^{}\n]+)\}/g, (match, from, to) => {
@@ -2527,10 +2593,10 @@
     const coordinator = { epoch: 1, field: null, spec() { return null; } };
     const imageTextSizer = createImageTextSizer();
     const safeOptions = Object.assign({
-      imageUrl(notePath, target) {
-        return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '');
+      imageUrl(notePath, target, syntax) {
+        return '/api/note-asset?note=' + encodeURIComponent(notePath || '') + '&src=' + encodeURIComponent(target || '') + '&syntax=' + encodeURIComponent(syntax || 'markdown');
       },
-      onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onOpenLocalFile() {}, onImageFiles() {},
+      onDocChanged() {}, onSaveRequest() {}, onOpenWiki() {}, onOpenExternal() {}, onOpenLocalFile() {}, onOpenTag() {}, onImageFiles() {},
       onImageSelectionChange() {}, onImageTextDefaultsChange() {}, onContextMenu() {}, onCommandContextChanged() {},
       clipboardText(text) { return text; },
       imageTextDefaults: { size: 'md', color: 'white' },
@@ -2884,7 +2950,7 @@
     safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }));
     safeOptions.prepareTableCell = (surface, content, result, source) => {
       content.querySelectorAll('[data-note-image]').forEach((image) => {
-        image.src = safeOptions.imageUrl(currentPath, image.dataset.noteImage || '');
+        image.src = safeOptions.imageUrl(currentPath, image.dataset.noteImage || '', image.dataset.noteImageSyntax);
       });
       if (!result.features || !result.features.math) return;
       const current = () => surface.current() && content.isConnected && content.dataset.source === source;
@@ -3237,6 +3303,10 @@
             return false;
           },
           mousedown(event, view) {
+            const tag = event.target.closest('[data-note-tag]');
+            if (tag && (event.ctrlKey || event.metaKey) && !inputPending()) {
+              event.preventDefault(); safeOptions.onOpenTag(tag.dataset.noteTag); return true;
+            }
             if (event.button === 2 && !imageTextController.active) {
               event.preventDefault();
               return true;

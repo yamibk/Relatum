@@ -1,0 +1,12 @@
+[
+  {"source":"# 标题\n#数学 #Math #math #学习/概率 #1984 #y1984", "inline":["数学","Math","math","学习/概率","y1984"], "tags":["数学","math","学习/概率","y1984"]},
+  {"source":"---\ntags:\n  - 数学\n  - '学习/概率'\n  - \"AI\" # comment\nother: '#fake'\n---\n#物理", "inline":["物理"], "tags":["数学","学习/概率","ai","物理"]},
+  {"source":"---\r\ntags: [数学, '研究/光学', \"AI\"]\r\n---\r\n#Math", "inline":["Math"], "tags":["数学","研究/光学","ai","math"]},
+  {"source":"`#code`\n```js\n#fenced\n```\n    #indented\n\\(#formula\\) $x+#dollar$\n\\[\n#display\n\\]\n#real", "inline":["real"], "tags":["real"]},
+  {"source":"[link](https://example.com/#url) ![[#image]] <!-- #comment --> %% #hidden %% \\#escaped abc#joined https://site/#fragment #valid", "inline":["valid"], "tags":["valid"]},
+  {"source":"#中文，#emoji🧠 #snake_case #two-words #123 #a//b #/bad #bad/", "inline":["中文","emoji🧠","snake_case","two-words"], "tags":["中文","emoji🧠","snake_case","two-words"]},
+  {"source":"<!--\n#comment\n-->\n%%\n#hidden\n%%\n#visible", "inline":["visible"], "tags":["visible"]},
+  {"source":"---\ntags: [not_closed]\n#正文", "inline":["正文"], "tags":["正文"]},
+  {"source":"```\n%% $ #code\n```\n`%%` #real\n<!-- \\(ignored\\) --> #other", "inline":["real","other"], "tags":["real","other"]},
+  {"source":"\\#escaped \\\\#visible \\\\(#literal\\) \\(#math\\) #last", "inline":["visible","literal","last"], "tags":["visible","literal","last"]}
+]
