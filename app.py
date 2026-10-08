@@ -91,7 +91,6 @@ CANVASES = ROOT / "canvases"
 TRASH = CANVASES / "回收站"   # 右键删除 = 移到这里（用户自己管理，可恢复）
 NOTES = ROOT / "notes"   # 托管 Markdown 笔记库；正文与伴生素材均保持普通文件
 DATA = ROOT / "data"
-NOTE_RECOVERY = DATA / "note-recovery"
 RECENT_FILE = DATA / "recent.json"
 RECENT_BACKUP_FILE = DATA / "recent.backup.json"
 BACKGROUND_PREF_FILE = DATA / "background.json"
@@ -437,7 +436,6 @@ RESEARCH_STORE = ResearchWorkspaceStore(RESEARCH_WORKSPACE_DIR, atomic_json=_ato
 
 NOTES_STORE = NotesStore(
     NOTES,
-    recovery_root=NOTE_RECOVERY,
     atomic_text=_atomic_write_text,
     atomic_bytes=_atomic_write_bytes,
 )
@@ -10366,7 +10364,6 @@ NOTES_POST_ROUTES = {
     "/api/note-move",
     "/api/note-trash",
     "/api/note-upload-image",
-    "/api/note-history-restore",
     "/api/note-import-begin",
     "/api/note-import-upload",
     "/api/note-import-commit",
@@ -10655,16 +10652,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return self._send_json(200, NOTES_STORE.tags())
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
-        if parsed.path == "/api/note-history":
-            q = urllib.parse.parse_qs(parsed.query)
-            try:
-                with NOTES_MUTATION_LOCK:
-                    version_id = q.get("version", [""])[0]
-                    result = NOTES_STORE.history_version(q.get("path", [""])[0], version_id) \
-                        if version_id else NOTES_STORE.history(q.get("path", [""])[0])
-                    return self._send_json(200, result)
-            except NotesError as err:
-                return self._send_json(err.status, {"error": str(err), "code": err.code})
         if parsed.path == "/api/note-asset":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -10875,8 +10862,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except OSError as err:
                 return self._send_json(500, {"error": f"清理图片失败：{err}"})
             return self._send_json(200, result)
-        if path == "/api/note-history-restore":
-            return self._api_note_history_restore(body)
         if path == "/api/note-import-begin":
             return self._api_note_import_begin(body)
         if path == "/api/note-import-upload":
@@ -11177,15 +11162,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(err)
         except OSError as err:
             return self._send_json(500, {"error": f"移到系统回收站失败：{err}"})
-        return self._send_json(200, result)
-
-    def _api_note_history_restore(self, body: dict):
-        try:
-            result = NOTES_STORE.restore_history(body.get("path", ""), body.get("version", ""))
-        except NotesError as err:
-            return self._send_notes_error(err)
-        except OSError as err:
-            return self._send_json(500, {"error": f"恢复历史版本失败：{err}"})
         return self._send_json(200, result)
 
     def _api_note_import_begin(self, body: dict):

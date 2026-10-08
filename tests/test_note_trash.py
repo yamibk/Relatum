@@ -14,7 +14,7 @@ class NoteTrashTests(unittest.TestCase):
     def test_note_and_companion_are_sent_in_one_recycle_operation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "notes"
-            store = NotesStore(root, recovery_root=Path(temporary) / "recovery")
+            store = NotesStore(root)
             store.ensure_root()
             store.create("", "A", "note")
             store.upload_image(

@@ -1,11 +1,9 @@
 import base64
-import json
 import os
 import stat
 import subprocess
 import tempfile
 import threading
-import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -39,7 +37,7 @@ class NotesLibraryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "notes"
         self.recovery = Path(self.temp.name) / "data" / "note-recovery"
-        self.store = NotesStore(self.root, recovery_root=self.recovery)
+        self.store = NotesStore(self.root)
         self.store.ensure_root()
 
     def tearDown(self):
@@ -82,7 +80,7 @@ class NotesLibraryTests(unittest.TestCase):
         (folder / 'document.pdf').write_bytes(b'keep')
         self.store.create('', 'Other', 'note', content='![](Image.assets/images/shared.png)')
         before = (self.root / 'Image.md').read_bytes()
-        history = self.store.history('Image.md')
+        self.assertFalse(self.recovery.exists())
         result = self.store.cleanup_unused_images('Image.md', self.store.load('Image.md')['revision'])
         self.assertEqual(result['deletedCount'], 1)
         self.assertEqual(result['deletedBytes'], len(png))
@@ -92,7 +90,7 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertTrue((self.root / asset).exists())
         self.assertTrue((folder / 'document.pdf').exists())
         self.assertEqual((self.root / 'Image.md').read_bytes(), before)
-        self.assertEqual(self.store.history('Image.md'), history)
+        self.assertFalse(self.recovery.exists())
         self.assertEqual(self.store.cleanup_unused_images('Image.md', self.store.load('Image.md')['revision'])['deletedCount'], 0)
 
     def test_cleanup_unused_images_understands_markdown_paths_and_nested_assets(self):
@@ -164,12 +162,11 @@ class NotesLibraryTests(unittest.TestCase):
                                   '```md', f'![]({asset})' + annotation('code'), '```',
                                   '![](missing.png)' + annotation('missing'), '正文 <!--ordinary-->'])
         saved = self.store.save('Image.md', content, self.store.load('Image.md')['revision'])
-        self.store.snapshot('Image.md', content, force=True)
         return png, asset, annotation, selected, kept, content, saved
 
-    def test_image_text_cleanup_removes_selected_unused_and_history_without_backup(self):
+    def test_image_text_cleanup_removes_selected_unused_without_backup(self):
         png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
-        before = self.store.history('Image.md')['versions']
+        self.assertFalse(self.recovery.exists())
         result = self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
         self.assertIn(kept, result['content'])
         for identifier in ('selected', 'orphan', 'code', 'missing'):
@@ -177,12 +174,7 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertIn('正文 <!--ordinary-->', result['content'])
         self.assertEqual((self.root / 'Image.md').read_bytes(), result['content'].encode('utf-8'))
         self.assertEqual((self.root / asset).read_bytes(), png)
-        after = self.store.history('Image.md')['versions']
-        self.assertEqual([v['id'] for v in before], [v['id'] for v in after])
-        for version in after:
-            historical = self.store.history_version('Image.md', version['id'])['content']
-            for identifier in ('selected', 'orphan', 'code', 'missing'):
-                self.assertNotIn(annotation(identifier), historical)
+        self.assertFalse(self.recovery.exists())
         # Repeating cleanup with a now-empty selected image is safe.
         clean_source = result['content'].splitlines()[1]
         repeated = self.store.image_text_operation('Image.md', result['content'], result['revision'], {'line': 2, 'source': clean_source})
@@ -209,12 +201,11 @@ class NotesLibraryTests(unittest.TestCase):
                 self.store.image_text_operation('Image.md', content, revision, selection, image)
             self.assertEqual(self.store.load('Image.md')['content'], content)
 
-    def test_image_text_history_failure_is_retryable_and_does_not_replace_current(self):
-        png, asset, annotation, selected, kept, content, saved = self.image_text_fixture()
-        with mock.patch.object(self.store, '_write_history_manifest', side_effect=OSError('disk full')):
-            with self.assertRaises(NotesError) as caught:
+    def test_image_text_write_failure_is_retryable_and_does_not_replace_current(self):
+        _, _, annotation, selected, _, content, saved = self.image_text_fixture()
+        with mock.patch.object(self.store, 'atomic_text', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
                 self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
-        self.assertEqual(caught.exception.code, 'history_cleanup_failed')
         self.assertEqual(self.store.load('Image.md')['content'], content)
         result = self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
         self.assertNotIn(annotation('selected'), result['content'])
@@ -233,10 +224,6 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertIn(kept, result['content'])
         for identifier in ('orphan', 'code', 'missing'):
             self.assertNotIn(annotation(identifier), result['content'])
-        for version in self.store.history('Image.md')['versions']:
-            historical = self.store.history_version('Image.md', version['id'])['content']
-            for identifier in ('orphan', 'code', 'missing'):
-                self.assertNotIn(annotation(identifier), historical)
         self.assertEqual((self.root / asset).read_bytes(), png)
 
     def test_nested_create_tree_and_path_guards(self):
@@ -394,17 +381,14 @@ class NotesLibraryTests(unittest.TestCase):
         finally:
             junction.rmdir()
 
-    def test_stale_revision_snapshots_disk_then_editor_wins(self):
+    def test_stale_revision_editor_wins_without_snapshot(self):
         self.store.create("", "A", "note", content="one")
         loaded = self.store.load("A.md")
         saved = self.store.save("A.md", "two", loaded["revision"])
         self.assertTrue(saved["revision"].startswith("sha256:"))
         overwritten = self.store.save("A.md", "three", loaded["revision"])
         self.assertEqual(self.store.load("A.md")["content"], "three")
-        versions = self.store.history("A.md")["versions"]
-        self.assertTrue(versions)
-        restored_disk = self.store.history_version("A.md", versions[0]["id"])
-        self.assertEqual(restored_disk["content"], "two")
+        self.assertFalse(self.recovery.exists())
         self.assertEqual(overwritten["revision"], self.store.load("A.md")["revision"])
 
     def test_multiline_write_preserves_bytes_and_revision(self):
@@ -446,7 +430,7 @@ class NotesLibraryTests(unittest.TestCase):
         second.join()
         self.assertEqual([item[0] for item in results], ["saved", "saved"])
         self.assertIn(self.store.load("Concurrent.md")["content"], {"one", "two"})
-        self.assertGreaterEqual(len(self.store.history("Concurrent.md")["versions"]), 2)
+        self.assertFalse(self.recovery.exists())
 
     def test_links_backlinks_and_missing_states(self):
         self.store.create("", "A", "note", content="去 [[folder/B|第二篇]] 和 [[Missing]]")
@@ -633,43 +617,30 @@ class NotesLibraryTests(unittest.TestCase):
         self.assertIsInstance(note["createdNs"], int)
         self.assertGreater(note["createdNs"], 0)
 
-    def test_history_restore_snapshots_current_version(self):
-        self.store.create("", "History", "note", content="one")
-        first = self.store.load("History.md")
-        self.store.save("History.md", "two", first["revision"])
-        version = self.store.history("History.md")["versions"][-1]
-        restored = self.store.restore_history("History.md", version["id"])
-        self.assertEqual(restored["content"], "one")
-        contents = [
-            self.store.history_version("History.md", item["id"])["content"]
-            for item in self.store.history("History.md")["versions"]
-        ]
-        self.assertIn("two", contents)
+    def test_save_move_and_image_cleanup_do_not_create_recovery(self):
+        _, _, _, selected, _, content, saved = self.image_text_fixture()
+        self.store.image_text_operation('Image.md', content, saved['revision'], {'line': 2, 'source': selected})
+        self.store.move('Image.md', 'Moved.md')
+        self.store.tree()
+        self.assertFalse(self.recovery.exists())
 
-    def test_history_interval_external_force_and_move_follow_path(self):
-        self.store.create("", "Moving", "note", content="one")
-        first = self.store.load("Moving.md")
-        second = self.store.save("Moving.md", "two", first["revision"])
-        self.store.save("Moving.md", "three", second["revision"])
-        self.assertEqual(len(self.store.history("Moving.md")["versions"]), 1)
-        self.store.save("Moving.md", "four", first["revision"])
-        self.assertEqual(len(self.store.history("Moving.md")["versions"]), 2)
-        self.store.move("Moving.md", "Moved.md")
-        versions = self.store.history("Moved.md")["versions"]
-        self.assertEqual(len(versions), 2)
-        self.assertEqual(self.store.history_version("Moved.md", versions[0]["id"])["path"], "Moved.md")
-
-    def test_history_prunes_snapshots_older_than_seven_days(self):
-        self.store.create("", "Prune", "note", content="now")
-        item = self.store.snapshot("Prune.md", "old", force=True)
-        bucket = next(path for path in self.recovery.iterdir() if path.is_dir())
-        manifest_path = bucket / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["snapshots"][0]["createdEpoch"] = time.time() - 8 * 24 * 60 * 60
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-        self.store.snapshot("Prune.md", "new", force=True)
-        self.assertEqual(len(self.store.history("Prune.md")["versions"]), 1)
-        self.assertFalse((bucket / item["file"]).exists())
+    def test_existing_recovery_files_are_not_accessed_or_changed(self):
+        _, _, _, selected, _, content, saved = self.image_text_fixture()
+        bucket = self.recovery / 'legacy'
+        bucket.mkdir(parents=True)
+        files = {bucket / 'old.md': b'legacy snapshot', bucket / 'manifest.json': b'legacy manifest'}
+        for path, raw in files.items():
+            path.write_bytes(raw)
+        signatures = {path: path.stat().st_mtime_ns for path in files}
+        self.store.save('Image.md', content + '\nlocal edit', 'stale')
+        loaded = self.store.load('Image.md')
+        self.store.image_text_operation('Image.md', loaded['content'], loaded['revision'], {'line': 2, 'source': selected})
+        self.store.move('Image.md', 'Moved.md')
+        self.store.tree()
+        for path, raw in files.items():
+            self.assertEqual(path.read_bytes(), raw)
+            self.assertEqual(path.stat().st_mtime_ns, signatures[path])
+        self.assertEqual(set(bucket.iterdir()), set(files))
 
     def test_external_delete_with_active_editor_content_stays_deleted(self):
         self.store.create("", "Deleted", "note", content="one")

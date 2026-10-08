@@ -34,7 +34,7 @@
     'Markdown 源码编辑器': 'Markdown source editor', 'Markdown 源码降级编辑器': 'Markdown fallback source editor', '开始书写 Markdown…': 'Start writing Markdown…',
     '从第一行开始': 'Begin with the first line', '笔记就是 notes/ 里的 Markdown 文件。': 'Notes are simply Markdown files inside notes/.',
     '笔记链接': 'Note links', '链接': 'Links', '关闭链接面板': 'Close links panel',
-    '链接到的笔记': 'Outgoing links', '反向链接': 'Backlinks', '复制内容': 'Copy content', '恢复此版本': 'Restore version',
+    '链接到的笔记': 'Outgoing links', '反向链接': 'Backlinks',
     '生涯使用报告': 'Career usage report', '查看我的使用报告': 'View my usage report',
     '统计画布、笔记、学习、专注与完成记录。': 'Canvas, Notes, Study, Focus, and completion records.',
     '全部计算在本机完成。': 'Everything is calculated on this device.',

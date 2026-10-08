@@ -38,6 +38,17 @@ class NotebookTests(unittest.TestCase):
         with self.assertRaises(NotesError):
             self.store.create("CustomNotebook", "Loose", "note")
 
+    def test_legacy_history_mode_falls_back_without_startup_write(self):
+        self.settings_path.parent.mkdir(parents=True)
+        legacy = {"version": 1, "colors": {}, "ui": {"open": True, "mode": "history"}}
+        original = json.dumps(legacy)
+        self.settings_path.write_text(original, encoding="utf-8")
+        settings = self.store.notebook_settings()
+        self.assertEqual(settings["ui"]["mode"], "notebooks")
+        self.assertEqual(self.settings_path.read_text(encoding="utf-8"), original)
+        self.store.update_notebook_settings({"ui": settings["ui"]})
+        self.assertEqual(json.loads(self.settings_path.read_text(encoding="utf-8"))["ui"]["mode"], "notebooks")
+
     def test_root_and_container_are_protected(self):
         self.notebook()
         for path in ("", "CustomNotebook", "customnotebook"):

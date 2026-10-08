@@ -48,8 +48,7 @@ assert(notes.includes('if (structureChanged) scheduleDocumentPrefetch();'),
 for (const endpoint of [
   '/api/notes-tree', '/api/note?', '/api/note-create', '/api/note-save',
   '/api/note-links', '/api/note-move', '/api/note-trash', '/api/note-upload-image',
-  '/api/note-reveal', '/api/note-reveal-assets', '/api/note-history',
-  '/api/note-history-restore', '/api/note-import-begin', '/api/note-import-upload',
+  '/api/note-reveal', '/api/note-reveal-assets', '/api/note-import-begin', '/api/note-import-upload',
   '/api/note-import-commit', '/api/note-import-abort',
 ]) {
   assert(notes.includes(endpoint) || server.includes(endpoint), `missing Notes endpoint: ${endpoint}`);
@@ -267,7 +266,8 @@ assert(css.includes('.note-live-h1 { padding-top: .28em !important; font-size: 1
 assert(css.includes("transform: translateY(calc(-1 * var(--note-title-scroll-offset, 0px)))"), 'the inline filename title must scroll away instead of staying fixed');
 assert(css.includes('padding: calc(var(--note-inline-title-space) + 10px) 0 120px'), 'the title reservation must live inside the editor scroller');
 assert(live.includes('replace(nodeRef.from, headingMarkerProjectionEnd'), 'inactive ATX markers must not leave a visible separator indent');
-assert(css.includes('.note-links-pane') && css.includes('transform: translateX(100%)'), 'links and history must remain an overlay instead of a permanent third column');
+assert(css.includes('.note-links-pane') && css.includes('transform: translateX(100%)'), 'shared sidebar must preserve its slide transition');
+assert(!notes.includes('/api/note-history') && !server.includes('/api/note-history'), 'note history APIs must be removed');
 assert(css.includes('.note-live-source-mark') && css.includes('--note-live-marker: #a8a7a2'), 'visible Markdown markers need Relatum light-theme source colors');
 assert(css.includes('--note-live-marker: #8f948d'), 'visible Markdown markers need a dark-theme source color');
 assert(css.includes('.note-live-heading *') && css.includes('text-decoration: none !important'), 'heading content must defensively reject inherited underlines');

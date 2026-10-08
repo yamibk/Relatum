@@ -39,11 +39,6 @@
   const errorBar = $('[data-role="note-error"]');
   const sideTitle = $('[data-role="note-side-title"]');
   const linksContent = $('[data-role="note-links-content"]');
-  const historyContent = $('[data-role="note-history-content"]');
-  const historyList = $('[data-role="note-history-list"]');
-  const historyPreview = $('[data-role="note-history-preview"]');
-  const historyRestore = $('[data-note-action="history-restore"]');
-  const historyCopy = $('[data-note-action="history-copy"]');
   const settingsTrigger = $('[data-note-action="toggle-settings"]');
   const settingsPop = $('[data-role="note-settings-pop"]');
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
@@ -175,13 +170,12 @@
       moveFailed: '移动失败', explorer: '在系统资源管理器中显示', openLibrary: '在资源管理器中打开笔记库',
       assets: '打开伴生素材目录', recycle: '移到系统回收站', recycled: '已移到系统回收站', refresh: '刷新',
       refreshed: '笔记库已刷新', copyPath: '复制库内路径', copied: '路径已复制', open: '打开', createHere: '在此新建笔记',
-      createFolderHere: '新建子文件夹', history: '历史版本', noHistory: '还没有可恢复的历史版本', restore: '恢复此版本',
-      copyContent: '复制内容', restored: '已恢复历史版本', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
+      createFolderHere: '新建子文件夹', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
       importFailed: '导入失败', imported: '已导入 {count} 篇笔记', unsupportedSkipped: '已跳过 {count} 个不支持的文件',
       uploadFailed: '图片保存失败', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
       missing: '尚未创建', noOutgoing: '当前笔记没有出链', noBacklinks: '当前笔记没有反向链接',
       unresolvedTitle: '创建这篇笔记？', unresolvedCopy: '“[[{target}]]”尚不存在。', cancel: '取消', create: '创建',
-      versionUnavailable: '历史版本无法读取', externalOpenFailed: '无法打开外部链接',
+      externalOpenFailed: '无法打开外部链接',
       expandFolder: '展开文件夹', collapseFolder: '收起文件夹', duplicateTitle: '已经存在一个同名文件',
       expandAll: '全部展开', collapseAll: '全部收起',
       titleRequired: '文件名不能为空', words: '{count} 个词', characters: '{count} 个字符', newTab: '新标签页', closeTab: '关闭标签页', closeAllTabs: '关闭所有笔记标签',
@@ -203,13 +197,12 @@
       moveFailed: 'Move failed', explorer: 'Show in File Explorer', openLibrary: 'Open notes folder in File Explorer',
       assets: 'Open companion assets', recycle: 'Move to Recycle Bin', recycled: 'Moved to Recycle Bin', refresh: 'Refresh',
       refreshed: 'Notes refreshed', copyPath: 'Copy vault path', copied: 'Path copied', open: 'Open', createHere: 'New note here',
-      createFolderHere: 'New subfolder', history: 'Version history', noHistory: 'No recoverable versions yet', restore: 'Restore version',
-      copyContent: 'Copy content', restored: 'Version restored', noAssets: 'This note has no companion assets',
+      createFolderHere: 'New subfolder', noAssets: 'This note has no companion assets',
       revealFailed: 'Could not show this item in File Explorer', importFailed: 'Import failed', imported: 'Imported {count} notes',
       unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image',
       linkWarnings: 'Moved; {count} ambiguous links were unchanged', ambiguous: 'Duplicate note name', missing: 'Not created',
       noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', unresolvedTitle: 'Create this note?',
-      unresolvedCopy: '“[[{target}]]” does not exist yet.', cancel: 'Cancel', create: 'Create', versionUnavailable: 'Could not read this version',
+      unresolvedCopy: '“[[{target}]]” does not exist yet.', cancel: 'Cancel', create: 'Create',
       externalOpenFailed: 'Could not open external link',
       expandFolder: 'Expand folder', collapseFolder: 'Collapse folder', duplicateTitle: 'A file with the same name already exists',
       expandAll: 'Expand all', collapseAll: 'Collapse all',
@@ -232,7 +225,7 @@
     notebookRoot: '', notebookExpanded: new Set(), notebookColors: {}, notebookSettingsLoaded: false, notebookTreeDirty: true, notebookPruning: new Map(),
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
     openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, draggedPath: '', renamePath: '', renameOriginal: '',
-    historyPath: '', historyVersion: null, importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
+    importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
@@ -288,7 +281,7 @@
 
   function notebookCopy(key) {
     const labels = {
-      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], history: ['历史', 'History'],
+      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'],
       create: ['新建笔记本', 'New notebook'], close: ['关闭侧栏', 'Close sidebar'],
       gray: ['灰色', 'Gray'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'],
       yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'],
@@ -362,7 +355,7 @@
     state.notebookRoot = ui.selectedRoot || '';
     state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
     state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
-    state.sideMode = ['notebooks', 'links', 'history'].includes(ui.mode) ? ui.mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links'].includes(ui.mode) ? ui.mode : 'notebooks';
     root.classList.toggle('links-overlay-open', ui.open === true);
     state.notebookSettingsLoaded = true;
     updateSidePanel();
@@ -1084,9 +1077,6 @@
         target.persistedGeneration = target.editGeneration;
         state.documentCache.delete(target.path);
         state.loadPromises.delete(target.path);
-        state.historyVersion = null;
-        historyPreview.textContent = ''; historyList.replaceChildren();
-        historyRestore.disabled = true; historyCopy.disabled = true;
         applyDocument(result, { preserveViewState: true });
         showToast(language() === 'en' ? (kind === 'merge' ? 'Merged into PNG' : 'Text box data deleted')
           : (kind === 'merge' ? '已合并为 PNG 图片' : '文本框数据已删除'));
@@ -2745,7 +2735,7 @@
         : '永久删除本篇笔记附件目录中未使用的图片文件；其他笔记仍在使用的图片会保留';
       cleanup.dataset.noteAction = 'cleanup-unused-images';
       cleanup.disabled = !!(state.assetCleanupBusy || state.imageTextBusy);
-      items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), cleanup, contextButton(tr('history'), () => openHistory(entry.path)));
+      items.push(contextButton(tr('assets'), () => reveal(entry.path, true)), cleanup);
     }
     items.push(separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true));
     showContext(items, x, y, options && options.source);
@@ -2802,8 +2792,7 @@
     if (sideTitle) sideTitle.textContent = notebookCopy(state.sideMode);
     if (notebooksContent) notebooksContent.hidden = state.sideMode !== 'notebooks';
     if (linksContent) linksContent.hidden = state.sideMode !== 'links';
-    if (historyContent) historyContent.hidden = state.sideMode !== 'history';
-    ['notebooks', 'links', 'history'].forEach((mode) => {
+    ['notebooks', 'links'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
       if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
     });
@@ -2823,23 +2812,10 @@
     }, 270);
   }
   function setSideMode(mode) {
-    state.sideMode = ['notebooks', 'links', 'history'].includes(mode) ? mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links'].includes(mode) ? mode : 'notebooks';
     setSideOpen(true);
     if (state.sideMode === 'links') ensureLinks();
   }
-  async function openHistory(path) { state.historyPath = path; state.historyVersion = null; setSideMode('history'); historyPreview.textContent = ''; historyRestore.disabled = true; historyCopy.disabled = true; try { const result = await request('/api/note-history?path=' + encodeURIComponent(path)); const fragment = document.createDocumentFragment(); (result.versions || []).forEach((version) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'note-history-item'; const date = new Date(version.createdAt); button.textContent = Number.isNaN(date.getTime()) ? version.createdAt : date.toLocaleString(); button.addEventListener('click', () => loadHistoryVersion(path, version.id, button)); fragment.appendChild(button); }); if (!fragment.childNodes.length) { const message = document.createElement('p'); message.className = 'note-link-empty'; message.textContent = tr('noHistory'); fragment.appendChild(message); } historyList.replaceChildren(fragment); } catch (error) { historyList.textContent = error.message || tr('versionUnavailable'); } }
-  async function loadHistoryVersion(path, id, button) {
-    const epoch = state.imageTextEpoch || 0;
-    try {
-      const version = await request('/api/note-history?path=' + encodeURIComponent(path) + '&version=' + encodeURIComponent(id));
-      if (state.imageTextBusy || epoch !== (state.imageTextEpoch || 0)) return;
-      state.historyVersion = version; historyPreview.textContent = version.content || '';
-      historyList.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
-      historyRestore.disabled = false; historyCopy.disabled = false;
-    } catch (error) { showToast(error.message || tr('versionUnavailable'), 'error'); }
-  }
-  async function restoreHistory() { if (!state.historyVersion) return; try { const result = await post('/api/note-history-restore', { path: state.historyPath, version: state.historyVersion.id }); if (state.current && state.current.path === result.path) applyDocument(result); showToast(tr('restored')); openHistory(result.path); } catch (error) { showToast(error.message || tr('versionUnavailable'), 'error'); } }
-
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
   async function uploadImages(files, commandContext) {
     if (!state.current || !files.length) return;
@@ -2960,7 +2936,6 @@
         finally { state.restoringNotebookSelection = false; }
       }
       else { renderTabs(); updateEditorVisibility(); }
-      if (root.classList.contains('links-overlay-open') && state.sideMode === 'history' && state.current) await openHistory(state.current.path);
       if (state.active && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
       document.documentElement.classList.remove('note-browser-restoring');
       return true;
@@ -3082,10 +3057,7 @@
       else setSideMode(mode);
     } else if (name === 'side-notebooks') setSideMode('notebooks');
     else if (name === 'side-links') setSideMode('links');
-    else if (name === 'side-history') { if (state.current) openHistory(state.current.path); else setSideMode('history'); }
     else if (name === 'close-links') setSideOpen(false);
-    else if (name === 'history-restore') restoreHistory();
-    else if (name === 'history-copy' && state.historyVersion) copyText(state.historyVersion.content || '');
   });
 
   document.addEventListener('pointerdown', (event) => {

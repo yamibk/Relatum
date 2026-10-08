@@ -12,7 +12,6 @@ Relatum 是本地优先应用。源码仓库与用户数据严格分离。
 - `data/viewport.json`、`data/window-state.json`：视口和窗口状态。
 - `data/study.json`、`data/notes.json`、`data/daily.json`、`data/focus.json`：学习与个人记录。
 - `data/diary/`、`data/学习归档/`、`data/画布归档/`：日记和历史归档。
-- `data/note-recovery/`：笔记的本地恢复快照，用于外部改写碰撞或主动恢复历史。
 - `data/ai.json`：用户配置的 AI 地址、模型与 API Key。
 - `data/backgrounds/`：用户导入的背景图片。
 

@@ -1254,7 +1254,6 @@
           ['<code>backgrounds</code>', '自己上传的背景图片。删除正在使用的图片会使背景缺失；先切换到内置背景，再清理不用的图片。'],
           ['<code>viewport.json</code>', '各画布上次的视野位置和缩放。删除后画布内容不受影响，只会丢失上次观看位置。'],
           ['<code>window-state.json</code>', '桌面窗口的大小、位置和最大化状态。删除后窗口恢复默认，不影响任何内容。'],
-          ['<code>note-recovery</code>', '笔记的本地恢复快照；外部改写与正在输入的内容碰撞、或恢复历史前会强制保留一份。普通快照最短间隔 5 分钟，保留 7 天。'],
         ]],
         ['树状页、学习、每日任务与活动足迹', '下面这些都是长期记录，不属于缓存。', [
           ['<code>tree-page.json</code>', '独立树状页的任务、阶段、连接、外观和当前树。它与学习页的目标树完全分开；删除后树状页会从空白重新开始，不影响 <code>study.json</code>、画布或学习页，也不能从学习页自动恢复。'],
@@ -1373,7 +1372,6 @@
           ['<code>backgrounds</code>', 'Background images you uploaded. Deleting an image still in use makes the background disappear; switch to a built-in background first.'],
           ['<code>viewport.json</code>', 'The last position and zoom for each canvas. Deleting it does not affect content, only the last viewing position.'],
           ['<code>window-state.json</code>', 'Desktop window size, position, and maximized state. Deleting it restores the default window without affecting content.'],
-          ['<code>note-recovery</code>', 'Local note recovery snapshots. Relatum forces one before an external edit collides with active typing and before restoring history. Ordinary snapshots are at least five minutes apart and are kept for seven days.'],
         ]],
         ['Tree, Study, daily tasks, and activity', 'These are long-term records, not cache files.', [
           ['<code>tree-page.json</code>', 'Tasks, stages, links, appearance, and the active tree for the independent Tree page. It is completely separate from Study Goal Trees. Deleting it starts Tree from blank without affecting <code>study.json</code>, canvases, or Study, and it cannot be rebuilt automatically from Study.'],

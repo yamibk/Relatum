@@ -211,7 +211,7 @@ async function freePort() {
     }
 
     // Real PNG generation and destructive cleanup, including an offscreen image,
-    // unused comments, code/HTML source, disk history and editor undo.
+    // unused comments, code/HTML source and editor undo.
     const fixture = await page.evaluate(async () => {
       const md = window.MarkdownMini;
       const image = '![](Image.assets/images/fixture.png)';
@@ -320,13 +320,10 @@ async function freePort() {
     assert.equal(cleanupRequests, 1, 'repeated clicks must not queue duplicate destructive operations');
     const cleared = await page.evaluate(async () => {
       const disk = await (await fetch('/api/note?path=Image.md')).json();
-      const history = await (await fetch('/api/note-history?path=Image.md')).json();
-      const versions = await Promise.all(history.versions.map(async (v) =>
-        (await (await fetch('/api/note-history?path=Image.md&version=' + v.id)).json()).content));
-      return { disk: disk.content, versions, editor: __imageTextToolbarTest.editor.snapshot().value };
+      return { disk: disk.content, editor: __imageTextToolbarTest.editor.snapshot().value };
     });
     assert.equal(cleared.disk, cleared.editor);
-    assert(cleared.versions.every((value) => !value.includes('<!--relatum:image-text:')));
+    assert(!fs.existsSync(path.join(root, 'data/note-recovery')), 'image operations do not create recovery files');
     await page.keyboard.press('Control+z');
     assert.equal(await page.evaluate(() => __imageTextToolbarTest.editor.snapshot().value), cleared.editor);
     assert(fs.existsSync(path.join(root, 'notes/Image.assets/images/fixture.png')), 'original asset stays intact');

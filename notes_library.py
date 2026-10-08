@@ -17,7 +17,7 @@ import time
 import unicodedata
 import urllib.parse
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable
 from note_metadata import note_metadata, valid_tag
@@ -30,8 +30,6 @@ MAX_NOTE_BYTES = 4 * 1024 * 1024
 MAX_NOTE_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_NOTE_IMPORT_BYTES = 512 * 1024 * 1024
 MAX_NOTE_IMPORT_FILES = 10_000
-NOTE_HISTORY_INTERVAL_SECONDS = 5 * 60
-NOTE_HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
 NOTE_IMAGE_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -400,17 +398,16 @@ class NotesStore:
         self,
         root: Path,
         *,
-        recovery_root: Path | None = None,
         atomic_text: Callable[[Path, str], None] | None = None,
         atomic_bytes: Callable[[Path, bytes], None] | None = None,
     ) -> None:
         self.root = Path(root)
-        self.recovery_root = Path(recovery_root) if recovery_root is not None else self.root.parent / "data" / "note-recovery"
         self.atomic_text = atomic_text or _default_atomic_text
         self.atomic_bytes = atomic_bytes or _default_atomic_bytes
         self._document_cache: dict[str, dict] = {}
         self._metadata_enabled = False
         self._notebook_settings: dict | None = None
+        self._notebook_settings_needs_write = False
 
     @staticmethod
     def _default_notebook_settings() -> dict:
@@ -446,6 +443,7 @@ class NotesStore:
                         except (NotesError, TypeError):
                             continue
                     self._merge_notebook_ui(value["ui"], raw.get("ui"), strict=False)
+                    self._notebook_settings_needs_write = isinstance(raw.get("ui"), dict) and raw["ui"].get("mode") == "history"
             except (OSError, ValueError, TypeError, AttributeError):
                 pass
             self._notebook_settings = value
@@ -460,8 +458,10 @@ class NotesStore:
             try:
                 if key == "open" and isinstance(value, bool):
                     target[key] = value
-                elif key == "mode" and value in ("notebooks", "links", "history"):
+                elif key == "mode" and value in ("notebooks", "links"):
                     target[key] = value
+                elif key == "mode" and value == "history" and not strict:
+                    target[key] = "notebooks"
                 elif key == "selectedRoot" and isinstance(value, str):
                     target[key] = self._notebook_setting_path(value, root_only=bool(value))
                 elif key == "expanded" and isinstance(value, list):
@@ -530,12 +530,13 @@ class NotesStore:
                                             if path != relative and not path.startswith(relative + "/")]
                 if value["ui"]["selectedRoot"] == relative:
                     value["ui"]["selectedRoot"] = ""
-        if value != self._notebook_settings:
+        if value != self._notebook_settings or self._notebook_settings_needs_write:
             settings_path = self.root.parent / "data" / "note-notebooks.json"
             if _is_reparse(settings_path.parent) or _is_reparse(settings_path):
                 raise NotesError("笔记本配置不能是链接或重解析点", status=403, code="unsafe_path")
             self.atomic_text(settings_path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
             self._notebook_settings = value
+            self._notebook_settings_needs_write = False
         result = self.notebook_settings()
         if "pruneMissing" in patch:
             result["prunedPaths"] = pruned
@@ -545,11 +546,6 @@ class NotesStore:
         self.root.mkdir(parents=True, exist_ok=True)
         if _is_reparse(self.root):
             raise NotesError("笔记根目录不能是链接或重解析点", status=403, code="unsafe_path")
-
-    def ensure_recovery_root(self) -> None:
-        self.recovery_root.mkdir(parents=True, exist_ok=True)
-        if _is_reparse(self.recovery_root):
-            raise NotesError("恢复历史目录不能是链接或重解析点", status=403, code="unsafe_path")
 
     def normalize_path(self, raw: object, *, allow_root: bool = False,
                        allow_assets: bool = False) -> str:
@@ -1028,157 +1024,6 @@ class NotesStore:
             "network": {"nodes": network_nodes, "edges": network_edges},
         }
 
-    def _history_bucket(self, relative: str) -> Path:
-        digest = hashlib.sha256(relative.casefold().encode("utf-8")).hexdigest()[:32]
-        return self.recovery_root / digest
-
-    def _history_manifest(self, relative: str, *, create: bool = False) -> tuple[Path, dict]:
-        self.ensure_recovery_root()
-        bucket = self._history_bucket(relative)
-        manifest_path = bucket / "manifest.json"
-        if manifest_path.is_file():
-            try:
-                data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                data = {}
-        else:
-            data = {}
-        if not isinstance(data, dict) or data.get("version") != 1 or data.get("path") != relative:
-            data = {"version": 1, "path": relative, "snapshots": []}
-        if not isinstance(data.get("snapshots"), list):
-            data["snapshots"] = []
-        if create:
-            bucket.mkdir(parents=True, exist_ok=True)
-            if _is_reparse(bucket):
-                raise NotesError("恢复历史目录不能是链接或重解析点", status=403, code="unsafe_path")
-        return manifest_path, data
-
-    def _write_history_manifest(self, manifest_path: Path, data: dict) -> None:
-        self.atomic_text(manifest_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-
-    def snapshot(self, relative: object, content: bytes | str, *, reason: str = "autosave",
-                 force: bool = False) -> dict | None:
-        normalized = self.normalize_path(relative)
-        raw = content.encode("utf-8") if isinstance(content, str) else bytes(content)
-        if len(raw) > MAX_NOTE_BYTES:
-            return None
-        now = time.time()
-        manifest_path, manifest = self._history_manifest(normalized, create=True)
-        snapshots = [item for item in manifest["snapshots"] if isinstance(item, dict)]
-        cutoff = now - NOTE_HISTORY_RETENTION_SECONDS
-        kept: list[dict] = []
-        for item in snapshots:
-            created = float(item.get("createdEpoch", 0) or 0)
-            file_name = str(item.get("file") or "")
-            if created >= cutoff and file_name:
-                kept.append(item)
-            else:
-                try:
-                    (manifest_path.parent / file_name).unlink(missing_ok=True)
-                except OSError:
-                    pass
-        snapshots = kept
-        revision = _revision(raw)
-        if snapshots and snapshots[-1].get("revision") == revision:
-            manifest["snapshots"] = snapshots
-            self._write_history_manifest(manifest_path, manifest)
-            return None
-        if not force and snapshots:
-            last = float(snapshots[-1].get("createdEpoch", 0) or 0)
-            if now - last < NOTE_HISTORY_INTERVAL_SECONDS:
-                manifest["snapshots"] = snapshots
-                self._write_history_manifest(manifest_path, manifest)
-                return None
-        snapshot_id = f"{int(now * 1000)}-{uuid.uuid4().hex[:8]}"
-        file_name = snapshot_id + ".md"
-        self.atomic_bytes(manifest_path.parent / file_name, raw)
-        item = {
-            "id": snapshot_id,
-            "file": file_name,
-            "createdAt": datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z"),
-            "createdEpoch": now,
-            "revision": revision,
-            "reason": reason,
-            "size": len(raw),
-        }
-        snapshots.append(item)
-        manifest["snapshots"] = snapshots
-        self._write_history_manifest(manifest_path, manifest)
-        return item
-
-    def history(self, relative: object) -> dict:
-        normalized = self.normalize_path(relative)
-        self._read_note_bytes(self._absolute(normalized))
-        _, manifest = self._history_manifest(normalized)
-        items = []
-        for item in reversed(manifest.get("snapshots", [])):
-            if not isinstance(item, dict):
-                continue
-            items.append({key: item.get(key) for key in (
-                "id", "createdAt", "revision", "reason", "size",
-            )})
-        return {"path": normalized, "versions": items}
-
-    def history_version(self, relative: object, version_id: object) -> dict:
-        normalized = self.normalize_path(relative)
-        if not isinstance(version_id, str) or not re.fullmatch(r"[0-9]+-[0-9a-f]{8}", version_id):
-            raise NotesError("历史版本标识无效")
-        manifest_path, manifest = self._history_manifest(normalized)
-        item = next((entry for entry in manifest.get("snapshots", [])
-                     if isinstance(entry, dict) and entry.get("id") == version_id), None)
-        if not item:
-            raise NotesError("历史版本不存在", status=404, code="not_found")
-        target = manifest_path.parent / str(item.get("file") or "")
-        if not target.is_file() or _is_reparse(target):
-            raise NotesError("历史版本不存在", status=404, code="not_found")
-        raw = target.read_bytes()
-        return {
-            "path": normalized,
-            "id": version_id,
-            "content": self._decode_note(raw),
-            "createdAt": item.get("createdAt"),
-            "revision": item.get("revision"),
-        }
-
-    def restore_history(self, relative: object, version_id: object) -> dict:
-        normalized = self.normalize_path(relative)
-        target = self._absolute(normalized)
-        current = self._read_note_bytes(target)
-        version = self.history_version(normalized, version_id)
-        self.snapshot(normalized, current, reason="before-restore", force=True)
-        content = str(version.get("content") or "")
-        encoded = content.encode("utf-8")
-        self.atomic_bytes(target, encoded)
-        self._cache_document(normalized, encoded)
-        return {"path": normalized, "content": content, "revision": _revision(encoded)}
-
-    def relocate_history(self, source: str, destination: str, *, folder: bool) -> None:
-        if not self.recovery_root.is_dir():
-            return
-        prefix = source.rstrip("/") + "/"
-        for bucket in list(self.recovery_root.iterdir()):
-            manifest_path = bucket / "manifest.json"
-            if not bucket.is_dir() or _is_reparse(bucket) or not manifest_path.is_file():
-                continue
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            old_path = manifest.get("path") if isinstance(manifest, dict) else None
-            if old_path == source:
-                new_path = destination
-            elif folder and isinstance(old_path, str) and old_path.startswith(prefix):
-                new_path = destination.rstrip("/") + "/" + old_path[len(prefix):]
-            else:
-                continue
-            manifest["path"] = new_path
-            new_bucket = self._history_bucket(new_path)
-            if new_bucket.exists() and new_bucket != bucket:
-                continue
-            self._write_history_manifest(manifest_path, manifest)
-            if new_bucket != bucket:
-                bucket.rename(new_bucket)
-
     def create(self, parent: object, name: object, kind: object, *, content: object = "",
                create_parents: bool = False) -> dict:
         parent_relative = self.normalize_path(parent, allow_root=True)
@@ -1284,12 +1129,6 @@ class NotesStore:
         if current == encoded:
             self._cache_document(normalized, current)
             return {"path": normalized, "revision": current_revision}
-        external = not isinstance(expected_revision, str) or expected_revision != current_revision
-        self.snapshot(
-            normalized, current,
-            reason="external-overwrite" if external else "autosave",
-            force=external,
-        )
         if not target.exists():
             raise NotesError("笔记不存在", status=404, code="not_found")
         self.atomic_text(target, content)
@@ -1451,7 +1290,6 @@ class NotesStore:
                 companion_moved = True
             for post_relative, text in updates.items():
                 self.atomic_text(self._absolute(post_relative), text)
-            self.relocate_history(source_rel, destination_rel, folder=source_is_folder)
             self._document_cache.clear()
         except Exception:
             for backup, pre_relative, post_relative in reversed(backups):
@@ -1488,7 +1326,7 @@ class NotesStore:
     def image_text_operation(self, relative: object, content: object, expected_revision: object,
                              selected: object, png: bytes | None = None,
                              rendered_lines: object = None) -> dict:
-        """Destructive image-text edit: no snapshot, with targeted history sanitization.
+        """Destructive image-text edit without creating a backup.
 
         Selection uses a 1-based line and its exact source, avoiding JS/Python
         UTF-16 offset differences. Caller holds the notes mutation lock.
@@ -1577,44 +1415,14 @@ class NotesStore:
                     start += 1
                 replacement = source[:start] + uploaded["path"] + source[start + len(image_target):]
 
-        keep_ids: set[str] = set()
         for number, line in enumerate(lines):
             if number == index:
                 ending = line[len(line.rstrip("\r\n")):]
                 lines[number] = replacement + ending
-            elif number in valid:
-                keep_ids.update(item["id"] for item in valid[number][2])
-            else:
+            elif number not in valid:
                 lines[number] = _IMAGE_TEXT_ANY_RE.sub("", line)
         updated = "".join(lines)
 
-        # Sanitize existing recovery files in place. No backup or recovery copy
-        # of the removed metadata is created, including on a failed retry.
-        manifest_path, manifest = self._history_manifest(normalized)
-        history_files = []
-        for entry in manifest["snapshots"]:
-            name = entry.get("file", "") if isinstance(entry, dict) else ""
-            if not re.fullmatch(r"[0-9]+-[0-9a-f]{8}\.md", name):
-                raise NotesError("恢复历史文件名无效", code="unsafe_path")
-            history_path = manifest_path.parent / name
-            if _is_reparse(manifest_path.parent) or _is_reparse(history_path):
-                raise NotesError("恢复历史不能是链接", code="unsafe_path")
-            history_files.append((entry, history_path))
-        def sanitize(match):
-            payload = _image_text_payload(match[0])
-            return _image_text_comment([item for item in payload or [] if item["id"] in keep_ids])
-        try:
-            for entry, history_path in history_files:
-                raw = self._read_note_bytes(history_path)
-                cleaned = _IMAGE_TEXT_ANY_RE.sub(sanitize, self._decode_note(raw)).encode("utf-8")
-                if cleaned != raw:
-                    self.atomic_bytes(history_path, cleaned)
-                entry.update(revision=_revision(cleaned), size=len(cleaned))
-            if history_files:
-                self._write_history_manifest(manifest_path, manifest)
-        except OSError as err:
-            raise NotesError("历史数据未全部清理，当前正文尚未替换，请重试", status=500,
-                             code="history_cleanup_failed") from err
         self.atomic_text(target, updated)
         encoded = updated.encode("utf-8")
         self._cache_document(normalized, encoded)
@@ -1753,7 +1561,7 @@ class NotesStore:
         """Permanently delete unused images in this note's companion directory.
 
         Caller holds NOTES_MUTATION_LOCK. Other live notes protect shared
-        references; history is deliberately not a usage source for this action.
+        references within the current library.
         """
         normalized = self.normalize_path(note)
         note_path = self._absolute(normalized)

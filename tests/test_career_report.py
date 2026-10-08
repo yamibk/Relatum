@@ -46,7 +46,7 @@ class CareerReportTests(unittest.TestCase):
         app.DIARY_DIR = self.data / "diary"
         app.REVIEW_DB_FILE = self.data / "review.db"
         app.CAREER_REPORT_FILE = self.data / "career-report.json"
-        app.NOTES_STORE = NotesStore(self.notes, recovery_root=self.data / "note-recovery")
+        app.NOTES_STORE = NotesStore(self.notes)
 
     def tearDown(self):
         for name, value in self.originals.items():

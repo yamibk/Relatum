@@ -70,6 +70,9 @@ async function freePort() {
     const toolPositions = () => page.locator('.note-document-tools > button').evaluateAll(buttons => buttons.map(button => {
       const rect = button.getBoundingClientRect(); return [Math.round(rect.x * 100), Math.round(rect.y * 100)];
     }));
+    const emptyPositions = () => page.locator('.note-empty-state > *').evaluateAll(items => items.map(item => {
+      const rect = item.getBoundingClientRect(); return [Math.round((rect.x + rect.width / 2) * 100), Math.round(rect.y * 100)];
+    }));
     const notebookNames = () => page.locator(`${right} > .note-notebook-root > .note-tree-row .note-tree-label`).allTextContents();
     const sync = () => page.evaluate(() => __notebooksTest.triggerExternalSync({ silentErrors: true }));
     const flush = () => page.evaluate(() => __notebooksTest.flushNotebookSettings());
@@ -82,6 +85,17 @@ async function freePort() {
 
     await enter();
     assert.equal(await page.locator('.note-workspace.links-overlay-open').count(), 0);
+    const closedEmptyPositions = await emptyPositions();
+    await page.locator('[data-note-action="toggle-notebooks"]').click();
+    assert.deepEqual(await emptyPositions(), closedEmptyPositions, 'wide empty prompt stays fixed when sidebar opens');
+    await page.locator('[data-note-action="side-links"]').click();
+    assert.deepEqual(await emptyPositions(), closedEmptyPositions, 'empty prompt stays fixed across sidebar views');
+    await page.locator('[data-note-action="close-links"]').click();
+    assert.deepEqual(await emptyPositions(), closedEmptyPositions, 'wide empty prompt stays fixed when sidebar closes');
+    assert.deepEqual(await page.evaluate(async () => [
+      (await fetch('/api/note-history?path=Root.md')).status,
+      (await fetch('/api/note-history-restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status,
+    ]), [404, 404], 'removed history APIs use ordinary missing responses');
     assert.equal(await row(left, 'CustomNotebook').count(), 0, 'container must not appear in default notebook');
     await row(left, 'Root.md').click();
     await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'Root.md');
@@ -89,7 +103,7 @@ async function freePort() {
     const closedToolPositions = await toolPositions();
     await page.locator('[data-note-action="toggle-notebooks"]').click();
     assert.deepEqual(await toolPositions(), closedToolPositions, 'wide toolbar stays fixed when sidebar opens');
-    for (const mode of ['links', 'history', 'notebooks']) {
+    for (const mode of ['links', 'notebooks']) {
       await page.locator(`[data-note-action="side-${mode}"]`).click();
       assert.deepEqual(await toolPositions(), closedToolPositions, 'sidebar mode does not move toolbar');
     }
@@ -183,11 +197,16 @@ async function freePort() {
     assert.equal(await page.evaluate(() => __notebooksTest.state.notebookRoot), 'CustomNotebook/Physics', 'selected classification restores even with another notebook open');
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), createdPath);
     assert.equal(await rootRow('CustomNotebook/Physics').locator('.note-notebook-icon').getAttribute('data-color'), 'blue');
-    await page.locator('[data-note-action="side-history"]').click(); await flush();
+    assert.equal(await page.locator('[data-note-action="side-history"]').count(), 0);
+    await page.route('**/api/notes-tree?notebookSettings=1', async route => {
+      const response = await route.fetch(); const payload = await response.json();
+      payload.notebookSettings.ui.mode = 'history';
+      await route.fulfill({ response, json: payload });
+    }, { times: 1 });
     await page.reload();
-    await page.waitForFunction(() => window.__notebooksTest?.state.initialized && __notebooksTest.state.current && document.querySelector('[data-role="note-history-list"]')?.textContent.length > 0);
-    assert.equal(await page.locator('[data-role="note-history-content"]').isVisible(), true, 'history mode restores with its current document');
-    await page.locator('[data-note-action="side-notebooks"]').click();
+    await page.waitForFunction(() => window.__notebooksTest?.state.initialized);
+    assert.equal(await page.evaluate(() => __notebooksTest.state.sideMode), 'notebooks', 'legacy history preference falls back to notebooks');
+    assert.equal(await page.locator('.note-side-modes button').count(), 2);
 
     await page.locator('[data-note-action="toggle-sort"]').click();
     await page.locator('#note-sort-menu [data-note-sort-mode="name-asc"]').click();
@@ -242,16 +261,21 @@ async function freePort() {
     assert.equal(await page.locator('[data-note-action="side-notebooks"]').textContent(), 'Notebooks');
     await page.setViewportSize({ width: 680, height: 800 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    if (await page.locator('[data-note-action="close-all-tabs"]').isEnabled()) await page.locator('[data-note-action="close-all-tabs"]').click();
+    await page.locator('.note-empty-state').waitFor();
     assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).position), 'absolute');
     await screenshot('notebooks-narrow');
     await page.locator('[data-note-action="side-links"]').click();
     assert.equal(await page.locator('[data-role="note-links-content"]').isVisible(), true);
     await page.locator('[data-note-action="side-notebooks"]').click();
     const narrowOpenToolPositions = await toolPositions();
+    const narrowOpenEmptyPositions = await emptyPositions();
     await page.locator('[data-note-action="close-links"]').click();
     assert.deepEqual(await toolPositions(), narrowOpenToolPositions, 'narrow toolbar stays fixed when overlay closes');
+    assert.deepEqual(await emptyPositions(), narrowOpenEmptyPositions, 'narrow empty prompt stays fixed when overlay closes');
     await flush(); assert.equal(settings().ui.open, false);
     await page.locator('[data-note-action="toggle-notebooks"]').click();
+    assert.deepEqual(await emptyPositions(), narrowOpenEmptyPositions, 'narrow empty prompt stays fixed when overlay opens');
     await page.locator('button[data-start-workspace="canvas"]').click();
     const inactiveRequests = treeRequests;
     await delay(2300); assert.equal(treeRequests, inactiveRequests, 'inactive workspace must stop directory checks');
