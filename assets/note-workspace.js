@@ -23,6 +23,7 @@
   const focusToggle = $('[data-note-action="toggle-focus"]');
   const expandAllButton = $('[data-note-action="toggle-all-folders"]');
   const viewToggle = $('[data-role="note-view-toggle"]');
+  const currentMenuButton = $('[data-note-action="current-menu"]');
   const imageTextToggle = $('[data-role="note-image-text-toggle"]');
   const imageTextTools = $('[data-role="note-image-text-tools"]');
   const documentStatusEl = $('[data-role="note-document-status"]');
@@ -973,6 +974,7 @@
   }
 
   function updateViewToggle() {
+    if (currentMenuButton) currentMenuButton.disabled = !state.current;
     if (!viewToggle) return;
     const sourceMode = state.viewMode === 'source';
     const label = tr(sourceMode ? 'switchToLive' : 'switchToSource');

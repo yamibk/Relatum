@@ -103,6 +103,9 @@ assert(html.includes('data-note-action="toggle-source"') && html.includes('data-
   'the document header needs a direct Live Preview/source toggle');
 assert(html.includes('data-note-action="toggle-image-text"') && html.includes('data-role="note-image-text-tools"'),
   'the shared sidebar needs an image-bound text entry and compact toolbar');
+assert(/data-note-action="current-menu"[^>]*disabled/.test(html)
+  && notes.includes('currentMenuButton.disabled = !state.current'),
+  'the current-note menu starts disabled and follows the active document');
 assert(/data-role="note-image-text-toggle"[^>]*disabled/.test(html),
   'image text must start disabled until a standalone local image is selected');
 assert(html.includes('data-image-text-action="edit"') && /data-image-text-action="edit"[^>]*disabled/.test(html),
