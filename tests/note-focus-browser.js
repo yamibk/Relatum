@@ -71,6 +71,35 @@ async function freePort() {
     await page.waitForFunction(() => window.CanvasNoteWorkspace && document.querySelector('.desktop-note-focus-close'));
     const floating = page.locator('.desktop-note-focus-close');
     const toggle = page.locator('[data-note-action="toggle-focus"]');
+    const visibleFocusIcon = () => toggle.locator('svg').evaluateAll(icons =>
+      icons.filter(icon => getComputedStyle(icon).display !== 'none').map(icon => icon.querySelector('use').getAttribute('href')));
+    async function expectSeparatedCloseButtons() {
+      const sidebarToggle = page.locator('[data-note-action="toggle-notebooks"]');
+      const initiallyOpen = await sidebarToggle.getAttribute('aria-expanded') === 'true';
+      if (!initiallyOpen) await sidebarToggle.click();
+      await sleep(300);
+      const geometry = await page.evaluate(() => {
+        const close = document.querySelector('[data-note-action="close-links"]');
+        const panel = close.getBoundingClientRect();
+        const controls = document.querySelector('.desktop-note-focus-controls').getBoundingClientRect();
+        const modes = [...document.querySelectorAll('.note-side-modes button')].map(button => {
+          const rect = button.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, right: rect.right };
+        });
+        return { panelRight: panel.right, panelLeft: panel.left, controlsLeft: controls.left,
+          modes, panelTop: panel.top, panelBottom: panel.bottom,
+          hit: document.elementFromPoint(panel.x + panel.width / 2, panel.y + panel.height / 2)?.closest('button')?.dataset.noteAction };
+      });
+      assert(geometry.panelRight <= geometry.controlsLeft - 7, 'sidebar close has a gap before the desktop window controls');
+      assert(geometry.modes.every(rect => rect.right <= geometry.panelLeft && rect.top >= geometry.panelTop - 1 && rect.bottom <= geometry.panelBottom + 1), 'sidebar view buttons remain on the first row');
+      assert.equal(geometry.hit, 'close-links', 'sidebar close remains clickable independently');
+      const calls = await page.evaluate(() => __closeCalls);
+      await page.locator('[data-note-action="close-links"]').click();
+      assert.equal(await sidebarToggle.getAttribute('aria-expanded'), 'false');
+      assert.equal(await page.evaluate(() => __closeCalls), calls, 'sidebar close never closes the window');
+      assert.equal(await floating.getAttribute('aria-hidden'), 'false');
+      if (initiallyOpen) await sidebarToggle.click();
+      await sleep(300);
+    }
     const dragSelectors = ['.note-tree-pane > .note-pane-head', '.note-tab-bar'];
     async function expectDragMarkers(enabled) {
       assert.deepEqual(await page.evaluate(selectors => selectors.map(selector => document.querySelector('#start-notes-workspace ' + selector).classList.contains('pywebview-drag-region')), dragSelectors), [enabled, enabled]);
@@ -125,14 +154,21 @@ async function freePort() {
     await expectDragMarkers(true);
     assert.equal(await floating.getAttribute('aria-hidden'), 'false');
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(await visibleFocusIcon(), ['#note-icon-focus-contract'], 'show-top-bar uses four inward arrows');
     assert(await floating.isVisible());
     assert(await page.evaluate(() => document.elementFromPoint(innerWidth - 23, 20).closest('.desktop-note-focus-close') !== null));
     await sleep(500);
+    await expectSeparatedCloseButtons();
     await page.screenshot({ path: path.join(root, 'focus-light.png') });
     await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; });
+    await expectSeparatedCloseButtons();
+    await page.evaluate(() => RelatumI18n.setLanguage('en'));
+    await expectSeparatedCloseButtons();
+    await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
     await expectBlankDrag();
     await page.screenshot({ path: path.join(root, 'focus-dark.png') });
     await page.setViewportSize({ width: 720, height: 500 });
+    await expectSeparatedCloseButtons();
     await expectBlankDrag();
     await page.screenshot({ path: path.join(root, 'focus-narrow.png') });
     await page.evaluate(() => { document.body.dataset.startTheme = 'light'; });
@@ -140,6 +176,7 @@ async function freePort() {
 
     await toggle.click();
     await expectDragMarkers(false);
+    assert.deepEqual(await visibleFocusIcon(), ['#note-icon-focus-expand'], 'hide-top-bar uses four outward arrows');
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFocusMode:v1')), '0');
     assert.equal(await floating.getAttribute('aria-hidden'), 'true');
     assert.equal(await floating.evaluate(node => getComputedStyle(node).pointerEvents), 'none');
@@ -234,6 +271,7 @@ async function freePort() {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await toggle.click();
     await toggle.click();
+    await expectSeparatedCloseButtons();
     assert.equal(await floating.evaluate(node => getComputedStyle(node).transitionDuration), '0s');
     assert.equal(await page.locator('.top-bar').evaluate(node => getComputedStyle(node).transitionDuration), '0s');
     assert.deepEqual(errors, []);
@@ -243,6 +281,10 @@ async function freePort() {
     await browserPage.goto(`http://127.0.0.1:${port}/`);
     assert.equal(await browserPage.locator('#start-notes-workspace .pywebview-drag-region').count(), 0);
     assert.equal(await browserPage.locator('.desktop-note-focus-controls').count(), 0);
+    await browserPage.waitForFunction(() => window.CanvasNoteWorkspace);
+    await browserPage.locator('[data-note-action="toggle-notebooks"]').click();
+    await sleep(300);
+    assert.equal(await browserPage.locator('.note-links-head').evaluate(node => getComputedStyle(node).paddingRight), '12px', 'ordinary browser does not reserve desktop control space');
     await browserContext.close();
     await context.close();
     console.log('note focus desktop browser: ok');

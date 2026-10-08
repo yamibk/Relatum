@@ -284,7 +284,7 @@ assert(symbols.length > 20 && new Set(symbols).size === symbols.length, 'the wor
 for (const match of noteShell.matchAll(/<use href="#(note-icon-[^"]+)"/g)) assert(symbols.includes(match[1]), `missing icon symbol ${match[1]}`);
 assert(notes.includes("use.setAttribute('href', '#note-icon-' + name)") && notes.includes("noteIcon(kind === 'folder' ? 'folder' : 'file-text'"), 'dynamic trees share static symbol definitions');
 assert(noteShell.includes('#note-icon-folder-cog') && noteShell.includes('#note-icon-sliders-horizontal')
-  && noteShell.includes('#note-icon-panel-top-close') && noteShell.includes('#note-icon-panel-top-open'), 'settings and focus use distinct meaningful icons');
+  && noteShell.includes('#note-icon-focus-expand') && noteShell.includes('#note-icon-focus-contract'), 'settings and focus use distinct meaningful icons');
 assert(!notes.includes("close.textContent = '×'") && !notes.includes("separator.textContent = '›'"), 'navigation and close shapes do not depend on font glyphs');
 assert(css.includes('stroke-linecap: round; stroke-linejoin: round') && css.includes('--note-control-focus:')
   && css.includes('width: 16px; height: 16px; opacity: .8'), 'icons share line geometry, tree scale and visible keyboard focus');

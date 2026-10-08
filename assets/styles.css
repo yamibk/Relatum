@@ -8645,6 +8645,12 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
 }
 .desktop-note-focus-controls .desktop-window-btn { height: 42px; min-height: 42px; }
 .desktop-note-focus-controls .desktop-window-btn:first-child { border-radius: 0 0 0 7px; }
+/* 专注模式的三枚窗口按钮覆盖首行，侧栏入口为它们预留空间。 */
+body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-links-pane > .note-links-head {
+  padding-right: calc(3 * 46px + 8px);
+  gap: 6px;
+}
+body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-links-head .note-side-modes { gap: 8px; }
 body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .desktop-note-focus-controls {
   opacity: 1;
   visibility: visible;
