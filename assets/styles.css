@@ -1693,6 +1693,38 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-document-switch-pending .note-document-body { opacity: .68; cursor: progress; }
 
 /* Note discovery uses the existing sidebar and document stage. */
+.note-workspace {
+  --note-scroll-thumb: rgba(45, 45, 42, .22);
+  --note-scroll-thumb-hover: rgba(45, 45, 42, .36);
+  --note-scroll-thumb-active: rgba(45, 45, 42, .48);
+}
+body.start-page[data-start-theme="dark"] .note-workspace {
+  --note-scroll-thumb: rgba(235, 240, 235, .24);
+  --note-scroll-thumb-hover: rgba(235, 240, 235, .38);
+  --note-scroll-thumb-active: rgba(235, 240, 235, .5);
+}
+.note-workspace :is(.note-tree-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-navigation, .note-browser-results) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--note-scroll-thumb) transparent;
+}
+/* Chromium's standard scrollbar properties override its detailed styling. */
+@supports selector(::-webkit-scrollbar) {
+  .note-workspace :is(.note-tree-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-navigation, .note-browser-results) {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+.note-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
+.note-workspace ::-webkit-scrollbar-track,
+.note-workspace ::-webkit-scrollbar-corner { background: transparent; }
+.note-workspace ::-webkit-scrollbar-thumb {
+  min-height: 32px; min-width: 32px;
+  border: 2px solid transparent; border-radius: 999px;
+  background: var(--note-scroll-thumb); background-clip: content-box;
+}
+.note-workspace ::-webkit-scrollbar-thumb:hover { background-color: var(--note-scroll-thumb-hover); }
+.note-workspace ::-webkit-scrollbar-thumb:active { background-color: var(--note-scroll-thumb-active); }
+.note-workspace ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .note-browser-mode [data-role="note-tree"],
 .note-browser-mode .note-head-actions,
 .note-browser-restoring [data-role="note-tree"],

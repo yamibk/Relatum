@@ -28,6 +28,7 @@
     const navigationGroups = new Map();
     let providerId = 'recent', selection = {}, rows = [], offset = 0, total = 0, hasMore = false, selectedPath = '';
     let pageSequence = 0, actionSequence = 0, loading = false, failed = false, dirty = true;
+    let resultProviderId = providerId, resultSelection = selection, hasResult = false, resetting = false, preservingScroll = false, failedReset = false;
     let resultScroll = 0;
     const copy = (key) => (words[ctx.language()] || words['zh-CN'])[key] || key;
     function button(label, handler, className) {
@@ -35,10 +36,11 @@
       node.textContent = label; node.addEventListener('click', handler); return node;
     }
     function showResults() {
+      const wasHidden = results.hidden;
       root.classList.remove('tree-overlay-open');
       ctx.showResults(true); back.hidden = true;
       results.hidden = false; results.inert = false;
-      results.scrollTop = resultScroll;
+      if (wasHidden) results.scrollTop = resultScroll;
     }
     function showDocument() {
       if (!results.hidden) resultScroll = results.scrollTop;
@@ -149,13 +151,15 @@
       if (ctx.icon) mobile.appendChild(ctx.icon('panel-left'));
       mobile.setAttribute('aria-label', ctx.language() === 'en' ? 'Show note navigation' : '显示笔记导航');
       mobile.title = mobile.getAttribute('aria-label');
-      const title = document.createElement('h2'); title.textContent = providerId === 'tags' ? '#' + (selection.label || selection.key) : selection.label || copy(providers.get(providerId).label);
+      const title = document.createElement('h2'); title.textContent = resultProviderId === 'tags' ? '#' + (resultSelection.label || resultSelection.key) : resultSelection.label || copy(providers.get(resultProviderId).label);
       const count = document.createElement('span'); count.textContent = copy('count').replace('{count}', total);
       heading.append(mobile, title, count); fragment.appendChild(heading);
       rows.forEach((note) => {
         const row = button('', async () => {
+          if (!active || (loading && resetting)) return;
           const sequence = ++actionSequence;
-          if (!(await ctx.beforeBrowse()) || !active || sequence !== actionSequence) return;
+          const page = pageSequence;
+          if (!(await ctx.beforeBrowse()) || !active || sequence !== actionSequence || page !== pageSequence || (loading && resetting)) return;
           if (await ctx.openNote(note.path)) { selectedPath = note.path; showDocument(); root.classList.remove('tree-overlay-open'); }
         }, 'note-browser-result');
         row.dataset.noteBrowserPath = note.path; row.classList.toggle('is-selected', note.path === selectedPath);
@@ -166,32 +170,52 @@
         (note.tags || []).forEach((tag) => { const item = document.createElement('span'); item.textContent = '#' + tag.label; tags.appendChild(item); });
         row.append(title, excerpt, tags, path); fragment.appendChild(row);
       });
-      if (failed) fragment.appendChild(button(copy('failed'), () => loadPage(offset === 0), 'note-browser-message'));
-      else if (loading) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy('loading'); fragment.appendChild(message); }
+      if (failed) fragment.appendChild(button(copy('failed'), () => { if (!loading) loadPage(failedReset); }, 'note-browser-message'));
+      else if (loading && (!resetting || !hasResult)) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy('loading'); fragment.appendChild(message); }
       else if (!rows.length) { const message = document.createElement('p'); message.className = 'note-browser-message'; message.textContent = copy('empty'); fragment.appendChild(message); }
       else if (hasMore) fragment.appendChild(button(copy('more'), () => loadPage(false), 'note-browser-more'));
       results.replaceChildren(fragment); results.scrollTop = scroll;
     }
     async function loadPage(reset, preserveScroll) {
+      if (!active || disposed || (!reset && loading)) return false;
       const sequence = ++pageSequence;
-      if (reset) { offset = 0; rows = []; total = 0; if (!preserveScroll) { resultScroll = 0; results.scrollTop = 0; } }
-      loading = true; failed = false; renderResults();
+      const requestProviderId = providerId, requestSelection = selection, requestOffset = reset ? 0 : offset;
+      loading = true; resetting = reset; preservingScroll = !!preserveScroll; failed = false;
+      if (reset) dirty = true;
+      results.setAttribute('aria-busy', 'true');
+      // Keep the committed view intact until the replacement page is ready.
+      if (!hasResult) { resultProviderId = requestProviderId; resultSelection = requestSelection; }
+      if (!reset || !hasResult) renderResults();
       try {
-        const result = await providers.get(providerId).loadPage(ctx, selection, offset);
+        const result = await providers.get(requestProviderId).loadPage(ctx, requestSelection, requestOffset);
         if (!active || disposed || sequence !== pageSequence) return false;
-        rows = rows.concat(result.items || []); total = result.total; hasMore = !!result.hasMore;
-        offset += result.consumed ?? (result.items || []).length; dirty = false; loading = false; renderResults();
+        rows = reset ? result.items || [] : rows.concat(result.items || []); total = result.total; hasMore = !!result.hasMore;
+        resultProviderId = requestProviderId; resultSelection = requestSelection; hasResult = true;
+        offset = requestOffset + (result.consumed ?? (result.items || []).length); dirty = false; loading = false; resetting = false;
+        results.setAttribute('aria-busy', 'false'); renderResults();
+        if (reset && !preserveScroll) { resultScroll = 0; results.scrollTop = 0; }
         return true;
       } catch (error) {
         if (!active || disposed || sequence !== pageSequence) return;
-        loading = false; failed = true; renderResults();
+        if (reset) {
+          rows = []; offset = 0; total = 0; hasMore = false;
+          resultProviderId = requestProviderId; resultSelection = requestSelection;
+        }
+        hasResult = true; loading = false; resetting = false; failed = true; failedReset = reset;
+        results.setAttribute('aria-busy', 'false'); renderResults();
+        if (reset && !preserveScroll) { resultScroll = 0; results.scrollTop = 0; }
         return false;
       }
     }
     async function refreshResults() {
-      const pages = Math.max(1, Math.ceil(offset / 50)), scroll = results.hidden ? resultScroll : results.scrollTop;
-      if (!(await loadPage(true, true))) return;
-      for (let page = 1; page < pages && hasMore; page++) if (!(await loadPage(false))) return;
+      const preserveScroll = (!resetting || preservingScroll) && resultProviderId === providerId && resultSelection.key === selection.key;
+      const pages = preserveScroll ? Math.max(1, Math.ceil(offset / 50)) : 1, scroll = preserveScroll ? (results.hidden ? resultScroll : results.scrollTop) : 0;
+      let sequence = pageSequence + 1;
+      if (!(await loadPage(true, preserveScroll)) || sequence !== pageSequence) return;
+      for (let page = 1; page < pages && hasMore; page++) {
+        sequence++;
+        if (!(await loadPage(false)) || sequence !== pageSequence) return;
+      }
       resultScroll = scroll; results.scrollTop = scroll;
     }
     async function select(id, next) {
@@ -215,7 +239,7 @@
         if (dirty || !rows.length) await loadPage(true); else renderResults();
         await loadNavigation();
       },
-      suspend(options) { active = false; pageSequence++; navigationSequences.forEach((value, key) => navigationSequences.set(key, value + 1)); actionSequence++; navigationGroups.forEach((group) => { cancelAnimationFrame(group.frame); clearTimeout(group.timer); }); if (loading) dirty = true; loading = false; if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
+      suspend(options) { active = false; pageSequence++; navigationSequences.forEach((value, key) => navigationSequences.set(key, value + 1)); actionSequence++; navigationGroups.forEach((group) => { cancelAnimationFrame(group.frame); clearTimeout(group.timer); }); if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
       resume() { active = true; renderNavigation(); if (!results.hidden && dirty) refreshResults(); loadNavigation(); },
       dispose() { this.suspend(); disposed = true; back.removeEventListener('click', onBack); nav.replaceChildren(); results.replaceChildren(); },
       setLanguage() { renderNavigation(); renderResults(); updateBackLabel(); },
