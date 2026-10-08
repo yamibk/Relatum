@@ -1951,7 +1951,7 @@
     rewriteEntryPaths(extracted, source, destination); target.push(extracted); naturalSort(target); return true;
   }
 
-  function beginInlineRename(path) { const entry = findEntry(path); if (!entry || isNotebookRoot(path)) return; selectNotebook(notebookRootForPath(path)); state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
+  function beginInlineRename(path) { const entry = findEntry(path); if (!entry || !path || isNotebookContainer(path)) return; selectNotebook(notebookRootForPath(path)); state.renamePath = path; state.renameOriginal = entry.kind === 'note' ? noteTitle(path) : entry.name; state.renameDraft = state.renameOriginal; state.renameError = ''; renderTree(); }
   function commitInlineRename(entry, input, cancel) {
     if (state.renameCommitPromise) return state.renameCommitPromise;
     if (!entry || state.renamePath !== entry.path) return Promise.resolve(!state.renamePath);
@@ -2058,7 +2058,7 @@
       const toggle = document.createElement('span'); toggle.className = 'note-tree-toggle'; toggle.setAttribute('aria-hidden', 'true');
       if (entry.kind === 'folder') { const expanded = expandedPaths.has(entry.path); row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded)); }
       const label = document.createElement('span'); label.className = 'note-tree-label';
-      if (!entry.notebook && state.renamePath === entry.path) {
+      if (entry.path && state.renamePath === entry.path) {
         const input = document.createElement('input'); input.className = 'note-tree-rename'; input.value = state.renameDraft === null ? state.renameOriginal : state.renameDraft; input.setAttribute('aria-label', tr('rename')); label.appendChild(input);
         input.addEventListener('click', (event) => event.stopPropagation());
         input.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Enter') { event.preventDefault(); commitInlineRename(entry, input, false); } else if (event.key === 'Escape') { event.preventDefault(); commitInlineRename(entry, input, true); } });
@@ -2092,7 +2092,7 @@
       row.addEventListener('dragleave', () => row.classList.remove('note-drop-target'));
       row.addEventListener('drop', (event) => { if (notebookTree) return; event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target'); const destination = entry.kind === 'folder' ? entry.path : parentPath(entry.path); if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination); });
       wrapper.appendChild(row);
-      if (!entry.notebook && state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
+      if (entry.path && state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
       if (entry.kind === 'folder' && expandedPaths.has(entry.path)) createChildrenShell(entry, depth, wrapper, false);
       host.appendChild(wrapper);
     }); }
@@ -2428,6 +2428,7 @@
     if (!source || !destination || source === destination) return true;
     state.lastMoveError = ''; state.lastMoveCode = '';
     const entriesSnapshot = JSON.parse(JSON.stringify(state.entries)); const oldTabs = state.tabs.slice(); const oldActiveTab = state.activeTab; const oldSelectedPath = state.selectedPath; const oldSelectedFolder = state.selectedFolder; const flushPromise = flushSave();
+    const oldNotebookRoot = state.notebookRoot; const oldNotebookExpanded = state.notebookExpanded; const oldExpanded = state.expanded;
     if (!optimisticMove(source, destination)) { state.lastMoveError = language() === 'en' ? 'A folder cannot be moved into itself' : '文件夹不能移入自己'; return false; }
     remapCachedPaths(source, destination);
     remapTabs(source, destination);
@@ -2435,17 +2436,28 @@
     state.selectedPath = mapPath(state.selectedPath, source, destination);
     state.selectedFolder = mapPath(state.selectedFolder, source, destination);
     state.expanded = new Set(Array.from(state.expanded).map((path) => mapPath(path, source, destination)));
+    state.notebookRoot = mapPath(state.notebookRoot, source, destination);
+    state.notebookExpanded = new Set(Array.from(state.notebookExpanded).map((path) => mapPath(path, source, destination)));
     if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
     renderTree();
     const rollback = () => {
       state.entries = entriesSnapshot; state.tabs = oldTabs; state.activeTab = oldActiveTab; state.selectedPath = oldSelectedPath; state.selectedFolder = oldSelectedFolder;
+      state.notebookRoot = oldNotebookRoot; state.notebookExpanded = oldNotebookExpanded; state.expanded = oldExpanded;
       remapCachedPaths(destination, source); state.openingPath = mapPath(state.openingPath, destination, source);
       if (liveEditor && typeof liveEditor.setNotePath === 'function' && state.current) liveEditor.setNotePath(state.current.path);
       persistTabs(); if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
       renderTabs(); renderTree();
     };
     if (!(await flushPromise)) { rollback(); state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false; }
-    try { const result = await post('/api/note-move', { path: source, destination }); remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); refreshTree(false); return true; }
+    try {
+      const result = await post('/api/note-move', { path: source, destination });
+      if (Object.prototype.hasOwnProperty.call(state.notebookColors, source)) {
+        const color = state.notebookColors[source]; delete state.notebookColors[source]; state.notebookColors[destination] = color;
+        queueNotebookSettings({ colors: { [destination]: color }, pruneMissing: [source] });
+      }
+      queueNotebookSettings({ ui: notebookUi() });
+      remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); refreshTree(false); return true;
+    }
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
   }
   function moveEntry(source, folder) { if (notebookRootForPath(source) !== notebookRootForPath(folder)) return; const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
@@ -2748,34 +2760,28 @@
       });
       colors.appendChild(button);
     });
-    showContext([colors, separator(), contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
+    showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path)), contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
   }
+  let notebookCreateRunning = false;
   async function createNotebook() {
-    if (!modalHost || !(await finishInlineTitle()) || state.renamePath && !(await finishInlineRename())) return;
-    const previousFocus = document.activeElement;
-    const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay';
-    const dialog = document.createElement('form'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
-    const title = document.createElement('h2'); title.textContent = notebookCopy('create'); title.id = 'note-notebook-create-title'; dialog.setAttribute('aria-labelledby', title.id);
-    const input = document.createElement('input'); input.type = 'text'; input.className = 'note-notebook-name'; input.autocomplete = 'off'; input.maxLength = 120; input.setAttribute('aria-label', notebookCopy('create'));
-    const error = document.createElement('p'); error.className = 'note-notebook-name-error'; error.setAttribute('role', 'alert');
-    const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
-    const finish = () => { overlay.remove(); if (previousFocus?.isConnected) previousFocus.focus(); };
-    const cancel = contextButton(tr('cancel'), finish); const submit = document.createElement('button'); submit.type = 'submit'; submit.textContent = tr('create');
-    actions.append(cancel, submit); dialog.append(title, input, error, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay);
-    dialog.addEventListener('keydown', (event) => { if (event.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(); } });
-    dialog.addEventListener('submit', async (event) => {
-      event.preventDefault(); if (submit.disabled) return;
-      const name = input.value.trim();
-      if (!name || /[\\/]/.test(name)) { error.textContent = language() === 'en' ? 'Enter a folder name without paths' : '请输入不含路径的文件夹名称'; input.focus(); return; }
-      submit.disabled = true;
-      try {
-        const result = await post('/api/note-create', { kind: 'folder', parent: NOTEBOOK_CONTAINER, name, createParents: true });
+    if (notebookCreateRunning) return;
+    notebookCreateRunning = true;
+    try {
+      if (!(await finishInlineTitle()) || state.renamePath && !(await finishInlineRename())) return;
+      const names = new Set((findEntry(NOTEBOOK_CONTAINER)?.children || []).map((entry) => entry.name.toLowerCase()));
+      let number = 1;
+      while (true) {
+        const name = 'Untitled' + number++;
+        if (names.has(name.toLowerCase())) continue;
+        let result;
+        try { result = await post('/api/note-create', { kind: 'folder', parent: NOTEBOOK_CONTAINER, name, createParents: true }); }
+        catch (error) { if (error.code === 'exists') continue; throw error; }
         state.entries = result.tree?.entries || state.entries; rebuildEntryIndex();
         selectNotebook(result.path, { rootTarget: true, noRender: true });
-        renderTree(); finish();
-      } catch (failure) { error.textContent = failure.message || tr('readFailed'); submit.disabled = false; input.focus(); }
-    });
-    requestAnimationFrame(() => { overlay.classList.add('visible'); input.focus(); });
+        renderTree(); break;
+      }
+    } catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
+    finally { notebookCreateRunning = false; }
   }
   function modalConfirm(title, copy) { if (!modalHost) return Promise.resolve(false); return new Promise((resolve) => { const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay'; const dialog = document.createElement('section'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); const heading = document.createElement('h2'); heading.textContent = title; const paragraph = document.createElement('p'); paragraph.textContent = copy; const actions = document.createElement('footer'); actions.className = 'note-modal-actions'; const finish = (value) => { overlay.remove(); resolve(value); }; actions.append(contextButton(tr('cancel'), () => finish(false)), contextButton(tr('create'), () => finish(true))); dialog.append(heading, paragraph, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay); requestAnimationFrame(() => overlay.classList.add('visible')); }); }
   async function confirmCreateWiki(rawTarget) { const target = normalizedWikiTarget(rawTarget); if (!target || !(await modalConfirm(tr('unresolvedTitle'), tr('unresolvedCopy', { target })))) return; const parts = target.replace(/\\/g, '/').split('/').filter(Boolean); const name = parts.pop(); const hasPath = parts.length > 0; await createEntry('note', { parent: hasPath ? parts.join('/') : state.current ? parentPath(state.current.path) : '', name, createParents: hasPath }); }

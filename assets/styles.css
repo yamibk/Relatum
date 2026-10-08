@@ -1963,8 +1963,6 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-notebook-colors { display: flex; flex-wrap: wrap; gap: 8px; padding: 9px 11px; max-width: 224px; }
 .note-notebook-colors button { width: 20px; height: 20px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: var(--notebook-color, #93978f); cursor: pointer; }
 .note-notebook-colors button[aria-pressed="true"] { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
-.note-notebook-name { width: 100%; margin: 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; }
-.note-notebook-name-error { min-height: 1.4em; color: #b26961; font-size: 12px; }
 @media (min-width: 1121px) {
   .note-workspace.links-overlay-open { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 300px; }
   .note-workspace.links-overlay-open .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: 300px; box-shadow: none; }

@@ -121,13 +121,14 @@ async function freePort() {
     assert.equal(await page.locator('[data-role="note-context-menu"]').isVisible(), false, 'default notes has no delete menu');
 
     await page.locator('[data-note-action="new-notebook"]').click();
-    await page.locator('.note-notebook-name').fill('Physics');
-    await page.locator('.note-modal-card button[type="submit"]').click();
-    await page.waitForFunction(() => document.querySelector('.note-notebook-name-error')?.textContent.length > 0);
-    await page.locator('.note-notebook-name').press('Escape');
+    await rootRow('CustomNotebook/Untitled1').waitFor();
+    assert.equal(await page.locator('.note-modal-card').count(), 0, 'creation does not ask for a name');
     await page.locator('[data-note-action="new-notebook"]').click();
-    await page.locator('.note-notebook-name').fill('New');
-    await page.locator('.note-modal-card button[type="submit"]').click();
+    await rootRow('CustomNotebook/Untitled2').waitFor();
+    await rootRow('CustomNotebook/Untitled2').click({ button: 'right' });
+    await page.locator('[data-role="note-context-menu"] button').filter({ hasText: /^重命名$/ }).click();
+    const notebookRename = page.locator(`${right} .note-tree-rename`);
+    await notebookRename.fill('New'); await notebookRename.press('Enter');
     await rootRow('CustomNotebook/New').waitFor();
     assert(fs.statSync(path.join(container, 'New')).isDirectory());
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'CustomNotebook/Physics/Chapter/C.md');
