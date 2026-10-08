@@ -73,6 +73,60 @@ async function freePort() {
     const emptyPositions = () => page.locator('.note-empty-state > *').evaluateAll(items => items.map(item => {
       const rect = item.getBoundingClientRect(); return [Math.round((rect.x + rect.width / 2) * 100), Math.round(rect.y * 100)];
     }));
+    const settleSide = () => page.waitForTimeout(280);
+    async function checkSideTools(mode) {
+      const visibleActions = await page.locator('[data-role="note-side-toolbar"] > button').evaluateAll(buttons =>
+        buttons.filter(button => !button.hidden).map(button => button.dataset.noteAction));
+      assert.deepEqual(visibleActions, mode === 'notebooks'
+        ? ['new-notebook', 'toggle-all-notebooks', 'toggle-image-text', 'toggle-settings']
+        : ['toggle-image-text', 'toggle-settings']);
+    }
+    async function checkRowsAndBoundary() {
+      const geometry = await page.evaluate(() => {
+        const rect = selector => document.querySelector(selector).getBoundingClientRect();
+        const tabs = rect('.note-tab-bar'), heading = rect('.note-links-head');
+        const left = rect('.note-tree-pane > .note-pane-head'), main = rect('.note-document-head'), tools = rect('.note-side-toolbar');
+        const leftStyle = getComputedStyle(document.querySelector('.note-tree-pane'));
+        const sideStyle = getComputedStyle(document.querySelector('.note-links-pane'));
+        return { first: [tabs.height, heading.height, tabs.bottom - heading.bottom], second: [left.height, main.height, tools.height, left.top - main.top, tools.top - main.top],
+          border: [leftStyle.borderRightColor, sideStyle.borderLeftColor], shadow: sideStyle.boxShadow };
+      });
+      assert.deepEqual(geometry.first, [40, 40, 0]);
+      assert.deepEqual(geometry.second, [48, 48, 48, 0, 0]);
+      assert.equal(geometry.border[0], geometry.border[1]);
+      assert.equal(geometry.shadow, 'none');
+    }
+    async function toggleAndCheckAnimation() {
+      const drift = await page.evaluate(async () => {
+        const elements = [...document.querySelectorAll('.note-document-tools > button, .note-empty-state > *')];
+        const positions = () => elements.map(el => { const r = el.getBoundingClientRect(); return [r.x + r.width / 2, r.y]; });
+        const baseline = positions(); let delta = 0;
+        document.querySelector('[data-note-action="toggle-notebooks"]').click();
+        const start = performance.now();
+        do {
+          await new Promise(requestAnimationFrame);
+          positions().forEach((point, i) => point.forEach((value, axis) => { delta = Math.max(delta, Math.abs(value - baseline[i][axis])); }));
+        } while (performance.now() - start < 280);
+        return delta;
+      });
+      assert(drift < 1, 'toolbar and empty hint stay stationary throughout the sidebar transition');
+    }
+    async function checkSettingsPopover() {
+      await page.locator('[data-note-action="toggle-settings"]').click();
+      const popover = page.locator('[data-role="note-settings-pop"]');
+      await popover.waitFor();
+      assert.equal(await popover.evaluate(el => el.parentElement.classList.contains('note-workspace')), true);
+      const bounds = await popover.boundingBox(), surface = await page.locator('.note-workspace').boundingBox();
+      assert(bounds.x >= surface.x + 11 && bounds.x + bounds.width <= surface.x + surface.width - 11);
+      assert(bounds.y >= surface.y + 11 && bounds.y + bounds.height <= surface.y + surface.height - 11);
+      await popover.locator('input').first().focus();
+      await page.evaluate(() => document.querySelector('[data-note-action="close-links"]').click());
+      assert.equal(await popover.evaluate(el => el.inert), true);
+      assert.equal(await page.locator('[data-note-action="toggle-settings"]').getAttribute('aria-expanded'), 'false');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.noteAction), 'toggle-notebooks', 'closing returns hidden popover focus to the sole toggle');
+      await settleSide(); assert.equal(await popover.isHidden(), true);
+      await page.locator('[data-note-action="toggle-notebooks"]').click(); await settleSide();
+    }
     const notebookNames = () => page.locator(`${right} > .note-notebook-root > .note-tree-row .note-tree-label`).allTextContents();
     const sync = () => page.evaluate(() => __notebooksTest.triggerExternalSync({ silentErrors: true }));
     const flush = () => page.evaluate(() => __notebooksTest.flushNotebookSettings());
@@ -84,14 +138,29 @@ async function freePort() {
     }
 
     await enter();
+    assert.equal(await page.locator('.note-document-tools > button').count(), 3);
+    assert.equal(await page.locator('[data-note-action="toggle-links"]').count(), 0);
     assert.equal(await page.locator('.note-workspace.links-overlay-open').count(), 0);
     const closedEmptyPositions = await emptyPositions();
-    await page.locator('[data-note-action="toggle-notebooks"]').click();
+    await toggleAndCheckAnimation();
+    await checkRowsAndBoundary(); await checkSideTools('notebooks');
     assert.deepEqual(await emptyPositions(), closedEmptyPositions, 'wide empty prompt stays fixed when sidebar opens');
     await page.locator('[data-note-action="side-links"]').click();
+    await checkSideTools('links');
     assert.deepEqual(await emptyPositions(), closedEmptyPositions, 'empty prompt stays fixed across sidebar views');
-    await page.locator('[data-note-action="close-links"]').click();
+    await toggleAndCheckAnimation();
     assert.deepEqual(await emptyPositions(), closedEmptyPositions, 'wide empty prompt stays fixed when sidebar closes');
+    await toggleAndCheckAnimation();
+    assert.equal(await page.locator('[data-note-action="side-links"]').getAttribute('aria-pressed'), 'true', 'sole toggle restores the last sidebar view');
+    await page.locator('[data-note-action="side-notebooks"]').click();
+    await page.locator('[data-note-action="close-links"]').click(); await settleSide();
+    await page.evaluate(() => {
+      const toggle = document.querySelector('[data-note-action="toggle-notebooks"]');
+      toggle.click(); requestAnimationFrame(() => { toggle.click(); requestAnimationFrame(() => { toggle.click(); toggle.click(); }); });
+    });
+    await settleSide();
+    assert.equal(await page.locator('.note-workspace.links-overlay-open').count(), 0, 'continuous reversals settle at the last closed intent');
+    assert.deepEqual(await emptyPositions(), closedEmptyPositions);
     assert.deepEqual(await page.evaluate(async () => [
       (await fetch('/api/note-history?path=Root.md')).status,
       (await fetch('/api/note-history-restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status,
@@ -101,11 +170,13 @@ async function freePort() {
     await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'Root.md');
     await page.evaluate(() => { window.__originalDoc = __notebooksTest.editor.view.state.doc; window.__originalView = __notebooksTest.editor.view; });
     const closedToolPositions = await toolPositions();
-    await page.locator('[data-note-action="toggle-notebooks"]').click();
+    await page.locator('[data-note-action="toggle-notebooks"]').click(); await settleSide();
     assert.deepEqual(await toolPositions(), closedToolPositions, 'wide toolbar stays fixed when sidebar opens');
     for (const mode of ['links', 'notebooks']) {
       await page.locator(`[data-note-action="side-${mode}"]`).click();
       assert.deepEqual(await toolPositions(), closedToolPositions, 'sidebar mode does not move toolbar');
+      await checkSideTools(mode); await checkSettingsPopover();
+      assert.equal(await page.locator(`[data-note-action="side-${mode}"]`).getAttribute('aria-pressed'), 'true');
     }
     assert.deepEqual(await notebookNames(), ['notes', 'Empty', 'Physics']);
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false');
@@ -157,7 +228,10 @@ async function freePort() {
     await flush();
     assert.equal(settings().colors['CustomNotebook/Physics'], 'blue');
     await screenshot('notebooks-light');
-    await page.evaluate(() => { document.body.dataset.startTheme = 'dark'; document.body.dataset.startBackground = 'scenic'; });
+    for (const theme of ['light', 'dark']) for (const background of ['plain', 'scenic']) {
+      await page.evaluate(({ theme, background }) => { document.body.dataset.startTheme = theme; document.body.dataset.startBackground = background; }, { theme, background: background === 'plain' ? 'simple' : background });
+      await checkRowsAndBoundary();
+    }
     await screenshot('notebooks-dark');
     await page.evaluate(() => { document.body.dataset.startTheme = 'light'; document.body.dataset.startBackground = 'simple'; });
     await rootRow('').click({ button: 'right' });
@@ -261,13 +335,17 @@ async function freePort() {
     assert.equal(await page.locator('[data-note-action="side-notebooks"]').textContent(), 'Notebooks');
     await page.setViewportSize({ width: 680, height: 800 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await page.locator('.note-workspace').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
+    assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
     if (await page.locator('[data-note-action="close-all-tabs"]').isEnabled()) await page.locator('[data-note-action="close-all-tabs"]').click();
     await page.locator('.note-empty-state').waitFor();
     assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).position), 'absolute');
     await screenshot('notebooks-narrow');
     await page.locator('[data-note-action="side-links"]').click();
+    await checkSideTools('links'); await checkSettingsPopover();
     assert.equal(await page.locator('[data-role="note-links-content"]').isVisible(), true);
     await page.locator('[data-note-action="side-notebooks"]').click();
+    await checkSideTools('notebooks'); await checkSettingsPopover();
     const narrowOpenToolPositions = await toolPositions();
     const narrowOpenEmptyPositions = await emptyPositions();
     await page.locator('[data-note-action="close-links"]').click();
@@ -276,6 +354,18 @@ async function freePort() {
     await flush(); assert.equal(settings().ui.open, false);
     await page.locator('[data-note-action="toggle-notebooks"]').click();
     assert.deepEqual(await emptyPositions(), narrowOpenEmptyPositions, 'narrow empty prompt stays fixed when overlay opens');
+    await page.locator('[data-note-action="close-links"]').click();
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await toggleAndCheckAnimation();
+    await page.evaluate(() => {
+      const toggle = document.querySelector('[data-note-action="toggle-notebooks"]');
+      toggle.click(); requestAnimationFrame(() => { toggle.click(); requestAnimationFrame(() => toggle.click()); });
+    });
+    await settleSide();
+    assert.equal(await page.locator('.note-workspace.links-overlay-open').count(), 0, 'narrow overlay reversals settle at the last intent');
+    assert.deepEqual(await emptyPositions(), narrowOpenEmptyPositions);
+    await toggleAndCheckAnimation();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.locator('button[data-start-workspace="canvas"]').click();
     const inactiveRequests = treeRequests;
     await delay(2300); assert.equal(treeRequests, inactiveRequests, 'inactive workspace must stop directory checks');

@@ -561,6 +561,8 @@
       settingsPop.removeAttribute('inert');
       syncNoteSettingsFontScale();
       renderNoteShortcutSettings();
+      positionSidePopover(settingsPop, settingsTrigger);
+      scheduleSidePopoverPosition();
       return;
     }
     stopShortcutRecording(true);
@@ -967,7 +969,7 @@
     const enabled = !!(state.current && liveEditor && state.viewMode === 'live');
     if (!enabled || state.imageText.available || state.imageTextCleanupPath !== state.current.path) state.imageTextCleanupPath = '';
     if (!enabled || !state.imageText.available) state.imageText.active = false;
-    const open = enabled && (!!state.imageText.active || !!state.imageTextCleanupPath);
+    const open = enabled && root.classList.contains('links-overlay-open') && (!!state.imageText.active || !!state.imageTextCleanupPath);
     if (imageTextToggle) {
       const label = tr('imageText');
       imageTextToggle.disabled = !enabled || !!state.imageTextBusy;
@@ -979,6 +981,7 @@
     if (!imageTextTools) return;
     imageTextTools.hidden = !open;
     imageTextTools.toggleAttribute('inert', !open);
+    if (open) { positionSidePopover(imageTextTools, imageTextToggle); scheduleSidePopoverPosition(); }
     imageTextTools.querySelectorAll('[data-image-text-action="size"]').forEach((button) => {
       const selected = button.dataset.imageTextValue === state.imageText.size;
       button.classList.toggle('is-selected', selected);
@@ -2796,17 +2799,62 @@
       const button = $('[data-note-action="side-' + mode + '"]');
       if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
     });
-    ['notebooks', 'links'].forEach((mode) => {
-      const button = $('[data-note-action="toggle-' + mode + '"]');
-      if (button) { button.setAttribute('aria-expanded', String(open && state.sideMode === mode)); button.setAttribute('aria-label', notebookCopy(mode)); button.title = notebookCopy(mode); }
+    const toggle = $('[data-note-action="toggle-notebooks"]');
+    if (toggle) { toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy('notebooks')); toggle.title = notebookCopy('notebooks'); }
+    $('[data-role="note-side-toolbar"]')?.setAttribute('aria-label', language() === 'en' ? 'Note tools' : '笔记工具');
+    ['new-notebook', 'toggle-all-notebooks'].forEach((action) => {
+      const button = $('[data-note-action="' + action + '"]'); if (button) button.hidden = state.sideMode !== 'notebooks';
     });
     const add = $('[data-note-action="new-notebook"]');
     if (add) { add.title = notebookCopy('create'); add.setAttribute('aria-label', add.title); }
     $('[data-note-action="close-links"]')?.setAttribute('aria-label', notebookCopy('close'));
     renderNotebookTree();
   }
+  let sidePopoverFrame = 0;
+  let sideMotionUntil = 0;
+  function positionSidePopover(popover, trigger) {
+    if (!popover || popover.hidden || !trigger || !root.classList.contains('links-overlay-open')) return;
+    const surface = root.getBoundingClientRect(); const anchor = trigger.getBoundingClientRect();
+    const below = Math.max(0, surface.bottom - anchor.bottom - 20);
+    const above = Math.max(0, anchor.top - surface.top - 20);
+    const placeAbove = below < 120 && above > below;
+    const available = placeAbove ? above : below;
+    const setStyle = (name, value) => { if (popover.style[name] !== value) popover.style[name] = value; };
+    setStyle('maxHeight', Math.min(popover === settingsPop ? 690 : 780, available) + 'px');
+    const left = Math.max(12, Math.min(anchor.right - surface.left - root.clientLeft - popover.offsetWidth, root.clientWidth - popover.offsetWidth - 12));
+    const wantedTop = placeAbove ? anchor.top - surface.top - root.clientTop - popover.offsetHeight - 8 : anchor.bottom - surface.top - root.clientTop + 8;
+    const top = Math.max(12, Math.min(wantedTop, root.clientHeight - popover.offsetHeight - 12));
+    setStyle('left', left + 'px'); setStyle('top', top + 'px');
+  }
+  function scheduleSidePopoverPosition() {
+    if (sidePopoverFrame) return;
+    sidePopoverFrame = requestAnimationFrame(() => {
+      sidePopoverFrame = 0;
+      if (!state.active || !root.classList.contains('links-overlay-open')) return;
+      positionSidePopover(settingsPop, settingsTrigger); positionSidePopover(imageTextTools, imageTextToggle);
+      if (performance.now() < sideMotionUntil && ((!settingsPop?.hidden && state.settingsOpen) || !imageTextTools?.hidden)) scheduleSidePopoverPosition();
+    });
+  }
+  window.addEventListener('resize', () => { sideMotionUntil = performance.now() + 270; scheduleSidePopoverPosition(); });
+  if (window.ResizeObserver) {
+    const sidePopoverObserver = new ResizeObserver(scheduleSidePopoverPosition);
+    [root, settingsPop, imageTextTools].filter(Boolean).forEach((element) => sidePopoverObserver.observe(element));
+  }
   function setSideOpen(open) {
+    sideMotionUntil = performance.now() + 270;
+    if (!open) {
+      const focusWasInside = sidePane?.contains(document.activeElement) || settingsPop?.contains(document.activeElement) || imageTextTools?.contains(document.activeElement);
+      setNoteSettingsOpen(false, { restoreFocus: false });
+      state.imageText.toggleSeq += 1; state.imageText.toggleIntent = null; state.imageTextCleanupPath = '';
+      state.imageText.active = false;
+      if (liveEditor) liveEditor.setImageTextMode(false);
+      if (imageTextTools) { imageTextTools.hidden = true; imageTextTools.inert = true; }
+      if (sidePopoverFrame) cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0;
+      if (focusWasInside) $('[data-note-action="toggle-notebooks"]')?.focus({ preventScroll: true });
+    }
     root.classList.toggle('links-overlay-open', open); updateSidePanel(); queueNotebookSettings({ ui: notebookUi() });
+    updateImageTextTools();
+    if (open) { if (state.sideMode === 'links') ensureLinks(); scheduleSidePopoverPosition(); }
     if (!open) window.setTimeout(() => {
       if (!root.classList.contains('links-overlay-open') && notebookTreeEl) { notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true; }
     }, 270);
@@ -2814,7 +2862,6 @@
   function setSideMode(mode) {
     state.sideMode = ['notebooks', 'links'].includes(mode) ? mode : 'notebooks';
     setSideOpen(true);
-    if (state.sideMode === 'links') ensureLinks();
   }
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
   async function uploadImages(files, commandContext) {
@@ -3051,11 +3098,8 @@
       const rect = action.getBoundingClientRect();
       openContextMenu(entry, rect.right - 220, rect.bottom + 6, { viewModes: true, source: 'current-menu' });
     } else if (name === 'toggle-tree') root.classList.toggle('tree-overlay-open');
-    else if (name === 'toggle-links' || name === 'toggle-notebooks') {
-      const mode = name === 'toggle-links' ? 'links' : 'notebooks';
-      if (root.classList.contains('links-overlay-open') && state.sideMode === mode) setSideOpen(false);
-      else setSideMode(mode);
-    } else if (name === 'side-notebooks') setSideMode('notebooks');
+    else if (name === 'toggle-notebooks') setSideOpen(!root.classList.contains('links-overlay-open'));
+    else if (name === 'side-notebooks') setSideMode('notebooks');
     else if (name === 'side-links') setSideMode('links');
     else if (name === 'close-links') setSideOpen(false);
   });

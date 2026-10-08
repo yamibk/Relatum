@@ -1057,7 +1057,7 @@ body.start-page[data-start-theme="dark"] .note-context-menu,
 body.start-page[data-start-theme="dark"] .note-modal-card { color: #edf0ea; background: #242724; border-color: rgba(235,240,235,.1); }
 body.start-page[data-start-theme="dark"] .note-modal-field input { color: #edf0ea; background: #1a1d1b; border-color: rgba(235,240,235,.12); }
 
-/* 笔记工作区 V2：纯白文件编辑界面，链接与历史作为覆盖式侧栏。 */
+/* 笔记工作区：纸面文件编辑界面，共用笔记本/链接侧栏。 */
 .note-workspace {
   position: relative;
   grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr);
@@ -1940,6 +1940,15 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-workspace.links-overlay-open .note-links-pane { transform: none; }
 .note-links-content { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 /* 笔记本和链接共用整高右栏；窄窗保留覆盖方式。 */
+.note-workspace { position: relative; --note-chrome-line: rgba(24, 24, 22, .065); --note-side-motion: 230ms cubic-bezier(.22, 1, .36, 1); }
+.note-tab-bar { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; border-bottom-color: var(--note-chrome-line); }
+.note-tree-pane::before { content: ""; box-sizing: border-box; height: 40px; flex: 0 0 40px; border-bottom: 1px solid var(--note-chrome-line); }
+.note-tree-pane > .note-pane-head { box-sizing: border-box; height: 48px; min-height: 48px; flex: 0 0 48px; padding-block: 6px; }
+.note-document-head { box-sizing: border-box; height: 48px; min-height: 48px; flex: 0 0 48px; }
+.note-links-pane > .note-links-head { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; padding: 5px 12px; border-bottom: 1px solid var(--note-chrome-line); }
+.note-side-popover.note-settings-pop { width: min(480px, calc(100% - 24px)); }
+.note-side-popover.note-image-text-tools { max-width: min(780px, calc(100% - 24px)); z-index: 650; }
+.note-side-popover { top: 0; right: auto; }
 .note-links-pane { width: min(300px, calc(100vw - 24px)); visibility: hidden; transition: transform 230ms cubic-bezier(.22, 1, .36, 1), visibility 230ms; }
 .note-workspace.links-overlay-open .note-links-pane { visibility: visible; }
 .note-side-modes { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
@@ -1947,7 +1956,8 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-side-modes button[aria-pressed="true"] { color: var(--text); }
 .note-notebooks-content { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .note-notebooks-content[hidden] { display: none; }
-.note-notebook-actions { display: flex; justify-content: flex-end; align-items: center; padding: 0 12px 7px; gap: 5px; }
+.note-notebook-actions { box-sizing: border-box; display: flex; justify-content: flex-end; align-items: center; height: 48px; min-height: 48px; flex: 0 0 48px; padding: 0 12px; gap: 5px; }
+.note-side-toolbar [hidden] { display: none; }
 .note-notebook-actions [data-note-action="new-notebook"] { font-size: 21px; font-weight: 400; }
 .note-notebook-tree { padding: 4px 8px 20px; }
 .note-notebook-root > .note-tree-row { min-height: 40px; margin-block: 2px; }
@@ -1971,11 +1981,17 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-notebook-colors button { width: 20px; height: 20px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: var(--notebook-color, #93978f); cursor: pointer; }
 .note-notebook-colors button[aria-pressed="true"] { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
 @media (min-width: 1121px) {
+  .note-workspace { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 0px; transition: grid-template-columns var(--note-side-motion); }
+  .note-document-head { transition: padding-right var(--note-side-motion); }
+  .note-empty-state { transition: right var(--note-side-motion); }
   .note-workspace:not(.links-overlay-open) .note-document-head { padding-right: calc(clamp(18px, 3vw, 38px) + 300px); }
   .note-workspace:not(.links-overlay-open) .note-empty-state { right: 300px; }
   .note-workspace.links-overlay-open { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 300px; }
-  .note-workspace.links-overlay-open .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: 300px; box-shadow: none; }
+  .note-workspace .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: 300px; transform: none; transition: visibility 230ms; }
 }
+body.start-page .note-links-pane { border-left-color: var(--note-chrome-line); box-shadow: none; }
+body.start-page .note-links-pane > .note-links-head { border-bottom-color: var(--note-chrome-line); }
+body.start-page[data-start-theme="dark"] .note-workspace { --note-chrome-line: rgba(235,240,235,.075); }
 body.start-page[data-start-theme="dark"] .note-notebook-root > .note-tree-row.selected-notebook { background: rgba(235,240,235,.095); }
 .note-links-content[hidden] { display: none; }
 .note-context-menu { border-radius: 7px; background: #fff; box-shadow: 0 12px 36px rgba(30, 29, 26, .14); }
@@ -2012,7 +2028,7 @@ body.start-page[data-start-theme="dark"] .note-tree-row.active-ancestor,
 body.start-page[data-start-theme="dark"] .note-path-crumb.is-folder { color: rgba(235,240,235,.72); }
 body.start-page[data-start-theme="dark"] .note-path-crumb.is-file { color: #edf0ea; }
 body.start-page[data-start-theme="dark"] .note-path-separator { color: rgba(235,240,235,.28); }
-body.start-page[data-start-theme="dark"] .note-tab-bar { border-color: rgba(235,240,235,.07); background: #181a19; }
+body.start-page[data-start-theme="dark"] .note-tab-bar { border-color: var(--note-chrome-line); background: #181a19; }
 body.start-page[data-start-theme="dark"] .note-document-status {
   border-color: rgba(235,240,235,.065);
   background: color-mix(in srgb, #181a19 91%, transparent);
@@ -2167,10 +2183,11 @@ body.start-page[data-start-background="scenic"] .note-tab.active {
   background: var(--note-scenic-paper);
 }
 body.start-page[data-start-background="scenic"] .note-links-pane {
-  border-left-color: var(--note-scenic-line);
+  border-left-color: var(--note-chrome-line);
   background: var(--note-scenic-overlay);
-  box-shadow: -18px 0 42px rgba(43, 42, 38, .10);
+  box-shadow: none;
 }
+body.start-page[data-start-background="scenic"] .note-workspace { --note-chrome-line: var(--note-scenic-line); }
 body.start-page[data-start-background="scenic"] .note-document-status {
   border-color: var(--note-scenic-line);
   background: var(--note-scenic-overlay);
@@ -2218,6 +2235,9 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .note-workspace,
+  .note-document-head,
+  .note-empty-state,
   .start-workspace-slider,
   .top-actions,
   .note-links-pane,

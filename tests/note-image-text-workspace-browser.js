@@ -95,12 +95,29 @@ async function freePort() {
       const image = document.querySelector('.note-live-image-frame.is-block img');
       return image && image.complete && image.naturalWidth > 0;
     });
+    if (!await page.locator('.note-workspace.links-overlay-open').count()) {
+      await page.locator('[data-note-action="toggle-notebooks"]').click();
+      await sleep(280);
+    }
     await frame.click({ position: { x: 30, y: 30 } });
     const toggle = page.locator('[data-role="note-image-text-toggle"]');
     const tools = page.locator('[data-role="note-image-text-tools"]');
     await toggle.click();
     await page.waitForFunction(() => document.querySelector('[data-role="note-image-text-toggle"]')
       .getAttribute('aria-pressed') === 'true');
+    assert.equal(await tools.evaluate(el => el.parentElement.classList.contains('note-workspace')), true);
+    const popBounds = await tools.boundingBox(), workspaceBounds = await page.locator('.note-workspace').boundingBox();
+    assert(popBounds.x >= workspaceBounds.x + 11 && popBounds.x + popBounds.width <= workspaceBounds.x + workspaceBounds.width - 11);
+    assert(popBounds.y >= workspaceBounds.y + 11 && popBounds.y + popBounds.height <= workspaceBounds.y + workspaceBounds.height - 11);
+    await tools.locator('button').first().focus();
+    await page.evaluate(() => document.querySelector('[data-note-action="close-links"]').click());
+    assert.equal(await tools.isHidden(), true);
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.noteAction), 'toggle-notebooks');
+    await sleep(280);
+    await page.locator('[data-note-action="toggle-notebooks"]').click(); await sleep(280);
+    await frame.click({ position: { x: 30, y: 30 } });
+    await toggle.click(); await tools.waitFor();
 
     if (!process.env.RELATUM_IMAGE_OPERATIONS_ONLY) {
     // Focus and projection updates may move the CodeMirror selection for one

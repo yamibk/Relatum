@@ -1622,46 +1622,6 @@
           <p class="note-current-path" data-role="note-current-path">选择一篇笔记</p>
         </div>
         <div class="note-document-tools">
-          <button type="button" class="note-side-button note-image-text-toggle" data-note-action="toggle-image-text"
-            data-role="note-image-text-toggle" aria-label="图片文字" aria-pressed="false" disabled>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h13v11h-13zM6 12l2.4-2.6 2.1 2 1.5-1.5 2.5 2.6M7 7.5h.01"/><path d="M12.2 5.8h4.3M14.35 3.65v4.3"/></svg>
-          </button>
-          <section class="note-image-text-tools" data-role="note-image-text-tools" role="toolbar"
-            aria-label="图片文字工具" hidden inert>
-            <button type="button" class="note-image-text-action" data-image-text-action="add" title="添加文字">T+</button>
-            <button type="button" class="note-image-text-action note-image-text-edit" data-image-text-action="edit"
-              aria-label="编辑文字" title="编辑文字" disabled>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5l.7-3 7.9-7.9 2.8 2.8-7.9 7.9zM11.8 5.4l2.8 2.8M4 16h12"/></svg>
-            </button>
-            <span class="note-image-text-separator" aria-hidden="true"></span>
-            <div class="note-image-text-sizes" role="group" aria-label="字号">
-              <button type="button" data-image-text-action="size" data-image-text-value="sm" title="小字号">A</button>
-              <button type="button" data-image-text-action="size" data-image-text-value="md" title="中字号">A</button>
-              <button type="button" data-image-text-action="size" data-image-text-value="lg" title="大字号">A</button>
-              <button type="button" data-image-text-action="size" data-image-text-value="xl" title="特大字号">A</button>
-              <button type="button" data-image-text-action="size" data-image-text-value="xxl" title="超大字号">A</button>
-              <button type="button" data-image-text-action="size" data-image-text-value="xxxl" title="巨大字号">A</button>
-            </div>
-            <span class="note-image-text-separator" aria-hidden="true"></span>
-            <div class="note-image-text-colors" role="group" aria-label="字色">
-              <button type="button" data-image-text-action="color" data-image-text-value="black" title="黑色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="white" title="白色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="yellow" title="黄色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="orange" title="橙色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="red" title="红色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="purple" title="紫色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="blue" title="蓝色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="cyan" title="青色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="green" title="绿色"></button>
-              <button type="button" data-image-text-action="color" data-image-text-value="gray" title="灰色"></button>
-            </div>
-            <span class="note-image-text-separator" aria-hidden="true"></span>
-            <button type="button" class="note-image-text-action" data-image-text-action="delete" title="删除文字" disabled>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 3.5h4M6.5 6l.6 10h5.8l.6-10M8.5 8.5v5M11.5 8.5v5"/></svg>
-            </button>
-            <button type="button" class="note-image-text-merge" data-image-text-action="merge" title="合并为图片">合并为图片</button>
-            <button type="button" class="note-image-text-merge" data-image-text-action="cleanup" title="删除文本框数据">删除文本框数据</button>
-          </section>
           <button type="button" class="note-side-button note-view-toggle" data-note-action="toggle-source"
             data-role="note-view-toggle" aria-label="切换到源码模式" aria-pressed="false" disabled>
             <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -1669,70 +1629,10 @@
               <g class="note-view-icon note-view-icon-live"><path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.5 9h5M7.5 12h5"/></g>
             </svg>
           </button>
-          <button type="button" class="note-side-button" data-note-action="toggle-links"
-            aria-label="显示链接面板">⇄</button>
           <button type="button" class="note-side-button note-notebooks-toggle" data-note-action="toggle-notebooks"
             aria-label="笔记本" title="笔记本" aria-expanded="false" aria-controls="note-shared-side-panel">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h10.5v14H5a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 5 3ZM7 3v14M10 6h3M2.5 6h2M2.5 10h2M2.5 14h2"/></svg>
           </button>
-          <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
-            aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15.08 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/>
-            </svg>
-          </button>
-          <section class="note-settings-pop" id="note-settings-pop" data-role="note-settings-pop"
-            role="dialog" aria-label="笔记设置" hidden inert>
-            <header class="note-settings-head">
-              <h2>笔记设置</h2>
-              <div class="note-settings-reset-area" data-role="note-settings-reset-area">
-                <button type="button" class="note-settings-reset" data-note-settings-action="reset-open"
-                  aria-expanded="false" aria-controls="note-settings-reset-confirm">
-                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1M2.8 3.4v3h3"/></svg>
-                  <span>恢复默认</span>
-                </button>
-                <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
-                  data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
-                  <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文本框字号比例和编辑器快捷键。</span></div>
-                  <footer>
-                    <button type="button" data-note-settings-action="reset-cancel">取消</button>
-                    <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
-                  </footer>
-                </div>
-                <span class="note-settings-reset-status" data-role="note-settings-reset-status"
-                  role="status" aria-live="polite"></span>
-              </div>
-            </header>
-            <section class="note-settings-section" aria-labelledby="note-settings-appearance-title">
-              <h3 id="note-settings-appearance-title">外观</h3>
-              <label class="note-settings-font">
-                <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
-                <span class="note-settings-range" style="--default-pos:33.333%;">
-                  <input type="range" min="80" max="140" step="5" value="100"
-                    data-role="note-font-scale" aria-label="笔记正文字号缩放比例">
-                </span>
-                <small aria-hidden="true"><i>80%</i><i>100% = 16px</i><i>140%</i></small>
-              </label>
-              <label class="note-settings-font">
-                <span><strong>图片文本框字号比例</strong><output data-role="note-image-text-scale-value">100%</output></span>
-                <span class="note-settings-range" style="--default-pos:20%;">
-                  <input type="range" min="50" max="300" step="5" value="100"
-                    data-role="note-image-text-scale" aria-label="图片文本框字号比例">
-                </span>
-                <small aria-hidden="true"><i>50%</i><i>100%</i><i>300%</i></small>
-              </label>
-            </section>
-            <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">
-              <div class="note-settings-section-head">
-                <h3 id="note-settings-shortcuts-title">编辑器快捷键</h3>
-                <span>单次组合键</span>
-              </div>
-              <p>点击“＋”后按下新的快捷键；同一命令可以保留多个组合。</p>
-              <div class="note-shortcut-list" data-role="note-shortcut-list"></div>
-              <div class="note-shortcut-status" data-role="note-shortcut-status" role="status" aria-live="polite"></div>
-            </section>
-          </section>
           <button type="button" class="note-more-button" data-note-action="current-menu"
             aria-label="当前笔记菜单">•••</button>
         </div>
@@ -1771,14 +1671,25 @@
         <button type="button" class="note-side-button" data-note-action="close-links"
           aria-label="关闭侧栏">×</button>
       </header>
+      <div class="note-notebook-actions note-side-toolbar" data-role="note-side-toolbar" role="toolbar" aria-label="笔记工具">
+        <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本">+</button>
+        <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-notebooks" aria-label="全部展开">
+          <svg class="note-expand-icon note-expand-icon-open" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 8 4.5-4 4.5 4M5.5 12l4.5 4 4.5-4"/></svg>
+          <svg class="note-expand-icon note-expand-icon-close" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 4 4.5 4 4.5-4M5.5 16l4.5-4 4.5 4"/></svg>
+        </button>
+        <button type="button" class="note-side-button note-image-text-toggle" data-note-action="toggle-image-text"
+          data-role="note-image-text-toggle" aria-label="图片文字" aria-pressed="false" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h13v11h-13zM6 12l2.4-2.6 2.1 2 1.5-1.5 2.5 2.6M7 7.5h.01"/><path d="M12.2 5.8h4.3M14.35 3.65v4.3"/></svg>
+        </button>
+        <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
+          aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15.08 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/>
+          </svg>
+        </button>
+      </div>
       <section class="note-notebooks-content" data-role="note-notebooks-content">
-        <div class="note-notebook-actions">
-          <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本">+</button>
-          <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-notebooks" aria-label="全部展开">
-            <svg class="note-expand-icon note-expand-icon-open" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 8 4.5-4 4.5 4M5.5 12l4.5 4 4.5-4"/></svg>
-            <svg class="note-expand-icon note-expand-icon-close" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 4 4.5 4 4.5-4M5.5 16l4.5-4 4.5 4"/></svg>
-          </button>
-        </div>
         <div class="note-notebook-tree" data-role="note-notebook-tree" tabindex="0"></div>
       </section>
       <div class="note-links-content" data-role="note-links-content" hidden>
@@ -1792,6 +1703,93 @@
         </section>
       </div>
     </aside>
+    <section class="note-image-text-tools note-side-popover" data-role="note-image-text-tools" role="toolbar"
+      aria-label="图片文字工具" hidden inert>
+      <button type="button" class="note-image-text-action" data-image-text-action="add" title="添加文字">T+</button>
+      <button type="button" class="note-image-text-action note-image-text-edit" data-image-text-action="edit"
+        aria-label="编辑文字" title="编辑文字" disabled>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5l.7-3 7.9-7.9 2.8 2.8-7.9 7.9zM11.8 5.4l2.8 2.8M4 16h12"/></svg>
+      </button>
+      <span class="note-image-text-separator" aria-hidden="true"></span>
+      <div class="note-image-text-sizes" role="group" aria-label="字号">
+        <button type="button" data-image-text-action="size" data-image-text-value="sm" title="小字号">A</button>
+        <button type="button" data-image-text-action="size" data-image-text-value="md" title="中字号">A</button>
+        <button type="button" data-image-text-action="size" data-image-text-value="lg" title="大字号">A</button>
+        <button type="button" data-image-text-action="size" data-image-text-value="xl" title="特大字号">A</button>
+        <button type="button" data-image-text-action="size" data-image-text-value="xxl" title="超大字号">A</button>
+        <button type="button" data-image-text-action="size" data-image-text-value="xxxl" title="巨大字号">A</button>
+      </div>
+      <span class="note-image-text-separator" aria-hidden="true"></span>
+      <div class="note-image-text-colors" role="group" aria-label="字色">
+        <button type="button" data-image-text-action="color" data-image-text-value="black" title="黑色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="white" title="白色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="yellow" title="黄色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="orange" title="橙色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="red" title="红色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="purple" title="紫色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="blue" title="蓝色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="cyan" title="青色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="green" title="绿色"></button>
+        <button type="button" data-image-text-action="color" data-image-text-value="gray" title="灰色"></button>
+      </div>
+      <span class="note-image-text-separator" aria-hidden="true"></span>
+      <button type="button" class="note-image-text-action" data-image-text-action="delete" title="删除文字" disabled>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 3.5h4M6.5 6l.6 10h5.8l.6-10M8.5 8.5v5M11.5 8.5v5"/></svg>
+      </button>
+      <button type="button" class="note-image-text-merge" data-image-text-action="merge" title="合并为图片">合并为图片</button>
+      <button type="button" class="note-image-text-merge" data-image-text-action="cleanup" title="删除文本框数据">删除文本框数据</button>
+    </section>
+    <section class="note-settings-pop note-side-popover" id="note-settings-pop" data-role="note-settings-pop"
+      role="dialog" aria-label="笔记设置" hidden inert>
+      <header class="note-settings-head">
+        <h2>笔记设置</h2>
+        <div class="note-settings-reset-area" data-role="note-settings-reset-area">
+          <button type="button" class="note-settings-reset" data-note-settings-action="reset-open"
+            aria-expanded="false" aria-controls="note-settings-reset-confirm">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 6.4a5.5 5.5 0 1 1 1.1 5.1M2.8 3.4v3h3"/></svg>
+            <span>恢复默认</span>
+          </button>
+          <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
+            data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
+            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文本框字号比例和编辑器快捷键。</span></div>
+            <footer>
+              <button type="button" data-note-settings-action="reset-cancel">取消</button>
+              <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
+            </footer>
+          </div>
+          <span class="note-settings-reset-status" data-role="note-settings-reset-status"
+            role="status" aria-live="polite"></span>
+        </div>
+      </header>
+      <section class="note-settings-section" aria-labelledby="note-settings-appearance-title">
+        <h3 id="note-settings-appearance-title">外观</h3>
+        <label class="note-settings-font">
+          <span><strong>笔记正文字号</strong><output data-role="note-font-scale-value">100%</output></span>
+          <span class="note-settings-range" style="--default-pos:33.333%;">
+            <input type="range" min="80" max="140" step="5" value="100"
+              data-role="note-font-scale" aria-label="笔记正文字号缩放比例">
+          </span>
+          <small aria-hidden="true"><i>80%</i><i>100% = 16px</i><i>140%</i></small>
+        </label>
+        <label class="note-settings-font">
+          <span><strong>图片文本框字号比例</strong><output data-role="note-image-text-scale-value">100%</output></span>
+          <span class="note-settings-range" style="--default-pos:20%;">
+            <input type="range" min="50" max="300" step="5" value="100"
+              data-role="note-image-text-scale" aria-label="图片文本框字号比例">
+          </span>
+          <small aria-hidden="true"><i>50%</i><i>100%</i><i>300%</i></small>
+        </label>
+      </section>
+      <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">
+        <div class="note-settings-section-head">
+          <h3 id="note-settings-shortcuts-title">编辑器快捷键</h3>
+          <span>单次组合键</span>
+        </div>
+        <p>点击“＋”后按下新的快捷键；同一命令可以保留多个组合。</p>
+        <div class="note-shortcut-list" data-role="note-shortcut-list"></div>
+        <div class="note-shortcut-status" data-role="note-shortcut-status" role="status" aria-live="polite"></div>
+      </section>
+    </section>
   </section>
 
   <section class="research-workspace start-workspace-panel" id="start-research-workspace"

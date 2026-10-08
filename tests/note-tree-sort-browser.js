@@ -138,6 +138,8 @@ async function chooseSort(page, mode) {
     assert.equal(await page.locator('#note-sort-menu').evaluate(node => getComputedStyle(node).animationName), 'none');
     await page.locator('[data-note-action="toggle-sort"]').click();
     await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.locator('[data-note-action="toggle-notebooks"]').click();
+    await page.waitForTimeout(280);
     await page.locator('[data-note-action="toggle-sort"]').click();
     await page.locator('[data-note-action="toggle-settings"]').click();
     assert.equal(await page.locator('[data-note-action="toggle-sort"]').getAttribute('aria-expanded'), 'false');

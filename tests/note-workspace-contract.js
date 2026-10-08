@@ -115,9 +115,17 @@ assert(html.includes('data-role="note-word-count"') && html.includes('data-role=
 assert(html.includes('data-role="note-font-scale"') && html.includes('data-role="note-settings-pop"'),
   'Note settings must own the Markdown font scale control');
 assert(html.includes('data-note-action="toggle-settings"'), 'Note settings need a toolbar gear trigger');
-assert(html.indexOf('data-note-action="toggle-links"') < html.indexOf('data-note-action="toggle-settings"')
-  && html.indexOf('data-note-action="toggle-settings"') < html.indexOf('data-note-action="current-menu"'),
-  'the Note settings trigger must sit between Links and the current-note menu');
+const documentTools = html.slice(html.indexOf('<div class="note-document-tools">'), html.indexOf('</header>', html.indexOf('<div class="note-document-tools">')));
+assert.deepEqual(Array.from(documentTools.matchAll(/data-note-action="([^"]+)"/g), match => match[1]),
+  ['toggle-source', 'toggle-notebooks', 'current-menu'], 'the document toolbar has exactly three entries');
+assert(!html.includes('data-note-action="toggle-links"'), 'the notebook button is the sole sidebar toggle');
+const sideTools = html.slice(html.indexOf('<div class="note-notebook-actions'), html.indexOf('<section class="note-notebooks-content'));
+assert.deepEqual(Array.from(sideTools.matchAll(/data-note-action="([^"]+)"/g), match => match[1]),
+  ['new-notebook', 'toggle-all-notebooks', 'toggle-image-text', 'toggle-settings'], 'both sidebar views share the ordered tools');
+assert(html.indexOf('<section class="note-image-text-tools note-side-popover') > html.indexOf('</aside>', html.indexOf('<aside class="note-links-pane'))
+  && html.includes('class="note-settings-pop note-side-popover"'), 'workspace popovers live outside the clipped sidebar');
+assert(notes.includes("setSideOpen(!root.classList.contains('links-overlay-open'))")
+  && notes.includes("button.hidden = state.sideMode !== 'notebooks'"), 'one toggle restores the last view while notebook-only actions follow that view');
 assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create the Live Preview adapter');
 assert(notes.includes('onImageSelectionChange: (selection) => updateImageTextTools(selection)')
   && notes.includes('liveEditor.setImageTextMode') && notes.includes('liveEditor.imageTextCommand'),
