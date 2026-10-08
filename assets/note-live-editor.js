@@ -37,7 +37,7 @@
   ]);
 
   const {
-    EditorState, EditorSelection, StateEffect, StateField, EditorView, Decoration, WidgetType, Prec, Compartment,
+    EditorState, EditorSelection, StateEffect, StateField, Transaction, EditorView, Decoration, WidgetType, Prec, Compartment,
     ViewPlugin, keymap, drawSelection, dropCursor, highlightSpecialChars,
     rectangularSelection, crosshairCursor, placeholder, highlightActiveLine,
     syntaxTree, forceParsing, indentOnInput,
@@ -3440,15 +3440,49 @@
       });
     }
 
-    function setNotePath(path) {
+    function pathRewriteChanges(value) {
+      const before = serializedDocument(view.state.doc);
+      if (before === value) return [];
+      const oldLines = before.split('\n'), newLines = value.split('\n');
+      const changes = [];
+      const difference = (oldText, newText, offset) => {
+        if (oldText === newText) return;
+        let start = 0, end = 0;
+        while (start < Math.min(oldText.length, newText.length) && oldText[start] === newText[start]) start++;
+        while (end < Math.min(oldText.length, newText.length) - start
+            && oldText[oldText.length - end - 1] === newText[newText.length - end - 1]) end++;
+        changes.push({ from: offset + start, to: offset + oldText.length - end,
+          insert: newText.slice(start, newText.length - end) });
+      };
+      // Path rewrites leave line breaks intact. Keep unrelated lines and their history.
+      if (oldLines.length === newLines.length) {
+        let offset = 0;
+        oldLines.forEach((line, index) => { difference(line, newLines[index], offset); offset += line.length + 1; });
+      } else difference(before, value, 0);
+      return changes;
+    }
+
+    function setNotePath(path, value) {
+      if (destroyed) return;
       const next = String(path || '');
       if (inputPending()) {
-        whenInputSettled().then(() => { if (!destroyed) setNotePath(next); });
+        const sequence = documentSetSeq, previousPath = currentPath;
+        whenInputSettled().then(() => {
+          if (!destroyed && sequence === documentSetSeq && currentPath === previousPath) setNotePath(next, value);
+        });
         return;
       }
+      const changes = typeof value === 'string' ? pathRewriteChanges(value) : [];
+      const scroll = view.scrollDOM.scrollTop;
       currentPath = next;
       coordinator.epoch += 1;
-      view.dispatch({ effects: notePathEffect.of(currentPath) });
+      suppressChanges = true;
+      try {
+        view.dispatch({ changes, effects: notePathEffect.of(currentPath),
+          annotations: Transaction.addToHistory.of(false) });
+      } finally { suppressChanges = false; }
+      view.scrollDOM.scrollTop = scroll;
+      view.requestMeasure();
     }
 
     function setSourceMode(active) {

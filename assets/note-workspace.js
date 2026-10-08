@@ -64,6 +64,14 @@
   const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
+  let noteMovePromise = null, noteMovePaths = null;
+  async function waitForNoteMove(path) {
+    while (noteMovePromise) {
+      const operation = noteMovePromise, paths = noteMovePaths;
+      if (await operation && paths && typeof path === 'string') path = mapPath(path, paths.source, paths.destination);
+    }
+    return path;
+  }
   const browserNavigation = $('[data-role="note-browser-navigation"]');
   const browserResults = $('[data-role="note-browser-results"]');
   const browserBack = $('[data-role="note-browser-back"]');
@@ -105,7 +113,7 @@
   }
   function showBrowserResults(show) {
     root.classList.toggle('note-browser-showing-results', show);
-    $('.note-document-body')?.toggleAttribute('inert', show);
+    $('.note-document-body')?.toggleAttribute('inert', show || !!noteMovePromise);
     updateBrowserControls();
   }
   async function loadNoteBrowser() {
@@ -1200,6 +1208,7 @@
   }
 
   async function setViewMode(mode) {
+    if (noteMovePromise) await waitForNoteMove();
     const next = normalizeViewMode(mode);
     if (next === state.viewMode) return;
     closeContextMenu();
@@ -1853,6 +1862,7 @@
     return true;
   }
   async function openBlankTab(options) {
+    if (noteMovePromise) await waitForNoteMove();
     if (noteBrowser) noteBrowser.showDocument();
     const previous = state.current;
     if (previous && editorInputPending()) await whenEditorInputSettled();
@@ -1867,6 +1877,7 @@
     return true;
   }
   async function activateTab(tabPath, options) {
+    if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
     if (isBlankTab(tabPath)) {
       if (noteBrowser) noteBrowser.showDocument();
@@ -1882,6 +1893,7 @@
     return openNote(tabPath, { reuseActiveTab: false, skipSave: !!(options && options.skipSave), noFocus: !!(options && options.noFocus), preserveNotebook: !!options?.preserveNotebook });
   }
   async function closeTab(tabPath, options) {
+    if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     const index = state.tabs.indexOf(tabPath);
     if (index < 0) return false;
     const active = state.activeTab === tabPath;
@@ -1953,7 +1965,7 @@
   }
   function scheduleDocumentPrefetch() {
     clearTimeout(state.prefetchTimer);
-    if (!state.active || document.hidden) return;
+    if (!state.active || document.hidden || noteMovePromise) return;
     state.prefetchTimer = setTimeout(runDocumentPrefetch, 350);
   }
   function stopDocumentPrefetch() {
@@ -1962,7 +1974,7 @@
   }
   async function runDocumentPrefetch() {
     state.prefetchTimer = 0;
-    if (prefetchRunning || !state.active || document.hidden || editorInputPending()) return;
+    if (prefetchRunning || !state.active || document.hidden || editorInputPending() || noteMovePromise) return;
     const epoch = prefetchEpoch;
     const viewport = treeEl.getBoundingClientRect();
     const paths = Array.from(treeEl.querySelectorAll('.note-tree-row')).filter((row) => {
@@ -2232,9 +2244,10 @@
     return true;
   }
   async function refreshTree(announce, options) {
+    if (noteMovePromise) return false;
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
     try {
-      const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (seq !== state.refreshSeq) return false;
+      const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (seq !== state.refreshSeq || noteMovePromise) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
       const signature = JSON.stringify(flattenEntries(entries, []).map((entry) => [entry.path, entry.modifiedNs, entry.size]));
       const browserChanged = signature !== state.treeMetadataSignature;
@@ -2310,6 +2323,9 @@
     if (fallbackEditor) fallbackEditor.toggleAttribute('inert', !!active);
     if (readingHost) readingHost.toggleAttribute('inert', !!active);
   }
+  function setNoteMoveInputLocked(locked) {
+    $('.note-document-body')?.toggleAttribute('inert', locked || root.classList.contains('note-browser-showing-results'));
+  }
 
   function applyDocument(data, options) {
     closeContextMenu(); resetExternalSyncActivity(); cancelStatistics();
@@ -2369,7 +2385,8 @@
     desktopDirty(true);
     scheduleSave();
   }
-  async function flushSave(documentState) {
+  async function flushSave(documentState, duringMove) {
+    if (noteMovePromise && !duringMove) await waitForNoteMove();
     if (state.imageTextBusy) return imageTextOperationPromise;
     const target = documentState || state.current;
     if (target && target === state.current && editorInputPending()) await whenEditorInputSettled();
@@ -2409,9 +2426,10 @@
       }
       finally { state.saveRunning = false; }
     });
-    const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target); return ok;
+    const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target, duringMove); return ok;
   }
   async function openNote(path, options) {
+    if (noteMovePromise) path = await waitForNoteMove(path);
     if (noteBrowser) noteBrowser.showDocument();
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (!path) return false;
@@ -2460,6 +2478,7 @@
     }
   }
   async function createEntry(kind, options) {
+    if (noteMovePromise) await waitForNoteMove();
     const parent = options && Object.prototype.hasOwnProperty.call(options, 'parent') ? options.parent : folderTarget();
     if (parent === null) return;
     if (state.current) flushSave(state.current);
@@ -2504,13 +2523,73 @@
   }
   async function movePath(source, destination, quiet) {
     if (!source || !destination || source === destination) return true;
+    while (noteMovePromise) {
+      const paths = noteMovePaths;
+      if (await noteMovePromise && paths) {
+        source = mapPath(source, paths.source, paths.destination);
+        destination = mapPath(destination, paths.source, paths.destination);
+      }
+    }
+    const operation = performMove(source, destination, quiet);
+    noteMovePromise = operation;
+    noteMovePaths = { source, destination };
+    try { return await operation; }
+    finally {
+      if (noteMovePromise === operation) {
+        noteMovePromise = null; noteMovePaths = null;
+        setNoteMoveInputLocked(false);
+        refreshTree(false, { silentErrors: true });
+        scheduleExternalSync();
+        scheduleDocumentPrefetch();
+      }
+    }
+  }
+  async function syncMovedDocument() {
+    const current = state.current;
+    if (!current) return;
+    const path = current.path, generation = current.editGeneration;
+    const disk = await request('/api/note?path=' + encodeURIComponent(path));
+    if (state.current !== current || current.path !== path || current.editGeneration !== generation || hasPendingEdits(current)) return;
+    const previous = editorSnapshot();
+    if (liveEditor) liveEditor.setNotePath(path, disk.content);
+    else {
+      fallbackEditor.value = disk.content;
+      fallbackEditor.setSelectionRange(Math.min(previous.anchor, disk.content.length), Math.min(previous.head, disk.content.length));
+      fallbackEditor.scrollTop = previous.scrollTop;
+    }
+    const snapshot = liveEditor ? liveEditor.snapshot() : editorSnapshot();
+    current.content = disk.content; current.revision = disk.revision;
+    current.hasImageText = disk.content.includes('<!--relatum:image-text:');
+    if (!current.hasImageText) current.characterCount = disk.content.length;
+    current.selectionStart = snapshot.anchor; current.selectionEnd = snapshot.head;
+    current.scrollTop = state.viewMode === 'reading' ? previous.scrollTop : snapshot.scrollTop;
+    current.editGeneration = ++state.documentGeneration; current.persistedGeneration = current.editGeneration;
+    current.countedGeneration = 0; current.outgoing = []; current.backlinks = [];
+    state.editGeneration += 1;
+    cacheDocument(current);
+    rememberViewState(path, { anchor: current.selectionStart, head: current.selectionEnd, scrollTop: current.scrollTop });
+    if (state.viewMode === 'reading') renderReadingDocument(readingPayload(current));
+    updateDocumentStats(null, current.characterCount, current.wordCount);
+    scheduleStatistics(current); clearSaveError(); desktopDirty(false); renderLinks();
+    if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') ensureLinks();
+  }
+  async function performMove(source, destination, quiet) {
     state.lastMoveError = ''; state.lastMoveCode = '';
-    const entriesSnapshot = JSON.parse(JSON.stringify(state.entries)); const oldTabs = state.tabs.slice(); const oldActiveTab = state.activeTab; const oldSelectedPath = state.selectedPath; const oldSelectedFolder = state.selectedFolder; const flushPromise = flushSave();
+    if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
+    if (editorInputPending()) await whenEditorInputSettled();
+    stopExternalSync(); stopDocumentPrefetch(); state.externalSeq += 1; state.refreshSeq += 1;
+    setNoteMoveInputLocked(true);
+    if (!(await flushSave(state.current, true))) { state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false; }
+    for (const cached of Array.from(state.documentCache.values())) {
+      if (cached !== state.current && hasPendingEdits(cached) && !(await flushSave(cached, true))) {
+        state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false;
+      }
+    }
+    const entriesSnapshot = JSON.parse(JSON.stringify(state.entries)); const oldTabs = state.tabs.slice(); const oldActiveTab = state.activeTab; const oldSelectedPath = state.selectedPath; const oldSelectedFolder = state.selectedFolder;
     const oldNotebookRoot = state.notebookRoot; const oldNotebookExpanded = state.notebookExpanded; const oldExpanded = state.expanded;
     if (!optimisticMove(source, destination)) { state.lastMoveError = language() === 'en' ? 'A folder cannot be moved into itself' : '文件夹不能移入自己'; return false; }
     remapCachedPaths(source, destination);
     remapTabs(source, destination);
-    if (liveEditor && typeof liveEditor.setNotePath === 'function' && state.current) liveEditor.setNotePath(state.current.path);
     state.selectedPath = mapPath(state.selectedPath, source, destination);
     state.selectedFolder = mapPath(state.selectedFolder, source, destination);
     state.expanded = new Set(Array.from(state.expanded).map((path) => mapPath(path, source, destination)));
@@ -2522,24 +2601,31 @@
       state.entries = entriesSnapshot; state.tabs = oldTabs; state.activeTab = oldActiveTab; state.selectedPath = oldSelectedPath; state.selectedFolder = oldSelectedFolder;
       state.notebookRoot = oldNotebookRoot; state.notebookExpanded = oldNotebookExpanded; state.expanded = oldExpanded;
       remapCachedPaths(destination, source); state.openingPath = mapPath(state.openingPath, destination, source);
-      if (liveEditor && typeof liveEditor.setNotePath === 'function' && state.current) liveEditor.setNotePath(state.current.path);
       persistTabs(); if (state.current) { renderCurrentPath(state.current.path); renderInlineTitle(state.current.path, true); }
       renderTabs(); renderTree();
     };
-    if (!(await flushPromise)) { rollback(); state.lastMoveError = tr('saveFailed'); state.lastMoveCode = 'save_failed'; return false; }
+    let result;
     try {
-      const result = await post('/api/note-move', { path: source, destination });
-      if (Object.prototype.hasOwnProperty.call(state.notebookColors, source)) {
-        const color = state.notebookColors[source]; delete state.notebookColors[source]; state.notebookColors[destination] = color;
-        queueNotebookSettings({ colors: { [destination]: color }, pruneMissing: [source] });
-      }
-      queueNotebookSettings({ ui: notebookUi() });
-      remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); refreshTree(false); return true;
+      result = await post('/api/note-move', { path: source, destination });
     }
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
+    // The disk transaction has committed. Read its rewritten references before
+    // changing the editor's asset base; a later read failure must not undo the UI path.
+    try { await syncMovedDocument(); }
+    catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
+    if (result.rewritten) {
+      state.documentCache.forEach((cached, path) => { if (cached !== state.current && !hasPendingEdits(cached)) state.documentCache.delete(path); });
+    }
+    if (Object.prototype.hasOwnProperty.call(state.notebookColors, source)) {
+      const color = state.notebookColors[source]; delete state.notebookColors[source]; state.notebookColors[destination] = color;
+      queueNotebookSettings({ colors: { [destination]: color }, pruneMissing: [source] });
+    }
+    queueNotebookSettings({ ui: notebookUi() });
+    remapViewStates(source, destination); if (state.current) try { localStorage.setItem(ACTIVE_PATH_KEY, state.current.path); } catch (error) {} if (result.warnings && result.warnings.length) showToast(tr('linkWarnings', { count: result.warnings.length }), 'warning'); return true;
   }
   function moveEntry(source, folder) { if (state.notebookRoot === null || folder === null || notebookRootForPath(source) !== notebookRootForPath(folder)) return; const destination = joinPath(folder || '', baseName(source)); if (destination !== source) movePath(source, destination); }
   async function recycleEntry(entry) {
+    if (noteMovePromise) await waitForNoteMove();
     if (!entry || state.recycleRunning) return;
     state.recycleRunning = true;
     stopExternalSync();
@@ -2962,7 +3048,7 @@
   async function importDataTransfer(transfer, destination) { if (destination === null || state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
 
   async function checkExternalChanges(announce, options) {
-    if (!state.active || state.imageTextBusy) return false;
+    if (!state.active || state.imageTextBusy || noteMovePromise) return false;
     if (state.recycleRunning) return true;
     const settings = options || {};
     const seq = ++state.externalSeq;
@@ -3013,7 +3099,7 @@
   }
   function scheduleExternalSync(delay) {
     stopExternalSync();
-    if (!state.active || document.hidden || state.imageTextBusy) return;
+    if (!state.active || document.hidden || state.imageTextBusy || noteMovePromise) return;
     if (state.assetCleanupBusy) return;
     state.externalSyncTimer = setTimeout(() => {
       state.externalSyncTimer = 0;
@@ -3025,7 +3111,7 @@
     stopExternalSync();
     let ran = false;
     const task = state.externalSyncChain.catch(() => false).then(async () => {
-      if (!state.active || state.imageTextBusy || state.assetCleanupBusy || (settings.background && document.hidden)) return false;
+      if (!state.active || state.imageTextBusy || state.assetCleanupBusy || noteMovePromise || (settings.background && document.hidden)) return false;
       ran = true;
       return checkExternalChanges(!!settings.announce, settings);
     });
@@ -3146,6 +3232,7 @@
     const action = event.target.closest('[data-note-action]');
     if (!action) return;
     const name = action.dataset.noteAction;
+    if (noteMovePromise) await waitForNoteMove();
     if (action.disabled || !noteActionAvailable(name)) return;
     if (name === 'toggle-browser') { setBrowserMode(!browserIntent); return; }
     if (name === 'toggle-image-text') {
