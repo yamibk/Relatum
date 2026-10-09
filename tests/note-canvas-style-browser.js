@@ -98,6 +98,31 @@ async function run(browser, full, fallback=false) {
     await page.locator('[data-note-action="toggle-notebooks"]').click();await settle();assert.equal(await panelMode(),'node','manually opening the sidebar retains selection');
     await page.locator('[data-note-action="side-links"]').click();await a.click();assert.equal(await page.evaluate(()=>T.state.sideMode),'links','selection does not change the chosen sidebar tab');
     await page.locator('[data-note-action="side-canvas"]').click();await settle();assert.equal(await panelMode(),'node','canvas tab activation retains selection');
+    const sideOpen=()=>page.locator('.note-workspace').evaluate(el=>el.classList.contains('links-overlay-open'));
+    const dispatchTab=(locator,extra={})=>locator.evaluate((el,extra)=>{
+      const event=new KeyboardEvent('keydown',{key:'Tab',code:'Tab',bubbles:true,cancelable:true,...extra});
+      el.addEventListener('keydown',event=>event.stopPropagation(),{once:true});el.dispatchEvent(event);return event.defaultPrevented;
+    },extra);
+    for(const mode of ['notebooks','links','canvas']) {
+      await page.locator(`[data-note-action="side-${mode}"]`).click();await a.click();
+      const beforeSelection=await page.evaluate(()=>RelatumNoteCanvas.getActive().getSelection());
+      const beforeHistory=await history();
+      await viewport.press('Tab');assert.equal(await sideOpen(),false,`Tab closes the ${mode} tab`);
+      assert(await viewport.evaluate(el=>document.activeElement===el),'closing keeps canvas focus');
+      assert.deepEqual(await page.evaluate(()=>RelatumNoteCanvas.getActive().getSelection()),beforeSelection);
+      await viewport.press('Tab');assert.equal(await sideOpen(),true);assert.equal(await page.evaluate(()=>T.state.sideMode),'canvas');
+      assert(await viewport.evaluate(el=>document.activeElement===el),'opening keeps canvas focus');
+      assert.equal(await history(),beforeHistory,'sidebar toggles do not write canvas history');
+    }
+    assert.equal(await dispatchTab(viewport,{repeat:true}),true);assert.equal(await sideOpen(),true,'long press does not toggle again or move focus');
+    for(const extra of [{shiftKey:true},{altKey:true},{metaKey:true},{isComposing:true},{keyCode:229}]) {
+      assert.equal(await dispatchTab(viewport,extra),false);assert.equal(await sideOpen(),true);
+    }
+    await widthInput.focus();assert.equal(await dispatchTab(widthInput),false);assert.equal(await sideOpen(),true,'panel inputs retain native Tab');
+    await a.dblclick();const tabInput=viewport.locator('textarea');
+    assert.equal(await dispatchTab(tabInput),false);assert.equal(await sideOpen(),true,'canvas text retains native Tab');await tabInput.press('Escape');
+    await frame.evaluate(el=>el.__noteCanvas.engine.suspend());await viewport.focus();
+    assert.equal(await dispatchTab(viewport),false);assert.equal(await sideOpen(),true,'inactive canvas does not toggle the sidebar');await a.click();
     assert(await page.evaluate(()=>{
       const S=RelatumNoteCanvasStyle,G=RelatumNoteCanvasGeometry,curves=['straight','bezier','smooth','elbow','rounded-elbow'];
       for(const [shape] of S.shapes) for(const curve of curves) for(const side of ['auto','top','right','bottom','left']) {
@@ -300,6 +325,10 @@ async function run(browser, full, fallback=false) {
     await page.evaluate(()=>T.setViewMode('source'));assert.equal(await page.evaluate(()=>RelatumNoteCanvas.getActive()),null);assert.equal(await group('node').locator('input:enabled').count(),0);
     await page.evaluate(()=>T.setViewMode('reading'));await page.waitForFunction(()=>document.querySelector('.note-reading-content .note-canvas-frame')?.__noteCanvas?.engine);
     assert.equal(await page.locator('.note-reading-content [data-canvas-resize]').count(),0);
+    const readingViewport=page.locator('.note-reading-content .note-canvas-viewport');
+    await readingViewport.click({position:{x:15,y:15}});await readingViewport.press('Tab');assert.equal(await sideOpen(),false);
+    await readingViewport.press('Tab');assert.equal(await sideOpen(),true);assert.equal(await page.evaluate(()=>T.state.sideMode),'canvas');
+    assert(await readingViewport.evaluate(el=>document.activeElement===el),'reading canvas keeps focus for repeated toggles');
     await page.evaluate(()=>T.setViewMode('live'));await page.waitForFunction(()=>document.querySelector('.note-canvas-frame')?.__noteCanvas?.engine);
     await page.evaluate(()=>RelatumI18n.setLanguage('en'));await settle();assert.equal(await group('node').locator('[data-shape="diamond"]').getAttribute('aria-label'),'Diamond');
     await page.evaluate(()=>{document.documentElement.dataset.startTheme=document.body.dataset.startTheme='dark';});await settle();

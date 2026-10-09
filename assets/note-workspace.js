@@ -3116,6 +3116,12 @@
     setNoteSettingsOpen(false, { restoreFocus: false });
     setSideOpen(true);
   }
+  function toggleCanvasPanel(engine) {
+    if (!state.active || !state.current || !canvasEnabled() || !engine || window.RelatumNoteCanvas?.getActive() !== engine) return false;
+    if (root.classList.contains('links-overlay-open')) setSideOpen(false);
+    else setSideMode('canvas');
+    return true;
+  }
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
   async function uploadImages(files, commandContext) {
     if (!state.current || !files.length) return;
@@ -3578,5 +3584,5 @@
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
-  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; } };
+  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, toggleCanvasPanel, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

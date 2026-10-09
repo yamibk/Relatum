@@ -78,6 +78,7 @@
           onDeactivate() { deactivate(adapter); },
           onCopyReference: () => navigator.clipboard.writeText(options.source || options.parsed.source).catch(() => {}),
           onDeleteReference: () => options.remove?.(),
+          onToggleProperties: () => window.CanvasNoteWorkspace?.toggleCanvasPanel?.(engine),
         });
         options.measure?.(); select(!!options.selected);
       } catch (error) {

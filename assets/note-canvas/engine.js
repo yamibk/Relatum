@@ -686,6 +686,12 @@
     listen(viewport, 'keydown', event => {
       if (event.target.closest('.note-canvas-input')) return;
       if (!active) return;
+      if (event.key === 'Tab' && event.target === viewport && document.activeElement === viewport && !draft &&
+          !event.isComposing && event.keyCode !== 229 && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && opts.onToggleProperties) {
+        event.preventDefault(); event.stopPropagation();
+        if (!event.repeat) opts.onToggleProperties();
+        return;
+      }
       if (event.code === 'Space') { event.preventDefault(); event.stopPropagation(); space = true; return; }
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelGesture(); selection(new Set(), new Set()); return; }
       const mod = event.ctrlKey || event.metaKey;
