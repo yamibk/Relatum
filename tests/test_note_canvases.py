@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from notes_library import NotesStore, NotesError
-from note_canvases import NoteCanvasStore, validate
+from note_canvases import NoteCanvasStore, validate, SHAPES
 from note_canvas_reference import rewrite, references
 from feature_profile import LaunchProfile
 
@@ -80,6 +80,71 @@ class NoteCanvasTests(unittest.TestCase):
         self.assertIn('Second.canvas|640x360', self.notes.load('A.md')['content'])
         self.assertEqual(result2['path'], 'canvases/Second.canvas')
 
+    def test_styles_round_trip_all_shapes_and_paths(self):
+        created = self.canvases.create('A.md')
+        data = copy.deepcopy(created['data'])
+        data['customMetadata'] = {'keep': True}
+        data['nodes'] = [dict(id=f'n{i}', kind='index', x=i * 200, y=0, width=160, height=160,
+                              text='纯文字', shape=shape, bgColor='#aabbcc', bgOpacity=.35,
+                              hideBackground=False, borderColor='#112233', borderWidth=2.5,
+                              paddingX=12, paddingY=8, radius=16, autoHeight=False,
+                              fontSize=22, color='#445566', fontWeight=650, lineHeight=1.6,
+                              wrap=True, textAlign='center', verticalAlign='bottom')
+                         for i, shape in enumerate(sorted(SHAPES))]
+        data['edges'] = [dict(id=f'e{i}', **{'from': 'n0', 'to': f'n{i+1}'}, text='标注',
+                              curve=curve, lineStyle='dotted', color='#778899', width=3,
+                              arrowStart=True, arrowEnd=False, arrowSize=20, cornerRadius=22,
+                              fromSide='bottom', toSide='left', labelPosition=.7,
+                              labelOffsetX=-40, labelOffsetY=30, waypoints=[{'x': 50, 'y': 80, 'customPoint': 'keep'}],
+                              labelStyle={'fontSize': 18, 'color': '', 'fontWeight': 400,
+                                          'wrap': False, 'textAlign': 'right', 'verticalAlign': 'center',
+                                          'lineHeight': 1.5, 'width': 120, 'height': 60})
+                         for i, curve in enumerate(('straight', 'bezier', 'smooth', 'elbow', 'rounded-elbow'))]
+        saved = self.canvases.save(created['path'], data, created['revision'])
+        loaded = self.canvases.read(created['path'])
+        self.assertEqual(loaded['revision'], saved['revision'])
+        self.assertEqual(loaded['data']['nodes'], data['nodes'])
+        self.assertEqual(loaded['data']['edges'], data['edges'])
+        self.assertEqual(loaded['data']['customMetadata'], {'keep': True})
+        renamed = self.canvases.rename(created['path'], 'Styled', saved['revision'])
+        self.assertEqual(self.canvases.read(renamed['path'])['data']['edges'], data['edges'])
+
+    def test_invalid_styles_are_rejected_without_overwriting(self):
+        created = self.canvases.create('A.md')
+        data = copy.deepcopy(created['data'])
+        data['nodes'] = [{'id': 'a', 'x': 0, 'y': 0}, {'id': 'b', 'x': 200, 'y': 0}]
+        data['edges'] = [{'id': 'e', 'from': 'a', 'to': 'b'}]
+        self.canvases.save(created['path'], data, created['revision'])
+        current = self.canvases.read(created['path'])
+        original = (self.root / created['path']).read_bytes()
+        cases = [('nodes', 'shape', 'script'), ('nodes', 'bgColor', 'url(https://example.test)'),
+                 ('nodes', 'bgOpacity', 2), ('nodes', 'autoHeight', 1), ('nodes', 'fontSize', float('nan')),
+                 ('nodes', 'fontWeight', True), ('nodes', 'wrap', 'yes'), ('nodes', 'verticalAlign', 'outside'),
+                 ('edges', 'curve', 'organic'), ('edges', 'width', 0), ('edges', 'arrowStart', 1),
+                 ('edges', 'fromSide', 'unknown'), ('edges', 'labelPosition', -1),
+                 ('edges', 'labelStyle', {'color': 'red'}), ('edges', 'labelStyle', []),
+                 ('edges', 'labelStyle', {'height': float('inf')})]
+        for collection, key, value in cases:
+            with self.subTest(collection=collection, key=key, value=value):
+                invalid = copy.deepcopy(data)
+                invalid[collection][0][key] = value
+                with self.assertRaises(NotesError):
+                    self.canvases.save(created['path'], invalid, current['revision'])
+                self.assertEqual((self.root / created['path']).read_bytes(), original)
+
+    def test_old_files_are_not_rewritten_or_populated_on_read(self):
+        created = self.canvases.create('A.md')
+        legacy = {'version': 2, 'nodes': [{'id': 'n', 'kind': 'index', 'x': 0, 'y': 0, 'text': '旧内容'},
+                                        {'id': 'b', 'x': 200, 'y': 0, 'text': '旧内容二'}],
+                  'edges': [{'id': 'e', 'from': 'n', 'to': 'b', 'curve': None}], 'custom': ['keep', 2]}
+        self.notes.atomic_text(self.root / created['path'], json.dumps(legacy, ensure_ascii=False))
+        original = (self.root / created['path']).read_bytes()
+        loaded = self.canvases.read(created['path'])
+        self.assertEqual(loaded['data'], legacy)
+        self.assertEqual((self.root / created['path']).read_bytes(), original)
+        self.canvases.save(created['path'], loaded['data'], loaded['revision'])
+        self.assertEqual((self.root / created['path']).read_bytes(), original)
+
     def test_rename_rolls_back_all_written_notes_and_file(self):
         created = self.canvases.create('A.md')
         value = f'![shared|640x360]({created["path"]})\n'
@@ -114,7 +179,7 @@ class NoteCanvasTests(unittest.TestCase):
     def test_launcher_independence_and_exclusive_api(self):
         enabled = LaunchProfile({'canvas': False, 'notes': True, 'notes.canvas': True}, restricted=True)
         disabled = LaunchProfile({'notes.canvas': False}, restricted=True)
-        for path in ('note-canvas/runtime.js', 'note-canvas/canvas.css'):
+        for path in ('note-canvas/runtime.js', 'note-canvas/canvas.css', 'note-canvas-style.js'):
             self.assertTrue(enabled.resource_allowed(path))
             self.assertFalse(disabled.resource_allowed(path))
         for path in ('/api/notes-canvas/read', '/api/notes-canvas/create', '/api/notes-canvas/save', '/api/notes-canvas/rename'):

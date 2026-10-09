@@ -49,6 +49,17 @@
         this.generation++; if (update.all || update.structure) this.reindex(); clearTimeout(this.timer);
         this.timer = setTimeout(() => this.flush(), 350);
       } else if (update.unchanged) update = {};
+      else if (update.restore) {
+        const restore = (records, index, keys, edge) => {
+          const selected = new Set(keys || []);
+          records.forEach(record => { if (!selected.has(record.id)) return;
+            const target = edge ? index.get(record.id)?.edge : index.get(record.id);
+            if (target) { Object.keys(target).forEach(key => delete target[key]); Object.assign(target, clone(record)); }
+          });
+        };
+        restore(this.before.nodes, this.nodes, update.nodes, false);
+        restore(this.before.edges, this.edges, update.edges, true);
+      }
       else if (update.positionOnly) {
         const ids = new Set(update.nodes);
         this.before.nodes.forEach(node => { if (ids.has(node.id)) { const current = this.nodes.get(node.id); if (current) { current.x = node.x; current.y = node.y; } } });

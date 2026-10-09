@@ -62,6 +62,7 @@
       .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
       .then(() => loadScript('note-media-frame.js', () => !!window.RelatumNoteMediaFrame))
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
+      .then(() => features.enabled('notes.canvas') ? loadScript('note-canvas-style.js', () => !!window.RelatumNoteCanvasStyle) : true)
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
       .then(() => { window.RelatumStartupMark?.('notes-scripts-ready'); return window.CanvasNoteWorkspace; })
       .catch(error => { noteWorkspaceLoader = null; throw error; });

@@ -4,18 +4,21 @@
 
 | 模块 | 责任与移植来源 |
 | --- | --- |
+| `../note-canvas-style.js` | 轻量属性定义、默认值、形状轮廓/文字安全区域及右栏；没有绘制引擎或文件请求。完整/仅笔记宿主共用，归 `notes.canvas` 控制。 |
 | `session.js` | 同文件唯一模型、节点/边/相邻边索引、事务快照历史、350ms 串行修订保存。同 owner 重入复用快照；结构变化/历史回放重建索引，文字与位置变化保留索引。持久化使用独立笔记 API。 |
 | `geometry.js` | 定向移植 `canvas.js` 的 `sideOfExit`、`bezierBetween`、`smoothD` 及 512 单位边空间网格；凸包缓存、Path2D 命中，超大边界使用保守回退。 |
 | `engine.js` | 实例 DOM/Canvas2D、相邻拖动 SVG、批量测量、选区差集、帧合并及最终释放提交。节点/框选在超过 4px 后捕获指针；双击优先节点和连线。拖动复用尺寸与相关边集合，静态层只在边界或真实失效时刷新，连线预览用局部 SVG。参考主画布相机缩放范围、滚轮步长、34ms 缓动与惯性衰减；低动态即时更新。文字输入是本实例原生 textarea。 |
 | `runtime.js` | 首次可见加载、引用视角、外框适配、共享文件会话与屏外释放。同尺寸/选中状态不重新配置或重建角柄，同文件引用的说明/尺寸更新保留引擎。引用尺寸属 Markdown，模型/历史属文件，视角属本机；三者不要混写。 |
 | `canvas.css` | 实例根下的样式，按需加载，无全局节点规则和持续动画。 |
 
-引擎 `create({host,session,readOnly,viewport,…})` 返回 `activate()`、`suspend()`、`refreshSize()`、`whenInputSettled()`、`destroy()` 和只读诊断 `stats()`。所有监听器/观察器在销毁时解除。宿主只经 `RelatumNoteCanvas.mount/flushAll/releaseNote/remapViews/renameSession` 交接；普通自动保存用 `flushAll({settle:false})`，不得中止仍在编辑的输入或手势。
+引擎 `create({host,session,readOnly,viewport,…})` 返回生命周期方法和只读诊断 `stats()`，以及 `getSelection()`、`subscribeSelection(listener)`（返回解绑函数）、`applySelectionStyle(kind,patch,{token,final})`、`endSelectionStyle(token,commit)`、`travel(redo)`。`kind` 为 `node/nodeText/edge/edgeText`，相同 token 的连续更新共用一次事务，final 提交；候选期间等待且核对活动引用、选区版本与对象引用身份，历史替换或删除会作废旧操作。宿主通过 `RelatumNoteCanvas.getActive()` 取得当前引擎，不直接改 DOM 或模型；全局选择事件仅通知活动实例切换，对象变化走实例订阅，避免重复刷新。面板每类样式只归一化一次选区；滑块绑定原目标，取消后的迟到事件、已移除控件的事件均不能重启或改投操作，新建默认控件不转发画布撤销。其余文件/文档交接仍用 `mount/flushAll/releaseNote/remapViews/renameSession`；普通自动保存用 `flushAll({settle:false})`，不得中止输入或手势。
 
 基础 V2 数据由 `note_canvases.py` 验证。支持以外的数据拒绝编辑，不能过滤后保存。有效引用扫描在 `note_canvas_reference.py` 与 `MarkdownMini`；修改语法应同步前后端并验证代码/注释保护、大小写和路径沙箱。
 
-内部更新通知的 `all/structure` 表示结构变化，`nodes/edges` 表示受影响对象，`positionOnly` 表示仅坐标变化；取消位置事务原位还原坐标，`unchanged` 结束未修改的输入而不交换模型。不要把锁状态或普通输入结束升级成全量同步。正文富块扫描必须保持范围外引用 id，避免光标与正文结构变化销毁投影。
+内部更新通知的 `all/structure` 表示结构变化，`nodes/edges` 表示受影响对象，`positionOnly` 表示仅坐标变化；`nodeGeometry/edgeGeometry` 使相关几何失效，`appearanceOnly` 跳过节点尺寸测量，`labelOnly`（含侧栏标注位置/偏移）不重绘静态层。节点尺寸缓存同时保留已规范的形状/圆角，框选与端点计算不重复解析完整样式。取消位置事务原位还原坐标，其他尺寸/拐点/标注/样式取消用 `restore` 原位恢复受影响记录，不重建索引；`unchanged` 结束未修改的输入而不交换模型。不要把锁状态或普通输入结束升级成全量同步。正文富块扫描必须保持范围外引用 id，避免光标与正文结构变化销毁投影。
 
-“画布”设置页签由笔记宿主管理，不依赖本模块加载。现有本机节点尺寸唯一生效，其余分组只显示文字占位；不提前写入自定义样式字段。容器透明并保留 1px 常驻细灰边线；边线不占布局、不拦截指针。选择反馈使用中性色，公共图片角柄只在画布根内覆盖颜色。原生文字输入框隐藏滚动条，多行输入继续自动撑高。
+“画布”页签包含四个初始折叠分组：新建默认样式、节点、文字、连线，没有画布级设置。默认样式存于 `canvas:noteCanvasDefaults:v1`，新建尺寸比例仍用旧键，顶部恢复默认只重置本机偏好；对象分组仅编辑选择并支持批量/混合值。节点只有纯文字类型、12 种形状，支持自动/固定尺寸和四角柄；连线有五种路径、拐点、指定连接边、起止箭头及标注位置。默认圆角矩形 160×48，圆形/正方形 160×160，正文/标注 16/13px，直线 1.6px、终点箭头 9px。样式字段缺省按原外观展示，颜色跟随主题，读取不补写 V2 文件。容器透明并保留不占布局/命中的 1px 细灰边线，选择反馈保持中性。原生输入隐藏滚动条，激活后溢出正文/标注优先原生横纵滚动，不缩放画布或滚动父笔记；Ctrl/Cmd 滚轮仍缩放。未激活时内层不接管滚轮。
+
+`tests/note-canvas-style-browser.js` 另覆盖 12 种真实轮廓命中、5 种路径与连接边的端点/进出方向、颜色与几何隔离、混合批量、连续滑块一次历史及 Esc/指针取消、固定尺寸滚动与等宽高自动撑高、节点/拐点/标注拖动与取消、中文候选及过期/销毁目标、默认与已有对象隔离、磁盘保存/共享/三模式、主题/语言/窄窗，以及完整/仅笔记宿主和 SVG 命中回退。
 
 验证使用 `tests/test_note_canvases.py`、`tests/test_note_notebooks.py` 与 `tests/note-canvas-browser.js`，均为一次性数据。浏览器覆盖双击命中、正文连续操作保持 DOM/引擎/会话身份、中文候选、保存不中断手势、正文/画布各自历史、改名保留重做、模式、共享/移动/冲突、设置迁移/语言/窄窗/主题、屏外销毁、大画布零位置测量与索引重建、静态层绘制次数及 Launcher 关闭/预热零请求。图片公共角柄另由既有图片文字浏览器回归验证。

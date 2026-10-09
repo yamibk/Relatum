@@ -3,71 +3,93 @@
 (function () {
   'use strict';
   const GRID = 512;
-  function exit(rect, target) {
-    const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
-    const dx = target.x - cx, dy = target.y - cy;
-    const hw = rect.w / 2, hh = rect.h / 2;
-    const t = Math.min(dx ? hw / Math.abs(dx) : Infinity, dy ? hh / Math.abs(dy) : Infinity);
-    if (!Number.isFinite(t)) return { x: cx, y: cy, nx: 1, ny: 0 };
-    let x = cx + dx * t, y = cy + dy * t;
-    const horizontal = Math.abs(x - cx) >= hw - .001;
-    const nx = horizontal ? Math.sign(dx) : 0, ny = horizontal ? 0 : Math.sign(dy);
-    const radius = Math.min(rect.r || 0, hw, hh);
-    if (radius && Math.abs(x - cx) > hw - radius && Math.abs(y - cy) > hh - radius) {
-      const cornerX = cx + Math.sign(dx) * (hw - radius), cornerY = cy + Math.sign(dy) * (hh - radius);
-      const ox = cx - cornerX, oy = cy - cornerY;
-      const a = dx * dx + dy * dy, b = 2 * (dx * ox + dy * oy), c = ox * ox + oy * oy - radius * radius;
-      const disc = b * b - 4 * a * c;
-      if (disc >= 0 && a) {
-        const arcT = (-b + Math.sqrt(disc)) / (2 * a);
-        const ax = cx + dx * arcT, ay = cy + dy * arcT;
-        if (Math.sign(ax - cornerX) === Math.sign(dx) && Math.sign(ay - cornerY) === Math.sign(dy)) { x = ax; y = ay; }
-      }
-    }
-    return { x, y, nx, ny };
+  const S = window.RelatumNoteCanvasStyle;
+  function exit(rect, target, side) {
+    const cx=rect.w/2, cy=rect.h/2;
+    const fixed={top:[0,-1],right:[1,0],bottom:[0,1],left:[-1,0]}[side];
+    let dx=fixed?fixed[0]:target.x-rect.x-cx,dy=fixed?fixed[1]:target.y-rect.y-cy;
+    if(!dx&&!dy) dx=1;
+    const limit=Math.min(dx?cx/Math.abs(dx):Infinity,dy?cy/Math.abs(dy):Infinity);
+    let low=0,high=limit;
+    for(let i=0;i<24;i++) { const mid=(low+high)/2;
+      if(S.contains(rect.shape||'rounded-rect',rect.w,rect.h,rect.r||0,cx+dx*mid,cy+dy*mid)) low=mid;else high=mid; }
+    const horizontal=Math.abs(dx/rect.w)>=Math.abs(dy/rect.h);
+    return {x:rect.x+cx+dx*high,y:rect.y+cy+dy*high,nx:horizontal?Math.sign(dx):0,ny:horizontal?0:Math.sign(dy)};
+  }
+  function pointAt(item, fraction) {
+    const samples=item.samples, wanted=item.length*Math.max(0,Math.min(1,fraction));
+    let low=1,high=samples.length-1;
+    while(low<high) {const mid=(low+high)>>1;if(samples[mid].length<wanted) low=mid+1;else high=mid;}
+    const a=samples[low-1],b=samples[low],t=(wanted-a.length)/Math.max(.0001,b.length-a.length);
+    return {x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};
+  }
+  function arrow(item, start, size) {
+    const samples=item.samples, tip=start?samples[0]:samples.at(-1), near=start?samples[1]:samples.at(-2);
+    const angle=Math.atan2(tip.y-near.y,tip.x-near.x);
+    return [tip,{x:tip.x-Math.cos(angle-.45)*size,y:tip.y-Math.sin(angle-.45)*size},
+      {x:tip.x-Math.cos(angle+.45)*size,y:tip.y-Math.sin(angle+.45)*size}];
   }
   function build(edge, source, target) {
-    const bends = edge.waypoints || [];
-    const s = exit(source, bends[0] || { x: target.x + target.w / 2, y: target.y + target.h / 2 });
-    const t = exit(target, bends[bends.length - 1] || { x: source.x + source.w / 2, y: source.y + source.h / 2 });
-    const points = [s, ...(edge.waypoints || []), t];
-    let d = 'M ' + s.x + ' ' + s.y, midpoint;
-    let controls = points;
-    if (edge.curve === 'straight' || edge.curve === 'elbow') {
-      points.slice(1).forEach(p => { d += ' L ' + p.x + ' ' + p.y; });
-      const k = Math.floor((points.length - 1) / 2);
-      midpoint = { x: (points[k].x + points[k + 1].x) / 2, y: (points[k].y + points[k + 1].y) / 2 };
-    } else if (points.length === 2) {
-      const dist = Math.hypot(target.x + target.w / 2 - source.x - source.w / 2,
-        target.y + target.h / 2 - source.y - source.h / 2);
-      const offset = Math.max(30, Math.min(dist * .4, 120));
-      const c1 = { x: s.x + s.nx * offset, y: s.y + s.ny * offset };
-      const c2 = { x: t.x + t.nx * offset, y: t.y + t.ny * offset };
-      controls = [s, c1, c2, t];
-      d += ` C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${t.x} ${t.y}`;
-      midpoint = { x: .125 * s.x + .375 * c1.x + .375 * c2.x + .125 * t.x,
-        y: .125 * s.y + .375 * c1.y + .375 * c2.y + .125 * t.y };
-    } else {
-      controls = [];
-      for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[i - 1] || points[i], p1 = points[i], p2 = points[i + 1], p3 = points[i + 2] || p2;
-        const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-        const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
-        controls.push(p1, c1, c2, p2);
-        d += ` C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`;
-      }
-      const k = Math.floor((points.length - 1) / 2);
-      const segment = controls.slice(k * 4, k * 4 + 4);
-      midpoint = { x: .125 * segment[0].x + .375 * segment[1].x + .375 * segment[2].x + .125 * segment[3].x,
-        y: .125 * segment[0].y + .375 * segment[1].y + .375 * segment[2].y + .125 * segment[3].y };
+    const style=S.values('edge',edge), bends=edge.waypoints||[];
+    const s=exit(source,bends[0]||{x:target.x+target.w/2,y:target.y+target.h/2},style.fromSide);
+    const t=exit(target,bends.at(-1)||{x:source.x+source.w/2,y:source.y+source.h/2},style.toSide);
+    let points=[s,...bends,t];
+    if(style.curve==='smooth'&&points.length===2) {
+      points=s.nx?[s,{x:(s.x+t.x)/2,y:s.y},{x:(s.x+t.x)/2,y:t.y},t]
+        :[s,{x:s.x,y:(s.y+t.y)/2},{x:t.x,y:(s.y+t.y)/2},t];
     }
-    const bounds = { left: Math.min(...controls.map(p => p.x)), right: Math.max(...controls.map(p => p.x)),
-      top: Math.min(...controls.map(p => p.y)), bottom: Math.max(...controls.map(p => p.y)) };
-    const angle = Math.atan2(t.y - controls[controls.length - 2].y, t.x - controls[controls.length - 2].x);
-    const size = 9;
-    const arrow = [t, { x: t.x - Math.cos(angle - .45) * size, y: t.y - Math.sin(angle - .45) * size },
-      { x: t.x - Math.cos(angle + .45) * size, y: t.y - Math.sin(angle + .45) * size }];
-    return { d, path: typeof Path2D === 'function' ? new Path2D(d) : null, bounds, midpoint, arrow, points: controls };
+    const segments=[],controls=[s];
+    let d=`M ${s.x} ${s.y}`,last=s;
+    const line=p=>{if(Math.hypot(p.x-last.x,p.y-last.y)<.00001) return;segments.push({a:last,b:p});controls.push(p);d+=` L ${p.x} ${p.y}`;last=p;};
+    const cubic=(c1,c2,p)=>{segments.push({a:last,c1,c2,b:p});controls.push(c1,c2,p);d+=` C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p.x} ${p.y}`;last=p;};
+    if(style.curve==='elbow'||style.curve==='rounded-elbow') {
+      const distance=Math.hypot(t.x-s.x,t.y-s.y),offset=Math.max(20,Math.min(distance*.18,80));
+      const start={x:s.x+s.nx*offset,y:s.y+s.ny*offset},end={x:t.x+t.nx*offset,y:t.y+t.ny*offset};
+      const anchors=[start,...bends,end],routed=[s,start];
+      anchors.slice(1).forEach((p,i)=>{
+        const a=anchors[i],horizontal=i===0?s.nx!==0:Math.abs(p.x-a.x)>=Math.abs(p.y-a.y);
+        if(horizontal) {const x=(a.x+p.x)/2;routed.push({x,y:a.y},{x,y:p.y});}
+        else {const y=(a.y+p.y)/2;routed.push({x:a.x,y},{x:p.x,y});}
+        routed.push(p);
+      });
+      routed.push(t);
+      points=routed.filter((p,i)=>!i||Math.hypot(p.x-routed[i-1].x,p.y-routed[i-1].y)>.00001);
+      for(let i=1;i<points.length-1;i++) {
+        const a=points[i-1],b=points[i],c=points[i+1],la=Math.hypot(b.x-a.x,b.y-a.y),lb=Math.hypot(c.x-b.x,c.y-b.y);
+        const r=style.curve==='rounded-elbow'?Math.min(style.cornerRadius,la/2,lb/2):0;
+        if(!r) {line(b);continue;}
+        const before={x:b.x+(a.x-b.x)*r/la,y:b.y+(a.y-b.y)*r/la},after={x:b.x+(c.x-b.x)*r/lb,y:b.y+(c.y-b.y)*r/lb};
+        line(before);cubic({x:before.x+(b.x-before.x)*2/3,y:before.y+(b.y-before.y)*2/3},
+          {x:after.x+(b.x-after.x)*2/3,y:after.y+(b.y-after.y)*2/3},after);
+      }line(t);
+    } else if(style.curve==='straight') points.slice(1).forEach(line);
+    else if(points.length===2) {
+      const distance=Math.hypot(t.x-s.x,t.y-s.y),offset=Math.max(30,Math.min(distance*.4,120));
+      if(style.curve==='smooth') {
+        const dx=(t.x-s.x)/3,dy=(t.y-s.y)/3;
+        cubic({x:s.x+dx,y:s.y+dy},{x:t.x-dx,y:t.y-dy},t);
+      } else cubic({x:s.x+s.nx*offset,y:s.y+s.ny*offset},{x:t.x+t.nx*offset,y:t.y+t.ny*offset},t);
+    } else for(let i=0;i<points.length-1;i++) {
+      const p0=points[i-1]||points[i],p1=points[i],p2=points[i+1],p3=points[i+2]||p2;
+      const tension=style.curve==='smooth'?1/6:1/4,offset=Math.max(20,Math.min(Math.hypot(p2.x-p1.x,p2.y-p1.y)*.4,120));
+      cubic(i===0?{x:s.x+s.nx*offset,y:s.y+s.ny*offset}:{x:p1.x+(p2.x-p0.x)*tension,y:p1.y+(p2.y-p0.y)*tension},
+        i===points.length-2?{x:t.x+t.nx*offset,y:t.y+t.ny*offset}:{x:p2.x-(p3.x-p1.x)*tension,y:p2.y-(p3.y-p1.y)*tension},p2);
+    }
+    if(!segments.length) line({x:t.x+.001,y:t.y});
+    const samples=[{x:s.x,y:s.y,length:0}];let length=0;
+    segments.forEach(segment=>{
+      const steps=segment.c1?24:1;
+      for(let i=1;i<=steps;i++) {
+        const u=i/steps,v=1-u,a=segment.a,b=segment.b;
+        const p=segment.c1?{x:v*v*v*a.x+3*v*v*u*segment.c1.x+3*v*u*u*segment.c2.x+u*u*u*b.x,
+          y:v*v*v*a.y+3*v*v*u*segment.c1.y+3*v*u*u*segment.c2.y+u*u*u*b.y}:{x:b.x,y:b.y};
+        const previous=samples.at(-1);length+=Math.hypot(p.x-previous.x,p.y-previous.y);samples.push({...p,length});
+      }
+    });
+    const bounds={left:Math.min(...controls.map(p=>p.x)),right:Math.max(...controls.map(p=>p.x)),
+      top:Math.min(...controls.map(p=>p.y)),bottom:Math.max(...controls.map(p=>p.y))};
+    const item={d,path:typeof Path2D==='function'?new Path2D(d):null,bounds,samples,length,points:controls};
+    item.midpoint=pointAt(item,.5);return item;
   }
   class SpatialGrid {
     constructor() { this.buckets = new Map(); this.keys = new Map(); this.large = new Set(); }
@@ -100,5 +122,5 @@
     }
     clear() { this.buckets.clear(); this.keys.clear(); this.large.clear(); }
   }
-  window.RelatumNoteCanvasGeometry = Object.freeze({ build, exit, SpatialGrid });
+  window.RelatumNoteCanvasGeometry = Object.freeze({ build, exit, pointAt, arrow, SpatialGrid });
 })();

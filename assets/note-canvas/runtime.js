@@ -5,6 +5,14 @@
   const base = new URL('.', script.src);
   let ready = null;
   const mounts = new Set();
+  let active = null;
+  function selectionChanged() { document.dispatchEvent(new Event('relatum:note-canvas-selection')); }
+  function activate(adapter) {
+    if(active===adapter) return;
+    const previous=active;active=null;previous?.engine?.suspend();active=adapter;
+    selectionChanged();
+  }
+  function deactivate(adapter) { if(active===adapter) {active=null;selectionChanged();} }
   const VIEW_KEY = 'canvas:noteCanvasViews:v1', SIZE_KEY = 'canvas:noteCanvasNodeScale:v1';
   function preferences() { try { const value = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch (_) { return {}; } }
   let views = preferences(), persistTimer = 0;
@@ -20,7 +28,8 @@
     const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('canvas.css', base).href; document.head.appendChild(css);
     const stylesheet = new Promise((resolve, reject) => { css.onload = resolve; css.onerror = reject; });
     const loadScript = name => new Promise((resolve, reject) => { const el = document.createElement('script'); el.src = new URL(name, base).href; el.onload = resolve; el.onerror = reject; document.head.appendChild(el); });
-    ready = Promise.all([stylesheet, loadScript('geometry.js').then(() => loadScript('session.js')).then(() => loadScript('engine.js'))]).catch(error => { ready = null; css.remove(); throw error; });
+    ready = Promise.all([stylesheet, (window.RelatumNoteCanvasStyle ? Promise.resolve() : loadScript('../note-canvas-style.js'))
+      .then(() => loadScript('geometry.js')).then(() => loadScript('session.js')).then(() => loadScript('engine.js'))]).catch(error => { ready = null; css.remove(); throw error; });
     return ready;
   }
   function mount(frame, options) {
@@ -65,7 +74,8 @@
           viewport: views[key]?.view,
           nodeScale() { try { return Math.max(.5, Math.min(3, Number(localStorage.getItem(SIZE_KEY) || 100) / 100)); } catch (_) { return 1; } },
           onViewChange(view) { views[viewKey(options.note, session.path, options.ordinal)] = { view, time: Date.now() }; persist(); },
-          onActivate() { options.select?.(); select(!options.readOnly); },
+          onActivate() { activate(adapter);options.select?.(); select(!options.readOnly); },
+          onDeactivate() { deactivate(adapter); },
           onCopyReference: () => navigator.clipboard.writeText(options.source || options.parsed.source).catch(() => {}),
           onDeleteReference: () => options.remove?.(),
         });
@@ -105,6 +115,7 @@
       suspend() { engine?.suspend(); },
       async destroy() {
         if (destroyed) return; destroyed = true; generation++; observer.disconnect(); frame.removeEventListener('contextmenu', menu);
+        engine?.suspend();deactivate(adapter);
         if (cleanupResize) cleanupResize();
         await engine?.whenInputSettled(); engine?.destroy(); engine = null;
         if (session) { session.pins--; session = null; } mounts.delete(adapter);
@@ -123,6 +134,7 @@
     }); persist();
   }
   window.RelatumNoteCanvas = Object.freeze({ mount, remapViews,
+    getActive() { return active?.engine || null; },
     async flushAll(options) { const settle = options?.settle !== false; if (settle) await Promise.all([...mounts].map(m => m.settle())); return window.RelatumNoteCanvasSessions ? window.RelatumNoteCanvasSessions.flushAll(!settle) : true; },
     get dirty() { return !!window.RelatumNoteCanvasSessions?.dirty(); },
     suspend() { mounts.forEach(m => m.suspend()); },

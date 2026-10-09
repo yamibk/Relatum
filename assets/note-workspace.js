@@ -67,6 +67,7 @@
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let noteMovePromise = null, noteMovePaths = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
+  if (canvasEnabled()) window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => window.RelatumNotePreferences?.resetCanvasNodeScale?.());
   async function flushCanvases(background) {
     if (!window.RelatumNoteCanvas) return true;
     const ok = await window.RelatumNoteCanvas.flushAll({ settle: !background });
@@ -3358,7 +3359,6 @@
     else if (name === 'side-notebooks') setSideMode('notebooks');
     else if (name === 'side-links') setSideMode('links');
     else if (name === 'side-canvas') setSideMode('canvas');
-    else if (name === 'reset-canvas-settings' && canvasEnabled()) window.RelatumNotePreferences?.resetCanvasNodeScale?.();
     else if (name === 'close-links') setSideOpen(false);
   });
 

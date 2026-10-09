@@ -9,6 +9,7 @@ import copy
 import json
 import math
 import posixpath
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,52 @@ from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, rewrite
 from notes_library import NotesError, _revision, _is_reparse
 
 MAX_CANVAS_BYTES = 16 * 1024 * 1024
+SHAPES = {"rect", "rounded-rect", "square", "circle", "ellipse", "diamond", "triangle",
+          "hexagon", "parallelogram", "trapezoid", "pill", "cylinder"}
+TEXT_ENUMS = {"textAlign": {"left", "center", "right"}, "verticalAlign": {"top", "center", "bottom"}}
+TEXT_NUMBERS = {"fontSize": (8, 120), "fontWeight": (100, 900), "lineHeight": (.8, 3)}
+
+
+def _styles(record, *, edge=False, label=False):
+    enums = dict(TEXT_ENUMS) if not edge else {
+        "curve": {"straight", "bezier", "smooth", "elbow", "rounded-elbow"},
+        "lineStyle": {"solid", "dashed", "dotted"},
+        "fromSide": {"auto", "top", "right", "bottom", "left"},
+        "toSide": {"auto", "top", "right", "bottom", "left"},
+        "arrow": {"none", "end", "one", "both"}}
+    numbers = dict(TEXT_NUMBERS) if not edge else {
+        "width": (.5, 12), "arrowSize": (4, 40), "cornerRadius": (0, 80),
+        "labelPosition": (0, 1), "labelOffsetX": (-6000, 6000), "labelOffsetY": (-6000, 6000)}
+    booleans = {"wrap"} if not edge else {"arrowStart", "arrowEnd"}
+    colors = {"color"}
+    if not edge and not label:
+        enums["shape"] = SHAPES
+        numbers.update({"radius": (0, 80), "bgOpacity": (0, 1), "borderWidth": (0, 12),
+                        "paddingX": (0, 80), "paddingY": (0, 80)})
+        booleans.update({"autoHeight", "hideBackground"})
+        colors.update({"bgColor", "borderColor"})
+    if label:
+        numbers.update({"width": (0, 6000), "height": (0, 6000)})
+    for key, allowed in enums.items():
+        if key == "curve" and record.get(key) is None:
+            continue  # The original V2 validator accepted an explicit null curve.
+        if key in record and (not isinstance(record[key], str) or record[key] not in allowed):
+            raise NotesError("画布样式选项无效", code="unsupported_canvas")
+    for key, (low, high) in numbers.items():
+        if key in record:
+            value = record[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
+                raise NotesError("画布样式数值无效", code="invalid_canvas")
+    for key in booleans:
+        if key in record and not isinstance(record[key], bool):
+            raise NotesError("画布样式开关无效", code="invalid_canvas")
+    for key in colors:
+        if key in record and (not isinstance(record[key], str) or not re.fullmatch(r"(?:|#[0-9a-fA-F]{6})", record[key])):
+            raise NotesError("画布样式颜色无效", code="invalid_canvas")
+    if edge and "labelStyle" in record:
+        if not isinstance(record["labelStyle"], dict):
+            raise NotesError("画布标注样式无效", code="invalid_canvas")
+        _styles(record["labelStyle"], label=True)
 
 
 def validate(payload: object) -> dict:
@@ -37,6 +84,7 @@ def validate(payload: object) -> dict:
         if not isinstance(node.get("id"), str) or not node["id"] or node["id"] in ids:
             raise NotesError("节点 id 无效")
         ids.add(node["id"])
+        _styles(node)
         for key in ("x", "y", "width", "height"):
             value = node.get(key, 0 if key in ("x", "y") else 160 if key == "width" else 48)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -50,8 +98,7 @@ def validate(payload: object) -> dict:
                 or edge.get("from") == edge.get("to") or not isinstance(edge.get("text", ""), str)):
             raise NotesError("连线无效")
         edge_ids.add(edge["id"])
-        if edge.get("curve") not in (None, "straight", "smooth", "bezier"):
-            raise NotesError("首版不支持该连线类型", code="unsupported_canvas")
+        _styles(edge, edge=True)
         waypoints = edge.get("waypoints", [])
         if not isinstance(waypoints, list) or len(waypoints) > 256:
             raise NotesError("连线拐点无效")

@@ -282,7 +282,7 @@
       "parent": "notes",
       "label": "笔记内嵌画布",
       "description": "笔记中的独立画布块；关闭后显示原引用，不加载引擎或读取画布。",
-      "scripts": ["note-canvas/"],
+      "scripts": ["note-canvas/", "note-canvas-style.js"],
       "readPrefixes": ["/api/notes-canvas/"],
       "writePrefixes": ["/api/notes-canvas/"],
       "default": true
