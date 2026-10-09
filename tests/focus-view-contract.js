@@ -146,9 +146,10 @@ assert(focus.includes("document.dispatchEvent(new CustomEvent('canvasfocus:ready
   'CanvasFocus must announce readiness after publishing its complete public interface');
 assert(focus.includes('function preloadFocusView()')
   && focus.includes('loadDaily({ source: bootFocusData.daily, reveal: false, entrance: false, quiet: true })')
-  && focus.includes('preloadFocusView().finally(() => {')
-  && focus.indexOf('window.CanvasFocus = canvasFocusApi;') > focus.indexOf('preloadFocusView().finally(() => {'),
-  'CanvasFocus must hydrate hidden data before exposing itself as ready');
+  && focus.includes('initialWarmup.finally(() => {')
+  && focus.includes('preloadEnabled === false ? Promise.resolve() : preloadFocusView()')
+  && focus.indexOf('window.CanvasFocus = canvasFocusApi;') > focus.indexOf('initialWarmup.finally(() => {'),
+  'CanvasFocus hydrates hidden data by default and supports explicit on-demand startup');
 const pendingFocusBranch = start.slice(
   start.indexOf('pendingFocusActivation = { options: Object.assign({}, options || {}) };'),
   start.indexOf('function runWhenCanvasFocusReady(action)'),

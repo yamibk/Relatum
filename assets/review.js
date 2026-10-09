@@ -703,6 +703,7 @@
 
   // 空闲时只缓存卡池 JSON；真正进入复习页后再生成卡片并按需加载公式运行时。
   function schedulePreload() {
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (preloadHandle || preloadPromise || loaded) return;
     const warm = () => {
       preloadHandle = 0;

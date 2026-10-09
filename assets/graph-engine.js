@@ -1052,11 +1052,11 @@
         draggedNode = nodes[index];
         dragVel.x = 0; dragVel.y = 0;
         idle = false;
-        pressInfo = { kind: 'node', index: index, x: event.clientX, y: event.clientY, moved: false };
+        pressInfo = { kind: 'node', pointerId: event.pointerId, index: index, x: event.clientX, y: event.clientY, moved: false };
         kick();
       } else {
         panOrigin = { clientX: event.clientX, clientY: event.clientY, viewX: viewX, viewY: viewY };
-        pressInfo = { kind: 'pan', x: event.clientX, y: event.clientY, moved: false };
+        pressInfo = { kind: 'pan', pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
         panVelScreen.x = 0; panVelScreen.y = 0;
         panLast = { x: event.clientX, y: event.clientY, t: now() };
         panLastMoveT = 0;
@@ -1235,8 +1235,11 @@
     }
 
     function destroy() {
+      if (destroyed) return;
       destroyed = true;
       stopLoop();
+      if (pressInfo && canvas.hasPointerCapture(pressInfo.pointerId)) canvas.releasePointerCapture(pressInfo.pointerId);
+      pressInfo = draggedNode = panOrigin = null;
       // canvas 通常会被外壳复用；destroy 必须同时解绑交互监听，
       // 否则旧引擎闭包会连同 nodes/edges 一直被 canvas 强引用。
       canvas.removeEventListener('pointerdown', handlePointerDown);
@@ -1254,6 +1257,9 @@
       }
       overlayCanvas = null; octx = null;
       if (domOverlay && domOverlay.destroy) { try { domOverlay.destroy(); } catch (e) {} }
+      nodes = []; edges = []; neighbors = []; _partPool = [];
+      pending = null;
+      canvas.width = canvas.height = 1;
     }
 
     return {

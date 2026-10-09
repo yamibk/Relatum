@@ -1,0 +1,49 @@
+{
+  "measuredAt": "2026-10-09T08:53:04.812Z",
+  "platform": "Windows 11 10.0.26200",
+  "browserVersion": "154.0.4258.62",
+  "baselineCommit": "8965be215645fc5e3356a38f0281036f05676172",
+  "packageSha256": "D58D577DE5297F1CD8D43052A59574A36EE86E228997D35D22B858C38DC01C7B",
+  "metric": "sum of process-tree private committed bytes and working sets; MiB = 1048576 bytes",
+  "settleSeconds": 10,
+  "rounds": 3,
+  "processesPerSample": 7,
+  "packageSamples": [
+    {"name":"full","round":1,"privateMiB":374.078125,"workingMiB":617.61328125},
+    {"name":"full-on-demand","round":1,"privateMiB":296.06640625,"workingMiB":536.5078125,"firstUseMs":{"notes":99.5247,"career":14.6144,"research":114.5985}},
+    {"name":"library","round":1,"privateMiB":281.33203125,"workingMiB":515.6484375},
+    {"name":"notes","round":1,"privateMiB":289.31640625,"workingMiB":532.56640625},
+    {"name":"full","round":2,"privateMiB":378.83984375,"workingMiB":627.8515625},
+    {"name":"full-on-demand","round":2,"privateMiB":302.9765625,"workingMiB":549.67578125,"firstUseMs":{"notes":136.9872,"career":27.4241,"research":135.5498}},
+    {"name":"library","round":2,"privateMiB":288.21875,"workingMiB":536.76171875},
+    {"name":"notes","round":2,"privateMiB":301.125,"workingMiB":552.359375},
+    {"name":"full","round":3,"privateMiB":389.42578125,"workingMiB":641.40625},
+    {"name":"full-on-demand","round":3,"privateMiB":305.4140625,"workingMiB":556.38671875,"firstUseMs":{"notes":120.9283,"career":23.1374,"research":122.7911}},
+    {"name":"library","round":3,"privateMiB":291.921875,"workingMiB":538.51953125},
+    {"name":"notes","round":3,"privateMiB":297.734375,"workingMiB":550.43359375}
+  ],
+  "browserHeapObservationBytes": {"default":8241969,"onDemand":4255492},
+  "graphBeforeEachOfSixCloses": {"idleBuffers":4,"closedBuffers":4,"closedPrograms":2},
+  "graphAfter": [
+    {"motion":"no-preference","gesture":0,"openLabels":300,"closedLabels":0,"closedBuffers":0,"closedPrograms":0,"activeContexts":0},
+    {"motion":"no-preference","gesture":1,"openLabels":0,"closedLabels":0,"closedBuffers":0,"closedPrograms":0,"activeContexts":0},
+    {"motion":"no-preference","gesture":2,"openLabels":0,"closedLabels":0,"closedBuffers":0,"closedPrograms":0,"activeContexts":0},
+    {"motion":"reduce","gesture":0,"openLabels":300,"closedLabels":0,"closedBuffers":0,"closedPrograms":0,"activeContexts":0},
+    {"motion":"reduce","gesture":1,"openLabels":300,"closedLabels":0,"closedBuffers":0,"closedPrograms":0,"activeContexts":0},
+    {"motion":"reduce","gesture":2,"openLabels":300,"closedLabels":0,"closedBuffers":0,"closedPrograms":0,"activeContexts":0}
+  ],
+  "starAfter": {"unopenedActiveContexts":0,"openedActiveContexts":1,"afterWorkspaceSwitchActiveContexts":0,"afterPageExitActiveContexts":0},
+  "audio": {
+    "sampleRate":48000,
+    "channels":2,
+    "decodedDurationSeconds":150,
+    "seamlessDurationSeconds":147,
+    "pcmBytesBeforeDisable":56448000,
+    "pcmBytesAfterDisable":0,
+    "pcmBytesAfterPauseCacheExpiry":0,
+    "pcmBytesAfterPagehide":0,
+    "sourcesBeforePauseFix":1,
+    "sourcesAfterFadeOut":0
+  },
+  "retryAttemptsBeforeNavigation": {"graph":2,"ai":2,"notes":2,"career":2}
+}

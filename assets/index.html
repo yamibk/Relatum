@@ -86,7 +86,7 @@
   <script>
     // 专注页位于脚本队列末端。页面解析时就并行读取其轻量数据，第一次翻页与后续翻页共用缓存。
     (function () {
-      if (!window.RelatumFeatureRuntime.enabled('canvas.focus')) return;
+      if (!window.RelatumFeatureRuntime.enabled('canvas.focus') || window.RelatumFeatureRuntime.preloadEnabled === false) return;
       function preloadJson(path) {
         return fetch(path, { credentials: 'same-origin' }).then(function (response) {
           if (!response.ok) throw new Error('preload failed');

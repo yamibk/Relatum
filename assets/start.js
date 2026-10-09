@@ -208,10 +208,11 @@
     onCanvasReveal: () => requestAnimationFrame(() => requestAnimationFrame(() => {
       if (workspaceRuntime.current === 'canvas') syncActiveSpineOrb({ animate: false });
     })),
-    notice: (title, message) => showNotice(title, message),
+    notice: (title, message) => showStartNotice(message, title),
   });
 
   function preloadEditorBackground(background) {
+    if (features.preloadEnabled === false) return;
     if (!background || typeof background !== 'object') return;
     let source = '';
     if (background.type === 'image' && background.path) {
@@ -1748,12 +1749,14 @@
     if (startNotice) startNotice.hidden = true;
   }
 
-  function showStartNotice(message) {
+  function showStartNotice(message, title) {
     if (!startNotice) {
-      window.alert(message);
+      window.alert(title ? title + '\n' + message : message);
       return;
     }
     const detail = startNotice.querySelector('[data-role="start-notice-detail"]');
+    const heading = startNotice.querySelector('.confirm-title');
+    if (heading) heading.textContent = title || (englishUI() ? 'Canvas name unchanged' : '画布名称没有改动');
     if (detail) detail.textContent = message || '重命名失败';
     startNotice.hidden = false;
   }
@@ -2245,6 +2248,7 @@
 
   function finalizeDeferredStartViewExitMotion() {
     finalizeCadenceEntranceExit(false);
+    window.StudyActivity?.finalizeExitMotion?.();
     if (window.CanvasCalendar && typeof window.CanvasCalendar.finalizeExitMotion === 'function') {
       window.CanvasCalendar.finalizeExitMotion();
     }
@@ -2951,7 +2955,7 @@
 
   function gotoEditor(path, sourceItem, fresh) {
     if (!features.enabled('canvas.editor')) {
-      showNotice('画布编辑器未启用', '请退出后通过启动器启用画布编辑器。');
+      showStartNotice(englishUI() ? 'Please exit and enable the canvas editor in the launcher.' : '请退出后通过启动器启用画布编辑器。', englishUI() ? 'Canvas editor disabled' : '画布编辑器未启用');
       return;
     }
     if (document.body.classList.contains('canvas-route-leaving')) return;

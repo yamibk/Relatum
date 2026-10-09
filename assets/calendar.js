@@ -171,6 +171,7 @@
 
   // 只预取首次打开所需的当天快照，不在隐藏页启动日历渲染或入场动画。
   function scheduleInitialPreload() {
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (state.initialPreloadHandle || state.initialPreloadPromise || state.loaded) return;
     const warm = () => {
       state.initialPreloadHandle = 0;

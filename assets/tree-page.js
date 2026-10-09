@@ -4018,6 +4018,7 @@
     treePagePreloadUsesIdle = false;
   }
   function scheduleTreePagePreload() {
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (treePagePreloadHandle || studyCache || studyPrefetchPromise) return;
     var warmTreePage = function () {
       treePagePreloadHandle = 0;

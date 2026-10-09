@@ -3382,6 +3382,7 @@
   }
 
   function scheduleStudyPreload() {
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (studyPreloadHandle || studyLoaded) return;
     const warm = () => {
       studyPreloadHandle = 0;

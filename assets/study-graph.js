@@ -827,6 +827,7 @@
       destroy: function () {
         pauseThemeObserver();
         try { engine.destroy(); } catch (e) {}
+        try { canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext(); } catch (e) {}
         try { host.innerHTML = ''; } catch (e) {}
       },
     };

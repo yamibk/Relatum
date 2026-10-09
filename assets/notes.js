@@ -2273,6 +2273,7 @@
 
   // 起步页稳定后在隐藏状态读取并构建速记墙；真正翻入页面时只需校准连线几何。
   function schedulePreload() {
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (preloadHandle || loaded || loading) return;
     const warm = () => {
       preloadHandle = 0;

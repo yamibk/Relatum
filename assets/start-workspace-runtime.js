@@ -50,8 +50,9 @@
         const script = document.createElement('script');
         script.src = src;
         script.async = true;
-        script.onload = () => ready() ? resolve(true) : reject(new Error(src + ' 没有完成初始化'));
-        script.onerror = () => reject(new Error(src + ' 加载失败'));
+        const fail = message => { script.remove(); reject(new Error(message)); };
+        script.onload = () => ready() ? resolve(true) : fail(src + ' 没有完成初始化');
+        script.onerror = () => fail(src + ' 加载失败');
         document.head.appendChild(script);
       });
     };
@@ -61,7 +62,8 @@
       .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
       .then(() => loadScript('note-workspace.js', () => !!window.CanvasNoteWorkspace))
-      .then(() => { window.RelatumStartupMark?.('notes-scripts-ready'); return window.CanvasNoteWorkspace; });
+      .then(() => { window.RelatumStartupMark?.('notes-scripts-ready'); return window.CanvasNoteWorkspace; })
+      .catch(error => { noteWorkspaceLoader = null; throw error; });
     return noteWorkspaceLoader;
   }
 
@@ -134,16 +136,18 @@
       const script = document.createElement('script');
       script.src = 'career-report.js';
       script.async = true;
+      const fail = message => { script.remove(); reject(new Error(message)); };
       script.onload = () => window.RelatumCareerReport
         ? resolve(window.RelatumCareerReport)
-        : reject(new Error('career-report.js 没有完成初始化'));
-      script.onerror = () => reject(new Error('career-report.js 加载失败'));
+        : fail('career-report.js 没有完成初始化');
+      script.onerror = () => fail('career-report.js 加载失败');
       document.head.appendChild(script);
-    });
+    }).catch(error => { careerWorkspaceLoader = null; throw error; });
     return careerWorkspaceLoader;
   }
 
   function scheduleNoteWorkspaceIdleWarmup() {
+    if (features.preloadEnabled === false) return;
     if (!features.enabled('notes') || activeStartWorkspace !== 'canvas' || noteWorkspaceWarmupScheduled || window.CanvasNoteWorkspace) return;
     noteWorkspaceWarmupScheduled = true;
     const warmup = () => {
@@ -151,7 +155,7 @@
       if (activeStartWorkspace !== 'canvas') return;
       loadNoteWorkspace()
         .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
-        .catch(() => {});
+        .catch(() => { noteWorkspaceWarmupScheduled = false; });
     };
     const queueWarmup = () => {
       if (typeof window.requestIdleCallback === 'function') {
@@ -167,6 +171,7 @@
   // 生涯报告本身已经是冻结磁盘快照。首屏稳定后在空闲时间提前加载轻量运行时
   // 和快照，避免用户第一次切换到第三工作区时再看到本地读取占位。
   function scheduleCareerWorkspaceIdleWarmup() {
+    if (features.preloadEnabled === false) return;
     if (!features.enabled('career') || careerWorkspaceWarmupScheduled || (window.RelatumCareerReport && window.RelatumCareerReport.report)) return;
     careerWorkspaceWarmupScheduled = true;
     const warmup = () => {

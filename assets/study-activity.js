@@ -62,6 +62,7 @@
   let cadenceYearWheelTimer = 0;
   let starInstance = null;   // 足迹星图当前实例（活跃图重绘时先销毁旧实例再挂新的）
   let cadenceShown = false;  // 活跃页当前是否被选为前置页（起步页翻页时由 StudyActivity.setActive 同步）
+  let starReleaseTimer = 0;
   let starMode = 'normal';
   let cadenceLens = 'canvas';   // v2 首次默认画布；之后记住 canvas / complete / focus
   try {
@@ -331,13 +332,14 @@
 
   function mountStarGraph(host, payload, options) {
     if (starInstance) { try { starInstance.destroy(); } catch (e) {} starInstance = null; }
+    if (!cadenceShown) return;
     const starStage = host.querySelector('[data-role="study-starmap"]');
     if (starStage && window.StudyGraph) {
       const canvasLens = cadenceLens === 'canvas';
       const graph = starMode === 'overview'
         ? (canvasLens ? (payload.canvasOverviewGraph || {}) : (payload.overviewGraph || {}))
         : (canvasLens ? (payload.canvasGraph || {}) : (payload.graph || {}));
-      // 活跃页不是当前前置页时，星图以挂起态挂载（建好静态帧但不空转 RAF），进入活跃页再唤醒。
+      // 隐藏页只缓存数据；真正打开才分配 WebGL 和标签层。
       starInstance = window.StudyGraph.mount(starStage, graph, {
         active: cadenceShown,
         intro: !(options && options.intro === false),
@@ -947,6 +949,7 @@
   }
 
   function scheduleActivityPreload() {
+    if (window.RelatumFeatureRuntime?.preloadEnabled === false) return;
     if (activityPreloadHandle || activityLoadPromise || (activityPayload && !activityDirty)) return;
     const warmActivity = () => {
       activityPreloadHandle = 0;
@@ -982,7 +985,10 @@
         cadenceVisibleSyncFrame = 0;
         if (!cadenceShown) return;
         syncCadenceVisibleLayout();
-        if (starInstance && starInstance.setActive) {
+        if (!starInstance && activityPayload) {
+          const host = document.querySelector('[data-role="study-cadence"]');
+          if (host) mountStarGraph(host, activityPayload);
+        } else if (starInstance && starInstance.setActive) {
           starInstance.setActive(true);
           if (starInstance.replayIntro) starInstance.replayIntro();
         }
@@ -993,6 +999,12 @@
   function invalidateActivity() {
     activityDirty = true;
     if (cadenceShown) queueActivityLoad();
+  }
+
+  function releaseStarGraph() {
+    window.clearTimeout(starReleaseTimer);
+    starReleaseTimer = 0;
+    if (starInstance) { try { starInstance.destroy(); } catch (e) {} starInstance = null; }
   }
 
   // 「更新」按钮：强制重新统计活跃数据并重绘热力图。平时翻进活跃页用缓存，不重读。
@@ -1017,10 +1029,19 @@
     reload() { invalidateActivity(); },
     // 起步页翻页时调用：只有活跃页是当前前置页时星图才跑 RAF，离开即挂起，避免隐藏页 60fps 空转。
     setActive(active) {
-      cadenceShown = !!active;
+      cadenceShown = !!active && document.body.dataset.startWorkspace === 'canvas';
+      window.clearTimeout(starReleaseTimer);
+      starReleaseTimer = 0;
       if (!cadenceShown) {
         cancelCadenceVisibleSync();
         if (starInstance && starInstance.setActive) starInstance.setActive(false);
+        // 外层翻页保留最后一帧，交接完成才释放；快速返回会取消释放任务。
+        if (starInstance) {
+          const turnMs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--start-turn-ms')) || 260;
+          starReleaseTimer = window.setTimeout(() => {
+            if (!cadenceShown) releaseStarGraph();
+          }, prefersReduced ? 0 : Math.max(800, turnMs + 560));
+        }
         return;
       }
       cancelActivityPreload();
@@ -1034,6 +1055,9 @@
     isReady() {
       return !!(activityPayload && !activityDirty);
     },
+    finalizeExitMotion() {
+      if (!cadenceShown && !document.querySelector('.cadence-embedded.view-leaving')) releaseStarGraph();
+    },
   };
   scheduleActivityPreload();
 
@@ -1046,5 +1070,17 @@
     if (!activityPayload) return;
     const host = document.querySelector('[data-role="study-cadence"]');
     if (host) renderCadence(activityPayload, { intro: false });
+  });
+  document.addEventListener('relatum:start-workspacechange', () => {
+    window.StudyActivity.setActive(document.querySelector('.book-view')?.dataset.viewName === 'cadence');
+  });
+  window.addEventListener('pagehide', () => {
+    cadenceShown = false;
+    cancelActivityPreload();
+    cancelCadenceVisibleSync();
+    releaseStarGraph();
+  });
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) window.StudyActivity.setActive(document.querySelector('.book-view')?.dataset.viewName === 'cadence');
   });
 })();

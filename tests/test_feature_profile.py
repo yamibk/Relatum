@@ -26,6 +26,18 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertTrue(profile.resource_allowed('assets/markdown.js'))
         self.assertTrue(profile.resource_allowed('assets/vendor/mathjax/tex-mml-chtml.js'))
 
+    def test_preload_is_optional_without_changing_workspaces_or_permissions(self):
+        profile = features.LaunchProfile({'runtime.preload': False}, restricted=True)
+        normal = features.LaunchProfile(restricted=True)
+        restored = features.LaunchProfile.decode(profile.encode())
+        self.assertFalse(restored.enabled('runtime.preload'))
+        self.assertEqual(profile.workspaces, normal.workspaces)
+        self.assertEqual(profile.session_key, normal.session_key)
+        self.assertTrue(profile.resource_allowed('assets/note-workspace.js'))
+        self.assertTrue(profile.write_allowed('/api/save'))
+        with self.assertRaises(features.ProfileError):
+            self.only('runtime.preload').validate()
+
     def test_save_restore_corruption_and_new_default(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

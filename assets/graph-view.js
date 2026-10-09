@@ -121,7 +121,7 @@
     const handle = overlay.querySelector('[data-role="graph-drag-handle"]');
     const title = overlay.querySelector('[data-role="graph-title"]');
     const stage = overlay.querySelector('[data-role="graph-stage"]');
-    const canvas = overlay.querySelector('[data-role="graph-canvas"]');
+    let canvas = overlay.querySelector('[data-role="graph-canvas"]');
     const tooltip = overlay.querySelector('[data-role="graph-tooltip"]');
     const hint = overlay.querySelector('[data-role="graph-hint"]');
     const empty = overlay.querySelector('[data-role="graph-empty"]');
@@ -376,7 +376,7 @@
           var hp = haloPool[id];
           if (!hp) {
             var hel = document.createElement('div');
-            hel.style.cssText = 'position:absolute;left:0;top:0;border-radius:50%;pointer-events:none;will-change:transform,opacity;';
+            hel.style.cssText = 'position:absolute;left:0;top:0;border-radius:50%;pointer-events:none;';
             container.appendChild(hel);
             hp = { el: hel };
             haloPool[id] = hp;
@@ -408,7 +408,7 @@
           var lp = labelPool[id];
           if (!lp) {
             var lel = document.createElement('div');
-            lel.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;will-change:transform,opacity;';
+            lel.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;';
             var inner = document.createElement('span');
             inner.style.cssText = 'display:block;transform:translate(-50%,-100%);white-space:nowrap;';
             inner.style.font = theme.font;
@@ -449,8 +449,6 @@
       return { sync: sync, destroy: destroy };
     }
 
-    var domOverlay = createDOMLabelLayer();
-
     // 闲时微漂移：小图谱保留"活着"的微动；节点超过阈值则收敛后关掉漂移、让 RAF 循环彻底停住
     // （静止时零开销——避免大图谱永不停的每帧重绘 + 标签层重排，这是图谱比星图卡的主因）。
     const DRIFT_MAX_NODES = 150;
@@ -458,35 +456,55 @@
     const GV_FLOW_COLOR = [0.27, 0.52, 0.40, 0.62];   // 连线流光：克制的青绿（浅色浮窗背景上也看得清）
     const PARTICLE_CFG = { speed: 0.00018, perEdge: 1, size: 2.2, getColor: function () { return GV_FLOW_COLOR; } };
 
-    const engine = global.GraphEngine.create({
-      canvas: canvas,
-      backend: 'webgl',
-      config: { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: 0.048, springRest: 112, gravity: 0.0055,
-                alphaDecay: 0.022, alphaReheat: 0.28, theta: 0.92, velocityDamp: 0.84,
-                zoomMin: 0.4, zoomMax: 3.5, fitScaleMin: 0.4, fitScaleMax: 3.5, fitPad: 26, fitMargin: 44 },
-      reduceMotion: reduceMotion,
-      active: false,
-      drawNode: drawNode,           // Canvas2D 兜底路径（WebGL 失败时引擎自动用它，含标签）
-      drawEdge: drawEdge,
-      nodeStyle: nodeStyle,         // WebGL 几何
-      edgeStyle: edgeStyle,
-      domOverlay: domOverlay,       // DOM 标签层（CSS transform，GPU compositor）
-      getGravity: function (node) { return node._grav != null ? node._grav : 0.0055; },
-      getEdgeRest: function (edge) { return edge.rest || 112; },
-      drift: IDLE_DRIFT,          // 实际开关在 open() 里按节点规模用 engine.setDrift 决定
-      particles: PARTICLE_CFG,    // 连线流光，同样在 open() 里按规模用 engine.setParticles 决定
-      onNodeClick: function (node) { close(); onSelect(node.id); },
-      onNodeHover: function (node, event) {
-        if (!tooltip) return;
-        if (!node) { tooltip.hidden = true; return; }
-        const rect = stage.getBoundingClientRect();
-        tooltip.textContent = node.label + ' / ' + node.type;
-        tooltip.style.left = (event.clientX - rect.left + 14) + 'px';
-        tooltip.style.top = (event.clientY - rect.top + 14) + 'px';
-        tooltip.hidden = false;
-      },
-    });
-    if (!engine) return null;
+    let engine = null;
+    function ensureEngine() {
+      if (engine) return engine;
+      const domOverlay = createDOMLabelLayer();
+      engine = global.GraphEngine.create({
+        canvas: canvas,
+        backend: 'webgl',
+        config: { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: 0.048, springRest: 112, gravity: 0.0055,
+                  alphaDecay: 0.022, alphaReheat: 0.28, theta: 0.92, velocityDamp: 0.84,
+                  zoomMin: 0.4, zoomMax: 3.5, fitScaleMin: 0.4, fitScaleMax: 3.5, fitPad: 26, fitMargin: 44 },
+        reduceMotion: reduceMotion,
+        active: false,
+        drawNode: drawNode,           // Canvas2D 兜底路径（WebGL 失败时引擎自动用它，含标签）
+        drawEdge: drawEdge,
+        nodeStyle: nodeStyle,
+        edgeStyle: edgeStyle,
+        domOverlay: domOverlay,       // DOM 标签层
+        getGravity: function (node) { return node._grav != null ? node._grav : 0.0055; },
+        getEdgeRest: function (edge) { return edge.rest || 112; },
+        drift: IDLE_DRIFT,          // 实际开关在 open() 里按节点规模决定
+        particles: PARTICLE_CFG,
+        onNodeClick: function (node) { close(); onSelect(node.id); },
+        onNodeHover: function (node, event) {
+          if (!tooltip) return;
+          if (!node) { tooltip.hidden = true; return; }
+          const rect = stage.getBoundingClientRect();
+          tooltip.textContent = node.label + ' / ' + node.type;
+          tooltip.style.left = (event.clientX - rect.left + 14) + 'px';
+          tooltip.style.top = (event.clientY - rect.top + 14) + 'px';
+          tooltip.hidden = false;
+        },
+      });
+      if (!engine) domOverlay.destroy();
+      return engine;
+    }
+
+    function releaseEngine() {
+      if (engine) engine.destroy();
+      engine = null;
+      // 替换画布同时释放 WebGL context；重开不复用已丢失的 context。
+      const oldCanvas = canvas;
+      canvas = oldCanvas.cloneNode(false);
+      canvas.width = canvas.height = 1;
+      oldCanvas.replaceWith(canvas);
+      try { oldCanvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext(); } catch (e) {}
+      oldCanvas.width = oldCanvas.height = 1;
+      nodes = [];
+      edges = [];
+    }
 
     function applyOpacity(value) {
       const amount = clamp(Number(value) || 94, 36, 100);
@@ -525,14 +543,24 @@
       }
       overlay.classList.remove('closing');
       overlay.hidden = true;
+      frame.removeEventListener('animationend', onCloseAnimationEnd);
+      releaseEngine();
       onVisibilityChange(false);
+    }
+
+    function onCloseAnimationEnd(event) {
+      if (event.target === frame) finishClose();
     }
 
     function close() {
       if (!opened || closing) return;
       opened = false;
       closing = true;
-      engine.setActive(false);
+      if (engine) engine.setActive(false);
+      if (windowDrag) {
+        if (handle.hasPointerCapture(windowDrag.pointerId)) handle.releasePointerCapture(windowDrag.pointerId);
+        windowDrag = null;
+      }
       if (tooltip) tooltip.hidden = true;
       if (trigger) {
         trigger.classList.remove('active');
@@ -543,7 +571,7 @@
         return;
       }
       overlay.classList.add('closing');
-      frame.addEventListener('animationend', finishClose, { once: true });
+      frame.addEventListener('animationend', onCloseAnimationEnd);
       closeTimer = setTimeout(finishClose, 280);
     }
 
@@ -553,8 +581,10 @@
         closeTimer = null;
       }
       closing = false;
+      frame.removeEventListener('animationend', onCloseAnimationEnd);
       overlay.classList.remove('closing');
       overlay.hidden = false;
+      if (!ensureEngine()) { overlay.hidden = true; return; }
       opened = true;
       if (trigger) {
         trigger.classList.add('active');
@@ -588,7 +618,7 @@
       seedPositions();
       engine.start({ intro: false, fit: true });
     });
-    if (resetButton) resetButton.addEventListener('click', () => engine.fitView(true));
+    if (resetButton) resetButton.addEventListener('click', () => { if (engine) engine.fitView(true); });
     overlay.addEventListener('mousedown', (event) => {
       if (event.target === overlay) close();
     });
@@ -619,6 +649,10 @@
     handle.addEventListener('pointerup', stopWindowDrag);
     handle.addEventListener('pointercancel', stopWindowDrag);
     global.addEventListener('resize', keepFrameVisible);
+    global.addEventListener('pagehide', () => {
+      close();
+      if (closing) finishClose();
+    });
 
     return { open: open, close: close };
   }

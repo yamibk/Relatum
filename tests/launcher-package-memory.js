@@ -68,7 +68,20 @@ async function run(name, choices, round) {
       assert(!state.resources.includes('/study.js') && !state.resources.includes('/note-workspace.js'));
     }
     if (name === 'notes') assert.equal(state.workspace, 'notes');
+    if (name === 'full-on-demand') {
+      assert(!state.notes && !state.career, 'on-demand startup leaves unopened workspace runtimes unloaded');
+      assert(Object.entries(state.runtime.features).every(([key, enabled]) => key === 'runtime.preload' ? !enabled : enabled), 'only background preloading is disabled');
+    }
     const measurement = await memory(app.pid);
+    const firstUseMs = {};
+    if (name === 'full-on-demand') {
+      for (const workspace of ['notes', 'career', 'research']) {
+        const started = performance.now();
+        assert(await page.evaluate(workspace => window.RelatumStartWorkspace.set(workspace, { animate: false }), workspace));
+        firstUseMs[workspace] = performance.now() - started;
+      }
+      assert(await page.evaluate(() => window.RelatumStartWorkspace.set('canvas', { animate: false })));
+    }
     // Verify real ordinary single-instance activation on the complete profile.
     if (!choices && round === 0) {
       const second = spawn(path.join(release, 'Relatum.exe'), [], { cwd: release, env: { ...process.env, RELATUM_DATA_ROOT: root, LOCALAPPDATA: root }, windowsHide: true, stdio: 'ignore' });
@@ -96,7 +109,7 @@ async function run(name, choices, round) {
       await new Promise(resolve => app.exitCode !== null ? resolve() : app.once('exit', resolve));
     }
     console.log(`${name} ${round + 1}: private ${measurement.privateMiB.toFixed(1)} MiB, working ${measurement.workingMiB.toFixed(1)} MiB (${measurement.processes.length} processes)`);
-    return { name, round: round + 1, ...measurement, state };
+    return { name, round: round + 1, ...measurement, state, firstUseMs };
   } finally {
     if (browser) await browser.close().catch(() => {});
     if (app.exitCode === null) { await execute('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { windowsHide: true }).catch(() => {}); }
@@ -124,10 +137,10 @@ async function run(name, choices, round) {
   }
   const samples = [];
   for (let round = 0; round < rounds; round++) {
-    for (const [name, choices] of [['full', null], ['library', profile(['canvas', 'canvas.library'])], ['notes', profile(['notes'])]]) samples.push(await run(name, choices, round));
+    for (const [name, choices] of [['full', null], ['full-on-demand', { version: 1, features: { 'runtime.preload': false } }], ['library', profile(['canvas', 'canvas.library'])], ['notes', profile(['notes'])]]) samples.push(await run(name, choices, round));
   }
   const median = values => { values.sort((a,b) => a-b); return values[Math.floor(values.length / 2)]; };
-  const summary = Object.fromEntries(['full','library','notes'].map(name => [name, {
+  const summary = Object.fromEntries(['full','full-on-demand','library','notes'].map(name => [name, {
     privateMiB: median(samples.filter(item => item.name === name).map(item => item.privateMiB)),
     workingMiB: median(samples.filter(item => item.name === name).map(item => item.workingMiB)),
   }]));

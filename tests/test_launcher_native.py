@@ -87,7 +87,8 @@ class NativeLauncherTests(unittest.TestCase):
                     Application.EnableVisualStyles()
                     form = launcher.create_form(root)
                     buttons, pick, detail, start, selected_file = form._relatum_controls
-                    self.assertEqual(len(buttons), 16)
+                    self.assertEqual(set(buttons), set(FEATURES))
+                    self.assertTrue(buttons['runtime.preload'].Enabled)
                     self.assertTrue(all(button.Checked for button in buttons.values()))
                     buttons['canvas'].Checked = False
                     self.assertFalse(buttons['canvas.editor'].Enabled)

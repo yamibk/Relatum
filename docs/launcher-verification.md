@@ -2,7 +2,7 @@
 
 ## 功能边界
 
-功能清单位于 `assets/feature-catalog.json`，当前有 16 项。`launcher.py` 使用现有桌面包的 pythonnet/WinForms 显示原生选择窗口；`feature_profile.py` 负责依赖解析、版本校验、选择保存和资源/API 归属。`Relatum.exe` 与 `RelatumLauncher.exe` 共享归档、图标与 `_internal`；启动器在导入主服务和 WebView2 前分派。
+功能清单位于 `assets/feature-catalog.json`，当前有 17 项。`launcher.py` 使用现有桌面包的 pythonnet/WinForms 显示原生选择窗口；`feature_profile.py` 负责依赖解析、版本校验、选择保存和资源/API 归属。`Relatum.exe` 与 `RelatumLauncher.exe` 共享归档、图标与 `_internal`；启动器在导入主服务和 WebView2 前分派。默认开启的“后台预加载”可以单独取消，保留全部已选功能而减少未使用运行时和数据的启动分配；2026-10-09 的三轮实际包对比见 [资源释放与内存记录](resource-lifecycle-performance-2026-10-09.md)。
 
 选择保存在实际数据根的 `data/launcher-profile.json`，与 EXE 旁的 `.exe.config` 不同。启动器通过命令行交接，主进程取得工作区占用并建立服务后才原子保存手动选择；拒绝启动不覆盖。普通 EXE 使用完整模式，不读取启动器选择；已有精简窗口时要求先退出。
 
@@ -65,7 +65,7 @@ node tests/launcher-package-memory.js D:\Relatum-release <报告JSON路径> 3
 - 无有效入口、仅编辑器未选文件、无效会话结构拒绝；独立画布管理和编辑器均可启动。
 - 四个工作区和七个特殊页面分别单独启用；恢复禁用工作区、隐藏特殊页偏好、页面翻转、跨页事件、脚本请求与直接 URL/API 边界。
 - Windows 大小写和路径别名、共享历史读取、启用功能预热、普通单实例和启动器不转交到旧窗口。
-- 原生窗口的 16 个选项与依赖状态；两份 EXE 相同字节和图标、两份运行时配置、共用资产及不包含用户数据。
+- 原生窗口的 17 个选项与依赖状态；两份 EXE 相同字节和图标、两份运行时配置、共用资产及不包含用户数据。
 - 真实 WebView2 笔记窗口在刚输入后关闭，等待保存链落盘；直接 EXE 忽略磁盘中故意设置的精简启动器配置。
 - 精简导航的中英文标签、宽/窄窗口滑块几何对齐，以及两工作区间切换；免弹窗设置保存/恢复、关闭、损坏回退、仅编辑器路径复用与已有实例拦截。`node tests/launcher-settings-package.js <发布目录>` 验证真实客户端控件保存、启动器直接启动笔记和取消后恢复选择窗口。
 

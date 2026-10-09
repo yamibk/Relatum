@@ -13,6 +13,8 @@
   const NOISE_SRC_URL = '/audio/rain.mp3';   // 打包内的真实雨声循环音源
   const NOISE_XFADE_SEC = 3;                 // 循环接缝交叉淡化时长（秒）
   const NOISE_MAX_GAIN = 0.9;                // 音量滑块满格时的增益上限（留峰值余量）
+  const NOISE_FADE_OUT_MS = 2000;
+  const NOISE_PAUSE_CACHE_MS = 30000;
   const MODE_KEY = 'canvas:focusMode';
   const TASK_KEY = 'canvas:focusTask';
   const KIND_KEY = 'canvas:focusTaskKind';
@@ -109,6 +111,10 @@
   let noisePlaying = false;
   let noiseBuffer = null;     // 解码并接缝处理后的无缝雨声缓冲
   let noiseLoading = false;   // 防止重复发起加载
+  let noiseLoadController = null;
+  let noiseLoadVersion = 0;
+  let noiseStopTimer = 0;
+  let noiseReleaseTimer = 0;
   let mode = loadMode();
   let running = false;
   let paused = false;
@@ -667,16 +673,46 @@
     if (noiseBuffer) { startNoiseSource(); return; }
     if (noiseLoading) return;
     noiseLoading = true;
-    fetch(NOISE_SRC_URL)
+    const version = ++noiseLoadVersion;
+    const controller = noiseLoadController = new AbortController();
+    fetch(NOISE_SRC_URL, { signal: controller.signal })
       .then((r) => { if (!r.ok) throw new Error('noise ' + r.status); return r.arrayBuffer(); })
-      .then((ab) => audioCtx.decodeAudioData(ab))
+      .then((ab) => version === noiseLoadVersion ? audioCtx.decodeAudioData(ab) : null)
       .then((decoded) => {
+        // decodeAudioData 不能取消；关闭/离页后的结果不能再保留约 54 MiB PCM 或重启音源。
+        if (!decoded || version !== noiseLoadVersion) return;
         noiseBuffer = makeSeamlessBuffer(decoded);
         noiseLoading = false;
+        noiseLoadController = null;
         // 解码期间若已切到「应播放」，补建链并淡入
         if (noisePlaying) { startNoiseSource(); rampNoise(noiseTarget()); }
       })
-      .catch(() => { noiseLoading = false; });
+      .catch(() => {
+        if (version !== noiseLoadVersion) return;
+        noiseLoading = false;
+        noiseLoadController = null;
+      });
+  }
+  function releaseNoiseBuffer() {
+    noiseLoadVersion += 1;
+    if (noiseLoadController) noiseLoadController.abort();
+    noiseLoadController = null;
+    noiseLoading = false;
+    noiseBuffer = null;
+  }
+  function stopNoiseSource() {
+    const nodes = noiseNodes;
+    noiseNodes = null;
+    if (!nodes) return;
+    try { nodes.source.stop(); } catch (e) {}
+    try { nodes.source.disconnect(); } catch (e) {}
+    try { nodes.source.buffer = null; } catch (e) {}
+    try { nodes.gain.disconnect(); } catch (e) {}
+  }
+  function clearNoiseTimers() {
+    window.clearTimeout(noiseStopTimer);
+    window.clearTimeout(noiseReleaseTimer);
+    noiseStopTimer = noiseReleaseTimer = 0;
   }
   function noiseTarget() { return Math.max(0, Math.min(NOISE_MAX_GAIN, noiseVol * NOISE_MAX_GAIN)); }
   function rampNoise(target) {
@@ -690,10 +726,33 @@
   // 仅在「专注阶段 · 运行中 · 未暂停 · 未到收尾」播放；其余状态淡出。
   function updateNoise() {
     const shouldPlay = noiseOn && running && !paused && !pendingSession && phase === 'focus';
-    if (shouldPlay) { ensureAudio(); ensureNoiseChain(); }
-    if (shouldPlay === noisePlaying) return;
+    if (shouldPlay) {
+      clearNoiseTimers();
+      noisePlaying = true;
+      ensureAudio();
+      ensureNoiseChain();
+      rampNoise(noiseTarget());
+      return;
+    }
+    if (noisePlaying) rampNoise(0);
     noisePlaying = shouldPlay;
-    rampNoise(shouldPlay ? noiseTarget() : 0);
+    // 短暂停顿复用 PCM；关闭、完成及休息阶段直接放弃缓存。静音不再无限循环。
+    if (!noiseOn || !running || pendingSession || phase !== 'focus') {
+      window.clearTimeout(noiseReleaseTimer);
+      noiseReleaseTimer = 0;
+      releaseNoiseBuffer();
+    } else if (!noiseReleaseTimer && (noiseBuffer || noiseLoading)) {
+      noiseReleaseTimer = window.setTimeout(() => {
+        noiseReleaseTimer = 0;
+        if (!noisePlaying) releaseNoiseBuffer();
+      }, NOISE_PAUSE_CACHE_MS);
+    }
+    if (noiseNodes && !noiseStopTimer) {
+      noiseStopTimer = window.setTimeout(() => {
+        noiseStopTimer = 0;
+        if (!noisePlaying) stopNoiseSource();
+      }, NOISE_FADE_OUT_MS);
+    }
   }
   function updateNoiseVolRow() {
     if (noiseVolRow) noiseVolRow.hidden = !noiseOn;
@@ -4452,6 +4511,10 @@
   window.addEventListener('pagehide', () => {
     persistRuntime();
     stopInterval();
+    noisePlaying = false;
+    clearNoiseTimers();
+    releaseNoiseBuffer();
+    stopNoiseSource();
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {});
   });
   window.addEventListener('pageshow', (event) => {
@@ -4574,7 +4637,8 @@
     getViewMode() { return viewMode; },
     isViewLocked: sessionLocksView,
   };
-  preloadFocusView().finally(() => {
+  const initialWarmup = window.RelatumFeatureRuntime?.preloadEnabled === false ? Promise.resolve() : preloadFocusView();
+  initialWarmup.finally(() => {
     window.CanvasFocus = canvasFocusApi;
     document.dispatchEvent(new CustomEvent('canvasfocus:ready'));
   });

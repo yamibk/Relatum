@@ -305,9 +305,19 @@
         "/api/career-report"
       ],
       "default": true
+    },
+    {
+      "id": "runtime.preload",
+      "label": "后台预加载",
+      "description": "提前准备未打开的页面、笔记编辑器和展示字体。取消后首次使用时加载，减少启动后的内存占用；所有已选功能仍可使用。",
+      "default": true
     }
   ],
   "sharedScripts": {
+    "markdown-table.js": [
+      "canvas.editor",
+      "notes"
+    ],
     "graph-gl.js": [
       "canvas.activity",
       "editor.graph"

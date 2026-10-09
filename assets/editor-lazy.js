@@ -12,7 +12,11 @@
       script.src = src;
       script.async = true;
       script.addEventListener('load', resolve, { once: true });
-      script.addEventListener('error', () => reject(new Error('无法加载 ' + src)), { once: true });
+      script.addEventListener('error', () => {
+        script.remove();
+        scriptJobs.delete(src);
+        reject(new Error('无法加载 ' + src));
+      }, { once: true });
       document.head.appendChild(script);
     });
     scriptJobs.set(src, job);
@@ -30,7 +34,11 @@
       link.rel = 'stylesheet';
       link.href = href;
       link.addEventListener('load', resolve, { once: true });
-      link.addEventListener('error', () => reject(new Error('无法加载 ' + href)), { once: true });
+      link.addEventListener('error', () => {
+        link.remove();
+        styleJobs.delete(href);
+        reject(new Error('无法加载 ' + href));
+      }, { once: true });
       document.head.appendChild(link);
     });
     styleJobs.set(href, job);
@@ -51,7 +59,7 @@
     if (!aiRuntimePromise) {
       aiRuntimePromise = loadScript('ai.js').then(() => {
         window.RelatumAIReady = true;
-      });
+      }).catch(error => { aiRuntimePromise = null; throw error; });
     }
     return aiRuntimePromise;
   }
@@ -85,7 +93,8 @@
     if (!window.RelatumFeatureRuntime.enabled('editor.graph')) return Promise.resolve(false);
     if (!graphRuntimePromise) {
       graphRuntimePromise = loadScriptsInOrder(['graph-gl.js', 'graph-engine.js', 'graph-view.js'])
-        .then(() => document.dispatchEvent(new CustomEvent('editor:graph-runtime-ready')));
+        .then(() => document.dispatchEvent(new CustomEvent('editor:graph-runtime-ready')))
+        .catch(error => { graphRuntimePromise = null; throw error; });
     }
     return graphRuntimePromise;
   }
@@ -123,13 +132,15 @@
     scheduleIdle(() => {
       // 首次交互仍可抢先触发同一 Promise；若用户暂未操作，则在揭幕后空闲补齐，
       // 避免第一次展开 AI 或图谱时才开始下载运行时。
-      ensureAIRuntime().catch((error) => console.warn('[编辑器] AI 运行时预热失败', error));
-      ensureGraphRuntime().catch((error) => console.warn('[编辑器] 图谱运行时预热失败', error));
+      if (window.RelatumFeatureRuntime.preloadEnabled !== false) {
+        ensureAIRuntime().catch((error) => console.warn('[编辑器] AI 运行时预热失败', error));
+        ensureGraphRuntime().catch((error) => console.warn('[编辑器] 图谱运行时预热失败', error));
+      }
     }, 3200);
     scheduleIdle(() => {
       loadScript('tooltip.js').catch((error) => console.warn('[编辑器] 说明框加载失败', error));
       // 空画布不再让 12MB 手写字体阻塞首屏；空闲后补齐，使首次使用文字工具时通常已就绪。
-      if (window.RelatumFontLoader && typeof window.RelatumFontLoader.ensureKose === 'function') {
+      if (window.RelatumFeatureRuntime.preloadEnabled !== false && window.RelatumFontLoader && typeof window.RelatumFontLoader.ensureKose === 'function') {
         window.RelatumFontLoader.ensureKose();
       }
     }, 2400);

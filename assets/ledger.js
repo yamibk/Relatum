@@ -1740,7 +1740,7 @@
   mount();
   // 与起步页其他重页一样，首屏空闲时就预取整本账本，
   // 用户第一次翻到记账视图时直接消费内存快照。
-  warmup();
+  if (window.RelatumFeatureRuntime?.preloadEnabled !== false) warmup();
   window.CanvasLedger = {
     activate() {
       finalizePageEntranceExit(true);
