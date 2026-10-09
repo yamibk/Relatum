@@ -14,6 +14,8 @@
 .note-canvas-frame .note-live-image-resize-handle { background: #333; box-shadow: 0 1px 4px rgba(0,0,0,.22); }
 .note-canvas-text { min-height: 22px; }
 .note-canvas-input { display: block; resize: none; border: 0; outline: 0; width: 100%; min-height: 22px; padding: 0; margin: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; white-space: pre-wrap; }
+.note-canvas-input { scrollbar-width: none; }
+.note-canvas-input::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .note-canvas-edge-label { position: absolute; padding: 2px 5px; border-radius: 3px; transform: translate(-50%, -50%); background: var(--surface, #fff); font: 13px/1.4 system-ui, sans-serif; white-space: pre-wrap; }
 .note-canvas-edge-label.is-selected { outline: 1px solid #505050; }
 .note-canvas-box { position: absolute; box-sizing: border-box; border: 1px solid rgba(0,0,0,.28); background: rgba(0,0,0,.035); pointer-events: none; z-index: 5; }
