@@ -13,8 +13,7 @@
 .note-canvas-selection-outline { display: none; fill: none; stroke: var(--nc-selection); stroke-width: 6; pointer-events: none; }
 .note-canvas-node.is-selected .note-canvas-selection-outline { display: block; }
 .note-canvas-cylinder-cap { fill: none; pointer-events: none; }
-.note-canvas-content { position: absolute; display: flex; flex-direction: column; overflow: auto; scrollbar-width: thin; pointer-events: auto; }
-.note-canvas-content::-webkit-scrollbar { width: 4px; height: 4px; }
+.note-canvas-content { position: absolute; display: flex; flex-direction: column; overflow: auto; pointer-events: auto; }
 .note-canvas-content, .note-canvas-edge-label, .note-canvas-input { overscroll-behavior: contain; }
 .note-canvas-viewport:not(.is-active) .note-canvas-content, .note-canvas-viewport:not(.is-active) .note-canvas-edge-label { overflow: hidden; }
 .note-canvas-text { flex-shrink: 0; }
@@ -28,8 +27,9 @@
 .note-canvas-frame .note-live-image-resize-handle { background: #333; box-shadow: 0 1px 4px rgba(0,0,0,.22); }
 .note-canvas-text { min-height: 22px; }
 .note-canvas-input { display: block; flex-shrink: 0; box-sizing: border-box; resize: none; border: 0; outline: 0; width: 100%; min-height: 1px; padding: 0; margin: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; white-space: inherit; overflow-wrap: inherit; text-align: inherit; }
-.note-canvas-input { scrollbar-width: none; }
-.note-canvas-input::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.note-canvas-viewport :is(.note-canvas-content, .note-canvas-edge-label, .note-canvas-input) { scrollbar-width: none; scrollbar-gutter: auto; }
+.note-canvas-viewport :is(.note-canvas-content, .note-canvas-edge-label, .note-canvas-input)::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.note-canvas-viewport :is(.note-canvas-content, .note-canvas-edge-label, .note-canvas-input)::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .note-canvas-edge-label { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; overflow: auto; padding: 2px 5px; border-radius: 3px; transform: translate(-50%, -50%); background: var(--nc-fill); color: var(--nc-text); font: 13px/1.4 system-ui, sans-serif; white-space: pre-wrap; }
 .note-canvas-edge-label.is-selected { outline: 1px solid #505050; }
 .note-canvas-box { position: absolute; box-sizing: border-box; border: 1px solid rgba(0,0,0,.28); background: rgba(0,0,0,.035); pointer-events: none; z-index: 5; }

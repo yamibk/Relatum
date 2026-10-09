@@ -137,7 +137,11 @@
     host.dataset.styleReady='true';
     const groups = host.querySelector('[data-role="note-canvas-style-groups"]');
     groups.dataset.i18nManaged='true';
-    let defaultKind='node', textKind='nodeText', subscribed=null, unsubscribe=null, pending=null;
+    const scale=host.querySelector('[data-role="note-canvas-default-scale"]');
+    const resetDefaults=host.querySelector('[data-note-action="reset-canvas-settings"]');
+    const panels=new Map();
+    let defaultKind='node', subscribed=null, unsubscribe=null, pending=null, mode='', lastEngine=null, lastFocus=-1;
+    let positionFrame=0, pendingPosition=null;
     const controls=[];
     const kindNames={ node:['节点','Nodes'], nodeText:['节点正文','Node text'], edge:['连线','Edges'], edgeText:['连线标注','Edge labels'] };
     function automaticColor(key, kind) {
@@ -166,24 +170,29 @@
       const operation={engine,kind,patch,token,final}; pending=operation;
       engine.applySelectionStyle(kind,patch,{token,final}).then(()=>{ if(pending===operation) {pending=null;refresh(final===true&&!!token);} });
     }
-    function addFields(parent, kind, isDefault) {
-      fields[kind].forEach(f=>{
+    function usable(row) { return row.isConnected && !row.closest('[hidden]') && row.closest('[data-canvas-group]')?.dataset.canvasGroup===mode; }
+    function addFields(parent, kind, isDefault, list=fields[kind]) {
+      list.forEach(f=>{
         const row=document.createElement(f.type==='shapes'?'div':'label'); row.className='note-canvas-field'; row.dataset.field=f.key;
+        const update=(patch,token,final)=>{if(usable(row)) apply(kind,patch,isDefault,token,final);};
         const title=document.createElement('span'); title.textContent=copy(f.zh,f.en); row.appendChild(title);
         let input, output, cancelRange;
         if(f.type==='shapes') {
           input=document.createElement('div'); input.className='note-canvas-shapes';input.setAttribute('role','group');
           shapes.forEach(([key,zh,en])=>{
-            const button=document.createElement('button'); button.type='button'; button.dataset.shape=key;
+            const button=document.createElement('button'); button.type='button'; button.dataset.shape=key;button.disabled=true;
             button.title=copy(zh,en); button.setAttribute('aria-label',button.title);
             const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.setAttribute('viewBox','-2 -2 104 64');
             const path=document.createElementNS(svg.namespaceURI,'path'); path.setAttribute('d',outline(key,key==='circle'||key==='square'?60:100,60,10));
             if(key==='circle'||key==='square') path.setAttribute('transform','translate(20 0)');
             svg.appendChild(path); button.appendChild(svg); input.appendChild(button);
-            button.addEventListener('click',()=>apply(kind,{shape:key},isDefault));
+            button.addEventListener('click',()=>{if(!button.disabled) update({shape:key});});
           });
         } else if(f.type==='select') {
-          input=choice(f.options,'',value=>apply(kind,{[f.key]:value},isDefault));
+          let target=null;
+          const capture=()=>{const engine=isDefault?null:window.RelatumNoteCanvas?.getActive();target={engine,version:engine?.getSelection().version};};
+          input=choice(f.options,'',value=>{if(!input.disabled) update({[f.key]:value},target,true);});
+          input.addEventListener('pointerdown',capture);input.addEventListener('focus',capture);
           const mixed=new Option(copy('混合','Mixed'),''); mixed.disabled=true; input.prepend(mixed);
         }
         else {
@@ -191,7 +200,8 @@
           if(f.min!==undefined) { input.min=f.min; input.max=f.max; input.step=f.step; }
           let token=null;
           const freshToken=()=>{const engine=isDefault?null:window.RelatumNoteCanvas?.getActive();return {engine,version:engine?.getSelection().version};};
-          input.addEventListener('pointerdown',()=>{ if(f.type==='range') token=freshToken(); });
+          input.addEventListener('pointerdown',()=>{ token=freshToken(); });
+          input.addEventListener('focus',()=>{ if(f.type!=='range') token=freshToken(); });
           const cancel=(silent)=>{
             if(!token) return;token.cancelled=true;token.engine?.endSelectionStyle(token,false);
             if(token.beforeDefault) {const d=readDefaults();d[token.kind]=token.beforeDefault;try {localStorage.setItem(KEY,JSON.stringify(d));} catch (_) {}}
@@ -205,81 +215,135 @@
             else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)&&token?.cancelled) token=freshToken();
           });
           input.addEventListener('input',()=>{
-            if(!input.isConnected) return;
+            if(!usable(row)||input.disabled) return;
             if(token?.cancelled) {refresh(true);return;}
             if(f.type==='number' && (input.value==='' || !input.validity.valid)) return;
             if(f.type==='range'&&!token) token=freshToken();
             const value=f.type==='checkbox'?input.checked:f.type==='color'?input.value:Number(input.value);
-            apply(kind,{[f.key]:value},isDefault,token,f.type!=='range');
+            update({[f.key]:value},token,f.type!=='range');
           });
           input.addEventListener('change',()=>{
-            if(!input.isConnected||f.type!=='range'||!token) return;
+            if(!usable(row)||input.disabled||f.type!=='range'||!token) return;
             const completed=token;token=null;
-            if(completed.cancelled) refresh(true);else apply(kind,{[f.key]:Number(input.value)},isDefault,completed,true);
+            if(completed.cancelled) refresh(true);else update({[f.key]:Number(input.value)},completed,true);
           });
           if(f.type==='range') { output=document.createElement('output'); row.appendChild(output); }
         }
         input.dataset.canvasStyle=kind+'.'+f.key; input.setAttribute('aria-label',copy(f.zh,f.en)); row.appendChild(input);
+        input.disabled=true;
         let automatic;
         if(f.type==='color') {
           automatic=document.createElement('button'); automatic.type='button'; automatic.className='note-canvas-auto-color';
+          automatic.disabled=true;
           automatic.textContent=copy('自动','Auto'); automatic.title=copy('跟随主题颜色','Follow theme color');
-          automatic.addEventListener('click',event=>{ event.preventDefault(); apply(kind,{[f.key]:''},isDefault); }); row.appendChild(automatic);
+          automatic.addEventListener('click',event=>{ event.preventDefault();if(!automatic.disabled) update({[f.key]:''}); }); row.appendChild(automatic);
         }
         let mixedLabel;
         if(f.type==='color'||f.type==='shapes') {
           mixedLabel=document.createElement('small');mixedLabel.className='note-canvas-mixed-state';mixedLabel.hidden=true;
           mixedLabel.textContent=copy('混合','Mixed');row.appendChild(mixedLabel);
         }
-        controls.push({row,input,output,f,kind,isDefault,automatic,mixedLabel,cancelRange}); parent.appendChild(row);
+        controls.push({row,input,output,f,kind,isDefault,automatic,mixedLabel,cancelRange,panel:parent.closest('[data-canvas-group]')}); parent.appendChild(row);
+      });
+    }
+    function resetButton(parent,kind,zh='恢复样式',en='Reset style',patch=defaults[kind]) {
+      const button=document.createElement('button');button.type='button';button.className='note-canvas-object-reset';
+      button.textContent=copy(zh,en);button.dataset.canvasReset=kind;
+      button.addEventListener('click',()=>{if(!button.disabled&&usable(button)) apply(kind,clone(patch),false);});parent.appendChild(button);
+    }
+    function section(panel,key,zh,en) {
+      const el=document.createElement('section');el.className='note-canvas-property-section';el.dataset.canvasSection=key;
+      const heading=document.createElement('h4');heading.textContent=copy(zh,en);el.appendChild(heading);panel.appendChild(el);return el;
+    }
+    function populateDefaults() {
+      const panel=panels.get('defaults');
+      for(let i=controls.length-1;i>=0;i--) if(controls[i].isDefault) {controls[i].cancelRange?.(true);controls.splice(i,1);}
+      panel.appendChild(scale);scale.hidden=defaultKind!=='node';
+      panel.querySelector('[data-canvas-default-fields]')?.remove();
+      const content=document.createElement('div');content.dataset.canvasDefaultFields='true';content.id='note-canvas-default-fields';
+      content.setAttribute('role','tabpanel');content.setAttribute('aria-labelledby','note-canvas-default-tab-'+defaultKind);
+      panel.appendChild(content);if(defaultKind==='node') content.appendChild(scale);addFields(content,defaultKind,true);
+      panel.querySelectorAll('[data-default-target]').forEach(button=>{
+        const selected=button.dataset.defaultTarget===defaultKind;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
       });
     }
     function build() {
+      const scroll=host.scrollTop;
       controls.forEach(control=>control.cancelRange?.(true));
-      groups.replaceChildren(); controls.length=0;
-      [['defaults','新建默认样式','New default styles'],['node','节点','Nodes'],['text','文字','Text'],['edge','连线','Edges']].forEach(([key,zh,en])=>{
-        const details=document.createElement('details'); details.dataset.canvasGroup=key;
-        const summary=document.createElement('summary'); summary.textContent=copy(zh,en); details.appendChild(summary);
-        if(key==='defaults'||key==='text') {
-          const kinds=key==='defaults'?Object.keys(defaults):['nodeText','edgeText'];
-          const switchKind=value=>{
-            if(key==='defaults') defaultKind=value; else textKind=value;
-            const open=[...groups.querySelectorAll('details')].filter(d=>d.open).map(d=>d.dataset.canvasGroup); build();
-            groups.querySelectorAll('details').forEach(d=>{ d.open=open.includes(d.dataset.canvasGroup); });
-          };
-          if(key==='text') {
-            const picker=document.createElement('div');picker.className='note-canvas-target-switch';picker.setAttribute('role','group');picker.setAttribute('aria-label',copy('文字目标','Text target'));
-            kinds.forEach(k=>{const button=document.createElement('button');button.type='button';button.textContent=copy(...kindNames[k]);button.dataset.textTarget=k;
-              button.setAttribute('aria-pressed',String(k===textKind));button.addEventListener('click',()=>switchKind(k));picker.appendChild(button);});details.appendChild(picker);
-          } else {
-            const picker=choice(kinds.map(k=>[k,...kindNames[k]]),defaultKind,switchKind);
-            picker.className='note-canvas-target';picker.setAttribute('aria-label',copy('样式目标','Style target'));details.appendChild(picker);
-          }
-        }
-        const kind=key==='defaults'?defaultKind:key==='text'?textKind:key;
-        addFields(details,kind,key==='defaults');
-        if(key!=='defaults') {
-          const reset=document.createElement('button'); reset.type='button'; reset.className='note-canvas-object-reset';
-          reset.textContent=copy('恢复样式','Reset style'); reset.dataset.canvasReset=kind;
-          reset.addEventListener('click',()=>apply(kind,clone(defaults[kind]),false)); details.appendChild(reset);
-          if(key==='edge') {
-            const position=document.createElement('button'); position.type='button'; position.className='note-canvas-object-reset'; position.dataset.canvasReset='edge';
-            position.textContent=copy('标注位置复位','Reset label position'); position.addEventListener('click',()=>apply('edge',{labelPosition:.5,labelOffsetX:0,labelOffsetY:0},false)); details.appendChild(position);
-          }
-        }
-        groups.appendChild(details);
-      }); refresh();
+      groups.replaceChildren();controls.length=0;panels.clear();
+      [['defaults','新建默认样式','New default styles'],['node','节点','Nodes'],['edge','连线','Edges'],['mixed','混合调色','Selection colors']].forEach(([key,zh,en])=>{
+        const panel=document.createElement('section');panel.dataset.canvasGroup=key;panel.hidden=key!==mode;
+        const title=document.createElement('h3');title.textContent=copy(zh,en);
+        title.className='note-canvas-panel-title';panel.appendChild(title);panels.set(key,panel);groups.appendChild(panel);
+      });
+      const creation=panels.get('defaults');
+      scale.querySelector('strong').textContent=copy('新建画布节点尺寸','New canvas node size');
+      scale.querySelector('input').setAttribute('aria-label',copy('新建画布节点尺寸','New canvas node size'));
+      const tabs=document.createElement('div');tabs.className='note-canvas-default-tabs';tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',copy('新建样式目标','New style target'));
+      ['node','edge','nodeText','edgeText'].forEach(kind=>{
+        const button=document.createElement('button');button.type='button';button.dataset.defaultTarget=kind;button.id='note-canvas-default-tab-'+kind;
+        button.setAttribute('role','tab');button.setAttribute('aria-controls','note-canvas-default-fields');button.textContent=copy(...kindNames[kind]);
+        button.addEventListener('click',()=>{if(!usable(button)||defaultKind===kind) return;defaultKind=kind;populateDefaults();refresh(true);host.scrollTop=0;});tabs.appendChild(button);
+      });
+      tabs.addEventListener('keydown',event=>{
+        const buttons=[...tabs.children],index=buttons.indexOf(event.target);
+        if(index<0||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowLeft'?-1:1)+buttons.length)%buttons.length;
+        buttons[next].click();buttons[next].focus({preventScroll:true});
+      });
+      creation.appendChild(tabs);populateDefaults();
+      const node=panels.get('node'),edge=panels.get('edge'),mixed=panels.get('mixed');
+      const subset=(kind,keys)=>keys.map(key=>fields[kind].find(f=>f.key===key));
+      addFields(section(node,'appearance','形状与外观','Shape and appearance'),'node',false,
+        subset('node',['shape','radius','bgColor','bgOpacity','hideBackground','borderColor','borderWidth']));
+      addFields(section(node,'size','尺寸','Size'),'node',false,subset('node',['width','height','autoHeight','paddingX','paddingY']));
+      resetButton(node,'node');
+      const body=section(node,'nodeText','正文排版','Body text');addFields(body,'nodeText',false);resetButton(body,'nodeText');
+      addFields(section(edge,'appearance','路径与外观','Path and appearance'),'edge',false,subset('edge',['curve','cornerRadius','lineStyle','color','width']));
+      addFields(section(edge,'connections','连接与箭头','Connections and arrows'),'edge',false,subset('edge',['fromSide','toSide','arrowStart','arrowEnd','arrowSize']));
+      resetButton(edge,'edge');
+      const label=section(edge,'edgeText','连线标注','Edge label');
+      addFields(label,'edge',false,subset('edge',['labelPosition','labelOffsetX','labelOffsetY']));
+      resetButton(label,'edge','标注位置复位','Reset label position',{labelPosition:.5,labelOffsetX:0,labelOffsetY:0});
+      addFields(label,'edgeText',false);resetButton(label,'edgeText');
+      [['node','bgColor','节点填充','Node fill'],['node','borderColor','节点边框','Node border'],['nodeText','color','节点正文','Node text'],
+        ['edge','color','连线','Edge stroke'],['edgeText','color','标注文字','Label text']].forEach(([kind,key,zh,en])=>
+          addFields(mixed,kind,false,[{...fields[kind].find(f=>f.key===key),zh,en}]));
+      refresh(true);host.scrollTop=scroll;
+    }
+    function position() {
+      if(positionFrame||pendingPosition===null) return;
+      positionFrame=requestAnimationFrame(()=>{
+        positionFrame=0;if(host.hidden) return;
+        const target=pendingPosition;pendingPosition=null;
+        const el=target==='top'?null:panels.get(mode)?.querySelector(`[data-canvas-section="${target}"]`);
+        host.scrollTop=el?host.scrollTop+el.getBoundingClientRect().top-host.getBoundingClientRect().top-16:0;
+      });
     }
     function refresh(force) {
       const engine=window.RelatumNoteCanvas?.getActive()||null;
       if(engine!==subscribed) { unsubscribe?.(); subscribed=engine; unsubscribe=engine?.subscribeSelection(refresh); }
       const selection=engine?.getSelection(), d=readDefaults(), normalized={};
-      controls.forEach(({row,input,output,f,kind,isDefault,automatic,mixedLabel})=>{
+      const next=selection?.nodes.length?(selection.edges.length?'mixed':'node'):selection?.edges.length?'edge':'defaults';
+      if(next!==mode||engine!==lastEngine) {
+        const previous=mode;mode=next;lastEngine=engine;lastFocus=-1;
+        controls.filter(c=>c.panel?.dataset.canvasGroup===previous).forEach(c=>{c.cancelRange?.(true);c.input.querySelectorAll?.('button').forEach(b=>{b.disabled=true;});c.input.disabled=true;if(c.automatic) c.automatic.disabled=true;});
+        panels.forEach((panel,key)=>{panel.hidden=key!==mode;});pendingPosition='top';
+      }
+      resetDefaults.hidden=mode!=='defaults';
+      if(selection&&selection.focusVersion!==lastFocus) {
+        lastFocus=selection.focusVersion;
+        if((mode==='node'&&selection.focusKind==='nodeText')||(mode==='edge'&&selection.focusKind==='edgeText')) pendingPosition=selection.focusKind;
+      }
+      position();
+      controls.forEach(({row,input,output,f,kind,isDefault,automatic,mixedLabel,panel})=>{
+        if(panel.hidden) return;
         const records=isDefault?[d[kind]]:(kind==='node'||kind==='nodeText'?selection?.nodes:selection?.edges)||[];
         const all=isDefault?records:normalized[kind]||(normalized[kind]=records.map(r=>values(kind,r)));
         const first=all[0]||defaults[kind], value=first[f.key], mixed=all.some(r=>r[f.key]!==value);
         const disabled=!isDefault && (!records.length||selection.readOnly||selection.busy);
         const irrelevant=f.key==='radius' && all.some(r=>r.shape!=='rounded-rect') || f.key==='cornerRadius' && all.some(r=>r.curve!=='rounded-elbow');
+        row.hidden=irrelevant;
         row.classList.toggle('is-disabled',disabled||irrelevant); row.classList.toggle('is-mixed',mixed);
         if(mixedLabel) mixedLabel.hidden=!mixed;
         if(f.type==='shapes') input.querySelectorAll('button').forEach(b=>{ b.disabled=disabled; b.setAttribute('aria-pressed',String(!mixed&&b.dataset.shape===value)); });
@@ -303,11 +367,10 @@
     document.addEventListener('relatum:note-canvas-selection',refresh);
     window.addEventListener('blur',()=>{controls.forEach(control=>control.cancelRange?.(true));refresh(true);});
     new MutationObserver(()=>refresh(true)).observe(document.body,{attributes:true,attributeFilter:['data-start-theme']});
-    document.addEventListener('relatum:languagechange',()=>{
-      const open=[...groups.querySelectorAll('details')].filter(d=>d.open).map(d=>d.dataset.canvasGroup);build();
-      groups.querySelectorAll('details').forEach(d=>{d.open=open.includes(d.dataset.canvasGroup);});
-    });
-    host.querySelector('[data-note-action="reset-canvas-settings"]').addEventListener('click',()=>{
+    document.addEventListener('relatum:languagechange',build);
+    new MutationObserver(position).observe(host,{attributes:true,attributeFilter:['hidden']});
+    resetDefaults.addEventListener('click',()=>{
+      if(mode!=='defaults') return;
       try { localStorage.removeItem(KEY); } catch (_) {} resetScale?.(); refresh();
     });
     build();

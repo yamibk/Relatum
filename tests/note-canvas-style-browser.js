@@ -43,6 +43,15 @@ async function run(browser, full, fallback=false) {
     await page.goto(url);await page.waitForFunction(()=>window.T?.state.initialized);
     const settings=page.locator('[data-role="note-canvas-settings"]');
     assert.equal(await settings.locator('[data-shape]').count(),24);
+    assert.equal(await settings.locator('details, select.note-canvas-target').count(),0);
+    const defaultTabs=settings.locator('[data-canvas-group="defaults"] [role="tab"]');assert.equal(await defaultTabs.count(),4);
+    for(const kind of ['node','edge','nodeText','edgeText']) {
+      const tab=settings.locator(`[data-default-target="${kind}"]`);await tab.click();
+      assert.equal(await tab.getAttribute('aria-selected'),'true');assert.equal(await settings.locator('[role="tab"][aria-selected="true"]').count(),1);
+      assert.equal(await settings.locator('[data-canvas-default-fields] [data-canvas-style]').evaluateAll(els=>new Set(els.map(el=>el.dataset.canvasStyle.split('.')[0])).size),1);
+      assert.equal(await settings.locator('[data-role="note-canvas-default-scale"]').isVisible(),kind==='node');
+    }
+    await settings.locator('[data-default-target="edgeText"]').press('Home');assert.equal(await settings.locator('[data-default-target="node"]').getAttribute('aria-selected'),'true');
     assert.equal(requests.filter(r=>/note-canvas\//.test(r)).length,0,'sidebar alone never starts the renderer');
     assert.equal(await settings.locator('[data-canvas-group="node"] input:enabled').count(),0);
     assert.equal((await settings.innerText()).includes('当前画布'),false);
@@ -55,7 +64,7 @@ async function run(browser, full, fallback=false) {
     const apply=(kind,patch,options)=>page.evaluate(async ({kind,patch,options})=>RelatumNoteCanvas.getActive().applySelectionStyle(kind,patch,options),{kind,patch,options});
     const undo=()=>page.evaluate(()=>RelatumNoteCanvas.getActive().travel(false));
     const group=kind=>settings.locator(`[data-canvas-group="${kind}"]`);
-    async function openGroup(kind) {const element=group(kind);if(!await element.evaluate(el=>el.open)) await element.locator('summary').click();}
+    const panelMode=()=>settings.locator('[data-canvas-group]:visible').getAttribute('data-canvas-group');
     async function point(fraction,key='e') {
       return frame.evaluate((el,{fraction,key})=>{
         const adapter=el.__noteCanvas,edge=adapter.session.edges.get(key).edge,S=RelatumNoteCanvasStyle,G=RelatumNoteCanvasGeometry;
@@ -65,7 +74,24 @@ async function run(browser, full, fallback=false) {
         return {x:v.left+m.e+p.x*m.a,y:v.top+m.f+p.y*m.d,d:item.d};
       },{fraction,key});
     }
-    await a.click();await openGroup('node');
+    await a.click();
+    assert.equal(await panelMode(),'node');assert.equal(await settings.locator('[data-note-action="reset-canvas-settings"]').isVisible(),false);
+    assert.equal(await group('defaults').isVisible(),false);assert.equal(await group('node').locator('[data-canvas-style="nodeText.fontSize"]').isVisible(),true);
+    const nodePanel=await group('node').elementHandle();
+    await settings.evaluate(el=>{el.scrollTop=150;});await b.click();await settle();
+    assert.equal(await settings.evaluate(el=>el.scrollTop),150,'same-type selection retains panel scroll');
+    assert(await nodePanel.evaluate(el=>el===document.querySelector('[data-canvas-group="node"]')),'selection reuses panel DOM');await a.click();
+    const widthInput=group('node').locator('[data-canvas-style="node.width"]');
+    const inputBox=await widthInput.boundingBox();await widthInput.press('ArrowUp');await settle();assert.equal((await data()).nodes[0].width,161);
+    assert.equal(await widthInput.evaluate(el=>getComputedStyle(el).appearance),'textfield');
+    assert.equal((await widthInput.boundingBox()).width,inputBox.width,'numeric controls keep their dimensions without spinners');await undo();await settle();
+    const alignSelect=group('node').locator('[data-canvas-style="nodeText.textAlign"]');await alignSelect.focus();await b.click();
+    await alignSelect.evaluate(el=>{el.value='right';el.dispatchEvent(new Event('change',{bubbles:true}));});await settle();
+    assert.equal((await data()).nodes[1].textAlign,undefined,'a delayed select change cannot retarget another node');assert.equal(await alignSelect.inputValue(),'left');await a.click();
+    await page.locator('[data-note-action="close-links"]').click();await a.click();assert.equal(await page.locator('.note-workspace').evaluate(el=>el.classList.contains('links-overlay-open')),false,'selection does not open the sidebar');
+    await page.locator('[data-note-action="toggle-notebooks"]').click();await settle();assert.equal(await panelMode(),'node','manually opening the sidebar retains selection');
+    await page.locator('[data-note-action="side-links"]').click();await a.click();assert.equal(await page.evaluate(()=>T.state.sideMode),'links','selection does not change the chosen sidebar tab');
+    await page.locator('[data-note-action="side-canvas"]').click();await settle();assert.equal(await panelMode(),'node','canvas tab activation retains selection');
     assert(await page.evaluate(()=>{
       const S=RelatumNoteCanvasStyle,G=RelatumNoteCanvasGeometry,curves=['straight','bezier','smooth','elbow','rounded-elbow'];
       for(const [shape] of S.shapes) for(const curve of curves) for(const side of ['auto','top','right','bottom','left']) {
@@ -91,6 +117,17 @@ async function run(browser, full, fallback=false) {
           expected:RelatumNoteCanvasStyle.contains(shape,el.offsetWidth,el.offsetHeight,8,el.offsetWidth*.06,el.offsetHeight*.06),path:el.querySelector('.note-canvas-fill').getAttribute('d')};
       },shape);
       assert.equal(hit.actual,hit.expected,`${shape} uses its real outline for hit testing`);assert(hit.path.length>10);
+      await apply('node',{width:48,height:24,autoHeight:false});await settle();
+      assert.equal(await a.locator('.note-canvas-content').evaluate(el=>getComputedStyle(el).scrollbarWidth),'none');
+      assert.equal(await a.locator('.note-canvas-content').evaluate(el=>getComputedStyle(el,'::-webkit-scrollbar').width),'0px');
+      assert.equal(await a.locator('.note-canvas-content').evaluate(el=>el.offsetWidth-el.clientWidth),0,`${shape} reserves no scroll gutter`);
+      assert.equal(await group('node').locator('[data-field="radius"]').isVisible(),shape==='rounded-rect');
+      const smallNode=(await data()).nodes[0],smallHistory=await history(),corner=await frame.locator('[data-canvas-resize="a"][data-corner="se"]').boundingBox();
+      await page.mouse.move(corner.x+corner.width/2,corner.y+corner.height/2);await page.mouse.down();await page.mouse.move(corner.x+12,corner.y+12,{steps:3});await settle();
+      assert.equal(await a.locator('.note-canvas-content').evaluate(el=>getComputedStyle(el,'::-webkit-scrollbar-button').display),'none');
+      await a.screenshot({path:path.join(root,`shape-${shape}-drag.png`)});
+      await viewport.press('Escape');await page.mouse.up();await settle();assert.deepEqual((await data()).nodes[0],smallNode);assert.equal(await history(),smallHistory);
+      await undo();await settle();await a.click();
     }
     await apply('node',{shape:'rounded-rect',width:160,height:70,autoHeight:true});await settle();
     await page.screenshot({path:path.join(root,'styles-light-desktop.png')});
@@ -156,33 +193,44 @@ async function run(browser, full, fallback=false) {
     assert.deepEqual(await a.evaluate(el=>({w:el.offsetWidth,h:el.offsetHeight})),grownSize);
     assert.equal(await frame.evaluate(el=>el.__noteCanvas.engine.stats().geometryBuilds),grownGeometry,'appearance changes preserve an auto-grown shape and its geometry');
     while(await history()>overflowHistory) await undo();await settle();assert.deepEqual(await data(),beforeOverflow);
-    await a.click();await openGroup('text');await apply('nodeText',{fontSize:23,color:'#493b61',fontWeight:650,lineHeight:1.7,textAlign:'right',verticalAlign:'bottom',wrap:false});await settle();
+    await a.click();await apply('nodeText',{fontSize:23,color:'#493b61',fontWeight:650,lineHeight:1.7,textAlign:'right',verticalAlign:'bottom',wrap:false});await settle();
     assert.equal(await a.locator('.note-canvas-content').evaluate(el=>getComputedStyle(el).whiteSpace),'pre');
     assert.equal(await a.locator('.note-canvas-content').evaluate(el=>getComputedStyle(el).fontSize),'23px');
     // Panel edits wait for the native candidate and retain the selected object.
     await a.dblclick();const input=a.locator('textarea');await input.evaluate(el=>el.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true})));await input.fill('中文候选完成');
+    assert.equal(await page.evaluate(()=>RelatumNoteCanvas.getActive().getSelection().focusKind),'nodeText');
+    assert.equal(await input.evaluate(el=>document.activeElement===el),true,'panel navigation never takes the native input focus');
+    const textPosition=await settings.evaluate(el=>el.scrollTop);assert(textPosition>0,'editing body text locates its typography section');
     await page.evaluate(()=>{window.stylePending=RelatumNoteCanvas.getActive().applySelectionStyle('nodeText',{fontSize:26});});
     assert.equal(await input.count(),1);assert.equal((await data()).nodes[0].fontSize,23);
     await input.evaluate(el=>el.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:el.value})));await settle();assert.equal(await page.evaluate(()=>stylePending),true);
     assert.equal((await data()).nodes[0].text,'中文候选完成');assert.equal((await data()).nodes[0].fontSize,26);
+    assert.equal(await settings.evaluate(el=>el.scrollTop),textPosition,'style and lock notifications do not reposition the panel');
     // Moving to prose invalidates a style operation still waiting on a candidate.
     await a.dblclick();await input.evaluate(el=>el.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true})));await input.fill('第二次候选');
     await page.evaluate(()=>{window.staleStyle=RelatumNoteCanvas.getActive().applySelectionStyle('node',{bgColor:'#00ff00'});});
     await page.locator('.cm-line').filter({hasText:'前文'}).first().click();
     await input.evaluate(el=>el.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:el.value})));await settle();assert.equal(await page.evaluate(()=>staleStyle),false);
     assert.equal((await data()).nodes[0].bgColor,aFill);assert.equal(await group('node').locator('input:enabled').count(),0);
+    assert.equal(await panelMode(),'defaults');
     await a.click();await a.dblclick();await input.evaluate(el=>el.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true})));
     await page.evaluate(()=>{window.blurStyle=RelatumNoteCanvas.getActive().applySelectionStyle('node',{bgColor:'#00ff00'});window.dispatchEvent(new Event('blur'));});
     await input.evaluate(el=>el.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:el.value})));await settle();assert.equal(await page.evaluate(()=>blurStyle),false,'window blur cancels styles awaiting native input');assert.equal((await data()).nodes[0].bgColor,aFill);
-    await frame.locator('.note-canvas-edge-label[data-canvas-edge="e"]').click();await openGroup('edge');
+    await group('node').locator('[data-canvas-style="node.bgColor"]').focus();
+    await frame.locator('.note-canvas-edge-label[data-canvas-edge="e"]').click();await settle();
+    const beforeHiddenEvent=await data();await group('node').locator('[data-canvas-style="node.bgColor"]').evaluate(el=>{el.value='#ff0000';el.dispatchEvent(new Event('input',{bubbles:true}));});await settle();
+    assert.deepEqual(await data(),beforeHiddenEvent,'hidden cached controls ignore late native input');
+    assert.equal(await panelMode(),'edge');assert.equal(await group('node').isVisible(),false);
+    assert.equal(await page.evaluate(()=>RelatumNoteCanvas.getActive().getSelection().focusKind),'edgeText');
+    assert(await settings.evaluate(el=>el.scrollTop>0),'clicking a label locates its section');
     const paths=[];
-    for(const curve of ['straight','bezier','smooth','elbow','rounded-elbow']) {await apply('edge',{curve});await settle();paths.push((await point(.3)).d);}
+    for(const curve of ['straight','bezier','smooth','elbow','rounded-elbow']) {await apply('edge',{curve});await settle();paths.push((await point(.3)).d);assert.equal(await group('edge').locator('[data-field="cornerRadius"]').isVisible(),curve==='rounded-elbow');}
     assert.equal(new Set(paths).size,5,'all five path types have distinct geometry');
     const labelStats=await frame.evaluate(el=>el.__noteCanvas.engine.stats());await apply('edge',{labelPosition:.35,labelOffsetX:10});await settle();
     assert.deepEqual(await frame.evaluate(el=>({builds:el.__noteCanvas.engine.stats().geometryBuilds,draws:el.__noteCanvas.engine.stats().staticDraws})),
       {builds:labelStats.geometryBuilds,draws:labelStats.staticDraws},'sidebar label positioning reuses geometry and never redraws the static edge layer');
     await apply('edge',{curve:'rounded-elbow',fromSide:'bottom',toSide:'top',cornerRadius:22,lineStyle:'dotted',color:'#49734e',width:4,arrowStart:true,arrowEnd:true,arrowSize:18,labelPosition:.65,labelOffsetX:15,labelOffsetY:-10});await settle();
-    await group('text').locator('[data-text-target="edgeText"]').click();await apply('edgeText',{fontSize:18,color:'#274d65',fontWeight:600,lineHeight:1.6,wrap:true,width:110,height:60,textAlign:'left',verticalAlign:'bottom'});await settle();
+    await apply('edgeText',{fontSize:18,color:'#274d65',fontWeight:600,lineHeight:1.6,wrap:true,width:110,height:60,textAlign:'left',verticalAlign:'bottom'});await settle();
     assert.equal((await data()).edges[0].labelStyle.width,110);
     assert.equal(await frame.locator('.note-canvas-edge-label[data-canvas-edge="e"]').evaluate(el=>getComputedStyle(el).width),'110px');
     if(fallback) {assert(await frame.locator('.note-canvas-live g').count()>0);assert.equal(await frame.locator('.note-canvas-live g').first().locator('polygon').count(),2);}
@@ -209,14 +257,30 @@ async function run(browser, full, fallback=false) {
     await page.mouse.move(fBox.x+fBox.width/2,fBox.y+fBox.height/2);await page.mouse.down();await page.mouse.move(fBox.x+fBox.width/2+20,fBox.y+fBox.height/2+20);await settle();
     await page.mouse.move(fBox.x+fBox.width/2,fBox.y+fBox.height/2);await page.mouse.up();await settle();
     assert.equal(await history(),past,'returning a label to its original offset has no history');assert.deepEqual((await data()).edges[1],beforeReturn);
-    const beforeDefaults=await data(),defaultHistory=await history();await openGroup('defaults');await group('defaults').locator('[data-shape="pill"]').click();await settle();assert.deepEqual(await data(),beforeDefaults);
+    await a.click({modifiers:['Shift']});await settle();assert.equal(await panelMode(),'mixed');
+    assert.equal(await group('mixed').locator('input').count(),5);assert.equal(await group('mixed').locator('input:not([type="color"])').count(),0);
+    const beforeMixed=await data();past=await history();
+    for(const [kind,key,color] of [['node','bgColor','#aabbcc'],['node','borderColor','#334455'],['nodeText','color','#223344'],['edge','color','#667788'],['edgeText','color','#112233']]) {
+      const before=await data(),count=await history();
+      await group('mixed').locator(`[data-canvas-style="${kind}.${key}"]`).evaluate((el,color)=>{el.value=color;el.dispatchEvent(new Event('input',{bubbles:true}));},color);await settle();
+      const expected=structuredClone(before);if(kind==='node'||kind==='nodeText') expected.nodes[0][key]=color;
+      else if(kind==='edgeText') expected.edges[1].labelStyle={...expected.edges[1].labelStyle,[key]:color};else expected.edges[1][key]=color;
+      assert.deepEqual(await data(),expected,`${kind}.${key} changes only its selected target category`);assert.equal(await history(),count+1);
+    }
+    const colored=await data();await group('mixed').locator('[data-field="bgColor"] button').click();await settle();assert.equal((await data()).nodes[0].bgColor,'');assert.deepEqual((await data()).edges,colored.edges);
+    while(await history()>past) await undo();await settle();assert.deepEqual(await data(),beforeMixed);assert.equal(await panelMode(),'mixed','history keeps the mixed selection panel');
+    await page.screenshot({path:path.join(root,'styles-mixed-desktop.png')});
+    await viewport.click({position:{x:15,y:15}});await settle();assert.equal(await panelMode(),'defaults');
+    await page.screenshot({path:path.join(root,'styles-defaults-desktop.png')});
+    const beforeDefaults=await data(),defaultHistory=await history();await group('defaults').locator('[data-shape="pill"]').click();await settle();assert.deepEqual(await data(),beforeDefaults);
     await group('defaults').locator('[data-canvas-style="node.width"]').press('Control+z');assert.deepEqual(await data(),beforeDefaults);assert.equal(await history(),defaultHistory,'undo in creation defaults does not change canvas history');
     await group('defaults').locator('[data-canvas-style="node.bgOpacity"]').evaluate(el=>{window.detachedRange=el;el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:3}));el.value='.2';el.dispatchEvent(new Event('input',{bubbles:true}));});
-    await group('defaults').locator('select.note-canvas-target').selectOption('edge');
+    await group('defaults').locator('[data-default-target="edge"]').click();
     await page.evaluate(()=>{detachedRange.value='.05';detachedRange.dispatchEvent(new Event('input',{bubbles:true}));detachedRange.dispatchEvent(new Event('change',{bubbles:true}));});
     assert.equal(await page.evaluate(()=>RelatumNoteCanvasStyle.readDefaults().node.bgOpacity),1,'rebuilding a panel cancels uncommitted defaults and ignores detached controls');
     await viewport.dblclick({position:{x:300,y:320}});await viewport.locator('textarea').fill('继承默认');await viewport.locator('textarea').press('Control+Enter');await settle();
     assert.equal((await data()).nodes.at(-1).shape,'pill');assert.equal((await data()).nodes.at(-1).kind,'index');
+    await viewport.click({position:{x:15,y:15}});await settle();
     await settings.locator('[data-note-action="reset-canvas-settings"]').click();assert.equal(await page.evaluate(()=>RelatumNoteCanvasStyle.readDefaults().node.shape),'rounded-rect');
     assert.equal((await data()).nodes.at(-1).shape,'pill','default reset preserves existing nodes');
     assert.equal(await page.evaluate(()=>CanvasNoteWorkspace.flushSave()),true);
@@ -235,9 +299,14 @@ async function run(browser, full, fallback=false) {
     await page.evaluate(()=>{document.documentElement.dataset.startTheme=document.body.dataset.startTheme='dark';});await settle();
     assert.equal(await a.locator('.note-canvas-fill').evaluate(el=>getComputedStyle(el).fill),'rgb(243, 217, 212)','custom colors survive theme changes');
     await page.setViewportSize({width:940,height:800});await settle();
-    assert(await settings.evaluate(el=>el.scrollWidth<=el.clientWidth));await page.screenshot({path:path.join(root,'styles-dark-narrow.png')});
+    assert(await settings.evaluate(el=>el.scrollWidth<=el.clientWidth));
+    assert(await defaultTabs.evaluateAll(els=>els.every(el=>el.scrollWidth<=el.clientWidth&&el.scrollHeight<=el.clientHeight)),'English tabs fit the narrow sidebar');
+    assert.equal(await settings.evaluate(el=>getComputedStyle(el).scrollbarWidth),'none');assert.equal(await settings.evaluate(el=>el.offsetWidth-el.clientWidth),0);
+    await group('defaults').locator('[data-canvas-style="edge.width"]').hover();const defaultScroll=await settings.evaluate(el=>el.scrollTop);await page.mouse.wheel(0,120);
+    await page.waitForFunction(scroll=>document.querySelector('[data-role="note-canvas-settings"]').scrollTop>scroll,defaultScroll);
+    await settings.evaluate(el=>{el.scrollTop=0;});await page.screenshot({path:path.join(root,'styles-dark-narrow.png')});
     await frame.locator('.note-canvas-edge-label[data-canvas-edge="e"]').click();
-    await settings.evaluate(el=>{el.querySelectorAll('details').forEach(d=>{d.open=d.dataset.canvasGroup==='edge';});el.scrollTop=0;});await settle();
+    await settings.evaluate(el=>{el.scrollTop=0;});await settle();
     await page.screenshot({path:path.join(root,'styles-edge-narrow.png')});
     assert.deepEqual(errors,[]);return {full,fallback,shapes:12,paths:5,screenshot:path.join(root,'styles-dark-narrow.png')};
   } catch(error) {

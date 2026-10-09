@@ -26,6 +26,7 @@
     let previewArrows=[];
     const selectionListeners = new Set();
     let selectionVersion = 0, styleSequence = 0, styleDraft = null, handleSignature = '', modelIdentity=session.data;
+    let focusKind = '', focusVersion = 0;
     let camera = Object.assign({ scale: 1, cx: 0, cy: 0 }, opts.viewport || {}), target = Object.assign({}, camera);
     camera = { scale: Number.isFinite(camera.scale) ? clamp(camera.scale, .25, 4) : 1,
       cx: Number.isFinite(camera.cx) ? camera.cx : 0, cy: Number.isFinite(camera.cy) ? camera.cy : 0 }; target = Object.assign({}, camera);
@@ -42,7 +43,7 @@
     function getSelection() {
       return { nodes: [...selectedNodes].map(key=>session.nodes.get(key)).filter(Boolean).map(node=>({...node})),
         edges: [...selectedEdges].map(key=>session.edges.get(key)?.edge).filter(Boolean).map(edge=>({...edge,labelStyle:{...edge.labelStyle}})),
-        readOnly, busy: locked(), version: selectionVersion };
+        readOnly, busy: locked(), version: selectionVersion, focusKind, focusVersion };
     }
     function styleInfo(kind, ids, patch) {
       const node=kind==='node'||kind==='nodeText';
@@ -104,10 +105,11 @@
       const hit = direct || document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-canvas-node]');
       return hit && viewport.contains(hit) ? hit.dataset.canvasNode : '';
     }
-    function selection(nextNodes, nextEdges) {
+    function selection(nextNodes, nextEdges, kind) {
+      if(kind || (!nextNodes.size && !nextEdges.size && focusKind)) { focusKind=kind||'';focusVersion++; }
       const nodesChanged=selectedNodes.size!==nextNodes.size||[...selectedNodes].some(key=>!nextNodes.has(key));
       const edgesChanged=selectedEdges.size!==nextEdges.size||[...selectedEdges].some(key=>!nextEdges.has(key));
-      if(!nodesChanged&&!edgesChanged) return;
+      if(!nodesChanged&&!edgesChanged) { if(kind) notifySelection();return; }
       endSelectionStyle(null,true); selectionVersion++;styleSequence++;
       selectedNodes.forEach(key => { if (!nextNodes.has(key)) nodes.get(key)?.classList.remove('is-selected'); });
       nextNodes.forEach(key => { if (!selectedNodes.has(key)) nodes.get(key)?.classList.add('is-selected'); });
@@ -561,6 +563,7 @@
       (edge?el:el.querySelector('.note-canvas-content')).appendChild(input);
       let resolve; const settled = new Promise(done => { resolve = done; });
       draft = { node: edge ? '' : key, edge: edge ? key : '', original: input.value, input, text, settled, resolve, composing: false, pending: null, isNew, frame: 0 };
+      focusKind=edge?'edgeText':'nodeText';focusVersion++;notifySelection();
       const current = draft;
       if(edge&&edgeCache.has(key)) renderLabel(edgeCache.get(key));
       const fit = () => { input.style.height = '0px';
@@ -600,7 +603,7 @@
         const next = new Set(selectedNodes);
         if (event.shiftKey) { next.has(key) ? next.delete(key) : next.add(key); }
         else if (!next.has(key)) { next.clear(); next.add(key); }
-        selection(next, event.shiftKey?new Set(selectedEdges):new Set());
+        selection(next, event.shiftKey?new Set(selectedEdges):new Set(), 'node');
         if (next.has(key)) startGesture(event, 'nodes', { ids: [...next], clicked:key,extend:event.shiftKey,positions: new Map([...next].map(id => { const n = session.nodes.get(id); return [id, { x: n.x, y: n.y }]; })) });
         return;
       }
@@ -609,7 +612,7 @@
         if(readOnly) return;
         const wasSelected=selectedEdges.has(edge),next=event.shiftKey?new Set(selectedEdges):new Set();
         if(event.shiftKey&&wasSelected) next.delete(edge);else next.add(edge);
-        selection(event.shiftKey?new Set(selectedNodes):new Set(),next);
+        selection(event.shiftKey?new Set(selectedNodes):new Set(),next,event.target.closest('.note-canvas-edge-label')?'edgeText':'edge');
         if(next.has(edge)&&!event.shiftKey) {
           const record=session.edges.get(edge)?.edge,style=S.values('edge',record);
           if(event.target.closest('.note-canvas-edge-label')) startGesture(event,'label',{key:edge,offset:{x:style.labelOffsetX,y:style.labelOffsetY}});
@@ -680,7 +683,10 @@
       } else if (event.key === 'F2' && selectedNodes.size === 1) { event.preventDefault(); event.stopPropagation(); edit([...selectedNodes][0], false, false); }
     });
     listen(viewport, 'keyup', event => { if (event.code === 'Space') { space = false; event.preventDefault(); event.stopPropagation(); } });
-    listen(document, 'pointerdown', event => { if (!host.contains(event.target)&&!event.target.closest?.('[data-role="note-canvas-settings"]')) suspend(); }, true);
+    listen(document, 'pointerdown', event => {
+      const sidebar=event.target.closest?.('[data-role="note-canvas-settings"], [data-note-action="side-canvas"], [data-note-action="toggle-notebooks"], [data-note-action="close-links"]');
+      if (!host.contains(event.target)&&!sidebar) suspend();
+    }, true);
     listen(window, 'blur', () => { styleSequence++;cancelGesture(); stopCamera(); finishEdit(true);endSelectionStyle(null,false); space = false; });
     listen(document, 'visibilitychange', () => { if (document.hidden) suspend(); });
     listen(viewport, 'lostpointercapture', () => { if (gesture) cancelGesture(); });

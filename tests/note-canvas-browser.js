@@ -82,8 +82,9 @@ async function run(browser, enabled, prewarm = false) {
     const settings = page.locator('[data-role="note-canvas-settings"]');
     assert.equal(await settings.isVisible(), true);
     assert.equal(await page.locator('[data-role="note-settings-pop"] [data-role="note-canvas-node-scale"]').count(), 0);
-    assert.equal(await settings.locator('details[open]').count(), 0);
-    assert.equal(await settings.locator('details').count(), 4);
+    assert.equal(await settings.locator('details').count(), 0);
+    assert.equal(await settings.locator('[role="tab"]').count(), 4);
+    assert.equal(await settings.locator('[data-canvas-group]:visible').getAttribute('data-canvas-group'), 'defaults');
     assert.equal(await settings.locator('[data-canvas-group="defaults"] [data-shape]').count(), 12);
     assert.equal(await settings.locator('[data-canvas-group="node"] input:enabled').count(), 0, 'object controls require a selection');
     assert.equal((await settings.innerText()).includes('规划中'), false);
@@ -362,8 +363,8 @@ async function run(browser, enabled, prewarm = false) {
     if (!await page.evaluate(() => document.querySelector('.note-workspace').classList.contains('links-overlay-open'))) await page.locator('[data-note-action="toggle-notebooks"]').click();
     await page.locator('[data-note-action="side-canvas"]').click();
     await page.evaluate(() => RelatumI18n.setLanguage('en')); await settle();
-    assert.equal(await settings.locator('h3').innerText(), 'Canvas settings');
-    await settings.locator('[data-canvas-group="node"] summary').click();
+    assert.equal(await settings.locator('#note-canvas-settings-title').innerText(), 'Canvas settings');
+    await frame.locator('.note-canvas-node').first().click();
     assert.equal(await settings.locator('[data-canvas-group="node"] button[aria-label="Diamond"]').count(), 1);
     await page.evaluate(() => RelatumI18n.setLanguage('zh')); await settle();
     assert.equal(await settings.locator('[data-canvas-group="node"] button[aria-label="菱形"]').count(), 1);
