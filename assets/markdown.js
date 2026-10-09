@@ -327,6 +327,73 @@
     return /[\s()]/.test(value) ? '<' + value + '>' : value;
   }
 
+  // Type recognition belongs to the existing Markdown layer, so a disabled
+  // canvas can remain literal without loading any optional script or asset.
+  function isCanvasImage(parsed) {
+    if (!parsed || parsed.syntax !== 'markdown') return false;
+    try { return /\.canvas$/i.test(decodeURIComponent(parsed.target)); } catch (_) { return false; }
+  }
+  function canvasTarget(note, target) {
+    try {
+      const value = decodeURIComponent(target).normalize('NFC');
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/|\\)/i.test(value) || value.includes('\\')) return '';
+      const parts = note.split('/').slice(0, -1);
+      for (const part of value.split('/')) { if (part === '..') { if (!parts.length) return ''; parts.pop(); } else if (part && part !== '.') parts.push(part); }
+      return parts.length === 2 && parts[0].toLowerCase() === 'canvases' && /\.canvas$/i.test(parts[1]) ? 'canvases/' + parts[1] : '';
+    } catch (_) { return ''; }
+  }
+  function canvasReferences(source) {
+    const refs = [], header = frontmatter(String(source)); let fence = '', html = false, htmlComment = false, percentComment = false, offset = 0;
+    String(source).split(/(?<=\n)/).forEach((original, index) => {
+      const line = original.replace(/[\r\n]+$/, ''), trimmed = line.trim(), marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (!header || offset >= header.to) {
+        if (fence) { if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = ''; }
+        else if (html) { if (htmlComment && line.includes('-->') || !htmlComment && !trimmed) html = htmlComment = false; }
+        else if (percentComment) { if ((line.match(/%%/g) || []).length % 2) percentComment = false; }
+        else if (marker) fence = marker[1];
+        else if (line.includes('%%')) percentComment = !!((line.match(/%%/g) || []).length % 2);
+        else if (line.includes('<!--') || /^ {0,3}<[A-Za-z/!?]/.test(line)) {
+          if (line.includes('<!--')) html = htmlComment = !line.slice(line.indexOf('<!--') + 4).includes('-->');
+          else html = !!trimmed;
+        } else if (/^ {0,3}!\[/.test(line)) {
+          const parsed = parseImage(line);
+          if (isCanvasImage(parsed)) refs.push({ from: offset, to: offset + line.length, parsed });
+        }
+      }
+      offset += original.length;
+    });
+    return refs;
+  }
+  function rewriteCanvasReferences(source, note, renamed, newNote) {
+    const changes = [];
+    canvasReferences(source).forEach(ref => {
+      const old = canvasTarget(note, ref.parsed.target); if (!old) return;
+      const key = Object.keys(renamed || {}).find(key => key.toLowerCase() === old.toLowerCase());
+      const target = key ? renamed[key] : old; if (!key && (!newNote || newNote === note)) return;
+      const directories = (newNote || note).split('/').slice(0, -1), parts = target.split('/');
+      while (directories.length && parts.length && directories[0].toLowerCase() === parts[0].toLowerCase()) { directories.shift(); parts.shift(); }
+      const relative = '../'.repeat(directories.length) + parts.map(part => encodeURIComponent(part).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase())).join('/');
+      const parsed = Object.assign({}, ref.parsed);
+      const oldName = old.split('/').pop(), newName = target.split('/').pop();
+      let value = parsed.source;
+      const labelEnd = closingBracket(value, parsed.leading.length + 1, '[', ']');
+      const targetAt = value.indexOf(parsed.target, labelEnd + 2);
+      value = value.slice(0, targetAt) + relative + value.slice(targetAt + parsed.target.length);
+      let replacement = null;
+      if (key && parsed.alt.toLowerCase() === oldName.toLowerCase()) replacement = newName;
+      else if (key && parsed.alt.toLowerCase() === oldName.slice(0, -7).toLowerCase()) replacement = newName.slice(0, -7);
+      if (replacement !== null) {
+        const labelAt = parsed.leading.length + 2;
+        const label = value.slice(labelAt, labelEnd), size = /\|[1-9]\d*(?:[xX][1-9]\d*)?$/.exec(label);
+        value = value.slice(0, labelAt) + replacement.replace(/[\\\[\]]/g, '\\$&') + (size ? size[0] : '') + value.slice(labelEnd);
+      }
+      changes.push({ from: ref.from, to: ref.to, insert: value });
+    });
+    let value = source;
+    changes.reverse().forEach(change => { value = value.slice(0, change.from) + change.insert + value.slice(change.to); });
+    return value;
+  }
+
   function serializeImage(parsed, dimensions) {
     if (!parsed || !parsed.target) return '';
     const width = Number(dimensions && dimensions.width);
@@ -783,6 +850,7 @@
     return html.replace(/\x00NIMAGE(\d+)\x00/g, function (_, idx) {
       const item = images[+idx];
       if (!item) return '';
+      if (isCanvasImage(item)) return escapeHtml(item.source);
       const target = escapeHtml(item.target);
       const alt = escapeHtml(item.alt || item.target.split('/').pop() || '');
       const sized = item.width
@@ -1264,6 +1332,10 @@
     highlightCode: highlightCode,
     markIntervals: markIntervals,
     parseImage: parseImage,
+    isCanvasImage: isCanvasImage,
+    canvasReferences: canvasReferences,
+    canvasTarget: canvasTarget,
+    rewriteCanvasReferences: rewriteCanvasReferences,
     serializeImage: serializeImage,
     parseImageBlock: parseImageBlock,
     serializeImageBlock: serializeImageBlock,

@@ -1698,6 +1698,7 @@
         <nav class="note-side-modes" aria-label="侧栏视图">
           <button type="button" data-note-action="side-notebooks">笔记本</button>
           <button type="button" data-note-action="side-links">链接</button>
+          <button type="button" data-note-action="side-canvas" data-feature="notes.canvas">画布</button>
         </nav>
         <button type="button" class="note-side-button" data-note-action="close-links"
           aria-label="关闭侧栏"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-x"/></svg></button>
@@ -1730,6 +1731,62 @@
           <div class="note-link-list" data-role="note-backlinks"></div>
         </section>
       </div>
+      <section class="note-canvas-settings" data-role="note-canvas-settings" data-feature="notes.canvas" aria-labelledby="note-canvas-settings-title" hidden>
+        <header class="note-canvas-settings-head">
+          <h3 id="note-canvas-settings-title">画布设置</h3>
+          <button type="button" class="note-settings-reset" data-note-action="reset-canvas-settings">恢复默认</button>
+        </header>
+        <h4>新建默认</h4>
+        <label class="note-settings-font">
+          <span><strong>新建画布节点尺寸</strong><output data-role="note-canvas-node-scale-value">100%</output></span>
+          <span class="note-settings-range" style="--default-pos:20%;">
+            <input type="range" min="50" max="300" step="5" value="100" data-role="note-canvas-node-scale" aria-label="新建画布节点尺寸">
+          </span>
+          <small aria-hidden="true"><i>50%</i><i>100% = 160 × 48</i><i>300%</i></small>
+        </label>
+        <p>本机新建默认值，只影响之后新建的节点。</p>
+        <p class="note-canvas-planning-copy">以下项目为规划中的设置，暂不生效。</p>
+        <details>
+          <summary><span>新建默认样式</span><small>规划中</small></summary>
+          <dl><dt>默认样式</dt><dd>节点类型、节点样式、文字样式、连线样式</dd></dl>
+        </details>
+        <details>
+          <summary><span>当前画布</span><small>规划中</small></summary>
+          <dl>
+            <dt>外框</dt><dd>默认尺寸与比例</dd>
+            <dt>视角</dt><dd>初始视角、适配内容</dd>
+            <dt>交互</dt><dd>网格与吸附、缩放和平移手感</dd>
+            <dt>布局</dt><dd>对齐、等距分布、自动布局</dd>
+          </dl>
+        </details>
+        <details>
+          <summary><span>节点</span><small>规划中</small></summary>
+          <dl>
+            <dt>类型</dt><dd>纯文字、便签、Markdown、图片</dd>
+            <dt>形状</dt><dd>矩形、圆角矩形、圆形、椭圆、菱形</dd>
+            <dt>尺寸</dt><dd>宽高、自动撑高、内边距、圆角</dd>
+            <dt>背景</dt><dd>颜色与透明度</dd>
+            <dt>边框</dt><dd>颜色与粗细</dd>
+          </dl>
+        </details>
+        <details>
+          <summary><span>文字</span><small>规划中</small></summary>
+          <p>分别用于节点正文与连线标注。</p>
+          <dl>
+            <dt>字体</dt><dd>字号、颜色、字重</dd>
+            <dt>排版</dt><dd>行距、换行、水平与垂直对齐</dd>
+          </dl>
+        </details>
+        <details>
+          <summary><span>连线</span><small>规划中</small></summary>
+          <dl>
+            <dt>路径</dt><dd>直线、曲线、折线、圆角折线</dd>
+            <dt>线条</dt><dd>线宽、颜色、实线、虚线、点线</dd>
+            <dt>箭头</dt><dd>起止箭头与大小</dd>
+            <dt>连接</dt><dd>连接位置、标注位置</dd>
+          </dl>
+        </details>
+      </section>
     </aside>
     <section class="note-image-text-tools note-side-popover" data-role="note-image-text-tools" role="toolbar"
       aria-label="图片文字工具" hidden inert>
@@ -1775,7 +1832,7 @@
           </button>
           <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
             data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
-            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文本框字号比例和编辑器快捷键。</span></div>
+            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字与画布节点尺寸和编辑器快捷键。</span></div>
             <footer>
               <button type="button" data-note-settings-action="reset-cancel">取消</button>
               <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>

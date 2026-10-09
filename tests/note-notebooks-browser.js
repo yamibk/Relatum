@@ -404,7 +404,7 @@ async function freePort() {
     await page.reload();
     await page.waitForFunction(() => window.__notebooksTest?.state.initialized);
     assert.equal(await page.evaluate(() => __notebooksTest.state.sideMode), 'notebooks', 'legacy history preference falls back to notebooks');
-    assert.equal(await page.locator('.note-side-modes button').count(), 2);
+    assert.deepEqual(await page.locator('.note-side-modes button').evaluateAll(buttons => buttons.map(button => button.dataset.noteAction)), ['side-notebooks', 'side-links', 'side-canvas']);
 
     await page.locator('[data-note-action="toggle-sort"]').click();
     await page.locator('#note-sort-menu [data-note-sort-mode="name-asc"]').click();

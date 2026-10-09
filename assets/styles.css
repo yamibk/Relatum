@@ -2005,6 +2005,25 @@ body.start-page[data-start-theme="dark"] .note-workspace { --note-control-hover:
 .note-side-modes button[aria-pressed="true"] { color: var(--text); }
 .note-notebooks-content { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .note-notebooks-content[hidden] { display: none; }
+.note-canvas-settings { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 14px 24px; color: var(--text); }
+.note-canvas-settings[hidden] { display: none; }
+.note-canvas-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 20px; }
+.note-canvas-settings h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.note-canvas-settings h4 { margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+.note-canvas-settings > p, .note-canvas-settings details > p { margin: 10px 0 16px; color: var(--text-tertiary); font-size: 11px; line-height: 1.7; }
+.note-canvas-settings .note-settings-font { padding: 12px 10px; }
+.note-canvas-settings .note-settings-font strong { font-size: 11px; }
+.note-canvas-settings .note-canvas-planning-copy { margin-top: 24px; }
+.note-canvas-settings details { margin: 0; border-top: 1px solid var(--note-chrome-line); }
+.note-canvas-settings summary { display: flex; align-items: center; gap: 7px; padding: 13px 0; font-size: 12px; font-weight: 550; cursor: pointer; list-style: none; }
+.note-canvas-settings summary::-webkit-details-marker { display: none; }
+.note-canvas-settings summary::before { content: ''; width: 5px; height: 5px; flex: none; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(-45deg); }
+.note-canvas-settings details[open] > summary::before { transform: rotate(45deg); }
+.note-canvas-settings summary small { margin-left: auto; color: var(--text-tertiary); font-size: 10px; font-weight: 400; }
+.note-canvas-settings summary:focus-visible, .note-canvas-settings button:focus-visible, .note-canvas-settings input:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
+.note-canvas-settings dl { margin: 0 0 16px 12px; font-size: 11px; line-height: 1.65; }
+.note-canvas-settings dt { margin-top: 10px; color: var(--text-secondary); font-weight: 550; }
+.note-canvas-settings dd { margin: 3px 0 0; color: var(--text-tertiary); }
 .note-notebook-actions { box-sizing: border-box; display: flex; justify-content: flex-end; align-items: center; height: 48px; min-height: 48px; flex: 0 0 48px; padding: 0 12px; gap: 5px; }
 .note-side-toolbar [hidden] { display: none; }
 .note-notebook-actions [data-note-action="new-notebook"] { font-size: 21px; font-weight: 400; }

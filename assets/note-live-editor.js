@@ -104,6 +104,78 @@
       : (markdownMini && typeof markdownMini.parseImage === 'function' ? markdownMini.parseImage(text) : null);
   }
 
+  const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
+  const canvasImage = parsed => !!window.MarkdownMini?.isCanvasImage(parsed);
+  let canvasRuntimePromise = null;
+  function loadCanvasRuntime() {
+    if (!canvasEnabled()) return Promise.reject(new Error('Canvas disabled'));
+    if (window.RelatumNoteCanvas) return Promise.resolve(window.RelatumNoteCanvas);
+    if (!canvasRuntimePromise) canvasRuntimePromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      const own = document.querySelector('script[src*="note-live-editor.js"]')?.src || new URL('note-live-editor.js', document.baseURI).href;
+      script.src = new URL('note-canvas/runtime.js', own).href;
+      script.onload = () => resolve(window.RelatumNoteCanvas); script.onerror = () => { script.remove(); canvasRuntimePromise = null; reject(new Error('画布模块加载失败')); };
+      document.head.appendChild(script);
+    });
+    return canvasRuntimePromise;
+  }
+
+  class CanvasBlockWidget extends WidgetType {
+    constructor(spec, path, options, coordinator, selected) {
+      super(); Object.assign(this, { spec, path, options, coordinator, selected });
+    }
+    eq(other) { return this.spec.id === other.spec.id && this.spec.from === other.spec.from && this.spec.source === other.spec.source && this.path === other.path && this.selected === other.selected; }
+    configuration(view, frame) {
+      const resolve = () => {
+        const current = this.coordinator.spec(view, this.spec.id);
+        return current && canvasImage(parseStandaloneImage(current.source)) ? current : null;
+      };
+      const parsed = parseStandaloneImage(this.spec.source);
+      const target = window.MarkdownMini.canvasTarget(this.path, parsed.target);
+      const ordinal = window.MarkdownMini.canvasReferences(view.state.doc.sliceString(0, this.spec.from))
+        .filter(ref => window.MarkdownMini.canvasTarget(this.path, ref.parsed.target).toLowerCase() === target.toLowerCase()).length;
+      return { note: this.path, parsed, ordinal, source: this.spec.source, selected: this.selected, readOnly: false, resolve,
+        select: () => { const range = resolve(); if (range && !compositionActive(view)) view.dispatch({ selection: EditorSelection.range(range.from, range.to) }); },
+        maxWidth: () => view.contentDOM.getBoundingClientRect().right - frame.getBoundingClientRect().left,
+        measure: () => { if (view.dom.isConnected && !compositionActive(view)) view.requestMeasure(); },
+        resize: (width, height) => {
+          const current = resolve(); if (!current || compositionActive(view)) return;
+          const replacement = window.MarkdownMini.serializeImage(parseStandaloneImage(current.source), { width, height });
+          view.dispatch({ changes: { from: current.from, to: current.to, insert: replacement },
+            selection: EditorSelection.range(current.from, current.from + replacement.length), userEvent: 'input.note-canvas-size' });
+        },
+        remove: () => { const current = resolve(); if (current && !compositionActive(view)) view.dispatch({ changes: { from: current.from, to: current.to, insert: '' }, selection: EditorSelection.cursor(current.from), userEvent: 'delete' }); },
+        onContextMenu: payload => this.options.onCanvasContextMenu?.(payload),
+      };
+    }
+    toDOM(view) {
+      const wrap = document.createElement('div'); wrap.className = 'note-live-rich-block is-canvas';
+      const frame = document.createElement('div'); frame.className = 'note-live-image-frame is-block has-explicit-size'; wrap.appendChild(frame);
+      const parsed = parseStandaloneImage(this.spec.source), width = parsed.width || 640, height = parsed.height || width * 9 / 16;
+      frame.style.cssText = `display:block;width:${width}px;max-width:100%;aspect-ratio:${width}/${height};border-radius:7px`;
+      frame.classList.toggle('is-selected', !!this.selected);
+      const holder = { widget: this, destroyed: false, observer: null }; wrap.__canvasWidget = holder;
+      holder.observer = new IntersectionObserver(entries => {
+        if (!entries.some(entry => entry.isIntersecting) || holder.destroyed) return;
+        holder.observer.disconnect();
+        loadCanvasRuntime().then(runtime => {
+          if (!holder.destroyed && wrap.isConnected) { holder.adapter = runtime.mount(frame, holder.widget.configuration(view, frame)); }
+        }).catch(error => { if (!holder.destroyed) { frame.textContent = error.message; view.requestMeasure(); } });
+      }); holder.observer.observe(wrap);
+      return wrap;
+    }
+    updateDOM(wrap, view) {
+      const holder = wrap.__canvasWidget;
+      if (!holder || holder.widget.path !== this.path || holder.widget.spec.id !== this.spec.id) return false;
+      const previous = parseStandaloneImage(holder.widget.spec.source), next = parseStandaloneImage(this.spec.source);
+      if (!previous || !next || window.MarkdownMini.canvasTarget(this.path, previous.target).toLowerCase() !== window.MarkdownMini.canvasTarget(this.path, next.target).toLowerCase()) return false;
+      holder.widget = this; holder.adapter?.update(this.configuration(view, wrap.firstChild));
+      wrap.firstChild.classList.toggle('is-selected', !!this.selected); return true;
+    }
+    destroy(wrap) { const holder = wrap?.__canvasWidget; if (holder) { holder.destroyed = true; holder.observer.disconnect(); holder.adapter?.destroy(); } }
+    ignoreEvent() { return true; }
+  }
+
   function fenceStart(text) {
     const match = /^\s{0,3}(`{3,}|~{3,})\s*([^\s`]*)[^\n]*$/.exec(text);
     return match ? {
@@ -247,9 +319,9 @@
           const line = doc.lineAt(node.from);
           if (node.to <= line.to && !doc.sliceString(line.from, node.from).trim() && !doc.sliceString(node.to, line.to).trim()) {
             const image = parseStandaloneImage(line.text);
-            if (image && image.target && !isRemoteTarget(image.target) && line.length <= MAX_RICH_LINE) {
+            if (image && image.target && !isRemoteTarget(image.target) && line.length <= MAX_RICH_LINE && (!canvasImage(image) || canvasEnabled())) {
               push({
-                from: line.from, to: line.to, kind: 'image', source: line.text,
+                from: line.from, to: line.to, kind: canvasImage(image) ? 'canvas' : 'image', source: line.text,
                 target: image.target, alt: image.alt, width: image.width, height: image.height,
               });
             }
@@ -298,9 +370,10 @@
         }
       }
       const standaloneImage = parseStandaloneImage(line.text);
-      if (standaloneImage && standaloneImage.target && !isRemoteTarget(standaloneImage.target)) {
+      if (standaloneImage && standaloneImage.target && !isRemoteTarget(standaloneImage.target) && line.to >= start && line.from <= end) {
+        if (canvasImage(standaloneImage) && !canvasEnabled()) { number += 1; continue; }
         push({
-          from: line.from, to: line.to, kind: 'image', source: line.text,
+          from: line.from, to: line.to, kind: canvasImage(standaloneImage) ? 'canvas' : 'image', source: line.text,
           target: standaloneImage.target, alt: standaloneImage.alt,
           width: standaloneImage.width, height: standaloneImage.height,
         });
@@ -556,7 +629,7 @@
     if (from < 0 || to <= from || to > view.state.doc.length) return null;
     const source = view.state.doc.sliceString(from, to);
     const parsed = parseStandaloneImage(source);
-    return parsed ? { from: from, to: to, parsed: parsed } : null;
+    return parsed && !canvasImage(parsed) ? { from: from, to: to, parsed: parsed } : null;
   }
 
   function imageRangeForLiveMode(state) {
@@ -1265,113 +1338,25 @@
       select(event);
     });
 
-    let cleanupResize = null;
-    if (frame.classList.contains('is-selected')) {
-      const handle = document.createElement('span');
-      handle.className = 'note-live-image-resize-handle';
-      handle.setAttribute('role', 'separator');
-      handle.setAttribute('aria-label', '等比例调整图片大小');
-      frame.appendChild(handle);
-      handle.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) return;
-        event.preventDefault(); event.stopPropagation();
-        if (imageTextController && (imageTextController.draftActive || imageTextController.switchFrame)) return;
-        const start = resolveRange();
-        if (!start) return;
-        const startRect = frame.getBoundingClientRect();
-        const line = frame.closest('.cm-line');
-        const contentRect = (line || view.contentDOM).getBoundingClientRect();
-        const startWidth = startRect.width;
-        const maxWidth = Math.max(48, contentRect.right - startRect.left);
-        let previewWidth = Math.round(startWidth);
-        let finished = false;
-        frame.classList.add('is-resizing');
-        try { handle.setPointerCapture(event.pointerId); } catch (captureError) {}
-
-        const preview = (clientX) => {
-          previewWidth = Math.round(clamp(startWidth + clientX - event.clientX, 48, maxWidth));
-          frame.classList.remove('has-explicit-box');
-          frame.classList.add('has-explicit-size');
-          frame.style.aspectRatio = '';
-          frame.style.width = previewWidth + 'px';
-          frame.style.maxWidth = '100%';
-          view.requestMeasure();
-        };
-        const removeListeners = () => {
-          handle.removeEventListener('pointermove', onMove);
-          handle.removeEventListener('pointerup', onUp);
-          handle.removeEventListener('pointercancel', onCancel);
-          document.removeEventListener('keydown', onKeyDown, true);
-          try {
-            if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
-          } catch (captureError) {}
-          cleanupResize = null;
-        };
-        const cancel = () => {
-          if (finished) return;
-          finished = true;
-          removeListeners();
-          frame.classList.remove('is-resizing');
-          frame.style.width = '';
-          frame.style.maxWidth = '';
-          frame.style.aspectRatio = '';
-          applyImageDimensions(frame, start.parsed);
-          view.requestMeasure();
-        };
-        const commit = () => {
-          if (finished) return;
-          finished = true;
-          removeListeners();
-          const current = resolveRange();
-          const markdownMini = window.MarkdownMini;
-          if (!current || !markdownMini || typeof markdownMini.serializeImage !== 'function') {
-            finished = false; cancel(); return;
-          }
-          const resizedImage = markdownMini.serializeImage(current.parsed.image || current.parsed, { width: previewWidth });
-          const replacement = current.parsed.imageTextItems && typeof markdownMini.serializeImageBlock === 'function'
-            ? markdownMini.serializeImageBlock(current.parsed, current.parsed.imageTextItems, resizedImage)
-            : resizedImage;
-          if (!replacement || replacement === current.parsed.source) {
-            frame.classList.remove('is-resizing');
-            frame.style.width = '';
-            frame.style.maxWidth = '';
-            frame.style.aspectRatio = '';
-            applyImageDimensions(frame, current.parsed);
-            view.requestMeasure();
-            return;
-          }
-          view.dispatch({
-            changes: { from: current.from, to: current.to, insert: replacement },
-            selection: EditorSelection.range(current.from, current.from + replacement.length),
-            scrollIntoView: true,
-            userEvent: 'input.image-text',
-          });
-          view.focus();
-        };
-        const onMove = (moveEvent) => {
-          if (moveEvent.pointerId !== event.pointerId) return;
-          moveEvent.preventDefault();
-          preview(moveEvent.clientX);
-        };
-        const onUp = (upEvent) => {
-          if (upEvent.pointerId !== event.pointerId) return;
-          upEvent.preventDefault();
-          commit();
-        };
-        const onCancel = (cancelEvent) => {
-          if (cancelEvent.pointerId === event.pointerId) cancel();
-        };
-        const onKeyDown = (keyEvent) => {
-          if (keyEvent.key !== 'Escape') return;
-          keyEvent.preventDefault(); keyEvent.stopPropagation(); cancel();
-        };
-        cleanupResize = cancel;
-        handle.addEventListener('pointermove', onMove);
-        handle.addEventListener('pointerup', onUp);
-        handle.addEventListener('pointercancel', onCancel);
-        document.addEventListener('keydown', onKeyDown, true);
-      });
-    }
+    const cleanupResize = window.RelatumNoteMediaFrame ? window.RelatumNoteMediaFrame.resize(frame, {
+      selected: frame.classList.contains('is-selected'), label: '等比例调整图片大小', resolve: resolveRange,
+      blocked: () => !!(imageTextController && (imageTextController.draftActive || imageTextController.switchFrame)),
+      maxWidth: () => (frame.closest('.cm-line') || view.contentDOM).getBoundingClientRect().right - frame.getBoundingClientRect().left,
+      preview(width) {
+        frame.classList.remove('has-explicit-box'); frame.classList.add('has-explicit-size');
+        frame.style.aspectRatio = ''; frame.style.width = width + 'px'; frame.style.maxWidth = '100%'; view.requestMeasure();
+      },
+      restore(current) { frame.style.width = ''; frame.style.maxWidth = ''; frame.style.aspectRatio = ''; applyImageDimensions(frame, current.parsed); view.requestMeasure(); },
+      commit(width) {
+        const current = resolveRange(), markdownMini = window.MarkdownMini; if (!current) return;
+        const resized = markdownMini.serializeImage(current.parsed.image || current.parsed, { width });
+        const replacement = current.parsed.imageTextItems ? markdownMini.serializeImageBlock(current.parsed, current.parsed.imageTextItems, resized) : resized;
+        if (!replacement || replacement === current.parsed.source) { applyImageDimensions(frame, current.parsed); view.requestMeasure(); return; }
+        view.dispatch({ changes: { from: current.from, to: current.to, insert: replacement },
+          selection: EditorSelection.range(current.from, current.from + replacement.length), scrollIntoView: true, userEvent: 'input.image-text' });
+        view.focus();
+      },
+    }) : null;
     owner.imageCleanup = () => {
       if (cleanupResize) cleanupResize();
       cancelDraft();
@@ -1408,6 +1393,8 @@
 
   function releaseReadingDocument(host) {
     if (!host) return;
+    host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
+    host.querySelectorAll('.note-live-image-frame').forEach(frame => frame.__canvasObserver?.disconnect());
     host.dataset.noteReadingEpoch = String((Number(host.dataset.noteReadingEpoch) || 0) + 1);
     if (window.MathJax && typeof window.MathJax.typesetClear === 'function') {
       try { window.MathJax.typesetClear([host]); } catch (error) {}
@@ -1428,7 +1415,14 @@
     const epoch = host.dataset.noteReadingEpoch;
     const imageTextSizer = createImageTextSizer();
     host.__relatumImageTextSizer = imageTextSizer;
-    const result = safeIsolatedResult(String(source || ''));
+    const original = String(source || '');
+    const canvasRefs = canvasEnabled() ? window.MarkdownMini.canvasReferences(original) : [];
+    let renderedSource = original;
+    canvasRefs.slice().reverse().forEach((ref, index) => {
+      const ordinal = canvasRefs.length - index - 1;
+      renderedSource = renderedSource.slice(0, ref.from) + '![](relatum-canvas-placeholder-' + ordinal + ')' + renderedSource.slice(ref.to);
+    });
+    const result = safeIsolatedResult(renderedSource);
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -1439,6 +1433,25 @@
       cell.append(...header.childNodes); header.replaceWith(cell);
     });
     content.querySelectorAll('[data-note-image]').forEach((image) => {
+      const placeholder = /^relatum-canvas-placeholder-(\d+)$/.exec(image.dataset.noteImage || '');
+      if (placeholder) {
+        const ref = canvasRefs[Number(placeholder[1])]; if (!ref) return;
+        const prior = image.closest('.md-local-image');
+        const frame = document.createElement('div'); frame.className = 'note-live-image-frame is-block has-explicit-size';
+        const width = ref.parsed.width || 640, height = ref.parsed.height || width * 9 / 16;
+        frame.style.cssText = `display:block;width:${width}px;max-width:100%;aspect-ratio:${width}/${height};border-radius:7px`;
+        prior.replaceWith(frame);
+        const target = window.MarkdownMini.canvasTarget(notePath, ref.parsed.target);
+        const ordinal = canvasRefs.slice(0, Number(placeholder[1])).filter(item => window.MarkdownMini.canvasTarget(notePath, item.parsed.target).toLowerCase() === target.toLowerCase()).length;
+        const observer = new IntersectionObserver(entries => {
+          if (!entries.some(entry => entry.isIntersecting)) return;
+          observer.disconnect();
+          loadCanvasRuntime().then(runtime => {
+            if (host.dataset.noteReadingEpoch === epoch && frame.isConnected) runtime.mount(frame, { note: notePath, parsed: ref.parsed, ordinal, readOnly: true, source: original.slice(ref.from, ref.to) });
+          }).catch(() => {});
+        }); observer.observe(frame); frame.__canvasObserver = observer;
+        return;
+      }
       image.src = safeOptions.imageUrl(String(notePath || ''), image.dataset.noteImage || '', image.dataset.noteImageSyntax);
       const frame = image.closest('.md-local-image');
       if (frame && frame.classList.contains('has-image-text')) {
@@ -1742,7 +1755,7 @@
   function selectedBlockImageIds(specs, state) {
     const selected = new Set();
     specs.forEach((spec) => {
-      if (spec.kind === 'image' && imageSelectionMatches(state, spec.from, spec.to)) selected.add(spec.id);
+      if ((spec.kind === 'image' || spec.kind === 'canvas') && imageSelectionMatches(state, spec.from, spec.to)) selected.add(spec.id);
     });
     return selected;
   }
@@ -1755,10 +1768,11 @@
   }
 
   function blockIsProjected(spec, activeIds) {
-    return usesBlockReplacement(spec) && (spec.kind === 'image' || spec.kind === 'table' || !activeIds.has(spec.id));
+    return usesBlockReplacement(spec) && (spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id));
   }
 
   function blockWidget(spec, path, options, coordinator, selected) {
+    if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
     return spec.kind === 'table' && options.tableController && window.MarkdownTable.parse(spec.source).ok
       ? options.tableController.widget(spec, path, coordinator)
       : new RichBlockWidget(spec, path, options, coordinator, selected);
@@ -2122,6 +2136,7 @@
           } else if (nodeRef.name === 'Image') {
             const raw = view.state.doc.sliceString(nodeRef.from, nodeRef.to);
             const parsed = parseMarkdownImage(raw);
+            if (canvasImage(parsed)) return false;
             if (parsed && parsed.target && !isRemoteTarget(parsed.target) && raw.length <= RICH_BLOCK_LIMIT) {
               add(nodeRef.from, nodeRef.to, Decoration.replace({
                 widget: new InlineImageWidget(parsed, nodeRef.from, nodeRef.to,
@@ -2245,7 +2260,7 @@
         matches(/!\[\[[^\]\n]+?\]\]/g, (match, from, to) => {
           const parsed = parseStandaloneImage(match[0]);
           protect(from, to);
-          if (parsed && parsed.target && !isRemoteTarget(parsed.target)) {
+          if (parsed && parsed.target && !isRemoteTarget(parsed.target) && !canvasImage(parsed)) {
             add(from, to, Decoration.replace({
               widget: new InlineImageWidget(parsed, from, to, imageSelectionMatches(view, from, to), notePath(), options),
               relatumAtomic: true,
@@ -2500,11 +2515,11 @@
     return true;
   }
 
-  function insertBlockCommand(view, kind, english) {
+  function insertBlockCommand(view, kind, english, canvasSource) {
     const transaction = view.state.changeByRange((range) => {
       const doc = view.state.doc;
       const selected = doc.sliceString(range.from, range.to);
-      const independent = kind === 'table' || kind === 'rule';
+      const independent = kind === 'table' || kind === 'rule' || kind === 'canvas';
       const from = independent ? doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to : range.from;
       const to = independent ? from : range.to;
       const leading = from > 0 ? (doc.sliceString(Math.max(0, from - 2), from).endsWith('\n\n') ? ''
@@ -2512,7 +2527,8 @@
       const trailing = to < doc.length ? (doc.sliceString(to, to + 2).startsWith('\n\n') ? ''
         : doc.sliceString(to, to + 1) === '\n' ? '\n' : '\n\n') : '';
       let block, offset;
-      if (kind === 'table') {
+      if (kind === 'canvas') { block = canvasSource; offset = block.length; }
+      else if (kind === 'table') {
         block = '|  |  |\n| --- | --- |\n|  |  |\n|  |  |'; offset = 2;
       } else if (kind === 'rule') { block = '---'; offset = block.length; }
       else if (kind === 'callout') {
@@ -2524,7 +2540,7 @@
         block = fence + '\n' + selected + (selected.endsWith('\n') ? '' : '\n') + fence; offset = fence.length + 1;
       }
       const contentFrom = from + leading.length + offset;
-      return { changes: { from, to, insert: leading + block + (kind === 'table' && to === doc.length ? '\n\n' : trailing) },
+      return { changes: { from, to, insert: leading + block + ((kind === 'table' || kind === 'canvas') && to === doc.length ? '\n\n' : trailing) },
         range: kind === 'code-block' && selected ? EditorSelection.range(contentFrom, contentFrom + selected.length) : EditorSelection.cursor(contentFrom) };
     });
     view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-command', scrollIntoView: true }));
@@ -2576,6 +2592,7 @@
     options = options || {};
     if (!host) throw new Error('Live Preview host is required');
     let currentPath = String(options.notePath || '');
+    let canvasHistoryPresent = /\.canvas/i.test(options.value || '');
     let suppressChanges = false;
     let documentSetSeq = 0;
     let destroyed = false;
@@ -3227,6 +3244,7 @@
             syncImageSelectionClass(update.view);
           }
           if (!update.docChanged || suppressChanges) return;
+          update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => { if (/\.canvas/i.test(inserted.toString())) canvasHistoryPresent = true; });
           if (inputSession.pending()) { inputSession.changed(); return; }
           const includeValue = update.transactions.some((transaction) => (
             transaction.isUserEvent('input.image-text')
@@ -3417,6 +3435,7 @@
         pendingShortcutBindings = null;
       }
       const value = documentState && typeof documentState.value === 'string' ? documentState.value : '';
+      canvasHistoryPresent = /\.canvas/i.test(value);
       currentPath = String(documentState && documentState.notePath || '');
       const end = value.length;
       const anchor = clamp(documentState && documentState.anchor, 0, end);
@@ -3462,15 +3481,70 @@
       return changes;
     }
 
-    function setNotePath(path, value) {
+    async function rewriteCanvasHistory(renamed, path, value) {
+      if (inputPending()) await whenInputSettled();
+      const oldPath = currentPath, original = view.state, scroll = view.scrollDOM.scrollTop;
+      const move = (state, command) => {
+        let next = state;
+        const success = command({ state, dispatch(transaction) { next = transaction.state; } });
+        return { success, state: next };
+      };
+      const past = [original], future = [];
+      let state = original, result, count = 0;
+      while ((result = move(state, CM.undo)).success) {
+        state = result.state; past.push(state);
+        if (++count % 20 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      state = original;
+      while ((result = move(state, CM.redo)).success) {
+        state = result.state; future.push(state);
+        if (++count % 20 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      past.reverse(); currentPath = path || oldPath;
+      const project = snapshot => {
+        const before = snapshot.doc.toString();
+        const after = window.MarkdownMini.rewriteCanvasReferences(before, oldPath, renamed || {}, currentPath);
+        const changes = minimalChanges(before, after), mapping = snapshot.changes(changes);
+        return { value: after, selection: EditorSelection.create(snapshot.selection.ranges.map(range => EditorSelection.range(mapping.mapPos(range.anchor), mapping.mapPos(range.head))), snapshot.selection.mainIndex) };
+      };
+      const first = project(past[0]); let rebuilt = makeState(first.value, first.selection), time = Date.now();
+      const replay = snapshot => {
+        const projected = project(snapshot), changes = minimalChanges(rebuilt.doc.toString(), projected.value);
+        rebuilt = rebuilt.update({ changes, selection: projected.selection,
+          annotations: Transaction.time.of(time += 1000), userEvent: 'input.canvas-reference-history' }).state;
+      };
+      past.slice(1).forEach(replay);
+      let replayedFuture = 0;
+      future.forEach(snapshot => { const before = rebuilt.doc; replay(snapshot); if (rebuilt.doc !== before) replayedFuture++; });
+      for (let i = 0; i < replayedFuture; i++) rebuilt = move(rebuilt, CM.undo).state;
+      if (typeof value === 'string' && rebuilt.doc.toString() !== value) {
+        rebuilt = rebuilt.update({ changes: minimalChanges(rebuilt.doc.toString(), value), annotations: Transaction.addToHistory.of(false) }).state;
+      }
+      coordinator.epoch++; suppressChanges = true;
+      try { view.setState(rebuilt); } finally { suppressChanges = false; }
+      inputSession.reset(view); view.__relatumInputSession = inputSession;
+      view.scrollDOM.scrollTop = scroll; view.requestMeasure();
+    }
+
+    function minimalChanges(before, value) {
+      if (before === value) return [];
+      let from = 0, end = 0;
+      while (from < Math.min(before.length, value.length) && before[from] === value[from]) from++;
+      while (end < Math.min(before.length, value.length) - from && before[before.length - end - 1] === value[value.length - end - 1]) end++;
+      return [{ from, to: before.length - end, insert: value.slice(from, value.length - end) }];
+    }
+
+    async function setNotePath(path, value) {
       if (destroyed) return;
       const next = String(path || '');
       if (inputPending()) {
         const sequence = documentSetSeq, previousPath = currentPath;
-        whenInputSettled().then(() => {
-          if (!destroyed && sequence === documentSetSeq && currentPath === previousPath) setNotePath(next, value);
+        return whenInputSettled().then(() => {
+          if (!destroyed && sequence === documentSetSeq && currentPath === previousPath) return setNotePath(next, value);
         });
-        return;
+      }
+      if (next !== currentPath && canvasHistoryPresent) {
+        await rewriteCanvasHistory({}, next, value); return;
       }
       const changes = typeof value === 'string' ? pathRewriteChanges(value) : [];
       const scroll = view.scrollDOM.scrollTop;
@@ -3549,7 +3623,8 @@
     function queryCommand(name, context) {
       if (!validCommandContext(context)) return { enabled: false, checked: false };
       if (name === 'copy' || name === 'cut') return { enabled: view.state.selection.ranges.some((range) => !range.empty), checked: false };
-      if (name === 'insert:table' || name === 'insert:rule') {
+      if (name === 'insert:canvas' && !canvasEnabled()) return { enabled: false, checked: false };
+      if (name === 'insert:table' || name === 'insert:rule' || name === 'insert:canvas') {
         const ends = view.state.selection.ranges.map((range) => view.state.doc.lineAt(range.to > range.from ? range.to - 1 : range.to).to);
         return { enabled: new Set(ends).size === ends.length, checked: false };
       }
@@ -3573,7 +3648,7 @@
       if (!queryCommand(name, context).enabled) return false;
       let done;
       if (name.startsWith('paragraph:')) done = paragraphCommand(view, name.slice(10));
-      else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en');
+      else if (name.startsWith('insert:')) done = insertBlockCommand(view, name.slice(7), document.documentElement.lang === 'en', text);
       else if (name === 'cut' || name === 'paste' || name === 'paste-plain') {
         const transaction = view.state.changeByRange((range) => ({ changes: { from: range.from, to: range.to, insert: text || '' },
           range: EditorSelection.cursor(range.from + (text || '').length) }));
@@ -3701,6 +3776,7 @@
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
+      rewriteCanvasHistory,
       whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       commandContext, queryCommand, executeCommand,
       get inputPending() { return inputPending(); },

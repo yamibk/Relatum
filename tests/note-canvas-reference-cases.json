@@ -1,0 +1,9 @@
+[
+  {"note":"A.md","source":"![A.canvas|640x360](canvases/A.canvas)\n","renamed":{"canvases/A.canvas":"canvases/B.canvas"},"expected":"![B.canvas|640x360](canvases/B.canvas)\n","count":1},
+  {"note":"A.md","source":"---\n\n![A.canvas](canvases/A.canvas)\n","renamed":{"canvases/A.canvas":"canvases/B.canvas"},"expected":"---\n\n![B.canvas](canvases/B.canvas)\n","count":1},
+  {"note":"A.md","source":"---\n![A.canvas](canvases/A.canvas)\n---\n\n![说明|320x180](<canvases/A.canvas> 'title')\r\n","renamed":{"canvases/A.canvas":"canvases/B.canvas"},"expected":"---\n![A.canvas](canvases/A.canvas)\n---\n\n![说明|320x180](<canvases/B.canvas> 'title')\r\n","count":1},
+  {"note":"A.md","source":"<!--\n```\n![A.canvas](canvases/A.canvas)\n-->\n\n%%\n```\n![A.canvas](canvases/A.canvas)\n%%\n\n![A.canvas](canvases/A.canvas)\n","renamed":{"canvases/A.canvas":"canvases/B.canvas"},"expected":"<!--\n```\n![A.canvas](canvases/A.canvas)\n-->\n\n%%\n```\n![A.canvas](canvases/A.canvas)\n%%\n\n![B.canvas](canvases/B.canvas)\n","count":1},
+  {"note":"A.md","source":"~~~md\n![A.canvas](canvases/A.canvas)\n~~~\n\ninline ![A.canvas](canvases/A.canvas)\n\n    ![A.canvas](canvases/A.canvas)\n\n![A.canvas](canvases/A.canvas)\n","renamed":{"canvases/A.canvas":"canvases/B.canvas"},"expected":"~~~md\n![A.canvas](canvases/A.canvas)\n~~~\n\ninline ![A.canvas](canvases/A.canvas)\n\n    ![A.canvas](canvases/A.canvas)\n\n![B.canvas](canvases/B.canvas)\n","count":1},
+  {"note":"Book/A.md","newNote":"A.md","source":"![自定义|640X360](../canvases/A.canvas)\r\n","renamed":{},"expected":"![自定义|640X360](canvases/A.canvas)\r\n","count":1},
+  {"note":"A.md","source":"![A\\[x\\].canvas|640x360](canvases/A%5Bx%5D.canvas)\n","renamed":{"canvases/A[x].canvas":"canvases/B[n].canvas"},"expected":"![B\\[n\\].canvas|640x360](canvases/B%5Bn%5D.canvas)\n","count":1}
+]

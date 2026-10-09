@@ -86,6 +86,7 @@ sandbox.window.window = sandbox.window;
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), sandbox);
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-live-editor.js'), 'utf8'), sandbox);
 const editorSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-live-editor.js'), 'utf8');
+const mediaFrameSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'note-media-frame.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'styles.css'), 'utf8');
 const vendorSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'vendor', 'codemirror', 'relatum-codemirror.min.js'), 'utf8');
 const vendorLock = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'vendor', 'codemirror', 'dependency-lock.json'), 'utf8'));
@@ -529,10 +530,10 @@ assert(editorSource.includes("Prec.highest(keymap.of([{ key: 'Enter', run: exitE
   'empty quote exit must outrank the Markdown continuation keymap');
 assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading markers must include their separator whitespace');
 assert(editorSource.includes("frame.className = 'note-live-image-frame '")
-  && editorSource.includes("handle.setPointerCapture(event.pointerId)")
+  && mediaFrameSource.includes("handle.setPointerCapture(event.pointerId)")
   && editorSource.includes("userEvent: 'input'"),
   'image widgets must remain visual, use pointer capture, and commit one editor transaction');
-assert(editorSource.includes("spec.kind === 'image' || spec.kind === 'table' || !activeIds.has(spec.id)"),
+assert(editorSource.includes("spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'table' || !activeIds.has(spec.id)"),
   'selected block images must remain projected instead of exposing their Markdown source');
 assert(stylesSource.includes('.note-live-rich-block.is-image { width: 100%; margin-right: 0; margin-left: 0; text-align: left;')
   && stylesSource.includes('.note-reading-content .md-local-image { position: relative; display: grid; justify-items: start;'),

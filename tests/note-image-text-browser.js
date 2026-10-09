@@ -12,7 +12,7 @@ const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><bas
 <link rel="stylesheet" href="styles.css"><style>body{margin:0}.note-live-editor-host{width:760px;height:600px;margin:30px}</style></head>
 <body class="start-page" data-start-theme="light"><div class="note-live-editor-host" id="editor"></div>
 <script src="markdown.js"></script><script src="mermaid-renderer.js"></script>
-<script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-live-editor.js"></script>
+<script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-media-frame.js"></script><script src="note-live-editor.js"></script>
 <script>window.defaultsChanges=[];window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{
 value:${JSON.stringify(source)},notePath:'image-text.md',imageUrl(){return '/fixture.png'},
 imageTextDefaults:{size:'lg',color:'blue'},onImageTextDefaultsChange(value){defaultsChanges.push(value)}});</script></body></html>`;

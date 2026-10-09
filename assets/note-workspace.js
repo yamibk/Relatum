@@ -42,6 +42,7 @@
   const errorBar = $('[data-role="note-error"]');
   const sideTitle = $('[data-role="note-side-title"]');
   const linksContent = $('[data-role="note-links-content"]');
+  const canvasSettingsContent = $('[data-role="note-canvas-settings"]');
   const settingsTrigger = $('[data-note-action="toggle-settings"]');
   const settingsPop = $('[data-role="note-settings-pop"]');
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
@@ -65,6 +66,13 @@
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let noteMovePromise = null, noteMovePaths = null;
+  const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
+  async function flushCanvases(background) {
+    if (!window.RelatumNoteCanvas) return true;
+    const ok = await window.RelatumNoteCanvas.flushAll({ settle: !background });
+    if (!ok) showSaveError(language() === 'en' ? 'Canvas changes could not be saved.' : '画布保存失败，草稿已保留。');
+    return ok;
+  }
   async function waitForNoteMove(path) {
     while (noteMovePromise) {
       const operation = noteMovePromise, paths = noteMovePaths;
@@ -303,7 +311,7 @@
       restored: ['已恢复', 'Restored'],
       conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
       resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
-      resetCopy: ['重置正文字号、图片文本框字号比例和编辑器快捷键。', 'Reset note text size, image text scale and editor shortcuts.'],
+      resetCopy: ['重置正文字号、图片文字和编辑器快捷键。', 'Reset text size, image text scale and editor shortcuts.'],
       reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
@@ -311,7 +319,7 @@
 
   function notebookCopy(key) {
     const labels = {
-      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'],
+      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'],
       create: ['新建笔记本', 'New notebook'], close: ['关闭侧栏', 'Close sidebar'],
       gray: ['灰色', 'Gray'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'],
       yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'],
@@ -386,7 +394,7 @@
     state.notebookRoot = ui.selectedRoot === null ? null : typeof ui.selectedRoot === 'string' ? ui.selectedRoot : '';
     state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
     state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
-    state.sideMode = ['notebooks', 'links'].includes(ui.mode) ? ui.mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links', ...(canvasEnabled() ? ['canvas'] : [])].includes(ui.mode) ? ui.mode : 'notebooks';
     root.classList.toggle('links-overlay-open', ui.open === true);
     state.notebookSettingsLoaded = true;
     updateSidePanel();
@@ -1211,6 +1219,7 @@
     if (noteMovePromise) await waitForNoteMove();
     const next = normalizeViewMode(mode);
     if (next === state.viewMode) return;
+    if (!(await flushCanvases())) return false;
     closeContextMenu();
     if (editorInputPending()) await whenEditorInputSettled();
     if (next === state.viewMode) return;
@@ -1258,6 +1267,7 @@
           imageTextDefaults: { size: state.imageText.size, color: state.imageText.color },
           onImageTextDefaultsChange: (defaults) => persistImageTextDefaults(defaults),
           onContextMenu: (payload) => openBodyContextMenu(payload),
+          onCanvasContextMenu: (payload) => openCanvasContextMenu(payload),
           onCommandContextChanged: () => { if (bodyMenuContext) closeContextMenu(); },
         });
         liveEditor.view.scrollDOM.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
@@ -1589,7 +1599,7 @@
     if (wordCountEl && (statistics || knownWords !== undefined)) wordCountEl.textContent = tr('words', { count: Number.isFinite(words) ? words.toLocaleString() : '—' });
     if (characterCountEl) characterCountEl.textContent = tr('characters', { count: Math.max(0, characters).toLocaleString() });
   }
-  function desktopDirty(value) { if (window.CanvasDesktop && typeof window.CanvasDesktop.setDirty === 'function') window.CanvasDesktop.setDirty(!!value); }
+  function desktopDirty(value) { if (window.CanvasDesktop && typeof window.CanvasDesktop.setDirty === 'function') window.CanvasDesktop.setDirty(!!value || !!window.RelatumNoteCanvas?.dirty); }
   async function request(url, options) {
     let response;
     try { response = await fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})); }
@@ -1863,6 +1873,7 @@
   }
   async function openBlankTab(options) {
     if (noteMovePromise) await waitForNoteMove();
+    if (!(await flushCanvases())) return false;
     if (noteBrowser) noteBrowser.showDocument();
     const previous = state.current;
     if (previous && editorInputPending()) await whenEditorInputSettled();
@@ -1880,6 +1891,7 @@
     if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
     if (isBlankTab(tabPath)) {
+      if (!(await flushCanvases())) return false;
       if (noteBrowser) noteBrowser.showDocument();
       const previous = state.current;
       if (previous && editorInputPending()) await whenEditorInputSettled();
@@ -1894,6 +1906,7 @@
   }
   async function closeTab(tabPath, options) {
     if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
+    if (!(await flushCanvases())) return false;
     const index = state.tabs.indexOf(tabPath);
     if (index < 0) return false;
     const active = state.activeTab === tabPath;
@@ -2359,9 +2372,9 @@
     if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') ensureLinks();
     scheduleStatistics(documentState); scheduleDocumentPrefetch();
   }
-  function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
+  function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; if (oldPath) window.RelatumNoteCanvas?.releaseNote(oldPath); state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
   function hasPendingEdits(documentState) { const target = documentState || state.current; return !!target && target.persistedGeneration < target.editGeneration; }
-  function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(), typeof delay === 'number' ? delay : SAVE_DELAY); }
+  function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(undefined, false, true), typeof delay === 'number' ? delay : SAVE_DELAY); }
   function markChanged(meta) {
     if (!state.current) return;
     resetExternalSyncActivity();
@@ -2385,8 +2398,9 @@
     desktopDirty(true);
     scheduleSave();
   }
-  async function flushSave(documentState, duringMove) {
+  async function flushSave(documentState, duringMove, background) {
     if (noteMovePromise && !duringMove) await waitForNoteMove();
+    if (!(await flushCanvases(background))) return false;
     if (state.imageTextBusy) return imageTextOperationPromise;
     const target = documentState || state.current;
     if (target && target === state.current && editorInputPending()) await whenEditorInputSettled();
@@ -2421,15 +2435,16 @@
         showSaveError(error.message || tr('saveFailed'));
         desktopDirty(true);
         clearTimeout(state.retryTimer);
-        state.retryTimer = setTimeout(() => flushSave(), RETRY_DELAY);
+        state.retryTimer = setTimeout(() => flushSave(undefined, false, true), RETRY_DELAY);
         return false;
       }
       finally { state.saveRunning = false; }
     });
-    const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target, duringMove); return ok;
+    const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target, duringMove, background); return ok;
   }
   async function openNote(path, options) {
     if (noteMovePromise) path = await waitForNoteMove(path);
+    if (!(await flushCanvases())) return false;
     if (noteBrowser) noteBrowser.showDocument();
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (!path) return false;
@@ -2448,6 +2463,7 @@
     const cached = state.documentCache.get(path);
     if (cached && !(options && options.force)) {
       if (!(options && options.skipSave) && previous) flushSave(previous);
+      if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
       applyDocument(cached);
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current === cached) focusEditor(); });
@@ -2459,7 +2475,11 @@
     try {
       const data = await loadPromise; if (seq !== state.openSeq) return false;
       const shown = state.current && state.current.path === path ? state.current : null;
-      if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) applyDocument(data);
+      if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) {
+        if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
+        if (seq !== state.openSeq) return false;
+        applyDocument(data);
+      }
       else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); }
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
@@ -2544,14 +2564,17 @@
       }
     }
   }
-  async function syncMovedDocument() {
+  async function syncMovedDocument(renamed) {
     const current = state.current;
     if (!current) return;
     const path = current.path, generation = current.editGeneration;
     const disk = await request('/api/note?path=' + encodeURIComponent(path));
     if (state.current !== current || current.path !== path || current.editGeneration !== generation || hasPendingEdits(current)) return;
     const previous = editorSnapshot();
-    if (liveEditor) liveEditor.setNotePath(path, disk.content);
+    if (liveEditor) {
+      if (renamed) await liveEditor.rewriteCanvasHistory(renamed, path, disk.content);
+      else await liveEditor.setNotePath(path, disk.content);
+    }
     else {
       fallbackEditor.value = disk.content;
       fallbackEditor.setSelectionRange(Math.min(previous.anchor, disk.content.length), Math.min(previous.head, disk.content.length));
@@ -2611,6 +2634,7 @@
     catch (error) { state.lastMoveError = error.message || tr('moveFailed'); state.lastMoveCode = error.code || ''; rollback(); if (!quiet) showToast(state.lastMoveError, 'error'); return false; }
     // The disk transaction has committed. Read its rewritten references before
     // changing the editor's asset base; a later read failure must not undo the UI path.
+    window.RelatumNoteCanvas?.remapViews(source, destination, true);
     try { await syncMovedDocument(); }
     catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
     if (result.rewritten) {
@@ -2744,6 +2768,7 @@
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
     body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
     rule: ['分隔线', 'Horizontal rule'], 'code-block': ['代码块', 'Code block'], math: ['数学块', 'Math block'],
+    canvas: ['画布', 'Canvas'],
     cut: ['剪切', 'Cut'], copy: ['复制', 'Copy'], paste: ['粘贴', 'Paste'], 'paste-plain': ['以纯文本形式粘贴', 'Paste as plain text'],
     'select-all': ['全选', 'Select all'], paragraph: ['段落设置', 'Paragraph'], insert: ['插入', 'Insert'],
   };
@@ -2751,6 +2776,61 @@
     const kind = name.split(':').pop();
     if (/^heading-[1-6]$/.test(kind)) return language() === 'en' ? 'Heading ' + kind.slice(-1) : kind.slice(-1) + '级标题';
     return BODY_COMMAND_LABELS[kind][language() === 'en' ? 1 : 0];
+  }
+  function openCanvasContextMenu(payload) {
+    if (!canvasEnabled() || !state.active || !state.current || state.viewMode !== 'live') return;
+    showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter))], payload.x, payload.y, 'canvas');
+  }
+  function canvasNameInput(name) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay';
+      const dialog = document.createElement('section'); dialog.className = 'note-modal-card';
+      dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
+      const heading = document.createElement('h2'); heading.textContent = tr('rename');
+      const input = document.createElement('input'); input.className = 'note-tree-rename'; input.value = name.replace(/\.canvas$/i, ''); input.setAttribute('aria-label', tr('rename'));
+      const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+      const finish = value => { overlay.remove(); resolve(value); };
+      actions.append(contextButton(tr('cancel'), () => finish(null)), contextButton(tr('rename'), () => { if (input.value.trim()) finish(input.value.trim()); }));
+      input.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') finish(null); else if (event.key === 'Enter' && !event.isComposing && input.value.trim()) finish(input.value.trim()); });
+      dialog.append(heading, input, actions); overlay.append(dialog); modalHost.replaceChildren(overlay);
+      requestAnimationFrame(() => { overlay.classList.add('visible'); input.focus(); input.select(); });
+    });
+  }
+  async function renameCanvas(adapter) {
+    const session = adapter?.session;
+    if (!session || noteMovePromise) return;
+    const name = await canvasNameInput(baseName(session.path));
+    if (!name) return;
+    const operation = (async () => {
+      if (editorInputPending()) await whenEditorInputSettled();
+      if (!(await flushCanvases())) return false;
+      stopExternalSync(); stopDocumentPrefetch(); state.externalSeq++; state.refreshSeq++;
+      setNoteMoveInputLocked(true);
+      if (!(await flushSave(state.current, true))) return false;
+      for (const cached of state.documentCache.values()) if (cached !== state.current && hasPendingEdits(cached) && !(await flushSave(cached, true))) return false;
+      const source = session.path;
+      const result = await post('/api/notes-canvas/rename', { path: source, name, revision: session.revision });
+      window.RelatumNoteCanvas.renameSession(source, result);
+      // Project every history branch even when the current note has no reference:
+      // its redo branch may still contain an inserted canvas.
+      if (liveEditor && state.current) {
+        await liveEditor.rewriteCanvasHistory(result.renamed, state.current.path);
+        if (result.noteRevisions?.[state.current.path]) state.current.revision = result.noteRevisions[state.current.path];
+        state.current.countedGeneration = 0;
+        rememberEditorState(state.current);
+      }
+      state.documentCache.forEach((cached, path) => { if (cached !== state.current && result.rewritten.includes(path) && !hasPendingEdits(cached)) state.documentCache.delete(path); });
+      try { await syncMovedDocument(); }
+      catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
+      if (noteBrowser) noteBrowser.invalidate();
+      return true;
+    })();
+    noteMovePromise = operation; noteMovePaths = null;
+    try { return await operation; }
+    catch (error) { showToast(error.message || tr('moveFailed'), 'error'); return false; }
+    finally {
+      if (noteMovePromise === operation) { noteMovePromise = null; setNoteMoveInputLocked(false); scheduleExternalSync(); scheduleDocumentPrefetch(); }
+    }
   }
   function fitBodyMenu(menu, x, y) {
     menu.style.left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8)) + 'px';
@@ -2767,7 +2847,14 @@
     if (!context || !liveEditor || !liveEditor.queryCommand(name, context).enabled || contextMenu.getAttribute('aria-busy') === 'true') return;
     contextMenu.setAttribute('aria-busy', 'true');
     try {
-      if (name === 'copy' || name === 'cut') {
+      if (name === 'insert:canvas') {
+        const note = state.current;
+        const result = await post('/api/notes-canvas/create', { note: note.path });
+        if (state.current !== note || bodyMenuContext !== context) return;
+        const label = baseName(result.path).replace(/[\\\[\]]/g, '\\$&');
+        const source = result.source.split('/').map(part => encodeURIComponent(part)).join('/');
+        liveEditor.executeCommand(name, context, '![' + label + '|640x360](' + source + ')');
+      } else if (name === 'copy' || name === 'cut') {
         const text = context.selection.ranges.map((range) => context.doc.sliceString(range.from, range.to)).join('\n');
         await navigator.clipboard.writeText(text);
         if (bodyMenuContext !== context) return;
@@ -2805,7 +2892,7 @@
       } else liveEditor.executeCommand(name, context);
       if (bodyMenuContext === context) closeContextMenu();
     } catch (error) {
-      showToast(language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
+      showToast(name === 'insert:canvas' ? error.message : language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
     } finally { contextMenu.removeAttribute('aria-busy'); }
   }
   function bodyCommandButton(name) {
@@ -2824,6 +2911,7 @@
     const paragraph = parent.dataset.noteSubmenu === 'paragraph';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
       : ['table', 'callout', 'rule', 'code-block', 'math'];
+    if (!paragraph && canvasEnabled()) commands.push('canvas');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
     commands.forEach((kind, index) => {
@@ -2957,7 +3045,8 @@
     if (sideTitle) sideTitle.textContent = notebookCopy(state.sideMode);
     if (notebooksContent) notebooksContent.hidden = state.sideMode !== 'notebooks';
     if (linksContent) linksContent.hidden = state.sideMode !== 'links';
-    ['notebooks', 'links'].forEach((mode) => {
+    if (canvasSettingsContent) canvasSettingsContent.hidden = state.sideMode !== 'canvas';
+    ['notebooks', 'links', 'canvas'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
       if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
     });
@@ -2970,7 +3059,7 @@
     const add = $('[data-note-action="new-notebook"]');
     if (add) { add.title = notebookCopy('create'); add.setAttribute('aria-label', add.title); }
     $('[data-note-action="close-links"]')?.setAttribute('aria-label', notebookCopy('close'));
-    renderNotebookTree();
+    if (state.sideMode === 'notebooks') renderNotebookTree();
   }
   let sidePopoverFrame = 0;
   let sideMotionUntil = 0;
@@ -3022,7 +3111,8 @@
     }, 270);
   }
   function setSideMode(mode) {
-    state.sideMode = ['notebooks', 'links'].includes(mode) ? mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
+    setNoteSettingsOpen(false, { restoreFocus: false });
     setSideOpen(true);
   }
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
@@ -3064,7 +3154,7 @@
     if (!entry) return true;
     const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size;
     if (settings.metadataOnly && !metadataChanged) return true;
-    if (state.saveRunning || hasPendingEdits()) return true;
+    if (state.saveRunning || hasPendingEdits() || window.RelatumNoteCanvas?.dirty) return true;
     try {
       const disk = await request('/api/note?path=' + encodeURIComponent(path));
       if (state.imageTextBusy || seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
@@ -3267,6 +3357,8 @@
     else if (name === 'toggle-notebooks') setSideOpen(!root.classList.contains('links-overlay-open'));
     else if (name === 'side-notebooks') setSideMode('notebooks');
     else if (name === 'side-links') setSideMode('links');
+    else if (name === 'side-canvas') setSideMode('canvas');
+    else if (name === 'reset-canvas-settings' && canvasEnabled()) window.RelatumNotePreferences?.resetCanvasNodeScale?.();
     else if (name === 'close-links') setSideOpen(false);
   });
 
@@ -3460,12 +3552,19 @@
     else if (event.key === 'Escape') { closeContextMenu(); root.classList.remove('tree-overlay-open'); }
   });
   function flushWorkspaceState(keepalive) {
-    const save = state.active ? flushSave() : Promise.resolve(true);
+    const save = (async () => {
+      if (!(await flushCanvases())) return false;
+      if (state.current && !(await flushSave())) return false;
+      for (const cached of state.documentCache.values()) if (cached !== state.current && hasPendingEdits(cached) && !(await flushSave(cached))) return false;
+      return true;
+    })();
     persistViewStates();
     const settings = flushNotebookSettings(keepalive);
     return Promise.all([save, settings]).then(([saved]) => saved);
   }
   window.addEventListener('blur', () => { closeContextMenu(); flushWorkspaceState(); });
+  window.addEventListener('relatum:note-canvas-dirty', () => desktopDirty(hasPendingEdits()));
+  window.addEventListener('relatum:note-canvas-error', event => { showSaveError(event.detail); desktopDirty(true); });
   window.addEventListener('resize', closeContextMenu);
   document.addEventListener('relatum:languagechange', closeContextMenu);
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
@@ -3479,5 +3578,5 @@
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
-  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits(); }, get currentPath() { return state.current ? state.current.path : ''; } };
+  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

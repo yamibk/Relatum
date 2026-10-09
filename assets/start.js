@@ -1790,6 +1790,16 @@
   const STARMAP_MOTION_KEY = 'canvas:starmapMotion:v1';
   const NOTE_FONT_SCALE_KEY = 'canvas:noteFontScale:v1';
   const NOTE_IMAGE_TEXT_SCALE_KEY = 'canvas:noteImageTextScale:v1';
+  const NOTE_CANVAS_NODE_SCALE_KEY = 'canvas:noteCanvasNodeScale:v1';
+  function applyCanvasNodeScale(value, persist) {
+    const scale = normalizeImageTextScale(value);
+    const input = document.querySelector('[data-role="note-canvas-node-scale"]');
+    const output = document.querySelector('[data-role="note-canvas-node-scale-value"]');
+    if (input) input.value = String(scale);
+    if (output) output.textContent = scale + '%';
+    if (persist) try { localStorage.setItem(NOTE_CANVAS_NODE_SCALE_KEY, String(scale)); } catch (_) {}
+    return scale;
+  }
   function normalizeImageTextScale(value) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.max(50, Math.min(300, Math.round(number / 5) * 5)) : 100;
@@ -1987,6 +1997,7 @@
   applyNoteFontScale(readNoteFontScale(), false);
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
   window.RelatumNotePreferences = Object.freeze({
+    resetCanvasNodeScale() { try { localStorage.removeItem(NOTE_CANVAS_NODE_SCALE_KEY); } catch (_) {} return applyCanvasNodeScale(100, false); },
     readImageTextScale,
     resetImageTextScale() {
       try { localStorage.removeItem(NOTE_IMAGE_TEXT_SCALE_KEY); } catch (error) {}
@@ -2005,6 +2016,9 @@
   applyImageTextScale(readImageTextScale(), false);
   const imageTextScaleRange = document.querySelector('[data-role="note-image-text-scale"]');
   if (imageTextScaleRange) imageTextScaleRange.addEventListener('input', () => applyImageTextScale(imageTextScaleRange.value, true));
+  try { applyCanvasNodeScale(localStorage.getItem(NOTE_CANVAS_NODE_SCALE_KEY) ?? 100, false); } catch (_) { applyCanvasNodeScale(100, false); }
+  const canvasNodeScaleRange = document.querySelector('[data-role="note-canvas-node-scale"]');
+  if (canvasNodeScaleRange) canvasNodeScaleRange.addEventListener('input', () => applyCanvasNodeScale(canvasNodeScaleRange.value, true));
   desktopPresetButtons.forEach((button) => {
     button.addEventListener('click', () => applyDesktopSize(button.dataset.width, button.dataset.height));
   });

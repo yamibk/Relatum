@@ -40,7 +40,7 @@ assert(notes.includes('EXTERNAL_SYNC_DELAYS = [2000, 4000, 8000, 16000, 30000]')
   'foreground Notes sync needs a bounded two-to-thirty-second retry schedule');
 assert(notes.includes('function triggerExternalSync(options)') && notes.includes('externalSyncChain: Promise.resolve(true)'),
   'automatic filesystem checks must stay serialized');
-assert(notes.includes('if (!state.active || document.hidden || state.imageTextBusy) return;'),
+assert(notes.includes('if (!state.active || document.hidden || state.imageTextBusy || noteMovePromise) return;'),
   'automatic filesystem checks must stop outside the visible Notes workspace');
 assert(notes.includes('if (structureChanged) scheduleDocumentPrefetch();'),
   'unchanged polling must not repeatedly prefetch documents');
@@ -244,7 +244,7 @@ assert(notes.includes("words: '{count} 个词'") && notes.includes("characters: 
 const changeListener = live.slice(live.indexOf('EditorView.updateListener'), live.indexOf('EditorView.domEventHandlers'));
 assert(!changeListener.includes('toString()'), 'ordinary keystrokes must not stringify the full Markdown document');
 assert(live.includes('length: view.state.doc.length'), 'ordinary keystrokes should update character count without cloning Markdown');
-assert(live.includes('function setNotePath(path)') && live.includes('notePathEffect.of(currentPath)'), 'a file rename must refresh path-dependent widgets without rebuilding editor state');
+assert(live.includes('function setNotePath(path, value)') && live.includes('notePathEffect.of(currentPath)'), 'a file rename must refresh path-dependent widgets without rebuilding editor state');
 assert(live.includes("phase: 'idle'") && live.includes("this.phase = 'composing'")
   && live.includes("this.phase = 'settling'") && live.includes('inputReconcileEffect'),
   'IME composition must use one idle/composing/settling session and one post-commit reconciliation');

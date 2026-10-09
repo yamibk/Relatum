@@ -154,6 +154,15 @@
     try { value = Number(localStorage.getItem(NOTE_FONT_SCALE_KEY) || 100); } catch (e) {}
     return Math.max(80, Math.min(140, Math.round(value / 5) * 5 || 100));
   }
+  const NOTE_CANVAS_NODE_SCALE_KEY = 'canvas:noteCanvasNodeScale:v1';
+  function applyCanvasNodeScale(value, persist) {
+    const scale = normalizeImageTextScale(value);
+    const input = query('note-canvas-node-scale'), output = query('note-canvas-node-scale-value');
+    if (input) input.value = String(scale);
+    if (output) output.textContent = scale + '%';
+    if (persist) try { localStorage.setItem(NOTE_CANVAS_NODE_SCALE_KEY, String(scale)); } catch (_) {}
+    return scale;
+  }
 
   function applyNoteFontScale(value, persist) {
     const scale = Math.max(80, Math.min(140, Math.round(Number(value) / 5) * 5 || 100));
@@ -167,6 +176,7 @@
   }
 
   const preferences = {
+    resetCanvasNodeScale() { try { localStorage.removeItem(NOTE_CANVAS_NODE_SCALE_KEY); } catch (_) {} return applyCanvasNodeScale(100, false); },
     readImageTextScale, readFontScale: readNoteFontScale,
     applyFontScale(value, persist) { return applyNoteFontScale(value, persist !== false); },
     resetFontScale() { localStorage.removeItem(NOTE_FONT_SCALE_KEY); return applyNoteFontScale(100, false); },
@@ -178,6 +188,9 @@
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
   const imageScale = query('note-image-text-scale');
   if (imageScale) imageScale.addEventListener('input', () => applyImageTextScale(imageScale.value, true));
+  try { applyCanvasNodeScale(localStorage.getItem(NOTE_CANVAS_NODE_SCALE_KEY) ?? 100, false); } catch (_) { applyCanvasNodeScale(100, false); }
+  const canvasScale = query('note-canvas-node-scale');
+  if (canvasScale) canvasScale.addEventListener('input', () => applyCanvasNodeScale(canvasScale.value, true));
   applyStartSpeed(read(START_SPEED_KEY, START_SPEED_DEFAULT), false);
   if (startSpeedRange) startSpeedRange.addEventListener('input', () => applyStartSpeed(startSpeedRange.value, true));
   applySpineSpeed(read(SPINE_SPEED_KEY, SPINE_SPEED_DEFAULT), false);

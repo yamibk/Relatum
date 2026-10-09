@@ -10355,6 +10355,9 @@ CANVAS_AND_DATA_POST_ROUTES = {
     "/api/restore",
 }
 NOTES_POST_ROUTES = {
+    "/api/notes-canvas/create",
+    "/api/notes-canvas/save",
+    "/api/notes-canvas/rename",
     "/api/note-notebooks-settings",
     "/api/note-cleanup-unused-images",
     "/api/note-image-text-merge",
@@ -10623,6 +10626,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except OSError as err:
                 return self._send_json(500, {"error": f"读取研究数据失败：{err}", "code": "read-failed"})
             return self._send_json(200, payload)
+        if parsed.path == "/api/notes-canvas/read":
+            try:
+                from note_canvases import NoteCanvasStore
+                query = urllib.parse.parse_qs(parsed.query)
+                with NOTES_MUTATION_LOCK:
+                    store = NoteCanvasStore(NOTES_STORE)
+                    relative = store.resolve(query.get("note", [""])[0], query.get("src", [""])[0])
+                    return self._send_json(200, store.read(relative))
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError as err:
+                return self._send_json(500, {"error": f"读取画布失败：{err}"})
         if parsed.path == "/api/notes-tree":
             try:
                 with NOTES_MUTATION_LOCK:
@@ -10817,6 +10832,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
+        if path.startswith("/api/notes-canvas/"):
+            try:
+                from note_canvases import NoteCanvasStore
+                store = NoteCanvasStore(NOTES_STORE)
+                if path == "/api/notes-canvas/create":
+                    result = store.create(body.get("note"))
+                elif path == "/api/notes-canvas/save":
+                    result = store.save(body.get("path"), body.get("data"), body.get("revision"))
+                elif path == "/api/notes-canvas/rename":
+                    result = store.rename(body.get("path"), body.get("name"), body.get("revision"))
+                else:
+                    return self._send_json(404, {"error": "未知画布操作"})
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError as err:
+                return self._send_json(500, {"error": f"画布操作失败：{err}"})
         if path == "/api/note-notebooks-settings":
             try:
                 return self._send_json(200, NOTES_STORE.update_notebook_settings(body))

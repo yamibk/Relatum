@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable
 from note_metadata import note_metadata, valid_tag
+from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as canvas_references, rewrite as rewrite_canvas_references
 
 
 NOTE_SUFFIX = ".md"
@@ -458,7 +459,7 @@ class NotesStore:
             try:
                 if key == "open" and isinstance(value, bool):
                     target[key] = value
-                elif key == "mode" and value in ("notebooks", "links"):
+                elif key == "mode" and value in ("notebooks", "links", "canvas"):
                     target[key] = value
                 elif key == "mode" and value == "history" and not strict:
                     target[key] = "notebooks"
@@ -562,6 +563,8 @@ class NotesStore:
             raise NotesError("只允许笔记库内的相对路径", status=403, code="unsafe_path")
         path = PurePosixPath(value)
         parts = path.parts
+        if parts and parts[0].casefold() == CANVAS_DIRECTORY and not allow_assets:
+            raise NotesError("画布资源目录不能作为普通笔记操作", status=403, code="reserved_canvas_directory")
         if not parts or any(part in ("", ".", "..") for part in parts):
             raise NotesError("路径不能包含空段、. 或 ..", status=403, code="unsafe_path")
         clean: list[str] = []
@@ -645,6 +648,8 @@ class NotesStore:
             for name in directories:
                 child = base_path / name
                 low = name.casefold()
+                if base_path == self.root and low == CANVAS_DIRECTORY:
+                    continue
                 if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
                     continue
                 if _is_reparse(child):
@@ -668,6 +673,8 @@ class NotesStore:
                 with os.scandir(folder) as scan:
                     for entry in scan:
                         low = entry.name.casefold()
+                        if folder == self.root and low == CANVAS_DIRECTORY:
+                            continue
                         if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
                             continue
                         try:
@@ -751,12 +758,15 @@ class NotesStore:
         document["signature"] = signature
         needs_mentions = "mentions" not in document
         needs_metadata = metadata and ("tags" not in document or "excerpt" not in document)
-        if needs_mentions or needs_metadata:
+        needs_canvas = "hasCanvasReferences" not in document
+        if needs_mentions or needs_metadata or needs_canvas:
             text = text if text is not None else self._decode_note(content)
             if needs_mentions:
                 document["mentions"] = _wiki_mentions(text)
             if needs_metadata:
                 document.update(note_metadata(text))
+            if needs_canvas:
+                document["hasCanvasReferences"] = (".canvas" in text.lower() or "%" in text) and any(canvas_target(relative, ref["target"]) for ref in canvas_references(text))
         self._document_cache[relative] = document
         return document
 
@@ -1207,6 +1217,12 @@ class NotesStore:
                 for start, end, replacement in sorted(replacements, reverse=True):
                     text = text[:start] + replacement + text[end:]
                 updates[new_source] = text
+            if old_source != new_source and document.get("hasCanvasReferences", True):
+                if text is None:
+                    text = self._indexed_text(old_source, document)
+                changed = rewrite_canvas_references(text, old_source, new_note=new_source)
+                if changed != text:
+                    updates[new_source] = changed
         # 同一句歧义只报告一次，避免长文重复刷屏。
         return updates, list(dict.fromkeys(warnings))[:50]
 
