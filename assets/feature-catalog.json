@@ -343,6 +343,10 @@
       "canvas.study",
       "canvas.focus"
     ],
+    "windowed-list.js": [
+      "canvas.library",
+      "canvas.review"
+    ],
     "start-shell.js": [
       "notes",
       "research",

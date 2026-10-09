@@ -124,6 +124,18 @@
   let boundKind = '';   // '' | 'daily'
   let dailyTasks = [];
   let dailyGroups = [];           // 分组树：每个 {id,name,parentId,collapsed}，parentId:'' = 根
+  const dailyGroupsById = new Map(), dailyTasksByGroup = new Map(), dailyGroupsByParent = new Map();
+  const dailyProgressCache = new Map();
+  function rebuildDailyIndexes() {
+    dailyGroupsById.clear(); dailyTasksByGroup.clear(); dailyGroupsByParent.clear(); dailyProgressCache.clear();
+    function add(map, id, item) { if (!map.has(id)) map.set(id, []); map.get(id).push(item); }
+    dailyGroups.forEach(function (group) { dailyGroupsById.set(group.id, group); add(dailyGroupsByParent, group.parentId || '', group); });
+    dailyTasks.forEach(function (task) { add(dailyTasksByGroup, task.groupId || '', task); });
+  }
+  function invalidateDailyProgress(groupId) {
+    dailyGroupChain(groupId).forEach(function (id) { dailyProgressCache.delete(id); });
+    dailyProgressCache.delete('');
+  }
   let dailyLoaded = false;
   let dailySignature = '';
   let dailyRequestSeq = 0;
@@ -1322,6 +1334,7 @@
     const payload = dailyPayload(json);
     if (Array.isArray(payload.tasks)) dailyTasks = payload.tasks;
     if (Array.isArray(payload.groups)) dailyGroups = payload.groups;
+    rebuildDailyIndexes();
     dailySignature = dailyPayloadSignature({ tasks: dailyTasks, groups: dailyGroups });
   }
   function setDailyLoading(loading, reveal) {
@@ -1613,26 +1626,32 @@
     animateDailyListMoves(previous, opts);
   }
 
-  // —— 分组树工具：分组与任务各自扁平存储，靠 parentId / groupId 现推出层级 ——
-  function dailyGroupById(id) { return dailyGroups.find((g) => g.id === id) || null; }
+  // —— 分组树工具：扁平数据按 parentId / groupId 建索引，汇总只失效受影响祖先 ——
+  function dailyGroupById(id) { return dailyGroupsById.get(id) || null; }
   function dailyChildGroups(parentId) {
     const pid = parentId || '';
-    return dailyGroups.filter((g) => (g.parentId || '') === pid);
+    return dailyGroupsByParent.get(pid) || [];
   }
   function dailyDirectTasks(groupId) {
     const gid = groupId || '';
-    return dailyTasks.filter((t) => (t.groupId || '') === gid);
+    return dailyTasksByGroup.get(gid) || [];
   }
-  function dailyGroupProgress(groupId) {
+  function dailyGroupProgress(groupId, visiting = new Set()) {
+    if (dailyProgressCache.has(groupId)) return dailyProgressCache.get(groupId);
+    if (visiting.has(groupId)) return { done: 0, total: 0 };
+    visiting.add(groupId);
     let done = 0;
     let total = 0;
     dailyDirectTasks(groupId).forEach((t) => { total += 1; if (t.doneToday) done += 1; });
     dailyChildGroups(groupId).forEach((g) => {
-      const sub = dailyGroupProgress(g.id);
+      const sub = dailyGroupProgress(g.id, visiting);
       done += sub.done;
       total += sub.total;
     });
-    return { done: done, total: total };
+    visiting.delete(groupId);
+    const result = { done: done, total: total };
+    dailyProgressCache.set(groupId, result);
+    return result;
   }
   function dailyGroupChain(groupId) {
     const ids = [];
@@ -1648,6 +1667,7 @@
     return ids;
   }
   function refreshDailyGroupProgress(groupId) {
+    invalidateDailyProgress(groupId);
     if (!dailyListEl || !groupId) return;
     dailyGroupChain(groupId).forEach((gid) => {
       const wrap = dailyListEl.querySelector('.focus-daily-group[data-group-id="' + gid + '"]');
@@ -1681,6 +1701,7 @@
     return parts.join(' / ');
   }
   function buildDailyRows() {
+    rebuildDailyIndexes();
     dailyListEl.innerHTML = '';
     if (dailyRoot) dailyRoot.style.setProperty('--daily-exit-tail', '0');
     if (!dailyTasks.length && !dailyGroups.length) {

@@ -2551,6 +2551,9 @@
       spineActiveOrb.classList.add('orb-breathing');
     }, 2800);
   }
+  if (spineActiveOrb) spineActiveOrb.addEventListener('animationend', function (event) {
+    if (event.animationName === 'spine-orb-breathe' || event.animationName === 'spine-orb-breathe-dark') spineActiveOrb.classList.remove('orb-breathing');
+  });
 
   function bindSpineHoverTarget(target) {
     if (!target || target.dataset.spineHoverBound === '1') return;
@@ -3438,6 +3441,7 @@
     refresh();
   }
 
+  let windowedFiles = null;
   function renderPanel(options) {
     const prevRects = (options && options.animateMoves) ? captureRecentRects() : null;
     const staggerEnter = !!(options && options.staggerEnter);
@@ -3450,6 +3454,20 @@
       ? panelFiles.findIndex((file) => file.path === selectedPath)
       : -1;
     syncLibrarySearchChrome(panelFiles.length);
+    if (panelFiles.length > 200 && window.RelatumWindowedList) {
+      if (fileStatsObserver) fileStatsObserver.disconnect();
+      fileList.classList.add('is-large-list');
+      if (!windowedFiles) windowedFiles = RelatumWindowedList.create({ host: fileList, scroller: bookStage, gap: 10, estimate: 78,
+        key: file => file.path,
+        render: file => { const li = buildFileItem(file); updateFileItemSearchContext(li, file); return li; },
+        update: (li, file, index) => { li.classList.toggle('file-selected', index === selectedIndex); },
+        pin: li => !!li.querySelector('.recent-rename-input') || li.classList.contains('pending-delete'),
+        onMount: () => { if (fileStatsObserver) fileStatsObserver.disconnect(); observeVisibleFileStats(); },
+      });
+      windowedFiles.setItems(panelFiles);
+      return;
+    }
+    if (windowedFiles) { windowedFiles.dispose(); windowedFiles = null; fileList.innerHTML = ''; }
     if (incrementalSearch) {
       reconcileLibrarySearchResults(panelFiles, options);
       return;
@@ -3787,7 +3805,18 @@
   function activeItems() {
     return fileList.querySelectorAll('.recent-item:not(.leaving):not(.search-leaving)');
   }
+  function fileItemAt(index) {
+    const file = panelFiles[index];
+    if (windowedFiles) return file ? windowedFiles.row(file.path) || windowedFiles.scrollToKey(file.path) : null;
+    return activeItems()[index];
+  }
   function refreshSelectionHighlight() {
+    if (windowedFiles) {
+      const selected = panelFiles[selectedIndex];
+      if (selected) windowedFiles.scrollToKey(selected.path);
+      activeItems().forEach(li => li.classList.toggle('file-selected', !!selected && li.dataset.path === selected.path));
+      return;
+    }
     const items = activeItems();
     items.forEach((li, i) => li.classList.toggle('file-selected', i === selectedIndex));
     if (selectedIndex >= 0 && items[selectedIndex]) {
@@ -3813,9 +3842,8 @@
   // 3d：键盘选中右栏文件（↑↓）
   function setSelected(i) {
     cancelPendingDelete();
-    const items = activeItems();
-    if (items.length === 0) { selectedIndex = -1; return; }
-    selectedIndex = Math.max(0, Math.min(i, items.length - 1));
+    if (panelFiles.length === 0) { selectedIndex = -1; return; }
+    selectedIndex = Math.max(0, Math.min(i, panelFiles.length - 1));
     refreshSelectionHighlight();
   }
 
@@ -3826,12 +3854,12 @@
       return;
     }
     pendingDeleteIndex = selectedIndex;
-    const li = activeItems()[selectedIndex];
+    const li = fileItemAt(selectedIndex);
     if (li) li.classList.add('pending-delete');
   }
   function cancelPendingDelete() {
     if (pendingDeleteIndex < 0) return;
-    const li = activeItems()[pendingDeleteIndex];
+    const li = fileItemAt(pendingDeleteIndex);
     if (li) li.classList.remove('pending-delete');
     pendingDeleteIndex = -1;
   }
@@ -3840,7 +3868,7 @@
     pendingDeleteIndex = -1;
     const f = panelFiles[idx];
     if (!f) return;
-    const li = activeItems()[idx];
+    const li = fileItemAt(idx);
     await trashCanvas(f, li, true);
   }
   // 3d：顶部轻提示（淡入，~1.2s 后淡出）
@@ -3893,7 +3921,7 @@
   function doMoveAnimated(idx, gid, toastMsg) {
     const f = panelFiles[idx];
     if (!f) return;
-    const li = activeItems()[idx];
+    const li = fileItemAt(idx);
     const lf = lastFiles.find((x) => x.path === f.path);
     if (lf) {
       lf.groupId = gid || '';
@@ -3925,7 +3953,7 @@
       body: JSON.stringify({ path: f.path, group: gid }),
     }).then((r) => { if (!r.ok) refresh(); }).catch(() => refresh());
     selectedIndex = Math.min(idx, panelFiles.length - 1);
-    if (remainsVisible) renderPanel({ animateMoves: true });
+    if (remainsVisible || windowedFiles) renderPanel({ animateMoves: true });
     else refreshSelectionHighlight();
     if (!remainsVisible && panelFiles.length === 0) {
       setTimeout(() => { if (panelFiles.length === 0) renderPanel(); }, 280);
@@ -4190,6 +4218,7 @@
       panelFiles = filesOf(activeGroup);
       renderDots();
       selectedIndex = Math.min(selectedIndex, panelFiles.length - 1);
+      if (windowedFiles) renderPanel();
       refreshSelectionHighlight();
       if (panelFiles.length === 0) {
         setTimeout(() => { if (panelFiles.length === 0) renderPanel(); }, 280);
@@ -4464,12 +4493,12 @@
           ? (selectedIndex < 0 ? 0 : selectedIndex + 1)
           : (selectedIndex < 0 ? panelFiles.length - 1 : selectedIndex - 1);
         setSelected(next);
-        const item = activeItems()[selectedIndex];
+        const item = fileItemAt(selectedIndex);
         if (item) item.focus();
       } else if (event.key === 'Enter') {
         const index = selectedIndex >= 0 ? selectedIndex : 0;
         const file = panelFiles[index];
-        const item = activeItems()[index];
+        const item = fileItemAt(index);
         if (file) {
           event.preventDefault();
           activateFileItem(file, item);
@@ -4530,13 +4559,14 @@
         refreshSelectionHighlight();
         if (armNext && selectedIndex >= 0) {
           pendingDeleteIndex = selectedIndex;
-          const next = activeItems()[selectedIndex];
+          const next = fileItemAt(selectedIndex);
           if (next) next.classList.add('pending-delete');
         }
         return true;
       }
       if (idx >= 0) panelFiles.splice(idx, 1);
       animateOut(currentLi);
+      if (windowedFiles) renderPanel();
       renderDots();
       showToast(json.missing ? '文件已不存在，已从列表移除' : '已移到回收站');
 
@@ -4545,7 +4575,7 @@
       refreshSelectionHighlight();
       if (armNext && selectedIndex >= 0) {
         pendingDeleteIndex = selectedIndex;
-        const next = activeItems()[selectedIndex];
+        const next = fileItemAt(selectedIndex);
         if (next) next.classList.add('pending-delete');
       } else if (panelFiles.length === 0) {
         setTimeout(() => { if (panelFiles.length === 0) renderPanel(); }, 280);
@@ -4722,7 +4752,7 @@
       const f = panelFiles[selectedIndex];
       if (f) {
         e.preventDefault();
-        activateFileItem(f, activeItems()[selectedIndex]);
+        activateFileItem(f, fileItemAt(selectedIndex));
       }
     } else if (/^[1-9]$/.test(e.key)) {
       e.preventDefault();

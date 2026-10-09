@@ -58,6 +58,12 @@
   let expandTimer = null;
   let stackHoverDelay = STACK_HOVER_DELAY_DEFAULT;
   let interacting = false;     // 拖拽中：暂停悬停展开逻辑
+  let cancelPointerGesture = null;
+  function cancelActiveGesture() {
+    const cancel = cancelPointerGesture;
+    cancelPointerGesture = null;
+    if (cancel) cancel();
+  }
   let activeNoteId = null;     // 最近悬停 / 操作过的便签，供无界面的 C 换色使用
   let spaceHeld = false;       // Space + 拖动空白 = 平移整面墙
   let noteInertia = NOTES_INERTIA_DEFAULT;
@@ -483,7 +489,14 @@
     if (v > hi) return hi + (v - hi) * PAN_RESIST;
     return v;
   }
-  function elById(id) { return surface.querySelector('.sticky-note[data-id="' + id + '"]'); }
+  const noteElements = new Map();
+  function elById(id) {
+    let el = noteElements.get(id);
+    if (el && el.isConnected) return el;
+    el = surface.querySelector('.sticky-note[data-id="' + id + '"]');
+    if (el) noteElements.set(id, el); else noteElements.delete(id);
+    return el;
+  }
   function refreshKeyboardCurrent() {
     surface.querySelectorAll('.sticky-note.keyboard-current').forEach((el) => el.classList.remove('keyboard-current'));
     if (!keyboardBrowseActive || searchInput || !activeNoteId) return;
@@ -607,12 +620,50 @@
   const arrowElements = new Map();
   let edgeGeometry = [];
   let arrowGeometry = [];
+  const noteCenters = new Map(), noteConnections = new Map();
+  const noteSizeCache = new WeakMap();
+  let surfaceGeometryVersion = 0;
+  window.addEventListener('resize', () => { surfaceGeometryVersion++; });
+  function measuredNoteSize(el) {
+    if (!el) return { w: NOTE_W, h: NOTE_H };
+    let size = noteSizeCache.get(el);
+    if (!size) { size = { w: el.offsetWidth, h: el.offsetHeight }; noteSizeCache.set(el, size); }
+    return size;
+  }
+  let movingEdgeFrame = 0, latestMovingNotes = null;
+  function flushMovingEdges() {
+    if (movingEdgeFrame) cancelAnimationFrame(movingEdgeFrame);
+    movingEdgeFrame = 0;
+    const moving = latestMovingNotes;
+    latestMovingNotes = null;
+    if (!moving) return;
+    const changedEdges = new Set(), changedArrows = new Set();
+    moving.forEach(function (note) {
+      const center = noteCenters.get(note.id);
+      if (!center) return;
+      center.point.x += note.x - center.x; center.point.y += note.y - center.y;
+      center.x = note.x; center.y = note.y;
+      const connections = noteConnections.get(note.id);
+      if (connections) connections.forEach(function (item) { (item.arrow ? changedArrows : changedEdges).add(item); });
+    });
+    projectEdges(changedEdges, changedArrows);
+  }
+  function queueMovingEdges(moving) {
+    latestMovingNotes = moving;
+    if (!movingEdgeFrame) movingEdgeFrame = requestAnimationFrame(flushMovingEdges);
+  }
   const measuredNotes = new Set();
   const movingEdgeNotes = new Map();
+  const changedEdgeNotes = new Set();
   let edgeRefreshFrame = 0;
   const edgeResizeObserver = typeof ResizeObserver === 'function'
     ? new ResizeObserver(scheduleEdgeRefresh) : null;
-  function scheduleEdgeRefresh() {
+  function scheduleEdgeRefresh(entries) {
+    if (Array.isArray(entries)) entries.forEach(entry => {
+      changedEdgeNotes.add(entry.target);
+      const box = entry.borderBoxSize && entry.borderBoxSize[0];
+      if (box) { const size = measuredNoteSize(entry.target); size.w = box.inlineSize; size.h = box.blockSize; }
+    });
     if (edgeRefreshFrame || document.hidden || !notesPageActive()
         || document.body.dataset.startWorkspace !== 'canvas') return;
     edgeRefreshFrame = requestAnimationFrame(refreshEdgeGeometry);
@@ -623,7 +674,21 @@
     movingEdgeNotes.forEach((motions, el) => {
       if (!el.isConnected || !measuredNotes.has(el)) movingEdgeNotes.delete(el);
     });
-    renderEdges();
+    const changedEdges = new Set(), changedArrows = new Set();
+    const rect = surface.getBoundingClientRect();
+    movingEdgeNotes.forEach((_, el) => changedEdgeNotes.add(el));
+    changedEdgeNotes.forEach(el => {
+      const center = noteCenters.get(el.dataset.id);
+      if (!center || !el.isConnected) return;
+      const bounds = el.getBoundingClientRect();
+      const point = surfaceToWorldPoint(bounds.left - rect.left + bounds.width / 2, bounds.top - rect.top + bounds.height / 2);
+      center.point.x = point.x; center.point.y = point.y;
+      center.x = center.note.x; center.y = center.note.y;
+      const links = noteConnections.get(el.dataset.id);
+      if (links) links.forEach(item => (item.arrow ? changedArrows : changedEdges).add(item));
+    });
+    changedEdgeNotes.clear();
+    projectEdges(changedEdges, changedArrows);
     if (movingEdgeNotes.size) scheduleEdgeRefresh();
   }
   function trackEdgeMotion(event) {
@@ -635,14 +700,18 @@
     else motions.delete(key);
     if (motions.size) movingEdgeNotes.set(event.target, motions);
     else movingEdgeNotes.delete(event.target);
+    changedEdgeNotes.add(event.target);
     scheduleEdgeRefresh();
   }
   ['transitionrun', 'transitionend', 'transitioncancel', 'animationstart', 'animationend', 'animationcancel']
     .forEach((type) => surface.addEventListener(type, trackEdgeMotion));
   function stopEdgeRefresh() {
+    if (movingEdgeFrame) cancelAnimationFrame(movingEdgeFrame);
+    movingEdgeFrame = 0; latestMovingNotes = null;
     if (edgeRefreshFrame) cancelAnimationFrame(edgeRefreshFrame);
     edgeRefreshFrame = 0;
     movingEdgeNotes.clear();
+    changedEdgeNotes.clear();
     if (edgeResizeObserver) edgeResizeObserver.disconnect();
     measuredNotes.clear();
   }
@@ -687,6 +756,8 @@
   }
   function renderEdges() {
     ensureEdgeSvg();
+    noteCenters.clear(); noteConnections.clear();
+    const noteModels = new Map(notes.map(function (note) { return [note.id, note]; }));
     const centers = new Map();
     const nextMeasuredNotes = new Set();
     let srect;
@@ -698,6 +769,8 @@
           const rect = el.getBoundingClientRect();
           centers.set(id, surfaceToWorldPoint(rect.left - srect.left + rect.width / 2,
             rect.top - srect.top + rect.height / 2));
+          const note = noteModels.get(id);
+          if (note) noteCenters.set(id, { point: centers.get(id), x: note.x, y: note.y, note: note });
           nextMeasuredNotes.add(el);
         } else centers.set(id, null);
       }
@@ -726,6 +799,17 @@
     });
     syncEdgeElements(edgeGeometry, edgeElements, edgeStaticG, 'line', 'notes-edge');
     syncEdgeElements(arrowGeometry, arrowElements, arrowStaticG, 'path', 'notes-arrow');
+    function indexConnection(item, ids, arrow) {
+      item.arrow = arrow;
+      ids.forEach(function (id) {
+        if (!id) return;
+        let links = noteConnections.get(id);
+        if (!links) noteConnections.set(id, links = new Set());
+        links.add(item);
+      });
+    }
+    edgeGeometry.forEach(function (item) { indexConnection(item, [item.data.from, item.data.to], false); });
+    arrowGeometry.forEach(function (item) { indexConnection(item, [item.data.fromNote, item.data.toNote], true); });
     projectEdges();
   }
   function syncEdgeElements(geometry, elements, host, tag, className) {
@@ -760,8 +844,8 @@
   function setEdgeAttribute(el, name, value) {
     if (el.getAttribute(name) !== value) el.setAttribute(name, value);
   }
-  function projectEdges() {
-    edgeGeometry.forEach((item) => {
+  function projectEdges(edgeWork = edgeGeometry, arrowWork = arrowGeometry) {
+    edgeWork.forEach((item) => {
       const a = worldToSurfacePoint(item.a.x, item.a.y);
       const b = worldToSurfacePoint(item.b.x, item.b.y);
       setEdgeAttribute(item.el, 'x1', a.x.toFixed(1));
@@ -769,7 +853,7 @@
       setEdgeAttribute(item.el, 'x2', b.x.toFixed(1));
       setEdgeAttribute(item.el, 'y2', b.y.toFixed(1));
     });
-    arrowGeometry.forEach((item) => {
+    arrowWork.forEach((item) => {
       const a = worldToSurfacePoint(item.a.x, item.a.y);
       const b = worldToSurfacePoint(item.b.x, item.b.y);
       setEdgeAttribute(item.el, 'd', arrowPathD(a, b));
@@ -933,6 +1017,7 @@
   }
 
   function renderAll() {
+    noteElements.clear();
     const world = ensureWorld();
     world.querySelectorAll('.sticky-note').forEach((el) => el.remove());
     notes.forEach((data) => world.appendChild(buildNoteEl(data)));
@@ -941,8 +1026,8 @@
   }
 
   // 按摞关系重排每张卡的位置偏移（--note-shift）与层级（z-index）；left/top 始终=数据 x/y。
-  function relayout() {
-    notes.forEach((data) => {
+  function relayout(refreshGeometry = true, onlyNotes = null) {
+    (onlyNotes || notes).forEach((data) => {
       const el = elById(data.id);
       if (!el) return;
       el.style.left = data.x + 'px';
@@ -970,7 +1055,7 @@
         el.style.zIndex = String(globalZ);
       }
     });
-    renderEdges();
+    if (refreshGeometry) renderEdges();
     refreshKeyboardCurrent();
   }
 
@@ -1005,6 +1090,12 @@
     }
     const moving = members.filter((m) => notes.includes(m));
     if (!moving.length) return;
+    const sizes = new Map(moving.map(function (note) {
+      const el = elById(note.id);
+      return [note.id, measuredNoteSize(el)];
+    }));
+    let boundsRect = surface.getBoundingClientRect();
+    let boundsVersion = surfaceGeometryVersion;
     noteInertiaDirty = false;
     surface.classList.add('note-inertia');
     let last = now;
@@ -1016,13 +1107,12 @@
       if (dt > 40) dt = 40;
       let dx = vx * dt;
       let dy = vy * dt;
-      const rect = surface.getBoundingClientRect();
-      const viewBounds = visibleWorldRect(rect);
+      if (boundsVersion !== surfaceGeometryVersion) { boundsRect = surface.getBoundingClientRect(); boundsVersion = surfaceGeometryVersion; }
+      const viewBounds = visibleWorldRect(boundsRect);
       let minDx = -Infinity, maxDx = Infinity, minDy = -Infinity, maxDy = Infinity;
       moving.forEach((m) => {
-        const el = elById(m.id);
-        const w = el ? el.offsetWidth : NOTE_W;
-        const h = el ? el.offsetHeight : NOTE_H;
+        const size = sizes.get(m.id);
+        const w = size.w, h = size.h;
         minDx = Math.max(minDx, viewBounds.left + EDGE - m.x);
         maxDx = Math.min(maxDx, viewBounds.right - w - EDGE - m.x);
         minDy = Math.max(minDy, viewBounds.top + EDGE - m.y);
@@ -1046,7 +1136,7 @@
         if (el) { el.style.left = m.x + 'px'; el.style.top = m.y + 'px'; }
       });
       noteInertiaDirty = true;
-      renderEdges();
+      queueMovingEdges(moving);
       const f = Math.exp(-0.0062 * dt);
       vx *= f; vy *= f;
       if (Math.hypot(vx, vy) > 0.018) {
@@ -1253,6 +1343,7 @@
     if (idx < 0) return;
     notes.splice(idx, 1);
     const el = elById(data.id);
+    noteElements.delete(data.id);
     if (el) {
       if (prefersReduced) {
         el.remove();
@@ -1351,6 +1442,7 @@
 
   // ── Alt + 从一张便签拖到另一张 = 拉一条连线 ──
   function startEdgeDraw(srcEl, srcData, downEv) {
+    cancelActiveGesture();
     cancelNoteInertia(true);
     ensureEdgeSvg();
     interacting = true;
@@ -1366,6 +1458,7 @@
     edgeTempLine.setAttribute('y2', src.y.toFixed(1));
     surface.classList.add('linking');
     let hovered = null;
+    let previewFrame = 0, latest = downEv;
     try { srcEl.setPointerCapture(downEv.pointerId); } catch (err) {}
 
     const setHover = (tgt) => {
@@ -1380,14 +1473,19 @@
         hovered = tgt;
       }
     };
-    const onMove = (ev) => {
-      const lx = ev.clientX - srect.left;
-      const ly = ev.clientY - srect.top;
+    const draw = () => {
+      previewFrame = 0;
+      const lx = latest.clientX - srect.left;
+      const ly = latest.clientY - srect.top;
       edgeTempLine.setAttribute('x2', lx.toFixed(1));
       edgeTempLine.setAttribute('y2', ly.toFixed(1));
       setHover(groupAt(lx, ly, null, srcData.id, srect));
     };
+    const onMove = (ev) => { latest = ev; if (!previewFrame) previewFrame = requestAnimationFrame(draw); };
     const cleanup = (ev) => {
+      cancelPointerGesture = null;
+      if (previewFrame) cancelAnimationFrame(previewFrame);
+      previewFrame = 0;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
@@ -1410,6 +1508,7 @@
       }
     };
     const onCancel = (ev) => cleanup(ev);
+    cancelPointerGesture = () => onCancel(downEv);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onCancel);
@@ -1417,6 +1516,7 @@
 
   // ── 右键拖出箭头：端点落在便签上就绑定便签，落在空白就是自由坐标 ──
   function startArrowDraw(downEv) {
+    cancelActiveGesture();
     cancelNoteInertia(true);
     ensureEdgeSvg();
     downEv.preventDefault();
@@ -1435,6 +1535,7 @@
     let end = start;
     let moved = false;
     let hovered = null;
+    let previewFrame = 0, latest = downEv;
 
     const setHover = (tgt) => {
       if (hovered && (!tgt || tgt.id !== hovered.id)) {
@@ -1449,6 +1550,9 @@
       }
     };
     const cleanup = (ev) => {
+      cancelPointerGesture = null;
+      if (previewFrame) cancelAnimationFrame(previewFrame);
+      previewFrame = 0;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
@@ -1458,17 +1562,23 @@
       surface.classList.remove('arrowing');
       interacting = false;
     };
-    const onMove = (ev) => {
-      const lx = ev.clientX - srect.left;
-      const ly = ev.clientY - srect.top;
+    const draw = () => {
+      previewFrame = 0;
+      const lx = latest.clientX - srect.left;
+      const ly = latest.clientY - srect.top;
       end = { x: lx, y: ly };
-      moved = moved || Math.hypot(lx - sx, ly - sy) >= 14;
       arrowTempPath.setAttribute('d', arrowPathD(start, end));
       setHover(groupAt(lx, ly, null, source ? source.id : null, srect));
+    };
+    const onMove = (ev) => {
+      latest = ev;
+      moved = moved || Math.hypot(ev.clientX - downEv.clientX, ev.clientY - downEv.clientY) >= 14;
+      if (!previewFrame) previewFrame = requestAnimationFrame(draw);
     };
     const onUp = (ev) => {
       const lx = ev.clientX - srect.left;
       const ly = ev.clientY - srect.top;
+      moved = moved || Math.hypot(lx - sx, ly - sy) >= 14;
       const target = groupAt(lx, ly, null, source ? source.id : null, srect);
       cleanup(ev);
       if (!moved) return;
@@ -1493,6 +1603,7 @@
       scheduleSave();
     };
     const onCancel = (ev) => cleanup(ev);
+    cancelPointerGesture = () => onCancel(downEv);
     try { surface.setPointerCapture(downEv.pointerId); } catch (err) {}
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1534,7 +1645,9 @@
       setActiveNote(data);
       const pre = snapshot();
       const rect = surface.getBoundingClientRect();
+      const preExpanded = expandedStack;
       const dragScale = viewScale;
+      const dragSize = measuredNoteSize(el);
       const startX = e.clientX;
       const startY = e.clientY;
       const wasExpandedMember = isMultiPile(data) && expandedStack === data.stack;
@@ -1562,13 +1675,21 @@
           origs = members.map((m) => ({ m: m, x: m.x, y: m.y }));
           el.classList.add('dragging');
           try { el.setPointerCapture(ev.pointerId); } catch (err) {}
-          relayout();
+          relayout(wasExpandedMember, wasExpandedMember ? null : members);
+          if (!wasExpandedMember) {
+            const center = noteCenters.get(data.id);
+            if (center) {
+              const bounds = el.getBoundingClientRect();
+              const point = surfaceToWorldPoint(bounds.left - rect.left + bounds.width / 2, bounds.top - rect.top + bounds.height / 2);
+              center.point.x = point.x; center.point.y = point.y;
+            }
+          }
         }
         const viewBounds = visibleWorldRect(rect);
         const minX = viewBounds.left + EDGE;
         const minY = viewBounds.top + EDGE;
-        const maxX = Math.max(minX, viewBounds.right - el.offsetWidth - EDGE);
-        const maxY = Math.max(minY, viewBounds.bottom - el.offsetHeight - EDGE);
+        const maxX = Math.max(minX, viewBounds.right - dragSize.w - EDGE);
+        const maxY = Math.max(minY, viewBounds.bottom - dragSize.h - EDGE);
         const base = origs.find((o) => o.m === data);
         const nx = clamp(Math.round(base.x + dx), minX, maxX);
         const ny = clamp(Math.round(base.y + dy), minY, maxY);
@@ -1593,14 +1714,32 @@
         dragState.lastMoveX = ev.clientX;
         dragState.lastMoveY = ev.clientY;
         dragState.lastMoveT = now;
-        renderEdges();
+        queueMovingEdges(members);
       };
-      const onUp = (ev) => {
+      const cleanup = () => {
+        cancelPointerGesture = null;
         el.removeEventListener('pointermove', onMove);
         el.removeEventListener('pointerup', onUp);
-        el.removeEventListener('pointercancel', onUp);
-        try { el.releasePointerCapture(ev.pointerId); } catch (err) {}
+        el.removeEventListener('pointercancel', onCancel);
+        el.removeEventListener('lostpointercapture', onCancel);
+        try { el.releasePointerCapture(e.pointerId); } catch (err) {}
         interacting = false;
+        el.classList.remove('dragging');
+      };
+      const onCancel = () => {
+        cleanup();
+        if (movingEdgeFrame) cancelAnimationFrame(movingEdgeFrame);
+        movingEdgeFrame = 0; latestMovingNotes = null;
+        if (dragging) {
+          notes = pre.notes; edges = pre.edges; arrows = pre.arrows;
+          expandedStack = preExpanded;
+          renderAll();
+        }
+      };
+      const onUp = (ev) => {
+        if (ev.type === 'pointerup' && dragging && (ev.clientX !== dragState.lastMoveX || ev.clientY !== dragState.lastMoveY)) onMove(ev);
+        flushMovingEdges();
+        cleanup();
         if (dragging) {
           el.classList.remove('dragging');
           const base = origs.find((o) => o.m === data);
@@ -1615,9 +1754,11 @@
           if (moved && !target) startNoteInertia(members, dragState);
         }
       };
+      cancelPointerGesture = onCancel;
       el.addEventListener('pointermove', onMove);
       el.addEventListener('pointerup', onUp);
-      el.addEventListener('pointercancel', onUp);
+      el.addEventListener('pointercancel', onCancel);
+      el.addEventListener('lostpointercapture', onCancel);
     });
   }
 
@@ -1736,6 +1877,7 @@
 
   surface.addEventListener('pointerdown', (e) => {
     if (!loaded) return;
+    cancelActiveGesture();
     if (e.button === 0 || e.button === 2) {
       cancelNoteInertia(true);
       cancelViewPanInertia();
@@ -1796,9 +1938,11 @@
         if (!panFrame) panFrame = requestAnimationFrame(draw);
       };
       const onUp = (ev) => {
+        if (ev.clientX !== panState.lastMoveX || ev.clientY !== panState.lastMoveY) onMove(ev);
         surface.removeEventListener('pointermove', onMove);
         surface.removeEventListener('pointerup', onUp);
-        surface.removeEventListener('pointercancel', onUp);
+        surface.removeEventListener('pointercancel', onCancel);
+        cancelPointerGesture = null;
         if (panFrame) { cancelAnimationFrame(panFrame); draw(); }
         try { surface.releasePointerCapture(ev.pointerId); } catch (err) {}
         surface.classList.remove('panning');
@@ -1808,9 +1952,21 @@
           startViewPanInertia(panState);
         }
       };
+      const onCancel = () => {
+        surface.removeEventListener('pointermove', onMove);
+        surface.removeEventListener('pointerup', onUp);
+        surface.removeEventListener('pointercancel', onCancel);
+        if (panFrame) cancelAnimationFrame(panFrame);
+        panFrame = 0;
+        try { surface.releasePointerCapture(e.pointerId); } catch (err) {}
+        cancelPointerGesture = null;
+        surface.classList.remove('panning'); interacting = false;
+        if (moved) saveViewSoon();
+      };
+      cancelPointerGesture = onCancel;
       surface.addEventListener('pointermove', onMove);
       surface.addEventListener('pointerup', onUp);
-      surface.addEventListener('pointercancel', onUp);
+      surface.addEventListener('pointercancel', onCancel);
       return;
     }
     const st = {
@@ -1828,15 +1984,25 @@
       updateSlashLine(st);
     };
     const onUp = (ev) => {
+      cancelPointerGesture = null;
       surface.removeEventListener('pointermove', onMove);
       surface.removeEventListener('pointerup', onUp);
-      surface.removeEventListener('pointercancel', onUp);
+      surface.removeEventListener('pointercancel', onCancel);
       try { surface.releasePointerCapture(ev.pointerId); } catch (err) {}
       finishSlash(st);
     };
+    const onCancel = () => {
+      cancelPointerGesture = null;
+      surface.removeEventListener('pointermove', onMove);
+      surface.removeEventListener('pointerup', onUp);
+      surface.removeEventListener('pointercancel', onCancel);
+      try { surface.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (st.svg) st.svg.remove();
+    };
+    cancelPointerGesture = onCancel;
     surface.addEventListener('pointermove', onMove);
     surface.addEventListener('pointerup', onUp);
-    surface.addEventListener('pointercancel', onUp);
+    surface.addEventListener('pointercancel', onCancel);
   });
   surface.addEventListener('contextmenu', (e) => e.preventDefault());
   surface.addEventListener('pointermove', (e) => {
@@ -1919,6 +2085,7 @@
   // ── 键盘：无 UI 创建 / 续写 / 定位，以及原有编辑快捷键 ──
   document.addEventListener('keydown', (e) => {
     if (document.body.dataset.startWorkspace !== 'canvas' || !loaded || !notesPageActive()) return;
+    if (e.key === 'Escape' && cancelPointerGesture) { e.preventDefault(); cancelActiveGesture(); return; }
     if (searchInput) return;                          // 搜索输入自身接管文字、回车与退出
     if (editingEl) return;                            // 写字时让浏览器做字符级撤销
     if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, [contenteditable], [role="dialog"]')) return;
@@ -2064,6 +2231,7 @@
     }
   }, true);
   window.addEventListener('blur', () => {
+    cancelActiveGesture();
     spaceHeld = false;
     surface.classList.remove('space-ready');
     clearViewArrowKeys();
@@ -2172,6 +2340,7 @@
   }
 
   function deactivate() {
+    cancelActiveGesture();
     cancelNoteInertia(true);
     cancelViewPanInertia();
     cancelZoom(true);

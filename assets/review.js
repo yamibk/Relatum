@@ -38,6 +38,7 @@
   const scopeSelectEl = root.querySelector('[data-role="review-scope-select"]');
   const sessionProgressEl = root.querySelector('[data-role="review-session-progress"]');
   const libraryListEl = root.querySelector('[data-role="review-library-list"]');
+  let windowedLibrary = null;
   const libraryEmptyEl = root.querySelector('[data-role="review-library-empty"]');
   const libraryCountEl = root.querySelector('[data-role="review-library-count"]');
   const searchEl = root.querySelector('[data-role="review-search"]');
@@ -969,12 +970,13 @@
     const filtered = filteredLibraryCards();
     visibleLibraryIds = filtered.map((card) => card.id);
     if (libraryCountEl) libraryCountEl.textContent = String(libraryCards.length);
-    libraryListEl.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-    filtered.forEach((card, index) => {
+    const rowSignature = card => JSON.stringify([card.prompt, card.answer, card.notes, card.status,
+      card.deckName, card.tags, tr(statusLabel(card.status)), tr(dueLabel(card)), tr('编辑'), tr('未命名问题'), tr('还没有填写答案或说明')]);
+    const buildItem = (card, index) => {
       const item = document.createElement('article');
       item.className = 'review-library-item';
       item.dataset.cardId = card.id;
+      item.__librarySignature = rowSignature(card);
       item.classList.toggle('is-selected', selectedCardIds.has(card.id));
       if (index < 12) {
         item.classList.add('stagger-slot');
@@ -1032,9 +1034,33 @@
       edit.textContent = tr('编辑');
       actions.append(edit);
       item.append(select, copy, actions);
-      fragment.appendChild(item);
-    });
-    libraryListEl.appendChild(fragment);
+      return item;
+    };
+    if (filtered.length > 200 && window.RelatumWindowedList) {
+      if (!windowedLibrary) windowedLibrary = RelatumWindowedList.create({ host: libraryListEl, gap: 10, estimate: 122,
+        key: card => card.id, render: (card, index) => buildItem(card, index),
+        update: (item, card, index) => {
+          const signature = rowSignature(card);
+          if (item.__librarySignature !== signature) {
+            const fresh = buildItem(card, index);
+            item.querySelector('.review-library-copy').replaceWith(fresh.querySelector('.review-library-copy'));
+            item.querySelector('[data-role="review-card-select"]').setAttribute('aria-label', fresh.querySelector('[data-role="review-card-select"]').getAttribute('aria-label'));
+            item.querySelector('[data-action="review-card-edit"]').textContent = tr('编辑');
+            item.__librarySignature = signature;
+          }
+          const selected = selectedCardIds.has(card.id);
+          item.classList.toggle('is-selected', selected);
+          item.querySelector('[data-role="review-card-select"]').checked = selected;
+        },
+      });
+      windowedLibrary.setItems(filtered, buildItem);
+    } else {
+      if (windowedLibrary) { windowedLibrary.dispose(); windowedLibrary = null; }
+      libraryListEl.innerHTML = '';
+      const fragment = document.createDocumentFragment();
+      filtered.forEach((card, index) => fragment.appendChild(buildItem(card, index)));
+      libraryListEl.appendChild(fragment);
+    }
     clearTimeout(libraryItemEnterTimer);
     if (animateItems && !reducedMotion()) {
       libraryItemEnterTimer = window.setTimeout(() => {
