@@ -33,7 +33,7 @@ body { margin: 0; }
 </style></head><body class="start-page" data-start-theme="light">
 <main class="note-document-pane"><div class="note-document-body"><div class="note-live-editor-host" id="editor"></div></div></main>
 <script src="markdown-table.js"></script><script src="markdown.js"></script><script src="mermaid-renderer.js"></script>
-<script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-table-editor.js"></script><script src="note-live-editor.js"></script>
+<script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-table-editor.js"></script><script src="note-media-frame.js"></script><script src="note-live-editor.js"></script>
 <script>window.editor = RelatumNoteLiveEditor.create(document.getElementById('editor'), {value: ${JSON.stringify(sample)}, notePath:'sample.md', imageUrl(){return '/fixture.png';}});</script>
 </body></html>`;
 
@@ -450,7 +450,8 @@ body { margin: 0; }
       const snapshot = editor.snapshot();
       return {empty:snapshot.anchor === snapshot.head, head:snapshot.head, imageAt:snapshot.value.indexOf('![[fixture.png')};
     });
-    assert(beforeImage.empty && beforeImage.head === beforeImage.imageAt, JSON.stringify(beforeImage));
+    assert(beforeImage.empty && beforeImage.head === beforeImage.imageAt - 1,
+      'ArrowLeft must use the preceding paragraph instead of a removed boundary line: ' + JSON.stringify(beforeImage));
     await page.evaluate(() => editor.setSourceMode(true));
     await settle();
     assert((await page.locator('.cm-content').innerText()).includes('![[fixture.png|240]]'),
@@ -474,6 +475,134 @@ body { margin: 0; }
     assert(!await page.locator('.cm-content').innerText().then(text => text.includes('![行内图|96]')),
       'an active inline image must not reveal its Markdown source');
 
+    // Standalone projections cover their visual boundary lines. Real blank
+    // Markdown lines remain visible, and pointer coordinates follow the layout.
+    await page.evaluate(() => {
+      // This static fixture checks the canvas host only. The real API/runtime
+      // interactions remain covered by note-canvas-browser.js.
+      window.RelatumNoteCanvas = { mount() { return { update() {}, destroy() {} }; } };
+    });
+    const compactChecks = [];
+    const fixtures = [
+      ['math', '1\n$$a^2+b^2=c^2$$\n2', 1, 0],
+      ['multiline', '1\n$$\n\\frac{\\sqrt{a^2+b^2}}{\\int_0^\\infty e^{-x}\\,dx}\n$$\n2', 1, 0],
+      ['brackets', '1\n\\[x^2\\]\n2', 1, 0],
+      ['consecutive', '1\n$$x^2$$\n$$y^2$$\n2', 2, 0],
+      ['blank-lines', '1\n\n$$x^2$$\n\n2', 1, 2],
+      ['image', '1\n![fixture|240x180](fixture.png)\n2', 1, 0],
+      ['canvas', '1\n![diagram.canvas|240x180](canvases/diagram.canvas)\n2', 1, 0],
+      ['consecutive-media', '1\n![fixture|240x180](fixture.png)\n![diagram.canvas|240x180](canvases/diagram.canvas)\n2', 2, 0],
+      ['media-blank-lines', '1\n\n![fixture|240x180](fixture.png)\n\n![diagram.canvas|240x180](canvases/diagram.canvas)\n\n2', 2, 3],
+      ['image-only', '![[fixture.png|240x180]]', 1, 0],
+      ['canvas-only', '![diagram.canvas|240x180](canvases/diagram.canvas)', 1, 0],
+      ['math-only', '$$x^2$$', 1, 0],
+      ['multiline-only', '$$\n\\frac{1}{x}\n$$', 1, 0],
+      ['wide-math', '1\n$$' + Array(100).fill('x^2').join('+') + '$$\n2', 1, 0],
+    ];
+    for (const [theme, width, scale] of [['light', 1280, 1], ['dark', 760, 1.35]]) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.evaluate(({ theme, scale }) => {
+        document.body.dataset.startTheme = theme;
+        document.body.style.setProperty('--note-font-scale', String(scale));
+      }, { theme, scale });
+      for (const [name, value, blocks, blanks] of fixtures) {
+        await page.evaluate(value => {
+          document.activeElement?.blur();
+          editor.setDocument({ value, notePath: 'compact.md', anchor: value.length, head: value.length });
+        }, value);
+        await page.waitForFunction(blocks => {
+          const projected = [...document.querySelectorAll('.cm-content > .note-live-rich-block')];
+          return projected.length === blocks && projected.every(block => !block.classList.contains('is-math') || block.querySelector('mjx-container'));
+        }, blocks);
+        await settle();
+        const layout = await page.evaluate(() => {
+          const content = editor.view.contentDOM;
+          const math = [...content.querySelectorAll('.is-math')].map(block => {
+            const container = block.querySelector('mjx-container'), style = getComputedStyle(container);
+            return { height: block.getBoundingClientRect().height, margin: style.marginTop, overflowY: style.overflowY,
+              width: block.clientWidth, scrollWidth: block.scrollWidth, heightOverflow: block.scrollHeight - block.clientHeight };
+          });
+          return { blanks: [...content.children].filter(el => el.classList.contains('cm-line') && !el.textContent).length,
+            contentWidth: content.clientWidth, math };
+        });
+        assert.equal(layout.blanks, blanks, name + ' must not add boundary lines');
+        assert.equal(await page.evaluate(() => editor.snapshot().value), value);
+        for (const math of layout.math) {
+          assert.equal(math.margin, '0px');
+          assert.equal(math.overflowY, 'visible', 'MathJax glyphs must not be clipped by their container');
+          assert(math.heightOverflow <= 2, name + ' must fit vertically in its outer scroller');
+        }
+        if (name === 'math') assert(layout.math[0].height < 45 * scale, 'simple math must use its measured height and modest padding');
+        if (name === 'wide-math') {
+          assert(layout.math[0].scrollWidth > layout.math[0].width + 100, 'wide formulas must scroll in the outer block');
+          assert(layout.contentWidth <= width, 'wide formulas must not expand the editor beyond the viewport');
+        }
+        if (value.endsWith('\n2')) {
+          const point = await page.evaluate(() => {
+            const line = [...editor.view.contentDOM.children].find(el => el.classList.contains('cm-line') && el.textContent === '2');
+            const rect = line.getBoundingClientRect(); return { x: rect.left + 3, y: (rect.top + rect.bottom) / 2 };
+          });
+          await page.mouse.click(point.x, point.y); await settle();
+          const caret = await page.evaluate(() => {
+            const head = editor.view.state.selection.main.head, rect = editor.view.coordsAtPos(head);
+            return { head, y: (rect.top + rect.bottom) / 2 };
+          });
+          assert.equal(caret.head, value.length - 1, name + ' must land on the visible paragraph');
+          assert(Math.abs(caret.y - point.y) < 5, name + ' must preserve pointer/caret coordinates');
+          await page.keyboard.type('Z'); await settle();
+          assert.equal(await page.evaluate(() => editor.snapshot().value), value.slice(0, -1) + 'Z2');
+          await page.keyboard.press('Control+z'); await settle();
+          assert.equal(await page.evaluate(() => editor.snapshot().value), value);
+        } else {
+          await page.evaluate(() => { editor.view.dispatch({ selection: RelatumCodeMirror.EditorSelection.cursor(editor.view.state.doc.length) }); editor.focus(); });
+          await page.keyboard.press('Enter'); await page.keyboard.type('Z'); await settle();
+          assert.equal(await page.evaluate(() => editor.snapshot().value), value + '\nZ', 'a document ending in a block must allow a following paragraph');
+        }
+        compactChecks.push({ name, theme, scale, ...layout });
+        if (name === 'multiline') await page.screenshot({ path: path.join(output, 'compact-math-' + theme + '.png') });
+      }
+    }
+    // Native carets navigate to the real paragraphs beside an image. Exact
+    // hidden-source boundary mapping is covered by the StateField regression.
+    // Candidates must remain visible without entering autosave snapshots.
+    const boundaryCdp = await page.context().newCDPSession(page);
+    const boundarySource = '1\n![[fixture.png|240x180]]\n2';
+    for (const side of ['start', 'end']) {
+      for (const commit of [true, false]) {
+        const at = side === 'start' ? 1 : boundarySource.lastIndexOf('\n') + 1;
+        await page.evaluate(value => {
+          editor.setDocument({ value, notePath: 'boundary-ime.md', anchor: value.length, head: value.length });
+        }, boundarySource);
+        await settle();
+        await page.locator('.note-live-image-frame.is-block').click({ position: { x: 20, y: 20 } });
+        await page.keyboard.press(side === 'start' ? 'ArrowLeft' : 'ArrowRight');
+        await settle();
+        assert.equal(await page.evaluate(() => editor.view.state.selection.main.head), at, 'arrows must navigate outside the media source');
+        for (const text of ['h', 'han']) {
+          await boundaryCdp.send('Input.imeSetComposition', { text, selectionStart: text.length, selectionEnd: text.length });
+          assert.equal(await page.evaluate(() => editor.snapshot().value), boundarySource);
+          assert((await page.locator('.cm-content').innerText()).includes(text), 'boundary preedit must remain visible at ' + side);
+        }
+        if (commit) await boundaryCdp.send('Input.insertText', { text: '汉' });
+        else await boundaryCdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+        await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().value), commit ? boundarySource.slice(0, at) + '汉' + boundarySource.slice(at) : boundarySource);
+      }
+    }
+    await boundaryCdp.detach();
+    // A sole-image document temporarily retains native editable boundary lines
+    // in image-text mode; leaving that mode must restore the compact layout.
+    const soleImage = '![[fixture.png|240x180]]';
+    await page.evaluate(value => editor.setDocument({ value, notePath: 'image-only-mode.md' }), soleImage);
+    await settle();
+    await page.locator('.note-live-image-frame.is-block').click({ position: { x: 20, y: 20 } });
+    await page.evaluate(() => editor.setImageTextMode(true));
+    await page.waitForFunction(() => [...editor.view.contentDOM.children].filter(el => el.classList.contains('cm-line') && !el.textContent).length === 2);
+    assert.equal(await page.evaluate(() => editor.snapshot().value), soleImage);
+    await page.evaluate(() => editor.setImageTextMode(false));
+    await page.waitForFunction(() => editor.view.contentDOM.querySelectorAll(':scope > .cm-line').length === 0);
+    assert.equal(await page.evaluate(() => editor.snapshot().value), soleImage);
+
     // Existing late-viewport and segmented-range fixtures exercise MathJax,
     // tables, callouts and mounted language highlighting together.
     await page.goto(`http://127.0.0.1:${server.address().port}/harness`);
@@ -486,7 +615,7 @@ body { margin: 0; }
     await page.waitForFunction(() => document.documentElement.dataset.noteLivePerformance);
     const typingProbe = await page.evaluate(() => JSON.parse(document.documentElement.dataset.noteLivePerformance));
     assert.deepEqual(errors, []);
-    const report = {output,metrics,clickChecks,calloutChecks,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
+    const report = {output,metrics,clickChecks,calloutChecks,compactChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report,null,2));
     console.log(JSON.stringify(report));
   } finally {

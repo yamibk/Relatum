@@ -118,6 +118,55 @@ function decorationRecords(set, length) {
 
 const liveProbe = loadLiveDecorationProbe();
 
+// Compact block boundaries must change layout without absorbing adjacent
+// composition text. Exercise the real StateField and ChangeSet mapping.
+for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)']) {
+  const coordinator = {};
+  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'compact.md', {}, coordinator, { pending: () => true });
+  const original = 'before\n' + block + '\nafter';
+  const initial = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: original,
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
+  });
+  const record = state => decorationRecords(state.field(field).decorations, state.doc.length)[0];
+  assert.strictEqual(record(initial).spec.inclusive, true, 'standalone media and math must cover their visual boundary lines');
+  const atomic = decorationRecords(initial.field(field).atomic, initial.doc.length)[0];
+  const media = block.startsWith('!');
+  assert.strictEqual(atomic.from, record(initial).from - (media ? 1 : 0));
+  assert.strictEqual(atomic.to, record(initial).to + (media ? 1 : 0));
+  assert.strictEqual(atomic.spec.inclusive, false, 'cursor skipping must retain real paragraph boundary positions');
+  for (const side of ['start', 'end']) {
+    const at = side === 'start' ? record(initial).from : record(initial).to;
+    let state = initial.update({ changes: { from: at, insert: 'han' } }).state;
+    let projected = record(state);
+    assert.strictEqual(state.doc.sliceString(projected.from, projected.to), block, 'candidate text must remain outside the projection at its ' + side);
+    assert.strictEqual(projected.spec.widget, record(initial).spec.widget, 'candidate mapping must reuse the widget');
+    assert.strictEqual(projected.from, state.field(field).specs[0].from);
+    assert.strictEqual(projected.to, state.field(field).specs[0].to);
+    state = state.update({ changes: { from: at, to: at + 3, insert: 'zhong' } }).state;
+    projected = record(state);
+    assert.strictEqual(state.doc.sliceString(projected.from, projected.to), block, 'replacement candidates must stay visible');
+    state = state.update({ changes: { from: at, to: at + 5, insert: '' } }).state;
+    assert.strictEqual(state.doc.toString(), original, 'candidate cancellation must restore the original document');
+    assert.strictEqual(state.doc.sliceString(record(state).from, record(state).to), block);
+  }
+  const before = record(initial);
+  const both = initial.update({ changes: [{ from: before.from, insert: '前' }, { from: before.to, insert: '后' }] }).state;
+  assert.strictEqual(both.doc.sliceString(record(both).from, record(both).to), block, 'multiple boundary edits must map together');
+  const deleted = initial.update({ changes: { from: before.from, to: before.to, insert: '' } }).state;
+  assert.strictEqual(decorationRecords(deleted.field(field).decorations, deleted.doc.length).length, 0, 'deleting a source range must remove its projection');
+}
+{
+  const coordinator = {};
+  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'rule.md', {}, coordinator, { pending: () => false });
+  const state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: 'before\n\n---\n\nafter',
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
+  });
+  assert.strictEqual(decorationRecords(state.field(field).decorations, state.doc.length)[0].spec.inclusive, false,
+    'other rich blocks must retain their existing boundary behavior');
+}
+
 const commentTagSource = '%%\n隐藏段落\n\n#hidden\n%%\n\n#visible';
 const commentTagCoordinator = { field: null, spec() { return null; } };
 const commentTagField = liveProbe.__relatumLiveTest.createBlockField(() => 'tags.md', { coordinator: commentTagCoordinator }, commentTagCoordinator);

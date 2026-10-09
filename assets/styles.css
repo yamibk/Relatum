@@ -831,8 +831,13 @@ body.start-page[data-start-theme="dark"] .note-live-rich-block.note-table td.is-
 body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5; }
 .note-live-rich-block.is-derive .md-derive { margin: 0; }
 .note-live-rich-block.is-mermaid { min-height: 70px; }
-.note-live-rich-block.is-math { overflow-x: auto; text-align: center; }
+.note-live-rich-block.is-math { padding: .35em 0; contain: inline-size; overflow-x: auto; text-align: center; }
 .note-live-rich-block mjx-container { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.note-live-rich-block.is-math mjx-container[jax="CHTML"][display="true"] {
+  margin: 0;
+  padding: .15em 0;
+  overflow: visible;
+}
 .note-live-rich-block.is-rule {
   width: 100%;
   padding-block: .55em;

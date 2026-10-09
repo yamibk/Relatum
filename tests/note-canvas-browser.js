@@ -109,6 +109,27 @@ async function run(browser, enabled, prewarm = false) {
     assert(fs.existsSync(path.join(root, 'notes/canvases')));
     assert.equal(await page.locator('[data-note-path="canvases"]').count(), 0);
     const viewport = frame.locator('.note-canvas-viewport');
+    const compactSource = await snap();
+    const compactLayout = await page.evaluate(() => {
+      const content = T.editor.view.contentDOM;
+      const line = [...content.children].find(el => el.classList.contains('cm-line') && el.textContent === '后文');
+      const rect = line.getBoundingClientRect();
+      return { blanks: [...content.children].filter(el => el.classList.contains('cm-line') && !el.textContent).length,
+        expected: T.editor.snapshot().value.split('\n').filter(line => !line).length,
+        point: { x: rect.left + 3, y: (rect.top + rect.bottom) / 2 } };
+    });
+    assert.equal(compactLayout.blanks, compactLayout.expected, 'live canvases must not add phantom boundary lines');
+    await page.mouse.click(compactLayout.point.x, compactLayout.point.y); await settle();
+    const proseCaret = await page.evaluate(() => {
+      const head = T.editor.view.state.selection.main.head, rect = T.editor.view.coordsAtPos(head);
+      return { head, y: (rect.top + rect.bottom) / 2 };
+    });
+    assert.equal(proseCaret.head, compactSource.indexOf('后文'));
+    assert(Math.abs(proseCaret.y - compactLayout.point.y) < 5, 'canvas height must agree with the following paragraph hit test');
+    await page.keyboard.type('Z'); await settle();
+    assert.equal(await snap(), compactSource.replace('后文', 'Z后文'));
+    await page.keyboard.press('Control+z'); await settle();
+    assert.equal(await snap(), compactSource);
     async function createNode(x, y, text) {
       const box = await viewport.boundingBox(); await page.mouse.dblclick(box.x + x, box.y + y);
       const input = viewport.locator('textarea'); await input.waitFor();
@@ -195,6 +216,9 @@ async function run(browser, enabled, prewarm = false) {
       assert.equal(await frame.locator('.note-canvas-live > path').count(),0,'previews release after finish or cancellation');
     }
     await batchConnect(true);assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.past.length),batchHistory);
+    // Escape deliberately clears the selection; restore both sources before
+    // checking the next batch rather than relying on the canceled gesture.
+    await first.click();await second.click({modifiers:['Shift']});
     await batchConnect();assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.data.edges.length),3);
     assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.past.length),batchHistory+1);
     await batchConnect();assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.past.length),batchHistory+1,'duplicates do not add history');
@@ -416,7 +440,10 @@ async function run(browser, enabled, prewarm = false) {
     await page.screenshot({ path: path.join(root, 'canvas.png') });
     return { enabled, nodes: 2, geometryBuilds: before, proseProjectionChanges: 0, noOpMeasurements: 0, dragMeasurements: 0, dragIndexRebuilds: 0, dragStaticDraws, screenshot: path.join(root, 'canvas.png') };
   } catch (error) {
-    if (page) console.error('Diagnostics', await page.evaluate(() => ({ value: window.T?.editor?.snapshot().value, html: document.querySelector('.is-canvas')?.outerHTML?.slice(0, 1800), active: document.activeElement?.className })).catch(() => null));
+    if (page) console.error('Diagnostics', JSON.stringify(await page.evaluate(() => ({ value: window.T?.editor?.snapshot().value,
+      canvases: [...document.querySelectorAll('.is-canvas .note-live-image-frame')].map(el => ({
+        stats: el.__noteCanvas?.engine?.stats(), nodes: el.__noteCanvas?.session?.data.nodes.length, edges: el.__noteCanvas?.session?.data.edges.length,
+      })), active: document.activeElement?.className })).catch(() => null)));
     throw error;
   } finally { await context.close(); server.kill(); }
 }

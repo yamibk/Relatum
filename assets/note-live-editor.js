@@ -47,6 +47,7 @@
     relatumCodeLanguages, relatumCodeHighlighting,
   } = CM;
   const focusEffect = StateEffect.define();
+  const imageTextProjectionEffect = StateEffect.define();
   const inputReconcileEffect = StateEffect.define();
   const notePathEffect = StateEffect.define();
   const viewportScanEffect = StateEffect.define();
@@ -1778,6 +1779,50 @@
       : new RichBlockWidget(spec, path, options, coordinator, selected);
   }
 
+  function compactBlockProjection(spec, state, options) {
+    // With no text paragraph at all, Chromium needs an editable boundary line
+    // to deliver native input without a keydown to the selected image text box.
+    const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
+      && options.imageTextController?.active;
+    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas');
+  }
+
+  function blockAtomicRange(spec, state) {
+    const media = spec.kind === 'image' || spec.kind === 'canvas';
+    // Media stay projected when selected. Their adjacent newline positions
+    // have no visible caret line, so keyboard navigation skips to the actual
+    // preceding/following paragraph. Formula boundaries still reveal source.
+    const from = media && spec.from > 0 ? spec.from - 1 : spec.from;
+    const to = media && spec.to < state.doc.length ? spec.to + 1 : spec.to;
+    return Decoration.replace({ block: true, inclusive: false, blockId: spec.id }).range(from, to);
+  }
+
+  function mapBlockProjections(decorations, changes) {
+    const mapped = decorations.map(changes);
+    const repairs = new Map();
+    // Inclusive block boundaries remove CodeMirror's empty boundary lines,
+    // but adjacent input must still stay outside the hidden source. Repair only
+    // touched boundaries, retaining the decoration and its existing widget.
+    changes.iterChanges((start, end) => {
+      decorations.between(start, end, (from, to, decoration) => {
+        if (!decoration.spec.inclusive || !decoration.spec.blockId) return;
+        if (start <= from && end >= to) {
+          repairs.set(decoration.spec.blockId, null);
+          return;
+        }
+        if ((start <= from && end === from) || (start === to && end >= to)) {
+          const nextFrom = changes.mapPos(from, 1), nextTo = changes.mapPos(to, -1);
+          repairs.set(decoration.spec.blockId, nextFrom < nextTo ? decoration.range(nextFrom, nextTo) : null);
+        }
+      });
+    });
+    if (!repairs.size) return mapped;
+    return mapped.update({
+      filter(from, to, decoration) { return !repairs.has(decoration.spec.blockId); },
+      add: Array.from(repairs.values()).filter(Boolean), sort: true,
+    });
+  }
+
   function createBlockField(notePath, options, coordinator, inputSession) {
     const field = StateField.define({
       create(state) {
@@ -1789,9 +1834,10 @@
         const decorations = Decoration.set(specs.filter(usesBlockReplacement).map((spec) => Decoration.replace({
           widget: blockWidget(spec, notePath(), options, coordinator,
             selectedImageIds.has(spec.id)),
-          block: true, inclusive: false, blockId: spec.id,
+          block: true, inclusive: compactBlockProjection(spec, state, options), blockId: spec.id,
         }).range(spec.from, spec.to)), true);
-        return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, decorations };
+        const atomic = Decoration.set(specs.filter(usesBlockReplacement).map(spec => blockAtomicRange(spec, state)), true);
+        return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, decorations, atomic };
       },
       update(value, transaction) {
         let focused = value.focused;
@@ -1801,8 +1847,8 @@
           // all projections and only map their positions through native edits;
           // reparsing/replacing neighbouring blocks can move the IME caret.
           const specs = transaction.docChanged ? value.specs.map((spec) => Object.assign({}, spec, {
-            // Rich replacements are non-inclusive. Text inserted exactly before
-            // an object shifts it right; text inserted after it stays outside.
+            // Source ranges remain non-inclusive even when their visual block
+            // boundaries are covered. Adjacent input stays outside the object.
             from: transaction.changes.mapPos(spec.from, 1),
             to: transaction.changes.mapPos(spec.to, -1),
           })) : value.specs;
@@ -1810,7 +1856,8 @@
             specs, byId: transaction.docChanged ? new Map(specs.map((spec) => [spec.id, spec])) : value.byId,
             selectedImageIds: value.selectedImageIds,
             focused,
-            decorations: transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations,
+            decorations: transaction.docChanged ? mapBlockProjections(value.decorations, transaction.changes) : value.decorations,
+            atomic: transaction.docChanged ? value.atomic.map(transaction.changes) : value.atomic,
           });
         }
         let specs = updateBlockSpecs(value.specs, transaction);
@@ -1823,9 +1870,10 @@
           viewportRefreshed = true;
         });
         const notePathChanged = transaction.effects.some((effect) => effect.is(notePathEffect));
+        const imageTextModeChanged = transaction.effects.some((effect) => effect.is(imageTextProjectionEffect));
         const inputReconciled = inputReconcileRanges !== undefined;
         const selectionChanged = !!transaction.selection;
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !viewportRefreshed) return value;
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed) return value;
 
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, false);
@@ -1840,6 +1888,9 @@
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
         value.selectedImageIds.forEach((id) => { if (!selectedImageIds.has(id)) refresh.add(id); });
         selectedImageIds.forEach((id) => { if (!value.selectedImageIds.has(id)) refresh.add(id); });
+        if (imageTextModeChanged) specs.forEach(spec => {
+          if (spec.kind === 'image' && spec.from === 0 && spec.to === transaction.state.doc.length) refresh.add(spec.id);
+        });
         // Mapped widgets still carry their pre-composition source positions.
         // The bounded reconciliation scan refreshes visible widgets once after
         // the browser has committed the candidate text.
@@ -1851,25 +1902,31 @@
           });
         }
 
-        let decorations = transaction.docChanged ? value.decorations.map(transaction.changes) : value.decorations;
+        let decorations = transaction.docChanged ? mapBlockProjections(value.decorations, transaction.changes) : value.decorations;
+        let atomic = transaction.docChanged ? value.atomic.map(transaction.changes) : value.atomic;
         if (refresh.size) {
+          const projected = specs.filter(spec => blockIsProjected(spec, activeIds) && refresh.has(spec.id));
           decorations = decorations.update({
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
-            add: specs.filter((spec) => blockIsProjected(spec, activeIds) && refresh.has(spec.id)).map((spec) => Decoration.replace({
+            add: projected.map((spec) => Decoration.replace({
               widget: blockWidget(spec, notePath(), options, coordinator,
                 selectedImageIds.has(spec.id)),
-              block: true, inclusive: false, blockId: spec.id,
+              block: true, inclusive: compactBlockProjection(spec, transaction.state, options), blockId: spec.id,
             }).range(spec.from, spec.to)),
             sort: true,
           });
+          atomic = atomic.update({
+            filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
+            add: projected.map(spec => blockAtomicRange(spec, transaction.state)), sort: true,
+          });
         }
-        return { specs, byId, activeIds, selectedImageIds, focused, decorations };
+        return { specs, byId, activeIds, selectedImageIds, focused, decorations, atomic };
       },
       provide: (field) => [
         EditorView.decorations.from(field, (value) => value.decorations),
         EditorView.atomicRanges.of((view) => {
           const value = view.state.field(field, false);
-          return value ? value.decorations : Decoration.none;
+          return value ? value.atomic : Decoration.none;
         }),
       ],
     });
@@ -2897,11 +2954,12 @@
         if (!available && this.active) { this.setActive(false); return; }
         this.notify();
       },
-      setActive(value, view) {
+      setActive(value, targetView) {
         const next = !!value && this.available;
+        const modeChanged = next !== this.active;
         this.uiSuppressed = false;
-        if (next && view) {
-          const range = exactSelectedImageRange(view.state);
+        if (next && targetView) {
+          const range = exactSelectedImageRange(targetView.state);
           this.activeRange = range ? { from: range.from, to: range.to } : null;
         }
         if (!next) {
@@ -2914,6 +2972,15 @@
         }
         this.active = next;
         this.render();
+        // A mode change may occur inside an editor update listener. Refresh the
+        // projection after that update, without altering the document/history.
+        if (modeChanged) requestAnimationFrame(() => {
+          if (!destroyed && !sourceMode && view.dom.isConnected) {
+            runWhenInputSettled(view, () => {
+              if (!destroyed && !sourceMode) view.dispatch({ effects: imageTextProjectionEffect.of(null) });
+            });
+          }
+        });
         return this.active;
       },
       select(id) {
@@ -3066,6 +3133,19 @@
       return imageTextController.command(name, value);
     }
 
+    function moveSelectedMediaCaret(view, backward) {
+      if (sourceMode || compositionActive(view) || view.state.selection.ranges.length !== 1) return false;
+      const range = exactSelectedImageRange(view.state);
+      if (!range) return false;
+      const line = view.state.doc.lineAt(range.from);
+      if (range.from !== line.from || range.to !== line.to) return false;
+      const at = backward ? Math.max(0, range.from - 1) : Math.min(view.state.doc.length, range.to + 1);
+      // Default arrows collapse a selected object at its hidden source edge,
+      // before atomic cursor skipping runs. Move to the real paragraph instead.
+      view.dispatch({ selection: EditorSelection.cursor(at), scrollIntoView: true });
+      return true;
+    }
+
     function ownsImageTextInput(event) {
       return !sourceMode && imageTextController.active && !!imageTextController.selectedId
         && !(event && event.target instanceof Element && event.target.closest('textarea'));
@@ -3205,8 +3285,8 @@
           { key: 'Delete', run: (view) => deleteImageObject(view, false) },
           { key: 'Enter', run: () => imageTextKeyCommand('edit') },
           { key: 'Escape', run: () => imageTextKeyCommand('clear-selection') },
-          { key: 'ArrowLeft', run: () => imageTextKeyCommand('move', { dx: -1, dy: 0 }) },
-          { key: 'ArrowRight', run: () => imageTextKeyCommand('move', { dx: 1, dy: 0 }) },
+          { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) },
+          { key: 'ArrowRight', run: (view) => imageTextKeyCommand('move', { dx: 1, dy: 0 }) || moveSelectedMediaCaret(view, false) },
           { key: 'ArrowUp', run: () => imageTextKeyCommand('move', { dx: 0, dy: -1 }) },
           { key: 'ArrowDown', run: () => imageTextKeyCommand('move', { dx: 0, dy: 1 }) },
           { key: 'Shift-ArrowLeft', run: () => imageTextKeyCommand('move', { dx: -10, dy: 0 }) },
