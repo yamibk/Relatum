@@ -56,7 +56,7 @@
     labelEase: 0.22,      // 顶层标签叠加层淡入淡出每帧逼近目标比例
     labelHideAlpha: 0.08, // 物理温度高于此值（铺开 / 回温中）时藏标签，避免随节点飞动抖字
     presolveSteps: 360,   // 进场+取景时无渲染预解算的最大步数（命中收敛即提前停）
-    presolveMaxNodes: 800,// 超过此规模不预解算，退回收敛后动画 fit（避免开图同步算布局卡顿）
+    presolveMaxNodes: 800,// 超过此规模不预解算，退回收敛后动画 fit（限制预布局总计算量）
     introVelocityClamp: 0,// 进场期节点速度上限；0=不限制（默认保持旧行为）
     finalFitOnConverge: true, // 未命中预解算时，收敛后是否再做一次动画 fit
   };
@@ -433,6 +433,20 @@
     let tickCount = 0;
     let alpha = 0;
     let introActive = false;
+    let presolveJob = null;
+    function restorePresolveSeed(job) {
+      job.nodes.forEach(function (node, i) {
+        node.x = job.x[i]; node.y = job.y[i]; node.vx = node.vy = 0; node._rx = node.x; node._ry = node.y;
+      });
+    }
+    function cancelPresolve(retain) {
+      const job = presolveJob;
+      if (!job) return;
+      global.clearTimeout(job.timer);
+      presolveJob = null; presolving = false;
+      restorePresolveSeed(job);
+      if (retain && !destroyed && nodes === job.nodes) pending = { intro: job.intro, fit: job.fit };
+    }
     let presolving = false;    // 进场预解算（提前取景）期间为真：此时也施加 introVelocityClamp，
                                // 否则种子偶发近重合(<1px)会让反平方斥力炸飞整张图→fit 取到垃圾布局
     let idle = false;          // 收敛后进入闲时微漂移（仅当配置了 drift）
@@ -474,6 +488,7 @@
     }
 
     function stopLoop() {
+      cancelPresolve(true);
       if (frameId) global.cancelAnimationFrame(frameId);
       frameId = 0;
       lastTickTime = 0;
@@ -481,6 +496,7 @@
 
     // —— 数据装载：node 需带 x,y,r（适配层先 seed 好坐标）；引擎补上运行期字段 ——
     function setData(nextNodes, nextEdges, dataOptions) {
+      cancelPresolve(false);
       const armIntro = !!(dataOptions && dataOptions.intro);
       nodes = nextNodes || [];
       edges = nextEdges || [];
@@ -790,6 +806,7 @@
       return false;
     }
     function requestRender() {
+      if (presolveJob) return;
       lastRenderT = 0;          // 打断闲时节流：让下一拍立即重画（悬停高亮 / 平移即时跟手）
       if (tryBeginPending()) return;
       if (!active || !visible || destroyed) return;
@@ -812,7 +829,7 @@
       let dt = (t - lastTickTime) / cfg.frameMs;
       lastTickTime = t;
       lastRenderT = t;
-      if (dt < 0.4) dt = 0.4;
+      if (dt < 0.01) dt = 0.01;
       if (dt > 2.4) dt = 2.4;
 
       const physicsBusy = alpha > cfg.alphaMin || !!draggedNode;
@@ -878,6 +895,7 @@
       }
     }
     function ensureLoop() {
+      if (presolveJob) return;
       if (tryBeginPending()) return;
       if (!frameId && !destroyed && active && visible) {
         frameId = global.requestAnimationFrame(tick);
@@ -904,25 +922,35 @@
       // 图谱开图(fit:false)/relax(intro:false)/reduceMotion/超大规模 都不走这条，行为与旧版一致。
       const usePresolve = introWanted && fitWanted && !reduceMotion && nodes.length <= cfg.presolveMaxNodes;
       if (usePresolve) {
-        const seedX = [], seedY = [];
-        for (let i = 0; i < nodes.length; i++) { seedX.push(nodes[i].x); seedY.push(nodes[i].y); }
+        if (frameId) global.cancelAnimationFrame(frameId);
+        frameId = 0;
+        const job = { nodes: nodes, x: nodes.map(n => n.x), y: nodes.map(n => n.y), step: 0, timer: 0, intro: introWanted, fit: fitWanted };
+        presolveJob = job;
         alpha = 1;
         presolving = true;
-        for (let i = 0; i < cfg.presolveSteps && alpha > cfg.alphaMin; i++) runPhysics(1);
-        presolving = false;
-        fitView(false);          // 按收敛布局 instant 取景（节点此刻还未登场、全透明，镜头跳变不可见）
-        autoFitPending = false;  // 已取景，收敛后不再动镜头
-        for (let i = 0; i < nodes.length; i++) {
-          const n = nodes[i];
-          n.x = seedX[i]; n.y = seedY[i];
-          n.vx = 0; n.vy = 0;
-          n._rx = n.x; n._ry = n.y;
+        function slice() {
+          if (presolveJob !== job || destroyed || nodes !== job.nodes) return;
+          if (!active || !visible) { cancelPresolve(true); return; }
+          const started = now();
+          do { runPhysics(1); job.step++; }
+          while (job.step < cfg.presolveSteps && alpha > cfg.alphaMin && now() - started < 4);
+          if (job.step < cfg.presolveSteps && alpha > cfg.alphaMin) { job.timer = global.setTimeout(slice, 0); return; }
+          presolveJob = null; presolving = false;
+          if (!userAdjustedView) fitView(false);
+          autoFitPending = false;
+          restorePresolveSeed(job);
+          finishBegin(introWanted && !reduceMotion);
         }
+        job.timer = global.setTimeout(slice, 0);
+        return;
       } else {
         autoFitPending = fitWanted && cfg.finalFitOnConverge !== false;
       }
+      finishBegin(introWanted);
+    }
+    function finishBegin(introWanted) {
       alpha = 1;
-      const t = now();   // 进场时钟在同步预解算之后取，预解算耗时不吃进场时长
+      const t = now();   // 预布局全部完成后才启动进场时钟。
       introActive = introWanted;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
@@ -935,6 +963,7 @@
     }
     // start({intro,fit})：开图 / 重排都走这里。intro 默认开、fit 默认开。
     function start(o) {
+      cancelPresolve(false);
       o = o || {};
       const introWanted = o.intro !== false && !reduceMotion && nodes.length > 0;
       pending = { intro: introWanted, fit: o.fit !== false && nodes.length > 0 };
@@ -1252,6 +1281,11 @@
         // 否则 keepGoing 会因 idle=true 永久保持 30fps RAF，却不再产生任何动效。
         idle = false;
         if (reduceMotion) {
+          if (presolveJob) {
+            const fit = presolveJob.fit;
+            cancelPresolve(false);
+            pending = { intro: false, fit: fit };
+          } else if (pending) pending.intro = false;
           driftGain = 0;
           if (_hasLabels) labelAlpha = labelTarget = nodes.length ? 1 : 0;
           requestRender();

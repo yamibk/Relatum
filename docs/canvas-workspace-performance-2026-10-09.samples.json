@@ -1,0 +1,82 @@
+{
+  "date": "2026-10-09",
+  "baselineRef": "634b96a1cffb86b1d99e285bed04a56b0b8b3eac",
+  "browser": "154.0.4258.62",
+  "units": { "time": "ms", "heap": "bytes" },
+  "method": "Real isolated pages; synthetic same-loop pointer bursts; 5 history commits; 3 alternated baseline/optimized 3000-node operation rounds. Frame intervals are rAF observations, not hardware presentation.",
+  "pan3000": {
+    "events": 120,
+    "baseline": { "paints": 120, "burstJsMs": 34.3 },
+    "optimized": { "synchronousPaints": 0, "framedPaints": 1, "viewportReads": 1, "burstJsMs": 0.5 }
+  },
+  "sameSelection3000": {
+    "moves": 12,
+    "baseline": { "selectedToggleCalls": 71640, "notifications": 12 },
+    "optimized": { "selectedToggleCalls": 1, "repeatedNotifications": 0 }
+  },
+  "history3000": [
+    { "points": 50000, "baselineMs": [17.5, 9.4, 11.5, 6.7, 8.9], "optimizedMs": [2.6, 5.0, 1.9, 1.8, 1.4], "unchangedInkReads": 0 },
+    { "points": 200000, "baselineMs": [65.1, 26.3, 29.6, 26.9, 25.2], "optimizedMs": [1.5, 1.5, 1.5, 1.8, 2.0], "unchangedInkReads": 0 },
+    { "points": 500000, "baselineMs": [92.5, 74.9, 153.4, 58.8, 56.4], "optimizedMs": [2.9, 2.2, 2.3, 2.4, 2.9], "unchangedInkReads": 0 }
+  ],
+  "notesDrag": {
+    "events": 60,
+    "baseline96": { "noteRectReads": 5760, "burstJsMs": 40.9 },
+    "optimized96": { "noteRectReads": 1, "burstJsMsRepeated": [5.5, 20.2] },
+    "optimized500": { "noteRectReads": 1, "burstJsMsRepeated": [20.5, 48.4] }
+  },
+  "windowedLists": {
+    "viewport": { "width": 1280, "height": 800 },
+    "baselineReview2000": { "rows": 2000, "rowDescendants": 20000, "removedRowsOnFilter": 2000, "addedRowsOnFilter": 2000 },
+    "optimized": [
+      { "items": 2000, "fileRows": 16, "reviewRows": 5, "selectedMatchingCards": 2000, "pageDomElements": 2695, "heapBytes": 10723428, "theme": "light", "dpr": 1 },
+      { "items": 10000, "fileRows": 16, "reviewRows": 5, "selectedMatchingCards": 10000, "pageDomElements": 2695, "heapBytes": 16794720, "theme": "dark", "dpr": 2, "reducedMotion": true }
+    ],
+    "narrowViewport": { "width": 680, "height": 650, "rowsUnder100": true },
+    "variableRowHeightAnchorPreserved": true,
+    "renameCompositionAndFocusPreserved": true,
+    "olderWebViewFocusFallbackPassed": true
+  },
+  "starMount": [
+    { "leaves": 100, "baselineMs": 23.8, "optimizedMs": 6.2, "heartbeatsIn450Ms": 42 },
+    { "leaves": 300, "baselineMs": 63.6, "optimizedMs": 11.9, "heartbeatsIn450Ms": 45 },
+    { "leaves": 600, "baselineMs": 129.0, "optimizedMs": 14.2, "heartbeatsIn450Ms": 45 }
+  ],
+  "alternated3000": {
+    "roundsEach": 3,
+    "baseline": {
+      "zoomFrameP95Ms": [66.7, 66.5, 66.7], "panFrameP95Ms": [66.6, 66.6, 66.5],
+      "undoJsMs": [20.6, 17.6, 21.4], "undoSettledMs": [77.3, 73.2, 72.5],
+      "styleRecalcCounts": [236, 219, 220], "layoutCounts": [187, 168, 171],
+      "layoutDurationMs": [222.938, 264.184, 261.393], "taskDurationMs": [4664.638, 4702.625, 4478.523]
+    },
+    "optimized": {
+      "zoomFrameP95Ms": [66.7, 66.6, 66.7], "panFrameP95Ms": [66.5, 66.8, 66.1],
+      "undoJsMs": [13.2, 17.7, 8.4], "undoSettledMs": [42.6, 45.4, 39.4],
+      "styleRecalcCounts": [195, 192, 208], "layoutCounts": [168, 165, 185],
+      "layoutDurationMs": [245.017, 250.381, 245.756], "taskDurationMs": [4417.821, 4699.550, 4850.336]
+    }
+  },
+  "notesCameraThreeRounds": {
+    "sampleFrames": [143, 145, 145], "noteRectReads": [23, 23, 22],
+    "layoutDurationMs": [27.609, 24.178, 25.811], "styleDurationMs": [34.224, 28.434, 28.980],
+    "maxEndpointErrorPx": 0.058, "staticSvgAddedOrRemoved": 0
+  },
+  "desktopFinal": {
+    "engine": "WebView2", "version": "154.0.4258.62", "viewport": { "width": 1280, "height": 800, "dpr": 1.5 },
+    "nodeCount": 3000, "before": [260, 0], "afterDrag": [366, 42], "undo": [260, 0], "redo": [366, 42],
+    "dragFinishJsMs": 7.9, "dragFinishSettledMs": 342.9,
+    "undoJsMs": 9.9, "undoSettledMs": 33.9, "redoJsMs": 9.5, "redoSettledMs": 24.4,
+    "wheelZoomAndMinimapChecked": true,
+    "method": "Native window input and visual checks; operation timings from opt-in perf diagnostics; no continuous hardware FPS claim."
+  },
+  "saveFailure": { "failedWriteRetained": true, "undoRedoAfterFailure": true, "retrySavedLatest": true },
+  "validation": {
+    "pythonTestsPassed": 172,
+    "canvasBenchmarkRoundsEach1200And3000": 5,
+    "virtualAnimationHz": [60, 120, 144, 240],
+    "denseTreeNodes": 1200, "dailyGroups": 100, "dailyTasks": 2000,
+    "importAndFullExport": true, "attachmentLifecycle": true, "blurAndCancel": true, "reversePageChanges": true,
+    "nativeImeCandidateCoverage": "Synthetic composition/focus checks only; not all OS IME candidate combinations."
+  }
+}

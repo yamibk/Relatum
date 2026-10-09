@@ -52,7 +52,7 @@ assert.strictEqual((dockHtml.match(/data-tree-item-clear-empty/g) || []).length,
   'data-tree-item-bold', 'data-tree-item-align', 'data-tree-item-highlight',
   'data-tree-item-rotate', 'data-tree-item-layer', 'data-tree-item-link',
 ].forEach((needle) => assert(!dockHtml.includes(needle), 'extra Tree free-item control leaked in: ' + needle));
-assert(html.includes('data-role="tree-page-free-items"') && html.includes('<script src="font-loader.js" defer></script>'),
+assert(html.includes('data-role="tree-page-free-items"') && /<script\b[^>]*src="font-loader\.js"[^>]*\bdefer\b/.test(html),
   'Tree free items need their own scene layer and the shared lazy font loader');
 
 function functionSource(source, name) {

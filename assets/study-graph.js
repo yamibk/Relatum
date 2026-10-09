@@ -525,6 +525,14 @@
     // ── DOM 标签层：CSS transform 替代 Canvas 2D ──
     // 标签 / 光晕 / 扇形折叠小星提升为 DOM 元素，GPU compositor 合成。
     function createDOMLabelLayer() {
+      const styleValues = new WeakMap();
+      function writeStyle(el, name, value) {
+        const text = String(value);
+        let values = styleValues.get(el);
+        if (!values) styleValues.set(el, values = {});
+        if (values[name] !== text) { values[name] = text; el.style[name] = text; }
+      }
+      function writeText(el, text) { if (el.textContent !== text) el.textContent = text; }
       var container = document.createElement('div');
       container.className = 'ge-dom-overlay';
       container.setAttribute('aria-hidden', 'true');
@@ -546,7 +554,7 @@
       function ensureFanEl(idx) {
         if (fanPool[idx]) return fanPool[idx];
         var el = document.createElement('div');
-        el.style.cssText = 'position:absolute;left:0;top:0;border-radius:50%;pointer-events:none;will-change:transform,opacity;';
+        el.style.cssText = 'position:absolute;left:0;top:0;border-radius:50%;pointer-events:none;';
         container.appendChild(el);
         fanPool[idx] = { el: el };
         return fanPool[idx];
@@ -571,18 +579,18 @@
           var hp = haloPool[id];
           if (!hp) {
             var hel = document.createElement('div');
-            hel.style.cssText = 'position:absolute;left:0;top:0;border-radius:50%;pointer-events:none;will-change:transform,opacity;';
+            hel.style.cssText = 'position:absolute;left:0;top:0;border-radius:50%;pointer-events:none;';
             container.appendChild(hel);
             hp = { el: hel };
             haloPool[id] = hp;
           }
           var center = w2s(n._rx, n._ry, st);
           var rpx = (n.r + 7) * st.unit;
-          hp.el.style.width = (rpx * 2).toFixed(1) + 'px';
-          hp.el.style.height = (rpx * 2).toFixed(1) + 'px';
-          hp.el.style.transform = 'translate(' + (center.x - rpx).toFixed(1) + 'px,' + (center.y - rpx).toFixed(1) + 'px)';
-          hp.el.style.opacity = alpha;
-          hp.el.style.background = 'rgba(' + n.rgb + ',0.14)';
+          writeStyle(hp.el, 'width', (rpx * 2).toFixed(1) + 'px');
+          writeStyle(hp.el, 'height', (rpx * 2).toFixed(1) + 'px');
+          writeStyle(hp.el, 'transform', 'translate(' + (center.x - rpx).toFixed(1) + 'px,' + (center.y - rpx).toFixed(1) + 'px)');
+          writeStyle(hp.el, 'opacity', alpha);
+          writeStyle(hp.el, 'background', 'rgba(' + n.rgb + ',0.14)');
         }
 
         // 聚合点扇形展开（聚焦时）
@@ -605,12 +613,12 @@
             var cy = n._ry + Math.sin(ang) * dist;
             var screen = w2s(cx, cy, st);
             var dpx = miniR * 2 * st.unit;
-            fe.el.style.width = dpx.toFixed(1) + 'px';
-            fe.el.style.height = dpx.toFixed(1) + 'px';
-            fe.el.style.transform = 'translate(' + (screen.x - dpx / 2).toFixed(1) + 'px,' + (screen.y - dpx / 2).toFixed(1) + 'px)';
-            fe.el.style.opacity = alpha;
-            fe.el.style.background = n.color;
-            fe.el.style.border = '1.2px solid ' + theme.fanStroke;
+            writeStyle(fe.el, 'width', dpx.toFixed(1) + 'px');
+            writeStyle(fe.el, 'height', dpx.toFixed(1) + 'px');
+            writeStyle(fe.el, 'transform', 'translate(' + (screen.x - dpx / 2).toFixed(1) + 'px,' + (screen.y - dpx / 2).toFixed(1) + 'px)');
+            writeStyle(fe.el, 'opacity', alpha);
+            writeStyle(fe.el, 'background', n.color);
+            writeStyle(fe.el, 'border', '1.2px solid ' + theme.fanStroke);
           }
         }
 
@@ -629,7 +637,7 @@
             var lp = labelPool[id];
             if (!lp) {
               var lel = document.createElement('div');
-              lel.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;will-change:transform,opacity;';
+              lel.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;';
               var inner = document.createElement('span');
               inner.style.cssText = 'display:block;transform:translate(-50%,-50%);white-space:nowrap;';
               inner.style.font = theme.fontAgg;
@@ -642,10 +650,10 @@
             lp.target = alpha;
             lp.alpha = approachLabelAlpha(lp.alpha, lp.target, reduce);
             var center = w2s(n._rx, n._ry, st);
-            lp.el.style.transform = 'translate(' + center.x.toFixed(1) + 'px,' + (center.y + 0.5).toFixed(1) + 'px)';
-            lp.el.style.opacity = lp.alpha;
-            lp.inner.style.color = theme.aggText;
-            lp.inner.textContent = n.label;
+            writeStyle(lp.el, 'transform', 'translate(' + center.x.toFixed(1) + 'px,' + (center.y + 0.5).toFixed(1) + 'px)');
+            writeStyle(lp.el, 'opacity', lp.alpha);
+            writeStyle(lp.inner, 'color', theme.aggText);
+            writeText(lp.inner, n.label);
             continue;
           }
 
@@ -660,7 +668,7 @@
           seenL[id] = true;
           if (!lp) {
             var lel = document.createElement('div');
-            lel.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;will-change:transform,opacity;';
+            lel.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;';
             var inner = document.createElement('span');
             inner.style.cssText = 'display:block;transform:translate(-50%,-100%);white-space:nowrap;';
             inner.style.font = theme.font600;
@@ -673,31 +681,31 @@
           lp.target = alpha;
           lp.alpha = approachLabelAlpha(lp.alpha, lp.target, reduce);
           if (lp.alpha < LABEL_EPSILON && lp.target <= 0) {
-            lp.el.style.opacity = '0';
+            writeStyle(lp.el, 'opacity', '0');
             continue;
           }
           var center = w2s(n._rx, n._ry, st);
           var ly = center.y - (n.r * st.unit) - 8;
-          lp.el.style.transform = 'translate(' + center.x.toFixed(1) + 'px,' + ly.toFixed(1) + 'px)';
-          lp.el.style.opacity = lp.alpha;
-          lp.inner.textContent = n.label;
-          lp.inner.style.color = theme.text;
-          lp.inner.style.textShadow = focusNear ? '0 0 3.6px ' + theme.labelHalo : 'none';
+          writeStyle(lp.el, 'transform', 'translate(' + center.x.toFixed(1) + 'px,' + ly.toFixed(1) + 'px)');
+          writeStyle(lp.el, 'opacity', lp.alpha);
+          writeText(lp.inner, n.label);
+          writeStyle(lp.inner, 'color', theme.text);
+          writeStyle(lp.inner, 'textShadow', focusNear ? '0 0 3.6px ' + theme.labelHalo : 'none');
         }
 
         // 收尾：藏本轮未用元素
         for (var k in haloPool) {
-          if (!seenH[k]) haloPool[k].el.style.opacity = '0';
+          if (!seenH[k]) writeStyle(haloPool[k].el, 'opacity', '0');
         }
         for (var k in labelPool) {
           if (!seenL[k]) {
             labelPool[k].target = 0;
             labelPool[k].alpha = approachLabelAlpha(labelPool[k].alpha, 0, reduce);
-            labelPool[k].el.style.opacity = labelPool[k].alpha < LABEL_EPSILON ? '0' : labelPool[k].alpha;
+            writeStyle(labelPool[k].el, 'opacity', labelPool[k].alpha < LABEL_EPSILON ? '0' : labelPool[k].alpha);
           }
         }
         for (var j = fanUsed; j < fanPool.length; j++) {
-          fanPool[j].el.style.opacity = '0';
+          writeStyle(fanPool[j].el, 'opacity', '0');
         }
       }
 

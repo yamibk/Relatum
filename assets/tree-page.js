@@ -2280,19 +2280,30 @@
       else path.removeAttribute('marker-end');
     });
   }
-  function applyLayoutFrame(next, placements) {
-    visualPlacements = placementMap(Array.from(placements.values()));
-    placements.forEach(function (placement, id) {
+  function writeNodePosition(element, placement) {
+    var x = placement.x, y = placement.y - placement.height / 2;
+    if (element.__layoutX === x && element.__layoutY === y) return;
+    element.__layoutX = x; element.__layoutY = y;
+    if (window.CSS && CSS.supports('translate', '1px 1px')) {
+      if (element.style.left !== '0px') element.style.left = '0px';
+      if (element.style.top !== '0px') element.style.top = '0px';
+      element.style.translate = x + 'px ' + y + 'px';
+    } else { element.style.left = x + 'px'; element.style.top = y + 'px'; }
+  }
+  function applyLayoutFrame(next, placements, nodeWork, edgeWork) {
+    visualPlacements = placements;
+    (nodeWork || placements).forEach(function (placement, id) {
       var element = nodeElements.get(id);
       if (!element) return;
-      element.style.left = placement.x + 'px';
-      element.style.top = (placement.y - placement.height / 2) + 'px';
+      writeNodePosition(element, placement);
     });
-    next.edges.forEach(function (edge) {
+    (edgeWork || next.edges).forEach(function (edge) {
       var path = edgeElements.get(edgeKey(edge));
       var from = placements.get(edge.from), to = placements.get(edge.to);
-      if (path && from && to) path.setAttribute('d', edge.type === 'visual'
-        ? visualEdgePath(from, to, edge) : edgePath(from, to));
+      if (path && from && to) {
+        var d = edge.type === 'visual' ? visualEdgePath(from, to, edge) : edgePath(from, to);
+        if (path.getAttribute('d') !== d) path.setAttribute('d', d);
+      }
     });
   }
   function animateLayout(previous, next, duration, excluded, newNodesAtDestination) {
@@ -2301,13 +2312,15 @@
     var toMap = placementMap(next.nodes);
     var fromMap = visualPlacements.size ? placementMap(Array.from(visualPlacements.values()))
       : placementMap(previous && previous.nodes);
+    var incoming = new Map();
+    next.edges.forEach(function (edge) { if (!incoming.has(edge.to)) incoming.set(edge.to, edge); });
     next.nodes.forEach(function (item) {
       if (fromMap.has(item.id)) return;
       if (newNodesAtDestination) {
         fromMap.set(item.id, Object.assign({}, item));
         return;
       }
-      var edge = next.edges.find(function (candidate) { return candidate.to === item.id; });
+      var edge = incoming.get(item.id);
       var parent = edge && (fromMap.get(edge.from) || toMap.get(edge.from));
       fromMap.set(item.id, parent ? Object.assign({}, item, { x: parent.x, y: parent.y }) : item);
     });
@@ -2324,20 +2337,27 @@
     }
     if (!geometryChanged && !(excluded && excluded.size)) { applyLayoutFrame(next, toMap); return; }
     if (prefersReduced || !previous || !duration) { applyLayoutFrame(next, toMap); return; }
+    var live = placementMap(next.nodes), nodeWork = new Map(), work = [];
+    toMap.forEach(function (to, id) {
+      var from = fromMap.get(id) || to, item = live.get(id);
+      item.x = from.x; item.y = from.y;
+      if (Math.abs(from.x - to.x) > .01 || Math.abs(from.y - to.y) > .01 || from.height !== to.height || from.width !== to.width || (excluded && excluded.has(id))) {
+        work.push({ id: id, from: from, to: to, live: item }); nodeWork.set(id, item);
+      }
+    });
+    var edgeWork = next.edges.filter(function (edge) { return nodeWork.has(edge.from) || nodeWork.has(edge.to); });
+    applyLayoutFrame(next, live);
     var started = performance.now();
     function frame(now) {
-      var t = Math.min(1, (now - started) / duration), eased = 1 - Math.pow(1 - t, 3), live = new Map();
-      toMap.forEach(function (to, id) {
-        if (excluded && excluded.has(id) && visualPlacements.has(id)) {
-          live.set(id, Object.assign({}, visualPlacements.get(id))); return;
+      var t = Math.min(1, (now - started) / duration), eased = 1 - Math.pow(1 - t, 3);
+      work.forEach(function (item) {
+        if (excluded && excluded.has(item.id) && visualPlacements.has(item.id)) {
+          var current = visualPlacements.get(item.id); item.live.x = current.x; item.live.y = current.y; return;
         }
-        var from = fromMap.get(id) || to;
-        live.set(id, Object.assign({}, to, {
-          x: from.x + (to.x - from.x) * eased,
-          y: from.y + (to.y - from.y) * eased,
-        }));
+        item.live.x = item.from.x + (item.to.x - item.from.x) * eased;
+        item.live.y = item.from.y + (item.to.y - item.from.y) * eased;
       });
-      applyLayoutFrame(next, live);
+      applyLayoutFrame(next, live, nodeWork, edgeWork);
       if (t < 1) layoutFrame = requestAnimationFrame(frame);
       else layoutFrame = 0;
     }
@@ -5140,8 +5160,7 @@
         var placement = current.livePlacements.get(id), element = nodeElements.get(id);
         if (!placement || !element) return;
         element.style.transform = '';
-        element.style.left = placement.x + 'px';
-        element.style.top = (placement.y - placement.height / 2) + 'px';
+        writeNodePosition(element, placement);
       });
     }
     drag = null;
