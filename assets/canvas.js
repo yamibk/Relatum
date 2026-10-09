@@ -1265,12 +1265,32 @@
     function cachedViewportRect() {
       return viewportRectCache || refreshViewportRect();
     }
+    const boundTextBoxesByTarget = new Map();
+    function rebuildTextBindingIndex() {
+      boundTextBoxesByTarget.clear();
+      data.nodes.forEach(function (node) {
+        if (!isTextBoxNode(node) || !node.textBindTarget) return;
+        let boxes = boundTextBoxesByTarget.get(node.textBindTarget);
+        if (!boxes) boundTextBoxesByTarget.set(node.textBindTarget, boxes = new Set());
+        boxes.add(node.id);
+      });
+    }
+    function boundTextBoxes(targetIds) {
+      const boxes = [];
+      for (const id of targetIds || boundTextBoxesByTarget.keys()) collect(id);
+      function collect(id) {
+        const ids = boundTextBoxesByTarget.get(id);
+        if (ids) ids.forEach(function (boxId) { const box = findNode(boxId); if (box) boxes.push(box); });
+      }
+      return boxes;
+    }
     function rebuildNodeIndex() {
       contentBoundsCache = null;
       nodeById.clear();
       data.nodes.forEach(function (node) {
         if (node && node.id) nodeById.set(node.id, node);
       });
+      rebuildTextBindingIndex();
     }
     function indexNodeData(node) {
       contentBoundsCache = null;
@@ -1373,7 +1393,38 @@
     let editingOriginalMarks = [];
     let editingIsNew = false;            // 仅用于节点
     let drag = null;                     // 见 start* 函数
-    let dragRaf = null;
+    let dragRaf = null, dragPaint = null;
+    function scheduleDragPaint(paint) {
+      dragPaint = paint;
+      return requestAnimationFrame(function () {
+        const latest = dragPaint; dragPaint = null; dragRaf = null;
+        if (latest) latest();
+      });
+    }
+    let interactionRaf = null, interactionPaint = null;
+    let hoverRaf = null, hoverEvent = null;
+    function queueInteractionPaint(paint) {
+      interactionPaint = paint;
+      if (interactionRaf == null) interactionRaf = requestAnimationFrame(flushInteractionPaint);
+    }
+    function flushInteractionPaint() {
+      if (interactionRaf != null) cancelAnimationFrame(interactionRaf);
+      interactionRaf = null;
+      const paint = interactionPaint;
+      interactionPaint = null;
+      if (paint) paint();
+    }
+    function cancelInteractionPaint() {
+      if (interactionRaf != null) cancelAnimationFrame(interactionRaf);
+      if (hoverRaf != null) cancelAnimationFrame(hoverRaf);
+      interactionRaf = hoverRaf = null;
+      interactionPaint = hoverEvent = null;
+    }
+    const paintedNodeSelection = new Set(), paintedEdgeSelection = new Set();
+    const inkStrokeElements = new Map(), inkArrowElements = new Map();
+    let strokeBoundsCache = new WeakMap();
+    let selectionSignature = null;
+    let paintedTransientDecorId = null;
     let previewPath = null;              // 拉线预览（兼容单线引用）
     let previewPaths = [];               // 多选 Alt 拉线时的多条预览
     let frameEl = null;                  // 框选矩形
@@ -2406,9 +2457,31 @@
     // 历史栈：栈顶 = 当前状态
     const history = [snapshotCanvasState()];
     const redoStack = [];
+    const entityHistory = Changes && Changes.createHistory ? Changes.createHistory(history[0], {
+      limit: HISTORY_LIMIT,
+      clone: {
+        state: function (state) { return cloneState(state.nodes, state.edges, state.ink, state.ruler, state.timers, state.taskbook); },
+        nodes: cloneNode, edges: cloneEdge,
+        strokes: function (stroke) { return cloneInk({ strokes: [stroke], arrows: [] }).strokes[0]; },
+        arrows: function (arrow) { return cloneInk({ strokes: [], arrows: [arrow] }).arrows[0]; },
+        timers: function (timer) { return cloneTimers([timer])[0]; }, ruler: cloneRuler, taskbook: cloneTaskbook,
+      },
+    }) : null;
+    function historyHead() { return entityHistory ? entityHistory.head() : history[history.length - 1]; }
+    const changedInkStrokes = new Set(), changedInkArrows = new Set();
     let pendingHistoryChanges = null;
 
-    function pushHistory() {
+    function pushHistory(scope = { nodes: true, edges: true }) {
+      if (entityHistory) {
+        const state = Object.assign({}, data, { timers: snapshotTimers() });
+        if (scope) scope = Object.assign({ timers: true, ruler: true, taskbook: true }, scope);
+        if (scope && changedInkStrokes.size) scope.strokes = changedInkStrokes;
+        if (scope && changedInkArrows.size) scope.arrows = changedInkArrows;
+        pendingHistoryChanges = Changes.merge(pendingHistoryChanges, entityHistory.commit(state, scope));
+        changedInkStrokes.clear(); changedInkArrows.clear();
+        refreshHistoryButtons();
+        return;
+      }
       const next = snapshotCanvasState();
       if (Changes) pendingHistoryChanges = Changes.merge(pendingHistoryChanges, Changes.diff(history[history.length - 1], next));
       history.push(next);
@@ -2418,6 +2491,7 @@
     }
 
     function refreshHistoryTimerHead() {
+      if (entityHistory) { entityHistory.refresh('timers', snapshotTimers()); return; }
       if (!history.length) return;
       history[history.length - 1].timers = snapshotTimers();
     }
@@ -2426,8 +2500,8 @@
       if (!drawToolbar) return;
       const undoBtn = drawToolbar.querySelector('[data-canvas-history="undo"]');
       const redoBtn = drawToolbar.querySelector('[data-canvas-history="redo"]');
-      if (undoBtn) undoBtn.disabled = history.length <= 1;
-      if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+      if (undoBtn) undoBtn.disabled = entityHistory ? !entityHistory.canUndo() : history.length <= 1;
+      if (redoBtn) redoBtn.disabled = entityHistory ? !entityHistory.canRedo() : redoStack.length === 0;
     }
     refreshHistoryButtons();
 
@@ -2443,6 +2517,7 @@
       document.dispatchEvent(new CustomEvent('canvas:scene-geometry-change'));
       updateEmptyHint();
       if (!changes || changes.topology) {
+        rebuildTextBindingIndex();
         rebuildEdgeIndex();
         refreshGroupContainers();
         refreshMindmapFolding();
@@ -3538,12 +3613,12 @@
       });
       if (drag && drag.path) {
         const tail = predictedTailPoints(e, drag);   // 预测尾段：只渲染、不入库
-        if (tail) {
-          const tmp = Object.assign({}, drag.stroke, { points: drag.stroke.points.concat(tail) });
-          drag.path.setAttribute('d', inkStrokeD(tmp));
-        } else if (changed) {
-          drag.path.setAttribute('d', inkStrokeD(drag.stroke));
-        }
+        const gesture = drag;
+        if (tail || changed) queueInteractionPaint(function () {
+          if (drag !== gesture || !gesture.path) return;
+          const stroke = tail ? Object.assign({}, gesture.stroke, { points: gesture.stroke.points.concat(tail) }) : gesture.stroke;
+          gesture.path.setAttribute('d', inkStrokeD(stroke));
+        });
       }
       return changed;
     }
@@ -3566,6 +3641,8 @@
       path.style.opacity = stroke.opacity == null ? 1 : stroke.opacity;
       if (stroke.hl) path.style.mixBlendMode = 'multiply';   // 荧光笔：正片叠底，盖在字上仍可读
       inkLayer.appendChild(path);
+      if (stroke.id) inkStrokeElements.set(stroke.id, path);
+      if (stroke.points && stroke.points.length) strokeBBoxNear(stroke, stroke.points[0], 0);
       return path;
     }
 
@@ -3582,6 +3659,8 @@
       path.style.opacity = arrow.opacity == null ? 1 : arrow.opacity;
       if (selectedArrowId === arrow.id) path.classList.add('selected');
       inkLayer.appendChild(path);
+      const elements = [path];
+      if (arrow.id) inkArrowElements.set(arrow.id, elements);
       // 折线箭头：加一条透明粗命中条（仅编辑模式可点，CSS 控制），用于选中 / 拖线身插拐点
       if (isPolyArrow(arrow)) {
         const hit = document.createElementNS(SVG_NS, 'path');
@@ -3590,6 +3669,7 @@
         hit.setAttribute('d', arrowPath(arrow));
         hit.addEventListener('mousedown', (e) => onPolyArrowMouseDown(arrow.id, e));
         inkLayer.appendChild(hit);
+        elements.push(hit);
       }
       return path;
     }
@@ -3597,6 +3677,8 @@
     function renderInk() {
       if (!inkLayer) return;
       inkLayer.innerHTML = '';
+      inkStrokeElements.clear(); inkArrowElements.clear();
+      strokeBoundsCache = new WeakMap();
       arrowHandleEls = [];   // innerHTML 清空后手柄引用失效，避免悬空
       ensureInkDefs();
       const ink = ensureInkData();
@@ -3761,13 +3843,19 @@
     }
     function clearTextBinding(textBox) {
       if (!isTextBoxNode(textBox)) return;
+      const boxes = boundTextBoxesByTarget.get(textBox.textBindTarget);
+      if (boxes) { boxes.delete(textBox.id); if (!boxes.size) boundTextBoxesByTarget.delete(textBox.textBindTarget); }
       delete textBox.textBindTarget;
       delete textBox.textBindDx;
       delete textBox.textBindDy;
     }
     function setTextBinding(textBox, target) {
       if (!isTextBoxNode(textBox) || !target || isDecorationNode(target)) return false;
+      clearTextBinding(textBox);
       textBox.textBindTarget = target.id;
+      let boxes = boundTextBoxesByTarget.get(target.id);
+      if (!boxes) boundTextBoxesByTarget.set(target.id, boxes = new Set());
+      boxes.add(textBox.id);
       textBox.textBindDx = (Number(textBox.x) || 0) - (Number(target.x) || 0);
       textBox.textBindDy = (Number(textBox.y) || 0) - (Number(target.y) || 0);
       return true;
@@ -3795,7 +3883,7 @@
     }
     function syncBoundTextBoxes(targetIds, liveCoords) {
       const ids = targetIds instanceof Set ? targetIds : null;
-      data.nodes.forEach(function (box) {
+      boundTextBoxes(ids).forEach(function (box) {
         if (!isTextBoxNode(box)) return;
         const target = textBindingTarget(box);
         if (!target || (ids && !ids.has(target.id))) return;
@@ -3814,7 +3902,7 @@
       });
     }
     function appendBoundTextBoxMoves(targetIds, moves, movingIds) {
-      data.nodes.forEach(function (box) {
+      boundTextBoxes(targetIds).forEach(function (box) {
         if (!isTextBoxNode(box)) return;
         const target = textBindingTarget(box);
         if (!target || !targetIds.has(target.id)) return;
@@ -4468,7 +4556,7 @@
 
     function rememberViewport() {
       viewportHasUserPosition = true;
-      const vRect = viewport.getBoundingClientRect();
+      const vRect = cachedViewportRect();
       rememberedViewportCenter = {
         x: (vRect.width / 2 - targetPanX) / targetScale,
         y: (vRect.height / 2 - targetPanY) / targetScale,
@@ -4541,7 +4629,7 @@
     function zoomTo(newScale, anchorClientX, anchorClientY) {
       newScale = clamp(newScale, MIN_SCALE, MAX_SCALE);
       if (newScale === targetScale) return;
-      const vRect = viewport.getBoundingClientRect();
+      const vRect = cachedViewportRect();
       // 锚点用 target 状态当基准——这样连续滚轮事件不会"漂移"
       const pointX = (anchorClientX - vRect.left - targetPanX) / targetScale;
       const pointY = (anchorClientY - vRect.top - targetPanY) / targetScale;
@@ -8473,6 +8561,7 @@
     }
 
     function refreshHistoryTaskbookHead() {
+      if (entityHistory) { entityHistory.refresh('taskbook', cloneTaskbook(data.taskbook)); return; }
       if (!history.length) return;
       history[history.length - 1].taskbook = cloneTaskbook(data.taskbook);
     }
@@ -9184,6 +9273,7 @@
         taskbook: nextData.taskbook,
       });
       history.splice(0, history.length, snapshotCanvasState());
+      if (entityHistory) entityHistory.reset(history[0]);
       redoStack.length = 0;
       refreshHistoryButtons();
       return { ok: true };
@@ -9192,6 +9282,7 @@
     window.setTimeout(retryTaskbookFocusLogs, 0);
 
     function createNodeEl(node) {
+      paintedNodeSelection.delete(node.id);
       if (node && node.handText) ensureKoseFont();
       const el = document.createElement('div');
       el.className = 'node';
@@ -13780,7 +13871,7 @@
         throw error;
       }
 
-      pushHistory();
+      pushHistory(null);
       notify();
       return plan.meta;
     }
@@ -14325,6 +14416,7 @@
     }
 
     function createEdgeEls(edge) {
+      paintedEdgeSelection.delete(edge.id);
       indexEdgeData(edge);
       const path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('class', 'canvas-edge');
@@ -14684,8 +14776,15 @@
     }
 
     function updateEdgeHover(e) {
-      const edge = !drag && geometryEdgeForEvent(e);
-      viewport.classList.toggle('edge-hover', !!edge);
+      hoverEvent = { clientX: e.clientX, clientY: e.clientY, target: e.target };
+      if (hoverRaf != null) return;
+      hoverRaf = requestAnimationFrame(function () {
+        hoverRaf = null;
+        const event = hoverEvent;
+        hoverEvent = null;
+        const hovered = !!(event && !drag && geometryEdgeForEvent(event));
+        if (viewport.classList.contains('edge-hover') !== hovered) viewport.classList.toggle('edge-hover', hovered);
+      });
     }
 
     // 取（或重建）一条连线在 surface 坐标系的完整几何项。
@@ -14890,6 +14989,7 @@
     }
 
     function disposeNodeElement(id, el) {
+      paintedNodeSelection.delete(id);
       disposeViewportAsset(id);
       if (nodeSizeObserver) nodeSizeObserver.unobserve(el);
       nodeSizeCache.delete(id);
@@ -15010,7 +15110,19 @@
       renderEdgesCanvas();   // 阶段①：增删/改样式后重描 canvas 连线层（开关关时空操作）
     }
 
-    function applySelection() {
+    function applySelection(force) {
+      function paintDifference(previous, next, paint) {
+        previous.forEach(function (id) { if (!next.has(id)) paint(id, false); });
+        next.forEach(function (id) { if (!previous.has(id)) paint(id, true); });
+        previous.clear();
+        next.forEach(function (id) { previous.add(id); });
+      }
+      const signature = Array.from(selectedNodeIds).sort().join('\u0000') + '\u0001'
+        + Array.from(selectedEdgeIds).sort().join('\u0000') + '\u0001'
+        + Array.from(selectedTimerIds).sort().join('\u0000') + '\u0001'
+        + (selectedArrowId || '') + '\u0001' + (transientMovableDecorId || '') + '\u0001' + currentMode();
+      if (force === false && signature === selectionSignature) return;
+      selectionSignature = signature;
       if (transientMovableDecorId && !selectedNodeIds.has(transientMovableDecorId)) {
         clearTransientMovableDecor();
       }
@@ -15021,13 +15133,21 @@
           selToolbar.hidden = true;
         }
       }
-      nodeMap.forEach((el, id) => {
-        el.classList.toggle('selected', selectedNodeIds.has(id));
-        el.classList.toggle('transient-movable-decor', id === transientMovableDecorId && selectedNodeIds.has(id));
+      paintDifference(paintedNodeSelection, selectedNodeIds, function (id, selected) {
+        const el = nodeMap.get(id);
+        if (el) el.classList.toggle('selected', selected);
       });
+      if (paintedTransientDecorId !== transientMovableDecorId || !selectedNodeIds.has(paintedTransientDecorId)) {
+        const old = nodeMap.get(paintedTransientDecorId);
+        if (old) old.classList.remove('transient-movable-decor');
+        paintedTransientDecorId = selectedNodeIds.has(transientMovableDecorId) ? transientMovableDecorId : null;
+        const next = nodeMap.get(paintedTransientDecorId);
+        if (next) next.classList.add('transient-movable-decor');
+      }
       syncSelectedAttachmentLifecycle();
-      edgeMap.forEach((refs, id) => {
-        const sel = selectedEdgeIds.has(id);
+      paintDifference(paintedEdgeSelection, selectedEdgeIds, function (id, sel) {
+        const refs = edgeMap.get(id);
+        if (!refs) return;
         if (sel) {
           const edge = findEdge(id);
           if (edge) ensureEdgeExactMidpoint(edge);
@@ -15091,7 +15211,7 @@
         selectedEdgeIds.clear();
       }
       ids.forEach((id) => selectedNodeIds.add(id));
-      applySelection();
+      applySelection(false);
     }
     function selectEdges(ids, additive) {
       if (rulerSelected) setRulerSelected(false);
@@ -15101,7 +15221,7 @@
         selectedEdgeIds.clear();
       }
       ids.forEach((id) => selectedEdgeIds.add(id));
-      applySelection();
+      applySelection(false);
     }
     function isSelectionToggleEvent(e) {
       return !!(e && (e.shiftKey || e.ctrlKey || e.metaKey));
@@ -16882,12 +17002,19 @@
       const threshold = Math.max(8, 14 / curScale);
       const beforeStrokes = ink.strokes.length;
       const beforeArrows = ink.arrows.length;
-      ink.strokes = ink.strokes.filter((stroke) => !strokeHit(stroke, p, threshold));
-      ink.arrows = ink.arrows.filter((arrow) => !arrowHit(arrow, p, threshold));
+      ink.strokes = ink.strokes.filter(function (stroke) {
+        if (!strokeBBoxNear(stroke, p, threshold) || !strokeHit(stroke, p, threshold)) return true;
+        removeInkStroke(stroke.id);
+        return false;
+      });
+      ink.arrows = ink.arrows.filter(function (arrow) {
+        if (!arrowHit(arrow, p, threshold)) return true;
+        removeInkArrow(arrow.id);
+        return false;
+      });
       if (ink.strokes.length !== beforeStrokes || ink.arrows.length !== beforeArrows) {
         eraserChanged = true;
-        renderInk();
-        notify();
+        updateEmptyHint();
       }
     }
 
@@ -16899,14 +17026,31 @@
     function strokeBBoxNear(stroke, p, r) {
       const pts = stroke.points || [];
       if (!pts.length) return false;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (let i = 0; i < pts.length; i++) {
-        const pt = pts[i];
-        if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
-        if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
+      let box = strokeBoundsCache.get(stroke);
+      if (!box || box.points !== pts || box.length !== pts.length) {
+        box = { points: pts, length: pts.length, minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        for (let i = 0; i < pts.length; i++) {
+          const pt = pts[i];
+          box.minX = Math.min(box.minX, pt.x); box.minY = Math.min(box.minY, pt.y);
+          box.maxX = Math.max(box.maxX, pt.x); box.maxY = Math.max(box.maxY, pt.y);
+        }
+        strokeBoundsCache.set(stroke, box);
       }
       const pad = r + (stroke.width || 3);
-      return p.x >= minX - pad && p.x <= maxX + pad && p.y >= minY - pad && p.y <= maxY + pad;
+      return p.x >= box.minX - pad && p.x <= box.maxX + pad && p.y >= box.minY - pad && p.y <= box.maxY + pad;
+    }
+    function removeInkStroke(id) {
+      const el = inkStrokeElements.get(id);
+      if (el) el.remove();
+      inkStrokeElements.delete(id);
+      changedInkStrokes.add(id);
+    }
+    function removeInkArrow(id) {
+      const elements = inkArrowElements.get(id);
+      if (elements) elements.forEach(function (el) { el.remove(); });
+      inkArrowElements.delete(id);
+      changedInkArrows.add(id);
+      if (selectedArrowId === id) { selectedArrowId = null; applyArrowSelection(); }
     }
     // 由原笔画 + 一截存活的点复制出新碎片（颜色/粗细/压感/压感曲线/每点压力全继承，新 id）
     function makeStrokeFragment(stroke, runPoints) {
@@ -16955,16 +17099,25 @@
         const frags = splitStrokeByEraser(stroke, p, r);
         if (frags.length === 1 && frags[0] === stroke) { next.push(stroke); continue; }
         changed = true;
-        for (let j = 0; j < frags.length; j++) next.push(frags[j]);
+        const oldPath = inkStrokeElements.get(stroke.id);
+        for (let j = 0; j < frags.length; j++) {
+          next.push(frags[j]); changedInkStrokes.add(frags[j].id);
+          const path = appendInkStroke(frags[j]);
+          if (oldPath && path) oldPath.before(path);
+        }
+        removeInkStroke(stroke.id);
       }
       if (changed) ink.strokes = next;
       const beforeArrows = ink.arrows.length;
-      ink.arrows = ink.arrows.filter((arrow) => !arrowHit(arrow, p, r));
+      ink.arrows = ink.arrows.filter(function (arrow) {
+        if (!arrowHit(arrow, p, r)) return true;
+        removeInkArrow(arrow.id);
+        return false;
+      });
       if (ink.arrows.length !== beforeArrows) changed = true;
       if (changed) {
         eraserChanged = true;
-        renderInk();
-        notify();
+        updateEmptyHint();
       }
     }
     // 按当前橡皮模式分发
@@ -17149,10 +17302,7 @@
     function updatePolyArrow(arrow) {
       if (!inkLayer) return;
       const d = arrowPath(arrow);
-      Array.prototype.forEach.call(
-        inkLayer.querySelectorAll('.canvas-free-arrow, .canvas-free-arrow-hit'),
-        (el) => { if (el.dataset.id === arrow.id) el.setAttribute('d', d); }
-      );
+      (inkArrowElements.get(arrow.id) || []).forEach(function (el) { el.setAttribute('d', d); });
       renderArrowHandles();
     }
     function onPolyArrowMouseDown(id, e) {
@@ -17208,12 +17358,14 @@
       const arrow = findArrow(id);   // 取活体；不可用撤销/导入前渲染时捕获的旧对象
       if (!arrow || !Array.isArray(arrow.waypoints)) return;
       arrow.waypoints.splice(index, 1);
+      changedInkArrows.add(id);
       pushHistory();
       renderInk();                   // 整层从活体重建，彻底消除 DOM/数据不一致
       notify();
     }
     function deleteSelectedArrow() {
       if (!selectedArrowId) return;
+      changedInkArrows.add(selectedArrowId);
       const ink = ensureInkData();
       ink.arrows = ink.arrows.filter((a) => a.id !== selectedArrowId);
       selectedArrowId = null;
@@ -17877,6 +18029,39 @@
     }
 
     // ── 全局 mousemove / mouseup ─────────────
+    function queuePointerInteraction(e) {
+      const gesture = drag, clientX = e.clientX, clientY = e.clientY;
+      queueInteractionPaint(function () {
+        if (drag !== gesture) return;
+        const p = clientToSurface(clientX, clientY);
+        if (gesture.mode === 'free-arrow' || gesture.mode === 'poly-arrow-create') {
+          gesture.arrow.end = { x: p.x, y: p.y };
+          if (gesture.mode === 'free-arrow') gesture.arrow.control = arrowControl(gesture.arrow.start, gesture.arrow.end, gesture.bendSign, gesture.bendFactor);
+          if (gesture.path) gesture.path.setAttribute('d', arrowPath(gesture.arrow));
+        } else if (gesture.moved) {
+          if (gesture.mode === 'waypoint') {
+            const edge = findEdge(gesture.edgeId);
+            if (!edge) return;
+            if (!Array.isArray(edge.waypoints)) edge.waypoints = [];
+            if (gesture.wpIndex === null) { edge.waypoints.splice(gesture.segIndex, 0, p); gesture.wpIndex = gesture.segIndex; }
+            else edge.waypoints[gesture.wpIndex] = p;
+            updateEdgePath(edge);
+            renderEdgeHandles();
+          } else {
+            const arrow = findArrow(gesture.arrowId);
+            if (!arrow) return;
+            changedInkArrows.add(arrow.id);
+            if (gesture.mode === 'arrow-endpoint') arrow[gesture.end] = p;
+            else {
+              if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
+              if (gesture.wpIndex === null) { arrow.waypoints.splice(gesture.segIndex, 0, p); gesture.wpIndex = gesture.segIndex; }
+              else arrow.waypoints[gesture.wpIndex] = p;
+            }
+            updatePolyArrow(arrow);
+          }
+        }
+      });
+    }
     function onWindowMouseMove(e) {
       // X 轮 fix：始终更新最后鼠标位置（N 键建节点用）
       lastMouseClientX = e.clientX;
@@ -17913,36 +18098,9 @@
         appendInkPointsFromPointerEvent(e);
       } else if (drag.mode === 'ink-erase') {
         eraseAtCurrent(e.clientX, e.clientY);
-      } else if (drag.mode === 'free-arrow') {
-        const p = clientToSurface(e.clientX, e.clientY);
-        drag.arrow.end = p;
-        drag.arrow.control = arrowControl(drag.arrow.start, drag.arrow.end, drag.bendSign, drag.bendFactor);
-        if (drag.path) drag.path.setAttribute('d', arrowPath(drag.arrow));
-      } else if (drag.mode === 'poly-arrow-create') {
-        const p = clientToSurface(e.clientX, e.clientY);
-        drag.arrow.end = { x: p.x, y: p.y };
-        if (drag.path) drag.path.setAttribute('d', arrowPath(drag.arrow));
-      } else if (drag.mode === 'arrow-waypoint') {
-        if (!drag.moved) return;                         // 没拖过 = 纯点选，不加拐点
-        const arrow = findArrow(drag.arrowId);
-        if (!arrow) return;
-        const p = clientToSurface(e.clientX, e.clientY);
-        if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
-        if (drag.wpIndex === null) {
-          arrow.waypoints.splice(drag.segIndex, 0, { x: p.x, y: p.y });
-          drag.wpIndex = drag.segIndex;
-        } else {
-          arrow.waypoints[drag.wpIndex] = { x: p.x, y: p.y };
-        }
-        updatePolyArrow(arrow);
-      } else if (drag.mode === 'arrow-endpoint') {
-        if (!drag.moved) return;
-        const arrow = findArrow(drag.arrowId);
-        if (!arrow) return;
-        const p = clientToSurface(e.clientX, e.clientY);
-        if (drag.end === 'start') arrow.start = { x: p.x, y: p.y };
-        else arrow.end = { x: p.x, y: p.y };
-        updatePolyArrow(arrow);
+      } else if (drag.mode === 'free-arrow' || drag.mode === 'poly-arrow-create'
+        || drag.mode === 'arrow-waypoint' || drag.mode === 'arrow-endpoint') {
+        queuePointerInteraction(e);
       } else if (drag.mode === 'sketch-shape-create') {
         if (!drag.moved) return;
         const dragEl = nodeMap.get(drag.nodeId);
@@ -17959,7 +18117,7 @@
         drag.latestAltKey = !!e.altKey;
         if (!drag.moved) return;
         if (dragRaf == null) {
-          dragRaf = requestAnimationFrame(() => {
+          dragRaf = scheduleDragPaint(() => {
             dragRaf = null;
             if (!drag || drag.mode !== 'node') return;
             const liveCoords = nodeDragLiveCoords(
@@ -18001,7 +18159,7 @@
         drag.latestClientY = e.clientY;
         if (!drag.moved) return;
         if (dragRaf == null) {
-          dragRaf = requestAnimationFrame(() => {
+          dragRaf = scheduleDragPaint(() => {
             dragRaf = null;
             if (!drag || drag.mode !== 'decor-resize') return;
             applyDecorResizeDrag(drag.latestClientX, drag.latestClientY);
@@ -18012,7 +18170,7 @@
         drag.latestClientY = e.clientY;
         if (!drag.moved) return;
         if (dragRaf == null) {
-          dragRaf = requestAnimationFrame(() => {
+          dragRaf = scheduleDragPaint(() => {
             dragRaf = null;
             if (!drag || drag.mode !== 'body-resize') return;
             applyBodyResizeDrag(drag.latestClientX, drag.latestClientY);
@@ -18039,40 +18197,31 @@
         }
         drag.lastMoveX = e.clientX; drag.lastMoveY = e.clientY; drag.lastMoveT = nowP;
         if (animRaf != null) { cancelAnimationFrame(animRaf); animRaf = null; viewportTickTs = 0; }
-        applyViewport();
-        rememberViewport();
+        const gesture = drag;
+        queueInteractionPaint(function () {
+          if (drag !== gesture) return;
+          applyViewport();
+          rememberViewport();
+        });
       } else if (drag.mode === 'edge-create') {
         const p = clientToSurface(e.clientX, e.clientY);
         drag.currentX = p.x;
         drag.currentY = p.y;
         if (dragRaf == null) {
-          dragRaf = requestAnimationFrame(() => {
+          dragRaf = scheduleDragPaint(() => {
             dragRaf = null;
             updatePreviewPath();
           });
         }
       } else if (drag.mode === 'waypoint') {
-        if (!drag.moved) return;                         // 没拖过 = 纯点选，不加拐点
-        const edge = data.edges.find((x) => x.id === drag.edgeId);
-        if (!edge) return;
-        const p = clientToSurface(e.clientX, e.clientY);
-        if (!Array.isArray(edge.waypoints)) edge.waypoints = [];
-        if (drag.wpIndex === null) {
-          // 第一次真正移动 → 在最近段插入新拐点
-          edge.waypoints.splice(drag.segIndex, 0, { x: p.x, y: p.y });
-          drag.wpIndex = drag.segIndex;
-        } else {
-          edge.waypoints[drag.wpIndex] = { x: p.x, y: p.y };
-        }
-        updateEdgePath(edge);
-        renderEdgeHandles();
+        queuePointerInteraction(e);
       } else if (drag.mode === 'frame-select') {
         const p = clientToSurface(e.clientX, e.clientY);
         drag.currentX = p.x;
         drag.currentY = p.y;
         if (drag.moved) ensureFrameEl();
         if (dragRaf == null) {
-          dragRaf = requestAnimationFrame(() => {
+          dragRaf = scheduleDragPaint(() => {
             dragRaf = null;
             if (!drag || drag.mode !== 'frame-select') return;
             if (!drag.nodeSizes) drag.nodeSizes = snapshotFrameNodeSizes();
@@ -18107,7 +18256,7 @@
               drag.baselineNodes.forEach((id) => selectedNodeIds.add(id));
               drag.baselineEdges.forEach((id) => selectedEdgeIds.add(id));
             }
-            applySelection();
+            applySelection(false);
           });
         }
       } else if (drag.mode === 'color-block-create') {
@@ -18116,7 +18265,7 @@
         drag.currentY = p.y;
         if (drag.moved) ensureFrameEl();
         if (dragRaf == null) {
-          dragRaf = requestAnimationFrame(() => {
+          dragRaf = scheduleDragPaint(() => {
             dragRaf = null;
             if (!drag || drag.mode !== 'color-block-create') return;
             updateFrameEl();
@@ -18130,10 +18279,16 @@
       if (!drag) return;
       // 指针笔画进行中：忽略并发的合成鼠标 mouseup，由 pointerup 收尾（防双重处理）
       if (drag.viaPointer && e.type.indexOf('pointer') !== 0) return;
+      if (['timer', 'free-arrow', 'poly-arrow-create', 'arrow-waypoint', 'arrow-endpoint', 'waypoint', 'frame-select', 'color-block-create'].includes(drag.mode)
+        || (drag.mode === 'pan' && (e.clientX !== drag.lastMoveX || e.clientY !== drag.lastMoveY))) onWindowMouseMove(e);
+      flushInteractionPaint();
       if (dragRaf != null) {
         cancelAnimationFrame(dragRaf);
         dragRaf = null;
       }
+      const finalPaint = dragPaint;
+      dragPaint = null;
+      if (finalPaint && (drag.mode === 'frame-select' || drag.mode === 'color-block-create')) finalPaint();
 
       if (drag.mode === 'timer') {
         drag.starts.forEach(function (_, id) {
@@ -18147,11 +18302,13 @@
         scheduleTimerToolbar();
       } else if (drag.mode === 'ink-stroke') {
         appendInkPointsFromPointerEvent(e);
+        flushInteractionPaint();
         const pts = drag.stroke.points || [];
         if (pts.length >= 2 && drag.moved) {
           ensureInkData().strokes.push(drag.stroke);
+          changedInkStrokes.add(drag.stroke.id);
           pushHistory();
-          renderInk();
+          strokeBBoxNear(drag.stroke, drag.stroke.points[0], 0);
           notify();
         } else if (drag.path) {
           drag.path.remove();
@@ -18166,8 +18323,8 @@
         const len = Math.hypot(drag.arrow.end.x - drag.arrow.start.x, drag.arrow.end.y - drag.arrow.start.y);
         if (drag.moved && len >= 12) {
           ensureInkData().arrows.push(drag.arrow);
+          changedInkArrows.add(drag.arrow.id);
           pushHistory();
-          renderInk();
           notify();
         } else if (drag.path) {
           drag.path.remove();
@@ -18176,8 +18333,10 @@
         const len = Math.hypot(drag.arrow.end.x - drag.arrow.start.x, drag.arrow.end.y - drag.arrow.start.y);
         if (drag.moved && len >= 12) {
           ensureInkData().arrows.push(drag.arrow);
+          changedInkArrows.add(drag.arrow.id);
           pushHistory();
-          renderInk();
+          if (drag.path) drag.path.remove();
+          appendFreeArrow(drag.arrow);
           notify();
         } else if (drag.path) {
           drag.path.remove();
@@ -18263,7 +18422,7 @@
         const node = findNode(drag.nodeId);
         const el = node ? nodeMap.get(node.id) : null;
         if (drag.moved) {
-          applyBodyResizeDrag(drag.latestClientX, drag.latestClientY);
+          applyBodyResizeDrag(e.clientX, e.clientY);
         }
         if (el) el.classList.remove('resizing-x', 'resizing-y', 'body-height-active');
         if (drag.moved) {
@@ -25133,7 +25292,7 @@
       });
       removalGhosts.clear();
       setEdgesSvgLive(false);
-      const before = Changes ? snapshotCanvasState() : null;
+      const before = Changes && !options.changes ? snapshotCanvasState() : null;
       const previousEdges = data.edges;
       const now = Date.now();
       const liveTimers = new Map();
@@ -25155,7 +25314,7 @@
           runtime: timerRuntime.has(timer.id) ? { running: true, startedAt: now } : null,
         });
       });
-      data.nodes = Changes ? Changes.restoreRecords(data.nodes, snap.nodes, cloneNode) : snap.nodes.map(cloneNode);
+      data.nodes = Changes ? Changes.restoreRecords(data.nodes, snap.nodes, cloneNode, options.changes && options.changes.nodeIds) : snap.nodes.map(cloneNode);
       const restoredTaskbook = cloneTaskbook(snap.taskbook);
       if (restoredTaskbook) data.taskbook = restoredTaskbook;
       else delete data.taskbook;
@@ -25177,14 +25336,20 @@
         scheduleTaskbookTick();
       }
       rebuildNodeIndex();
-      data.edges = Changes ? Changes.restoreRecords(previousEdges, snap.edges, cloneEdge) : snap.edges.map(cloneEdge);
+      data.edges = Changes ? Changes.restoreRecords(previousEdges, snap.edges, cloneEdge, options.changes && options.changes.edgeIds) : snap.edges.map(cloneEdge);
       if (Taskbooks) {
         Taskbooks.synchronizeCompletion(data);
         Taskbooks.rebuildWorkflowEdges(data);
       }
       if (Changes) data.edges = Changes.restoreRecords(previousEdges, data.edges, cloneEdge);
       rebuildEdgeIndex();
-      data.ink = cloneInk(snap.ink);
+      if (!options.changes || options.changes.ink) {
+        if (options.changes && options.changes.strokesIds && options.changes.arrowsIds) {
+          const liveInk = ensureInkData();
+          liveInk.strokes = Changes.restoreRecords(liveInk.strokes, snap.ink.strokes, function (stroke) { return cloneInk({ strokes: [stroke], arrows: [] }).strokes[0]; }, options.changes.strokesIds);
+          liveInk.arrows = Changes.restoreRecords(liveInk.arrows, snap.ink.arrows, function (arrow) { return cloneInk({ strokes: [], arrows: [arrow] }).arrows[0]; }, options.changes.arrowsIds);
+        } else data.ink = cloneInk(snap.ink);
+      }
       const snapshotRuler = cloneRuler(snap.ruler);
       if (snapshotRuler) data.ruler = snapshotRuler;
       else delete data.ruler;
@@ -25206,7 +25371,7 @@
       if (restoredTimers.length) data.timers = restoredTimers;
       else delete data.timers;
       normalizeTextBindings();
-      const changes = Changes ? Changes.diff(before, data) : null;
+      const changes = options.changes || (Changes ? Changes.diff(before, data) : null);
       pendingHistoryChanges = null;
       sceneGeometryCache = null;
       contentBoundsCache = null;
@@ -25242,6 +25407,15 @@
     }
 
     function undo() {
+      if (entityHistory) {
+        const finishPerf = beginPerfOperation('undo');
+        refreshHistoryTimerHead();
+        const result = entityHistory.undo();
+        if (result) applySnapshot(result.snapshot, { changes: result.changes });
+        refreshHistoryButtons();
+        finishPerf();
+        return;
+      }
       if (history.length <= 1) return;
       const finishPerf = beginPerfOperation('undo');
       refreshHistoryTimerHead();
@@ -25253,6 +25427,15 @@
     }
 
     function redo() {
+      if (entityHistory) {
+        const finishPerf = beginPerfOperation('redo');
+        refreshHistoryTimerHead();
+        const result = entityHistory.redo();
+        if (result) applySnapshot(result.snapshot, { changes: result.changes });
+        refreshHistoryButtons();
+        finishPerf();
+        return;
+      }
       if (redoStack.length === 0) return;
       const finishPerf = beginPerfOperation('redo');
       refreshHistoryTimerHead();
@@ -25587,6 +25770,10 @@
       if (e.key === 'Escape') {
         // 取消正在进行的拖动 / 拉线 / 框选
         if (drag) {
+          cancelInteractionPaint();
+          dragPaint = null;
+          if (dragRaf != null) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+          if (drag.mode === 'pan') { viewport.classList.remove('panning'); applyViewport(); rememberViewport(); }
           if (drag.mode === 'ruler-move' || drag.mode === 'ruler-rotate') {
             e.preventDefault();
             finishRulerGesture(false);
@@ -25675,10 +25862,11 @@
           if ((drag.mode === 'ink-stroke' || drag.mode === 'free-arrow' || drag.mode === 'poly-arrow-create') && drag.path) {
             drag.path.remove();
           }
-          if (drag.mode === 'arrow-waypoint' || drag.mode === 'arrow-endpoint') {
+          if (drag.mode === 'arrow-waypoint' || drag.mode === 'arrow-endpoint' || drag.mode === 'waypoint' || drag.mode === 'ink-erase') {
             // 拖拐点/端点中途 Esc：还未入历史，重放栈顶快照即丢弃本次实时改动
-            if (drag.moved) applySnapshot(history[history.length - 1]);
+            if (drag.moved || eraserChanged) applySnapshot(historyHead());
           }
+          changedInkStrokes.clear(); changedInkArrows.clear();
           if (drag.mode === 'ink-erase') {
             eraserChanged = false;
           }
@@ -25982,6 +26170,12 @@
     }
     // 窗口失焦时一并清理空格态 + 方向键态——否则 Alt-Tab 切走会卡住
     function onWindowBlur() {
+      cancelInteractionPaint();
+      cancelPanInertia();
+      if (arrowPanRaf != null) { cancelAnimationFrame(arrowPanRaf); arrowPanRaf = null; arrowTickTs = 0; }
+      dragPaint = null;
+      if (dragRaf != null) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+      if (drag && drag.mode !== 'pan') onKeyDown({ key: 'Escape', target: document.body, preventDefault: function () {} });
       if (drag && (drag.mode === 'ruler-move' || drag.mode === 'ruler-rotate')) {
         finishRulerGesture(false);
       }
@@ -25999,13 +26193,35 @@
         drag = null;
         scheduleTimerToolbar();
       }
+      // A menu/dialog can consume Escape before the gesture branch. Still abort its
+      // uncommitted model and preview when the window or workspace loses focus.
+      if (drag && drag.mode !== 'pan') {
+        const interrupted = drag;
+        if (interrupted.path) interrupted.path.remove();
+        const ids = new Set(interrupted.starts ? interrupted.starts.keys() : []);
+        if (interrupted.nodeId) ids.add(interrupted.nodeId);
+        if (interrupted.followingTextBoxIds) interrupted.followingTextBoxIds.forEach(function (id) { ids.add(id); });
+        ids.forEach(function (id) {
+          const el = nodeMap.get(id) || timerMap.get(id);
+          if (el) el.classList.remove('dragging', 'mindmap-subtree-dragging', 'mindmap-drag-anchor', 'resizing', 'resizing-x', 'resizing-y', 'body-height-active');
+        });
+        drag = null;
+        changedInkStrokes.clear(); changedInkArrows.clear(); eraserChanged = false;
+        clearPreviewPath(); clearFrameEl(); hideTextSnapGuides();
+        if (rulerEl) rulerEl.classList.remove('bypassed');
+        applySnapshot(historyHead());
+      }
       if (spaceHeld) {
         spaceHeld = false;
         viewport.classList.remove('space-held');
       }
       // 平移中切走窗口不会收到可靠的 mouseup；主动结束，避免返回后残留闭合抓手。
-      if (drag && drag.mode === 'pan') drag = null;
+      if (drag && drag.mode === 'pan') { applyViewport(); rememberViewport(); drag = null; }
       viewport.classList.remove('panning');
+      if (drawPointerId != null) {
+        try { viewport.releasePointerCapture(drawPointerId); } catch (_) {}
+        drawPointerId = null;
+      }
       Object.keys(arrowKeys).forEach(function (k) { arrowKeys[k] = false; });
     }
 
@@ -26055,7 +26271,7 @@
       viewport.addEventListener('pointerdown', onViewportPointerDownCapture, true);
       viewport.addEventListener('pointermove', onViewportPointerMove);
       viewport.addEventListener('pointerup', onViewportPointerUp);
-      viewport.addEventListener('pointercancel', onViewportPointerUp);
+      viewport.addEventListener('pointercancel', onWindowBlur);
     }
     // Z 轮：滚轮缩放（passive:false 才能 preventDefault）
     viewport.addEventListener('wheel', onWheel, { passive: false });
@@ -26074,6 +26290,8 @@
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('paste', onPaste, true);
     window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('pagehide', onWindowBlur);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) onWindowBlur(); });
     window.addEventListener('resize', refreshViewportRect);
     window.addEventListener('resize', keepRememberedViewportCentered);
     window.addEventListener('resize', requestEdgesCanvasRender);
@@ -29515,7 +29733,7 @@
 
     // ── 供新建面板单选节点时直接编辑节点属性 ──
     global.CanvasModule.findNode = findNode;
-    global.CanvasModule.pushHistory = pushHistory;
+    global.CanvasModule.pushHistory = function (scope) { pushHistory(scope === undefined ? null : scope); };
     global.CanvasModule.notify = notify;
     global.CanvasModule.isIndexNode = isIndexNode;
     global.CanvasModule.isBodyNode = isBodyNode;
