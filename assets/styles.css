@@ -2020,6 +2020,7 @@ body.start-page[data-start-theme="dark"] .note-workspace { --note-control-hover:
 .note-canvas-settings .note-canvas-panel-title { margin: 0 0 14px; font-size: 13px; font-weight: 650; }
 .note-canvas-settings [data-role="note-canvas-default-scale"][hidden] { display: none; }
 .note-canvas-default-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; padding: 3px; margin-bottom: 16px; background: var(--note-chrome-line); border-radius: 8px; }
+body:not([data-start-theme="dark"]) .note-canvas-default-tabs { background: #f6f6f6; }
 .note-canvas-default-tabs button { min-width: 0; height: 34px; padding: 3px 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 11px; font-weight: 550; line-height: 1.15; cursor: pointer; overflow-wrap: anywhere; }
 .note-canvas-default-tabs button[aria-selected="true"] { background: var(--text); color: var(--surface); }
 .note-canvas-property-section { border-top: 1px solid var(--note-chrome-line); padding-top: 14px; margin-bottom: 20px; }

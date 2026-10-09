@@ -2912,7 +2912,7 @@
     const paragraph = parent.dataset.noteSubmenu === 'paragraph';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
       : ['table', 'callout', 'rule', 'code-block', 'math'];
-    if (!paragraph && canvasEnabled()) commands.push('canvas');
+    if (!paragraph && canvasEnabled()) commands.splice(3, 0, 'canvas');
     const submenu = document.createElement('div'); submenu.className = 'note-context-menu note-context-submenu';
     submenu.setAttribute('role', 'menu'); submenu.setAttribute('aria-label', parent.textContent);
     commands.forEach((kind, index) => {
