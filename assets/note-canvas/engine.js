@@ -22,8 +22,8 @@
     let selectedNodes = new Set(), selectedEdges = new Set(), active = false, destroyed = false;
     let raf = 0, cameraRaf = 0, inertiaRaf = 0, gesture = null, pendingPointer = null, space = false;
     let draft = null, width = 0, height = 0, factor = 1, frameRect = null, geometryBuilds = 0;
-    let staticDirty = true, painting = false, staticDraws = 0, previewPath = null;
-    let previewArrows=[];
+    let staticDirty = true, painting = false, staticDraws = 0;
+    const edgePreviews = new Map();
     const selectionListeners = new Set();
     let selectionVersion = 0, styleSequence = 0, styleDraft = null, handleSignature = '', modelIdentity=session.data;
     let focusKind = '', focusVersion = 0;
@@ -320,17 +320,25 @@
       }
       if (geometryHit) moving.forEach(key => { const item = edgeCache.get(key); if (item) svgEdge(item); });
       if (gesture?.kind === 'edge' && gesture.point) {
-        const source = session.nodes.get(gesture.source),style=S.readDefaults().edge;
-        if (!previewPath) { previewPath = document.createElementNS(SVG, 'path'); live.appendChild(previewPath); }
+        const style=gesture.defaults.edge;
         const temporary={x:gesture.point.x-.001,y:gesture.point.y-.001,w:.002,h:.002,r:0,shape:'rect'};
+        gesture.sources.forEach(key=>{
+        const source=session.nodes.get(key);if(!source)return;
+        let preview=edgePreviews.get(key);
+        if(!preview) {
+          const path=document.createElementNS(SVG,'path');live.appendChild(path);
+          const arrows=[0,1].map(()=>{const polygon=document.createElementNS(SVG,'polygon');live.appendChild(polygon);return polygon;});
+          preview={path,arrows};edgePreviews.set(key,preview);
+        }
+        const previewPath=preview.path,previewArrows=preview.arrows;
         const item=G.build(style,nodeRect(source),temporary);previewPath.setAttribute('d',item.d);
         previewPath.style.stroke=style.color||'var(--nc-ink)';previewPath.style.strokeWidth=style.width;
         previewPath.style.strokeDasharray=style.lineStyle==='dashed'?'10 7':style.lineStyle==='dotted'?'1 6':'none';
         previewPath.style.strokeLinecap=style.lineStyle==='dotted'?'round':'butt';
-        if(!previewArrows.length) previewArrows=[0,1].map(()=>{const polygon=document.createElementNS(SVG,'polygon');live.appendChild(polygon);return polygon;});
         [style.arrowStart,style.arrowEnd].forEach((visible,i)=>{const polygon=previewArrows[i];polygon.style.display=visible?'':'none';polygon.style.fill=style.color||'var(--nc-ink)';
           polygon.setAttribute('points',G.arrow(item,i===0,style.arrowSize).map(p=>p.x+','+p.y).join(' '));});
-      } else if (previewPath) { previewPath.remove(); previewPath = null;previewArrows.forEach(el=>el.remove());previewArrows=[]; }
+        });
+      } else if (edgePreviews.size) { edgePreviews.forEach(({path,arrows})=>{path.remove();arrows.forEach(el=>el.remove());});edgePreviews.clear(); }
       renderHandles();
       painting = false;
     }
@@ -505,8 +513,14 @@
       if (completed.kind === 'edge' && completed.moved && insideWindow) {
         const targetNode = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-canvas-node]');
         const key = targetNode?.dataset.canvasNode;
-        if (key && viewport.contains(targetNode) && key !== completed.source && !session.data.edges.some(e => e.from === completed.source && e.to === key)) {
-          const d=S.readDefaults();session.change(engine, data => data.edges.push({ id: id(), from: completed.source, to: key, text: '', ...d.edge,labelStyle:{...d.edgeText} }));
+        if (key && viewport.contains(targetNode) && session.nodes.has(key)) {
+          const existing=new Set(session.data.edges.filter(edge=>edge.to===key).map(edge=>edge.from));
+          const sources=completed.sources.filter(source=>source!==key&&session.nodes.has(source)&&!existing.has(source));
+          const d=completed.defaults;
+          if(sources.length) {
+            const edges=sources.map(source=>({id:id(),from:source,to:key,text:'',...d.edge,labelStyle:{...d.edgeText}}));
+            session.change(engine,data=>data.edges.push(...edges),{structure:true,edges:edges.map(edge=>edge.id)});
+          }
         }
       }
       if (completed.kind === 'pan' && completed.moved && !reduced() && insideWindow) {
@@ -599,7 +613,10 @@
       const key = nodeAt(event);
       if (key) {
         if (readOnly) return;
-        if (event.altKey) { startGesture(event, 'edge', { source: key, point: worldPoint(event) }); return; }
+        if (event.altKey) {
+          const sources=selectedNodes.has(key)?[...selectedNodes].filter(source=>session.nodes.has(source)):[key];
+          startGesture(event,'edge',{sources,defaults:S.readDefaults(),point:worldPoint(event)});return;
+        }
         const next = new Set(selectedNodes);
         if (event.shiftKey) { next.has(key) ? next.delete(key) : next.add(key); }
         else if (!next.has(key)) { next.clear(); next.add(key); }
@@ -707,7 +724,7 @@
       if (draft) return; // Native IME host is released only after it settles.
       destroyed = true; if (raf) cancelAnimationFrame(raf); raf = 0;
       resize.disconnect(); themeObserver.disconnect(); disposers.forEach(fn => fn()); session.listeners.delete(sync);
-      nodes.clear(); rects.clear(); edgeCache.clear(); grid.clear(); labels.clear(); svgEdges.clear();
+      nodes.clear(); rects.clear(); edgeCache.clear(); grid.clear(); labels.clear(); svgEdges.clear(); edgePreviews.clear();
       canvas.width = canvas.height = 1; viewport.remove();
     }
     return engine;

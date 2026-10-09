@@ -53,6 +53,12 @@ async function run(browser, full, fallback=false) {
     }
     await settings.locator('[data-default-target="edgeText"]').press('Home');assert.equal(await settings.locator('[data-default-target="node"]').getAttribute('aria-selected'),'true');
     assert.equal(requests.filter(r=>/note-canvas\//.test(r)).length,0,'sidebar alone never starts the renderer');
+    const defaultColor=settings.locator('[data-canvas-group="defaults"] [data-canvas-style="node.bgColor"]');
+    await defaultColor.click();assert.equal(await settings.locator('.note-canvas-color-popup').count(),1);
+    await defaultColor.click();assert.equal(await settings.locator('.note-canvas-color-popup').count(),0,'second swatch click closes instead of reopening');
+    await defaultColor.click();await page.keyboard.press('Escape');assert.equal(await settings.locator('.note-canvas-color-popup').count(),0);
+    await defaultColor.click();await settings.locator('[data-default-target="edge"]').click();assert.equal(await settings.locator('.note-canvas-color-popup').count(),0,'switching panels releases the color popup');
+    await settings.locator('[data-default-target="node"]').click();
     assert.equal(await settings.locator('[data-canvas-group="node"] input:enabled').count(),0);
     assert.equal((await settings.innerText()).includes('当前画布'),false);
     await page.evaluate(()=>T.openNote('A.md'));await page.waitForFunction(()=>document.querySelector('.note-canvas-frame')?.__noteCanvas?.engine);

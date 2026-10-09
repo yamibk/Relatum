@@ -2035,7 +2035,24 @@ body:not([data-start-theme="dark"]) .note-canvas-default-tabs { background: #f6f
 .note-canvas-settings input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
 .note-canvas-field select { grid-column: 1 / -1; }
 .note-canvas-field input[type="color"] { height: 28px; padding: 2px !important; }
+.note-canvas-color-popup { position: fixed; z-index: 10000; box-sizing: border-box; padding: 10px; border: 1px solid var(--note-chrome-line); border-radius: 6px; background: var(--surface); color: var(--text); box-shadow: 0 6px 24px rgba(0,0,0,.16); }
+.note-canvas-color-plane { position: relative; height: 135px; background-image: linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,transparent); touch-action: none; cursor: crosshair; }
+.note-canvas-color-plane i { position: absolute; width: 10px; height: 10px; box-sizing: border-box; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #444; transform: translate(-50%,-50%); pointer-events: none; }
+.note-canvas-color-hue { display: block; width: 100%; margin: 12px 0; height: 12px; appearance: none; border-radius: 3px; background: linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+.note-canvas-color-hue::-webkit-slider-thumb { appearance: none; width: 15px; height: 15px; border: 2px solid white; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px #555; }
+.note-canvas-color-hue::-moz-range-thumb { width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; background: transparent; }
+.note-canvas-color-palette { display: flex; gap: 6px; margin-bottom: 10px; }
+.note-canvas-color-palette button { flex: 1; min-width: 0; height: 22px; border: 1px solid var(--note-chrome-line); border-radius: 3px; cursor: pointer; }
+.note-canvas-color-popup > input[type="text"] { box-sizing: border-box; width: 100%; padding: 6px; border: 1px solid var(--note-chrome-line); border-radius: 4px; color: var(--text); background: var(--surface); font: inherit; font-size: 12px; }
+.note-canvas-color-eyedropper { display: block; width: 100%; margin-top: 8px; padding: 5px; border: 1px solid var(--note-chrome-line); border-radius: 4px; color: var(--text); background: var(--surface); font: inherit; font-size: 11px; cursor: pointer; }
 .note-canvas-field input[type="range"] { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--text); }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue) { appearance: none; height: 18px; background: transparent; }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue)::-webkit-slider-runnable-track { box-sizing: border-box; height: 8px; border: 1px solid #dedede; border-radius: 4px; background: linear-gradient(to right,#efefef var(--canvas-range-progress,0%),#fcfcfc var(--canvas-range-progress,0%)); }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue)::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; margin-top: -5px; border: 0; border-radius: 50%; background: #202020; }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue)::-moz-range-track { box-sizing: border-box; height: 8px; border: 1px solid #dedede; border-radius: 4px; background: #fcfcfc; }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue)::-moz-range-progress { height: 6px; border-radius: 4px; background: #efefef; }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue)::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #202020; }
+body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:not(.note-canvas-color-hue):disabled::-webkit-slider-thumb { background: #bdbdbd; }
 .note-canvas-field output { text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .note-canvas-field input[type="checkbox"] { justify-self: end; accent-color: var(--text); }
 .note-canvas-auto-color { grid-column: 2; justify-self: end; border: 0; border-radius: 3px; padding: 3px 5px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }

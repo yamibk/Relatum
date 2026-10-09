@@ -180,6 +180,27 @@ async function run(browser, enabled, prewarm = false) {
     await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 }); await page.mouse.up(); await page.keyboard.up('Alt'); await settle();
     assert.equal(await frame.evaluate(el => el.__noteCanvas.session.data.edges.length), 1);
     assert.equal(await frame.locator('.note-canvas-live g').count(), 0, 'static edges stay out of SVG');
+    // Multi-selection connects every source in one file-history transaction.
+    await createNode(420, 55, '批量目标');
+    const third=viewport.locator('.note-canvas-node').nth(2);
+    await first.click();await second.click({modifiers:['Shift']});
+    const batchHistory=await frame.evaluate(el=>el.__noteCanvas.session.past.length);
+    async function batchConnect(cancel=false) {
+      const from=await first.boundingBox(),to=await third.boundingBox();
+      await page.keyboard.down('Alt');await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();
+      await page.mouse.move(to.x+to.width/2,to.y+to.height/2,{steps:5});await settle();
+      assert.equal(await frame.locator('.note-canvas-live > path').count(),2,'each selected source has a preview');
+      if(cancel) await viewport.press('Escape');
+      await page.mouse.up();await page.keyboard.up('Alt');await settle();
+      assert.equal(await frame.locator('.note-canvas-live > path').count(),0,'previews release after finish or cancellation');
+    }
+    await batchConnect(true);assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.past.length),batchHistory);
+    await batchConnect();assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.data.edges.length),3);
+    assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.past.length),batchHistory+1);
+    await batchConnect();assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.past.length),batchHistory+1,'duplicates do not add history');
+    await viewport.press('Control+z');await settle();assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.data.edges.length),1);
+    await viewport.press('Control+y');await settle();assert.equal(await frame.evaluate(el=>el.__noteCanvas.session.data.edges.length),3);
+    await viewport.press('Control+z');await viewport.press('Control+z');await settle();await first.click();
     const originalX = await frame.evaluate(el => el.__noteCanvas.session.data.nodes[0].x);
     a = await first.boundingBox();
     await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2); await page.mouse.down();
