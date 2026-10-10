@@ -140,10 +140,11 @@
         };
         if(!fits(h,w)) {
           const equal=style.shape==='circle'||style.shape==='square';
-          let low=h,high=Math.max(h,6000);
+          let low=Math.floor(h),high=Math.max(Math.ceil(h),6000);
           // Width grows with height for equal-sided shapes; solve the real text
           // box instead of extrapolating line count at the original narrow width.
-          while(high-low>1) {const mid=Math.ceil((low+high)/2);if(fits(mid,equal?mid:w)) high=mid;else low=mid;}
+          // Integer bounds ensure progress after scaled or dragged fractional sizes.
+          while(high-low>1) {const mid=Math.floor((low+high)/2);if(fits(mid,equal?mid:w)) high=mid;else low=mid;}
           h=high;if(equal) w=h;
         }
         safe=S.inset(style.shape,w,h,style.radius);
