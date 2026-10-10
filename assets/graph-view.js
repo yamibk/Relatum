@@ -21,7 +21,6 @@
     pdf: '#b07a4f', md: '#5b8c7e', normal: '#35383b',
   };
 
-  function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
   function now() {
     return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   }
@@ -118,7 +117,6 @@
     const onSelect = options.onSelect || function () {};
     const onVisibilityChange = options.onVisibilityChange || function () {};
     const frame = overlay.querySelector('[data-role="graph-window"]');
-    const handle = overlay.querySelector('[data-role="graph-drag-handle"]');
     const title = overlay.querySelector('[data-role="graph-title"]');
     const stage = overlay.querySelector('[data-role="graph-stage"]');
     let canvas = overlay.querySelector('[data-role="graph-canvas"]');
@@ -127,22 +125,15 @@
     const empty = overlay.querySelector('[data-role="graph-empty"]');
     const nodeCount = overlay.querySelector('[data-role="graph-node-count"]');
     const edgeCount = overlay.querySelector('[data-role="graph-edge-count"]');
-    const opacity = overlay.querySelector('[data-role="graph-opacity"]');
-    const opacityValue = overlay.querySelector('[data-role="graph-opacity-val"]');
-    const closeButton = overlay.querySelector('[data-action="graph-close"]');
     const relaxButton = overlay.querySelector('[data-action="graph-relax"]');
     const resetButton = overlay.querySelector('[data-action="graph-reset-view"]');
-    if (!frame || !stage || !canvas || !canvas.getContext || !global.GraphEngine) return null;
+    if (!frame || !stage || !canvas || !canvas.getContext || !global.GraphEngine || !global.GraphWindow) return null;
 
     let reduceMotion = false;
     try { reduceMotion = global.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
     let nodes = [];
     let edges = [];
-    let windowDrag = null;
-    let opened = false;
-    let closing = false;
-    let closeTimer = null;
 
     // —— 主题相关颜色：开图时读一次（随主题切换重读）——
     const theme = {
@@ -456,13 +447,15 @@
     const GV_FLOW_COLOR = [0.27, 0.52, 0.40, 0.62];   // 连线流光：克制的青绿（浅色浮窗背景上也看得清）
     const PARTICLE_CFG = { speed: 0.00018, perEdge: 1, size: 2.2, getColor: function () { return GV_FLOW_COLOR; } };
 
-    let engine = null;
-    function ensureEngine() {
-      if (engine) return engine;
+    function createEngine(nextCanvas) {
+      canvas = nextCanvas;
       const domOverlay = createDOMLabelLayer();
-      engine = global.GraphEngine.create({
+      const engine = global.GraphEngine.create({
         canvas: canvas,
         backend: 'webgl',
+        cacheInstances: true,
+        nodeStyleTimeDependent: true,
+        onCanvasReplace: function (replacement) { canvas = replacement; },
         config: { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: 0.048, springRest: 112, gravity: 0.0055,
                   alphaDecay: 0.022, alphaReheat: 0.28, theta: 0.92, velocityDamp: 0.84,
                   zoomMin: 0.4, zoomMax: 3.5, fitScaleMin: 0.4, fitScaleMax: 3.5, fitPad: 26, fitMargin: 44 },
@@ -492,107 +485,24 @@
       return engine;
     }
 
-    function releaseEngine() {
-      if (engine) engine.destroy();
-      engine = null;
-      // 替换画布同时释放 WebGL context；重开不复用已丢失的 context。
-      const oldCanvas = canvas;
-      canvas = oldCanvas.cloneNode(false);
-      canvas.width = canvas.height = 1;
-      oldCanvas.replaceWith(canvas);
-      try { oldCanvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext(); } catch (e) {}
-      oldCanvas.width = oldCanvas.height = 1;
-      nodes = [];
-      edges = [];
-    }
-
-    function applyOpacity(value) {
-      const amount = clamp(Number(value) || 94, 36, 100);
-      if (opacity) opacity.value = String(amount);
-      if (opacityValue) opacityValue.textContent = amount + '%';
-      if (opacity) opacity.style.setProperty('--graph-opacity-pct', (((amount - 36) / 64) * 100).toFixed(2) + '%');
-      frame.style.setProperty('--graph-window-alpha', (amount / 100).toFixed(2));
-      try { localStorage.setItem(OPACITY_KEY, String(amount)); } catch (e) {}
-    }
-    function readOpacity() {
-      try { return localStorage.getItem(OPACITY_KEY) || '94'; } catch (e) { return '94'; }
-    }
-
-    function centerFrame() {
-      const outer = overlay.getBoundingClientRect();
-      // offset 尺寸不受入场 transform 影响，避免浮窗在缩放动画首帧按错误尺寸居中。
-      frame.style.left = Math.max(12, (outer.width - frame.offsetWidth) / 2) + 'px';
-      frame.style.top = Math.max(12, (outer.height - frame.offsetHeight) / 2) + 'px';
-    }
-    function keepFrameVisible() {
-      const outer = overlay.getBoundingClientRect();
-      const maxLeft = Math.max(12, outer.width - Math.min(frame.offsetWidth, outer.width - 24) - 12);
-      const maxTop = Math.max(12, outer.height - Math.min(frame.offsetHeight, outer.height - 24) - 12);
-      const left = clamp(parseFloat(frame.style.left) || 12, 12, maxLeft);
-      const top = clamp(parseFloat(frame.style.top) || 12, 12, maxTop);
-      frame.style.left = left + 'px';
-      frame.style.top = top + 'px';
-    }
-
-    function finishClose() {
-      if (!closing) return;
-      closing = false;
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-      }
-      overlay.classList.remove('closing');
-      overlay.hidden = true;
-      frame.removeEventListener('animationend', onCloseAnimationEnd);
-      releaseEngine();
-      onVisibilityChange(false);
-    }
-
-    function onCloseAnimationEnd(event) {
-      if (event.target === frame) finishClose();
-    }
-
-    function close() {
-      if (!opened || closing) return;
-      opened = false;
-      closing = true;
-      if (engine) engine.setActive(false);
-      if (windowDrag) {
-        if (handle.hasPointerCapture(windowDrag.pointerId)) handle.releasePointerCapture(windowDrag.pointerId);
-        windowDrag = null;
-      }
-      if (tooltip) tooltip.hidden = true;
-      if (trigger) {
-        trigger.classList.remove('active');
-        trigger.setAttribute('aria-expanded', 'false');
-      }
-      if (reduceMotion) {
-        finishClose();
-        return;
-      }
-      overlay.classList.add('closing');
-      frame.addEventListener('animationend', onCloseAnimationEnd);
-      closeTimer = setTimeout(finishClose, 280);
-    }
+    const windowUI = global.GraphWindow.create({
+      overlay, trigger, createEngine, onVisibilityChange,
+      readPreferences: function () {
+        try { return { opacity: localStorage.getItem(OPACITY_KEY) || '94' }; } catch (_) { return {}; }
+      },
+      writePreferences: function (preferences) {
+        try { localStorage.setItem(OPACITY_KEY, String(preferences.opacity)); } catch (_) {}
+      },
+      onCloseStart: function () { if (tooltip) tooltip.hidden = true; },
+      onRelease: function (replacement) { canvas = replacement; nodes = []; edges = []; },
+    });
+    function close() { windowUI.close(); }
 
     function open(data, canvasTitle) {
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-      }
-      closing = false;
-      frame.removeEventListener('animationend', onCloseAnimationEnd);
-      overlay.classList.remove('closing');
-      overlay.hidden = false;
-      if (!ensureEngine()) { overlay.hidden = true; return; }
-      opened = true;
-      if (trigger) {
-        trigger.classList.add('active');
-        trigger.setAttribute('aria-expanded', 'true');
-      }
-      onVisibilityChange(true);
+      reduceMotion = windowUI.reduceMotion;
+      const engine = windowUI.open();
+      if (!engine) return;
       if (title) title.textContent = canvasTitle || '当前画布';
-      applyOpacity(readOpacity());
       syncTheme();
       buildGraphData(data || {});
       if (nodeCount) nodeCount.textContent = String(nodes.length);
@@ -605,54 +515,16 @@
       engine.setDrift(nodes.length > DRIFT_MAX_NODES ? null : IDLE_DRIFT);  // 大图谱收敛后停住，小图谱保留微动
       engine.setParticles(nodes.length > DRIFT_MAX_NODES ? null : PARTICLE_CFG);  // 连线流光同样大图谱关，零开销
       engine.setPanInertia(readPanInertia());                               // 视图平移惯性与画布「拖拽惯性」同步
-      centerFrame();
-      keepFrameVisible();
       engine.start({ intro: true, fit: false });
     }
 
     // —— 外壳交互 ——
-    if (opacity) opacity.addEventListener('input', () => applyOpacity(opacity.value));
-    if (closeButton) closeButton.addEventListener('click', close);
     if (relaxButton) relaxButton.addEventListener('click', () => {
       if (!nodes.length) return;
       seedPositions();
-      engine.start({ intro: false, fit: true });
+      windowUI.engine?.start({ intro: false, fit: true });
     });
-    if (resetButton) resetButton.addEventListener('click', () => { if (engine) engine.fitView(true); });
-    overlay.addEventListener('mousedown', (event) => {
-      if (event.target === overlay) close();
-    });
-
-    handle.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || event.target.closest('button, input, label')) return;
-      const rect = frame.getBoundingClientRect();
-      const outer = overlay.getBoundingClientRect();
-      windowDrag = {
-        pointerId: event.pointerId,
-        x: event.clientX, y: event.clientY,
-        left: rect.left - outer.left, top: rect.top - outer.top,
-      };
-      handle.setPointerCapture(event.pointerId);
-    });
-    handle.addEventListener('pointermove', (event) => {
-      if (!windowDrag || windowDrag.pointerId !== event.pointerId) return;
-      frame.style.left = windowDrag.left + event.clientX - windowDrag.x + 'px';
-      frame.style.top = windowDrag.top + event.clientY - windowDrag.y + 'px';
-      keepFrameVisible();
-    });
-    function stopWindowDrag(event) {
-      if (!windowDrag || windowDrag.pointerId !== event.pointerId) return;
-      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
-      windowDrag = null;
-      keepFrameVisible();
-    }
-    handle.addEventListener('pointerup', stopWindowDrag);
-    handle.addEventListener('pointercancel', stopWindowDrag);
-    global.addEventListener('resize', keepFrameVisible);
-    global.addEventListener('pagehide', () => {
-      close();
-      if (closing) finishClose();
-    });
+    if (resetButton) resetButton.addEventListener('click', () => windowUI.engine?.fitView(true));
 
     return { open: open, close: close };
   }

@@ -1,4 +1,4 @@
-// 共享力导向图谱引擎（Canvas 2D 版）。
+// 共享力导向图谱引擎（Canvas2D / WebGL）。
 // 关系视图(graph-view) 与 活跃页足迹星图(study-graph) 共用这一份核心：
 //   · 渲染：Canvas 2D（取代逐元素 SVG，消除每帧整棵 SVG 树的 style/layout/paint 重算）；
 //   · 斥力：Barnes-Hut 四叉树近似，O(n log n)（取代逐对 O(n²)）；
@@ -170,6 +170,7 @@
   function createCanvas2DBackend(spec) {
     const canvas = spec.canvas;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
     const drawNode = spec.drawNode || function () {};
     const drawEdge = spec.drawEdge || function () {};
     // —— 视口后备存储：按 DPR 重置画布像素尺寸（与抽离前 syncSize 一致）——
@@ -252,7 +253,8 @@
   // ─────────────────────────── WebGL 渲染后端 ───────────────────────────
   // 依赖 graph-gl.js 暴露的 GraphGL 低层核心（WebGL2 实例化：圆 / 圆角方块 SDF + 带宽连线）。
   // 引擎只把每帧的「几何 + 样式描述符」翻译进 GraphGL 的两个 Float32Array，再交 GPU 一把画完——
-  // 缩放 / 平移只改一个仿射矩阵、几乎零重画，这是丝滑的来源。文字 / 光晕 / 聚合扇形不在这层，
+  // 实例缓存开启后，静止几何的缩放 / 平移只更新矩阵和 AA；时间外观仍独立刷新节点实例。
+  // 文字 / 光晕 / 聚合扇形不在这层，
   // 留给后续顶层 2D 叠加层（中文做不了位图字体图集，且文字不该进每帧热路径）。
   // GL 不可用 / 着色器编译失败 → 返回 null，由引擎自动回落 Canvas2D（广色域发灰风险也能经此切回）。
   function createWebGLBackend(spec) {
@@ -267,6 +269,11 @@
     const ES = core.EDGE_STRIDE;
     const nodeStyle = spec.nodeStyle || defaultNodeStyle;
     const edgeStyle = spec.edgeStyle || defaultEdgeStyle;
+    const cacheInstances = spec.cacheInstances === true;
+    let lastNodeVersion = -1, lastEdgeVersion = -1;
+    let nodeStorage = null, edgeStorage = null;
+    let nodeCount = 0, edgeCount = 0;
+    let lastNodeInputCount = -1, lastEdgeInputCount = -1;
 
     // 后备存储与 viewport 由 core.draw 按 dpr 负责，这里只回报 CSS 度量（与 Canvas2D 后端口径一致）
     function syncSize() {
@@ -294,52 +301,63 @@
       core.ensureCapacity(nodes.length + pcount, edges.length);   // 预留流光粒子的实例位
       const nd = core.nodeData;
       const ed = core.edgeData;
+      const uploadNodes = !cacheInstances || frame.nodeInstancesVersion == null
+        || frame.nodeInstancesVersion !== lastNodeVersion || nd !== nodeStorage
+        || lastNodeInputCount !== nodes.length + pcount;
+      const uploadEdges = !cacheInstances || frame.edgeInstancesVersion == null
+        || frame.edgeInstancesVersion !== lastEdgeVersion || ed !== edgeStorage
+        || lastEdgeInputCount !== edges.length;
 
       // 连线（在节点之下，先写）
-      let ei = 0;
-      for (let i = 0; i < edges.length; i++) {
-        const e = edges[i];
-        const s = nodes[e.source];
-        const dn = nodes[e.target];
-        if (!s || !dn) continue;
-        const st = edgeStyle(e, s, dn, { highlighted: e._highlighted, dim: e._dim });
-        const col = st.color || _NO_STROKE;
-        let alpha = (col[3] == null ? 1 : col[3]) * Math.min(s._appearOpacity, dn._appearOpacity);
-        const o = ei * ES;
-        ed[o] = s._rx; ed[o + 1] = s._ry;
-        ed[o + 2] = dn._rx; ed[o + 3] = dn._ry;
-        ed[o + 4] = col[0]; ed[o + 5] = col[1]; ed[o + 6] = col[2]; ed[o + 7] = alpha;
-        ed[o + 8] = st.width || 1;
-        ei++;
+      if (uploadEdges) {
+        let ei = 0;
+        for (let i = 0; i < edges.length; i++) {
+          const e = edges[i];
+          const s = nodes[e.source];
+          const dn = nodes[e.target];
+          if (!s || !dn) continue;
+          const st = edgeStyle(e, s, dn, { highlighted: e._highlighted, dim: e._dim });
+          const col = st.color || _NO_STROKE;
+          const alpha = (col[3] == null ? 1 : col[3]) * Math.min(s._appearOpacity, dn._appearOpacity);
+          const o = ei * ES;
+          ed[o] = s._rx; ed[o + 1] = s._ry;
+          ed[o + 2] = dn._rx; ed[o + 3] = dn._ry;
+          ed[o + 4] = col[0]; ed[o + 5] = col[1]; ed[o + 6] = col[2]; ed[o + 7] = alpha;
+          ed[o + 8] = st.width || 1;
+          ei++;
+        }
+        edgeCount = ei;
+        edgeStorage = ed;
+        lastEdgeVersion = frame.edgeInstancesVersion;
+        lastEdgeInputCount = edges.length;
       }
       // 节点
-      let ni = 0;
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        const st = nodeStyle(n, {
-          focus: n._focus, near: n._near, dim: n._dim, hovered: i === frame.focusIndex,
-        });
-        const fill = st.fill || _GRAY_FILL;
-        const stroke = st.stroke || _NO_STROKE;
-        const appS = n._appeared ? 1 : n._appearScale;   // 进场生长
-        const appO = n._appeared ? 1 : n._appearOpacity;  // 进场淡入
-        const o = ni * NS;
-        nd[o] = n._rx; nd[o + 1] = n._ry;
-        nd[o + 2] = (st.r == null ? (n.r || 6) : st.r);
-        nd[o + 3] = fill[0]; nd[o + 4] = fill[1]; nd[o + 5] = fill[2];
-        nd[o + 6] = (fill[3] == null ? 1 : fill[3]) * appO;
-        nd[o + 7] = stroke[0]; nd[o + 8] = stroke[1]; nd[o + 9] = stroke[2];
-        nd[o + 10] = (stroke[3] == null ? 0 : stroke[3]) * appO;
-        nd[o + 11] = st.strokeW || 0;
-        nd[o + 12] = st.shape ? 1 : 0;
-        nd[o + 13] = (st.scale == null ? 1 : st.scale) * appS;
-        ni++;
-      }
-      // 流光粒子：无描边小圆，追加在节点实例之后 → 同一 drawArraysInstanced，零额外 draw call
-      if (pcount) {
-        const parts = frame.particles;
+      if (uploadNodes) {
+        let ni = 0;
+        for (let i = 0; i < nodes.length; i++) {
+          const n = nodes[i];
+          const st = nodeStyle(n, {
+            focus: n._focus, near: n._near, dim: n._dim, hovered: i === frame.focusIndex,
+          });
+          const fill = st.fill || _GRAY_FILL;
+          const stroke = st.stroke || _NO_STROKE;
+          const appS = n._appeared ? 1 : n._appearScale;
+          const appO = n._appeared ? 1 : n._appearOpacity;
+          const o = ni * NS;
+          nd[o] = n._rx; nd[o + 1] = n._ry;
+          nd[o + 2] = (st.r == null ? (n.r || 6) : st.r);
+          nd[o + 3] = fill[0]; nd[o + 4] = fill[1]; nd[o + 5] = fill[2];
+          nd[o + 6] = (fill[3] == null ? 1 : fill[3]) * appO;
+          nd[o + 7] = stroke[0]; nd[o + 8] = stroke[1]; nd[o + 9] = stroke[2];
+          nd[o + 10] = (stroke[3] == null ? 0 : stroke[3]) * appO;
+          nd[o + 11] = st.strokeW || 0;
+          nd[o + 12] = st.shape ? 1 : 0;
+          nd[o + 13] = (st.scale == null ? 1 : st.scale) * appS;
+          ni++;
+        }
+        // 粒子追加在节点实例之后，同一 draw call；关闭粒子时同步缩小实例数。
         for (let i = 0; i < pcount; i++) {
-          const p = parts[i];
+          const p = frame.particles[i];
           const o = ni * NS;
           nd[o] = p.x; nd[o + 1] = p.y; nd[o + 2] = p.r;
           nd[o + 3] = p.cr; nd[o + 4] = p.cg; nd[o + 5] = p.cb; nd[o + 6] = p.ca;
@@ -347,8 +365,14 @@
           nd[o + 11] = 0; nd[o + 12] = 0; nd[o + 13] = 1;
           ni++;
         }
+        nodeCount = ni;
+        nodeStorage = nd;
+        lastNodeVersion = frame.nodeInstancesVersion;
+        lastNodeInputCount = nodes.length + pcount;
       }
-      core.draw(ni, ei, { xform: [a, b, c, d], aaWorld: aaWorld, dpr: dpr, cssW: cssW, cssH: cssH });
+      core.draw(nodeCount, edgeCount,
+        { xform: [a, b, c, d], aaWorld: aaWorld, dpr: dpr, cssW: cssW, cssH: cssH },
+        { nodes: uploadNodes, edges: uploadEdges });
     }
 
     function destroy() { try { core.destroy(); } catch (e) {} }
@@ -359,7 +383,7 @@
   // ───────────────────────────── 引擎实例 ─────────────────────────────
   function create(options) {
     const opts = options || {};
-    const canvas = opts.canvas;
+    let canvas = opts.canvas;
     if (!canvas || !canvas.getContext) return null;
     const cfg = Object.assign({}, DEFAULTS, opts.config || {});
     const VIEW_W = cfg.viewW;
@@ -388,6 +412,7 @@
     const backendSpec = {
       canvas: canvas, drawNode: drawNode, drawEdge: drawEdge,
       nodeStyle: opts.nodeStyle, edgeStyle: opts.edgeStyle,
+      cacheInstances: opts.cacheInstances === true,
     };
     const makeBackend = (typeof opts.backend === 'function') ? opts.backend
       : (opts.backend === 'webgl') ? createWebGLBackend
@@ -395,7 +420,21 @@
     let backend = makeBackend(backendSpec);
     if (!backend && makeBackend !== createCanvas2DBackend) {
       backend = createCanvas2DBackend(backendSpec);   // 回落兜底
+      // shader 失败时原 canvas 已被 WebGL 锁定，不能再取得 2D context。
+      // 换用未绑定 context 的画布，再通知宿主更新闭包引用与后续资源释放目标。
+      if (!backend && canvas.cloneNode && canvas.replaceWith) {
+        const oldCanvas = canvas;
+        canvas = oldCanvas.cloneNode(false);
+        canvas.width = canvas.height = 1;
+        oldCanvas.replaceWith(canvas);
+        try { oldCanvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext(); } catch (e) {}
+        oldCanvas.width = oldCanvas.height = 1;
+        backendSpec.canvas = canvas;
+        if (typeof opts.onCanvasReplace === 'function') opts.onCanvasReplace(canvas, oldCanvas);
+        backend = createCanvas2DBackend(backendSpec);
+      }
     }
+    if (!backend) return null;
 
     // —— 顶层标签层：支持两种后端 ——
     // 1) DOM 标签层（domOverlay，推荐）：适配层创建 DOM 元素，引擎每帧调 sync() 更新 CSS transform。
@@ -409,6 +448,7 @@
     let labelAlpha = 0;
     let labelTarget = 0;
     const _hasLabels = !!(drawOverlay || domOverlay);  // 是否有标签层（影响交互时的淡入淡出逻辑）
+    const alwaysShowLabels = opts.labelVisibility === 'always';
     // Canvas 叠加层仅当适配层提供 drawOverlay 且无 domOverlay、且后端非 canvas2d 时启用
     if (drawOverlay && !domOverlay && backend && backend.kind !== 'canvas2d') {
       overlayCanvas = global.document.createElement('canvas');
@@ -422,6 +462,14 @@
 
     let nodes = [];
     let edges = [];
+    let positionVersion = 0;
+    let nodeInstancesVersion = 0;
+    let edgeInstancesVersion = 0;
+    let renderedPositionVersion = -1;
+    let renderedDrift = false;
+    let lastParticleCount = 0;
+    function invalidateStyles() { nodeInstancesVersion++; edgeInstancesVersion++; }
+    function invalidatePositions() { positionVersion++; invalidateStyles(); }
     let neighbors = [];
     let _partPool = [];        // 流光粒子复用池（零分配）：{ x,y,r,cr,cg,cb,ca }
     let draggedNode = null;
@@ -439,6 +487,7 @@
       job.nodes.forEach(function (node, i) {
         node.x = job.x[i]; node.y = job.y[i]; node.vx = node.vy = 0; node._rx = node.x; node._ry = node.y;
       });
+      invalidatePositions();
     }
     function cancelPresolve(retain) {
       const job = presolveJob;
@@ -503,6 +552,11 @@
     // —— 数据装载：node 需带 x,y,r（适配层先 seed 好坐标）；引擎补上运行期字段 ——
     function setData(nextNodes, nextEdges, dataOptions) {
       cancelPresolve(false);
+      // 数据集切换不能让旧指针手势继续拖动旧节点、或以旧数组下标点击新节点。
+      if (pressInfo && canvas.hasPointerCapture(pressInfo.pointerId)) canvas.releasePointerCapture(pressInfo.pointerId);
+      pressInfo = draggedNode = panOrigin = null;
+      panLast = null;
+      cancelPanGlide();
       const armIntro = !!(dataOptions && dataOptions.intro);
       nodes = nextNodes || [];
       edges = nextEdges || [];
@@ -529,6 +583,8 @@
         if (neighbors[e.target]) neighbors[e.target].add(e.source);
       }
       lastFocusIndex = -1;
+      if (alwaysShowLabels) labelAlpha = labelTarget = nodes.length ? 1 : 0;
+      invalidatePositions();
     }
 
     // —— 物理一帧 —— （斥力换四叉树，其余弹簧/引力/阻尼/积分沿用旧口径）
@@ -580,6 +636,7 @@
         n.x += n.vx * dt;
         n.y += n.vy * dt;
       }
+      invalidatePositions();
     }
 
     function updateIntro(t) {
@@ -594,6 +651,8 @@
         else busy = true;
       }
       introActive = busy;
+      // 连线透明度也取决于端点入场进度，不能只更新节点实例。
+      invalidateStyles();
       return busy;
     }
 
@@ -626,7 +685,7 @@
       } else {
         fitTween.active = false;
         viewX = target.x; viewY = target.y; viewScale = target.scale;
-        requestRender();
+        requestFrame();
       }
     }
     function fitViewSilently() {
@@ -707,19 +766,26 @@
       const size = backend.syncSize();
       const m = metrics();
       const t = (driftGain > 0.001 && !reduceMotion) ? now() : 0;
+      const drifting = !!(t && drift);
       // 计算渲染坐标（叠加闲时漂移×包络）→ 写入 n._rx/_ry，命中检测与后端绘制共用
       // 用 driftGain 而非 idle 把关：缩放时 idle 被关掉但 driftGain 不掉，节点不会被瞬间抹掉漂移而"瞬移"。
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        let dx = n.x, dy = n.y;
-        if (t && drift && n !== draggedNode) {
-          const amp = (drift.amp ? drift.amp(n) : 0) * driftGain;
-          if (amp) {
-            dx += Math.sin(t * drift.speed + n._phase) * amp;
-            dy += Math.cos(t * drift.speed * 0.86 + n._phase) * amp;
+      if (renderedPositionVersion !== positionVersion || drifting || renderedDrift !== drifting) {
+        // 漂移停止的首帧必须还原基础坐标；静止相机帧不逐节点改写 _rx/_ry。
+        if (drifting || renderedDrift !== drifting) invalidatePositions();
+        for (let i = 0; i < nodes.length; i++) {
+          const n = nodes[i];
+          let dx = n.x, dy = n.y;
+          if (drifting && n !== draggedNode) {
+            const amp = (drift.amp ? drift.amp(n) : 0) * driftGain;
+            if (amp) {
+              dx += Math.sin(t * drift.speed + n._phase) * amp;
+              dy += Math.cos(t * drift.speed * 0.86 + n._phase) * amp;
+            }
           }
+          n._rx = dx; n._ry = dy;
         }
-        n._rx = dx; n._ry = dy;
+        renderedPositionVersion = positionVersion;
+        renderedDrift = drifting;
       }
       // —— 连线流光：沿每条边从 source→target 推进的小光点（适配层把 source 建成更靠中心的一端 → 向外发散）——
       // 用 _rx/_ry（已含漂移）定位，所以光点跟着边一起呼吸；端点 sin(πf) 淡入淡出、不在节点处突现。
@@ -753,6 +819,9 @@
           }
         }
       }
+      if (partCount || partCount !== lastParticleCount || opts.nodeStyleTimeDependent) nodeInstancesVersion++;
+      lastParticleCount = partCount;
+      if (opts.edgeStyleTimeDependent) edgeInstancesVersion++;
       backend.draw({
         nodes: nodes,
         edges: edges,
@@ -762,12 +831,15 @@
         particles: _partPool,
         particleCount: partCount,
         size: size,
+        positionVersion: positionVersion,
+        nodeInstancesVersion: nodeInstancesVersion,
+        edgeInstancesVersion: edgeInstancesVersion,
       });
-      // DOM 标签层：每帧同步位置（CSS transform 由 GPU compositor 处理，无需帧跳过）
-      // 仅 WebGL 后端启用；Canvas2D 后端用 drawNode 自带标签，不重叠。
+      // DOM 标签层：适配层可用版本跳过不变坐标，再用容器 transform 投影相机。
+      // 默认仅 WebGL 启用；笔记显式开启 2D 后端共用标签时，drawNode 不再重复画字。
       // 始终调用 sync——由 sync 内部根据 labelAlpha 决定显隐，避免 pointerdown 瞬间置 0
       // 时跳过调用导致 DOM 元素残留上一次的 opacity。
-      if (domOverlay && backend && backend.kind !== 'canvas2d') {
+      if (domOverlay && backend && (backend.kind !== 'canvas2d' || opts.domOverlayOnCanvas2D)) {
         domOverlay.sync({
           nodes: nodes, edges: edges, focusIndex: lastFocusIndex,
           labelAlpha: labelAlpha, scale: viewScale, unit: m.unit,
@@ -775,6 +847,9 @@
           viewX: viewX, viewY: viewY,
           offsetX: m.offsetX, offsetY: m.offsetY,
           cssW: m.cssW, cssH: m.cssH,
+          positionVersion: positionVersion,
+          nodeInstancesVersion: nodeInstancesVersion,
+          edgeInstancesVersion: edgeInstancesVersion,
         });
       }
       // 2D Canvas 叠加层（旧方案，仅当无 domOverlay 时使用）
@@ -812,6 +887,11 @@
       return false;
     }
     function requestRender() {
+      // 外部调用者可在原地修改主题/外观，保留下一帧完整刷新样式的旧契约。
+      invalidateStyles();
+      requestFrame();
+    }
+    function requestFrame() {
       if (presolveJob) return;
       lastRenderT = 0;          // 打断闲时节流：让下一拍立即重画（悬停高亮 / 平移即时跟手）
       if (tryBeginPending()) return;
@@ -883,7 +963,7 @@
 
       // 标签叠加层：交互 / 进场 / 高温铺开时藏（→0），手停下来淡入（→1）
       if (_hasLabels) {
-        if (reduceMotion) {
+        if (reduceMotion || alwaysShowLabels) {
           labelAlpha = labelTarget = (nodes.length ? 1 : 0);   // 减少动效：标签恒显、不做淡入淡出
         } else {
           const interacting = !!draggedNode || !!panOrigin || zoomTween.active
@@ -973,7 +1053,8 @@
         else { n._appeared = true; n._appearScale = 1; n._appearOpacity = 1; }
       }
       kick();
-      requestRender();
+      invalidateStyles();
+      requestFrame();
     }
     // start({intro,fit})：开图 / 重排都走这里。intro 默认开、fit 默认开。
     function start(o) {
@@ -993,11 +1074,29 @@
           n._appeared = false; n._appearScale = 0.4; n._appearOpacity = 0;
         }
       }
+      // 舒展按钮会先原地播种；start 必须同步使渲染坐标缓存失效。
+      invalidatePositions();
       refreshObservedVisibility();
       if (canBegin()) doBegin();
-      else requestRender();
+      else requestFrame();
     }
     function resetView() { viewX = 0; viewY = 0; viewScale = 1; }
+
+    // Restore a host's session camera without invalidating node/edge instances.
+    function restoreView(view) {
+      if (destroyed || !view || !Number.isFinite(view.x) || !Number.isFinite(view.y)
+          || !Number.isFinite(view.scale) || view.scale <= 0) return false;
+      zoomTween.active = false;
+      fitTween.active = false;
+      cancelPanGlide();
+      userAdjustedView = true;
+      autoFitPending = false;
+      if (pending) pending.fit = false;
+      viewX = view.x; viewY = view.y;
+      viewScale = clamp(view.scale, cfg.zoomMin, cfg.zoomMax);
+      requestFrame();
+      return true;
+    }
 
     // ───────────────────────── 命中检测 / 交互 ─────────────────────────
     function nodeAtClient(clientX, clientY) {
@@ -1060,7 +1159,7 @@
       if (event.button !== 0) return;
       canvas.setPointerCapture(event.pointerId);
       cancelPanGlide();                                  // 抓起即停惯性滑行（抓手感，像 Figma/画布）
-      if (_hasLabels && !reduceMotion) labelAlpha = 0;   // 一抓起就藏标签，松手再淡入（手停才画）
+      if (_hasLabels && !reduceMotion && !alwaysShowLabels) labelAlpha = 0;
       const index = nodeAtClient(event.clientX, event.clientY);
       if (index >= 0) {
         draggedNode = nodes[index];
@@ -1090,7 +1189,8 @@
         dragVel.y = dragVel.y * 0.5 + (p.y - draggedNode.y) * 0.5;
         draggedNode.x = p.x; draggedNode.y = p.y;
         draggedNode.vx = 0; draggedNode.vy = 0;
-        requestRender();
+        invalidatePositions();
+        requestFrame();
       } else if (panOrigin) {
         const m = metrics();
         viewX = panOrigin.viewX - (event.clientX - panOrigin.clientX) / m.unit;
@@ -1109,7 +1209,7 @@
           panLast = { x: event.clientX, y: event.clientY, t: tnow };
           panLastMoveT = tnow;
         }
-        requestRender();
+        requestFrame();
       } else {
         hover(event);
       }
@@ -1140,12 +1240,12 @@
       }
       pressInfo = null;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      if (_hasLabels) ensureLoop();   // 手停：让 labelAlpha 淡回（平移/滑行结束续上一拍）
+      if (_hasLabels && !alwaysShowLabels) ensureLoop();
     }
     function handlePointerCancel(event) {
       draggedNode = null; panOrigin = null; pressInfo = null;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      if (_hasLabels) ensureLoop();
+      if (_hasLabels && !alwaysShowLabels) ensureLoop();
     }
     function handlePointerLeave(event) {
       if (!draggedNode) {
@@ -1164,7 +1264,7 @@
       idle = false;
       fitTween.active = false;
       cancelPanGlide();
-      if (_hasLabels && !reduceMotion) labelAlpha = 0;   // 缩放时藏标签，停下淡入
+      if (_hasLabels && !reduceMotion && !alwaysShowLabels) labelAlpha = 0;
       const rect = canvas.getBoundingClientRect();
       const sx = event.clientX - rect.left;
       const sy = event.clientY - rect.top;
@@ -1177,7 +1277,7 @@
         const m = metrics();
         viewX = anchor.x - (sx - m.offsetX) / m.unit;
         viewY = anchor.y - (sy - m.offsetY) / m.unit;
-        requestRender();
+        requestFrame();
         return;
       }
       zoomTween.target = next;
@@ -1242,7 +1342,7 @@
       try {
         ro = new global.ResizeObserver(function () {
           refreshObservedVisibility();
-          requestRender();
+          requestFrame();
         });
         ro.observe(canvas);
       } catch (e) {}
@@ -1282,15 +1382,30 @@
       heat: heat,
       kick: kick,
       fitView: fitView,
-      resetView: function () { resetView(); requestRender(); },
+      resetView: function () { resetView(); requestFrame(); },
+      restoreView: restoreView,
       requestRender: requestRender,
       setActive: setActive,
       setVisible: setVisible,
       // 运行时切换闲时微漂移：传 null 关掉，收敛后让 RAF 循环彻底停住（静止零开销）；
       // 传 drift 描述符则恢复"活着"的微动。适配层按节点规模决定（大图谱关、小图谱留）。
-      setDrift: function (d) { drift = d || null; idle = false; if (drift) ensureLoop(); },
+      setDrift: function (d) {
+        const next = d || null;
+        if (drift === next) return;
+        drift = next; idle = false;
+        invalidatePositions();
+        if (drift) ensureLoop();
+        else requestFrame();
+      },
       // 运行时切换连线流光（传 null 关掉）。大图谱可与 drift 一起关，收敛后彻底静止零开销。
-      setParticles: function (p) { particleCfg = p || null; idle = false; if (particleCfg) ensureLoop(); },
+      setParticles: function (p) {
+        const next = p || null;
+        if (particleCfg === next) return;
+        particleCfg = next; idle = false;
+        nodeInstancesVersion++;
+        if (particleCfg) ensureLoop();
+        else requestFrame();
+      },
       // 视图平移松手惯性倍率（0–1，0=关）。图谱读 canvas:panInertia 传入与画布同步；星图不调用即保持原样。
       setPanInertia: function (v) { panInertia = Math.max(0, Math.min(1, Number(v) || 0)); },
       setReduceMotion: function (v) {
@@ -1300,6 +1415,7 @@
         // 在闲时漂移已启动后动态切到 reduced-motion，必须解锁 idle；
         // 否则 keepGoing 会因 idle=true 永久保持 30fps RAF，却不再产生任何动效。
         idle = false;
+        invalidatePositions();
         if (reduceMotion) {
           if (presolveJob) {
             const fit = presolveJob.fit;
@@ -1316,6 +1432,8 @@
       nodeAtClient: nodeAtClient,
       hasNodes: function () { return nodes.length > 0; },
       get view() { return { x: viewX, y: viewY, scale: viewScale }; },
+      get layoutPending() { return !destroyed && (!!pending || !!presolveJob || !!draggedNode || alpha > cfg.alphaMin); },
+      get canvas() { return canvas; },
       get backendKind() { return backend && backend.kind; },
       get hasOverlay() { return !!(octx || domOverlay); },
       get labelAlpha() { return labelAlpha; },

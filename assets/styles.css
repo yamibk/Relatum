@@ -1179,6 +1179,12 @@ body.start-page[data-start-theme="dark"] .note-library-name-field input { color:
 body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-expand { display: none; }
 body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-restore { display: block; }
 .note-head-actions { flex: none; }
+/* Eight tools remain reachable at the existing 220px sidebar minimum. */
+.note-tree-pane > .note-pane-head { gap: 4px; padding-inline: 6px; }
+.note-tree-pane > .note-pane-head .note-library-heading { flex: none; gap: 2px; overflow: visible; }
+.note-tree-pane > .note-pane-head .note-head-actions { gap: 2px; }
+.note-tree-pane > .note-pane-head :is(.note-icon-button, .note-library-focus-button) { width: 24px; flex: none; }
+.note-graph-toggle[aria-expanded="true"] { color: var(--text); background-color: var(--note-control-active); }
 .note-expand-all .note-expand-icon { grid-area: 1 / 1; }
 .note-expand-all .note-expand-icon-close { display: none; }
 .note-expand-all[data-all-expanded="true"] .note-expand-icon-open { display: none; }
@@ -33765,6 +33771,51 @@ html.dark-semantic-ui {
     flex: 1 1 auto;
   }
 }
+
+/* A transparent notebook tab fills the document pane without its paper/title gutters. */
+.note-graph-active .note-document-head,
+.note-graph-active .note-document-body,
+.note-graph-active .note-document-status { display: none; }
+.note-graph-panel { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: transparent; outline: none; }
+.note-graph-panel[hidden] { display: none; }
+.note-graph-stage { position: absolute; inset: 0; }
+.note-tab-graph-icon { flex: none; width: 14px; height: 14px; }
+.note-graph-tools { position: absolute; z-index: 3; top: 8px; right: 10px; display: flex; gap: 2px; }
+.note-graph-tools .graph-tool-btn { min-width: 30px; height: 30px; padding-inline: 8px; }
+.note-graph-tools .note-mobile-pane-button { display: none; }
+.note-graph-panel .graph-canvas { color: var(--text); }
+.note-graph-panel .graph-tool-btn:disabled { opacity: .35; cursor: default; }
+.note-graph-panel .graph-tooltip { overflow-wrap: anywhere; }
+.note-graph-active .note-image-text-toggle,
+.note-graph-active [data-note-action="toggle-settings"] { display: none; }
+.note-graph-load-message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: var(--text-secondary); font-size: 14px; }
+@media (max-width: 760px) {
+  .note-graph-tools .note-mobile-pane-button { display: inline-flex; }
+  .note-graph-panel .graph-hint { top: 48px; max-width: calc(100% - 32px); text-align: center; }
+}
+.note-graph-label-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.note-graph-label-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.note-graph-label-anchor { position: absolute; left: 0; top: 0; }
+.note-graph-label {
+  position: absolute; display: block; white-space: nowrap; color: var(--text);
+  font-size: 12px; font-weight: 500; line-height: 16px; transform-origin: 0 0;
+  transform: scale(var(--note-graph-inverse, 1)) translate(-50%, calc(var(--note-graph-radius, 6) * var(--note-graph-unit, 1) * 1px + 8px));
+}
+.note-graph-message {
+  position: absolute; z-index: 5; left: 12px; top: 48px; right: 12px;
+  display: flex; justify-content: center; align-items: center; gap: 12px;
+  padding: 8px 12px; color: var(--text-secondary); font-size: 12px;
+  background: var(--bg); border-radius: 7px;
+}
+.note-graph-message.is-full { inset: 0; flex-direction: column; font-size: 14px; background: transparent; }
+.note-graph-message[hidden], .note-graph-message button[hidden] { display: none; }
+.note-graph-message button, .note-graph-load-message button { appearance: none; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
+body.start-page[data-start-theme="dark"] .note-graph-panel {
+  --text: #f3f3f1; --text-secondary: rgba(243,243,241,.72); --text-tertiary: rgba(243,243,241,.48);
+  --border: rgba(255,255,255,.14); --bg: #181a19;
+  color-scheme: dark; color: var(--text); background: transparent;
+}
+body.start-page[data-start-theme="dark"] .note-graph-panel .graph-tool-btn:hover { color: #fff; background: rgba(224,239,232,.085); }
 
 .text-reader-overlay {
   position: fixed;

@@ -22,6 +22,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 from note_metadata import note_metadata, valid_tag
 from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as canvas_references, rewrite as rewrite_canvas_references
+from note_graph import references as graph_references, graph_edges, scope_contains
 
 
 NOTE_SUFFIX = ".md"
@@ -31,6 +32,10 @@ MAX_NOTE_BYTES = 4 * 1024 * 1024
 MAX_NOTE_IMAGE_BYTES = 40 * 1024 * 1024
 MAX_NOTE_IMPORT_BYTES = 512 * 1024 * 1024
 MAX_NOTE_IMPORT_FILES = 10_000
+# Cached topology JSON UTF-8 bytes + 128 wrapper/signature bytes, × 2, is an
+# estimate, not process RSS.
+# Large single responses remain available to the caller but are not retained.
+GRAPH_CACHE_BYTES = 16 * 1024 * 1024
 NOTE_IMAGE_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -406,6 +411,8 @@ class NotesStore:
         self.atomic_text = atomic_text or _default_atomic_text
         self.atomic_bytes = atomic_bytes or _default_atomic_bytes
         self._document_cache: dict[str, dict] = {}
+        self._graph_cache: dict[str, tuple[tuple, dict, int]] = {}
+        self._graph_cache_bytes = 0
         self._metadata_enabled = False
         self._notebook_settings: dict | None = None
         self._notebook_settings_needs_write = False
@@ -639,7 +646,7 @@ class NotesStore:
         except UnicodeDecodeError as err:
             raise NotesError("笔记不是有效的 UTF-8 文本", status=409, code="invalid_encoding") from err
 
-    def _note_files(self, *, strict: bool = False) -> list[tuple[Path, str, tuple]]:
+    def _note_files(self, *, strict: bool = False, scope: str | None = None) -> list[tuple[Path, str, tuple]]:
         self.ensure_root()
         notes = []
 
@@ -657,6 +664,8 @@ class NotesStore:
                     for entry in scan:
                         low = entry.name.casefold()
                         if not prefix and low == CANVAS_DIRECTORY:
+                            continue
+                        if scope == "" and not prefix and low == NOTEBOOK_CONTAINER.casefold():
                             continue
                         if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
                             continue
@@ -682,7 +691,8 @@ class NotesStore:
                     notes.append((target, relative, (metadata.st_mtime_ns, metadata.st_size),
                                   order + (_natural_key(name),)))
 
-        visit(self.root, "", ())
+        directory = self._absolute(scope, allow_root=True) if scope is not None else self.root
+        visit(directory, scope + "/" if scope else "", ())
         notes.sort(key=lambda item: item[3])
         return [(target, relative, signature) for target, relative, signature, _ in notes]
 
@@ -745,23 +755,25 @@ class NotesStore:
         entries = visit(self.root)
         return {"version": 1, "entries": entries}
 
-    def _documents(self, *, metadata: bool = False, strict: bool = False) -> dict[str, dict]:
+    def _documents(self, *, metadata: bool = False, strict: bool = False,
+                   scope: str | None = None, graph: bool = False) -> dict[str, dict]:
         # Once explicitly requested, refresh metadata with the existing index
         # read so link scans cannot force a second body read for changed files.
         self._metadata_enabled = metadata = metadata or self._metadata_enabled
         documents: dict[str, dict] = {}
         live_paths: set[str] = set()
-        for target, relative, signature in self._note_files(strict=strict):
+        for target, relative, signature in self._note_files(strict=strict, scope=scope):
             live_paths.add(relative)
             try:
                 cached = self._document_cache.get(relative)
                 if cached and cached.get("signature") == signature and 'mentions' in cached \
                         and 'canvasTargets' in cached \
+                        and (not graph or 'graphReferences' in cached) \
                         and (not metadata or ('tags' in cached and 'excerpt' in cached)):
                     documents[relative] = cached
                     continue
                 raw = self._read_note_bytes(target)
-                documents[relative] = self._index_document(relative, raw, signature, metadata=metadata)
+                documents[relative] = self._index_document(relative, raw, signature, metadata=metadata, graph=graph)
             except (NotesError, OSError) as error:
                 if strict:
                     raise NotesError("统计未完成：有笔记无法读取，请重试", status=409,
@@ -769,12 +781,13 @@ class NotesStore:
                 # 一个被外部复制进来的损坏/超大文件不应拖垮其它笔记的链接面板。
                 continue
         for stale in set(self._document_cache) - live_paths:
-            self._document_cache.pop(stale, None)
+            if scope is None or scope_contains(stale, scope):
+                self._document_cache.pop(stale, None)
         return documents
 
     def _index_document(self, relative: str, content: bytes, signature: tuple,
                         *, metadata: bool, text: str | None = None,
-                        revision: str | None = None) -> dict:
+                        revision: str | None = None, graph: bool = False) -> dict:
         revision = revision if revision is not None else _revision(content)
         cached = self._document_cache.get(relative)
         # File timestamps can change without changing the bytes. Keep parsed
@@ -786,7 +799,8 @@ class NotesStore:
         needs_mentions = "mentions" not in document
         needs_metadata = metadata and ("tags" not in document or "excerpt" not in document)
         needs_canvas = "canvasTargets" not in document
-        if needs_mentions or needs_metadata or needs_canvas:
+        needs_graph = graph and "graphReferences" not in document
+        if needs_mentions or needs_metadata or needs_canvas or needs_graph:
             text = text if text is not None else self._decode_note(content)
             if needs_mentions:
                 document["mentions"] = _wiki_mentions(text)
@@ -797,6 +811,8 @@ class NotesStore:
                     if ".canvas" in text.lower() or "%" in text else set()
                 document["canvasTargets"] = sorted(target for target in targets if target)
                 document["hasCanvasReferences"] = bool(document["canvasTargets"])
+            if needs_graph:
+                document["graphReferences"] = graph_references(text)
         self._document_cache[relative] = document
         return document
 
@@ -866,6 +882,54 @@ class NotesStore:
     def invalidate(self) -> None:
         """在文件被系统回收站或外部批量操作移动后清空增量缓存。"""
         self._document_cache.clear()
+        self._graph_cache.clear()
+        self._graph_cache_bytes = 0
+
+    def graph(self, root: object = "", known_signature: str = "") -> dict:
+        """A content-free graph for one notebook, with lazy incremental parsing."""
+        scope = self._notebook_setting_path(root, root_only=bool(root))
+        target = self._absolute(scope, allow_root=True)
+        try:
+            metadata = target.stat(follow_symlinks=False)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise FileNotFoundError
+            if scope:
+                scope = target.resolve(strict=True).relative_to(self.root.resolve()).as_posix()
+        except (FileNotFoundError, NotADirectoryError):
+            raise NotesError("笔记本不存在", status=404, code="not_found")
+        except OSError as error:
+            raise NotesError("统计未完成：笔记本无法读取，请重试", status=409,
+                             code="statistics_incomplete") from error
+        documents = self._documents(scope=scope, graph=True, strict=True)
+        input_signature = tuple((path, document["signature"], document["revision"])
+                                for path, document in documents.items())
+        cached = self._graph_cache.get(scope)
+        if cached and cached[0] == input_signature:
+            result = cached[1]
+            self._graph_cache.pop(scope)
+            self._graph_cache[scope] = cached
+        else:
+            nodes = [{"id": path, "path": path, "title": PurePosixPath(path).stem}
+                     for path in documents]
+            edges = graph_edges(documents, scope)
+            encoded = json.dumps([scope, nodes, edges], ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+            result = {"root": scope, "nodes": nodes, "edges": edges,
+                      "signature": hashlib.sha256(encoded).hexdigest()}
+            previous = self._graph_cache.pop(scope, None)
+            if previous:
+                self._graph_cache_bytes -= previous[2]
+            estimate = (len(encoded) + 128) * 2
+            if estimate <= GRAPH_CACHE_BYTES:
+                while self._graph_cache and (len(self._graph_cache) >= 24
+                                             or self._graph_cache_bytes + estimate > GRAPH_CACHE_BYTES):
+                    evicted = self._graph_cache.pop(next(iter(self._graph_cache)))
+                    self._graph_cache_bytes -= evicted[2]
+                self._graph_cache[scope] = (input_signature, result, estimate)
+                self._graph_cache_bytes += estimate
+        if known_signature == result["signature"]:
+            return {"root": scope, "signature": result["signature"], "unchanged": True}
+        return result
 
     def _indexed_text(self, relative: str, document: dict) -> str:
         """Read a body only for explicit statistics/rewrites, guarding index offsets."""

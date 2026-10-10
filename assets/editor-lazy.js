@@ -92,7 +92,7 @@
   function ensureGraphRuntime() {
     if (!window.RelatumFeatureRuntime.enabled('editor.graph')) return Promise.resolve(false);
     if (!graphRuntimePromise) {
-      graphRuntimePromise = loadScriptsInOrder(['graph-gl.js', 'graph-engine.js', 'graph-view.js'])
+      graphRuntimePromise = loadScriptsInOrder(['graph-gl.js', 'graph-engine.js', 'graph-window.js', 'graph-view.js'])
         .then(() => document.dispatchEvent(new CustomEvent('editor:graph-runtime-ready')))
         .catch(error => { graphRuntimePromise = null; throw error; });
     }

@@ -58,6 +58,7 @@
     };
     noteWorkspaceLoader = loadScript('vendor/codemirror/relatum-codemirror.min.js', () => !!window.RelatumCodeMirror)
       .then(() => loadScript('markdown-table.js', () => !!window.MarkdownTable))
+      .then(() => loadScript('markdown.js', () => !!window.MarkdownMini?.quoteLine))
       .then(() => loadScript('note-table-editor.js', () => !!window.RelatumNoteTableEditor))
       .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
       .then(() => loadScript('note-media-frame.js', () => !!window.RelatumNoteMediaFrame))

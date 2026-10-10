@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-10。
+> 最后按源码校准：2026-10-11。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -57,9 +57,20 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 高频平移、连线悬停、箭头和拐点预览按显示帧合并最新坐标；速度和手写原始采样仍逐事件读取。正常释放先提交最终坐标，再写历史；取消、失焦和隐藏清除待绘制任务。选区只更新旧、新差集，重复同一选区不刷新面板或通知；绑定文本框通过目标 id 索引跟随。墨迹笔画边界缓存与局部 SVG 更新只影响橡皮候选及命中对象。
 - `prefers-reduced-motion` 已在多处使用；新增动画要考虑降级。
 - 编辑器图谱首次打开才创建 WebGL 引擎与标签层，关闭动画完成后销毁引擎、解绑交互、释放 context 并替换为 1×1 空画布；快速关闭后重开取消旧收尾，不能误删新会话。活跃星图隐藏预热只保留数据/热力图，实际进入才挂载；离页及顶层工作区切换在外层交接完成后释放，快速返回取消释放，`pagehide` 立即清理。`GraphEngine.destroy()` 必须幂等并清除节点、粒子与临时手势。
+- 三处图谱宿主启用 `cacheInstances`，引擎分别维护位置、节点实例和连线实例版本。纯相机变化复用渲染坐标及 GPU 实例，但每帧仍更新矩阵、AA 与屏幕尺寸参数；公开 `requestRender()` 保持外观失效语义。画布与星图声明 `nodeStyleTimeDependent`，继续刷新实际渲染帧中的呼吸/脉动，未变化的连线复用；笔记无持续漂移和粒子，收敛后停止 RAF。物理、入场、悬停、主题、粒子、容量与数据切换各自触发失效；数据替换取消旧手势。已取得 WebGL context 后着色器失败，必须换新 canvas，再创建 Canvas2D，并通过 `onCanvasReplace` 交接宿主引用。
 - 深色主题的学习目标树与独立树状页路线、附加依赖线、视觉关系线和箭头统一为纯白；附加依赖保留虚线，删除预览保留红色，入退场仍沿用透明度过渡。
 
 ## 3. 源码地图
+
+`assets/start-workspace-runtime.js` 明确等待 `markdown.js` 就绪后才加载笔记编辑器，不能依赖首页晚到的静态脚本提供解析器；恢复图谱或空白标签后打开正文同样受此依赖保护。
+
+笔记左上角“浏览”之后提供“图谱”，范围取左树当前选中的笔记本；未选择时禁用。默认 `notes` 排除整个 `CustomNotebook`，自定义本只包含自身子树。`GET /api/note-graph?root=…` 返回路径身份、文件名标题、已有 Markdown 节点、去重无向关系与拓扑签名；可带 `signature`，无变化返回 `unchanged`。`note_graph.py` 识别双链和行内/引用式 Markdown 链接，排除代码、前言、注释、公式、图片及转义示例，保留列表/引用/表格中的真实链接。双链按同本完整路径、本根相对路径及唯一文件名解析，Markdown 按源目录精确解析 `.md`；跨本、歧义、缺失、外部及自引用不产生关系。旧双链面板与移动重写语法不变。`notes_library.py` 按本扫描/清理现有增量索引，首次图谱才解析引用、不保存正文；响应缓存最多 24 本及估算 16MiB，总预算不包含既有文档索引，超大单项不驻留。正文改动不影响节点/关系时签名保持不变，读取不完整返回 `statistics_incomplete`，不能伪装成空图。
+
+`assets/note-workspace.js` 用固定身份 `relatum:graph-tab:v1` 在现有标签列表内维护唯一关系图谱页，沿用排序、关闭、快捷键与标签恢复，所有文件路径操作显式跳过特殊身份。重复点击入口只激活，不重建或复位；内容随左树当前笔记本切换。图谱占满标签栏下可用区域，透明背景显示工作区底色，只保留角落的舒展、复位、笔记本面板入口和节点/关系数量，窄窗提供目录入口。图谱、正文和浏览结果互斥；进入前沿用重命名、候选、表格及内嵌画布交接并保存当前本草稿，失败留在原编辑现场。进入图谱临时收起右栏，只允许按需查看笔记本，回到正文恢复原右栏开关与页签，临时状态不写入笔记本偏好。点击节点激活已有 Markdown 标签或新开，成功后保留图谱标签，失败继续显示图谱。
+
+真正查看笔记图谱才依次加载 `graph-gl.js`、`graph-engine.js` 与 `note-graph.js`，归 `notes`，不依赖 `notes.canvas`、主画布或 `graph-window.js`，失败可重试；仅恢复隐藏标签身份不加载模块或创建引擎。`graph-window.js` 仅用于原画布浮窗。笔记标题使用完整文件名和固定字号的常显 DOM，悬停显示完整路径并突出相邻关系；按缓存测量边界裁剪屏外标题，离屏 DOM 回收池最多 256 项，纯平移主要更新父容器变换，不逐帧测量、不按密度或缩放隐藏屏内标题。可见时复用已有外部检查周期，签名不变不换标签/布局/视角，关系改变保留存活位置及相机再收敛。
+
+只有可见图谱持有引擎与绘制资源；切到正文、空白页、浏览结果，以及关闭、离场或页面隐藏时停止任务，立即释放标签、交互监听及 GPU/context；异步响应核对标签会话和笔记本，`pagehide` 同时清空会话缓存。图谱标签存在期间，`note-graph.js` 以 LRU 保留最多 24 本及估算 16MiB 的正确拓扑、节点坐标、相机和待收敛标记，不保留 DOM/GPU/正文。返回恢复按本视角；成功改名映射受影响的会话、删除清理，其他本改名不重建正在显示的图谱。关闭图谱标签清空缓存，重启后首次查看自动布局取景，不写笔记、编辑历史或本机布局偏好，旧 `canvas:noteGraphViews:v1` 不再读取或写入。共享 `GraphEngine.restoreView({x,y,scale})` 校验有限坐标及正缩放、夹紧缩放、停止旧相机动画，通过相机刷新路径恢复而不使实例失效。入口、API 与共享引擎仍按原功能清单裁剪。实测与验收边界见 `docs/note-graph-performance-2026-10-10.md`。
 
 笔记右栏在“引导”之后提供“大纲 / Outline”。`assets/note-outline.js` 仅在前台可见大纲时加载，按当前正文及未保存修改生成主正文 H1–H6 和下划线式 H1/H2 的标题树；引用、Callout、列表内部标题及代码、公式、前言和注释不参与。树默认全部展开，折叠与滚动位置按笔记保留在最多 24 项的本次会话缓存；正文滚动高亮当前章节，折叠时高亮其可见祖先。点击编辑面标题滚动并移光标，阅读面仅滚动，等待现有原生输入及画布保存并核对文档和操作身份，同名标题按源码位置定位，过期操作不改投。大纲只在可见时合并编辑更新并分批解析，滚动按帧更新高亮，不重建未变化的标题行；关闭、离场、隐藏及 pagehide 取消任务、释放观察器。
 
@@ -811,6 +822,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
 
 ## 11. 验证清单
+
+笔记图谱运行 `python -m unittest tests.test_note_graph tests.test_notes_library tests.test_note_notebooks tests.test_note_canvas_browser tests.test_note_canvases`、`node tests/note-graph-browser.js`、`node tests/note-graph-performance-browser.js`、`node tests/graph-instance-cache-regression.js` 与 `node tests/graph-instance-cache-browser.js`。浏览器沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，仅创建一次性库或合成数据，`RELATUM_ARTIFACT_DIR` 保存截图；性能脚本可追加临时 JSON 报告路径，`--regression-only` 只验缓存与迟到响应。覆盖标签去重、快捷键、关闭和重启恢复、隐藏恢复不创建引擎、各本视角、右栏偏好、长标题、保存失败与原生预编辑、脚本/扫描/节点读取失败重试、外部变化、改名/删除、快速切本、离场与页面隐藏，以及 WebGL/Canvas2D/着色器失败。150/1500/3000 节点按 DPR 1/2 对比原浮窗面积和实际标签页布局，记录帧间隔、样式、长任务及 GPU 上传，断言相机零实例上传、稳定零 RAF、切页释放及缓存上限。继续运行原 `graph-presolve-regression.js`、`resource-lifecycle-browser.js`、功能裁剪、笔记本和工作区回归。真实 WebView2 与微软拼音仍需隔离人工验收；同机几何或面积对照不能宣称整宿主帧率提升。
 
 笔记大纲另运行 `node tests/note-outline-regression.js`、`node tests/note-outline-browser.js` 和 `python -m unittest tests.test_note_notebooks`，再回归笔记本、编辑器、侧栏及位置记忆。浏览器测试只能使用隔离 `RELATUM_DATA_ROOT`；测试宿主变量为 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，截图与长文报告写入临时目录或 `RELATUM_ARTIFACT_DIR`。Chromium 原生预编辑不替代 Windows WebView2 与真实微软拼音候选窗的人工验收。
 

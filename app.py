@@ -10681,6 +10681,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return self._send_json(200, NOTES_STORE.links(q.get("path", [""])[0]))
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+        if parsed.path == "/api/note-graph":
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                with NOTES_MUTATION_LOCK:
+                    result = NOTES_STORE.graph(query.get("root", [""])[0], query.get("signature", [""])[0])
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except OSError:
+                return self._send_json(500, {"error": "读取笔记图谱失败", "code": "read_failed"})
         if parsed.path == "/api/note-tags":
             try:
                 with NOTES_MUTATION_LOCK:

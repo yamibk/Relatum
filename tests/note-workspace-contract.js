@@ -81,7 +81,7 @@ assert(notes.includes('row.setAttribute(\'aria-expanded\''), 'folder expansion s
 assert(!notes.includes("toggle.textContent = expanded ? '⌄' : '›'"), 'folder disclosure must not depend on font glyph characters');
 assert(notes.includes('function setFolderExpanded'), 'folder disclosure should update only the affected subtree');
 const notebookBlankSource = notes.slice(notes.indexOf('async function finishNotebookInteraction'), notes.indexOf("treeEl.addEventListener('click'"));
-assert(notebookBlankSource.includes("state.sideMode === 'notebooks'")
+assert(notebookBlankSource.includes("effectiveSideMode() === 'notebooks'")
   && notebookBlankSource.includes("event.target.closest('.note-tree-row, .note-tree-inline-error')"), 'blank notebook actions exclude tools, links and rows');
 assert(notebookBlankSource.includes("contextButton(notebookCopy('create'), createNotebook)")
   && notebookBlankSource.includes("contextButton(tr('explorer'), () => reveal('', false))"), 'blank notebook menu creates a notebook or reveals the complete library');
@@ -141,7 +141,7 @@ assert.deepEqual(Array.from(sideTools.matchAll(/data-note-action="([^"]+)"/g), m
 assert(html.indexOf('<section class="note-image-text-tools note-side-popover') > html.indexOf('</aside>', html.indexOf('<aside class="note-links-pane'))
   && html.includes('class="note-settings-pop note-side-popover"'), 'workspace popovers live outside the clipped sidebar');
 assert(notes.includes("setSideOpen(!root.classList.contains('links-overlay-open'))")
-  && notes.includes("button.hidden = state.sideMode !== 'notebooks'"), 'one toggle restores the last view while notebook-only actions follow that view');
+  && notes.includes("button.hidden = selectedMode !== 'notebooks'"), 'one toggle restores the last view while notebook-only actions follow the visible view');
 assert(notes.includes('RelatumNoteLiveEditor.create'), 'workspace must create the Live Preview adapter');
 assert(notes.includes('onImageSelectionChange: (selection) => updateImageTextTools(selection)')
   && notes.includes('liveEditor.setImageTextMode') && notes.includes('liveEditor.imageTextCommand'),

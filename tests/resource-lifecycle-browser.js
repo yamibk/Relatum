@@ -158,6 +158,14 @@ async function snapshot(page) {
       assert(!report.homeIdle.scripts.includes('/note-workspace.js'), 'notes runtime waits for use');
       assert(!report.homeIdle.scripts.includes('/career-report.js'), 'career runtime waits for use');
     }
+    await page.locator('.left-spine [data-action="cadence-view"]').waitFor({ state: 'visible', timeout: 10000 }).catch(async error => {
+      error.message += '\n' + JSON.stringify(await page.evaluate(() => ({
+        body: document.body.className, workspace: document.body.dataset.startWorkspace, hideSpecial: document.body.dataset.hideSpecial,
+        cadence: getComputedStyle(document.querySelector('.cadence-spine-tab')).display,
+        parents: Array.from(document.querySelector('.left-spine').parentElement.parentElement.children).map(el => ({ tag: el.tagName, classes: el.className, hidden: el.hidden })),
+      })));
+      throw error;
+    });
     await page.locator('.left-spine [data-action="cadence-view"]').click();
     await page.waitForFunction(() => window.__resources.buffers > 0, null, { timeout: 10000 });
     report.starOpen = await snapshot(page);

@@ -69,6 +69,10 @@
   const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
+  let noteGraph = null, noteGraphLoader = null, noteGraphIntentSequence = 0;
+  const GRAPH_TAB = 'relatum:graph-tab:v1';
+  const graphHost = $('[data-role="note-graph-panel"]');
+  let graphPresentation = false, graphSidebar = null;
   let noteMovePromise = null, noteMovePaths = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
   if (canvasEnabled()) window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => window.RelatumNotePreferences?.resetCanvasNodeScale?.());
@@ -90,6 +94,127 @@
   const browserResults = $('[data-role="note-browser-results"]');
   const browserBack = $('[data-role="note-browser-back"]');
   const browserToggle = $('[data-note-action="toggle-browser"]');
+  const graphToggle = $('[data-note-action="toggle-graph"]');
+  function updateNoteGraphSession(source, destination) {
+    if (destination === undefined) noteGraph?.prune(source);
+    else noteGraph?.remap(source, destination);
+  }
+  function isGraphTab(tab) { return tab === GRAPH_TAB; }
+  function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab); }
+  function graphContentActive() {
+    return graphPresentation && isGraphTab(state.activeTab) && state.active && !root.hidden
+      && !document.hidden && !browserResultsActive();
+  }
+  function effectiveSideMode() { return graphPresentation ? 'notebooks' : state.sideMode; }
+  function setGraphPresentation(show) {
+    if (graphPresentation === show) return;
+    graphPresentation = show;
+    if (show) {
+      graphSidebar = { open: root.classList.contains('links-overlay-open'), mode: state.sideMode };
+      root.classList.remove('links-overlay-open');
+    } else {
+      noteGraphIntentSequence++; noteGraph?.deactivate();
+      if (graphSidebar) root.classList.toggle('links-overlay-open', graphSidebar.open);
+      graphSidebar = null;
+    }
+    root.classList.toggle('note-graph-active', show);
+    if (graphHost) { graphHost.hidden = !show; graphHost.inert = !show; }
+    updateSidePanel(); updateGraphToggle();
+  }
+  function graphLoadStatus(error) {
+    const message = graphHost?.querySelector('[data-role="note-graph-load-message"]');
+    if (!message) return;
+    message.querySelector('span').textContent = error ? (error.message || tr('readFailed'))
+      : language() === 'en' ? 'Loading notebook graph…' : '正在读取笔记图谱…';
+    const retry = message.querySelector('button'); retry.hidden = !error; retry.textContent = language() === 'en' ? 'Retry' : '重试';
+  }
+  async function resumeNoteGraph() {
+    if (!graphContentActive()) return false;
+    const sequence = noteGraphIntentSequence, scope = state.notebookRoot;
+    graphLoadStatus();
+    try {
+      const graph = await loadNoteGraph();
+      if (sequence !== noteGraphIntentSequence || !graphContentActive() || scope !== state.notebookRoot) return false;
+      return await graph.activate();
+    } catch (error) {
+      if (sequence === noteGraphIntentSequence && graphContentActive()) graphLoadStatus(error);
+      return false;
+    }
+  }
+  function updateGraphToggle() {
+    if (!graphToggle) return;
+    const selected = state.notebookRoot !== null;
+    const label = selected ? (language() === 'en' ? 'Notebook graph' : '笔记本图谱')
+      : (language() === 'en' ? 'Select a notebook first' : '请先选择笔记本');
+    graphToggle.disabled = !selected;
+    graphToggle.removeAttribute('title');
+    graphToggle.dataset.uiTooltip = label; graphToggle.dataset.uiTooltipSource = label;
+    graphToggle.setAttribute('aria-label', label);
+    graphToggle.setAttribute('aria-controls', 'note-graph-panel');
+    graphToggle.setAttribute('aria-expanded', String(graphPresentation));
+  }
+  async function prepareNoteGraph() {
+    await waitForNoteMove();
+    if (!(await beforeBrowse())) return false;
+    const scope = state.notebookRoot;
+    for (const cached of Array.from(state.documentCache.values())) {
+      if (cached !== state.current && notebookRootForPath(cached.path) === scope
+          && hasPendingEdits(cached) && !(await flushSave(cached))) return false;
+    }
+    return state.active && !document.hidden && scope === state.notebookRoot;
+  }
+  async function loadNoteGraph() {
+    if (noteGraph) return noteGraph;
+    if (!noteGraphLoader) noteGraphLoader = (async () => {
+      for (const [name, exported] of [['graph-gl.js', 'GraphGL'], ['graph-engine.js', 'GraphEngine'],
+        ['note-graph.js', 'RelatumNoteGraph']]) {
+        if (window[exported]) continue;
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script'); script.src = name; script.async = true;
+          script.onload = () => {
+            if (window[exported]) resolve();
+            else { script.remove(); reject(new Error(tr('readFailed'))); }
+          };
+          script.onerror = () => { script.remove(); reject(new Error(tr('readFailed'))); };
+          document.head.appendChild(script);
+        });
+      }
+      noteGraph = window.RelatumNoteGraph.create({ host: graphHost, request, language,
+        getRoot: () => state.notebookRoot, isActive: graphContentActive,
+        onSelect: (path, valid) => openNote(path, { reuseActiveTab: false, graphGuard: valid }),
+        showError: (message) => showToast(message || tr('readFailed'), 'error'),
+      });
+      if (!noteGraph) throw new Error(tr('readFailed'));
+      return noteGraph;
+    })().catch((error) => { noteGraphLoader = null; throw error; });
+    return noteGraphLoader;
+  }
+  async function activateGraphTab(options) {
+    if (!state.active || document.hidden) return false;
+    if (graphPresentation && !browserResultsActive()) {
+      await resumeNoteGraph();
+      if (!options?.noFocus && graphContentActive()) graphHost?.focus({ preventScroll: true });
+      return true;
+    }
+    const sequence = ++noteGraphIntentSequence;
+    const scope = state.notebookRoot, previousTab = state.activeTab, previousDocument = state.current;
+    try {
+      await loadNoteGraph();
+      if (!(await prepareNoteGraph())) return false;
+      if (sequence !== noteGraphIntentSequence || !state.active || document.hidden || scope !== state.notebookRoot
+          || state.activeTab !== previousTab || state.current !== previousDocument) return false;
+      if (noteBrowser) noteBrowser.showDocument();
+      if (!state.tabs.includes(GRAPH_TAB)) state.tabs.push(GRAPH_TAB);
+      state.activeTab = GRAPH_TAB;
+      clearCurrent({ keepTabs: true, keepActiveTab: true, keepCache: true });
+      await resumeNoteGraph();
+      if (!options?.noFocus && graphContentActive()) graphHost?.focus({ preventScroll: true });
+      return true;
+    } catch (error) { if (sequence === noteGraphIntentSequence) showToast(error.message || tr('readFailed'), 'error'); return false; }
+  }
+  function toggleNoteGraph() {
+    if (state.notebookRoot !== null) activateGraphTab();
+  }
   function browserResultsActive() {
     return root.classList.contains('note-browser-showing-results');
   }
@@ -125,6 +250,8 @@
     root.classList.toggle('note-browser-showing-results', show);
     $('.note-document-body')?.toggleAttribute('inert', show || !!noteMovePromise);
     updateBrowserControls();
+    updateEditorVisibility();
+    if (!show && graphPresentation) resumeNoteGraph();
     syncOutline();
   }
   async function loadNoteBrowser() {
@@ -312,7 +439,7 @@
     shortcutBindings: NOTE_SHORTCUTS ? NOTE_SHORTCUTS.load() : {},
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
-  try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = stored.filter((path) => typeof path === 'string'); } catch (error) {}
+  try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = Array.from(new Set(stored.filter((path) => typeof path === 'string'))); } catch (error) {}
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
@@ -383,7 +510,8 @@
         .map((entry) => ({ ...entry, notebook: true }))];
   }
   function notebookUi() {
-    return { open: root.classList.contains('links-overlay-open'), mode: state.sideMode, selectedRoot: state.notebookRoot, expanded: Array.from(state.notebookExpanded) };
+    return { open: graphSidebar ? graphSidebar.open : root.classList.contains('links-overlay-open'),
+      mode: graphSidebar ? graphSidebar.mode : state.sideMode, selectedRoot: state.notebookRoot, expanded: Array.from(state.notebookExpanded) };
   }
   function queueNotebookSettings(patch) {
     if (!state.notebookSettingsLoaded) return;
@@ -442,6 +570,7 @@
     state.notebookExpanded.forEach((path) => { if (path && !findEntry(path)) missing.add(path); });
     const selectedMissing = !!state.notebookRoot && !roots.has(state.notebookRoot);
     if (selectedMissing) {
+      noteGraphIntentSequence++; noteGraph?.deactivate(); updateNoteGraphSession(state.notebookRoot);
       missing.add(state.notebookRoot); state.notebookRoot = ''; state.selectedFolder = ''; state.selectedPath = ''; state.rootTargeted = true;
     }
     state.notebookPruning.forEach((time, path) => { if (findEntry(path)) state.notebookPruning.delete(path); });
@@ -451,6 +580,7 @@
       paths.forEach((path) => state.notebookPruning.set(path, now));
       queueNotebookSettings({ pruneMissing: paths });
     }
+    if (selectedMissing && graphPresentation) { renderTabs(); resumeNoteGraph(); }
     return selectedMissing;
   }
   let notebookSelectionSequence = 0;
@@ -459,14 +589,20 @@
     if (path && (!isNotebookRoot(path) || findEntry(path)?.kind !== 'folder')) return false;
     notebookSelectionSequence += 1;
     const changed = state.notebookRoot !== path;
+    if (changed) {
+      noteGraphIntentSequence++; noteGraph?.deactivate();
+      if (graphPresentation) { state.openSeq++; state.openingPath = ''; setDocumentSwitchPending(false); }
+    }
     state.notebookRoot = path;
     if (changed || options?.rootTarget) { state.selectedFolder = path; state.selectedPath = path; state.rootTargeted = true; }
     if (changed) { stopDocumentPrefetch(); queueNotebookSettings({ ui: notebookUi() }); }
     if (changed && !options?.noRender) renderTree({ keepNotebookTree: true });
     updateTreeSelection(); updateNotebookSelection(); updateNotebookRootLabel();
+    if (changed) { renderTabs(); if (graphPresentation) resumeNoteGraph(); }
     return changed;
   }
   function updateNotebookRootLabel() {
+    updateGraphToggle();
     const selected = state.notebookRoot !== null;
     const footer = $('.note-tree-foot'); if (footer) footer.hidden = !selected;
     const label = $('.note-tree-foot > span');
@@ -1869,7 +2005,7 @@
       return false;
     }
     const activeIndex = state.tabs.indexOf(state.activeTab);
-    if (reuseActive && activeIndex >= 0) state.tabs.splice(activeIndex, 1, path);
+    if (reuseActive && activeIndex >= 0 && !isGraphTab(state.activeTab)) state.tabs.splice(activeIndex, 1, path);
     else state.tabs.push(path);
     state.activeTab = path;
     persistTabs();
@@ -1880,7 +2016,9 @@
     const activeTab = state.activeTab || state.openingPath || (state.current && state.current.path) || '';
     const existing = new Map(Array.from(tabsEl.children).map((tab) => [tab.dataset.noteTabPath || '', tab]));
     state.tabs.forEach((tabPath, index) => {
-      const blank = isBlankTab(tabPath);
+      const blank = isBlankTab(tabPath), graph = isGraphTab(tabPath);
+      const title = graph ? (language() === 'en' ? 'Graph' : '关系图谱')
+        + ' · ' + (state.notebookRoot ? state.notebookRoot.split('/').pop() : 'notes') : blank ? tr('newTab') : noteTitle(tabPath);
       let tab = existing.get(tabPath);
       if (!tab) {
         tab = document.createElement('div');
@@ -1891,17 +2029,21 @@
         tab.append(label, close);
       }
       existing.delete(tabPath);
-      tab.className = 'note-tab' + (tabPath === activeTab ? ' active' : '') + (blank ? ' is-blank' : '');
+      tab.className = 'note-tab' + (tabPath === activeTab ? ' active' : '') + (blank ? ' is-blank' : '') + (graph ? ' is-graph' : '');
       tab.dataset.noteTabPath = tabPath;
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', tabPath === activeTab ? 'true' : 'false');
+      if (graph) tab.setAttribute('aria-controls', 'note-graph-panel'); else tab.removeAttribute('aria-controls');
+      tab.title = title;
       tab.tabIndex = tabPath === activeTab ? 0 : -1;
       tab.draggable = true;
       const label = tab.querySelector('.note-tab-label');
-      label.textContent = blank ? tr('newTab') : noteTitle(tabPath);
+      if (graph && !tab.querySelector('.note-tab-graph-icon')) tab.insertBefore(noteIcon('graph', 'note-tab-graph-icon'), label);
+      if (!graph) tab.querySelector('.note-tab-graph-icon')?.remove();
+      label.textContent = title;
       const close = tab.querySelector('.note-tab-close');
       close.dataset.noteTabClose = tabPath;
-      close.setAttribute('aria-label', tr('closeTab') + ' · ' + (blank ? tr('newTab') : noteTitle(tabPath)));
+      close.setAttribute('aria-label', tr('closeTab') + ' · ' + title);
       const current = tabsEl.children[index];
       if (current !== tab) tabsEl.insertBefore(tab, current || null);
     });
@@ -1922,8 +2064,8 @@
     state.renderedActiveTab = activeTab;
   }
   function remapTabs(source, destination) {
-    state.tabs = Array.from(new Set(state.tabs.map((path) => isBlankTab(path) ? path : mapPath(path, source, destination))));
-    state.activeTab = isBlankTab(state.activeTab) ? state.activeTab : mapPath(state.activeTab, source, destination);
+    state.tabs = Array.from(new Set(state.tabs.map((path) => isSpecialTab(path) ? path : mapPath(path, source, destination))));
+    state.activeTab = isSpecialTab(state.activeTab) ? state.activeTab : mapPath(state.activeTab, source, destination);
     state.openingPath = mapPath(state.openingPath, source, destination);
     persistTabs();
     renderTabs();
@@ -2003,6 +2145,7 @@
   async function activateTab(tabPath, options) {
     if (noteMovePromise) tabPath = await waitForNoteMove(tabPath);
     if (!tabPath || !state.tabs.includes(tabPath)) return false;
+    if (isGraphTab(tabPath)) return activateGraphTab(options);
     if (isBlankTab(tabPath)) {
       if (!(await flushCanvases())) return false;
       if (noteBrowser) noteBrowser.showDocument();
@@ -2023,11 +2166,14 @@
     const index = state.tabs.indexOf(tabPath);
     if (index < 0) return false;
     const active = state.activeTab === tabPath;
-    const cached = isBlankTab(tabPath) ? null : state.documentCache.get(tabPath);
-    if (!(options && options.skipSave) && cached) flushSave(cached);
+    const cached = isSpecialTab(tabPath) ? null : state.documentCache.get(tabPath);
+    if (!(options && options.skipSave) && cached && !(await flushSave(cached))) return false;
     state.tabs.splice(index, 1);
+    if (isGraphTab(tabPath)) { noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); }
     persistTabs();
     if (!active) { renderTabs(); return true; }
+    // A failed read of the next file must not leave a closed graph occupying the pane.
+    if (isGraphTab(tabPath)) clearCurrent({ keepTabs: true, keepCache: true });
     const nextPath = state.tabs[Math.min(index, state.tabs.length - 1)] || state.tabs[index - 1] || '';
     if (nextPath) return activateTab(nextPath, { noFocus: !!(options && options.noFocus) });
     state.activeTab = '';
@@ -2039,12 +2185,13 @@
     const current = state.current;
     if (current && !(await flushSave(current))) return false;
     for (const path of state.tabs) {
-      if (isBlankTab(path)) continue;
+      if (isSpecialTab(path)) continue;
       const cached = state.documentCache.get(path);
       if (cached && cached !== current && !(await flushSave(cached))) return false;
     }
     state.tabs = [];
     state.activeTab = '';
+    noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true });
     persistTabs();
     clearCurrent({ keepTabs: true });
     return true;
@@ -2174,7 +2321,7 @@
     if (!options?.keepNotebookTree) { state.notebookTreeDirty = true; renderNotebookTree(); }
   }
   function renderNotebookTree() {
-    if (!notebookTreeEl || !root.classList.contains('links-overlay-open') || state.sideMode !== 'notebooks') return;
+    if (!notebookTreeEl || !root.classList.contains('links-overlay-open') || effectiveSideMode() !== 'notebooks') return;
     if (state.notebookTreeDirty) {
       renderTreeInto(notebookTreeEl, notebookRoots(), state.notebookExpanded, true);
       state.notebookTreeDirty = false;
@@ -2286,7 +2433,7 @@
         event.preventDefault(); event.stopPropagation();
         if (!(await finishInlineTitle()) || state.renamePath && !(await finishInlineRename())) return;
         if (editorInputPending()) await whenEditorInputSettled();
-        if (state.active && state.sideMode === 'notebooks' && root.classList.contains('links-overlay-open') && findEntry(entry.path)?.kind === 'folder') beginInlineRename(entry.path);
+      if (state.active && effectiveSideMode() === 'notebooks' && root.classList.contains('links-overlay-open') && findEntry(entry.path)?.kind === 'folder') beginInlineRename(entry.path);
       });
       if (entry.notebook) row.addEventListener('keydown', (event) => {
         if (event.target !== row || event.isComposing || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return;
@@ -2328,7 +2475,7 @@
     const oldTabs = Array.isArray(previousTabs) ? previousTabs : state.tabs.slice();
     const oldActivePath = state.activeTab || (state.current && state.current.path) || '';
     const oldActiveIndex = Math.max(0, oldTabs.indexOf(oldActivePath));
-    const isLiveTab = (path) => isBlankTab(path) || !!findEntry(path);
+    const isLiveTab = (path) => isSpecialTab(path) || !!findEntry(path);
     const nextTabs = oldTabs.filter(isLiveTab);
     const currentMissing = !!state.current && !findEntry(state.current.path);
     const openingMissing = !!state.openingPath && !findEntry(state.openingPath);
@@ -2386,15 +2533,18 @@
       const previousTabs = state.tabs.slice();
       // Always refresh metadata for cache validation; unchanged rows retain focus,
       // inline rename drafts and any folder transition already in progress.
+      const previousNotebookRoots = notebookRoots().map(entry => entry.path);
       state.entries = entries;
       rebuildEntryIndex(flat);
       if (!state.notebookSettingsLoaded) restoreNotebookSettings(result.notebookSettings);
       const previousNotebookRoot = state.notebookRoot;
       const notebookMissing = reconcileNotebooks();
+      const liveRoots = new Set(notebookRoots().map(entry => entry.path));
+      previousNotebookRoots.forEach(path => { if (path && !liveRoots.has(path)) updateNoteGraphSession(path); });
       let prunedRecent = false;
       recentFiles.forEach((time, path) => { if (!state.entryIndex.has(path)) { recentFiles.delete(path); prunedRecent = true; } });
       if (prunedRecent) persistRecent();
-      if (browserChanged && noteBrowser) noteBrowser.invalidate();
+      if (browserChanged) { noteBrowser?.invalidate(); noteGraph?.invalidate(); }
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
@@ -2467,6 +2617,7 @@
   function normalizedWikiTarget(value) { const target = String(value || '').split('|', 1)[0].trim(); const marks = [target.indexOf('#'), target.indexOf('^')].filter((index) => index >= 0); return (marks.length ? target.slice(0, Math.min.apply(Math, marks)) : target).replace(/\.md$/i, '').trim(); }
   function outgoingForWiki(value) { const wanted = normalizedWikiTarget(value).toLocaleLowerCase(); return (state.current && state.current.outgoing || []).find((item) => String(item.rawTarget || '').replace(/\.md$/i, '').toLocaleLowerCase() === wanted) || null; }
   function updateEditorVisibility() {
+    setGraphPresentation(state.initialized && isGraphTab(state.activeTab) && !browserResultsActive());
     const hasNote = !!state.current;
     empty.hidden = hasNote;
     if (inlineTitleShell) inlineTitleShell.hidden = !hasNote;
@@ -2563,7 +2714,7 @@
       try {
         const result = await post('/api/note-save', { path, content, revision: target.revision });
         target.revision = result.revision || target.revision;
-        recordRecent(path); if (noteBrowser) noteBrowser.invalidate();
+        recordRecent(path); if (noteBrowser) noteBrowser.invalidate(); noteGraph?.invalidate();
         target.persistedGeneration = Math.max(target.persistedGeneration, generation);
         if (target.editGeneration <= generation) target.content = content;
         cacheDocument(target);
@@ -2593,28 +2744,38 @@
     const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target, duringMove, background); return ok;
   }
   async function openNote(path, options) {
+    const fromGraph = graphPresentation, graphRoot = state.notebookRoot, graphIntent = noteGraphIntentSequence;
+    const graphValid = () => (!options?.graphGuard || options.graphGuard()) && (!fromGraph ||
+      (graphPresentation && state.notebookRoot === graphRoot && noteGraphIntentSequence === graphIntent));
     if (noteMovePromise) path = await waitForNoteMove(path);
     if (!(await flushCanvases())) return false;
-    if (noteBrowser) noteBrowser.showDocument({ keepAction: !!options?.browserAction });
+    if (!graphValid()) return false;
+    if (!fromGraph && noteBrowser) noteBrowser.showDocument({ keepAction: !!options?.browserAction });
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (!path) return false;
     if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled();
-    selectNoteTab(path, !(options && options.reuseActiveTab === false));
-    if (!state.restoringNotebookSelection && !options?.preserveNotebook) {
-      selectNotebook(notebookRootForPath(path));
+    const commitSelection = () => {
+      selectNoteTab(path, !(options && options.reuseActiveTab === false));
+      if (fromGraph) setGraphPresentation(false);
+      if (noteBrowser) noteBrowser.showDocument({ keepAction: !!options?.browserAction });
+      if (!state.restoringNotebookSelection && !options?.preserveNotebook) selectNotebook(notebookRootForPath(path));
       state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
-    }
-    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
+    };
+    if (!fromGraph) commitSelection();
+    if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); updateEditorVisibility(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
     cancelLinksRefresh();
     const previous = state.current; rememberEditorState(previous);
-    const seq = ++state.openSeq; state.openingPath = path; state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
+    const seq = ++state.openSeq; state.openingPath = path;
+    if (!fromGraph) { state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path); }
     renderTabs();
     const treeExpanded = state.notebookRoot === notebookRootForPath(path) && expandTreePath(path, false);
-    if (!(options && options.selectionPrimed)) { renderCurrentPath(path); if (treeExpanded) renderTree(); else updateTreeSelection(); }
+    if (!fromGraph && !(options && options.selectionPrimed)) { renderCurrentPath(path); if (treeExpanded) renderTree(); else updateTreeSelection(); }
     const cached = state.documentCache.get(path);
     if (cached && !(options && options.force)) {
       if (!(options && options.skipSave) && previous) flushSave(previous);
       if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
+      if (seq !== state.openSeq || !graphValid()) return false;
+      if (fromGraph) commitSelection();
       applyDocument(cached);
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current === cached) focusEditor(); });
@@ -2624,11 +2785,12 @@
     const loadPromise = fetchDocument(path);
     if (!(options && options.skipSave) && previous) flushSave(previous);
     try {
-      const data = await loadPromise; if (seq !== state.openSeq) return false;
+      const data = await loadPromise; if (seq !== state.openSeq || !graphValid()) return false;
       const shown = state.current && state.current.path === path ? state.current : null;
       if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) {
         if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
-        if (seq !== state.openSeq) return false;
+        if (seq !== state.openSeq || !graphValid()) return false;
+        if (fromGraph) commitSelection();
         applyDocument(data);
       }
       else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); resumeLinksRefresh(); }
@@ -2787,6 +2949,8 @@
     // The disk transaction has committed. Read its rewritten references before
     // changing the editor's asset base; a later read failure must not undo the UI path.
     window.RelatumNoteCanvas?.remapViews(source, destination, true);
+    updateNoteGraphSession(source, destination);
+    noteGraph?.invalidate();
     try { await syncMovedDocument(); }
     catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
     if (result.rewritten) {
@@ -2847,6 +3011,7 @@
     try {
       if (!(await flushPromise)) { rollback(); return; }
       const result = await post('/api/note-trash', { path: entry.path });
+      updateNoteGraphSession(entry.path); noteGraph?.invalidate();
       const serverEntries = result.tree && Array.isArray(result.tree.entries) ? result.tree.entries : state.entries;
       const treeChanged = !sameTreeStructure(state.entries, serverEntries);
       state.entries = serverEntries;
@@ -3280,20 +3445,21 @@
 
   function updateSidePanel() {
     const open = root.classList.contains('links-overlay-open');
+    const selectedMode = effectiveSideMode();
     if (sidePane) { sidePane.inert = !open; sidePane.setAttribute('aria-label', language() === 'en' ? 'Note sidebar' : '笔记侧栏'); }
     $('.note-side-modes')?.setAttribute('aria-label', language() === 'en' ? 'Sidebar view' : '侧栏视图');
-    if (sideTitle) sideTitle.textContent = notebookCopy(state.sideMode);
-    if (notebooksContent) notebooksContent.hidden = state.sideMode !== 'notebooks';
-    if (linksContent) linksContent.hidden = state.sideMode !== 'links';
-    if (canvasSettingsContent) canvasSettingsContent.hidden = state.sideMode !== 'canvas';
-    if (guideContent) { guideContent.hidden = state.sideMode !== 'guide'; if (open && state.sideMode === 'guide') renderGuide(); }
-    if (outlineContent) { outlineContent.hidden = state.sideMode !== 'outline'; outlineContent.setAttribute('aria-label', notebookCopy('outline')); }
+    if (sideTitle) sideTitle.textContent = notebookCopy(selectedMode);
+    if (notebooksContent) notebooksContent.hidden = selectedMode !== 'notebooks';
+    if (linksContent) linksContent.hidden = selectedMode !== 'links';
+    if (canvasSettingsContent) canvasSettingsContent.hidden = selectedMode !== 'canvas';
+    if (guideContent) { guideContent.hidden = selectedMode !== 'guide'; if (open && selectedMode === 'guide') renderGuide(); }
+    if (outlineContent) { outlineContent.hidden = selectedMode !== 'outline'; outlineContent.setAttribute('aria-label', notebookCopy('outline')); }
     ['notebooks', 'links', 'canvas', 'guide', 'outline'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
-      if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
+      if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(selectedMode === mode)); button.hidden = graphPresentation && mode !== 'notebooks' || mode === 'canvas' && !canvasEnabled(); }
     });
     if (open) {
-      const button = $('[data-note-action="side-' + state.sideMode + '"]');
+      const button = $('[data-note-action="side-' + selectedMode + '"]');
       if (button) {
         const nav = button.parentElement, parent = nav.getBoundingClientRect(), rect = button.getBoundingClientRect();
         if (rect.left < parent.left) nav.scrollLeft += rect.left - parent.left;
@@ -3302,14 +3468,15 @@
     }
     const toggle = $('[data-note-action="toggle-notebooks"]');
     if (toggle) { toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy(open ? 'collapseSideLabel' : 'expandSideLabel')); toggle.title = notebookCopy(open ? 'collapseSide' : 'expandSide'); }
+    $('[data-note-action="graph-notebooks"]')?.setAttribute('aria-expanded', String(open));
     $('[data-role="note-side-toolbar"]')?.setAttribute('aria-label', language() === 'en' ? 'Note tools' : '笔记工具');
     ['new-notebook', 'toggle-all-notebooks'].forEach((action) => {
-      const button = $('[data-note-action="' + action + '"]'); if (button) button.hidden = state.sideMode !== 'notebooks';
+      const button = $('[data-note-action="' + action + '"]'); if (button) button.hidden = selectedMode !== 'notebooks';
     });
     const add = $('[data-note-action="new-notebook"]');
     if (add) { add.title = notebookCopy('create'); add.setAttribute('aria-label', add.title); }
     $('[data-note-action="close-links"]')?.setAttribute('aria-label', notebookCopy('close'));
-    if (state.sideMode === 'notebooks') renderNotebookTree();
+    if (selectedMode === 'notebooks') renderNotebookTree();
     syncOutline();
   }
   let sidePopoverFrame = 0;
@@ -3353,16 +3520,18 @@
       if (liveEditor) liveEditor.setImageTextMode(false);
       if (imageTextTools) { imageTextTools.hidden = true; imageTextTools.inert = true; }
       if (sidePopoverFrame) cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0;
-      if (focusWasInside) $('[data-note-action="toggle-notebooks"]')?.focus({ preventScroll: true });
+      if (focusWasInside) $(graphPresentation ? '[data-note-action="graph-notebooks"]' : '[data-note-action="toggle-notebooks"]')?.focus({ preventScroll: true });
     }
-    root.classList.toggle('links-overlay-open', open); updateSidePanel(); queueNotebookSettings({ ui: notebookUi() });
+    root.classList.toggle('links-overlay-open', open); updateSidePanel();
+    if (!graphPresentation) queueNotebookSettings({ ui: notebookUi() });
     updateImageTextTools();
-    if (open) { if (state.sideMode === 'links') ensureLinks(); scheduleSidePopoverPosition(); }
+    if (open) { if (effectiveSideMode() === 'links') ensureLinks(); scheduleSidePopoverPosition(); }
     if (!open) window.setTimeout(() => {
       if (!root.classList.contains('links-overlay-open') && notebookTreeEl) { clearTreeRowIndex(notebookTreeEl); notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true; }
     }, 270);
   }
   function setSideMode(mode) {
+    if (graphPresentation) { if (mode === 'notebooks') setSideOpen(true); return; }
     state.sideMode = ['notebooks', 'links', 'guide', 'outline', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
     setNoteSettingsOpen(false, { restoreFocus: false });
     setSideOpen(true);
@@ -3423,6 +3592,7 @@
     const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors, background: !!settings.background });
     if (!refreshed) return false;
     await noteBrowser?.checkExternalCanvases();
+    await noteGraph?.checkExternalChanges();
     if (state.imageTextBusy || seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
     if (!entry) return true;
@@ -3501,8 +3671,8 @@
       let path = ''; try { path = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
       let activeTab = state.tabs.includes(state.activeTab) ? state.activeTab : '';
       if (!activeTab && path && findEntry(path) && state.tabs.includes(path)) activeTab = path;
-      if (!activeTab) activeTab = state.tabs.find((tabPath) => isBlankTab(tabPath) || !!findEntry(tabPath)) || '';
-      if (activeTab && isBlankTab(activeTab)) { state.activeTab = activeTab; persistTabs(); renderTabs(); updateEditorVisibility(); }
+      if (!activeTab) activeTab = state.tabs.find((tabPath) => isSpecialTab(tabPath) || !!findEntry(tabPath)) || '';
+      if (activeTab && isSpecialTab(activeTab)) { state.activeTab = activeTab; persistTabs(); renderTabs(); updateEditorVisibility(); }
       else if (activeTab) {
         state.restoringNotebookSelection = true;
         try { await openNote(activeTab, { reuseActiveTab: false, skipSave: true, noFocus: true, noRecent: true }); }
@@ -3531,6 +3701,7 @@
     revealColdBoot();
     syncOutline();
     if (!initialized) return false;
+    await resumeNoteGraph();
     if (browserDisclosure.hidden && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
     window.RelatumStartupMark?.('notes-ready');
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
@@ -3540,7 +3711,7 @@
       scheduleStatistics(state.current); scheduleDocumentPrefetch();
       if (state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
       requestAnimationFrame(() => {
-        if (state.active && state.current) focusEditor();
+        if (state.active && state.current && !graphPresentation) focusEditor();
       });
     }
     return true;
@@ -3548,6 +3719,7 @@
   async function deactivate() {
     state.linksRefreshSuspended = true; cancelLinksRefresh(); stopExternalSync();
     if (!(await flushSave())) { state.linksRefreshSuspended = false; resumeLinksRefresh(); scheduleExternalSync(); return false; }
+    noteGraphIntentSequence++; noteGraph?.deactivate();
     await flushNotebookSettings(); browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle();
     stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates();
     setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
@@ -3561,10 +3733,15 @@
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
     syncOutline();
+    if (root.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); }
+    else if (state.active && graphPresentation) resumeNoteGraph();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
 
   root.addEventListener('click', async (event) => {
+    if (event.target.closest('[data-note-action="toggle-graph"]')) { toggleNoteGraph(); return; }
+    if (event.target.closest('[data-note-action="retry-graph"]')) { resumeNoteGraph(); return; }
+    if (event.target.closest('[data-note-action="graph-notebooks"]')) { setSideOpen(!root.classList.contains('links-overlay-open')); return; }
     if (event.target.closest('[data-note-action="toggle-browser"]')) { setBrowserMode(!browserIntent); return; }
     if (state.imageTextBusy) return;
     const libraryAction = event.target.closest('[data-note-library-action]');
@@ -3751,7 +3928,7 @@
     if (!(await finishInlineTitle())) return false;
     if (state.renamePath && !(await finishInlineRename())) return false;
     if (editorInputPending()) await whenEditorInputSettled();
-    return state.active && state.sideMode === 'notebooks';
+    return state.active && effectiveSideMode() === 'notebooks';
   }
   notebooksContent?.addEventListener('click', async (event) => {
     if (event.target.closest('.note-tree-row, .note-tree-inline-error')) return;
@@ -3868,13 +4045,13 @@
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
     syncOutline();
-    if (document.hidden) { cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
-    else if (state.active) { if (noteBrowser) noteBrowser.resume(); if (browserIntent && browserDisclosure.hidden) setBrowserMode(true); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
+    if (document.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
+    else if (state.active) { resumeNoteGraph(); if (noteBrowser) noteBrowser.resume(); if (browserIntent && browserDisclosure.hidden) setBrowserMode(true); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
-  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); syncOutline(); });
+  window.addEventListener('pagehide', () => { noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); syncOutline(); resumeNoteGraph(); });
   window.addEventListener('beforeunload', () => { cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
-  document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
+  document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();

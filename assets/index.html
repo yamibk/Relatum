@@ -1560,6 +1560,7 @@
         <symbol id="note-icon-panel-right-bar" viewBox="0 0 24 24"><rect x="15.5" y="6" width="2.5" height="12" rx="1.25"/></symbol>
         <symbol id="note-icon-notebook-filled" viewBox="0 0 24 24"><rect x="5" y="2" width="16" height="20" rx="2" fill="currentColor" stroke="none"/><path d="M9 3v18M13 7h4" fill="none" stroke="var(--note-notebook-cutout, var(--bg))" stroke-width="1.5"/><path d="M3 7h3M3 12h3M3 17h3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
         <symbol id="note-icon-type-plus" viewBox="0 0 24 24"><path d="M10 4v16M3 7V5a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M7 20h6M19 12v8M15 16h8"/></symbol>
+        <symbol id="note-icon-graph" viewBox="0 0 24 24"><circle cx="5" cy="5" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="19" r="2.5"/><path d="m7.4 5.2 9.1.6M6.2 7.2l4.6 9.6M17.8 8.2l-4.6 8.6"/></symbol>
       </defs>
     </svg>
     <aside class="note-tree-pane" aria-label="笔记文件树">
@@ -1578,6 +1579,10 @@
           <button type="button" class="note-icon-button note-browser-toggle" data-note-action="toggle-browser"
             title="展开笔记浏览" aria-label="展开笔记浏览" aria-pressed="false" aria-expanded="false" aria-controls="note-browser-disclosure">
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-search"/></svg>
+          </button>
+          <button type="button" class="note-icon-button note-graph-toggle" data-note-action="toggle-graph"
+            title="笔记图谱" aria-label="笔记图谱" aria-expanded="false" disabled>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-graph"/></svg>
           </button>
         </div>
         <div class="note-head-actions">
@@ -1653,6 +1658,12 @@
           <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-copy-x"/></svg>
         </button>
       </nav>
+      <section class="note-graph-panel" id="note-graph-panel" data-role="note-graph-panel"
+        role="tabpanel" tabindex="0" hidden inert>
+        <div class="note-graph-load-message" data-role="note-graph-load-message" role="status">
+          <span></span><button type="button" data-note-action="retry-graph" hidden>重试</button>
+        </div>
+      </section>
       <header class="note-document-head">
         <div class="note-current-copy">
           <button type="button" class="note-browser-back" data-role="note-browser-back" hidden>返回结果</button>

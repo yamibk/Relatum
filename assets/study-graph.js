@@ -135,7 +135,7 @@
     host.innerHTML = '';
     const stage = document.createElement('div');
     stage.className = 'star-stage';
-    const canvas = document.createElement('canvas');
+    let canvas = document.createElement('canvas');
     canvas.className = 'star-canvas';
     canvas.setAttribute('role', 'img');
     const canvasActivityGraph = !!(graphData && graphData.kind === 'canvas');
@@ -734,6 +734,9 @@
     engine = global.GraphEngine.create({
       canvas: canvas,
       backend: 'webgl',
+      cacheInstances: true,
+      nodeStyleTimeDependent: true,
+      onCanvasReplace: function (nextCanvas) { canvas = nextCanvas; },
       observe: stage,
       active: !(opts && opts.active === false),
       reduceMotion: reduceMotion,

@@ -260,6 +260,7 @@
         "note-table-editor.js",
         "note-workspace.js",
         "note-browser.js",
+        "note-graph.js",
         "note-live-editor.js",
         "note-media-frame.js",
         "note-shortcuts.js",
@@ -331,10 +332,15 @@
     ],
     "graph-gl.js": [
       "canvas.activity",
-      "editor.graph"
+      "editor.graph",
+      "notes"
     ],
     "graph-engine.js": [
       "canvas.activity",
+      "editor.graph",
+      "notes"
+    ],
+    "graph-window.js": [
       "editor.graph"
     ],
     "study-palette.js": [

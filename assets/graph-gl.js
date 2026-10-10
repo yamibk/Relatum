@@ -151,7 +151,7 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, edgeQuad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 1, -1, 0, 1, 1, 1]), gl.STATIC_DRAW);
 
-    // 实例数据缓冲（DYNAMIC，每帧 bufferData 重传）
+    // 实例数据缓冲；相机帧复用已有实例，数据或外观变化才上传。
     const nodeInstBuf = gl.createBuffer();
     const edgeInstBuf = gl.createBuffer();
 
@@ -207,8 +207,11 @@
       }
     };
 
-    // camera: { xform:[a,b,c,d], aaWorld, dpr, cssW, cssH }
-    api.draw = function (nodeCount, edgeCount, camera) {
+    let uploadedNodeCount = -1;
+    let uploadedEdgeCount = -1;
+    // uploads 可分别复用节点/连线；省略时保留直接调用者的全量上传语义。
+    // 尺寸、相机矩阵与抗锯齿带宽始终更新，不改变世界单位半径/线宽。
+    api.draw = function (nodeCount, edgeCount, camera, uploads) {
       const w = Math.max(1, Math.round(camera.cssW * camera.dpr));
       const h = Math.max(1, Math.round(camera.cssH * camera.dpr));
       if (canvas.width !== w) canvas.width = w;
@@ -221,7 +224,10 @@
         gl.useProgram(edgeProgram);
         gl.uniform4f(uEdgeXform, xf[0], xf[1], xf[2], xf[3]);
         gl.bindBuffer(gl.ARRAY_BUFFER, edgeInstBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, api.edgeData.subarray(0, edgeCount * EDGE_STRIDE), gl.DYNAMIC_DRAW);
+        if (!uploads || uploads.edges !== false || uploadedEdgeCount !== edgeCount) {
+          gl.bufferData(gl.ARRAY_BUFFER, api.edgeData.subarray(0, edgeCount * EDGE_STRIDE), gl.DYNAMIC_DRAW);
+          uploadedEdgeCount = edgeCount;
+        }
         gl.bindVertexArray(edgeVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, edgeCount);
       }
@@ -230,7 +236,10 @@
         gl.uniform4f(uNodeXform, xf[0], xf[1], xf[2], xf[3]);
         gl.uniform1f(uNodeAA, camera.aaWorld);
         gl.bindBuffer(gl.ARRAY_BUFFER, nodeInstBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, api.nodeData.subarray(0, nodeCount * NODE_STRIDE), gl.DYNAMIC_DRAW);
+        if (!uploads || uploads.nodes !== false || uploadedNodeCount !== nodeCount) {
+          gl.bufferData(gl.ARRAY_BUFFER, api.nodeData.subarray(0, nodeCount * NODE_STRIDE), gl.DYNAMIC_DRAW);
+          uploadedNodeCount = nodeCount;
+        }
         gl.bindVertexArray(nodeVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, nodeCount);
       }
