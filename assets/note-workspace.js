@@ -3266,18 +3266,14 @@
         event.isComposing || event.keyCode === 229 || document.hidden || editorInputPending() ||
         state.settingsOpen || state.libraryPanel || state.imageTextBusy || state.assetCleanupBusy ||
         state.openingPath || noteMovePromise || root.classList.contains('note-document-switch-pending') ||
-        modalHost?.childElementCount || contextMenu && !contextMenu.hidden || imageTextTools && !imageTextTools.hidden) return false;
-    const controls = 'input, textarea, select, button, a[href], area[href], summary, iframe, audio[controls], video[controls], ' +
-      '.note-canvas-viewport, [role="button"], [role="link"], [role="textbox"], [role="combobox"], ' +
-      '[role="slider"], [role="spinbutton"], [role="checkbox"], [role="radio"], [role="switch"], ' +
-      '[role="tab"], [role="tree"], [role="treeitem"], [role="listbox"], [role="option"], [role="menu"], [role^="menuitem"], [role="dialog"], [role="alertdialog"]';
-    return [event.target, document.activeElement].every((element) => {
+        modalHost?.childElementCount || (contextMenu && !contextMenu.hidden) || (imageTextTools && !imageTextTools.hidden)) return false;
+    const focused = document.activeElement;
+    // A retained Markdown selection is not an input caret once the editor loses focus.
+    if (liveEditor?.view?.hasFocus) return false;
+    const inputs = 'input, textarea, select, [role="textbox"], [role="combobox"], [role="spinbutton"], [role="slider"]';
+    return [event.target, focused].every((element) => {
       if (!(element instanceof Element)) return false;
-      if (element === document.body || element === document.documentElement) return true;
-      if (!root.contains(element) || element.isContentEditable || element.closest(controls + ', [inert]') ||
-          editorHost?.contains(element) || fallbackEditor?.contains(element) || sidePane?.contains(element)) return false;
-      const tabStop = element.closest('[tabindex]');
-      return !tabStop || tabStop === readingHost || tabStop === root;
+      return !element.isContentEditable && !element.closest(inputs + ', [inert], [role="menu"], [role^="menuitem"], [role="dialog"], [role="alertdialog"]');
     });
   }
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
