@@ -61,6 +61,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 3. 源码地图
 
+画布浏览筛选按钮的悬停反馈只作用于未选中按钮；选中按钮保持浅色主题黑底白字、深色主题浅底深字，避免悬停背景覆盖选中反色。
+
 笔记内嵌画布的自动撑高搜索使用整数上下界，每步必须缩小区间；新建尺寸比例和角柄拖动产生的小数尺寸不能直接作为二分边界。`node tests/note-canvas-stability-browser.js` 使用临时库验证 50%–300% 全部 51 档、12 种形状、小数高度、长文字、保存重开及静置零重绘/测量；测试中的步数保护只用于阻止坏源码卡住验收，末尾移除探针后加载生产脚本再验一次双击/保存。追加发布目录参数可用真实 EXE/WebView2 验证，仍只使用隔离数据根，例如 `node tests/note-canvas-stability-browser.js D:\Relatum-release`。故障来源、实测与剩余测试限制见 `docs/note-canvas-stability-2026-10-10.md`。
 
 笔记实时预览的独立公式、图片和内嵌画布使用覆盖视觉边界的块投影，不额外生成上下两条空行；Markdown 中真实空行保留。`assets/note-live-editor.js` 将投影范围与光标原子范围分开缓存：图片/画布的键盘导航跳到真实前后正文，公式边界仍进入源码；选中独立媒体后的左右方向键同样落在真实正文，图片文字微调优先。候选输入沿用非包容的源码位置映射，只修正受影响的投影边界并复用 widget，新增文字不得被隐藏，完整删除不得遗留空投影。仅含一张图片的文档在图片文字模式中临时保留原输入边界行，供 Chromium 无 keydown 的原生输入使用，退出模式即恢复紧凑投影，不改变正文或历史。公式由 `assets/styles.css` 的局部规则控制少量随字号缩放的留白，MathJax 容器无重复外边距或纵向裁切，超宽公式由外层横向滚动且不撑宽编辑器。验证用 `node tests/note-live-editor-regression.js`、`node tests/note-live-presentation-browser.js` 和 `node tests/note-canvas-browser.js`；覆盖真实空行、文首/文末/连续块、分数/根号/积分/上标、窄窗与字号、正文坐标、选中媒体后的方向键及原生浏览器候选确认/取消。Windows WebView2 与真实 Microsoft 拼音的隔离验收、纯图片文字模式例外及既有样式回归失败记录见 `tests/note-compact-validation.md`。

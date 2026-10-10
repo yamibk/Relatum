@@ -1763,7 +1763,7 @@ button.note-browser-message, .note-browser-back, .note-browser-more { cursor: po
 .note-browser-reference small { display: block; font-size: 12px; opacity: .55; overflow-wrap: anywhere; margin-top: 4px; }
 .note-browser-missing { color: #a84e36; }
 .note-browser-canvas-filter:focus-visible, .note-browser-canvas-reveal:focus-visible, .note-browser-reference:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
-.note-browser-canvas-filter:hover, .note-browser-canvas-reveal:enabled:hover, .note-browser-reference:hover, .note-browser-reference.is-selected { background: rgba(128, 128, 128, .12); }
+.note-browser-canvas-filter:not([aria-pressed="true"]):hover, .note-browser-canvas-reveal:enabled:hover, .note-browser-reference:hover, .note-browser-reference.is-selected { background: rgba(128, 128, 128, .12); }
 body.start-page[data-start-theme="dark"] .note-browser-canvas-filter[aria-pressed="true"] { background: #e7e9e5; color: #181a19; }
 body.start-page[data-start-theme="dark"] .note-browser-missing { color: #e4a18d; }
 .note-browser-back { flex: none; }
