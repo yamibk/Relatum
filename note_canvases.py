@@ -123,6 +123,12 @@ class NoteCanvasStore:
             raise NotesError("只允许 notes/canvases 内的画布", status=403, code="unsafe_path")
         return self.notes._absolute(normalized, allow_assets=True)
 
+    def reveal_target(self, relative: object) -> Path:
+        path = self._path(relative)
+        if not path.is_file():
+            raise NotesError("画布文件不存在", status=404, code="not_found")
+        return path
+
     def resolve(self, note: object, source: object) -> str:
         note = self.notes.normalize_path(note)
         self.notes._absolute(note)

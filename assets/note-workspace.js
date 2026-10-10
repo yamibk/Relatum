@@ -208,6 +208,7 @@
       loading: '正在读取笔记库…', emptyTree: '还没有笔记', select: '选择一篇笔记', readFailed: '读取笔记失败',
       saveFailed: '保存失败，请检查磁盘空间或目录权限', newNote: '新建笔记', newFolder: '新建文件夹', rename: '重命名',
       moveFailed: '移动失败', explorer: '在系统资源管理器中显示', openLibrary: '在资源管理器中打开笔记库',
+      canvasExplorer: '在系统资源管理器中打开',
       assets: '打开伴生素材目录', recycle: '移到系统回收站', recycled: '已移到系统回收站', refresh: '刷新',
       refreshed: '笔记库已刷新', copyPath: '复制库内路径', copied: '路径已复制', open: '打开', createHere: '在此新建笔记',
       createFolderHere: '新建子文件夹', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
@@ -235,6 +236,7 @@
       loading: 'Reading notes…', emptyTree: 'No notes yet', select: 'Select a note', readFailed: 'Could not read notes',
       saveFailed: 'Could not save. Check disk space and folder permissions.', newNote: 'New note', newFolder: 'New folder', rename: 'Rename',
       moveFailed: 'Move failed', explorer: 'Show in File Explorer', openLibrary: 'Open notes folder in File Explorer',
+      canvasExplorer: 'Open in File Explorer',
       assets: 'Open companion assets', recycle: 'Move to Recycle Bin', recycled: 'Moved to Recycle Bin', refresh: 'Refresh',
       refreshed: 'Notes refreshed', copyPath: 'Copy vault path', copied: 'Path copied', open: 'Open', createHere: 'New note here',
       createFolderHere: 'New subfolder', noAssets: 'This note has no companion assets',
@@ -2781,7 +2783,16 @@
   }
   function openCanvasContextMenu(payload) {
     if (!canvasEnabled() || !state.active || !state.current || state.viewMode !== 'live') return;
-    showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter))], payload.x, payload.y, 'canvas');
+    closeContextMenu();
+    const explorer = contextButton(tr('canvasExplorer'), () => revealCanvas(payload.adapter));
+    explorer.disabled = !payload.adapter?.session;
+    showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter)), explorer], payload.x, payload.y, 'canvas');
+  }
+  async function revealCanvas(adapter) {
+    const session = adapter?.session;
+    if (!session) return;
+    try { await post('/api/notes-canvas/reveal', { path: session.path }); }
+    catch (error) { showToast(error.message || tr('revealFailed'), 'error'); }
   }
   function canvasNameInput(name) {
     return new Promise(resolve => {
@@ -3597,7 +3608,8 @@
   treeEl.addEventListener('dragleave', (event) => { if (!treeEl.contains(event.relatedTarget)) treeEl.classList.remove('note-drop-root'); });
   treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.notebookRoot === null) return; if (state.draggedPath) moveEntry(state.draggedPath, state.notebookRoot); else importDataTransfer(event.dataTransfer, state.notebookRoot); });
   document.addEventListener('pointerdown', (event) => {
-    if (contextMenu && !contextMenu.hidden && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
+    const dismissCanvasByRightClick = event.button === 2 && contextMenu?.dataset.source === 'canvas';
+    if (contextMenu && !contextMenu.hidden && !dismissCanvasByRightClick && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
     if (state.libraryPanel && !event.target.closest('.note-library-popover') && !event.target.closest('[data-note-action="toggle-sort"]') && !event.target.closest('[data-note-action="toggle-library-settings"]')) {
       setLibraryPanel('', { restoreFocus: false });
     }
@@ -3605,6 +3617,12 @@
       setNoteSettingsOpen(false, { restoreFocus: false });
     }
   });
+  document.addEventListener('contextmenu', (event) => {
+    if (!contextMenu || contextMenu.hidden || contextMenu.dataset.source !== 'canvas') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeContextMenu();
+  }, true);
   document.addEventListener('keydown', (event) => {
     if ((state.imageTextBusy || state.assetCleanupBusy) && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
     if (!state.active) return;

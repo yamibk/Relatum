@@ -10358,6 +10358,7 @@ NOTES_POST_ROUTES = {
     "/api/notes-canvas/create",
     "/api/notes-canvas/save",
     "/api/notes-canvas/rename",
+    "/api/notes-canvas/reveal",
     "/api/note-notebooks-settings",
     "/api/note-cleanup-unused-images",
     "/api/note-image-text-merge",
@@ -10842,6 +10843,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     result = store.save(body.get("path"), body.get("data"), body.get("revision"))
                 elif path == "/api/notes-canvas/rename":
                     result = store.rename(body.get("path"), body.get("name"), body.get("revision"))
+                elif path == "/api/notes-canvas/reveal":
+                    target = store.reveal_target(body.get("path"))
+                    subprocess.Popen(_explorer_select_args(target), close_fds=True)
+                    result = {"ok": True}
                 else:
                     return self._send_json(404, {"error": "未知画布操作"})
                 return self._send_json(200, result)
