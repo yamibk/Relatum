@@ -405,7 +405,7 @@ async function freePort() {
     await page.reload();
     await page.waitForFunction(() => window.__notebooksTest?.state.initialized);
     assert.equal(await page.evaluate(() => __notebooksTest.state.sideMode), 'notebooks', 'legacy history preference falls back to notebooks');
-    assert.deepEqual(await page.locator('.note-side-modes button').evaluateAll(buttons => buttons.map(button => button.dataset.noteAction)), ['side-notebooks', 'side-links', 'side-canvas', 'side-guide']);
+    assert.deepEqual(await page.locator('.note-side-modes button').evaluateAll(buttons => buttons.map(button => button.dataset.noteAction)), ['side-notebooks', 'side-links', 'side-canvas', 'side-guide', 'side-outline']);
 
     assert.equal(await page.locator('.note-guide-example').count(), 0, 'Guide DOM is lazy');
     let guideMathRequests = 0;

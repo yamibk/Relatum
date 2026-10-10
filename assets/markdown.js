@@ -1140,6 +1140,16 @@
 
       if (trimmed === '') { i++; continue; }
 
+      // Note-only source headings are identified before placeholder transforms,
+      // which otherwise shift line numbers (frontmatter, math and comments).
+      const noteHeading = options && Array.isArray(options.noteHeadings)
+        ? /^[ \t]{0,3}\x00NHEAD([1-6]):(\d+)\x00(.*)$/.exec(line) : null;
+      if (noteHeading) {
+        const tag = 'h' + noteHeading[1];
+        out.push('<' + tag + ' data-note-heading-from="' + noteHeading[2] + '">' + renderInline(escapeHtml(noteHeading[3])) + '</' + tag + '>');
+        i++; continue;
+      }
+
       // 代码块占位符（独占一行）→ 直接透传，最外层 restoreCode 换成 <pre>
       if (/^\x00CODE\d+\x00$/.test(trimmed)) { out.push(trimmed); i++; continue; }
       // 块级公式占位符（独占一行）→ 居中块
@@ -1252,6 +1262,7 @@
   function isBlockStart(line) {
     const t = line.trim();
     if (/^\x00(CODE|DMATH)\d+\x00$/.test(t)) return true;
+    if (/^\x00NHEAD[1-6]:\d+\x00/.test(t)) return true;
     const kind = classifyLine(line).type;
     return kind === 'heading'
       || kind === 'list'
@@ -1266,8 +1277,22 @@
     if (!source) return { html: '', features: { math: false, mermaid: false }, error: false };
     const options = arguments.length > 1 ? arguments[1] : null;
     const opts = options && typeof options === 'object' ? options : {};
-    const header = opts.noteTags ? frontmatter(source) : null;
-    const body = header ? source.slice(header.to) : source;
+    let headingSource = source;
+    if (Array.isArray(opts.noteHeadings)) {
+      const pieces = []; let position = 0;
+      opts.noteHeadings.forEach(heading => {
+        if (heading.from < position || heading.to > source.length || !/^[1-6]$/.test(String(heading.level))) return;
+        pieces.push(source.slice(position, heading.from));
+        const sourceFrom = Number.isInteger(heading.sourceFrom) ? heading.sourceFrom : heading.from;
+        pieces.push('\x00NHEAD' + heading.level + ':' + sourceFrom + '\x00' + heading.text);
+        // Retain every source newline for other note blocks and callout folds.
+        pieces.push('\n'.repeat(source.slice(heading.from, heading.to).split('\n').length - 1));
+        position = heading.to;
+      });
+      pieces.push(source.slice(position)); headingSource = pieces.join('');
+    }
+    const header = opts.noteTags ? frontmatter(headingSource) : null;
+    const body = header ? headingSource.slice(header.to) : headingSource;
     const features = scanFeatures(body);
     try {
       const codeGuard = protectCode(body, opts.noteBlocks);

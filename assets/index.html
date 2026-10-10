@@ -1556,7 +1556,8 @@
         <symbol id="note-icon-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></symbol>
         <symbol id="note-icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
         <symbol id="note-icon-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></symbol>
-        <symbol id="note-icon-notebook-outline" viewBox="0 0 24 24"><rect x="5" y="3" width="16" height="18" rx="2"/><path d="M9 3v18M3 7h3M3 12h3M3 17h3M13 7h4"/></symbol>
+        <symbol id="note-icon-panel-right-frame" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/></symbol>
+        <symbol id="note-icon-panel-right-bar" viewBox="0 0 24 24"><rect x="15.5" y="6" width="2.5" height="12" rx="1.25"/></symbol>
         <symbol id="note-icon-notebook-filled" viewBox="0 0 24 24"><rect x="5" y="2" width="16" height="20" rx="2" fill="currentColor" stroke="none"/><path d="M9 3v18M13 7h4" fill="none" stroke="var(--note-notebook-cutout, var(--bg))" stroke-width="1.5"/><path d="M3 7h3M3 12h3M3 17h3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
         <symbol id="note-icon-type-plus" viewBox="0 0 24 24"><path d="M10 4v16M3 7V5a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M7 20h6M19 12v8M15 16h8"/></symbol>
       </defs>
@@ -1665,8 +1666,8 @@
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g class="note-view-icon note-view-icon-source"><use href="#note-icon-code-xml"/></g><g class="note-view-icon note-view-icon-live"><use href="#note-icon-file-pen-line"/></g></svg>
           </button>
           <button type="button" class="note-side-button note-notebooks-toggle" data-note-action="toggle-notebooks"
-            aria-label="笔记本" title="笔记本" aria-expanded="false" aria-controls="note-shared-side-panel" disabled>
-            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-notebook-outline"/></svg>
+            aria-label="展开右侧面板" title="展开" aria-expanded="false" aria-controls="note-shared-side-panel" disabled>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-panel-right-frame"/><use class="note-panel-icon-bar" href="#note-icon-panel-right-bar"/></svg>
           </button>
           <button type="button" class="note-more-button" data-note-action="current-menu"
             aria-label="当前笔记菜单" disabled><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-ellipsis"/></svg></button>
@@ -1705,6 +1706,7 @@
           <button type="button" data-note-action="side-links">链接</button>
           <button type="button" data-note-action="side-canvas" data-feature="notes.canvas">画布</button>
           <button type="button" data-note-action="side-guide">引导</button>
+          <button type="button" data-note-action="side-outline">大纲</button>
         </nav>
         <button type="button" class="note-side-button" data-note-action="close-links"
           aria-label="关闭侧栏"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-x"/></svg></button>
@@ -1738,6 +1740,7 @@
         </section>
       </div>
       <section class="note-guide" data-role="note-guide" hidden></section>
+      <section class="note-outline" data-role="note-outline" aria-label="大纲" hidden></section>
       <section class="note-canvas-settings" data-role="note-canvas-settings" data-feature="notes.canvas" aria-labelledby="note-canvas-settings-title" hidden>
         <header class="note-canvas-settings-head">
           <h3 id="note-canvas-settings-title">画布设置</h3>

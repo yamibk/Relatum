@@ -45,6 +45,8 @@
   const linksContent = $('[data-role="note-links-content"]');
   const canvasSettingsContent = $('[data-role="note-canvas-settings"]');
   const guideContent = $('[data-role="note-guide"]');
+  const outlineContent = $('[data-role="note-outline"]');
+  let noteOutline = null, outlineLoader = null, outlineLoadSequence = 0;
   const settingsTrigger = $('[data-note-action="toggle-settings"]');
   const settingsPop = $('[data-role="note-settings-pop"]');
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
@@ -123,6 +125,7 @@
     root.classList.toggle('note-browser-showing-results', show);
     $('.note-document-body')?.toggleAttribute('inert', show || !!noteMovePromise);
     updateBrowserControls();
+    syncOutline();
   }
   async function loadNoteBrowser() {
     if (noteBrowser) return noteBrowser;
@@ -351,8 +354,10 @@
 
   function notebookCopy(key) {
     const labels = {
-      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'], guide: ['引导', 'Guide'],
+      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'], guide: ['引导', 'Guide'], outline: ['大纲', 'Outline'],
       create: ['新建笔记本', 'New notebook'], close: ['关闭侧栏', 'Close sidebar'],
+      expandSide: ['展开', 'Expand'], collapseSide: ['收起', 'Collapse'],
+      expandSideLabel: ['展开右侧面板', 'Expand right sidebar'], collapseSideLabel: ['收起右侧面板', 'Collapse right sidebar'],
       gray: ['灰色', 'Gray'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'],
       yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'],
       settingsFailed: ['笔记本配置保存失败', 'Could not save notebook settings'],
@@ -426,7 +431,7 @@
     state.notebookRoot = ui.selectedRoot === null ? null : typeof ui.selectedRoot === 'string' ? ui.selectedRoot : '';
     state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
     state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
-    state.sideMode = ['notebooks', 'links', 'guide', ...(canvasEnabled() ? ['canvas'] : [])].includes(ui.mode) ? ui.mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links', 'guide', 'outline', ...(canvasEnabled() ? ['canvas'] : [])].includes(ui.mode) ? ui.mode : 'notebooks';
     root.classList.toggle('links-overlay-open', ui.open === true);
     state.notebookSettingsLoaded = true;
     updateSidePanel();
@@ -883,6 +888,7 @@
       requestAnimationFrame(() => fallbackEditor.setSelectionRange(payload.anchor, payload.head));
     } else fallbackEditor.value = '';
     if (state.viewMode === 'reading' && documentState) renderReadingDocument(payload);
+    noteOutline?.documentChanged();
     requestAnimationFrame(() => requestAnimationFrame(scheduleInlineTitleScroll));
   }
 
@@ -999,6 +1005,81 @@
   function scheduleHeadingJump(fragment) {
     if (!fragment) return;
     requestAnimationFrame(() => requestAnimationFrame(() => jumpToHeading(fragment)));
+  }
+
+  function outlineVisible() {
+    return !!outlineContent && state.active && !root.hidden && !document.hidden
+      && state.sideMode === 'outline' && root.classList.contains('links-overlay-open');
+  }
+  function outlineDocument() {
+    if (!state.current || browserResultsActive()) return null;
+    const source = liveEditor ? liveEditor.snapshot().value
+      : window.MarkdownMini.structure.normalizeSource(state.viewMode === 'reading' ? state.current.content : fallbackEditor.value);
+    return { identity: state.current, path: state.current.path, source };
+  }
+  async function navigateOutline(heading, documentState, currentOperation) {
+    const mode = state.viewMode;
+    const valid = () => currentOperation() && outlineVisible() && !browserResultsActive()
+      && state.current === documentState.identity && state.current?.path === documentState.path && state.viewMode === mode;
+    if (!valid()) return false;
+    if (editorInputPending()) await whenEditorInputSettled();
+    if (!valid() || !(await flushCanvases())) return false;
+    if (!valid()) return false;
+    const source = outlineDocument()?.source;
+    if (typeof source !== 'string') return false;
+    const position = window.RelatumNoteOutline.mapHeadingPosition(heading, documentState.source, source);
+    if (position === null) return false;
+    // Native input can shift a target or turn the surrounding text into a code
+    // block. Recheck changed source without blocking one large parser pass.
+    if (source !== documentState.source) {
+      const scan = window.RelatumNoteLiveSyntax.scanNoteHeadings(source); let result;
+      do {
+        const deadline = performance.now() + 8;
+        do { result = scan.next(); } while (!result.done && performance.now() < deadline);
+        if (!result.done) await new Promise(resolve => setTimeout(resolve, 0));
+        if (!valid() || outlineDocument()?.source !== source) return false;
+      } while (!result.done);
+      if (!result.value.some(item => item.from === position && item.level === heading.level)) return false;
+    }
+    if (mode === 'reading') {
+      const target = readingHost.querySelector('[data-note-heading-from="' + position + '"]');
+      if (!target) return false;
+      readingHost.scrollTop += target.getBoundingClientRect().top - readingHost.getBoundingClientRect().top - 12;
+    } else if (liveEditor) liveEditor.revealPosition(position, { align: 'start' });
+    else {
+      fallbackEditor.focus(); fallbackEditor.setSelectionRange(position, position);
+      const lineHeight = parseFloat(getComputedStyle(fallbackEditor).lineHeight) || 24;
+      fallbackEditor.scrollTop = Math.max(0, (source.slice(0, position).split('\n').length - 1) * lineHeight - 12);
+    }
+    return true;
+  }
+  function syncOutline() {
+    const sequence = ++outlineLoadSequence;
+    if (!outlineVisible()) { noteOutline?.suspend(); return; }
+    if (noteOutline) { noteOutline.resume(); return; }
+    if (!outlineLoader) outlineLoader = (async () => {
+      if (!window.RelatumNoteOutline) await new Promise((resolve, reject) => {
+        const script = document.createElement('script'); script.src = 'note-outline.js'; script.async = true;
+        const failed = () => { script.remove(); reject(new Error(tr('readFailed'))); };
+        script.onload = () => window.RelatumNoteOutline ? resolve() : failed(); script.onerror = failed;
+        document.head.appendChild(script);
+      });
+    })().catch(error => { outlineLoader = null; throw error; });
+    outlineLoader.then(() => {
+      if (sequence !== outlineLoadSequence || !outlineVisible()) return;
+      if (!noteOutline) noteOutline = window.RelatumNoteOutline.create(outlineContent, {
+        language, getDocument: outlineDocument, inputPending: editorInputPending, whenInputSettled: whenEditorInputSettled,
+        getSurface: () => ({ kind: state.viewMode === 'reading' ? 'reading' : liveEditor ? 'editor' : 'fallback',
+          scroller: editorScrollElement(), view: state.viewMode === 'reading' ? null : liveEditor?.view }),
+        navigate: navigateOutline,
+      });
+      noteOutline.resume();
+    }).catch(() => {
+      if (sequence !== outlineLoadSequence || !outlineVisible()) return;
+      const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'note-outline-status';
+      retry.textContent = language() === 'en' ? 'Outline unavailable. Click to retry' : '大纲暂时无法加载，点击重试';
+      retry.addEventListener('click', syncOutline); outlineContent.replaceChildren(retry);
+    });
   }
 
   async function openLocalNoteFile(target, imageSyntax) {
@@ -2395,6 +2476,7 @@
     if (readingHost) readingHost.hidden = !hasNote || state.viewMode !== 'reading';
     updateViewToggle();
     updateImageTextTools();
+    syncOutline();
   }
   function setDocumentSwitchPending(active) {
     root.classList.toggle('note-document-switch-pending', !!active);
@@ -2464,6 +2546,7 @@
     scheduleStatistics(state.current);
     desktopDirty(true);
     scheduleSave();
+    noteOutline?.documentChanged();
   }
   async function flushSave(documentState, duringMove, background) {
     if (noteMovePromise && !duringMove) await waitForNoteMove();
@@ -3204,7 +3287,8 @@
     if (linksContent) linksContent.hidden = state.sideMode !== 'links';
     if (canvasSettingsContent) canvasSettingsContent.hidden = state.sideMode !== 'canvas';
     if (guideContent) { guideContent.hidden = state.sideMode !== 'guide'; if (open && state.sideMode === 'guide') renderGuide(); }
-    ['notebooks', 'links', 'canvas', 'guide'].forEach((mode) => {
+    if (outlineContent) { outlineContent.hidden = state.sideMode !== 'outline'; outlineContent.setAttribute('aria-label', notebookCopy('outline')); }
+    ['notebooks', 'links', 'canvas', 'guide', 'outline'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
       if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
     });
@@ -3217,7 +3301,7 @@
       }
     }
     const toggle = $('[data-note-action="toggle-notebooks"]');
-    if (toggle) { toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy('notebooks')); toggle.title = notebookCopy('notebooks'); }
+    if (toggle) { toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy(open ? 'collapseSideLabel' : 'expandSideLabel')); toggle.title = notebookCopy(open ? 'collapseSide' : 'expandSide'); }
     $('[data-role="note-side-toolbar"]')?.setAttribute('aria-label', language() === 'en' ? 'Note tools' : '笔记工具');
     ['new-notebook', 'toggle-all-notebooks'].forEach((action) => {
       const button = $('[data-note-action="' + action + '"]'); if (button) button.hidden = state.sideMode !== 'notebooks';
@@ -3226,6 +3310,7 @@
     if (add) { add.title = notebookCopy('create'); add.setAttribute('aria-label', add.title); }
     $('[data-note-action="close-links"]')?.setAttribute('aria-label', notebookCopy('close'));
     if (state.sideMode === 'notebooks') renderNotebookTree();
+    syncOutline();
   }
   let sidePopoverFrame = 0;
   let sideMotionUntil = 0;
@@ -3278,7 +3363,7 @@
     }, 270);
   }
   function setSideMode(mode) {
-    state.sideMode = ['notebooks', 'links', 'guide', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links', 'guide', 'outline', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
     setNoteSettingsOpen(false, { restoreFocus: false });
     setSideOpen(true);
   }
@@ -3444,6 +3529,7 @@
     root.classList.add('active');
     const initialized = await initializeWorkspace();
     revealColdBoot();
+    syncOutline();
     if (!initialized) return false;
     if (browserDisclosure.hidden && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
     window.RelatumStartupMark?.('notes-ready');
@@ -3467,12 +3553,14 @@
     setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
     state.active = false;
+    syncOutline();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false);
     root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true;
   }
   // Retain the outgoing page until the workspace's slide finishes, then release
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
+    syncOutline();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
 
@@ -3560,6 +3648,7 @@
     else if (name === 'side-links') setSideMode('links');
     else if (name === 'side-canvas') setSideMode('canvas');
     else if (name === 'side-guide') setSideMode('guide');
+    else if (name === 'side-outline') setSideMode('outline');
     else if (name === 'close-links') setSideOpen(false);
   });
 
@@ -3778,11 +3867,12 @@
   document.addEventListener('relatum:languagechange', closeContextMenu);
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
+    syncOutline();
     if (document.hidden) { cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
     else if (state.active) { if (noteBrowser) noteBrowser.resume(); if (browserIntent && browserDisclosure.hidden) setBrowserMode(true); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
-  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); });
+  window.addEventListener('pagehide', () => { noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); syncOutline(); });
   window.addEventListener('beforeunload', () => { cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);

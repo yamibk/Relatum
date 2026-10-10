@@ -97,6 +97,14 @@ class NotebookTests(unittest.TestCase):
         self.assertEqual(saved["ui"]["mode"], "guide")
         self.assertEqual(NotesStore(self.store.root).notebook_settings(), saved)
 
+    def test_outline_sidebar_mode_roundtrip(self):
+        saved = self.store.update_notebook_settings({"ui": {"mode": "outline", "open": True}})
+        self.assertEqual(saved["ui"]["mode"], "outline")
+        self.assertTrue(saved["ui"]["open"])
+        reloaded = NotesStore(self.store.root)
+        self.assertEqual(reloaded.notebook_settings()["ui"]["mode"], "outline")
+        self.assertEqual(NotesStore(self.store.root).notebook_settings(), saved)
+
     def test_unselected_roundtrip_and_partial_merge(self):
         relative = self.notebook()
         before = self.store.update_notebook_settings({"colors": {relative: "blue"},

@@ -2019,6 +2019,9 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-new, .note-tab-close-all, .note-tab-close, .note-library-focus-button, .note-mobile-pane-button, .note-image-text-action, .note-shortcut-add, .note-shortcut-chip button):focus-visible { outline: 1.5px solid var(--note-control-focus); outline-offset: 2px; }
 .note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-close-all, .note-library-focus-button, .note-image-text-action, [data-note-action="new-note"], [data-note-action="new-folder"]):disabled { opacity: .34; cursor: default; }
 .note-workspace :is(.note-icon-button, .note-side-button, .note-more-button, .note-tab-close-all, .note-library-focus-button, .note-image-text-action):disabled:hover { background: transparent; }
+.note-workspace .note-notebooks-toggle .note-panel-icon-bar { fill: currentColor; fill-opacity: 0; stroke-width: 1.5; transition: fill-opacity 130ms ease; }
+.note-workspace .note-notebooks-toggle:is(:hover, :focus-visible, [aria-expanded="true"]):not(:disabled) .note-panel-icon-bar { fill-opacity: 1; }
+.note-workspace .note-notebooks-toggle[aria-expanded="true"] { color: var(--text); }
 .note-workspace .note-image-text-tools[aria-busy="true"] button:disabled { cursor: wait; }
 body.start-page[data-start-theme="dark"] .note-workspace { --note-control-hover: rgba(235,240,235,.075); --note-control-active: rgba(235,240,235,.12); --note-control-focus: rgba(204,220,197,.7); --note-notebook-cutout: #181a19; }
 .note-links-pane { width: min(300px, calc(100vw - 24px)); visibility: hidden; transition: transform 230ms cubic-bezier(.22, 1, .36, 1), visibility 230ms; }
@@ -2388,6 +2391,7 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
   .note-tab-close-all,
   .note-workspace .note-icon-button,
   .note-workspace .note-side-button,
+  .note-workspace .note-panel-icon-bar,
   .note-workspace .note-more-button,
   .note-workspace .note-library-focus-button,
   .note-workspace .note-mobile-pane-button,
@@ -45381,6 +45385,24 @@ body.start-page[data-start-theme="dark"] .note-live-callout-title-widget.note-co
 .note-guide-copy { position: absolute; right: 0; bottom: 14px; width: 24px; height: 24px; padding: 4px; color: var(--text-secondary); border: 0; background: transparent; cursor: pointer; }
 .note-guide-copy svg { width: 16px; height: 16px; }
 .note-guide-copy:focus-visible { outline: 1px solid var(--text-secondary); }
+
+.note-outline { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 24px; color: var(--text); }
+.note-outline[hidden] { display: none; }
+.note-outline-tree, .note-outline-tree ul { margin: 0; padding: 0; list-style: none; }
+.note-outline-tree ul { padding-left: 14px; }
+.note-outline-tree [hidden] { display: none; }
+.note-outline-row { display: flex; align-items: center; min-height: 32px; border-radius: 5px; font-size: 13px; }
+.note-outline-row:hover { background: var(--note-control-hover); }
+.note-outline-row.is-current { background: var(--note-control-active); font-weight: 650; }
+.note-outline-row:focus-visible { outline: 1px solid var(--note-control-focus); outline-offset: -1px; }
+.note-outline-row button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.note-outline-toggle { display: grid; place-items: center; width: 26px; height: 30px; flex: 0 0 26px; }
+.note-outline-toggle.has-children::before { content: ''; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); opacity: .6; }
+.note-outline-row[aria-expanded="true"] > .note-outline-toggle::before { transform: translateY(-1px) rotate(45deg); }
+.note-outline-row .note-outline-toggle:disabled { cursor: default; }
+.note-outline-row .note-outline-title { min-width: 0; flex: 1; padding: 6px 7px 6px 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-outline-status { margin: 0; padding: 10px 4px; border: 0; background: transparent; color: var(--text-secondary); font: 12px/1.7 var(--font-ui); text-align: left; }
+button.note-outline-status { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .note-callout-fold svg { transition: none; } }
 
 /* ── 日历双视图 · 极简记账 ─────────────────────────────── */

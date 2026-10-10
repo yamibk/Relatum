@@ -230,6 +230,160 @@
     return value;
   }
 
+  let noteHeadingParser = null;
+  function* parseHeadingTree(source) {
+    if (!noteHeadingParser) noteHeadingParser = markdownLanguage.parser.configure(plainParagraphExtension);
+    const parsing = noteHeadingParser.startParse(source);
+    let tree;
+    while (!(tree = parsing.advance())) yield;
+    return tree;
+  }
+
+  // The same source index serves the lazy outline and the reading surface.
+  // Keep this generator DOM-free and yield between parser/scan steps so a long
+  // note does not force full-document parsing into CodeMirror's input listener.
+  function* scanNoteHeadings(value) {
+    const source = window.MarkdownMini.structure.normalizeSource(value);
+    let tree = yield* parseHeadingTree(source);
+    const protectedRanges = [], inlineCode = [], customRanges = [];
+    const protectedName = /^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|CommentBlock|Blockquote|BulletList|OrderedList|Table)$/;
+    for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
+      if (protectedName.test(node.name)) protectedRanges.push({ from: node.from, to: node.to, kind: node.name });
+      else {
+        const cursor = node.cursor();
+        do {
+          if (cursor.name === 'InlineCode') inlineCode.push({ from: cursor.from, to: cursor.to });
+          yield;
+        } while (cursor.next());
+      }
+      yield;
+    }
+    const metadata = window.MarkdownMini.frontmatter(source);
+    if (metadata) customRanges.push(metadata);
+    const guards = [...protectedRanges, ...inlineCode, ...(metadata ? [metadata] : [])].sort((a, b) => a.from - b.from);
+    let guardIndex = 0, offset = 0, comment = null, math = null;
+    const guarded = (position) => {
+      while (guardIndex < guards.length && guards[guardIndex].to <= position) guardIndex++;
+      return guardIndex < guards.length && guards[guardIndex].from <= position;
+    };
+    const lines = source.split('\n');
+    for (let number = 0; number < lines.length; number++) {
+      const line = lines[number];
+      const end = offset + line.length;
+      if (math) {
+        if (line.trim() === math.close) { customRanges.push({ from: math.from, to: end }); math = null; }
+      } else if (!guarded(offset) || guards[guardIndex]?.kind === 'Table') {
+        const trimmed = line.trim();
+        const table = window.MarkdownTable;
+        // Relatum accepts literal pipes in code/math and heading-looking table
+        // cells that Lezer may end the table before. Match the shared grid scan.
+        if (!comment && table && line.length <= MAX_RICH_LINE && number + 1 < lines.length
+            && table.rowHasDelimiter(line) && table.isSeparatorLine(lines[number + 1])) {
+          let close = number + 2, length = line.length + lines[number + 1].length + 1;
+          while (close < lines.length && length <= RICH_BLOCK_LIMIT && lines[close].length <= MAX_RICH_LINE
+              && lines[close].trim() && table.rowHasDelimiter(lines[close])) {
+            length += lines[close].length + 1; close++; yield;
+          }
+          if (length <= RICH_BLOCK_LIMIT) {
+            customRanges.push({ from: offset, to: offset + length }); offset += length + 1; number = close - 1; yield; continue;
+          }
+        }
+        if (!comment && (trimmed === '$$' || trimmed === '\\[')) math = { from: offset, close: trimmed === '$$' ? '$$' : '\\]' };
+        else if (!comment && (/^\$\$.+\$\$$/.test(trimmed) || /^\\\[.+\\\]$/.test(trimmed))) customRanges.push({ from: offset, to: end });
+        else {
+          const markers = /<!--|-->|%%/g;
+          const inlineMath = /<!--|%%/.test(line) ? window.MarkdownMini.mathRanges(line).filter(range =>
+            !inlineCode.some(code => code.from < offset + range.to && code.to > offset + range.from)) : [];
+          let marker;
+          while ((marker = markers.exec(line))) {
+            const position = offset + marker.index;
+            if (guarded(position)) continue;
+            if (!comment && inlineMath.some(range => range.from <= marker.index && range.to >= marker.index + marker[0].length)) continue;
+            if (comment) {
+              if (marker[0] === comment.close) { customRanges.push({ from: comment.from, to: position + marker[0].length }); comment = null; }
+            } else if (marker[0] !== '-->') comment = { from: position, close: marker[0] === '<!--' ? '-->' : '%%' };
+          }
+        }
+      }
+      offset = end + 1;
+      yield;
+    }
+    if (comment) customRanges.push({ from: comment.from, to: source.length });
+    if (math) customRanges.push({ from: math.from, to: source.length });
+    let visibleSource = source;
+    if (customRanges.length) {
+      const ranges = [...protectedRanges, ...customRanges].sort((a, b) => a.from - b.from), merged = [];
+      for (const range of ranges) {
+        const last = merged[merged.length - 1];
+        if (last && range.from <= last.to) last.to = Math.max(last.to, range.to);
+        else merged.push({ from: range.from, to: range.to });
+      }
+      const pieces = []; let position = 0;
+      for (const range of merged) {
+        pieces.push(source.slice(position, range.from));
+        for (let start = range.from; start < range.to; start += 16384) {
+          pieces.push(source.slice(start, Math.min(range.to, start + 16384)).replace(/[^\n]/g, ' '));
+          yield;
+        }
+        position = range.to;
+      }
+      pieces.push(source.slice(position)); visibleSource = pieces.join('');
+      tree = yield* parseHeadingTree(visibleSource);
+    }
+    const headings = [];
+    for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
+      const heading = /^(?:ATXHeading([1-6])|SetextHeading([12]))$/.exec(node.name);
+      if (!heading) { yield; continue; }
+      const cursor = node.cursor(); let omitted = [];
+      const labelCode = [];
+      let textFrom = node.from, textTo = node.to;
+      do {
+        if (cursor.name === 'HeaderMark') {
+          if (heading[1] && cursor.from === node.from) textFrom = cursor.to;
+          else textTo = Math.min(textTo, cursor.from);
+        } else if (/^(?:EmphasisMark|CodeMark|StrikethroughMark|LinkMark|LinkTitle)$/.test(cursor.name)
+            || cursor.name === 'URL' && cursor.node.parent?.name !== 'Autolink') omitted.push({ from: cursor.from, to: cursor.to });
+        if (cursor.name === 'InlineCode') labelCode.push({ from: cursor.from, to: cursor.to });
+        yield;
+      } while (cursor.next());
+      const text = visibleSource.slice(textFrom, textTo).trim().replace(/\n/g, ' ');
+      const rawText = visibleSource.slice(textFrom, textTo);
+      const literals = labelCode.map(range => {
+        const value = visibleSource.slice(range.from, range.to), marks = /^`+/.exec(value)[0].length;
+        return { from: range.from, to: range.to, text: value.slice(marks, -marks).replace(/\n/g, ' '), literal: true };
+      });
+      window.MarkdownMini.mathRanges(rawText).forEach(range => {
+        const from = textFrom + range.from, to = textFrom + range.to;
+        if (!literals.some(code => code.from < to && code.to > from)) literals.push({ from, to, text: rawText.slice(range.from, range.to), literal: true });
+      });
+      const wikis = [];
+      for (const match of rawText.matchAll(/\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]/g)) {
+        const from = textFrom + match.index;
+        if (!literals.some(range => range.from < from + match[0].length && range.to > from)) wikis.push({ from, to: from + match[0].length, text: match[2] || match[1] });
+      }
+      const replacements = [...literals, ...wikis];
+      omitted = omitted.filter(range => !replacements.some(item => item.from < range.to && item.to > range.from)).concat(replacements).sort((a, b) => a.from - b.from);
+      const unescape = value => value.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, '$1');
+      let label = '', position = textFrom;
+      for (const range of omitted) {
+        if (range.to <= textFrom || range.from >= textTo) continue;
+        label += unescape(visibleSource.slice(position, range.from)) + (range.literal ? range.text : unescape(range.text || '')); position = range.to;
+      }
+      label += unescape(visibleSource.slice(position, textTo));
+      label = label.replace(/\s+/g, ' ').trim();
+      if (label) headings.push({ from: node.from, to: node.to, level: Number(heading[1] || heading[2]), text, label });
+      yield;
+    }
+    return headings;
+  }
+
+  function noteHeadingsFromString(source) {
+    const scan = scanNoteHeadings(source);
+    let step;
+    do { step = scan.next(); } while (!step.done);
+    return step.value;
+  }
+
   function calloutPresentationType(type) {
     return window.MarkdownMini.noteBlock(type).type;
   }
@@ -1412,12 +1566,12 @@
     ignoreEvent() { return false; }
   }
 
-  function safeIsolatedResult(source) {
+  function safeIsolatedResult(source, options) {
     const markdownMini = window.MarkdownMini;
     if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
       return { html: '', features: { math: false, mermaid: false }, error: true };
     }
-    return markdownMini.renderResult(source, { localImages: true, noteTags: true, noteBlocks: true });
+    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true }, options));
   }
 
   function releaseReadingDocument(host) {
@@ -1444,14 +1598,23 @@
     const epoch = host.dataset.noteReadingEpoch;
     const imageTextSizer = createImageTextSizer();
     host.__relatumImageTextSizer = imageTextSizer;
-    const original = String(source || '');
+    const original = window.MarkdownMini.structure.normalizeSource(source);
     const canvasRefs = canvasEnabled() ? window.MarkdownMini.canvasReferences(original) : [];
     let renderedSource = original;
     canvasRefs.slice().reverse().forEach((ref, index) => {
       const ordinal = canvasRefs.length - index - 1;
       renderedSource = renderedSource.slice(0, ref.from) + '![](relatum-canvas-placeholder-' + ordinal + ')' + renderedSource.slice(ref.to);
     });
-    const result = safeIsolatedResult(renderedSource);
+    let canvasShift = 0, canvasIndex = 0;
+    const noteHeadings = noteHeadingsFromString(original).map(heading => {
+      while (canvasIndex < canvasRefs.length && canvasRefs[canvasIndex].to <= heading.from) {
+        const ref = canvasRefs[canvasIndex];
+        canvasShift += ('![](relatum-canvas-placeholder-' + canvasIndex + ')').length - (ref.to - ref.from);
+        canvasIndex++;
+      }
+      return Object.assign({}, heading, { from: heading.from + canvasShift, to: heading.to + canvasShift, sourceFrom: heading.from });
+    });
+    const result = safeIsolatedResult(renderedSource, { noteHeadings });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
@@ -3940,9 +4103,12 @@
       view.focus();
     }
 
-    function revealPosition(position) {
+    function revealPosition(position, options) {
       const target = clamp(position, 0, view.state.doc.length);
-      view.dispatch({ selection: EditorSelection.cursor(target), scrollIntoView: true });
+      view.dispatch({ selection: EditorSelection.cursor(target),
+        ...(options && options.align === 'start'
+          ? { effects: EditorView.scrollIntoView(target, { y: 'start', yMargin: 12 }) }
+          : { scrollIntoView: true }) });
       view.focus();
     }
 
@@ -4070,6 +4236,8 @@
   }
 
   window.RelatumNoteLiveSyntax = {
+    scanNoteHeadings,
+    noteHeadingsFromString,
     scanBlockSpecsFromString(source) {
       const state = EditorState.create({ doc: String(source || ''), extensions: [markdown({ base: markdownLanguage })] });
       return scanBlockSpecs(state, 0, state.doc.length).map((spec) => Object.assign({}, spec));
