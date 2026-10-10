@@ -517,51 +517,41 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-quote-line { padding-left: .85em !important; border-left: 2px solid rgba(79, 94, 74, .25); color: var(--text-secondary); }
 .note-live-editor-host .cm-line.note-live-callout-line,
 .note-live-editor-host .cm-line.note-live-callout-line.cm-activeLine {
-  --callout: #086ddd;
-  --callout-bg: rgba(8, 109, 221, .09);
+  --callout: var(--note-block-accent-light, #086ddd);
+  --callout-bg: var(--note-block-bg-light, color-mix(in srgb, var(--callout) 10%, #fff));
   box-sizing: border-box;
-  padding: .08em 1em !important;
-  border-left: 3px solid var(--callout);
+  padding: 0 12px 0 24px !important;
+  border: 0;
   color: var(--text);
   background: var(--callout-bg);
+  line-height: 1.5;
 }
 /* Padding belongs to each real CM line, so its height and wrapped caret
    coordinates are measured normally. No margins or fixed-height overlays. */
 .note-live-editor-host .cm-line.note-live-callout-line.note-live-callout-first {
-  padding-top: .65em !important;
-  padding-bottom: .28em !important;
-  border-radius: 7px 7px 0 0;
+  padding-top: 12px !important;
+  border-radius: 4px 4px 0 0;
+  line-height: 1.3;
 }
 .note-live-editor-host .cm-line.note-live-callout-line.note-live-callout-last {
-  padding-bottom: .65em !important;
-  border-radius: 0 0 7px 7px;
+  padding-bottom: calc(1em + 12px) !important;
+  border-radius: 0 0 4px 4px;
 }
-.note-live-editor-host .cm-line.note-live-callout-line.note-live-callout-first.note-live-callout-last { border-radius: 7px; }
+.note-live-editor-host .cm-line.note-live-callout-line.note-live-callout-first.note-live-callout-last { border-radius: 4px; padding-bottom: 12px !important; }
+.note-live-editor-host .cm-line.note-live-callout-body-first { padding-top: 1em !important; }
 .note-live-callout-title-widget {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   max-width: 100%;
   color: var(--callout);
-  font-weight: 700;
-  line-height: inherit;
-  vertical-align: baseline;
+  font-weight: 600;
+  line-height: 1.3;
+  vertical-align: top;
   cursor: text;
 }
 .note-live-callout-title-widget > span { min-width: 0; }
 .note-live-callout-title-widget .md-callout-icon { display: block; flex: 0 0 auto; width: 18px; height: 18px; stroke-width: 1.75; }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-abstract { --callout: #008986; --callout-bg: rgba(0, 137, 134, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-info,
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-todo { --callout: #007f9b; --callout-bg: rgba(0, 127, 155, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-tip { --callout: #008a7c; --callout-bg: rgba(0, 138, 124, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-success { --callout: #27824c; --callout-bg: rgba(39, 130, 76, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-question { --callout: #a87922; --callout-bg: rgba(168, 121, 34, .1); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-warning { --callout: #bb741b; --callout-bg: rgba(187, 116, 27, .1); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-failure { --callout: #ba5050; --callout-bg: rgba(186, 80, 80, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-danger { --callout: #bd3d57; --callout-bg: rgba(189, 61, 87, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-bug { --callout: #b74d45; --callout-bg: rgba(183, 77, 69, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-example { --callout: #8063b8; --callout-bg: rgba(128, 99, 184, .09); }
-.note-live-editor-host .cm-line.note-live-callout-line.is-callout-quote { --callout: #6e7471; --callout-bg: rgba(110, 116, 113, .09); }
 .note-live-editor-host .cm-line.note-live-code-line,
 .note-live-editor-host .cm-line.note-live-code-line.cm-activeLine {
   padding-inline: 1.05em !important;
@@ -2239,10 +2229,11 @@ body.start-page[data-start-theme="dark"] .note-live-wikilink { color: #b7d1b1; t
 body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-line.note-live-callout-line,
 body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-line.note-live-callout-line.cm-activeLine {
   color: #edf0ea;
-  background: color-mix(in srgb, var(--callout) 17%, transparent);
-  border-left-color: color-mix(in srgb, var(--callout) 72%, #edf0ea);
+  --callout: var(--note-block-accent-dark, #027aff);
+  background: var(--note-block-bg-dark, color-mix(in srgb, var(--callout) 10%, #181a19));
+  border: 0;
 }
-body.start-page[data-start-theme="dark"] .note-live-callout-title-widget { color: color-mix(in srgb, var(--callout) 62%, #edf0ea); }
+body.start-page[data-start-theme="dark"] .note-live-callout-title-widget { color: var(--callout); }
 body.start-page[data-start-theme="dark"] .note-live-quote-line { border-left-color: rgba(235,240,235,.2); }
 body.start-page[data-start-theme="dark"] .note-live-raw-html-line { color: #d0a88d; }
 body.start-page[data-start-theme="dark"] .note-live-rich-block { color: #edf0ea; }
@@ -45281,6 +45272,87 @@ body.canvas-dark .task-root-archive-root:focus-visible {
     transition: none !important;
   }
 }
+
+/* Note blocks share their palette with the native-line editor and Guide. */
+.node-text .md-callout.note-block {
+  --callout: var(--note-block-accent-light, #086ddd);
+  margin: 1em 0;
+  padding: 12px 12px 12px 24px;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: none;
+  background: var(--note-block-bg-light);
+  color: var(--text);
+  font-size: inherit;
+  line-height: 1.5;
+}
+.node-text .md-callout.note-block > .md-callout-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  color: var(--callout);
+  font-size: inherit;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.node-text .md-callout.note-block .md-callout-icon { flex: 0 0 18px; width: 18px; height: 18px; stroke-width: 1.75; }
+.node-text .md-callout.note-block > .md-callout-body > p { margin: 1em 0; line-height: 1.5; }
+.node-text .md-callout.note-block > .md-callout-body[hidden] { display: none; }
+.node-text .md-callout.note-color-block,
+.note-live-editor-host .cm-line.note-live-callout-line.note-color-block,
+.note-live-rich-block.note-block-math.note-color-block { background: var(--note-block-bg-light); }
+.node-text .md-callout.note-color-block { border-radius: 7px; }
+.node-text .md-callout.note-color-block > .md-callout-title,
+.note-live-callout-title-widget.note-color-block { color: inherit; font-weight: 600; }
+.node-text .md-callout.note-color-block:not(:has(> .md-callout-title)) > .md-callout-body > p:first-child { margin-top: 0; }
+.node-text .md-callout.note-color-block:not(:has(> .md-callout-title)) > .md-callout-body > p:last-child { margin-bottom: 0; }
+.note-live-editor-host .cm-line.note-color-block.note-live-callout-first { border-top-left-radius: 7px; border-top-right-radius: 7px; }
+.note-live-editor-host .cm-line.note-color-block.note-live-callout-last { border-bottom-left-radius: 7px; border-bottom-right-radius: 7px; }
+.note-live-editor-host .cm-line.note-color-block.note-live-callout-body-first.note-live-callout-first { padding-top: 12px !important; line-height: 1.5; }
+.note-live-editor-host .cm-line.note-color-block.note-live-callout-first.note-live-callout-last { border-radius: 7px; }
+.note-live-rich-block.note-block-math {
+  --callout: var(--note-block-accent-light, #086ddd);
+  margin: 0;
+  width: 100%;
+  padding: 1em 12px 1em 24px;
+  border: 0;
+  background: var(--note-block-bg-light);
+}
+.note-live-rich-block.note-block-math.note-live-callout-last { padding-bottom: calc(1em + 12px); border-radius: 0 0 4px 4px; }
+.note-live-rich-block.note-block-math.note-color-block.note-live-callout-last { border-radius: 0 0 7px 7px; }
+.note-live-rich-block.note-block-math.note-color-block.note-live-callout-first { padding-top: 12px; border-top-left-radius: 7px; border-top-right-radius: 7px; }
+.note-live-rich-block.note-block-math.note-color-block.note-live-callout-first.note-live-callout-last { padding-bottom: 12px; border-radius: 7px; }
+.note-callout-title-text { min-width: 0; overflow-wrap: anywhere; }
+.note-callout-fold { display: inline-flex; flex: 0 0 18px; width: 18px; height: 20px; padding: 0; margin: 0; border: 0; border-radius: 2px; background: transparent; color: inherit; cursor: pointer; vertical-align: middle; }
+.note-callout-fold svg { width: 18px; height: 18px; transition: transform 100ms ease; }
+.note-callout-fold[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.note-callout-fold:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
+body.start-page[data-start-theme="dark"] .node-text .md-callout.note-block,
+body.start-page[data-start-theme="dark"] .note-live-rich-block.note-block-math { --callout: var(--note-block-accent-dark, #027aff); background: var(--note-block-bg-dark); color: #edf0ea; }
+body.start-page[data-start-theme="dark"] .node-text .md-callout.note-color-block,
+body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-line.note-live-callout-line.note-color-block,
+body.start-page[data-start-theme="dark"] .note-live-rich-block.note-block-math.note-color-block { background: var(--note-block-bg-dark); }
+body.start-page[data-start-theme="dark"] .node-text .md-callout.note-color-block > .md-callout-title,
+body.start-page[data-start-theme="dark"] .note-live-callout-title-widget.note-color-block { color: #edf0ea; }
+.note-side-modes { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.note-side-modes::-webkit-scrollbar { display: none; }
+.note-side-modes button { flex: 0 0 auto; white-space: nowrap; }
+.note-links-head > [data-note-action="close-links"] { flex: 0 0 auto; }
+.note-guide { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
+.note-guide[hidden] { display: none; }
+.note-guide h3 { margin: 18px 0 10px; font-size: 13px; font-weight: 600; }
+.note-guide h3:first-child { margin-top: 0; }
+.note-guide-example { position: relative; padding: 8px 0 14px; border-bottom: 1px solid var(--border); }
+.note-guide-example .node-text { font-size: 13px; }
+.note-guide-example .md-callout.note-block { margin: 0 0 8px; }
+.note-guide-example pre { margin: 0; padding-right: 28px; font: 11px/1.5 var(--note-font-mono, Consolas, monospace); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); }
+.note-guide-example small { display: block; margin: 6px 0; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.note-guide-copy { position: absolute; right: 0; bottom: 14px; width: 24px; height: 24px; padding: 4px; color: var(--text-secondary); border: 0; background: transparent; cursor: pointer; }
+.note-guide-copy svg { width: 16px; height: 16px; }
+.note-guide-copy:focus-visible { outline: 1px solid var(--text-secondary); }
+@media (prefers-reduced-motion: reduce) { .note-callout-fold svg { transition: none; } }
 
 /* ── 日历双视图 · 极简记账 ─────────────────────────────── */
 .calendar-mode-stage {

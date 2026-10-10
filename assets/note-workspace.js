@@ -43,6 +43,7 @@
   const sideTitle = $('[data-role="note-side-title"]');
   const linksContent = $('[data-role="note-links-content"]');
   const canvasSettingsContent = $('[data-role="note-canvas-settings"]');
+  const guideContent = $('[data-role="note-guide"]');
   const settingsTrigger = $('[data-note-action="toggle-settings"]');
   const settingsPop = $('[data-role="note-settings-pop"]');
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
@@ -320,7 +321,7 @@
 
   function notebookCopy(key) {
     const labels = {
-      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'],
+      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'], guide: ['引导', 'Guide'],
       create: ['新建笔记本', 'New notebook'], close: ['关闭侧栏', 'Close sidebar'],
       gray: ['灰色', 'Gray'], blue: ['蓝色', 'Blue'], cyan: ['青色', 'Cyan'], green: ['绿色', 'Green'],
       yellow: ['黄色', 'Yellow'], orange: ['橙色', 'Orange'], red: ['红色', 'Red'], purple: ['紫色', 'Purple'],
@@ -395,7 +396,7 @@
     state.notebookRoot = ui.selectedRoot === null ? null : typeof ui.selectedRoot === 'string' ? ui.selectedRoot : '';
     state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
     state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
-    state.sideMode = ['notebooks', 'links', ...(canvasEnabled() ? ['canvas'] : [])].includes(ui.mode) ? ui.mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links', 'guide', ...(canvasEnabled() ? ['canvas'] : [])].includes(ui.mode) ? ui.mode : 'notebooks';
     root.classList.toggle('links-overlay-open', ui.open === true);
     state.notebookSettingsLoaded = true;
     updateSidePanel();
@@ -1206,10 +1207,10 @@
     if (!readingHost) return;
     const documentState = payload || readingPayload();
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
-      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '');
+      window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
-        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true })
+        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true })
         : { html: '' };
       readingHost.innerHTML = '<article class="note-reading-content node-text">' + (result.html || '') + '</article>';
     }
@@ -3039,6 +3040,85 @@
   function modalConfirm(title, copy) { if (!modalHost) return Promise.resolve(false); return new Promise((resolve) => { const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay'; const dialog = document.createElement('section'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); const heading = document.createElement('h2'); heading.textContent = title; const paragraph = document.createElement('p'); paragraph.textContent = copy; const actions = document.createElement('footer'); actions.className = 'note-modal-actions'; const finish = (value) => { overlay.remove(); resolve(value); }; actions.append(contextButton(tr('cancel'), () => finish(false)), contextButton(tr('create'), () => finish(true))); dialog.append(heading, paragraph, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay); requestAnimationFrame(() => overlay.classList.add('visible')); }); }
   async function confirmCreateWiki(rawTarget) { const target = normalizedWikiTarget(rawTarget); if (!target || !(await modalConfirm(tr('unresolvedTitle'), tr('unresolvedCopy', { target })))) return; const parts = target.replace(/\\/g, '/').split('/').filter(Boolean); const name = parts.pop(); const hasPath = parts.length > 0; await createEntry('note', { parent: hasPath ? parts.join('/') : state.current ? parentPath(state.current.path) : '', name, createParents: hasPath }); }
 
+  function renderGuide() {
+    if (!guideContent || !window.MarkdownMini?.noteBlockCatalog) return;
+    const lang = language();
+    if (guideContent.dataset.language === lang) return;
+    const english = lang === 'en';
+    const scroll = guideContent.scrollTop;
+    guideContent.replaceChildren(); guideContent.dataset.language = lang;
+    const catalog = window.MarkdownMini.noteBlockCatalog;
+    const heading = (zh, en) => { const item = document.createElement('h3'); item.textContent = english ? en : zh; guideContent.appendChild(item); };
+    const example = (source, preview, detail) => {
+      const item = document.createElement('div'); item.className = 'note-guide-example';
+      if (preview) {
+        const content = document.createElement('div'); content.className = 'node-text';
+        content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true }).html;
+        content.querySelectorAll('.note-callout-fold').forEach(button => button.addEventListener('click', () => {
+          const body = button.closest('.md-callout').querySelector('.md-callout-body');
+          if (body) { body.hidden = !body.hidden; button.setAttribute('aria-expanded', String(!body.hidden)); }
+        }));
+        item.appendChild(content);
+      }
+      if (detail) { const text = document.createElement('small'); text.textContent = detail; item.appendChild(text); }
+      const code = document.createElement('pre'); code.textContent = source; item.appendChild(code);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-guide-copy';
+      const label = english ? 'Copy syntax' : '复制语法'; button.setAttribute('data-ui-tooltip', label); button.setAttribute('aria-label', label);
+      button.innerHTML = '<svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#note-icon-copy"/></svg>';
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', async () => {
+        let copied = false;
+        try { await navigator.clipboard.writeText(source); copied = true; } catch (error) {
+          await liveEditor?.whenInputSettled();
+          const active = document.activeElement;
+          const selection = window.getSelection();
+          const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange()) : [];
+          const inputSelection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+          const area = document.createElement('textarea'); area.value = source; area.readOnly = true;
+          area.style.cssText = 'position:fixed;left:-9999px;opacity:0'; document.body.appendChild(area); area.select();
+          try { copied = !!document.execCommand('copy'); } catch (copyError) {}
+          area.remove();
+          active?.focus({ preventScroll: true });
+          if (selection) { selection.removeAllRanges(); ranges.forEach(range => selection.addRange(range)); }
+          if (inputSelection) active.setSelectionRange(...inputSelection);
+        }
+        const feedback = copied ? english ? 'Syntax copied' : '语法已复制' : english ? 'Could not copy syntax' : '语法复制失败';
+        if (button.isConnected) { button.setAttribute('data-ui-tooltip', feedback); button.setAttribute('aria-label', feedback); window.setTimeout(() => { if (button.isConnected) { button.setAttribute('data-ui-tooltip', label); button.setAttribute('aria-label', label); } }, 1800); }
+        showToast(feedback, copied ? undefined : 'error');
+      });
+      item.appendChild(button); guideContent.appendChild(item);
+    };
+    const body = english ? 'Callout content.' : 'Callout 正文。';
+    heading('Callout 与别名', 'Callouts and aliases');
+    catalog.types.forEach(type => {
+      const source = '> [!' + type.name + ']\n> ' + body;
+      example(source, source, type.aliases.length ? (english ? 'Aliases: ' : '别名：') + type.aliases.join(', ') : '');
+    });
+    heading('标题与折叠', 'Titles and folding');
+    const custom = '> [!note] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + body;
+    example(custom, custom);
+    ['+', '-'].forEach(suffix => {
+      const source = '> [!' + (suffix === '+' ? 'tip' : 'warning') + ']' + suffix + ' ' + (english ? suffix === '+' ? 'Expanded by default' : 'Collapsed by default' : suffix === '+' ? '默认展开' : '默认折叠') + '\n> ' + body;
+      example(source, source);
+    });
+    heading('块公式', 'Display math');
+    example('> [!info]\n> $$a^2+b^2$$\n> ' + body, null);
+    example('> [!info]\n> $$\n> a^2+b^2\n> $$\n> ' + body, null);
+    example('> [!info]\n> \\[\n> E=mc^2\n> \\]\n> ' + body, null);
+    heading('纯色块', 'Color blocks');
+    const groups = { cool: ['冷色', 'Cool'], green: ['绿色', 'Green'], warm: ['暖色', 'Warm'], pink: ['粉紫', 'Pink and purple'], neutral: ['中性', 'Neutral'] };
+    Object.entries(groups).forEach(([group, names]) => {
+      heading(...names);
+      catalog.colors.filter(color => color.group === group).forEach(color => {
+        const source = '> [!' + color.name + ']\n> ' + (english ? 'Color block content.' : '纯色块正文。');
+        example(source, source);
+      });
+    });
+    const titled = '> [!Lavender] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + (english ? 'Color block content.' : '纯色块正文。');
+    example(titled, titled, english ? 'Color names are case-insensitive.' : '颜色名不区分大小写。');
+    guideContent.scrollTop = scroll;
+  }
+
   function updateSidePanel() {
     const open = root.classList.contains('links-overlay-open');
     if (sidePane) { sidePane.inert = !open; sidePane.setAttribute('aria-label', language() === 'en' ? 'Note sidebar' : '笔记侧栏'); }
@@ -3047,10 +3127,19 @@
     if (notebooksContent) notebooksContent.hidden = state.sideMode !== 'notebooks';
     if (linksContent) linksContent.hidden = state.sideMode !== 'links';
     if (canvasSettingsContent) canvasSettingsContent.hidden = state.sideMode !== 'canvas';
-    ['notebooks', 'links', 'canvas'].forEach((mode) => {
+    if (guideContent) { guideContent.hidden = state.sideMode !== 'guide'; if (open && state.sideMode === 'guide') renderGuide(); }
+    ['notebooks', 'links', 'canvas', 'guide'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
       if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(state.sideMode === mode)); }
     });
+    if (open) {
+      const button = $('[data-note-action="side-' + state.sideMode + '"]');
+      if (button) {
+        const nav = button.parentElement, parent = nav.getBoundingClientRect(), rect = button.getBoundingClientRect();
+        if (rect.left < parent.left) nav.scrollLeft += rect.left - parent.left;
+        else if (rect.right > parent.right) nav.scrollLeft += rect.right - parent.right;
+      }
+    }
     const toggle = $('[data-note-action="toggle-notebooks"]');
     if (toggle) { toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy('notebooks')); toggle.title = notebookCopy('notebooks'); }
     $('[data-role="note-side-toolbar"]')?.setAttribute('aria-label', language() === 'en' ? 'Note tools' : '笔记工具');
@@ -3112,7 +3201,7 @@
     }, 270);
   }
   function setSideMode(mode) {
-    state.sideMode = ['notebooks', 'links', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
+    state.sideMode = ['notebooks', 'links', 'guide', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
     setNoteSettingsOpen(false, { restoreFocus: false });
     setSideOpen(true);
   }
@@ -3365,6 +3454,7 @@
     else if (name === 'side-notebooks') setSideMode('notebooks');
     else if (name === 'side-links') setSideMode('links');
     else if (name === 'side-canvas') setSideMode('canvas');
+    else if (name === 'side-guide') setSideMode('guide');
     else if (name === 'close-links') setSideOpen(false);
   });
 

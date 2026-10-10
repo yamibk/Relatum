@@ -47,6 +47,7 @@
     relatumCodeLanguages, relatumCodeHighlighting,
   } = CM;
   const focusEffect = StateEffect.define();
+  const calloutFoldEffect = StateEffect.define();
   const imageTextProjectionEffect = StateEffect.define();
   const inputReconcileEffect = StateEffect.define();
   const notePathEffect = StateEffect.define();
@@ -230,15 +231,7 @@
   }
 
   function calloutPresentationType(type) {
-    const value = String(type || 'note').toLowerCase();
-    const aliases = {
-      summary: 'abstract', tldr: 'abstract', hint: 'tip', important: 'tip', faq: 'question',
-      help: 'question', check: 'success', done: 'success', caution: 'warning', attention: 'warning',
-      fail: 'failure', missing: 'failure', error: 'danger', cite: 'quote', infobox: 'info',
-    };
-    const canonical = aliases[value] || value;
-    return /^(?:note|abstract|info|todo|tip|success|question|warning|failure|danger|bug|example|quote)$/.test(canonical)
-      ? canonical : 'note';
+    return window.MarkdownMini.noteBlock(type).type;
   }
 
   function completeSpec(spec, prior) {
@@ -305,7 +298,7 @@
           if (!rangeHasLongLine(doc, node.from, node.to)) push({ from: node.from, to: node.to, kind, source: doc.sliceString(node.from, node.to), language: opener.language });
           return false;
         }
-        if (/^(?:CodeBlock|IndentedCode|HTMLBlock)$/.test(node.name)) {
+        if (/^(?:CodeBlock|IndentedCode|HTMLBlock|InlineCode)$/.test(node.name)) {
           protectedBlocks.push({ from: node.from, to: node.to });
           return false;
         }
@@ -314,7 +307,7 @@
           const source = doc.sliceString(node.from, node.to);
           const callout = parseCalloutSource(source);
           if (callout && source.length <= RICH_BLOCK_LIMIT && !rangeHasLongLine(doc, node.from, node.to)) push(Object.assign({ from: node.from, to: node.to, kind: 'callout', source }, callout));
-          return false;
+          return undefined;
         }
         if (node.name === 'Image') {
           const line = doc.lineAt(node.from);
@@ -332,6 +325,34 @@
         return undefined;
       },
     });
+
+    // Skip known code/HTML without reading it; comments are scanned only in
+    // bounded gaps and can continue across a protected block.
+    const commentFrom = Math.max(0, start - BLOCK_MATH_LIMIT);
+    const commentTo = Math.min(doc.length, end + BLOCK_MATH_LIMIT);
+    const commentRanges = [];
+    let commentCursor = commentFrom, openComment = null;
+    const scanComments = (from, to) => {
+      while (from < to) {
+        let finish = Math.min(to, from + RICH_BLOCK_LIMIT);
+        if (finish < to && doc.lineAt(finish).from > from) finish = doc.lineAt(finish).from;
+        const source = doc.sliceString(from, finish), markers = /<!--|-->|%%/g;
+        let marker;
+        while ((marker = markers.exec(source))) {
+          if (openComment) {
+            if (marker[0] === openComment.close) { commentRanges.push({ from: openComment.from, to: from + marker.index + marker[0].length }); openComment = null; }
+          } else if (marker[0] !== '-->') openComment = { from: from + marker.index, close: marker[0] === '<!--' ? '-->' : '%%' };
+        }
+        from = finish;
+      }
+    };
+    protectedBlocks.slice().sort((a, b) => a.from - b.from).forEach(range => {
+      if (range.to <= commentCursor || range.from >= commentTo) return;
+      scanComments(commentCursor, Math.min(range.from, commentTo)); commentCursor = Math.max(commentCursor, range.to);
+    });
+    scanComments(commentCursor, commentTo);
+    if (openComment) commentRanges.push({ from: openComment.from, to: commentTo });
+    protectedBlocks.push(...commentRanges);
 
     // $$ is a Relatum extension rather than a Lezer Markdown block. Its search is
     // deliberately bounded, so an edit can never walk an entire large document.
@@ -381,25 +402,26 @@
         number += 1;
         continue;
       }
-      const singleLine = sameLineBlockMath(line.text);
+      const quote = window.MarkdownMini.quoteLine(line.text);
+      const singleLine = sameLineBlockMath(quote.text) || (/^\\\[.+\\\]$/.test(quote.text.trim()) ? { source: quote.text } : null);
       if (singleLine) {
         const protectedSource = protectedBlocks.some((range) => range.from < line.to && range.to > line.from);
         if (!protectedSource && line.length <= BLOCK_MATH_LIMIT && line.to >= start && line.from <= end) {
-          push({ from: line.from, to: line.to, kind: 'math', source: line.text });
+          push({ from: line.from, to: line.to, kind: 'math', source: line.text, renderSource: quote.text });
         }
         number += 1;
         continue;
       }
-      const opener = line.text.trim();
+      const opener = quote.text.trim();
       if (opener !== '$$' && opener !== '\\[') { number += 1; continue; }
       const closer = opener === '$$' ? '$$' : '\\]';
       let close = number + 1;
-      while (close <= doc.lines && doc.line(close).from - line.from <= BLOCK_MATH_LIMIT && doc.line(close).text.trim() !== closer) close += 1;
-      if (close <= doc.lines && doc.line(close).text.trim() === closer) {
+      while (close <= doc.lines && doc.line(close).from - line.from <= BLOCK_MATH_LIMIT && window.MarkdownMini.quoteLine(doc.line(close).text).depth >= quote.depth && window.MarkdownMini.stripQuote(doc.line(close).text, quote.depth).trim() !== closer) close += 1;
+      if (close <= doc.lines && window.MarkdownMini.quoteLine(doc.line(close).text).depth === quote.depth && window.MarkdownMini.stripQuote(doc.line(close).text, quote.depth).trim() === closer) {
         const closeLine = doc.line(close);
         const source = doc.sliceString(line.from, closeLine.to);
         const protectedSource = protectedBlocks.some((range) => range.from < closeLine.to && range.to > line.from);
-        if (!protectedSource && source.length <= BLOCK_MATH_LIMIT && closeLine.to >= start && line.from <= end) push({ from: line.from, to: closeLine.to, kind: 'math', source });
+        if (!protectedSource && source.length <= BLOCK_MATH_LIMIT && closeLine.to >= start && line.from <= end) push({ from: line.from, to: closeLine.to, kind: 'math', source, renderSource: source.split('\n').map((value) => window.MarkdownMini.stripQuote(value, quote.depth)).join('\n') });
         number = close + 1;
       } else number += 1;
     }
@@ -410,6 +432,10 @@
     }
     const pool = Array.isArray(reusable) ? reusable.slice() : [];
     return raw.map((spec) => {
+      if (spec.kind === 'math') {
+        const parent = raw.filter(item => item.kind === 'callout' && item.from < spec.from && item.to >= spec.to).sort((a, b) => b.from - a.from)[0];
+        if (parent) { spec.calloutType = parent.type; spec.calloutLast = parent.to === spec.to; spec.colorFirst = !parent.title && window.MarkdownMini.noteBlock(parent.type).color && doc.lineAt(parent.from).to + 1 === spec.from; }
+      }
       const index = pool.findIndex((old) => old.kind === spec.kind && old.from <= spec.to && old.to >= spec.from);
       const prior = index >= 0 ? pool.splice(index, 1)[0] : null;
       return completeSpec(spec, prior);
@@ -612,11 +638,13 @@
           return runWhenInputSettled(view, () => {
             if (this.token === token && span.isConnected && this.coordinator.epoch === this.epoch) view.requestMeasure();
           });
+        }).finally(() => {
+          if ((this.token !== token || !span.isConnected || this.coordinator.epoch !== this.epoch) && typeof math.typesetClear === 'function') math.typesetClear([span]);
         });
       }).catch(() => { span.classList.add('is-failed'); });
       return span;
     }
-    destroy() { this.token = null; }
+    destroy(dom) { this.token = null; if (dom && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
     ignoreEvent() { return false; }
   }
 
@@ -1389,7 +1417,7 @@
     if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
       return { html: '', features: { math: false, mermaid: false }, error: true };
     }
-    return markdownMini.renderResult(source, { localImages: true, noteTags: true });
+    return markdownMini.renderResult(source, { localImages: true, noteTags: true, noteBlocks: true });
   }
 
   function releaseReadingDocument(host) {
@@ -1427,6 +1455,24 @@
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
+    const sourceLines = original.split('\n');
+    let sourceOffset = 0;
+    const sourceLineOffsets = sourceLines.map(line => { const from = sourceOffset; sourceOffset += line.length + 1; return from; });
+    const metadata = window.MarkdownMini.frontmatter(original);
+    const lineOffset = metadata ? original.slice(0, metadata.to).split('\n').length - 1 : 0;
+    content.querySelectorAll('.note-block[data-fold]').forEach((block) => {
+      if (!block.dataset.fold) return;
+      const button = block.querySelector('.note-callout-fold');
+      const body = block.querySelector('.md-callout-body');
+      if (!button) return;
+      const line = Number(block.dataset.ln) + lineOffset;
+      const position = sourceLineOffsets[line] || 0;
+      const session = safeOptions.calloutSession;
+      let collapsed = session ? session.get(position, block.dataset.fold === '-') : block.dataset.fold === '-';
+      const refresh = () => { if (body) body.hidden = collapsed; button.setAttribute('aria-expanded', String(!collapsed)); button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout'); };
+      refresh();
+      button.addEventListener('click', () => { collapsed = !collapsed; if (session) session.set(position, collapsed); refresh(); });
+    });
     // Notes present every table row as data, including the first Markdown row.
     content.querySelectorAll('table th').forEach((header) => {
       const cell = document.createElement('td');
@@ -1485,13 +1531,14 @@
     const source = String(spec && spec.source || '');
     const from = Number(spec && spec.from) || 0;
     if (spec && spec.kind === 'math') {
-      const bracket = source.trim().startsWith('\\[');
+      const bracket = (spec.renderSource || source).trim().startsWith('\\[');
       const opener = source.indexOf(bracket ? '\\[' : '$$');
       const closer = source.lastIndexOf(bracket ? '\\]' : '$$');
       if (opener >= 0 && closer > opener) {
         let offset = opener + 2;
         if (source[offset] === '\r' && source[offset + 1] === '\n') offset += 2;
         else if (source[offset] === '\n') offset += 1;
+        if (spec.renderSource && spec.renderSource !== source) offset += window.MarkdownMini.quoteLine(source.slice(offset).split('\n', 1)[0]).prefix.length;
         while (offset < closer && /[\t ]/.test(source[offset])) offset += 1;
         return from + Math.min(offset, closer);
       }
@@ -1514,7 +1561,8 @@
     }
     eq(other) {
       return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
-        && other.notePath === this.notePath && other.epoch === this.epoch && other.selected === this.selected;
+        && other.notePath === this.notePath && other.epoch === this.epoch && other.selected === this.selected
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast && other.spec.colorFirst === this.spec.colorFirst;
     }
     isCurrent(view, wrap, token) {
       if (this.token !== token || !wrap.isConnected || this.coordinator.epoch !== this.epoch) return false;
@@ -1563,7 +1611,16 @@
         wrap.addEventListener('click', (event) => this.reveal(view, event));
         wrap.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event); });
         wrap.classList.add('md-math-block');
-        wrap.textContent = this.spec.source;
+        wrap.textContent = this.spec.renderSource || this.spec.source;
+        const parent = view.state.field(this.coordinator.field, false)?.specs.filter((spec) => spec.kind === 'callout' && spec.from <= this.spec.from && spec.to >= this.spec.to).sort((a, b) => b.from - a.from)[0];
+        if (parent) {
+          const descriptor = window.MarkdownMini.noteBlock(parent.type, parent.title, parent.suffix);
+          wrap.classList.add('note-block-math');
+          wrap.style.cssText = descriptor.style;
+          if (descriptor.color) wrap.classList.add('note-color-block');
+          if (parent.to === this.spec.to) wrap.classList.add('note-live-callout-last');
+          if (this.spec.colorFirst) wrap.classList.add('note-live-callout-first');
+        }
         ensureMathJax().then((math) => {
           if (!this.isCurrent(view, wrap, token)) return;
           return runWhenInputSettled(view, () => (
@@ -1573,7 +1630,7 @@
             return runWhenInputSettled(view, () => {
               if (this.isCurrent(view, wrap, token)) view.requestMeasure();
             });
-          });
+          }).finally(() => { if (!this.isCurrent(view, wrap, token) && typeof math.typesetClear === 'function') math.typesetClear([wrap]); });
         }).catch(() => wrap.classList.add('is-failed'));
       } else if (this.spec.kind === 'rule') {
         wrap.tabIndex = 0;
@@ -1610,6 +1667,7 @@
           }).catch(() => wrap.classList.add('is-failed'));
         }
         if (hasMath) {
+          wrap.dataset.noteMath = '1';
           ensureMathJax().then((math) => {
             if (!this.isCurrent(view, wrap, token)) return;
             return runWhenInputSettled(view, () => (
@@ -1619,13 +1677,13 @@
               return runWhenInputSettled(view, () => {
                 if (this.isCurrent(view, wrap, token)) view.requestMeasure();
               });
-            });
+            }).finally(() => { if (!this.isCurrent(view, wrap, token) && typeof math.typesetClear === 'function') math.typesetClear([wrap]); });
           }).catch(() => wrap.classList.add('is-failed'));
         }
       }
       return wrap;
     }
-    destroy() { this.token = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; }
+    destroy(dom) { this.token = null; if (this.imageCleanup) this.imageCleanup(); this.imageCleanup = null; if (dom && (this.spec.kind === 'math' || dom.dataset.noteMath) && typeof window.MathJax?.typesetClear === 'function') window.MathJax.typesetClear([dom]); }
     ignoreEvent() { return false; }
   }
 
@@ -1635,11 +1693,18 @@
       this.spec = spec;
       this.sourceOffset = sourceOffset;
       this.coordinator = coordinator;
+      this.collapsed = calloutCollapsed(spec, coordinator);
     }
     eq(other) {
       return other.spec.id === this.spec.id
         && other.spec.fingerprint === this.spec.fingerprint
-        && other.sourceOffset === this.sourceOffset;
+        && other.sourceOffset === this.sourceOffset && other.collapsed === this.collapsed;
+    }
+    updateDOM(wrap) {
+      if (wrap.dataset.blockId !== this.spec.id || wrap.dataset.fingerprint !== this.spec.fingerprint) return false;
+      const button = wrap.querySelector('.note-callout-fold');
+      if (button) { button.setAttribute('aria-expanded', String(!this.collapsed)); button.setAttribute('aria-label', this.collapsed ? 'Expand callout' : 'Collapse callout'); }
+      return true;
     }
     reveal(view, event) {
       if (event) { event.preventDefault(); event.stopPropagation(); }
@@ -1654,7 +1719,10 @@
     toDOM(view) {
       const wrap = document.createElement('span');
       wrap.className = 'note-live-callout-title-widget';
+      wrap.dataset.blockId = this.spec.id; wrap.dataset.fingerprint = this.spec.fingerprint;
       wrap.dataset.callout = calloutPresentationType(this.spec.type);
+      const descriptor = window.MarkdownMini.noteBlock(this.spec.type, this.spec.title, this.spec.suffix);
+      wrap.classList.toggle('note-color-block', descriptor.color);
       wrap.tabIndex = 0;
       wrap.setAttribute('aria-label', '点击编辑 Callout 源码');
       const rendered = document.createElement('span');
@@ -1665,14 +1733,43 @@
       if (title) {
         Array.from(title.childNodes).forEach((node) => wrap.appendChild(node.cloneNode(true)));
       } else {
-        wrap.textContent = this.spec.title || this.spec.type || 'Note';
+        wrap.textContent = descriptor.color ? '' : this.spec.title || this.spec.type || 'Note';
       }
-      wrap.addEventListener('mousedown', (event) => this.reveal(view, event));
+      const button = wrap.querySelector('.note-callout-fold');
+      if (button) bindLiveFold(button, view, this.spec, this.coordinator);
+      wrap.addEventListener('mousedown', (event) => { if (!event.target.closest('.note-callout-fold')) this.reveal(view, event); });
       wrap.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') this.reveal(view, event);
+        if (!event.target.closest('.note-callout-fold') && (event.key === 'Enter' || event.key === ' ')) this.reveal(view, event);
       });
       return wrap;
     }
+    ignoreEvent() { return true; }
+  }
+
+  function calloutCollapsed(spec, coordinator) {
+    const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+    return descriptor.foldable && (coordinator.folds.has(spec.id) ? coordinator.folds.get(spec.id) : coordinator.foldPositions?.has(spec.from) ? coordinator.foldPositions.get(spec.from) : spec.collapsed);
+  }
+  function bindLiveFold(button, view, spec, coordinator) {
+    button.setAttribute('aria-expanded', String(!calloutCollapsed(spec, coordinator)));
+    button.addEventListener('mousedown', (event) => { event.preventDefault(); event.stopPropagation(); });
+    button.addEventListener('click', (event) => {
+      event.preventDefault(); event.stopPropagation();
+      runWhenInputSettled(view, () => {
+        const current = coordinator.spec(view, spec.id);
+        if (!current) return;
+        const collapsed = !calloutCollapsed(current, coordinator);
+        const header = view.state.doc.lineAt(current.from);
+        const selection = collapsed && selectionTouches(view.state.selection, header.to + 1, current.to) ? EditorSelection.cursor(header.to) : undefined;
+        view.dispatch({ effects: calloutFoldEffect.of({ id: current.id, collapsed }), ...(selection ? { selection } : {}) });
+      });
+    });
+  }
+  class CalloutFoldWidget extends WidgetType {
+    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.collapsed = calloutCollapsed(spec, coordinator); }
+    eq(other) { return other.spec.id === this.spec.id && other.collapsed === this.collapsed; }
+    updateDOM(wrap) { if (wrap.dataset.blockId !== this.spec.id) return false; wrap.firstChild.setAttribute('aria-expanded', String(!this.collapsed)); wrap.firstChild.setAttribute('aria-label', this.collapsed ? 'Expand callout' : 'Collapse callout'); return true; }
+    toDOM(view) { const wrap = document.createElement('span'); wrap.dataset.blockId = this.spec.id; wrap.innerHTML = window.MarkdownMini.foldButton(this.collapsed); bindLiveFold(wrap.firstChild, view, this.spec, this.coordinator); return wrap; }
     ignoreEvent() { return true; }
   }
 
@@ -1824,24 +1921,58 @@
   }
 
   function createBlockField(notePath, options, coordinator, inputSession) {
+    coordinator.folds = coordinator.folds || new Map(); coordinator.records = coordinator.records || [];
+    // Specs and their parent subsets are source-ordered. Keep the furthest
+    // containing endpoint instead of comparing every block with every parent.
+    const descendants = (specs, parents) => {
+      const ids = new Set();
+      let index = 0, end = -1;
+      specs.forEach(spec => {
+        while (index < parents.length && parents[index].from < spec.from) end = Math.max(end, parents[index++].to);
+        if (spec.to <= end) ids.add(spec.id);
+      });
+      return ids;
+    };
+    const projectionState = (specs) => {
+      const callouts = specs.filter(spec => spec.kind === 'callout');
+      const collapsed = callouts.filter(spec => calloutCollapsed(spec, coordinator));
+      return { callouts, collapsed: new Set(collapsed.map(spec => spec.id)), hidden: descendants(specs, collapsed) };
+    };
+    const projectedSpecs = (specs, activeIds, projection) => specs.filter(spec => blockIsProjected(spec, activeIds) && !projection.hidden.has(spec.id));
+    const calloutProjections = (projection, state, focused) => {
+      const ranges = [];
+      projection.callouts.forEach(spec => {
+        if (projection.hidden.has(spec.id)) return;
+        const header = state.doc.lineAt(spec.from);
+        const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+        if (projection.collapsed.has(spec.id) && header.to < spec.to) ranges.push(Decoration.replace({ block: true, inclusive: false, blockId: spec.id }).range(header.to, spec.to));
+        if (descriptor.color && !descriptor.title && header.to < spec.to && !(focused && selectionTouches(state.selection, header.from, header.to))) ranges.push(Decoration.replace({ block: true, inclusiveStart: true, inclusiveEnd: false, blockId: spec.id, colorHeader: true }).range(header.from, header.to + 1));
+      });
+      return ranges;
+    };
     const field = StateField.define({
       create(state) {
         const tree = syntaxTree(state);
         const parsedTo = Math.min(RICH_BLOCK_LIMIT, typeof tree.length === 'number' ? Math.min(state.doc.length, tree.length) : state.doc.length);
-        const specs = scanBlockSpecs(state, 0, parsedTo);
+        const specs = scanBlockSpecs(state, 0, parsedTo, coordinator.records);
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const selectedImageIds = selectedBlockImageIds(specs, state);
-        const decorations = Decoration.set(specs.filter(usesBlockReplacement).map((spec) => Decoration.replace({
+        const projection = projectionState(specs);
+        const projected = projectedSpecs(specs, new Set(), projection);
+        const hidden = calloutProjections(projection, state, false);
+        const decorations = Decoration.set(projected.map((spec) => Decoration.replace({
           widget: blockWidget(spec, notePath(), options, coordinator,
             selectedImageIds.has(spec.id)),
           block: true, inclusive: compactBlockProjection(spec, state, options), blockId: spec.id,
-        }).range(spec.from, spec.to)), true);
-        const atomic = Decoration.set(specs.filter(usesBlockReplacement).map(spec => blockAtomicRange(spec, state)), true);
+        }).range(spec.from, spec.to)).concat(hidden), true);
+        const atomic = Decoration.set(projected.map(spec => blockAtomicRange(spec, state)).concat(hidden.filter(range => !range.value.spec.colorHeader)), true);
         return { specs, byId, activeIds: new Set(), selectedImageIds, focused: false, decorations, atomic };
       },
       update(value, transaction) {
         let focused = value.focused;
         transaction.effects.forEach((effect) => { if (effect.is(focusEffect)) focused = !!effect.value; });
+        const foldChanged = transaction.effects.some(effect => effect.is(calloutFoldEffect));
+        transaction.effects.forEach(effect => { if (effect.is(calloutFoldEffect)) coordinator.folds.set(effect.value.id, effect.value.collapsed); });
         if (inputSession.pending()) {
           // The browser owns the preedit text until compositionend. Preserve
           // all projections and only map their positions through native edits;
@@ -1873,17 +2004,20 @@
         const imageTextModeChanged = transaction.effects.some((effect) => effect.is(imageTextProjectionEffect));
         const inputReconciled = inputReconcileRanges !== undefined;
         const selectionChanged = !!transaction.selection;
-        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed) return value;
+        if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged) return value;
 
         const byId = new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, false);
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const refresh = new Set();
+        if (foldChanged) specs.forEach(spec => refresh.add(spec.id));
+        if (selectionChanged || focused !== value.focused) specs.filter(spec => spec.kind === 'callout').forEach(spec => refresh.add(spec.id));
         value.byId.forEach((old, id) => {
           const current = byId.get(id);
           if (!current || old.from !== current.from || old.to !== current.to || old.fingerprint !== current.fingerprint) refresh.add(id);
         });
         byId.forEach((current, id) => { if (!value.byId.has(id)) refresh.add(id); });
+        descendants(specs, specs.filter(spec => spec.kind === 'callout' && refresh.has(spec.id))).forEach(id => refresh.add(id));
         value.activeIds.forEach((id) => { if (!activeIds.has(id)) refresh.add(id); });
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
         value.selectedImageIds.forEach((id) => { if (!selectedImageIds.has(id)) refresh.add(id); });
@@ -1905,19 +2039,21 @@
         let decorations = transaction.docChanged ? mapBlockProjections(value.decorations, transaction.changes) : value.decorations;
         let atomic = transaction.docChanged ? value.atomic.map(transaction.changes) : value.atomic;
         if (refresh.size) {
-          const projected = specs.filter(spec => blockIsProjected(spec, activeIds) && refresh.has(spec.id));
+          const projection = projectionState(specs);
+          const projected = projectedSpecs(specs, activeIds, projection).filter(spec => refresh.has(spec.id));
+          const hidden = calloutProjections(projection, transaction.state, focused).filter(range => refresh.has(range.value.spec.blockId));
           decorations = decorations.update({
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
             add: projected.map((spec) => Decoration.replace({
               widget: blockWidget(spec, notePath(), options, coordinator,
                 selectedImageIds.has(spec.id)),
               block: true, inclusive: compactBlockProjection(spec, transaction.state, options), blockId: spec.id,
-            }).range(spec.from, spec.to)),
+            }).range(spec.from, spec.to)).concat(hidden),
             sort: true,
           });
           atomic = atomic.update({
             filter(from, to, decoration) { return !refresh.has(decoration.spec.blockId); },
-            add: projected.map(spec => blockAtomicRange(spec, transaction.state)), sort: true,
+            add: projected.map(spec => blockAtomicRange(spec, transaction.state)).concat(hidden.filter(range => !range.value.spec.colorHeader)), sort: true,
           });
         }
         return { specs, byId, activeIds, selectedImageIds, focused, decorations, atomic };
@@ -1933,7 +2069,7 @@
     coordinator.field = field;
     coordinator.spec = (view, id) => {
       const value = view.state.field(field, false);
-      return value && value.byId.get(id) || null;
+      return value && value.byId.get(id) || coordinator.records.find(spec => spec.id === id) || null;
     };
     return field;
   }
@@ -2040,7 +2176,7 @@
     };
     const replace = (from, to) => { if (to > from) add(from, to, Decoration.replace({ inclusive: false })); };
     const mark = (from, to, name) => { if (to > from) add(from, to, Decoration.mark({ class: name })); };
-    const lineClass = (position, name) => add(position, position, Decoration.line({ class: name }));
+    const lineClass = (position, name, style) => add(position, position, Decoration.line({ class: name, ...(style ? { attributes: { style } } : {}) }));
     const inactiveBlockAt = (from, to) => blockSpecs.some((spec) => blockIsProjected(spec, blockValue.activeIds) && spec.from < to && spec.to > from);
     const inactiveBlockContains = (from, to) => blockSpecs.some((spec) => blockIsProjected(spec, blockValue.activeIds) && spec.from <= from && spec.to >= to);
     const sourceMark = (from, to, unitFrom, unitTo, role) => {
@@ -2084,14 +2220,21 @@
         // A caret in the body should not dismantle the title. Both title and
         // body stay in CodeMirror-owned line boxes, including wrapped lines.
         const headerActive = constructActive(view, startLine.from, startLine.to);
-        const type = calloutPresentationType(spec.type);
+        const descriptor = window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix);
+        const type = descriptor.type;
+        const collapsed = calloutCollapsed(spec, options.coordinator);
+        const hiddenHeader = descriptor.color && !descriptor.title && !headerActive && startLine.to < spec.to;
         for (let number = Math.max(first.number, startLine.number); number <= Math.min(last.number, endLine.number); number += 1) {
-          let className = 'note-live-callout-line is-callout-' + type;
-          if (number === startLine.number) className += ' note-live-callout-first';
-          if (number === endLine.number) className += ' note-live-callout-last';
-          lineClass(view.state.doc.line(number).from, className);
+          if (collapsed && number > startLine.number || hiddenHeader && number === startLine.number) continue;
+          let className = 'note-live-callout-line is-callout-' + type + (descriptor.color ? ' note-color-block' : '');
+          if (number === startLine.number || hiddenHeader && number === startLine.number + 1) className += ' note-live-callout-first';
+          if (number === endLine.number || collapsed) className += ' note-live-callout-last';
+          if (number !== startLine.number) className += ' note-live-callout-body-line';
+          if (number === startLine.number + 1) className += ' note-live-callout-body-first';
+          lineClass(view.state.doc.line(number).from, className, descriptor.style);
         }
-        if (!headerActive && startLine.number >= first.number && startLine.number <= last.number) {
+        if (headerActive && descriptor.foldable) add(startLine.to, startLine.to, Decoration.widget({ widget: new CalloutFoldWidget(spec, options.coordinator), side: 1 }));
+        if (!hiddenHeader && !headerActive && startLine.number >= first.number && startLine.number <= last.number) {
           const header = /^(\s*(?:>\s*)+)(\[![A-Za-z][\w-]*\][+-]?\s*.*)$/.exec(startLine.text);
           if (header) {
             const from = startLine.from + header[1].length;
@@ -2263,7 +2406,7 @@
             const line = view.state.doc.lineAt(nodeRef.from);
             const spec = blockSpecs.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
             if (!spec) lineClass(line.from, 'note-live-quote-line');
-            if (spec) sourceMark(nodeRef.from, nodeRef.to, line.from, line.to, 'callout');
+            if (spec) sourceMark(nodeRef.from, nodeRef.to + (/^[ \t]/.test(view.state.doc.sliceString(nodeRef.to, line.to)) ? 1 : 0), line.from, line.to, 'callout');
             else sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'quote');
           } else if (nodeRef.name === 'TableDelimiter') {
             const unit = ancestorOf(node, /^Table$/) || node;
@@ -2402,7 +2545,7 @@
           this.compositionPending = true;
           return;
         }
-        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(inputReconcileEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect)));
+        const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(inputReconcileEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect) || effect.is(calloutFoldEffect)));
         const syntaxChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
         if (this.compositionPending || update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || lifecycleChanged || syntaxChanged) {
           this.compositionPending = false;
@@ -2664,7 +2807,7 @@
       if (serializedDoc !== doc) { serializedDoc = doc; serializedValue = doc.toString(); }
       return serializedValue;
     }
-    const coordinator = { epoch: 1, field: null, spec() { return null; } };
+    const coordinator = { epoch: 1, field: null, folds: new Map(), foldPositions: new Map(), records: [], spec() { return null; } };
     const imageTextSizer = createImageTextSizer();
     const safeOptions = Object.assign({
       imageUrl(notePath, target, syntax) {
@@ -3078,6 +3221,30 @@
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
+    const sourceFoldPlugin = ViewPlugin.fromClass(class {
+      constructor(view) { this.decorations = this.build(view); }
+      build(view) {
+        const ranges = [];
+        const seen = new Set();
+        view.visibleRanges.forEach(range => {
+          const specs = scanBlockSpecs(view.state, range.from, range.to, coordinator.records).filter(spec => spec.kind === 'callout');
+          coordinator.records = coordinator.records.filter(item => item.to < range.from || item.from > range.to || specs.some(spec => spec.id === item.id));
+          specs.forEach(spec => {
+            if (seen.has(spec.id)) return; seen.add(spec.id);
+            const prior = coordinator.records.findIndex(item => item.id === spec.id);
+            if (prior >= 0) coordinator.records[prior] = spec; else coordinator.records.push(spec);
+            if (window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix).foldable) ranges.push(Decoration.widget({ widget: new CalloutFoldWidget(spec, coordinator), side: 1 }).range(view.state.doc.lineAt(spec.from).to));
+          });
+        });
+        return Decoration.set(ranges, true);
+      }
+      update(update) {
+        if (update.docChanged) coordinator.records = coordinator.records.map(spec => Object.assign({}, spec, { from: update.changes.mapPos(spec.from, 1), to: update.changes.mapPos(spec.to, -1) }));
+        if (inputSession.pending()) { if (update.docChanged) this.decorations = this.decorations.map(update.changes); return; }
+        update.transactions.forEach(transaction => transaction.effects.forEach(effect => { if (effect.is(calloutFoldEffect)) coordinator.folds.set(effect.value.id, effect.value.collapsed); }));
+        if (update.docChanged || update.viewportChanged || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(calloutFoldEffect) || effect.is(inputReconcileEffect)))) this.decorations = this.build(update.view);
+      }
+    }, { decorations: value => value.decorations });
     const viewportParsePlugin = createViewportParsePlugin();
     const livePreviewCompartment = new Compartment();
     const editorLabelCompartment = new Compartment();
@@ -3193,7 +3360,7 @@
     });
 
     function livePreviewExtensions() {
-      return sourceMode ? [] : [blockField, viewportParsePlugin, inlinePlugin];
+      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, inlinePlugin];
     }
 
     function editorLabelExtension() {
@@ -3305,6 +3472,9 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged && coordinator.foldPositions.size) coordinator.foldPositions = new Map(Array.from(coordinator.foldPositions, ([position, collapsed]) => [update.changes.mapPos(position, 1), collapsed]));
+          const blocks = update.state.field(blockField, false);
+          if (blocks) coordinator.records = blocks.specs.filter(spec => spec.kind === 'callout');
           if (update.docChanged || update.selectionSet) safeOptions.onCommandContextChanged();
           if (imageTextController.active && update.docChanged
               && update.transactions.some((transaction) => transaction.isUserEvent('undo') || transaction.isUserEvent('redo'))) {
@@ -3508,6 +3678,7 @@
       const seq = ++documentSetSeq;
       if (tableController) tableController.close();
       coordinator.epoch += 1;
+      coordinator.folds.clear(); coordinator.foldPositions.clear(); coordinator.records = [];
       imageTextController.setActive(false);
       if (pendingSourceMode !== null) { sourceMode = pendingSourceMode; pendingSourceMode = null; }
       if (pendingShortcutBindings !== null) {
@@ -3856,6 +4027,10 @@
 
     return {
       setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
+      calloutSession: {
+        get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
+        set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },
+      },
       rewriteCanvasHistory,
       whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       commandContext, queryCommand, executeCommand,

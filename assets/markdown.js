@@ -171,11 +171,12 @@
     let mermaid = false;
     const visibleLines = [];
     for (let i = 0; i < lines.length; i++) {
-      const fence = parseFenceLine(lines[i]);
+      const quote = quoteLine(lines[i]);
+      const fence = parseFenceLine(quote.text);
       if (fence) {
         let close = i + 1;
-        while (close < lines.length && !isFenceClose(lines[close], fence)) close++;
-        if (close < lines.length) {
+        while (close < lines.length && quoteLine(lines[close]).depth >= quote.depth && !isFenceClose(stripQuote(lines[close], quote.depth), fence)) close++;
+        if (close < lines.length && isFenceClose(stripQuote(lines[close], quote.depth), fence)) {
           if (/^(?:mermaid|flowchart|graph|flow|sequence|sequencediagram|timeline|gantt|class|classdiagram|state|statediagram|er|erdiagram|mindmap)$/.test(fence.language)) {
             mermaid = true;
           }
@@ -185,7 +186,7 @@
         }
         break; // An unfinished code fence remains code while typing.
       }
-      visibleLines.push(/^(?: {4}|\t)/.test(lines[i]) ? '' : lines[i].replace(/`+[^`]*`+/g, ''));
+      visibleLines.push(/^(?: {4}|\t)/.test(quote.text) ? '' : lines[i].replace(/`+[^`]*`+/g, ''));
     }
     const visible = visibleLines.join('\n').replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, '');
     const math = mathRanges(visible).length > 0
@@ -619,27 +620,42 @@
     return out;
   }
 
-  function protectCode(src) {
+  function protectCode(src, noteBlocks) {
     const codes = [];
     const lines = normalizeSource(src).split('\n');
     const output = [];
     for (let i = 0; i < lines.length; i++) {
-      const fence = parseFenceLine(lines[i]);
+      const quote = quoteLine(lines[i]);
+      const fence = parseFenceLine(quote.text);
       if (!fence) {
+        if (noteBlocks && /^(?: {4}|\t)/.test(quote.text)) {
+          let close = i + 1;
+          while (close < lines.length && quoteLine(lines[close]).depth >= quote.depth && /^(?: {4}|\t)/.test(stripQuote(lines[close], quote.depth))) close++;
+          codes.push({ lang: '', code: lines.slice(i, close).map(line => stripQuote(line, quote.depth).replace(/^(?: {4}|\t)/, '')).join('\n') });
+          output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
+          for (let pad = i + 1; pad < close; pad++) output.push(quote.prefix);
+          i = close - 1; continue;
+        }
         output.push(lines[i]);
         continue;
       }
       let close = i + 1;
-      while (close < lines.length && !isFenceClose(lines[close], fence)) close++;
+      while (close < lines.length && quoteLine(lines[close]).depth >= quote.depth && !isFenceClose(stripQuote(lines[close], quote.depth), fence)) close++;
       // An unfinished fence is editable plain text, never a block that consumes
       // the rest of the document.
-      if (close >= lines.length) {
+      if (close >= lines.length || !isFenceClose(stripQuote(lines[close], quote.depth), fence)) {
+        if (noteBlocks) {
+          codes.push({ lang: '', code: lines.slice(i + 1, close).map(line => stripQuote(line, quote.depth)).join('\n') });
+          output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
+          for (let pad = i + 1; pad < close; pad++) output.push(quote.prefix);
+          i = close - 1; continue;
+        }
         output.push(lines[i]);
         continue;
       }
-      codes.push({ lang: fence.language, code: lines.slice(i + 1, close).join('\n') });
-      output.push('\x00CODE' + (codes.length - 1) + '\x00');
-      for (let pad = i + 1; pad <= close; pad++) output.push('');
+      codes.push({ lang: fence.language, code: lines.slice(i + 1, close).map((line) => stripQuote(line, quote.depth)).join('\n') });
+      output.push(quote.prefix + '\x00CODE' + (codes.length - 1) + '\x00');
+      for (let pad = i + 1; pad <= close; pad++) output.push(quote.prefix);
       i = close;
     }
     return { protected: output.join('\n'), codes: codes };
@@ -704,15 +720,18 @@
   }
 
   // ── 数学公式：先抠 $$块$$ 再抠 $行内$（占位符回填时再 escape，MathJax 读 textContent 会 decode）──
-  function protectMath(src, preserveLines) {
+  function protectMath(src, preserveLines, noteBlocks) {
     const ranges = mathRanges(src);
     const maths = [];
     let s = '', cursor = 0;
     ranges.forEach((range) => {
       s += src.slice(cursor, range.from);
-      maths.push({ content: range.body, delimiter: range.open === '\\[' ? 'bracket-block' : range.open === '\\(' ? 'paren-inline' : range.display ? 'dollar-block' : 'dollar-inline' });
+      const lineStart = src.lastIndexOf('\n', range.from - 1) + 1;
+      const quote = quoteLine(src.slice(lineStart, range.from));
+      const content = range.display && quote.depth ? range.body.split('\n').map((line, index) => index ? stripQuote(line, quote.depth) : line).join('\n') : range.body;
+      maths.push({ content, raw: !!(noteBlocks && range.display && range.to - range.from > 32768), delimiter: range.open === '\\[' ? 'bracket-block' : range.open === '\\(' ? 'paren-inline' : range.display ? 'dollar-block' : 'dollar-inline' });
       const nl = preserveLines === false || !range.display ? 0 : (src.slice(range.from, range.to).match(/\n/g) || []).length;
-      s += '\x00' + (range.display ? 'DMATH' : 'MATH') + (maths.length - 1) + '\x00' + '\n'.repeat(nl);
+      s += '\x00' + (range.display ? 'DMATH' : 'MATH') + (maths.length - 1) + '\x00' + ('\n' + quote.prefix).repeat(nl);
       cursor = range.to;
     });
     s += src.slice(cursor);
@@ -724,6 +743,7 @@
       const item = maths[+idx];
       if (!item) return '';
       const content = escapeHtml(item.content);
+      if (item.raw) return '<pre class="md-math-source"><code>' + (item.delimiter === 'bracket-block' ? '\\[' + content + '\\]' : '$$' + content + '$$') + '</code></pre>';
       return '<div class="md-math-block">'
         + (item.delimiter === 'bracket-block' ? '\\[' + content + '\\]' : '$$' + content + '$$')
         + '</div>';
@@ -934,6 +954,66 @@
       + ' aria-hidden="true">' + body + '</svg>';
   }
 
+  function quoteLine(source) {
+    const value = String(source || '');
+    let offset = 0, depth = 0, match;
+    while ((match = /^[ \t]{0,3}>[ \t]?/.exec(value.slice(offset)))) { offset += match[0].length; depth++; }
+    return { prefix: value.slice(0, offset), depth, text: value.slice(offset) };
+  }
+  function stripQuote(source, depth) {
+    let value = String(source || '');
+    for (let index = 0; index < depth; index++) value = value.replace(/^\s*>[ \t]?/, '');
+    return value;
+  }
+
+  // Local Lucide subset; license: assets/vendor/lucide/LICENSE.txt.
+  const NOTE_ICONS = Object.freeze({
+    note: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+    abstract: '<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M12 11h4M12 16h4M8 11h.01M8 16h.01"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+    todo: '<circle cx="12" cy="12" r="10"/><path d="m16 9-5.5 5.5L8 12"/>',
+    tip: '<path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"/>',
+    success: '<path d="M20 6 9 17l-5-5"/>',
+    question: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
+    warning: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/>',
+    failure: '<path d="m18 6-12 12M6 6l12 12"/>',
+    danger: '<path d="m13 2-9 12h7l-1 8 10-12h-7z"/>',
+    bug: '<path d="M12 20v-9M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4M14.12 3.88 16 2M21 21a4 4 0 0 0-3.81-4M21 5a4 4 0 0 1-3.55 3.97M22 13h-4M3 21a4 4 0 0 1 3.81-4M3 5a4 4 0 0 0 3.55 3.97M6 13H2m6-11 1.88 1.88M9 7.13V6a3 3 0 1 1 6 0v1.13"/>',
+    example: '<path d="M3 5h.01M3 12h.01M3 19h.01M8 5h13M8 12h13M8 19h13"/>',
+    quote: '<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2zM5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/>',
+  });
+  const NOTE_GROUPS = Object.freeze({
+    blue: ['#086DDD', '#027AFF'], cyan: ['#00BFBC', '#53DFDD'], green: ['#08B94E', '#44CF6E'],
+    orange: ['#EC7500', '#E9973F'], red: ['#E93147', '#FB464C'], purple: ['#7852EE', '#A882FF'], gray: ['#9E9E9E', '#9E9E9E'],
+  });
+  const NOTE_TYPE_GROUP = { note: 'blue', info: 'blue', todo: 'blue', abstract: 'cyan', tip: 'cyan', success: 'green', question: 'orange', warning: 'orange', failure: 'red', danger: 'red', bug: 'red', example: 'purple', quote: 'gray' };
+  function mixedColor(base, surface, amount, round) {
+    const rounding = round || Math.round;
+    return '#' + [1, 3, 5].map((index) => rounding((parseInt(base.slice(index, index + 2), 16) * (amount * 100) + parseInt(surface.slice(index, index + 2), 16) * (100 - amount * 100)) / 100).toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+  const NOTE_COLORS = Object.freeze([
+    ['blue','668BB3','cool'],['sky','78ABC5','cool'],['steel','7C94A6','cool'],['denim','637D9D','cool'],['indigo','777AA6','cool'],['cyan','64A5B0','cool'],['aqua','7EB6B2','cool'],['turquoise','65AAA3','cool'],
+    ['teal','5C938D','green'],['mint','96BEAB','green'],['forest','5E8775','green'],['sage','9CA88D','green'],['olive','9C9D70','green'],['green','789A75','green'],
+    ['yellow','C3AF6F','warm'],['lemon','C7BF80','warm'],['amber','C5A16A','warm'],['orange','C29B79','warm'],['apricot','D2B393','warm'],['peach','D4B0A0','warm'],['coral','C68F83','warm'],['terracotta','B68B79','warm'],
+    ['red','B98282','pink'],['rose','BD96A3','pink'],['pink','CEAAB9','pink'],['mauve','AB97AF','pink'],['lavender','ABA4CC','pink'],['purple','9584B0','pink'],
+    ['gray','969B9F','neutral'],['silver','AFB7BA','neutral'],['stone','A6A095','neutral'],['sand','BFB299','neutral'],
+  ].map(([name, hex, group]) => Object.freeze({ name, group, base: '#' + hex, light: mixedColor('#' + hex, '#FFFFFF', .16), dark: mixedColor('#' + hex, '#181A19', .22), example: '> [!' + name + ']\n> ' + name })));
+  const NOTE_TYPES = Object.freeze(Object.keys(NOTE_ICONS).map((name) => Object.freeze({ name, aliases: Object.freeze(Object.keys(CALLOUT_ALIAS).filter((alias) => CALLOUT_ALIAS[alias] === name)), example: '> [!' + name + ']\n> ' + name.charAt(0).toUpperCase() + name.slice(1) })));
+  function noteBlock(type, title, suffix) {
+    const input = String(type || 'note').toLowerCase();
+    const color = NOTE_COLORS.find((item) => item.name === input);
+    const canonical = CALLOUT_ALIAS[input] || (NOTE_ICONS[input] ? input : 'note');
+    const colors = NOTE_GROUPS[NOTE_TYPE_GROUP[canonical]];
+    return { type: color ? input : canonical, input, color: !!color, title: String(title || '') || (color ? '' : input.charAt(0).toUpperCase() + input.slice(1)), foldable: !color && /^[+-]$/.test(suffix || ''), collapsed: !color && suffix === '-',
+      style: color ? '--note-block-bg-light:' + color.light + ';--note-block-bg-dark:' + color.dark + ';'
+        : '--note-block-accent-light:' + colors[0] + ';--note-block-accent-dark:' + colors[1] + ';--note-block-bg-light:' + mixedColor(colors[0], '#FFFFFF', .1, Math.floor) + ';--note-block-bg-dark:' + mixedColor(colors[1], '#181A19', .1, Math.floor) + ';',
+      icon: color ? '' : '<svg class="md-callout-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + NOTE_ICONS[canonical] + '</svg>',
+    };
+  }
+  function foldButton(collapsed) {
+    return '<button type="button" class="note-callout-fold" aria-expanded="' + !collapsed + '" aria-label="' + (collapsed ? 'Expand callout' : 'Collapse callout') + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>';
+  }
+
   // ── 表格 ───────────────────────────────
   function splitTableRow(line) {
     if (global.MarkdownTable && typeof global.MarkdownTable.splitRow === 'function') {
@@ -1029,7 +1109,7 @@
 
   // ── 块解析：在"已抠占位符"的文本上做行级解析，返回带占位符的 HTML（占位符在最外层统一回填）──
   // topLevel=true 时给块加 data-ln（源码行号，供节点阅读浮层反查）；递归（引用/callout 内）不加。
-  function parseBlocks(text, topLevel) {
+  function parseBlocks(text, topLevel, options, lineOffset) {
     const lines = text.split('\n');
     const out = [];
     let i = 0;
@@ -1088,17 +1168,19 @@
         }
         const head = /^\[!(\w+)\]([+-]?)\s*(.*)$/.exec(buf[0] || '');
         if (head) {
+          const descriptor = options && options.noteBlocks ? noteBlock(head[1], head[3].trim(), head[2]) : null;
           let type = head[1].toLowerCase();
           type = CALLOUT_ALIAS[type] || (CALLOUT_ICONS[type] ? type : 'note');
           const title = head[3].trim() || CALLOUT_LABEL[type] || head[1];
-          const bodyHtml = parseBlocks(buf.slice(1).join('\n'), false);
-          out.push('<div class="md-callout" data-callout="' + type + '"' + ln(startLn) + '>'
-            + '<div class="md-callout-title">' + calloutIcon(type)
-            + '<span>' + renderInline(escapeHtml(title)) + '</span></div>'
-            + (bodyHtml ? '<div class="md-callout-body">' + bodyHtml + '</div>' : '')
+          const bodyHtml = parseBlocks(buf.slice(1).join('\n'), false, options, (lineOffset || 0) + startLn + 1);
+          out.push('<div class="md-callout' + (descriptor ? ' note-block' + (descriptor.color ? ' note-color-block' : '') : '') + '" data-callout="' + (descriptor ? descriptor.type : type) + '"' + (descriptor ? ' data-ln="' + ((lineOffset || 0) + startLn) + '"' : ln(startLn))
+            + (descriptor ? ' style="' + descriptor.style + '" data-fold="' + (descriptor.foldable ? head[2] : '') + '"' : '') + '>'
+            + ((!descriptor || descriptor.title) ? '<div class="md-callout-title">' + (descriptor ? descriptor.icon : calloutIcon(type))
+            + '<span class="note-callout-title-text">' + renderInline(escapeHtml(descriptor ? descriptor.title : title)) + '</span>' + (descriptor && descriptor.foldable ? foldButton(descriptor.collapsed) : '') + '</div>' : '')
+            + (bodyHtml ? '<div class="md-callout-body"' + (descriptor && descriptor.collapsed ? ' hidden' : '') + '>' + bodyHtml + '</div>' : '')
             + '</div>');
         } else {
-          out.push('<blockquote' + ln(startLn) + '>' + parseBlocks(buf.join('\n'), false) + '</blockquote>');
+          out.push('<blockquote' + ln(startLn) + '>' + parseBlocks(buf.join('\n'), false, options, (lineOffset || 0) + startLn) + '</blockquote>');
         }
         continue;
       }
@@ -1188,19 +1270,21 @@
     const body = header ? source.slice(header.to) : source;
     const features = scanFeatures(body);
     try {
-      const codeGuard = protectCode(body);
+      const codeGuard = protectCode(body, opts.noteBlocks);
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
       const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
       const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
       const linkGuard = protectLinks(wikiGuard.protected);
-      const mathGuard = protectMath(linkGuard.protected);
+      const mathSource = opts.noteBlocks ? linkGuard.protected.replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, (comment) => comment.split('\n').slice(1).map(line => '\n' + quoteLine(line).prefix).join('')) : linkGuard.protected;
+      const mathGuard = protectMath(mathSource, undefined, opts.noteBlocks);
+      if (opts.noteBlocks) features.math = mathGuard.maths.some(item => !item.raw) || /\\begin\{([^{}\s]+)\}[\s\S]+?\\end\{\1\}|\\(?:ref|eqref)\{[^{}\n]+\}/.test(mathGuard.protected);
       const escapeGuard = protectEscapes(mathGuard.protected);
       const tags = opts.noteTags ? tagRanges(escapeGuard.protected) : [];
       let tagged = escapeGuard.protected;
       tags.slice().reverse().forEach((tag, index) => {
         tagged = tagged.slice(0, tag.from) + '\x00NTAG' + (tags.length - index - 1) + '\x00' + tagged.slice(tag.to);
       });
-      let html = parseBlocks(tagged, true);
+      let html = parseBlocks(tagged, true, opts);
       html = html.replace(/\x00NTAG(\d+)\x00/g, (_, index) => '<a class="note-tag" data-note-tag="' + escapeHtml(tags[+index].tag) + '">' + escapeHtml('#' + tags[+index].tag) + '</a>');
       html = restoreMath(html, mathGuard.maths);
       html = restoreLinks(html, linkGuard.links);
@@ -1344,5 +1428,10 @@
     frontmatter: frontmatter,
     tagRanges: tagRanges,
     mathRanges: mathRanges,
+    quoteLine: quoteLine,
+    stripQuote: stripQuote,
+    noteBlock: noteBlock,
+    foldButton: foldButton,
+    noteBlockCatalog: Object.freeze({ types: NOTE_TYPES, colors: NOTE_COLORS }),
   };
 })(window);

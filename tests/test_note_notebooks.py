@@ -92,6 +92,11 @@ class NotebookTests(unittest.TestCase):
         with self.assertRaises(NotesError):
             self.store.update_notebook_settings({"ui": {"mode": "unknown"}})
 
+    def test_guide_sidebar_mode_roundtrip(self):
+        saved = self.store.update_notebook_settings({"ui": {"mode": "guide", "open": True}})
+        self.assertEqual(saved["ui"]["mode"], "guide")
+        self.assertEqual(NotesStore(self.store.root).notebook_settings(), saved)
+
     def test_unselected_roundtrip_and_partial_merge(self):
         relative = self.notebook()
         before = self.store.update_notebook_settings({"colors": {relative: "blue"},

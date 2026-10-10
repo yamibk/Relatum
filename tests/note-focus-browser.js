@@ -85,12 +85,13 @@ async function freePort() {
         const modes = [...document.querySelectorAll('.note-side-modes button')].map(button => {
           const rect = button.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, right: rect.right };
         });
+        const nav = document.querySelector('.note-side-modes').getBoundingClientRect();
         return { panelRight: panel.right, panelLeft: panel.left, controlsLeft: controls.left,
-          modes, panelTop: panel.top, panelBottom: panel.bottom,
+          modes, navRight: nav.right, panelTop: panel.top, panelBottom: panel.bottom,
           hit: document.elementFromPoint(panel.x + panel.width / 2, panel.y + panel.height / 2)?.closest('button')?.dataset.noteAction };
       });
       assert(geometry.panelRight <= geometry.controlsLeft - 7, 'sidebar close has a gap before the desktop window controls');
-      assert(geometry.modes.every(rect => rect.right <= geometry.panelLeft && rect.top >= geometry.panelTop - 1 && rect.bottom <= geometry.panelBottom + 1), 'sidebar view buttons remain on the first row');
+      assert(geometry.navRight <= geometry.panelLeft && geometry.modes.every(rect => rect.top >= geometry.panelTop - 1 && rect.bottom <= geometry.panelBottom + 1), 'scrolling sidebar tabs remain on the first row, clipped before the fixed close button');
       assert.equal(geometry.hit, 'close-links', 'sidebar close remains clickable independently');
       const calls = await page.evaluate(() => __closeCalls);
       await page.locator('[data-note-action="close-links"]').click();
@@ -110,12 +111,16 @@ async function freePort() {
     }
     async function expectBlankDrag() {
       const before = await page.evaluate(() => __dragStarts);
+      const hits = [];
       for (const selector of dragSelectors) {
         const point = await blankPoint(selector);
+        // The narrow layout intentionally keeps the closed file tree offscreen.
+        if (point.x < 0) continue;
+        hits.push(await page.evaluate(({point, selector}) => ({selector, point, hit:document.elementFromPoint(point.x, point.y)?.className}), {point, selector}));
         await page.mouse.move(point.x, point.y); await page.mouse.down();
         await page.mouse.move(point.x + 2, point.y + 1); await page.mouse.up();
       }
-      assert.equal(await page.evaluate(() => __dragStarts), before + 2);
+      assert.equal(await page.evaluate(() => __dragStarts), before + hits.length, JSON.stringify(hits));
     }
     await expectDragMarkers(true);
     await expectBlankDrag();

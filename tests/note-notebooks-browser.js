@@ -404,7 +404,32 @@ async function freePort() {
     await page.reload();
     await page.waitForFunction(() => window.__notebooksTest?.state.initialized);
     assert.equal(await page.evaluate(() => __notebooksTest.state.sideMode), 'notebooks', 'legacy history preference falls back to notebooks');
-    assert.deepEqual(await page.locator('.note-side-modes button').evaluateAll(buttons => buttons.map(button => button.dataset.noteAction)), ['side-notebooks', 'side-links', 'side-canvas']);
+    assert.deepEqual(await page.locator('.note-side-modes button').evaluateAll(buttons => buttons.map(button => button.dataset.noteAction)), ['side-notebooks', 'side-links', 'side-canvas', 'side-guide']);
+
+    assert.equal(await page.locator('.note-guide-example').count(), 0, 'Guide DOM is lazy');
+    let guideMathRequests = 0;
+    page.on('request', request => { if (/mathjax|tex-chtml/i.test(request.url())) guideMathRequests++; });
+    await page.locator('[data-note-action="side-guide"]').click();
+    await settleSide();
+    assert.equal(await page.locator('.note-guide-example').count(), 52);
+    assert.equal(await page.locator('.note-guide .note-color-block').count(), 33);
+    assert.equal(await page.locator('.note-guide mjx-container').count(), 0);
+    assert.equal(guideMathRequests, 0, 'formula examples must not load MathJax');
+    await checkSideTools('guide');
+    await page.evaluate(() => {
+      __notebooksTest.editor.view.dispatch({ selection: { anchor: 1, head: 3 } });
+      __notebooksTest.editor.focus();
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__guideCopied = text; } } });
+    });
+    await page.locator('.note-guide-copy').first().click();
+    assert((await page.evaluate(() => window.__guideCopied)).startsWith('> [!note]'));
+    assert.deepEqual(await page.evaluate(() => [__notebooksTest.editor.snapshot().anchor, __notebooksTest.editor.snapshot().head]), [1, 3], 'copy retains body selection');
+    await flush();
+    assert.equal(settings().ui.mode, 'guide');
+    await page.reload();
+    await page.waitForFunction(() => window.__notebooksTest?.state.initialized);
+    assert.equal(await page.evaluate(() => __notebooksTest.state.sideMode), 'guide');
+    await page.locator('[data-note-action="side-notebooks"]').click(); await settleSide();
 
     await page.locator('[data-note-action="toggle-sort"]').click();
     await page.locator('#note-sort-menu [data-note-sort-mode="name-asc"]').click();

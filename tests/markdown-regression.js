@@ -19,6 +19,34 @@ const Notebook = global.RelatumMarkdownNotebook;
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'styles.css'), 'utf8');
 assert(Markdown && Markdown.structure && typeof Markdown.renderResult === 'function');
 
+const noteCatalog = Markdown.noteBlockCatalog;
+assert(Object.isFrozen(noteCatalog) && Object.isFrozen(noteCatalog.colors));
+assert.equal(noteCatalog.colors.length, 32);
+for (const type of noteCatalog.types) {
+  for (const name of [type.name, ...type.aliases]) {
+    const rendered = Markdown.renderResult('> [!' + name.toUpperCase() + ']\n> content', {noteBlocks:true});
+    assert(rendered.html.includes('>' + name[0].toUpperCase() + name.slice(1) + '</span>'), rendered.html);
+    assert(rendered.html.includes('data-callout="' + type.name + '"'));
+  }
+}
+for (const color of noteCatalog.colors) {
+  const html = Markdown.renderResult('> [!' + color.name.toUpperCase() + ']\n> content', {noteBlocks:true}).html;
+  assert(html.includes('note-color-block') && !html.includes('md-callout-title') && !html.includes('<svg'), html);
+  assert(html.includes(color.light) && html.includes(color.dark));
+}
+assert(!Markdown.renderResult('> [!blue]\n> content').html.includes('note-color-block'), 'note-only extension must not change canvas Markdown');
+for (const delimiter of [['$$','$$'], ['\\[','\\]']]) {
+  const html = Markdown.renderResult('> [!info]\n> before\n> ' + delimiter[0] + '\n> x > y\n> > z\n> ' + delimiter[1] + '\n> after', {noteBlocks:true}).html;
+  assert(html.includes('x &gt; y\n&gt; z') && !html.includes('&gt; x'), html);
+  assert(/md-callout-body[^]*before[^]*md-math-block[^]*after[^]*<\/div><\/div>$/.test(html), html);
+}
+for (const source of ['> [!note]\n> ```tex\n> $$x$$\n> ```', '> [!note]\n>     $$x$$', '> [!note]\n> <!--\n> $$x$$\n> -->', '> [!note]\n> %%\n> $$x$$\n> %%', '---\nexample: $$x$$\n---\ncontent']) {
+  const result = Markdown.renderResult(source, {noteBlocks:true,noteTags:true});
+  assert(!result.features.math && !result.html.includes('md-math-block'), JSON.stringify(result));
+}
+const boundedMath = Markdown.renderResult('> [!note]\n> $$' + 'x+'.repeat(17000) + 'x$$\n> after', {noteBlocks:true});
+assert(!boundedMath.features.math && boundedMath.html.includes('md-math-source') && !boundedMath.html.includes('md-math-block'));
+
 const label = Markdown.renderLabelResult('**bold** *italic* ~~gone~~ `code` ==bright==\n$U_{s1}$');
 assert.equal(label.error, false);
 for (const tag of ['<strong>bold</strong>', '<em>italic</em>', '<del>gone</del>', '<code>code</code>', '<mark', '<br>'])

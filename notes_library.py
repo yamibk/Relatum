@@ -459,7 +459,7 @@ class NotesStore:
             try:
                 if key == "open" and isinstance(value, bool):
                     target[key] = value
-                elif key == "mode" and value in ("notebooks", "links", "canvas"):
+                elif key == "mode" and value in ("notebooks", "links", "canvas", "guide"):
                     target[key] = value
                 elif key == "mode" and value == "history" and not strict:
                     target[key] = "notebooks"

@@ -207,8 +207,11 @@ body { margin: 0; }
         const view = editor.view, caret = view.coordsAtPos(view.state.selection.main.head);
         return {line:view.state.doc.lineAt(view.state.selection.main.head).text, caret};
       });
+      // Leaving the active wrapped body hides its source markers and may reflow
+      // that paragraph. Compare the caret with the resulting native text box.
+      const settledAfterPoint = await textPoint('后方定位段落');
       assert(after.line.includes('后方定位段落'), 'a click below a wrapped Callout must land in the following paragraph');
-      assert(Math.abs((after.caret.top + after.caret.bottom)/2 - afterPoint.y) < 5, 'Callout padding must not shift later pointer coordinates');
+      assert(Math.abs((after.caret.top + after.caret.bottom)/2 - settledAfterPoint.y) < 5, 'Callout padding must not shift native caret coordinates: ' + JSON.stringify({after, afterPoint, settledAfterPoint}));
       await page.locator('.note-live-callout-title-widget').click();
       await settle();
       assert.equal(await page.locator('.note-live-callout-title-widget').count(), 0, 'a title click must enter its native Markdown line');

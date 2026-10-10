@@ -1550,6 +1550,7 @@
         <symbol id="note-icon-chevrons-up-down" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5" /><path d="m7 9 5-5 5 5" /></symbol>
         <symbol id="note-icon-chevrons-down-up" viewBox="0 0 24 24"><path d="m7 20 5-5 5 5" /><path d="m7 4 5 5 5-5" /></symbol>
         <symbol id="note-icon-copy-x" viewBox="0 0 24 24"><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2" /><rect x="8" y="8" width="14" height="14" rx="2" /><path d="m12.5 12.5 5 5" /><path d="m12.5 17.5 5-5" /></symbol>
+        <symbol id="note-icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
         <symbol id="note-icon-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
         <symbol id="note-icon-file-text" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path d="M14 2v5a1 1 0 0 0 1 1h5" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></symbol>
         <symbol id="note-icon-rotate-ccw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol>
@@ -1699,6 +1700,7 @@
           <button type="button" data-note-action="side-notebooks">笔记本</button>
           <button type="button" data-note-action="side-links">链接</button>
           <button type="button" data-note-action="side-canvas" data-feature="notes.canvas">画布</button>
+          <button type="button" data-note-action="side-guide">引导</button>
         </nav>
         <button type="button" class="note-side-button" data-note-action="close-links"
           aria-label="关闭侧栏"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-x"/></svg></button>
@@ -1731,6 +1733,7 @@
           <div class="note-link-list" data-role="note-backlinks"></div>
         </section>
       </div>
+      <section class="note-guide" data-role="note-guide" hidden></section>
       <section class="note-canvas-settings" data-role="note-canvas-settings" data-feature="notes.canvas" aria-labelledby="note-canvas-settings-title" hidden>
         <header class="note-canvas-settings-head">
           <h3 id="note-canvas-settings-title">画布设置</h3>

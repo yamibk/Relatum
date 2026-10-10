@@ -65,6 +65,28 @@ async function run(browser, enabled, prewarm = false) {
     if (!enabled) {
       assert.equal(await page.locator('[data-note-action="side-canvas"], [data-role="note-canvas-settings"]').count(), 0);
       assert.equal(await page.evaluate(() => T.state.sideMode), 'notebooks', 'disabled restored tab falls back');
+      await page.locator('[data-note-action="side-guide"]').click(); await settle();
+      assert.equal(await page.locator('.note-guide-example').count(), 52, 'Guide remains available without canvas');
+      assert.equal(requests.filter(r => /mathjax|tex-chtml/i.test(r)).length, 0, 'Guide formulas are source only');
+      await page.evaluate(() => RelatumI18n.setLanguage('en')); await settle();
+      assert.equal(await page.locator('[data-note-action="side-guide"]').innerText(), 'Guide');
+      assert.equal(await page.locator('.note-guide-copy').first().getAttribute('data-ui-tooltip'), 'Copy syntax');
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {configurable:true,value:{writeText:async()=>{throw new Error('unavailable');}}});
+        window.__execCommand=document.execCommand; document.execCommand=()=>false;
+      });
+      await page.locator('.note-guide-copy').first().click();
+      await page.waitForFunction(()=>document.querySelector('.note-guide-copy').getAttribute('data-ui-tooltip') === 'Could not copy syntax');
+      await page.evaluate(() => { document.execCommand=window.__execCommand; RelatumI18n.setLanguage('zh-CN'); document.body.dataset.startTheme='dark'; });
+      await page.setViewportSize({width:520,height:800}); await settle();
+      await page.screenshot({path:path.join(root,'guide-disabled-dark-narrow.png')});
+      const guideGeometry = await page.evaluate(() => {
+        const nav=document.querySelector('.note-side-modes').getBoundingClientRect(),close=document.querySelector('[data-note-action="close-links"]').getBoundingClientRect();
+        return {navRight:nav.right,closeLeft:close.left,scroll:document.querySelector('.note-side-modes').scrollWidth>document.querySelector('.note-side-modes').clientWidth};
+      });
+      assert(guideGeometry.navRight <= guideGeometry.closeLeft);
+      await page.locator('[data-note-action="close-links"]').click();
+      await page.setViewportSize({width:1280,height:900});
       const literal = '![示意图.canvas|640x360](canvases/示意图.canvas)';
       await page.evaluate(value => T.editor.replaceSelection('\n\n' + value), literal);
       await settle();
