@@ -35,9 +35,24 @@ function instrumentation(fallback) {
   Object.defineProperty(window, 'GraphEngine', { configurable: true, get: () => module, set(value) {
     const create = value.create;
     value.create = options => {
+      const record = { engine: null, nodes: [], edges: [], track: false, frames: [], nodeColors: {}, edgeColors: {} };
+      const sync = options.domOverlay.sync;
+      options.domOverlay.sync = state => {
+        sync(state);
+        const labelAlpha = Number(document.querySelector('.note-graph-label-world').style.getPropertyValue('--note-graph-label-alpha'));
+        if (record.track) record.frames.push({ time: performance.now(), view: record.engine.view,
+          opacity: state.nodes.map(node => node._appearOpacity), scale: state.nodes.map(node => node._appearScale),
+          labels: Array.from(document.querySelectorAll('[data-note-graph-label]')).map(el => Number(el.style.opacity || 1) * (el.classList.contains('is-hovered') ? 1 : labelAlpha)) });
+      };
+      const styleNode = options.nodeStyle, styleEdge = options.edgeStyle, drawNode = options.drawNode, drawEdge = options.drawEdge;
+      options.nodeStyle = (node, env) => { const style = styleNode(node, env); record.nodeColors[node.id] = style.fill.slice(0, 3); return style; };
+      options.edgeStyle = (...args) => { const style = styleEdge(...args); record.edgeColors.normal = style.color.slice(0, 3); return style; };
+      options.drawNode = (ctx, node, env) => { drawNode(ctx, node, env); record.nodeColors[node.id] = ctx.fillStyle; };
+      options.drawEdge = (...args) => { drawEdge(...args); record.edgeColors.normal = args[0].strokeStyle; };
       const engine = create(options);
       if (engine) {
-        const record = { engine, nodes: [], edges: [] }, setData = engine.setData;
+        record.engine = engine;
+        const setData = engine.setData;
         engine.setData = function (nodes, edges, ...rest) { record.nodes = nodes; record.edges = edges; return setData.call(this, nodes, edges, ...rest); };
         probe.engines.push(record); probe.latest = record;
       }
@@ -133,6 +148,97 @@ async function run(browser, mode) {
           y: rect.top + (rect.height - 720 * base) / 2 + (node._ry - view.y) * unit };
       }, path);
     }
+    async function verifyLabelFade(path) {
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending);
+      await pause(800); // Finish entry/theme/resize work before measuring camera-only invalidation.
+      const saved = await camera();
+      await page.mouse.move(1, 1); await pause(80);
+      const uploads = await page.evaluate(() => __graphProbe.uploads);
+      const label = page.locator('[data-note-graph-label=' + JSON.stringify(path) + '] span');
+      for (const [unit, alpha] of [[.2, 0], [.25, 0], [.45, .5], [.65, 1], [.8, 1], [.45, .5], [.2, 0]]) {
+        await page.evaluate(({ path, unit }) => {
+          const { engine, nodes } = __graphProbe.latest, node = nodes.find(n => n.id === path);
+          const rect = engine.canvas.getBoundingClientRect(), scale = unit / Math.min(rect.width / 1200, rect.height / 720);
+          engine.restoreView({ x: node._rx - 600 / scale, y: node._ry - 360 / scale, scale });
+        }, { path, unit });
+        await pause(60);
+        assert(Math.abs(await label.evaluate(el => Number(getComputedStyle(el).opacity)) - alpha) < .002, 'title opacity follows screen unit in both directions');
+        assert.equal(await label.evaluate(el => getComputedStyle(el).fontSize), '12px');
+      }
+      assert.equal(await page.evaluate(() => __graphProbe.uploads), uploads, 'fade does not invalidate GPU instances');
+      const point = await nodePoint(path); await page.mouse.move(point.x, point.y); await pause(80);
+      assert.equal(await label.evaluate(el => getComputedStyle(el).opacity), '1', 'hover reveals hidden full title');
+      assert.equal(await page.locator('.note-graph-label-anchor.is-hovered').count(), 1);
+      assert(await page.locator('.note-graph-label-anchor:not(.is-hovered) .note-graph-label').evaluateAll(elements => elements.every(el => getComputedStyle(el).opacity === '0')), 'neighbors stay hidden');
+      await page.mouse.move(1, 1); await pause(80);
+      assert.equal(await label.evaluate(el => getComputedStyle(el).opacity), '0', 'leaving restores hidden title');
+      const draws = await page.evaluate(() => __graphProbe.draws); await pause(150);
+      assert.equal(await page.evaluate(() => __graphProbe.draws), draws, 'fade adds no idle drawing');
+      await page.evaluate(view => __graphProbe.latest.engine.restoreView(view), saved); await pause(80);
+    }
+    async function verifyPalette(dark, path) {
+      await page.evaluate(() => __graphProbe.latest.engine.fitView(false)); await pause(80);
+      const point = await nodePoint(path); await page.mouse.move(point.x, point.y); await pause(80);
+      const paint = await page.evaluate(path => ({ node: __graphProbe.latest.nodeColors[path],
+        edge: __graphProbe.latest.edgeColors.normal, backend: __graphProbe.latest.engine.backendKind }), path);
+      const focus = dark ? '#f5f5f5' : '#202020', normal = dark ? '#b9b9b9' : '#5f5f5f';
+      function rgb(hex) { return [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255); }
+      assert.deepEqual(paint.node, paint.backend === 'webgl' ? rgb(focus) : focus, 'hover uses neutral high contrast');
+      if (paint.backend === 'webgl') assert.equal(new Set(paint.edge).size, 1, 'GL edges are grayscale');
+      else assert(/^rgba?\((\d+), \1, \1[,)]/.test(paint.edge), '2D edges are grayscale: ' + paint.edge);
+      await page.mouse.move(1, 1); await pause(80);
+      assert.deepEqual(await page.evaluate(path => __graphProbe.latest.nodeColors[path], path), paint.backend === 'webgl' ? rgb(normal) : normal);
+    }
+    async function verifyGrowthAndSpread() {
+      const grow = page.locator(`${panel} [data-action="graph-grow"]`);
+      assert.equal(await grow.getAttribute('aria-label'), '播放关系图谱生长动画');
+      assert.equal(await grow.getAttribute('data-ui-tooltip'), '播放关系图谱生长动画');
+      assert(await grow.evaluate(el => el.nextElementSibling.dataset.action === 'graph-relax'));
+      const view = { x: 1000000, y: -1000000, scale: .04 };
+      await page.evaluate(view => {
+        const record = __graphProbe.latest; record.track = true; record.frames = [];
+        record.engine.restoreView(view); document.querySelector('[data-action="graph-relax"]').click();
+      }, view);
+      assert.deepEqual(await camera(), view, 'spread does not reset a remote camera on click');
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending); await pause(150);
+      const spread = await page.evaluate(() => { const r = __graphProbe.latest; r.track = false; return r.frames; });
+      assert(spread.length > 30); assert(spread.every(frame => JSON.stringify(frame.view) === JSON.stringify(view)), 'every spread frame keeps the camera including final empty-viewport frame');
+      assert.equal(await page.locator('[data-note-graph-label]').count(), 0);
+      await page.locator(`${panel} [data-action="graph-reset-view"]`).evaluate(el => el.click()); await pause(1000);
+      assert.notDeepEqual(await camera(), view, 'explicit reset recovers offscreen nodes');
+      const creates = await page.evaluate(() => __graphProbe.engines.length), queries = requests.filter(url => url === '/api/note-graph').length;
+      const blank = await page.evaluate(() => {
+        const r = __graphProbe.latest; r.track = true; r.frames = [];
+        document.querySelector('[data-action="graph-grow"]').click();
+        const rect = r.engine.canvas.getBoundingClientRect(), n = r.nodes[0], view = r.engine.view;
+        const base = Math.min(rect.width / 1200, rect.height / 720), unit = base * view.scale;
+        const x = rect.left + (rect.width - 1200 * base) / 2 + (n.x - view.x) * unit;
+        const y = rect.top + (rect.height - 720 * base) / 2 + (n.y - view.y) * unit;
+        return { view, born: r.nodes.map(node => node._born), opacity: r.nodes.map(node => node._appearOpacity), hit: r.engine.nodeAtClient(x, y) };
+      });
+      assert(blank.opacity.every(alpha => alpha === 0)); assert.equal(blank.hit, -1);
+      await page.waitForFunction(() => __graphProbe.latest.frames.length > 0);
+      const first = await page.evaluate(() => __graphProbe.latest.frames[0]);
+      assert(first.opacity.every(alpha => alpha === 0) && first.labels.every(alpha => alpha === 0), 'first rendered growth frame is blank including labels');
+      await pause(200);
+      const replay = await page.evaluate(() => {
+        const r = __graphProbe.latest, before = r.nodes.map(node => node._appearOpacity);
+        document.querySelector('[data-action="graph-grow"]').click();
+        return { view: r.engine.view, before, born: r.nodes.map(node => node._born), opacity: r.nodes.map(node => node._appearOpacity) };
+      });
+      assert(replay.before[0] > 0 && replay.before[0] >= replay.before.at(-1));
+      assert.deepEqual(replay.view, blank.view, 'continuous replay reuses the initial growth framing');
+      assert(replay.born[0] > blank.born[0]); assert(replay.opacity.every(alpha => alpha === 0));
+      assert.equal(await page.evaluate(() => __graphProbe.engines.length), creates, 'replay reuses the engine');
+      assert.equal(requests.filter(url => url === '/api/note-graph').length, queries, 'replay makes no data request');
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending && __graphProbe.latest.nodes.every(node => node._appeared)); await pause(200);
+      const growth = await page.evaluate(() => { const r = __graphProbe.latest; r.track = false; return r.frames; });
+      assert(growth.every(frame => JSON.stringify(frame.view) === JSON.stringify(blank.view)), 'growth never changes camera after its blank-phase framing');
+      assert(growth.some(frame => frame.opacity[0] > frame.opacity.at(-1) && frame.scale[0] !== frame.scale.at(-1)), 'appearance is staggered');
+      assert(growth.at(-1).opacity.every(alpha => alpha === 1));
+      const draws = await page.evaluate(() => __graphProbe.draws); await pause(200);
+      assert.equal(await page.evaluate(() => __graphProbe.draws), draws, 'finished growth has no ongoing rendering');
+    }
     await shown(3, 1);
     assert.equal(await page.evaluate(() => T.state.activeTab), token);
     assert(!requests.includes('/graph-window.js'), 'notes do not load the floating window shell');
@@ -143,6 +249,9 @@ async function run(browser, mode) {
     assert.equal(await page.evaluate(() => __graphProbe.latest.engine.backendKind), ['fallback', 'shader-failure'].includes(mode) ? 'canvas2d' : 'webgl');
     await page.waitForFunction(name => Array.from(document.querySelectorAll('[data-note-graph-label]')).some(el => el.textContent === name), longName);
     await pause(6500);
+    await verifyLabelFade(longName + '.md');
+    await verifyPalette(false, 'A.md');
+    await verifyGrowthAndSpread();
     const viewBeforeRepeat = await camera(), creates = await page.evaluate(() => __graphProbe.engines.length);
     await button.click(); await button.click();
     assert.equal(await page.locator('.note-tab.is-graph').count(), 1);
@@ -162,7 +271,7 @@ async function run(browser, mode) {
     const width = await label.evaluate(el => el.getBoundingClientRect().width);
     await page.mouse.move(stage.x + 5, stage.y + 5); await page.mouse.down();
     await page.mouse.move(stage.x + 35, stage.y + 22, { steps: 6 }); await page.mouse.up();
-    await page.mouse.wheel(0, 90); await pause(300);
+    await page.mouse.wheel(0, 90); await pause(800);
     assert(Math.abs(width - await label.evaluate(el => el.getBoundingClientRect().width)) < 1, 'zoom keeps full titles at a fixed font size');
     assert.equal(await page.evaluate(() => __graphProbe.uploads), uploads, 'static camera movement uploads zero instances');
     await page.evaluate(() => { window.__firstLabel = document.querySelector('[data-note-graph-label]'); });
@@ -233,6 +342,7 @@ async function run(browser, mode) {
     await page.unroute('**/api/note-graph?*'); await page.locator(`${panel} [data-note-graph-retry]`).click();
     await page.waitForFunction(() => document.querySelector('[data-role="note-graph-message"]').hidden);
     await select('CustomNotebook/Empty', 0, 0); await resourcesReleased();
+    assert(await page.locator(`${panel} [data-action="graph-grow"]`).isDisabled());
     await page.evaluate(() => RelatumI18n.setLanguage('en'));
     assert((await page.locator(`${panel} [data-role="graph-empty"]`).textContent()).includes('no notes'));
     await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
@@ -259,11 +369,13 @@ async function run(browser, mode) {
       await resourcesReleased();
       await page.evaluate(async () => { document.querySelector('[data-start-workspace-panel="notes"]').hidden = false; await CanvasNoteWorkspace.activate(); });
       await shown(3, 2);
+      await page.locator(`${panel} [data-action="graph-grow"]`).evaluate(el => el.click());
       const hiddenView = await camera();
       await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
       await resourcesReleased();
       await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
       await shown(3, 2); assert.deepEqual(await camera(), hiddenView, 'visibility return restores the session camera');
+      assert(await page.evaluate(() => __graphProbe.latest.nodes.every(node => node._appeared)), 'return does not replay cancelled growth');
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide'))); await resourcesReleased();
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow'))); await shown(3, 2);
       await page.evaluate(() => T.recycleEntry({ kind: 'folder', path: 'CustomNotebook/Renamed', name: 'Renamed' }));
@@ -275,6 +387,20 @@ async function run(browser, mode) {
     await page.locator(`${panel} [data-note-action="toggle-tree"]`).click();
     assert(await page.locator('.note-tree-pane').isVisible(), 'narrow graph has a reachable directory control');
     await page.locator(`${panel} [data-note-action="toggle-tree"]`).click();
+    await verifyLabelFade(await page.evaluate(() => __graphProbe.latest.nodes[0].id));
+    assert.equal(await page.locator(`${panel} [data-action="graph-grow"]`).getAttribute('aria-label'), 'Play graph growth animation');
+    assert.equal(await page.locator(`${panel} [data-action="graph-grow"]`).getAttribute('data-ui-tooltip'), 'Play graph growth animation');
+    await verifyPalette(true, await page.evaluate(() => __graphProbe.latest.nodes.find(node => node.degree > 0).id));
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.evaluate(() => T.activateTab('A.md')); await resourcesReleased();
+    await page.evaluate(() => T.activateTab('relatum:graph-tab:v1')); await shown(3, 1);
+    const reduced = await page.evaluate(() => {
+      document.querySelector('[data-action="graph-grow"]').click();
+      const r = __graphProbe.latest;
+      return { opacity: r.nodes.map(node => node._appearOpacity), scale: r.nodes.map(node => node._appearScale), born: r.nodes.map(node => node._born) };
+    });
+    assert(reduced.opacity.every(alpha => alpha === 1) && reduced.scale.every(scale => scale === 1), 'low motion skips the blank phase and growth easing');
+    assert(reduced.born.every(time => time === reduced.born[0]), 'low motion skips staggering');
     if (process.env.RELATUM_ARTIFACT_DIR) {
       fs.mkdirSync(process.env.RELATUM_ARTIFACT_DIR, { recursive: true }); await pause(300);
       await page.evaluate(() => { const toast = document.querySelector('[data-role="note-toast"]'); if (toast) toast.hidden = true; });

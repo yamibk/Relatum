@@ -186,6 +186,15 @@ async function snapshot(page) {
       assert.equal(report.starClosed.buffers, 0, 'leaving star graph releases GPU buffers');
       assert.equal(report.starClosed.activeContexts, 0, 'leaving star graph releases its context');
     }
+    // Allow graph changes to verify both hosts without running the independent audio suite.
+    if (process.argv.includes('--graph-only')) {
+      assert.deepEqual(errors, [], 'star graph transitions have no script errors');
+      await context.close();
+      if (process.env.RELATUM_RESOURCE_REPORT) fs.writeFileSync(process.env.RELATUM_RESOURCE_REPORT, JSON.stringify(report, null, 2));
+      console.log(JSON.stringify({ graphOnly: true, onDemand: report.onDemand, starClosedBuffers: report.starClosed.buffers,
+        starClosedContexts: report.starClosed.activeContexts, homeIdleBuffers: report.homeIdle.buffers }));
+      return;
+    }
     await page.locator('[data-role="focus-primary"]').click();
     await page.waitForFunction(() => window.__resources.sourcesStarted > 0, null, { timeout: 20000 });
     await sleep(500);
@@ -244,14 +253,19 @@ async function snapshot(page) {
       await page.unroute('**/audio/rain.mp3');
       await page.evaluate(() => {
         const original = AudioContext.prototype.decodeAudioData;
+        window.__lateDecode = { pending: 0, completed: 0 };
         AudioContext.prototype.decodeAudioData = function (...args) {
-          return original.apply(this, args).then(buffer => new Promise(resolve => setTimeout(() => resolve(buffer), 700)));
+          window.__lateDecode.pending++;
+          return original.apply(this, args)
+            .then(buffer => new Promise(resolve => setTimeout(() => resolve(buffer), 700)))
+            .finally(() => { window.__lateDecode.pending--; window.__lateDecode.completed++; });
         };
       });
       await page.locator('[data-role="focus-set-noise"]').check();
-      await sleep(150);
+      await page.waitForFunction(() => window.__lateDecode.pending > 0, null, { timeout: 20000 });
       await page.locator('[data-role="focus-set-noise"]').uncheck();
-      await sleep(1200);
+      // Native decoding time varies; collect only after the deliberately delayed result settles.
+      await page.waitForFunction(() => window.__lateDecode.completed > 0 && window.__lateDecode.pending === 0, null, { timeout: 20000 });
       const lateDecode = await snapshot(page);
       assert.equal(lateDecode.audioSources, 0, 'late decoding does not restart');
       assert.equal(lateDecode.retainedPCMBytes, 0, 'late decoding does not retain PCM');

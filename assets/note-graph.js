@@ -3,9 +3,12 @@
   'use strict';
   const CACHE_LIMIT = 24, CACHE_BYTES = 16 * 1024 * 1024;
   const VIEW_W = 1200, VIEW_H = 720;
+  const LABEL_HIDE_UNIT = .25, LABEL_SHOW_UNIT = .65;
+  const GROWTH_BLANK_MS = 100, GROWTH_SPAN_MS = 3000;
   const COPY = {
     title: ['关系图谱', 'Graph'], notebooks: ['笔记本', 'Notebooks'], directory: ['显示笔记目录', 'Show note directory'],
     relax: ['舒展', 'Spread'], reset: ['复位', 'Reset'],
+    grow: ['播放关系图谱生长动画', 'Play graph growth animation'],
     nodes: ['节点', 'nodes'], edges: ['连线', 'edges'], retry: ['重试', 'Retry'],
     loading: ['正在读取笔记图谱…', 'Loading notebook graph…'], empty: ['当前笔记本还没有笔记', 'This notebook has no notes yet'],
     disconnected: ['当前笔记之间还没有链接', 'These notes do not have links yet'],
@@ -24,6 +27,7 @@
     host.innerHTML = '<div class="graph-stage note-graph-stage" data-role="graph-stage"><canvas class="graph-canvas" data-role="graph-canvas"></canvas>'
       + '<div class="note-graph-tools">'
       + '<button type="button" class="graph-tool-btn note-mobile-pane-button" data-note-action="toggle-tree" data-note-graph-control-label="directory"><svg class="graph-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#note-icon-panel-left"/></svg></button>'
+      + '<button type="button" class="graph-tool-btn" data-action="graph-grow" data-note-graph-control-label="grow"><svg class="graph-tool-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 16 9-9 3 3-9 9-3-3ZM10.5 9.5l3 3M5 2v4M3 4h4M14 1v3M12.5 2.5h3M17 12v4M15 14h4"/></svg></button>'
       + '<button type="button" class="graph-tool-btn" data-action="graph-relax"><svg class="graph-tool-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.2 4.2H4.2v3M12.8 4.2h3v3M7.2 15.8h-3v-3M12.8 15.8h3v-3M8 8 4.4 4.4M12 8l3.6-3.6M8 12l-3.6 3.6M12 12l3.6 3.6"/></svg><span data-note-graph-copy="relax"></span></button>'
       + '<button type="button" class="graph-tool-btn" data-action="graph-reset-view"><svg class="graph-tool-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.7 7.1A6.2 6.2 0 1 0 16 12M15.7 3.8v3.5h-3.5"/></svg><span data-note-graph-copy="reset"></span></button>'
       + '<button type="button" class="graph-tool-btn" data-note-action="graph-notebooks" data-note-graph-control-label="notebooks" aria-controls="note-shared-side-panel" aria-expanded="false"><svg class="graph-tool-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#note-icon-panel-right-frame"/><use href="#note-icon-panel-right-bar"/></svg></button></div>'
@@ -41,6 +45,7 @@
     let nodes = [], edges = [], signature = '', scope = null;
     let wanted = false, destroyed = false, operation = 0, engine = null, needsLayout = false, selecting = false;
     let openJob = null, refreshJob = null, status = '', failure = null;
+    let growthView = null;
     const scenes = new Map();
     let sceneBytes = 0;
     function current(ticket, expectedRoot) {
@@ -66,15 +71,15 @@
     }
     function syncTheme() {
       const dark = document.body.dataset.startTheme === 'dark';
-      theme.fill = dark ? '#9dbfa8' : '#4f9571'; theme.fillGL = dark ? [.616, .749, .659] : [.310, .584, .443];
-      theme.edge = dark ? 'rgba(221,230,223,.23)' : 'rgba(27,29,32,.22)';
-      theme.edgeHi = dark ? 'rgba(230,242,233,.8)' : 'rgba(27,29,32,.66)';
-      theme.edgeGL = dark ? [.867, .902, .875, .23] : [.106, .114, .125, .22];
-      theme.edgeHiGL = dark ? [.902, .949, .914, .8] : [.106, .114, .125, .66];
+      theme.fill = dark ? '#b9b9b9' : '#5f5f5f'; theme.fillGL = dark ? [185 / 255, 185 / 255, 185 / 255] : [95 / 255, 95 / 255, 95 / 255];
+      theme.focus = dark ? '#f5f5f5' : '#202020'; theme.focusGL = dark ? [245 / 255, 245 / 255, 245 / 255] : [32 / 255, 32 / 255, 32 / 255];
+      theme.edge = dark ? 'rgba(190,190,190,.23)' : 'rgba(96,96,96,.22)';
+      theme.edgeHi = dark ? 'rgba(245,245,245,.8)' : 'rgba(32,32,32,.66)';
+      theme.edgeGL = dark ? [190 / 255, 190 / 255, 190 / 255, .23] : [96 / 255, 96 / 255, 96 / 255, .22];
+      theme.edgeHiGL = dark ? [245 / 255, 245 / 255, 245 / 255, .8] : [32 / 255, 32 / 255, 32 / 255, .66];
       engine?.requestRender();
     }
-    const theme = { fill: '#4f9571', fillGL: [.310, .584, .443], edge: 'rgba(27,29,32,.22)',
-      edgeHi: 'rgba(27,29,32,.66)', edgeGL: [.106, .114, .125, .22], edgeHiGL: [.106, .114, .125, .66] };
+    const theme = {};
 
     function createLabelLayer() {
       const layer = document.createElement('div'); layer.className = 'note-graph-label-layer'; layer.setAttribute('aria-hidden', 'true');
@@ -85,7 +90,7 @@
       const measure = document.createElement('canvas').getContext('2d');
       const family = getComputedStyle(stage).fontFamily || 'system-ui';
       if (measure) measure.font = '500 12px ' + family;
-      let stamp = 0, previousMatrix = '', previousUnit = 0, previousNodes = null;
+      let stamp = 0, previousMatrix = '', previousUnit = 0, previousNodes = null, previousLabelAlpha = -1;
       function metric(node) {
         let value = measurements.get(node.id);
         if (!value || value.text !== node.label) {
@@ -109,6 +114,11 @@
             previousNodes = state.nodes;
           }
           const unit = state.unit, inverse = 1 / unit;
+          const progress = Math.max(0, Math.min(1, (unit - LABEL_HIDE_UNIT) / (LABEL_SHOW_UNIT - LABEL_HIDE_UNIT)));
+          const labelAlpha = progress * progress * (3 - 2 * progress);
+          if (labelAlpha !== previousLabelAlpha) {
+            world.style.setProperty('--note-graph-label-alpha', String(labelAlpha)); previousLabelAlpha = labelAlpha;
+          }
           const tx = state.offsetX - state.viewX * unit, ty = state.offsetY - state.viewY * unit;
           const matrix = 'matrix(' + unit + ',0,0,' + unit + ',' + tx + ',' + ty + ')';
           if (matrix !== previousMatrix) { world.style.transform = matrix; previousMatrix = matrix; }
@@ -116,7 +126,8 @@
             world.style.setProperty('--note-graph-inverse', String(inverse));
             world.style.setProperty('--note-graph-unit', String(unit)); previousUnit = unit;
           }
-          for (const node of state.nodes) {
+          for (let index = 0; index < state.nodes.length; index++) {
+            const node = state.nodes[index];
             const sx = node._rx * unit + tx, sy = node._ry * unit + ty;
             let entry = visible.get(node.id);
             const measurement = metric(node), width = measurement.width;
@@ -127,17 +138,22 @@
               if (!entry) {
                 const anchor = document.createElement('div'); anchor.className = 'note-graph-label-anchor';
                 const label = document.createElement('span'); label.className = 'note-graph-label'; anchor.appendChild(label);
-                entry = { anchor, label, text: '', path: '', radius: -1, opacity: -1, x: NaN, y: NaN };
+                entry = { anchor, label, text: '', path: '', radius: -1, opacity: -1, hovered: false, x: NaN, y: NaN };
               }
               world.appendChild(entry.anchor); visible.set(node.id, entry);
             }
             entry.stamp = stamp;
-            if (entry.x !== node._rx || entry.y !== node._ry) {
+            const hovered = index === state.focusIndex;
+            if (entry.hovered !== hovered) { entry.anchor.classList.toggle('is-hovered', hovered); entry.hovered = hovered; }
+            // Fully faded titles keep their DOM/measurement but defer invisible style work.
+            // Cached values stay unchanged so the next visible/hovered frame catches up.
+            const visibleTitle = labelAlpha > 0 || hovered;
+            if (visibleTitle && (entry.x !== node._rx || entry.y !== node._ry)) {
               entry.anchor.style.transform = 'translate(' + node._rx + 'px,' + node._ry + 'px)'; entry.x = node._rx; entry.y = node._ry;
             }
             if (entry.radius !== node.r) { entry.anchor.style.setProperty('--note-graph-radius', String(node.r)); entry.radius = node.r; }
             const alpha = (node._appearOpacity ?? 1) * (node._dim ? .26 : 1);
-            if (entry.opacity !== alpha) { entry.anchor.style.opacity = String(alpha); entry.opacity = alpha; }
+            if (visibleTitle && entry.opacity !== alpha) { entry.anchor.style.opacity = String(alpha); entry.opacity = alpha; }
             if (entry.text !== node.label) {
               entry.label.textContent = node.label; entry.text = node.label;
             }
@@ -149,7 +165,7 @@
       };
     }
     function nodeStyle(node, environment) {
-      const dim = environment.dim ? .22 : 1, color = theme.fillGL;
+      const dim = environment.dim ? .22 : 1, color = environment.focus ? theme.focusGL : theme.fillGL;
       return { r: node.r, fill: [color[0], color[1], color[2], dim],
         stroke: [color[0], color[1], color[2], environment.focus ? dim : 0],
         strokeW: environment.focus ? 2 : 0, scale: environment.focus ? 1.18 : 1 };
@@ -163,6 +179,7 @@
       const labelLayer = createLabelLayer();
       const engine = global.GraphEngine.create({ canvas, backend: 'webgl', active: false,
         cacheInstances: true, labelVisibility: 'always', domOverlayOnCanvas2D: true,
+        ignoreHiddenNodes: true,
         onCanvasReplace: replacement => { canvas = replacement; },
         config: { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: .048, springRest: 112, gravity: .0055,
           alphaDecay: .022, alphaReheat: .28, theta: .92, velocityDamp: .84,
@@ -171,11 +188,11 @@
         nodeStyle, edgeStyle, domOverlay: labelLayer,
         getGravity: node => node.degree >= 6 ? .022 : node.degree >= 3 ? .009 : node.degree ? .005 : .0035,
         getEdgeRest: edge => edge.rest,
-        onConverge() { needsLayout = false; },
+        onLayoutSettled() { needsLayout = false; growthView = null; },
         drawNode(context, node, environment) {
           context.globalAlpha *= environment.dim ? .22 : 1;
           context.beginPath(); context.arc(0, 0, node.r * (environment.focus ? 1.18 : 1), 0, Math.PI * 2);
-          context.fillStyle = theme.fill; context.fill();
+          context.fillStyle = environment.focus ? theme.focus : theme.fill; context.fill();
         },
         drawEdge(context, edge, source, target, environment) {
           context.globalAlpha *= environment.dim ? .14 : 1;
@@ -203,7 +220,7 @@
     function updateCounts() {
       find('[data-role="graph-node-count"]').textContent = String(nodes.length);
       find('[data-role="graph-edge-count"]').textContent = String(edges.length);
-      ['graph-relax', 'graph-reset-view'].forEach(action => { find('[data-action="' + action + '"]').disabled = nodes.length === 0; });
+      ['graph-grow', 'graph-relax', 'graph-reset-view'].forEach(action => { find('[data-action="' + action + '"]').disabled = nodes.length === 0; });
     }
     function ensureEngine() {
       if (engine) return engine;
@@ -266,6 +283,7 @@
       });
     }
     function installData(result, first) {
+      growthView = null;
       const previous = new Map(nodes.map(node => [node.id, node]));
       const byId = new Map();
       const next = (result.nodes || []).filter(node => node && typeof node.path === 'string' && typeof node.id === 'string');
@@ -328,6 +346,7 @@
       openJob = wrapped; return wrapped;
     }
     function deactivate(settings) {
+      growthView = null;
       wanted = false; operation++; openJob = null; refreshJob = null; selecting = false;
       rememberScene(); releaseEngine(); tooltip.hidden = true;
       nodes = []; edges = []; signature = ''; needsLayout = false;
@@ -383,10 +402,23 @@
       scenes.forEach((value, key) => { if (key === path || key.startsWith(path + '/')) forgetScene(key); });
     }
     retry.addEventListener('click', () => { if (wanted) { showStatus(nodes.length ? '' : 'loading'); checkExternalChanges(); } });
-    find('[data-action="graph-relax"]').addEventListener('click', () => {
-      if (!nodes.length) return; needsLayout = true; seedPositions(); engine?.start({ intro: false, fit: true });
+    find('[data-action="graph-grow"]').addEventListener('click', () => {
+      if (!wanted || !engine || !nodes.length) return;
+      tooltip.hidden = true; needsLayout = true;
+      // Everything is armed transparent before the next paint, including during a cancelled presolve.
+      engine.setData(nodes, edges, { intro: true });
+      if (growthView) engine.restoreView(growthView);
+      else { engine.fitView(false); growthView = engine.view; }
+      seedPositions();
+      engine.start({ intro: true, fit: false, preserveView: true, introDelayMs: GROWTH_BLANK_MS, introSpanMs: GROWTH_SPAN_MS });
     });
-    find('[data-action="graph-reset-view"]').addEventListener('click', () => engine?.fitView(true));
+    find('[data-action="graph-relax"]').addEventListener('click', () => {
+      if (!wanted || !engine || !nodes.length) return;
+      tooltip.hidden = true; growthView = null; needsLayout = true;
+      engine.setData(nodes, edges); seedPositions();
+      engine.start({ intro: false, fit: false, preserveView: true });
+    });
+    find('[data-action="graph-reset-view"]').addEventListener('click', () => { growthView = null; engine?.fitView(true); });
     const themeObserver = new MutationObserver(() => { if (wanted) syncTheme(); });
     updateLanguage(); updateCounts();
     return { activate, deactivate, isOpen: () => wanted, checkExternalChanges,

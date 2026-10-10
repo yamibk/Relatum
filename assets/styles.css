@@ -33797,9 +33797,11 @@ html.dark-semantic-ui {
 .note-graph-label-anchor { position: absolute; left: 0; top: 0; }
 .note-graph-label {
   position: absolute; display: block; white-space: nowrap; color: var(--text);
+  opacity: var(--note-graph-label-alpha, 1);
   font-size: 12px; font-weight: 500; line-height: 16px; transform-origin: 0 0;
   transform: scale(var(--note-graph-inverse, 1)) translate(-50%, calc(var(--note-graph-radius, 6) * var(--note-graph-unit, 1) * 1px + 8px));
 }
+.note-graph-label-anchor.is-hovered .note-graph-label { opacity: 1; }
 .note-graph-message {
   position: absolute; z-index: 5; left: 12px; top: 48px; right: 12px;
   display: flex; justify-content: center; align-items: center; gap: 12px;

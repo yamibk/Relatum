@@ -10,7 +10,7 @@ function fixture(options = {}) {
   let clock = 100, id = 0, bufferId = 0, shaderId = 0, programId = 0;
   let boundBuffer = null, currentProgram = null, core = null, replacements = 0, glError = '';
   let nodeStyles = 0, edgeStyles = 0, positionWrites = 0, lostContexts = 0;
-  const frames = new Map(), timers = new Map(), uploads = [], draws = [], overlays = [], clicks = [];
+  const frames = new Map(), timers = new Map(), uploads = [], draws = [], overlays = [], clicks = [], settled = [], converged = [];
   const uniforms = new Map(), storage = new Map();
   const gl = {
     VERTEX_SHADER: 1, FRAGMENT_SHADER: 2, COMPILE_STATUS: 3, LINK_STATUS: 4,
@@ -65,9 +65,12 @@ function fixture(options = {}) {
   const engine = sandbox.GraphEngine.create({ canvas: originalCanvas, backend: 'webgl', cacheInstances: options.cache !== false,
     nodeStyleTimeDependent: !!options.timeStyle, reduceMotion: !!options.reduced,
     labelVisibility: options.legacyLabels ? undefined : 'always', domOverlayOnCanvas2D: true,
-    config: { alphaDecay: 1, repulsion: 0, spring: 0, gravity: 0, introMs: 80, introStagger: 0 },
+    config: { alphaDecay: 1, repulsion: 0, spring: 0, gravity: 0, introMs: 80, introStagger: 0, ...options.config },
+    ignoreHiddenNodes: !!options.ignoreHidden,
     domOverlay: { sync(state) { overlays.push(state); }, destroy() {} },
     onNodeClick(node) { clicks.push(node.id); },
+    onLayoutSettled() { settled.push(engine.view); },
+    onConverge() { converged.push(engine.view); },
     onCanvasReplace(next, previous) { replacements++; assert.equal(previous, originalCanvas); },
     nodeStyle(node, env) { nodeStyles++; return { r: node.r, fill: [1, 0, 0, env.dim ? .2 : 1],
       stroke: [0, 0, 0, 1], strokeW: 2, scale: options.timeStyle ? 1 + .04 * Math.sin(clock) : 1 }; },
@@ -104,9 +107,86 @@ function fixture(options = {}) {
       edgeUploads: uploads.filter(x => x.buffer === 4).length };
   }
   engine.requestRender(); frame();
-  return { engine, nodes, edges, frames, timers, uploads, draws, overlays, clicks, uniforms, storage, sandbox,
+  return { engine, nodes, edges, frames, timers, uploads, draws, overlays, clicks, settled, converged, uniforms, storage, sandbox,
     originalCanvas, frame, drain, event, pan, counts, get core() { return core; },
     get replacements() { return replacements; }, get lostContexts() { return lostContexts; } };
+}
+
+// Restarting a layout never moves an explicitly preserved camera, even with an empty viewport.
+for (const view of [{ x: 1000000, y: -1000000, scale: .04 }, { x: -90000, y: 50000, scale: 3.5 }, { x: 40, y: 60, scale: .8 }]) {
+  const f = fixture({ config: { zoomMin: .04, zoomMax: 3.5, alphaDecay: .2 } });
+  f.engine.restoreView(view); f.frame();
+  const camera = f.engine.view;
+  f.engine.start({ intro: false, fit: true, preserveView: true });
+  assert.deepEqual(f.engine.view, camera, 'preserveView suppresses the initial reset');
+  while (f.frames.size) { f.frame(); assert.deepEqual(f.engine.view, camera, 'convergence cannot fit or compensate an empty viewport'); }
+  assert.equal(f.settled.length, 1); assert.equal(f.converged.length, 0, 'settling is separate from the legacy automatic-fit callback');
+  f.engine.fitView(false); f.frame(); assert.notDeepEqual(f.engine.view, camera, 'manual reset still fits');
+  f.engine.destroy();
+}
+{
+  const f = fixture({ count: 6, ignoreHidden: true, config: { introMs: 460, introStagger: 12 } });
+  f.engine.start({ intro: true, preserveView: true, introDelayMs: 100, introSpanMs: 30 });
+  const camera = f.engine.view, firstBorn = f.nodes[0]._born;
+  assert.equal(f.nodes.at(-1)._born - firstBorn, 30, 'birth span caps the normal stagger');
+  f.frame(50);
+  assert(f.nodes.every(node => node._appearOpacity === 0 && !node._appeared));
+  assert.equal(f.storage.get(4)[7], 0, 'blank phase hides edges');
+  assert.equal(f.engine.nodeAtClient(100, 120), -1, 'unborn nodes cannot be picked');
+  f.event('pointerdown', 100, 120); f.event('pointerup', 100, 120);
+  assert.deepEqual(f.clicks, [], 'blank phase does not open an invisible note');
+  f.frame(70);
+  assert(f.nodes[0]._appearOpacity > f.nodes.at(-1)._appearOpacity, 'nodes reveal in stable order');
+  assert(f.nodes[0]._appearScale > .4 && f.nodes[0]._appearScale < 1);
+  assert(Math.abs(f.storage.get(4)[7] - .5 * Math.min(f.nodes[0]._appearOpacity, f.nodes[1]._appearOpacity)) < 1e-6, 'edge alpha follows both endpoints');
+  assert.equal(f.engine.nodeAtClient(100, 120), 0, 'a visible growing point becomes pickable');
+  assert.equal(f.settled.length, 0, 'settling notification waits for unfinished appearance');
+  f.engine.start({ intro: true, preserveView: true, introDelayMs: 100, introSpanMs: 30 });
+  assert(f.nodes[0]._born > firstBorn); assert(f.nodes.every(node => node._appearOpacity === 0));
+  assert.equal(f.frames.size, 1, 'replay reuses the single animation loop');
+  while (f.frames.size) { f.frame(); assert.deepEqual(f.engine.view, camera); }
+  assert.equal(f.settled.length, 1); assert(f.nodes.every(node => node._appearOpacity === 1 && node._appearScale === 1));
+  const before = f.counts(); f.pan(); assert.deepEqual(f.counts(), before, 'finished growth restores zero-upload camera movement');
+  f.engine.start({ intro: true, preserveView: true, introDelayMs: 100, introSpanMs: 30 });
+  f.engine.setReduceMotion(true); f.drain();
+  assert(f.nodes.every(node => node._appeared && node._appearOpacity === 1), 'reduced motion cancels waiting and births immediately');
+  f.engine.destroy(); assert.equal(f.frames.size, 0); assert.equal(f.timers.size, 0);
+}
+for (const count of [150, 1500, 3000]) {
+  const f = fixture({ count, ignoreHidden: true, config: { introMs: 460, introStagger: 12 } });
+  f.engine.start({ intro: true, preserveView: true, introDelayMs: 100, introSpanMs: 3000 });
+  assert(f.nodes.at(-1)._born - f.nodes[0]._born <= 3000);
+  assert(f.nodes[1]._born - f.nodes[0]._born <= 12);
+  f.frame(3700); f.drain();
+  assert(f.nodes.every(node => node._appeared), 'all nodes finish within the bounded playback time');
+  assert.equal(f.settled.length, 1); f.engine.destroy();
+}
+{
+  const f = fixture({ config: { introStagger: 12 } });
+  f.engine.start({ intro: true, fit: false });
+  assert(Math.abs(f.nodes[1]._born - f.nodes[0]._born - 12) < 1e-7, 'unspecified birth span preserves legacy timing');
+  f.engine.start({ intro: true, preserveView: true, introSpanMs: 0 });
+  assert.equal(f.nodes[1]._born, f.nodes[0]._born, 'an explicit zero span removes staggering');
+  f.drain();
+  f.event('wheel', 600, 360); f.frame();
+  f.engine.fitView(true); f.frame();
+  const view = f.engine.view;
+  f.engine.start({ intro: false, preserveView: true }); f.drain();
+  assert.deepEqual(f.engine.view, view, 'preserved restart cancels old zoom and framing tweens');
+  f.engine.setPanInertia(1); f.event('pointerdown', 2, 2); f.frame();
+  f.event('pointermove', 80, 100); f.frame(); f.event('pointerup', 80, 100);
+  const panView = f.engine.view;
+  f.engine.start({ intro: false, preserveView: true }); f.drain();
+  assert.deepEqual(f.engine.view, panView, 'preserved restart cancels old pan inertia');
+  f.engine.destroy();
+}
+{
+  const f = fixture({ ignoreHidden: true, config: { introStagger: 12 } });
+  f.engine.start({ intro: true, preserveView: true, introDelayMs: 100 });
+  f.engine.setData([{ id: 'new-book', x: 200, y: 180, r: 8 }], []); f.drain();
+  assert.equal(f.storage.get(3)[6], 1, 'data replacement cannot inherit the old blank phase');
+  assert.equal(f.settled.length, 0, 'cancelled playback cannot deliver an old convergence callback');
+  f.engine.destroy();
 }
 
 for (const reduced of [false, true]) {

@@ -39,8 +39,23 @@ function installProbe() {
   };
   const create = GraphEngine.create;
   GraphEngine.create = options => {
-    const engine = create(options), setData = engine.setData;
-    const record = { engine, nodes: [], edges: [] }; probe.engines.push(record); probe.latest = record;
+    const record = { engine: null, nodes: [], edges: [], growth: null }, sync = options.domOverlay.sync;
+    options.domOverlay.sync = state => {
+      sync(state);
+      const growth = record.growth;
+      if (!growth) return;
+      const time = performance.now(), first = state.nodes[0], last = state.nodes.at(-1);
+      if (!growth.frames) {
+        growth.firstFrameBlank = state.nodes.every(node => node._appearOpacity === 0)
+          && (state.unit <= .25 || Array.from(document.querySelectorAll('[data-note-graph-label]')).every(el => Number(el.style.opacity) === 0));
+      } else growth.intervals.push(time - growth.previous);
+      growth.previous = time; growth.frames++;
+      if (JSON.stringify(record.engine.view) !== growth.camera) growth.cameraChanges++;
+      if (first._appearOpacity > 0 && growth.firstVisibleMs === null) growth.firstVisibleMs = time - growth.began;
+      if (last._appeared && growth.appearanceEndMs === null) growth.appearanceEndMs = time - growth.began;
+    };
+    const engine = record.engine = create(options), setData = engine.setData;
+    probe.engines.push(record); probe.latest = record;
     engine.setData = function (nodes, edges, ...rest) { record.nodes = nodes; record.edges = edges; return setData.call(this, nodes, edges, ...rest); };
     return engine;
   };
@@ -65,7 +80,9 @@ function installProbe() {
       const width = probe.widths.get(node.id).width;
       return sx + width / 2 >= 0 && sx - width / 2 <= rect.width && y + 16 >= 0 && y <= rect.height;
     }).length;
-    return { labels: document.querySelectorAll('[data-note-graph-label]').length, intersecting,
+    const progress = Math.max(0, Math.min(1, (unit - .25) / .4));
+    return { labels: document.querySelectorAll('[data-note-graph-label]').length, intersecting, unit,
+      labelAlpha: Number(getComputedStyle(document.querySelector('.note-graph-label')).opacity), expectedAlpha: progress * progress * (3 - 2 * progress),
       measures: probe.measures, font: getComputedStyle(document.querySelector('.note-graph-label')).fontSize,
       cssWidth: rect.width, cssHeight: rect.height, pixelWidth: engine.canvas.width, pixelHeight: engine.canvas.height };
   };
@@ -100,6 +117,36 @@ function installProbe() {
       uploads: probe.uploads - before.uploads, uploadBytes: probe.uploadBytes - before.bytes,
       frameIntervalP50Ms: intervals[Math.floor(intervals.length * .5)], frameIntervalP95Ms: intervals[Math.floor(intervals.length * .95)],
       longTasks: tasks.length, longestTaskMs: Math.max(0, ...tasks) };
+  };
+  window.runGraphGrowth = async () => {
+    const record = probe.latest, engine = record.engine;
+    engine.setReduceMotion(false);
+    const before = { measures: probe.measures, engines: probe.engines.length, uploads: probe.uploads, bytes: probe.uploadBytes };
+    const tasks = [], observer = new PerformanceObserver(list => tasks.push(...list.getEntries().map(item => item.duration)));
+    observer.observe({ type: 'longtask', buffered: false });
+    const began = performance.now();
+    document.querySelector('[data-action="graph-grow"]').click();
+    const growth = record.growth = { began, camera: JSON.stringify(engine.view), cameraChanges: 0,
+      frames: 0, intervals: [], previous: 0, firstVisibleMs: null, appearanceEndMs: null };
+    const birthSpanMs = record.nodes.at(-1)._born - record.nodes[0]._born;
+    const staggerMs = record.nodes.length > 1 ? record.nodes[1]._born - record.nodes[0]._born : 0;
+    let complete = false;
+    for (let i = 0; i < 300; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (!engine.layoutPending && record.nodes.every(node => node._appeared)) { complete = true; break; }
+    }
+    record.growth = null; observer.disconnect(); growth.intervals.sort((a, b) => a - b);
+    const result = { complete, frames: growth.frames, firstFrameBlank: growth.firstFrameBlank,
+      cameraChanges: growth.cameraChanges, firstVisibleMs: growth.firstVisibleMs, appearanceEndMs: growth.appearanceEndMs,
+      birthSpanMs, staggerMs, totalUntilSettledMs: performance.now() - began,
+      frameIntervalP50Ms: growth.intervals[Math.floor(growth.intervals.length * .5)],
+      frameIntervalP95Ms: growth.intervals[Math.floor(growth.intervals.length * .95)],
+      longTasks: tasks.length, longestTaskMs: Math.max(0, ...tasks), measures: probe.measures - before.measures,
+      uploads: probe.uploads - before.uploads, uploadBytes: probe.uploadBytes - before.bytes, enginesCreated: probe.engines.length - before.engines };
+    const idle = { draws: probe.draws, raf: probe.raf };
+    await new Promise(resolve => setTimeout(resolve, 350));
+    result.idleDraws = probe.draws - idle.draws; result.idleRaf = probe.raf - idle.raf;
+    return result;
   };
 }
 
@@ -152,7 +199,8 @@ async function measure(browser, count, dpr, size) {
     assert(stable, count + ': physics converged');
     await page.evaluate(() => { graphLabelProbe.latest.engine.setPanInertia(0); graphLabelProbe.latest.engine.fitView(false); });
     await page.waitForTimeout(80); const setup = await metrics(), labelInfo = await page.evaluate(() => notebookLabelInfo());
-    assert.equal(labelInfo.labels, labelInfo.intersecting, 'all intersecting titles stay visible');
+    assert.equal(labelInfo.labels, labelInfo.intersecting, 'intersecting anchors are retained across fade');
+    assert(Math.abs(labelInfo.labelAlpha - labelInfo.expectedAlpha) < .002, 'fit view uses scale-aware title opacity');
     assert(labelInfo.labels >= count * .95); assert.equal(labelInfo.measures, count); assert.equal(labelInfo.font, '12px');
     assert.equal(labelInfo.pixelWidth, Math.round(labelInfo.cssWidth * dpr)); assert.equal(labelInfo.pixelHeight, Math.round(labelInfo.cssHeight * dpr));
     const rect = await page.locator('[data-role="graph-canvas"]').boundingBox();
@@ -181,13 +229,72 @@ async function measure(browser, count, dpr, size) {
     await page.evaluate(view => graphLabelProbe.latest.engine.restoreView(view), view); await page.waitForTimeout(80);
     assert.equal(await page.evaluate(() => graphLabelProbe.measures), labelInfo.measures);
     const returned = await page.evaluate(() => notebookLabelInfo()); assert.equal(returned.labels, returned.intersecting);
+    await page.mouse.move(1, 1); await page.waitForTimeout(80);
+    const zoomStart = await metrics();
+    const zoom = await page.evaluate(async () => {
+      const probe = graphLabelProbe, engine = probe.latest.engine, view = engine.view;
+      const rect = engine.canvas.getBoundingClientRect(), base = Math.min(rect.width / 1200, rect.height / 720);
+      const centerX = view.x + 600 / view.scale, centerY = view.y + 360 / view.scale;
+      const uploads = probe.uploads, bytes = probe.uploadBytes, measures = probe.measures;
+      const states = [];
+      for (let step = 0; step <= 24; step++) {
+        const unit = .2 + .6 * (1 - Math.abs(step - 12) / 12), scale = unit / base;
+        engine.restoreView({ x: centerX - 600 / scale, y: centerY - 360 / scale, scale });
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (step === 0 || step === 12 || step === 24) states.push(Number(getComputedStyle(document.querySelector('.note-graph-label')).opacity));
+      }
+      engine.restoreView(view);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { uploads: probe.uploads - uploads, bytes: probe.uploadBytes - bytes, measures: probe.measures - measures, states };
+    });
+    const zoomEnd = await metrics();
+    assert.equal(zoom.uploads, 0); assert.equal(zoom.bytes, 0); assert.equal(zoom.measures, 0);
+    assert.deepEqual(zoom.states, [0, 1, 0], 'large graph zoom hides, restores and hides full titles');
+    const zoomIdle = await page.evaluate(() => ({ draws: graphLabelProbe.draws, raf: graphLabelProbe.raf }));
+    await page.waitForTimeout(350);
+    assert.deepEqual(await page.evaluate(() => ({ draws: graphLabelProbe.draws, raf: graphLabelProbe.raf })), zoomIdle, 'fade adds no idle frames');
     const sample = { count, edges: count - 1, dpr, size, ...labelInfo, pan,
+      zoom, zoomScriptCpuMs: (zoomEnd.ScriptDuration - zoomStart.ScriptDuration) * 1000,
+      zoomStyleCpuMs: (zoomEnd.RecalcStyleDuration - zoomStart.RecalcStyleDuration) * 1000,
       setupScriptCpuMs: (setup.ScriptDuration - before.ScriptDuration) * 1000,
       panScriptCpuMs: (panEnd.ScriptDuration - panStart.ScriptDuration) * 1000,
       panStyleCpuMs: (panEnd.RecalcStyleDuration - panStart.RecalcStyleDuration) * 1000,
       panLayoutCpuMs: (panEnd.LayoutDuration - panStart.LayoutDuration) * 1000,
       idleRaf: idleEnd.raf - idleStart.raf, idleDraws: idleEnd.draws - idleStart.draws,
       recycledMax: await page.evaluate(() => graphLabelProbe.recycledMax) };
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const growthStart = await metrics(); sample.growth = await page.evaluate(() => runGraphGrowth());
+    const growthEnd = await metrics();
+    sample.growth.scriptCpuMs = (growthEnd.ScriptDuration - growthStart.ScriptDuration) * 1000;
+    sample.growth.styleCpuMs = (growthEnd.RecalcStyleDuration - growthStart.RecalcStyleDuration) * 1000;
+    sample.growth.layoutCpuMs = (growthEnd.LayoutDuration - growthStart.LayoutDuration) * 1000;
+    assert(sample.growth.complete && sample.growth.firstFrameBlank, 'bounded growth starts blank and finishes');
+    assert.equal(sample.growth.cameraChanges, 0); assert.equal(sample.growth.measures, 0); assert.equal(sample.growth.enginesCreated, 0);
+    assert(sample.growth.birthSpanMs <= 3000.001 && sample.growth.staggerMs <= 12.001);
+    assert(sample.growth.firstVisibleMs >= 95 && sample.growth.appearanceEndMs >= 100 + sample.growth.birthSpanMs + 450);
+    assert.equal(sample.growth.idleRaf, 0); assert.equal(sample.growth.idleDraws, 0);
+    // Even after re-layout, the first static camera repaint must use existing instances.
+    const cameraUploads = await page.evaluate(() => {
+      const before = graphLabelProbe.uploads, engine = graphLabelProbe.latest.engine, view = engine.view;
+      engine.restoreView({ ...view, x: view.x + 2 }); return before;
+    });
+    await page.waitForTimeout(80); assert.equal(await page.evaluate(() => graphLabelProbe.uploads), cameraUploads);
+    const catchUp = await page.evaluate(async () => {
+      const { engine, nodes } = graphLabelProbe.latest, node = nodes[0], view = engine.view;
+      const rect = engine.canvas.getBoundingClientRect(), unit = .8, scale = unit / Math.min(rect.width / 1200, rect.height / 720);
+      engine.restoreView({ x: node._rx - 600 / scale, y: node._ry - 360 / scale, scale });
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const anchor = Array.from(document.querySelectorAll('[data-note-graph-label]')).find(el => el.dataset.noteGraphLabel === node.id);
+      const title = anchor.querySelector('span'), box = title.getBoundingClientRect();
+      const caughtUp = Math.abs(box.left + box.width / 2 - (rect.left + rect.width / 2)) < 1
+        && Math.abs(box.top - (rect.top + rect.height / 2 + node.r * unit + 8)) < 1;
+      const visible = getComputedStyle(title).opacity === '1' && getComputedStyle(anchor).opacity === '1';
+      engine.restoreView(view); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { caughtUp, visible };
+    });
+    assert.deepEqual(catchUp, { caughtUp: true, visible: true }, 'first visible frame catches up deferred title positions and opacity');
+    assert.equal(await page.evaluate(() => graphLabelProbe.uploads), cameraUploads);
+    sample.growth.titleCatchUp = true;
     await page.evaluate(() => syntheticGraph.deactivate()); await released(page);
     assert.equal(await page.evaluate(() => graphLabelProbe.scenes.size), 1, 'hiding keeps only a logical scene');
     await page.evaluate(() => syntheticGraph.destroy()); assert.equal(await page.evaluate(() => graphLabelProbe.scenes.size), 0);
@@ -264,7 +371,7 @@ async function cacheRegression(browser) {
   try {
     report.regression = await cacheRegression(browser); console.log(JSON.stringify({ regression: report.regression }));
     if (!process.argv.includes('--regression-only')) {
-      for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) for (const size of ['window-area', 'tab']) {
+      for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) for (const size of process.argv.includes('--tab-only') ? ['tab'] : ['window-area', 'tab']) {
         const sample = await measure(browser, count, dpr, size); report.samples.push(sample); console.log(JSON.stringify(sample));
       }
     }

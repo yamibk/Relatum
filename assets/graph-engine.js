@@ -400,6 +400,7 @@
     const onNodeClick = opts.onNodeClick || function () {};
     const onNodeHover = opts.onNodeHover || function () {};
     const onConverge = opts.onConverge || function () {};
+    const onLayoutSettled = opts.onLayoutSettled || function () {};
     let drift = opts.drift || null;          // { speed, amp: fn(node)->number }；可被 setDrift 运行时切换
     let particleCfg = opts.particles || null; // { speed, perEdge, size, getColor(edge,s,d)->[r,g,b,a]|null }；连线流光，可被 setParticles 切换
     const drawOverlay = opts.drawOverlay || null;  // 顶层 2D 叠加层绘制回调（标签/光晕/扇形）
@@ -481,6 +482,7 @@
     let lastRenderT = 0;      // 上次真正重画的时刻（闲时节流用）
     let tickCount = 0;
     let alpha = 0;
+    let layoutSettlePending = false;
     let introActive = false;
     let presolveJob = null;
     function restorePresolveSeed(job) {
@@ -495,7 +497,7 @@
       global.clearTimeout(job.timer);
       presolveJob = null; presolving = false;
       restorePresolveSeed(job);
-      if (retain && !destroyed && nodes === job.nodes) pending = { intro: job.intro, fit: job.fit };
+      if (retain && !destroyed && nodes === job.nodes) pending = job.begin;
     }
     let presolving = false;    // 进场预解算（提前取景）期间为真：此时也施加 introVelocityClamp，
                                // 否则种子偶发近重合(<1px)会让反平方斥力炸飞整张图→fit 取到垃圾布局
@@ -552,6 +554,8 @@
     // —— 数据装载：node 需带 x,y,r（适配层先 seed 好坐标）；引擎补上运行期字段 ——
     function setData(nextNodes, nextEdges, dataOptions) {
       cancelPresolve(false);
+      pending = null; introActive = false; autoFitPending = false; layoutSettlePending = false;
+      zoomTween.active = false; fitTween.active = false;
       // 数据集切换不能让旧指针手势继续拖动旧节点、或以旧数组下标点击新节点。
       if (pressInfo && canvas.hasPointerCapture(pressInfo.pointerId)) canvas.releasePointerCapture(pressInfo.pointerId);
       pressInfo = draggedNode = panOrigin = null;
@@ -975,6 +979,12 @@
 
       render();
 
+      // Physical settling is independent of automatic camera fitting.
+      if (layoutSettlePending && !draggedNode && !introActive && alpha <= cfg.alphaMin && !pending && !presolveJob) {
+        layoutSettlePending = false;
+        onLayoutSettled();
+      }
+
       const labelBusy = _hasLabels && Math.abs(labelAlpha - labelTarget) > 0.006;
       const keepGoing = (alpha > cfg.alphaMin) || draggedNode || introActive
         || zoomTween.active || fitTween.active || idle || labelBusy || panGlide.active;
@@ -996,6 +1006,7 @@
     }
     function heat(amount) {
       alpha = Math.max(alpha, amount);
+      if (nodes.length && alpha > cfg.alphaMin) layoutSettlePending = true;
       idle = false;
       ensureLoop();
     }
@@ -1006,6 +1017,7 @@
     function doBegin() {
       if (!pending) return;
       cancelRenderFrame();
+      const begin = pending;
       const introWanted = pending.intro;
       const fitWanted = pending.fit;
       pending = null;
@@ -1018,7 +1030,7 @@
       if (usePresolve) {
         if (frameId) global.cancelAnimationFrame(frameId);
         frameId = 0;
-        const job = { nodes: nodes, x: nodes.map(n => n.x), y: nodes.map(n => n.y), step: 0, timer: 0, intro: introWanted, fit: fitWanted };
+        const job = { nodes: nodes, x: nodes.map(n => n.x), y: nodes.map(n => n.y), step: 0, timer: 0, begin: begin };
         presolveJob = job;
         alpha = 1;
         presolving = true;
@@ -1033,22 +1045,24 @@
           if (!userAdjustedView) fitView(false);
           autoFitPending = false;
           restorePresolveSeed(job);
-          finishBegin(introWanted && !reduceMotion);
+          finishBegin(introWanted && !reduceMotion, begin);
         }
         job.timer = global.setTimeout(slice, 0);
         return;
       } else {
         autoFitPending = fitWanted && cfg.finalFitOnConverge !== false;
       }
-      finishBegin(introWanted);
+      finishBegin(introWanted, begin);
     }
-    function finishBegin(introWanted) {
+    function finishBegin(introWanted, begin) {
       alpha = 1;
       const t = now();   // 预布局全部完成后才启动进场时钟。
+      const delay = introWanted ? begin.introDelayMs : 0;
+      const stagger = introWanted ? Math.min(cfg.introStagger, begin.introSpanMs / Math.max(1, nodes.length - 1)) : 0;
       introActive = introWanted;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
-        n._born = t + i * cfg.introStagger;
+        n._born = t + delay + i * stagger;
         if (introWanted) { n._appeared = false; n._appearScale = 0.4; n._appearOpacity = 0; }
         else { n._appeared = true; n._appearScale = 1; n._appearOpacity = 1; }
       }
@@ -1056,17 +1070,22 @@
       invalidateStyles();
       requestFrame();
     }
-    // start({intro,fit})：开图 / 重排都走这里。intro 默认开、fit 默认开。
+    // New playback options are opt-in; existing hosts retain their camera and timing defaults.
     function start(o) {
+      if (destroyed) return;
       cancelPresolve(false);
       o = o || {};
       const introWanted = o.intro !== false && !reduceMotion && nodes.length > 0;
-      pending = { intro: introWanted, fit: o.fit !== false && nodes.length > 0 };
-      userAdjustedView = false;
+      const preserveView = o.preserveView === true;
+      pending = { intro: introWanted, fit: !preserveView && o.fit !== false && nodes.length > 0,
+        introDelayMs: Number.isFinite(o.introDelayMs) ? Math.max(0, o.introDelayMs) : 0,
+        introSpanMs: Number.isFinite(o.introSpanMs) ? Math.max(0, o.introSpanMs) : Infinity };
+      userAdjustedView = preserveView;
+      autoFitPending = false;
       zoomTween.active = false;
       fitTween.active = false;
       cancelPanGlide();
-      resetView();
+      if (!preserveView) resetView();
       // 先按「未登场」预置一帧静态（若要进场），可见时再由 doBegin 生长
       if (introWanted) {
         for (let i = 0; i < nodes.length; i++) {
@@ -1106,6 +1125,7 @@
       let bestD = Infinity;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
+        if (opts.ignoreHiddenNodes && n._appearOpacity <= 0.02) continue;
         const dx = w.x - n._rx;
         const dy = w.y - n._ry;
         const reach = (n.r || 6) + cfg.hitPad;
@@ -1372,7 +1392,7 @@
       overlayCanvas = null; octx = null;
       if (domOverlay && domOverlay.destroy) { try { domOverlay.destroy(); } catch (e) {} }
       nodes = []; edges = []; neighbors = []; _partPool = [];
-      pending = null;
+      pending = null; introActive = autoFitPending = layoutSettlePending = false;
       canvas.width = canvas.height = 1;
     }
 
@@ -1418,10 +1438,12 @@
         invalidatePositions();
         if (reduceMotion) {
           if (presolveJob) {
-            const fit = presolveJob.fit;
+            const begin = presolveJob.begin;
             cancelPresolve(false);
-            pending = { intro: false, fit: fit };
+            pending = Object.assign({}, begin, { intro: false });
           } else if (pending) pending.intro = false;
+          introActive = false;
+          nodes.forEach(function (node) { node._appeared = true; node._appearScale = node._appearOpacity = 1; });
           driftGain = 0;
           if (_hasLabels) labelAlpha = labelTarget = nodes.length ? 1 : 0;
           requestRender();
