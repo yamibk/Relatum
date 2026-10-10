@@ -267,7 +267,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   stroke-linejoin: round;
 }
 
-.note-tree-scroll,
+.note-sidebar-scroll,
 .note-notebook-tree {
   flex: 1;
   min-height: 0;
@@ -277,6 +277,8 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   scrollbar-width: thin;
   scrollbar-color: rgba(60, 60, 55, 0.22) transparent;
 }
+.note-sidebar-scroll { display: flex; flex-direction: column; padding: 0; overflow-anchor: none; }
+.note-tree-scroll { flex: 1 0 auto; min-height: 0; overflow: visible; outline: none; }
 .note-tree-scroll.note-drop-root { background: rgba(116, 133, 105, 0.08); }
 .note-tree-loading,
 .note-tree-empty { padding: 24px 14px; color: var(--text-tertiary); font-size: 12px; line-height: 1.7; }
@@ -1698,13 +1700,13 @@ body.start-page[data-start-theme="dark"] .note-workspace {
   --note-scroll-thumb-hover: rgba(235, 240, 235, .38);
   --note-scroll-thumb-active: rgba(235, 240, 235, .5);
 }
-.note-workspace :is(.note-tree-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-navigation, .note-browser-results) {
+.note-workspace :is(.note-sidebar-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-results) {
   scrollbar-width: thin;
   scrollbar-color: var(--note-scroll-thumb) transparent;
 }
 /* Chromium's standard scrollbar properties override its detailed styling. */
 @supports selector(::-webkit-scrollbar) {
-  .note-workspace :is(.note-tree-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-navigation, .note-browser-results) {
+  .note-workspace :is(.note-sidebar-scroll, .note-notebook-tree, .note-source-editor, .cm-scroller, .note-reading-view, .note-backlink-section, .note-browser-results) {
     scrollbar-width: auto;
     scrollbar-color: auto;
   }
@@ -1720,13 +1722,17 @@ body.start-page[data-start-theme="dark"] .note-workspace {
 .note-workspace ::-webkit-scrollbar-thumb:hover { background-color: var(--note-scroll-thumb-hover); }
 .note-workspace ::-webkit-scrollbar-thumb:active { background-color: var(--note-scroll-thumb-active); }
 .note-workspace ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
-.note-browser-mode [data-role="note-tree"],
-.note-browser-restoring [data-role="note-tree"] { display: none; }
-.note-browser-showing-results .note-current-path,
-.note-browser-restoring .note-current-path { visibility: hidden; }
+.note-browser-showing-results .note-current-path { visibility: hidden; }
 .note-browser-toggle[aria-pressed="true"] { background: rgba(0, 0, 0, .075); color: var(--text); }
-.note-browser-navigation { flex: 1; min-height: 0; overflow: auto; padding: 12px 10px; }
-.note-browser-navigation[hidden], .note-browser-results[hidden], .note-browser-back[hidden] { display: none; }
+.note-browser-disclosure {
+  flex: none; display: grid; grid-template-rows: 0fr; min-height: 0;
+  opacity: 0; transform: translateY(-5px); pointer-events: none;
+  transition: grid-template-rows 220ms cubic-bezier(.22, 1, .36, 1), opacity 150ms ease, transform 220ms cubic-bezier(.22, 1, .36, 1);
+}
+.note-browser-disclosure.is-open { grid-template-rows: 1fr; opacity: 1; transform: none; pointer-events: auto; }
+.note-browser-disclosure-clip { min-height: 0; overflow: hidden; }
+.note-browser-navigation { padding: 12px 10px 8px; }
+.note-browser-disclosure[hidden], .note-browser-results[hidden], .note-browser-back[hidden] { display: none; }
 .note-browser-nav-row { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 6px; padding: 9px 12px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .note-browser-nav-row:hover, .note-browser-nav-row.is-selected { background: rgba(0, 0, 0, .06); }
 .note-browser-tag-row { padding-left: calc(24px + var(--tag-depth, 0) * 14px); }
@@ -2374,6 +2380,7 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
   .note-tree-toggle,
   .note-tree-toggle::before,
   .note-tree-children-shell,
+  .note-browser-disclosure,
   .note-tree-children-shell .note-tree-entry,
   .note-tab-close,
   .note-tab-new,

@@ -86,7 +86,7 @@ assert(notebookBlankSource.includes("state.sideMode === 'notebooks'")
 assert(notebookBlankSource.includes("contextButton(notebookCopy('create'), createNotebook)")
   && notebookBlankSource.includes("contextButton(tr('explorer'), () => reveal('', false))"), 'blank notebook menu creates a notebook or reveals the complete library');
 assert(notebookBlankSource.includes('selectNotebook(null, { rootTarget: true })')
-  && notebookBlankSource.includes('await setBrowserMode(false)'), 'blank deselection exits browsing without changing the document');
+  && !notebookBlankSource.includes('setBrowserMode('), 'blank deselection preserves browsing disclosure and the current document/results');
 assert(notes.includes('if (state.notebookRoot === null) return []')
   && notes.includes('if (parent === null) return;') && notes.includes('if (destination === null || state.importRunning) return;'), 'unselected roots cannot render files, create or import');
 assert(notes.includes('Select a notebook first') && notes.includes('请先选择笔记本')

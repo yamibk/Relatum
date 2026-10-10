@@ -5,6 +5,7 @@
   if (!root) return;
   const $ = (selector, scope) => (scope || root).querySelector(selector);
   const treeEl = $('[data-role="note-tree"]');
+  const sidebarScroll = $('[data-role="note-sidebar-scroll"]');
   const notebookTreeEl = $('[data-role="note-notebook-tree"]');
   const treeRowIndexes = new Map([treeEl, notebookTreeEl].filter(Boolean).map((host) =>
     [host, { rows: new Map(), selectionPaths: new Set(), selectionKey: null }]));
@@ -83,17 +84,14 @@
     return path;
   }
   const browserNavigation = $('[data-role="note-browser-navigation"]');
+  const browserDisclosure = $('[data-role="note-browser-disclosure"]');
   const browserResults = $('[data-role="note-browser-results"]');
   const browserBack = $('[data-role="note-browser-back"]');
   const browserToggle = $('[data-note-action="toggle-browser"]');
-  function browserModeActive() {
-    return root.classList.contains('note-browser-mode') || document.documentElement.classList.contains('note-browser-restoring');
-  }
   function browserResultsActive() {
-    return root.classList.contains('note-browser-showing-results') || document.documentElement.classList.contains('note-browser-restoring');
+    return root.classList.contains('note-browser-showing-results');
   }
   function noteActionAvailable(name) {
-    if (browserModeActive() && ['new-note', 'new-folder', 'toggle-sort', 'toggle-all-folders'].includes(name)) return false;
     if (browserResultsActive() && ['toggle-source', 'toggle-notebooks', 'current-menu'].includes(name)) return false;
     return true;
   }
@@ -136,7 +134,7 @@
       noteBrowser = window.RelatumNoteBrowser.create({ root, navigation: browserNavigation, results: browserResults, back: browserBack,
         request, query: (query) => post('/api/note-query', query), language, icon: noteIcon,
         getEntries: () => flattenEntries(state.entries, []), getRecent: () => Object.fromEntries(recentFiles),
-        beforeBrowse, showResults: showBrowserResults, openNote: (path) => openNote(path),
+        beforeBrowse, showResults: showBrowserResults, openNote: (path) => openNote(path, { browserAction: true }),
         canvasEnabled, revealCanvas: (path) => post('/api/notes-canvas/reveal', { path }), showError: (message) => showToast(message, 'error'),
       });
       return noteBrowser;
@@ -145,30 +143,59 @@
   }
   function updateBrowserToggle() {
     if (!browserToggle) return;
-    const label = language() === 'en' ? (browserIntent ? 'Back to file tree' : 'Browse notes') : (browserIntent ? '返回文件树' : '浏览笔记');
-    browserToggle.setAttribute('aria-label', label); browserToggle.title = label; browserToggle.setAttribute('aria-pressed', String(browserIntent));
+    const label = language() === 'en' ? (browserIntent ? 'Collapse note browsing' : 'Expand note browsing') : (browserIntent ? '收起笔记浏览' : '展开笔记浏览');
+    browserToggle.setAttribute('aria-label', label); browserToggle.removeAttribute('title');
+    browserToggle.dataset.uiTooltip = label; browserToggle.dataset.uiTooltipSource = label;
+    browserToggle.setAttribute('aria-pressed', String(browserIntent)); browserToggle.setAttribute('aria-expanded', String(browserIntent));
   }
+  let browserCloseTimer = 0;
+  const browserMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  function finishBrowserCollapse() {
+    if (!browserIntent) browserDisclosure.hidden = true;
+  }
+  function setBrowserDisclosure(open) {
+    clearTimeout(browserCloseTimer);
+    browserDisclosure.inert = !open; browserDisclosure.setAttribute('aria-hidden', String(!open));
+    if (!open && browserDisclosure.contains(document.activeElement)) browserToggle.focus({ preventScroll: true });
+    if (open && browserDisclosure.hidden) {
+      browserDisclosure.hidden = false;
+      // Establish the collapsed height once. CSS reverses ongoing transitions
+      // from their current progress; neither navigation nor tree rows remount.
+      if (!browserMotion.matches) void browserDisclosure.offsetHeight;
+    }
+    browserDisclosure.classList.toggle('is-open', open);
+    if (!open) {
+      if (browserMotion.matches) finishBrowserCollapse();
+      else browserCloseTimer = setTimeout(finishBrowserCollapse, 240);
+    }
+  }
+  browserDisclosure.addEventListener('transitionend', (event) => {
+    if (event.target === browserDisclosure && event.propertyName === 'grid-template-rows') finishBrowserCollapse();
+  });
+  browserMotion.addEventListener('change', () => { if (browserMotion.matches) { clearTimeout(browserCloseTimer); finishBrowserCollapse(); } });
+  // A disclosure click must leave the current native input/IME host focused.
+  // Capture before editor outside-click handlers can settle their drafts.
+  window.addEventListener('pointerdown', (event) => {
+    if (event.button === 0 && browserToggle.contains(event.target)) { event.preventDefault(); event.stopPropagation(); }
+  }, true);
   async function setBrowserMode(enabled, tag) {
     if (!state.active) return;
     const sequence = ++browserSequence; browserIntent = enabled;
-    if (!(await beforeBrowse()) || sequence !== browserSequence) { if (sequence === browserSequence) { browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle(); } return; }
+    root.classList.toggle('note-browser-mode', enabled);
+    try { localStorage.setItem('canvas:noteSidebarView:v1', enabled ? 'browse' : 'tree'); } catch (error) {}
+    updateBrowserToggle();
+    if (noteBrowser) noteBrowser.setNavigationOpen(enabled);
+    if (!enabled) { setBrowserDisclosure(false); return; }
     try {
-      const browser = enabled ? await loadNoteBrowser() : noteBrowser;
-      if (sequence !== browserSequence || !state.active) return;
-      root.classList.toggle('note-browser-mode', enabled);
-      browserNavigation.hidden = !enabled;
-      treeEl.inert = enabled;
-      try { localStorage.setItem('canvas:noteSidebarView:v1', enabled ? 'browse' : 'tree'); } catch (error) {}
-      document.documentElement.classList.remove('note-browser-restoring'); updateBrowserToggle(); updateBrowserControls();
-      if (enabled) await browser.activate({ tag });
-      else if (browser) browser.suspend();
-      if (!enabled) scheduleInlineTitleScroll();
+      const browser = await loadNoteBrowser();
+      if (sequence !== browserSequence || !state.active || document.hidden) return;
+      browser.activate({ navigationOpen: true }); setBrowserDisclosure(true);
+      if (tag) await browser.browseTag(tag);
     } catch (error) {
       if (sequence !== browserSequence || !state.active) return;
-      document.documentElement.classList.remove('note-browser-restoring');
-      browserIntent = false; root.classList.remove('note-browser-mode'); browserNavigation.hidden = true; treeEl.inert = false;
-      if (noteBrowser) noteBrowser.suspend();
-      updateBrowserControls();
+      browserIntent = false; root.classList.remove('note-browser-mode'); setBrowserDisclosure(false);
+      if (noteBrowser) noteBrowser.setNavigationOpen(false);
+      try { localStorage.setItem('canvas:noteSidebarView:v1', 'tree'); } catch (storageError) {}
       updateBrowserToggle(); showToast(error.message || tr('readFailed'), 'error');
     }
   }
@@ -1994,7 +2021,7 @@
     state.prefetchTimer = 0;
     if (prefetchRunning || !state.active || document.hidden || editorInputPending() || noteMovePromise) return;
     const epoch = prefetchEpoch;
-    const viewport = treeEl.getBoundingClientRect();
+    const viewport = sidebarScroll.getBoundingClientRect();
     const paths = Array.from(treeEl.querySelectorAll('.note-tree-row')).filter((row) => {
       const rect = row.getBoundingClientRect(); return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
     }).map((row) => row.dataset.notePath);
@@ -2485,7 +2512,7 @@
   async function openNote(path, options) {
     if (noteMovePromise) path = await waitForNoteMove(path);
     if (!(await flushCanvases())) return false;
-    if (noteBrowser) noteBrowser.showDocument();
+    if (noteBrowser) noteBrowser.showDocument({ keepAction: !!options?.browserAction });
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
     if (!path) return false;
     if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled();
@@ -3398,7 +3425,7 @@
       }
       else { renderTabs(); updateEditorVisibility(); }
       if (state.active && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
-      document.documentElement.classList.remove('note-browser-restoring');
+      updateBrowserToggle();
       updateBrowserControls();
       return true;
     })();
@@ -3410,7 +3437,7 @@
     state.linksRefreshSuspended = false;
     const wasInitialized = state.initialized;
     state.active = true;
-    if (noteBrowser && browserIntent) noteBrowser.resume();
+    if (noteBrowser) noteBrowser.resume();
     state.externalSyncUnchanged = 0;
     if (state.current && state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true);
@@ -3418,7 +3445,7 @@
     const initialized = await initializeWorkspace();
     revealColdBoot();
     if (!initialized) return false;
-    if (!root.classList.contains('note-browser-mode') && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
+    if (browserDisclosure.hidden && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
     window.RelatumStartupMark?.('notes-ready');
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
     else scheduleExternalSync();
@@ -3450,6 +3477,7 @@
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
 
   root.addEventListener('click', async (event) => {
+    if (event.target.closest('[data-note-action="toggle-browser"]')) { setBrowserMode(!browserIntent); return; }
     if (state.imageTextBusy) return;
     const libraryAction = event.target.closest('[data-note-library-action]');
     if (libraryAction && librarySettings.contains(libraryAction)) {
@@ -3498,7 +3526,6 @@
     const name = action.dataset.noteAction;
     if (noteMovePromise) await waitForNoteMove();
     if (action.disabled || !noteActionAvailable(name)) return;
-    if (name === 'toggle-browser') { setBrowserMode(!browserIntent); return; }
     if (name === 'toggle-image-text') {
       toggleImageTextMode(action);
       return;
@@ -3641,10 +3668,6 @@
     if (event.target.closest('.note-tree-row, .note-tree-inline-error')) return;
     const sequence = ++notebookSelectionSequence;
     if (!(await finishNotebookInteraction()) || sequence !== notebookSelectionSequence) return;
-    if (browserIntent || root.classList.contains('note-browser-mode')) {
-      await setBrowserMode(false);
-      if (root.classList.contains('note-browser-mode') || sequence !== notebookSelectionSequence) return;
-    }
     closeContextMenu(); selectNotebook(null, { rootTarget: true });
     state.selectedPath = ''; treeEl.classList.remove('note-drop-root'); updateTreeSelection();
   });
@@ -3756,7 +3779,7 @@
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
-    else if (state.active) { if (noteBrowser && browserIntent) noteBrowser.resume(); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
+    else if (state.active) { if (noteBrowser) noteBrowser.resume(); if (browserIntent && browserDisclosure.hidden) setBrowserMode(true); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
   window.addEventListener('pagehide', () => { state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); });

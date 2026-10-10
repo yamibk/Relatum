@@ -38,7 +38,8 @@ async function run(browser, mode) {
     await page.addInitScript(() => { localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteView:v1', 'source'); });
     await page.goto(url); await page.waitForFunction(() => window.T?.state.initialized && T.state.active);
     await page.locator('[data-note-action="toggle-browser"]').click();
-    await page.locator('.note-browser-results-head').waitFor();
+    await page.locator('[data-note-browser-provider="recent"]').waitFor();
+    assert.equal(await page.locator('.note-browser-results-head').count(), 0, 'opening navigation leaves the document unchanged');
     assert(!requests.some(r => r.includes('/api/notes-canvas/')), 'ordinary browse startup must not query canvas catalog');
     const nav = page.locator('[data-note-browser-provider="canvas"]');
     if (mode === 'disabled') {
@@ -162,6 +163,19 @@ async function run(browser, mode) {
     releaseReference(); await pause(200);
     assert.equal(await lost.locator('[data-note-browser-path="Stale.md"]').count(), 0);
     await page.unroute('**/api/notes-canvas/references?*');
+    await page.locator('[data-canvas-filter="all"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.note-browser-canvas').length === 50);
+    await page.locator('[data-note-action="toggle-browser"]').click();
+    assert.equal(await page.locator('.note-browser-showing-results').count(), 1, 'collapsing navigation leaves canvas results visible');
+    await page.evaluate(() => { window.__collapsedCanvasRow = document.querySelector('.note-browser-canvas'); });
+    await page.evaluate(() => T.browser.checkExternalCanvases());
+    assert(await page.evaluate(() => __collapsedCanvasRow === document.querySelector('.note-browser-canvas')), 'unchanged checks keep rows while navigation is collapsed');
+    fs.writeFileSync(path.join(canvases, 'External.canvas'), 'catalog only');
+    await page.evaluate(() => T.browser.checkExternalCanvases());
+    await page.waitForFunction(() => document.querySelector('.note-browser-results-head').textContent.includes('69'));
+    await page.locator('[data-canvas-filter="missing"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.note-browser-canvas').length === 2);
+    assert.equal(await lost.count(), 1, 'filters remain usable with collapsed navigation');
     await page.evaluate(() => T.browser.suspend({ keepView: true }));
     const requestsBefore = requests.filter(r => r.includes('/api/notes-canvas/list')).length;
     await page.evaluate(() => T.browser.checkExternalCanvases());

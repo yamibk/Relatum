@@ -21,8 +21,6 @@
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
         window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
-        window.RelatumBoot.noteBrowserMode = localStorage.getItem('canvas:noteSidebarView:v1') === 'browse';
-        if (window.RelatumBoot.noteBrowserMode) document.documentElement.classList.add('note-browser-restoring');
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
           window.RelatumBoot = window.RelatumBoot || {};
@@ -1577,7 +1575,7 @@
             <svg class="note-icon note-focus-icon note-focus-icon-restore" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-focus-contract"/></svg>
           </button>
           <button type="button" class="note-icon-button note-browser-toggle" data-note-action="toggle-browser"
-            title="浏览笔记" aria-label="浏览笔记" aria-pressed="false">
+            title="展开笔记浏览" aria-label="展开笔记浏览" aria-pressed="false" aria-expanded="false" aria-controls="note-browser-disclosure">
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-search"/></svg>
           </button>
         </div>
@@ -1628,10 +1626,16 @@
         <p class="note-library-name-preview" data-role="note-library-name-preview"></p>
         <p class="note-library-name-error" data-role="note-library-name-error" role="alert"></p>
       </section>
-      <div class="note-tree-scroll" data-role="note-tree" tabindex="0">
-        <p class="note-tree-loading">正在读取笔记库…</p>
+      <div class="note-sidebar-scroll" data-role="note-sidebar-scroll">
+        <div class="note-browser-disclosure" id="note-browser-disclosure" data-role="note-browser-disclosure" aria-hidden="true" hidden inert>
+          <div class="note-browser-disclosure-clip">
+            <nav class="note-browser-navigation" data-role="note-browser-navigation" aria-label="笔记浏览"></nav>
+          </div>
+        </div>
+        <div class="note-tree-scroll" data-role="note-tree" tabindex="0">
+          <p class="note-tree-loading">正在读取笔记库…</p>
+        </div>
       </div>
-      <nav class="note-browser-navigation" data-role="note-browser-navigation" aria-label="笔记浏览" hidden></nav>
       <footer class="note-tree-foot">
         <span>本地目录 · notes/</span>
         <button type="button" data-note-action="reveal-root">在资源管理器中打开</button>

@@ -27,8 +27,9 @@
 
   function create(ctx) {
     const root = ctx.root, nav = ctx.navigation, results = ctx.results, back = ctx.back;
-    let active = false, disposed = false;
+    let active = false, navigationOpen = false, disposed = false;
     const expanded = new Set(), navigation = new Map(), navigationDirty = new Set(providers.keys()), navigationSequences = new Map();
+    const navigationLoading = new Set();
     const navigationGroups = new Map();
     let providerId = 'recent', selection = {}, rows = [], offset = 0, total = 0, hasMore = false, selectedPath = '';
     let pageSequence = 0, actionSequence = 0, loading = false, failed = false, dirty = true;
@@ -49,12 +50,13 @@
       results.hidden = false; results.inert = false;
       if (wasHidden) results.scrollTop = resultScroll;
     }
-    function showDocument() {
+    function showDocument(options) {
+      if (!options?.keepAction) actionSequence++;
       cancelReferenceRequests();
       if (loading) { pageSequence++; dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); }
       if (!results.hidden) resultScroll = results.scrollTop;
       ctx.showResults(false); results.hidden = true; results.inert = true;
-      back.hidden = !active; updateBackLabel();
+      back.hidden = !active || !hasResult; updateBackLabel();
     }
     function updateBackLabel() { back.replaceChildren(...(ctx.icon ? [ctx.icon('arrow-left')] : []), document.createTextNode(copy('return'))); }
     function renderNavigation(animateId) {
@@ -67,7 +69,7 @@
         if (!group) {
           const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry';
           const heading = button('', async () => {
-            if (!active) return;
+            if (!active || !navigationOpen) return;
             if (hierarchical) {
               if (expanded.has(provider.id)) expanded.delete(provider.id); else expanded.add(provider.id);
               renderNavigation(provider.id); if (expanded.has(provider.id)) await loadNavigation(provider.id);
@@ -90,7 +92,7 @@
         }
         const { heading, shell, children } = group;
         group.label.textContent = copy(provider.label);
-        heading.classList.toggle('is-selected', providerId === provider.id && !hierarchical);
+        heading.classList.toggle('is-selected', (hasResult || !results.hidden) && providerId === provider.id && !hierarchical);
         if (!hierarchical) return;
         const items = navigation.get(provider.id) || [];
         const changedItems = group.items !== items, open = expanded.has(provider.id), changedOpen = group.open !== open;
@@ -102,7 +104,7 @@
           let item = group.rows.get(tag.key);
           if (!item) {
             const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry';
-            const row = button('', () => select(provider.id, item.tag)); row.classList.add('note-browser-tag-row');
+            const row = button('', () => { if (navigationOpen) select(provider.id, item.tag); }); row.classList.add('note-browser-tag-row');
             const label = document.createElement('span'), count = document.createElement('small');
             if (ctx.icon && provider.id === 'tags') row.appendChild(ctx.icon('hash', 'note-browser-icon'));
             row.append(label, count); wrapper.appendChild(row);
@@ -126,7 +128,7 @@
           void shell.offsetHeight;
           group.frame = requestAnimationFrame(() => {
             group.frame = 0;
-            if (!active || !expanded.has(provider.id)) return;
+            if (!active || !navigationOpen || !expanded.has(provider.id)) return;
             shell.classList.add('is-open', 'is-expanding');
             group.timer = setTimeout(() => { heading.classList.remove('is-expanding'); shell.classList.remove('is-expanding'); }, 300);
           });
@@ -139,20 +141,30 @@
     }
     async function loadNavigation(id) {
       if (!id) { await Promise.all(Array.from(expanded, (key) => loadNavigation(key))); return; }
-      if (!active || !expanded.has(id) || !navigationDirty.has(id)) return;
+      if (!active || !navigationOpen || !expanded.has(id) || !navigationDirty.has(id) || navigationLoading.has(id)) return;
       const sequence = (navigationSequences.get(id) || 0) + 1; navigationSequences.set(id, sequence);
+      navigationLoading.add(id);
       const group = navigationGroups.get(id);
       if (group && group.error) { group.error.remove(); group.error = null; }
       try {
         const items = await providers.get(id).loadNavigation(ctx);
-        if (!active || disposed || sequence !== navigationSequences.get(id)) return;
+        if (!active || !navigationOpen || disposed || sequence !== navigationSequences.get(id)) return;
         navigation.set(id, items); navigationDirty.delete(id); renderNavigation(group && group.waitingOnOpen ? id : undefined);
         if (group) group.waitingOnOpen = false;
       } catch (error) {
-        if (active && sequence === navigationSequences.get(id) && group) {
+        if (active && navigationOpen && sequence === navigationSequences.get(id) && group) {
           group.error = button(copy('failed'), () => loadNavigation(id), 'note-browser-message'); group.wrapper.appendChild(group.error);
         }
-      }
+      } finally { if (sequence === navigationSequences.get(id)) navigationLoading.delete(id); }
+    }
+    function cancelNavigation() {
+      navigationSequences.forEach((value, key) => navigationSequences.set(key, value + 1)); navigationLoading.clear();
+      navigationGroups.forEach((group) => { cancelAnimationFrame(group.frame); clearTimeout(group.timer); });
+    }
+    function setNavigationOpen(open) {
+      navigationOpen = !!open;
+      if (!navigationOpen) cancelNavigation();
+      else if (active) { renderNavigation(); loadNavigation(); }
     }
     function cancelReferenceRequests() {
       referenceEpoch++;
@@ -165,7 +177,9 @@
       if (!active || (loading && resetting)) return;
       const sequence = ++actionSequence, page = pageSequence;
       if (!(await ctx.beforeBrowse()) || !active || sequence !== actionSequence || page !== pageSequence || (loading && resetting)) return;
-      if (await ctx.openNote(note.path)) { selectedPath = note.path; showDocument(); root.classList.remove('tree-overlay-open'); }
+      if (await ctx.openNote(note.path) && active && sequence === actionSequence) {
+        selectedPath = note.path; showDocument({ keepAction: true }); root.classList.remove('tree-overlay-open');
+      }
     }
     function referenceState(path) {
       if (!canvasReferences.has(path)) canvasReferences.set(path, { open: false, items: [], offset: 0, hasMore: false, loaded: false, loading: false, error: '', sequence: 0, signature: '' });
@@ -313,6 +327,7 @@
       resultScroll = scroll; results.scrollTop = scroll;
     }
     async function select(id, next) {
+      if (!active || disposed) return;
       if (providers.get(id)?.enabled && !providers.get(id).enabled(ctx)) return;
       const sequence = ++actionSequence;
       if (!(await ctx.beforeBrowse()) || !active || sequence !== actionSequence) return;
@@ -344,19 +359,17 @@
     }
     back.addEventListener('click', onBack);
     return {
-      async activate(options) {
+      activate(options) {
         if (disposed) return;
         active = true;
-        if (options && options.tag) { providerId = 'tags'; selection = { key: options.tag, label: options.tag }; expanded.add('tags'); dirty = true; }
-        renderNavigation(); showResults();
-        if (providerId === 'canvas' && hasResult) await refreshResults();
-        else if (dirty || !rows.length) await loadPage(true); else renderResults();
-        await loadNavigation();
+        setNavigationOpen(!!options?.navigationOpen);
       },
-      suspend(options) { active = false; cancelReferenceRequests(); pageSequence++; navigationSequences.forEach((value, key) => navigationSequences.set(key, value + 1)); actionSequence++; navigationGroups.forEach((group) => { cancelAnimationFrame(group.frame); clearTimeout(group.timer); }); if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
-      resume() { active = true; renderNavigation(); if (!results.hidden && dirty) refreshResults(); loadNavigation(); },
+      async browseTag(tag) { expanded.add('tags'); if (navigationOpen) { renderNavigation(); loadNavigation(); } await select('tags', { key: tag, label: tag }); },
+      setNavigationOpen,
+      suspend(options) { active = false; cancelReferenceRequests(); pageSequence++; cancelNavigation(); actionSequence++; if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
+      resume() { active = true; if (navigationOpen) renderNavigation(); if (!results.hidden && dirty) refreshResults(); loadNavigation(); },
       dispose() { this.suspend(); disposed = true; back.removeEventListener('click', onBack); nav.replaceChildren(); results.replaceChildren(); },
-      setLanguage() { renderNavigation(); renderResults(); updateBackLabel(); },
+      setLanguage() { renderNavigation(); if (hasResult) renderResults(); updateBackLabel(); },
       showDocument,
       checkExternalCanvases,
       invalidate() { dirty = true; providers.forEach((provider) => navigationDirty.add(provider.id)); if (active) { if (!results.hidden) refreshResults(); loadNavigation(); } },

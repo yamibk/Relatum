@@ -270,14 +270,15 @@ async function freePort() {
     assert.equal(creationRequests, beforeCreation, 'unselected new-note and tree drop make no filesystem request');
     assert(!fs.existsSync(path.join(notes, 'Blocked.md')));
     await page.locator('[data-note-action="toggle-browser"]').click();
+    await page.locator('[data-note-browser-provider="recent"]').click();
     await page.locator('.note-browser-result').first().waitFor();
     const browserHeading = await page.locator('.note-browser-results-head').textContent();
     await clickNotebookBlank();
-    await page.waitForFunction(() => !document.querySelector('.note-workspace').classList.contains('note-browser-mode'));
+    assert.equal(await page.locator('[data-note-action="toggle-browser"]').getAttribute('aria-expanded'), 'true', 'notebook deselection leaves navigation open');
     assert.equal(await page.locator(left).innerHTML(), '');
     await page.locator('[data-note-action="toggle-browser"]').click();
     await page.locator('.note-browser-result').first().waitFor();
-    assert.equal(await page.locator('.note-browser-results-head').textContent(), browserHeading, 'browse conditions survive blank deselection');
+    assert.equal(await page.locator('.note-browser-results-head').textContent(), browserHeading, 'browse conditions survive blank deselection and disclosure collapse');
     await clickNotebookBlank();
     await page.waitForFunction(() => !document.querySelector('.note-workspace').classList.contains('note-browser-mode'));
     fs.writeFileSync(path.join(notes, 'Root.md'), 'Externally changed note\n');
