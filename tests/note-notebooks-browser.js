@@ -306,7 +306,7 @@ async function freePort() {
     assert.equal(await row(left, 'Root.md').count(), 0);
     await row(left, 'CustomNotebook/Physics/P.md').waitFor();
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'Root.md');
-    assert.equal(Math.round((await page.locator('.note-links-pane').boundingBox()).width), 300);
+    assert.equal(Math.round((await page.locator('.note-links-pane').boundingBox()).width), 320);
     assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).position), 'relative');
     await rootRow('CustomNotebook/Physics').press('Enter');
     await rootRow('CustomNotebook/Physics').press('Space');
