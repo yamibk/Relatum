@@ -3261,6 +3261,25 @@
     else setSideMode('canvas');
     return true;
   }
+  function canToggleSideByTab(event) {
+    if (event.defaultPrevented || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey ||
+        event.isComposing || event.keyCode === 229 || document.hidden || editorInputPending() ||
+        state.settingsOpen || state.libraryPanel || state.imageTextBusy || state.assetCleanupBusy ||
+        state.openingPath || noteMovePromise || root.classList.contains('note-document-switch-pending') ||
+        modalHost?.childElementCount || contextMenu && !contextMenu.hidden || imageTextTools && !imageTextTools.hidden) return false;
+    const controls = 'input, textarea, select, button, a[href], area[href], summary, iframe, audio[controls], video[controls], ' +
+      '.note-canvas-viewport, [role="button"], [role="link"], [role="textbox"], [role="combobox"], ' +
+      '[role="slider"], [role="spinbutton"], [role="checkbox"], [role="radio"], [role="switch"], ' +
+      '[role="tab"], [role="tree"], [role="treeitem"], [role="listbox"], [role="option"], [role="menu"], [role^="menuitem"], [role="dialog"], [role="alertdialog"]';
+    return [event.target, document.activeElement].every((element) => {
+      if (!(element instanceof Element)) return false;
+      if (element === document.body || element === document.documentElement) return true;
+      if (!root.contains(element) || element.isContentEditable || element.closest(controls + ', [inert]') ||
+          editorHost?.contains(element) || fallbackEditor?.contains(element) || sidePane?.contains(element)) return false;
+      const tabStop = element.closest('[tabindex]');
+      return !tabStop || tabStop === readingHost || tabStop === root;
+    });
+  }
   function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
   async function uploadImages(files, commandContext) {
     if (!state.current || !files.length) return;
@@ -3688,6 +3707,11 @@
       return;
     }
     if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Tab' && canToggleSideByTab(event)) {
+      event.preventDefault(); event.stopPropagation();
+      if (!event.repeat) setSideOpen(!root.classList.contains('links-overlay-open'));
+      return;
+    }
     if (state.libraryPanel && event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
       if (libraryResetConfirm && !libraryResetConfirm.hidden) toggleLibraryReset(false, true);
