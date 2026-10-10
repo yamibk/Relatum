@@ -115,10 +115,7 @@ class NoteCanvasBrowserTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 'statistics_incomplete')
         (self.notes.root / 'bad.md').unlink()
         self.assertEqual(self.store.list('unused')['total'], 1)
-        def unreadable_tree(root, **options):
-            options['onerror'](PermissionError('cannot read directory'))
-            return iter(())
-        with mock.patch('notes_library.os.walk', side_effect=unreadable_tree):
+        with mock.patch('notes_library.os.scandir', side_effect=PermissionError('cannot read directory')):
             with self.assertRaises(NotesError) as caught:
                 self.store.list('unused')
             self.assertEqual(caught.exception.code, 'statistics_incomplete')

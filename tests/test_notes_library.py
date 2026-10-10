@@ -54,6 +54,85 @@ class NotesLibraryTests(unittest.TestCase):
             self.store.links('Target.md')
             self.assertEqual(reads.call_count, 1, 'unchanged link index must not reread every body')
 
+    def test_document_scan_reuses_file_metadata_and_relative_paths(self):
+        paths = ['Folder-10/Note-2.md', 'Folder-2/Note-10.md', 'Folder-2/Note-2.MD', 'Root.md']
+        for relative in paths:
+            target = self.root / relative
+            target.parent.mkdir(exist_ok=True)
+            target.write_text('[[Root]] #study', encoding='utf-8')
+        for hidden in ('Hidden.assets', '.relatum-stage', '.trash', 'canvases'):
+            (self.root / hidden).mkdir()
+            (self.root / hidden / 'Hidden.md').write_text('hidden', encoding='utf-8')
+        expected = ['Folder-2/Note-2.MD', 'Folder-2/Note-10.md', 'Folder-10/Note-2.md', 'Root.md']
+        self.assertEqual(list(self.store._documents(metadata=True)), expected)
+        original_scan, original_stat = os.scandir, Path.stat
+        observed = {}
+        def file_stat(target, *args, **kwargs):
+            if target.suffix.casefold() == '.md':
+                self.fail('unchanged index must reuse the directory entry stat')
+            return original_stat(target, *args, **kwargs)
+        with mock.patch('notes_library.os.scandir', side_effect=lambda folder:
+                        _tree_scan_fixture(original_scan, folder, {}, observed)), \
+                mock.patch.object(Path, 'stat', file_stat), \
+                mock.patch.object(self.store, '_read_note_bytes', wraps=self.store._read_note_bytes) as reads:
+            self.assertEqual(list(self.store._documents(metadata=True)), expected)
+            reads.assert_not_called()
+        for relative in paths:
+            observed[self.root / relative].assert_called_once_with(follow_symlinks=False)
+        self.assertFalse(any(target.name == 'Hidden.md' for target in observed))
+        (self.root / 'Folder-2/Note-10.md').unlink()
+        (self.root / 'Root.md').write_text('[[Changed]] #new', encoding='utf-8')
+        refreshed = self.store._documents(metadata=True)
+        self.assertNotIn('Folder-2/Note-10.md', self.store._document_cache)
+        self.assertEqual(refreshed['Root.md']['mentions'][0]['base'], 'Changed')
+        self.assertEqual(refreshed['Root.md']['tags'], [{'key': 'new', 'label': 'new'}])
+
+    def test_document_scan_handles_unreadable_entries_and_directories(self):
+        for name in ('Live.md', 'Locked.md'):
+            (self.root / name).write_text('content', encoding='utf-8')
+        folder = self.root / 'Folder'
+        folder.mkdir()
+        original = os.scandir
+        for strict in (False, True):
+            with self.subTest(strict=strict):
+                with mock.patch('notes_library.os.scandir', side_effect=lambda target:
+                                _tree_scan_fixture(original, target,
+                                                   {self.root / 'Locked.md': PermissionError('locked')}, {})):
+                    if strict:
+                        with self.assertRaises(NotesError) as caught:
+                            self.store._documents(strict=True)
+                        self.assertEqual(caught.exception.code, 'statistics_incomplete')
+                    else:
+                        self.assertEqual(list(self.store._documents()), ['Live.md'])
+        def failed_scan(target):
+            if Path(target) == folder:
+                raise PermissionError('cannot enumerate directory')
+            return original(target)
+        with mock.patch('notes_library.os.scandir', side_effect=failed_scan):
+            self.assertEqual(set(self.store._documents()), {'Live.md', 'Locked.md'})
+            with self.assertRaises(NotesError) as caught:
+                self.store._documents(strict=True)
+            self.assertEqual(caught.exception.code, 'statistics_incomplete')
+
+    def test_document_scan_excludes_reparse_files_and_rechecks_directories(self):
+        (self.root / 'Live.md').write_text('live', encoding='utf-8')
+        (self.root / 'FileLink.md').write_text('outside', encoding='utf-8')
+        for folder in ('Junction', 'Changed'):
+            (self.root / folder).mkdir()
+            (self.root / folder / 'Outside.md').write_text('outside', encoding='utf-8')
+        overrides = {
+            self.root / 'FileLink.md': SimpleNamespace(st_mode=stat.S_IFREG, st_file_attributes=0x400),
+            self.root / 'Junction': SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400),
+        }
+        original_scan, original_reparse = os.scandir, notes_library._is_reparse
+        observed = {}
+        with mock.patch('notes_library.os.scandir', side_effect=lambda target:
+                        _tree_scan_fixture(original_scan, target, overrides, observed)), \
+                mock.patch('notes_library._is_reparse', side_effect=lambda target:
+                           Path(target) == self.root / 'Changed' or original_reparse(target)):
+            self.assertEqual(list(self.store._documents(strict=True)), ['Live.md'])
+        self.assertFalse(any(target.name == 'Outside.md' for target in observed))
+
     def test_unchanged_load_save_and_links_reuse_parsed_fields(self):
         self.store.create('', 'Target', 'note', content='target')
         content = '#study\n[[Target]]\nbody\n'

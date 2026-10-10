@@ -639,38 +639,60 @@ class NotesStore:
         except UnicodeDecodeError as err:
             raise NotesError("笔记不是有效的 UTF-8 文本", status=409, code="invalid_encoding") from err
 
-    def _note_paths(self, *, strict: bool = False) -> list[Path]:
+    def _note_files(self, *, strict: bool = False) -> list[tuple[Path, str, tuple]]:
         self.ensure_root()
-        notes: list[Path] = []
+        notes = []
+
         def failed_scan(error):
-            raise NotesError("统计未完成：有笔记目录无法读取，请重试", status=409,
-                             code="statistics_incomplete") from error
-        for base, directories, filenames in os.walk(self.root, followlinks=False,
-                                                   onerror=failed_scan if strict else None):
-            base_path = Path(base)
-            safe_dirs = []
-            for name in directories:
-                child = base_path / name
-                low = name.casefold()
-                if base_path == self.root and low == CANVAS_DIRECTORY:
-                    continue
-                if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
-                    continue
-                if _is_reparse(child):
-                    continue
-                safe_dirs.append(name)
-            directories[:] = safe_dirs
-            for name in filenames:
-                target = base_path / name
-                if target.suffix.casefold() == NOTE_SUFFIX and not _is_reparse(target):
-                    notes.append(target)
-        notes.sort(key=lambda item: tuple(_natural_key(part) for part in item.relative_to(self.root).parts))
-        return notes
+            if strict:
+                raise NotesError("统计未完成：有笔记目录或文件无法读取，请重试", status=409,
+                                 code="statistics_incomplete") from error
+
+        # Carry relative names, natural order and file signatures through one
+        # scan instead of rebuilding paths and restatting every indexed note.
+        def visit(folder: Path, prefix: str, order: tuple) -> None:
+            try:
+                entries = []
+                with os.scandir(folder) as scan:
+                    for entry in scan:
+                        low = entry.name.casefold()
+                        if not prefix and low == CANVAS_DIRECTORY:
+                            continue
+                        if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
+                            continue
+                        try:
+                            metadata = entry.stat(follow_symlinks=False)
+                        except OSError as error:
+                            failed_scan(error)
+                            continue
+                        attrs = int(getattr(metadata, "st_file_attributes", 0) or 0)
+                        if stat.S_ISLNK(metadata.st_mode) or attrs & 0x400:
+                            continue
+                        entries.append((entry.name, metadata))
+            except OSError as error:
+                failed_scan(error)
+                return
+            for name, metadata in entries:
+                target = folder / name
+                relative = prefix + name
+                if stat.S_ISDIR(metadata.st_mode):
+                    if not _is_reparse(target):
+                        visit(target, relative + "/", order + (_natural_key(name),))
+                elif stat.S_ISREG(metadata.st_mode) and name.casefold().endswith(NOTE_SUFFIX):
+                    notes.append((target, relative, (metadata.st_mtime_ns, metadata.st_size),
+                                  order + (_natural_key(name),)))
+
+        visit(self.root, "", ())
+        notes.sort(key=lambda item: item[3])
+        return [(target, relative, signature) for target, relative, signature, _ in notes]
+
+    def _note_paths(self, *, strict: bool = False) -> list[Path]:
+        return [target for target, _, _ in self._note_files(strict=strict)]
 
     def tree(self) -> dict:
         self.ensure_root()
 
-        def visit(folder: Path) -> list[dict]:
+        def visit(folder: Path, prefix: str = "") -> list[dict]:
             result: list[dict] = []
             try:
                 entries = []
@@ -696,7 +718,7 @@ class NotesStore:
             entries.sort(key=lambda item: (not stat.S_ISDIR(item[1].st_mode), _natural_key(item[0].name)))
             for entry, metadata in entries:
                 target = folder / entry.name
-                relative = target.relative_to(self.root).as_posix()
+                relative = prefix + entry.name
                 if stat.S_ISDIR(metadata.st_mode):
                     # DirEntry metadata is a snapshot. Recheck each directory
                     # immediately before descending in case it became a link.
@@ -706,7 +728,7 @@ class NotesStore:
                         "kind": "folder",
                         "name": entry.name,
                         "path": relative,
-                        "children": visit(target),
+                        "children": visit(target, relative + "/"),
                     })
                 elif stat.S_ISREG(metadata.st_mode) and target.suffix.casefold() == NOTE_SUFFIX:
                     result.append({
@@ -729,12 +751,9 @@ class NotesStore:
         self._metadata_enabled = metadata = metadata or self._metadata_enabled
         documents: dict[str, dict] = {}
         live_paths: set[str] = set()
-        for target in self._note_paths(strict=strict):
-            relative = target.relative_to(self.root).as_posix()
+        for target, relative, signature in self._note_files(strict=strict):
             live_paths.add(relative)
             try:
-                stat = target.stat()
-                signature = (stat.st_mtime_ns, stat.st_size)
                 cached = self._document_cache.get(relative)
                 if cached and cached.get("signature") == signature and 'mentions' in cached \
                         and 'canvasTargets' in cached \

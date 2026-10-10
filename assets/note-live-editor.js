@@ -2006,18 +2006,33 @@
         const selectionChanged = !!transaction.selection;
         if (!transaction.docChanged && !selectionChanged && focused === value.focused && !notePathChanged && !imageTextModeChanged && !viewportRefreshed && !foldChanged) return value;
 
-        const byId = new Map(specs.map((spec) => [spec.id, spec]));
+        const byId = specs === value.specs ? value.byId : new Map(specs.map((spec) => [spec.id, spec]));
         const activeIds = activeBlockIds(specs, transaction.state, focused, false);
         const selectedImageIds = selectedBlockImageIds(specs, transaction.state);
         const refresh = new Set();
         if (foldChanged) specs.forEach(spec => refresh.add(spec.id));
-        if (selectionChanged || focused !== value.focused) specs.filter(spec => spec.kind === 'callout').forEach(spec => refresh.add(spec.id));
-        value.byId.forEach((old, id) => {
-          const current = byId.get(id);
-          if (!current || old.from !== current.from || old.to !== current.to || old.fingerprint !== current.fingerprint) refresh.add(id);
-        });
-        byId.forEach((current, id) => { if (!value.byId.has(id)) refresh.add(id); });
-        descendants(specs, specs.filter(spec => spec.kind === 'callout' && refresh.has(spec.id))).forEach(id => refresh.add(id));
+        if (selectionChanged || focused !== value.focused) {
+          // Only entering/leaving a header can change its block projection.
+          // Body caret movement keeps unrelated Callouts and their media intact.
+          const candidates = new Set([...value.activeIds, ...activeIds]);
+          candidates.forEach(id => {
+            const old = value.byId.get(id), current = byId.get(id);
+            if (!old || !current || current.kind !== 'callout') return;
+            const before = transaction.startState.doc.lineAt(old.from);
+            const after = transaction.state.doc.lineAt(current.from);
+            if ((value.focused && selectionTouches(transaction.startState.selection, before.from, before.to))
+                !== (focused && selectionTouches(transaction.state.selection, after.from, after.to))) refresh.add(id);
+          });
+        }
+        if (byId !== value.byId) {
+          value.byId.forEach((old, id) => {
+            const current = byId.get(id);
+            if (!current || old.from !== current.from || old.to !== current.to || old.fingerprint !== current.fingerprint) refresh.add(id);
+          });
+          byId.forEach((current, id) => { if (!value.byId.has(id)) refresh.add(id); });
+        }
+        const refreshedCallouts = specs.filter(spec => spec.kind === 'callout' && refresh.has(spec.id));
+        if (refreshedCallouts.length) descendants(specs, refreshedCallouts).forEach(id => refresh.add(id));
         value.activeIds.forEach((id) => { if (!activeIds.has(id)) refresh.add(id); });
         activeIds.forEach((id) => { if (!value.activeIds.has(id)) refresh.add(id); });
         value.selectedImageIds.forEach((id) => { if (!selectedImageIds.has(id)) refresh.add(id); });

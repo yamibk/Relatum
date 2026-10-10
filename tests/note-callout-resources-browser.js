@@ -75,9 +75,39 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     await page.evaluate(()=>editor.setDocument({value:'plain text',notePath:'plain.md'})); await settle();
     const ordinaryMathClears=await page.evaluate(()=>{MathJax.typesetClear=__originalMathClear;delete window.__originalMathClear;return __ordinaryMathClears;});
     const projection = await page.evaluate(() => {
-      const {EditorState,markdown,markdownLanguage} = RelatumCodeMirror;
+      const {EditorState,EditorSelection,markdown,markdownLanguage} = RelatumCodeMirror;
       const {createBlockField,scanBlockSpecs,focusEffect,calloutFoldEffect} = __calloutResourceTest;
       const report = [];
+      const selectionSource = 'before\n\n> [!note]+ Title\n> body\n> $$x^2$$\n\n> [!blue]\n> color body\n> $$y^2$$\n\n> [!blue] Named\n> > [!tip]- Inner\n> > $$z^2$$\n\nend';
+      const selectionCoordinator = {folds:new Map(),records:[]};
+      const selectionField = createBlockField(()=> 'selection.md',{},selectionCoordinator,{pending:()=>false});
+      const extensions = field => [EditorState.allowMultipleSelections.of(true),markdown({base:markdownLanguage}),field];
+      let selectionState = EditorState.create({doc:selectionSource,extensions:extensions(selectionField)});
+      const snapshot = (state,field) => {
+        const value=state.field(field),ranges=[];
+        for (const kind of ['decorations','atomic']) value[kind].between(0,state.doc.length,(from,to,decoration)=>{
+          const spec=value.byId.get(decoration.spec.blockId),widget=decoration.spec.widget;
+          ranges.push([kind,from,to,!!decoration.spec.colorHeader,spec?.kind,spec?.source,widget?.constructor.name,widget?.selected]);
+        });
+        return JSON.stringify(ranges);
+      };
+      const positions = [0,selectionSource.indexOf('Title'),selectionSource.indexOf('body'),
+        selectionSource.indexOf('[!blue]'),selectionSource.indexOf('color body'),selectionSource.indexOf('y^2'),
+        selectionSource.indexOf('Named'),selectionSource.indexOf('Inner'),selectionSource.length];
+      let transitions=0;
+      const checkSelection = (selection,focused) => {
+        selectionState=selectionState.update({selection,effects:focusEffect.of(focused)}).state;
+        const expectedField=createBlockField(()=> 'selection.md',{}, {folds:new Map(),records:[]},{pending:()=>false});
+        let expected=EditorState.create({doc:selectionSource,selection,extensions:extensions(expectedField)});
+        expected=expected.update({effects:focusEffect.of(focused)}).state;
+        if (snapshot(selectionState,selectionField)!==snapshot(expected,expectedField)) throw new Error('incremental Callout projection differs from fresh state focused='+focused+' selection='+JSON.stringify(selection.toJSON()));
+        transitions++;
+      };
+      for (const focused of [true,false,true]) for (const anchor of positions) for (const head of [anchor,selectionSource.length]) {
+        checkSelection(EditorSelection.create([EditorSelection.range(anchor,head)]),focused);
+      }
+      checkSelection(EditorSelection.create(positions.slice(3,5).map(position=>EditorSelection.cursor(position))),true);
+      report.push({selectionTransitions:transitions});
       const nested='> [!note]+ Outer\n> $$x^2$$\n>\n> > [!tip]- Inner\n> > $$y^2$$\n>\n> $$z^2$$\n\n> [!blue]\n> $$w^2$$\n\nend';
       const nestedCoordinator={folds:new Map(),records:[]};
       const nestedField=createBlockField(()=> 'nested.md',{},nestedCoordinator,{pending:()=>false});
@@ -92,7 +122,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
         if (JSON.stringify(actual.sort())!==JSON.stringify(expected)) throw new Error('nested projection mismatch for fold mask '+mask);
       }
       for (const count of [250,1000,2000]) {
-        const source = Array.from({length:count},(_,i)=>'> [!tip]+ Block '+i+'\n> body\n> $$x^2$$').join('\n\n');
+        const source = Array.from({length:count},(_,i)=>'> [!tip]+ Block '+i+'\n> body\n> $$x^2$$').join('\n\n')+'\n\nend';
         const coordinator = {folds:new Map(),records:[]};
         const field = createBlockField(()=> 'stress.md',{},coordinator,{pending:()=>false});
         let state = EditorState.create({doc:source,extensions:[markdown({base:markdownLanguage}),field]});
@@ -101,15 +131,35 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
         // known block count, independent of the editor's incremental parser.
         value.specs = scanBlockSpecs(state,0,source.length,[],markdownLanguage.parser.parse(source));
         value.byId = new Map(value.specs.map(spec=>[spec.id,spec]));
+        state=state.update({effects:calloutFoldEffect.of({id:value.specs[0].id,collapsed:false})}).state;
+        state=state.update({selection:{anchor:source.length},effects:focusEffect.of(true)}).state;
         let checks = 0;
         value.specs.forEach(spec=>{const kind=spec.kind;Object.defineProperty(spec,'kind',{get(){checks++;return kind;}});});
+        const originalNoteBlock=MarkdownMini.noteBlock;
+        let descriptors=0,identities=0,outsideDescriptors=0,bodyDescriptors=0;
+        MarkdownMini.noteBlock=(...args)=>{descriptors++;return originalNoteBlock(...args);};
         const times = [];
-        for (let i=0;i<5;i++) {
-          const start=performance.now();
-          state=state.update({selection:{anchor:source.length-i},effects:focusEffect.of(true)}).state;
-          times.push(performance.now()-start);
-        }
-        report.push({count,specs:value.specs.length,checks,medianMs:times.sort((a,b)=>a-b)[2]});
+        try {
+          for (let i=0;i<20;i++) {
+            const previous=state.field(field),start=performance.now();
+            state=state.update({selection:{anchor:source.length-i%3}}).state;
+            times.push(performance.now()-start);
+            const current=state.field(field);
+            if(previous.byId===current.byId && previous.decorations===current.decorations && previous.atomic===current.atomic) identities++;
+          }
+          outsideDescriptors=descriptors;
+          const body=source.indexOf('> body')+2;
+          state=state.update({selection:{anchor:body}}).state;
+          const beforeBody=descriptors;
+          for (let i=0;i<20;i++) {
+            const previous=state.field(field);
+            state=state.update({selection:{anchor:body+i%3}}).state;
+            const current=state.field(field);
+            if(previous.byId===current.byId && previous.decorations===current.decorations && previous.atomic===current.atomic) identities++;
+          }
+          bodyDescriptors=descriptors-beforeBody;
+        } finally { MarkdownMini.noteBlock=originalNoteBlock; }
+        report.push({count,specs:value.specs.length,checks,outsideDescriptors,bodyDescriptors,identities,medianMs:times.sort((a,b)=>a-b)[10]});
       }
       return report;
     });
@@ -128,7 +178,12 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
       assert(retained.every(count=>count===0),'source mode clears detached inline formulae');
       [...richRemoval,...delayedRemoval].forEach(sample=>assert.equal(sample.records,0,JSON.stringify(sample)));
       assert.equal(ordinaryMathClears,0,'ordinary blocks do not enter MathJax cleanup');
-      projection.forEach(sample=>assert(sample.checks<sample.specs*100,JSON.stringify(sample)));
+      projection.filter(sample=>sample.specs).forEach(sample=>{
+        assert(sample.checks<sample.specs*300,JSON.stringify(sample));
+        assert.equal(sample.outsideDescriptors,0,'ordinary caret movement does not reparse Callouts');
+        assert.equal(sample.bodyDescriptors,0,'body caret movement does not reparse Callouts');
+        assert.equal(sample.identities,40,'ordinary/body caret movement preserves projections and id index');
+      });
     }
     assert.deepEqual(errors,[]);
   } finally { if (browser) await browser.close(); await new Promise(resolve=>server.close(resolve)); }
