@@ -501,6 +501,15 @@ body { margin: 0; }
       ['math-only', '$$x^2$$', 1, 0],
       ['multiline-only', '$$\n\\frac{1}{x}\n$$', 1, 0],
       ['wide-math', '1\n$$' + Array(100).fill('x^2').join('+') + '$$\n2', 1, 0],
+      ['rule', '1\n\n---\n2', 1, 1],
+      ['rule-blank-lines', '1\n\n---\n\n2', 1, 2],
+      ['rule-multiple-blanks', '1\n\n\n---\n\n\n2', 1, 4],
+      ['rule-stars', '1\n***\n2', 1, 0],
+      ['rule-underscores', '1\n___\n2', 1, 0],
+      ['rule-start', '---\n2', 1, 0],
+      ['rule-end', '1\n\n---', 1, 1],
+      ['rule-only', '---', 1, 0],
+      ['rule-consecutive', '1\n\n---\n***\n___\n2', 3, 1],
     ];
     for (const [theme, width, scale] of [['light', 1280, 1], ['dark', 760, 1.35]]) {
       await page.setViewportSize({ width, height: 960 });
@@ -525,8 +534,13 @@ body { margin: 0; }
             return { height: block.getBoundingClientRect().height, margin: style.marginTop, overflowY: style.overflowY,
               width: block.clientWidth, scrollWidth: block.scrollWidth, heightOverflow: block.scrollHeight - block.clientHeight };
           });
+          const rules = [...content.querySelectorAll('.is-rule')].map(block => {
+            const rect = block.getBoundingClientRect(), style = getComputedStyle(block);
+            return { height: rect.height, width: rect.width, marginTop: style.marginTop, marginBottom: style.marginBottom,
+              fontSize: parseFloat(style.fontSize), lineHeight: parseFloat(style.lineHeight) };
+          });
           return { blanks: [...content.children].filter(el => el.classList.contains('cm-line') && !el.textContent).length,
-            contentWidth: content.clientWidth, math };
+            contentWidth: content.clientWidth, math, rules };
         });
         assert.equal(layout.blanks, blanks, name + ' must not add boundary lines');
         assert.equal(await page.evaluate(() => editor.snapshot().value), value);
@@ -534,6 +548,13 @@ body { margin: 0; }
           assert.equal(math.margin, '0px');
           assert.equal(math.overflowY, 'visible', 'MathJax glyphs must not be clipped by their container');
           assert(math.heightOverflow <= 2, name + ' must fit vertically in its outer scroller');
+        }
+        for (const rule of layout.rules) {
+          assert.equal(rule.marginTop, '0px');
+          assert.equal(rule.marginBottom, '0px');
+          assert(Math.abs(rule.height - (rule.fontSize * 1.1 + 1)) < 1, 'rules must use their measured padding and one-pixel line');
+          assert(rule.height < rule.lineHeight, 'rules must occupy less than one text line, excluding real blank lines');
+          assert(rule.width > 100, 'rules must retain the text column width');
         }
         if (name === 'math') assert(layout.math[0].height < 45 * scale, 'simple math must use its measured height and modest padding');
         if (name === 'wide-math') {
@@ -563,8 +584,133 @@ body { margin: 0; }
         }
         compactChecks.push({ name, theme, scale, ...layout });
         if (name === 'multiline') await page.screenshot({ path: path.join(output, 'compact-math-' + theme + '.png') });
+        if (name === 'rule') await page.screenshot({ path: path.join(output, 'compact-rule-' + theme + '.png') });
       }
     }
+    const ruleSource = '前文\n\n---\n\n后文';
+    const ruleChecks = [], readingRuleChecks = [];
+    const ruleCdp = await page.context().newCDPSession(page);
+    const setRuleDocument = async () => {
+      await page.evaluate(value => {
+        document.activeElement?.blur();
+        editor.setDocument({ value, notePath: 'rule.md', anchor: value.length, head: value.length });
+      }, ruleSource);
+      await settle();
+    };
+    const ruleTextPoint = token => page.evaluate(token => {
+      const line = [...editor.view.contentDOM.children].find(el => el.classList.contains('cm-line') && el.textContent === token);
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode, offset = node.textContent.indexOf(token);
+        if (offset < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, offset + 1); range.setEnd(node, offset + 2);
+        const rect = range.getBoundingClientRect();
+        return { x: rect.left + 1, y: (rect.top + rect.bottom) / 2 };
+      }
+      return null;
+    }, token);
+    for (const [theme, width, scale] of [['light', 1280, 1], ['dark', 620, 1.35]]) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.evaluate(({ theme, scale }) => {
+        document.body.dataset.startTheme = theme;
+        document.body.style.setProperty('--note-font-scale', String(scale));
+      }, { theme, scale });
+      await setRuleDocument();
+      for (const token of ['前文', '后文']) {
+        const point = await ruleTextPoint(token);
+        assert(point, 'text beside a rule must have its own visible rectangle');
+        await page.mouse.click(point.x, point.y); await settle();
+        const caret = await page.evaluate(() => {
+          const head = editor.view.state.selection.main.head, rect = editor.view.coordsAtPos(head);
+          return { head, line: editor.view.state.doc.lineAt(head).text, y: (rect.top + rect.bottom) / 2 };
+        });
+        assert.equal(caret.line, token);
+        assert(Math.abs(caret.y - point.y) < 5, 'rule-adjacent clicks must preserve measured caret coordinates');
+        await page.keyboard.type('Z'); await settle();
+        const changed = ruleSource.slice(0, caret.head) + 'Z' + ruleSource.slice(caret.head);
+        assert.equal(await page.evaluate(() => editor.snapshot().value), changed);
+        await page.evaluate(() => { editor.setSourceMode(true); editor.setSourceMode(false); }); await settle();
+        await page.keyboard.press('Control+z'); await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource);
+        await page.keyboard.press('Control+y'); await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().value), changed);
+        await page.keyboard.press('Control+z'); await settle();
+      }
+      // Real empty Markdown lines stay clickable and editable on both sides.
+      for (const number of [2, 4]) {
+        await setRuleDocument();
+        const point = await page.evaluate(number => {
+          const line = [...editor.view.contentDOM.children].filter(el => el.classList.contains('cm-line') && !el.textContent)[number === 2 ? 0 : 1];
+          const rect = line.getBoundingClientRect();
+          return { x: rect.left + 2, y: (rect.top + rect.bottom) / 2, at: editor.view.state.doc.line(number).from };
+        }, number);
+        await page.mouse.click(point.x, point.y); await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().head), point.at, 'real empty lines must keep their source position');
+        await page.keyboard.type('Q'); await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource.slice(0, point.at) + 'Q' + ruleSource.slice(point.at));
+        assert((await page.locator('.cm-content').innerText()).includes('Q'), 'typing into a real empty line must stay visible');
+        await page.keyboard.press('Control+z'); await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource);
+      }
+      await setRuleDocument();
+      await page.locator('.note-live-rich-block.is-rule').click(); await settle();
+      assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).text), '---');
+      assert.equal(await page.locator('.note-live-rich-block.is-rule').count(), 0, 'clicking a compact rule must reveal its editable source');
+      await page.keyboard.press('Home'); await page.keyboard.press('Shift+End'); await page.keyboard.press('Backspace'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource.replace('---', ''));
+      assert.equal(await page.locator('.note-live-rich-block.is-rule').count(), 0, 'deleted rules must not leave an empty projection');
+      await page.keyboard.press('Control+z'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource);
+      await page.keyboard.press('Home'); await page.keyboard.press('ArrowRight'); await settle();
+      assert.equal(await page.evaluate(() => editor.snapshot().head), ruleSource.indexOf('---') + 1);
+      await page.keyboard.press('Home'); await page.keyboard.press('ArrowLeft'); await settle();
+      assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).number), 2);
+      await page.keyboard.press('ArrowDown'); await settle();
+      assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).number), 4,
+        'vertical navigation must skip the projected rule and reach the next real empty line');
+      await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowRight'); await settle();
+      assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).number), 3);
+      await page.keyboard.press('End'); await page.keyboard.press('ArrowRight'); await settle();
+      assert.equal(await page.evaluate(() => editor.view.state.doc.lineAt(editor.snapshot().head).number), 4);
+      for (const token of ['前文', '后文']) for (const commit of [true, false]) {
+        await setRuleDocument();
+        const point = await ruleTextPoint(token);
+        await page.mouse.click(point.x, point.y); await settle();
+        const at = await page.evaluate(() => editor.snapshot().head);
+        for (const text of ['h', 'ha', 'han']) {
+          await ruleCdp.send('Input.imeSetComposition', { text, selectionStart: text.length, selectionEnd: text.length });
+          assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource, 'rule-adjacent Pinyin must stay out of save snapshots');
+          assert((await page.locator('.cm-content').innerText()).includes(text));
+        }
+        if (commit) await ruleCdp.send('Input.insertText', { text: '汉' });
+        else await ruleCdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+        await settle();
+        assert.equal(await page.evaluate(() => editor.snapshot().value), commit ? ruleSource.slice(0, at) + '汉' + ruleSource.slice(at) : ruleSource);
+        if (commit) {
+          await page.keyboard.press('Control+z'); await settle();
+          assert.equal(await page.evaluate(() => editor.snapshot().value), ruleSource);
+        }
+      }
+      ruleChecks.push({ theme, scale, pointer: true, blankInput: true, reveal: true, arrows: true, delete: true, undoRedo: true, ime: true });
+      // Reading spacing is local: canvas Markdown keeps its original 10px margins.
+      const reading = await page.evaluate(value => {
+        const host = document.createElement('div'); host.style.setProperty('--note-font-text', 'system-ui');
+        const canvas = document.createElement('div'); canvas.className = 'node-text'; canvas.innerHTML = '<hr class="md-hr">';
+        document.body.append(host, canvas);
+        RelatumNoteLiveEditor.renderMarkdown(host, value, 'rule.md');
+        const hr = host.querySelector('hr.md-hr'), style = getComputedStyle(hr), other = getComputedStyle(canvas.firstChild);
+        const result = { fontSize: parseFloat(style.fontSize), marginTop: parseFloat(style.marginTop), marginBottom: parseFloat(style.marginBottom),
+          height: hr.getBoundingClientRect().height, rules: host.querySelectorAll('hr.md-hr').length, canvasMargin: other.marginTop };
+        host.remove(); canvas.remove(); return result;
+      }, ruleSource);
+      assert.equal(reading.rules, 1); assert.equal(reading.height, 1);
+      assert(Math.abs(reading.marginTop - reading.fontSize * .55) < .1);
+      assert(Math.abs(reading.marginBottom - reading.fontSize * .55) < .1);
+      assert.equal(reading.canvasMargin, '10px');
+      readingRuleChecks.push({ theme, scale, ...reading });
+    }
+    await ruleCdp.detach();
     // Native carets navigate to the real paragraphs beside an image. Exact
     // hidden-source boundary mapping is covered by the StateField regression.
     // Candidates must remain visible without entering autosave snapshots.
@@ -618,7 +764,7 @@ body { margin: 0; }
     await page.waitForFunction(() => document.documentElement.dataset.noteLivePerformance);
     const typingProbe = await page.evaluate(() => JSON.parse(document.documentElement.dataset.noteLivePerformance));
     assert.deepEqual(errors, []);
-    const report = {output,metrics,clickChecks,calloutChecks,compactChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
+    const report = {output,metrics,clickChecks,calloutChecks,compactChecks,ruleChecks,readingRuleChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report,null,2));
     console.log(JSON.stringify(report));
   } finally {

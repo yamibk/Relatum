@@ -1906,6 +1906,7 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-reading-content h5,
 .note-reading-content h6 { margin: 1.05em 0 .48em; font-weight: 700; letter-spacing: -.01em; }
 .note-reading-content p { margin: 0 0 .82em; }
+.note-reading-content.node-text hr.md-hr { margin: .55em 0; }
 .note-reading-content ul,
 .note-reading-content ol { margin: 0 0 .82em; padding-left: 1.65em; }
 .note-reading-content pre.md-code {

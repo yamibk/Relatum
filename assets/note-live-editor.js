@@ -1881,7 +1881,7 @@
     // to deliver native input without a keydown to the selected image text box.
     const imageTextInput = spec.kind === 'image' && spec.from === 0 && spec.to === state.doc.length
       && options.imageTextController?.active;
-    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas');
+    return !imageTextInput && (spec.kind === 'math' || spec.kind === 'image' || spec.kind === 'canvas' || spec.kind === 'rule');
   }
 
   function blockAtomicRange(spec, state) {

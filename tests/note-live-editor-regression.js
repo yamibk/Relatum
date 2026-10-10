@@ -120,16 +120,17 @@ const liveProbe = loadLiveDecorationProbe();
 
 // Compact block boundaries must change layout without absorbing adjacent
 // composition text. Exercise the real StateField and ChangeSet mapping.
-for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)']) {
+for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)', '---', '***', '___']) {
   const coordinator = {};
   const field = liveProbe.__relatumLiveTest.createBlockField(() => 'compact.md', {}, coordinator, { pending: () => true });
-  const original = 'before\n' + block + '\nafter';
+  // A blank line distinguishes --- from a Setext heading underline.
+  const original = 'before\n' + (block === '---' ? '\n' : '') + block + '\nafter';
   const initial = liveProbe.RelatumCodeMirror.EditorState.create({
     doc: original,
     extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
   });
   const record = state => decorationRecords(state.field(field).decorations, state.doc.length)[0];
-  assert.strictEqual(record(initial).spec.inclusive, true, 'standalone media and math must cover their visual boundary lines');
+  assert.strictEqual(record(initial).spec.inclusive, true, 'compact blocks must cover their visual boundary lines');
   const atomic = decorationRecords(initial.field(field).atomic, initial.doc.length)[0];
   const media = block.startsWith('!');
   assert.strictEqual(atomic.from, record(initial).from - (media ? 1 : 0));
@@ -158,13 +159,29 @@ for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', 
 }
 {
   const coordinator = {};
-  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'rule.md', {}, coordinator, { pending: () => false });
+  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'mermaid.md', {}, coordinator, { pending: () => false });
   const state = liveProbe.RelatumCodeMirror.EditorState.create({
-    doc: 'before\n\n---\n\nafter',
+    doc: 'before\n\n```mermaid\ngraph TD; A-->B\n```\n\nafter',
     extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
   });
   assert.strictEqual(decorationRecords(state.field(field).decorations, state.doc.length)[0].spec.inclusive, false,
     'other rich blocks must retain their existing boundary behavior');
+}
+for (const [name, source, rules] of [
+  ['Setext heading', 'Before\n---\nAfter', 0],
+  ['frontmatter', '---\ntitle: sample\n---\n\nAfter', 0],
+  ['fenced code', '```text\n---\n```', 0],
+  ['table separator', '| A | B |\n| --- | --- |\n| x | y |', 0],
+  ['horizontal rule', 'Before\n\n---\nAfter', 1],
+]) {
+  const coordinator = {};
+  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'syntax.md', {}, coordinator, { pending: () => false });
+  const state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: source,
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage }), field],
+  });
+  assert.strictEqual(state.field(field).specs.filter(spec => spec.kind === 'rule').length, rules,
+    name + ' must retain its original Markdown meaning');
 }
 
 const commentTagSource = '%%\n隐藏段落\n\n#hidden\n%%\n\n#visible';
