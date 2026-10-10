@@ -1184,7 +1184,6 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-tree-pane > .note-pane-head .note-library-heading { flex: none; gap: 2px; overflow: visible; }
 .note-tree-pane > .note-pane-head .note-head-actions { gap: 2px; }
 .note-tree-pane > .note-pane-head :is(.note-icon-button, .note-library-focus-button) { width: 24px; flex: none; }
-.note-graph-toggle[aria-expanded="true"] { color: var(--text); background-color: var(--note-control-active); }
 .note-expand-all .note-expand-icon { grid-area: 1 / 1; }
 .note-expand-all .note-expand-icon-close { display: none; }
 .note-expand-all[data-all-expanded="true"] .note-expand-icon-open { display: none; }
