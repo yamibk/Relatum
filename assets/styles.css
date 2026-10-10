@@ -272,6 +272,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  outline: none;
   padding: 10px 8px 24px;
   scrollbar-width: thin;
   scrollbar-color: rgba(60, 60, 55, 0.22) transparent;
