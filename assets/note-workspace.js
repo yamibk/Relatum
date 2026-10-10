@@ -267,7 +267,7 @@
     active: false, initialized: false, treeRendered: false, entries: [], current: null, selectedFolder: '', selectedPath: '', rootTargeted: false, expanded: new Set(), sideMode: 'notebooks',
     notebookRoot: '', notebookExpanded: new Set(), notebookColors: {}, notebookSettingsLoaded: false, notebookTreeDirty: true, notebookPruning: new Map(),
     editGeneration: 0, saveTimer: 0, retryTimer: 0, saveChain: Promise.resolve(true), saveRunning: false,
-    openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, draggedPath: '', renamePath: '', renameOriginal: '',
+    openSeq: 0, refreshSeq: 0, externalSeq: 0, linksSeq: 0, linksRefreshTimer: 0, linksRefreshSuspended: false, draggedPath: '', renamePath: '', renameOriginal: '',
     importRunning: false, renameError: '', renameDraft: null, renameCommitPromise: null, lastMoveError: '',
     openingPath: '', documentGeneration: 0, documentCache: new Map(), loadPromises: new Map(), entryIndex: new Map(), prefetchTimer: 0,
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
@@ -1674,7 +1674,7 @@
     persistExpanded(); renderTree();
     return true;
   }
-  function rebuildEntryIndex() { state.entryIndex = new Map(flattenEntries(state.entries, []).map((entry) => [entry.path, entry])); }
+  function rebuildEntryIndex(flat) { state.entryIndex = new Map((flat || flattenEntries(state.entries, [])).map((entry) => [entry.path, entry])); }
   function findEntry(path) { return state.entryIndex.get(path) || null; }
   function folderTarget() {
     if (state.notebookRoot === null) return null;
@@ -2057,10 +2057,10 @@
     return !state.renamePath;
   }
   function renderTree(options) {
-    rebuildEntryIndex();
+    if (!options?.entryIndexReady) rebuildEntryIndex();
     renderTreeInto(treeEl, visibleTreeEntries(), state.expanded, false);
     state.treeRendered = true;
-    state.renderedOrder = treeOrderSignature(state.entries);
+    state.renderedOrder = options?.orderSignature ?? treeOrderSignature(state.entries);
     state.pendingTreeReorder = false;
     updateNotebookRootLabel();
     if (!options?.keepNotebookTree) { state.notebookTreeDirty = true; renderNotebookTree(); }
@@ -2267,34 +2267,34 @@
     try {
       const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (seq !== state.refreshSeq || noteMovePromise) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
-      const signature = JSON.stringify(flattenEntries(entries, []).map((entry) => [entry.path, entry.modifiedNs, entry.size]));
+      const flat = flattenEntries(entries, []);
+      const signature = JSON.stringify(flat.map((entry) => [entry.path, entry.modifiedNs, entry.size]));
       const browserChanged = signature !== state.treeMetadataSignature;
       if (signature !== state.treeMetadataSignature) { state.externalSyncUnchanged = 0; state.treeMetadataSignature = signature; }
       else if (options && options.background) state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1);
       const structureChanged = !state.treeRendered || !sameTreeStructure(state.entries, entries);
-      const orderChanged = state.renderedOrder !== treeOrderSignature(entries);
+      const orderSignature = treeOrderSignature(entries);
+      const orderChanged = state.renderedOrder !== orderSignature;
       const previousTabs = state.tabs.slice();
       // Always refresh metadata for cache validation; unchanged rows retain focus,
       // inline rename drafts and any folder transition already in progress.
       state.entries = entries;
-      rebuildEntryIndex();
+      rebuildEntryIndex(flat);
       if (!state.notebookSettingsLoaded) restoreNotebookSettings(result.notebookSettings);
       const previousNotebookRoot = state.notebookRoot;
       const notebookMissing = reconcileNotebooks();
-      const existingPaths = new Set(flattenEntries(entries, []).map((entry) => entry.path));
       let prunedRecent = false;
-      recentFiles.forEach((time, path) => { if (!existingPaths.has(path)) { recentFiles.delete(path); prunedRecent = true; } });
+      recentFiles.forEach((time, path) => { if (!state.entryIndex.has(path)) { recentFiles.delete(path); prunedRecent = true; } });
       if (prunedRecent) persistRecent();
       if (browserChanged && noteBrowser) noteBrowser.invalidate();
-      const flat = flattenEntries(state.entries, []); rebuildEntryIndex();
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
       if (state.selectedFolder && !folders.has(state.selectedFolder)) state.selectedFolder = '';
-      if (state.selectedPath && !flat.some((entry) => entry.path === state.selectedPath)) state.selectedPath = '';
+      if (state.selectedPath && !state.entryIndex.has(state.selectedPath)) state.selectedPath = '';
       if (structureChanged || orderChanged || previousNotebookRoot !== state.notebookRoot) {
         if (state.renamePath && !structureChanged) state.pendingTreeReorder = true;
-        else renderTree();
+        else renderTree({ entryIndexReady: true, orderSignature });
       }
       await reconcileExternalTree(previousTabs);
       if (notebookMissing) selectNotebook('', { rootTarget: true });
@@ -2321,7 +2321,41 @@
     }
     list(outgoingEl, outgoing, 'outgoing'); list(backlinksEl, backlinks, 'backlink');
   }
-  async function ensureLinks() { if (!state.current) return false; const path = state.current.path; const seq = ++state.linksSeq; try { const result = await request('/api/note-links?path=' + encodeURIComponent(path)); if (seq !== state.linksSeq || !state.current || state.current.path !== path) return false; state.current.outgoing = result.outgoing || []; state.current.backlinks = result.backlinks || []; renderLinks(); return true; } catch (error) { return false; } }
+  async function ensureLinks() {
+    if (!state.current) return false;
+    const documentState = state.current; const path = documentState.path; const revision = documentState.revision;
+    const seq = ++state.linksSeq;
+    try {
+      const result = await request('/api/note-links?path=' + encodeURIComponent(path));
+      if (seq !== state.linksSeq || state.current !== documentState || documentState.path !== path) return false;
+      documentState.outgoing = result.outgoing || []; documentState.backlinks = result.backlinks || [];
+      if (documentState.revision === revision) documentState.linksRefreshNeeded = false;
+      renderLinks(); return true;
+    } catch (error) { return false; }
+  }
+  function cancelLinksRefresh() {
+    clearTimeout(state.linksRefreshTimer);
+    state.linksRefreshTimer = 0;
+  }
+  function linksRefreshVisible(documentState) {
+    return !!documentState && state.current === documentState && state.active && !document.hidden
+      && !state.linksRefreshSuspended && !state.openingPath && !noteMovePromise
+      && state.sideMode === 'links' && root.classList.contains('links-overlay-open');
+  }
+  function scheduleLinksRefresh(documentState) {
+    cancelLinksRefresh();
+    if (documentState) documentState.linksRefreshNeeded = true;
+    if (!linksRefreshVisible(documentState)) return;
+    const timer = setTimeout(() => {
+      if (state.linksRefreshTimer !== timer) return;
+      state.linksRefreshTimer = 0;
+      if (documentState.linksRefreshNeeded && linksRefreshVisible(documentState)) ensureLinks();
+    }, 500);
+    state.linksRefreshTimer = timer;
+  }
+  function resumeLinksRefresh() {
+    if (state.current?.linksRefreshNeeded) scheduleLinksRefresh(state.current);
+  }
   function normalizedWikiTarget(value) { const target = String(value || '').split('|', 1)[0].trim(); const marks = [target.indexOf('#'), target.indexOf('^')].filter((index) => index >= 0); return (marks.length ? target.slice(0, Math.min.apply(Math, marks)) : target).replace(/\.md$/i, '').trim(); }
   function outgoingForWiki(value) { const wanted = normalizedWikiTarget(value).toLocaleLowerCase(); return (state.current && state.current.outgoing || []).find((item) => String(item.rawTarget || '').replace(/\.md$/i, '').toLocaleLowerCase() === wanted) || null; }
   function updateEditorVisibility() {
@@ -2346,6 +2380,7 @@
   }
 
   function applyDocument(data, options) {
+    cancelLinksRefresh();
     closeContextMenu(); resetExternalSyncActivity(); cancelStatistics();
     state.imageTextCleanupPath = '';
     const preservedView = options && options.preserveViewState && state.current && state.current.path === data.path
@@ -2377,7 +2412,7 @@
     if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') ensureLinks();
     scheduleStatistics(documentState); scheduleDocumentPrefetch();
   }
-  function clearCurrent(options) { clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; if (oldPath) window.RelatumNoteCanvas?.releaseNote(oldPath); state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
+  function clearCurrent(options) { cancelLinksRefresh(); clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; if (oldPath) window.RelatumNoteCanvas?.releaseNote(oldPath); state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
   function hasPendingEdits(documentState) { const target = documentState || state.current; return !!target && target.persistedGeneration < target.editGeneration; }
   function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(undefined, false, true), typeof delay === 'number' ? delay : SAVE_DELAY); }
   function markChanged(meta) {
@@ -2425,7 +2460,7 @@
         if (state.current === target) {
           clearSaveError();
           if (!hasPendingEdits(target)) desktopDirty(false); else scheduleSave(0);
-          if (root.classList.contains('links-overlay-open')) setTimeout(() => ensureLinks(), 500);
+          scheduleLinksRefresh(target);
         }
         return true;
       } catch (error) {
@@ -2460,6 +2495,7 @@
       state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
     }
     if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
+    cancelLinksRefresh();
     const previous = state.current; rememberEditorState(previous);
     const seq = ++state.openSeq; state.openingPath = path; state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path);
     renderTabs();
@@ -2485,7 +2521,7 @@
         if (seq !== state.openSeq) return false;
         applyDocument(data);
       }
-      else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); }
+      else { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); resumeLinksRefresh(); }
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
       return true;
@@ -2499,6 +2535,7 @@
         if (error.code !== 'aborted' && !missing) showToast(error.message || tr('readFailed'), 'error');
       }
       if (error.code !== 'aborted') await refreshTree(false, { silentErrors: missing });
+      if (seq === state.openSeq) resumeLinksRefresh();
       return false;
     }
   }
@@ -3194,6 +3231,7 @@
     [root, settingsPop, imageTextTools].filter(Boolean).forEach((element) => sidePopoverObserver.observe(element));
   }
   function setSideOpen(open) {
+    cancelLinksRefresh();
     sideMotionUntil = performance.now() + 270;
     if (!open) {
       const focusWasInside = sidePane?.contains(document.activeElement) || settingsPop?.contains(document.activeElement) || imageTextTools?.contains(document.activeElement);
@@ -3354,6 +3392,7 @@
   }
   async function preload() { return initializeWorkspace(); }
   async function activate() {
+    state.linksRefreshSuspended = false;
     const wasInitialized = state.initialized;
     state.active = true;
     if (noteBrowser && browserIntent) noteBrowser.resume();
@@ -3369,6 +3408,7 @@
     if (wasInitialized) await triggerExternalSync({ silentErrors: true });
     else scheduleExternalSync();
     if (state.current) {
+      resumeLinksRefresh();
       scheduleStatistics(state.current); scheduleDocumentPrefetch();
       if (state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
       requestAnimationFrame(() => {
@@ -3377,7 +3417,17 @@
     }
     return true;
   }
-  async function deactivate() { stopExternalSync(); if (!(await flushSave())) { scheduleExternalSync(); return false; } await flushNotebookSettings(); browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false }); if (noteBrowser) noteBrowser.suspend({ keepView: true }); state.active = false; if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false); root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true; }
+  async function deactivate() {
+    state.linksRefreshSuspended = true; cancelLinksRefresh(); stopExternalSync();
+    if (!(await flushSave())) { state.linksRefreshSuspended = false; resumeLinksRefresh(); scheduleExternalSync(); return false; }
+    await flushNotebookSettings(); browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle();
+    stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates();
+    setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
+    if (noteBrowser) noteBrowser.suspend({ keepView: true });
+    state.active = false;
+    if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false);
+    root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true;
+  }
   // Retain the outgoing page until the workspace's slide finishes, then release
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
@@ -3685,11 +3735,12 @@
   document.addEventListener('relatum:languagechange', closeContextMenu);
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
-    else if (state.active) { if (noteBrowser && browserIntent) noteBrowser.resume(); state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
+    if (document.hidden) { cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
+    else if (state.active) { if (noteBrowser && browserIntent) noteBrowser.resume(); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
-  window.addEventListener('beforeunload', () => { stopExternalSync(); flushWorkspaceState(true); });
+  window.addEventListener('pagehide', () => { state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); });
+  window.addEventListener('beforeunload', () => { cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();

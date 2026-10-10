@@ -49,7 +49,7 @@ async function freePort() {
     let source = fs.readFileSync(path.join(repo, 'assets', 'note-workspace.js'), 'utf8');
     // Expose internals only in the intercepted test response; production has no debug API.
     source = source.replace('  window.CanvasNoteWorkspace = {',
-      '  window.__noteViewTest = {state, openNote, closeAllTabs, createEntry, movePath, recycleEntry, setViewMode, flushSave, checkExternalChanges, snapshot: editorSnapshot, editor: liveEditor, rememberViewState, persistViewStates};\n  window.CanvasNoteWorkspace = {');
+      '  window.__noteViewTest = {state, openNote, closeAllTabs, createEntry, movePath, recycleEntry, setViewMode, flushSave, checkExternalChanges, stopExternalSync, stopDocumentPrefetch, snapshot: editorSnapshot, editor: liveEditor, rememberViewState, persistViewStates};\n  window.CanvasNoteWorkspace = {');
     async function prepare(target) {
       const page = await target.newPage();
       page.on('pageerror', error => errors.push(error.message));
@@ -59,6 +59,188 @@ async function freePort() {
       await page.locator('button[data-start-workspace="notes"]').click();
       await page.waitForFunction(() => window.__noteViewTest?.state.active && window.__noteViewTest.state.initialized);
       return page;
+    }
+    async function verifyDeferredLinks() {
+      const first = 'links-audit-A.md', second = 'links-audit-B.md';
+      fs.writeFileSync(path.join(root, 'notes', first), '# Links audit\n\n[[links-audit-B]]\n');
+      fs.writeFileSync(path.join(root, 'notes', second), 'Wiki destination');
+      const auditContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+      try {
+        const audit = await prepare(auditContext);
+        const requests = [];
+        const isLinks = request => new URL(request.url()).pathname === '/api/note-links';
+        audit.on('request', request => { if (isLinks(request)) requests.push(new URL(request.url()).searchParams.get('path')); });
+        await audit.evaluate(first => __noteViewTest.openNote(first), first);
+        await audit.evaluate(() => {
+          __noteViewTest.stopExternalSync(); __noteViewTest.stopDocumentPrefetch();
+          const native = window.setTimeout;
+          window.__captureLinksDelay = false; window.__capturedLinksDelays = [];
+          window.setTimeout = function(callback, delay, ...args) {
+            const id = native.call(this, callback, delay, ...args);
+            if (window.__captureLinksDelay && delay === 500 && typeof callback === 'function') window.__capturedLinksDelays.push(() => callback(...args));
+            return id;
+          };
+        });
+        const side = mode => audit.locator(`[data-note-action="side-${mode}"]`);
+        async function save(label, capture) {
+          await audit.evaluate(async ({label, capture}) => {
+            const test = __noteViewTest, view = test.editor.view;
+            view.dispatch({ changes: { from: view.state.doc.length, insert: '\n' + label } });
+            window.__capturedLinksDelays = []; window.__captureLinksDelay = !!capture;
+            let saved;
+            try { saved = await test.flushSave(); } finally { window.__captureLinksDelay = false; test.stopExternalSync(); }
+            if (!saved) throw new Error('isolated link audit save failed');
+          }, {label, capture});
+        }
+        async function showLinks() {
+          if (!(await audit.locator('.note-workspace').evaluate(node => node.classList.contains('links-overlay-open')))) await audit.locator('[data-note-action="toggle-notebooks"]').click();
+          await side('notebooks').click();
+          const before = requests.length, response = audit.waitForResponse(response => isLinks(response.request()));
+          await side('links').click(); await response;
+          assert.equal(requests.length, before + 1, 'entering the Links tab queries immediately');
+        }
+        async function invokeLateCallbacks() {
+          assert.equal(await audit.evaluate(() => window.__capturedLinksDelays.length), 1, 'capture the delayed link request independently of editor statistics');
+          await audit.evaluate(() => window.__capturedLinksDelays.forEach(callback => callback()));
+        }
+        if (!(await audit.locator('.note-workspace').evaluate(node => node.classList.contains('links-overlay-open')))) await audit.locator('[data-note-action="toggle-notebooks"]').click();
+        for (const mode of ['notebooks', 'canvas', 'guide']) {
+          await side(mode).click(); const before = requests.length;
+          await save('Save with ' + mode); await sleep(650);
+          assert.equal(requests.length, before, mode + ' must not query hidden links after saving');
+        }
+        await showLinks();
+        const coalesced = requests.length;
+        await save('First links save'); await sleep(100);
+        await save('Second links save'); await sleep(100);
+        await save('Third links save'); await sleep(350);
+        assert.equal(requests.length, coalesced, 'each save restarts the 500ms link refresh window');
+        await sleep(300);
+        assert.deepEqual(requests.slice(coalesced), [first], 'continuous saves share one delayed link query');
+
+        const cancellations = ['close', 'tab', 'document', 'workspace', 'hidden', 'pagehide'];
+        for (const [index, cancellation] of cancellations.entries()) {
+          await audit.evaluate(first => __noteViewTest.openNote(first), first);
+          await showLinks(); const before = requests.length;
+          const target = 'extra-' + index;
+          await save('Cancel on ' + cancellation + '\n[[' + target + ']]', true);
+          if (cancellation === 'close') await audit.locator('[data-note-action="close-links"]').click();
+          else if (cancellation === 'tab') await side('guide').click();
+          else if (cancellation === 'document') {
+            const response = audit.waitForResponse(response => isLinks(response.request()));
+            await audit.evaluate(second => __noteViewTest.openNote(second), second); await response;
+          } else if (cancellation === 'workspace') {
+            await audit.locator('button[data-start-workspace="canvas"]').click();
+            await audit.waitForFunction(() => !__noteViewTest.state.active);
+          } else if (cancellation === 'hidden') {
+            await audit.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
+          } else await audit.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+          await invokeLateCallbacks(); await sleep(650);
+          assert.deepEqual(requests.slice(before), cancellation === 'document' ? [second] : [],
+            cancellation + ' cancels the pending request and rejects a late callback');
+          const resumed = requests.length;
+          if (cancellation === 'workspace') {
+            await audit.locator('button[data-start-workspace="notes"]').click();
+            await audit.waitForFunction(() => __noteViewTest.state.active);
+          } else if (cancellation === 'hidden') await audit.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
+          else if (cancellation === 'pagehide') await audit.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+          await audit.evaluate(() => __noteViewTest.stopExternalSync());
+          if (['workspace', 'hidden', 'pagehide'].includes(cancellation)) {
+            await sleep(650);
+            assert.deepEqual(requests.slice(resumed), [first], cancellation + ' resumes exactly one pending refresh when visible');
+            assert(await audit.locator('[data-role="note-outgoing"] .note-link-card').filter({ hasText: target }).count(), cancellation + ' restores the saved link in the visible panel');
+          }
+        }
+        await showLinks(); const failedLeave = requests.length;
+        await save('Pending link refresh before failed leave');
+        await audit.route('**/api/note-save', route => route.fulfill({ status: 500, json: { error: 'isolated save failure' } }), { times: 1 });
+        await audit.evaluate(() => {
+          const view = __noteViewTest.editor.view;
+          view.dispatch({ changes: { from: view.state.doc.length, insert: '\nUnsaved before leaving' } });
+        });
+        const failure = audit.waitForResponse(response => new URL(response.url()).pathname === '/api/note-save');
+        await audit.locator('button[data-start-workspace="canvas"]').click();
+        assert.equal((await failure).status(), 500);
+        await audit.waitForFunction(() => __noteViewTest.state.active && !__noteViewTest.state.saveRunning && !__noteViewTest.state.linksRefreshSuspended);
+        await sleep(650);
+        assert.deepEqual(requests.slice(failedLeave), [first], 'failed departure restores the pending refresh and keeps the dirty document open');
+        assert(await audit.evaluate(() => __noteViewTest.state.current.persistedGeneration < __noteViewTest.state.current.editGeneration));
+        const recovered = requests.length;
+        await save('Recovery after failed leave'); await sleep(650);
+        assert.deepEqual(requests.slice(recovered), [first], 'saving after failed departure resumes normal link refresh');
+
+        await showLinks(); const failedNavigation = requests.length;
+        await save('Refresh after failed navigation\n[[extra-12]]');
+        await audit.route('**/api/note?path=' + second, route => route.fulfill({ status: 503, json: { error: 'isolated read failure' } }), { times: 1 });
+        assert.equal(await audit.evaluate(second => __noteViewTest.openNote(second, { force: true }), second), false);
+        assert.equal(await audit.evaluate(() => __noteViewTest.state.current.path), first, 'failed navigation preserves the previous document');
+        await audit.evaluate(() => __noteViewTest.stopExternalSync()); await sleep(650);
+        assert.deepEqual(requests.slice(failedNavigation), [first], 'failed navigation resumes the previous document refresh');
+        assert(await audit.locator('[data-role="note-outgoing"] .note-link-card').filter({ hasText: 'extra-12' }).count());
+
+        await showLinks(); const finalSave = requests.length;
+        let releaseSave, sawSave;
+        const saveRelease = new Promise(resolve => { releaseSave = resolve; });
+        const saveReceived = new Promise(resolve => { sawSave = resolve; });
+        await audit.route('**/api/note-save', async route => {
+          const response = await route.fetch(); sawSave(); await saveRelease; await route.fulfill({ response });
+        }, { times: 1 });
+        await audit.evaluate(() => {
+          const view = __noteViewTest.editor.view;
+          view.dispatch({ changes: { from: view.state.doc.length, insert: '\n[[extra-13]]' } });
+          window.__lateAuditSave = __noteViewTest.flushSave();
+        });
+        await saveReceived;
+        await audit.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+        releaseSave(); assert(await audit.evaluate(() => window.__lateAuditSave));
+        await sleep(650);
+        assert.equal(requests.length, finalSave, 'a save response after pagehide does not restart hidden link work');
+        await audit.evaluate(() => window.dispatchEvent(new Event('pageshow'))); await sleep(650);
+        assert.deepEqual(requests.slice(finalSave), [first], 'pageshow restores one refresh after the final save finishes');
+        assert(await audit.locator('[data-role="note-outgoing"] .note-link-card').filter({ hasText: 'extra-13' }).count());
+
+        await showLinks(); const departureSave = requests.length;
+        await audit.evaluate(() => {
+          const view = __noteViewTest.editor.view;
+          view.dispatch({ changes: { from: view.state.doc.length, insert: '\n[[extra-14]]' } });
+        });
+        await audit.locator('button[data-start-workspace="canvas"]').click();
+        await audit.waitForFunction(() => !__noteViewTest.state.active); await sleep(650);
+        assert.equal(requests.length, departureSave, 'the departure flush saves the new link without querying the hidden panel');
+        await audit.locator('button[data-start-workspace="notes"]').click();
+        await audit.waitForFunction(() => __noteViewTest.state.active);
+        await audit.evaluate(() => __noteViewTest.stopExternalSync()); await sleep(650);
+        assert.deepEqual(requests.slice(departureSave), [first], 'returning refreshes links saved by the departure flush');
+        assert(await audit.locator('[data-role="note-outgoing"] .note-link-card').filter({ hasText: 'extra-14' }).count());
+
+        let releaseLinks, sawLinks;
+        const linksRelease = new Promise(resolve => { releaseLinks = resolve; });
+        const linksReceived = new Promise(resolve => { sawLinks = resolve; });
+        await audit.route('**/api/note-links?*', async route => {
+          const response = await route.fetch(); sawLinks(); await linksRelease; await route.fulfill({ response });
+        }, { times: 1 });
+        const staleLinks = requests.length, oldResponse = audit.waitForResponse(response => isLinks(response.request()));
+        await side('links').click(); await linksReceived;
+        await save('Save during an old links response\n[[extra-15]]');
+        releaseLinks(); await oldResponse; await sleep(50);
+        assert.equal(await audit.evaluate(() => __noteViewTest.state.current.linksRefreshNeeded), true,
+          'a response captured before the save cannot clear the new revision refresh');
+        await sleep(650);
+        assert.deepEqual(requests.slice(staleLinks), [first, first], 'an old-revision response is followed by one current links request');
+        assert(await audit.locator('[data-role="note-outgoing"] .note-link-card').filter({ hasText: 'extra-15' }).count());
+        await showLinks(); await audit.locator('[data-note-action="close-links"]').click();
+        const reopened = requests.length, response = audit.waitForResponse(response => isLinks(response.request()));
+        await audit.locator('[data-note-action="toggle-notebooks"]').click(); await response;
+        assert.equal(requests.length, reopened + 1, 'reopening the Links sidebar queries immediately');
+        await audit.locator('[data-note-action="close-links"]').click();
+        await audit.evaluate(first => __noteViewTest.openNote(first), first);
+        await audit.evaluate(() => __noteViewTest.setViewMode('reading'));
+        const wiki = requests.length;
+        await audit.locator('[data-role="note-reading-view"] [data-wikilink="links-audit-B"]').click();
+        await audit.waitForFunction(second => __noteViewTest.state.current?.path === second, second);
+        assert.deepEqual(requests.slice(wiki), [first], 'Wiki navigation still resolves links with the sidebar closed');
+        assert.equal(await audit.locator('.note-workspace').evaluate(node => node.classList.contains('links-overlay-open')), false);
+      } finally { await auditContext.close(); }
     }
     let page = await prepare(context);
     // Keep this pre-existing DOM reuse suite on name order: a modified-time
@@ -283,8 +465,9 @@ async function freePort() {
       __noteViewTest.rememberViewState('test.md', {anchor: 1, head: 1, scrollTop: 0});
       __noteViewTest.persistViewStates();
     });
+    await verifyDeferredLinks();
     assert.deepEqual(errors, [], 'browser errors');
-    console.log('note view state browser: ok (tree DOM reuse, optimistic recycle, automatic external sync, rename focus, metadata/structure refresh, error recovery, focus, external edits, reopen, eviction, selection, restart, moves, clamping, modes, bounded/corrupt/unavailable storage)');
+    console.log('note view state browser: ok (tree DOM reuse, optimistic recycle, automatic external sync, rename focus, metadata/structure refresh, error recovery, focus, external edits, reopen, eviction, selection, restart, moves, clamping, modes, bounded/corrupt/unavailable storage, deferred visible links and cancellation, closed-sidebar Wiki navigation)');
     await context.close();
   } finally {
     if (browser) await browser.close();

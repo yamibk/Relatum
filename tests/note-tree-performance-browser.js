@@ -43,8 +43,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.route('**/api/note?*', route => route.fulfill({ json: {
       path: new URL(route.request().url()).searchParams.get('path'), content: 'A small note', revision: 'fixture',
     } }));
-    const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
-      '  window.__treePerf = {state,treeRowIndexes,updateTreeSelection,refreshTree,stopExternalSync,stopDocumentPrefetch,makeDocument,cacheDocument,openNote};\n  window.CanvasNoteWorkspace = {');
+    let source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8');
+    for (const [name, counter] of [['rebuildEntryIndex', '__treePerfIndexBuilds'], ['treeOrderSignature', '__treePerfOrderSignatures']]) {
+      const declaration = new RegExp('(  function ' + name + '\\([^)]*\\) \\{)');
+      assert(declaration.test(source), 'missing tree instrumentation target: ' + name);
+      source = source.replace(declaration, '$1 window.' + counter + ' = (window.' + counter + ' || 0) + 1;');
+    }
+    source = source.replace('  window.CanvasNoteWorkspace = {',
+      '  window.__treePerf = {state,treeRowIndexes,updateTreeSelection,refreshTree,stopExternalSync,stopDocumentPrefetch,makeDocument,cacheDocument,openNote,flattenEntries,treeOrderSignature};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
     await page.goto(url);
     await page.locator('button[data-start-workspace="notes"]').click();
@@ -95,11 +101,66 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
         return issues;
       }), [], 'indices contain exactly the mounted rows');
     }
+    const refreshReports = [];
+    async function refreshOnce(label, { reuseRows = false, firstPath = '' } = {}) {
+      const result = await page.evaluate(async () => {
+        const test = __treePerf, state = test.state;
+        const tree = document.querySelector('[data-role="note-tree"]');
+        const previousEntries = state.entries, previousCurrent = state.current;
+        const previousRows = Array.from(tree.querySelectorAll('.note-tree-row'));
+        window.__treePerfIndexBuilds = 0; window.__treePerfOrderSignatures = 0;
+        const ok = await test.refreshTree(false, { background: true });
+        test.stopExternalSync(); test.stopDocumentPrefetch();
+        const indexBuilds = window.__treePerfIndexBuilds, orderSignatures = window.__treePerfOrderSignatures;
+        const flat = test.flattenEntries(state.entries, []);
+        const rows = Array.from(tree.querySelectorAll('.note-tree-row'));
+        return {
+          ok, indexBuilds, orderSignatures, entriesReplaced: previousEntries !== state.entries,
+          latestEntriesIndexed: state.entryIndex.size === flat.length && flat.every(entry => state.entryIndex.get(entry.path) === entry),
+          metadataMatches: state.treeMetadataSignature === JSON.stringify(flat.map(entry => [entry.path, entry.modifiedNs, entry.size])),
+          orderMatches: state.renderedOrder === test.treeOrderSignature(state.entries),
+          reusedRows: rows.length === previousRows.length && rows.every((row, index) => row === previousRows[index]),
+          currentPreserved: state.current === previousCurrent,
+          selectedPath: rows.find(row => row.getAttribute('aria-current') === 'page')?.dataset.notePath || '',
+          firstPath: rows[0]?.dataset.notePath || '', cachedPaths: Array.from(state.documentCache.keys()),
+        };
+      });
+      assert.equal(result.ok, true, label + ': refresh succeeds');
+      assert.equal(result.indexBuilds, 1, label + ': rebuild the path index once, including any tree rendering');
+      assert.equal(result.orderSignatures, 1, label + ': reuse the calculated order when rendering');
+      assert.equal(result.entriesReplaced, true, label + ': adopt the latest API entries');
+      assert.equal(result.latestEntriesIndexed, true, label + ': index points to this response, never stale entry objects');
+      assert.equal(result.metadataMatches, true, label + ': metadata signature covers the latest flattened tree');
+      assert.equal(result.orderMatches, true, label + ': rendered order follows the selected sort');
+      assert.equal(result.currentPreserved, true, label + ': keep the current document session');
+      assert.equal(result.selectedPath, 'Perf-0000.md', label + ': keep the active selection');
+      if (reuseRows) assert.equal(result.reusedRows, true, label + ': unchanged rows keep DOM identity');
+      if (firstPath) assert.equal(result.firstPath, firstPath, label + ': update the visible order');
+      refreshReports.push({ label, indexBuilds: result.indexBuilds, orderSignatures: result.orderSignatures, reusedRows: result.reusedRows });
+      await checkIndexes();
+      return result;
+    }
+    await refreshOnce('unchanged', { reuseRows: true, firstPath: 'Perf-0000.md' });
+    entries.find(entry => entry.path === 'Perf-0001.md').size += 1;
+    const metadataRefresh = await refreshOnce('metadata only', { reuseRows: true, firstPath: 'Perf-0000.md' });
+    assert(!metadataRefresh.cachedPaths.includes('Perf-0001.md'), 'changed noncurrent metadata invalidates its document cache');
+    assert(metadataRefresh.cachedPaths.includes('Perf-0000.md'), 'unchanged current document remains cached');
+    entries.find(entry => entry.path === 'Perf-0001.md').modifiedNs = 2;
+    const reordered = await refreshOnce('metadata reorder', { firstPath: 'Perf-0001.md' });
+    assert.equal(reordered.reusedRows, false, 'modified-date reorder updates the tree DOM');
+    await page.evaluate(() => {
+      __treePerf.cacheDocument(__treePerf.makeDocument({ path: 'Perf-2999.md', content: 'A cached deleted note', revision: 'fixture' }));
+      __treePerf.state.selectedPath = 'Perf-2999.md';
+    });
+    entries = entries.filter(entry => entry.path !== 'Perf-2999.md');
+    const deleted = await refreshOnce('delete', { firstPath: 'Perf-0001.md' });
+    assert(!deleted.cachedPaths.includes('Perf-2999.md'), 'deleted noncurrent note is removed from the document cache');
+    assert.equal(await page.evaluate(() => __treePerf.state.selectedPath), '', 'delete prunes the old selected path');
     const folder = { kind: 'folder', name: 'Nested', path: 'Nested', children: [
       { kind: 'note', name: 'Child', fileName: 'Child.md', path: 'Nested/Child.md', modifiedNs: 1, createdNs: 1, size: 12 },
     ] };
     entries.push(folder);
-    await page.evaluate(() => __treePerf.refreshTree());
+    await refreshOnce('add folder and note', { firstPath: 'Nested' });
     const left = '[data-role="note-tree"]', right = '[data-role="note-notebook-tree"]';
     const row = (tree, path) => page.locator(`${tree} .note-tree-row[data-note-path="${path}"]`);
     await row(left, 'Nested').click(); await checkIndexes();
@@ -130,7 +191,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.evaluate(() => __treePerf.refreshTree()); await checkIndexes();
     assert.equal(await row(left, 'Nested').count(), 0);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ status: 'note tree performance and lifecycle: ok', ...report }));
+    console.log(JSON.stringify({ status: 'note tree performance and lifecycle: ok', ...report, refreshReports }));
   } finally {
     if (browser) await browser.close();
     service.kill();
