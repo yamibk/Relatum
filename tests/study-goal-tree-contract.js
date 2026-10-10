@@ -260,6 +260,87 @@ const pointDrop = GoalTree.structureDropCandidate(layout, tree, 'nb', { x: miles
 assert.strictEqual(pointDrop.primaryLink.trigger.kind, 'milestone');
 assert.strictEqual(pointDrop.primaryLink.trigger.milestoneId, 'half');
 
+function dropWithAndWithoutContext(dropLayout, dropTree, nodeId, point, targetId) {
+  const hints = { targetId: targetId || '' };
+  const fresh = GoalTree.structureDropCandidate(dropLayout, dropTree, nodeId, point, hints);
+  const cached = GoalTree.structureDropCandidate(dropLayout, dropTree, nodeId, point, {
+    ...hints, context: GoalTree.prepareDropContext(dropLayout, dropTree, nodeId),
+  });
+  assert.deepStrictEqual(cached, fresh, 'a prepared drag snapshot must preserve the standalone result');
+  return cached;
+}
+const ncPlacement = layout.nodes.find((node) => node.id === 'nc');
+const rootPlacement = layout.nodes.find((node) => node.id === 'root');
+const beforeSibling = dropWithAndWithoutContext(layout, tree, 'nb', { x: ncPlacement.x, y: ncPlacement.y - 1 });
+assert.strictEqual(beforeSibling.beforeId, 'nc');
+assert.strictEqual(beforeSibling.parentId, 'stage');
+const afterSibling = dropWithAndWithoutContext(layout, tree, 'nb', { x: ncPlacement.x, y: ncPlacement.y });
+assert.strictEqual(afterSibling.beforeId, '', 'the exact sibling center sorts after that sibling');
+const crossRoot = dropWithAndWithoutContext(layout, tree, 'nb', { x: rootPlacement.x - 1, y: rootPlacement.y });
+assert.strictEqual(crossRoot.type, 'reparent');
+assert.strictEqual(crossRoot.primaryLink.from, null);
+assert.strictEqual(crossRoot.side, 'left', 'empty space across the root keeps the side-switch gesture');
+const descendantDrop = dropWithAndWithoutContext(layout, tree, 'stage', { x: ncPlacement.x, y: ncPlacement.y }, 'nc');
+assert.strictEqual(descendantDrop.type, 'insert', 'a stage cannot be reparented under its own descendant');
+assert.strictEqual(descendantDrop.parentId, 'na', 'a rejected descendant target retains the old parent');
+const collapsedContext = GoalTree.prepareDropContext(collapsed, tree, 'stage');
+assert(collapsedContext.structuralExcluded.has('nb') && collapsedContext.structuralExcluded.has('nc'),
+  'hidden descendants remain excluded from reparenting');
+assert.strictEqual(dropWithAndWithoutContext(layout, tree, 'missing', { x: 0, y: 0 }), null);
+const cycleTree = {
+  nodes: [{ id: 'cycle-a', kind: 'branch' }, { id: 'cycle-b', kind: 'branch' }],
+  links: [
+    { id: 'cycle-ab', from: 'cycle-a', to: 'cycle-b', type: 'contains', primary: true },
+    { id: 'cycle-ba', from: 'cycle-b', to: 'cycle-a', type: 'contains', primary: true },
+  ],
+};
+const cycleLayout = { nodes: [
+  { id: 'root', kind: 'root', x: 0, y: 0, width: 100, height: 50 },
+  { id: 'cycle-a', kind: 'branch', x: 200, y: 50, width: 100, height: 50 },
+  { id: 'cycle-b', kind: 'branch', x: 200, y: 100, width: 100, height: 50 },
+] };
+const cycleDrop = dropWithAndWithoutContext(cycleLayout, cycleTree, 'cycle-a', { x: 300, y: 75 }, 'cycle-b');
+assert.strictEqual(cycleDrop.type, 'insert', 'a malformed primary cycle terminates and cannot become a reparent target');
+assert.strictEqual(cycleDrop.beforeId, '');
+
+// Drag candidates run once per display frame, including unchanged empty-space targets.
+// A wide root must not scan all links again for each sibling or each frame.
+const denseNodes = Array.from({ length: 1500 }, (_, index) => ({ id: 'dense-' + index, kind: 'branch', title: '阶段' }));
+const denseTree = {
+  version: 2, id: 'dense', title: '密集路线', nodes: denseNodes,
+  links: denseNodes.map((node, index) => ({ id: 'dense-link-' + index, from: null, to: node.id,
+    type: 'contains', primary: true, side: 'right', order: index })),
+};
+denseTree.nodes.push({ id: 'left-stage', kind: 'branch', title: '左侧阶段' });
+denseTree.links.push({ id: 'left-link', from: null, to: 'left-stage', type: 'contains', primary: true, side: 'left', order: 0 });
+denseTree.links.push({ id: 'secondary', from: 'dense-0', to: 'dense-10', type: 'requires', primary: false, trigger: { kind: 'complete' } });
+const denseLayout = { nodes: [
+  { id: 'root', kind: 'root', x: 0, y: 0, width: 196, height: 72 },
+  ...denseTree.nodes.map((node, index) => ({ id: node.id, kind: 'branch', x: 300, y: index * 100, width: 180, height: 72,
+    side: node.id === 'left-stage' ? 'left' : 'right' })),
+  { id: 'fake-milestone', kind: 'milestone', x: 300, y: 1050, width: 132, height: 54 },
+] };
+const denseContext = GoalTree.prepareDropContext(denseLayout, denseTree, 'dense-1499');
+let dragSnapshotScans = 0;
+for (const items of [denseTree.nodes, denseTree.links, denseLayout.nodes]) {
+  for (const name of ['find', 'filter', 'forEach', 'map']) {
+    const original = items[name];
+    items[name] = function (...args) { dragSnapshotScans += 1; return original.apply(this, args); };
+  }
+}
+for (let frame = 0; frame < 32; frame += 1) {
+  const candidate = GoalTree.structureDropCandidate(denseLayout, denseTree, 'dense-1499', { x: 500, y: 1000 }, { context: denseContext });
+  assert.strictEqual(candidate.beforeId, 'dense-11', 'left-root nodes, milestone visuals and secondary links do not enter the sibling order');
+  assert.strictEqual(candidate.direction, 'right');
+  const targetCandidate = GoalTree.structureDropCandidate(denseLayout, denseTree, 'dense-1499', { x: 300, y: 1000 }, { targetId: 'dense-10', context: denseContext });
+  assert.strictEqual(targetCandidate.type, 'reparent');
+  assert.strictEqual(targetCandidate.parentId, 'dense-10');
+}
+assert.strictEqual(dragSnapshotScans, 0, 'prepared drag frames must reuse the fixed tree and layout indexes');
+const tiedLayout = { nodes: denseLayout.nodes.slice(0, 5).map((placement) => ({ ...placement, y: 50 })) };
+const tiedDrop = dropWithAndWithoutContext(tiedLayout, denseTree, 'dense-1499', { x: 500, y: 49 });
+assert.strictEqual(tiedDrop.beforeId, 'dense-0', 'equal sibling coordinates preserve the layout enumeration order');
+
 const next = GoalTree.nextTasks(model);
 assert(next.every((node) => model.availability.get(node.id).available));
 

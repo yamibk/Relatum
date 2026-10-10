@@ -428,6 +428,7 @@
     let panOrigin = null;
     let pressInfo = null;
     let frameId = 0;
+    let renderFrameId = 0;     // 收敛后的单次重绘，与连续物理/动画帧互斥
     let lastTickTime = 0;
     let lastRenderT = 0;      // 上次真正重画的时刻（闲时节流用）
     let tickCount = 0;
@@ -487,10 +488,15 @@
       return { x: viewX + (sx - m.offsetX) / m.unit, y: viewY + (sy - m.offsetY) / m.unit };
     }
 
+    function cancelRenderFrame() {
+      if (renderFrameId) global.cancelAnimationFrame(renderFrameId);
+      renderFrameId = 0;
+    }
     function stopLoop() {
       cancelPresolve(true);
       if (frameId) global.cancelAnimationFrame(frameId);
       frameId = 0;
+      cancelRenderFrame();
       lastTickTime = 0;
     }
 
@@ -810,13 +816,18 @@
       lastRenderT = 0;          // 打断闲时节流：让下一拍立即重画（悬停高亮 / 平移即时跟手）
       if (tryBeginPending()) return;
       if (!active || !visible || destroyed) return;
-      if (!frameId) render();
+      if (!frameId && !renderFrameId) {
+        renderFrameId = global.requestAnimationFrame(function () {
+          renderFrameId = 0;
+          if (active && visible && !destroyed && !presolveJob && !frameId) render();
+        });
+      }
     }
 
     function tick(t) {
-      frameId = 0;
+      // 当前回调也算在途帧；fit/onConverge 等重入请求由本帧及收尾统一接管。
       tickCount++;
-      if (destroyed) return;
+      if (destroyed) { frameId = 0; return; }
       if (!lastTickTime) lastTickTime = t - cfg.frameMs;
       // 闲时微动封顶到 idleFps：当唯一在动的只是漂移/呼吸/闪烁（无物理/进场/缩放/平移惯性/拖拽/标签淡变）时，
       // 高刷屏不必每一拍都重画整图——慢动作下 30fps 与 144fps 肉眼无差，却能把闲时 GPU 占用压到约 1/5。
@@ -887,17 +898,19 @@
       const labelBusy = _hasLabels && Math.abs(labelAlpha - labelTarget) > 0.006;
       const keepGoing = (alpha > cfg.alphaMin) || draggedNode || introActive
         || zoomTween.active || fitTween.active || idle || labelBusy || panGlide.active;
-      if (active && visible && keepGoing) {
+      if (!destroyed && active && visible && keepGoing) {
         frameId = global.requestAnimationFrame(tick);
       } else {
         lastTickTime = 0;
         if (wasIntro && !introActive) render();  // 进场末帧补绘，抹平残留缩放
+        frameId = 0;
       }
     }
     function ensureLoop() {
       if (presolveJob) return;
       if (tryBeginPending()) return;
       if (!frameId && !destroyed && active && visible) {
+        cancelRenderFrame();   // 动画帧会绘制最新状态，不再另排一次同帧重绘
         frameId = global.requestAnimationFrame(tick);
       }
     }
@@ -912,6 +925,7 @@
     function canBegin() { return active && visible && !destroyed && nodes.length > 0; }
     function doBegin() {
       if (!pending) return;
+      cancelRenderFrame();
       const introWanted = pending.intro;
       const fitWanted = pending.fit;
       pending = null;

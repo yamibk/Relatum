@@ -541,12 +541,26 @@
     return 'right';
   }
   function prepareDropContext(layoutValue, tree, nodeId) {
-    var source = (tree && tree.nodes || []).find(function (node) { return node.id === nodeId; });
+    var byNode = new Map(), primaryByTarget = new Map();
+    (tree && tree.nodes || []).forEach(function (node) { if (!byNode.has(node.id)) byNode.set(node.id, node); });
+    (tree && tree.links || []).forEach(function (link) {
+      if (link.primary && !primaryByTarget.has(link.to)) primaryByTarget.set(link.to, link);
+    });
+    var source = byNode.get(nodeId);
     if (!layoutValue || !source) return { valid: false, excluded: new Set() };
-    var incoming = primaryLink(tree, nodeId);
+    var incoming = primaryByTarget.get(text(nodeId)) || null;
+    var structuralExcluded = subtreeIds(tree, nodeId);
+    // The drag uses a fixed tree/layout snapshot; sibling order only needs one scan.
+    var siblings = incoming ? layoutValue.nodes.filter(function (placement) {
+      if (placement.kind === 'milestone' || structuralExcluded.has(placement.id)) return false;
+      var link = primaryByTarget.get(text(placement.id));
+      return link && text(link.from) === text(incoming.from)
+        && (!incoming.from ? rootSide(link.side) === rootSide(incoming.side) : true);
+    }).sort(function (a, b) { return a.y - b.y; }) : [];
     return {
       valid: true, source: source, nodeId: nodeId, incoming: incoming,
-      structuralExcluded: subtreeIds(tree, nodeId),
+      byNode: byNode, structuralExcluded: structuralExcluded, siblings: siblings,
+      sourceSide: topSide(tree, nodeId),
       byPlacement: new Map(layoutValue.nodes.map(function (item) { return [item.id, item]; })),
     };
   }
@@ -556,7 +570,7 @@
     if (!context.valid || !point) return null;
     var targetId = text(hints.targetId), targetPlacement = context.byPlacement.get(targetId);
     var target = targetId === 'root' ? { id: 'root', kind: 'root' }
-      : (tree.nodes || []).find(function (node) { return node.id === targetId; });
+      : context.byNode.get(targetId);
     var incoming = context.incoming;
     var primary = null;
     if (!target && targetPlacement && targetPlacement.kind === 'milestone') {
@@ -575,7 +589,7 @@
       var rootPlacement = context.byPlacement.get('root');
       if (rootPlacement) {
         var requestedSide = point.x < rootPlacement.x + rootPlacement.width / 2 ? 'left' : 'right';
-        if (requestedSide !== topSide(tree, nodeId)) {
+        if (requestedSide !== context.sourceSide) {
           targetId = 'root';
           targetPlacement = rootPlacement;
           target = { id: 'root', kind: 'root' };
@@ -583,7 +597,8 @@
         }
       }
     }
-    if (primary && !context.structuralExcluded.has(primary.from) && canMove(tree, nodeId, primary.from)) {
+    if (primary && !context.structuralExcluded.has(primary.from)
+        && (!primary.from || context.byNode.has(primary.from))) {
       return {
         type: 'reparent', targetId: targetId, primaryLink: primary,
         parentId: primary.from, side: primary.side || null, beforeId: '',
@@ -593,12 +608,7 @@
       };
     }
     if (!incoming) return null;
-    var siblings = layoutValue.nodes.filter(function (placement) {
-      if (placement.kind === 'milestone' || context.structuralExcluded.has(placement.id)) return false;
-      var link = primaryLink(tree, placement.id);
-      return link && text(link.from) === text(incoming.from)
-        && (!incoming.from ? rootSide(link.side) === rootSide(incoming.side) : true);
-    }).sort(function (a, b) { return a.y - b.y; });
+    var siblings = context.siblings;
     var insertIndex = siblings.length;
     for (var index = 0; index < siblings.length; index += 1) if (point.y < siblings[index].y) { insertIndex = index; break; }
     var beforeId = siblings[insertIndex] ? siblings[insertIndex].id : '';
@@ -606,7 +616,7 @@
     return {
       type: 'insert', targetId: '', beforeId: beforeId,
       primaryLink: Object.assign({}, cloneLink(incoming), { beforeId: beforeId }),
-      parentId: incoming.from, side: incoming.side || null, direction: topSide(tree, nodeId),
+      parentId: incoming.from, side: incoming.side || null, direction: context.sourceSide,
       horizontal: true,
       depthCoord: anchor ? anchor.x + anchor.width / 2 : point.x,
       slotCoord: siblings.length ? (insertIndex < siblings.length ? siblings[insertIndex].y - siblings[insertIndex].height / 2 - 15 : siblings[siblings.length - 1].y + siblings[siblings.length - 1].height / 2 + 15) : (parentPlacement ? parentPlacement.y : point.y),

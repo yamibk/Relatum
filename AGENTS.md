@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-09。
+> 最后按源码校准：2026-10-10。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -170,7 +170,7 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 | `assets/markdown.js` | 零依赖 Markdown 结构层与安全渲染器；统一标题、列表/任务项、引用、围栏、公式和段落分类，提供 `renderResult()` 的 HTML + Math/Mermaid 特征结果，并保留 `render()` 兼容入口。`parseImage()` / `serializeImage()` 是图片语法兼容接口；`parseImageBlock()` / `serializeImageBlock()` 统一处理独占行图片及紧随其后的 `relatum:image-text:v1` 注释，`imageTextVisibleSource()` 供前端统计提取真实可见文字。图片尺寸兼容 Obsidian 的 `|宽度` / `|宽度x高度` 正整数像素语法，不接受百分比；只有笔记工作区显式传入 `localImages:true` 时才生成无 `src` 的本地图片占位和安全文字层，其余调用保持既有安全行为。 |
 | `assets/table-editor.js` | 通用二维网格交互层；负责单元格/行列选择、增删、粘贴、对齐、源码切换与表格工作室。 |
 | `assets/mermaid-renderer.js` | 统一离线 Mermaid 渲染队列。 |
-| `assets/graph-engine.js` | 通用关系图引擎，Canvas2D + 可选 WebGL 几何后端。 |
+| `assets/graph-engine.js` | 通用关系图引擎，Canvas2D + 可选 WebGL 几何后端。收敛后的悬停、平移与低动态缩放将单次重绘合并到下一显示帧，相机与速度采样仍逐事件更新；连续物理/动画循环接管时取消单次帧，隐藏、停用与销毁清理全部排队帧。 |
 | `assets/graph-gl.js` | WebGL2 实例化渲染后端，暴露 `window.GraphGL`；只画节点/边几何，文字仍走 2D/DOM。 |
 | `assets/graph-view.js` | 当前画布关系图浮层。 |
 | `assets/study.js` | 独立学习任务系统：极简清单、单位进度面板、自适应数字任务页、每页可选说明、引用式临时任务侧栏、回收站与完成归档；任务数据与总路线共用。回收站单条任务的永久移除使用页内确认浮窗，不调用浏览器原生确认框。当前数字页的非空说明同时显示在进度视图主标题与极简清单 `To Do` 标题右侧，并共用字号、字重、颜色与双击编辑保存链；清单说明为空或未设置时仍保留无文字的双击编辑区域，并用不可见行盒维持标题栏基线不变。进度视图错峰入场中离页或切换右侧数字页时冻结当前帧，当前页整体退场后再清理并替换内容。任务卡片颜色存在任务的 `color` 字段，进度卡/清单行/临时侧栏右键弹出同款 12 色调色盘；完整视图右上角的四个颜色图例保留原始兼容色值，但显示时与调色盘共用浅色/深色主题映射。 |
@@ -620,6 +620,7 @@ Callout 继续由 CodeMirror 原生行构成，完整连续底色覆盖活动行
 ### 独立树状页 `tree-page.js`
 
 - 树状页与学习目标树的布局动画复用本次动画的坐标工作集，只写移动节点及相关连线；位置优先使用独立 CSS `translate`，与原有拖动/入场 `transform` 分离，旧 WebView2 回退 `left/top`。未变化的布局不启动持续写入，完成和取消沿用原生命周期。
+- 两页结构拖动在起拖时针对固定树/布局快照建立节点索引、主路线排除集合、源侧与同组兄弟排序；每帧落点复用上下文，不逐兄弟扫描全部连线或重复构建子树。自动平移只改变相机和拖动展示位置，松手与取消释放原拖动上下文；未传上下文的独立调用仍按当前树计算。
 
 - 整枝拖动和右键拖拽视觉关系线的边缘自动平移，均使用与学习目标树相同的真实帧间隔，保持各刷新率下的每秒速度一致；停在中央、松手或取消后不得空跑 RAF。运行 `node tests/tree-page-motion-regression.js` 回归两种手势的高刷新率时间步长。
 - `Tab` 进度明细面板的主表面在浅色主题使用纯白、深色主题使用纯黑；卡片、边框和文字层级只使用中性灰阶，绿色只保留给完成勾选，不得恢复偏绿纸面。列表保留滚轮、触控板、触摸与键盘滚动，但不显示 WebView2 / 浏览器原生滚动条。标题栏圆形勾选钮替代原 `Tab` 提示，默认开启并以 `tree-page:progressBranchesVisible:v1` 保存本机偏好；关闭时只隐藏树上的进度点节点与其枝线，不删除名称、触发条件或面板内容。
@@ -1027,6 +1028,8 @@ node .\tests\editor-opening-performance-contract.js
 `?perf=1` 才会创建 `window.__relatumOpeningPerf`、`window.__relatumPerfSnapshot()`、帧采样和隐藏 `#relatum-perf-snapshot`。`opening.dataReadyMs/domReadyMs/firstVisibleFrameMs/interactiveMs` 均相对导航起点，分别记录数据解码就绪、核心 DOM 绑定结束、揭幕后帧回调与其后的事件循环机会；不等同于 GPU 硬件呈现时间。`loadMs` 是可交互时间，未就绪为 null，不能用初始化结束代替；`initMs` 只表示核心初始化。`operations` 记录撤销、重做和鼠标收尾的同步 `jsMs` 与经过帧/布局后的 `settledMs`。正常页面不得创建这些调试全局、采样循环或输出节点。
 
 工作区大数据验收另运行 `node tests/canvas-workspace-performance.js <隔离服务 URL> <隔离目录> <report.json>`：1200/3000 节点、5万/20万/50万手写点、96/500 便签、2000/10000 文件和复习卡片；断言原始事件按帧合并、重复选区零通知、普通历史及撤销不读取未改墨迹、局部拖动测量、改名焦点/中文合成、旧 WebView2 焦点回退、变高列表滚动锚点、窄窗、深浅/DPR/低动态装饰、完整筛选结果批量选择和保存失败后的撤销/重试。`canvas-workspace-layout-regression.js` 覆盖密集树工作集、位置回退、嵌套每日任务与虚拟 60/120/144/240Hz；`graph-presolve-regression.js` 校验分片、离页/返回、过期数据、销毁与低动态切换。Python 测试也应在导入 `app` 前设置一次性 `RELATUM_DATA_ROOT`，不能假设每个测试已替换所有数据路径。性能口径、桌面验收和限制见 `docs/canvas-workspace-performance-2026-10-09.md`。
+
+树拖动与图谱单帧回归还由 `study-goal-tree-contract.js` 校验同组排序、左右换侧、后代排除及准备上下文后的逐帧零全树扫描；`graph-presolve-regression.js` 校验事件突发只排一次绘制、最终相机、标签交接、自动取景重入和绘制过程中停用/隐藏/销毁。图谱实际宿主继续跑两种 `resource-lifecycle-browser.js` 配置。此次复核的测量、未修改项与既有测试限制见 `docs/performance-2026-10-10.md`。
 
 本地服务冒烟：
 
