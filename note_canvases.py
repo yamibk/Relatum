@@ -6,16 +6,18 @@ and edge records remain compatible, and unsupported content is never flattened.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
 import posixpath
 import re
 import uuid
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, rewrite
-from notes_library import NotesError, _revision, _is_reparse
+from notes_library import NotesError, _revision, _is_reparse, _natural_key
 
 MAX_CANVAS_BYTES = 16 * 1024 * 1024
 SHAPES = {"rect", "rounded-rect", "square", "circle", "ellipse", "diamond", "triangle",
@@ -115,6 +117,66 @@ def validate(payload: object) -> dict:
 class NoteCanvasStore:
     def __init__(self, notes):
         self.notes = notes
+
+    @staticmethod
+    def _key(path: str) -> str:
+        return unicodedata.normalize("NFC", path).casefold()
+
+    @staticmethod
+    def _pagination(offset: int, limit: int) -> None:
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
+            raise NotesError("分页参数无效")
+
+    def _catalog(self) -> tuple[list[dict], dict[str, set[str]], str]:
+        # Only file names and reference metadata are needed; never read canvas JSON.
+        directory = self.notes._absolute(CANVAS_DIRECTORY, allow_assets=True)
+        files = {}
+        try:
+            for target in directory.iterdir():
+                if target.suffix.casefold() != ".canvas" or _is_reparse(target) or not target.is_file():
+                    continue
+                relative = CANVAS_DIRECTORY + "/" + target.name
+                self._path(relative)
+                files[self._key(relative)] = relative
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise NotesError("读取画布目录失败", status=500, code="read_failed") from error
+        references, names = {}, dict(files)
+        for note, document in self.notes._documents(strict=True).items():
+            for path in document["canvasTargets"]:
+                self._path(path)
+                key = self._key(path)
+                names.setdefault(key, path)
+                references.setdefault(key, set()).add(note)
+        items = [{"path": path, "name": Path(path).stem, "exists": key in files,
+                  "referenceCount": len(references.get(key, ()))} for key, path in names.items()]
+        items.sort(key=lambda item: (_natural_key(item["name"]), item["path"]))
+        encoded = json.dumps([items, {key: sorted(paths) for key, paths in sorted(references.items())}],
+                             ensure_ascii=False, sort_keys=True).encode("utf-8")
+        signature = hashlib.sha256(encoded).hexdigest()
+        return items, references, signature
+
+    def list(self, filter: str = "all", offset: int = 0, limit: int = 50) -> dict:
+        self._pagination(offset, limit)
+        if filter not in ("all", "unused", "missing"):
+            raise NotesError("画布筛选无效")
+        items, _, signature = self._catalog()
+        if filter == "unused":
+            items = [item for item in items if item["exists"] and not item["referenceCount"]]
+        elif filter == "missing":
+            items = [item for item in items if not item["exists"]]
+        return {"items": items[offset:offset + limit], "total": len(items),
+                "hasMore": offset + limit < len(items), "signature": signature}
+
+    def references(self, relative: str, offset: int = 0, limit: int = 50) -> dict:
+        self._pagination(offset, limit)
+        self._path(relative)
+        _, references, signature = self._catalog()
+        paths = sorted(references.get(self._key(relative), ()),
+                       key=lambda path: tuple(_natural_key(part) for part in Path(path).parts))
+        return {"items": [{"path": path, "title": Path(path).stem} for path in paths[offset:offset + limit]],
+                "total": len(paths), "hasMore": offset + limit < len(paths), "signature": signature}
 
     def _path(self, relative: str) -> Path:
         normalized = self.notes.normalize_path(relative, allow_assets=True)

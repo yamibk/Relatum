@@ -639,10 +639,14 @@ class NotesStore:
         except UnicodeDecodeError as err:
             raise NotesError("笔记不是有效的 UTF-8 文本", status=409, code="invalid_encoding") from err
 
-    def _note_paths(self) -> list[Path]:
+    def _note_paths(self, *, strict: bool = False) -> list[Path]:
         self.ensure_root()
         notes: list[Path] = []
-        for base, directories, filenames in os.walk(self.root, followlinks=False):
+        def failed_scan(error):
+            raise NotesError("统计未完成：有笔记目录无法读取，请重试", status=409,
+                             code="statistics_incomplete") from error
+        for base, directories, filenames in os.walk(self.root, followlinks=False,
+                                                   onerror=failed_scan if strict else None):
             base_path = Path(base)
             safe_dirs = []
             for name in directories:
@@ -719,13 +723,13 @@ class NotesStore:
         entries = visit(self.root)
         return {"version": 1, "entries": entries}
 
-    def _documents(self, *, metadata: bool = False) -> dict[str, dict]:
+    def _documents(self, *, metadata: bool = False, strict: bool = False) -> dict[str, dict]:
         # Once explicitly requested, refresh metadata with the existing index
         # read so link scans cannot force a second body read for changed files.
         self._metadata_enabled = metadata = metadata or self._metadata_enabled
         documents: dict[str, dict] = {}
         live_paths: set[str] = set()
-        for target in self._note_paths():
+        for target in self._note_paths(strict=strict):
             relative = target.relative_to(self.root).as_posix()
             live_paths.add(relative)
             try:
@@ -733,12 +737,16 @@ class NotesStore:
                 signature = (stat.st_mtime_ns, stat.st_size)
                 cached = self._document_cache.get(relative)
                 if cached and cached.get("signature") == signature and 'mentions' in cached \
+                        and 'canvasTargets' in cached \
                         and (not metadata or ('tags' in cached and 'excerpt' in cached)):
                     documents[relative] = cached
                     continue
                 raw = self._read_note_bytes(target)
                 documents[relative] = self._index_document(relative, raw, signature, metadata=metadata)
-            except (NotesError, OSError):
+            except (NotesError, OSError) as error:
+                if strict:
+                    raise NotesError("统计未完成：有笔记无法读取，请重试", status=409,
+                                     code="statistics_incomplete") from error
                 # 一个被外部复制进来的损坏/超大文件不应拖垮其它笔记的链接面板。
                 continue
         for stale in set(self._document_cache) - live_paths:
@@ -758,7 +766,7 @@ class NotesStore:
         document["signature"] = signature
         needs_mentions = "mentions" not in document
         needs_metadata = metadata and ("tags" not in document or "excerpt" not in document)
-        needs_canvas = "hasCanvasReferences" not in document
+        needs_canvas = "canvasTargets" not in document
         if needs_mentions or needs_metadata or needs_canvas:
             text = text if text is not None else self._decode_note(content)
             if needs_mentions:
@@ -766,7 +774,10 @@ class NotesStore:
             if needs_metadata:
                 document.update(note_metadata(text))
             if needs_canvas:
-                document["hasCanvasReferences"] = (".canvas" in text.lower() or "%" in text) and any(canvas_target(relative, ref["target"]) for ref in canvas_references(text))
+                targets = {canvas_target(relative, ref["target"]) for ref in canvas_references(text)} \
+                    if ".canvas" in text.lower() or "%" in text else set()
+                document["canvasTargets"] = sorted(target for target in targets if target)
+                document["hasCanvasReferences"] = bool(document["canvasTargets"])
         self._document_cache[relative] = document
         return document
 

@@ -77,6 +77,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 画布文件存放于 `notes/canvases/`，首次“插入 → 画布”才创建目录；该根目录从笔记树、普通目录操作和文档索引排除。新文件为 `Untitled-YYYY-MM-DD[-N].canvas`，子目录笔记使用相对路径；复制引用共享文件，删除笔记/引用保留画布。`note_canvases.py` 是独立数据层，`/api/notes-canvas/create`、`save`、`rename`、`reveal` 与 GET `read?note=…&src=…` 归专用开关控制；写入复用笔记及跨进程锁、路径沙箱和原子写入，保存/重命名核对预期 UTF-8 字节修订。保留 V2 基础结构和一种纯文字节点，支持 12 种形状及直线、贝塞尔、平滑、折线、圆角折线；样式采用可选节点/连线字段，标注文字位于连线的 `labelStyle`。缺失字段沿用原外观，读取不补写；形状/样式枚举、颜色、布尔及数值同步校验，已有元数据完整保留。复杂节点、非空手写、尺规、计时器等仍拒绝读取编辑，避免丢失内容。`note_canvas_reference.py` 与 `MarkdownMini.canvasReferences/rewriteCanvasReferences` 识别有效独立引用，排除代码、前言和 HTML 注释；移动笔记修正相对路径，画布改名改写全库有效引用，保留尺寸、自定义说明与示例，失败恢复文件和正文。画布改名使用 CodeMirror 公共 undo/redo 接口遍历并重放各历史状态，投影新引用后保留正文历史边界及重做分支，文件改名自身不进入正文撤销。
 
+“浏览笔记”的左侧另有“画布 / Canvas”入口，归 `notes.canvas` 控制，与右侧画布属性页签独立。`assets/note-browser.js` 的画布提供者列出全库 `notes/canvases/` 文件及有效引用指向的缺失文件，按名称自然排序、50 项分页，提供全部/未引用/文件缺失筛选。引用数按不同 Markdown 笔记去重，仅统计现有解析器认可的独立内嵌引用，代码、前言、注释及普通/行内链接不计入；大小写和编码沿用现有解析与文件匹配规则。点击画布原位展开引用笔记，可打开正文并返回保留筛选、展开、已加载画布页数和滚动；已有文件复用 reveal 定位，缺失时禁用。列表不读取画布 JSON、不加载绘制引擎、不创建资源目录。`notes_library.py` 的增量文档索引保留去重 `canvasTargets` 和兼容 `hasCanvasReferences`，不保留正文；`note_canvases.py` 用文件信息及引用索引生成目录和结果签名。无法读取笔记时返回 `statistics_incomplete`，界面显示统计未完成和重试，不宣称零引用。仅当前画布结果可见时接入宿主既有外部检查周期，无变化不重建 DOM；打开正文、离场、隐藏和挂起后停止检查，迟到查询按会话/操作序号丢弃。验证使用 `python -m unittest tests.test_note_canvas_browser` 和 `node tests/note-canvas-browser-discovery.js`，后者沿用宿主 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，只用一次性数据根，覆盖完整/仅笔记/禁用模式、分页返回、筛选、错误恢复、保存失败、外部变化、迟到响应及深色英文窄窗；继续回归笔记浏览、笔记本与内嵌画布。
+
 实时预览中，内嵌画布整体的右键菜单提供“重命名”和“在系统资源管理器中打开”，后者通过 POST `/api/notes-canvas/reveal` 的 `{path}` 定位并选中对应文件；仅允许画布资源目录内的已有 `.canvas` 文件，复用路径沙箱和重解析点检查，失败显示提示。画布尚未取得文件会话时定位入口禁用。画布菜单打开后，在画布、菜单或周围区域再次右键只关闭菜单并吞掉该次右键事件，下一次右键正常打开；左键外部点击及 Esc 沿用原关闭行为。
 
 内嵌引擎提供双击新建/编辑、节点拖动、框选、Shift 多选、Alt＋左键有向连线、双击连线文字、删除与撤销/重做；画布内部无工具栏。节点和框选在超过 4px 移动阈值后才捕获指针，双击按节点、连线、空白的优先级命中，不能把节点双击重定向成新建。点击激活后滚轮缩放，空格＋左键平移，点击正文退出；未激活的滚轮由笔记接管。文字输入使用原生 textarea，中文候选结束后两帧交接；正文自动保存不能结束节点输入或取消连线，离场、模式切换、改名与关闭则等待输入和画布保存，失败保留草稿并拒绝离场。相同文件共用模型、50 步文件历史和 350ms 串行保存；各处引用尺寸独立，角柄等比例缩放当前构图并写入该处 Markdown。各引用视角以笔记路径、画布路径及引用序号保存在 `canvas:noteCanvasViews:v1`（最多 256 项），移动/改名映射。
@@ -341,6 +343,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 - 运行时与首页：`/api/runtime`、`/api/recent`
 - 笔记浏览：`GET /api/note-tags` 返回含隐式父级的标签目录与去重数量；`/api/note-asset?note=&src=&syntax=wiki` 可选 wiki 查找，缺省仍为标准相对 Markdown。
+- 笔记画布引用管理：`GET /api/notes-canvas/list?filter=all|unused|missing&offset=0&limit=50` 返回 `items / total / hasMore / signature`，条目为 `path / name / exists / referenceCount`；`GET /api/notes-canvas/references?path=canvases/名称.canvas&offset=0&limit=50` 返回同一分页结构，条目为引用笔记 `path / title`。上限 50，沿用笔记锁、路径沙箱、重解析点检查及 `notes.canvas` API 前缀开关；两者均只读。
 - Markdown 笔记库：`/api/notes-tree` 返回隐藏伴生目录的嵌套树；`/api/note?path=` 只返回正文与强修订号；`/api/note-links?path=` 按需返回出链/反链；`/api/note-asset?note=&src=` 只流式返回库内授权栅格图片。
 - AI 配置安全视图：`/api/ai-config`
 - 学习/活跃：`/api/study`、`/api/study-activity`；`/api/study` 只返回 v6 学习任务、回收站、`goalTrees[]` 与 `activeTreeId`，不再返回单树 `goalTree` 别名或读取目标树归档；活跃接口保留完成/专注数据，并返回 `canvasDays`、`canvasEntries`、`canvasStats`、`canvasGraph`、`canvasOverviewGraph` 与三页汇总 `startPageStats`，年份是画布、三页计时、完成归档和专注记录的并集。

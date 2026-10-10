@@ -10627,6 +10627,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except OSError as err:
                 return self._send_json(500, {"error": f"读取研究数据失败：{err}", "code": "read-failed"})
             return self._send_json(200, payload)
+        if parsed.path in ("/api/notes-canvas/list", "/api/notes-canvas/references"):
+            try:
+                from note_canvases import NoteCanvasStore
+                query = urllib.parse.parse_qs(parsed.query)
+                offset = int(query.get("offset", ["0"])[0])
+                limit = int(query.get("limit", ["50"])[0])
+                with NOTES_MUTATION_LOCK:
+                    store = NoteCanvasStore(NOTES_STORE)
+                    if parsed.path.endswith("/list"):
+                        result = store.list(query.get("filter", ["all"])[0], offset, limit)
+                    else:
+                        result = store.references(query.get("path", [""])[0], offset, limit)
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except ValueError:
+                return self._send_json(400, {"error": "分页参数无效"})
+            except OSError:
+                return self._send_json(500, {"error": "读取画布引用失败", "code": "read_failed"})
         if parsed.path == "/api/notes-canvas/read":
             try:
                 from note_canvases import NoteCanvasStore

@@ -100,6 +100,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert(await page.locator('.note-browser-results-head').textContent().then(value => value.includes('最近文件')), 'an old tag reply must not replace newer recent results');
     await page.unroute('**/api/note-query');
     await page.locator('[data-note-browser-tag="学习"]').click();
+    await page.waitForFunction(() => document.querySelector('.note-browser-results-head')?.textContent.includes('#学习') && document.querySelector('.note-browser-results').getAttribute('aria-busy') === 'false');
     await page.waitForFunction(() => document.querySelectorAll('.note-browser-result').length === 50);
     await page.locator('.note-browser-result').first().click();
     await page.waitForFunction(() => !document.querySelector('[data-role="note-browser-back"]').hidden);

@@ -137,6 +137,7 @@
         request, query: (query) => post('/api/note-query', query), language, icon: noteIcon,
         getEntries: () => flattenEntries(state.entries, []), getRecent: () => Object.fromEntries(recentFiles),
         beforeBrowse, showResults: showBrowserResults, openNote: (path) => openNote(path),
+        canvasEnabled, revealCanvas: (path) => post('/api/notes-canvas/reveal', { path }), showError: (message) => showToast(message, 'error'),
       });
       return noteBrowser;
     })().catch((error) => { browserLoader = null; throw error; });
@@ -3256,6 +3257,7 @@
     const previousSize = state.current && state.current.treeSize || 0;
     const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors, background: !!settings.background });
     if (!refreshed) return false;
+    await noteBrowser?.checkExternalCanvases();
     if (state.imageTextBusy || seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
     if (!entry) return true;
