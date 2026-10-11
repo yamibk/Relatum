@@ -1,5 +1,7 @@
 """Notebook graphs use disposable libraries and never change Markdown files."""
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -346,11 +348,42 @@ class NoteGraphTests(unittest.TestCase):
                 self.store.graph('CustomNotebook/One')
         self.assertEqual(caught.exception.code, 'unsafe_path')
 
-    def test_feature_gate_follows_notes_without_embedded_canvas(self):
-        profile = LaunchProfile({'notes': True}, restricted=True)
-        self.assertTrue(profile.api_allowed('/api/note-graph'))
-        disabled = LaunchProfile({'notes': False}, restricted=True)
-        self.assertFalse(disabled.api_allowed('/api/note-graph'))
+    def test_disabled_graph_rejects_before_scanning_despite_parent_prefix(self):
+        import app
+        from types import SimpleNamespace
+        profile = LaunchProfile({'notes': True, 'notes.graph': False}, restricted=True)
+        self.assertTrue(profile.api_allowed('/api/note-graph'), 'parent notes prefix is intentionally broad')
+        handler = object.__new__(app.Handler)
+        handler.server = SimpleNamespace(launch_profile=profile)
+        handler.path = '/api/note-graph?root='
+        with mock.patch.object(handler, '_send_json') as send, \
+                mock.patch.object(app.NOTES_STORE, 'graph', side_effect=AssertionError('disabled graph scanned')):
+            handler.do_GET()
+        self.assertEqual(send.call_args.args[0], 403)
+        self.assertEqual(send.call_args.args[1]['code'], 'feature-disabled')
+
+    def test_backend_parser_import_waits_for_graph_request(self):
+        code = '''
+import sys
+from pathlib import Path
+from notes_library import NotesStore
+import app
+assert 'note_graph' not in sys.modules
+store = NotesStore(Path(sys.argv[1]))
+store.root.mkdir(parents=True, exist_ok=True)
+(store.root / 'A.md').write_text('[[B]]', encoding='utf8')
+(store.root / 'B.md').write_text('body', encoding='utf8')
+store.tree(); store.load('A.md'); store.links('A.md')
+assert 'note_graph' not in sys.modules
+assert len(store.graph('')['edges']) == 1
+assert 'note_graph' in sys.modules
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-c', code, str(Path(directory) / 'notes')],
+                                    cwd=Path(__file__).resolve().parent.parent,
+                                    env={**os.environ, 'RELATUM_DATA_ROOT': directory, 'PYTHONDONTWRITEBYTECODE': '1'},
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_source_files_and_preferences_are_not_rewritten(self):
         target = self.note('Keep.md', '[[Missing]]\r\n[link](Missing.md)\r\n')

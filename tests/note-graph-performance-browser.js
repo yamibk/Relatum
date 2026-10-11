@@ -541,6 +541,83 @@ async function measure(browser, count, dpr, size) {
   } finally { await cdp.detach(); await context.close(); }
 }
 
+async function preloadRegression(browser) {
+  const { context, page, errors } = await preparePage(browser, 2, 'tab');
+  try {
+    const result = await page.evaluate(async () => {
+      const check = (value, name) => { if (!value) throw Error(name); };
+      let root = 'Warm', active = false, fail = false, changed = false;
+      const requests = [], replies = [];
+      const graph = RelatumNoteGraph.create({ host: document.querySelector('#graph'), getRoot: () => root,
+        isActive: () => active, language: () => 'zh', onSelect: async () => false, showError: () => {},
+        request: async url => {
+          requests.push(url);
+          if (fail) throw Error('offline');
+          const query = new URL(url, 'http://127.0.0.1').searchParams;
+          if (query.has('signature') && !changed) return { root, signature: root + ':2', unchanged: true };
+          if (root === 'Late') return new Promise(resolve => replies.push(resolve));
+          return graphModel(root, changed ? 3 : root === 'Empty' ? 0 : 2);
+        } });
+      const raf = graphLabelProbe.raf;
+      const warm = graph.preload(root), duplicate = graph.preload(root);
+      check(warm === duplicate, 'in-flight preparation is deduplicated');
+      check(await warm, 'preparation succeeds');
+      check(requests.length === 1 && graphLabelProbe.scenes.get(root).prepared, 'raw data stored once');
+      const hidden = { engines: graphLabelProbe.engines.length, contexts: graphLabelProbe.contexts,
+        labels: document.querySelectorAll('[data-note-graph-label]').length, draws: graphLabelProbe.draws,
+        measures: graphLabelProbe.measures, raf: graphLabelProbe.raf - raf };
+      check(Object.values(hidden).every(value => value === 0), 'hidden preparation does no rendering or layout');
+      active = true; await graph.activate();
+      check(graphLabelProbe.latest.nodes.length === 2 && requests.length === 2 && requests[1].includes('&signature='),
+        'first activation consumes prepared topology and immediately checks its signature');
+      graph.deactivate(); graph.deactivate({ clearCache: true }); active = false;
+      changed = false; await graph.preload(root); changed = true; active = true; await graph.activate();
+      check(graphLabelProbe.latest.nodes.length === 3, 'external updates replace prepared data');
+      graph.deactivate({ clearCache: true }); active = false; changed = false; root = 'Empty';
+      check(await graph.preload(root), 'empty book is a valid prepared result');
+      const engines = graphLabelProbe.engines.length; active = true; await graph.activate();
+      check(graphLabelProbe.engines.length === engines, 'empty prepared book creates no engine');
+      graph.deactivate({ clearCache: true }); active = false; root = null;
+      const before = requests.length; check(await graph.preload(root), 'unselected book prepares scripts only');
+      check(requests.length === before, 'unselected book sends no API request');
+      root = 'Failed'; fail = true; check(!await graph.preload(root), 'request failures finish startup');
+      check(!graphLabelProbe.scenes.has(root), 'failures never cache an empty graph'); fail = false;
+      check(await graph.preload(root), 'failed preparation can retry');
+      graph.remap('Failed', 'Renamed'); check(!graphLabelProbe.scenes.has('Failed'), 'rename drops raw topology');
+      root = 'Deleted'; await graph.preload(root); graph.prune(root);
+      check(!graphLabelProbe.scenes.has(root), 'delete drops raw topology');
+      for (const action of ['abort', 'switch', 'rename', 'delete', 'invalidate', 'deactivate']) {
+        root = 'Late'; const controller = new AbortController(), pending = graph.preload(root, { signal: controller.signal });
+        if (action === 'abort') controller.abort();
+        if (action === 'switch') { root = 'Other'; graph.deactivate(); }
+        if (action === 'rename') { root = 'Renamed'; graph.remap('Late', root); }
+        if (action === 'delete') graph.prune('Late');
+        if (action === 'invalidate') graph.invalidatePreload();
+        if (action === 'deactivate') graph.deactivate();
+        replies.shift()(graphModel('Late', 2));
+        check(!await pending && !graphLabelProbe.scenes.has('Late'), action + ' rejects late results');
+      }
+      root = 'Late'; const closing = graph.preload(root); graph.destroy(); replies.shift()(graphModel(root, 2));
+      check(!await closing && graphLabelProbe.scenes.size === 0, 'page exit clears and rejects preparation');
+      return { hidden, deduplicated: true, signatureHandoff: true, externalUpdate: true, empty: true,
+        unselected: true, failureRetry: true, lateActions: 7 };
+    });
+    await released(page);
+    await page.addScriptTag({ content: source.replace('CACHE_BYTES = 16 * 1024 * 1024', 'CACHE_BYTES = 8192') });
+    const budget = await page.evaluate(async () => {
+      let root = 'Huge';
+      const graph = RelatumNoteGraph.create({ host: document.querySelector('#graph'), getRoot: () => root,
+        isActive: () => false, language: () => 'zh', onSelect: async () => false, showError: () => {},
+        request: async () => { const model = graphModel(root, 2); model.nodes[0].title = '长标题'.repeat(4000); return model; } });
+      await graph.preload(root);
+      const skipped = graphLabelProbe.scenes.size === 0 && graphLabelProbe.sceneBytes === 0;
+      graph.destroy(); return skipped;
+    });
+    assert(budget, 'over-budget prepared topology is not retained'); assert.deepEqual(errors, []);
+    return { ...result, oversizedSkipped: budget };
+  } finally { await context.close(); }
+}
+
 async function cacheRegression(browser) {
   const { context, page, errors } = await preparePage(browser, 1, 'tab');
   try {
@@ -621,7 +698,9 @@ async function cacheRegression(browser) {
         const sample = await sidebarMeasure(browser, count, edgeCount, dpr); report.samples.push(sample); console.log(JSON.stringify(sample));
       }
     } else {
-      report.regression = await cacheRegression(browser); console.log(JSON.stringify({ regression: report.regression }));
+      report.regression = await cacheRegression(browser);
+      report.preload = await preloadRegression(browser);
+      console.log(JSON.stringify({ regression: report.regression, preload: report.preload }));
     }
     if (!hotpathsOnly && !sidebarOnly && !process.argv.includes('--regression-only')) {
       for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) for (const size of process.argv.includes('--tab-only') ? ['tab'] : ['window-area', 'tab']) {

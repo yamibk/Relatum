@@ -1791,6 +1791,19 @@
   const NOTE_FONT_SCALE_KEY = 'canvas:noteFontScale:v1';
   const NOTE_IMAGE_TEXT_SCALE_KEY = 'canvas:noteImageTextScale:v1';
   const NOTE_CANVAS_NODE_SCALE_KEY = 'canvas:noteCanvasNodeScale:v1';
+  const NOTE_GRAPH_PRELOAD_KEY = 'canvas:noteGraphPreload:v1';
+  function readGraphPreload() {
+    try { return localStorage.getItem(NOTE_GRAPH_PRELOAD_KEY) === '1'; } catch (_) { return false; }
+  }
+  function applyGraphPreload(value, persist) {
+    const enabled = value === true;
+    const input = document.querySelector('[data-role="note-graph-preload"]');
+    const paused = document.querySelector('[data-role="note-graph-preload-paused"]');
+    if (input) input.checked = enabled;
+    if (paused) paused.hidden = window.RelatumFeatureRuntime?.preloadEnabled !== false;
+    if (persist && readGraphPreload() !== enabled) try { localStorage.setItem(NOTE_GRAPH_PRELOAD_KEY, enabled ? '1' : '0'); } catch (_) {}
+    return enabled;
+  }
   const NOTE_GRAPH_SPACING_KEY = 'canvas:noteGraphSpacing:v1';
   function normalizeGraphSpacing(value) {
     const number = Number(value);
@@ -2018,6 +2031,9 @@
   applyNoteFontScale(readNoteFontScale(), false);
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));
   window.RelatumNotePreferences = Object.freeze({
+    readGraphPreload,
+    applyGraphPreload(value, persist) { return applyGraphPreload(value, persist !== false); },
+    resetGraphPreload() { try { localStorage.removeItem(NOTE_GRAPH_PRELOAD_KEY); } catch (_) {} return applyGraphPreload(false, false); },
     readGraphSpacing() { return noteGraphSpacing; },
     applyGraphSpacing(value, persist) { return applyGraphSpacing(value, persist !== false); },
     resetGraphSpacing() { try { localStorage.removeItem(NOTE_GRAPH_SPACING_KEY); } catch (_) {} return applyGraphSpacing(125, false); },
@@ -2035,6 +2051,9 @@
     },
   });
   applyGraphSpacing(noteGraphSpacing, false);
+  applyGraphPreload(readGraphPreload(), false);
+  const graphPreloadToggle = document.querySelector('[data-role="note-graph-preload"]');
+  graphPreloadToggle?.addEventListener('change', () => applyGraphPreload(graphPreloadToggle.checked, true));
   const graphSpacingRange = document.querySelector('[data-role="note-graph-spacing"]');
   if (graphSpacingRange) graphSpacingRange.addEventListener('input', () => applyGraphSpacing(graphSpacingRange.value, true));
   document.querySelectorAll('[data-action="desktop-settings-close"]').forEach((button) => {

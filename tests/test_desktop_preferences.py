@@ -43,6 +43,16 @@ class DesktopPreferencesTests(unittest.TestCase):
             preferences.flush()
             self.assertTrue(DesktopPreferences(Path(directory), 'full').initialized)
 
+    def test_graph_preload_joins_existing_snapshot_in_full_and_notes_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for session in ('full', 'notes'):
+                preferences = DesktopPreferences(Path(directory), session)
+                preferences.update({'canvas:noteGraphPreload:v1': '1', 'canvas:noteGraphSpacing:v1': '140'})
+                preferences.flush()
+                restored = DesktopPreferences(Path(directory), session)
+                self.assertEqual(restored.values['canvas:noteGraphPreload:v1'], '1')
+                self.assertIn('canvas:noteGraphPreload:v1', restored.bootstrap())
+
     def test_failed_write_retries_and_invalid_input_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             preferences = DesktopPreferences(Path(directory), 'notes')

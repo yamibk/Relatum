@@ -45,6 +45,7 @@
     let nodes = [], edges = [], signature = '', scope = null;
     let wanted = false, destroyed = false, operation = 0, engine = null, needsLayout = false, selecting = false;
     let openJob = null, refreshJob = null, status = '', failure = null;
+    let preloadJob = null, preloadOperation = 0;
     let growthView = null;
     function readSpacing() {
       const percent = global.RelatumNotePreferences?.readGraphSpacing?.() ?? 125;
@@ -276,6 +277,42 @@
       scenes.set(path, scene); sceneBytes += scene.bytes;
       while (scenes.size > CACHE_LIMIT || sceneBytes > CACHE_BYTES) forgetScene(scenes.keys().next().value);
     }
+    function cancelPreload() {
+      preloadOperation++;
+      preloadJob?.controller.abort(); preloadJob = null;
+    }
+    function invalidatePreload() {
+      cancelPreload();
+      scenes.forEach((scene, path) => { if (scene.prepared) forgetScene(path); });
+    }
+    function validModel(result, expectedRoot) {
+      return result?.root === expectedRoot && Array.isArray(result.nodes) && Array.isArray(result.edges);
+    }
+    function preload(expectedRoot, settings = {}) {
+      if (destroyed || settings.signal?.aborted) return Promise.resolve(false);
+      if (expectedRoot === null || scenes.has(expectedRoot) || wanted) return Promise.resolve(true);
+      if (preloadJob?.root === expectedRoot) return preloadJob.promise;
+      invalidatePreload();
+      const ticket = preloadOperation, controller = new AbortController();
+      const job = { root: expectedRoot, controller, promise: null };
+      const abort = () => { if (preloadJob === job) cancelPreload(); };
+      settings.signal?.addEventListener('abort', abort, { once: true });
+      const task = (async () => {
+        try {
+          const result = await options.request('/api/note-graph?root=' + encodeURIComponent(expectedRoot), { signal: controller.signal });
+          if (destroyed || controller.signal.aborted || ticket !== preloadOperation || wanted
+              || options.getRoot() !== expectedRoot || !validModel(result, expectedRoot)) return false;
+          // Raw topology shares the scene budget; no labels, layout or drawing resources.
+          storeScene(expectedRoot, { prepared: true, signature: result.signature || '', model: result });
+          return true;
+        } catch (_) { return false; }
+      })();
+      job.promise = task.finally(() => {
+        settings.signal?.removeEventListener('abort', abort);
+        if (preloadJob === job) preloadJob = null;
+      });
+      preloadJob = job; return job.promise;
+    }
     function rememberScene() {
       if (scope === null || !signature) return;
       needsLayout = needsLayout || !!engine?.layoutPending;
@@ -366,13 +403,15 @@
       const ticket = ++operation; scope = expectedRoot; wanted = true;
       if (scope === null) { showStatus('select'); return Promise.resolve(true); }
       const scene = scenes.get(scope);
-      if (scene) { scenes.delete(scope); scenes.set(scope, scene); restoreScene(scene); }
+      if (scene?.prepared) { forgetScene(scope); installData(scene.model, true); }
+      else if (scene) { scenes.delete(scope); scenes.set(scope, scene); restoreScene(scene); }
       else { spacing = readSpacing(); showStatus('loading'); }
       const task = queryGraph(ticket, expectedRoot, !signature);
       const wrapped = task.finally(() => { if (openJob === wrapped) openJob = null; });
       openJob = wrapped; return wrapped;
     }
     function deactivate(settings) {
+      cancelPreload();
       growthView = null;
       wanted = false; operation++; openJob = null; refreshJob = null; selecting = false;
       rememberScene(); releaseEngine(); tooltip.hidden = true;
@@ -409,9 +448,11 @@
       const affected = root => root !== null && (mapPath(root, source, destination) !== root
         || inBook(source, root) || inBook(destination, root));
       const active = wanted && affected(scope);
+      if (preloadJob && affected(preloadJob.root)) cancelPreload();
       if (active) deactivate();
       const records = Array.from(scenes); scenes.clear(); sceneBytes = 0;
       records.forEach(([path, scene]) => {
+        if (scene.prepared && affected(path)) return;
         if (affected(path)) {
           scene.nodes = scene.nodes.map(node => {
             const path = mapPath(node.path, source, destination);
@@ -425,6 +466,7 @@
       if (active && options.isActive()) activate();
     }
     function prune(path) {
+      invalidatePreload();
       if (scope === path || scope && scope.startsWith(path + '/')) deactivate();
       scenes.forEach((value, key) => { if (key === path || key.startsWith(path + '/')) forgetScene(key); });
     }
@@ -448,8 +490,8 @@
     find('[data-action="graph-reset-view"]').addEventListener('click', () => { growthView = null; engine?.fitView(true); });
     const themeObserver = new MutationObserver(() => { if (wanted) syncTheme(); });
     updateLanguage(); updateCounts();
-    return { activate, deactivate, isOpen: () => wanted, checkExternalChanges,
-      invalidate() { return openJob ? Promise.resolve(false) : checkExternalChanges(); },
+    return { activate, deactivate, preload, invalidatePreload, isOpen: () => wanted, checkExternalChanges,
+      invalidate() { invalidatePreload(); return openJob ? Promise.resolve(false) : checkExternalChanges(); },
       setLanguage: updateLanguage, remap, prune,
       destroy() {
         if (destroyed) return;

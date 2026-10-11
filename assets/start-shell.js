@@ -155,6 +155,19 @@
     return Math.max(80, Math.min(140, Math.round(value / 5) * 5 || 100));
   }
   const NOTE_CANVAS_NODE_SCALE_KEY = 'canvas:noteCanvasNodeScale:v1';
+  const NOTE_GRAPH_PRELOAD_KEY = 'canvas:noteGraphPreload:v1';
+  function readGraphPreload() {
+    try { return localStorage.getItem(NOTE_GRAPH_PRELOAD_KEY) === '1'; } catch (_) { return false; }
+  }
+  function applyGraphPreload(value, persist) {
+    const enabled = value === true;
+    const input = document.querySelector('[data-role="note-graph-preload"]');
+    const paused = document.querySelector('[data-role="note-graph-preload-paused"]');
+    if (input) input.checked = enabled;
+    if (paused) paused.hidden = window.RelatumFeatureRuntime?.preloadEnabled !== false;
+    if (persist && readGraphPreload() !== enabled) try { localStorage.setItem(NOTE_GRAPH_PRELOAD_KEY, enabled ? '1' : '0'); } catch (_) {}
+    return enabled;
+  }
   const NOTE_GRAPH_SPACING_KEY = 'canvas:noteGraphSpacing:v1';
   function normalizeGraphSpacing(value) {
     const number = Number(value);
@@ -196,6 +209,9 @@
   }
 
   const preferences = {
+    readGraphPreload,
+    applyGraphPreload(value, persist) { return applyGraphPreload(value, persist !== false); },
+    resetGraphPreload() { try { localStorage.removeItem(NOTE_GRAPH_PRELOAD_KEY); } catch (_) {} return applyGraphPreload(false, false); },
     readGraphSpacing() { return noteGraphSpacing; },
     applyGraphSpacing(value, persist) { return applyGraphSpacing(value, persist !== false); },
     resetGraphSpacing() { try { localStorage.removeItem(NOTE_GRAPH_SPACING_KEY); } catch (_) {} return applyGraphSpacing(125, false); },
@@ -207,6 +223,9 @@
   };
   window.RelatumNotePreferences = Object.freeze(preferences);
   applyGraphSpacing(noteGraphSpacing, false);
+  applyGraphPreload(readGraphPreload(), false);
+  const graphPreloadToggle = document.querySelector('[data-role="note-graph-preload"]');
+  graphPreloadToggle?.addEventListener('change', () => applyGraphPreload(graphPreloadToggle.checked, true));
   const graphSpacing = query('note-graph-spacing');
   if (graphSpacing) graphSpacing.addEventListener('input', () => applyGraphSpacing(graphSpacing.value, true));
   applyNoteFontScale(readNoteFontScale(), false);

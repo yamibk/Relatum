@@ -90,6 +90,16 @@ class NativeLauncherTests(unittest.TestCase):
                     self.assertEqual(set(buttons), set(FEATURES))
                     self.assertTrue(buttons['runtime.preload'].Enabled)
                     self.assertTrue(all(button.Checked for button in buttons.values()))
+                    self.assertEqual(buttons['notes.graph'].Text.strip(), '笔记图谱')
+                    buttons['notes'].Checked = False
+                    self.assertFalse(buttons['notes.graph'].Enabled)
+                    self.assertTrue(buttons['notes.graph'].Checked)
+                    buttons['notes'].Checked = True
+                    self.assertTrue(buttons['notes.graph'].Enabled)
+                    buttons['notes.graph'].Checked = False
+                    self.assertTrue(buttons['editor.graph'].Checked)
+                    self.assertTrue(buttons['canvas.activity'].Checked)
+                    buttons['notes.graph'].Checked = True
                     buttons['canvas'].Checked = False
                     self.assertFalse(buttons['canvas.editor'].Enabled)
                     self.assertTrue(buttons['canvas.editor'].Checked)

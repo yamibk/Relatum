@@ -179,6 +179,27 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertNotIn('src="start.js"', html)
         self.assertNotIn('data-start-workspace-panel="canvas"', html)
 
+    def test_note_graph_child_and_independent_shared_runtime(self):
+        source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
+        legacy = features.LaunchProfile.decode('{"version":1,"features":{"notes":true}}')
+        self.assertTrue(legacy.enabled('notes.graph'), 'old choices retain the new default')
+        profile = self.only('notes')
+        html = features.render_html(source, profile, 'index.html')
+        for marker in ('data-note-action="toggle-graph"', 'id="note-graph-panel"',
+                       'data-role="note-graph-spacing"', 'data-role="note-graph-preload"'):
+            self.assertNotIn(marker, html)
+        for script in ('note-graph.js', 'graph-engine.js', 'graph-gl.js'):
+            self.assertFalse(profile.resource_allowed(script))
+        for keys in (('notes', 'notes.graph'), ('canvas', 'canvas.editor', 'editor.graph'),
+                     ('canvas', 'canvas.activity')):
+            enabled = self.only(*keys)
+            self.assertTrue(enabled.resource_allowed('graph-engine.js'))
+            self.assertTrue(enabled.resource_allowed('graph-gl.js'))
+            self.assertEqual(enabled.resource_allowed('note-graph.js'), 'notes.graph' in keys)
+        profile.choices['notes.graph'] = True
+        profile.choices['notes'] = False
+        self.assertFalse(profile.enabled('notes.graph'))
+
     def test_tree_and_study_share_goal_tree_model(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
         for name, keys in (("tree", ("canvas", "canvas.tree")), ("study", ("canvas", "canvas.study")), ("neither", ("notes",))):

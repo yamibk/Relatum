@@ -260,7 +260,6 @@
         "note-table-editor.js",
         "note-workspace.js",
         "note-browser.js",
-        "note-graph.js",
         "note-live-editor.js",
         "note-media-frame.js",
         "note-shortcuts.js",
@@ -276,6 +275,15 @@
       "writePrefixes": [
         "/api/note-"
       ],
+      "default": true
+    },
+    {
+      "id": "notes.graph",
+      "parent": "notes",
+      "label": "笔记图谱",
+      "description": "笔记本关系图谱；关闭后不加载图谱脚本、数据或绘制引擎。",
+      "scripts": ["note-graph.js"],
+      "readPaths": ["/api/note-graph"],
       "default": true
     },
     {
@@ -333,12 +341,12 @@
     "graph-gl.js": [
       "canvas.activity",
       "editor.graph",
-      "notes"
+      "notes.graph"
     ],
     "graph-engine.js": [
       "canvas.activity",
       "editor.graph",
-      "notes"
+      "notes.graph"
     ],
     "graph-window.js": [
       "editor.graph"

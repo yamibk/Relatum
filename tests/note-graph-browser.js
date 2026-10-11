@@ -84,7 +84,7 @@ async function run(browser, mode) {
   if (mode === 'notes-only' || mode === 'notes-no-canvas') {
     const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'), 'utf8'));
     args.push('--launch-profile', JSON.stringify({ version: 1,
-      features: Object.fromEntries(catalog.features.map(f => [f.id, f.id === 'notes' || mode === 'notes-only' && f.id === 'notes.canvas'])) }));
+      features: Object.fromEntries(catalog.features.map(f => [f.id, ['notes', 'notes.graph'].includes(f.id) || mode === 'notes-only' && f.id === 'notes.canvas'])) }));
   }
   const server = spawn(release ? path.join(release, 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python', release ? args.slice(4) : args,
     { cwd: release || repo, env: { ...process.env, RELATUM_DATA_ROOT: root,

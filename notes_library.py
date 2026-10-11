@@ -22,7 +22,22 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 from note_metadata import note_metadata, valid_tag
 from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as canvas_references, rewrite as rewrite_canvas_references
-from note_graph import references as graph_references, graph_edges, scope_contains
+
+
+# Keep graph parsing out of ordinary note sessions; names remain patchable in tests.
+def graph_references(text):
+    from note_graph import references
+    return references(text)
+
+
+def graph_edges(documents, scope):
+    from note_graph import graph_edges as resolve_edges
+    return resolve_edges(documents, scope)
+
+
+def scope_contains(path, scope):
+    from note_graph import scope_contains as contains
+    return contains(path, scope)
 
 
 NOTE_SUFFIX = ".md"

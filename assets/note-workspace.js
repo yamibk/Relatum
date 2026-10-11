@@ -72,6 +72,7 @@
   let noteGraph = null, noteGraphLoader = null, noteGraphIntentSequence = 0;
   const GRAPH_TAB = 'relatum:graph-tab:v1';
   const graphHost = $('[data-role="note-graph-panel"]');
+  const graphEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.graph');
   let graphPresentation = false, graphSidebar = null;
   let sideCloseTask = null, sideMotionSequence = 0;
   let noteMovePromise = null, noteMovePaths = null;
@@ -103,7 +104,7 @@
   function isGraphTab(tab) { return tab === GRAPH_TAB; }
   function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab); }
   function graphContentActive() {
-    return graphPresentation && isGraphTab(state.activeTab) && state.active && !root.hidden
+    return graphEnabled() && graphPresentation && isGraphTab(state.activeTab) && state.active && !root.hidden
       && !document.hidden && !browserResultsActive();
   }
   function effectiveSideMode() { return graphPresentation ? 'notebooks' : state.sideMode; }
@@ -149,7 +150,7 @@
     const selected = state.notebookRoot !== null;
     const label = selected ? (language() === 'en' ? 'Notebook graph' : '笔记本图谱')
       : (language() === 'en' ? 'Select a notebook first' : '请先选择笔记本');
-    graphToggle.disabled = !selected;
+    graphToggle.hidden = !graphEnabled(); graphToggle.disabled = !selected || !graphEnabled();
     graphToggle.removeAttribute('title');
     graphToggle.dataset.uiTooltip = label; graphToggle.dataset.uiTooltipSource = label;
     graphToggle.setAttribute('aria-label', label);
@@ -167,6 +168,7 @@
     return state.active && !document.hidden && scope === state.notebookRoot;
   }
   async function loadNoteGraph() {
+    if (!graphEnabled()) return null;
     if (noteGraph) return noteGraph;
     if (!noteGraphLoader) noteGraphLoader = (async () => {
       for (const [name, exported] of [['graph-gl.js', 'GraphGL'], ['graph-engine.js', 'GraphEngine'],
@@ -193,6 +195,7 @@
     return noteGraphLoader;
   }
   async function activateGraphTab(options) {
+    if (!graphEnabled()) return false;
     if (!state.active || document.hidden) return false;
     if (graphPresentation && !browserResultsActive()) {
       await resumeNoteGraph();
@@ -443,6 +446,7 @@
   };
   try { const stored = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'); if (Array.isArray(stored)) state.expanded = new Set(stored); } catch (error) {}
   try { const stored = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) || '[]'); if (Array.isArray(stored)) state.tabs = Array.from(new Set(stored.filter((path) => typeof path === 'string'))); } catch (error) {}
+  if (!graphEnabled()) state.tabs = state.tabs.filter(path => !isGraphTab(path));
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
@@ -476,7 +480,7 @@
       restored: ['已恢复', 'Restored'],
       conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
       resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
-      resetCopy: ['重置正文字号、图片文字、图谱节点间距和编辑器快捷键。', 'Reset text size, image text scale, graph node spacing and editor shortcuts.'],
+      resetCopy: ['重置正文字号、图片文字、图谱节点间距、图谱预加载和编辑器快捷键。', 'Reset text size, image text scale, graph node spacing, graph preloading and editor shortcuts.'],
       reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
@@ -829,6 +833,7 @@
   function resetNoteSettings() {
     const preference = window.RelatumNotePreferences;
     preference?.resetGraphSpacing?.();
+    preference?.resetGraphPreload?.();
     if (preference) preference.resetImageTextScale();
     if (preference && typeof preference.resetFontScale === 'function') preference.resetFontScale();
     else {
@@ -2625,7 +2630,7 @@
   function normalizedWikiTarget(value) { const target = String(value || '').split('|', 1)[0].trim(); const marks = [target.indexOf('#'), target.indexOf('^')].filter((index) => index >= 0); return (marks.length ? target.slice(0, Math.min.apply(Math, marks)) : target).replace(/\.md$/i, '').trim(); }
   function outgoingForWiki(value) { const wanted = normalizedWikiTarget(value).toLocaleLowerCase(); return (state.current && state.current.outgoing || []).find((item) => String(item.rawTarget || '').replace(/\.md$/i, '').toLocaleLowerCase() === wanted) || null; }
   function updateEditorVisibility() {
-    setGraphPresentation(state.initialized && isGraphTab(state.activeTab) && !browserResultsActive());
+    setGraphPresentation(graphEnabled() && state.initialized && isGraphTab(state.activeTab) && !browserResultsActive());
     const hasNote = !!state.current;
     empty.hidden = hasNote;
     if (inlineTitleShell) inlineTitleShell.hidden = !hasNote;
@@ -3726,6 +3731,13 @@
     return state.initializePromise;
   }
   async function preload() { return initializeWorkspace(); }
+  async function preloadGraph(settings = {}) {
+    if (!graphEnabled() || settings.signal?.aborted || !(await initializeWorkspace()) || settings.signal?.aborted) return false;
+    const scope = state.notebookRoot, sequence = noteGraphIntentSequence;
+    const graph = await loadNoteGraph();
+    if (!graph || settings.signal?.aborted || sequence !== noteGraphIntentSequence || scope !== state.notebookRoot) return false;
+    return graph.preload(scope, settings);
+  }
   async function activate() {
     state.linksRefreshSuspended = false;
     const wasInitialized = state.initialized;
@@ -4095,5 +4107,5 @@
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
-  window.CanvasNoteWorkspace = { activate, deactivate, preload, flushSave, toggleCanvasPanel, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; } };
+  window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; } };
 })();

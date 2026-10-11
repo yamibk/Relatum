@@ -26,5 +26,23 @@ for (const filename of ['start.js', 'start-shell.js']) {
     sandbox.pref.apply(NaN, true); assert.equal(sandbox.pref.read(), 125);
   }
   assert(source.includes('readGraphSpacing()') && source.includes('resetGraphSpacing()'), 'same public methods in both startup modes');
+  const preloadBegin = source.indexOf('const NOTE_GRAPH_PRELOAD_KEY');
+  for (const [raw, expected] of [[null, false], ['0', false], ['true', false], ['bad', false], ['1', true]]) {
+    const preloadKey = 'canvas:noteGraphPreload:v1', storage = new Map(raw === null ? [] : [[preloadKey, raw]]);
+    const input = {}, paused = {}, writes = [];
+    const sandbox = { window: { RelatumFeatureRuntime: { preloadEnabled: false } },
+      document: { querySelector: selector => selector.includes('-paused') ? paused : input },
+      localStorage: { getItem: name => storage.get(name) ?? null,
+        setItem(name, value) { writes.push([name, value]); storage.set(name, value); } } };
+    vm.createContext(sandbox);
+    vm.runInContext(source.slice(preloadBegin, begin) + '\nglobalThis.pref = { read: readGraphPreload, apply: applyGraphPreload };', sandbox);
+    assert.equal(sandbox.pref.read(), expected);
+    sandbox.pref.apply(expected, false); assert.equal(input.checked, expected); assert.equal(paused.hidden, false);
+    sandbox.pref.apply(expected, true); assert.equal(writes.length, 0);
+    sandbox.pref.apply(!expected, true); assert.equal(storage.get(preloadKey), expected ? '0' : '1');
+    sandbox.window.RelatumFeatureRuntime.preloadEnabled = true;
+    sandbox.pref.apply(expected, false); assert.equal(paused.hidden, true);
+    assert.equal(writes.length, 1, 'preference preview neither loads a graph nor writes storage');
+  }
 }
-console.log('note graph: both preference paths, bounds/defaults, step rounding and duplicate-write/event suppression passed');
+console.log('note graph: both preference paths, spacing bounds, preload default/boolean/global hint and duplicate writes passed');

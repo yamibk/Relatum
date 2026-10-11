@@ -21,6 +21,34 @@
         document.documentElement.dataset.startWorkspace = workspace;
         window.RelatumBoot = window.RelatumBoot || {};
         window.RelatumBoot.noteFocusMode = localStorage.getItem('canvas:noteFocusMode:v1') === '1';
+        var boot = window.RelatumBoot, features = window.RelatumFeatureRuntime;
+        boot.noteGraphPreloadRequested = features.enabled('notes') && features.enabled('notes.graph')
+          && features.preloadEnabled !== false && localStorage.getItem('canvas:noteGraphPreload:v1') === '1';
+        if (boot.noteGraphPreloadRequested) {
+          document.documentElement.classList.add('note-graph-boot-pending');
+          boot.noteGraphController = new AbortController();
+          boot.noteGraphReady = new Promise(function (resolve) {
+            var finished = false;
+            boot.finishGraphPreload = function (success) {
+              if (finished) return;
+              finished = true;
+              clearTimeout(boot.noteGraphTimer); boot.noteGraphTimer = 0;
+              if (!success) boot.noteGraphController.abort();
+              document.documentElement.classList.remove('note-graph-boot-pending');
+              var stage = document.querySelector('.start-workspace-stage'); if (stage) stage.inert = false;
+              document.querySelectorAll('button[data-start-workspace]').forEach(function (button) { button.inert = false; });
+              window.RelatumStartupMark?.(success ? 'note-graph-preload-ready' : 'note-graph-preload-skipped');
+              resolve(success);
+            };
+          });
+          boot.noteGraphTimer = window.setTimeout(function () { boot.finishGraphPreload(false); }, 4000);
+          document.addEventListener('DOMContentLoaded', function () {
+            if (!document.documentElement.classList.contains('note-graph-boot-pending')) return;
+            var stage = document.querySelector('.start-workspace-stage'); if (stage) stage.inert = true;
+            document.querySelectorAll('button[data-start-workspace]').forEach(function (button) { button.inert = true; });
+          }, { once: true });
+          window.addEventListener('pagehide', function () { boot.finishGraphPreload(false); boot.noteGraphController.abort(); }, { once: true });
+        }
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
           window.RelatumBoot = window.RelatumBoot || {};
@@ -78,6 +106,12 @@
        挂载，笔记运行时取得文件树与上次文档后再一次性揭示。 */
     html.note-boot-pending body[data-start-workspace="notes"] .note-workspace {
       visibility: hidden !important;
+    }
+    html.note-graph-boot-pending .start-workspace-stage { visibility: hidden !important; }
+    .note-graph-boot-status { display: none; }
+    html.note-graph-boot-pending .note-graph-boot-status {
+      display: flex; position: fixed; inset: 92px 0 0; align-items: center; justify-content: center;
+      color: var(--text-secondary); font-size: 13px; pointer-events: none;
     }
   </style>
   <link rel="preload" href="focus.js" as="script">
@@ -418,6 +452,7 @@
     </div>
   </header>
 
+  <div class="note-graph-boot-status" data-feature="notes.graph" role="status">正在准备笔记图谱…</div>
   <div class="start-workspace-stage">
   <main class="start-main start-workspace-panel" id="start-canvas-workspace"
     data-start-workspace-panel="canvas" data-state="loading">
@@ -1580,7 +1615,7 @@
             title="展开笔记浏览" aria-label="展开笔记浏览" aria-pressed="false" aria-expanded="false" aria-controls="note-browser-disclosure">
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-search"/></svg>
           </button>
-          <button type="button" class="note-icon-button note-graph-toggle" data-note-action="toggle-graph"
+          <button type="button" class="note-icon-button note-graph-toggle" data-note-action="toggle-graph" data-feature="notes.graph"
             title="笔记图谱" aria-label="笔记图谱" aria-expanded="false" disabled>
             <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-graph"/></svg>
           </button>
@@ -1658,7 +1693,7 @@
           <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-copy-x"/></svg>
         </button>
       </nav>
-      <section class="note-graph-panel" id="note-graph-panel" data-role="note-graph-panel"
+      <section class="note-graph-panel" id="note-graph-panel" data-role="note-graph-panel" data-feature="notes.graph"
         role="tabpanel" tabindex="0" hidden inert>
         <div class="note-graph-load-message" data-role="note-graph-load-message" role="status">
           <span></span><button type="button" data-note-action="retry-graph" hidden>重试</button>
@@ -1811,7 +1846,7 @@
           </button>
           <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
             data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
-            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字、图谱节点间距和编辑器快捷键。</span></div>
+            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字、图谱节点间距、图谱预加载和编辑器快捷键。</span></div>
             <footer>
               <button type="button" data-note-settings-action="reset-cancel">取消</button>
               <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
@@ -1839,7 +1874,7 @@
           </span>
           <small aria-hidden="true"><i>50%</i><i>100%</i><i>300%</i></small>
         </label>
-        <label class="note-settings-font">
+        <label class="note-settings-font" data-feature="notes.graph">
           <span><strong>图谱节点间距</strong><output data-role="note-graph-spacing-value">125%</output></span>
           <span class="note-settings-range" style="--default-pos:37.5%;">
             <input type="range" min="80" max="200" step="5" value="125"
@@ -1848,6 +1883,12 @@
           <small aria-hidden="true"><i>80%</i><i>125% 默认</i><i>200%</i></small>
           <small class="note-graph-spacing-hint">100% 为原间距，所有笔记本共用</small>
         </label>
+      </section>
+      <section class="note-settings-section" data-feature="notes.graph" aria-labelledby="note-settings-startup-title">
+        <h3 id="note-settings-startup-title">启动</h3>
+        <label class="note-graph-preload-setting"><input type="checkbox" data-role="note-graph-preload"><strong>预加载图谱</strong></label>
+        <p class="note-graph-preload-hint">下次启动主界面时提前加载上次笔记本的图谱脚本和数据，首次打开再计算布局。会增加启动时间和数据缓存占用。</p>
+        <p class="note-graph-preload-hint" data-role="note-graph-preload-paused" hidden>本次启动已关闭后台预加载</p>
       </section>
       <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">
         <div class="note-settings-section-head">

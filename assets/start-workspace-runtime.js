@@ -32,7 +32,7 @@
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
   const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, research: 2, career: 3 };
   let activeStartWorkspace = features.workspace(document.body.dataset.startWorkspace);
-  let workspaceSwitchPromise = Promise.resolve(true);
+  let workspaceSwitchPromise = window.RelatumBoot?.noteGraphReady || Promise.resolve(true);
   let noteWorkspaceLoader = null, researchWorkspaceLoader = null, careerWorkspaceLoader = null;
   let researchWorkspaceFrame = null, researchWorkspaceApi = null;
   let noteWorkspaceWarmupHandle = 0, careerWorkspaceWarmupHandle = 0;
@@ -375,15 +375,22 @@
     get current() { return activeStartWorkspace; },
     set: setStartWorkspace,
   };
+  const boot = window.RelatumBoot;
+  if (boot?.noteGraphPreloadRequested && !boot.noteGraphController.signal.aborted) {
+    window.RelatumStartupMark?.('note-graph-preload-start');
+    loadNoteWorkspace().then(workspace => {
+      if (boot.noteGraphController.signal.aborted) return false;
+      return workspace.preloadGraph({ signal: boot.noteGraphController.signal });
+    }).then(ok => boot.finishGraphPreload(ok !== false), () => boot.finishGraphPreload(false));
+  }
   if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'research'
     || activeStartWorkspace === 'career') {
     setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
   }
   else {
-    scheduleCareerWorkspaceIdleWarmup();
-    scheduleNoteWorkspaceIdleWarmup();
+    workspaceSwitchPromise.then(() => { scheduleCareerWorkspaceIdleWarmup(); scheduleNoteWorkspaceIdleWarmup(); });
   }
-  if (activeStartWorkspace === 'notes') scheduleCareerWorkspaceIdleWarmup();
+  if (activeStartWorkspace === 'notes') workspaceSwitchPromise.then(scheduleCareerWorkspaceIdleWarmup);
   window.addEventListener('pagehide', disposeResearchWorkspace, { once: true });
 
   return window.RelatumStartWorkspace;

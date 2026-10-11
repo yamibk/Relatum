@@ -10682,6 +10682,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
         if parsed.path == "/api/note-graph":
+            # The parent notes feature also owns /api/note-; check this child
+            # before scanning so the broad parent permission cannot enable it.
+            if not self.launch_profile.enabled("notes.graph"):
+                return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
             query = urllib.parse.parse_qs(parsed.query)
             try:
                 with NOTES_MUTATION_LOCK:
