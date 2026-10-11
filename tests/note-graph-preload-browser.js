@@ -54,6 +54,11 @@ function probe(options) {
     return fetcher.call(this, url, ...args);
   };
   const get = HTMLCanvasElement.prototype.getContext;
+  const NativeWorker = window.Worker;
+  if (NativeWorker) window.Worker = class extends NativeWorker {
+    constructor(...args) { super(...args); p.workers = (p.workers || 0) + 1; this.finished = false; }
+    terminate() { if (!this.finished) { this.finished = true; p.workers--; } super.terminate(); }
+  };
   HTMLCanvasElement.prototype.getContext = function (kind, ...args) {
     if (options.fallback && /^webgl/.test(kind)) return null;
     const context = get.call(this, kind, ...args);
@@ -104,6 +109,7 @@ async function session(browser, options, test) {
       'canvas:noteFocusMode:v1': options.focus ? '1' : '0' } }));
     server = spawn(path.join(release, 'RelatumLauncher.exe'), [], { cwd: release, windowsHide: true, stdio: 'ignore',
       env: { ...process.env, RELATUM_DATA_ROOT: root, LOCALAPPDATA: root,
+        RELATUM_STARTUP_TRACE: '1',
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } });
   } else {
     server = spawn(process.env.RELATUM_PYTHON || 'python', ['app.py', '--no-browser', '--port', String(port),
@@ -170,6 +176,9 @@ async function hiddenResources(page) {
     starts: __preloadProbe.starts, draws: __preloadProbe.draws, labels: document.querySelectorAll('[data-note-graph-label]').length })),
   { engines: 0, contexts: 0, starts: 0, draws: 0, labels: 0 });
 }
+async function prepared(page) {
+  await page.waitForFunction(() => performance.getEntriesByName('relatum:note-graph-preload-ready').length > 0);
+}
 async function openGraph(page, count) {
   await page.evaluate(() => P.activateGraphTab());
   await page.waitForFunction(count => document.querySelector('[data-role="graph-node-count"]').textContent === String(count), count);
@@ -188,6 +197,9 @@ async function regression(browser) {
   for (const options of cases) await session(browser, options, async ({ page, resources, url, note, selected, root }) => {
     await ready(page);
     const enabled = options.graph !== false, warm = enabled && options.preload === true && options.total !== false;
+    assert.equal(await page.locator('.note-graph-boot-status').count(), 0, 'preparation has no blocking startup surface');
+    assert.equal(await page.evaluate(() => document.querySelector('.start-workspace-stage').inert), false);
+    if (warm) await prepared(page);
     await hiddenResources(page);
     assert.equal(resources.includes('/note-graph.js'), warm, 'startup resource boundary');
     assert.equal(await page.evaluate(() => __preloadProbe.requests.length), warm && selected !== null ? 1 : 0);
@@ -196,7 +208,7 @@ async function regression(browser) {
       root: P.state.notebookRoot, tabs: P.state.tabs, current: P.state.current?.path,
       preload: RelatumNotePreferences.readGraphPreload(), spacing: RelatumNotePreferences.readGraphSpacing() }));
     assert.equal(state.root, selected); assert.equal(state.preload, options.preload === true);
-    if (warm) assert(state.prepared <= state.ready, 'prepared topology precedes main workspace activation');
+    if (warm) assert(state.prepared > state.ready, 'main workspace activation precedes idle preparation');
     if (!enabled) {
       assert.equal(await page.locator('[data-note-action="toggle-graph"], [data-role="note-graph-panel"], [data-role="note-graph-preload"], [data-role="note-graph-spacing"]').count(), 0);
       assert(!state.tabs.includes(token)); assert.equal(state.current || '', options.restore === 'blank' ? '' : note,
@@ -266,9 +278,39 @@ async function regression(browser) {
     });
     return;
   }
+  await session(browser, { preload: true, setup: async page => {
+    await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+      window.__interactionTimer = setInterval(() => document.dispatchEvent(new PointerEvent('pointermove')), 80);
+    }, { once: true }));
+  } }, async ({ page, resources }) => {
+    await ready(page); await sleep(1800);
+    assert(!resources.includes('/note-graph.js'), 'continuous interaction postpones scripts');
+    await page.evaluate(() => {
+      clearInterval(__interactionTimer);
+      window.__releasePreparationBusy = RelatumBackgroundPreparation.beginBusy();
+    });
+    await sleep(1800);
+    assert(!resources.includes('/note-graph.js'), 'application work postpones scripts');
+    await page.evaluate(() => __releasePreparationBusy());
+    await prepared(page); await hiddenResources(page);
+    assert.equal(await page.evaluate(() => __preloadProbe.workers || 0), 0, 'finished worker is released');
+    assert.equal(await page.evaluate(() => __preloadProbe.scenes.get('').backgroundLayout), true);
+    await openGraph(page, 2);
+    assert.equal(await page.evaluate(() => __preloadProbe.starts), 0, 'prepared layout opens without automatic growth');
+    report.regression.push({ kind: 'idle-interaction-busy-and-stable-open', passed: true });
+  });
+  await session(browser, { preload: true }, async ({ page }) => {
+    await ready(page); await prepared(page);
+    await page.evaluate(() => P.selectNotebook('CustomNotebook/Other', { rootTarget: true }));
+    await page.waitForFunction(() => __preloadProbe.scenes.get('CustomNotebook/Other')?.backgroundLayout);
+    await hiddenResources(page); await openGraph(page, 1);
+    assert.equal(await page.evaluate(() => __preloadProbe.latest.layoutPending), false);
+    report.regression.push({ kind: 'idle-preparation-follows-selected-notebook', passed: true });
+  });
   await session(browser, { preload: true, mode: 'full', startWorkspace: 'canvas' }, async ({ page, resources }) => {
     await page.waitForFunction(() => window.P?.state.initialized && RelatumStartWorkspace.current === 'canvas'
       && !document.documentElement.classList.contains('note-graph-boot-pending'));
+    await prepared(page);
     await hiddenResources(page);
     assert.equal(await page.evaluate(() => P.state.active), false, 'preparation does not activate the hidden notes workspace');
     assert(resources.includes('/note-graph.js')); assert.equal(await page.evaluate(() => __preloadProbe.requests.length), 1);
@@ -286,7 +328,7 @@ async function regression(browser) {
     report.regression.push({ kind: 'restored-visible-graph', passed: true });
   });
   await session(browser, { preload: true }, async ({ page, notes }) => {
-    await ready(page); fs.writeFileSync(path.join(notes, '笔记-0.md'), 'external prose without a link\n');
+    await ready(page); await prepared(page); fs.writeFileSync(path.join(notes, '笔记-0.md'), 'external prose without a link\n');
     await openGraph(page, 2);
     assert.equal(await page.locator('[data-role="graph-edge-count"]').textContent(), '0',
       'signature handoff checks real external edits before accepting the old topology');
@@ -310,24 +352,28 @@ async function regression(browser) {
       if (kind === 'script-failure') await page.route('**/note-graph.js*', route => route.abort('failed'));
       else await page.route('**/api/note-graph?*', async route => {
         if (kind === 'api-failure') return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"offline"}' });
-        await sleep(4500); await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ root: '', signature: 'late', nodes: [], edges: [] }) }).catch(() => {});
+        await sleep(11000); await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ root: '', signature: 'late', nodes: [], edges: [] }) }).catch(() => {});
       });
     } }, async ({ page }) => {
       if (kind === 'timeout' || kind === 'pagehide') {
         await page.waitForFunction(() => __preloadProbe.requests.length === 1);
-        assert(await page.evaluate(() => document.querySelector('.start-workspace-stage').inert));
-        assert.equal(await page.locator('.note-graph-boot-status').isVisible(), true);
+        assert.equal(await page.evaluate(() => document.querySelector('.start-workspace-stage').inert), false);
+        assert.equal(await page.locator('.note-graph-boot-status').count(), 0);
         await hiddenResources(page);
         if (kind === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
       }
       await ready(page); await hiddenResources(page);
+      if (kind !== 'pagehide') await page.waitForFunction(() =>
+        performance.getEntriesByName('relatum:note-graph-preload-skipped').length > 0);
       if (kind === 'timeout') {
         const ended = await page.evaluate(() => performance.getEntriesByName('relatum:note-graph-preload-skipped')[0].startTime);
-        assert(ended >= 3900 && ended <= 4500, 'four-second startup fallback'); await sleep(650);
+        const started = await page.evaluate(() => performance.getEntriesByName('relatum:note-graph-preload-start')[0].startTime);
+        assert(ended - started >= 10000, 'request timeout is independent of usable startup');
       }
       assert.equal(await page.evaluate(() => __preloadProbe.scenes?.size || 0), 0, 'failure/cancellation never caches a late empty graph');
       await page.unroute('**/api/note-graph?*'); await page.unroute('**/note-graph.js*');
-      await openGraph(page, 2); report.regression.push({ kind, passed: true }); console.log('graph startup recovery ' + kind + ': passed');
+      if (kind !== 'pagehide') await openGraph(page, 2);
+      report.regression.push({ kind, passed: true }); console.log('graph startup recovery ' + kind + ': passed');
     });
   }
 }
@@ -336,6 +382,7 @@ async function benchmark(browser) {
   for (const count of [398, 3000]) for (let round = 0; round < 3; round++) for (const preload of [false, true]) {
     await session(browser, { preload, count, edges: count === 398 ? 79 : 2999, canvas: false }, async ({ page, context }) => {
       await ready(page); await hiddenResources(page);
+      if (preload) await prepared(page);
       const cdp = await context.newCDPSession(page); await cdp.send('HeapProfiler.collectGarbage');
       const memory = await cdp.send('Runtime.getHeapUsage');
       const startup = await page.evaluate(() => ({ startupMs: performance.getEntriesByName('relatum:notes-ready')[0].startTime,
@@ -355,6 +402,7 @@ async function nativeBenchmark(browser) {
   for (const count of [398, 3000]) for (let round = 0; round < 3; round++) for (const preload of [false, true]) {
     await session(browser, { preload, count, edges: count === 398 ? 79 : 2999, canvas: false, nativeBenchmark: true },
       async ({ page, context, pid, startupMs }) => {
+        if (preload) await prepared(page);
         assert.equal(await page.evaluate(() => !!window.RelatumNoteGraph), preload);
         assert.equal(await page.locator('[data-note-graph-label]').count(), 0);
         assert(await page.evaluate(() => { const canvas = document.querySelector('[data-role="note-graph-panel"] canvas');

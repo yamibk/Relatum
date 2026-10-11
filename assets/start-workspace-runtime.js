@@ -1,8 +1,94 @@
 // Shared workspace lifecycle; used with and without the canvas homepage.
 (function () {
   'use strict';
+  // One scheduler for both homepage shells. It sleeps entirely when nobody is waiting.
+  function createBackgroundPreparation() {
+    const lifetime = new AbortController(), waiters = new Set(), documents = new Set();
+    const events = ['pointermove', 'pointerdown', 'pointerup', 'wheel', 'scroll', 'keydown',
+      'input', 'compositionstart', 'compositionupdate', 'compositionend', 'touchstart', 'touchmove'];
+    let lastActivity = performance.now(), busy = 0, timer = 0, idleHandle = 0, observer = null;
+    const abortError = () => new DOMException('Background preparation cancelled', 'AbortError');
+    function cancelWake() {
+      clearTimeout(timer); timer = 0;
+      if (idleHandle) window.cancelIdleCallback(idleHandle);
+      idleHandle = 0;
+    }
+    function quiet() {
+      return !lifetime.signal.aborted && document.readyState === 'complete'
+        && !document.hidden && document.hasFocus() && !busy && !window.CanvasNoteWorkspace?.backgroundBusy
+        && performance.now() - lastActivity >= 1500
+        && !navigator.scheduling?.isInputPending?.({ includeContinuous: true });
+    }
+    function settle(entry, error, deadline) {
+      waiters.delete(entry); entry.signal?.removeEventListener('abort', entry.abort);
+      if (error) entry.reject(error); else entry.resolve(deadline);
+    }
+    function pump(deadline) {
+      idleHandle = 0; timer = 0;
+      for (const entry of Array.from(waiters)) {
+        if (lifetime.signal.aborted || entry.signal?.aborted) settle(entry, abortError());
+        else if (entry.foreground?.()) settle(entry, null, deadline);
+        else if (quiet() && deadline && deadline.timeRemaining() >= 1) settle(entry, null, deadline);
+      }
+      wake();
+    }
+    function wake() {
+      cancelWake();
+      if (!waiters.size || lifetime.signal.aborted) return;
+      for (const entry of Array.from(waiters)) {
+        if (entry.foreground?.()) settle(entry, null, null);
+      }
+      if (!waiters.size || document.hidden || !document.hasFocus() || busy) return;
+      if (window.CanvasNoteWorkspace?.backgroundBusy) {
+        timer = setTimeout(() => pump(null), 250); return;
+      }
+      const delay = Math.max(0, 1500 - (performance.now() - lastActivity));
+      if (delay || document.readyState !== 'complete') {
+        timer = setTimeout(() => pump(null), Math.max(100, delay)); return;
+      }
+      if (window.requestIdleCallback) idleHandle = window.requestIdleCallback(pump);
+      else timer = setTimeout(() => {
+        const end = performance.now() + 4;
+        pump({ timeRemaining: () => Math.max(0, end - performance.now()) });
+      }, 250);
+    }
+    function touch() { lastActivity = performance.now(); wake(); }
+    function beginBusy() {
+      busy++; touch();
+      let released = false;
+      return () => { if (!released) { released = true; busy--; touch(); } };
+    }
+    function waitForIdle(signal, foreground) {
+      if (lifetime.signal.aborted || signal?.aborted) return Promise.reject(abortError());
+      return new Promise((resolve, reject) => {
+        const entry = { signal, foreground, resolve, reject, abort: null };
+        entry.abort = () => { settle(entry, abortError()); wake(); };
+        signal?.addEventListener('abort', entry.abort, { once: true });
+        waiters.add(entry); wake();
+      });
+    }
+    function observeDocument(target) {
+      if (documents.has(target)) return;
+      documents.add(target);
+      events.forEach(name => target.addEventListener(name, touch, { capture: true, passive: true, signal: lifetime.signal }));
+    }
+    observeDocument(document);
+    ['focus', 'blur', 'load'].forEach(name => window.addEventListener(name, touch, { signal: lifetime.signal }));
+    document.addEventListener('visibilitychange', touch, { signal: lifetime.signal });
+    try {
+      observer = new PerformanceObserver(() => touch());
+      observer.observe({ type: 'longtask', buffered: false });
+    } catch (_) {}
+    window.addEventListener('pagehide', () => {
+      lifetime.abort(); cancelWake(); observer?.disconnect(); documents.clear();
+      for (const entry of Array.from(waiters)) settle(entry, abortError());
+    }, { once: true });
+    return Object.freeze({ waitForIdle, beginBusy, touch, wake, observeDocument, signal: lifetime.signal });
+  }
   window.RelatumWorkspaceRuntime = Object.freeze({ create(config) {
   const features = window.RelatumFeatureRuntime;
+  const preparation = window.RelatumBoot?.noteGraphPreloadRequested
+    ? (window.RelatumBackgroundPreparation ||= createBackgroundPreparation()) : null;
   const workspacePanels = Array.from(document.querySelectorAll('[data-start-workspace-panel]'));
   const workspaceButtons = Array.from(document.querySelectorAll('button[data-start-workspace]'));
   const workspaceStage = document.querySelector('.start-workspace-stage');
@@ -32,20 +118,23 @@
   const START_WORKSPACE_KEY = 'canvas:startWorkspace:v1';
   const START_WORKSPACE_ORDER = { canvas: 0, notes: 1, research: 2, career: 3 };
   let activeStartWorkspace = features.workspace(document.body.dataset.startWorkspace);
-  let workspaceSwitchPromise = window.RelatumBoot?.noteGraphReady || Promise.resolve(true);
+  let workspaceSwitchPromise = Promise.resolve(true);
   let noteWorkspaceLoader = null, researchWorkspaceLoader = null, careerWorkspaceLoader = null;
+  let noteWorkspaceForeground = false;
   let researchWorkspaceFrame = null, researchWorkspaceApi = null;
   let noteWorkspaceWarmupHandle = 0, careerWorkspaceWarmupHandle = 0;
   let noteWorkspaceWarmupScheduled = false, careerWorkspaceWarmupScheduled = false;
   let workspaceTransitionTimer = 0;
   function englishUI() { return !!(window.RelatumI18n && window.RelatumI18n.language === 'en'); }
-  function loadNoteWorkspace() {
+  function loadNoteWorkspace(background = false) {
+    if (!background) { noteWorkspaceForeground = true; preparation?.wake(); }
     if (!features.enabled('notes')) return Promise.reject(new Error('本次启动未启用笔记'));
     if (window.CanvasNoteWorkspace) return Promise.resolve(window.CanvasNoteWorkspace);
     if (noteWorkspaceLoader) return noteWorkspaceLoader;
     window.RelatumStartupMark?.('notes-load-start');
-    const loadScript = (src, ready) => {
+    const loadScript = async (src, ready) => {
       if (ready()) return Promise.resolve(true);
+      if (background && preparation) await preparation.waitForIdle(preparation.signal, () => noteWorkspaceForeground);
       return new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = src;
@@ -111,6 +200,7 @@
         researchWorkspaceApi = workspace;
         // Events inside an iframe do not bubble to the homepage document.
         frame.contentDocument.addEventListener('pointerdown', () => header?.classList.remove('top-edge-revealed'));
+        preparation?.observeDocument(frame.contentDocument);
         if (typeof workspace.setLanguage === 'function') {
           workspace.setLanguage(englishUI() ? 'en' : 'zh-CN');
         }
@@ -156,7 +246,7 @@
     const warmup = () => {
       noteWorkspaceWarmupHandle = 0;
       if (activeStartWorkspace !== 'canvas') return;
-      loadNoteWorkspace()
+      loadNoteWorkspace(!!preparation)
         .then((workspace) => typeof workspace.preload === 'function' ? workspace.preload() : true)
         .catch(() => { noteWorkspaceWarmupScheduled = false; });
     };
@@ -338,9 +428,10 @@
   }
 
   function setStartWorkspace(next, options = {}) {
+    const release = preparation?.beginBusy();
     workspaceSwitchPromise = workspaceSwitchPromise
       .catch(() => false)
-      .then(() => performStartWorkspace(next, options));
+      .then(() => performStartWorkspace(next, options)).finally(() => release?.());
     return workspaceSwitchPromise;
   }
 
@@ -375,14 +466,42 @@
     get current() { return activeStartWorkspace; },
     set: setStartWorkspace,
   };
-  const boot = window.RelatumBoot;
-  if (boot?.noteGraphPreloadRequested && !boot.noteGraphController.signal.aborted) {
-    window.RelatumStartupMark?.('note-graph-preload-start');
-    loadNoteWorkspace().then(workspace => {
-      if (boot.noteGraphController.signal.aborted) return false;
-      return workspace.preloadGraph({ signal: boot.noteGraphController.signal });
-    }).then(ok => boot.finishGraphPreload(ok !== false), () => boot.finishGraphPreload(false));
+  let graphPreparation = null, graphPreparationSequence = 0, resumeGraphPreparation = false;
+  function scheduleGraphPreparation(event) {
+    if (!preparation || preparation.signal.aborted) return;
+    graphPreparation?.abort();
+    if (event?.detail?.cancel) {
+      graphPreparationSequence++; graphPreparation = null; resumeGraphPreparation = false; return;
+    }
+    const controller = new AbortController(), sequence = ++graphPreparationSequence;
+    graphPreparation = controller;
+    const abort = () => controller.abort();
+    preparation.signal.addEventListener('abort', abort, { once: true });
+    (async () => {
+      await preparation.waitForIdle(controller.signal);
+      window.RelatumStartupMark?.('note-graph-preload-start');
+      const workspace = await loadNoteWorkspace(true);
+      if (controller.signal.aborted || sequence !== graphPreparationSequence) return;
+      const ok = await workspace.preloadGraph({ signal: controller.signal, waitForIdle: preparation.waitForIdle });
+      if (!controller.signal.aborted && sequence === graphPreparationSequence)
+        window.RelatumStartupMark?.(ok ? 'note-graph-preload-ready' : 'note-graph-preload-skipped');
+    })().catch(() => {
+      if (!controller.signal.aborted && sequence === graphPreparationSequence)
+        window.RelatumStartupMark?.('note-graph-preload-skipped');
+    }).finally(() => {
+      preparation.signal.removeEventListener('abort', abort);
+      if (graphPreparation === controller) graphPreparation = null;
+    });
   }
+  document.addEventListener('relatum:note-graph-target', scheduleGraphPreparation);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      resumeGraphPreparation = !!graphPreparation;
+      graphPreparation?.abort();
+    } else if (resumeGraphPreparation) {
+      resumeGraphPreparation = false; scheduleGraphPreparation();
+    }
+  });
   if (activeStartWorkspace === 'notes' || activeStartWorkspace === 'research'
     || activeStartWorkspace === 'career') {
     setStartWorkspace(activeStartWorkspace, { animate: false, persist: false });
@@ -391,6 +510,7 @@
     workspaceSwitchPromise.then(() => { scheduleCareerWorkspaceIdleWarmup(); scheduleNoteWorkspaceIdleWarmup(); });
   }
   if (activeStartWorkspace === 'notes') workspaceSwitchPromise.then(scheduleCareerWorkspaceIdleWarmup);
+  workspaceSwitchPromise.then(scheduleGraphPreparation);
   window.addEventListener('pagehide', disposeResearchWorkspace, { once: true });
 
   return window.RelatumStartWorkspace;
