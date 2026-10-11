@@ -445,6 +445,10 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host .cm-selectionBackground,
 .note-live-editor-host.cm-focused .cm-selectionBackground,
 .note-live-editor-host .cm-focused .cm-selectionBackground { background: rgba(116, 133, 104, .19) !important; }
+/* Callout backgrounds cover the drawn selection layer. Restore the native
+   text selection above the card without changing its layout or coordinates. */
+.note-live-editor-host .cm-line.note-live-callout-line::selection,
+.note-live-editor-host .cm-line.note-live-callout-line ::selection { background-color: rgba(116, 133, 104, .19) !important; }
 .note-live-editor-host.has-image-selection .cm-selectionLayer,
 .note-live-editor-host.has-image-selection .cm-cursorLayer { visibility: hidden; }
 .note-live-editor-host .cm-activeLine { background: transparent; }
