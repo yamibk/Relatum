@@ -1249,6 +1249,8 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-tab-new,
 .note-tab-close-all {
   appearance: none;
+  box-sizing: border-box;
+  padding: 0;
   border: 0;
   display: grid;
   place-items: center;
