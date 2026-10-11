@@ -46,6 +46,17 @@
     let wanted = false, destroyed = false, operation = 0, engine = null, needsLayout = false, selecting = false;
     let openJob = null, refreshJob = null, status = '', failure = null;
     let growthView = null;
+    function readSpacing() {
+      const percent = global.RelatumNotePreferences?.readGraphSpacing?.() ?? 125;
+      return Number.isFinite(percent) && percent > 0 ? Math.max(.8, Math.min(2, percent / 100)) : 1.25;
+    }
+    let spacing = readSpacing();
+    function applySpacing(event) {
+      if (!wanted || destroyed || !options.isActive() || !engine) return;
+      const next = Number.isFinite(event?.detail) && event.detail > 0 ? Math.max(.8, Math.min(2, event.detail / 100)) : readSpacing();
+      if (!engine.setLayoutSpacing(next)) return;
+      spacing = next; needsLayout = nodes.length > 0; growthView = null; tooltip.hidden = true;
+    }
     const scenes = new Map();
     let sceneBytes = 0;
     function current(ticket, expectedRoot) {
@@ -77,6 +88,17 @@
       theme.edgeHi = dark ? 'rgba(245,245,245,.8)' : 'rgba(32,32,32,.66)';
       theme.edgeGL = dark ? [190 / 255, 190 / 255, 190 / 255, .23] : [96 / 255, 96 / 255, 96 / 255, .22];
       theme.edgeHiGL = dark ? [245 / 255, 245 / 255, 245 / 255, .8] : [32 / 255, 32 / 255, 32 / 255, .66];
+      // The backend reads these descriptors without modifying them. Radius stays
+      // on the node; only four palette states are needed, even during animation.
+      theme.nodeStyles = [0, 1, 2, 3].map(state => {
+        const focus = !!(state & 2), dim = state & 1 ? .22 : 1, color = focus ? theme.focusGL : theme.fillGL;
+        return { fill: [color[0], color[1], color[2], dim], stroke: [color[0], color[1], color[2], focus ? dim : 0],
+          strokeW: focus ? 2 : 0, scale: focus ? 1.18 : 1 };
+      });
+      theme.edgeStyles = [0, 1, 2, 3].map(state => {
+        const highlighted = !!(state & 2), color = highlighted ? theme.edgeHiGL : theme.edgeGL;
+        return { color: [color[0], color[1], color[2], color[3] * (state & 1 ? .14 : 1)], width: highlighted ? 2 : 1.2 };
+      });
       engine?.requestRender();
     }
     const theme = {};
@@ -165,25 +187,22 @@
       };
     }
     function nodeStyle(node, environment) {
-      const dim = environment.dim ? .22 : 1, color = environment.focus ? theme.focusGL : theme.fillGL;
-      return { r: node.r, fill: [color[0], color[1], color[2], dim],
-        stroke: [color[0], color[1], color[2], environment.focus ? dim : 0],
-        strokeW: environment.focus ? 2 : 0, scale: environment.focus ? 1.18 : 1 };
+      return theme.nodeStyles[(environment.focus ? 2 : 0) + (environment.dim ? 1 : 0)];
     }
     function edgeStyle(edge, source, target, environment) {
-      const color = environment.highlighted ? theme.edgeHiGL : theme.edgeGL;
-      return { color: [color[0], color[1], color[2], color[3] * (environment.dim ? .14 : 1)], width: environment.highlighted ? 2 : 1.2 };
+      return theme.edgeStyles[(environment.highlighted ? 2 : 0) + (environment.dim ? 1 : 0)];
     }
     function createEngine(nextCanvas) {
       canvas = nextCanvas;
       const labelLayer = createLabelLayer();
       const engine = global.GraphEngine.create({ canvas, backend: 'webgl', active: false,
         cacheInstances: true, labelVisibility: 'always', domOverlayOnCanvas2D: true,
-        ignoreHiddenNodes: true,
+        ignoreHiddenNodes: true, coalesceHover: true,
         onCanvasReplace: replacement => { canvas = replacement; },
         config: { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: .048, springRest: 112, gravity: .0055,
           alphaDecay: .022, alphaReheat: .28, theta: .92, velocityDamp: .84,
-          zoomMin: .04, zoomMax: 3.5, fitScaleMin: .04, fitScaleMax: 3.5, fitPad: 26, fitMargin: 44 },
+          zoomMin: .04, zoomMax: 3.5, fitScaleMin: .04, fitScaleMax: 3.5, fitPad: 26, fitMargin: 44,
+          fitUnitMin: .8, fitUnitMax: 1.2, fitCenter: 'median', layoutSpacing: spacing },
         reduceMotion: global.matchMedia('(prefers-reduced-motion: reduce)').matches,
         nodeStyle, edgeStyle, domOverlay: labelLayer,
         getGravity: node => node.degree >= 6 ? .022 : node.degree >= 3 ? .009 : node.degree ? .005 : .0035,
@@ -202,11 +221,14 @@
         },
         onNodeClick: selectNode,
         onNodeHover(node, event) {
-          if (!node) { tooltip.hidden = true; return; }
-          tooltip.textContent = node.path;
+          if (!node) { if (!tooltip.hidden) tooltip.hidden = true; return; }
+          if (tooltip.textContent !== node.path) tooltip.textContent = node.path;
           const bounds = stage.getBoundingClientRect();
-          tooltip.style.left = Math.max(4, Math.min(event.clientX - bounds.left + 14, bounds.width - 284)) + 'px';
-          tooltip.style.top = Math.max(4, Math.min(event.clientY - bounds.top + 14, bounds.height - 45)) + 'px'; tooltip.hidden = false;
+          const left = Math.max(4, Math.min(event.clientX - bounds.left + 14, bounds.width - 284)) + 'px';
+          const top = Math.max(4, Math.min(event.clientY - bounds.top + 14, bounds.height - 45)) + 'px';
+          if (tooltip.style.left !== left) tooltip.style.left = left;
+          if (tooltip.style.top !== top) tooltip.style.top = top;
+          if (tooltip.hidden) tooltip.hidden = false;
         },
       });
       if (!engine) labelLayer.destroy();
@@ -229,10 +251,12 @@
       if (!engine) throw new Error(copy('failed'));
       themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-start-theme'] });
       document.addEventListener('relatum:languagechange', updateLanguage);
+      global.addEventListener('relatum:note-graph-spacing', applySpacing);
       return engine;
     }
     function releaseEngine() {
       themeObserver.disconnect(); document.removeEventListener('relatum:languagechange', updateLanguage);
+      global.removeEventListener('relatum:note-graph-spacing', applySpacing);
       if (!engine) return;
       const previous = engine.canvas;
       engine.destroy(); engine = null;
@@ -257,18 +281,20 @@
       needsLayout = needsLayout || !!engine?.layoutPending;
       // Stop first: a sliced presolve restores its seeds when cancelled.
       engine?.setActive(false);
-      storeScene(scope, { signature, needsLayout, view: engine ? engine.view : null,
+      storeScene(scope, { signature, needsLayout, spacing, view: engine ? engine.view : null,
         nodes: nodes.map(node => ({ id: node.id, path: node.path, label: node.label, degree: node.degree, r: node.r, x: node.x, y: node.y })),
         edges: edges.map(edge => ({ source: edge.source, target: edge.target, rest: edge.rest })) });
     }
     function restoreScene(scene) {
       nodes = scene.nodes.map(node => ({ ...node })); edges = scene.edges.map(edge => ({ ...edge }));
       signature = scene.signature; needsLayout = scene.needsLayout;
+      spacing = scene.spacing ?? 1.25;
       updateCounts();
       if (nodes.length) {
         const drawing = ensureEngine(); drawing.setData(nodes, edges);
         if (!drawing.restoreView(scene.view)) drawing.fitView(false);
         drawing.setActive(true);
+        applySpacing();
         if (needsLayout) drawing.kick();
       }
       showStatus('');
@@ -276,7 +302,7 @@
     function seedPositions() {
       const count = Math.max(1, nodes.length);
       // A uniform disk avoids near-coincident neighbors in a dense single ring.
-      const radius = Math.min(VIEW_W, VIEW_H) * .29 * Math.max(1, Math.sqrt(count / 180));
+      const radius = Math.min(VIEW_W, VIEW_H) * .29 * Math.max(1, Math.sqrt(count / 180)) * spacing;
       nodes.forEach((node, index) => {
         const angle = index * 2.399963229728653, spread = radius * Math.sqrt((index + .5) / count);
         node.x = VIEW_W / 2 + Math.cos(angle) * spread; node.y = VIEW_H / 2 + Math.sin(angle) * spread;
@@ -284,6 +310,7 @@
     }
     function installData(result, first) {
       growthView = null;
+      if (!engine) spacing = readSpacing();
       const previous = new Map(nodes.map(node => [node.id, node]));
       const byId = new Map();
       const next = (result.nodes || []).filter(node => node && typeof node.path === 'string' && typeof node.id === 'string');
@@ -340,7 +367,7 @@
       if (scope === null) { showStatus('select'); return Promise.resolve(true); }
       const scene = scenes.get(scope);
       if (scene) { scenes.delete(scope); scenes.set(scope, scene); restoreScene(scene); }
-      else showStatus('loading');
+      else { spacing = readSpacing(); showStatus('loading'); }
       const task = queryGraph(ticket, expectedRoot, !signature);
       const wrapped = task.finally(() => { if (openJob === wrapped) openJob = null; });
       openJob = wrapped; return wrapped;

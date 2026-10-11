@@ -42,12 +42,16 @@
     repulsion: 8400,      // 斥力强度 K（force = K·mass / d² · alpha）
     spring: 0.046,        // 连线弹簧劲度
     springRest: 112,      // 连线自然长度（可被 getEdgeRest 覆盖）
+    layoutSpacing: 1,     // 可选布局倍率；圆点、标签和镜头尺寸不变
     gravity: 0.0055,      // 向心引力（可被 getGravity(node) 覆盖）
     theta: 0.9,           // Barnes-Hut 近似阈值（越小越精确、越慢）
     zoomMin: 0.35,
     zoomMax: 4,
     fitScaleMin: 0.35,
     fitScaleMax: 4,
+    fitUnitMin: null,     // 可选 CSS 屏幕比例限制；未指定时保留原取景
+    fitUnitMax: null,
+    fitCenter: 'bounds',  // 'median' 避免少量远处节点把主体推离屏幕
     fitPad: 24,           // 计算 fit 时每个节点的额外留白
     fitMargin: 48,        // fit 整体外边距
     inertiaClamp: 42,     // 松手惯性速度上限
@@ -386,6 +390,11 @@
     let canvas = opts.canvas;
     if (!canvas || !canvas.getContext) return null;
     const cfg = Object.assign({}, DEFAULTS, opts.config || {});
+    let layoutSpacing = Number.isFinite(cfg.layoutSpacing) && cfg.layoutSpacing > 0
+      ? clamp(cfg.layoutSpacing, 0.8, 2) : 1;
+    let layoutRepulsion = cfg.repulsion * Math.pow(layoutSpacing, 3);
+    const screenFit = Number.isFinite(cfg.fitUnitMin) && cfg.fitUnitMin > 0
+      || Number.isFinite(cfg.fitUnitMax) && cfg.fitUnitMax > 0;
     const VIEW_W = cfg.viewW;
     const VIEW_H = cfg.viewH;
     const CENTER_X = VIEW_W / 2;
@@ -476,6 +485,8 @@
     let draggedNode = null;
     let panOrigin = null;
     let pressInfo = null;
+    const hoverPoint = { clientX: 0, clientY: 0 };
+    let hoverPending = false, hoverOnlyFrame = true;
     let frameId = 0;
     let renderFrameId = 0;     // 收敛后的单次重绘，与连续物理/动画帧互斥
     let lastTickTime = 0;
@@ -519,6 +530,7 @@
     let active = !(opts.active === false);
     let visible = !observeTarget;   // 若交了 stage 给 IO 观察，则初始不可见、待 IO 唤醒
     let pending = null;            // 待触发的进场参数（延到 active && visible 才执行）
+    let deferredFit = null;        // 仅等待有效尺寸，由 ResizeObserver 接力，不轮询
     let io = null;
     let ro = null;
     const zoomTween = { active: false, target: 1, sx: 0, sy: 0, ax: 0, ay: 0 };
@@ -542,8 +554,10 @@
     function cancelRenderFrame() {
       if (renderFrameId) global.cancelAnimationFrame(renderFrameId);
       renderFrameId = 0;
+      hoverOnlyFrame = true;
     }
     function stopLoop() {
+      hoverPending = false;
       cancelPresolve(true);
       if (frameId) global.cancelAnimationFrame(frameId);
       frameId = 0;
@@ -553,7 +567,9 @@
 
     // —— 数据装载：node 需带 x,y,r（适配层先 seed 好坐标）；引擎补上运行期字段 ——
     function setData(nextNodes, nextEdges, dataOptions) {
+      hoverPending = false;
       cancelPresolve(false);
+      deferredFit = null;
       pending = null; introActive = false; autoFitPending = false; layoutSettlePending = false;
       zoomTween.active = false; fitTween.active = false;
       // 数据集切换不能让旧指针手势继续拖动旧节点、或以旧数组下标点击新节点。
@@ -599,7 +615,7 @@
       const quad = buildQuad(nodes);
       for (let i = 0; i < nodes.length; i++) { nodes[i]._fx = 0; nodes[i]._fy = 0; }
       for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i] !== draggedNode) applyRepulsion(nodes[i], quad, theta2, cfg.repulsion, a);
+        if (nodes[i] !== draggedNode) applyRepulsion(nodes[i], quad, theta2, layoutRepulsion, a);
       }
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
@@ -614,7 +630,7 @@
         const dx = second.x - first.x;
         const dy = second.y - first.y;
         const distance = Math.sqrt(dx * dx + dy * dy) || 0.001;
-        const force = cfg.spring * (distance - getEdgeRest(e)) * a;
+        const force = cfg.spring * (distance - getEdgeRest(e) * layoutSpacing) * a;
         const fx = force * dx / distance;
         const fy = force * dy / distance;
         if (first !== draggedNode) { first.vx += fx; first.vy += fy; }
@@ -662,24 +678,43 @@
 
     function computeFit() {
       if (!nodes.length) return { x: 0, y: 0, scale: 1 };
+      if (screenFit && !(canvas.clientWidth > 0 && canvas.clientHeight > 0)) return null;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const xs = cfg.fitCenter === 'median' ? [] : null, ys = xs ? [] : null;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
+        if (xs) { xs.push(n.x); ys.push(n.y); }
         const pad = (n.r || 6) + cfg.fitPad;
         minX = Math.min(minX, n.x - pad);
         minY = Math.min(minY, n.y - pad);
         maxX = Math.max(maxX, n.x + pad);
         maxY = Math.max(maxY, n.y + pad);
       }
+      if (minX === Infinity) return { x: 0, y: 0, scale: 1 };
       const width = (maxX - minX) + cfg.fitMargin * 2;
       const height = (maxY - minY) + cfg.fitMargin * 2;
-      const scale = clamp(Math.min(VIEW_W / width, VIEW_H / height), cfg.fitScaleMin, cfg.fitScaleMax);
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
+      let scale = clamp(Math.min(VIEW_W / width, VIEW_H / height), cfg.fitScaleMin, cfg.fitScaleMax);
+      if (screenFit) {
+        const base = Math.min(canvas.clientWidth / VIEW_W, canvas.clientHeight / VIEW_H);
+        const minUnit = Number.isFinite(cfg.fitUnitMin) && cfg.fitUnitMin > 0 ? cfg.fitUnitMin : 0;
+        const maxUnit = Number.isFinite(cfg.fitUnitMax) && cfg.fitUnitMax > 0 ? Math.max(minUnit, cfg.fitUnitMax) : Infinity;
+        const unit = clamp(Math.min(canvas.clientWidth / width, canvas.clientHeight / height), minUnit, maxUnit);
+        scale = clamp(unit / base, Math.max(cfg.zoomMin, cfg.fitScaleMin), Math.min(cfg.zoomMax, cfg.fitScaleMax));
+      }
+      function median(values) {
+        values.sort(function (a, b) { return a - b; });
+        const middle = Math.floor(values.length / 2);
+        return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+      }
+      const cx = xs ? median(xs) : (minX + maxX) / 2;
+      const cy = ys ? median(ys) : (minY + maxY) / 2;
       return { x: cx - (VIEW_W / scale) / 2, y: cy - (VIEW_H / scale) / 2, scale: scale };
     }
     function fitView(animated) {
       const target = computeFit();
+      if (!target) { deferredFit = !!animated; return false; }
+      deferredFit = null;
       zoomTween.active = false;
       cancelPanGlide();
       if (animated && !reduceMotion) {
@@ -691,9 +726,12 @@
         viewX = target.x; viewY = target.y; viewScale = target.scale;
         requestFrame();
       }
+      return true;
     }
     function fitViewSilently() {
       const target = computeFit();
+      if (!target) { deferredFit = false; return; }
+      deferredFit = null;
       zoomTween.active = false;
       cancelPanGlide();
       fitTween.active = false;
@@ -767,6 +805,7 @@
     // —— 渲染一帧 —— 引擎算相机 + 闲时漂移坐标，绘制委托给当前后端
     function render() {
       if (destroyed) return;
+      hoverOnlyFrame = true;
       const size = backend.syncSize();
       const m = metrics();
       const t = (driftGain > 0.001 && !reduceMotion) ? now() : 0;
@@ -791,6 +830,7 @@
         renderedPositionVersion = positionVersion;
         renderedDrift = drifting;
       }
+      flushHover();
       // —— 连线流光：沿每条边从 source→target 推进的小光点（适配层把 source 建成更靠中心的一端 → 向外发散）——
       // 用 _rx/_ry（已含漂移）定位，所以光点跟着边一起呼吸；端点 sin(πf) 淡入淡出、不在节点处突现。
       let partCount = 0;
@@ -895,7 +935,9 @@
       invalidateStyles();
       requestFrame();
     }
-    function requestFrame() {
+    function requestFrame(onlyHover) {
+      if (onlyHover !== true) hoverOnlyFrame = false;
+      if (screenFit && !(canvas.clientWidth > 0 && canvas.clientHeight > 0)) return;
       if (presolveJob) return;
       lastRenderT = 0;          // 打断闲时节流：让下一拍立即重画（悬停高亮 / 平移即时跟手）
       if (tryBeginPending()) return;
@@ -903,7 +945,13 @@
       if (!frameId && !renderFrameId) {
         renderFrameId = global.requestAnimationFrame(function () {
           renderFrameId = 0;
-          if (active && visible && !destroyed && !presolveJob && !frameId) render();
+          const onlyHover = hoverOnlyFrame;
+          hoverOnlyFrame = true;
+          if (active && visible && !destroyed && !presolveJob && !frameId) {
+            // Tooltip-only moves and empty-space hits do not redraw the scene.
+            // Real camera/appearance work still renders, consuming the latest hit.
+            if (!onlyHover || flushHover()) render();
+          }
         });
       }
     }
@@ -998,6 +1046,7 @@
     }
     function ensureLoop() {
       if (presolveJob) return;
+      if (pending && !canBegin()) return;
       if (tryBeginPending()) return;
       if (!frameId && !destroyed && active && visible) {
         cancelRenderFrame();   // 动画帧会绘制最新状态，不再另排一次同帧重绘
@@ -1012,8 +1061,34 @@
     }
     function kick() { heat(cfg.alphaReheat); }
 
+    // Only scalar force parameters change between display frames; keep the visible
+    // positions and backend/label caches. A new value supersedes old entry/fitting.
+    function setLayoutSpacing(value) {
+      if (destroyed || !Number.isFinite(value) || value <= 0) return false;
+      const next = clamp(value, 0.8, 2);
+      if (next === layoutSpacing) return false;
+      const cancelAppearance = introActive || pending && pending.intro || presolveJob && presolveJob.begin.intro;
+      cancelPresolve(false);
+      pending = null; deferredFit = null; introActive = false; autoFitPending = false;
+      userAdjustedView = true;
+      zoomTween.active = fitTween.active = false; cancelPanGlide();
+      layoutSpacing = next; layoutRepulsion = cfg.repulsion * Math.pow(next, 3);
+      let appeared = false;
+      for (let i = 0; cancelAppearance && i < nodes.length; i++) {
+        const n = nodes[i];
+        if (!n._appeared || n._appearOpacity !== 1 || n._appearScale !== 1) {
+          n._appeared = true; n._appearOpacity = n._appearScale = 1; appeared = true;
+        }
+      }
+      if (appeared) invalidateStyles();
+      alpha = Math.min(alpha, cfg.alphaReheat);
+      if (nodes.length) kick();
+      return true;
+    }
+
     // —— 进场：延到 active && visible 才真正开跑（隐藏时不白烧动画 / RAF）——
-    function canBegin() { return active && visible && !destroyed && nodes.length > 0; }
+    function canBegin() { return active && visible && !destroyed && nodes.length > 0
+      && (!screenFit || canvas.clientWidth > 0 && canvas.clientHeight > 0); }
     function doBegin() {
       if (!pending) return;
       cancelRenderFrame();
@@ -1051,6 +1126,7 @@
         return;
       } else {
         autoFitPending = fitWanted && cfg.finalFitOnConverge !== false;
+        if (screenFit && fitWanted && !userAdjustedView) fitViewSilently();
       }
       finishBegin(introWanted, begin);
     }
@@ -1073,7 +1149,9 @@
     // New playback options are opt-in; existing hosts retain their camera and timing defaults.
     function start(o) {
       if (destroyed) return;
+      hoverPending = false;
       cancelPresolve(false);
+      deferredFit = null;
       o = o || {};
       const introWanted = o.intro !== false && !reduceMotion && nodes.length > 0;
       const preserveView = o.preserveView === true;
@@ -1110,6 +1188,7 @@
       cancelPanGlide();
       userAdjustedView = true;
       autoFitPending = false;
+      deferredFit = null;
       if (pending) pending.fit = false;
       viewX = view.x; viewY = view.y;
       viewScale = clamp(view.scale, cfg.zoomMin, cfg.zoomMax);
@@ -1158,25 +1237,35 @@
         e._dim = !involved;
       }
     }
-    function hover(event) {
-      if (draggedNode || panOrigin) return;
+    function flushHover() {
+      if (!hoverPending) return false;
+      hoverPending = false;
+      return hover(hoverPoint, true);
+    }
+    function hover(event, inFrame) {
+      if (draggedNode || panOrigin) return false;
       const index = nodeAtClient(event.clientX, event.clientY);
       if (index < 0) {
-        if (lastFocusIndex !== -1) { clearHighlight(); lastFocusIndex = -1; onNodeHover(null, event); requestRender(); }
-        return;
+        if (lastFocusIndex === -1) return false;
+        clearHighlight(); lastFocusIndex = -1; onNodeHover(null, event);
+        invalidateStyles(); if (!inFrame) requestFrame();
+        return true;
       }
       if (index !== lastFocusIndex) {
         highlightNeighborhood(index);
         lastFocusIndex = index;
         onNodeHover(nodes[index], event);
-        requestRender();
+        invalidateStyles(); if (!inFrame) requestFrame();
+        return true;
       } else {
         onNodeHover(nodes[index], event);  // 仍停同一节点，仅刷新 tooltip 位置
+        return false;
       }
     }
 
     function handlePointerDown(event) {
       if (event.button !== 0) return;
+      hoverPending = false;
       canvas.setPointerCapture(event.pointerId);
       cancelPanGlide();                                  // 抓起即停惯性滑行（抓手感，像 Figma/画布）
       if (_hasLabels && !reduceMotion && !alwaysShowLabels) labelAlpha = 0;
@@ -1231,7 +1320,13 @@
         }
         requestFrame();
       } else {
-        hover(event);
+        if (opts.coalesceHover) {
+          if (!active || !visible || destroyed) return;
+          // One reusable coordinate record, consumed by the existing display frame.
+          // Pointerdown still hits immediately; drag/inertia samples stay per event.
+          hoverPoint.clientX = event.clientX; hoverPoint.clientY = event.clientY;
+          hoverPending = true; requestFrame(true);
+        } else hover(event);
       }
     }
     function endPointer(event) {
@@ -1263,11 +1358,13 @@
       if (_hasLabels && !alwaysShowLabels) ensureLoop();
     }
     function handlePointerCancel(event) {
+      hoverPending = false;
       draggedNode = null; panOrigin = null; pressInfo = null;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       if (_hasLabels && !alwaysShowLabels) ensureLoop();
     }
     function handlePointerLeave(event) {
+      hoverPending = false;
       if (!draggedNode) {
         if (lastFocusIndex !== -1) { clearHighlight(); lastFocusIndex = -1; requestRender(); }
         onNodeHover(null, event);
@@ -1362,7 +1459,9 @@
       try {
         ro = new global.ResizeObserver(function () {
           refreshObservedVisibility();
-          requestFrame();
+          if (tryBeginPending()) return;
+          if (active && visible && deferredFit !== null) fitView(deferredFit);
+          else requestFrame();
         });
         ro.observe(canvas);
       } catch (e) {}
@@ -1392,7 +1491,7 @@
       overlayCanvas = null; octx = null;
       if (domOverlay && domOverlay.destroy) { try { domOverlay.destroy(); } catch (e) {} }
       nodes = []; edges = []; neighbors = []; _partPool = [];
-      pending = null; introActive = autoFitPending = layoutSettlePending = false;
+      pending = null; deferredFit = null; introActive = autoFitPending = layoutSettlePending = false;
       canvas.width = canvas.height = 1;
     }
 
@@ -1404,6 +1503,7 @@
       fitView: fitView,
       resetView: function () { resetView(); requestFrame(); },
       restoreView: restoreView,
+      setLayoutSpacing: setLayoutSpacing,
       requestRender: requestRender,
       setActive: setActive,
       setVisible: setVisible,
@@ -1454,6 +1554,7 @@
       nodeAtClient: nodeAtClient,
       hasNodes: function () { return nodes.length > 0; },
       get view() { return { x: viewX, y: viewY, scale: viewScale }; },
+      get layoutSpacing() { return layoutSpacing; },
       get layoutPending() { return !destroyed && (!!pending || !!presolveJob || !!draggedNode || alpha > cfg.alphaMin); },
       get canvas() { return canvas; },
       get backendKind() { return backend && backend.kind; },

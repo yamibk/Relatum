@@ -4,10 +4,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const assets = path.resolve(__dirname, '../assets');
+const hotpathsOnly = process.argv.includes('--hotpaths-only');
+const graphAssets = process.env.RELATUM_GRAPH_BASELINE_DIR || assets;
 
 function installProbe() {
   const probe = window.graphLabelProbe = { draws: 0, measures: 0, created: 0, raf: 0,
     uploads: 0, uploadBytes: 0, contexts: 0, buffers: 0, programs: 0, recycledMax: 0, engines: [] };
+  probe.spacing = 125;
+  window.RelatumNotePreferences = { readGraphSpacing: () => probe.spacing,
+    applyGraphSpacing(value) { probe.spacing = value; window.dispatchEvent(new CustomEvent('relatum:note-graph-spacing', { detail: value })); } };
   const measure = CanvasRenderingContext2D.prototype.measureText;
   CanvasRenderingContext2D.prototype.measureText = function (...args) { probe.measures++; return measure.apply(this, args); };
   const raf = window.requestAnimationFrame;
@@ -40,8 +45,30 @@ function installProbe() {
   const create = GraphEngine.create;
   GraphEngine.create = options => {
     const record = { engine: null, nodes: [], edges: [], growth: null }, sync = options.domOverlay.sync;
+    if (probe.audit) {
+      record.styles = { nodeCalls: 0, edgeCalls: 0, descriptors: 0, colorArrays: 0 };
+      const descriptors = new WeakSet(), colors = new WeakSet();
+      for (const [key, counter] of [['nodeStyle', 'nodeCalls'], ['edgeStyle', 'edgeCalls']]) {
+        const original = options[key];
+        options[key] = (...args) => {
+          record.styles[counter]++;
+          const style = original(...args);
+          if (!descriptors.has(style)) { descriptors.add(style); record.styles.descriptors++; }
+          for (const color of [style.fill, style.stroke, style.color]) if (color && !colors.has(color)) {
+            colors.add(color); record.styles.colorArrays++;
+          }
+          return style;
+        };
+      }
+    }
     options.domOverlay.sync = state => {
       sync(state);
+      if (record.spacing) {
+        const sample = record.spacing, time = performance.now();
+        if (sample.previous) sample.intervals.push(time - sample.previous);
+        sample.previous = time; sample.frames++;
+        if (JSON.stringify(record.engine.view) !== sample.camera) sample.cameraChanges++;
+      }
       const growth = record.growth;
       if (!growth) return;
       const time = performance.now(), first = state.nodes[0], last = state.nodes.at(-1);
@@ -89,13 +116,16 @@ function installProbe() {
   window.runLabelPan = async frames => {
     const canvas = probe.latest.engine.canvas, { x, y } = window.graphPanPoint;
     const stats = { parentStyleWrites: 0, anchorStyleWrites: 0, labelMounts: 0 };
+    const mounted = new Set(), styled = [];
     const world = document.querySelector('.note-graph-label-world');
     const observer = new MutationObserver(records => {
       for (const record of records) {
         if (record.type === 'attributes') {
           if (record.target === world) stats.parentStyleWrites++;
-          else if (record.target.matches('.note-graph-label-anchor')) stats.anchorStyleWrites++;
-        } else stats.labelMounts += Array.from(record.addedNodes).filter(node => node.nodeType === 1 && node.matches('.note-graph-label-anchor')).length;
+          else if (record.target.matches('.note-graph-label-anchor')) { stats.anchorStyleWrites++; styled.push(record.target); }
+        } else for (const node of record.addedNodes) {
+          if (node.nodeType === 1 && node.matches('.note-graph-label-anchor')) { stats.labelMounts++; mounted.add(node); }
+        }
       }
     });
     observer.observe(world, { subtree: true, attributes: true, attributeFilter: ['style'], childList: true });
@@ -113,7 +143,8 @@ function installProbe() {
     }
     await new Promise(resolve => requestAnimationFrame(resolve));
     observer.disconnect(); long.disconnect(); intervals.sort((a, b) => a - b);
-    return { ...stats, labelCreates: probe.created - before.created, measures: probe.measures - before.measures, draws: probe.draws - before.draws,
+    return { ...stats, retainedAnchorStyleWrites: styled.filter(node => !mounted.has(node)).length,
+      labelCreates: probe.created - before.created, measures: probe.measures - before.measures, draws: probe.draws - before.draws,
       uploads: probe.uploads - before.uploads, uploadBytes: probe.uploadBytes - before.bytes,
       frameIntervalP50Ms: intervals[Math.floor(intervals.length * .5)], frameIntervalP95Ms: intervals[Math.floor(intervals.length * .95)],
       longTasks: tasks.length, longestTaskMs: Math.max(0, ...tasks) };
@@ -148,10 +179,36 @@ function installProbe() {
     result.idleDraws = probe.draws - idle.draws; result.idleRaf = probe.raf - idle.raf;
     return result;
   };
+  window.runGraphSpacing = async () => {
+    const record = probe.latest, engine = record.engine;
+    const before = { measures: probe.measures, engines: probe.engines.length, uploads: probe.uploads, bytes: probe.uploadBytes };
+    const sample = record.spacing = { camera: JSON.stringify(engine.view), cameraChanges: 0, frames: 0, intervals: [], previous: 0 };
+    const tasks = [], observer = new PerformanceObserver(list => tasks.push(...list.getEntries().map(item => item.duration)));
+    observer.observe({ type: 'longtask', buffered: false });
+    const stages = [], began = performance.now();
+    for (const percent of [80, 100, 125, 200]) {
+      RelatumNotePreferences.applyGraphSpacing(percent);
+      let complete = false;
+      for (let i = 0; i < 300; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!engine.layoutPending) { complete = true; break; }
+      }
+      if (!complete) throw new Error('Spacing did not converge at ' + percent);
+      stages.push({ percent, multiplier: engine.layoutSpacing, finite: record.nodes.every(n => Number.isFinite(n.x) && Number.isFinite(n.y)) });
+    }
+    record.spacing = null; observer.disconnect(); sample.intervals.sort((a, b) => a - b);
+    const result = { stages, frames: sample.frames, cameraChanges: sample.cameraChanges, totalMs: performance.now() - began,
+      frameIntervalP50Ms: sample.intervals[Math.floor(sample.intervals.length * .5)], frameIntervalP95Ms: sample.intervals[Math.floor(sample.intervals.length * .95)],
+      longTasks: tasks.length, longestTaskMs: Math.max(0, ...tasks), measures: probe.measures - before.measures,
+      uploads: probe.uploads - before.uploads, uploadBytes: probe.uploadBytes - before.bytes, enginesCreated: probe.engines.length - before.engines };
+    const idle = { draws: probe.draws, raf: probe.raf }; await new Promise(resolve => setTimeout(resolve, 350));
+    result.idleDraws = probe.draws - idle.draws; result.idleRaf = probe.raf - idle.raf;
+    return result;
+  };
 }
 
 // Private cache observations exist only in the test-injected source.
-const production = fs.readFileSync(path.join(assets, 'note-graph.js'), 'utf8');
+const production = fs.readFileSync(path.join(graphAssets, 'note-graph.js'), 'utf8');
 const source = production
   .replace('return value;', 'graphLabelProbe.widths = measurements; return value;')
   .replace('const RECYCLE_LIMIT = 256;', 'const RECYCLE_LIMIT = 256; graphLabelProbe.recycledEntries = recycled;')
@@ -175,13 +232,93 @@ async function preparePage(browser, dpr, size) {
   await page.addStyleTag({ content: size === 'tab'
     ? '#workspace { position:fixed;inset:92px 0 0; }'
     : '#workspace { position:fixed;left:380px;top:189px;width:1160px;height:702px;display:block; } .note-tree-pane,.note-tab-bar {display:none} .note-document-pane {height:100%}' });
-  for (const filename of ['graph-gl.js', 'graph-engine.js']) await page.addScriptTag({ path: path.join(assets, filename) });
-  await page.evaluate(installProbe); await page.addScriptTag({ content: source });
+  await page.addScriptTag({ path: path.join(assets, 'graph-gl.js') });
+  if (hotpathsOnly) {
+    const engine = fs.readFileSync(path.join(graphAssets, 'graph-engine.js'), 'utf8');
+    const instrumented = engine.replace('function nodeAtClient(clientX, clientY) {',
+      'function nodeAtClient(clientX, clientY) { window.graphHitChecks = (window.graphHitChecks || 0) + 1;');
+    assert.notEqual(instrumented, engine, 'hit probe attaches to production hit testing');
+    await page.addScriptTag({ content: instrumented });
+  } else await page.addScriptTag({ path: path.join(graphAssets, 'graph-engine.js') });
+  await page.evaluate(installProbe);
+  if (hotpathsOnly) await page.evaluate(() => { graphLabelProbe.audit = true; });
+  await page.addScriptTag({ content: source });
   return { context, page, errors };
 }
 async function released(page) {
   await page.waitForFunction(() => graphLabelProbe.contexts === 0 && graphLabelProbe.buffers === 0 && graphLabelProbe.programs === 0);
   assert.equal(await page.locator('[data-note-graph-label]').count(), 0);
+}
+async function hotpathMeasure(browser, count, dpr) {
+  const { context, page, errors } = await preparePage(browser, dpr, 'tab');
+  const cdp = await context.newCDPSession(page); await cdp.send('Performance.enable');
+  const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(item => [item.name, item.value]));
+  try {
+    await page.evaluate(count => openSyntheticNotebook(count), count);
+    await page.waitForFunction(() => !graphLabelProbe.latest.engine.layoutPending);
+    await page.waitForTimeout(400);
+    const hoverStart = await metrics();
+    const hover = await page.evaluate(async () => {
+      const { engine, nodes } = graphLabelProbe.latest, canvas = engine.canvas, rect = canvas.getBoundingClientRect(), view = engine.view;
+      const base = Math.min(rect.width / 1200, rect.height / 720), unit = base * view.scale;
+      const project = node => ({ x: rect.left + (rect.width - 1200 * base) / 2 + (node._rx - view.x) * unit,
+        y: rect.top + (rect.height - 720 * base) / 2 + (node._ry - view.y) * unit });
+      const node = nodes.find(n => { const p = project(n); return p.x > rect.left + 20 && p.x < rect.right - 20
+        && p.y > rect.top + 20 && p.y < rect.bottom - 20 && engine.nodeAtClient(p.x, p.y) === nodes.indexOf(n); });
+      if (!node) throw new Error('Hover sampling needs a visible, unobscured node');
+      const point = project(node), tooltip = document.querySelector('[data-role="graph-tooltip"]');
+      let textWrites = 0, styleWrites = 0;
+      const observer = new MutationObserver(records => { for (const record of records) {
+        if (record.type === 'childList') textWrites++; else if (record.attributeName === 'style') styleWrites++;
+      } });
+      observer.observe(tooltip, { childList: true, attributes: true, attributeFilter: ['style'] });
+      const before = { hits: window.graphHitChecks || 0, uploads: graphLabelProbe.uploads, draws: graphLabelProbe.draws };
+      const intervals = []; let previous = 0;
+      for (let frame = 0; frame < 90; frame++) await new Promise(resolve => requestAnimationFrame(time => {
+        if (previous) intervals.push(time - previous); previous = time;
+        for (let event = 0; event < 16; event++) canvas.dispatchEvent(new PointerEvent('pointermove', {
+          clientX: point.x + (event % 2) * .1, clientY: point.y + (frame % 2) * .1, pointerId: 1, pointerType: 'mouse' }));
+        resolve();
+      }));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      observer.disconnect(); intervals.sort((a, b) => a - b);
+      const result = { events: 1440, hits: (window.graphHitChecks || 0) - before.hits, textWrites, styleWrites,
+        draws: graphLabelProbe.draws - before.draws, uploads: graphLabelProbe.uploads - before.uploads,
+        correctTitle: tooltip.textContent === node.path && !tooltip.hidden && node._focus,
+        frameIntervalP95Ms: intervals[Math.floor(intervals.length * .95)] };
+      canvas.dispatchEvent(new PointerEvent('pointerleave')); await new Promise(resolve => requestAnimationFrame(resolve));
+      return result;
+    });
+    const hoverEnd = await metrics();
+    assert(hover.correctTitle); assert.equal(hover.uploads, 2, 'one neighborhood change uploads once per instance type');
+    if (!process.env.RELATUM_GRAPH_BASELINE_DIR) {
+      assert(hover.hits <= 90, 'pointer bursts use the latest coordinate once per display frame');
+      assert.equal(hover.textWrites, 1, 'a stationary node keeps its path text DOM');
+    }
+    const beforeStyles = await page.evaluate(() => ({ ...graphLabelProbe.latest.styles }));
+    const growthStart = await metrics(), growth = await page.evaluate(() => runGraphGrowth()), growthEnd = await metrics();
+    const styles = await page.evaluate(before => Object.fromEntries(Object.entries(graphLabelProbe.latest.styles)
+      .map(([key, value]) => [key, value - before[key]])), beforeStyles);
+    assert(growth.complete && growth.firstFrameBlank); assert.equal(growth.cameraChanges, 0);
+    assert.equal(growth.measures, 0); assert.equal(growth.enginesCreated, 0);
+    assert.equal(growth.idleDraws, 0); assert.equal(growth.idleRaf, 0);
+    if (!process.env.RELATUM_GRAPH_BASELINE_DIR) { assert(styles.descriptors <= 8); assert(styles.colorArrays <= 12); }
+    // Static camera changes after the animation still reuse all instance data.
+    const cameraUploads = await page.evaluate(async () => {
+      const { engine } = graphLabelProbe.latest, before = graphLabelProbe.uploads, view = engine.view;
+      engine.restoreView({ ...view, x: view.x + 5 }); await new Promise(resolve => requestAnimationFrame(resolve));
+      return graphLabelProbe.uploads - before;
+    });
+    assert.equal(cameraUploads, 0);
+    await page.evaluate(() => syntheticGraph.deactivate()); await released(page);
+    assert.deepEqual(errors, []);
+    return { count, dpr, hover: { ...hover, scriptMs: (hoverEnd.ScriptDuration - hoverStart.ScriptDuration) * 1000,
+      styleMs: (hoverEnd.RecalcStyleDuration - hoverStart.RecalcStyleDuration) * 1000 },
+      growth: { ...growth, styles, scriptMs: (growthEnd.ScriptDuration - growthStart.ScriptDuration) * 1000,
+        styleMs: (growthEnd.RecalcStyleDuration - growthStart.RecalcStyleDuration) * 1000 }, cameraUploads,
+      released: await page.evaluate(() => ({ contexts: graphLabelProbe.contexts, buffers: graphLabelProbe.buffers, programs: graphLabelProbe.programs })) };
+  } finally { await context.close(); }
 }
 async function measure(browser, count, dpr, size) {
   const { context, page, errors } = await preparePage(browser, dpr, size);
@@ -201,7 +338,8 @@ async function measure(browser, count, dpr, size) {
     await page.waitForTimeout(80); const setup = await metrics(), labelInfo = await page.evaluate(() => notebookLabelInfo());
     assert.equal(labelInfo.labels, labelInfo.intersecting, 'intersecting anchors are retained across fade');
     assert(Math.abs(labelInfo.labelAlpha - labelInfo.expectedAlpha) < .002, 'fit view uses scale-aware title opacity');
-    assert(labelInfo.labels >= count * .95); assert.equal(labelInfo.measures, count); assert.equal(labelInfo.font, '12px');
+    assert(labelInfo.unit >= .8 - .001 && labelInfo.unit <= 1.2 + .001, 'readable fit can clip peripheral nodes');
+    assert(labelInfo.labels > 0); assert.equal(labelInfo.measures, count); assert.equal(labelInfo.font, '12px');
     assert.equal(labelInfo.pixelWidth, Math.round(labelInfo.cssWidth * dpr)); assert.equal(labelInfo.pixelHeight, Math.round(labelInfo.cssHeight * dpr));
     const rect = await page.locator('[data-role="graph-canvas"]').boundingBox();
     const point = await page.evaluate(rect => {
@@ -215,16 +353,18 @@ async function measure(browser, count, dpr, size) {
     await page.mouse.move(point.x, point.y); await page.mouse.down();
     const panStart = await metrics(), pan = await page.evaluate(() => runLabelPan(90)), panEnd = await metrics();
     await page.mouse.up(); await page.waitForTimeout(80);
-    // A title appearing for the first time at a clipped edge needs its three initial styles.
-    assert(pan.anchorStyleWrites <= pan.labelCreates * 3, JSON.stringify(pan)); assert(pan.parentStyleWrites > 0);
+    // Edge entries may initialize new anchors or catch up recycled ones; retained anchors stay untouched.
+    assert.equal(pan.retainedAnchorStyleWrites, 0); assert(pan.anchorStyleWrites <= pan.labelMounts * 3, JSON.stringify(pan));
+    assert(pan.parentStyleWrites > 0);
     assert.equal(pan.measures, 0); assert.equal(pan.uploads, 0); assert.equal(pan.uploadBytes, 0);
     const idleStart = await page.evaluate(() => ({ draws: graphLabelProbe.draws, raf: graphLabelProbe.raf }));
     await page.waitForTimeout(350); const idleEnd = await page.evaluate(() => ({ draws: graphLabelProbe.draws, raf: graphLabelProbe.raf }));
     assert.deepEqual(idleEnd, idleStart, 'stable adapter has zero RAF/draws');
     const view = await page.evaluate(() => graphLabelProbe.latest.engine.view);
+    const retained = await page.evaluate(() => document.querySelectorAll('[data-note-graph-label]').length + graphLabelProbe.recycledEntries.size);
     await page.evaluate(() => graphLabelProbe.latest.engine.restoreView({ x: 1000000, y: 1000000, scale: .3 }));
     await page.waitForTimeout(80); assert.equal(await page.locator('[data-note-graph-label]').count(), 0);
-    assert.equal(await page.evaluate(() => graphLabelProbe.recycledEntries.size), Math.min(count, 256));
+    assert.equal(await page.evaluate(() => graphLabelProbe.recycledEntries.size), Math.min(retained, 256));
     assert((await page.evaluate(() => graphLabelProbe.recycledMax)) <= 256);
     await page.evaluate(view => graphLabelProbe.latest.engine.restoreView(view), view); await page.waitForTimeout(80);
     assert.equal(await page.evaluate(() => graphLabelProbe.measures), labelInfo.measures);
@@ -295,6 +435,19 @@ async function measure(browser, count, dpr, size) {
     assert.deepEqual(catchUp, { caughtUp: true, visible: true }, 'first visible frame catches up deferred title positions and opacity');
     assert.equal(await page.evaluate(() => graphLabelProbe.uploads), cameraUploads);
     sample.growth.titleCatchUp = true;
+    const spacingStart = await metrics(); sample.spacing = await page.evaluate(() => runGraphSpacing());
+    const spacingEnd = await metrics();
+    sample.spacing.scriptCpuMs = (spacingEnd.ScriptDuration - spacingStart.ScriptDuration) * 1000;
+    sample.spacing.styleCpuMs = (spacingEnd.RecalcStyleDuration - spacingStart.RecalcStyleDuration) * 1000;
+    sample.spacing.layoutCpuMs = (spacingEnd.LayoutDuration - spacingStart.LayoutDuration) * 1000;
+    assert.equal(sample.spacing.cameraChanges, 0); assert.equal(sample.spacing.measures, 0); assert.equal(sample.spacing.enginesCreated, 0);
+    assert.equal(sample.spacing.idleRaf, 0); assert.equal(sample.spacing.idleDraws, 0);
+    assert(sample.spacing.stages.every(stage => stage.multiplier === stage.percent / 100 && stage.finite));
+    const spacingUploads = await page.evaluate(() => {
+      const before = graphLabelProbe.uploads, engine = graphLabelProbe.latest.engine;
+      engine.restoreView({ ...engine.view, x: engine.view.x + 2 }); return before;
+    });
+    await page.waitForTimeout(80); assert.equal(await page.evaluate(() => graphLabelProbe.uploads), spacingUploads, 'settled spacing still caches camera-only instances');
     await page.evaluate(() => syntheticGraph.deactivate()); await released(page);
     assert.equal(await page.evaluate(() => graphLabelProbe.scenes.size), 1, 'hiding keeps only a logical scene');
     await page.evaluate(() => syntheticGraph.destroy()); assert.equal(await page.evaluate(() => graphLabelProbe.scenes.size), 0);
@@ -369,8 +522,16 @@ async function cacheRegression(browser) {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.RELATUM_EDGE_PATH });
   const report = { measuredAt: new Date().toISOString(), scope: 'same current adapter and WebGL caches; former window stage area vs production tab layout, synthetic Chinese titles', samples: [] };
   try {
-    report.regression = await cacheRegression(browser); console.log(JSON.stringify({ regression: report.regression }));
-    if (!process.argv.includes('--regression-only')) {
+    if (hotpathsOnly) {
+      report.scope = 'production hot paths; 16 hover events per frame, 90 frames; finite growth, synthetic Chinese notes';
+      report.baseline = !!process.env.RELATUM_GRAPH_BASELINE_DIR;
+      for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) {
+        const sample = await hotpathMeasure(browser, count, dpr); report.samples.push(sample); console.log(JSON.stringify(sample));
+      }
+    } else {
+      report.regression = await cacheRegression(browser); console.log(JSON.stringify({ regression: report.regression }));
+    }
+    if (!hotpathsOnly && !process.argv.includes('--regression-only')) {
       for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) for (const size of process.argv.includes('--tab-only') ? ['tab'] : ['window-area', 'tab']) {
         const sample = await measure(browser, count, dpr, size); report.samples.push(sample); console.log(JSON.stringify(sample));
       }

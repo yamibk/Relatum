@@ -473,7 +473,7 @@
       restored: ['已恢复', 'Restored'],
       conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
       resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
-      resetCopy: ['重置正文字号、图片文字和编辑器快捷键。', 'Reset text size, image text scale and editor shortcuts.'],
+      resetCopy: ['重置正文字号、图片文字、图谱节点间距和编辑器快捷键。', 'Reset text size, image text scale, graph node spacing and editor shortcuts.'],
       reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
@@ -762,6 +762,10 @@
 
   function syncNoteSettingsFontScale() {
     const preference = window.RelatumNotePreferences;
+    const spacing = preference?.readGraphSpacing?.() ?? 125;
+    const spacingInput = $('[data-role="note-graph-spacing"]'), spacingOutput = $('[data-role="note-graph-spacing-value"]');
+    if (spacingInput) spacingInput.value = String(spacing);
+    if (spacingOutput) spacingOutput.textContent = spacing + '%';
     const input = $('[data-role="note-font-scale"]');
     const output = $('[data-role="note-font-scale-value"]');
     const scale = preference && typeof preference.readFontScale === 'function' ? preference.readFontScale() : 100;
@@ -821,6 +825,7 @@
 
   function resetNoteSettings() {
     const preference = window.RelatumNotePreferences;
+    preference?.resetGraphSpacing?.();
     if (preference) preference.resetImageTextScale();
     if (preference && typeof preference.resetFontScale === 'function') preference.resetFontScale();
     else {

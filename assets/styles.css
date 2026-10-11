@@ -33785,8 +33785,7 @@ html.dark-semantic-ui {
 .note-graph-panel .graph-canvas { color: var(--text); }
 .note-graph-panel .graph-tool-btn:disabled { opacity: .35; cursor: default; }
 .note-graph-panel .graph-tooltip { overflow-wrap: anywhere; }
-.note-graph-active .note-image-text-toggle,
-.note-graph-active [data-note-action="toggle-settings"] { display: none; }
+.note-graph-active .note-image-text-toggle { display: none; }
 .note-graph-load-message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: var(--text-secondary); font-size: 14px; }
 @media (max-width: 760px) {
   .note-graph-tools .note-mobile-pane-button { display: inline-flex; }

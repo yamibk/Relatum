@@ -38,7 +38,7 @@
   // Feature-specific settings do not initialize hidden page runtimes.
   document.addEventListener('DOMContentLoaded', () => {
     const groups = [
-      ['notes', '[data-role="note-font-scale"], [data-role="note-image-text-scale"]'],
+      ['notes', '[data-role="note-font-scale"], [data-role="note-image-text-scale"], [data-role="note-graph-spacing"]'],
       ['career', '[data-role^="career-scroll-"]'],
       ['canvas.quicknotes', '[data-role^="notes-"]'],
       ['canvas.calendar', '[data-role="calendar-countdown-toggle"]'],

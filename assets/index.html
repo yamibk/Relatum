@@ -1811,7 +1811,7 @@
           </button>
           <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
             data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
-            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字与画布节点尺寸和编辑器快捷键。</span></div>
+            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字、图谱节点间距和编辑器快捷键。</span></div>
             <footer>
               <button type="button" data-note-settings-action="reset-cancel">取消</button>
               <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
@@ -1838,6 +1838,15 @@
               data-role="note-image-text-scale" aria-label="图片文本框字号比例">
           </span>
           <small aria-hidden="true"><i>50%</i><i>100%</i><i>300%</i></small>
+        </label>
+        <label class="note-settings-font">
+          <span><strong>图谱节点间距</strong><output data-role="note-graph-spacing-value">125%</output></span>
+          <span class="note-settings-range" style="--default-pos:37.5%;">
+            <input type="range" min="80" max="200" step="5" value="125"
+              data-role="note-graph-spacing" aria-label="图谱节点间距">
+          </span>
+          <small aria-hidden="true"><i>80%</i><i>125% 默认</i><i>200%</i></small>
+          <small class="note-graph-spacing-hint">100% 为原间距，所有笔记本共用</small>
         </label>
       </section>
       <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">

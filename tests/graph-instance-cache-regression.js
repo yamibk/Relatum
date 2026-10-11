@@ -10,7 +10,7 @@ function fixture(options = {}) {
   let clock = 100, id = 0, bufferId = 0, shaderId = 0, programId = 0;
   let boundBuffer = null, currentProgram = null, core = null, replacements = 0, glError = '';
   let nodeStyles = 0, edgeStyles = 0, positionWrites = 0, lostContexts = 0;
-  const frames = new Map(), timers = new Map(), uploads = [], draws = [], overlays = [], clicks = [], settled = [], converged = [];
+  const frames = new Map(), timers = new Map(), uploads = [], draws = [], overlays = [], clicks = [], hovers = [], settled = [], converged = [];
   const uniforms = new Map(), storage = new Map();
   const gl = {
     VERTEX_SHADER: 1, FRAGMENT_SHADER: 2, COMPILE_STATUS: 3, LINK_STATUS: 4,
@@ -49,13 +49,16 @@ function fixture(options = {}) {
     return element;
   }
   const originalCanvas = canvas();
-  const sandbox = { Math, Date, devicePixelRatio: 1, performance: { now: () => clock },
+  const sandbox = { Math, Date, devicePixelRatio: 1, testHitCount: 0, performance: { now: () => clock },
     setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(key) { timers.delete(key); },
     requestAnimationFrame(fn) { frames.set(++id, fn); return id; }, cancelAnimationFrame(key) { frames.delete(key); } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const filename of ['graph-gl.js', 'graph-engine.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '../assets', filename), 'utf8'), sandbox);
+    let source = fs.readFileSync(path.join(__dirname, '../assets', filename), 'utf8');
+    if (filename === 'graph-engine.js') source = source.replace('function nodeAtClient(clientX, clientY) {',
+      'function nodeAtClient(clientX, clientY) { window.testHitCount++;');
+    vm.runInContext(source, sandbox);
   }
   const makeGL = sandbox.GraphGL.create;
   sandbox.GraphGL.create = element => {
@@ -67,8 +70,10 @@ function fixture(options = {}) {
     labelVisibility: options.legacyLabels ? undefined : 'always', domOverlayOnCanvas2D: true,
     config: { alphaDecay: 1, repulsion: 0, spring: 0, gravity: 0, introMs: 80, introStagger: 0, ...options.config },
     ignoreHiddenNodes: !!options.ignoreHidden,
+    coalesceHover: !!options.coalesceHover,
     domOverlay: { sync(state) { overlays.push(state); }, destroy() {} },
     onNodeClick(node) { clicks.push(node.id); },
+    onNodeHover(node, point) { hovers.push({ id: node ? node.id : null, x: point.clientX, y: point.clientY }); },
     onLayoutSettled() { settled.push(engine.view); },
     onConverge() { converged.push(engine.view); },
     onCanvasReplace(next, previous) { replacements++; assert.equal(previous, originalCanvas); },
@@ -107,9 +112,66 @@ function fixture(options = {}) {
       edgeUploads: uploads.filter(x => x.buffer === 4).length };
   }
   engine.requestRender(); frame();
-  return { engine, nodes, edges, frames, timers, uploads, draws, overlays, clicks, settled, converged, uniforms, storage, sandbox,
+  return { engine, nodes, edges, frames, timers, uploads, draws, overlays, clicks, hovers, settled, converged, uniforms, storage, sandbox,
     originalCanvas, frame, drain, event, pan, counts, get core() { return core; },
     get replacements() { return replacements; }, get lostContexts() { return lostContexts; } };
+}
+
+// Optional notebook hover batching shares render frames but never redraws tooltip-only moves.
+for (const shaderFailure of [false, true]) {
+  const f = fixture({ count: 4, coalesceHover: true, shaderFailure });
+  for (let i = 0; i < 100; i++) f.event('pointermove', i < 99 ? 100 : 175, 120);
+  assert.equal(f.sandbox.testHitCount, 0); assert.equal(f.frames.size, 1);
+  f.frame();
+  assert.equal(f.sandbox.testHitCount, 1); assert.deepEqual(f.hovers, [{ id: '3', x: 175, y: 120 }]);
+  assert(f.nodes[3]._focus && f.nodes[2]._near && f.nodes[0]._dim && f.edges[2]._highlighted);
+  const before = f.counts(), paints = f.overlays.length;
+  for (let i = 0; i < 100; i++) f.event('pointermove', 175.1, 120);
+  f.frame();
+  assert.equal(f.sandbox.testHitCount, 2); assert.equal(f.hovers.length, 2);
+  assert.equal(f.hovers.at(-1).x, 175.1, 'tooltip receives the latest point');
+  assert.equal(f.overlays.length, paints, 'tooltip movement leaves both rendering backends idle');
+  assert.deepEqual(f.counts(), before); assert.equal(f.frames.size, 0);
+  for (let i = 0; i < 100; i++) f.event('pointermove', 600, 360);
+  f.frame(); assert(!f.nodes.some(n => n._focus || n._dim));
+  const cleared = f.overlays.length, hits = f.sandbox.testHitCount;
+  for (let i = 0; i < 100; i++) f.event('pointermove', 600, 360);
+  f.frame(); assert.equal(f.sandbox.testHitCount, hits + 1);
+  assert.equal(f.overlays.length, cleared, 'empty-space pointer movement must not redraw');
+  for (const cancel of ['pointerleave', 'pointercancel']) {
+    const previous = f.sandbox.testHitCount;
+    f.event('pointermove', 100, 120); f.event(cancel, 100, 120); f.frame();
+    assert.equal(f.sandbox.testHitCount, previous, cancel + ' discards the queued hit');
+    assert(!f.nodes[0]._focus);
+  }
+  f.event('pointermove', 100, 120);
+  f.event('pointerdown', 125, 120); f.event('pointerup', 125, 120); f.drain();
+  assert.deepEqual(f.clicks, ['1'], 'click hits synchronously even before a queued hover frame');
+  const hovers = f.hovers.length;
+  f.event('pointermove', 100, 120); f.engine.setActive(false); f.frame();
+  f.engine.setActive(true); f.drain(); assert.equal(f.hovers.length, hovers, 'hidden graph discards queued hover');
+  f.event('pointermove', 100, 120);
+  f.engine.setData([{ id: 'new-notebook', x: 100, y: 120, r: 8 }], []);
+  f.engine.requestRender(); f.frame(); assert.equal(f.hovers.length, hovers, 'replacement data cannot inherit an old hit');
+  f.event('pointermove', 100, 120); f.engine.destroy(); f.frame();
+  assert.equal(f.hovers.length, hovers); assert.equal(f.frames.size, 0); assert.equal(f.engine.canvas.listeners.size, 0);
+}
+{
+  const f = fixture({ coalesceHover: true });
+  f.event('pointermove', 70, 120); f.engine.restoreView({ x: 30, y: 0, scale: 1 }); f.frame();
+  assert(f.nodes[0]._focus, 'a combined camera frame queries the new camera');
+  assert.equal(f.frames.size, 0, 'hover processed inside a render does not queue another render');
+  f.event('pointerleave', 70, 120); f.frame();
+  f.nodes[0].x = 240; f.event('pointermove', 210, 120); f.engine.kick(); f.frame();
+  assert.equal(f.nodes[0]._rx, 240); assert(f.nodes[0]._focus, 'a physics frame hits its updated render coordinates');
+  assert.equal(f.sandbox.testHitCount, 2); f.drain(); f.engine.destroy();
+}
+{
+  const f = fixture({ coalesceHover: true, ignoreHidden: true });
+  f.engine.start({ intro: true, preserveView: true, introDelayMs: 100 });
+  f.event('pointermove', 100, 120); f.frame();
+  assert.equal(f.hovers.length, 0, 'blank growth frame keeps hidden nodes out of coalesced hit testing');
+  f.engine.destroy();
 }
 
 // Restarting a layout never moves an explicitly preserved camera, even with an empty viewport.

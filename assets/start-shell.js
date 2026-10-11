@@ -155,6 +155,26 @@
     return Math.max(80, Math.min(140, Math.round(value / 5) * 5 || 100));
   }
   const NOTE_CANVAS_NODE_SCALE_KEY = 'canvas:noteCanvasNodeScale:v1';
+  const NOTE_GRAPH_SPACING_KEY = 'canvas:noteGraphSpacing:v1';
+  function normalizeGraphSpacing(value) {
+    const number = Number(value);
+    return value !== null && String(value).trim() && Number.isFinite(number) && number > 0
+      ? Math.max(80, Math.min(200, Math.round(number / 5) * 5)) : 125;
+  }
+  let noteGraphSpacing = 125;
+  try { noteGraphSpacing = normalizeGraphSpacing(localStorage.getItem(NOTE_GRAPH_SPACING_KEY)); } catch (_) {}
+  function applyGraphSpacing(value, persist) {
+    const next = normalizeGraphSpacing(value), changed = next !== noteGraphSpacing;
+    noteGraphSpacing = next;
+    const input = query('note-graph-spacing'), output = query('note-graph-spacing-value');
+    if (input) input.value = String(next);
+    if (output) output.textContent = next + '%';
+    if (persist) try {
+      if (normalizeGraphSpacing(localStorage.getItem(NOTE_GRAPH_SPACING_KEY)) !== next) localStorage.setItem(NOTE_GRAPH_SPACING_KEY, String(next));
+    } catch (_) {}
+    if (changed) window.dispatchEvent(new CustomEvent('relatum:note-graph-spacing', { detail: next }));
+    return next;
+  }
   function applyCanvasNodeScale(value, persist) {
     const scale = normalizeImageTextScale(value);
     const input = query('note-canvas-node-scale'), output = query('note-canvas-node-scale-value');
@@ -176,6 +196,9 @@
   }
 
   const preferences = {
+    readGraphSpacing() { return noteGraphSpacing; },
+    applyGraphSpacing(value, persist) { return applyGraphSpacing(value, persist !== false); },
+    resetGraphSpacing() { try { localStorage.removeItem(NOTE_GRAPH_SPACING_KEY); } catch (_) {} return applyGraphSpacing(125, false); },
     resetCanvasNodeScale() { try { localStorage.removeItem(NOTE_CANVAS_NODE_SCALE_KEY); } catch (_) {} return applyCanvasNodeScale(100, false); },
     readImageTextScale, readFontScale: readNoteFontScale,
     applyFontScale(value, persist) { return applyNoteFontScale(value, persist !== false); },
@@ -183,6 +206,9 @@
     resetImageTextScale() { localStorage.removeItem(NOTE_IMAGE_TEXT_SCALE_KEY); return applyImageTextScale(100, false); },
   };
   window.RelatumNotePreferences = Object.freeze(preferences);
+  applyGraphSpacing(noteGraphSpacing, false);
+  const graphSpacing = query('note-graph-spacing');
+  if (graphSpacing) graphSpacing.addEventListener('input', () => applyGraphSpacing(graphSpacing.value, true));
   applyNoteFontScale(readNoteFontScale(), false);
   applyImageTextScale(readImageTextScale(), false);
   if (noteFontScaleRange) noteFontScaleRange.addEventListener('input', () => applyNoteFontScale(noteFontScaleRange.value, true));

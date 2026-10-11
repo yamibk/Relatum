@@ -25,8 +25,6 @@ function instrumentation(fallback) {
       for (const name of ['bufferData', 'bufferSubData']) {
         const fn = gl[name]; gl[name] = function (...a) { probe.uploads++; return fn.apply(this, a); };
       }
-      const draw = gl.drawArraysInstanced;
-      gl.drawArraysInstanced = function (...a) { probe.draws++; return draw.apply(this, a); };
       if (fallback === 'shader') gl.getShaderParameter = () => false;
     }
     return gl;
@@ -39,6 +37,7 @@ function instrumentation(fallback) {
       const sync = options.domOverlay.sync;
       options.domOverlay.sync = state => {
         sync(state);
+        probe.draws++; // Count both WebGL and Canvas2D render frames.
         const labelAlpha = Number(document.querySelector('.note-graph-label-world').style.getPropertyValue('--note-graph-label-alpha'));
         if (record.track) record.frames.push({ time: performance.now(), view: record.engine.view,
           opacity: state.nodes.map(node => node._appearOpacity), scale: state.nodes.map(node => node._appearScale),
@@ -139,6 +138,64 @@ async function run(browser, mode) {
     }
     async function select(scope, count, edges) { await page.evaluate(scope => T.selectNotebook(scope), scope); await button.click(); await shown(count, edges); }
     async function camera() { return page.evaluate(() => __graphProbe.latest.engine.view); }
+    async function readableView() {
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending && __graphProbe.latest.nodes.every(n => n._appeared));
+      let stable = false;
+      for (let i = 0; i < 30; i++) {
+        const draws = await page.evaluate(() => __graphProbe.draws); await pause(100);
+        if (draws === await page.evaluate(() => __graphProbe.draws)) { stable = true; break; }
+      }
+      assert(stable, 'wait for the camera fit to finish as well as physics');
+      const view = await page.evaluate(() => {
+        const engine = __graphProbe.latest.engine, rect = engine.canvas.getBoundingClientRect();
+        return { unit: Math.min(rect.width / 1200, rect.height / 720) * engine.view.scale, spacing: engine.layoutSpacing };
+      });
+      assert(view.unit >= .8 - .002 && view.unit <= 1.2 + .002, 'default framing is readable at actual CSS size: ' + JSON.stringify(view));
+    }
+    async function verifySpacingSettings() {
+      await readableView();
+      const before = await camera(), creates = await page.evaluate(() => __graphProbe.engines.length);
+      await page.locator('[data-note-action="graph-notebooks"]').click(); await pause(300);
+      const settings = page.locator('[data-note-action="toggle-settings"]');
+      assert(await settings.isVisible(), 'settings remain available in the graph sidebar');
+      await settings.click();
+      const range = page.locator('[data-role="note-graph-spacing"]');
+      assert.equal(await range.inputValue(), '125');
+      assert.deepEqual(await range.evaluate(el => [el.min, el.max, el.step, el.closest('section').getAttribute('aria-labelledby')]),
+        ['80', '200', '5', 'note-settings-appearance-title']);
+      await page.evaluate(() => {
+        const r = __graphProbe.latest; r.track = true; r.frames = []; window.spacingLabel = document.querySelector('[data-note-graph-label]');
+        const coordinates = r.nodes.map(n => [n.x, n.y]), radii = r.nodes.map(n => n.r);
+        const input = document.querySelector('[data-role="note-graph-spacing"]');
+        for (const value of [80, 100, 125, 200]) { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (JSON.stringify(coordinates) !== JSON.stringify(r.nodes.map(n => [n.x, n.y]))) throw new Error('input must not reseed visible coordinates');
+        if (JSON.stringify(radii) !== JSON.stringify(r.nodes.map(n => n.r))) throw new Error('spacing must not resize dots');
+      });
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending); await pause(100);
+      assert.equal(await page.evaluate(() => __graphProbe.latest.engine.layoutSpacing), 2);
+      assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteGraphSpacing:v1')), '200');
+      assert.equal(await page.evaluate(() => __graphProbe.engines.length), creates);
+      assert(await page.evaluate(() => spacingLabel.isConnected), 'spacing retains existing title DOM');
+      assert.deepEqual(await camera(), before, 'spacing does not compensate for sidebar or layout changes');
+      assert(await page.evaluate(() => __graphProbe.latest.frames.every(frame => JSON.stringify(frame.view) === JSON.stringify(__graphProbe.latest.engine.view))));
+      await page.evaluate(() => {
+        document.querySelector('[data-action="graph-grow"]').click();
+        window.spacingGrowthView = { ...__graphProbe.latest.engine.view };
+        RelatumNotePreferences.applyGraphSpacing(140);
+      });
+      assert(await page.evaluate(() => __graphProbe.latest.nodes.every(n => n._appeared && n._appearOpacity === 1)), 'spacing cancels old blank/growth entry');
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending); await pause(100);
+      assert.deepEqual(await camera(), await page.evaluate(() => spacingGrowthView));
+      await page.locator('[data-note-settings-action="reset-open"]').click();
+      assert((await page.locator('[data-role="note-settings-reset-confirm"]').textContent()).includes('图谱节点间距'));
+      await page.locator('[data-note-settings-action="reset-accept"]').click();
+      await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending); await pause(100);
+      assert.equal(await range.inputValue(), '125'); assert.equal(await page.evaluate(() => __graphProbe.latest.engine.layoutSpacing), 1.25);
+      assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteGraphSpacing:v1')), null);
+      await page.evaluate(() => { __graphProbe.latest.track = false; });
+      await settings.click(); await page.locator('[data-note-action="graph-notebooks"]').click(); await pause(350);
+      await page.locator(`${panel} [data-action="graph-reset-view"]`).click(); await readableView();
+    }
     async function nodePoint(path) {
       return page.evaluate(path => {
         const { engine, nodes } = __graphProbe.latest, node = nodes.find(n => n.id === path);
@@ -252,6 +309,7 @@ async function run(browser, mode) {
     await verifyLabelFade(longName + '.md');
     await verifyPalette(false, 'A.md');
     await verifyGrowthAndSpread();
+    await verifySpacingSettings();
     const viewBeforeRepeat = await camera(), creates = await page.evaluate(() => __graphProbe.engines.length);
     await button.click(); await button.click();
     assert.equal(await page.locator('.note-tab.is-graph').count(), 1);
@@ -280,11 +338,16 @@ async function run(browser, mode) {
     const savedView = await camera();
     await page.evaluate(() => T.activateTab('A.md'));
     await page.locator(panel).waitFor({ state: 'hidden' }); await resourcesReleased();
+    const hiddenCreates = await page.evaluate(() => __graphProbe.engines.length);
+    await page.evaluate(() => RelatumNotePreferences.applyGraphSpacing(170));
+    assert.equal(await page.evaluate(() => __graphProbe.engines.length), hiddenCreates, 'hidden settings create no engine');
     assert.equal(await page.locator('.note-tab.is-graph').count(), 1, 'switching MD preserves the graph tab');
     await page.evaluate(() => T.setSideMode('outline')); await pause(450);
     assert(await page.evaluate(() => T.notebookUi().open && T.notebookUi().mode === 'outline'));
     await button.click(); await shown(3, 1);
     assert.deepEqual(await camera(), savedView, 'return restores the session camera');
+    assert.equal(await page.evaluate(() => __graphProbe.latest.engine.layoutSpacing), 1.7, 'return uses the new global spacing');
+    await page.evaluate(() => RelatumNotePreferences.resetGraphSpacing());
     assert(!await page.evaluate(() => document.querySelector('[data-start-workspace-panel="notes"]').classList.contains('links-overlay-open')));
     await page.locator('[data-note-action="graph-notebooks"]').click();
     await page.locator('[data-role="note-notebooks-content"]').waitFor({ state: 'visible' }).catch(async error => {
@@ -389,6 +452,11 @@ async function run(browser, mode) {
     await page.locator(`${panel} [data-note-action="toggle-tree"]`).click();
     await verifyLabelFade(await page.evaluate(() => __graphProbe.latest.nodes[0].id));
     assert.equal(await page.locator(`${panel} [data-action="graph-grow"]`).getAttribute('aria-label'), 'Play graph growth animation');
+    await page.locator('[data-note-action="graph-notebooks"]').click(); await pause(350);
+    await page.locator('[data-note-action="toggle-settings"]').click();
+    assert.equal(await page.locator('[data-role="note-graph-spacing"]').getAttribute('aria-label'), 'Graph node spacing');
+    await page.locator('[data-role="note-graph-spacing"]').evaluate(el => { el.value = '165'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.locator('[data-note-action="toggle-settings"]').click(); await page.locator('[data-note-action="close-links"]').click();
     assert.equal(await page.locator(`${panel} [data-action="graph-grow"]`).getAttribute('data-ui-tooltip'), 'Play graph growth animation');
     await verifyPalette(true, await page.evaluate(() => __graphProbe.latest.nodes.find(node => node.degree > 0).id));
     await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -411,6 +479,8 @@ async function run(browser, mode) {
     await page.waitForFunction(() => window.T?.state.initialized && T.state.active);
     await page.locator(panel).waitFor({ state: 'visible' });
     await page.waitForFunction(() => __graphProbe.latest?.nodes.length > 0);
+    await readableView();
+    assert.equal(await page.evaluate(() => __graphProbe.latest.engine.layoutSpacing), 1.65, 'restarting restores spacing but computes a readable camera');
     assert.equal(await page.locator('.note-tab.is-graph').count(), 1);
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteGraphViews:v1')), 'legacy-window-settings', 'old floating preferences are neither read nor written');
     await page.evaluate(() => T.activateTab('A.md'));
