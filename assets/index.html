@@ -24,31 +24,6 @@
         var boot = window.RelatumBoot, features = window.RelatumFeatureRuntime;
         boot.noteGraphPreloadRequested = features.enabled('notes') && features.enabled('notes.graph')
           && features.preloadEnabled !== false && localStorage.getItem('canvas:noteGraphPreload:v1') === '1';
-        if (boot.noteGraphPreloadRequested) {
-          document.documentElement.classList.add('note-graph-boot-pending');
-          boot.noteGraphController = new AbortController();
-          boot.noteGraphReady = new Promise(function (resolve) {
-            var finished = false;
-            boot.finishGraphPreload = function (success) {
-              if (finished) return;
-              finished = true;
-              clearTimeout(boot.noteGraphTimer); boot.noteGraphTimer = 0;
-              if (!success) boot.noteGraphController.abort();
-              document.documentElement.classList.remove('note-graph-boot-pending');
-              var stage = document.querySelector('.start-workspace-stage'); if (stage) stage.inert = false;
-              document.querySelectorAll('button[data-start-workspace]').forEach(function (button) { button.inert = false; });
-              window.RelatumStartupMark?.(success ? 'note-graph-preload-ready' : 'note-graph-preload-skipped');
-              resolve(success);
-            };
-          });
-          boot.noteGraphTimer = window.setTimeout(function () { boot.finishGraphPreload(false); }, 4000);
-          document.addEventListener('DOMContentLoaded', function () {
-            if (!document.documentElement.classList.contains('note-graph-boot-pending')) return;
-            var stage = document.querySelector('.start-workspace-stage'); if (stage) stage.inert = true;
-            document.querySelectorAll('button[data-start-workspace]').forEach(function (button) { button.inert = true; });
-          }, { once: true });
-          window.addEventListener('pagehide', function () { boot.finishGraphPreload(false); boot.noteGraphController.abort(); }, { once: true });
-        }
         if (workspace === 'notes') {
           document.documentElement.classList.add('note-boot-pending');
           window.RelatumBoot = window.RelatumBoot || {};
@@ -106,12 +81,6 @@
        挂载，笔记运行时取得文件树与上次文档后再一次性揭示。 */
     html.note-boot-pending body[data-start-workspace="notes"] .note-workspace {
       visibility: hidden !important;
-    }
-    html.note-graph-boot-pending .start-workspace-stage { visibility: hidden !important; }
-    .note-graph-boot-status { display: none; }
-    html.note-graph-boot-pending .note-graph-boot-status {
-      display: flex; position: fixed; inset: 92px 0 0; align-items: center; justify-content: center;
-      color: var(--text-secondary); font-size: 13px; pointer-events: none;
     }
   </style>
   <link rel="preload" href="focus.js" as="script">
@@ -441,7 +410,6 @@
     </div>
   </header>
 
-  <div class="note-graph-boot-status" data-feature="notes.graph" role="status">正在准备笔记图谱…</div>
   <div class="start-workspace-stage">
   <main class="start-main start-workspace-panel" id="start-canvas-workspace"
     data-start-workspace-panel="canvas" data-state="loading">
@@ -1876,7 +1844,7 @@
       <section class="note-settings-section" data-feature="notes.graph" aria-labelledby="note-settings-startup-title">
         <h3 id="note-settings-startup-title">启动</h3>
         <label class="note-graph-preload-setting"><input type="checkbox" data-role="note-graph-preload"><strong>预加载图谱</strong></label>
-        <p class="note-graph-preload-hint">下次启动主界面时提前加载上次笔记本的图谱脚本和数据，首次打开再计算布局。会增加启动时间和数据缓存占用。</p>
+        <p class="note-graph-preload-hint">下次启动主界面后，空闲时逐步准备当前笔记本的图谱脚本、数据和布局；操作时暂停，不等待准备完成。会增加后台数据缓存占用。</p>
         <p class="note-graph-preload-hint" data-role="note-graph-preload-paused" hidden>本次启动已关闭后台预加载</p>
       </section>
       <section class="note-settings-section note-shortcut-settings" aria-labelledby="note-settings-shortcuts-title">

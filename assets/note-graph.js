@@ -5,6 +5,10 @@
   const VIEW_W = 1200, VIEW_H = 720;
   const LABEL_HIDE_UNIT = .25, LABEL_SHOW_UNIT = .65;
   const GROWTH_BLANK_MS = 100, GROWTH_SPAN_MS = 3000;
+  const LAYOUT_CONFIG = { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: .048,
+    springRest: 112, gravity: .0055, alphaDecay: .022, alphaReheat: .28, theta: .92,
+    velocityDamp: .84, zoomMin: .04, zoomMax: 3.5, fitScaleMin: .04, fitScaleMax: 3.5,
+    fitPad: 26, fitMargin: 44, fitUnitMin: .8, fitUnitMax: 1.2, fitCenter: 'median' };
   const COPY = {
     title: ['关系图谱', 'Graph'], notebooks: ['笔记本', 'Notebooks'], directory: ['显示笔记目录', 'Show note directory'],
     relax: ['舒展', 'Spread'], reset: ['复位', 'Reset'],
@@ -47,6 +51,19 @@
     let openJob = null, refreshJob = null, status = '', failure = null;
     let preloadJob = null, preloadOperation = 0;
     let growthView = null;
+    let labelMetrics = new Map(), labelFont = '';
+    let fontVersion = 0;
+    const titleFont = () => '500 12px ' + (getComputedStyle(stage).fontFamily || 'system-ui');
+    function clearLabelMetrics() { labelMetrics.clear(); labelFont = ''; }
+    function fontsChanged() {
+      fontVersion++; clearLabelMetrics();
+      scenes.forEach(scene => { delete scene.metrics; delete scene.font; });
+    }
+    function spacingChanged() {
+      cancelPreload();
+      scenes.forEach((scene, path) => { if (scene.backgroundLayout) forgetScene(path); });
+      if (!wanted && !destroyed) document.dispatchEvent(new CustomEvent('relatum:note-graph-target'));
+    }
     function readSpacing() {
       const percent = global.RelatumNotePreferences?.readGraphSpacing?.() ?? 125;
       return Number.isFinite(percent) && percent > 0 ? Math.max(.8, Math.min(2, percent / 100)) : 1.25;
@@ -108,11 +125,15 @@
       const layer = document.createElement('div'); layer.className = 'note-graph-label-layer'; layer.setAttribute('aria-hidden', 'true');
       const world = document.createElement('div'); world.className = 'note-graph-label-world'; layer.appendChild(world); stage.appendChild(layer);
       // Widths belong to graph data; DOM belongs to the viewport. Keep a small detached LRU.
-      const visible = new Map(), recycled = new Map(), measurements = new Map();
+      const visible = new Map(), recycled = new Map();
+      const font = titleFont();
+      const measurements = labelFont === font ? new Map(labelMetrics) : new Map();
+      labelMetrics.clear();
       const RECYCLE_LIMIT = 256;
       const measure = document.createElement('canvas').getContext('2d');
-      const family = getComputedStyle(stage).fontFamily || 'system-ui';
-      if (measure) measure.font = '500 12px ' + family;
+      if (measure) measure.font = font;
+      const resetMeasurements = () => { measurements.clear(); engine?.requestRender(); };
+      document.fonts?.addEventListener('loadingdone', resetMeasurements);
       let stamp = 0, previousMatrix = '', previousUnit = 0, previousNodes = null, previousLabelAlpha = -1;
       function metric(node) {
         let value = measurements.get(node.id);
@@ -184,7 +205,8 @@
           }
           visible.forEach((entry, id) => { if (entry.stamp !== stamp) { visible.delete(id); recycle(entry, id); } });
         },
-        destroy() { visible.clear(); recycled.clear(); measurements.clear(); previousNodes = null; layer.remove(); },
+        destroy() { document.fonts?.removeEventListener('loadingdone', resetMeasurements);
+          visible.clear(); recycled.clear(); measurements.clear(); previousNodes = null; layer.remove(); },
       };
     }
     function nodeStyle(node, environment) {
@@ -200,10 +222,7 @@
         cacheInstances: true, labelVisibility: 'always', domOverlayOnCanvas2D: true,
         ignoreHiddenNodes: true, coalesceHover: true,
         onCanvasReplace: replacement => { canvas = replacement; },
-        config: { viewW: VIEW_W, viewH: VIEW_H, repulsion: 7200, spring: .048, springRest: 112, gravity: .0055,
-          alphaDecay: .022, alphaReheat: .28, theta: .92, velocityDamp: .84,
-          zoomMin: .04, zoomMax: 3.5, fitScaleMin: .04, fitScaleMax: 3.5, fitPad: 26, fitMargin: 44,
-          fitUnitMin: .8, fitUnitMax: 1.2, fitCenter: 'median', layoutSpacing: spacing },
+        config: { ...LAYOUT_CONFIG, layoutSpacing: spacing },
         reduceMotion: global.matchMedia('(prefers-reduced-motion: reduce)').matches,
         nodeStyle, edgeStyle, domOverlay: labelLayer,
         getGravity: node => node.degree >= 6 ? .022 : node.degree >= 3 ? .009 : node.degree ? .005 : .0035,
@@ -271,39 +290,65 @@
     }
     function storeScene(path, scene) {
       forgetScene(path);
+      delete scene.bytes;
       // Serialized UTF-8 × 2 bounds strings/records conservatively; this is not a heap measurement.
       scene.bytes = (new TextEncoder().encode(JSON.stringify(scene)).length + 128) * 2;
-      if (scene.bytes > CACHE_BYTES) return;
+      if (scene.bytes > CACHE_BYTES) return false;
       scenes.set(path, scene); sceneBytes += scene.bytes;
       while (scenes.size > CACHE_LIMIT || sceneBytes > CACHE_BYTES) forgetScene(scenes.keys().next().value);
+      return true;
     }
     function cancelPreload() {
       preloadOperation++;
-      preloadJob?.controller.abort(); preloadJob = null;
+      preloadJob?.controller.abort();
+      if (preloadJob && !preloadJob.transferred) preloadJob.dataController.abort();
+      preloadJob = null;
     }
     function invalidatePreload() {
       cancelPreload();
-      scenes.forEach((scene, path) => { if (scene.prepared) forgetScene(path); });
+      scenes.forEach((scene, path) => { if (scene.prepared || scene.backgroundLayout) forgetScene(path); });
     }
     function validModel(result, expectedRoot) {
       return result?.root === expectedRoot && Array.isArray(result.nodes) && Array.isArray(result.edges);
     }
     function preload(expectedRoot, settings = {}) {
       if (destroyed || settings.signal?.aborted) return Promise.resolve(false);
-      if (expectedRoot === null || scenes.has(expectedRoot) || wanted) return Promise.resolve(true);
+      if (expectedRoot === null || wanted) return Promise.resolve(true);
+      if (scenes.has(expectedRoot) && !scenes.get(expectedRoot).prepared) return Promise.resolve(true);
       if (preloadJob?.root === expectedRoot) return preloadJob.promise;
-      invalidatePreload();
+      cancelPreload();
       const ticket = preloadOperation, controller = new AbortController();
-      const job = { root: expectedRoot, controller, promise: null };
+      const job = { root: expectedRoot, controller, dataController: new AbortController(),
+        promise: null, data: null, transferred: false };
+      const valid = () => !destroyed && !controller.signal.aborted && ticket === preloadOperation
+        && !wanted && options.getRoot() === expectedRoot;
+      const wait = async () => {
+        const deadline = settings.waitForIdle ? await settings.waitForIdle(controller.signal) : null;
+        if (!valid()) throw new DOMException('Preparation cancelled', 'AbortError');
+        return deadline;
+      };
       const abort = () => { if (preloadJob === job) cancelPreload(); };
       settings.signal?.addEventListener('abort', abort, { once: true });
       const task = (async () => {
         try {
-          const result = await options.request('/api/note-graph?root=' + encodeURIComponent(expectedRoot), { signal: controller.signal });
-          if (destroyed || controller.signal.aborted || ticket !== preloadOperation || wanted
-              || options.getRoot() !== expectedRoot || !validModel(result, expectedRoot)) return false;
-          // Raw topology shares the scene budget; no labels, layout or drawing resources.
-          storeScene(expectedRoot, { prepared: true, signature: result.signature || '', model: result });
+          await wait();
+          const cached = scenes.get(expectedRoot);
+          if (cached?.prepared) job.data = Promise.resolve(cached.model);
+          else {
+            const timeout = setTimeout(() => job.dataController.abort(), 10000);
+            job.data = options.request('/api/note-graph?root=' + encodeURIComponent(expectedRoot),
+              { signal: job.dataController.signal }).finally(() => clearTimeout(timeout));
+          }
+          const result = await job.data;
+          if (!valid() || !validModel(result, expectedRoot)) return false;
+          await wait();
+          const scene = cached?.prepared ? cached : { prepared: true, signature: result.signature || '', model: result };
+          if (!storeScene(expectedRoot, scene)) return true;
+          // Raw topology is useful immediately. A second idle grant starts CPU-only layout.
+          if (settings.waitForIdle) {
+            await wait();
+            await prepareLayout(expectedRoot, scene, job, wait);
+          }
           return true;
         } catch (_) { return false; }
       })();
@@ -312,6 +357,92 @@
         if (preloadJob === job) preloadJob = null;
       });
       preloadJob = job; return job.promise;
+    }
+    async function prepareLayout(expectedRoot, scene, job, wait) {
+      if (!global.Worker || !scene.model.nodes.length) return;
+      const preparedSpacing = readSpacing(), data = { nodes: [], edges: [] }, byId = new Map(), seen = new Set();
+      async function chunks(items, visit) {
+        let index = 0;
+        while (index < items.length) {
+          const deadline = await wait();
+          const end = performance.now() + Math.min(4, deadline?.timeRemaining() ?? 4);
+          do { visit(items[index], index); index++; } while (index < items.length && performance.now() < end);
+        }
+      }
+      await chunks(scene.model.nodes, (node, index) => {
+        if (!node || typeof node.id !== 'string' || typeof node.path !== 'string') return;
+        byId.set(node.id, data.nodes.length);
+        data.nodes.push({ id: node.id, path: node.path,
+          label: String(node.title || node.path.split('/').pop().replace(/\.md$/i, '')),
+          degree: 0, r: 6, x: VIEW_W / 2, y: VIEW_H / 2 });
+      });
+      await chunks(scene.model.edges, edge => {
+        const source = byId.get(edge.from), target = byId.get(edge.to);
+        if (source === undefined || target === undefined || source === target) return;
+        const key = Math.min(source, target) + ':' + Math.max(source, target);
+        if (seen.has(key)) return;
+        seen.add(key); data.edges.push({ source, target, rest: 112 });
+        data.nodes[source].degree++; data.nodes[target].degree++;
+      });
+      const radius = Math.min(VIEW_W, VIEW_H) * .29 * Math.max(1, Math.sqrt(data.nodes.length / 180)) * preparedSpacing;
+      await chunks(data.nodes, (node, index) => {
+        node.r = Math.max(6, Math.min(17, 6 + node.degree * 1.5));
+        const angle = index * 2.399963229728653, spread = radius * Math.sqrt((index + .5) / Math.max(1, data.nodes.length));
+        node.x += Math.cos(angle) * spread; node.y += Math.sin(angle) * spread;
+      });
+      await wait();
+      let worker;
+      try {
+        worker = new Worker('note-graph-layout-worker.js');
+        const positions = await new Promise((resolve, reject) => {
+          let finished = false, timeout = 0;
+          const finish = (error, value) => {
+            if (finished) return;
+            finished = true; clearTimeout(timeout);
+            job.controller.signal.removeEventListener('abort', abort);
+            worker.terminate();
+            if (error) reject(error); else resolve(value);
+          };
+          const abort = () => finish(new DOMException('Preparation cancelled', 'AbortError'));
+          const send = message => {
+            if (finished) return;
+            timeout = setTimeout(() => finish(new Error('Layout worker did not respond')), 10000);
+            worker.postMessage(message);
+          };
+          job.controller.signal.addEventListener('abort', abort, { once: true });
+          worker.onerror = event => { event.preventDefault(); finish(new Error('Layout worker failed')); };
+          worker.onmessageerror = () => finish(new Error('Layout worker message failed'));
+          worker.onmessage = async event => {
+            if (finished || event.data.id !== ticketForWorker) return;
+            clearTimeout(timeout);
+            if (event.data.type === 'done') { finish(null, event.data.positions); return; }
+            if (event.data.type !== 'ready') { finish(new Error('Layout worker failed')); return; }
+            try { await wait(); send({ type: 'step', id: ticketForWorker }); } catch (error) { finish(error); }
+          };
+          const ticketForWorker = preloadOperation;
+          send({ type: 'prepare', id: ticketForWorker, nodes: data.nodes, edges: data.edges,
+            config: { ...LAYOUT_CONFIG, layoutSpacing: preparedSpacing } });
+        });
+        await wait();
+        if (preparedSpacing !== readSpacing() || scenes.get(expectedRoot) !== scene
+            || positions.length !== data.nodes.length) return;
+        await chunks(data.nodes, (node, index) => {
+          const point = positions[index];
+          if (!Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])) throw new Error('Invalid layout');
+          node.x = point[0]; node.y = point[1];
+        });
+        const measuredVersion = fontVersion;
+        const font = titleFont(), measure = document.createElement('canvas').getContext('2d'), metrics = [];
+        if (measure) measure.font = font;
+        await chunks(data.nodes, node => metrics.push([node.id,
+          { text: node.label, width: measure ? measure.measureText(node.label).width : node.label.length * 12 }]));
+        await wait();
+        if (preparedSpacing !== readSpacing() || scenes.get(expectedRoot) !== scene) return;
+        // Replace raw topology rather than keeping a second copy in the LRU.
+        storeScene(expectedRoot, { backgroundLayout: true, signature: scene.signature,
+          needsLayout: false, spacing: preparedSpacing, view: null, ...data,
+          metrics: measuredVersion === fontVersion ? metrics : [], font: measuredVersion === fontVersion ? font : '' });
+      } finally { worker?.terminate(); }
     }
     function rememberScene() {
       if (scope === null || !signature) return;
@@ -323,6 +454,8 @@
         edges: edges.map(edge => ({ source: edge.source, target: edge.target, rest: edge.rest })) });
     }
     function restoreScene(scene) {
+      clearLabelMetrics();
+      if (scene.font === titleFont()) { labelMetrics = new Map(scene.metrics || []); labelFont = scene.font; }
       nodes = scene.nodes.map(node => ({ ...node })); edges = scene.edges.map(edge => ({ ...edge }));
       signature = scene.signature; needsLayout = scene.needsLayout;
       spacing = scene.spacing ?? 1.25;
@@ -379,11 +512,11 @@
       } else releaseEngine();
       showStatus('');
     }
-    async function queryGraph(ticket, expectedRoot, first) {
+    async function queryGraph(ticket, expectedRoot, first, preparedRequest) {
       try {
         const url = '/api/note-graph?root=' + encodeURIComponent(expectedRoot)
           + (!first && signature ? '&signature=' + encodeURIComponent(signature) : '');
-        const result = await options.request(url);
+        const result = preparedRequest ? await preparedRequest : await options.request(url);
         if (!current(ticket, expectedRoot)) return false;
         if (result.root !== expectedRoot) throw new Error(copy('failed'));
         if (result.unchanged && !first) { showStatus(''); return true; }
@@ -399,14 +532,18 @@
       if (destroyed || !options.isActive()) return Promise.resolve(false);
       const expectedRoot = options.getRoot();
       if (wanted && scope === expectedRoot) return openJob || refreshJob || Promise.resolve(true);
+      const preparedRequest = preloadJob?.root === expectedRoot ? preloadJob.data : null;
+      if (preparedRequest) preloadJob.transferred = true;
       deactivate();
       const ticket = ++operation; scope = expectedRoot; wanted = true;
       if (scope === null) { showStatus('select'); return Promise.resolve(true); }
-      const scene = scenes.get(scope);
+      let scene = scenes.get(scope);
+      if (scene?.backgroundLayout && scene.spacing !== readSpacing()) { forgetScene(scope); scene = null; }
       if (scene?.prepared) { forgetScene(scope); installData(scene.model, true); }
       else if (scene) { scenes.delete(scope); scenes.set(scope, scene); restoreScene(scene); }
       else { spacing = readSpacing(); showStatus('loading'); }
-      const task = queryGraph(ticket, expectedRoot, !signature);
+      // With cached data the signature check is still required; otherwise take over the in-flight read.
+      const task = queryGraph(ticket, expectedRoot, !signature, scene ? null : preparedRequest);
       const wrapped = task.finally(() => { if (openJob === wrapped) openJob = null; });
       openJob = wrapped; return wrapped;
     }
@@ -415,6 +552,7 @@
       growthView = null;
       wanted = false; operation++; openJob = null; refreshJob = null; selecting = false;
       rememberScene(); releaseEngine(); tooltip.hidden = true;
+      clearLabelMetrics();
       nodes = []; edges = []; signature = ''; needsLayout = false;
       updateCounts(); host.setAttribute('aria-busy', 'false');
       if (settings?.clearCache) { scenes.clear(); sceneBytes = 0; }
@@ -452,7 +590,7 @@
       if (active) deactivate();
       const records = Array.from(scenes); scenes.clear(); sceneBytes = 0;
       records.forEach(([path, scene]) => {
-        if (scene.prepared && affected(path)) return;
+        if ((scene.prepared || scene.backgroundLayout) && affected(path)) return;
         if (affected(path)) {
           scene.nodes = scene.nodes.map(node => {
             const path = mapPath(node.path, source, destination);
@@ -489,12 +627,16 @@
     });
     find('[data-action="graph-reset-view"]').addEventListener('click', () => { growthView = null; engine?.fitView(true); });
     const themeObserver = new MutationObserver(() => { if (wanted) syncTheme(); });
+    global.addEventListener('relatum:note-graph-spacing', spacingChanged);
+    document.fonts?.addEventListener('loadingdone', fontsChanged);
     updateLanguage(); updateCounts();
     return { activate, deactivate, preload, invalidatePreload, isOpen: () => wanted, checkExternalChanges,
       invalidate() { invalidatePreload(); return openJob ? Promise.resolve(false) : checkExternalChanges(); },
       setLanguage: updateLanguage, remap, prune,
       destroy() {
         if (destroyed) return;
+        global.removeEventListener('relatum:note-graph-spacing', spacingChanged);
+        document.fonts?.removeEventListener('loadingdone', fontsChanged);
         deactivate({ clearCache: true }); destroyed = true; host.replaceChildren();
       },
     };

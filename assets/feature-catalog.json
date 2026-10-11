@@ -282,7 +282,7 @@
       "parent": "notes",
       "label": "笔记图谱",
       "description": "笔记本关系图谱；关闭后不加载图谱脚本、数据或绘制引擎。",
-      "scripts": ["note-graph.js"],
+      "scripts": ["note-graph.js", "note-graph-layout-worker.js"],
       "readPaths": ["/api/note-graph"],
       "default": true
     },

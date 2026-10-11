@@ -163,6 +163,59 @@
     for (let i = 0; i < 4; i++) if (cell.kids[i]) applyRepulsion(node, cell.kids[i], theta2, k, alpha);
   }
 
+  // Pure physics shared by visible engines and the notebook preparation worker.
+  // No DOM, context, event listener or animation scheduling belongs here.
+  function stepPhysics(nodes, edges, state, dt) {
+    const cfg = state.config, dragged = state.dragged;
+    state.alpha += -state.alpha * cfg.alphaDecay * (dragged ? .45 : 1) * dt;
+    const a = state.alpha, quad = buildQuad(nodes);
+    for (let i = 0; i < nodes.length; i++) { nodes[i]._fx = 0; nodes[i]._fy = 0; }
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i] !== dragged) applyRepulsion(nodes[i], quad, state.theta2, state.repulsion, a);
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i]; if (n === dragged) continue;
+      n.vx += n._fx; n.vy += n._fy;
+    }
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i], first = nodes[e.source], second = nodes[e.target];
+      const dx = second.x - first.x, dy = second.y - first.y;
+      const distance = Math.sqrt(dx * dx + dy * dy) || .001;
+      const force = cfg.spring * (distance - state.getEdgeRest(e) * state.spacing) * a;
+      const fx = force * dx / distance, fy = force * dy / distance;
+      if (first !== dragged) { first.vx += fx; first.vy += fy; }
+      if (second !== dragged) { second.vx -= fx; second.vy -= fy; }
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i]; if (n === dragged) continue;
+      const g = state.getGravity(n);
+      n.vx += (cfg.viewW / 2 - n.x) * g * a;
+      n.vy += (cfg.viewH / 2 - n.y) * g * a;
+      n.vx *= cfg.velocityDamp; n.vy *= cfg.velocityDamp;
+      if (state.clampVelocity && cfg.introVelocityClamp > 0) {
+        const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+        if (speed > cfg.introVelocityClamp) {
+          const k = cfg.introVelocityClamp / speed; n.vx *= k; n.vy *= k;
+        }
+      }
+      n.x += n.vx * dt; n.y += n.vy * dt;
+    }
+  }
+  function createLayout(options) {
+    const config = Object.assign({}, DEFAULTS, options.config || {});
+    const nodes = options.nodes, edges = options.edges;
+    const spacing = clamp(config.layoutSpacing, .8, 2);
+    const state = { config, alpha: 1, dragged: null, clampVelocity: true, theta2: config.theta * config.theta,
+      spacing, repulsion: config.repulsion * Math.pow(spacing, 3),
+      getEdgeRest: options.getEdgeRest || (edge => edge.rest ?? config.springRest),
+      getGravity: options.getGravity || (() => config.gravity) };
+    nodes.forEach((n, index) => {
+      n.vx = n.vy = n._fx = n._fy = 0; n._phase = index * 2.399963229728653;
+    });
+    return { step() { if (state.alpha > config.alphaMin) stepPhysics(nodes, edges, state, 1); },
+      get settled() { return !nodes.length || state.alpha <= config.alphaMin; } };
+  }
+
   // ─────────────────────────── 可切换渲染后端 ───────────────────────────
   // 引擎只管物理 / 相机 / 漂移 / 命中 / 交互；"把这些节点连线画成像素"交给后端。
   // 默认后端 = Canvas 2D（与抽离前逐操作一致）；后续 WebGL 后端实现同一份接口即可一键切换、
@@ -399,7 +452,6 @@
     const VIEW_H = cfg.viewH;
     const CENTER_X = VIEW_W / 2;
     const CENTER_Y = VIEW_H / 2;
-    const theta2 = cfg.theta * cfg.theta;
     const IDLE_FRAME_MS = 1000 / (cfg.idleFps || 30);   // 闲时微动渲染最小间隔
 
     const drawNode = opts.drawNode || function () {};
@@ -493,6 +545,13 @@
     let lastRenderT = 0;      // 上次真正重画的时刻（闲时节流用）
     let tickCount = 0;
     let alpha = 0;
+    const physicsState = { config: cfg, alpha: 0, dragged: null, clampVelocity: false, theta2: cfg.theta * cfg.theta,
+      spacing: layoutSpacing, repulsion: layoutRepulsion, getEdgeRest, getGravity };
+    let releaseBackgroundBusy = null;
+    function markBackgroundBusy(value) {
+      if (value && !releaseBackgroundBusy) releaseBackgroundBusy = global.RelatumBackgroundPreparation?.beginBusy();
+      if (!value && releaseBackgroundBusy) { releaseBackgroundBusy(); releaseBackgroundBusy = null; }
+    }
     let layoutSettlePending = false;
     let introActive = false;
     let presolveJob = null;
@@ -557,6 +616,7 @@
       hoverOnlyFrame = true;
     }
     function stopLoop() {
+      markBackgroundBusy(false);
       hoverPending = false;
       cancelPresolve(true);
       if (frameId) global.cancelAnimationFrame(frameId);
@@ -609,53 +669,11 @@
 
     // —— 物理一帧 —— （斥力换四叉树，其余弹簧/引力/阻尼/积分沿用旧口径）
     function runPhysics(dt) {
-      alpha += (0 - alpha) * cfg.alphaDecay * (draggedNode ? 0.45 : 1) * dt;
-      const a = alpha;
-      // 斥力：建树 → 逐节点查询累加 → 应用（被拖拽节点仍进树施力，但自身不受力）
-      const quad = buildQuad(nodes);
-      for (let i = 0; i < nodes.length; i++) { nodes[i]._fx = 0; nodes[i]._fy = 0; }
-      for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i] !== draggedNode) applyRepulsion(nodes[i], quad, theta2, layoutRepulsion, a);
-      }
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        if (n === draggedNode) continue;
-        n.vx += n._fx; n.vy += n._fy;
-      }
-      // 连线弹簧
-      for (let i = 0; i < edges.length; i++) {
-        const e = edges[i];
-        const first = nodes[e.source];
-        const second = nodes[e.target];
-        const dx = second.x - first.x;
-        const dy = second.y - first.y;
-        const distance = Math.sqrt(dx * dx + dy * dy) || 0.001;
-        const force = cfg.spring * (distance - getEdgeRest(e) * layoutSpacing) * a;
-        const fx = force * dx / distance;
-        const fy = force * dy / distance;
-        if (first !== draggedNode) { first.vx += fx; first.vy += fy; }
-        if (second !== draggedNode) { second.vx -= fx; second.vy -= fy; }
-      }
-      // 向心引力 + 阻尼 + 积分
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        if (n === draggedNode) continue;
-        const g = getGravity(n);
-        n.vx += (CENTER_X - n.x) * g * a;
-        n.vy += (CENTER_Y - n.y) * g * a;
-        n.vx *= cfg.velocityDamp;
-        n.vy *= cfg.velocityDamp;
-        if ((introActive || presolving) && cfg.introVelocityClamp > 0) {
-          const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
-          if (speed > cfg.introVelocityClamp) {
-            const k = cfg.introVelocityClamp / speed;
-            n.vx *= k;
-            n.vy *= k;
-          }
-        }
-        n.x += n.vx * dt;
-        n.y += n.vy * dt;
-      }
+      physicsState.alpha = alpha; physicsState.dragged = draggedNode;
+      physicsState.clampVelocity = introActive || presolving;
+      physicsState.spacing = layoutSpacing; physicsState.repulsion = layoutRepulsion;
+      stepPhysics(nodes, edges, physicsState, dt);
+      alpha = physicsState.alpha;
       invalidatePositions();
     }
 
@@ -1042,6 +1060,7 @@
         lastTickTime = 0;
         if (wasIntro && !introActive) render();  // 进场末帧补绘，抹平残留缩放
         frameId = 0;
+        markBackgroundBusy(false);
       }
     }
     function ensureLoop() {
@@ -1049,6 +1068,7 @@
       if (pending && !canBegin()) return;
       if (tryBeginPending()) return;
       if (!frameId && !destroyed && active && visible) {
+        markBackgroundBusy(nodes.length > 0);
         cancelRenderFrame();   // 动画帧会绘制最新状态，不再另排一次同帧重绘
         frameId = global.requestAnimationFrame(tick);
       }
@@ -1091,6 +1111,7 @@
       && (!screenFit || canvas.clientWidth > 0 && canvas.clientHeight > 0); }
     function doBegin() {
       if (!pending) return;
+      markBackgroundBusy(nodes.length > 0);
       cancelRenderFrame();
       const begin = pending;
       const introWanted = pending.intro;
@@ -1566,8 +1587,8 @@
   }
 
   global.GraphEngine = {
-    create: create, clamp: clamp, easeOut: easeOut,
+    create: create, createLayout: createLayout, clamp: clamp, easeOut: easeOut,
     createCanvas2DBackend: createCanvas2DBackend,
     createWebGLBackend: createWebGLBackend,
   };
-})(window);
+})(typeof window === 'undefined' ? self : window);

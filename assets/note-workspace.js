@@ -70,6 +70,14 @@
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let noteGraph = null, noteGraphLoader = null, noteGraphIntentSequence = 0;
+  let noteGraphForeground = false;
+  function backgroundTargetChanged(cancel = false) {
+    document.dispatchEvent(new CustomEvent('relatum:note-graph-target', { detail: { cancel } }));
+  }
+  async function withNoteBusy(task) {
+    const release = window.RelatumBackgroundPreparation?.beginBusy();
+    try { return await task(); } finally { release?.(); }
+  }
   const GRAPH_TAB = 'relatum:graph-tab:v1';
   const graphHost = $('[data-role="note-graph-panel"]');
   const graphEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.graph');
@@ -168,13 +176,16 @@
     }
     return state.active && !document.hidden && scope === state.notebookRoot;
   }
-  async function loadNoteGraph() {
+  async function loadNoteGraph(settings = {}) {
+    if (!settings.waitForIdle) { noteGraphForeground = true; window.RelatumBackgroundPreparation?.wake(); }
     if (!graphEnabled()) return null;
     if (noteGraph) return noteGraph;
     if (!noteGraphLoader) noteGraphLoader = (async () => {
       for (const [name, exported] of [['graph-gl.js', 'GraphGL'], ['graph-engine.js', 'GraphEngine'],
         ['note-graph.js', 'RelatumNoteGraph']]) {
         if (window[exported]) continue;
+        if (settings.waitForIdle) await settings.waitForIdle(window.RelatumBackgroundPreparation?.signal,
+          () => noteGraphForeground);
         await new Promise((resolve, reject) => {
           const script = document.createElement('script'); script.src = name; script.async = true;
           script.onload = () => {
@@ -192,7 +203,7 @@
       });
       if (!noteGraph) throw new Error(tr('readFailed'));
       return noteGraph;
-    })().catch((error) => { noteGraphLoader = null; throw error; });
+    })().catch((error) => { noteGraphLoader = null; noteGraphForeground = false; throw error; });
     return noteGraphLoader;
   }
   async function activateGraphTab(options) {
@@ -580,6 +591,7 @@
     if (selectedMissing) {
       noteGraphIntentSequence++; noteGraph?.deactivate(); updateNoteGraphSession(state.notebookRoot);
       missing.add(state.notebookRoot); state.notebookRoot = ''; state.selectedFolder = ''; state.selectedPath = ''; state.rootTargeted = true;
+      backgroundTargetChanged();
     }
     state.notebookPruning.forEach((time, path) => { if (findEntry(path)) state.notebookPruning.delete(path); });
     const now = Date.now();
@@ -602,6 +614,7 @@
       if (graphPresentation) { state.openSeq++; state.openingPath = ''; setDocumentSwitchPending(false); }
     }
     state.notebookRoot = path;
+    if (changed) backgroundTargetChanged();
     if (changed || options?.rootTarget) { state.selectedFolder = path; state.selectedPath = path; state.rootTargeted = true; }
     if (changed) { stopDocumentPrefetch(); queueNotebookSettings({ ui: notebookUi() }); }
     if (changed && !options?.noRender) renderTree({ keepNotebookTree: true });
@@ -1466,6 +1479,10 @@
 
   function renderReadingDocument(payload) {
     if (!readingHost) return;
+    const release = window.RelatumBackgroundPreparation?.beginBusy();
+    try { renderReadingDocumentNow(payload); } finally { release?.(); }
+  }
+  function renderReadingDocumentNow(payload) {
     const documentState = payload || readingPayload();
     if (window.RelatumNoteLiveEditor && typeof window.RelatumNoteLiveEditor.renderMarkdown === 'function') {
       window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession });
@@ -2183,7 +2200,9 @@
     const cached = isSpecialTab(tabPath) ? null : state.documentCache.get(tabPath);
     if (!(options && options.skipSave) && cached && !(await flushSave(cached))) return false;
     state.tabs.splice(index, 1);
-    if (isGraphTab(tabPath)) { noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); }
+    if (isGraphTab(tabPath)) {
+      noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); backgroundTargetChanged(true);
+    }
     persistTabs();
     if (!active) { renderTabs(); return true; }
     // A failed read of the next file must not leave a closed graph occupying the pane.
@@ -2206,6 +2225,7 @@
     state.tabs = [];
     state.activeTab = '';
     noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true });
+    backgroundTargetChanged(true);
     persistTabs();
     clearCurrent({ keepTabs: true });
     return true;
@@ -2760,6 +2780,9 @@
     const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target, duringMove, background); return ok;
   }
   async function openNote(path, options) {
+    return withNoteBusy(() => openNoteNow(path, options));
+  }
+  async function openNoteNow(path, options) {
     const fromGraph = graphPresentation, graphRoot = state.notebookRoot, graphIntent = noteGraphIntentSequence;
     const graphValid = () => (!options?.graphGuard || options.graphGuard()) && (!fromGraph ||
       (graphPresentation && state.notebookRoot === graphRoot && noteGraphIntentSequence === graphIntent));
@@ -2872,6 +2895,9 @@
     }
   }
   async function movePath(source, destination, quiet) {
+    return withNoteBusy(() => movePathNow(source, destination, quiet));
+  }
+  async function movePathNow(source, destination, quiet) {
     if (!source || !destination || source === destination) return true;
     while (noteMovePromise) {
       const paths = noteMovePaths;
@@ -2967,6 +2993,7 @@
     window.RelatumNoteCanvas?.remapViews(source, destination, true);
     updateNoteGraphSession(source, destination);
     noteGraph?.invalidate();
+    backgroundTargetChanged();
     try { await syncMovedDocument(); }
     catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
     if (result.rewritten) {
@@ -3623,7 +3650,10 @@
   }
   function entryFiles(entry, prefix) { return new Promise((resolve) => { if (entry.isFile) { entry.file((file) => resolve([{ path: prefix + file.name, file }]), () => resolve([])); return; } if (!entry.isDirectory) { resolve([]); return; } const reader = entry.createReader(); const children = []; const read = () => reader.readEntries(async (batch) => { if (!batch.length) { resolve((await Promise.all(children.map((child) => entryFiles(child, prefix + entry.name + '/')))).flat()); return; } children.push(...batch); read(); }, () => resolve([])); read(); }); }
   async function filesFromTransfer(transfer) { const items = Array.from(transfer && transfer.items || []); const entries = items.map((item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean); if (entries.length) return (await Promise.all(entries.map((entry) => entryFiles(entry, '')))).flat(); return Array.from(transfer && transfer.files || []).map((file) => ({ path: file.name, file })); }
-  async function importDataTransfer(transfer, destination) { if (destination === null || state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
+  async function importDataTransfer(transfer, destination) {
+    return withNoteBusy(() => importDataTransferNow(transfer, destination));
+  }
+  async function importDataTransferNow(transfer, destination) { if (destination === null || state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
 
   async function checkExternalChanges(announce, options) {
     if (!state.active || state.imageTextBusy || noteMovePromise) return false;
@@ -3710,7 +3740,7 @@
     if (state.initialized) return Promise.resolve(true);
     if (state.initializePromise) return state.initializePromise;
     window.RelatumStartupMark?.('notes-initialize-start');
-    const initialize = (async () => {
+    const initialize = withNoteBusy(async () => {
       if (!(await refreshTree(false))) return false;
       window.RelatumStartupMark?.('notes-tree-ready');
       state.initialized = true;
@@ -3729,15 +3759,17 @@
       updateBrowserToggle();
       updateBrowserControls();
       return true;
-    })();
+    });
     state.initializePromise = initialize.finally(() => { state.initializePromise = null; });
     return state.initializePromise;
   }
   async function preload() { return initializeWorkspace(); }
   async function preloadGraph(settings = {}) {
-    if (!graphEnabled() || settings.signal?.aborted || !(await initializeWorkspace()) || settings.signal?.aborted) return false;
+    if (!graphEnabled() || settings.signal?.aborted) return false;
+    if (settings.waitForIdle) await settings.waitForIdle(settings.signal);
+    if (!(await initializeWorkspace()) || settings.signal?.aborted) return false;
     const scope = state.notebookRoot, sequence = noteGraphIntentSequence;
-    const graph = await loadNoteGraph();
+    const graph = await loadNoteGraph(settings);
     if (!graph || settings.signal?.aborted || sequence !== noteGraphIntentSequence || scope !== state.notebookRoot) return false;
     return graph.preload(scope, settings);
   }
@@ -4110,5 +4142,10 @@
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
-  window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; }, get usagePath() { return graphPresentation || browserResultsActive() ? '' : state.current?.path || ''; } };
+  window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel,
+    refresh: (announce) => triggerExternalSync({ announce: !!announce }),
+    get backgroundBusy() { return !!(state.importRunning || state.openingPath || noteMovePromise || editorInputPending()); },
+    get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; },
+    get currentPath() { return state.current ? state.current.path : ''; },
+    get usagePath() { return graphPresentation || browserResultsActive() ? '' : state.current?.path || ''; } };
 })();
