@@ -7,7 +7,7 @@ dependency graph and registry integrity values used for this vendor snapshot.
 ## Snapshot
 
 - `relatum-codemirror.min.js`
-  - SHA-256: `E5E52F1EA20BC947938CCC86EB2F7AC1DB2131C0710571B02774F33B35A2AA02`
+  - SHA-256: `0EE70A9DD4761516CDA8B7A0D94D26BF27243ED0269839B848A2C9F7E2B6D5BA`
   - Direct packages: `@codemirror/state@6.7.1`, `@codemirror/view@6.43.9`,
     `@codemirror/language@6.12.4`, `@codemirror/lang-markdown@6.5.2`,
     `@codemirror/lang-cpp@6.0.3`, `@codemirror/lang-python@6.2.1`,
@@ -21,6 +21,18 @@ dependency graph and registry integrity values used for this vendor snapshot.
 - `../mermaid/mermaid.min.js`
   - Version: `11.17.1`
   - SHA-256: `B7A4CDA9E88E187D4E1F279B8A14A3DF651EDD8DC704B9B56ED8E84659735570`
+
+## Local CodeMirror selection patch
+
+The resolved package versions and dependency graph are unchanged. The bundled
+selection renderer samples `.cm-line:not(.note-live-callout-line)` instead of
+the first `.cm-line` for its shared horizontal fill boundaries. Callout padding
+belongs to the card and must not inset selections in the ordinary text below it.
+When only Callout lines are mounted, the existing no-sample fallback uses the
+content bounds. Source lines, caret coordinates, selection ranges and copying
+keep their existing behavior. Preserve this one selector change when rebuilding
+the offline artifact. `node tests/note-callout-selection-regression.js` exercises
+the actual bundled renderer with measured-coordinate fixtures without a browser.
 
 ## CodeMirror and Lezer
 
