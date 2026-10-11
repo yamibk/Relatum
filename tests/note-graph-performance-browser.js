@@ -5,11 +5,19 @@ const fs = require('node:fs'), path = require('node:path');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const assets = path.resolve(__dirname, '../assets');
 const hotpathsOnly = process.argv.includes('--hotpaths-only');
+const sidebarOnly = process.argv.includes('--sidebar-only');
 const graphAssets = process.env.RELATUM_GRAPH_BASELINE_DIR || assets;
 
 function installProbe() {
   const probe = window.graphLabelProbe = { draws: 0, measures: 0, created: 0, raf: 0,
-    uploads: 0, uploadBytes: 0, contexts: 0, buffers: 0, programs: 0, recycledMax: 0, engines: [] };
+    uploads: 0, uploadBytes: 0, contexts: 0, buffers: 0, programs: 0, recycledMax: 0, engines: [], backingResizes: 0 };
+  for (const name of ['width', 'height']) {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, name);
+    Object.defineProperty(HTMLCanvasElement.prototype, name, { ...descriptor, set(value) {
+      if (this.classList.contains('graph-canvas') && descriptor.get.call(this) !== value) probe.backingResizes++;
+      return descriptor.set.call(this, value);
+    } });
+  }
   probe.spacing = 125;
   window.RelatumNotePreferences = { readGraphSpacing: () => probe.spacing,
     applyGraphSpacing(value) { probe.spacing = value; window.dispatchEvent(new CustomEvent('relatum:note-graph-spacing', { detail: value })); } };
@@ -86,12 +94,12 @@ function installProbe() {
     engine.setData = function (nodes, edges, ...rest) { record.nodes = nodes; record.edges = edges; return setData.call(this, nodes, edges, ...rest); };
     return engine;
   };
-  window.graphModel = (root, count) => ({ root, signature: root + ':' + count,
+  window.graphModel = (root, count, edgeCount = Math.max(0, count - 1)) => ({ root, signature: root + ':' + count,
     nodes: Array.from({ length: count }, (_, i) => ({ id: `${root}/笔记-${i}.md`, path: `${root}/笔记-${i}.md`, title: `笔记-${i}：中文合成标题` })),
-    edges: Array.from({ length: Math.max(0, count - 1) }, (_, i) => ({ from: `${root}/笔记-${i}.md`, to: `${root}/笔记-${i + 1}.md` })),
+    edges: Array.from({ length: edgeCount }, (_, i) => ({ from: `${root}/笔记-${i}.md`, to: `${root}/笔记-${i + 1}.md` })),
   });
-  window.openSyntheticNotebook = async count => {
-    const model = graphModel('', count);
+  window.openSyntheticNotebook = async (count, edgeCount) => {
+    const model = graphModel('', count, edgeCount);
     window.syntheticGraph = RelatumNoteGraph.create({ host: document.querySelector('#graph'),
       getRoot: () => '', isActive: () => true, language: () => 'zh', onSelect: async () => false,
       request: async () => model, showError: message => { throw new Error(message); } });
@@ -227,16 +235,17 @@ async function preparePage(browser, dpr, size) {
   await page.setContent('<!doctype html><html><body class="start-page" data-start-theme="light"><div id="workspace" class="note-workspace note-graph-active">'
     + '<aside class="note-tree-pane"></aside><main class="note-document-pane"><nav class="note-tab-bar"><span>关系图谱 · notes</span></nav>'
     + '<section id="graph" class="note-graph-panel"></section></main></div></body></html>');
-  await page.addStyleTag({ path: path.join(assets, 'styles.css') });
+  await page.addStyleTag({ path: path.join(sidebarOnly ? graphAssets : assets, 'styles.css') });
   // The tab case uses production sidebar/tab geometry. The former window stage is 1160 × 702 CSS px.
   await page.addStyleTag({ content: size === 'tab'
     ? '#workspace { position:fixed;inset:92px 0 0; }'
     : '#workspace { position:fixed;left:380px;top:189px;width:1160px;height:702px;display:block; } .note-tree-pane,.note-tab-bar {display:none} .note-document-pane {height:100%}' });
   await page.addScriptTag({ path: path.join(assets, 'graph-gl.js') });
-  if (hotpathsOnly) {
+  if (hotpathsOnly || sidebarOnly) {
     const engine = fs.readFileSync(path.join(graphAssets, 'graph-engine.js'), 'utf8');
-    const instrumented = engine.replace('function nodeAtClient(clientX, clientY) {',
-      'function nodeAtClient(clientX, clientY) { window.graphHitChecks = (window.graphHitChecks || 0) + 1;');
+    const instrumented = hotpathsOnly ? engine.replace('function nodeAtClient(clientX, clientY) {',
+      'function nodeAtClient(clientX, clientY) { window.graphHitChecks = (window.graphHitChecks || 0) + 1;')
+      : engine.replace('function runPhysics(dt) {', 'function runPhysics(dt) { window.graphPhysicsSteps = (window.graphPhysicsSteps || 0) + 1;');
     assert.notEqual(instrumented, engine, 'hit probe attaches to production hit testing');
     await page.addScriptTag({ content: instrumented });
   } else await page.addScriptTag({ path: path.join(graphAssets, 'graph-engine.js') });
@@ -248,6 +257,83 @@ async function preparePage(browser, dpr, size) {
 async function released(page) {
   await page.waitForFunction(() => graphLabelProbe.contexts === 0 && graphLabelProbe.buffers === 0 && graphLabelProbe.programs === 0);
   assert.equal(await page.locator('[data-note-graph-label]').count(), 0);
+}
+async function sidebarMeasure(browser, count, edgeCount, dpr) {
+  const { context, page, errors } = await preparePage(browser, dpr, 'tab');
+  const cdp = await context.newCDPSession(page); await cdp.send('Performance.enable');
+  const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(item => [item.name, item.value]));
+  try {
+    await page.evaluate(({ count, edgeCount }) => openSyntheticNotebook(count, edgeCount), { count, edgeCount });
+    await page.waitForFunction(() => !graphLabelProbe.latest.engine.layoutPending);
+    await page.waitForTimeout(450);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.evaluate(() => {
+      const panel = document.createElement('aside'); panel.className = 'note-links-pane';
+      panel.innerHTML = '<header class="note-pane-head note-links-head">笔记本</header><div class="note-notebooks-content">notes</div>';
+      document.querySelector('#workspace').appendChild(panel);
+      window.sampleSidebar = async () => {
+        const probe = graphLabelProbe, engine = probe.latest.engine, canvas = engine.canvas;
+        const root = document.querySelector('#workspace'), world = document.querySelector('.note-graph-label-world');
+        const before = { draws: probe.draws, backingResizes: probe.backingResizes, uploads: probe.uploads,
+          bytes: probe.uploadBytes, measures: probe.measures, engines: probe.engines.length, physics: window.graphPhysicsSteps || 0 };
+        const camera = JSON.stringify(engine.view), positions = JSON.stringify(probe.latest.nodes.map(node => [node.x, node.y]));
+        const widths = new Set(), units = new Set(), intervals = [], tasks = [];
+        let previous = 0, labelMutations = 0;
+        const dom = new MutationObserver(records => { labelMutations += records.length; });
+        dom.observe(world, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+        const long = new PerformanceObserver(list => tasks.push(...list.getEntries().map(item => item.duration)));
+        long.observe({ type: 'longtask', buffered: false });
+        const sample = async open => {
+          root.classList.toggle('links-overlay-open', open);
+          const began = performance.now();
+          await new Promise(resolve => {
+            const frame = time => {
+              const rect = canvas.getBoundingClientRect();
+              widths.add(rect.width); units.add(Math.min(rect.width / 1200, rect.height / 720) * engine.view.scale);
+              if (previous) intervals.push(time - previous); previous = time;
+              if (performance.now() - began < 360) requestAnimationFrame(frame); else resolve();
+            };
+            requestAnimationFrame(frame);
+          });
+        };
+        await sample(true); await sample(false);
+        labelMutations += dom.takeRecords().length; dom.disconnect();
+        tasks.push(...long.takeRecords().map(item => item.duration)); long.disconnect();
+        intervals.sort((a, b) => a - b);
+        return { widthStates: widths.size, unitStates: units.size, labelMutations,
+          draws: probe.draws - before.draws, backingResizes: probe.backingResizes - before.backingResizes,
+          uploads: probe.uploads - before.uploads, uploadBytes: probe.uploadBytes - before.bytes, measures: probe.measures - before.measures,
+          enginesCreated: probe.engines.length - before.engines, physicsSteps: (window.graphPhysicsSteps || 0) - before.physics,
+          cameraUnchanged: JSON.stringify(engine.view) === camera,
+          positionsUnchanged: JSON.stringify(probe.latest.nodes.map(node => [node.x, node.y])) === positions,
+          frameIntervalP50Ms: intervals[Math.floor(intervals.length * .5)], frameIntervalP95Ms: intervals[Math.floor(intervals.length * .95)],
+          longTasks: tasks.length, longestTaskMs: Math.max(0, ...tasks) };
+      };
+    });
+    await page.waitForTimeout(100);
+    const rounds = [];
+    for (let repeat = 0; repeat < 3; repeat++) {
+      const before = await metrics(), sample = await page.evaluate(() => sampleSidebar()), after = await metrics();
+      sample.scriptCpuMs = (after.ScriptDuration - before.ScriptDuration) * 1000;
+      sample.styleCpuMs = (after.RecalcStyleDuration - before.RecalcStyleDuration) * 1000;
+      sample.layoutCpuMs = (after.LayoutDuration - before.LayoutDuration) * 1000;
+      assert(sample.cameraUnchanged && sample.positionsUnchanged);
+      assert.equal(sample.physicsSteps, 0); assert.equal(sample.enginesCreated, 0); assert.equal(sample.measures, 0);
+      assert.equal(sample.uploads, 0);
+      if (!process.env.RELATUM_GRAPH_BASELINE_DIR) {
+        assert.equal(sample.widthStates, 1); assert.equal(sample.unitStates, 1);
+        assert.equal(sample.draws, 0); assert.equal(sample.backingResizes, 0); assert.equal(sample.labelMutations, 0);
+      }
+      rounds.push(sample);
+    }
+    const idle = await page.evaluate(() => ({ draws: graphLabelProbe.draws, raf: graphLabelProbe.raf }));
+    await page.waitForTimeout(180);
+    assert.deepEqual(await page.evaluate(() => ({ draws: graphLabelProbe.draws, raf: graphLabelProbe.raf })), idle);
+    await page.evaluate(() => syntheticGraph.destroy()); await released(page); assert.deepEqual(errors, []);
+    const median = key => rounds.map(round => round[key]).sort((a, b) => a - b)[1];
+    return { count, edgeCount, dpr, rounds, median: Object.fromEntries(['draws', 'backingResizes', 'frameIntervalP95Ms',
+      'scriptCpuMs', 'styleCpuMs', 'layoutCpuMs', 'longTasks', 'longestTaskMs'].map(key => [key, median(key)])), released: true };
+  } finally { await cdp.detach(); await context.close(); }
 }
 async function hotpathMeasure(browser, count, dpr) {
   const { context, page, errors } = await preparePage(browser, dpr, 'tab');
@@ -528,10 +614,16 @@ async function cacheRegression(browser) {
       for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) {
         const sample = await hotpathMeasure(browser, count, dpr); report.samples.push(sample); console.log(JSON.stringify(sample));
       }
+    } else if (sidebarOnly) {
+      report.scope = 'production graph sidebar CSS; one open/close cycle per round, three rounds; synthetic notes, unchanged camera and positions';
+      report.baseline = !!process.env.RELATUM_GRAPH_BASELINE_DIR;
+      for (const dpr of [1, 2]) for (const [count, edgeCount] of [[150, 149], [398, 79], [1500, 1499], [3000, 2999]]) {
+        const sample = await sidebarMeasure(browser, count, edgeCount, dpr); report.samples.push(sample); console.log(JSON.stringify(sample));
+      }
     } else {
       report.regression = await cacheRegression(browser); console.log(JSON.stringify({ regression: report.regression }));
     }
-    if (!hotpathsOnly && !process.argv.includes('--regression-only')) {
+    if (!hotpathsOnly && !sidebarOnly && !process.argv.includes('--regression-only')) {
       for (const dpr of [1, 2]) for (const count of [150, 1500, 3000]) for (const size of process.argv.includes('--tab-only') ? ['tab'] : ['window-area', 'tab']) {
         const sample = await measure(browser, count, dpr, size); report.samples.push(sample); console.log(JSON.stringify(sample));
       }

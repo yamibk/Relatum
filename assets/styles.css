@@ -33779,9 +33779,20 @@ html.dark-semantic-ui {
 .note-graph-panel[hidden] { display: none; }
 .note-graph-stage { position: absolute; inset: 0; }
 .note-tab-graph-icon { flex: none; width: 14px; height: 14px; }
-.note-graph-tools { position: absolute; z-index: 3; top: 8px; right: 10px; display: flex; gap: 2px; }
+.note-graph-tools { position: absolute; z-index: 3; top: 8px; right: 10px; display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: var(--bg); }
 .note-graph-tools .graph-tool-btn { min-width: 30px; height: 30px; padding-inline: 8px; }
 .note-graph-tools .note-mobile-pane-button { display: none; }
+/* Keep the graph's CSS viewport and backing store fixed while its sidebar moves. */
+@media (min-width: 1121px) {
+  .note-workspace.note-graph-active { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 0px; transition: none; }
+  .note-workspace.note-graph-active .note-links-pane { position: absolute; transform: translateX(100%); transition: transform var(--note-side-motion), visibility 230ms; }
+  .note-workspace.note-graph-active.links-overlay-open .note-links-pane { transform: none; }
+  .note-graph-tools { transition: transform var(--note-side-motion); }
+  .note-graph-active.links-overlay-open .note-graph-tools { transform: translateX(calc(-1 * var(--note-side-width))); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .note-graph-tools { transition: none; }
+}
 .note-graph-panel .graph-canvas { color: var(--text); }
 .note-graph-panel .graph-tool-btn:disabled { opacity: .35; cursor: default; }
 .note-graph-panel .graph-tooltip { overflow-wrap: anywhere; }

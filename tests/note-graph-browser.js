@@ -2,11 +2,19 @@
 // Real API + Edge. Every file and preference belongs to a disposable data root.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const panel = '[data-role="note-graph-panel"]', token = 'relatum:graph-tab:v1';
 const longName = '独立的中文长标题完整显示而且不截断超过十八个字符';
+const release = process.env.RELATUM_GRAPH_RELEASE ? path.resolve(process.env.RELATUM_GRAPH_RELEASE) : '';
+const execute = promisify(execFile);
+
+async function freePort() {
+  const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
+  const port = socket.address().port; await new Promise(resolve => socket.close(resolve)); return port;
+}
 
 function instrumentation(fallback) {
   const probe = window.__graphProbe = { contexts: 0, buffers: 0, programs: 0, uploads: 0, draws: 0, engines: [] };
@@ -70,33 +78,52 @@ async function run(browser, mode) {
     fs.writeFileSync(path.join(notes, 'CustomNotebook', book, 'A.md'), '[[B]]\n[重复](B.md)\n[[CustomNotebook/Other/B]]\n');
     fs.writeFileSync(path.join(notes, 'CustomNotebook', book, 'B.md'), '正文\n');
   }
-  const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
-  const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
-  const url = `http://127.0.0.1:${port}`, args = ['app.py', '--no-browser', '--port', String(port)];
+  const port = await freePort(), debugPort = release ? await freePort() : 0;
+  let url = `http://127.0.0.1:${port}`;
+  const args = ['app.py', '--no-browser', '--port', String(port)];
   if (mode === 'notes-only' || mode === 'notes-no-canvas') {
     const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'), 'utf8'));
     args.push('--launch-profile', JSON.stringify({ version: 1,
       features: Object.fromEntries(catalog.features.map(f => [f.id, f.id === 'notes' || mode === 'notes-only' && f.id === 'notes.canvas'])) }));
   }
-  const server = spawn(process.env.RELATUM_PYTHON || 'python', args,
-    { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const server = spawn(release ? path.join(release, 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python', release ? args.slice(4) : args,
+    { cwd: release || repo, env: { ...process.env, RELATUM_DATA_ROOT: root,
+      ...(release ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } : {}) }, windowsHide: true, stdio: 'ignore' });
+  let context, connection, page;
   try {
+    if (release) {
+      let ready = false;
+      for (let i = 0; i < 200; i++) {
+        try { ready = (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok; } catch (_) {}
+        if (ready) break; assert.equal(server.exitCode, null, 'isolated native client stays running'); await pause(100);
+      }
+      assert(ready, 'isolated WebView2 debugging endpoint');
+      connection = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`); context = connection.contexts()[0];
+      for (let i = 0; i < 100; i++) {
+        page = context.pages().find(item => item.url().startsWith('http://127.0.0.1:')); if (page) break; await pause(100);
+      }
+      assert(page, 'native client page'); url = new URL(page.url()).origin;
+      await page.setViewportSize({ width: 1440, height: 900 });
+    } else {
+      context = await browser.newContext({ viewport: { width: 1440, height: 900 } }); page = await context.newPage();
+    }
     let ready = false;
     for (let i = 0; i < 100; i++) { try { if ((await fetch(url + '/api/runtime')).ok) { ready = true; break; } } catch (_) {} await pause(100); }
     assert(ready, mode + ': server started');
-    const page = await context.newPage(); page.setDefaultTimeout(15000);
+    page.setDefaultTimeout(15000); await page.emulateMedia({ reducedMotion: 'no-preference' });
     const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message)); page.on('request', req => requests.push(new URL(req.url()).pathname));
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
-      '  window.T = {state, openNote, activateTab, closeTab, closeAllTabs, selectNotebook, triggerExternalSync, flushSave, movePath, recycleEntry, setSideMode, notebookUi, showBrowserResults, get graph(){return noteGraph;}, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
+      '  window.T = {state, openNote, activateTab, closeTab, closeAllTabs, selectNotebook, triggerExternalSync, flushSave, movePath, recycleEntry, setSideOpen, setSideMode, notebookUi, showBrowserResults, get sideClosePending(){return !!sideCloseTask;}, get graph(){return noteGraph;}, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
+    // Use current frontend code in the existing native host without modifying its package.
+    if (release) await page.route('**/styles.css*', route => route.fulfill({ contentType: 'text/css', body: fs.readFileSync(path.join(repo, 'assets/styles.css'), 'utf8') }));
     await page.addInitScript(instrumentation, mode === 'fallback' ? 'unavailable' : mode === 'shader-failure' ? 'shader' : '');
     await page.addInitScript(() => {
       localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteFocusMode:v1', '0');
       localStorage.setItem('canvas:noteGraphViews:v1', 'legacy-window-settings');
     });
-    await page.goto(url); await page.waitForFunction(() => window.T?.state.initialized && T.state.active);
+    await page.goto(url + (release ? '/?desktop=1' : '')); await page.waitForFunction(() => window.T?.state.initialized && T.state.active);
     const button = page.locator('[data-note-action="toggle-graph"]');
     assert(!requests.includes('/note-graph.js'), 'graph runtime stays lazy');
     assert.equal(await page.evaluate(() => __graphProbe.contexts), 0);
@@ -151,6 +178,100 @@ async function run(browser, mode) {
         return { unit: Math.min(rect.width / 1200, rect.height / 720) * engine.view.scale, spacing: engine.layoutSpacing };
       });
       assert(view.unit >= .8 - .002 && view.unit <= 1.2 + .002, 'default framing is readable at actual CSS size: ' + JSON.stringify(view));
+    }
+    async function verifySidebarMotion() {
+      await readableView();
+      const before = await camera();
+      const staticMotion = await page.evaluate(async () => {
+        const record = __graphProbe.latest, canvas = record.engine.canvas;
+        const start = { width: canvas.getBoundingClientRect().width, pixels: [canvas.width, canvas.height],
+          draws: __graphProbe.draws, engines: __graphProbe.engines.length, view: JSON.stringify(record.engine.view),
+          positions: JSON.stringify(record.nodes.map(node => [node.x, node.y])) };
+        let geometryUnchanged = true;
+        for (const open of [true, false]) {
+          T.setSideOpen(open);
+          for (let frame = 0; frame < 20; frame++) await new Promise(resolve => requestAnimationFrame(() => {
+            geometryUnchanged &&= canvas.getBoundingClientRect().width === start.width
+              && canvas.width === start.pixels[0] && canvas.height === start.pixels[1];
+            resolve();
+          }));
+        }
+        return { geometryUnchanged, draws: __graphProbe.draws - start.draws,
+          engines: __graphProbe.engines.length - start.engines, pending: T.sideClosePending,
+          viewUnchanged: JSON.stringify(record.engine.view) === start.view,
+          positionsUnchanged: JSON.stringify(record.nodes.map(node => [node.x, node.y])) === start.positions };
+      });
+      assert.deepEqual(staticMotion, { geometryUnchanged: true, draws: 0, engines: 0, pending: false, viewUnchanged: true, positionsUnchanged: true });
+      const race = await page.evaluate(async () => {
+        const tree = document.querySelector('[data-role="note-notebook-tree"]'), pane = document.querySelector('.note-links-pane');
+        const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+        T.setSideOpen(true); await wait(300);
+        const rows = Array.from(tree.children), clearWhileVisible = [];
+        const observer = new MutationObserver(() => { if (!tree.childElementCount) clearWhileVisible.push(getComputedStyle(pane).visibility === 'visible'); });
+        observer.observe(tree, { childList: true });
+        T.setSideOpen(false); await wait(60); T.setSideOpen(true); await wait(140); T.setSideOpen(false);
+        // A stale completion is also harmless while the latest closing pane is visible.
+        pane.dispatchEvent(new TransitionEvent('transitionend', { propertyName: 'visibility', bubbles: true }));
+        await wait(90);
+        const retained = rows.length > 0 && rows.every(row => row.isConnected), duringVisible = getComputedStyle(pane).visibility === 'visible';
+        await wait(250); observer.disconnect();
+        return { retained, duringVisible, clearWhileVisible, empty: tree.childElementCount === 0, pending: T.sideClosePending };
+      });
+      assert(race.retained && race.duringVisible, 'old close cannot blank the newer closing animation');
+      assert(race.clearWhileVisible.every(value => !value)); assert(race.empty && !race.pending);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      assert.deepEqual(await page.evaluate(() => {
+        T.setSideOpen(true); T.setSideOpen(false);
+        return { pending: T.sideClosePending, empty: !document.querySelector('[data-role="note-notebook-tree"]').childElementCount };
+      }), { pending: false, empty: true }, 'reduced motion completes cleanup synchronously');
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await page.evaluate(() => T.activateTab('A.md')); await resourcesReleased();
+      await page.evaluate(() => T.setSideMode('outline')); await pause(300);
+      await page.evaluate(() => T.activateTab('relatum:graph-tab:v1')); await shown(3, 1); await pause(350);
+      assert.deepEqual(await camera(), before);
+      assert(!await page.evaluate(() => document.querySelector('.note-workspace').classList.contains('links-overlay-open')));
+      await page.evaluate(() => T.setSideOpen(true)); await pause(300);
+      await page.evaluate(() => T.setSideOpen(false)); await pause(40);
+      await page.evaluate(() => T.activateTab('A.md')); await resourcesReleased(); await pause(320);
+      assert(await page.evaluate(() => T.notebookUi().open && T.state.sideMode === 'outline' && !T.sideClosePending), 'MD restoration cancels graph close cleanup');
+      await page.evaluate(() => T.setSideOpen(false)); await pause(300);
+      await page.evaluate(() => T.setSideMode('notebooks')); await pause(40);
+      await page.evaluate(() => T.activateTab('relatum:graph-tab:v1')); await shown(3, 1);
+      const entryWidths = await page.evaluate(async () => {
+        const widths = new Set();
+        for (let frame = 0; frame < 20; frame++) await new Promise(resolve => requestAnimationFrame(() => {
+          widths.add(__graphProbe.latest.engine.canvas.getBoundingClientRect().width); resolve();
+        }));
+        return widths.size;
+      });
+      assert.equal(entryWidths, 1, 'entering during an MD grid animation establishes the final graph viewport immediately');
+      for (const width of [1440, 1121, 1120, 760, 720]) {
+        await page.setViewportSize({ width, height: 900 }); await pause(350);
+        await page.locator('[data-note-action="graph-notebooks"]').evaluate(el => el.click()); await pause(300);
+        assert(await page.locator('[data-note-action="close-links"]').isVisible());
+        if (width >= 1121) {
+          const toolbar = await page.locator('.note-graph-tools').boundingBox(), sidebar = await page.locator('.note-links-pane').boundingBox();
+          assert(toolbar.x >= 0 && toolbar.x + toolbar.width <= sidebar.x - 5, 'wide toolbar remains clear of the covering panel');
+          assert(await page.locator('[data-note-action="graph-notebooks"]').evaluate(el => {
+            const rect = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+          }), 'translated toggle stays clickable');
+        }
+        await page.locator('[data-note-action="close-links"]').click(); await pause(300);
+        assert(!await page.evaluate(() => T.sideClosePending));
+      }
+      await page.setViewportSize({ width: 1440, height: 900 }); await pause(350);
+      for (const focused of [true, false]) {
+        await page.locator('[data-note-action="toggle-focus"]').click(); await pause(550);
+        assert.equal(await page.evaluate(() => document.body.classList.contains('note-focus-mode')), focused);
+        await page.locator('[data-note-action="graph-notebooks"]').evaluate(el => el.click()); await pause(300);
+        assert(await page.locator('[data-note-action="close-links"]').isVisible());
+        if (process.env.RELATUM_ARTIFACT_DIR) {
+          fs.mkdirSync(process.env.RELATUM_ARTIFACT_DIR, { recursive: true });
+          await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, `graph-sidebar-${mode}-${focused ? 'focus' : 'normal'}.png`) });
+        }
+        await page.locator('[data-note-action="close-links"]').click(); await pause(300);
+      }
+      assert.deepEqual(await camera(), before, 'sidebar, breakpoints and focus mode preserve the logical camera');
     }
     async function verifySpacingSettings() {
       await readableView();
@@ -306,6 +427,7 @@ async function run(browser, mode) {
     assert.equal(await page.evaluate(() => __graphProbe.latest.engine.backendKind), ['fallback', 'shader-failure'].includes(mode) ? 'canvas2d' : 'webgl');
     await page.waitForFunction(name => Array.from(document.querySelectorAll('[data-note-graph-label]')).some(el => el.textContent === name), longName);
     await pause(6500);
+    await verifySidebarMotion();
     await verifyLabelFade(longName + '.md');
     await verifyPalette(false, 'A.md');
     await verifyGrowthAndSpread();
@@ -509,19 +631,29 @@ async function run(browser, mode) {
     assert.equal(await page.evaluate(() => T.state.tabs.length), 0);
     assert.deepEqual(errors, [], mode + ': no browser errors');
     // A final uninstrumented workspace uses the same production entry and tab close action.
-    await page.unroute('**/note-workspace.js*'); await page.reload(); await page.waitForFunction(() => window.CanvasNoteWorkspace);
+    await page.unroute('**/note-workspace.js*');
+    if (release) await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8') }));
+    await page.reload(); await page.waitForFunction(() => window.CanvasNoteWorkspace);
     await button.click(); await page.locator(panel).waitFor({ state: 'visible' });
     await page.locator('.note-tab.is-graph .note-tab-close').click(); await page.locator(panel).waitFor({ state: 'hidden' });
-    console.log(`note graph tab ${mode}: passed`);
+    console.log(`note graph tab ${mode}${release ? ' WebView2' : ''}: passed`);
   } finally {
-    await context.close(); server.kill(); await pause(100);
+    if (release) {
+      if (page && server.exitCode === null) {
+        await page.evaluate(() => window.pywebview.api.close_window()).catch(() => {});
+        if (server.exitCode === null) await Promise.race([new Promise(resolve => server.once('exit', resolve)), pause(5000)]);
+      }
+      await connection?.close().catch(() => {});
+      if (server.exitCode === null) await execute('taskkill.exe', ['/PID', String(server.pid), '/T', '/F'], { windowsHide: true }).catch(() => {});
+    } else { await context?.close(); server.kill(); }
+    await pause(150);
     if (path.dirname(root) === os.tmpdir() && path.basename(root).startsWith('relatum-note-graph-tab-')) fs.rmSync(root, { recursive: true, force: true });
   }
 }
 (async () => {
-  const browser = await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
+  const browser = release ? null : await chromium.launch({ headless: true, ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
   const available = ['full', 'notes-only', 'notes-no-canvas', 'fallback', 'shader-failure'];
   const modes = process.argv.length > 2 ? process.argv.slice(2) : available;
   assert(modes.every(mode => available.includes(mode)));
-  try { for (const mode of modes) await run(browser, mode); } finally { await browser.close(); }
+  try { for (const mode of modes) await run(browser, mode); } finally { await browser?.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

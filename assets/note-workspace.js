@@ -73,6 +73,7 @@
   const GRAPH_TAB = 'relatum:graph-tab:v1';
   const graphHost = $('[data-role="note-graph-panel"]');
   let graphPresentation = false, graphSidebar = null;
+  let sideCloseTask = null, sideMotionSequence = 0;
   let noteMovePromise = null, noteMovePaths = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
   if (canvasEnabled()) window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => window.RelatumNotePreferences?.resetCanvasNodeScale?.());
@@ -108,6 +109,7 @@
   function effectiveSideMode() { return graphPresentation ? 'notebooks' : state.sideMode; }
   function setGraphPresentation(show) {
     if (graphPresentation === show) return;
+    cancelSideClose();
     graphPresentation = show;
     if (show) {
       graphSidebar = { open: root.classList.contains('links-overlay-open'), mode: state.sideMode };
@@ -120,6 +122,7 @@
     root.classList.toggle('note-graph-active', show);
     if (graphHost) { graphHost.hidden = !show; graphHost.inert = !show; }
     updateSidePanel(); updateGraphToggle();
+    scheduleSideClose();
   }
   function graphLoadStatus(error) {
     const message = graphHost?.querySelector('[data-role="note-graph-load-message"]');
@@ -3514,7 +3517,39 @@
     const sidePopoverObserver = new ResizeObserver(scheduleSidePopoverPosition);
     [root, settingsPop, imageTextTools].filter(Boolean).forEach((element) => sidePopoverObserver.observe(element));
   }
+  function clearClosedNotebookTree() {
+    if (root.classList.contains('links-overlay-open') || !notebookTreeEl) return;
+    clearTreeRowIndex(notebookTreeEl); notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true;
+  }
+  function cancelSideClose() {
+    sideMotionSequence++;
+    if (!sideCloseTask) return;
+    clearTimeout(sideCloseTask.timer);
+    root.removeEventListener('transitionend', sideCloseTask.onEnd);
+    sidePane?.removeEventListener('transitionend', sideCloseTask.onEnd);
+    sideCloseTask = null;
+  }
+  function scheduleSideClose() {
+    if (root.classList.contains('links-overlay-open') || !notebookTreeEl) return;
+    const sequence = sideMotionSequence;
+    const finish = () => {
+      if (sideCloseTask !== task || sequence !== sideMotionSequence) return;
+      cancelSideClose(); clearClosedNotebookTree();
+    };
+    const task = sideCloseTask = { timer: 0, onEnd(event) {
+      if (event.target !== root && event.target !== sidePane) return;
+      if (!['transform', 'visibility', 'grid-template-columns'].includes(event.propertyName)) return;
+      // A queued end event from a reversed transition cannot clear visible content.
+      if (!sidePane || getComputedStyle(sidePane).visibility === 'hidden') finish();
+    } };
+    if (!sidePane || root.hidden || document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        || getComputedStyle(sidePane).visibility === 'hidden') { finish(); return; }
+    root.addEventListener('transitionend', task.onEnd);
+    sidePane.addEventListener('transitionend', task.onEnd);
+    task.timer = window.setTimeout(finish, 270);
+  }
   function setSideOpen(open) {
+    cancelSideClose();
     cancelLinksRefresh();
     sideMotionUntil = performance.now() + 270;
     if (!open) {
@@ -3531,9 +3566,7 @@
     if (!graphPresentation) queueNotebookSettings({ ui: notebookUi() });
     updateImageTextTools();
     if (open) { if (effectiveSideMode() === 'links') ensureLinks(); scheduleSidePopoverPosition(); }
-    if (!open) window.setTimeout(() => {
-      if (!root.classList.contains('links-overlay-open') && notebookTreeEl) { clearTreeRowIndex(notebookTreeEl); notebookTreeEl.replaceChildren(); state.notebookTreeDirty = true; }
-    }, 270);
+    if (!open) scheduleSideClose();
   }
   function setSideMode(mode) {
     if (graphPresentation) { if (mode === 'notebooks') setSideOpen(true); return; }
@@ -3730,6 +3763,8 @@
     setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
     state.active = false;
+    cancelSideClose();
+    if (!sidePane || root.hidden || getComputedStyle(sidePane).visibility === 'hidden') clearClosedNotebookTree();
     syncOutline();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(false);
     root.classList.remove('tree-overlay-open'); closeContextMenu(); desktopDirty(false); return true;
@@ -3738,7 +3773,7 @@
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
     syncOutline();
-    if (root.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); }
+    if (root.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
     else if (state.active && graphPresentation) resumeNoteGraph();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
@@ -4050,10 +4085,10 @@
   window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
   document.addEventListener('visibilitychange', () => {
     syncOutline();
-    if (document.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
+    if (document.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
     else if (state.active) { resumeNoteGraph(); if (noteBrowser) noteBrowser.resume(); if (browserIntent && browserDisclosure.hidden) setBrowserMode(true); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
   });
-  window.addEventListener('pagehide', () => { noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('pagehide', () => { noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); syncOutline(); resumeNoteGraph(); });
   window.addEventListener('beforeunload', () => { cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
