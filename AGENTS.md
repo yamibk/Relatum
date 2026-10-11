@@ -657,7 +657,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - `usage_store.py` 管理新账本，编辑器按项目索引查询，WAL 读快照不持有写入互斥锁；`career_report.py` 纯只读统计内容并生成冻结快照，画布目录和库登记均不用普通修复加载器。目录读取失败独立记为未知范围，不使其他来源丢失。新建/修改、归档、打卡和复习仅从成功业务操作记入；无变化保存、重复操作不增加记录。加载画布只初始化指纹，不回填旧日期。
 - 前端拆分数据、章节、图表、动效、生命周期；根 `data-i18n-managed` 排除全局翻译遍历。支持全部/30/90/可选择的自然年/自定义范围，仅筛选冻结历史；库存标注生成时规模，日期缺口断线，图表提供刻度、单位、精确明细、提示与图例。
 - 笔记复用 `note_graph.py` 双链/Markdown 解析，按笔记本隔离；统计全量，图谱确定性取最多 600 节点/2400 真实边。研究读取主文件，统计组件、导线、关系线、定义与真实依赖，禁止恢复或重写。共享内嵌文件按文件去重。
-- 预热只准备运行时和快照，进入才加载独立 CSS。接近视口挂载图表，离屏释放绘制/交互资源并保留镜头、坐标、筛选及占位高度；滚动停稳才创建图谱。隐藏/离场取消 RAF、观察器、请求和生成轮询，迟到结果检查会话。
+- 预热只准备运行时和快照，进入才加载独立 CSS。普通图表在视口前后 240px 内挂载；生涯图谱使用独立观察器，提前约 1.25 屏（900–1800px）加载并开始布局，连续滚动也立即触发。超出各自预加载范围后释放绘制/交互资源，保留镜头、坐标、筛选及占位高度。隐藏/离场取消 RAF、两组观察器、请求和生成轮询，迟到结果检查会话。
 - 图谱复用引擎实例缓存、悬停合帧、WebGL→Canvas2D 回退，无漂移/粒子，收敛后停 RAF。可选 `shouldHandleWheel(event)` 默认不改变原宿主；生涯 Ctrl/Meta+滚轮缩放，普通滚轮继续阅读。键盘方向键平移、加减缩放、0 复位。
 - 普通图表、数字及滚动共用有限调度器，数字接近视口播放、离场落到最终值；低动态静态降级。惯性帧不读布局，ResizeObserver 缓存边界；语言/主题/筛选/重新生成保留阅读锚点，滚动偏好沿用。
 - 验证：`python -B -m unittest tests.test_usage_v2 tests.test_canvas_activity tests.test_start_page_activity tests.test_career_report tests.test_calendar_canvas_activity tests.test_feature_profile`；`node tests/usage-tracker-regression.js`、`node tests/career-report-contract.js`；`node tests/career-v2-browser.js [--large] [--webview2] [--fallback]`。浏览器设置 RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH，WebView2 另设 RELATUM_WEBVIEW_PYTHON（有 pywebview 的 Python）。工具只用新建临时数据根和浏览器配置，检查内容字节不变；实测见 `docs/career-v2-performance-2026-10-11.md`。

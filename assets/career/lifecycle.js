@@ -7,10 +7,9 @@ export function createCareer(onReport) {
   const root=document.querySelector('.career-workspace'), scroll=root.querySelector('[data-role="career-scroll"]'),
     host=root.querySelector('[data-role="career-report"]'),entry=root.querySelector('[data-role="career-entry"]'),loading=root.querySelector('[data-role="career-loading"]');
   const schedule=scheduler(), context={scheduler:schedule,filter:{mode:'all'},graphViews:new Map(),legendState:new Map(),heatmapYear:null};
-  let report=null, initialized=null, active=false, sequence=0, charts=[], observer=null, renderVersion=0, reportVersion=0, job=null, generating=false, pollController=null, css=null, scroller=null;
+  let report=null, initialized=null, active=false, sequence=0, charts=[], observer=null, graphObserver=null, renderVersion=0, reportVersion=0, job=null, generating=false, pollController=null, css=null, scroller=null;
   const mounted=new Map();
   const finishNumbers=new Set();
-  const pendingGraphs=new Map();
   const pendingReveals=new Map();
   let entrance=null;
   const visible=()=>active&&!document.hidden&&document.documentElement.dataset.desktopMinimized!=='1'&&!root.hidden;
@@ -31,8 +30,7 @@ export function createCareer(onReport) {
   }
   function stop() {
     entrance?.cancel();entrance=null;scroll.style.removeProperty('opacity');
-    sequence++;observer?.disconnect();observer=null;
-    for(const timer of pendingGraphs.values())clearTimeout(timer);pendingGraphs.clear();
+    sequence++;observer?.disconnect();observer=null;graphObserver?.disconnect();graphObserver=null;
     for(const timer of pendingReveals.values())clearTimeout(timer);pendingReveals.clear();
     for(const [target,runtime] of mounted){runtime.destroy();target.dataset.mounted='0';}mounted.clear();
     for(const finish of finishNumbers)finish();finishNumbers.clear();
@@ -58,12 +56,10 @@ export function createCareer(onReport) {
       if(!visible()||version!==renderVersion||mounted.has(record.host))return;
       const runtime=mountChart(record.host,record.spec,context);mounted.set(record.host,runtime);record.host.dataset.mounted='1';reveal(record.panel);record.panel.classList.add('career-entered');
     }
-    function near(record){
-      if(record.spec.type!=='graph'){mount(record);return;}
-      if(mounted.has(record.host)||pendingGraphs.has(record.host))return;
-      const check=()=>{pendingGraphs.delete(record.host);if(!visible()||version!==renderVersion)return;
-        if(scroller?.isScrolling){pendingGraphs.set(record.host,setTimeout(check,80));return;}mount(record);};
-      pendingGraphs.set(record.host,setTimeout(check,80));
+    function unmount(record){
+      const runtime=mounted.get(record.host);if(!runtime)return;
+      record.host.style.minHeight=Math.ceil(record.host.getBoundingClientRect().height)+'px';
+      runtime.destroy();mounted.delete(record.host);record.host.dataset.mounted='0';
     }
     const lookup=new Map(charts.map(r=>[r.host,r]));
     const reveals=[...host.querySelectorAll('.career-section-head,.career-panel,[data-career-number]')];
@@ -75,8 +71,13 @@ export function createCareer(onReport) {
     }
     if('IntersectionObserver' in window){
       observer=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
-        for(const item of entries){const record=lookup.get(item.target);if(!record){if(item.isIntersecting)reveal(item.target);else{clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);}continue;}if(item.isIntersecting)near(record);else{clearTimeout(pendingGraphs.get(item.target));pendingGraphs.delete(item.target);if(mounted.has(item.target)){item.target.style.minHeight=Math.ceil(item.target.getBoundingClientRect().height)+'px';mounted.get(item.target).destroy();mounted.delete(item.target);item.target.dataset.mounted='0';}}}
-      },{root:scroll,rootMargin:'240px 0px',threshold:0});charts.forEach(r=>observer.observe(r.host));reveals.forEach(node=>observer.observe(node));
+        for(const item of entries){const record=lookup.get(item.target);if(!record){if(item.isIntersecting)reveal(item.target);else{clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);}continue;}if(item.isIntersecting)mount(record);else unmount(record);}
+      },{root:scroll,rootMargin:'240px 0px',threshold:0});charts.filter(r=>r.spec.type!=='graph').forEach(r=>observer.observe(r.host));reveals.forEach(node=>observer.observe(node));
+      // Start graph loading and layout ahead of the viewport, including during continuous scrolling.
+      const graphMargin=Math.round(Math.max(900,Math.min(1800,scroll.clientHeight*1.25)));
+      graphObserver=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
+        for(const item of entries){const record=lookup.get(item.target);if(item.isIntersecting)mount(record);else unmount(record);}
+      },{root:scroll,rootMargin:`${graphMargin}px 0px`,threshold:0});charts.filter(r=>r.spec.type==='graph').forEach(r=>graphObserver.observe(r.host));
     }else{charts.forEach(mount);reveals.forEach(reveal);}
   }
   function render(keepAnchor=true) {
