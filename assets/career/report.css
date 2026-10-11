@@ -14,6 +14,9 @@
   background: var(--career-bg);
 }
 
+.career-workspace.workspace-entering.workspace-forward,
+.career-workspace.workspace-entering.workspace-back { animation: none; }
+
 .career-filter { position: sticky; top: 14px; z-index: 5; display: flex; flex-wrap: wrap; gap: 7px; padding: 10px; margin: 24px 0 10px; border: 1px solid var(--career-line); border-radius: 18px; background: var(--career-paper); }
 .career-filter button,.career-legend button,.career-more,.career-graph-controls button { appearance:none; border:1px solid var(--career-line); border-radius:20px; background:transparent; color:inherit; padding:8px 14px; cursor:pointer; font:inherit; font-size:12px; }
 .career-filter button[aria-pressed="true"],.career-legend button[aria-pressed="true"] { background:var(--career-ink);color:var(--career-paper); }

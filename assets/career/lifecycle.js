@@ -12,6 +12,7 @@ export function createCareer(onReport) {
   const finishNumbers=new Set();
   const pendingGraphs=new Map();
   const pendingReveals=new Map();
+  let entrance=null;
   const visible=()=>active&&!document.hidden&&document.documentElement.dataset.desktopMinimized!=='1'&&!root.hidden;
   function styles() {
     if(!css)css=new Promise((resolve,reject)=>{const link=el('link');link.rel='stylesheet';link.href='career/report.css';link.onload=resolve;link.onerror=()=>{link.remove();css=null;reject(new Error(tr('生涯样式未能加载','Career styles could not load')));};document.head.append(link);});
@@ -29,6 +30,7 @@ export function createCareer(onReport) {
     entry.querySelector('button').disabled=!!job||generating;
   }
   function stop() {
+    entrance?.cancel();entrance=null;scroll.style.removeProperty('opacity');
     sequence++;observer?.disconnect();observer=null;
     for(const timer of pendingGraphs.values())clearTimeout(timer);pendingGraphs.clear();
     for(const timer of pendingReveals.values())clearTimeout(timer);pendingReveals.clear();
@@ -90,9 +92,15 @@ export function createCareer(onReport) {
   }
   async function activate() {
     active=true;const own=++sequence;
+    entrance?.cancel();entrance=null;scroll.style.opacity='0';
     await styles();await preload();
     if(!active||own!==sequence||document.hidden)return;
     syncEntry();if(report){if(!host.childElementCount)render(false);else observe();}
+    scroll.style.removeProperty('opacity');
+    if(visible()&&!matchMedia('(prefers-reduced-motion: reduce)').matches&&typeof scroll.animate==='function'){
+      const animation=scroll.animate([{opacity:0},{opacity:1}],{duration:600,easing:'ease-out'});
+      entrance=animation;animation.finished.then(()=>{if(entrance===animation)entrance=null;},()=>{});
+    }
     if(job)poll(job);
   }
   function waiting(ms,signal) {
