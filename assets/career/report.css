@@ -25,7 +25,50 @@
 .career-range-caption,.career-history-empty { color:var(--career-muted);font-size:13px;line-height:1.8; }
 .career-chart-mount { min-width:0; color:var(--career-ink); }
 .career-native-chart { display:block;width:100%;height:auto;overflow:visible; }
-.career-chart-tip { position:fixed;z-index:25;max-width:230px;padding:9px 12px;border:1px solid var(--career-line);border-radius:10px;background:var(--career-paper);color:var(--career-ink);font-size:12px;pointer-events:none;white-space:normal;box-shadow:0 6px 18px rgba(0,0,0,.08); }
+.career-chart-tip { position:fixed;z-index:210;max-width:min(230px,calc(100vw - 40px));box-sizing:border-box;max-height:calc(100vh - 16px);overflow:hidden;overflow-wrap:anywhere;padding:9px 12px;border:1px solid var(--career-line);border-radius:10px;background:var(--career-paper);color:var(--career-ink);font-family:inherit;font-size:12px;line-height:1.5;pointer-events:none;white-space:normal;box-shadow:0 6px 18px rgba(0,0,0,.08);animation:careerTipEnter 120ms ease-out; }
+.career-chart-tip[hidden] { display:none; }
+.career-chart-tip { width:max-content; }
+.career-plot { position:relative;contain:layout paint style; }
+.career-return-cover { position:absolute;inset:0;z-index:1;background:var(--career-paper);pointer-events:none; }
+.career-plot.is-presenting { animation:careerPlotEnter 700ms cubic-bezier(.16,1,.3,1) both; }
+.career-dense-surface.is-presenting::after { content:"";position:absolute;inset:0;background:var(--career-paper);pointer-events:none;transform-origin:right;animation:careerDenseEnter 900ms cubic-bezier(.16,1,.3,1) both; }
+.career-plot.is-presenting .career-rank-track i { transform-origin:left;animation:careerBarEnter 750ms cubic-bezier(.16,1,.3,1) var(--career-stagger,0ms) both; }
+.career-plot.is-presenting .career-bar-enter { transform-box:fill-box;transform-origin:center bottom;animation:careerColumnEnter 750ms cubic-bezier(.16,1,.3,1) var(--career-stagger,0ms) both; }
+.career-plot.is-presenting .career-area-enter,
+.career-plot.is-presenting .career-matrix-point { transform-box:fill-box;transform-origin:center;animation:careerPointEnter 750ms cubic-bezier(.16,1.25,.3,1) var(--career-stagger,0ms) backwards; }
+.career-plot.is-presenting .career-series-line { animation:careerLineEnter 800ms cubic-bezier(.16,1,.3,1) var(--career-stagger,0ms) both; }
+.career-plot.is-presenting .career-trend-point { animation:careerDotEnter 700ms ease-out var(--career-stagger,0ms) backwards; }
+.career-feedback { outline:none; }
+.career-bar-mark,.career-area-mark,.career-trend-point,.career-matrix-point { transition:opacity 160ms ease,fill 160ms ease; }
+.career-bar-mark.is-hit,.career-area-mark.is-hit,.career-area-enter.is-hit .career-area-mark,.career-trend-point.is-hit,.career-matrix-point.is-hit { transform-box:fill-box;transform-origin:center;transition:transform 160ms ease,opacity 160ms ease,fill 160ms ease; }
+.career-bar-mark.is-hit { transform:scaleX(1.06);opacity:1;fill:var(--career-accent); }
+.career-area-mark.is-hit,.career-area-enter.is-hit .career-area-mark { transform:scale(1.015);opacity:.8;fill:var(--career-accent); }
+.career-trend-point.is-hit,.career-matrix-point.is-hit { transform:scale(1.35);opacity:1;stroke:var(--career-paper);stroke-width:1; }
+.career-feedback:focus-visible { outline:2px solid var(--career-accent);outline-offset:3px; }
+.career-series { transition:opacity 160ms ease; }
+.career-native-chart.has-series-hit .career-series:not(.is-hit) { opacity:.24; }
+.career-series-line { vector-effect:non-scaling-stroke;transition:stroke-width 160ms ease; }
+.career-series.is-hit .career-series-line { stroke-width:2.2; }
+.career-rank { transition:color 160ms ease; }
+.career-rank.is-hit { color:var(--career-accent); }
+.career-rank.is-hit .career-rank-track { transform:scaleY(1.18); }
+.career-rank-track { transition:transform 160ms ease; }
+.career-dense-surface { position:relative; }
+.career-dense-highlight { position:absolute;pointer-events:none;border-radius:2px;background:var(--career-accent);outline:1px solid var(--career-paper);animation:careerTipEnter 160ms ease-out; }
+.career-graph-halo { position:absolute;pointer-events:none;border:1px solid currentColor;border-radius:50%;box-sizing:border-box;opacity:.45;animation:careerHaloEnter 180ms ease-out; }
+@keyframes careerTipEnter { from{opacity:0}to{opacity:1} }
+@keyframes careerPlotEnter { from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none} }
+@keyframes careerDenseEnter { from{transform:scaleX(1)}to{transform:scaleX(0)} }
+@keyframes careerBarEnter { from{transform:scaleX(.02)}to{transform:scaleX(1)} }
+@keyframes careerColumnEnter { from{opacity:0;transform:scaleY(.04)}to{opacity:1;transform:scaleY(1)} }
+@keyframes careerPointEnter { from{opacity:0;transform:scale(.35)}to{transform:scale(1)} }
+@keyframes careerLineEnter { from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0)} }
+@keyframes careerDotEnter { from{opacity:0} }
+@keyframes careerHaloEnter { from{opacity:0;transform:scale(.8)}to{opacity:.45;transform:scale(1)} }
+@media(prefers-reduced-motion:reduce) {
+  .career-plot,.career-plot *, .career-chart-tip,.career-dense-highlight,.career-graph-halo { animation:none !important;transition:none !important; }
+  .career-dense-surface::after { display:none !important; }
+}
 .career-axis-label { fill:currentColor;font-size:10px;opacity:.62; }
 .career-axis-grid { stroke:currentColor;stroke-opacity:.1;stroke-width:1; }
 .career-chart-empty { min-height:200px;display:grid;place-content:center;color:var(--career-muted);font-size:13px; }

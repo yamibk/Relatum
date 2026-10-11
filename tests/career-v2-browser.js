@@ -62,7 +62,16 @@ async function main(){
     const jump=async id=>{await page.evaluate(id=>{const scroll=document.querySelector('.career-scroll'),node=document.querySelector('#career-'+id);scroll.scrollTop=node.offsetTop;},id);await page.waitForTimeout(650);};
     await jump('overview');await page.screenshot({path:path.join(dataRoot,'overview.png')});
     assert(await page.locator('[data-chart-key="daily"] canvas').count());
+    assert.equal(await page.locator('[data-chart-key="daily"] .career-plot').getAttribute('data-presentation'),'first','entry plays when the real chart enters the viewport');
     await jump('notes');await page.screenshot({path:path.join(dataRoot,'notes.png')});
+    await jump('overview');assert.equal(await page.locator('[data-chart-key="daily"] .career-plot').getAttribute('data-presentation'),'shown','return keeps data and skips full unfolding');
+    const dailyBox=await page.locator('[data-chart-key="daily"] canvas').boundingBox(),dailyPoint={x:dailyBox.x+80,y:dailyBox.y+100};
+    await page.mouse.move(dailyPoint.x,dailyPoint.y);await page.waitForTimeout(70);
+    const liveTip=page.locator('.career-chart-tip');assert(await liveTip.isVisible());assert.equal(await liveTip.count(),1,'one shared tooltip');
+    assert(await liveTip.evaluate(n=>n.parentElement===document.body),'tooltip escapes panel containment');
+    const tipBox=await liveTip.boundingBox();assert(Math.abs(tipBox.x-dailyPoint.x-12)<2&&Math.abs(tipBox.y-dailyPoint.y-12)<2);
+    await jump('notes');
+    assert(await liveTip.isHidden(),'scroll clears old chart feedback');
     for(const mode of ['30','90','year','all']){await page.locator(`.career-filter [data-mode="${mode}"]`).click();await page.waitForTimeout(130);}
     assert.equal(requests.length,initialRequests,'filters must not read a new snapshot or rescan');
     await page.locator('.career-filter [data-mode="custom"]').click();
@@ -97,7 +106,7 @@ async function main(){
     await page.keyboard.press('=');assert(await page.evaluate(()=>[...__careerGraphs.live][0].engine.view.scale)>camera.scale,'keyboard graph zoom');
     await page.keyboard.press('0');await page.waitForTimeout(650);
     for(let i=0;i<5;i++){
-      await page.locator('[data-start-workspace="notes"]').click();await page.waitForTimeout(500);assert.equal(await page.locator('.career-chart-mount canvas').count(),0,'leaving releases chart resources');assert.equal(await page.evaluate(()=>__careerGraphs.live.size),0,'no retained graph engines');
+      await page.locator('[data-start-workspace="notes"]').click();await page.waitForTimeout(500);assert.equal(await page.locator('.career-chart-mount canvas').count(),0,'leaving releases chart resources');assert.equal(await page.locator('.career-chart-tip').count(),0,'leaving releases the portal');assert.equal(await page.evaluate(()=>__careerGraphs.live.size),0,'no retained graph engines');
       await page.locator('[data-start-workspace="career"]').click();await page.waitForTimeout(650);
     }
     await page.evaluate(()=>{document.body.dataset.startTheme='dark';});await page.waitForTimeout(300);await jump('overview');await page.screenshot({path:path.join(dataRoot,'dark.png')});
@@ -108,14 +117,14 @@ async function main(){
     // Finite probe is test-only and observes report idle, not unrelated hosts.
     await jump('overview');await page.waitForTimeout(1800);
     const idle=await page.evaluate(async()=>{let count=0;const original=window.requestAnimationFrame;window.requestAnimationFrame=fn=>{count++;return original(fn);};await new Promise(r=>setTimeout(r,650));window.requestAnimationFrame=original;return count;});assert.equal(idle,0,'idle report must not schedule RAF');
-    const perf=[],interaction=[];
+    const perf=[],interaction=[],performanceFailures=[];
     for(const stress of process.argv.includes('--checks-only')?[]:[false,true]){
       const cdp=await context.newCDPSession(page);await cdp.send('Emulation.setCPUThrottlingRate',{rate:stress?4:1});
       if(stress)await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:2,mobile:false});
       for(let round=0;round<3;round++){
         const intervals=await page.evaluate(async()=>{const scroll=document.querySelector('.career-scroll');scroll.scrollTop=0;await new Promise(r=>setTimeout(r,900));const values=[];let previous=performance.now(),i=0;const max=scroll.scrollHeight-scroll.clientHeight;await new Promise(resolve=>{function tick(now){values.push(now-previous);previous=now;scroll.scrollTop=max*(i/180);if(++i<180)requestAnimationFrame(tick);else resolve();}requestAnimationFrame(tick);});return values.slice(1);});
-        const result={stress,round,p95:percentile(intervals,.95),max:Math.max(...intervals)};perf.push(result);process.stdout.write(JSON.stringify(result)+'\n');
-        assert(result.p95<=(stress?35:20),`frame interval target: ${JSON.stringify(result)}`);
+        const result={stress,round,p95:percentile(intervals,.95),max:Math.max(...intervals),fps:intervals.length*1000/intervals.reduce((sum,value)=>sum+value,0)};perf.push(result);process.stdout.write(JSON.stringify(result)+'\n');
+        if(result.p95>(stress?35:20))performanceFailures.push({kind:'scroll',...result});
       }
       await page.evaluate(()=>{const s=document.querySelector('.career-scroll');s.scrollTop=document.querySelector('[data-chart-key="note-network"]').closest('.career-panel').offsetTop;});await page.waitForTimeout(5500);
       for(let round=0;round<3;round++){
@@ -138,8 +147,8 @@ async function main(){
           return values;
         });
         await page.mouse.up();await page.mouse.move(80,2);
-        const result={stress,round,p95:percentile(intervals,.95),max:Math.max(...intervals)};interaction.push(result);process.stdout.write(JSON.stringify({interaction:result})+'\n');
-        assert(result.p95<=(stress?35:20),`interaction frame target: ${JSON.stringify(result)}`);
+        const result={stress,round,p95:percentile(intervals,.95),max:Math.max(...intervals),fps:intervals.length*1000/intervals.reduce((sum,value)=>sum+value,0)};interaction.push(result);process.stdout.write(JSON.stringify({interaction:result})+'\n');
+        if(result.p95>(stress?35:20))performanceFailures.push({kind:'interaction',...result});
       }
       await cdp.detach();
     }
@@ -167,7 +176,8 @@ async function main(){
     const regenerated=JSON.parse(fs.readFileSync(path.join(dataRoot,'data','career-report-v2.json'),'utf8'));assert.equal(regenerated.inventory.notes.count,fixture.notes+1);
     assert(!usage.flatMap(b=>b.intervals||[]).some(r=>r.category==='career'||r.category==='focus'||r.category==='diary'));
     assert.equal(errors.length,0,errors.join('\n'));
-    const result={fixture,native,fallback,browserVersion:browser.version(),checksOnly:process.argv.includes('--checks-only'),perf,interaction,graphIdle,idle,errors,checks:26,dataRoot};fs.writeFileSync(path.join(dataRoot,'acceptance.json'),JSON.stringify(result,null,2));process.stdout.write(JSON.stringify({result:path.join(dataRoot,'acceptance.json')})+'\n');
+    const result={fixture,native,fallback,browserVersion:browser.version(),checksOnly:process.argv.includes('--checks-only'),perf,interaction,performanceFailures,graphIdle,idle,errors,checks:32,dataRoot};fs.writeFileSync(path.join(dataRoot,'acceptance.json'),JSON.stringify(result,null,2));process.stdout.write(JSON.stringify({result:path.join(dataRoot,'acceptance.json')})+'\n');
+    assert.equal(performanceFailures.length,0,`frame interval targets: ${JSON.stringify(performanceFailures)}`);
   }finally{if(native)await page?.evaluate(()=>window.pywebview?.api.close_window()).catch(()=>{});await browser?.close();if(server.exitCode===null)server.kill();}
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1;});

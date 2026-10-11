@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-11",
+  "baseCommit": "8a6c394",
+  "implementation": "uncommitted workspace changes",
+  "browserVersion": "155.0.4283.45",
+  "viewport": [1440, 1000],
+  "fixture": {"notes": 5000, "canvases": 500, "research": 200, "inputs": 100000},
+  "currentGeneration": {"usageMs": 10535, "generationMs": 3123, "reportBytes": 4819444},
+  "method": {"scrollFrames": 180, "dragFrames": 90, "hoverFrames": 90, "hoverEventsPerFrame": 3, "ordinaryDpr": 1, "stressDpr": 2, "stressCpuRate": 4, "ordinaryP95TargetMs": 20, "stressP95TargetMs": 35, "fps": "sample count / total frame intervals in seconds"},
+  "baseline": {
+    "source": "read-only git content served by isolated test routes",
+    "scroll": [
+      {"stress": false, "round": 0, "p95": 16.9, "max": 283.5},
+      {"stress": false, "round": 1, "p95": 16.9, "max": 17.5},
+      {"stress": false, "round": 2, "p95": 16.9, "max": 34.1},
+      {"stress": true, "round": 0, "p95": 33.7, "max": 66.7},
+      {"stress": true, "round": 1, "p95": 33.4, "max": 83.3},
+      {"stress": true, "round": 2, "p95": 33.4, "max": 83.5}
+    ],
+    "interaction": [
+      {"stress": false, "round": 0, "p95": 17, "max": 17.3},
+      {"stress": false, "round": 1, "p95": 16.9, "max": 17.5},
+      {"stress": false, "round": 2, "p95": 17, "max": 17},
+      {"stress": true, "round": 0, "p95": 16.8, "max": 33.3},
+      {"stress": true, "round": 1, "p95": 16.9, "max": 17.1},
+      {"stress": true, "round": 2, "p95": 16.9, "max": 17.2}
+    ],
+    "idleRaf": 0, "graphIdleRaf": 0
+  },
+  "current": {
+    "scroll": [
+      {"stress": false, "round": 0, "p95": 16.9, "max": 17.7, "fps": 60.007},
+      {"stress": false, "round": 1, "p95": 16.9, "max": 17.2, "fps": 60.009},
+      {"stress": false, "round": 2, "p95": 16.8, "max": 17.2, "fps": 60.011},
+      {"stress": true, "round": 0, "p95": 50, "max": 83.4, "fps": 46.908},
+      {"stress": true, "round": 1, "p95": 48.9, "max": 66.6, "fps": 45.515},
+      {"stress": true, "round": 2, "p95": 49.9, "max": 66.7, "fps": 46.504}
+    ],
+    "interaction": [
+      {"stress": false, "round": 0, "p95": 17, "max": 17.2, "fps": 60.001},
+      {"stress": false, "round": 1, "p95": 17, "max": 17, "fps": 60.013},
+      {"stress": false, "round": 2, "p95": 17, "max": 17.4, "fps": 60.011},
+      {"stress": true, "round": 0, "p95": 17, "max": 33.4, "fps": 58.692},
+      {"stress": true, "round": 1, "p95": 16.9, "max": 33.3, "fps": 59.669},
+      {"stress": true, "round": 2, "p95": 16.9, "max": 33.3, "fps": 59.009}
+    ],
+    "performanceTargetPassed": false,
+    "performanceFailures": ["stress scroll round 0", "stress scroll round 1", "stress scroll round 2"],
+    "functionalAssertionsPassed": true, "idleRaf": 0, "graphIdleRaf": 0, "browserErrors": []
+  },
+  "webview2": {
+    "browserVersion": "154.0.4258.62",
+    "fixture": {"notes": 90, "canvases": 12, "research": 5, "inputs": 1000},
+    "scroll": [
+      {"stress": false, "round": 0, "p95": 16.9, "max": 17.2, "fps": 60.009},
+      {"stress": false, "round": 1, "p95": 17, "max": 17.4, "fps": 60.009},
+      {"stress": false, "round": 2, "p95": 16.9, "max": 17.1, "fps": 60.009},
+      {"stress": true, "round": 0, "p95": 16.9, "max": 33.5, "fps": 59.675},
+      {"stress": true, "round": 1, "p95": 16.8, "max": 33.2, "fps": 59.687},
+      {"stress": true, "round": 2, "p95": 16.9, "max": 33.3, "fps": 59.348}
+    ],
+    "interaction": [
+      {"stress": false, "round": 0, "p95": 17, "max": 17.3, "fps": 60.009},
+      {"stress": false, "round": 1, "p95": 17, "max": 17.5, "fps": 60.016},
+      {"stress": false, "round": 2, "p95": 17.1, "max": 17.7, "fps": 59.999},
+      {"stress": true, "round": 0, "p95": 16.8, "max": 17.8, "fps": 60.011},
+      {"stress": true, "round": 1, "p95": 16.8, "max": 17.6, "fps": 60.011},
+      {"stress": true, "round": 2, "p95": 16.9, "max": 18, "fps": 60.013}
+    ],
+    "performanceTargetPassed": true, "idleRaf": 0, "graphIdleRaf": 0,
+    "webglFunctionalAssertionsPassed": true, "canvas2dFunctionalAssertionsPassed": true,
+    "canvas2dChecksOnly": true, "browserErrors": []
+  },
+  "interactionCounters": {
+    "backends": ["webgl", "canvas2d"],
+    "initialHeatmapCellPaintsBefore": 730, "initialHeatmapCellPaintsAfter": 365,
+    "sameDateEightMovesTextWritesBefore": 8, "sameDateEightMovesTextWritesAfter": 0,
+    "hoverAndKeyboardExtraBasePaintsAfter": 0, "idleEightClearsAttributeWritesAfter": 0,
+    "legendPreservesSeriesDom": true, "unfinishedLayoutPreservesRemainingEnergy": true
+  },
+  "regressions": {
+    "pythonTestsPassed": 54,
+    "careerContractPassed": true, "usageCollectorPassed": true,
+    "graphInstanceCachePassed": true, "graphLayoutPassed": true,
+    "graphPresolvePassed": true, "noteGraphPreferencesPassed": true,
+    "noteGraphBrowserModesPassed": ["full", "notes-only", "notes-no-canvas", "fallback", "shader-failure"],
+    "resourceLifecycleModesPassed": ["default", "on-demand"],
+    "closedGraphGpuBuffers": 0, "closedStarGpuBuffers": 0,
+    "pausedAudioSources": 0, "disabledPcmBytes": 0, "expiredPcmBytes": 0
+  }
+}

@@ -14,6 +14,35 @@ export function scheduler() {
     start() { enabled = true; }, get size() { return jobs.size; }
   };
 }
+// Mounting prepares resources; only the viewport owner starts presentation.
+export function chartPresentation(target) {
+  // Fade a small paper cover on return instead of recompositing the whole SVG/Canvas.
+  if(target.namespaceURI==='http://www.w3.org/2000/svg'){
+    const stage=document.createElement('div');target.before(stage);stage.append(target);target=stage;
+  }
+  let animation=null, finish=0, cover=null;
+  target.classList.add('career-plot'); target.dataset.presentation='waiting';target.inert=true;
+  function coverStage(){if(!cover){cover=document.createElement('div');cover.className='career-return-cover';cover.setAttribute('aria-hidden','true');target.append(cover);}}
+  coverStage();
+  function cancel() { animation?.cancel();animation=null;clearTimeout(finish);finish=0;if(target.classList.contains('is-presenting'))target.classList.remove('is-presenting'); }
+  return {
+    target,
+    enter(first) {
+      cancel();
+      const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.inert=false;
+      target.dataset.presentation=first&&!reduced?'first':'shown';
+      if(first&&!reduced) {cover?.remove();cover=null;target.classList.add('is-presenting');finish=setTimeout(()=>{target.classList.remove('is-presenting');target.dataset.presentation='shown';finish=0;},1100);}
+      else if(!reduced&&target.animate) {
+        coverStage();
+        const current=cover.animate([{opacity:1},{opacity:0}],{duration:240,easing:'ease-out'});animation=current;
+        current.finished.then(()=>{if(animation===current){animation=null;cover?.remove();cover=null;}},()=>{});
+      }else{cover?.remove();cover=null;}
+    },
+    leave() { cancel();target.dataset.presentation='waiting';target.inert=true;coverStage(); },
+    destroy() { cancel();cover?.remove();cover=null; }
+  };
+}
 export function scrolling(scroll, schedule, canRun) {
   const defaults = { strength: 100, inertia: 45, acceleration: 60, maxSpeed: 2400, pauseReveal: false };
   let prefs = defaults, idleMs = 50, height = 0, max = 0, velocity = 0, last = 0, wheelAt = 0, idle = 0, paused = false;

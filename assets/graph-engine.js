@@ -460,6 +460,7 @@
     const getGravity = opts.getGravity || function () { return cfg.gravity; };
     const onNodeClick = opts.onNodeClick || function () {};
     const onNodeHover = opts.onNodeHover || function () {};
+    const onEdgeHover = typeof opts.onEdgeHover === 'function' ? opts.onEdgeHover : null;
     const onConverge = opts.onConverge || function () {};
     const onLayoutSettled = opts.onLayoutSettled || function () {};
     let drift = opts.drift || null;          // { speed, amp: fn(node)->number }；可被 setDrift 运行时切换
@@ -582,6 +583,7 @@
     let panLastMoveT = 0;
     const panGlide = { active: false, vx: 0, vy: 0, last: 0 };
     let lastFocusIndex = -1;
+    let lastEdgeFocusIndex = -1;
     let userAdjustedView = false;
     let autoFitPending = false;
     let destroyed = false;
@@ -663,6 +665,7 @@
         if (neighbors[e.target]) neighbors[e.target].add(e.source);
       }
       lastFocusIndex = -1;
+      lastEdgeFocusIndex = -1;
       if (alwaysShowLabels) labelAlpha = labelTarget = nodes.length ? 1 : 0;
       invalidatePositions();
     }
@@ -1258,6 +1261,34 @@
         e._dim = !involved;
       }
     }
+    // Opt-in straight relationship hits, measured in CSS pixels. Node hits win.
+    // Reuse render coordinates; no geometry construction or extra animation loop.
+    function edgeAtClient(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect(), m = metrics();
+      const x = viewX + (clientX - rect.left - m.offsetX) / m.unit;
+      const y = viewY + (clientY - rect.top - m.offsetY) / m.unit;
+      let best = -1, distance = Math.pow(6 / m.unit, 2);
+      for (let i = edges.length - 1; i >= 0; i--) {
+        const e = edges[i], a = nodes[e.source], b = nodes[e.target];
+        if (!a || !b || opts.ignoreHiddenNodes && (a._appearOpacity <= .02 || b._appearOpacity <= .02)) continue;
+        const dx = b._rx - a._rx, dy = b._ry - a._ry, length = dx * dx + dy * dy;
+        if (!length) continue;
+        const t = clamp(((x - a._rx) * dx + (y - a._ry) * dy) / length, 0, 1);
+        const sx = x - a._rx - t * dx, sy = y - a._ry - t * dy, d = sx * sx + sy * sy;
+        if (d < distance) { distance = d; best = i; }
+      }
+      return best;
+    }
+    function clearHover(event) {
+      hoverPending = false;
+      const changed = lastFocusIndex >= 0 || lastEdgeFocusIndex >= 0;
+      if (changed) {
+        clearHighlight(); lastFocusIndex = lastEdgeFocusIndex = -1;
+        onNodeHover(null, event || hoverPoint); if (onEdgeHover) onEdgeHover(null, event || hoverPoint);
+        invalidateStyles(); requestFrame();
+      }
+      return changed;
+    }
     function flushHover() {
       if (!hoverPending) return false;
       hoverPending = false;
@@ -1267,12 +1298,24 @@
       if (draggedNode || panOrigin) return false;
       const index = nodeAtClient(event.clientX, event.clientY);
       if (index < 0) {
-        if (lastFocusIndex === -1) return false;
+        const edgeIndex = onEdgeHover ? edgeAtClient(event.clientX, event.clientY) : -1;
+        if (lastFocusIndex === -1 && edgeIndex === lastEdgeFocusIndex) {
+          if (edgeIndex >= 0) onEdgeHover(edges[edgeIndex], event);
+          return false;
+        }
         clearHighlight(); lastFocusIndex = -1; onNodeHover(null, event);
+        lastEdgeFocusIndex = edgeIndex;
+        if (edgeIndex >= 0) {
+          const edge = edges[edgeIndex];
+          for (let i = 0; i < nodes.length; i++) { nodes[i]._near = i === edge.source || i === edge.target; nodes[i]._dim = !nodes[i]._near; }
+          for (let i = 0; i < edges.length; i++) { edges[i]._highlighted = i === edgeIndex; edges[i]._dim = i !== edgeIndex; }
+        }
+        if (onEdgeHover) onEdgeHover(edgeIndex >= 0 ? edges[edgeIndex] : null, event);
         invalidateStyles(); if (!inFrame) requestFrame();
         return true;
       }
       if (index !== lastFocusIndex) {
+        if (lastEdgeFocusIndex >= 0) { lastEdgeFocusIndex = -1; onEdgeHover(null, event); }
         highlightNeighborhood(index);
         lastFocusIndex = index;
         onNodeHover(nodes[index], event);
@@ -1286,6 +1329,7 @@
 
     function handlePointerDown(event) {
       if (event.button !== 0) return;
+      if (onEdgeHover) clearHover(event);
       hoverPending = false;
       canvas.setPointerCapture(event.pointerId);
       cancelPanGlide();                                  // 抓起即停惯性滑行（抓手感，像 Figma/画布）
@@ -1379,6 +1423,7 @@
       if (_hasLabels && !alwaysShowLabels) ensureLoop();
     }
     function handlePointerCancel(event) {
+      if (onEdgeHover) clearHover(event);
       hoverPending = false;
       draggedNode = null; panOrigin = null; pressInfo = null;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -1387,8 +1432,9 @@
     function handlePointerLeave(event) {
       hoverPending = false;
       if (!draggedNode) {
-        if (lastFocusIndex !== -1) { clearHighlight(); lastFocusIndex = -1; requestRender(); }
+        if (lastFocusIndex !== -1 || lastEdgeFocusIndex !== -1) { clearHighlight(); lastFocusIndex = lastEdgeFocusIndex = -1; requestRender(); }
         onNodeHover(null, event);
+        if (onEdgeHover) onEdgeHover(null, event);
       }
     }
     function handleDoubleClick(event) {
@@ -1574,10 +1620,12 @@
         }
       },
       nodeAtClient: nodeAtClient,
+      clearHover: clearHover,
       hasNodes: function () { return nodes.length > 0; },
       get view() { return { x: viewX, y: viewY, scale: viewScale }; },
       get layoutSpacing() { return layoutSpacing; },
       get layoutPending() { return !destroyed && (!!pending || !!presolveJob || !!draggedNode || alpha > cfg.alphaMin); },
+      get layoutAlpha() { return alpha; },
       get canvas() { return canvas; },
       get backendKind() { return backend && backend.kind; },
       get hasOverlay() { return !!(octx || domOverlay); },

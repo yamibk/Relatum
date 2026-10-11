@@ -6,8 +6,8 @@ import { scheduler, scrolling, animateNumbers } from './motion.js';
 export function createCareer(onReport) {
   const root=document.querySelector('.career-workspace'), scroll=root.querySelector('[data-role="career-scroll"]'),
     host=root.querySelector('[data-role="career-report"]'),entry=root.querySelector('[data-role="career-entry"]'),loading=root.querySelector('[data-role="career-loading"]');
-  const schedule=scheduler(), context={scheduler:schedule,filter:{mode:'all'},graphViews:new Map(),legendState:new Map(),heatmapYear:null};
-  let report=null, initialized=null, active=false, sequence=0, charts=[], observer=null, graphObserver=null, renderVersion=0, reportVersion=0, job=null, generating=false, pollController=null, css=null, scroller=null;
+  const schedule=scheduler(), context={scheduler:schedule,filter:{mode:'all'},graphViews:new Map(),legendState:new Map(),presented:new Set(),heatmapYear:null};
+  let report=null, initialized=null, active=false, sequence=0, charts=[], observer=null, graphObserver=null, viewportObserver=null,interactionAbort=null,renderVersion=0, reportVersion=0, job=null, generating=false, pollController=null, css=null, scroller=null;
   const mounted=new Map();
   const finishNumbers=new Set();
   const pendingReveals=new Map();
@@ -30,9 +30,10 @@ export function createCareer(onReport) {
   }
   function stop() {
     entrance?.cancel();entrance=null;scroll.style.removeProperty('opacity');
-    sequence++;observer?.disconnect();observer=null;graphObserver?.disconnect();graphObserver=null;
+    sequence++;observer?.disconnect();observer=null;graphObserver?.disconnect();graphObserver=null;viewportObserver?.disconnect();viewportObserver=null;interactionAbort?.abort();interactionAbort=null;
     for(const timer of pendingReveals.values())clearTimeout(timer);pendingReveals.clear();
     for(const [target,runtime] of mounted){runtime.destroy();target.dataset.mounted='0';}mounted.clear();
+    context.tooltip?.destroy();context.tooltip=null;
     for(const finish of finishNumbers)finish();finishNumbers.clear();
     schedule.stop();scroller?.destroy();scroller=null;
     pollController?.abort();pollController=null;
@@ -52,17 +53,36 @@ export function createCareer(onReport) {
     if(!visible()||!report||observer)return;
     schedule.start();scroller?.destroy();scroller=scrolling(scroll,schedule,visible);
     const version=renderVersion;
+    const visualRecords=new Map(),inView=new Set();
     function mount(record) {
       if(!visible()||version!==renderVersion||mounted.has(record.host))return;
-      const runtime=mountChart(record.host,record.spec,context);mounted.set(record.host,runtime);record.host.dataset.mounted='1';reveal(record.panel);record.panel.classList.add('career-entered');
+      const runtime=mountChart(record.host,record.spec,context);mounted.set(record.host,runtime);record.host.dataset.mounted='1';
+      reveal(record.panel);
+      const target=runtime.target||record.host;visualRecords.set(target,record);if(viewportObserver)viewportObserver.observe(target);else enterChart(target,record);
     }
-    function unmount(record){
+    function unmount(record,height){
       const runtime=mounted.get(record.host);if(!runtime)return;
-      record.host.style.minHeight=Math.ceil(record.host.getBoundingClientRect().height)+'px';
+      const target=runtime.target||record.host;viewportObserver?.unobserve(target);visualRecords.delete(target);inView.delete(target);clearTimeout(pendingReveals.get(target));pendingReveals.delete(target);
+      record.host.style.minHeight=Math.ceil(height)+'px';
       runtime.destroy();mounted.delete(record.host);record.host.dataset.mounted='0';
     }
     const lookup=new Map(charts.map(r=>[r.host,r]));
+    function prepare(entries){
+      // Measure removals together before any mount/destroy can invalidate layout.
+      const leaving=[];
+      for(const item of entries)if(!item.isIntersecting&&mounted.has(item.target))leaving.push({record:lookup.get(item.target),height:item.target.getBoundingClientRect().height});
+      for(const item of leaving)unmount(item.record,item.height);
+      for(const item of entries){const record=lookup.get(item.target);if(!record){if(item.isIntersecting)reveal(item.target);else{clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);}}else if(item.isIntersecting)mount(record);}
+    }
     const reveals=[...host.querySelectorAll('.career-section-head,.career-panel,[data-career-number]')];
+    function enterChart(target,record){
+      if(inView.has(target)||pendingReveals.has(target))return;
+      inView.add(target);
+      const check=()=>{pendingReveals.delete(target);if(!visible()||version!==renderVersion||!inView.has(target))return;
+        if(scroller?.revealPaused){pendingReveals.set(target,setTimeout(check,80));return;}
+        const runtime=mounted.get(record.host);if(!runtime)return;const first=!context.presented.has(record.spec.key);runtime.enter?.(first);context.presented.add(record.spec.key);
+      };check();
+    }
     function reveal(node){
       if(node.dataset.visible==='1'||pendingReveals.has(node))return;
       const check=()=>{pendingReveals.delete(node);if(!visible()||version!==renderVersion)return;
@@ -70,20 +90,28 @@ export function createCareer(onReport) {
         node.dataset.visible='1';if(node.matches('[data-career-number]'))finishNumbers.add(animateNumbers(node,schedule,()=>scroller?.revealPaused));};check();
     }
     if('IntersectionObserver' in window){
+      viewportObserver=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
+        for(const item of entries){const record=visualRecords.get(item.target);if(record){if(item.isIntersecting&&item.intersectionRatio>=.06)enterChart(item.target,record);else if(!item.isIntersecting){inView.delete(item.target);clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);mounted.get(record.host)?.leave?.();}}
+        }
+      },{root:scroll,threshold:[0,.06]});
       observer=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
-        for(const item of entries){const record=lookup.get(item.target);if(!record){if(item.isIntersecting)reveal(item.target);else{clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);}continue;}if(item.isIntersecting)mount(record);else unmount(record);}
+        prepare(entries);
       },{root:scroll,rootMargin:'240px 0px',threshold:0});charts.filter(r=>r.spec.type!=='graph').forEach(r=>observer.observe(r.host));reveals.forEach(node=>observer.observe(node));
       // Start graph loading and layout ahead of the viewport, including during continuous scrolling.
       const graphMargin=Math.round(Math.max(900,Math.min(1800,scroll.clientHeight*1.25)));
       graphObserver=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
-        for(const item of entries){const record=lookup.get(item.target);if(item.isIntersecting)mount(record);else unmount(record);}
+        prepare(entries);
       },{root:scroll,rootMargin:`${graphMargin}px 0px`,threshold:0});charts.filter(r=>r.spec.type==='graph').forEach(r=>graphObserver.observe(r.host));
     }else{charts.forEach(mount);reveals.forEach(reveal);}
+    interactionAbort=new AbortController();
+    const clearInteraction=()=>{for(const runtime of mounted.values())runtime.clearInteraction?.();context.tooltip?.hide();};
+    scroll.addEventListener('scroll',clearInteraction,{passive:true,signal:interactionAbort.signal});window.addEventListener('blur',clearInteraction,{signal:interactionAbort.signal});window.addEventListener('resize',clearInteraction,{signal:interactionAbort.signal});
   }
-  function render(keepAnchor=true) {
+  function render(keepAnchor=true,resetPresentation=false) {
     if(!visible()||!report)return;
     const saved=keepAnchor?anchor():null;
     stop();active=true;schedule.start();renderVersion++;
+    if(resetPresentation){context.graphViews.clear();context.presented.clear();}
     const built=buildReport(report,context,{filter(value){context.filter=value;render(true);},generate});charts=built.charts;host.replaceChildren(built.shell);host.hidden=false;entry.hidden=true;loading.hidden=true;
     observe();restore(saved);syncEntry();if(job)poll(job);
   }
@@ -122,7 +150,7 @@ export function createCareer(onReport) {
         if(current.status==='complete'){
           const result=await request('/api/career/report',{signal:controller.signal});
           if(controller.signal.aborted||!visible())return;
-          const saved=anchor();report=result.report;reportVersion++;onReport(report);initialized=Promise.resolve(report);job=null;context.graphViews.clear();render(false);restore(saved);message(false,'');return;
+          const saved=anchor();report=result.report;reportVersion++;onReport(report);initialized=Promise.resolve(report);job=null;render(false,true);restore(saved);message(false,'');return;
         }
         if(current.status==='error')throw new Error(current.error);
         progress(current);await waiting(500,controller.signal);

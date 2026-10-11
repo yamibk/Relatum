@@ -10,7 +10,7 @@ function fixture(options = {}) {
   let clock = 100, id = 0, bufferId = 0, shaderId = 0, programId = 0;
   let boundBuffer = null, currentProgram = null, core = null, replacements = 0, glError = '';
   let nodeStyles = 0, edgeStyles = 0, positionWrites = 0, lostContexts = 0;
-  const frames = new Map(), timers = new Map(), uploads = [], draws = [], overlays = [], clicks = [], hovers = [], settled = [], converged = [];
+  const frames = new Map(), timers = new Map(), uploads = [], draws = [], overlays = [], clicks = [], hovers = [], edgeHovers = [], settled = [], converged = [];
   const uniforms = new Map(), storage = new Map();
   const gl = {
     VERTEX_SHADER: 1, FRAGMENT_SHADER: 2, COMPILE_STATUS: 3, LINK_STATUS: 4,
@@ -74,6 +74,7 @@ function fixture(options = {}) {
     domOverlay: { sync(state) { overlays.push(state); }, destroy() {} },
     onNodeClick(node) { clicks.push(node.id); },
     onNodeHover(node, point) { hovers.push({ id: node ? node.id : null, x: point.clientX, y: point.clientY }); },
+    onEdgeHover: options.edgeHover ? (edge,point)=>edgeHovers.push({edge,x:point.clientX,y:point.clientY}) : undefined,
     onLayoutSettled() { settled.push(engine.view); },
     onConverge() { converged.push(engine.view); },
     onCanvasReplace(next, previous) { replacements++; assert.equal(previous, originalCanvas); },
@@ -112,9 +113,29 @@ function fixture(options = {}) {
       edgeUploads: uploads.filter(x => x.buffer === 4).length };
   }
   engine.requestRender(); frame();
-  return { engine, nodes, edges, frames, timers, uploads, draws, overlays, clicks, hovers, settled, converged, uniforms, storage, sandbox,
+  return { engine, nodes, edges, frames, timers, uploads, draws, overlays, clicks, hovers, edgeHovers, settled, converged, uniforms, storage, sandbox,
     originalCanvas, frame, drain, event, pan, counts, get core() { return core; },
     get replacements() { return replacements; }, get lostContexts() { return lostContexts; } };
+}
+
+// Career's opt-in relationship hover leaves the original node-only path intact.
+{
+  const f=fixture();f.engine.heat(.04);assert.equal(f.engine.layoutAlpha,.04);f.engine.setActive(false);assert.equal(f.engine.layoutAlpha,.04,'pause preserves the remaining layout energy');f.engine.setActive(true);f.drain();assert(f.engine.layoutAlpha<=.0018);f.engine.destroy();
+}
+for(const shaderFailure of [false,true]) {
+  const f=fixture({count:3,coalesceHover:true,edgeHover:true,shaderFailure});
+  f.nodes[0].x=100;f.nodes[1].x=300;f.nodes[2].x=500;f.engine.setData(f.nodes,f.edges);f.engine.requestRender();f.frame();
+  f.event('pointermove',200,125);f.frame();
+  assert.equal(f.edgeHovers.at(-1).edge,f.edges[0]);assert(f.edges[0]._highlighted&&f.edges[1]._dim);assert(f.nodes[0]._near&&f.nodes[1]._near&&f.nodes[2]._dim);
+  const before=f.counts(),paints=f.overlays.length;
+  for(let i=0;i<30;i++)f.event('pointermove',201,124);f.frame();
+  assert.deepEqual(f.counts(),before);assert.equal(f.overlays.length,paints,'same edge only moves tooltip');
+  f.event('pointermove',100,120);f.frame();assert(f.nodes[0]._focus);assert.equal(f.edgeHovers.at(-1).edge,null,'node wins over its incident edge');
+  f.engine.clearHover();f.drain();assert(!f.nodes.some(n=>n._focus||n._near||n._dim));assert(!f.edges.some(e=>e._highlighted||e._dim));
+  f.event('pointermove',200,127);f.frame();assert.equal(f.edgeHovers.at(-1).edge,null,'outside six CSS pixels is empty');
+  f.engine.restoreView({x:0,y:0,scale:2});f.frame();f.event('pointermove',400,245);f.frame();assert.equal(f.edgeHovers.at(-1).edge,f.edges[0],'hit tolerance is independent of zoom');
+  f.event('pointercancel',400,245);f.drain();assert(!f.edges.some(e=>e._highlighted));
+  f.event('pointermove',400,245);f.engine.destroy();f.frame();assert.equal(f.frames.size,0);
 }
 
 // Optional notebook hover batching shares render frames but never redraws tooltip-only moves.
