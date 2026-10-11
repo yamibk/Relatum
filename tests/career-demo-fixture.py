@@ -79,6 +79,7 @@ def main():
                              'width': 200, 'height': 90} for j in range(count)]
         payload['edges'] = [{'id': f'e{j}', 'from': f'n{j}', 'to': f'n{j+1}'} for j in range(count-1)]
         write(app.CANVASES / name, payload)
+        app.register_recent(app.CANVASES / name)
         canvases.append(name)
     research = empty_research_document()
     definitions = []

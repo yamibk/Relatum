@@ -1,6 +1,6 @@
 {
   "date": "2026-10-11",
-  "baseCommit": "1ed5182197817fa85d72df7f64a0c1769730f226",
+  "baseCommit": "0f04928e83c65e9c91a4b80b28cbb5d629cc6139",
   "environment": {
     "cpu": "Intel Core i9-13900HX",
     "cores": 24,
@@ -18,86 +18,88 @@
         "canvases": 500,
         "research": 200,
         "inputs": 100000,
-        "usageMs": 10685,
-        "generationMs": 3174,
-        "reportBytes": 4825279
+        "usageMs": 10025,
+        "generationMs": 3180,
+        "reportBytes": 4825095
       },
       "native": false,
       "fallback": false,
+      "browserVersion": "155.0.4283.45",
+      "checksOnly": false,
       "perf": [
         {
           "stress": false,
           "round": 0,
-          "p95": 16.900000000001455,
-          "max": 17.80000000000291
+          "p95": 16.9,
+          "max": 17.6
         },
         {
           "stress": false,
           "round": 1,
-          "p95": 16.900000000001455,
-          "max": 83.40000000000146
+          "p95": 16.9,
+          "max": 34.7
         },
         {
           "stress": false,
           "round": 2,
-          "p95": 16.900000000001455,
-          "max": 33.700000000004366
+          "p95": 16.9,
+          "max": 17.2
         },
         {
           "stress": true,
           "round": 0,
-          "p95": 33.40000000000873,
-          "max": 66.69999999999709
+          "p95": 33.3,
+          "max": 50.2
         },
         {
           "stress": true,
           "round": 1,
-          "p95": 33.30000000000291,
-          "max": 83.29999999998836
+          "p95": 33.3,
+          "max": 50.2
         },
         {
           "stress": true,
           "round": 2,
-          "p95": 33.30000000000291,
-          "max": 66.5
+          "p95": 33.3,
+          "max": 50
         }
       ],
       "interaction": [
         {
           "stress": false,
           "round": 0,
-          "p95": 16.900000000001455,
-          "max": 17.5
+          "p95": 16.9,
+          "max": 17
         },
         {
           "stress": false,
           "round": 1,
-          "p95": 16.900000000001455,
-          "max": 17.19999999999709
+          "p95": 16.9,
+          "max": 17.5
         },
         {
           "stress": false,
           "round": 2,
-          "p95": 17,
-          "max": 17.40000000000873
+          "p95": 16.9,
+          "max": 17.6
         },
         {
           "stress": true,
           "round": 0,
           "p95": 17,
-          "max": 33.39999999999418
+          "max": 33.3
         },
         {
           "stress": true,
           "round": 1,
-          "p95": 17.09999999999127,
-          "max": 17.70000000001164
+          "p95": 17,
+          "max": 33.5
         },
         {
           "stress": true,
           "round": 2,
-          "p95": 16.89999999999418,
-          "max": 17.09999999999127
+          "p95": 17,
+          "max": 17.7
         }
       ],
       "graphIdle": 0,
@@ -297,9 +299,9 @@
         "canvases": 12,
         "research": 5,
         "inputs": 1000,
-        "usageMs": 80,
-        "generationMs": 101,
-        "reportBytes": 104249
+        "usageMs": 86,
+        "generationMs": 130,
+        "reportBytes": 106213
       },
       "native": true,
       "fallback": true,

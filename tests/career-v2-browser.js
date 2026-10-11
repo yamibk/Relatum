@@ -73,6 +73,19 @@ async function main(){
     await page.evaluate(()=>{const s=document.querySelector('.career-scroll');s.scrollTop=document.querySelector('[data-chart-key="note-network"]').closest('.career-panel').offsetTop;});
     await page.waitForSelector('[data-chart-key="note-network"] canvas');await page.waitForTimeout(4500);
     assert.equal(await page.evaluate(()=>[...__careerGraphs.live][0]?.engine.backendKind),fallback?'canvas2d':'webgl');
+    const palette=await page.evaluate(()=>{
+      const o=[...__careerGraphs.live][0].options;
+      return [false,true].flatMap(focus=>[false,true].map(dim=>({
+        node:o.nodeStyle({}, {focus,dim}), edge:o.edgeStyle({}, {}, {}, {highlighted:focus,dim})
+      })));
+    });
+    for(const style of palette)for(const color of [style.node.fill,style.edge.color]){
+      assert.equal(color.length,4,'WebGL color uses four numeric components');
+      assert(color.every(c=>Number.isFinite(c)&&c>=0&&c<=1),'finite normalized color');
+      assert(color[0]===color[1]&&color[1]===color[2],'Career graph uses neutral grayscale');
+    }
+    assert(palette[1].edge.color[3]<palette[0].edge.color[3],'dimmed links use the environment argument');
+    assert(palette[2].edge.width>palette[0].edge.width,'highlighted links use the environment argument');
     const graph=page.locator('[data-chart-key="note-network"] canvas'),box=await graph.boundingBox();
     await page.mouse.move(box.x+box.width/2,box.y+box.height/2);const before=await page.evaluate(()=>document.querySelector('.career-scroll').scrollTop);
     await page.mouse.wheel(0,150);await page.waitForTimeout(200);assert(await page.evaluate(()=>document.querySelector('.career-scroll').scrollTop)>before,'ordinary graph wheel scrolls report');

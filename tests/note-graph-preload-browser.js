@@ -200,6 +200,21 @@ async function regression(browser) {
     assert.equal(await page.locator('.note-graph-boot-status').count(), 0, 'preparation has no blocking startup surface');
     assert.equal(await page.evaluate(() => document.querySelector('.start-workspace-stage').inert), false);
     if (warm) await prepared(page);
+    if (warm && options.mode === 'full') {
+      await page.evaluate(() => {
+        document.documentElement.dataset.desktopMinimized = '1';
+        window.dispatchEvent(new Event('canvasdesktop:visibility'));
+        window.__idleAfterRestore = false;
+        RelatumBackgroundPreparation.waitForIdle().then(() => { window.__idleAfterRestore = true; });
+      });
+      await sleep(1800);
+      assert.equal(await page.evaluate(() => window.__idleAfterRestore), false, 'native minimize pauses idle preparation even with retained focus');
+      await page.evaluate(() => {
+        document.documentElement.dataset.desktopMinimized = '0';
+        window.dispatchEvent(new Event('canvasdesktop:visibility'));
+      });
+      await page.waitForFunction(() => window.__idleAfterRestore);
+    }
     await hiddenResources(page);
     assert.equal(resources.includes('/note-graph.js'), warm, 'startup resource boundary');
     assert.equal(await page.evaluate(() => __preloadProbe.requests.length), warm && selected !== null ? 1 : 0);

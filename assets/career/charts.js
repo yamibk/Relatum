@@ -164,11 +164,13 @@ function mountGraph(host,spec,context) {
   loadGraph().then(()=> {
     if(!alive)return;
     const dark=document.body.dataset.startTheme==='dark', fill=dark?'#b9b9b9':'#5f5f5f', focus=dark?'#f5f5f5':'#202020';
-    const nodeStyles=[{fill},{fill,opacity:.18},{fill:focus},{fill:focus,opacity:.18}], edgeStyles=[{color:fill,opacity:.25,width:1},{color:fill,opacity:.04,width:1},{color:focus,opacity:.8,width:1.5},{color:focus,opacity:.08,width:1}];
+    const gray=dark?185/255:95/255, highlighted=dark?245/255:32/255;
+    const nodeStyles=[0,1,2,3].map(state=>{const color=state&2?highlighted:gray;return {fill:[color,color,color,state&1?.18:1]};});
+    const edgeStyles=[0,1,2,3].map(state=>{const color=state&2?highlighted:gray,alpha=state&2?(state&1?.08:.8):(state&1?.04:.25);return {color:[color,color,color,alpha],width:state&2?1.5:1};});
     engine=window.GraphEngine.create({ canvas,backend:'webgl',cacheInstances:true,coalesceHover:true,reduceMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,
       shouldHandleWheel:event=>event.ctrlKey||event.metaKey,
       config:{viewW:900,viewH:420,zoomMin:.12,zoomMax:4,presolveMaxNodes:0,alphaDecay:.04,finalFitOnConverge:false,fitMargin:28},
-      onCanvasReplace:replacement=>{canvas=replacement;}, nodeStyle:(n,e)=>nodeStyles[(e.focus?2:0)+(e.dim?1:0)],edgeStyle:(n,e)=>edgeStyles[(e.highlighted?2:0)+(e.dim?1:0)],
+      onCanvasReplace:replacement=>{canvas=replacement;}, nodeStyle:(n,e)=>nodeStyles[(e.focus?2:0)+(e.dim?1:0)],edgeStyle:(edge,a,b,e)=>edgeStyles[(e.highlighted?2:0)+(e.dim?1:0)],
       drawNode(ctx,node,e){ctx.globalAlpha*=e.dim?.18:1;ctx.fillStyle=e.focus?focus:fill;ctx.beginPath();ctx.arc(0,0,node.r,0,Math.PI*2);ctx.fill();},
       drawEdge(ctx,edge,a,b,e){ctx.globalAlpha*=e.dim?.04:.24;ctx.strokeStyle=e.highlighted?focus:fill;ctx.lineWidth=e.highlighted?1.5:1;ctx.beginPath();ctx.moveTo(a._rx,a._ry);ctx.lineTo(b._rx,b._ry);ctx.stroke();},
       onNodeHover(node,event){if(node)tip.show(`${node.title} · ${number(node.words??node.degree??0)} ${node.words!=null?tr('字词','words'):tr('关系','relations')}`,event.clientX,event.clientY);else tip.hide();},

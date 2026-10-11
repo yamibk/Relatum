@@ -1240,8 +1240,8 @@
       subtitle: 'These are your content. Keep the folder structure when backing up.',
       sections: [
         ['Main canvases · <code>canvases</code>', '', [
-          ['<code>名称.canvas</code>', 'Nodes, text, edges, ink and canvas settings.'],
-          ['<code>名称.assets</code>', 'Images, PDFs, Markdown attachments and annotations. Keep its name paired with the canvas.'],
+          ['<code>Name.canvas</code>', 'Nodes, text, edges, ink and canvas settings.'],
+          ['<code>Name.assets</code>', 'Images, PDFs, Markdown attachments and annotations. Keep its name paired with the canvas.'],
           ['<code>Trash</code>', 'Deleted canvases and attachments. Emptying it prevents recovery in the app.'],
         ]],
         ['Notes · <code>notes</code>', '', [
@@ -1410,8 +1410,8 @@
     const apply = () => {
       copy.innerHTML = '<div class="start-help-page-intro"><p>' + item.eyebrow + '</p><h3>' + item.title
         + '</h3>' + (item.subtitle ? '<span>' + item.subtitle + '</span>' : '') + '</div>'
-        + item.sections.map((section) => '<section class="start-help-section"><h4>' + section[0] + '</h4><p>'
-          + section[1] + '</p>' + (section[2] ? '<dl class="start-help-list">'
+        + item.sections.map((section) => '<section class="start-help-section"><h4>' + section[0] + '</h4>'
+          + (section[1] ? '<p>' + section[1] + '</p>' : '') + (section[2] ? '<dl class="start-help-list">'
             + section[2].map((row) => '<div><dt>' + row[0] + '</dt><dd>' + row[1] + '</dd></div>').join('')
             + '</dl>' : '') + '</section>').join('');
       if (position) position.textContent = String(index + 1).padStart(2, '0') + ' / '

@@ -15,7 +15,8 @@
     }
     function quiet() {
       return !lifetime.signal.aborted && document.readyState === 'complete'
-        && !document.hidden && document.hasFocus() && !busy && !window.CanvasNoteWorkspace?.backgroundBusy
+        && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+        && document.hasFocus() && !busy && !window.CanvasNoteWorkspace?.backgroundBusy
         && performance.now() - lastActivity >= 1500
         && !navigator.scheduling?.isInputPending?.({ includeContinuous: true });
     }
@@ -38,7 +39,8 @@
       for (const entry of Array.from(waiters)) {
         if (entry.foreground?.()) settle(entry, null, null);
       }
-      if (!waiters.size || document.hidden || !document.hasFocus() || busy) return;
+      if (!waiters.size || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
+          || !document.hasFocus() || busy) return;
       if (window.CanvasNoteWorkspace?.backgroundBusy) {
         timer = setTimeout(() => pump(null), 250); return;
       }
@@ -75,6 +77,7 @@
     observeDocument(document);
     ['focus', 'blur', 'load'].forEach(name => window.addEventListener(name, touch, { signal: lifetime.signal }));
     document.addEventListener('visibilitychange', touch, { signal: lifetime.signal });
+    window.addEventListener('canvasdesktop:visibility', touch, { signal: lifetime.signal });
     try {
       observer = new PerformanceObserver(() => touch());
       observer.observe({ type: 'longtask', buffered: false });

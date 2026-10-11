@@ -10472,7 +10472,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .start-help-overlay {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: 260;
 }
 .start-help-overlay[hidden] { display: none; }
 .start-help-backdrop {

@@ -23,7 +23,7 @@ class UsageV2Tests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_demo_marker_is_explicit_and_survives_report_regeneration(self):
+    def test_demo_marker_is_explicit_in_history(self):
         self.assertNotIn('demo', self.store.snapshot())
         with self.store.connection(write=True) as conn:
             conn.execute("INSERT INTO meta VALUES('demo','1')")
