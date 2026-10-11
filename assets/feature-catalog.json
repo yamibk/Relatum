@@ -319,10 +319,11 @@
       "label": "生涯工作区",
       "description": "本地冻结使用报告。关闭后不预载报告。",
       "scripts": [
-        "career-report.js"
+        "career-report.js", "career/"
       ],
+      "readPrefixes": ["/api/career/"],
       "writePrefixes": [
-        "/api/career-report"
+        "/api/career/"
       ],
       "default": true
     },
@@ -334,16 +335,19 @@
     }
   ],
   "sharedScripts": {
+    "usage-tracker.js": ["notes", "research", "canvas.editor", "canvas.library", "canvas.study", "canvas.tree", "canvas.quicknotes", "canvas.review", "canvas.focus"],
     "markdown-table.js": [
       "canvas.editor",
       "notes"
     ],
     "graph-gl.js": [
+      "career",
       "canvas.activity",
       "editor.graph",
       "notes.graph"
     ],
     "graph-engine.js": [
+      "career",
       "canvas.activity",
       "editor.graph",
       "notes.graph"
@@ -421,6 +425,7 @@
     ]
   },
   "sharedWrites": {
+    "/api/usage/batch": ["career", "notes", "research", "canvas.editor", "canvas.library", "canvas.study", "canvas.tree", "canvas.quicknotes", "canvas.review", "canvas.focus"],
     "/api/rename": [
       "canvas.editor",
       "canvas.library"
@@ -428,11 +433,6 @@
     "/api/archive-canvas": [
       "canvas.editor",
       "canvas.library"
-    ],
-    "/api/start-page-activity": [
-      "canvas.study",
-      "canvas.tree",
-      "canvas.quicknotes"
     ],
     "/api/start-sticky-notes-save": [
       "canvas.library",

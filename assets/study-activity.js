@@ -379,8 +379,8 @@
     const focusStats = payload.focusStats || {};  // { today, month, year, total }（秒）
     const canvasDays = payload.canvasDays || {};
     const canvasEntries = payload.canvasEntries || [];
-    const canvasStats = payload.canvasStats || {};
-    const startPageStats = payload.startPageStats || {};
+    const canvasStats = { ...(payload.canvasStats || {}), ...(payload.usageStats || {}), activeCanvasCount: payload.usageStats?.activeProjects ?? payload.canvasStats?.activeCanvasCount ?? 0 };
+    const startPageStats = {};
     const C = CADENCE;
     const step = C.cell + C.gap;
     const now = new Date();
@@ -524,16 +524,16 @@
                 (focusDays[initialDay] || {}).count || 0, todayKey)
             : cadenceDayDetailHtml(initialDay, entries, days[initialDay] || 0, todayKey))
       + '</section>'
-      + '<div class="cadence-stats cadence-stats-canvas" aria-label="画布时间统计">'
+      + '<div class="cadence-stats cadence-stats-canvas" aria-label="新使用统计">'
         + canvasPageTimeStatCell(currentYear ? canvasStats.monthSec : canvasStats.yearSec,
           currentYear ? startPageStats.monthSec : startPageStats.yearSec,
-          currentYear ? '本月画布时间' : '当年画布时间')
+          currentYear ? '本月前台时间' : '当年前台时间')
         + canvasPageCountStatCell(
           currentYear ? canvasStats.streak : canvasStats.longestStreak,
           currentYear ? startPageStats.streak : startPageStats.longestStreak,
           '天', currentYear ? '连续活跃' : '最长连续')
-        + canvasPageCountStatCell(canvasStats.activeCanvasCount, startPageStats.activePageCount, '', '活跃画布')
-        + canvasPageTimeStatCell(canvasStats.totalSec, startPageStats.totalSec, '累计画布时间')
+        + canvasPageCountStatCell(canvasStats.activeCanvasCount, startPageStats.activePageCount, '', '活跃项目')
+        + canvasPageTimeStatCell(canvasStats.totalSec, startPageStats.totalSec, '新累计前台时间')
       + '</div>'
       + '<div class="cadence-stats cadence-stats-complete" aria-label="活跃统计">'
         + '<div><strong>' + statOne + '</strong><span>' + statOneLabel + '</span></div>'

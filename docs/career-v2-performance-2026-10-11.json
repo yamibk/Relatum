@@ -1,0 +1,316 @@
+{
+  "date": "2026-10-11",
+  "baseCommit": "1ed5182197817fa85d72df7f64a0c1769730f226",
+  "environment": {
+    "cpu": "Intel Core i9-13900HX",
+    "cores": 24,
+    "logicalProcessors": 32,
+    "node": "22.21.0",
+    "python": "3.12.14",
+    "pywebview": "6.2.1",
+    "edge": "155.0.4283.45",
+    "webview2": "154.0.4258.62"
+  },
+  "runs": {
+    "large": {
+      "fixture": {
+        "notes": 5000,
+        "canvases": 500,
+        "research": 200,
+        "inputs": 100000,
+        "usageMs": 10685,
+        "generationMs": 3174,
+        "reportBytes": 4825279
+      },
+      "native": false,
+      "fallback": false,
+      "perf": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 16.900000000001455,
+          "max": 17.80000000000291
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 16.900000000001455,
+          "max": 83.40000000000146
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 16.900000000001455,
+          "max": 33.700000000004366
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 33.40000000000873,
+          "max": 66.69999999999709
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 33.30000000000291,
+          "max": 83.29999999998836
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 33.30000000000291,
+          "max": 66.5
+        }
+      ],
+      "interaction": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 16.900000000001455,
+          "max": 17.5
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 16.900000000001455,
+          "max": 17.19999999999709
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 17,
+          "max": 17.40000000000873
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 17,
+          "max": 33.39999999999418
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 17.09999999999127,
+          "max": 17.70000000001164
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.89999999999418,
+          "max": 17.09999999999127
+        }
+      ],
+      "graphIdle": 0,
+      "idle": 0,
+      "errors": [],
+      "checks": 26
+    },
+    "webview2": {
+      "fixture": {
+        "notes": 90,
+        "canvases": 12,
+        "research": 5,
+        "inputs": 1000,
+        "usageMs": 106,
+        "generationMs": 113,
+        "reportBytes": 104158
+      },
+      "native": true,
+      "fallback": false,
+      "perf": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 16.900000000001455,
+          "max": 17.19999999999709
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 17,
+          "max": 17.69999999999709
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 17,
+          "max": 17.30000000000291
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 16.80000000000291,
+          "max": 17.599999999998545
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 16.89999999999418,
+          "max": 17.69999999999709
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.90000000000873,
+          "max": 17.5
+        }
+      ],
+      "interaction": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 17,
+          "max": 17.19999999999709
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 17,
+          "max": 17.400000000001455
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 17,
+          "max": 17.700000000004366
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 16.90000000000873,
+          "max": 17.39999999999418
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 17.10000000000582,
+          "max": 17.69999999999709
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.89999999999418,
+          "max": 18
+        }
+      ],
+      "graphIdle": 0,
+      "idle": 0,
+      "errors": [],
+      "checks": 26
+    },
+    "webview2Fallback": {
+      "fixture": {
+        "notes": 90,
+        "canvases": 12,
+        "research": 5,
+        "inputs": 1000,
+        "usageMs": 65,
+        "generationMs": 104,
+        "reportBytes": 104158
+      },
+      "native": true,
+      "fallback": true,
+      "perf": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 16.900000000001455,
+          "max": 17.200000000004366
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 17,
+          "max": 17.200000000004366
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 17,
+          "max": 17.200000000004366
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 16.900000000001455,
+          "max": 17.099999999998545
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 16.90000000000873,
+          "max": 33.5
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.89999999999418,
+          "max": 17.79999999998836
+        }
+      ],
+      "interaction": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 16.900000000001455,
+          "max": 17.19999999999709
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 17.10000000000582,
+          "max": 17.5
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 17,
+          "max": 17.5
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 16.90000000000873,
+          "max": 17.5
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 16.89999999999418,
+          "max": 17
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.90000000000873,
+          "max": 17.30000000000291
+        }
+      ],
+      "graphIdle": 0,
+      "idle": 0,
+      "errors": [],
+      "checks": 26
+    },
+    "webview2FallbackFinalChecks": {
+      "fixture": {
+        "notes": 90,
+        "canvases": 12,
+        "research": 5,
+        "inputs": 1000,
+        "usageMs": 80,
+        "generationMs": 101,
+        "reportBytes": 104249
+      },
+      "native": true,
+      "fallback": true,
+      "browserVersion": "154.0.4258.62",
+      "checksOnly": true,
+      "perf": [],
+      "interaction": [],
+      "graphIdle": 0,
+      "idle": 0,
+      "errors": [],
+      "checks": 26
+    }
+  }
+}

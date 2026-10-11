@@ -1376,6 +1376,7 @@
       fitView(true);
     }
     function handleWheel(event) {
+      if (typeof opts.shouldHandleWheel === 'function' && !opts.shouldHandleWheel(event)) return;
       event.preventDefault();
       userAdjustedView = true;
       idle = false;

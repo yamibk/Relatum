@@ -24,7 +24,7 @@ class ExternalCanvasImportTest(unittest.TestCase):
             mock.patch.object(target, "DATA", self.data),
             mock.patch.object(target, "RECENT_FILE", self.data / "recent.json"),
             mock.patch.object(target, "RECENT_BACKUP_FILE", self.data / "recent.backup.json"),
-            mock.patch.object(target, "CANVAS_ACTIVITY_FILE", self.data / "canvas-activity.json"),
+            mock.patch.object(target, "USAGE_FILE", self.data / "usage-v2.sqlite3"),
             mock.patch.object(
                 target,
                 "record_canvas_activity_event",

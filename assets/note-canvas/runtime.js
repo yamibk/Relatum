@@ -6,7 +6,7 @@
   let ready = null;
   const mounts = new Set();
   let active = null;
-  function selectionChanged() { document.dispatchEvent(new Event('relatum:note-canvas-selection')); }
+  function selectionChanged() { document.dispatchEvent(new Event('relatum:note-canvas-selection')); document.dispatchEvent(new Event('relatum:usage-target')); }
   function activate(adapter) {
     if(active===adapter) return;
     const previous=active;active=null;previous?.engine?.suspend();active=adapter;
@@ -136,6 +136,7 @@
   }
   window.RelatumNoteCanvas = Object.freeze({ mount, remapViews,
     getActive() { return active?.engine || null; },
+    usageTarget() { return active?.session ? { path: active.session.path } : null; },
     async flushAll(options) { const settle = options?.settle !== false; if (settle) await Promise.all([...mounts].map(m => m.settle())); return window.RelatumNoteCanvasSessions ? window.RelatumNoteCanvasSessions.flushAll(!settle) : true; },
     get dirty() { return !!window.RelatumNoteCanvasSessions?.dirty(); },
     suspend() { mounts.forEach(m => m.suspend()); },

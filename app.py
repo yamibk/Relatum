@@ -21,6 +21,7 @@ import re
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -45,6 +46,8 @@ from ai_plan import (
 from notes_library import MAX_NOTE_BYTES, MAX_NOTE_IMAGE_BYTES, NotesError, NotesStore
 from research_store import ResearchConflictError, ResearchStoreError, ResearchWorkspaceStore
 from feature_profile import FEATURES, FULL_PROFILE, LaunchProfile, ProfileError, render_html
+from usage_store import UsageStore, CATEGORIES
+from career_report import CareerReports, read_json as _usage_read_json, scan_canvases as _usage_scan_canvases
 
 # 桌面打包版把内置资源放在运行时资源目录。便携版用户数据留在 EXE
 # 旁边；具有 MSIX 包身份时改用 %LOCALAPPDATA%\Relatum，避免写只读安装目录。
@@ -103,8 +106,6 @@ CANVAS_ARCHIVE_DIR = DATA / "画布归档"   # 编辑器顶栏「归档」：移
 NOTES_FILE = DATA / "notes.json"   # 起步页「速记」便签墙（独立数据，不进 .canvas）
 START_STICKY_NOTES_FILE = DATA / "start-sticky-notes.json"   # 起步页跨页便签（不含「速记」页）
 FOCUS_FILE = DATA / "focus.json"   # 起步页「专注钟」专注记录（自成一体，不进 .canvas；供活跃页专注镜头汇总）
-CANVAS_ACTIVITY_FILE = DATA / "canvas-activity.json"   # 画布前台使用时长与创建/修改足迹（不写进 .canvas）
-START_PAGE_ACTIVITY_FILE = DATA / "start-page-activity.json"   # 起步页学习/树状/速记的前台使用时长
 DAILY_FILE = DATA / "daily.json"   # 专注页「每日任务」习惯清单（每天重置勾选，累计天数/分钟；自成一体，不进 .canvas）
 DAILY_BACKUP_FILE = DATA / "daily.backup.json"
 LEDGER_FILE = DATA / "ledger.json"   # 日历页第二视图「记账」的独立收支流水
@@ -113,7 +114,8 @@ DIARY_DIR = DATA / "diary"   # 起步页「日历」日记：每天一份 Markdo
 COUNTDOWN_FILE = DATA / "countdown.json"   # 日历页轻量倒数日：目标事件 + 目标日期
 TEMPLATES_FILE = DATA / "templates.json"   # 「模板」库：常用节点组的可复用快照（全局，所有画布共用，不进 .canvas）
 REVIEW_DB_FILE = DATA / "review.db"   # 独立复习卡片、调度状态与复习事件；不扫描、不改写 .canvas
-CAREER_REPORT_FILE = DATA / "career-report.json"   # 「生涯」使用报告的冻结本地快照
+CAREER_REPORT_FILE = DATA / "career-report-v2.json"   # 新生涯冻结快照；旧文件不再读取
+USAGE_FILE = DATA / "usage-v2.sqlite3"
 RESEARCH_WORKSPACE_DIR = DATA / "research-workspace"   # 独立研究文档；不复用 .canvas / 最近列表
 
 DEFAULT_PORT = 8765
@@ -167,14 +169,11 @@ FILE_STREAM_CHUNK_BYTES = 256 * 1024
 VIEWPORT_STATE_LIMIT = 500
 CANVAS_STATS_CACHE_LIMIT = 512
 DIARY_INDEX_CACHE_LIMIT = 4096
-CANVAS_ACTIVITY_SCHEMA = 1
-CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC = 10 * 60
-START_PAGE_ACTIVITY_SCHEMA = 1
-START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes")
+START_PAGE_ACTIVITY_PAGES = ("study", "tree", "notes", "notebook", "research", "review", "checkin")
 LEDGER_SCHEMA = 2
 LEDGER_PAGE_MAX = 99
 LEDGER_REVISION_MAX = 9_007_199_254_740_990
-CAREER_REPORT_SCHEMA = 1
+CAREER_REPORT_SCHEMA = 2
 # 画布伴生素材统一可被 /api/canvas-asset 读取的类型（图片 + 附件）。
 CANVAS_ASSET_TYPES = {**BACKGROUND_IMAGE_TYPES, **CANVAS_ATTACHMENT_TYPES}
 
@@ -336,6 +335,10 @@ def move_canvas_to_trash(src: Path) -> Path:
     move_canvas_with_assets(src, dst)
     move_viewport_state(src, dst)
     move_canvas_activity_path(src, dst)
+    try:
+        usage_store().remove("canvas", _canvas_activity_path_key(dst))
+    except (OSError, sqlite3.Error):
+        pass
     remove_from_recent(src)
     return dst
 
@@ -4017,6 +4020,9 @@ def daily_toggle(body: dict) -> dict:
             task["bestStreak"] = _daily_best_streak(dates)
         task.pop("undo", None)
     save_daily(data)
+    if want_done and not is_done:
+        _usage_event("checkin", str(task["id"]), str(task.get("title") or task.get("name") or ""),
+                     "checkin", event_id=f"checkin:{today}:{task['id']}")
     return daily_public_payload(data)
 
 
@@ -4315,401 +4321,97 @@ def study_public_payload() -> dict:
     return load_study()
 
 
-def _empty_canvas_activity() -> dict:
-    return {
-        "version": CANVAS_ACTIVITY_SCHEMA,
-        "backfillVersion": 0,
-        "canvases": {},
-        "paths": {},
-        "days": {},
-    }
+USAGE_PROFILE = FULL_PROFILE
+_USAGE_INSTANCE = None
+_CAREER_INSTANCE = None
+_USAGE_INSTANCE_LOCK = threading.RLock()
+_USAGE_FEATURES = {"notes": "notes", "canvas": "canvas.editor", "embedded": "notes.canvas",
+                   "research": "research", "study": "canvas.study", "tree": "canvas.tree",
+                   "quicknotes": "canvas.quicknotes", "review": "canvas.review", "checkin": "canvas.focus"}
+
+
+def _usage_available(category, profile=None):
+    profile = profile or USAGE_PROFILE
+    return profile.enabled(_USAGE_FEATURES[category]) or (category == "canvas" and profile.enabled("canvas.library"))
+
+
+def usage_store() -> UsageStore:
+    global _USAGE_INSTANCE
+    with _USAGE_INSTANCE_LOCK:
+        target = DATA / "usage-v2.sqlite3"
+        if _USAGE_INSTANCE is None or _USAGE_INSTANCE.path != target:
+            _USAGE_INSTANCE = UsageStore(target, enabled=_usage_available)
+        return _USAGE_INSTANCE
+
+
+def initialize_usage() -> None:
+    try:
+        usage_store().state()
+    except (OSError, sqlite3.Error) as error:
+        # Statistics failure must not prevent opening or saving user content.
+        print(f"[usage-v2] {type(error).__name__}", file=sys.stderr)
+
+
+def _usage_fingerprint(payload: object) -> str:
+    content = dict(payload) if isinstance(payload, dict) else payload
+    if isinstance(content, dict):
+        for field in ("updatedAt", "createdAt", "view", "viewport", "activePageId"):
+            content.pop(field, None)
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _usage_event(category, locator, name, kind, **kwargs):
+    # Analytics cannot make a successfully saved user document fail.
+    try:
+        usage_store().event(category, locator, name, kind, **kwargs)
+    except (OSError, sqlite3.Error) as error:
+        print(f"[usage-v2] {type(error).__name__}", file=sys.stderr)
+
+
+def _usage_remap(method, *args, **kwargs):
+    try:
+        getattr(usage_store(), method)(*args, **kwargs)
+    except (OSError, sqlite3.Error) as error:
+        print(f"[usage-v2] {type(error).__name__}", file=sys.stderr)
 
 
 def _canvas_activity_path_key(path: Path | str) -> str:
     return os.path.normcase(_norm(path))
 
 
-def _normalize_canvas_activity(raw: object) -> dict:
-    source = raw if isinstance(raw, dict) else {}
-    payload = _empty_canvas_activity()
-    try:
-        payload["backfillVersion"] = max(0, int(source.get("backfillVersion") or 0))
-    except (TypeError, ValueError):
-        pass
-    canvases = source.get("canvases")
-    if isinstance(canvases, dict):
-        for canvas_id, item in canvases.items():
-            if not isinstance(item, dict):
-                continue
-            cid = str(canvas_id or "").strip()
-            path = str(item.get("path") or "").strip()
-            if not cid or not path:
-                continue
-            aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
-            clean = {
-                "path": path,
-                "title": str(item.get("title") or Path(path).stem or "Untitled")[:240],
-                "aliases": list(dict.fromkeys(
-                    str(alias) for alias in aliases if str(alias or "").strip()
-                ))[-24:],
-                "firstSeenAt": str(item.get("firstSeenAt") or ""),
-                "lastSeenAt": str(item.get("lastSeenAt") or ""),
-                "backfilled": bool(item.get("backfilled")),
-            }
-            payload["canvases"][cid] = clean
-            payload["paths"][_canvas_activity_path_key(path)] = cid
-    days = source.get("days")
-    if isinstance(days, dict):
-        for day, entries in days.items():
-            day_key = str(day or "")
-            try:
-                date.fromisoformat(day_key)
-            except ValueError:
-                continue
-            if not isinstance(entries, dict):
-                continue
-            clean_entries = {}
-            for canvas_id, item in entries.items():
-                cid = str(canvas_id or "").strip()
-                if not cid or not isinstance(item, dict):
-                    continue
-                spans = []
-                for span in item.get("spans", []):
-                    if not isinstance(span, list) or len(span) != 2:
-                        continue
-                    try:
-                        start = max(0.0, min(86400.0, float(span[0])))
-                        end = max(start, min(86400.0, float(span[1])))
-                    except (TypeError, ValueError):
-                        continue
-                    if end > start:
-                        spans.append([start, end])
-                merged = _merge_canvas_activity_spans(spans)
-                clean_entries[cid] = {
-                    "spans": merged,
-                    "seconds": int(round(sum(end - start for start, end in merged))),
-                    "created": bool(item.get("created")),
-                    "modified": bool(item.get("modified")),
-                    "inferred": bool(item.get("inferred")),
-                }
-            if clean_entries:
-                payload["days"][day_key] = clean_entries
-    return payload
-
-
-def _load_canvas_activity_unlocked() -> dict:
-    if not CANVAS_ACTIVITY_FILE.is_file():
-        return _empty_canvas_activity()
-    try:
-        raw = json.loads(CANVAS_ACTIVITY_FILE.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return _empty_canvas_activity()
-    return _normalize_canvas_activity(raw)
-
-
-def _save_canvas_activity_unlocked(data: dict) -> None:
-    data["version"] = CANVAS_ACTIVITY_SCHEMA
-    _atomic_write_json(CANVAS_ACTIVITY_FILE, data)
-
-
-def _merge_canvas_activity_spans(spans: list[list[float]]) -> list[list[float]]:
-    ordered = sorted(
-        ([float(span[0]), float(span[1])] for span in spans if span[1] > span[0]),
-        key=lambda span: span[0],
-    )
-    merged: list[list[float]] = []
-    for start, end in ordered:
-        if merged and start <= merged[-1][1] + 0.25:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
-    return [[round(start, 3), round(end, 3)] for start, end in merged]
-
-
-def _canvas_activity_recent_id(path: Path | str) -> str:
-    key = _canvas_activity_path_key(path)
-    recent = load_recent()
-    for item in recent.get("files", []):
-        if _canvas_activity_path_key(item.get("path", "")) == key:
-            value = str(item.get("id") or "").strip()
-            if value:
-                return value
-    return uuid.uuid4().hex
-
-
-def _ensure_canvas_activity_identity(
-    data: dict,
-    path: Path | str,
-    *,
-    title: str | None = None,
-) -> tuple[str, dict, bool]:
-    normalized = _norm(path)
-    key = _canvas_activity_path_key(normalized)
-    canvas_id = str(data.get("paths", {}).get(key) or "")
-    changed = False
-    if canvas_id not in data.get("canvases", {}):
-        canvas_id = _canvas_activity_recent_id(normalized)
-        while canvas_id in data.get("canvases", {}):
-            canvas_id = uuid.uuid4().hex
-        now = _study_now()
-        data.setdefault("canvases", {})[canvas_id] = {
-            "path": normalized,
-            "title": str(title or Path(normalized).stem or "Untitled")[:240],
-            "aliases": [],
-            "firstSeenAt": now,
-            "lastSeenAt": now,
-            "backfilled": False,
-        }
-        data.setdefault("paths", {})[key] = canvas_id
-        changed = True
-    meta = data["canvases"][canvas_id]
-    if meta.get("path") != normalized:
-        previous = str(meta.get("path") or "")
-        aliases = list(meta.get("aliases") or [])
-        if previous and previous not in aliases:
-            aliases.append(previous)
-        meta["aliases"] = aliases[-24:]
-        meta["path"] = normalized
-        if previous:
-            data.setdefault("paths", {}).pop(_canvas_activity_path_key(previous), None)
-        data.setdefault("paths", {})[key] = canvas_id
-        changed = True
-    next_title = str(title or Path(normalized).stem or meta.get("title") or "Untitled")[:240]
-    if meta.get("title") != next_title:
-        meta["title"] = next_title
-        changed = True
-    meta["lastSeenAt"] = _study_now()
-    return canvas_id, meta, changed
-
-
-def _canvas_activity_day_entry(data: dict, day: str, canvas_id: str) -> dict:
-    entries = data.setdefault("days", {}).setdefault(day, {})
-    return entries.setdefault(canvas_id, {
-        "spans": [], "seconds": 0, "created": False, "modified": False, "inferred": False,
-    })
-
-
-def _canvas_activity_file_times(path: Path, payload: dict | None = None) -> tuple[str, str]:
-    content = payload if isinstance(payload, dict) else None
-    if content is None:
-        try:
-            content = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            content = {}
-    try:
-        stat = path.stat()
-    except OSError:
-        stat = None
-    created = str(content.get("createdAt") or "").strip()
-    updated = str(content.get("updatedAt") or "").strip()
-    if not created and stat is not None:
-        created = datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_ctime)).isoformat()
-    if not updated and stat is not None:
-        updated = datetime.fromtimestamp(stat.st_mtime).isoformat()
-    return created, updated
-
-
-def _canvas_activity_day(value: object) -> str:
-    raw = str(value or "").strip()[:10]
-    try:
-        return date.fromisoformat(raw).isoformat()
-    except ValueError:
-        return ""
-
-
-def _backfill_canvas_activity_file_unlocked(
-    data: dict,
-    path: Path,
-    *,
-    payload: dict | None = None,
-) -> tuple[str, bool]:
-    canvas_id, meta, changed = _ensure_canvas_activity_identity(data, path, title=path.stem)
-    if meta.get("backfilled"):
-        return canvas_id, changed
-    created_at, updated_at = _canvas_activity_file_times(path, payload)
-    created_day = _canvas_activity_day(created_at)
-    updated_day = _canvas_activity_day(updated_at)
-    if created_day:
-        entry = _canvas_activity_day_entry(data, created_day, canvas_id)
-        entry["created"] = True
-        entry["inferred"] = True
-    if updated_day:
-        entry = _canvas_activity_day_entry(data, updated_day, canvas_id)
-        entry["modified"] = True
-        entry["inferred"] = True
-    meta["backfilled"] = True
-    return canvas_id, True
-
-
-def _canvas_activity_backfill_all_unlocked(data: dict) -> bool:
-    if int(data.get("backfillVersion") or 0) >= CANVAS_ACTIVITY_SCHEMA:
-        return False
-    candidates: dict[str, Path] = {}
-    if CANVASES.exists():
-        for path in CANVASES.glob("*.canvas"):
-            if path.is_file():
-                candidates[_canvas_activity_path_key(path)] = path
-    for raw in recent_paths():
-        path = Path(raw)
-        if path.is_file() and is_authorized(path) and not is_in_trash(path):
-            candidates[_canvas_activity_path_key(path)] = path
-    for path in candidates.values():
-        _backfill_canvas_activity_file_unlocked(data, path)
-    data["backfillVersion"] = CANVAS_ACTIVITY_SCHEMA
-    return True
-
-
-@_serialized_data
-def canvas_activity_register_path(path: Path, payload: dict | None = None) -> dict:
-    data = _load_canvas_activity_unlocked()
-    changed = _canvas_activity_backfill_all_unlocked(data)
-    canvas_id, file_changed = _backfill_canvas_activity_file_unlocked(data, path, payload=payload)
-    changed = changed or file_changed
-    if changed:
-        _save_canvas_activity_unlocked(data)
-    return _canvas_activity_totals(data, canvas_id)
-
-
-@_serialized_data
-def record_canvas_activity_event(
-    path: Path,
-    event: str,
-    *,
-    when: str | None = None,
-    payload: dict | None = None,
-) -> dict:
-    data = _load_canvas_activity_unlocked()
-    canvas_id, meta, _ = _ensure_canvas_activity_identity(data, path, title=path.stem)
-    meta["backfilled"] = True
-    day = _canvas_activity_day(when or _study_now())
-    entry = _canvas_activity_day_entry(data, day, canvas_id)
-    if event == "created":
-        entry["created"] = True
-    elif event == "modified":
-        entry["modified"] = True
-    else:
-        raise ValueError("未知画布活动类型")
-    entry["inferred"] = False
-    _save_canvas_activity_unlocked(data)
-    return _canvas_activity_totals(data, canvas_id)
-
-
-@_serialized_data
-def move_canvas_activity_path(src: Path | str, dst: Path | str) -> None:
-    data = _load_canvas_activity_unlocked()
-    source_key = _canvas_activity_path_key(src)
-    canvas_id = str(data.get("paths", {}).get(source_key) or "")
-    if canvas_id not in data.get("canvases", {}):
-        return
-    meta = data["canvases"][canvas_id]
-    old_path = str(meta.get("path") or _norm(src))
-    aliases = list(meta.get("aliases") or [])
-    if old_path and old_path not in aliases:
-        aliases.append(old_path)
-    meta["aliases"] = aliases[-24:]
-    meta["path"] = _norm(dst)
-    meta["title"] = Path(dst).stem
-    meta["lastSeenAt"] = _study_now()
-    data.setdefault("paths", {}).pop(source_key, None)
-    data["paths"][_canvas_activity_path_key(dst)] = canvas_id
-    _save_canvas_activity_unlocked(data)
-
-
-def _parse_canvas_activity_time(value: object) -> datetime:
-    raw = str(value or "").strip()
-    if not raw:
-        raise ValueError("缺少计时起止时间")
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError as err:
-        raise ValueError("计时时间格式不正确") from err
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
-    return parsed
-
-
-def _split_canvas_activity_interval(start: datetime, end: datetime) -> list[tuple[str, float, float]]:
-    parts = []
-    cursor = start
-    while cursor < end:
-        midnight = datetime.combine(cursor.date() + timedelta(days=1), datetime.min.time())
-        part_end = min(end, midnight)
-        day_start = datetime.combine(cursor.date(), datetime.min.time())
-        parts.append((
-            cursor.date().isoformat(),
-            (cursor - day_start).total_seconds(),
-            (part_end - day_start).total_seconds(),
-        ))
-        cursor = part_end
-    return parts
-
-
-def _canvas_activity_totals(data: dict, canvas_id: str) -> dict:
-    today = date.today().isoformat()
-    total = 0
-    today_total = 0
-    for day, entries in data.get("days", {}).items():
-        entry = entries.get(canvas_id) if isinstance(entries, dict) else None
-        if not isinstance(entry, dict):
-            continue
-        seconds = max(0, int(entry.get("seconds") or 0))
-        total += seconds
-        if day == today:
-            today_total = seconds
-    return {"canvasId": canvas_id, "todaySec": today_total, "totalSec": total}
-
-
-def _canvas_activity_total_seconds_by_id(data: dict) -> dict[str, int]:
-    totals: dict[str, int] = {}
+def _canvas_activity_total_seconds_by_id(data: dict) -> dict:
+    totals = {}
     for entries in data.get("days", {}).values():
-        if not isinstance(entries, dict):
-            continue
-        for canvas_id, entry in entries.items():
-            if isinstance(entry, dict):
-                totals[canvas_id] = totals.get(canvas_id, 0) + max(0, int(entry.get("seconds") or 0))
+        for identity, item in entries.items():
+            totals[identity] = totals.get(identity, 0) + item.get("seconds", 0)
     return totals
 
 
-@_serialized_data
-def record_canvas_activity_interval(body: dict) -> dict:
-    path = Path(str(body.get("path") or "").strip())
-    if not str(path) or not path.is_file():
-        raise FileNotFoundError("画布文件不存在")
-    if path.suffix.lower() != ".canvas":
-        raise ValueError("计时目标不是 .canvas 文件")
-    if not is_authorized(path):
-        raise PermissionError("画布路径未授权")
-    session_id = str(body.get("sessionId") or "").strip()
-    if not session_id or len(session_id) > 160:
-        raise ValueError("计时会话标识无效")
-    start = _parse_canvas_activity_time(body.get("startedAt"))
-    end = _parse_canvas_activity_time(body.get("endedAt"))
-    duration = (end - start).total_seconds()
-    if duration <= 0 or duration > CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC:
-        raise ValueError("计时时段长度无效")
-    if end > datetime.now() + timedelta(minutes=2):
-        raise ValueError("计时时段不能位于未来")
-    data = _load_canvas_activity_unlocked()
-    canvas_id, meta, _ = _ensure_canvas_activity_identity(data, path, title=path.stem)
-    if not meta.get("backfilled"):
-        _backfill_canvas_activity_file_unlocked(data, path)
-    for day, start_sec, end_sec in _split_canvas_activity_interval(start, end):
-        entry = _canvas_activity_day_entry(data, day, canvas_id)
-        entry["spans"] = _merge_canvas_activity_spans(
-            list(entry.get("spans") or []) + [[start_sec, end_sec]]
-        )
-        entry["seconds"] = int(round(sum(b - a for a, b in entry["spans"])))
-    _save_canvas_activity_unlocked(data)
-    return _canvas_activity_totals(data, canvas_id)
+def canvas_activity_register_path(path: Path, payload: dict | None = None) -> dict:
+    try:
+        store = usage_store()
+        identity = store.baseline("canvas", _canvas_activity_path_key(path), path.stem,
+                                  _usage_fingerprint(payload)) if payload is not None else store.identity(
+                                      "canvas", _canvas_activity_path_key(path), path.stem)
+        return store.entity_totals(identity)
+    except (OSError, sqlite3.Error) as error:
+        print(f"[usage-v2] {type(error).__name__}", file=sys.stderr)
+        return {"canvasId": "", "todaySec": None, "totalSec": None, "unavailable": True}
 
 
-@_serialized_data
+def record_canvas_activity_event(path: Path, event: str, *, when=None, payload=None) -> dict:
+    _usage_event("canvas", _canvas_activity_path_key(path), path.stem, event,
+                 fingerprint=_usage_fingerprint(payload) if payload is not None else None)
+    return canvas_activity_register_path(path)
+
+
+def move_canvas_activity_path(src: Path | str, dst: Path | str) -> None:
+    _usage_remap("move", "canvas", _canvas_activity_path_key(src), _canvas_activity_path_key(dst), Path(dst).stem)
+
+
 def canvas_activity_snapshot() -> dict:
-    data = _load_canvas_activity_unlocked()
-    changed = _canvas_activity_backfill_all_unlocked(data)
-    if changed:
-        _save_canvas_activity_unlocked(data)
-    return data
+    return usage_store().canvas_projection()
 
 
 def _canvas_activity_payload(data: dict, year: int) -> dict:
@@ -4777,6 +4479,7 @@ def _canvas_activity_payload(data: dict, year: int) -> dict:
             canvas_bucket["day"] = max(str(canvas_bucket.get("day") or ""), day)
             canvas_bucket["inferred"] = bool(canvas_bucket.get("inferred")) or inferred
         if day_ids:
+            day_sec = data.get("unionDays", {}).get(day, day_sec)
             days_payload[day] = {
                 "durationSec": day_sec,
                 "canvasCount": len(day_ids),
@@ -4811,7 +4514,7 @@ def _canvas_activity_payload(data: dict, year: int) -> dict:
         "stats": {
             "monthSec": sum(item["durationSec"] for day, item in days_payload.items() if day.startswith(month_key)),
             "yearSec": sum(item["durationSec"] for item in days_payload.values()),
-            "totalSec": sum(all_totals.values()),
+            "totalSec": sum(data.get("unionDays", {}).values()) if "unionDays" in data else sum(all_totals.values()),
             "streak": streak,
             "longestStreak": _study_longest_streak(active_days),
             "activeCanvasCount": len(active_ids),
@@ -4835,111 +4538,8 @@ def _canvas_activity_overview_graph(data: dict) -> dict:
     return {"kind": "canvas", "years": result}
 
 
-def _empty_start_page_activity() -> dict:
-    return {"version": START_PAGE_ACTIVITY_SCHEMA, "days": {}}
-
-
-def _normalize_start_page_activity(raw: object) -> dict:
-    source = raw if isinstance(raw, dict) else {}
-    payload = _empty_start_page_activity()
-    days = source.get("days")
-    if not isinstance(days, dict):
-        return payload
-    for day, entries in days.items():
-        day_key = str(day or "")
-        try:
-            date.fromisoformat(day_key)
-        except ValueError:
-            continue
-        if not isinstance(entries, dict):
-            continue
-        clean_entries = {}
-        for page in START_PAGE_ACTIVITY_PAGES:
-            item = entries.get(page)
-            if not isinstance(item, dict):
-                continue
-            spans = []
-            for span in item.get("spans", []):
-                if not isinstance(span, list) or len(span) != 2:
-                    continue
-                try:
-                    start = max(0.0, min(86400.0, float(span[0])))
-                    end = max(start, min(86400.0, float(span[1])))
-                except (TypeError, ValueError):
-                    continue
-                if end > start:
-                    spans.append([start, end])
-            merged = _merge_canvas_activity_spans(spans)
-            if merged:
-                clean_entries[page] = {
-                    "spans": merged,
-                    "seconds": int(round(sum(end - start for start, end in merged))),
-                }
-        if clean_entries:
-            payload["days"][day_key] = clean_entries
-    return payload
-
-
-def _load_start_page_activity_unlocked() -> dict:
-    if not START_PAGE_ACTIVITY_FILE.is_file():
-        return _empty_start_page_activity()
-    try:
-        raw = json.loads(START_PAGE_ACTIVITY_FILE.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return _empty_start_page_activity()
-    return _normalize_start_page_activity(raw)
-
-
-def _save_start_page_activity_unlocked(data: dict) -> None:
-    data["version"] = START_PAGE_ACTIVITY_SCHEMA
-    _atomic_write_json(START_PAGE_ACTIVITY_FILE, data)
-
-
-def _start_page_activity_totals(data: dict, page: str) -> dict:
-    today = date.today().isoformat()
-    total = 0
-    today_total = 0
-    for day, entries in data.get("days", {}).items():
-        item = entries.get(page) if isinstance(entries, dict) else None
-        if not isinstance(item, dict):
-            continue
-        seconds = max(0, int(item.get("seconds") or 0))
-        total += seconds
-        if day == today:
-            today_total = seconds
-    return {"page": page, "todaySec": today_total, "totalSec": total}
-
-
-@_serialized_data
-def record_start_page_activity_interval(body: dict) -> dict:
-    page = str(body.get("page") or "").strip()
-    if page not in START_PAGE_ACTIVITY_PAGES:
-        raise ValueError("计时页面无效")
-    session_id = str(body.get("sessionId") or "").strip()
-    if not session_id or len(session_id) > 160:
-        raise ValueError("计时会话标识无效")
-    start = _parse_canvas_activity_time(body.get("startedAt"))
-    end = _parse_canvas_activity_time(body.get("endedAt"))
-    duration = (end - start).total_seconds()
-    if duration <= 0 or duration > CANVAS_ACTIVITY_HEARTBEAT_MAX_SEC:
-        raise ValueError("计时时段长度无效")
-    if end > datetime.now() + timedelta(minutes=2):
-        raise ValueError("计时时段不能位于未来")
-    data = _load_start_page_activity_unlocked()
-    for day, start_sec, end_sec in _split_canvas_activity_interval(start, end):
-        entries = data.setdefault("days", {}).setdefault(day, {})
-        item = entries.setdefault(page, {"spans": [], "seconds": 0})
-        item["spans"] = _merge_canvas_activity_spans(
-            list(item.get("spans") or []) + [[start_sec, end_sec]]
-        )
-        item["seconds"] = int(round(sum(b - a for a, b in item["spans"])))
-    _save_start_page_activity_unlocked(data)
-    return _start_page_activity_totals(data, page)
-
-
-@_serialized_data
 def start_page_activity_snapshot() -> dict:
-    return _load_start_page_activity_unlocked()
+    return usage_store().page_projection()
 
 
 def _start_page_activity_stats(data: dict, year: int) -> dict:
@@ -5749,7 +5349,7 @@ def _calendar_canvas_activity(day: str, data: dict | None = None) -> dict:
     items.sort(key=lambda item: (-item["seconds"], item["title"]))
     return {
         "count": len(items),
-        "durationSec": sum(item["seconds"] for item in items),
+        "durationSec": int(data.get("unionDays", {}).get(day, sum(item["seconds"] for item in items))),
         "items": items,
     }
 
@@ -6046,6 +5646,7 @@ def study_activity_payload(selected_year: str | int | None = None) -> dict:
         "canvasGraph": canvas_year["graph"],
         "canvasOverviewGraph": _canvas_activity_overview_graph(canvas_activity),
         "startPageStats": _start_page_activity_stats(start_page_activity, year),
+        "usageStats": usage_store().totals(year),
         "focusDays": focus_year,
         "focusStats": {
             "today": focus_days_all.get(today.isoformat(), {}).get("sec", 0),
@@ -8267,620 +7868,62 @@ def _archive_folder_count() -> int:
 
 # ─── 「生涯」冻结使用报告 ─────────────────────────────────
 
-def _career_json(path: Path) -> object:
-    try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-
-
-def _career_json_source_status(path: Path, has_data: bool) -> str:
-    if not path.is_file():
-        return "empty"
-    return ("available" if has_data else "empty") if isinstance(_career_json(path), dict) else "unavailable"
-
-
-def _career_aggregate_status(count: int, skipped_count: int) -> str:
-    if skipped_count:
-        return "partial" if count else "unavailable"
-    return "available" if count else "empty"
-
-
-def _career_day(value: object) -> str:
-    raw = str(value or "").strip()[:10]
-    try:
-        return date.fromisoformat(raw).isoformat()
-    except ValueError:
-        return ""
-
-
-def _career_longest_streak(days: list[str]) -> int:
-    longest = 0
-    current = 0
-    previous: date | None = None
-    for raw in sorted(set(days)):
-        try:
-            item = date.fromisoformat(raw)
-        except ValueError:
-            continue
-        current = current + 1 if previous and item == previous + timedelta(days=1) else 1
-        longest = max(longest, current)
-        previous = item
-    return longest
-
-
-def _career_canvas_candidates() -> list[Path]:
+def _career_canvas_candidates() -> dict:
     candidates: dict[str, Path] = {}
-    if CANVASES.exists():
-        for path in CANVASES.glob("*.canvas"):
-            if path.is_file() and not path.is_symlink():
-                candidates[os.path.normcase(_norm(path))] = path
+    paths, skipped = _usage_scan_canvases(CANVASES)
+    for path in paths:
+        candidates[os.path.normcase(_norm(path))] = path
     try:
-        recent = load_recent()
+        # The ordinary library loader may normalize, recover or rewrite the
+        # file. A report must only read the existing primary metadata.
+        recent = _usage_read_json(RECENT_FILE)
+        if recent is not None and (not isinstance(recent, dict) or not isinstance(recent.get("files", []), list)):
+            raise ValueError("Unreadable library metadata")
     except (OSError, ValueError):
         recent = {}
+        skipped += 1
     for item in recent.get("files", []) if isinstance(recent, dict) else []:
         raw = str(item.get("path") or "") if isinstance(item, dict) else ""
         if not raw:
             continue
         path = Path(raw)
         try:
+            if path.suffix.casefold() != ".canvas" or is_in_trash(path):
+                continue
+            metadata = path.stat(follow_symlinks=False)
             available = (
-                path.is_file() and path.suffix.casefold() == ".canvas"
-                and is_authorized(path) and not is_in_trash(path)
-                and not path.is_symlink()
+                stat.S_ISREG(metadata.st_mode) and not getattr(metadata, 'st_file_attributes', 0) & 1024
+                # These candidates come from the authorized recent list;
+                # is_authorized() itself uses the repairing library loader.
             )
+            if not available:
+                skipped += 1
+        except FileNotFoundError:
+            available = False
         except OSError:
             available = False
+            skipped += 1
         if available:
             candidates[os.path.normcase(_norm(path))] = path
-    return sorted(candidates.values(), key=lambda item: item.stem.casefold())
+    return {"paths": sorted(candidates.values(), key=lambda item: item.stem.casefold()), "skipped": skipped}
 
 
-def _career_canvas_inventory() -> dict:
-    kind_counts: dict[str, int] = {}
-    node_count = 0
-    edge_count = 0
-    ink_count = 0
-    character_count = 0
-    valid_count = 0
-    skipped_count = 0
-    created_days: list[str] = []
-    updated_days: list[str] = []
-    for path in _career_canvas_candidates():
-        payload = _career_json(path)
-        if not isinstance(payload, dict):
-            skipped_count += 1
-            continue
-        nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
-        edges = payload.get("edges") if isinstance(payload.get("edges"), list) else []
-        ink = payload.get("ink") if isinstance(payload.get("ink"), dict) else {}
-        valid_count += 1
-        node_count += len(nodes)
-        edge_count += len(edges)
-        ink_count += len(ink.get("strokes") or []) + len(ink.get("arrows") or [])
-        created = _career_day(payload.get("createdAt"))
-        updated = _career_day(payload.get("updatedAt"))
-        if created:
-            created_days.append(created)
-        if updated:
-            updated_days.append(updated)
-        for node in nodes:
-            if not isinstance(node, dict):
-                continue
-            kind = str(node.get("kind") or "card").strip().casefold()
-            if kind == "text":
-                kind = "index"
-            if kind not in {
-                "card", "preview", "index", "sticky", "code", "table",
-                "task-root", "image", "attachment", "group", "shape",
-            }:
-                kind = "other"
-            kind_counts[kind] = kind_counts.get(kind, 0) + 1
-            character_count += len(str(node.get("text") or ""))
-            character_count += len(str(node.get("body") or ""))
-        notebook = payload.get("markdownNotebook")
-        if isinstance(notebook, dict):
-            for note in notebook.get("notes") or []:
-                if isinstance(note, dict):
-                    character_count += len(str(note.get("markdown") or ""))
-    return {
-        "count": valid_count,
-        "skippedCount": skipped_count,
-        "nodeCount": node_count,
-        "edgeCount": edge_count,
-        "inkCount": ink_count,
-        "characterCount": character_count,
-        "kinds": [
-            {"key": key, "count": kind_counts[key]}
-            for key in sorted(kind_counts, key=lambda key: (-kind_counts[key], key))
-        ],
-        "createdDays": sorted(set(created_days)),
-        "updatedDays": sorted(set(updated_days)),
-    }
-
-
-def _career_canvas_activity() -> dict:
-    data = _load_canvas_activity_unlocked()
-    totals = _canvas_activity_total_seconds_by_id(data)
-    canvases = data.get("canvases") if isinstance(data.get("canvases"), dict) else {}
-    top = []
-    for canvas_id, seconds in totals.items():
-        meta = canvases.get(canvas_id) if isinstance(canvases.get(canvas_id), dict) else {}
-        top.append({
-            "id": canvas_id,
-            "title": str(meta.get("title") or "未命名画布")[:160],
-            "seconds": max(0, int(seconds or 0)),
-        })
-    top.sort(key=lambda item: (item["seconds"], item["title"].casefold()), reverse=True)
-    days: dict[str, dict] = {}
-    month_canvases: dict[str, dict[str, int]] = {}
-    span_count = 0
-    for raw_day, entries in data.get("days", {}).items():
-        day = _career_day(raw_day)
-        if not day or not isinstance(entries, dict):
-            continue
-        seconds = 0
-        events = 0
-        inferred_events = 0
-        for canvas_id, entry in entries.items():
-            if not isinstance(entry, dict):
-                continue
-            value = max(0, int(entry.get("seconds") or 0))
-            seconds += value
-            entry_events = int(bool(entry.get("created"))) + int(bool(entry.get("modified")))
-            if entry.get("inferred"):
-                inferred_events += entry_events
-            else:
-                events += entry_events
-            span_count += len(entry.get("spans") or [])
-            if value:
-                bucket = month_canvases.setdefault(day[:7], {})
-                bucket[canvas_id] = bucket.get(canvas_id, 0) + value
-        if seconds or events or inferred_events:
-            days[day] = {
-                "seconds": seconds,
-                "events": events,
-                "inferredEvents": inferred_events,
-            }
-    months = []
-    for month in sorted(month_canvases):
-        items = []
-        for canvas_id, seconds in month_canvases[month].items():
-            meta = canvases.get(canvas_id) if isinstance(canvases.get(canvas_id), dict) else {}
-            items.append({
-                "title": str(meta.get("title") or "未命名画布")[:100],
-                "seconds": seconds,
-            })
-        items.sort(key=lambda item: (item["seconds"], item["title"].casefold()), reverse=True)
-        months.append({"month": month, "items": items[:8]})
-    return {
-        "days": days,
-        "top": top[:8],
-        "months": months,
-        "totalSec": sum(totals.values()),
-        "spanCount": span_count,
-    }
-
-
-def _career_page_activity() -> dict:
-    data = _load_start_page_activity_unlocked()
-    totals = {page: 0 for page in START_PAGE_ACTIVITY_PAGES}
-    days: dict[str, dict] = {}
-    for raw_day, entries in data.get("days", {}).items():
-        day = _career_day(raw_day)
-        if not day or not isinstance(entries, dict):
-            continue
-        item = {}
-        for page in START_PAGE_ACTIVITY_PAGES:
-            entry = entries.get(page)
-            seconds = max(0, int(entry.get("seconds") or 0)) if isinstance(entry, dict) else 0
-            if seconds:
-                totals[page] += seconds
-                item[page] = seconds
-        if item:
-            days[day] = item
-    return {"days": days, "totals": totals, "totalSec": sum(totals.values())}
-
-
-def _career_archives() -> dict:
-    records: list[dict] = []
-    skipped_count = 0
-
-    def add(kind: str, title: object, when: object) -> None:
-        day = _career_day(when)
-        if not day:
-            return
-        records.append({
-            "kind": kind,
-            "title": str(title or "").strip()[:160],
-            "day": day,
-        })
-
-    if STUDY_ARCHIVE_DIR.exists():
-        for folder in STUDY_ARCHIVE_DIR.iterdir():
-            if not folder.is_dir():
-                continue
-            marker = folder / "tasks.json"
-            if marker.is_file():
-                payload = _career_json(marker)
-                if isinstance(payload, dict):
-                    for task in payload.get("tasks") or []:
-                        if isinstance(task, dict):
-                            add("study", task.get("title"), task.get("completedAt") or payload.get("archivedAt"))
-                else:
-                    skipped_count += 1
-            marker = folder / "notes.json"
-            if marker.is_file():
-                payload = _career_json(marker)
-                if isinstance(payload, dict):
-                    # Quick notes have no separate title; their `text` is the body and
-                    # must never be copied into the frozen report.
-                    for _note in payload.get("notes") or []:
-                        add("quick", "", payload.get("archivedAt"))
-                else:
-                    skipped_count += 1
-            marker = folder / "taskbook.json"
-            if marker.is_file():
-                payload = _career_json(marker)
-                if isinstance(payload, dict):
-                    add("taskbook", payload.get("title"), payload.get("archivedAt"))
-                else:
-                    skipped_count += 1
-    if CANVAS_ARCHIVE_DIR.exists():
-        for folder in CANVAS_ARCHIVE_DIR.iterdir():
-            if not folder.is_dir():
-                continue
-            marker = folder / "canvas.json"
-            if not marker.is_file():
-                continue
-            payload = _career_json(marker)
-            if not isinstance(payload, dict):
-                skipped_count += 1
-                continue
-            nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
-            if nodes:
-                for node in nodes:
-                    add("canvas", node.get("title") if isinstance(node, dict) else node, payload.get("archivedAt"))
-            else:
-                count = max(1, int(payload.get("count") or 1))
-                for _ in range(min(count, 5000)):
-                    add("canvas", payload.get("name"), payload.get("archivedAt"))
-    counts = {kind: 0 for kind in ("study", "quick", "taskbook", "canvas")}
-    months: dict[str, dict[str, int]] = {}
-    for item in records:
-        counts[item["kind"]] += 1
-        bucket = months.setdefault(item["day"][:7], {kind: 0 for kind in counts})
-        bucket[item["kind"]] += 1
-    records.sort(key=lambda item: (item["day"], item["title"]), reverse=True)
-    return {
-        "count": len(records),
-        "counts": counts,
-        "months": [{"month": month, **months[month]} for month in sorted(months)],
-        "recent": records[:8],
-        "days": [item["day"] for item in records],
-        "skippedCount": skipped_count,
-    }
-
-
-def _career_review_stats() -> dict:
-    empty = {
-        "cardCount": 0, "deckCount": 0, "eventCount": 0,
-        "ratings": {"remembered": 0, "vague": 0, "forgot": 0},
-        "days": {}, "status": "empty",
-    }
-    if not REVIEW_DB_FILE.is_file():
-        return empty
-    uri_path = urllib.parse.quote(REVIEW_DB_FILE.resolve().as_posix(), safe="/:")
-    conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, timeout=2.0)
-    try:
-        tables = {
-            str(row[0]) for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            ).fetchall()
-        }
-        required = {"review_cards", "review_decks", "review_events"}
-        if not required.issubset(tables):
-            return empty
-        card_count = int(conn.execute("SELECT COUNT(*) FROM review_cards").fetchone()[0])
-        deck_count = int(conn.execute("SELECT COUNT(*) FROM review_decks").fetchone()[0])
-        rows = conn.execute(
-            "SELECT rating, reviewed_at FROM review_events ORDER BY reviewed_at"
-        ).fetchall()
-        ratings = {"remembered": 0, "vague": 0, "forgot": 0}
-        days: dict[str, int] = {}
-        for rating, reviewed_at in rows:
-            key = str(rating or "")
-            if key in ratings:
-                ratings[key] += 1
-            day = _career_day(reviewed_at)
-            if day:
-                days[day] = days.get(day, 0) + 1
-        return {
-            "cardCount": card_count,
-            "deckCount": deck_count,
-            "eventCount": len(rows),
-            "ratings": ratings,
-            "days": days,
-            "status": "available",
-        }
-    finally:
-        conn.close()
-
-
-def _career_daily_stats() -> dict:
-    raw = _career_json(DAILY_FILE)
-    tasks = raw.get("tasks") if isinstance(raw, dict) and isinstance(raw.get("tasks"), list) else []
-    done_days: set[str] = set()
-    checkins = 0
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        for raw_day in task.get("doneDates") or []:
-            day = _career_day(raw_day)
-            if day:
-                done_days.add(day)
-                checkins += 1
-    return {"taskCount": len(tasks), "checkinCount": checkins, "days": sorted(done_days)}
-
-
-def _career_diary_stats() -> dict:
-    days = []
-    if DIARY_DIR.exists():
-        for path in DIARY_DIR.glob("*.md"):
-            day = _career_day(path.stem)
-            if day and path.is_file() and not path.is_symlink():
-                days.append(day)
-    return {"count": len(set(days)), "days": sorted(set(days))}
-
-
-def _career_learning_stats() -> tuple[dict, list[dict]]:
-    coverage: list[dict] = []
-    learning = {
-        "activeTasks": 0, "doneTasks": 0, "goalTreeCount": 0,
-        "goalNodeCount": 0, "treeTasks": 0, "treeCount": 0,
-    }
-    try:
-        study = load_study()
-        tasks = study.get("tasks") if isinstance(study.get("tasks"), list) else []
-        learning["activeTasks"] = sum(1 for task in tasks if isinstance(task, dict) and task.get("status") == "active")
-        learning["doneTasks"] = sum(1 for task in tasks if isinstance(task, dict) and task.get("status") == "done")
-        trees = study.get("goalTrees") if isinstance(study.get("goalTrees"), list) else []
-        learning["goalTreeCount"] = len(trees)
-        learning["goalNodeCount"] = sum(len(tree.get("nodes") or []) for tree in trees if isinstance(tree, dict))
-        coverage.append({"id": "study", "status": "available" if tasks or trees else "empty"})
-    except (OSError, ValueError):
-        coverage.append({"id": "study", "status": "unavailable"})
-    try:
-        tree_page = load_tree_page()
-        learning["treeTasks"] = len(tree_page.get("tasks") or [])
-        learning["treeCount"] = len(tree_page.get("goalTrees") or [])
-        coverage.append({
-            "id": "tree", "status": "available" if learning["treeTasks"] else "empty",
-        })
-    except (OSError, ValueError):
-        coverage.append({"id": "tree", "status": "unavailable"})
-    return learning, coverage
-
-
-def _career_build_report() -> dict:
-    generated_at = _study_now()
-    canvas_inventory = _career_canvas_inventory()
-    canvas_activity = _career_canvas_activity()
-    page_activity = _career_page_activity()
-    archives = _career_archives()
-    focus = load_focus()
-    focus_days = {
-        day: {
-            "seconds": max(0, int(value.get("sec") or 0)),
-            "count": max(0, int(value.get("count") or 0)),
-        }
-        for day, value in focus.get("days", {}).items()
-        if _career_day(day) and isinstance(value, dict)
-    }
-    focus_months: dict[str, dict[str, int]] = {}
-    for day, value in focus_days.items():
-        bucket = focus_months.setdefault(day[:7], {"seconds": 0, "count": 0})
-        bucket["seconds"] += value["seconds"]
-        bucket["count"] += value["count"]
-
-    coverage = [{
-        "id": "canvases",
-        "status": _career_aggregate_status(canvas_inventory["count"], canvas_inventory["skippedCount"]),
-        "skippedCount": canvas_inventory["skippedCount"],
-    }, {
-        "id": "canvasActivity",
-        "status": _career_json_source_status(
-            CANVAS_ACTIVITY_FILE,
-            bool(canvas_activity["days"] or canvas_activity["totalSec"]),
-        ),
-    }, {
-        "id": "pageActivity",
-        "status": _career_json_source_status(
-            START_PAGE_ACTIVITY_FILE,
-            bool(page_activity["days"] or page_activity["totalSec"]),
-        ),
-    }]
-    try:
-        with NOTES_MUTATION_LOCK:
-            note_stats = NOTES_STORE.report_statistics()
-        coverage.append({
-            "id": "notes", "status": _career_aggregate_status(note_stats["count"], note_stats["skippedCount"]),
-            "skippedCount": note_stats["skippedCount"],
-        })
-    except (NotesError, OSError, ValueError):
-        note_stats = {
-            "count": 0, "skippedCount": 0, "folderCount": 0, "wordCount": 0,
-            "characterCount": 0, "linkCount": 0, "orphanCount": 0,
-            "lengthBuckets": {"short": 0, "medium": 0, "long": 0},
-            "top": [], "inferredModifiedMonths": [], "network": {"nodes": [], "edges": []},
-        }
-        coverage.append({"id": "notes", "status": "unavailable", "skippedCount": 0})
-    learning, learning_coverage = _career_learning_stats()
-    coverage.extend(learning_coverage)
-    try:
-        review = _career_review_stats()
-        coverage.append({"id": "review", "status": review.pop("status")})
-    except (OSError, sqlite3.DatabaseError):
-        review = {
-            "cardCount": 0, "deckCount": 0, "eventCount": 0,
-            "ratings": {"remembered": 0, "vague": 0, "forgot": 0}, "days": {},
-        }
-        coverage.append({"id": "review", "status": "unavailable"})
-    daily = _career_daily_stats()
-    diaries = _career_diary_stats()
-    coverage.extend([{
-        "id": "focus",
-        "status": _career_json_source_status(FOCUS_FILE, bool(focus_days)),
-    }, {
-        "id": "daily",
-        "status": _career_json_source_status(DAILY_FILE, bool(daily["taskCount"] or daily["checkinCount"])),
-    }, {
-        "id": "diary",
-        "status": "available" if diaries["count"] else "empty",
-    }, {
-        "id": "archives",
-        "status": _career_aggregate_status(archives["count"], archives["skippedCount"]),
-        "skippedCount": archives["skippedCount"],
-    }])
-
-    day_map: dict[str, dict] = {}
-
-    def bucket(day: str) -> dict:
-        return day_map.setdefault(day, {
-            "day": day, "canvasSec": 0, "focusSec": 0, "pageSec": 0,
-            "completed": 0, "reviewed": 0, "daily": 0, "diary": 0, "events": 0,
-        })
-
-    inferred_days = []
-    for day, value in canvas_activity["days"].items():
-        if value["seconds"] or value["events"]:
-            target = bucket(day)
-            target["canvasSec"] += value["seconds"]
-            target["events"] += value["events"]
-        if value.get("inferredEvents"):
-            inferred_days.append({"day": day, "events": value["inferredEvents"]})
-    for day, values in page_activity["days"].items():
-        bucket(day)["pageSec"] += sum(values.values())
-    for day, value in focus_days.items():
-        bucket(day)["focusSec"] += value["seconds"]
-        bucket(day)["events"] += value["count"]
-    for day in archives["days"]:
-        target = bucket(day)
-        target["completed"] += 1
-        target["events"] += 1
-    for day, count in review["days"].items():
-        target = bucket(day)
-        target["reviewed"] += count
-        target["events"] += count
-    for day in daily["days"]:
-        target = bucket(day)
-        target["daily"] = 1
-        target["events"] += 1
-    for day in diaries["days"]:
-        target = bucket(day)
-        target["diary"] = 1
-        target["events"] += 1
-
-    active_day_keys = sorted(day_map)
-    days = [day_map[key] for key in active_day_keys]
-    months: dict[str, dict] = {}
-    weekdays = [{"weekday": index, "activeDays": 0, "events": 0} for index in range(7)]
-    for item in days:
-        month = item["day"][:7]
-        target = months.setdefault(month, {
-            "month": month, "activeDays": 0, "canvasSec": 0, "focusSec": 0,
-            "pageSec": 0, "completed": 0, "reviewed": 0, "events": 0,
-        })
-        target["activeDays"] += 1
-        for key in ("canvasSec", "focusSec", "pageSec", "completed", "reviewed", "events"):
-            target[key] += item[key]
-        weekday = date.fromisoformat(item["day"]).weekday()
-        weekdays[weekday]["activeDays"] += 1
-        weekdays[weekday]["events"] += item["events"]
-    month_list = [months[key] for key in sorted(months)]
-    best_month = max(month_list, key=lambda item: (item["events"], item["activeDays"]), default=None)
-    best_weekday = max(weekdays, key=lambda item: (item["activeDays"], item["events"]), default=None)
-    first_day = active_day_keys[0] if active_day_keys else ""
-    # The overview uses sparse active days, while the barcode needs real calendar
-    # spacing. Keep only the latest 365 calendar days so long histories do not
-    # inflate the frozen snapshot with thousands of empty rows.
-    report_days: list[dict] = []
-    if active_day_keys:
-        report_end = date.fromisoformat(generated_at[:10])
-        report_start = max(date.fromisoformat(first_day), report_end - timedelta(days=364))
-        current = report_start
-        while current <= report_end:
-            key = current.isoformat()
-            report_days.append(day_map.get(key, {
-                "day": key, "canvasSec": 0, "focusSec": 0, "pageSec": 0,
-                "completed": 0, "reviewed": 0, "daily": 0, "diary": 0, "events": 0,
-            }))
-            current += timedelta(days=1)
-
-    return {
-        "version": CAREER_REPORT_SCHEMA,
-        "generatedAt": generated_at,
-        "period": {
-            "kind": "all",
-            "firstDay": first_day,
-            "lastDay": generated_at[:10],
-        },
-        "coverage": coverage,
-        "overview": {
-            "activeDays": len(active_day_keys),
-            "longestStreak": _career_longest_streak(active_day_keys),
-            "canvasSec": canvas_activity["totalSec"],
-            "focusSec": sum(value["seconds"] for value in focus_days.values()),
-            "pageSec": page_activity["totalSec"],
-            "archiveCount": archives["count"],
-            "noteWords": note_stats["wordCount"],
-        },
-        "activity": {
-            "days": report_days,
-            "months": month_list,
-            "weekdays": weekdays,
-            "inferredDays": inferred_days,
-        },
-        "canvases": {
-            **{key: value for key, value in canvas_inventory.items() if key not in {"createdDays", "updatedDays"}},
-            "totalSec": canvas_activity["totalSec"],
-            "spanCount": canvas_activity["spanCount"],
-            "top": canvas_activity["top"],
-            "months": canvas_activity["months"],
-        },
-        "notes": note_stats,
-        "learning": {
-            **learning,
-            "archives": archives,
-            "pageSeconds": page_activity["totals"],
-        },
-        "focus": {
-            "totalSec": sum(value["seconds"] for value in focus_days.values()),
-            "sessionCount": sum(value["count"] for value in focus_days.values()),
-            "months": [{"month": month, **focus_months[month]} for month in sorted(focus_months)],
-        },
-        "habits": {"daily": daily, "diaries": diaries, "review": review},
-        "reflection": {
-            "bestMonth": best_month["month"] if best_month else "",
-            "bestMonthEvents": best_month["events"] if best_month else 0,
-            "bestWeekday": best_weekday["weekday"] if best_weekday else -1,
-        },
-    }
+def career_reports() -> CareerReports:
+    global _CAREER_INSTANCE
+    with _USAGE_INSTANCE_LOCK:
+        store = usage_store()
+        if _CAREER_INSTANCE is None or _CAREER_INSTANCE.usage is not store:
+            _CAREER_INSTANCE = CareerReports(DATA / "career-report-v2.json", store, notes=NOTES, data=DATA,
+                                             canvas_candidates=_career_canvas_candidates, atomic_json=_atomic_write_json)
+        return _CAREER_INSTANCE
 
 
 def load_career_report() -> dict:
-    raw = _career_json(CAREER_REPORT_FILE)
-    if not isinstance(raw, dict) or raw.get("version") != CAREER_REPORT_SCHEMA:
-        return {"version": CAREER_REPORT_SCHEMA, "exists": False}
-    return {"version": CAREER_REPORT_SCHEMA, "exists": True, "report": raw}
+    return career_reports().read()
 
 
-@_serialized_data
 def generate_career_report() -> dict:
-    report = _career_build_report()
-    _atomic_write_json(CAREER_REPORT_FILE, report)
-    return report
+    return career_reports().generate()
 
 
 # ─── Windows 文件对话框（隐藏子进程，桌面版不闪终端）──────
@@ -9473,7 +8516,6 @@ def import_external_canvas_copies(
                     actual_group = requested_group if requested_group in valid_groups else ""
                     recent_before = RECENT_FILE.read_bytes() if RECENT_FILE.is_file() else None
                     recent_backup_before = RECENT_BACKUP_FILE.read_bytes() if RECENT_BACKUP_FILE.is_file() else None
-                    activity_before = CANVAS_ACTIVITY_FILE.read_bytes() if CANVAS_ACTIVITY_FILE.is_file() else None
                     reserved: set[str] = set()
                     for plan in sources:
                         stem = _safe_export_stem(plan["source"].stem, "导入画布")
@@ -9495,13 +8537,11 @@ def import_external_canvas_copies(
                             register_recent(target, target.stem)
                             if actual_group:
                                 file_set_group(_norm(target), actual_group)
-                            activity = record_canvas_activity_event(target, "created", payload=plan["payload"])
                             items.append({
                                 "path": _norm(target),
                                 "title": target.stem,
                                 "renamed": bool(plan["renamed"]),
                                 "missingAssetCount": int(plan["missingAssetCount"]),
-                                "canvasActivity": activity,
                             })
                     except Exception:
                         for target in reversed(materialized):
@@ -9515,8 +8555,10 @@ def import_external_canvas_copies(
                                 pass
                         _restore_optional_file(RECENT_FILE, recent_before)
                         _restore_optional_file(RECENT_BACKUP_FILE, recent_backup_before)
-                        _restore_optional_file(CANVAS_ACTIVITY_FILE, activity_before)
                         raise
+
+                    for plan, item in zip(sources, items):
+                        item["canvasActivity"] = record_canvas_activity_event(plan["target"], "created", payload=plan["payload"])
 
         return {
             "ok": True,
@@ -10309,6 +9351,8 @@ class RequestBodyError(ValueError):
 # appropriate lock only after the dialog returns, so an open dialog never stalls
 # autosave in another request thread.
 POST_WITHOUT_DATA_LOCK = {
+    "/api/usage/batch",
+    "/api/career/generate",
     "/api/file-stats",
     "/api/ai-chat",
     "/api/ai-plan",
@@ -10472,6 +9516,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ── JSON 工具 ──
     def _send_json(self, status: int, payload: dict) -> None:
+        operation = getattr(self, "_usage_operation", None)
+        self._usage_operation = None
+        if status == 200 and operation:
+            route, request, source, before = operation
+            category = {"/api/study-archive-done": "study", "/api/notes-archive": "quicknotes", "/api/archive-canvas": "canvas", "/api/taskbook-archive": "canvas"}.get(route)
+            if category and not payload.get("idempotent"):
+                count = payload.get("count") or payload.get("leafCount") or (1 if route == "/api/taskbook-archive" else 0)
+                if count:
+                    locator = _canvas_activity_path_key(request["path"]) if category == "canvas" else ""
+                    _usage_event(category, locator, Path(request.get("path", "")).stem or category, "archived",
+                                 count=count, event_id="archive:" + str(request.get("archiveId") or payload.get("folder") or uuid.uuid4().hex))
+            elif source:
+                try:
+                    after = _usage_read_json(source)
+                    if _usage_fingerprint(after) != _usage_fingerprint(before):
+                        category = "study" if source == STUDY_FILE else "tree" if source == TREE_PAGE_FILE else "quicknotes"
+                        key = "notes" if category == "quicknotes" else "tasks"
+                        previous = {str(item.get("id")) for item in (before or {}).get(key, []) if isinstance(item, dict)}
+                        created = sum(str(item.get("id")) not in previous for item in (after or {}).get(key, []) if isinstance(item, dict))
+                        _usage_event(category, "workspace", category, "created" if created else "modified",
+                                     fingerprint=_usage_fingerprint(after), count=max(1, created))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -10716,8 +9783,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
         if parsed.path == "/api/recent":
             return self._api_recent()
-        if parsed.path == "/api/career-report":
+        if parsed.path == "/api/career/report":
             return self._send_json(200, load_career_report())
+        if parsed.path == "/api/usage/state":
+            try:
+                return self._send_json(200, usage_store().state())
+            except (OSError, sqlite3.Error):
+                return self._send_json(503, {"error": "统计暂不可用，请重试"})
+        if parsed.path.startswith("/api/career/jobs/"):
+            try:
+                return self._send_json(200, career_reports().job(parsed.path.rsplit("/", 1)[-1]))
+            except KeyError:
+                return self._send_json(404, {"error": "生成任务不存在"})
         if parsed.path == "/api/ai-config":
             return self._send_json(200, ai_public_config())
         if parsed.path == "/api/study":
@@ -10866,6 +9943,43 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._dispatch_POST(path, body)
 
     def _dispatch_POST(self, path: str, body: dict):
+        source = STUDY_FILE if path.startswith("/api/study-") else TREE_PAGE_FILE if path.startswith("/api/tree-page-") else NOTES_FILE if path == "/api/notes-save" else None
+        try:
+            before = _usage_read_json(source) if source else None
+        except (OSError, ValueError):
+            before = None
+        self._usage_operation = (path, body, source, before)
+        if path == "/api/usage/batch":
+            try:
+                intervals = body.get("intervals", [])
+                if not isinstance(intervals, list) or len(intervals) > 512:
+                    raise ValueError("统计批次无效")
+                for interval in intervals:
+                    if not isinstance(interval, dict):
+                        raise ValueError("统计时段无效")
+                    category = interval.get("category")
+                    locator = str(interval.get("locator") or "")
+                    if category not in CATEGORIES:
+                        return self._send_json(403, {"error": "统计功能未启用"})
+                    if category == "canvas" and locator:
+                        target = Path(locator)
+                        known = usage_store().known_locator("canvas", _canvas_activity_path_key(target))
+                        if target.suffix.casefold() != ".canvas" or not (known or is_authorized(target)):
+                            return self._send_json(403, {"error": "画布路径未授权"})
+                        interval["locator"] = _canvas_activity_path_key(target)
+                        interval["name"] = target.stem
+                    elif category in ("notes", "embedded") and locator:
+                        interval["locator"] = NOTES_STORE.normalize_path(locator)
+                        if category == "embedded" and not locator.startswith("canvases/"):
+                            raise ValueError("无效内嵌画布目标")
+                        interval["name"] = Path(locator).name
+                    elif category == "research" and len(locator) > 160:
+                        raise ValueError("无效研究页面身份")
+                return self._send_json(200, usage_store().batch(body))
+            except (ValueError, TypeError, KeyError, NotesError) as error:
+                return self._send_json(400, {"error": str(error)})
+            except (OSError, sqlite3.Error):
+                return self._send_json(503, {"error": "统计暂未写入，请重试"})
         if path.startswith("/api/notes-canvas/"):
             try:
                 from note_canvases import NoteCanvasStore
@@ -10882,6 +9996,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     result = {"ok": True}
                 else:
                     return self._send_json(404, {"error": "未知画布操作"})
+                if path == "/api/notes-canvas/create":
+                    _usage_event("embedded", result["path"], Path(result["path"]).name, "created", fingerprint=result.get("revision"))
+                elif path == "/api/notes-canvas/save" and result.get("revision") != body.get("revision"):
+                    _usage_event("embedded", result["path"], Path(result["path"]).name, "modified", fingerprint=result.get("revision"))
+                elif path == "/api/notes-canvas/rename":
+                    _usage_remap("move", "embedded", body["path"], result["path"], Path(result["path"]).name)
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)
@@ -10894,16 +10014,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_notes_error(err)
             except OSError as err:
                 return self._send_json(500, {"error": f"保存笔记本配置失败：{err}"})
-        if path == "/api/career-report-generate":
-            try:
-                report = generate_career_report()
-            except Exception as err:  # noqa: BLE001 - keep the old atomic snapshot on every failure
-                return self._send_json(500, {
-                    "error": f"生成使用报告失败（{type(err).__name__}）",
-                })
-            return self._send_json(200, {
-                "version": CAREER_REPORT_SCHEMA, "exists": True, "report": report,
-            })
+        if path == "/api/career/generate":
+            return self._send_json(202, generate_career_report())
         if path == "/api/research/workspace":
             return self._api_research_workspace_save(body)
         if path == "/api/note-create":
@@ -10972,10 +10084,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_study_goal_tree_command(body)
         if path == "/api/tree-page-command":
             return self._api_tree_page_command(body)
-        if path == "/api/canvas-activity":
-            return self._api_canvas_activity(body)
-        if path == "/api/start-page-activity":
-            return self._api_start_page_activity(body)
+        if path in ("/api/canvas-activity", "/api/start-page-activity", "/api/career-report-generate"):
+            return self._send_json(410, {"error": "旧统计接口已停用"})
         if path == "/api/archive-canvas":
             return self._api_archive_canvas(body)
         if path == "/api/taskbook-archive":
@@ -11148,6 +10258,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ── API 实现 ──
     def _api_research_workspace_save(self, body: dict):
         try:
+            old = _usage_read_json(RESEARCH_STORE.primary) or {}
+        except (OSError, ValueError):
+            old = {}
+        if not isinstance(old, dict):
+            old = {}
+        try:
             result = RESEARCH_STORE.save(body.get("document"), body.get("revision", ""))
         except ResearchConflictError as err:
             return self._send_json(409, {
@@ -11159,6 +10275,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             })
         except OSError as err:
             return self._send_json(500, {"error": f"保存研究数据失败：{err}", "code": "write-failed"})
+        old_pages = old.get('pages') if isinstance(old.get('pages'), list) else []
+        previous = {str(p["id"]): p for p in old_pages if isinstance(p, dict) and "id" in p}
+        for page in result["document"]["pages"]:
+            key = str(page["id"])
+            if key not in previous or _usage_fingerprint(previous[key]) != _usage_fingerprint(page):
+                _usage_event("research", key, str(page.get("title") or key), "created" if key not in previous else "modified", fingerprint=_usage_fingerprint(page))
+        for key in previous.keys() - {str(p["id"]) for p in result["document"]["pages"]}:
+            _usage_remap("remove", "research", key)
+        old_definitions = old.get('subcircuits') if isinstance(old.get('subcircuits'), list) else []
+        previous_definitions = {str(d['id']):d for d in old_definitions if isinstance(d, dict) and 'id' in d}
+        for definition in result['document']['subcircuits']:
+            key = str(definition['id'])
+            if key not in previous_definitions or _usage_fingerprint(previous_definitions[key]) != _usage_fingerprint(definition):
+                _usage_event('research', 'definition:'+key, str(definition.get('title') or definition.get('name') or key),
+                             'created' if key not in previous_definitions else 'modified', fingerprint=_usage_fingerprint(definition))
+        for key in previous_definitions.keys() - {str(d['id']) for d in result['document']['subcircuits']}:
+            _usage_remap('remove', 'research', 'definition:'+key)
         return self._send_json(200, result)
 
     def _send_notes_error(self, err: NotesError):
@@ -11192,6 +10325,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # 新建后的首帧直接带回空白正文与修订号，前端无需再做一次
                 # GET；这也让“创建并开始输入”不受后台保存队列影响。
                 result.update(NOTES_STORE.load(result["path"]))
+                _usage_event("notes", result["path"], Path(result["path"]).name, "created", fingerprint=result.get("revision"))
             result["tree"] = NOTES_STORE.tree()
         except NotesError as err:
             return self._send_notes_error(err)
@@ -11210,12 +10344,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(err)
         except OSError as err:
             return self._send_json(500, {"error": f"保存笔记失败：{err}"})
+        if result.get("revision") != body.get("revision"):
+            _usage_event("notes", result["path"], Path(result["path"]).name, "modified", fingerprint=result.get("revision"))
         return self._send_json(200, result)
 
     def _api_note_move(self, body: dict):
         try:
             result = NOTES_STORE.move(body.get("path", ""), body.get("destination", ""))
             result["tree"] = NOTES_STORE.tree()
+            _usage_remap("move", "notes", body.get("path", ""), result["path"], Path(result["path"]).name, prefix=True)
         except NotesError as err:
             return self._send_notes_error(err)
         except OSError as err:
@@ -11228,6 +10365,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             _move_paths_to_recycle_bin(targets)
             NOTES_STORE.invalidate()
             result = {"ok": True, "path": normalized, "tree": NOTES_STORE.tree()}
+            _usage_remap("remove", "notes", normalized, prefix=True)
         except NotesError as err:
             return self._send_notes_error(err)
         except OSError as err:
@@ -11272,6 +10410,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(err)
         except OSError as err:
             return self._send_json(500, {"error": f"提交导入失败：{err}"})
+        for relative in result.get("notes", []):
+            try:
+                revision = NOTES_STORE.load(relative).get("revision")
+                _usage_event("notes", relative, Path(relative).name, "created", fingerprint=revision)
+            except (NotesError, OSError):
+                pass
         return self._send_json(200, result)
 
     def _api_note_import_abort(self, body: dict):
@@ -11305,6 +10449,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_notes_error(err)
         except OSError as err:
             return self._send_json(500, {"error": f"图片文字操作未完成，请重试：{err}"})
+        if result.get("revision") != body.get("revision"):
+            _usage_event("notes", result["path"], Path(result["path"]).name, "modified", fingerprint=result.get("revision"))
         return self._send_json(200, result)
 
     def _api_note_upload_image(self, body: dict):
@@ -11353,7 +10499,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _api_recent(self):
         data = load_recent()
-        activity = canvas_activity_snapshot()
+        try:
+            activity = canvas_activity_snapshot()
+        except (OSError, sqlite3.Error):
+            activity = {}
+            data["usageUnavailable"] = True
         totals = _canvas_activity_total_seconds_by_id(activity)
         activity_paths = activity.get("paths", {})
         for item in data.get("files", []):
@@ -11362,7 +10512,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             canvas_id = str(item.get("id") or "")
             if canvas_id not in totals:
                 canvas_id = str(activity_paths.get(_canvas_activity_path_key(item.get("path", ""))) or "")
-            item["canvasActivitySec"] = totals.get(canvas_id, 0)
+            item["canvasActivitySec"] = None if data.get("usageUnavailable") else totals.get(canvas_id, 0)
         data["recentLimit"] = RECENT_LIMIT
         self._send_json(200, data)
 
@@ -11390,27 +10540,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
         self._send_json(200, {"files": recent_file_stats(paths)})
 
-    def _api_canvas_activity(self, body: dict):
-        try:
-            totals = record_canvas_activity_interval(body if isinstance(body, dict) else {})
-        except FileNotFoundError as err:
-            return self._send_json(404, {"error": str(err)})
-        except PermissionError as err:
-            return self._send_json(403, {"error": str(err)})
-        except ValueError as err:
-            return self._send_json(400, {"error": str(err)})
-        except OSError as err:
-            return self._send_json(500, {"error": f"保存画布时间失败：{err}"})
-        self._send_json(200, {"ok": True, **totals})
-
-    def _api_start_page_activity(self, body: dict):
-        try:
-            totals = record_start_page_activity_interval(body if isinstance(body, dict) else {})
-        except ValueError as err:
-            return self._send_json(400, {"error": str(err)})
-        except OSError as err:
-            return self._send_json(500, {"error": f"保存起步页时间失败：{err}"})
-        self._send_json(200, {"ok": True, **totals})
 
     def _api_new(self):
         target = make_new_canvas_path()
@@ -12237,6 +11366,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json(400, {"error": str(err)})
         except sqlite3.DatabaseError as err:
             return self._send_json(500, {"error": f"记录复习结果失败：{err}"})
+        _usage_event("review", str(card["id"]), "review", "reviewed",
+                     event_id="review:" + str(body.get("requestId") or (str(card["id"]) + ":" + str(card.get("lastReviewedAt")))))
         self._send_json(200, {"ok": True, "card": card})
 
     def _api_focus_log(self, body: dict):
@@ -12488,6 +11619,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         target = Path(raw)
         if not is_authorized(target):
             return self._send_json(403, {"error": "路径未授权写入"})
+        try:
+            store = usage_store()
+            locator = _canvas_activity_path_key(target)
+            if target.exists() and store.needs_baseline("canvas", locator):
+                original = _usage_read_json(target)
+                store.baseline("canvas", locator, target.stem, _usage_fingerprint(original))
+        except (OSError, ValueError, sqlite3.Error):
+            pass
         payload["updatedAt"] = datetime.now().replace(microsecond=0).isoformat()
         try:
             _atomic_write_json(
@@ -13539,6 +12678,10 @@ def main() -> int:
     except ProfileError as err:
         print(f"启动器配置无效：{err}", file=sys.stderr)
         return 1
+
+    global USAGE_PROFILE
+    USAGE_PROFILE = profile
+    initialize_usage()
 
     for raw_dir in args.allow_dir:
         d = Path(raw_dir).resolve()

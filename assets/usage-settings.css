@@ -1,0 +1,6 @@
+.start-usage-settings { border-top:1px solid var(--border);padding:16px 4px;color:var(--text); }
+.start-usage-settings h3 { margin:0 0 10px;font-size:13px; }
+.start-usage-settings p { margin:0 0 12px;font-size:11px;line-height:1.7;opacity:.65; }
+.start-usage-settings .start-setting-row { display:flex;justify-content:space-between;gap:18px;align-items:center;padding:7px 0;font-size:12px;cursor:pointer; }
+.start-usage-settings input { accent-color:var(--text);width:15px;height:15px; }
+.start-usage-settings [hidden] { display:none!important; }

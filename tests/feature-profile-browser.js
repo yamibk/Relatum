@@ -36,6 +36,11 @@ const cases = [
       fs.mkdirSync(path.join(root, 'canvases'));
       const canvas = path.join(root, 'canvases', 'test.canvas');
       fs.writeFileSync(canvas, JSON.stringify({ nodes: [], edges: [] }));
+      if (name === 'career') {
+        fs.mkdirSync(path.join(root, 'notes'));
+        fs.writeFileSync(path.join(root, 'notes', 'A.md'), 'A [[B]]', 'utf8');
+        fs.writeFileSync(path.join(root, 'notes', 'B.md'), 'B [A](A.md)', 'utf8');
+      }
       const port = await freePort();
       const base = `http://127.0.0.1:${port}`;
       const args = ['app.py', '--no-browser', '--port', String(port)];
@@ -70,6 +75,13 @@ const cases = [
         const runtime = await (await fetch(base + '/api/runtime')).json();
         const enabled = id => runtime.features[id];
         const home = catalog.features.some(item => item.id !== 'canvas.editor' && item.id.startsWith('canvas.') && enabled(item.id));
+        if (name === 'career') {
+          let job = await (await fetch(base + '/api/career/generate', { method: 'POST', body: '{}' })).json();
+          for (let i = 0; job.status === 'running' && i < 100; i++) {
+            await sleep(100); job = await (await fetch(base + '/api/career/jobs/' + job.id)).json();
+          }
+          assert.equal(job.status, 'complete', 'Career-only inventory generation');
+        }
         const url = name === 'editor' ? base + '/editor.html?file=' + encodeURIComponent(canvas) : base + (enabled('canvas.study') ? '/?desktop=1&view=study' : '/?desktop=1');
         await page.goto(url, { waitUntil: 'load' });
         if (name === 'full' || name === 'notes' && enabled('notes')) await page.waitForFunction(() => window.CanvasNoteWorkspace);
@@ -112,6 +124,17 @@ const cases = [
           assert.deepEqual(errors, [], `${name}: language and viewport changes`);
         }
         if (name === 'calendar') assert(await page.evaluate(() => !!window.RelatumStudyPalette), 'calendar keeps its shared ledger palette');
+        if (name === 'career') {
+          await page.evaluate(() => {
+            const panel = document.querySelector('[data-chart-key="note-network"]').closest('.career-panel');
+            document.querySelector('.career-scroll').scrollTop = panel.offsetTop;
+          });
+          await page.waitForSelector('[data-chart-key="note-network"] canvas');
+          await page.waitForFunction(() => !!window.GraphEngine && document.querySelector('[data-chart-key="note-network"] canvas').width > 1);
+          assert.equal(requests.filter(r => r === '/graph-gl.js').length, 1, 'Career-only loads the shared GL runtime once');
+          assert.equal(requests.filter(r => r === '/graph-engine.js').length, 1, 'Career-only loads the shared engine once');
+          assert.deepEqual(errors, [], 'Career-only chart runtime errors');
+        }
         if (name === 'library') assert(await page.evaluate(() => !!window.RelatumStickyPalette), 'library keeps the shared floating-note palette');
         if (home) {
           const visible = await page.evaluate(() => document.querySelector('.book-view').dataset.viewName);
@@ -142,7 +165,7 @@ const cases = [
           if (!enabled('canvas.editor')) assert.equal((await fetch(base + '/EDITOR.HTML')).status, 403, 'Windows case alias');
           if (name === 'editor') assert.equal((await fetch(base + '/%5Cignored')).status, 403, 'Windows path alias must not serve an unfiltered homepage');
           assert.equal((await fetch(base + '/api/study-activity')).status, 200, 'historical activity stays readable');
-          assert.equal((await fetch(base + '/api/career-report')).status, 200, 'historical report stays readable');
+          assert.equal((await fetch(base + '/api/career/report')).status, enabled('career')?200:403, 'new frozen report follows the Career feature');
         }
         if (name === 'full') {
           const state = await page.evaluate(() => ({ study: !!window.StudyView, activity: !!window.StudyActivity, career: !!window.RelatumCareerReport }));

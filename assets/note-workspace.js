@@ -124,6 +124,7 @@
     if (graphHost) { graphHost.hidden = !show; graphHost.inert = !show; }
     updateSidePanel(); updateGraphToggle();
     scheduleSideClose();
+    document.dispatchEvent(new Event('relatum:usage-target'));
   }
   function graphLoadStatus(error) {
     const message = graphHost?.querySelector('[data-role="note-graph-load-message"]');
@@ -2641,6 +2642,7 @@
     updateViewToggle();
     updateImageTextTools();
     syncOutline();
+    document.dispatchEvent(new Event('relatum:usage-target'));
   }
   function setDocumentSwitchPending(active) {
     root.classList.toggle('note-document-switch-pending', !!active);
@@ -2672,6 +2674,7 @@
     });
     setDocumentSwitchPending(false);
     state.current = documentState; cacheDocument(documentState); state.openingPath = '';
+    document.dispatchEvent(new Event('relatum:usage-target'));
     if (!state.tabs.includes(documentState.path)) selectNoteTab(documentState.path, true);
     else if (state.activeTab !== documentState.path) { state.activeTab = documentState.path; persistTabs(); }
     setEditorDocument(documentState);
@@ -4107,5 +4110,5 @@
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
-  window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; } };
+  window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel, refresh: (announce) => triggerExternalSync({ announce: !!announce }), get dirty() { return hasPendingEdits() || !!window.RelatumNoteCanvas?.dirty; }, get currentPath() { return state.current ? state.current.path : ''; }, get usagePath() { return graphPresentation || browserResultsActive() ? '' : state.current?.path || ''; } };
 })();

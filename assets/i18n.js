@@ -65,6 +65,8 @@
     '删除前先看': 'Before deleting', 'canvases 与 notes': 'canvases and notes',
     'canvases 文件夹': 'canvases folder', 'data 文件夹': 'data folder',
     '本机偏好': 'On-device preferences',
+    '备份与清理': 'Backup and cleanup', '画布与笔记': 'Canvases and notes',
+    '功能数据': 'Feature data', '本机设置': 'Local settings',
     '先退出 Relatum，再在资源管理器中整理文件 · 按': 'Quit Relatum before managing files in File Explorer · Press',
     '或': 'or', '上一页': 'Previous page', '下一页': 'Next page',
     '切换为浅色起始页': 'Switch to light theme', '切换为深色起始页': 'Switch to dark theme',
@@ -438,6 +440,8 @@
     '本段将计入': 'This session counts toward',
 
     '年度足迹': 'Annual Activity', '完成': 'Completed', '静': 'Quiet', '丰': 'Full',
+    '新使用统计': 'New usage statistics', '本月前台时间': 'Foreground time this month', '当年前台时间': 'Foreground time this year',
+    '活跃项目': 'Active projects', '新累计前台时间': 'New total foreground time',
     '画布星图': 'Canvas Constellation', '本月画布时间': 'Canvas time this month',
     '累计画布时间': 'Total canvas time', '活跃画布': 'Active canvases',
     '连续活跃': 'Active streak', '历史记录': 'Historical record',

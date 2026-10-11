@@ -723,7 +723,7 @@
     marking = true;
     updateRatingGate();
     try {
-      const json = await post('/api/review-mark', { cardId: marked.id, rating: rating });
+      const json = await post('/api/review-mark', { cardId: marked.id, rating: rating, requestId: window.crypto?.randomUUID?.() || Date.now().toString(36) });
       const updated = json.card || marked;
       reviewedToday += 1;
       sessionReviewedCount += 1;

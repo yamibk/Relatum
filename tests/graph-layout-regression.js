@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../assets/graph-engine.js'), 'utf8');
 
-function fixture(config = {}, size = [1600, 1000]) {
+function fixture(config = {}, size = [1600, 1000], options = {}) {
   let clock = 100, id = 0, settled = 0;
   const frames = new Map(), timers = new Map(), resizes = [], draws = [], listeners = new Map();
   const canvas = { clientWidth: size[0], clientHeight: size[1], getContext() {},
@@ -14,7 +14,7 @@ function fixture(config = {}, size = [1600, 1000]) {
     setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
     ResizeObserver: class { constructor(fn) { resizes.push(fn); } observe() {} disconnect() {} } };
   sandbox.window = sandbox; vm.createContext(sandbox); vm.runInContext(source, sandbox);
-  const engine = sandbox.GraphEngine.create({ canvas,
+  const engine = sandbox.GraphEngine.create({ canvas, ...options,
     config: { zoomMin: .04, zoomMax: 3.5, fitScaleMin: .04, fitScaleMax: 3.5, ...config },
     onLayoutSettled() { settled++; }, getEdgeRest: edge => edge.rest,
     backend: () => ({ kind: 'test', syncSize: () => ({ cssW: canvas.clientWidth, cssH: canvas.clientHeight, dpr: 1 }),
@@ -25,7 +25,7 @@ function fixture(config = {}, size = [1600, 1000]) {
   }
   function finish() { for (let i = 0; frames.size && i < 1000; i++) frame(); assert.equal(frames.size, 0); }
   return { engine, canvas, frames, timers, draws, frame, finish, resize: () => resizes.forEach(fn => fn()), settled: () => settled,
-    doubleClick: event => listeners.get('dblclick')(event) };
+    doubleClick: event => listeners.get('dblclick')(event), wheel: event=>listeners.get('wheel')(event) };
 }
 const readable = { fitUnitMin: .8, fitUnitMax: 1.2, fitCenter: 'median' };
 function unit(f) { return Math.min(f.canvas.clientWidth / 1200, f.canvas.clientHeight / 720) * f.engine.view.scale; }
@@ -115,4 +115,14 @@ for (const linked of [false, true]) {
   const camera = { ...f.engine.view }; f.engine.setLayoutSpacing(1.25); assert.equal(f.timers.size, 0);
   stale(); f.finish(); assert.deepEqual({ ...f.engine.view }, camera); assert(nodes.every(n => n._appeared)); f.engine.destroy();
 }
-console.log('graph: readable CSS framing, robust centers, deferred fits, spacing covariance, cancellation and zero idle RAF passed');
+// The opt-in Career guard must leave every existing graph's wheel behavior intact.
+for(const guarded of [false,true]){
+  const f=fixture({},[1200,720],guarded?{shouldHandleWheel:event=>event.ctrlKey||event.metaKey}:{});
+  f.engine.setData([{x:500,y:300,r:6}],[]);f.engine.restoreView({x:0,y:0,scale:1});f.finish();
+  const camera={...f.engine.view};let prevented=0;
+  const event={clientX:600,clientY:360,deltaY:-100,ctrlKey:false,metaKey:false,preventDefault(){prevented++;}};
+  f.wheel(event);
+  if(guarded){assert.equal(prevented,0);assert.equal(f.frames.size,0);assert.deepEqual({...f.engine.view},camera);f.wheel({...event,ctrlKey:true});}
+  assert.equal(prevented,1);f.finish();assert(f.engine.view.scale>camera.scale);f.engine.destroy();
+}
+console.log('graph: readable CSS framing, robust centers, spacing, cancellation, optional wheel guard and zero idle RAF passed');

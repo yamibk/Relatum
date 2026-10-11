@@ -138,6 +138,12 @@ export async function createResearchEditor(stage) {
     subcircuitCatalog,
   });
   let renderedPageId = session.activePage().id;
+  function syncUsageTarget() {
+    const page = session.activePage();
+    window.RelatumResearchUsageTarget = { id: page.id, title: page.title || page.id };
+    try { window.parent.document.dispatchEvent(new Event('relatum:usage-target')); } catch (_) {}
+  }
+  syncUsageTarget();
   let disposed = false;
   let active = false;
   let activeController = null;
@@ -545,6 +551,7 @@ export async function createResearchEditor(stage) {
     const current = session.page(renderedPageId);
     if (current) session.setPageView(current.id, canvas.getViewState());
     session.activatePage(page.id); renderedPageId = page.id; selectedNodeId = ''; selectedNodeIds = [];
+    syncUsageTarget();
     selectedEdgeId = ''; selectedEdgeIds = [];
     canvas.setModel(page.model, page.view); bindModel();
     const runtime = ensureRuntime(page); canvas.setComputeProjection(page.runtime.computeProjection);

@@ -69,8 +69,6 @@
   const notesConsoleShortcutsToggle = document.querySelector('[data-role="notes-console-shortcuts-toggle"]');
   const notesConsoleHelpPanel = document.querySelector('[data-role="notes-console-help-panel"]');
   const calendarCountdownToggle = document.querySelector('[data-role="calendar-countdown-toggle"]');
-  const startPageActivityToggle = document.querySelector('[data-role="start-page-activity-toggle"]');
-  const startPageActivityStatsToggle = document.querySelector('[data-role="start-page-activity-stats-toggle"]');
   const hideSpecialToggle = document.querySelector('[data-role="hide-special-toggle"]');
   const goalTreeSimpleToggle = document.querySelector('[data-role="goal-tree-simple-toggle"]');
   const goalTreeUnlockToggle = document.querySelector('[data-role="goal-tree-unlock-toggle"]');
@@ -164,8 +162,6 @@
   const NOTES_CONSOLE_HOTSPOT_WIDTH = 48;
   const NOTES_CONSOLE_HOTSPOT_HEIGHT = 72;
   const CALENDAR_COUNTDOWN_KEY = 'canvas:calendarCountdownEnabled';
-  const START_PAGE_ACTIVITY_ENABLED_KEY = 'canvas:startPageActivityEnabled:v1';
-  const START_PAGE_ACTIVITY_STATS_VISIBLE_KEY = 'canvas:startPageActivityStatsVisible:v1';
   const HIDE_SPECIAL_KEY = 'canvas:hideSpecialPages';
   const GOAL_TREE_SIMPLE_KEY = 'canvas:studyGoalTreeSimpleMode:v1';
   const GOAL_TREE_ENFORCE_UNLOCK_KEY = 'canvas:goalTreeEnforceUnlock:v1';
@@ -185,19 +181,7 @@
   let startViewTransitionTimer = 0;
   const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
-  const START_PAGE_ACTIVITY_VIEWS = new Set(['study', 'tree', 'notes']);
-  let startPageActivityEnabled = true;
-  let startPageActivityStatsVisible = false;
-  let startPageActivityActive = false;
-  let startPageActivityPage = '';
-  let startPageActivityLastCapturedAt = 0;
-  let startPageActivityHeartbeat = 0;
-  let startPageActivitySending = null;
-  const startPageActivityPending = [];
-  const startPageActivityIdleWaiters = new Set();
-  const startPageActivitySessionId = (window.crypto && typeof window.crypto.randomUUID === 'function')
-    ? window.crypto.randomUUID()
-    : 'start-page-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  // No legacy heartbeat or JSON ledger collector.
 
   function englishUI() {
     return !!(window.RelatumI18n && window.RelatumI18n.language === 'en');
@@ -470,28 +454,8 @@
     }));
   }
 
-  function applyStartPageActivityEnabled(enabled, persist) {
-    startPageActivityEnabled = enabled !== false;
-    if (startPageActivityToggle) startPageActivityToggle.checked = startPageActivityEnabled;
-    document.body.dataset.startPageActivityEnabled = startPageActivityEnabled ? '1' : '0';
-    if (persist) {
-      try {
-        localStorage.setItem(START_PAGE_ACTIVITY_ENABLED_KEY, startPageActivityEnabled ? '1' : '0');
-      } catch (e) {}
-    }
-    syncStartPageActivity();
-  }
+  // Recording preferences are owned by the unified usage service.
 
-  function applyStartPageActivityStatsVisible(visible, persist) {
-    startPageActivityStatsVisible = visible === true;
-    if (startPageActivityStatsToggle) startPageActivityStatsToggle.checked = startPageActivityStatsVisible;
-    document.body.dataset.startPageActivityStatsVisible = startPageActivityStatsVisible ? '1' : '0';
-    if (persist) {
-      try {
-        localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisible ? '1' : '0');
-      } catch (e) {}
-    }
-  }
 
   // 「隐藏特殊页」：开启后书脊只剩普通书页（最近 / 收藏 / 自定义分组）的圆点，
   // 7 张前置页（复习/日历/活跃/速记/树状/学习/专注）的入口被 CSS 收起，滚轮翻页也跳过它们。
@@ -762,27 +726,6 @@
   let calendarCountdownEnabled = true;
   try { calendarCountdownEnabled = localStorage.getItem(CALENDAR_COUNTDOWN_KEY) !== '0'; } catch (e) {}
   applyCalendarCountdownEnabled(calendarCountdownEnabled, false);
-  let storedStartPageActivityEnabled = null;
-  let startPageActivityEnabledInit = true;
-  try {
-    storedStartPageActivityEnabled = localStorage.getItem(START_PAGE_ACTIVITY_ENABLED_KEY);
-    if (storedStartPageActivityEnabled === '1' || storedStartPageActivityEnabled === '0') {
-      startPageActivityEnabledInit = storedStartPageActivityEnabled === '1';
-    }
-  } catch (e) {}
-  applyStartPageActivityEnabled(startPageActivityEnabledInit, false);
-  let startPageActivityStatsVisibleInit = false;
-  try {
-    const storedStartPageActivityStatsVisible = localStorage.getItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY);
-    if (storedStartPageActivityStatsVisible === '1' || storedStartPageActivityStatsVisible === '0') {
-      startPageActivityStatsVisibleInit = storedStartPageActivityStatsVisible === '1';
-    } else if (storedStartPageActivityEnabled === '1' || storedStartPageActivityEnabled === '0') {
-      // 只为旧用户迁移已有计时开关；全新用户按出厂组合保持“计时开、统计关”。
-      startPageActivityStatsVisibleInit = startPageActivityEnabledInit;
-      localStorage.setItem(START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, startPageActivityStatsVisibleInit ? '1' : '0');
-    }
-  } catch (e) {}
-  applyStartPageActivityStatsVisible(startPageActivityStatsVisibleInit, false);
   let hideSpecialInit = false;  // 默认关闭：出厂即显示特殊页，只有显式存过 '1' 才隐藏
   try { hideSpecialInit = localStorage.getItem(HIDE_SPECIAL_KEY) === '1'; } catch (e) {}
   applyHideSpecialPages(hideSpecialInit, false);
@@ -1095,16 +1038,7 @@
       applyCalendarCountdownEnabled(calendarCountdownToggle.checked, true);
     });
   }
-  if (startPageActivityToggle) {
-    startPageActivityToggle.addEventListener('change', () => {
-      applyStartPageActivityEnabled(startPageActivityToggle.checked, true);
-    });
-  }
-  if (startPageActivityStatsToggle) {
-    startPageActivityStatsToggle.addEventListener('change', () => {
-      applyStartPageActivityStatsVisible(startPageActivityStatsToggle.checked, true);
-    });
-  }
+  // Category switches are rendered by usage-tracker.js.
   if (hideSpecialToggle) {
     hideSpecialToggle.addEventListener('change', () => {
       applyHideSpecialPages(hideSpecialToggle.checked, true);
@@ -1199,236 +1133,170 @@
   // 起步页「?」只承担本地数据说明；旧的功能教程留给编辑器内的新手引导。
   const START_HELP_PAGES_ZH = [
     {
-      id: 'safety', eyebrow: '01 · BEFORE DELETING', title: '删除前，先看这里',
-      subtitle: 'Relatum 的画布、笔记和长期记录保存在用户数据目录里的 <code>canvases</code>、<code>notes</code> 和 <code>data</code> 中；界面偏好和部分临时运行态另存在本机浏览器存储中。',
+      id: 'safety', eyebrow: '01 · BACKUP', title: '备份与清理',
+      subtitle: '退出 Relatum 后，备份整个用户数据目录。',
       sections: [
-        ['三个文件夹与一组本机偏好', '前三项保存用户内容和长期记录；本机偏好记住界面与当前会话状态。', [
-          ['<code>canvases</code>', '保存每张画布及其图片、PDF、Markdown 附件和批注。这里通常最占空间，也是最不能随便拆开删除的部分。'],
-          ['<code>notes</code>', '保存笔记工作区的 <code>.md</code> 正文、任意层级文件夹和 <code>&lt;笔记名&gt;.assets</code> 图片。它是可直接备份的真实笔记库，不是缓存。'],
-          ['<code>data</code>', '保存画布列表、分组收藏、学习任务、独立树状页、复习卡片、速记、日记、专注记录、背景和少量文件型设置。这里的 JSON 文件通常很小。'],
-          ['本机偏好', '保存主题、工作区、视图、镜头、工具默认和运行中的专注计时等状态。它不在 <code>data</code> 文件夹中，删除后主要表现为界面重置。'],
+        ['需要保留什么', '', [
+          ['<code>canvases</code>', '主画布和附件。'],
+          ['<code>notes</code>', 'Markdown 笔记、图片和内嵌画布。'],
+          ['<code>data</code>', '研究、学习、复习、日记、统计和设置。'],
+          ['本机设置', '桌面版还在 <code>data/desktop-sessions</code> 保存界面偏好。浏览器版的偏好存在浏览器中。'],
         ]],
-        ['真正容易占空间的地方', '如果只是想腾出磁盘空间，优先检查素材和回收站；不要为了几 KB 的 JSON 文件丢掉长期记录。', [
-          ['<code>*.assets</code>', '画布使用的图片、PDF 和 Markdown 附件。先在对应画布里使用“清理附件”，只删没有被引用的素材。'],
-          ['<code>回收站</code>', '已从起步页删除、但仍可恢复的画布和素材。确认不再需要后，用 Relatum 的回收站页面清空。'],
-          ['<code>data/backgrounds</code>', '自己上传的全局背景图片。先换成内置背景，再删除不再使用的图片。'],
-          ['归档与数据库', '学习归档、画布归档和 <code>review.db</code> 是历史记录，不是缓存；只有确定不再需要这些历史时才删除。'],
+        ['想腾出空间', '', [
+          ['附件', '在画布里使用“清理附件”，删除未引用的素材。'],
+          ['回收站', '确认不再需要后，在应用内清空。'],
+          ['上传的背景', '先换成内置背景，再清理 <code>data/backgrounds</code>。'],
         ]],
-        ['安全整理顺序', '建议按下面的顺序操作，出了问题也更容易恢复。', [
-          ['1. 退出 Relatum', '避免程序正在保存时，文件被删掉、重建或只写入一半。'],
-          ['2. 复制一份备份', '至少备份准备删除的文件；如果拿不准，直接备份整个 <code>canvases</code>、<code>notes</code> 和 <code>data</code>。'],
-          ['3. 优先用应用内功能', '画布重命名、回收和清理附件，以及笔记重命名、移动与删除，尽量在 Relatum 内完成。'],
-          ['4. 再手动删除', '只删除已经确认用途的条目。删除后重新打开 Relatum，检查画布、附件和记录是否正常。'],
-        ]],
-        ['一个重要区别', '“文件会重新出现”不等于“数据会恢复”。很多文件缺失后，Relatum 会创建一份新的空文件或使用默认设置；原来的内容仍然已经丢失。'],
+        ['删除前', '先备份，再清理。笔记移动、画布改名和删除请优先在应用内操作。缺失文件重新出现时，通常是一份空文件，旧内容不会自动恢复。'],
       ],
     },
     {
-      id: 'canvases', eyebrow: '02 · CONTENT', title: 'canvases 与 notes：作品正文',
-      subtitle: '<code>canvases</code> 保存画布，<code>notes</code> 保存普通 Markdown 笔记库；两者都是用户正文。',
+      id: 'canvases', eyebrow: '02 · CONTENT', title: '画布与笔记',
+      subtitle: '这些都是你的内容，备份时保留文件夹结构。',
       sections: [
-        ['顶层会看到什么', '每张画布至少有一个 <code>.canvas</code> 文件；使用过图片或附件时，还会出现同名的 <code>.assets</code> 文件夹。', [
-          ['<code>名称.canvas</code>', '画布本体，包含节点、文字、连线、手写、表格、计时器、镜头册、任务簿和笔记坞等内容。删除后，这张画布本身就丢失；起步页可能暂时留下一个打不开的登记项。'],
-          ['<code>名称.assets</code>', '这张画布的素材目录。删除后画布文字和节点仍可能打开，但图片、PDF、Markdown 附件及部分批注会显示缺失。'],
-          ['<code>回收站</code>', '从 Relatum 删除的画布和同名素材会先移到这里。删除其中内容或清空文件夹后，将无法再从应用内恢复。'],
+        ['主画布 · <code>canvases</code>', '', [
+          ['<code>名称.canvas</code>', '节点、文字、连线、手写和画布设置。'],
+          ['<code>名称.assets</code>', '图片、PDF、Markdown 附件和批注。与对应画布保持同名。'],
+          ['<code>回收站</code>', '删除的画布和附件。清空后无法在应用内恢复。'],
         ]],
-        ['<code>.assets</code> 里面的文件', '素材目录内部的文件常常比画布 JSON 大得多，但不能仅凭文件名判断是否无用。', [
-          ['图片与背景素材', '删除后，对应图片节点或旧画布背景会缺图；画布结构和文字仍保留。'],
-          ['<code>attachments</code>', '保存插入画布的 PDF、Markdown 等附件副本。删除某个附件后，对应附件节点还在，但正文无法读取。'],
-          ['<code>*.annot.json</code>', '某个 PDF 或 Markdown 附件旁的批注。只删它会清除该附件的高光、下划线、手写和便签，不会删除附件原文。'],
-          ['<code>node-annotations.json</code>', '保存画布正文阅读器里的手写与空间批注。删除后只丢这些批注，节点正文仍在。'],
+        ['笔记 · <code>notes</code>', '', [
+          ['<code>*.md</code>', '笔记正文。可用普通文本编辑器打开。'],
+          ['<code>&lt;笔记名&gt;.assets/images</code>', '笔记图片。应用内移动或改名时会一起处理。'],
+          ['<code>canvases/*.canvas</code>', '笔记内嵌画布。多个引用可以共用一个文件；删除引用不会删除画布。'],
+          ['笔记图谱与大纲', '从笔记链接和标题生成，不另存一份正文。图谱视角只在当前会话保留。'],
         ]],
-        ['不要拆散同名的一对', '例如 <code>课程.canvas</code> 应与 <code>课程.assets</code> 保持同名。手动只改其中一个名字，会让画布找不到素材；手动把画布移出目录，也可能让起步页登记失效。请优先使用 Relatum 的重命名、导入和回收站功能。'],
-        ['想腾空间时怎么做', '先打开目标画布，在顶部使用“清理附件”，它会按实际引用删除孤儿素材。仍需继续清理时，再检查回收站和已经确认不需要的整张画布；不要随意逐个删除素材文件。'],
-        ['<code>notes</code> 笔记库', '每篇笔记是普通 <code>.md</code> 文件，可在文件树右键选择“在系统资源管理器中显示”后复制进来，也可从 Explorer 直接拖入。粘贴图片保存在同层 <code>&lt;笔记名&gt;.assets/images</code> 中，会随应用内重命名、移动或移入 Windows 系统回收站。手工改动后回到 Relatum 即会静默同步，也可点击刷新。'],
+        ['查看文件', '在笔记文件树右键选择“在系统资源管理器中显示”。备份内嵌画布时，复制整个 <code>notes</code> 文件夹。'],
       ],
     },
     {
-      id: 'data', eyebrow: '03 · DATA', title: 'data：记录、设置和索引',
-      subtitle: '这些文件大多不占多少空间，却决定起步页如何组织画布，以及树状、学习、日历、复习和专注页能看到哪些长期记录。界面偏好另见“本机偏好”。',
+      id: 'data', eyebrow: '03 · DATA', title: '功能数据',
+      subtitle: '以下路径位于 <code>data</code> 中。删除对应文件会丢失记录或设置。',
       sections: [
-        ['画布列表与显示设置', '删除设置文件通常不会删除画布本体，但会让界面恢复默认或失去整理信息。', [
-          ['<code>recent.json</code>', '保存最近画布、分组、收藏和排序。删除后 <code>.canvas</code> 文件仍在，但起步页列表会变空，分组、收藏和顺序丢失；之后可手动扫描重新登记顶层画布。'],
-          ['<code>recent.backup.json</code>', '最近列表的上一份有效快照。删除后界面暂时不变，但失去损坏时的自动恢复来源；它不是手动删除 <code>recent.json</code> 后的自动还原按钮。'],
-          ['<code>recent.corrupt-*.json</code>', '曾损坏而被隔离的旧列表。确认当前列表正常且不需要人工找回旧分组后可以删除。'],
-          ['<code>background.json</code>', '全局背景和辅助底纹设置。删除后恢复出厂背景；上传的图片文件可能仍留在 <code>backgrounds</code> 中。'],
-          ['<code>backgrounds</code>', '自己上传的背景图片。删除正在使用的图片会使背景缺失；先切换到内置背景，再清理不用的图片。'],
-          ['<code>viewport.json</code>', '各画布上次的视野位置和缩放。删除后画布内容不受影响，只会丢失上次观看位置。'],
-          ['<code>window-state.json</code>', '桌面窗口的大小、位置和最大化状态。删除后窗口恢复默认，不影响任何内容。'],
+        ['内容与记录', '', [
+          ['<code>research-workspace</code>', '研究页面、组件、连线、子电路和备份。'],
+          ['<code>study.json / tree-page.json</code>', '学习任务与目标树 / 独立树状页。'],
+          ['<code>学习归档 / 画布归档</code>', '归档内容和完成记录。'],
+          ['<code>notes.json / start-sticky-notes.json</code>', '速记墙 / 首页便签。'],
+          ['<code>daily.json / review.db</code>', '每日任务与打卡 / 复习卡片、计划和评分。'],
+          ['<code>diary / focus.json</code>', '日记 / 专注记录。'],
+          ['<code>ledger.json / countdown.json</code>', '记账 / 倒数日。'],
         ]],
-        ['树状页、学习、每日任务与活动足迹', '下面这些都是长期记录，不属于缓存。', [
-          ['<code>tree-page.json</code>', '独立树状页的任务、阶段、连接、外观和当前树。它与学习页的目标树完全分开；删除后树状页会从空白重新开始，不影响 <code>study.json</code>、画布或学习页，也不能从学习页自动恢复。'],
-          ['<code>study.json</code>', '当前学习任务、任务回收站、进度和多棵目标树。删除后这些当前数据全部重置；已经归档的历史仍单独留在“学习归档”。'],
-          ['<code>学习归档</code>', '已完成学习任务、归档速记和任务簿完成副本。删除后对应历史、活跃统计和星图回顾会减少或消失，当前未完成任务不受影响。'],
-          ['<code>画布归档</code>', '画布归档动作留下的轻量历史记录。删除后原画布通常仍在，但活跃页里的归档足迹和统计会减少。'],
-          ['<code>daily.json</code>', '每日任务、累计打卡天数、分钟和里程碑。删除后每日任务系统从空白开始。'],
-          ['<code>daily.backup.json</code>', '每日任务的上一份有效快照。删除后当前内容不变，但损坏时少一层恢复保障。'],
-          ['<code>daily.corrupt-*.json</code>', '损坏后隔离的旧每日任务。确认当前每日任务正常且不需要人工抢救旧数据后可以删除。'],
-          ['<code>canvas-activity.json</code>', '画布创建、修改和前台使用时长账本。删除后画布仍在，但年度足迹、使用时长和相关活跃统计会丢失并从今重新记录。'],
-          ['<code>start-page-activity.json</code>', '学习、树状和速记三页的前台使用时长账本。删除后页面内容不受影响，但活跃页中的绿色附加统计会清空并从今重新记录。'],
+        ['使用统计与生涯', '', [
+          ['<code>usage-v2.sqlite3</code>', '新版使用时长、归档、复习、打卡和统计开关。齿轮设置中可关闭分类记录，已有历史保留。'],
+          ['<code>career-report-v2.json</code>', '最近一次手动生成的报告。筛选不重新扫描内容；删除后可重新生成。'],
+          ['统计范围', '前台阅读和工作计时；失焦、隐藏、最小化暂停。专注钟、日记和生涯不计时。'],
+          ['旧统计文件', '<code>canvas-activity.json</code>、<code>start-page-activity.json</code> 和 <code>career-report.json</code> 已停用，不读取或迁移。'],
         ]],
-        ['速记、日历、专注与复习', '删除哪一项，就会清空对应页面的数据。', [
-          ['<code>notes.json</code>', '速记墙的便签、连线和视野。删除后当前速记墙清空；此前主动归档的速记仍在“学习归档”。'],
-          ['<code>start-sticky-notes.json</code>', '起步页各页面上跨页显示的小便签。删除后这些便签全部消失，不影响速记墙。'],
-          ['<code>focus.json</code>', '专注记录及相关状态。删除后日历和活跃页中的专注历史、累计时长会随之消失。'],
-          ['<code>diary</code>', '日历日记，每天一份 Markdown。删除某一天的文件只丢当天日记；删除整个文件夹会丢全部日记。'],
-          ['<code>ledger.json</code>', '日历“记账”视图中的 v2 收支流水，包括修订号、所属数字页、金额、可选的精确十进制倍率、日期、备注、颜色，以及各数字页可选的金额单位；单位留空时显示人民币 <code>¥</code>。汇总按倍率计算后的最终分值进行十进制半入舍入。删除后所有记账页都会从空白开始，不影响日记、每日任务或其它日历数据。'],
-          ['<code>ledger.backup.json</code>', '记账流水的上一份有效快照。删除后当前账目不变，但主文件损坏时会少一层自动恢复保障。'],
-          ['<code>ledger.corrupt-*.json</code>', '记账主文件损坏后隔离的旧数据。确认当前账目已正常恢复且不需要人工找回旧流水后可以删除。'],
-          ['<code>countdown.json</code>', '倒数日事件和当前选择。删除后倒数日清空，可重新创建。'],
-          ['<code>review.db</code>', '复习卡片、卡组、标签、复习计划和每次评分的完整数据库。删除后复习系统全部清空，不能从画布自动重建。'],
-          ['<code>review.db-wal / -shm</code>', '数据库运行时可能出现的临时文件。不要单独删除；先正常退出 Relatum，它们通常会自动合并或消失。'],
-          ['<code>career-report.json</code>', '“生涯”页最近一次手动生成的冻结统计快照。删除后只会清除报告，不会删除画布、笔记或其它原始记录；下次生成会重新读取当时可用的数据。'],
+        ['列表与设置', '', [
+          ['<code>recent.json</code>', '画布列表、分组、收藏和排序。'],
+          ['<code>note-notebooks.json</code>', '笔记本颜色、侧栏页签和展开状态。'],
+          ['<code>templates.json / background.json</code>', '节点模板 / 背景设置。'],
+          ['<code>ai.json</code>', 'AI 服务地址、模型和 API Key。分享备份前移除密钥。'],
+          ['<code>*.backup.* / *.corrupt-*</code>', '恢复副本或损坏后保留的文件。确认主文件正常后再清理。'],
         ]],
-        ['其它可能出现的文件', '这些项目不一定每台电脑都有。', [
-          ['<code>templates.json</code>', '所有画布共用的节点模板库。删除后自建模板消失，现有画布不受影响。'],
-          ['<code>ai.json</code>', 'AI 助手的 API Key、模型和接口地址。删除后需要重新配置；已有画布内容不受影响。该文件含密钥，备份或分享时注意保密。'],
-          ['<code>calendar-pins.json</code>', '旧版本遗留的日历任务便签，当前版本已不再读取。确认不需要回旧版本查看后可以备份并删除。'],
-        ]],
-        ['不建议整包删除 <code>data</code>', '整包删除相当于重置 Relatum 除画布正文和画布素材之外的大部分状态：画布文件还在，但列表整理、学习、速记、复习、日记、专注、模板和设置会一起消失。'],
+        ['数据库文件', '不要单独删除 <code>review.db</code> 或 <code>usage-v2.sqlite3</code> 旁的 <code>-wal / -shm</code> 文件。退出所有窗口后，再备份整个 <code>data</code>。'],
       ],
     },
     {
-      id: 'storage', eyebrow: '04 · ON-DEVICE', title: '本机存储：偏好、视图与运行态',
-      subtitle: '这些状态保存在 Relatum 的 WebView2 用户数据或浏览器的网站数据中，不在 <code>canvases</code>、<code>notes</code> 或 <code>data</code> 文件夹里。实际位置会随电脑、安装方式和浏览器而变。',
+      id: 'storage', eyebrow: '04 · SETTINGS', title: '本机设置',
+      subtitle: '这些设置记住你的界面和上次位置。',
       sections: [
-        ['起步页、语言与笔记工作区', '这一组主要记住你上次看到的界面，不代替真正的内容文件。', [
-          ['主题与工作区', '<code>canvas:startTheme</code>、<code>canvas:startWorkspace:v1</code> 和 <code>canvas:toolbarLanguage</code> 等保存主题、上次工作区、界面语言、搜索与页面显示偏好。删除后恢复默认，不删画布或记录。'],
-          ['笔记工作区', '<code>canvas:note*</code> 记住打开标签、当前笔记、文件夹展开状态、视图和字号。删除后工作区会重置，<code>.md</code> 正文和笔记图片仍在。'],
-          ['笔记编辑位置', '<code>canvas:noteViewStates:v1</code> 记住最近 200 篇笔记的库内路径、光标选区和滚动位置，方便重启或重新打开后接着编辑。它只保存在本机，不包含正文；清除后会忘记这些位置，不会删除笔记或图片。'],
+        ['保存的内容', '', [
+          ['界面', '语言、主题、工作区、滚动和工具默认值。'],
+          ['笔记', '标签页、字号、阅读位置、光标和图谱间距。'],
+          ['视图', '画布镜头、树的折叠、复习模式和记账显示方式。'],
+          ['未结束的专注钟', '计时恢复状态。已完成的记录保存在 <code>data/focus.json</code>。'],
         ]],
-        ['学习、树状、速记、复习与记账', '这些页面的长期内容在 <code>data</code> 中，但一些“怎么看”只存在本机。', [
-          ['视图与镜头', '<code>study:*</code>、<code>canvas:notesView</code>、<code>canvas:cadenceLens:v2</code>、<code>canvas:reviewMode:v1</code> 和 <code>relatum.*.view.&lt;树 ID&gt;</code> 记住页面、复习模式、镜头与折叠状态。删除后任务、树和便签仍在，但视图会回到默认。'],
-          ['深色卡片呈现', '<code>canvas:darkCardPresentation:v1</code> 分别记住树状页与学习页彩色卡片的底色、边框和侧条强度及字体颜色。删除后两页都恢复底色 15%、强调 100% 和白字，不会清除任务、阶段或它们已选的颜色。'],
-          ['任务页颜色与图例', '<code>study:taskPageColors:v1</code> 和 <code>study:legend:v1</code> 只存在本机。删除后颜色恢复默认，不能从 <code>study.json</code> 自动恢复，只能重新设置。'],
-          ['记账当前页', '<code>ledger:page:v1</code> 只记住上次查看的数字页，删除后回到第 1 页；账目归属和每页金额单位仍保存在 <code>data/ledger.json</code> 中。'],
-          ['记账视图', '<code>ledger:viewByPage:v1</code> 按页记住月份或累计视图，只保存设为累计的页；删除后每页都恢复月份视图。它只改变展示和汇总范围，不改写账目日期。'],
-          ['记账金额显示', '<code>ledger:hideDecimalsByPage:v1</code> 按页记住是否隐藏小数点，只保存设为隐藏的页；删除后每页都显示完整小数。它只改变显示，账目金额数据不变。'],
+        ['存在哪里', '', [
+          ['桌面版', '<code>data/desktop-sessions/&lt;模式&gt;/preferences.json</code> 保存偏好；同目录的 <code>window-state.json</code> 保存窗口位置。WebView2 也有本机运行数据。'],
+          ['浏览器版', '浏览器的站点存储。更换浏览器或清除站点数据后，偏好会重置。'],
         ]],
-        ['画布编辑器', '模式、面板位置、工具参数、新建节点/连线的默认样式、自动保存和引导状态等以 <code>canvas:*</code> 偏好保存。删除后已有 <code>.canvas</code> 内容不会改变，但编辑器偏好与新建默认会重置，首次引导也可能再次出现。'],
-        ['专注钟与当前会话', '两者都不应当作已完成的长期记录。', [
-          ['<code>canvas:focus*</code>', '保存未完成计时的恢复状态、模式、时长、声音、噪音和任务绑定。删除后这些状态丢失；已写入 <code>data/focus.json</code> 的专注历史仍保留。'],
-          ['<code>sessionStorage</code>', '只保存本次会话的桌面识别和返回路径标记。关闭会话或清除它，不会删除用户内容。'],
-        ]],
-        ['如果要整理这部分', '先退出 Relatum，不要逐个删除 WebView2 内部的数据库文件。清除整个应用或网站存储会重置所有本机偏好，但不会删除 <code>canvases</code>、<code>notes</code> 或 <code>data</code>。AI 助手的 API Key 另存在 <code>data/ai.json</code>，不属于浏览器存储。'],
+        ['清除后的结果', '界面、位置和未结束的计时可能重置。笔记与画布文件仍保留。AI Key 位于 <code>data/ai.json</code>，不在浏览器存储中。'],
       ],
     },
   ];
 
   const START_HELP_PAGES_EN = [
     {
-      id: 'safety', eyebrow: '01 · BEFORE DELETING', title: 'Before deleting, read this',
-      subtitle: 'Relatum stores canvases, notes, and long-term records in the <code>canvases</code>, <code>notes</code>, and <code>data</code> folders inside the user data directory. Interface preferences and some temporary runtime state live separately in on-device browser storage.',
+      id: 'safety', eyebrow: '01 · BACKUP', title: 'Backup and cleanup',
+      subtitle: 'Quit Relatum, then back up the entire user data folder.',
       sections: [
-        ['Three folders and one set of on-device preferences', 'The folders hold user content and long-term records; on-device preferences remember the interface and current-session state.', [
-          ['<code>canvases</code>', 'Stores every canvas together with its images, PDFs, Markdown attachments, and annotations. This folder usually uses the most space and should not be split up or cleaned blindly.'],
-          ['<code>notes</code>', 'Stores the Notes workspace as ordinary <code>.md</code> files, nested folders, and <code>&lt;note name&gt;.assets</code> images. It is your real, directly backupable notes library, not a cache.'],
-          ['<code>data</code>', 'Stores the canvas library, groups and favorites, study tasks, the independent Tree page, review cards, quick notes, journals, focus history, backgrounds, and a small set of file-backed settings. Its JSON files are usually very small.'],
-          ['On-device preferences', 'Stores themes, workspaces, views, cameras, tool defaults, and runtime state such as an unfinished focus timer. It is outside the <code>data</code> folder, and deleting it mainly resets the interface.'],
+        ['What to keep', '', [
+          ['<code>canvases</code>', 'Main canvases and attachments.'],
+          ['<code>notes</code>', 'Markdown notes, images and embedded canvases.'],
+          ['<code>data</code>', 'Research, study, reviews, journals, statistics and settings.'],
+          ['Local settings', 'Desktop preferences also live in <code>data/desktop-sessions</code>. Browser preferences live in the browser.'],
         ]],
-        ['What actually uses disk space', 'If you only want to free disk space, inspect assets and Trash first. Do not sacrifice long-term records to save a few KB of JSON.', [
-          ['<code>*.assets</code>', 'Images, PDFs, and Markdown attachments used by a canvas. Use “Clean attachments” inside that canvas first so only unreferenced files are removed.'],
-          ['<code>Trash</code>', 'Canvases and assets removed from Home but still recoverable. Once you are sure, empty them from Relatum’s Trash page.'],
-          ['<code>data/backgrounds</code>', 'Global background images you uploaded. Switch to a built-in background before deleting images you no longer use.'],
-          ['Archives and databases', 'Study archives, canvas archives, and <code>review.db</code> are history, not cache. Delete them only when you no longer need that history.'],
+        ['Free up space', '', [
+          ['Attachments', 'Use “Clean attachments” inside a canvas to remove unused assets.'],
+          ['Trash', 'Empty it in the app once you no longer need its contents.'],
+          ['Uploaded backgrounds', 'Switch to a built-in background before cleaning <code>data/backgrounds</code>.'],
         ]],
-        ['A safer cleanup order', 'Follow this order so a mistake is easier to recover from.', [
-          ['1. Quit Relatum', 'This prevents files from being deleted, recreated, or only partly written while the app is saving.'],
-          ['2. Make a backup', 'Back up at least the items you plan to delete. If you are unsure, copy the entire <code>canvases</code>, <code>notes</code>, and <code>data</code> folders.'],
-          ['3. Prefer in-app actions', 'Use Relatum for canvas renaming, Trash, and asset cleanup, and for note renaming, moving, and deletion whenever possible.'],
-          ['4. Delete manually only after that', 'Delete only items whose purpose you have confirmed. Reopen Relatum afterward and check canvases, attachments, and records.'],
-        ]],
-        ['One important distinction', 'A file being recreated does not mean its data was recovered. When a file is missing, Relatum may create a new empty file or use defaults; the original content is still gone.'],
+        ['Before deleting', 'Back up first. Use the app to move notes, rename canvases and delete content. A recreated file is usually empty; it does not restore the old content.'],
       ],
     },
     {
-      id: 'canvases', eyebrow: '02 · CONTENT', title: 'canvases and notes: your content',
-      subtitle: '<code>canvases</code> stores canvases and <code>notes</code> is an ordinary Markdown library. Both folders contain user-authored content.',
+      id: 'canvases', eyebrow: '02 · CONTENT', title: 'Canvases and notes',
+      subtitle: 'These are your content. Keep the folder structure when backing up.',
       sections: [
-        ['What appears at the top level', 'Every canvas has a <code>.canvas</code> file. If it uses images or attachments, it also has a matching <code>.assets</code> folder.', [
-          ['<code>Name.canvas</code>', 'The canvas itself: nodes, text, edges, ink, tables, timers, scenes, taskbooks, notebooks, and more. Deleting it loses that canvas; Home may temporarily keep an entry that can no longer open.'],
-          ['<code>Name.assets</code>', 'The asset folder for that canvas. If deleted, text and nodes may still open, but images, PDFs, Markdown attachments, and some annotations will be missing.'],
-          ['<code>Trash</code>', 'Canvases deleted in Relatum, with matching assets, are moved here first. Deleting its contents or emptying the folder prevents recovery from inside the app.'],
+        ['Main canvases · <code>canvases</code>', '', [
+          ['<code>名称.canvas</code>', 'Nodes, text, edges, ink and canvas settings.'],
+          ['<code>名称.assets</code>', 'Images, PDFs, Markdown attachments and annotations. Keep its name paired with the canvas.'],
+          ['<code>Trash</code>', 'Deleted canvases and attachments. Emptying it prevents recovery in the app.'],
         ]],
-        ['Files inside <code>.assets</code>', 'These files are often much larger than the canvas JSON, but a filename alone cannot tell you whether a file is unused.', [
-          ['Images and background assets', 'Deleting one makes the matching image node or an older canvas background go missing; the canvas structure and text remain.'],
-          ['<code>attachments</code>', 'Copies of PDFs, Markdown, and other attachments inserted into the canvas. If one is deleted, its node remains but its content cannot be read.'],
-          ['<code>*.annot.json</code>', 'Annotations beside a PDF or Markdown attachment. Deleting only this file removes that attachment’s highlights, underlines, ink, and notes, but not its source content.'],
-          ['<code>node-annotations.json</code>', 'Ink and spatial annotations made in the canvas text reader. Deleting it removes only those annotations; node text remains.'],
+        ['Notes · <code>notes</code>', '', [
+          ['<code>*.md</code>', 'Note text. Opens in any text editor.'],
+          ['<code>&lt;note name&gt;.assets/images</code>', 'Note images. Relatum moves or renames these with the note.'],
+          ['<code>canvases/*.canvas</code>', 'Embedded canvases. Multiple references can share one file; deleting a reference keeps the file.'],
+          ['Note graph and outline', 'Generated from links and headings. No extra copy of note text is stored. Graph views last for the current session.'],
         ]],
-        ['Keep matching names together', 'For example, <code>Course.canvas</code> must stay paired with <code>Course.assets</code>. Renaming only one breaks asset links, and moving a canvas out manually can invalidate its Home entry. Prefer Relatum’s rename, import, and Trash actions.'],
-        ['How to free space', 'Open the target canvas and use “Clean attachments” from the top bar; it removes orphaned assets according to actual references. If you still need space, inspect Trash and entire canvases you no longer need. Do not delete asset files one by one at random.'],
-        ['The <code>notes</code> library', 'Each note is an ordinary <code>.md</code> file. Right-click it and choose “Show in File Explorer”, or drag files and folders directly from Explorer. Pasted images live under <code>&lt;note name&gt;.assets/images</code>; Relatum moves that folder with the note and sends both to the Windows Recycle Bin together. Returning to Relatum after a manual file change silently refreshes it.'],
+        ['Find your files', 'Right-click in the note tree and choose “Show in File Explorer”. Copy the entire <code>notes</code> folder to include embedded canvases.'],
       ],
     },
     {
-      id: 'data', eyebrow: '03 · DATA', title: 'data: records, settings, and indexes',
-      subtitle: 'Most of these files use little space, but they determine how Home organizes canvases and which long-term records appear in Tree, Study, Calendar, Review, and Focus. See On-device preferences for interface settings.',
+      id: 'data', eyebrow: '03 · DATA', title: 'Feature data',
+      subtitle: 'These paths are inside <code>data</code>. Deleting a file removes its records or settings.',
       sections: [
-        ['Canvas library and display settings', 'Deleting a settings file usually leaves the canvas itself intact, but resets the interface or removes organization data.', [
-          ['<code>recent.json</code>', 'Recent canvases, groups, favorites, and ordering. The <code>.canvas</code> files remain after deletion, but Home becomes empty and organization is lost; you can later scan the top-level canvases folder to register files again.'],
-          ['<code>recent.backup.json</code>', 'The previous valid library snapshot. Deleting it changes nothing immediately, but removes an automatic recovery source if the library becomes corrupt. It is not an undo button for manually deleting <code>recent.json</code>.'],
-          ['<code>recent.corrupt-*.json</code>', 'Old library files quarantined after corruption. They can be deleted after you confirm the current library is healthy and you do not need to recover old groups manually.'],
-          ['<code>background.json</code>', 'Global background and guide-pattern settings. Deleting it restores factory defaults; uploaded image files may remain in <code>backgrounds</code>.'],
-          ['<code>backgrounds</code>', 'Background images you uploaded. Deleting an image still in use makes the background disappear; switch to a built-in background first.'],
-          ['<code>viewport.json</code>', 'The last position and zoom for each canvas. Deleting it does not affect content, only the last viewing position.'],
-          ['<code>window-state.json</code>', 'Desktop window size, position, and maximized state. Deleting it restores the default window without affecting content.'],
+        ['Content and records', '', [
+          ['<code>research-workspace</code>', 'Research pages, components, edges, subcircuits and backups.'],
+          ['<code>study.json / tree-page.json</code>', 'Study tasks and goal trees / the independent Tree page.'],
+          ['<code>学习归档 / 画布归档</code>', 'Archived content and completion records.'],
+          ['<code>notes.json / start-sticky-notes.json</code>', 'Quick Notes wall / Home sticky notes.'],
+          ['<code>daily.json / review.db</code>', 'Daily tasks and check-ins / review cards, schedules and ratings.'],
+          ['<code>diary / focus.json</code>', 'Journals / focus sessions.'],
+          ['<code>ledger.json / countdown.json</code>', 'Ledger / countdown events.'],
         ]],
-        ['Tree, Study, daily tasks, and activity', 'These are long-term records, not cache files.', [
-          ['<code>tree-page.json</code>', 'Tasks, stages, links, appearance, and the active tree for the independent Tree page. It is completely separate from Study Goal Trees. Deleting it starts Tree from blank without affecting <code>study.json</code>, canvases, or Study, and it cannot be rebuilt automatically from Study.'],
-          ['<code>study.json</code>', 'Current study tasks, task Trash, progress, and Goal Trees. Deleting it resets all current study data; previously archived history remains separately in the Study archive.'],
-          ['<code>Study archive</code>', 'Completed study tasks, archived quick notes, and completed taskbook snapshots. Deleting it removes that history and reduces or removes related activity statistics and constellation history; current active tasks remain.'],
-          ['<code>Canvas archive</code>', 'Lightweight history created by canvas archive actions. Deleting it usually leaves original canvases intact, but removes related archive events and statistics from Activity.'],
-          ['<code>daily.json</code>', 'Daily tasks, streak days, minutes, and milestones. Deleting it starts the daily-task system from empty.'],
-          ['<code>daily.backup.json</code>', 'The previous valid daily-task snapshot. Deleting it leaves current content unchanged but removes one recovery layer.'],
-          ['<code>daily.corrupt-*.json</code>', 'Old daily-task data quarantined after corruption. Delete it only after confirming current data is healthy and no manual recovery is needed.'],
-          ['<code>canvas-activity.json</code>', 'Canvas creation, editing, and foreground-usage history. Deleting it leaves canvases intact, but removes yearly activity, usage time, and related statistics; recording then starts over.'],
-          ['<code>start-page-activity.json</code>', 'Foreground-usage history for Study, Tree, and Quick Notes. Deleting it leaves page content intact, but clears the green add-on statistics in Activity and starts recording over.'],
+        ['Usage statistics and Career', '', [
+          ['<code>usage-v2.sqlite3</code>', 'New usage time, archives, reviews, check-ins and collection settings. Switch categories off in Settings to stop collection while keeping history.'],
+          ['<code>career-report-v2.json</code>', 'The latest manually generated report. Filters do not scan content again. A deleted report can be regenerated.'],
+          ['What is timed', 'Foreground reading and work. Collection pauses on blur, hiding and minimizing. Focus, journals and Career are excluded.'],
+          ['Legacy statistics', '<code>canvas-activity.json</code>, <code>start-page-activity.json</code> and <code>career-report.json</code> are retired. They are not read or migrated.'],
         ]],
-        ['Quick notes, Calendar, Focus, and Review', 'Deleting an item clears the data for its corresponding page.', [
-          ['<code>notes.json</code>', 'Quick Notes cards, connections, and viewport. Deleting it clears the current wall; notes you explicitly archived remain in the Study archive.'],
-          ['<code>start-sticky-notes.json</code>', 'Small sticky notes shown across Home pages. Deleting it removes all of them without affecting Quick Notes.'],
-          ['<code>focus.json</code>', 'Focus sessions and related state. Deleting it removes focus history and accumulated time from Calendar and Activity.'],
-          ['<code>diary</code>', 'Calendar journals, one Markdown file per day. Deleting one file loses only that day; deleting the folder loses every journal entry.'],
-          ['<code>ledger.json</code>', 'All v2 income and expense entries from Calendar’s Ledger view, including the revision, numbered page, amount, optional exact decimal multiplier, date, note, color, and each page’s optional amount unit. A blank unit uses RMB <code>¥</code>. Multiplied final cents use decimal half-up rounding. Deleting it empties every Ledger page without affecting journals, daily tasks, or other Calendar data.'],
-          ['<code>ledger.backup.json</code>', 'The previous valid ledger snapshot. Deleting it leaves current entries unchanged but removes one automatic recovery layer if the main file becomes corrupt.'],
-          ['<code>ledger.corrupt-*.json</code>', 'Old ledger data quarantined after the main file became corrupt. Delete it only after confirming current entries were recovered correctly and no manual recovery is needed.'],
-          ['<code>countdown.json</code>', 'Countdown events and the selected event. Deleting it clears Countdown; events can be created again.'],
-          ['<code>review.db</code>', 'The complete database of review cards, decks, tags, schedules, and every rating. Deleting it empties Review and it cannot be rebuilt automatically from canvases.'],
-          ['<code>review.db-wal / -shm</code>', 'Temporary files that may appear while the database is in use. Do not delete them separately; quit Relatum normally and they will usually merge or disappear.'],
-          ['<code>career-report.json</code>', 'The frozen snapshot from the most recent manual Career report generation. Deleting it removes only the report, not canvases, notes, or source records; generating again reads the data available at that time.'],
+        ['Library and settings', '', [
+          ['<code>recent.json</code>', 'Canvas list, groups, favorites and ordering.'],
+          ['<code>note-notebooks.json</code>', 'Notebook colors, sidebar tabs and expanded folders.'],
+          ['<code>templates.json / background.json</code>', 'Node templates / background settings.'],
+          ['<code>ai.json</code>', 'AI endpoint, model and API key. Remove the key before sharing a backup.'],
+          ['<code>*.backup.* / *.corrupt-*</code>', 'Recovery copies or quarantined files. Check the main file before deleting these.'],
         ]],
-        ['Other files you may see', 'Not every computer will have all of these.', [
-          ['<code>templates.json</code>', 'The node template library shared by all canvases. Deleting it removes custom templates without changing existing canvases.'],
-          ['<code>ai.json</code>', 'The AI assistant API key, model, and endpoint. Deleting it requires configuration again but does not affect canvas content. It contains a secret, so keep backups and shared copies private.'],
-          ['<code>calendar-pins.json</code>', 'Calendar task notes left by older versions and no longer read by the current version. Back it up before deleting if you may return to an older version.'],
-        ]],
-        ['Do not delete the whole <code>data</code> folder', 'Deleting it resets almost everything except canvas bodies and their assets: the files still exist, but library organization, Study, Quick Notes, Review, journals, Focus, templates, and settings disappear together.'],
+        ['Database files', 'Keep any <code>-wal / -shm</code> files beside <code>review.db</code> and <code>usage-v2.sqlite3</code>. Close every window before backing up the entire <code>data</code> folder.'],
       ],
     },
     {
-      id: 'storage', eyebrow: '04 · ON-DEVICE', title: 'On-device storage: preferences, views, and runtime state',
-      subtitle: 'This state lives in Relatum’s WebView2 user data or in the browser’s site data, outside the <code>canvases</code>, <code>notes</code>, and <code>data</code> folders. Its actual location varies by computer, installation method, and browser.',
+      id: 'storage', eyebrow: '04 · SETTINGS', title: 'Local settings',
+      subtitle: 'These remember your interface and last position.',
       sections: [
-        ['Home, language, and the Notes workspace', 'These settings mainly remember the interface you last saw; they do not replace the real content files.', [
-          ['Theme and workspace', '<code>canvas:startTheme</code>, <code>canvas:startWorkspace:v1</code>, <code>canvas:toolbarLanguage</code>, and related keys store the theme, last workspace, interface language, search, and page-display preferences. Deleting them restores defaults without deleting canvases or records.'],
-          ['Notes workspace', '<code>canvas:note*</code> remembers open tabs, the current note, expanded folders, the view, and text size. Deleting it resets the workspace, while <code>.md</code> files and note images remain.'],
-          ['Note editing positions', '<code>canvas:noteViewStates:v1</code> remembers vault-relative paths, cursor selections, and scroll positions for the 200 most recent notes, so you can resume editing after restarting or reopening them. It stays on this device and contains no note text. Clearing it forgets these positions without deleting notes or images.'],
+        ['What is saved', '', [
+          ['Interface', 'Language, theme, workspace, scrolling and tool defaults.'],
+          ['Notes', 'Tabs, text size, reading position, cursor and graph spacing.'],
+          ['Views', 'Canvas cameras, collapsed trees, review mode and ledger display.'],
+          ['Unfinished focus timer', 'Timer recovery state. Completed sessions live in <code>data/focus.json</code>.'],
         ]],
-        ['Study, Tree, Quick Notes, Review, and Ledger', 'Long-term content for these pages lives in <code>data</code>, but some details about how it is viewed exist only on this device.', [
-          ['Views and cameras', '<code>study:*</code>, <code>canvas:notesView</code>, <code>canvas:cadenceLens:v2</code>, <code>canvas:reviewMode:v1</code>, and <code>relatum.*.view.&lt;tree ID&gt;</code> remember pages, review mode, cameras, and collapsed branches. Tasks, trees, and notes remain after deletion, but their views return to defaults.'],
-          ['Dark card presentation', '<code>canvas:darkCardPresentation:v1</code> separately remembers the color-fill, border and stripe strengths, and text-color mode for Tree and Study cards. Deleting it restores 15% fill, 100% accent, and white text for both pages without removing tasks, stages, or their assigned colors.'],
-          ['Task-page colors and legend', '<code>study:taskPageColors:v1</code> and <code>study:legend:v1</code> exist only on this device. Deleting them restores default colors; they cannot be recovered automatically from <code>study.json</code> and must be set again.'],
-          ['Current Ledger page', '<code>ledger:page:v1</code> only remembers the last numbered page you viewed. Deleting it returns to page 1; entry ownership and per-page amount units remain in <code>data/ledger.json</code>.'],
-          ['Ledger view', '<code>ledger:viewByPage:v1</code> remembers the monthly or cumulative view per page, keeping only pages set to cumulative. Deleting it restores the monthly view for every page; it only changes presentation and summary scope, not entry dates.'],
-          ['Ledger amount display', '<code>ledger:hideDecimalsByPage:v1</code> remembers per page whether decimal places are hidden, keeping only pages set to hide them. Deleting it shows full decimals for every page; it only changes display, never the stored amounts.'],
+        ['Where it lives', '', [
+          ['Desktop', '<code>data/desktop-sessions/&lt;mode&gt;/preferences.json</code> holds preferences; <code>window-state.json</code> holds window position. WebView2 also keeps local runtime data.'],
+          ['Browser', 'Browser site storage. Switching browsers or clearing site data resets these preferences.'],
         ]],
-        ['Canvas editor', 'Modes, panel positions, tool parameters, default styles for new nodes and edges, autosave, and onboarding state are stored as <code>canvas:*</code> preferences. Deleting them does not change existing <code>.canvas</code> content, but editor preferences and creation defaults reset, and onboarding may appear again.'],
-        ['Focus and the current session', 'Neither should be confused with completed long-term records.', [
-          ['<code>canvas:focus*</code>', 'Stores recovery state for an unfinished timer, mode, durations, sound, noise, and task binding. Deleting it loses those settings and the unfinished timer state; completed history already written to <code>data/focus.json</code> remains.'],
-          ['<code>sessionStorage</code>', 'Stores only current-session desktop detection and return-route markers. Closing the session or clearing it does not delete user content.'],
-        ]],
-        ['If you need to manage this storage', 'Quit Relatum first, and do not delete individual database files inside WebView2 user data. Clearing all app or site storage resets every on-device preference but does not delete <code>canvases</code>, <code>notes</code>, or <code>data</code>. The AI assistant API key lives separately in <code>data/ai.json</code>, not in browser storage.'],
+        ['After clearing', 'The interface, positions and unfinished timer may reset. Note and canvas files remain. The AI key lives in <code>data/ai.json</code>, outside browser storage.'],
       ],
     },
   ];
@@ -1934,8 +1802,6 @@
       START_BACKGROUND_KEY,               // 主页背景（简洁）
       STARMAP_MOTION_KEY,                 // 足迹星图动画（含「结束后自动取景」）
       CALENDAR_COUNTDOWN_KEY,             // 日历倒数日（开）
-      START_PAGE_ACTIVITY_ENABLED_KEY,    // 学习/树状/速记计时（开）
-      START_PAGE_ACTIVITY_STATS_VISIBLE_KEY, // 显示三页统计数字（关）
       HIDE_SPECIAL_KEY,                   // 隐藏特殊页（关）
       GOAL_TREE_SIMPLE_KEY,               // 精简目标树编辑（开）
       GOAL_TREE_ENFORCE_UNLOCK_KEY,       // 强制按解锁顺序（关）
@@ -1960,8 +1826,7 @@
       }));
     }, 140);
     applyCalendarCountdownEnabled(true, false);
-    applyStartPageActivityEnabled(true, false);
-    applyStartPageActivityStatsVisible(false, false);
+    window.RelatumUsage?.resetSettings();
     applyHideSpecialPages(false, false);
     applyGoalTreeSimpleMode(true, false);
     applyGoalTreeUnlockEnforcement(false, false);
@@ -2141,161 +2006,8 @@
     }
   }
 
-  function currentStartPageActivityTarget() {
-    if (!startPageActivityEnabled || workspaceRuntime.current !== 'canvas') return '';
-    const view = bookView ? String(bookView.dataset.viewName || '') : '';
-    return START_PAGE_ACTIVITY_VIEWS.has(view) ? view : '';
-  }
-
-  function captureStartPageActivity(endAt) {
-    if (!startPageActivityActive || !startPageActivityPage || !startPageActivityLastCapturedAt) return;
-    const endedAt = Math.max(startPageActivityLastCapturedAt, Number(endAt) || Date.now());
-    let cursor = startPageActivityLastCapturedAt;
-    while (endedAt - cursor >= 250) {
-      const chunkEnd = Math.min(endedAt, cursor + 9 * 60 * 1000);
-      startPageActivityPending.push({
-        page: startPageActivityPage,
-        startedAt: cursor,
-        endedAt: chunkEnd,
-      });
-      cursor = chunkEnd;
-    }
-    startPageActivityLastCapturedAt = endedAt;
-  }
-
-  function postStartPageActivity(interval, keepalive) {
-    return fetch('/api/start-page-activity', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: !!keepalive,
-      body: JSON.stringify({
-        page: interval.page,
-        sessionId: startPageActivitySessionId,
-        startedAt: new Date(interval.startedAt).toISOString(),
-        endedAt: new Date(interval.endedAt).toISOString(),
-      }),
-    }).then((response) => response.json().then((json) => ({ response, json })));
-  }
-
-  function resolveStartPageActivityIdleWaiters() {
-    if (startPageActivitySending || startPageActivityPending.length) return;
-    startPageActivityIdleWaiters.forEach((resolve) => resolve(true));
-    startPageActivityIdleWaiters.clear();
-  }
-
-  function waitForStartPageActivityIdle(timeoutMs) {
-    sendNextStartPageActivity(false);
-    if (!startPageActivitySending && !startPageActivityPending.length) return Promise.resolve(true);
-    const wait = Math.max(0, Number(timeoutMs) || 0);
-    return new Promise((resolve) => {
-      let done = false;
-      let timer = 0;
-      const finish = (idle) => {
-        if (done) return;
-        done = true;
-        if (timer) window.clearTimeout(timer);
-        startPageActivityIdleWaiters.delete(finish);
-        resolve(!!idle);
-      };
-      startPageActivityIdleWaiters.add(finish);
-      timer = window.setTimeout(() => finish(false), wait);
-      resolveStartPageActivityIdleWaiters();
-    });
-  }
-
-  function sendNextStartPageActivity(keepalive) {
-    if (startPageActivitySending || !startPageActivityPending.length) return;
-    const interval = startPageActivityPending[0];
-    startPageActivitySending = interval;
-    postStartPageActivity(interval, keepalive)
-      .then(({ response, json }) => {
-        if (!response.ok) throw new Error(json.error || 'start page activity failed');
-        const index = startPageActivityPending.indexOf(interval);
-        if (index >= 0) startPageActivityPending.splice(index, 1);
-      })
-      .catch((error) => {
-        console.warn('[起步页] 前台时间暂未写入，将稍后重试', error);
-      })
-      .finally(() => {
-        if (startPageActivitySending === interval) startPageActivitySending = null;
-        if (startPageActivityPending.length) {
-          window.setTimeout(() => sendNextStartPageActivity(false), 1200);
-        } else {
-          resolveStartPageActivityIdleWaiters();
-        }
-      });
-  }
-
-  function flushStartPageActivityKeepalive() {
-    startPageActivityPending.slice().forEach((interval) => {
-      postStartPageActivity(interval, true)
-        .then(({ response, json }) => {
-          if (!response.ok) throw new Error(json.error || 'start page activity failed');
-          const index = startPageActivityPending.indexOf(interval);
-          if (index >= 0) startPageActivityPending.splice(index, 1);
-        })
-        .catch(() => {})
-        .finally(resolveStartPageActivityIdleWaiters);
-    });
-  }
-
-  function pauseStartPageActivity(keepalive) {
-    if (!startPageActivityActive) return;
-    captureStartPageActivity(Date.now());
-    startPageActivityActive = false;
-    startPageActivityPage = '';
-    startPageActivityLastCapturedAt = 0;
-    if (startPageActivityHeartbeat) window.clearInterval(startPageActivityHeartbeat);
-    startPageActivityHeartbeat = 0;
-    if (keepalive) flushStartPageActivityKeepalive();
-    else sendNextStartPageActivity(false);
-  }
-
-  function resumeStartPageActivity() {
-    const target = currentStartPageActivityTarget();
-    if (!target || document.hidden || !document.hasFocus()) {
-      pauseStartPageActivity(false);
-      return;
-    }
-    if (startPageActivityActive && startPageActivityPage === target) return;
-    if (startPageActivityActive) pauseStartPageActivity(false);
-    startPageActivityActive = true;
-    startPageActivityPage = target;
-    startPageActivityLastCapturedAt = Date.now();
-    if (startPageActivityHeartbeat) window.clearInterval(startPageActivityHeartbeat);
-    startPageActivityHeartbeat = window.setInterval(() => {
-      captureStartPageActivity(Date.now());
-      sendNextStartPageActivity(false);
-    }, 30000);
-    sendNextStartPageActivity(false);
-  }
-
-  function syncStartPageActivity() {
-    const target = currentStartPageActivityTarget();
-    if (!target) {
-      pauseStartPageActivity(false);
-      return;
-    }
-    resumeStartPageActivity();
-  }
-
-  function setupStartPageActivityTracker() {
-    document.addEventListener('start:viewchange', syncStartPageActivity);
-    document.addEventListener('relatum:start-workspacechange', syncStartPageActivity);
-    window.addEventListener('focus', resumeStartPageActivity);
-    window.addEventListener('blur', () => pauseStartPageActivity(true));
-    window.addEventListener('pagehide', () => pauseStartPageActivity(true));
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) pauseStartPageActivity(true);
-      else resumeStartPageActivity();
-    });
-  }
-
-  window.RelatumStartPageActivity = Object.freeze({
-    waitForIdle() {
-      return waitForStartPageActivityIdle(3000);
-    },
-  });
+  function syncStartPageActivity() { window.RelatumUsage?.sync(); }
+  function setupStartPageActivityTracker() { window.RelatumUsage?.sync(); }
 
   function clearStartViewMotion() {
     [bookStage, document.querySelector('.study-embedded'), document.querySelector('.cadence-embedded'), document.querySelector('.tree-page-embedded'),
@@ -3079,6 +2791,7 @@
   }
 
   function formatCanvasActivity(sec) {
+    if(sec===null)return englishUI()?'Usage unavailable':'使用统计暂不可用';
     sec = Math.max(0, Number(sec) || 0);
     if (!sec) return '';
     if (sec < 60) return '累计不足 1 分钟';

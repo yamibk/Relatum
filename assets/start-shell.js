@@ -280,6 +280,7 @@
   if (reset) reset.addEventListener('click', () => {
     ['canvas:startTheme','canvas:startBackgroundStyle',START_SPEED_KEY,SPINE_SPEED_KEY,CAREER_SCROLL_FEEL_KEY,CAREER_SCROLL_IDLE_KEY].forEach(key => localStorage.removeItem(key));
     theme('light', false); background('simple', false); applyStartSpeed(260, false); applySpineSpeed(414, false); applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, false);
+    window.RelatumUsage?.resetSettings();
   });
   const settings = query('desktop-settings');
   const settingsOpen = document.querySelector('[data-action="desktop-settings-open"]');

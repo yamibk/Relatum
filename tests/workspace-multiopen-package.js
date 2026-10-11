@@ -141,7 +141,13 @@ async function functional() {
     assert.equal(await reopened.page.evaluate(() => localStorage.getItem('canvas:noteImageTextScale:v1')), '135');
     const size = await reopened.page.evaluate(() => window.pywebview.api.get_restored_size());
     assert.equal(size.width, 1000); assert.equal(size.height, 680);
-    const report = await career.page.evaluate(async () => (await fetch('/api/career-report-generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json());
+    const report = await career.page.evaluate(async () => {
+      await window.RelatumUsage?.flush();
+      let job=await (await fetch('/api/career/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+      while(job.status==='running'){await new Promise(resolve=>setTimeout(resolve,100));job=await (await fetch('/api/career/jobs/'+job.id)).json();}
+      if(job.status!=='complete')throw new Error(job.error||'Generation failed');
+      return (await fetch('/api/career/report')).json();
+    });
     assert(report.exists);
     await close(research);
     const research2 = await start(root, ['research']); entries.push(research2);

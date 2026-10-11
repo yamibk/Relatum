@@ -191,7 +191,7 @@ class FeatureProfileTests(unittest.TestCase):
         for script in ('note-graph.js', 'graph-engine.js', 'graph-gl.js'):
             self.assertFalse(profile.resource_allowed(script))
         for keys in (('notes', 'notes.graph'), ('canvas', 'canvas.editor', 'editor.graph'),
-                     ('canvas', 'canvas.activity')):
+                     ('canvas', 'canvas.activity'), ('career',)):
             enabled = self.only(*keys)
             self.assertTrue(enabled.resource_allowed('graph-engine.js'))
             self.assertTrue(enabled.resource_allowed('graph-gl.js'))

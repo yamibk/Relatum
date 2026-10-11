@@ -277,22 +277,6 @@
             </label>
             <label class="start-setting-toggle">
               <span>
-                <strong>学习、树状、速记计时</strong>
-                <small>开启后记录这三页的前台使用时长</small>
-              </span>
-              <input type="checkbox" data-role="start-page-activity-toggle" checked>
-              <i aria-hidden="true"></i>
-            </label>
-            <label class="start-setting-toggle">
-              <span>
-                <strong>显示三页统计数字</strong>
-                <small>在活跃页显示绿色附加统计</small>
-              </span>
-              <input type="checkbox" data-role="start-page-activity-stats-toggle">
-              <i aria-hidden="true"></i>
-            </label>
-            <label class="start-setting-toggle">
-              <span>
                 <strong>隐藏特殊页</strong>
                 <small>收起复习/日历/活跃/速记/树状/学习/专注，只留最近·收藏·分组</small>
               </span>
@@ -429,6 +413,11 @@
             </label>
           </div>
         </div>
+      </div>
+      <div class="start-usage-settings" data-usage-panel>
+        <h3 data-usage-heading>使用统计</h3>
+        <p data-usage-help>记录前台阅读与工作时间。关闭分类后保留已有历史。</p>
+        <div data-usage-settings></div>
       </div>
       <nav class="start-workspace-switch" data-role="start-workspace-switch"
         role="tablist" aria-label="工作区">
@@ -1911,8 +1900,8 @@
       <section class="career-entry" data-role="career-entry">
         <p class="career-kicker">RELATUM · CAREER</p>
         <h1>查看我的使用报告</h1>
-        <p>统计画布、笔记、学习、专注与完成记录。<br>全部计算在本机完成。</p>
-        <button type="button" class="career-generate" data-career-action="generate">查看我的使用报告</button>
+        <p>记录笔记、画布、研究与学习的积累。<br>全部计算在本机完成。</p>
+        <button type="button" class="career-generate" data-career-action="generate">生成我的使用报告</button>
       </section>
       <section class="career-loading" data-role="career-loading" aria-live="polite" hidden>
         <span class="career-loading-mark" aria-hidden="true"></span>
@@ -1936,10 +1925,10 @@
       aria-labelledby="start-help-title">
       <nav class="start-help-spine" aria-label="数据说明翻页">
         <span class="start-help-spine-slider" data-role="start-help-spine-slider" aria-hidden="true"></span>
-        <button type="button" class="active" data-help-page="safety" title="删除前先看"><span></span></button>
+        <button type="button" class="active" data-help-page="safety" title="备份与清理"><span></span></button>
         <button type="button" data-help-page="canvases" title="canvases 与 notes"><span></span></button>
-        <button type="button" data-help-page="data" title="data 文件夹"><span></span></button>
-        <button type="button" data-help-page="storage" title="本机偏好"><span></span></button>
+        <button type="button" data-help-page="data" title="功能数据"><span></span></button>
+        <button type="button" data-help-page="storage" title="本机设置"><span></span></button>
       </nav>
       <header class="start-help-head">
         <div>
@@ -1952,10 +1941,10 @@
 
       <nav class="start-help-nav" aria-label="数据说明目录">
         <span class="start-help-nav-slider" data-role="start-help-nav-slider" aria-hidden="true"></span>
-        <button type="button" class="active" data-help-page="safety">删除前先看</button>
-        <button type="button" data-help-page="canvases">canvases 文件夹</button>
-        <button type="button" data-help-page="data">data 文件夹</button>
-        <button type="button" data-help-page="storage">本机偏好</button>
+        <button type="button" class="active" data-help-page="safety">备份与清理</button>
+        <button type="button" data-help-page="canvases">画布与笔记</button>
+        <button type="button" data-help-page="data">功能数据</button>
+        <button type="button" data-help-page="storage">本机设置</button>
       </nav>
 
       <div class="start-help-book">
@@ -1965,7 +1954,7 @@
       </div>
 
       <footer class="start-help-foot">
-        <span>先退出 Relatum，再在资源管理器中整理文件 · 按 <kbd>?</kbd> 或 <kbd>Esc</kbd> 关闭</span>
+        <span>按 <kbd>?</kbd> 或 <kbd>Esc</kbd> 关闭</span>
         <div class="start-help-pager">
           <button type="button" data-action="start-help-prev" aria-label="上一页">‹</button>
           <span data-role="start-help-position">01 / 04</span>
@@ -2080,6 +2069,8 @@
   <script src="i18n.js" defer></script>
   <script src="desktop-shell.js" defer></script>
   <script src="sticky-palette.js" defer></script>
+  <link rel="stylesheet" href="usage-settings.css">
+  <script src="usage-tracker.js" defer></script>
   <script src="start-workspace-runtime.js" defer></script>
   <script src="start-shell.js" defer></script>
   <script src="windowed-list.js" defer></script>

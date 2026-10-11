@@ -1,125 +1,32 @@
 'use strict';
-
-const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
-const vm = require('node:vm');
-
-const root = path.resolve(__dirname, '..');
-const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
-const html = read('assets/index.html');
-const start = read('assets/start.js') + read('assets/start-workspace-runtime.js');
-const career = read('assets/career-report.js');
-const css = read('assets/styles.css');
-const i18n = read('assets/i18n.js');
-const server = read('app.py');
-const agents = read('AGENTS.md');
-
-for (const workspace of ['canvas', 'notes', 'career']) {
-  assert(html.includes(`data-start-workspace="${workspace}"`), `${workspace} workspace tab is missing`);
-  assert(html.includes(`data-start-workspace-panel="${workspace}"`), `${workspace} workspace panel is missing`);
-}
-assert(!html.includes('data-start-workspace="blog"'), 'the removed Blog workspace tab must not return');
-assert(!html.includes('blog-workspace'), 'the removed Blog workspace panel must be deleted');
-assert(!start.includes('blog: 2'), 'workspace ordering must replace Blog with Career');
-assert(!css.includes('.blog-workspace') && !css.includes('.blog-placeholder-paper'), 'Blog CSS residue must be removed');
-
-assert(start.includes("script.src = 'career-report.js'"), 'Career runtime must be lazy-loaded');
-assert(!html.includes('<script src="career-report.js"'), 'Career runtime must not block start-page parsing');
-assert(start.includes("name === 'career'"), 'workspace switch must activate the Career runtime');
-assert(start.includes('localStorage.setItem(START_WORKSPACE_KEY, name)'), 'Career workspace must persist like Canvas and Notes');
-assert(html.includes('查看我的使用报告'), 'first-run entry action is missing');
-assert(career.includes("'/api/career-report'"), 'Career snapshot GET is missing');
-assert(career.includes("'/api/career-report-generate'"), 'Career generation POST is missing');
-assert(server.includes('CAREER_REPORT_FILE = DATA / "career-report.json"'), 'frozen report file is missing');
-assert(server.includes('def load_career_report()'), 'snapshot reader is missing');
-assert(server.includes('def generate_career_report()'), 'snapshot generator is missing');
-assert(server.includes('if parsed.path == "/api/career-report"'), 'snapshot GET route is missing');
-assert(server.includes('if path == "/api/career-report-generate"'), 'generation POST route is missing');
-assert(server.includes('_atomic_write_json(CAREER_REPORT_FILE, report)'), 'report replacement must remain atomic');
-
-assert(career.includes("createElementNS(SVG_NS"), 'charts must use native SVG');
-assert(career.includes('IntersectionObserver'), 'scroll reveal must be viewport-driven');
-assert(career.includes('const SCROLL_IDLE_MS = 50'), 'scroll reveals need an explicit idle window');
-assert(start.includes('CAREER_SCROLL_IDLE_KEY') && career.includes('canvas:careerScrollIdleMs:v1'), 'career scroll idle must be a tunable start-page preference');
-assert(career.includes("scroll.addEventListener('scroll', handleScroll, { passive: true })"), 'Career scroll observation must stay passive');
-assert(html.match(/data-role="career-scroll-feel-range"/g).length === 5, 'Career scroll feel must expose four motion controls plus reveal delay');
-assert(html.includes('data-action="career-scroll-feel-reset"'), 'Career scroll feel needs a one-click reset');
-assert(html.includes('data-role="career-scroll-reveal-toggle"'), 'Career reveal pausing must be optional');
-assert(start.includes("CAREER_SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1'"), 'Career scroll feel must persist locally');
-assert(start.includes('strength: 100') && start.includes('inertia: 45')
-  && start.includes('acceleration: 60') && start.includes('maxSpeed: 2400')
-  && start.includes('pauseReveal: false'), 'Career scroll feel defaults must remain stable');
-assert(start.includes("new CustomEvent('relatum:career-scroll-feel'"), 'Career scroll feel changes must update the lazy runtime live');
-assert(career.includes("scroll.addEventListener('wheel', handleWheel, { passive: false })"), 'discrete mouse-wheel inertia must be able to prevent native scrolling');
-assert(career.includes('function isDiscreteMouseWheel(event)'), 'Career inertia must distinguish coarse wheels from precise input');
-assert(career.includes('event.wheelDeltaY || event.wheelDelta'), 'Chromium/WebView2 wheel notches must drive coarse-wheel detection');
-assert(career.includes('event.ctrlKey || event.metaKey') && career.includes('Math.abs(event.deltaX) > Math.abs(event.deltaY)'), 'zoom and horizontal gestures must keep native behavior');
-assert(career.includes('const impulse = event.deltaY * unit * 0.16'), 'wheel strength must use the agreed impulse model');
-assert(career.includes('0.80 + 0.16 * (scrollFeel.inertia / 100)'), 'inertia must use time-normalized configurable retention');
-assert(career.includes('sameDirection ? scrollFeel.acceleration / 100 : 0.15'), 'repeat acceleration and reverse braking must stay distinct');
-assert(career.includes('const maxVelocity = scrollFeel.maxSpeed / 60'), 'wheel velocity must honor the configured px/s cap');
-assert(career.includes('function revealPausedForScroll()'), 'scroll-time reveal pausing must be controlled by one runtime predicate');
-assert(career.includes('if (state.wheelFrame) {') && career.includes('scheduleScrollFinish();'), 'reveals must not settle while wheel inertia is active');
-assert(career.includes('stopWheelInertia(false);') && career.includes("window.addEventListener('pagehide'"), 'Career inertia must be cancelled by runtime cleanup');
-assert(career.includes('pendingReveals: new Set()'), 'scroll-time reveals must be queued and coalesced');
-assert(!career.includes('NUMBER_TICK_MS'), 'number text updates must not be rate-limited below display refresh');
-assert(career.includes('numberJobs: new Map()'), 'visible numbers must share one scheduler');
-assert(career.includes('requestAnimationFrame(runNumberFrame)'), 'number updates must use the shared animation frame');
-assert(!career.includes('requestAnimationFrame(frame)'), 'per-number animation frame loops must not return');
-assert(career.includes("class: 'career-daily-series'"), 'dense daily marks must animate as one series');
-assert(!career.includes("cell.style.setProperty('--career-index'"), 'heatmap cells must not each schedule a reveal transition');
-assert(css.includes('contain: layout paint style'), 'Career panels must isolate layout and paint invalidation');
-assert(css.includes('[data-visible="1"] .career-dot-matrix'), 'dot matrices must reveal as one visual group');
-assert(css.includes('[data-visible="1"] .career-heatmap'), 'heatmaps must reveal as one visual group');
-assert(career.includes("prefers-reduced-motion: reduce"), 'runtime must respect reduced motion');
-assert(css.includes('@media (prefers-reduced-motion: reduce)'), 'Career CSS needs a reduced-motion fallback');
-assert(css.includes('.career-workspace [hidden]'), 'Career entry/loading/report states must honor the hidden attribute');
-assert(career.includes('Math.max(number(item.canvasSec), number(item.focusSec), number(item.pageSec))'), 'independent timers must not be added into a misleading total');
-assert(career.includes("stat(tr('canvasSessions'), report.canvases && report.canvases.spanCount)"), 'overview must replace Focus time with Canvas sessions');
-assert(career.includes("value: (item) => number(item.canvasSec)"), 'usage habits must chart monthly Canvas time');
-assert(career.includes('notes.inferredModifiedMonths || []'), 'usage habits must reuse frozen note modification months');
-assert(career.includes("stat(tr('linkedNotes'), linkedCount)"), 'note maintenance must distinguish linked notes');
-assert(career.includes("stat(tr('orphanNotes'), orphanCount)"), 'note maintenance must distinguish unlinked notes');
-assert(career.includes("stat(tr('recordDays'), Object.keys(dayMap).length)"), 'check-in and diary dates must use their union');
-assert(!career.includes('lineChart(focus.months || []'), 'Focus must not keep a dedicated monthly chart');
-assert(!career.includes("Object.entries(review.days || {})"), 'review events must not enter the habit heatmap');
-assert(!career.includes("panel(tr('review'), tr('review')"), 'Review must not keep a dedicated report panel');
-assert(server.includes('"inferredDays": inferred_days'), 'inferred canvas dates must stay separate from real activity');
-assert(!career.includes('fetch(\'http') && !career.includes('fetch("http'), 'Career report must not access remote services');
-assert(!career.includes('innerHTML'), 'report rendering must not inject user names through HTML strings');
-assert(career.includes('data-career-action="generate"'), 'the only report action must be regeneration');
-assert(i18n.includes("'生涯': 'Career'"), 'Career workspace needs an English label');
-assert(agents.includes('career-report.json'), 'AGENTS.md must document the frozen report data file');
-
-// Run the actual inertia callback on virtual displays. Its hot path must not
-// query geometry, and an isolated wheel notch should travel the same distance.
-const wheelSource = career.slice(career.indexOf('  function runWheelInertia(now)'), career.indexOf('  function isDiscreteMouseWheel(event)'));
-function wheelDistance(hz, start = 100, velocity = 19.2, max = 50000) {
-  let queued = false, writes = 0;
-  const state = { active: true, wheelFrame: 1, wheelLastFrame: 0, wheelVelocity: velocity, wheelPosition: start, maxScrollTop: max };
-  const scroll = {};
-  for (const key of ['scrollTop', 'scrollHeight', 'clientHeight']) {
-    Object.defineProperty(scroll, key, { get() { throw Error('layout read in inertia frame: ' + key); }, set() { writes++; } });
-  }
-  const sandbox = { state, scroll, scrollFeel: { inertia: 45 }, WHEEL_STOP_SPEED: .08,
-    runtimeVisible: () => true, reducedMotion: () => false,
-    stopWheelInertia() { state.wheelVelocity = 0; },
-    requestAnimationFrame() { queued = true; return 1; } };
-  vm.createContext(sandbox);
-  vm.runInContext(wheelSource, sandbox);
-  for (let frame = 0; frame < hz * 5; frame++) {
-    queued = false;
-    sandbox.runWheelInertia(1000 + frame * 1000 / hz);
-    if (!queued) break;
-  }
-  assert(!queued, 'inertia must settle without leaving a frame loop');
-  assert(writes > 0);
-  return state.wheelPosition - start;
-}
-const distances = [60, 120, 144, 240].map(hz => wheelDistance(hz));
-assert(Math.max(...distances) - Math.min(...distances) < .1, 'wheel travel must stay stable from 60 to 240Hz');
-assert.equal(wheelDistance(120, 49990), 10, 'bottom edge must clamp precisely');
-assert.equal(wheelDistance(120, 10, -19.2), -10, 'top edge must clamp precisely');
-
-console.log('career-report-contract: ok');
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const career=read('assets/career/lifecycle.js'),data=read('assets/career/data.js'),charts=read('assets/career/charts.js');
+assert(read('assets/career-report.js').includes("import('./career/lifecycle.js')"));
+assert(career.includes('/api/career/report'));assert(career.includes('/api/career/generate'));assert(career.includes('/api/career/jobs/'));
+assert(career.includes('IntersectionObserver'));assert(career.includes('runtime.destroy()'));
+assert(charts.includes('createElementNS'));assert(charts.includes('ResizeObserver'));
+assert(read('assets/graph-engine.js').includes('opts.shouldHandleWheel'));
+assert(!read('assets/styles.css').includes('.career-workspace {'));
+const vm=require('node:vm');const context={window:{RelatumI18n:{language:'zh-CN'}},document:{documentElement:{lang:'zh-CN'}},Intl,Date,Map,Set};
+vm.runInNewContext(data.replace(/export /g,'')+'\nthis.selectReport=select;this.exact=exactDuration;',context);
+const at=new Date(2026,9,11,12).getTime(),since=new Date(2026,0,1,12).getTime();
+const report={history:{cutoff:at,since,days:[{date:'2026-01-01',seconds:7},{date:'2026-10-10',seconds:20},{date:'2026-10-11',seconds:30}],entityDays:[],events:[],hours:[],entities:[],coverage:[]}};
+assert.equal(context.selectReport(report,{mode:'all'}).seconds,57);assert.equal(context.selectReport(report,{mode:'30'}).seconds,50);
+assert.equal(context.selectReport(report,{mode:'90'}).activeDays,2);assert.equal(context.selectReport(report,{mode:'year'}).longest,2);
+assert.equal(context.selectReport(report,{mode:'custom',start:'2025-01-01',end:'2025-12-31'}).seconds,0);
+assert.equal(context.selectReport(report,{mode:'year',year:'2025'}).end,'2025-12-31');
+assert.equal(context.exact(3601.125),'01:00:01.125');
+const coverageReport={history:{...report.history,coverage:[{category:'notes',at:since,enabled:true},{category:'notes',at:new Date(2026,9,10,12).getTime(),enabled:false}]}};
+const selected=context.selectReport(coverageReport,{mode:'all'});
+assert.equal(selected.collection('2026-10-09','notes'),'on');assert.equal(selected.collection('2026-10-10','notes'),'partial');assert.equal(selected.collection('2026-10-11','notes'),'off');
+let frameId=0;const frames=new Map();
+context.requestAnimationFrame=fn=>{frames.set(++frameId,fn);return frameId;};context.cancelAnimationFrame=id=>frames.delete(id);
+vm.runInNewContext(read('assets/career/motion.js').replace(/export /g,'')+'\nthis.makeScheduler=scheduler;',context);
+const schedule=context.makeScheduler();let tooltipRuns=0;
+schedule.add('pointer',()=>{schedule.add('tooltip',()=>{tooltipRuns++;});});
+const initial=[...frames][0];frames.delete(initial[0]);initial[1](16);
+assert.equal(frames.size,1,'adding tooltip work during a frame schedules only one next frame');
+const next=[...frames][0];frames.delete(next[0]);next[1](32);assert.equal(tooltipRuns,1);assert.equal(frames.size,0);
+schedule.add('pointer',()=>{throw new Error('Canceled pointer work ran');});schedule.stop();assert.equal(frames.size,0);
+console.log('Career modules, frozen date filters, exact units and lifecycle contracts passed');
