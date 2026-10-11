@@ -1182,7 +1182,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 /* Eight tools remain reachable at the existing 220px sidebar minimum. */
 .note-tree-pane > .note-pane-head { gap: 4px; padding-inline: 6px; }
 .note-tree-pane > .note-pane-head .note-library-heading { flex: none; gap: 2px; overflow: visible; }
-.note-tree-pane > .note-pane-head .note-library-heading .note-icon-button { height: 27px; padding: 0; border-radius: 5px; }
+.note-tree-pane > .note-pane-head .note-icon-button { height: 27px; padding: 0; border-radius: 5px; }
 .note-tree-pane > .note-pane-head .note-head-actions { gap: 2px; }
 .note-tree-pane > .note-pane-head :is(.note-icon-button, .note-library-focus-button) { width: 24px; flex: none; }
 .note-expand-all .note-expand-icon { grid-area: 1 / 1; }
