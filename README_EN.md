@@ -1,7 +1,7 @@
 # Relatum
 
 <p align="center">
-  <strong>Put scattered thoughts on a freeform canvas, then shape them into knowledge you can use.</strong>
+  <strong>Local canvases, Markdown notes, and study tools.</strong>
 </p>
 
 <p align="center">
@@ -32,51 +32,61 @@
 
 ## What is Relatum?
 
-Relatum is an open-source, local-first freeform knowledge canvas and study workspace. Create and connect ideas on an infinite canvas, organize course notes and research material, or turn an existing structure into a polished mind map with one click.
+Relatum is an open-source Windows app with four workspaces: Canvas, Notes, Research, and Career.
 
-No account is required. Canvases, preferences, and optional AI credentials stay on your computer by default. Relatum is designed for Windows users looking for a visual note-taking app, a personal knowledge management (PKM) workspace, or an Obsidian Canvas-compatible workflow with extensive customization.
+No account is required. Notes, canvases, and settings stay on your computer. Core features work offline; the optional AI assistant connects to a service you configure.
 
 ## Highlights
 
-### A truly customizable freeform canvas
+### Canvas
 
-- Create, move, and connect nodes anywhere on an infinite canvas.
-- Customize colors, size, shape, corner radius, opacity, font weight, text scale, and alignment.
-- Style connections with different colors, paths, and line types; add handwriting, text boxes, color blocks, and decorative shapes.
-- Basic compatibility with the Obsidian Canvas `nodes + edges` structure.
+- Add text, images, code, and attachments to an infinite canvas. Move and connect them freely.
+- Customize nodes and connections, add handwriting, arrange mind maps with one click, and export PNG images.
+- Basic compatibility with the Obsidian Canvas format.
 
-### One-click mind map layout
+### Notes
 
-- Turn selected nodes or an entire connected structure into a mind map.
-- Choose from multiple node, color, and connection presets.
-- Adjust branch colors, hierarchy sizes, spacing, layout direction, and line styles.
-- Keep editing after layout: move nodes, restyle them, and reorganize branches freely.
+- Live Markdown rendering with math, code, Callouts, images, and embedded canvases.
+- Organize files with notebooks, folders, and tabs. Edits save automatically.
+- Find and browse notes using search, recent files, tags, outlines, wikilinks, and relationship graphs.
 
-### Notes, documents, and visual research
+### Reading and reference material
 
-- Switch between Canvas and Notes workspaces from Home while preserving the current state on both sides.
-- An Obsidian-style Markdown library with nested folders, multi-document tabs, editable file titles, single-surface Live Preview, Callouts, wikilinks, backlinks, local images, word/character counts, quiet 350ms autosave, and a local font-scale preference.
-- The file tree supports context menus, internal moves, and direct Windows Explorer drops. Notes and folders can be revealed in Explorer, and removal uses the Windows Recycle Bin.
-- Idle external edits load silently. If an external edit collides with active typing, the local editor content wins without a conflict dialog. Notes do not generate history snapshots.
-- Markdown, math, Mermaid diagrams, code, images, PDF files, and Markdown attachments.
-- Long-form reading, PDF/Markdown annotations, canvas search, minimap, and relationship graph.
-- Import Markdown folders and export canvas content or PNG images.
+- Read and annotate PDF and Markdown documents.
+- Use math, Mermaid diagrams, and local attachments. Import Markdown folders.
 
-### A study workspace beyond note-taking
+### Study and Career
 
-- Pomodoro and stopwatch focus modes linked to study or daily tasks.
-- Daily tasks, study boards, calendar and diary, countdowns, quick notes, and spaced review.
-- A standalone review-card library with scheduled due reviews, unlimited shuffled free review, and an on-demand organization mode, independent of canvas nodes.
-- Activity statistics, yearly progress, and task archives.
+- Study tasks, daily tasks, Pomodoro timers, and stopwatches.
+- Calendar, diary, countdowns, quick notes, and review cards.
+- The Career workspace shows daily usage, yearly heatmaps, and workspace usage trends, with date-range filters.
 
-### Personalization, templates, and optional AI
+### Appearance and AI
 
-- Soft gradients, immersive presets, and custom image backgrounds.
-- Reusable custom templates and preset decorative shapes.
-- Optional AI assistant for conversation, organizing content, and generating confirmed results onto the canvas.
-- AI endpoint, model, and API key are configured by the user; the key is stored locally.
+- Themes, custom backgrounds, templates, and style presets.
+- An optional AI assistant for chat, organizing content, and generating canvases. Configure your own endpoint, model, and API key.
 
 ## Screenshots
+
+### Notes: live Markdown rendering
+
+See math, lists, and Callouts as you edit. Use the outline to jump to a section.
+
+![Relatum Notes workspace with live Markdown rendering, math, a Callout, and an outline](docs/images/relatum-notes-live-preview.png)
+
+### Notes: browsing and search
+
+Find notes through recent files, tags, and search. The list shows titles, previews, and file paths.
+
+![Relatum Notes workspace with recent files, tags, and search controls](docs/images/relatum-notes-browser.png)
+
+### Career: usage statistics
+
+View daily usage, a yearly heatmap, and workspace usage trends. Filter by all records, 30 days, 90 days, this year, or a custom range.
+
+![Relatum Career workspace with daily usage, a yearly heatmap, and workspace usage trends](docs/images/relatum-career-usage.png)
+
+### More screenshots
 
 <table>
   <tr>
