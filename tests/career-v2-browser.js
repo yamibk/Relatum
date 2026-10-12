@@ -55,7 +55,9 @@ async function main(){
       await page.evaluate(()=>window.pywebview.api.toggle_maximize());await page.waitForTimeout(200);await page.evaluate(()=>window.pywebview.api.toggle_maximize());await page.waitForTimeout(500);
     }
     await page.locator('[data-start-workspace="career"]').click();
-    await page.waitForSelector('.career-report-shell',{state:'visible'});await page.waitForTimeout(1600);
+    await page.waitForSelector('.career-report-shell',{state:'visible'});await page.waitForTimeout(1800);
+    const assertHeroNumbers=async()=>assert(await page.evaluate(()=>[...document.querySelectorAll('.career-hero [data-career-number]')].every(node=>(node._numberText?.data??node.textContent)===node._format(Number(node.dataset.careerNumber)))),'hero numbers settle and do not replay');
+    await assertHeroNumbers();
     assert.equal(await page.locator('.career-chapter').count(),6);
     assert(await page.locator('.career-hero').innerText().then(t=>t.includes('笔记')));
     const initialRequests=requests.length;
@@ -73,6 +75,7 @@ async function main(){
     await jump('notes');
     assert(await liveTip.isHidden(),'scroll clears old chart feedback');
     for(const mode of ['30','90','year','all']){await page.locator(`.career-filter [data-mode="${mode}"]`).click();await page.waitForTimeout(130);}
+    await assertHeroNumbers();
     assert.equal(requests.length,initialRequests,'filters must not read a new snapshot or rescan');
     await page.locator('.career-filter [data-mode="custom"]').click();
     const from=page.locator('.career-custom-range input').nth(0),to=page.locator('.career-custom-range input').nth(1);
@@ -112,6 +115,7 @@ async function main(){
     await page.evaluate(()=>{document.body.dataset.startTheme='dark';});await page.waitForTimeout(300);await jump('overview');await page.screenshot({path:path.join(dataRoot,'dark.png')});
     await page.evaluate(()=>{window.RelatumI18n?.setLanguage?.('en');document.dispatchEvent(new CustomEvent('relatum:languagechange'));});await page.waitForTimeout(200);
     await page.setViewportSize({width:430,height:850});await page.waitForTimeout(350);
+    await assertHeroNumbers();
     assert(await page.evaluate(()=>document.querySelector('.career-scroll').scrollWidth<=document.querySelector('.career-scroll').clientWidth+2),'narrow report overflow');await page.screenshot({path:path.join(dataRoot,'narrow.png')});
     await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.body.dataset.startTheme='light';});
     // Finite probe is test-only and observes report idle, not unrelated hosts.
@@ -174,6 +178,14 @@ async function main(){
     await page.evaluate(()=>{document.body.dataset.startTheme='dark';});
     await page.waitForFunction(count=>RelatumCareerReport.report.inventory.notes.count===count,fixture.notes+1,{timeout:45000});
     const regenerated=JSON.parse(fs.readFileSync(path.join(dataRoot,'data','career-report-v2.json'),'utf8'));assert.equal(regenerated.inventory.notes.count,fixture.notes+1);
+    if(native){
+      await page.evaluate(()=>document.querySelector('.career-scroll').scrollTop=0);
+      await page.waitForFunction(()=>document.querySelector('[data-metric-key="note-words"]')?.dataset.counted==='1');
+      await page.evaluate(()=>window.pywebview.api.minimize());await page.waitForFunction(()=>document.documentElement.dataset.desktopMinimized==='1');
+      await assertHeroNumbers();
+      await page.evaluate(()=>window.pywebview.api.toggle_maximize());await page.waitForTimeout(200);await page.evaluate(()=>window.pywebview.api.toggle_maximize());await page.waitForTimeout(400);
+      await assertHeroNumbers();
+    }
     assert(!usage.flatMap(b=>b.intervals||[]).some(r=>r.category==='career'||r.category==='focus'||r.category==='diary'));
     assert.equal(errors.length,0,errors.join('\n'));
     const result={fixture,native,fallback,browserVersion:browser.version(),checksOnly:process.argv.includes('--checks-only'),perf,interaction,performanceFailures,graphIdle,idle,errors,checks:32,dataRoot};fs.writeFileSync(path.join(dataRoot,'acceptance.json'),JSON.stringify(result,null,2));process.stdout.write(JSON.stringify({result:path.join(dataRoot,'acceptance.json')})+'\n');

@@ -1,13 +1,20 @@
-import { el, tr, number, duration, label, dateKey, select, categories } from './data.js';
+import { el, tr, number, metricNumber, metricDuration, label, dateKey, select, categories } from './data.js';
+import { prepareNumber } from './motion.js';
 
 export function buildReport(report, context, actions) {
   const data=select(report,context.filter);context.data=data;
   const inventory=report.inventory, shell=el('div','career-report-shell'), charts=[];
   shell.dataset.i18nManaged='1';
   const stockLabel=tr('生成时规模','Inventory at generation');
-  function metric(name,value,format=number) {
+  function metric(key,name,value,format=metricNumber) {
     const item=el('div','career-hero-metric'), n=el('strong','',format(value));
-    if(value!=null){n.dataset.careerNumber=String(value);n._format=format;} item.append(n,el('span','',name));return item;
+    if(value!=null){
+      n.dataset.careerNumber=String(value);n.dataset.metricKey=key;n._format=format;
+      if(context.countedNumbers.has(key))n.dataset.counted='1';
+      else prepareNumber(n);
+      if(n.dataset.counted==='1')context.countedNumbers.add(key);
+    }
+    item.append(n,el('span','',name));return item;
   }
   function chapter(id,index,title,copy) {
     const node=el('section','career-chapter');node.id='career-'+id;node.dataset.chapter=id;
@@ -30,7 +37,7 @@ export function buildReport(report, context, actions) {
   hero.append(el('p','career-section-kicker','RELATUM · CAREER'),el('p','career-hero-date',new Date(report.generatedAt).toLocaleString()),el('h1','',tr('使用报告','Usage report')),
     el('p','career-hero-copy',tr('使用时长、内容规模与完成记录。','Usage time, content size and completed activities.')));
   if(report.history.demo)hero.append(el('p','career-demo-label',tr('验收数据 · 用于检查图表，不是实际使用记录','Demo data · for checking charts, not actual usage')));
-  const summary=el('div','career-hero-metrics');summary.append(metric(tr('使用时长','Usage time'),data.seconds,duration),metric(tr('活跃日期','Active days'),data.activeDays),metric(tr('最长连续活跃','Longest streak'),data.longest),metric(tr('笔记字词 · 生成时','Note words · at generation'),inventory.notes.wordCount));hero.append(el('div','career-hero-rule'),summary);shell.append(hero);
+  const summary=el('div','career-hero-metrics');summary.append(metric('usage',tr('使用时长','Usage time'),data.seconds,metricDuration(data.seconds)),metric('active-days',tr('活跃日期','Active days'),data.activeDays),metric('longest-streak',tr('最长连续活跃','Longest streak'),data.longest),metric('note-words',tr('笔记字词 · 生成时','Note words · at generation'),inventory.notes.wordCount));hero.append(el('div','career-hero-rule'),summary);shell.append(hero);
   const toolbar=el('nav','career-filter');toolbar.setAttribute('aria-label',tr('冻结数据的时间范围','Time range of the frozen report'));
   const modes=[['all',tr('全部记录','All records')],['30',tr('近 30 天','30 days')],['90',tr('近 90 天','90 days')],['year',tr('自然年','This year')],['custom',tr('自定义','Custom')]];
   modes.forEach(([mode,text])=>{const b=el('button','',text);b.type='button';b.dataset.mode=mode;b.setAttribute('aria-pressed',String(context.filter.mode===mode));b.addEventListener('click',()=>actions.filter({...context.filter,mode}));toolbar.append(b);});
@@ -60,7 +67,7 @@ export function buildReport(report, context, actions) {
   card(notes,'note-network',tr('笔记关系','Note links'),tr('同一笔记本内的双链和 Markdown 链接。','Wiki and Markdown links within each notebook.'),{type:'graph',inventory:true,network:inventory.notes.network},true);
 
   const canvas=chapter('canvas','03',tr('画布','Canvases'),tr('主画布与笔记内嵌画布分别计量。共享内嵌文件只计算一次。','Main and embedded canvases are counted separately. Shared embedded files are counted once.'));
-  const canvasMetrics=el('div','career-stat-strip');canvasMetrics.append(metric(tr('主画布 · 生成时','Main canvases · at generation'),inventory.canvas.count),metric(tr('内嵌文件 · 生成时','Embedded files · at generation'),inventory.embedded.count),metric(tr('有效内嵌引用','Valid embedded references'),inventory.embedded.references));canvas.node.insertBefore(canvasMetrics,canvas.grid);
+  const canvasMetrics=el('div','career-stat-strip');canvasMetrics.append(metric('canvas-count',tr('主画布 · 生成时','Main canvases · at generation'),inventory.canvas.count),metric('embedded-count',tr('内嵌文件 · 生成时','Embedded files · at generation'),inventory.embedded.count),metric('embedded-references',tr('有效内嵌引用','Valid embedded references'),inventory.embedded.references));canvas.node.insertBefore(canvasMetrics,canvas.grid);
   card(canvas,'canvas-types',tr('节点类型','Node types'),`${stockLabel} · ${number(inventory.canvas.nodes)} ${tr('节点','nodes')} · ${number(inventory.canvas.edges)} ${tr('连线','edges')}`,{type:'distribution',inventory:true,rows:Object.entries(inventory.canvas.kinds).map(([name,value])=>({name,value}))});
   card(canvas,'canvas-use',tr('常用画布','Frequently used canvases'),tr('改名与移动保留同一身份的历史。','Renaming and moving preserve identity and history.'),{type:'rank',unit:'seconds',rows:data.rankings('canvas')});
   card(canvas,'canvas-months',tr('画布每月时长','Monthly canvas usage'),tr('圆点面积表示每月时长，精确值见提示与明细。','Dot area represents monthly time; exact values appear in hints and details.'),{type:'matrix',category:'canvas',rows:[]},true);

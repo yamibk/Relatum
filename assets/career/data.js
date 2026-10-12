@@ -11,6 +11,13 @@ export function duration(seconds) {
   if (seconds == null) return '—';
   return seconds >= 3600 ? `${number(seconds / 3600)} ${tr('小时', 'h')}` : seconds >= 60 ? `${number(seconds / 60)} ${tr('分钟', 'min')}` : `${number(seconds)} ${tr('秒', 's')}`;
 }
+// Metrics count whole items; durations keep their final unit throughout counting.
+export const metricNumber = value => value == null ? '—' : number(Math.round(value));
+export function metricDuration(target) {
+  const divisor = target >= 3600 ? 3600 : target >= 60 ? 60 : 1;
+  const unit = divisor === 3600 ? tr('小时', 'h') : divisor === 60 ? tr('分钟', 'min') : tr('秒', 's');
+  return value => value == null ? '—' : `${number(value / divisor)} ${unit}`;
+}
 export function el(tag, className = '', text = '') {
   const node = document.createElement(tag); if (className) node.className = className;
   if (text !== '') node.textContent = text; return node;

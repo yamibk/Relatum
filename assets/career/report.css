@@ -523,15 +523,7 @@ body.start-page[data-start-theme="dark"] .career-panel.is-dark .career-bar-track
 [data-career-number] { font-variant-numeric: tabular-nums; transform-origin: left bottom; }
 /* The full value reserves its wrapped dimensions once. Only the absolute text changes,
    so counting cannot resize bars, metric columns or the long report's layout. */
-.career-number-text { position: relative; display: block; }
-.career-number-sizer { display: block; visibility: hidden; }
 .career-number-value { position: absolute; inset: 0; contain: size layout style; }
-[data-career-number].is-counting { animation: careerNumberSettle 760ms cubic-bezier(.16,1,.3,1) both; }
-@keyframes careerNumberSettle {
-  0% { opacity: .35; transform: translateY(10px) scale(.965); }
-  58% { opacity: 1; transform: translateY(-2px) scale(1.012); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
 .career-panel.is-dark .career-stat-strip { background: rgba(255,255,255,.15); }
 .career-panel.is-dark .career-stat-strip > div { background: transparent; }
 
@@ -629,7 +621,6 @@ body.start-page[data-start-theme="dark"] .career-panel.is-dark .career-bar-track
   .career-bar-fill { transform: scaleX(1) !important; transition: none !important; }
   .career-dot-matrix, .career-dot, .career-dot-band, .career-heatmap { opacity: 1 !important; transform: none !important; clip-path: inset(0) !important; transition: none !important; }
   .career-month-matrix-dot { transform: scale(var(--career-dot-scale, .4)) !important; transition: none !important; }
-  [data-career-number].is-counting { animation: none !important; }
   .career-generate, .career-regenerate { transition: none !important; }
 }
 .career-demo-label { color: var(--career-muted); font-size: 14px; }

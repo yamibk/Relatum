@@ -1,17 +1,17 @@
 import { el, tr, request } from './data.js';
 import { buildReport } from './chapters.js';
 import { mountChart } from './charts.js';
-import { scheduler, scrolling, animateNumbers } from './motion.js';
+import { scheduler, scrolling, animateNumbers, numberMotion } from './motion.js';
 
 export function createCareer(onReport) {
   const root=document.querySelector('.career-workspace'), scroll=root.querySelector('[data-role="career-scroll"]'),
     host=root.querySelector('[data-role="career-report"]'),entry=root.querySelector('[data-role="career-entry"]'),loading=root.querySelector('[data-role="career-loading"]');
-  const schedule=scheduler(), context={scheduler:schedule,filter:{mode:'all'},graphViews:new Map(),legendState:new Map(),presented:new Set(),heatmapYear:null};
+  const schedule=scheduler(), context={scheduler:schedule,filter:{mode:'all'},graphViews:new Map(),legendState:new Map(),presented:new Set(),countedNumbers:new Set(),heatmapYear:null};
   let report=null, initialized=null, active=false, sequence=0, charts=[], observer=null, graphObserver=null, viewportObserver=null,interactionAbort=null,renderVersion=0, reportVersion=0, job=null, generating=false, pollController=null, css=null, scroller=null;
   const mounted=new Map();
   const finishNumbers=new Set();
   const pendingReveals=new Map();
-  let entrance=null;
+  let entrance=null, numberStartAt=0;
   const visible=()=>active&&!document.hidden&&document.documentElement.dataset.desktopMinimized!=='1'&&!root.hidden;
   function styles() {
     if(!css)css=new Promise((resolve,reject)=>{const link=el('link');link.rel='stylesheet';link.href='career/report.css';link.onload=resolve;link.onerror=()=>{link.remove();css=null;reject(new Error(tr('生涯样式未能加载','Career styles could not load')));};document.head.append(link);});
@@ -74,7 +74,17 @@ export function createCareer(onReport) {
       for(const item of leaving)unmount(item.record,item.height);
       for(const item of entries){const record=lookup.get(item.target);if(!record){if(item.isIntersecting)reveal(item.target);else{clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);}}else if(item.isIntersecting)mount(record);}
     }
-    const reveals=[...host.querySelectorAll('.career-section-head,.career-panel,[data-career-number]')];
+    const reveals=[...host.querySelectorAll('.career-section-head,.career-panel')];
+    const numbers=[...host.querySelectorAll('[data-career-number]:not([data-counted])')];
+    function enterNumber(node){
+      if(node.dataset.counted==='1'||pendingReveals.has(node))return;
+      const check=()=>{pendingReveals.delete(node);if(!visible()||version!==renderVersion||!inView.has(node))return;
+        const delay=Math.min(numberMotion.entranceDelay,Math.max(0,numberStartAt-performance.now()));
+        if(scroller?.revealPaused||delay>0){pendingReveals.set(node,setTimeout(check,scroller?.revealPaused?80:delay));return;}
+        context.countedNumbers.add(node.dataset.metricKey);
+        finishNumbers.add(animateNumbers(node,schedule,()=>scroller?.revealPaused));
+      };check();
+    }
     function enterChart(target,record){
       if(inView.has(target)||pendingReveals.has(target))return;
       inView.add(target);
@@ -87,13 +97,17 @@ export function createCareer(onReport) {
       if(node.dataset.visible==='1'||pendingReveals.has(node))return;
       const check=()=>{pendingReveals.delete(node);if(!visible()||version!==renderVersion)return;
         if(scroller?.revealPaused){pendingReveals.set(node,setTimeout(check,80));return;}
-        node.dataset.visible='1';if(node.matches('[data-career-number]'))finishNumbers.add(animateNumbers(node,schedule,()=>scroller?.revealPaused));};check();
+        node.dataset.visible='1';};check();
     }
     if('IntersectionObserver' in window){
       viewportObserver=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
         for(const item of entries){const record=visualRecords.get(item.target);if(record){if(item.isIntersecting&&item.intersectionRatio>=.06)enterChart(item.target,record);else if(!item.isIntersecting){inView.delete(item.target);clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);mounted.get(record.host)?.leave?.();}}
+          else if(item.target.matches('[data-career-number]')){
+            if(item.isIntersecting&&item.intersectionRatio>=numberMotion.visibleRatio){inView.add(item.target);enterNumber(item.target);}
+            else{inView.delete(item.target);clearTimeout(pendingReveals.get(item.target));pendingReveals.delete(item.target);}
+          }
         }
-      },{root:scroll,threshold:[0,.06]});
+      },{root:scroll,threshold:[0,.06,numberMotion.visibleRatio]});numbers.forEach(node=>viewportObserver.observe(node));
       observer=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
         prepare(entries);
       },{root:scroll,rootMargin:'240px 0px',threshold:0});charts.filter(r=>r.spec.type!=='graph').forEach(r=>observer.observe(r.host));reveals.forEach(node=>observer.observe(node));
@@ -102,7 +116,7 @@ export function createCareer(onReport) {
       graphObserver=new IntersectionObserver(entries=>{if(!visible()||version!==renderVersion)return;
         prepare(entries);
       },{root:scroll,rootMargin:`${graphMargin}px 0px`,threshold:0});charts.filter(r=>r.spec.type==='graph').forEach(r=>graphObserver.observe(r.host));
-    }else{charts.forEach(mount);reveals.forEach(reveal);}
+    }else{charts.forEach(mount);reveals.forEach(reveal);numbers.forEach(node=>{inView.add(node);enterNumber(node);});}
     interactionAbort=new AbortController();
     const clearInteraction=()=>{for(const runtime of mounted.values())runtime.clearInteraction?.();context.tooltip?.hide();};
     scroll.addEventListener('scroll',clearInteraction,{passive:true,signal:interactionAbort.signal});window.addEventListener('blur',clearInteraction,{signal:interactionAbort.signal});window.addEventListener('resize',clearInteraction,{signal:interactionAbort.signal});
@@ -111,7 +125,7 @@ export function createCareer(onReport) {
     if(!visible()||!report)return;
     const saved=keepAnchor?anchor():null;
     stop();active=true;schedule.start();renderVersion++;
-    if(resetPresentation){context.graphViews.clear();context.presented.clear();}
+    if(resetPresentation){context.graphViews.clear();context.presented.clear();context.countedNumbers.clear();}
     const built=buildReport(report,context,{filter(value){context.filter=value;render(true);},generate});charts=built.charts;host.replaceChildren(built.shell);host.hidden=false;entry.hidden=true;loading.hidden=true;
     observe();restore(saved);syncEntry();if(job)poll(job);
   }
@@ -124,7 +138,10 @@ export function createCareer(onReport) {
     entrance?.cancel();entrance=null;scroll.style.opacity='0';
     await styles();await preload();
     if(!active||own!==sequence||document.hidden)return;
+    numberStartAt=Infinity;
     syncEntry();if(report){if(!host.childElementCount)render(false);else observe();}
+    // Start the delay with the visible fade, after report construction/layout.
+    numberStartAt=performance.now()+numberMotion.entranceDelay;
     scroll.style.removeProperty('opacity');
     if(visible()&&!matchMedia('(prefers-reduced-motion: reduce)').matches&&typeof scroll.animate==='function'){
       const animation=scroll.animate([{opacity:0},{opacity:1}],{duration:600,easing:'ease-out'});
@@ -174,6 +191,15 @@ export function createCareer(onReport) {
   document.addEventListener('relatum:start-workspacechange',event=>{active=event.detail.workspace==='career';if(!active)stop();else if(report){if(!host.childElementCount)render(false);else if(!observer)observe();}if(active&&job)poll(job);});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();else if(active){observe();if(job)poll(job);}});
   window.addEventListener('canvasdesktop:visibility',()=>{if(!visible())stop();else{observe();if(job)poll(job);}});
+  const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+  reducedMotion.addEventListener('change',()=>{
+    if(!reducedMotion.matches)return;
+    for(const finish of finishNumbers)finish();finishNumbers.clear();
+    host.querySelectorAll('[data-career-number]:not([data-counted])').forEach(node=>{
+      clearTimeout(pendingReveals.get(node));pendingReveals.delete(node);
+      context.countedNumbers.add(node.dataset.metricKey);animateNumbers(node,schedule,()=>false);
+    });
+  });
   document.addEventListener('relatum:languagechange',()=>{if(visible()&&report)render(true);else syncEntry();});
   const theme=new MutationObserver(()=>{if(visible()&&report)render(true);});theme.observe(document.body,{attributes:true,attributeFilter:['data-start-theme']});
   window.addEventListener('pagehide',()=>{stop();context.graphViews.clear();});

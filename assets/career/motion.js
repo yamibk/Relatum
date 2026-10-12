@@ -82,20 +82,41 @@ export function scrolling(scroll, schedule, canRun) {
   document.addEventListener('relatum:career-scroll-idle', event => { idleMs = Math.max(20,Math.min(160,event.detail.ms)); }, { signal });
   return { measure, stop, get isScrolling(){return paused;}, get revealPaused() { return prefs.pauseReveal && paused; }, destroy() { stop(); clearTimeout(idle); ro.disconnect(); abort.abort(); } };
 }
+export const numberMotion = Object.freeze({ duration: 1500, entranceDelay: 200, visibleRatio: .15 });
+
+// Prepare before mounting so an unseen metric never flashes its final value.
+export function prepareNumber(node) {
+  const target = Number(node.dataset.careerNumber), render = node._format;
+  if (node._numberText || node.dataset.counted === '1') return;
+  if (!render || !Number.isFinite(target) || target <= 0 || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    node.dataset.counted = '1';
+    return;
+  }
+  const reserve = document.createElement('span'); reserve.className = 'career-number-reserve'; reserve.textContent = render(target); reserve.setAttribute('aria-hidden', 'true');
+  const value = document.createElement('span'); value.className = 'career-number-value';
+  node._numberText = document.createTextNode(render(0)); value.append(node._numberText); node.replaceChildren(reserve, value);
+}
+
 export function animateNumbers(host, schedule, pause) {
   const finishes=[];
   const nodes=host.matches('[data-career-number]:not([data-counted])')?[host]:host.querySelectorAll('[data-career-number]:not([data-counted])');
   for (const node of nodes) {
-    node.dataset.counted = '1';
     const target = Number(node.dataset.careerNumber), render = node._format;
-    if (!render || matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
-    // Reserve the final text's width and keep one stable text node.
-    const reserve = document.createElement('span'); reserve.className = 'career-number-reserve'; reserve.textContent = render(target);
-    const value = document.createElement('span'); value.className = 'career-number-value'; const text = document.createTextNode(render(0)); value.append(text); node.replaceChildren(reserve,value);
-    finishes.push(()=>{schedule.remove(node);text.data=render(target);});
-    let elapsed = 0, last = 0;
-    schedule.add(node, now => { if (pause()) { last=now; return true; } elapsed += last ? Math.min(40,now-last) : 0; last=now;
-      const progress = Math.min(1,elapsed/720); text.data = render(target*(1-Math.pow(1-progress,4)));
+    prepareNumber(node);
+    node.dataset.counted = '1';
+    const text = node._numberText;
+    if (!render || !text) continue;
+    const write = value => { if (text.data !== value) text.data = value; };
+    const finish = () => { schedule.remove(node); write(render(target)); };
+    finishes.push(finish);
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { finish(); continue; }
+    let elapsed = 0, last = performance.now(), wasPaused = !!pause();
+    schedule.add(node, now => {
+      const paused = !!pause(), delta = Math.max(0, now-last); last=now;
+      if (paused || wasPaused) { wasPaused=paused; return true; }
+      elapsed += delta;
+      const progress = Math.min(1,elapsed/numberMotion.duration);
+      write(render(target*progress*progress*(3-2*progress)));
       return progress < 1;
     });
   }
