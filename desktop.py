@@ -893,6 +893,7 @@ def main() -> int:
         except Exception:
             pass
         try:
+            app.NOTES_STORE.close()
             server.server_close()
         except Exception:
             pass

@@ -304,9 +304,9 @@
       if (preloadJob && !preloadJob.transferred) preloadJob.dataController.abort();
       preloadJob = null;
     }
-    function invalidatePreload() {
-      cancelPreload();
-      scenes.forEach((scene, path) => { if (scene.prepared || scene.backgroundLayout) forgetScene(path); });
+    function invalidatePreload(expectedRoot) {
+      if (expectedRoot === undefined || preloadJob?.root === expectedRoot) cancelPreload();
+      scenes.forEach((scene, path) => { if ((expectedRoot === undefined || path === expectedRoot) && (scene.prepared || scene.backgroundLayout)) forgetScene(path); });
     }
     function validModel(result, expectedRoot) {
       return result?.root === expectedRoot && Array.isArray(result.nodes) && Array.isArray(result.edges);
@@ -631,7 +631,7 @@
     document.fonts?.addEventListener('loadingdone', fontsChanged);
     updateLanguage(); updateCounts();
     return { activate, deactivate, preload, invalidatePreload, isOpen: () => wanted, checkExternalChanges,
-      invalidate() { invalidatePreload(); return openJob ? Promise.resolve(false) : checkExternalChanges(); },
+      invalidate(expectedRoot) { invalidatePreload(expectedRoot); return openJob || expectedRoot !== undefined && scope !== expectedRoot ? Promise.resolve(false) : checkExternalChanges(); },
       setLanguage: updateLanguage, remap, prune,
       destroy() {
         if (destroyed) return;

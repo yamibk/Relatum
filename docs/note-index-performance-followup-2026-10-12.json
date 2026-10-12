@@ -1,0 +1,602 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "sqlite": "3.53.1",
+  "method": "real UTF-8 Markdown, 8 wiki links/note, code, tags, emoji, 1/1000 long documents; 40 warm samples; p95 nearest rank; 60 real atomic saves",
+  "runs": [
+    {
+      "count": 2000,
+      "layout": "mixed",
+      "catalog_ms": 735.68,
+      "first_build_ms": 12387.39,
+      "body_reads_first_build": 2062,
+      "restart_ms": 150.71,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 1.232,
+          "p95_ms": 2.85,
+          "max_ms": 3.322,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 1.084,
+          "p95_ms": 1.362,
+          "max_ms": 1.443,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.529,
+          "p95_ms": 0.595,
+          "max_ms": 0.624,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.339,
+          "p95_ms": 1.566,
+          "max_ms": 1.65,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 2.33,
+          "p95_ms": 2.797,
+          "max_ms": 3.035,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 6.373,
+          "p95_ms": 7.332,
+          "max_ms": 9.021,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 5.36,
+          "p95_ms": 5.814,
+          "max_ms": 5.95,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 5.355,
+          "p95_ms": 5.684,
+          "max_ms": 6.022,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 4.028,
+          "p95_ms": 4.297,
+          "max_ms": 4.587,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 1.364,
+        "p95_ms": 1.795,
+        "max_ms": 2.14,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.351,
+        "p95_ms": 1.584,
+        "max_ms": 2.116,
+        "samples": 60
+      },
+      "save_p95_increase_percent": -11.8,
+      "save_during_cleanup": {
+        "p50_ms": 1.479,
+        "p95_ms": 1.913,
+        "max_ms": 2.066,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": 6.6,
+      "logical_delete_1024_ms": 9.361,
+      "index_and_wal_mib": 24.31,
+      "memory": {
+        "working_mib": 60.9,
+        "peak_mib": 61.3
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 5150.2,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": true
+    },
+    {
+      "count": 10000,
+      "layout": "mixed",
+      "catalog_ms": 2327.69,
+      "first_build_ms": 62960.4,
+      "body_reads_first_build": 10062,
+      "restart_ms": 624.59,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 1.669,
+          "p95_ms": 1.959,
+          "max_ms": 2.17,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 1.735,
+          "p95_ms": 1.933,
+          "max_ms": 2.226,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.542,
+          "p95_ms": 0.625,
+          "max_ms": 0.731,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.437,
+          "p95_ms": 1.691,
+          "max_ms": 2.843,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 3.594,
+          "p95_ms": 3.861,
+          "max_ms": 5.058,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 19.357,
+          "p95_ms": 20.391,
+          "max_ms": 21.957,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 13.497,
+          "p95_ms": 14.568,
+          "max_ms": 16.857,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 13.415,
+          "p95_ms": 14.08,
+          "max_ms": 14.63,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 6.892,
+          "p95_ms": 7.84,
+          "max_ms": 8.37,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 1.202,
+        "p95_ms": 1.501,
+        "max_ms": 2.047,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.491,
+        "p95_ms": 2.092,
+        "max_ms": 2.265,
+        "samples": 60
+      },
+      "save_p95_increase_percent": 39.4,
+      "save_during_cleanup": {
+        "p50_ms": 1.386,
+        "p95_ms": 1.715,
+        "max_ms": 2.185,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": 14.3,
+      "logical_delete_1024_ms": 0.764,
+      "index_and_wal_mib": 100.67,
+      "memory": {
+        "working_mib": 76.2,
+        "peak_mib": 85.2
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 15326.09,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": false
+    },
+    {
+      "count": 50000,
+      "layout": "mixed",
+      "catalog_ms": 11735.9,
+      "first_build_ms": 312165.1,
+      "body_reads_first_build": 50062,
+      "restart_ms": 3934.64,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 5.068,
+          "p95_ms": 5.614,
+          "max_ms": 5.941,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 4.672,
+          "p95_ms": 5.572,
+          "max_ms": 5.907,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.527,
+          "p95_ms": 0.646,
+          "max_ms": 0.653,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.423,
+          "p95_ms": 1.884,
+          "max_ms": 2.01,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 4.682,
+          "p95_ms": 5.203,
+          "max_ms": 5.759,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 79.794,
+          "p95_ms": 84.19,
+          "max_ms": 87.872,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 62.559,
+          "p95_ms": 67.411,
+          "max_ms": 76.561,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 61.617,
+          "p95_ms": 64.39,
+          "max_ms": 64.568,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 25.898,
+          "p95_ms": 26.804,
+          "max_ms": 26.904,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 1.549,
+        "p95_ms": 2.338,
+        "max_ms": 2.794,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.459,
+        "p95_ms": 1.988,
+        "max_ms": 3.796,
+        "samples": 60
+      },
+      "save_p95_increase_percent": -15.0,
+      "save_during_cleanup": {
+        "p50_ms": 1.646,
+        "p95_ms": 1.796,
+        "max_ms": 5.723,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": -23.2,
+      "logical_delete_1024_ms": 60.771,
+      "index_and_wal_mib": 479.89,
+      "memory": {
+        "working_mib": 118.3,
+        "peak_mib": 191.7
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 134260.28,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": true
+    },
+    {
+      "count": 2000,
+      "layout": "flat",
+      "catalog_ms": 667.03,
+      "first_build_ms": 12678.83,
+      "body_reads_first_build": 2063,
+      "restart_ms": 151.75,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 1.199,
+          "p95_ms": 1.413,
+          "max_ms": 1.456,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 1.135,
+          "p95_ms": 1.259,
+          "max_ms": 1.278,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.54,
+          "p95_ms": 0.662,
+          "max_ms": 0.803,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.434,
+          "p95_ms": 1.607,
+          "max_ms": 1.729,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 2.143,
+          "p95_ms": 2.354,
+          "max_ms": 2.663,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 6.976,
+          "p95_ms": 7.503,
+          "max_ms": 7.756,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 5.931,
+          "p95_ms": 6.763,
+          "max_ms": 7.1,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 5.898,
+          "p95_ms": 7.746,
+          "max_ms": 8.852,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 5.987,
+          "p95_ms": 9.212,
+          "max_ms": 10.584,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 1.646,
+        "p95_ms": 2.273,
+        "max_ms": 2.409,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.472,
+        "p95_ms": 1.767,
+        "max_ms": 2.69,
+        "samples": 60
+      },
+      "save_p95_increase_percent": -22.3,
+      "save_during_cleanup": {
+        "p50_ms": 1.374,
+        "p95_ms": 1.554,
+        "max_ms": 2.071,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": -31.6,
+      "logical_delete_1024_ms": 12.103,
+      "index_and_wal_mib": 24.43,
+      "memory": {
+        "working_mib": 141.1,
+        "peak_mib": 247.1
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 5341.43,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": true
+    },
+    {
+      "count": 10000,
+      "layout": "flat",
+      "catalog_ms": 2219.0,
+      "first_build_ms": 58139.08,
+      "body_reads_first_build": 10062,
+      "restart_ms": 497.22,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 2.407,
+          "p95_ms": 4.569,
+          "max_ms": 4.994,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 2.315,
+          "p95_ms": 3.133,
+          "max_ms": 3.224,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.533,
+          "p95_ms": 0.648,
+          "max_ms": 0.701,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.394,
+          "p95_ms": 1.869,
+          "max_ms": 2.276,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 2.256,
+          "p95_ms": 2.693,
+          "max_ms": 3.214,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 19.155,
+          "p95_ms": 22.655,
+          "max_ms": 25.077,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 13.96,
+          "p95_ms": 17.672,
+          "max_ms": 19.253,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 14.022,
+          "p95_ms": 18.304,
+          "max_ms": 18.951,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 10.071,
+          "p95_ms": 16.192,
+          "max_ms": 19.534,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 1.297,
+        "p95_ms": 1.964,
+        "max_ms": 2.6,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.255,
+        "p95_ms": 1.436,
+        "max_ms": 1.685,
+        "samples": 60
+      },
+      "save_p95_increase_percent": -26.9,
+      "save_during_cleanup": {
+        "p50_ms": 1.556,
+        "p95_ms": 1.946,
+        "max_ms": 2.206,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": -0.9,
+      "logical_delete_1024_ms": 3.255,
+      "index_and_wal_mib": 95.67,
+      "memory": {
+        "working_mib": 135.6,
+        "peak_mib": 247.1
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 17499.86,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": true
+    },
+    {
+      "count": 50000,
+      "layout": "flat",
+      "catalog_ms": 10220.59,
+      "first_build_ms": 311464.37,
+      "body_reads_first_build": 50061,
+      "restart_ms": 3864.74,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 7.889,
+          "p95_ms": 10.481,
+          "max_ms": 10.741,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 7.869,
+          "p95_ms": 8.649,
+          "max_ms": 9.62,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.514,
+          "p95_ms": 0.69,
+          "max_ms": 0.816,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.371,
+          "p95_ms": 1.937,
+          "max_ms": 5.228,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 2.926,
+          "p95_ms": 3.903,
+          "max_ms": 4.221,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 84.772,
+          "p95_ms": 87.798,
+          "max_ms": 88.674,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 63.569,
+          "p95_ms": 68.106,
+          "max_ms": 68.263,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 63.933,
+          "p95_ms": 69.085,
+          "max_ms": 79.118,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 31.053,
+          "p95_ms": 33.371,
+          "max_ms": 33.842,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 2.784,
+        "p95_ms": 4.715,
+        "max_ms": 21.796,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.667,
+        "p95_ms": 1.968,
+        "max_ms": 2.767,
+        "samples": 60
+      },
+      "save_p95_increase_percent": -58.3,
+      "save_during_cleanup": {
+        "p50_ms": 1.595,
+        "p95_ms": 1.858,
+        "max_ms": 2.051,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": -60.6,
+      "logical_delete_1024_ms": 64.232,
+      "index_and_wal_mib": 451.48,
+      "memory": {
+        "working_mib": 132.7,
+        "peak_mib": 247.1
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 125681.36,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": true
+    }
+  ]
+}

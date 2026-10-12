@@ -142,13 +142,11 @@ class NoteCanvasStore:
             pass
         except OSError as error:
             raise NotesError("读取画布目录失败", status=500, code="read_failed") from error
-        references, names = {}, dict(files)
-        for note, document in self.notes._documents(strict=True).items():
-            for path in document["canvasTargets"]:
-                self._path(path)
-                key = self._key(path)
-                names.setdefault(key, path)
-                references.setdefault(key, set()).add(note)
+        self.notes._prepare_index(strict=True)
+        references, names = self.notes.index.canvas_references(with_names=True)
+        names.update(files)
+        for key in references:
+            self._path(key)
         items = [{"path": path, "name": Path(path).stem, "exists": key in files,
                   "referenceCount": len(references.get(key, ()))} for key, path in names.items()]
         items.sort(key=lambda item: (_natural_key(item["name"]), item["path"]))
@@ -269,7 +267,9 @@ class NoteCanvasStore:
             return {"path": relative, "revision": current["revision"], "rewritten": [], "renamed": {}}
         if self.notes._case_collision(source.parent, name, ignore=source):
             raise NotesError("已有同名画布", status=409, code="exists")
-        documents = self.notes._documents()
+        self.notes._prepare_index(strict=True)
+        documents = {note: self.notes.index.document(note)
+                     for note in self.notes.index.canvas_references(relative).get(self._key(relative), ())}
         updates, backups = {}, {}
         for note, document in documents.items():
             if not document.get("hasCanvasReferences", True):
@@ -315,6 +315,8 @@ class NoteCanvasStore:
                     target.rename(source)
             raise
         finally:
+            for note in written:
+                self.notes.sync.enqueue(note, priority=True)
             self.notes.invalidate()
         return {"path": destination, "revision": current["revision"], "rewritten": list(updates),
                 "renamed": {relative: destination},

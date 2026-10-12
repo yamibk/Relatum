@@ -441,6 +441,8 @@ NOTES_STORE = NotesStore(
     NOTES,
     atomic_text=_atomic_write_text,
     atomic_bytes=_atomic_write_bytes,
+    index_path=DATA / 'note-index.sqlite3',
+    background_index=True,
 )
 
 
@@ -7914,7 +7916,7 @@ def career_reports() -> CareerReports:
         store = usage_store()
         if _CAREER_INSTANCE is None or _CAREER_INSTANCE.usage is not store:
             _CAREER_INSTANCE = CareerReports(DATA / "career-report-v2.json", store, notes=NOTES, data=DATA,
-                                             canvas_candidates=_career_canvas_candidates, atomic_json=_atomic_write_json)
+                                             canvas_candidates=_career_canvas_candidates, atomic_json=_atomic_write_json, notes_store=NOTES_STORE)
         return _CAREER_INSTANCE
 
 
@@ -9371,6 +9373,8 @@ POST_WITHOUT_DATA_LOCK = {
     "/api/import-canvas-image",
     "/api/note-reveal",
     "/api/note-reveal-assets",
+    "/api/note-query",
+    "/api/note-index-activity",
 }
 
 # File lifecycle operations serialize with each other, but not with unrelated
@@ -9700,12 +9704,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 query = urllib.parse.parse_qs(parsed.query)
                 offset = int(query.get("offset", ["0"])[0])
                 limit = int(query.get("limit", ["50"])[0])
-                with NOTES_MUTATION_LOCK:
-                    store = NoteCanvasStore(NOTES_STORE)
-                    if parsed.path.endswith("/list"):
-                        result = store.list(query.get("filter", ["all"])[0], offset, limit)
-                    else:
-                        result = store.references(query.get("path", [""])[0], offset, limit)
+                store = NoteCanvasStore(NOTES_STORE)
+                if parsed.path.endswith("/list"):
+                    result = store.list(query.get("filter", ["all"])[0], offset, limit)
+                else:
+                    result = store.references(query.get("path", [""])[0], offset, limit)
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)
@@ -9727,13 +9730,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(500, {"error": f"读取画布失败：{err}"})
         if parsed.path == "/api/notes-tree":
             try:
-                with NOTES_MUTATION_LOCK:
-                    result = NOTES_STORE.tree()
-                    if urllib.parse.parse_qs(parsed.query).get("notebookSettings", [""])[0] == "1":
-                        result["notebookSettings"] = NOTES_STORE.notebook_settings()
-                    return self._send_json(200, result)
+                query = urllib.parse.parse_qs(parsed.query)
+                NOTES_STORE.graph_index_enabled = self.launch_profile.enabled('notes.graph')
+                NOTES_STORE.sync.activity(query.get('visible', ['1'])[0] == '1')
+                if query.get('reconcile', ['0'])[0] == '1' and NOTES_STORE.sync.active:
+                    NOTES_STORE.sync.scan()
+                result = NOTES_STORE.tree(json.loads(query.get('view', ['{}'])[0]))
+                if query.get("notebookSettings", [""])[0] == "1":
+                    result["notebookSettings"] = NOTES_STORE.notebook_settings()
+                return self._send_json(200, result)
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except (ValueError, sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
+        if parsed.path in ('/api/note-index-state', '/api/note-changes', '/api/note-children'):
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                if parsed.path == '/api/note-index-state':
+                    result = NOTES_STORE.index_status()
+                elif parsed.path == '/api/note-changes':
+                    result = NOTES_STORE.index_changes(int(query.get('since', ['0'])[0]))
+                else:
+                    result = NOTES_STORE.children(query.get('parent', [''])[0], int(query.get('offset', ['0'])[0]),
+                        int(query.get('limit', ['50'])[0]), query.get('sort', ['name-asc'])[0],
+                        int(query['generation'][0]) if 'generation' in query else None, query.get('folders', ['0'])[0] == '1')
+                return self._send_json(200, result)
+            except NotesError as err:
+                return self._send_notes_error(err)
+            except ValueError as err:
+                return self._send_json(400, {'error': str(err), 'code': 'invalid'})
+            except (sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
         if parsed.path == "/api/note":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -9744,10 +9771,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/note-links":
             q = urllib.parse.parse_qs(parsed.query)
             try:
-                with NOTES_MUTATION_LOCK:
-                    return self._send_json(200, NOTES_STORE.links(q.get("path", [""])[0]))
+                return self._send_json(200, NOTES_STORE.links(q.get("path", [""])[0]))
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except (sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
         if parsed.path == "/api/note-graph":
             # The parent notes feature also owns /api/note-; check this child
             # before scanning so the broad parent permission cannot enable it.
@@ -9755,19 +9783,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
             query = urllib.parse.parse_qs(parsed.query)
             try:
-                with NOTES_MUTATION_LOCK:
-                    result = NOTES_STORE.graph(query.get("root", [""])[0], query.get("signature", [""])[0])
+                result = NOTES_STORE.graph(query.get("root", [""])[0], query.get("signature", [""])[0])
                 return self._send_json(200, result)
             except NotesError as err:
                 return self._send_notes_error(err)
             except OSError:
                 return self._send_json(500, {"error": "读取笔记图谱失败", "code": "read_failed"})
+            except (sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
         if parsed.path == "/api/note-tags":
             try:
-                with NOTES_MUTATION_LOCK:
-                    return self._send_json(200, NOTES_STORE.tags())
+                return self._send_json(200, NOTES_STORE.tags())
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except (sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
         if parsed.path == "/api/note-asset":
             q = urllib.parse.parse_qs(parsed.query)
             try:
@@ -10022,10 +10052,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_note_create(body)
         if path == "/api/note-query":
             try:
-                with NOTES_MUTATION_LOCK:
-                    return self._send_json(200, NOTES_STORE.query(body))
+                return self._send_json(200, NOTES_STORE.query(body))
             except NotesError as err:
                 return self._send_json(err.status, {"error": str(err), "code": err.code})
+            except (sqlite3.Error, RuntimeError) as err:
+                return self._send_json(503, {'error': str(err), 'code': 'index_unavailable'})
+        if path == '/api/note-index-activity':
+            NOTES_STORE.graph_index_enabled = self.launch_profile.enabled('notes.graph')
+            NOTES_STORE.sync.activity(body.get('visible') is True)
+            return self._send_json(200, {'ok': True})
         if path == "/api/note-save":
             return self._api_note_save(body)
         if path == "/api/note-move":
@@ -10326,7 +10361,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # GET；这也让“创建并开始输入”不受后台保存队列影响。
                 result.update(NOTES_STORE.load(result["path"]))
                 _usage_event("notes", result["path"], Path(result["path"]).name, "created", fingerprint=result.get("revision"))
-            result["tree"] = NOTES_STORE.tree()
+            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
         except NotesError as err:
             return self._send_notes_error(err)
         except OSError as err:
@@ -10351,7 +10386,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_note_move(self, body: dict):
         try:
             result = NOTES_STORE.move(body.get("path", ""), body.get("destination", ""))
-            result["tree"] = NOTES_STORE.tree()
+            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
             _usage_remap("move", "notes", body.get("path", ""), result["path"], Path(result["path"]).name, prefix=True)
         except NotesError as err:
             return self._send_notes_error(err)
@@ -10363,8 +10398,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             normalized, targets = NOTES_STORE.trash_targets(body.get("path", ""))
             _move_paths_to_recycle_bin(targets)
-            NOTES_STORE.invalidate()
-            result = {"ok": True, "path": normalized, "tree": NOTES_STORE.tree()}
+            NOTES_STORE.removed(normalized)
+            result = {"ok": True, "path": normalized, "tree": NOTES_STORE.tree(body.get('_tree', {}))}
             _usage_remap("remove", "notes", normalized, prefix=True)
         except NotesError as err:
             return self._send_notes_error(err)
@@ -10405,7 +10440,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _api_note_import_commit(self, body: dict):
         try:
             result = NOTES_STORE.commit_import(body.get("token", ""))
-            result["tree"] = NOTES_STORE.tree()
+            result["tree"] = NOTES_STORE.tree(body.get('_tree', {}))
         except NotesError as err:
             return self._send_notes_error(err)
         except OSError as err:
@@ -12730,6 +12765,8 @@ def main() -> int:
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n  已停止")
+    finally:
+        NOTES_STORE.close()
     return 0
 
 

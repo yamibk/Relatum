@@ -384,7 +384,8 @@
     ],
     "windowed-list.js": [
       "canvas.library",
-      "canvas.review"
+      "canvas.review",
+      "notes"
     ],
     "start-shell.js": [
       "notes",

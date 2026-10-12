@@ -157,7 +157,10 @@ async function run(browser, mode) {
         const host = document.querySelector('[data-role="note-graph-panel"]');
         return Number(host?.querySelector('[data-role="graph-node-count"]')?.textContent) === count
           && Number(host?.querySelector('[data-role="graph-edge-count"]')?.textContent) === edges;
-      }, { count, edges });
+      }, { count, edges }).catch(async error => {
+        throw new Error(error.message + '\n' + JSON.stringify(await page.evaluate(() => ({ root: T.state.notebookRoot, tab: T.state.activeTab,
+          counts: document.querySelector('[data-role="note-graph-panel"]').textContent, folders: Array.from(T.state.entryIndex.keys()), error: document.querySelector('.note-toast')?.textContent }))));
+      });
     }
     async function resourcesReleased() {
       await page.waitForFunction(() => __graphProbe.contexts === 0 && __graphProbe.buffers === 0 && __graphProbe.programs === 0);

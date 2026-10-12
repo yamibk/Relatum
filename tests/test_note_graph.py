@@ -240,7 +240,7 @@ class NoteGraphTests(unittest.TestCase):
                     'root': '', 'signature': first['signature'], 'unchanged': True,
                 })
             self.assertEqual(parsed.call_count, 2)
-        self.assertTrue(all(not {'text', 'raw', 'content'} & document.keys() for document in self.store._document_cache.values()))
+        self.assertTrue(all(not {'text', 'raw', 'content'} & document.keys() for document in self.store.index.documents().values()))
 
     def test_changed_body_only_reparses_changed_note_and_topology_signature(self):
         self.note('Index.md', '[[Target]]')
@@ -256,7 +256,7 @@ class NoteGraphTests(unittest.TestCase):
         loaded = self.store.load('Index.md')
         with mock.patch('notes_library.graph_references', wraps=references) as parsed:
             self.store.save('Index.md', 'remove relationship', loaded['revision'])
-            parsed.assert_not_called()
+            self.assertEqual(parsed.call_count, 1, 'save updates the shared index immediately')
             third = self.store.graph('')
             self.assertEqual(parsed.call_count, 1)
         self.assertNotEqual(first['signature'], third['signature'])
@@ -271,12 +271,18 @@ class NoteGraphTests(unittest.TestCase):
         self.store.graph('CustomNotebook/Two')
         (self.store.root / 'CustomNotebook/One/A.md').unlink()
         self.assertEqual(self.store.graph('CustomNotebook/One')['nodes'], [])
-        self.assertNotIn('CustomNotebook/One/A.md', self.store._document_cache)
-        self.assertIn('Default.md', self.store._document_cache)
-        self.assertIn('CustomNotebook/Two/B.md', self.store._document_cache)
+        self.assertNotIn('CustomNotebook/One/A.md', self.store.index.documents())
+        self.assertIn('Default.md', self.store.index.documents())
+        self.assertIn('CustomNotebook/Two/B.md', self.store.index.documents())
+        cached = dict(self.store._graph_cache)
+        size = self.store._graph_cache_bytes
         self.store.invalidate()
-        self.assertEqual(self.store._graph_cache, {})
-        self.assertEqual(self.store._graph_cache_bytes, 0)
+        self.assertEqual(self.store._graph_cache, cached, 'reconciliation does not evict unchanged notebooks')
+        self.assertEqual(self.store._graph_cache_bytes, size)
+        self.store.removed('CustomNotebook/One')
+        self.assertNotIn('CustomNotebook/One', self.store._graph_cache)
+        self.assertIn('CustomNotebook/Two', self.store._graph_cache)
+        self.assertEqual(self.store._graph_cache_bytes, sum(entry[2] for entry in self.store._graph_cache.values()))
 
     def test_graph_cache_count_total_budget_and_oversized_responses(self):
         for index in range(26):
@@ -392,7 +398,8 @@ assert 'note_graph' in sys.modules
         self.store.graph('')
         self.assertEqual(target.read_bytes(), raw)
         self.assertEqual(target.stat().st_mtime_ns, before)
-        self.assertFalse((self.store.root.parent / 'data').exists())
+        self.assertTrue((self.store.root.parent / 'data' / 'note-index.sqlite3').exists())
+        self.assertFalse((self.store.root.parent / 'data' / 'note-notebooks.json').exists())
 
 
 if __name__ == '__main__':

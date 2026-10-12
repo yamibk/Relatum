@@ -1,0 +1,107 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "sqlite": "3.53.1",
+  "method": "real UTF-8 Markdown, 8 wiki links/note, code, tags, emoji, 1/1000 long documents; 40 warm samples; p95 nearest rank; 60 real atomic saves",
+  "runs": [
+    {
+      "count": 10000,
+      "layout": "mixed",
+      "catalog_ms": 2847.46,
+      "first_build_ms": 64404.52,
+      "body_reads_first_build": 10062,
+      "restart_ms": 580.58,
+      "body_reads_restart": 0,
+      "query_filesystem_scans": 0,
+      "query_body_reads": 0,
+      "queries": {
+        "directory": {
+          "p50_ms": 1.629,
+          "p95_ms": 1.867,
+          "max_ms": 2.242,
+          "samples": 40
+        },
+        "directory_modified": {
+          "p50_ms": 1.614,
+          "p95_ms": 1.843,
+          "max_ms": 1.96,
+          "samples": 40
+        },
+        "tags": {
+          "p50_ms": 0.546,
+          "p95_ms": 0.639,
+          "max_ms": 0.733,
+          "samples": 40
+        },
+        "backlinks": {
+          "p50_ms": 1.344,
+          "p95_ms": 1.485,
+          "max_ms": 1.608,
+          "samples": 40
+        },
+        "regular_rare": {
+          "p50_ms": 2.932,
+          "p95_ms": 3.773,
+          "max_ms": 4.217,
+          "samples": 40
+        },
+        "regular_common": {
+          "p50_ms": 21.151,
+          "p95_ms": 29.908,
+          "max_ms": 31.744,
+          "samples": 40
+        },
+        "one_character": {
+          "p50_ms": 15.385,
+          "p95_ms": 17.125,
+          "max_ms": 18.023,
+          "samples": 40
+        },
+        "two_characters": {
+          "p50_ms": 15.252,
+          "p95_ms": 17.273,
+          "max_ms": 18.179,
+          "samples": 40
+        },
+        "filtered": {
+          "p50_ms": 7.957,
+          "p95_ms": 8.964,
+          "max_ms": 9.055,
+          "samples": 40
+        }
+      },
+      "save_baseline": {
+        "p50_ms": 1.736,
+        "p95_ms": 2.579,
+        "max_ms": 3.399,
+        "samples": 60
+      },
+      "save_during_build": {
+        "p50_ms": 1.351,
+        "p95_ms": 1.509,
+        "max_ms": 1.796,
+        "samples": 60
+      },
+      "save_p95_increase_percent": -41.5,
+      "save_during_cleanup": {
+        "p50_ms": 1.371,
+        "p95_ms": 1.572,
+        "max_ms": 2.315,
+        "samples": 60
+      },
+      "cleanup_save_p95_increase_percent": -39.0,
+      "logical_delete_1024_ms": 0.885,
+      "index_and_wal_mib": 100.78,
+      "memory": {
+        "working_mib": 67.1,
+        "peak_mib": 76.8
+      },
+      "delete_recreate_cycles": 10,
+      "cleanup_and_cycles_ms": 11826.81,
+      "free_pages": 0,
+      "integrity": "ok",
+      "latency_targets_met": true,
+      "save_targets_met": true
+    }
+  ]
+}

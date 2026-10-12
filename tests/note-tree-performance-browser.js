@@ -117,7 +117,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
         return {
           ok, indexBuilds, orderSignatures, entriesReplaced: previousEntries !== state.entries,
           latestEntriesIndexed: state.entryIndex.size === flat.length && flat.every(entry => state.entryIndex.get(entry.path) === entry),
-          metadataMatches: state.treeMetadataSignature === JSON.stringify(flat.map(entry => [entry.path, entry.modifiedNs, entry.size])),
+          metadataMatches: state.treeMetadataSignature === JSON.stringify(flat.map(entry => [entry.path, entry.modifiedNs, entry.size, entry.revision])),
           orderMatches: state.renderedOrder === test.treeOrderSignature(state.entries),
           reusedRows: rows.length === previousRows.length && rows.every((row, index) => row === previousRows[index]),
           currentPreserved: state.current === previousCurrent,
