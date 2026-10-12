@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-11。
+> 最后按源码校准：2026-10-12。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -61,6 +61,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 深色主题的学习目标树与独立树状页路线、附加依赖线、视觉关系线和箭头统一为纯白；附加依赖保留虚线，删除预览保留红色，入退场仍沿用透明度过渡。
 
 ## 3. 源码地图
+
+笔记工作区的可见生命周期同时检查 `document.hidden` 与桌面壳已有的 `desktopMinimized`，`visibilitychange` 和 `canvasdesktop:visibility` 共用幂等交接。原生最小化即使保留浏览器焦点和可见状态，也立即释放图谱标签、监听及 GPU/context，暂停目录/图谱检查、正文预读、双链刷新、大纲和字数计算；已开始的保存及候选输入交接继续完成。请求返回核对可见状态及操作身份，最小化前的目录、正文、链接、浏览和图谱响应不能在还原后改投或重建资源。还原恢复当前正文/浏览、大纲及按本缓存的图谱坐标和镜头，不重播生长；重复通知不重复初始化，离开的工作区不被还原事件重新激活。沿用原 API、缓存预算和持久化格式。
 
 笔记图谱入口保持普通图标外观，图谱标签激活时不显示额外的灰底选中提示；保留原有悬停反馈与无障碍展开状态。
 
@@ -851,6 +853,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
 
 ## 11. 验证清单
+
+笔记可见生命周期使用 `node tests/note-visibility-browser.js`，配置已有 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`；覆盖完整、仅笔记且禁用内嵌画布、禁用图谱及 Canvas2D 回退。另设 `RELATUM_WEBVIEW_PYTHON` 为已有 pywebview 环境，运行 `node tests/note-visibility-browser.js --webview2` 验真实原生最小化/还原。400 节点合成库和浏览器配置均在一次性目录，检查零 GPU 残留、零新增绘制/读取、未完成布局与镜头恢复、重复通知、迟到响应、预读取消、大纲/浏览/阅读恢复、草稿保存和 Chromium 原生候选交接；不替代真实微软拼音候选窗人工验收。不重新构建或改写发布包。继续回归笔记图谱、大纲、视图状态及资源生命周期的默认/按需两种配置。
 
 笔记图谱验证入口为 `python -m unittest tests.test_note_graph tests.test_notes_library tests.test_note_notebooks tests.test_note_canvas_browser tests.test_note_canvases`、`node tests/note-graph-browser.js`、`node tests/note-graph-performance-browser.js`、`node tests/graph-instance-cache-regression.js` 与 `node tests/graph-instance-cache-browser.js`。浏览器沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，仅创建一次性库或合成数据，`RELATUM_ARTIFACT_DIR` 保存截图；性能脚本可追加临时 JSON 报告路径，`--regression-only` 验场景和预加载缓存、预算与迟到响应。`node tests/note-graph-preload-browser.js --regression-only` 覆盖正常可操作启动、总/子开关、恢复默认、禁用标签恢复、交互/繁重任务暂停、切本跟随、Worker 释放、准备布局直接打开、脚本/API 失败、独立请求超时和取消；`--benchmark-only` 每种规模和开关各三轮测首帧等待/启动/闲置 JS 堆。`RELATUM_GRAPH_RELEASE` 指向隔离新包验真实启动器与准备期间窗口关闭。继续覆盖标签去重、快捷键、关闭和重启恢复、隐藏恢复不创建引擎、各本视角、右栏偏好、长标题、保存失败与原生预编辑、脚本/扫描/节点读取失败重试、外部变化、改名/删除、快速切本、离场与页面隐藏，以及 WebGL/Canvas2D/着色器失败。150/1500/3000 节点按 DPR 1/2 对比原浮窗面积和实际标签页布局，记录帧间隔、样式、长任务及 GPU 上传，断言相机零实例上传、稳定零 RAF、切页释放及缓存上限。继续回归原 `graph-presolve-regression.js`、`resource-lifecycle-browser.js`、功能裁剪、笔记本和工作区。以上是后续验证方式；本次空闲预加载修改按用户要求未运行任何测试或构建。真实微软拼音仍需隔离人工验收；同机几何或面积对照不能宣称整宿主帧率提升。
 

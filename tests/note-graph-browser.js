@@ -190,7 +190,9 @@ async function run(browser, mode) {
         let geometryUnchanged = true;
         for (const open of [true, false]) {
           T.setSideOpen(open);
-          for (let frame = 0; frame < 20; frame++) await new Promise(resolve => requestAnimationFrame(() => {
+          // Cover the 230ms transition and 270ms fallback on high-refresh hosts too.
+          const until = performance.now() + 300;
+          for (let frame = 0; frame < 20 || performance.now() < until; frame++) await new Promise(resolve => requestAnimationFrame(() => {
             geometryUnchanged &&= canvas.getBoundingClientRect().width === start.width
               && canvas.width === start.pixels[0] && canvas.height === start.pixels[1];
             resolve();

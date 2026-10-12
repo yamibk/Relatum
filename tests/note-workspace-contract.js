@@ -40,7 +40,7 @@ assert(notes.includes('EXTERNAL_SYNC_DELAYS = [2000, 4000, 8000, 16000, 30000]')
   'foreground Notes sync needs a bounded two-to-thirty-second retry schedule');
 assert(notes.includes('function triggerExternalSync(options)') && notes.includes('externalSyncChain: Promise.resolve(true)'),
   'automatic filesystem checks must stay serialized');
-assert(notes.includes('if (!state.active || document.hidden || state.imageTextBusy || noteMovePromise) return;'),
+assert(notes.includes('if (!noteWorkspaceVisible() || state.imageTextBusy || noteMovePromise) return;'),
   'automatic filesystem checks must stop outside the visible Notes workspace');
 assert(notes.includes('if (structureChanged) scheduleDocumentPrefetch();'),
   'unchanged polling must not repeatedly prefetch documents');

@@ -3,6 +3,11 @@
   'use strict';
   const root = document.querySelector('[data-start-workspace-panel="notes"]');
   if (!root) return;
+  function notePageVisible() {
+    return !document.hidden && document.documentElement.dataset.desktopMinimized !== '1';
+  }
+  function noteWorkspaceVisible() { return state.active && !root.hidden && notePageVisible(); }
+  let noteVisibilityEpoch = 0, notePageWasVisible = notePageVisible();
   const $ = (selector, scope) => (scope || root).querySelector(selector);
   const treeEl = $('[data-role="note-tree"]');
   const sidebarScroll = $('[data-role="note-sidebar-scroll"]');
@@ -112,8 +117,8 @@
   function isGraphTab(tab) { return tab === GRAPH_TAB; }
   function isSpecialTab(tab) { return isGraphTab(tab) || isBlankTab(tab); }
   function graphContentActive() {
-    return graphEnabled() && graphPresentation && isGraphTab(state.activeTab) && state.active && !root.hidden
-      && !document.hidden && !browserResultsActive();
+    return graphEnabled() && graphPresentation && isGraphTab(state.activeTab) && noteWorkspaceVisible()
+      && !browserResultsActive();
   }
   function effectiveSideMode() { return graphPresentation ? 'notebooks' : state.sideMode; }
   function setGraphPresentation(show) {
@@ -174,7 +179,7 @@
       if (cached !== state.current && notebookRootForPath(cached.path) === scope
           && hasPendingEdits(cached) && !(await flushSave(cached))) return false;
     }
-    return state.active && !document.hidden && scope === state.notebookRoot;
+    return noteWorkspaceVisible() && scope === state.notebookRoot;
   }
   async function loadNoteGraph(settings = {}) {
     if (!settings.waitForIdle) { noteGraphForeground = true; window.RelatumBackgroundPreparation?.wake(); }
@@ -208,7 +213,7 @@
   }
   async function activateGraphTab(options) {
     if (!graphEnabled()) return false;
-    if (!state.active || document.hidden) return false;
+    if (!noteWorkspaceVisible()) return false;
     if (graphPresentation && !browserResultsActive()) {
       await resumeNoteGraph();
       if (!options?.noFocus && graphContentActive()) graphHost?.focus({ preventScroll: true });
@@ -219,7 +224,7 @@
     try {
       await loadNoteGraph();
       if (!(await prepareNoteGraph())) return false;
-      if (sequence !== noteGraphIntentSequence || !state.active || document.hidden || scope !== state.notebookRoot
+      if (sequence !== noteGraphIntentSequence || !noteWorkspaceVisible() || scope !== state.notebookRoot
           || state.activeTab !== previousTab || state.current !== previousDocument) return false;
       if (noteBrowser) noteBrowser.showDocument();
       if (!state.tabs.includes(GRAPH_TAB)) state.tabs.push(GRAPH_TAB);
@@ -334,13 +339,14 @@
     updateBrowserToggle();
     if (noteBrowser) noteBrowser.setNavigationOpen(enabled);
     if (!enabled) { setBrowserDisclosure(false); return; }
+    if (!noteWorkspaceVisible()) return;
     try {
       const browser = await loadNoteBrowser();
-      if (sequence !== browserSequence || !state.active || document.hidden) return;
+      if (sequence !== browserSequence || !noteWorkspaceVisible()) return;
       browser.activate({ navigationOpen: true }); setBrowserDisclosure(true);
       if (tag) await browser.browseTag(tag);
     } catch (error) {
-      if (sequence !== browserSequence || !state.active) return;
+      if (sequence !== browserSequence || !noteWorkspaceVisible()) return;
       browserIntent = false; root.classList.remove('note-browser-mode'); setBrowserDisclosure(false);
       if (noteBrowser) noteBrowser.setNavigationOpen(false);
       try { localStorage.setItem('canvas:noteSidebarView:v1', 'tree'); } catch (storageError) {}
@@ -1171,7 +1177,7 @@
   }
 
   function outlineVisible() {
-    return !!outlineContent && state.active && !root.hidden && !document.hidden
+    return !!outlineContent && noteWorkspaceVisible()
       && state.sideMode === 'outline' && root.classList.contains('links-overlay-open');
   }
   function outlineDocument() {
@@ -1825,18 +1831,18 @@
     statisticsFrame = 0; statisticsJob = null;
   }
   function scheduleStatistics(target, delay) {
-    if (!target || target.countedGeneration === target.editGeneration || !state.active || document.hidden) return;
+    if (!target || target.countedGeneration === target.editGeneration || !noteWorkspaceVisible()) return;
     if (statisticsJob && statisticsJob.target === target && statisticsJob.generation === target.editGeneration) return;
     cancelStatistics();
     const job = statisticsJob = { target, generation: target.editGeneration, index: 0, count: 0, characters: 0,
       inWord: false, joiner: false, line: '', lineIndex: 0, unicodeWord: /[\p{L}\p{N}]/u };
     statisticsTimer = setTimeout(() => {
       statisticsTimer = 0;
-      if (statisticsJob !== job || target !== state.current || !state.active || document.hidden || editorInputPending()) { cancelStatistics(); return; }
+      if (statisticsJob !== job || target !== state.current || !noteWorkspaceVisible() || editorInputPending()) { cancelStatistics(); return; }
       job.source = editorSnapshot().value;
       const step = () => {
         statisticsFrame = 0;
-        if (statisticsJob !== job || target !== state.current || target.editGeneration !== job.generation || !state.active || document.hidden) return;
+        if (statisticsJob !== job || target !== state.current || target.editGeneration !== job.generation || !noteWorkspaceVisible()) return;
         const deadline = performance.now() + 4;
         let processed = 0;
         while (job.lineIndex < job.line.length || job.index < job.source.length) {
@@ -2272,7 +2278,7 @@
   }
   function scheduleDocumentPrefetch() {
     clearTimeout(state.prefetchTimer);
-    if (!state.active || document.hidden || noteMovePromise) return;
+    if (!noteWorkspaceVisible() || noteMovePromise) return;
     state.prefetchTimer = setTimeout(runDocumentPrefetch, 350);
   }
   function stopDocumentPrefetch() {
@@ -2281,7 +2287,7 @@
   }
   async function runDocumentPrefetch() {
     state.prefetchTimer = 0;
-    if (prefetchRunning || !state.active || document.hidden || editorInputPending() || noteMovePromise) return;
+    if (prefetchRunning || !noteWorkspaceVisible() || editorInputPending() || noteMovePromise) return;
     const epoch = prefetchEpoch;
     const viewport = sidebarScroll.getBoundingClientRect();
     const paths = Array.from(treeEl.querySelectorAll('.note-tree-row')).filter((row) => {
@@ -2293,11 +2299,11 @@
     prefetchRunning = true;
     try {
       for (const entry of candidates) {
-        if (epoch !== prefetchEpoch || !state.active || document.hidden || editorInputPending()) break;
+        if (epoch !== prefetchEpoch || !noteWorkspaceVisible() || editorInputPending()) break;
         if (state.documentCache.has(entry.path)) continue;
         try {
           const data = await fetchDocument(entry.path);
-          if (epoch === prefetchEpoch && state.active && !document.hidden && !state.documentCache.has(entry.path)
+          if (epoch === prefetchEpoch && noteWorkspaceVisible() && !state.documentCache.has(entry.path)
               && findEntry(entry.path)?.modifiedNs === entry.modifiedNs) cacheDocument(makeDocument(data));
         } catch (error) {}
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2553,8 +2559,10 @@
   async function refreshTree(announce, options) {
     if (noteMovePromise) return false;
     const seq = ++state.refreshSeq; if (!state.initialized) treeEl.textContent = tr('loading');
+    const current = () => seq === state.refreshSeq && !noteMovePromise
+      && (options?.externalSeq === undefined || options.externalSeq === state.externalSeq && noteWorkspaceVisible());
     try {
-      const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (seq !== state.refreshSeq || noteMovePromise) return false;
+      const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (!current()) return false;
       const entries = Array.isArray(result.entries) ? result.entries : [];
       const flat = flattenEntries(entries, []);
       const signature = JSON.stringify(flat.map((entry) => [entry.path, entry.modifiedNs, entry.size]));
@@ -2595,6 +2603,7 @@
       return true;
     }
     catch (error) {
+      if (!current()) return false;
       if (seq === state.refreshSeq && !state.treeRendered) treeEl.textContent = error.message || tr('readFailed');
       if (!(options && options.silentErrors)) showToast(error.message || tr('readFailed'), 'error');
       return false;
@@ -2614,12 +2623,13 @@
     list(outgoingEl, outgoing, 'outgoing'); list(backlinksEl, backlinks, 'backlink');
   }
   async function ensureLinks() {
-    if (!state.current) return false;
+    if (!state.current || !noteWorkspaceVisible()) return false;
     const documentState = state.current; const path = documentState.path; const revision = documentState.revision;
+    documentState.linksRefreshNeeded = true;
     const seq = ++state.linksSeq;
     try {
       const result = await request('/api/note-links?path=' + encodeURIComponent(path));
-      if (seq !== state.linksSeq || state.current !== documentState || documentState.path !== path) return false;
+      if (seq !== state.linksSeq || !noteWorkspaceVisible() || state.current !== documentState || documentState.path !== path) return false;
       documentState.outgoing = result.outgoing || []; documentState.backlinks = result.backlinks || [];
       if (documentState.revision === revision) documentState.linksRefreshNeeded = false;
       renderLinks(); return true;
@@ -2630,7 +2640,7 @@
     state.linksRefreshTimer = 0;
   }
   function linksRefreshVisible(documentState) {
-    return !!documentState && state.current === documentState && state.active && !document.hidden
+    return !!documentState && state.current === documentState && noteWorkspaceVisible()
       && !state.linksRefreshSuspended && !state.openingPath && !noteMovePromise
       && state.sideMode === 'links' && root.classList.contains('links-overlay-open');
   }
@@ -3656,20 +3666,22 @@
   async function importDataTransferNow(transfer, destination) { if (destination === null || state.importRunning) return; state.importRunning = true; let token = ''; try { const all = await filesFromTransfer(transfer); const accepted = all.filter((item) => /\.md$/i.test(item.path) || IMAGE_RE.test(item.path)); const skipped = all.length - accepted.length; if (!accepted.length) return; token = (await post('/api/note-import-begin', { destination: destination || '' })).token; for (const item of accepted) await post('/api/note-import-upload', { token, path: item.path.replace(/\\/g, '/'), mediaType: item.file.type || '', data: await fileToBase64(item.file) }); const result = await post('/api/note-import-commit', { token }); token = ''; state.entries = result.tree && result.tree.entries || state.entries; renderTree(); if (result.notes && result.notes.length) { showToast(tr('imported', { count: result.notes.length })); await openNote(result.notes[0]); } if (skipped) setTimeout(() => showToast(tr('unsupportedSkipped', { count: skipped }), 'warning'), 350); } catch (error) { showToast(error.message || tr('importFailed'), 'error'); } finally { if (token) post('/api/note-import-abort', { token }).catch(() => {}); state.importRunning = false; } }
 
   async function checkExternalChanges(announce, options) {
-    if (!state.active || state.imageTextBusy || noteMovePromise) return false;
+    if (!noteWorkspaceVisible() || state.imageTextBusy || noteMovePromise) return false;
     if (state.recycleRunning) return true;
     const settings = options || {};
     const seq = ++state.externalSeq;
+    const current = () => seq === state.externalSeq && noteWorkspaceVisible();
     const path = state.current && state.current.path;
     const generation = state.editGeneration;
     const revision = state.current && state.current.revision;
     const previousModifiedNs = state.current && state.current.treeModifiedNs || 0;
     const previousSize = state.current && state.current.treeSize || 0;
-    const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors, background: !!settings.background });
-    if (!refreshed) return false;
+    const refreshed = await refreshTree(announce, { silentErrors: !!settings.silentErrors, background: !!settings.background, externalSeq: seq });
+    if (!refreshed || !current()) return false;
     await noteBrowser?.checkExternalCanvases();
+    if (!current()) return false;
     await noteGraph?.checkExternalChanges();
-    if (state.imageTextBusy || seq !== state.externalSeq || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
+    if (!current() || state.imageTextBusy || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
     if (!entry) return true;
     const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size;
@@ -3677,7 +3689,7 @@
     if (state.saveRunning || hasPendingEdits() || window.RelatumNoteCanvas?.dirty) return true;
     try {
       const disk = await request('/api/note?path=' + encodeURIComponent(path));
-      if (state.imageTextBusy || seq !== state.externalSeq || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
+      if (!current() || state.imageTextBusy || !state.current || state.current.path !== path || state.editGeneration !== generation || state.current.revision !== revision || hasPendingEdits()) return true;
       if (disk.revision !== revision) applyDocument(disk, { preserveViewState: true });
       else {
         state.current.treeModifiedNs = entry.modifiedNs || 0;
@@ -3686,8 +3698,9 @@
       }
       return true;
     } catch (error) {
+      if (!current()) return false;
       if (isMissingError(error)) {
-        await refreshTree(false, { silentErrors: true });
+        await refreshTree(false, { silentErrors: true, externalSeq: seq });
         return true;
       }
       if (announce) showToast(error.message || tr('readFailed'), 'error');
@@ -3705,11 +3718,11 @@
   function resetExternalSyncActivity() {
     const slowed = state.externalSyncUnchanged > 0;
     state.externalSyncUnchanged = 0;
-    if (state.active && !document.hidden && (slowed || !state.externalSyncTimer)) scheduleExternalSync();
+    if (noteWorkspaceVisible() && (slowed || !state.externalSyncTimer)) scheduleExternalSync();
   }
   function scheduleExternalSync(delay) {
     stopExternalSync();
-    if (!state.active || document.hidden || state.imageTextBusy || noteMovePromise) return;
+    if (!noteWorkspaceVisible() || state.imageTextBusy || noteMovePromise) return;
     if (state.assetCleanupBusy) return;
     state.externalSyncTimer = setTimeout(() => {
       state.externalSyncTimer = 0;
@@ -3718,21 +3731,22 @@
   }
   function triggerExternalSync(options) {
     const settings = options || {};
+    const visibilityEpoch = noteVisibilityEpoch;
     stopExternalSync();
     let ran = false;
     const task = state.externalSyncChain.catch(() => false).then(async () => {
-      if (!state.active || state.imageTextBusy || state.assetCleanupBusy || noteMovePromise || (settings.background && document.hidden)) return false;
+      if (visibilityEpoch !== noteVisibilityEpoch || !noteWorkspaceVisible() || state.imageTextBusy || state.assetCleanupBusy || noteMovePromise) return false;
       ran = true;
       return checkExternalChanges(!!settings.announce, settings);
     });
     state.externalSyncChain = task;
     task.then((ok) => {
-      if (!ran) return;
+      if (!ran || visibilityEpoch !== noteVisibilityEpoch) return;
       state.externalSyncFailures = ok ? 0 : Math.min(EXTERNAL_SYNC_DELAYS.length, state.externalSyncFailures + 1);
     }, () => {
-      if (ran) state.externalSyncFailures = Math.min(EXTERNAL_SYNC_DELAYS.length, state.externalSyncFailures + 1);
+      if (ran && visibilityEpoch === noteVisibilityEpoch) state.externalSyncFailures = Math.min(EXTERNAL_SYNC_DELAYS.length, state.externalSyncFailures + 1);
     }).finally(() => {
-      if (state.externalSyncChain === task) scheduleExternalSync();
+      if (state.externalSyncChain === task && visibilityEpoch === noteVisibilityEpoch) scheduleExternalSync();
     });
     return task;
   }
@@ -3777,7 +3791,7 @@
     state.linksRefreshSuspended = false;
     const wasInitialized = state.initialized;
     state.active = true;
-    if (noteBrowser) noteBrowser.resume();
+    if (noteBrowser && noteWorkspaceVisible()) noteBrowser.resume();
     state.externalSyncUnchanged = 0;
     if (state.current && state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
     if (window.CanvasDesktop && typeof window.CanvasDesktop.setNoteWorkspaceActive === 'function') window.CanvasDesktop.setNoteWorkspaceActive(true);
@@ -3796,7 +3810,7 @@
       scheduleStatistics(state.current); scheduleDocumentPrefetch();
       if (state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
       requestAnimationFrame(() => {
-        if (state.active && state.current && !graphPresentation) focusEditor();
+        if (noteWorkspaceVisible() && state.current && !graphPresentation) focusEditor();
       });
     }
     return true;
@@ -4129,14 +4143,32 @@
   window.addEventListener('relatum:note-canvas-error', event => { showSaveError(event.detail); desktopDirty(true); });
   window.addEventListener('resize', closeContextMenu);
   document.addEventListener('relatum:languagechange', closeContextMenu);
-  window.addEventListener('focus', () => { if (state.active && !document.hidden) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
-  document.addEventListener('visibilitychange', () => {
-    syncOutline();
-    if (document.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(); }
-    else if (state.active) { resumeNoteGraph(); if (noteBrowser) noteBrowser.resume(); if (browserIntent && browserDisclosure.hidden) setBrowserMode(true); state.externalSyncUnchanged = 0; resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); }
-  });
-  window.addEventListener('pagehide', () => { noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
-  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; resumeLinksRefresh(); syncOutline(); resumeNoteGraph(); });
+  window.addEventListener('focus', () => { if (noteWorkspaceVisible()) { state.externalSyncUnchanged = 0; scheduleStatistics(state.current); scheduleDocumentPrefetch(); triggerExternalSync({ silentErrors: true }); } });
+  function syncNotePageVisibility() {
+    const visible = notePageVisible();
+    if (visible === notePageWasVisible) return;
+    notePageWasVisible = visible;
+    if (!visible) {
+      // Native WebView2 minimization need not change document.hidden or focus.
+      // Invalidate reads, but let the existing save/IME handoff finish normally.
+      noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++;
+      noteGraphIntentSequence++; noteGraph?.deactivate();
+      cancelSideClose(); clearClosedNotebookTree(); cancelLinksRefresh();
+      noteBrowser?.suspend({ keepView: true }); closeContextMenu();
+      stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); syncOutline();
+      flushWorkspaceState();
+    } else if (noteWorkspaceVisible()) {
+      syncOutline(); resumeNoteGraph(); noteBrowser?.resume();
+      if (browserIntent && browserDisclosure.hidden) setBrowserMode(true);
+      state.externalSyncUnchanged = 0; resumeLinksRefresh();
+      scheduleStatistics(state.current); scheduleDocumentPrefetch();
+      triggerExternalSync({ silentErrors: true });
+    }
+  }
+  document.addEventListener('visibilitychange', syncNotePageVisibility);
+  window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
+  window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });
   window.addEventListener('beforeunload', () => { cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
