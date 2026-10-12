@@ -119,32 +119,19 @@
     return fmtFocusStat(sec);
   }
 
-  function cadenceStatMeasure(format, extra) {
-    const f = format || { num: '0', unit: '' };
-    const className = extra ? ' cadence-stat-addon' : '';
-    const attrs = extra
-      ? ' tabindex="0" title="学习、树状、速记合计" aria-label="学习、树状、速记合计"'
-      : '';
-    return '<span class="cadence-stat-measure' + className + '"' + attrs + '><b>'
-      + (extra ? '+' : '') + f.num + '</b>'
-      + (f.unit ? '<small> ' + f.unit + '</small>' : '') + '</span>';
+  function cadenceStatCell(format, label) {
+    return '<div><strong>' + format.num
+      + (format.unit ? '<small> ' + format.unit + '</small>' : '') + '</strong>'
+      + '<span>' + label + '</span></div>';
   }
 
-  function splitCanvasStatCell(primary, extra, label) {
-    return '<div><strong class="cadence-stat-pair">' + cadenceStatMeasure(primary, false)
-      + (extra ? cadenceStatMeasure(extra, true) : '') + '</strong>'
-      + '<span class="cadence-stat-label">' + label + '</span></div>';
+  function usageTimeStatCell(sec, label) {
+    return cadenceStatCell(fmtCanvasStat(sec), label);
   }
 
-  function canvasPageTimeStatCell(canvasSec, pageSec, label) {
-    return splitCanvasStatCell(fmtCanvasStat(canvasSec), fmtCanvasStat(pageSec), label);
-  }
-
-  function canvasPageCountStatCell(canvasValue, pageValue, unit, label) {
-    return splitCanvasStatCell(
-      { num: String(Math.max(0, Number(canvasValue) || 0)), unit: unit || '' },
-      { num: String(Math.max(0, Number(pageValue) || 0)), unit: unit || '' },
-      label
+  function usageCountStatCell(value, unit, label) {
+    return cadenceStatCell(
+      { num: String(Math.max(0, Number(value) || 0)), unit: unit || '' }, label
     );
   }
 
@@ -379,8 +366,7 @@
     const focusStats = payload.focusStats || {};  // { today, month, year, total }（秒）
     const canvasDays = payload.canvasDays || {};
     const canvasEntries = payload.canvasEntries || [];
-    const canvasStats = { ...(payload.canvasStats || {}), ...(payload.usageStats || {}), activeCanvasCount: payload.usageStats?.activeProjects ?? payload.canvasStats?.activeCanvasCount ?? 0 };
-    const startPageStats = {};
+    const usageStats = { ...(payload.canvasStats || {}), ...(payload.usageStats || {}), activeProjects: payload.usageStats?.activeProjects ?? payload.canvasStats?.activeCanvasCount ?? 0 };
     const C = CADENCE;
     const step = C.cell + C.gap;
     const now = new Date();
@@ -525,15 +511,13 @@
             : cadenceDayDetailHtml(initialDay, entries, days[initialDay] || 0, todayKey))
       + '</section>'
       + '<div class="cadence-stats cadence-stats-canvas" aria-label="新使用统计">'
-        + canvasPageTimeStatCell(currentYear ? canvasStats.monthSec : canvasStats.yearSec,
-          currentYear ? startPageStats.monthSec : startPageStats.yearSec,
+        + usageTimeStatCell(currentYear ? usageStats.monthSec : usageStats.yearSec,
           currentYear ? '本月前台时间' : '当年前台时间')
-        + canvasPageCountStatCell(
-          currentYear ? canvasStats.streak : canvasStats.longestStreak,
-          currentYear ? startPageStats.streak : startPageStats.longestStreak,
+        + usageCountStatCell(
+          currentYear ? usageStats.streak : usageStats.longestStreak,
           '天', currentYear ? '连续活跃' : '最长连续')
-        + canvasPageCountStatCell(canvasStats.activeCanvasCount, startPageStats.activePageCount, '', '活跃项目')
-        + canvasPageTimeStatCell(canvasStats.totalSec, startPageStats.totalSec, '新累计前台时间')
+        + usageCountStatCell(usageStats.activeProjects, '', '活跃项目')
+        + usageTimeStatCell(usageStats.totalSec, '新累计前台时间')
       + '</div>'
       + '<div class="cadence-stats cadence-stats-complete" aria-label="活跃统计">'
         + '<div><strong>' + statOne + '</strong><span>' + statOneLabel + '</span></div>'

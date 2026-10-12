@@ -450,7 +450,6 @@
     '使用过的画布，会在这里连成一片星图。': 'Used canvases gather here as a constellation.',
     '年度足迹与画布活跃': 'Annual activity and canvas usage',
     '画布时间统计': 'Canvas time summary', '新建': 'Created',
-    '学习、树状、速记合计': 'Study, Tree, and Quick Notes combined',
     '最长连续': 'Longest streak', '当年画布时间': 'Canvas time this year',
     '悬停回望，点击展开当天画布': 'Hover to look back; select a day to open its canvases.',
     '这一天还没有画布使用记录。': 'No canvas activity was recorded this day.',
