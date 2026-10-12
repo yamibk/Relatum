@@ -1,4 +1,0 @@
-# Inductor
-
-[[Inductance]]
-[[RL Circuit]]

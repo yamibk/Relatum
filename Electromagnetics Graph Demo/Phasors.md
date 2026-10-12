@@ -1,4 +1,0 @@
-# Phasors
-
-[[AC Circuits]]
-[[Resonance]]

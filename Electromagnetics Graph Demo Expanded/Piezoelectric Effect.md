@@ -1,1 +1,0 @@
-# Piezoelectric Effect

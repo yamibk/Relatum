@@ -1,1 +1,0 @@
-# Thermoelectric Effect

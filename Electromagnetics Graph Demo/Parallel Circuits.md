@@ -1,4 +1,0 @@
-# Parallel Circuits
-
-[[Resistor]]
-[[Capacitor]]

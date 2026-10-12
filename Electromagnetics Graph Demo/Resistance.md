@@ -1,4 +1,0 @@
-# Resistance
-
-[[Resistor]]
-[[Impedance]]

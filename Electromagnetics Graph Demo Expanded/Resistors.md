@@ -1,4 +1,0 @@
-# Resistors
-
-[[Passive Components]]
-[[Capacitors]]
