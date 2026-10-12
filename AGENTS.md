@@ -861,6 +861,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 构建脚本输出 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、各自同级 `.exe.config` 和共用 `_internal/`；MSIX 暂存包排除启动器及其配置。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
 - 构建会整体替换 `Relatum-release/`；若目录内已有 `canvases/`、`notes/` 或 `data/`，默认拒绝覆盖，除非显式 `-ForceReplaceUserData`。
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
+- `build-desktop.ps1` 用构建环境的 Python 执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询；不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不依赖启动目录。不要改回含嵌套引号的 `python -c`，Windows PowerShell 5.1 会丢掉参数内引号；维护 BAT 默认仍调用该版本。验证可直接运行检查脚本，再运行维护 BAT 完整构建；输出应包含 `Note SQLite/FTS5 preflight` 和“构建完成”。
 
 ## 11. 验证清单
 
