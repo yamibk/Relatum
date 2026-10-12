@@ -113,7 +113,8 @@ if (-not $SkipInstall) {
 }
 
 # Note search must work in the bundled interpreter, including short queries.
-& $Python -c 'import sqlite3; from note_search import short_grams; c=sqlite3.connect(":memory:"); assert sqlite3.sqlite_version_info >= (3,43,0), "SQLite 3.43+ required"; c.execute("create virtual table t using fts5(body,tokenize=trigram)"); c.execute("create virtual table s using fts5(body,content="+chr(39)*2+",contentless_delete=1,detail=none,tokenize=ascii)"); c.execute("insert into s values(?)",(short_grams("ab"),)); assert c.execute("select count(*) from s where s match ?",("g26162",)).fetchone()[0] == 1; print("Note SQLite/FTS5 preflight:",sqlite3.sqlite_version)'
+# Use a file: Windows PowerShell 5.1 strips embedded quotes in native -c arguments.
+& $Python (Join-Path $ProjectRoot 'scripts\check-note-sqlite.py')
 Assert-NativeSuccess 'Checking SQLite note search capabilities'
 
 # -- 2. Application icon -------------------------------------------------------
