@@ -22,7 +22,7 @@ assert(html.includes('window.__relatumOpeningRequests'));
   .forEach((source) => assert(!html.includes('<script src="' + source + '" defer></script>'), source + ' must stay off the critical path'));
 assert(!html.includes('<link rel="stylesheet" href="editor-onboarding.css">'));
 
-assert(lazy.includes("loadScriptsInOrder(['graph-gl.js', 'graph-engine.js', 'graph-view.js'])"));
+assert(lazy.includes("loadScriptsInOrder(['graph-gl.js', 'graph-engine.js', 'graph-window.js', 'graph-view.js'])"));
 assert(lazy.includes("loadScript('ai.js')"));
 assert(lazy.includes('ensureAIRuntime().catch'));
 assert(lazy.includes('ensureGraphRuntime().catch'));

@@ -1313,8 +1313,10 @@
     const edgePathCache = new Map();     // id → { edge, d, path, geom, midpoint, points, bounds, order }
     const edgeMidpointCache = new Map(); // id → { d, x, y }，名称与选中标记共用真实路径中点
     const EDGE_GRID_SIZE = 512;
+    const EDGE_GRID_MAX_CELLS = 256;     // 超长/大弯连线单独筛选，避免包围盒铺满空网格
     const edgeSpatialGrid = new Map();   // "gx,gy" → Set<edgeId>
     const edgeSpatialCells = new Map();  // edgeId → string[]
+    const edgeSpatialOverflow = new Set();
     const edgeGeometryDirty = new Set();
     const EDGE_CANVAS_ON = !!edgesCtx
       && typeof Path2D === 'function'
@@ -14640,13 +14642,16 @@
       return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
     }
 
-    function edgeGridKeys(bounds) {
+    function edgeGridKeys(bounds, maxCells) {
       const keys = [];
       if (!bounds) return keys;
       const gx0 = Math.floor(bounds.minX / EDGE_GRID_SIZE);
       const gy0 = Math.floor(bounds.minY / EDGE_GRID_SIZE);
       const gx1 = Math.floor(bounds.maxX / EDGE_GRID_SIZE);
       const gy1 = Math.floor(bounds.maxY / EDGE_GRID_SIZE);
+      const cells = (gx1 - gx0 + 1) * (gy1 - gy0 + 1);
+      if (![gx0, gy0, gx1, gy1, cells].every(Number.isSafeInteger)
+        || gx1 < gx0 || gy1 < gy0 || cells > maxCells) return null;
       for (let gy = gy0; gy <= gy1; gy++) {
         for (let gx = gx0; gx <= gx1; gx++) keys.push(gx + ',' + gy);
       }
@@ -14664,11 +14669,13 @@
         });
       }
       edgeSpatialCells.delete(id);
+      edgeSpatialOverflow.delete(id);
     }
 
     function indexEdgeGeometry(item) {
       removeEdgeFromSpatialIndex(item.edge.id);
-      const keys = edgeGridKeys(item.bounds);
+      const keys = edgeGridKeys(item.bounds, EDGE_GRID_MAX_CELLS);
+      if (!keys) { edgeSpatialOverflow.add(item.edge.id); return; }
       keys.forEach(function (key) {
         let bucket = edgeSpatialGrid.get(key);
         if (!bucket) {
@@ -14733,16 +14740,25 @@
 
     function queryEdgeGeometry(bounds) {
       ensureEdgeGeometryCache();
-      const ids = new Set();
-      edgeGridKeys(bounds).forEach(function (key) {
-        const bucket = edgeSpatialGrid.get(key);
-        if (bucket) bucket.forEach(function (id) { ids.add(id); });
-      });
       const items = [];
-      ids.forEach(function (id) {
-        const item = edgePathCache.get(id);
-        if (item) items.push(item);
-      });
+      const append = function (item) {
+        if (!item) return;
+        const b = item.bounds;
+        if (b.maxX < bounds.minX || b.minX > bounds.maxX
+          || b.maxY < bounds.minY || b.minY > bounds.maxY) return;
+        items.push(item);
+      };
+      // 总览/远处平移时不枚举巨量空单元；成本上限跟现有几何数量走。
+      const keys = edgeGridKeys(bounds, Math.max(16, Math.min(4096, edgeSpatialGrid.size)));
+      if (!keys) edgePathCache.forEach(append);
+      else {
+        const ids = new Set(edgeSpatialOverflow);
+        keys.forEach(function (key) {
+          const bucket = edgeSpatialGrid.get(key);
+          if (bucket) bucket.forEach(function (id) { ids.add(id); });
+        });
+        ids.forEach(function (id) { append(edgePathCache.get(id)); });
+      }
       items.sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
       return items;
     }
@@ -25390,7 +25406,7 @@
           if (refs.labelEl) refs.labelEl.remove();
         });
         edgeMap.clear(); edgePathCache.clear(); edgeSpatialGrid.clear();
-        edgeSpatialCells.clear(); edgeGeometryDirty.clear(); edgeMidpointCache.clear();
+        edgeSpatialCells.clear(); edgeSpatialOverflow.clear(); edgeGeometryDirty.clear(); edgeMidpointCache.clear();
       }
       edgeCanvasLiveCoords = null;
       selectedNodeIds.clear();
@@ -29999,6 +30015,7 @@
             geometryCache: edgePathCache.size,
             spatialBuckets: edgeSpatialGrid.size,
             spatialRefs: indexedRefs,
+            spatialOverflow: edgeSpatialOverflow.size,
             svgPaths: edgesLayer ? edgesLayer.querySelectorAll('.canvas-edge').length : 0,
             svgHits: edgesLayer ? edgesLayer.querySelectorAll('.canvas-edge-hit').length : 0,
             labels: surface.querySelectorAll('.canvas-edge-label').length,

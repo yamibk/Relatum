@@ -52,12 +52,12 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 编辑器启用深色语义且背景判定为深色时，右侧完整面板、简洁样式面板与简洁节点入口统一使用高不透明度的墨绿黑表面、细亮边框和暖白选中态；这些常驻面板不使用 `backdrop-filter`，避免背景透亮发白和持续模糊开销。
 - 大画布、图谱、PDF、MathJax、Mermaid 都在热路径附近。改动 `canvas.js`、`graph-engine.js`、`graph-gl.js` 前先定位最小区域。
 - MathJax 与 Mermaid 都是本地按需运行时：前者只由真实公式源触发，后者只由 Mermaid fence 触发。普通文字/普通 Markdown 不应加载它们，也不要恢复全 `document.body` 的 Mermaid MutationObserver；所有生成 Markdown DOM 的入口必须显式调用对应渲染器。
-- 画布节点、连线和节点相邻连线使用常驻 id 索引。静态连线由 Canvas 绘制；支持 `Path2D/isPointInStroke` 时用 512 单位空间网格筛选候选、逆叠放顺序做几何命中，静态 SVG 路径和命中条不挂入文档。拖节点和脑图滑行只临时挂载受影响的 SVG 线，其他线继续由 Canvas 绘制，收尾卸载并更新几何缓存；能力不足时保留完整 SVG 命中回退。`edgePathCache` 保留路径、端点/箭头点、真实曲线中点和边界，平滑曲线的边界包含控制点凸包；相机移动不得逐边重算几何。空名称按需创建标签，完整导出按数据补齐 SVG。删除连线同步清理 marker、几何缓存和空间索引。
+- 画布节点、连线和节点相邻连线使用常驻 id 索引。静态连线由 Canvas 绘制；支持 `Path2D/isPointInStroke` 时用 512 单位空间网格筛选候选、逆叠放顺序做几何命中，静态 SVG 路径和命中条不挂入文档。单条连线最多登记 256 个网格单元，超长或大弯曲线另保留一个候选身份；查询单元数超过实际网格预算（最多 4096）时按已有几何边界筛选，不枚举巨量空格。两条路径共用真实边界和叠放顺序，移动、删除及完整替换同步清理超限候选。拖节点和脑图滑行只临时挂载受影响的 SVG 线，其他线继续由 Canvas 绘制，收尾卸载并更新几何缓存；能力不足时保留完整 SVG 命中回退。`edgePathCache` 保留路径、端点/箭头点、真实曲线中点和边界，平滑曲线的边界包含控制点凸包；相机移动不得逐边重算几何。空名称按需创建标签，完整导出按数据补齐 SVG。删除连线同步清理 marker、几何缓存和空间索引。
 - 批量节点先挂载再统一测量；内容边界、视口和小地图尺寸使用缓存，ResizeObserver 只更新真实变化。相机移动只变换已有小地图节点层，停止后校准最小点尺寸；不得恢复每帧扫描节点和改写全部小地图样式。抓手光标使用独立透明命中层，连线光标只作用于背景命中面，不使用 `.canvas-surface *` 或继承到整张画布的临时 cursor 规则。
 - 高频平移、连线悬停、箭头和拐点预览按显示帧合并最新坐标；速度和手写原始采样仍逐事件读取。正常释放先提交最终坐标，再写历史；取消、失焦和隐藏清除待绘制任务。选区只更新旧、新差集，重复同一选区不刷新面板或通知；绑定文本框通过目标 id 索引跟随。墨迹笔画边界缓存与局部 SVG 更新只影响橡皮候选及命中对象。
 - `prefers-reduced-motion` 已在多处使用；新增动画要考虑降级。
 - 编辑器图谱首次打开才创建 WebGL 引擎与标签层，关闭动画完成后销毁引擎、解绑交互、释放 context 并替换为 1×1 空画布；快速关闭后重开取消旧收尾，不能误删新会话。活跃星图隐藏预热只保留数据/热力图，实际进入才挂载；离页及顶层工作区切换在外层交接完成后释放，快速返回取消释放，`pagehide` 立即清理。`GraphEngine.destroy()` 必须幂等并清除节点、粒子与临时手势。
-- 三处图谱宿主启用 `cacheInstances`，引擎分别维护位置、节点实例和连线实例版本。纯相机变化复用渲染坐标及 GPU 实例，但每帧仍更新矩阵、AA 与屏幕尺寸参数；公开 `requestRender()` 保持外观失效语义。画布与星图声明 `nodeStyleTimeDependent`，继续刷新实际渲染帧中的呼吸/脉动，未变化的连线复用；笔记无持续漂移和粒子，收敛后停止 RAF。物理、入场、悬停、主题、粒子、容量与数据切换各自触发失效；数据替换取消旧手势。已取得 WebGL context 后着色器失败，必须换新 canvas，再创建 Canvas2D，并通过 `onCanvasReplace` 交接宿主引用。
+- 三处图谱宿主启用 `cacheInstances`，引擎分别维护位置、节点实例和连线实例版本。纯相机变化复用渲染坐标及 GPU 实例，但每帧仍更新矩阵、AA 与屏幕尺寸参数；公开 `requestRender()` 保持外观失效语义。画布与星图声明 `nodeStyleTimeDependent`，继续刷新实际渲染帧中的呼吸/脉动，未变化的连线复用；笔记无持续漂移和粒子，收敛后停止 RAF。共享引擎同时检查页面隐藏、已有 `desktopMinimized` 原生通知及 pagehide/pageshow，暂停连续/单次帧和预布局、清除临时手势；还原只接续原镜头和布局，冻结已开始的生长时钟，未激活宿主不被唤醒。画布图谱与星图最小化期间保留同一个引擎及 GPU 资源，正常关闭/离页仍由宿主销毁；destroy 同步解绑新增可见生命周期监听。物理、入场、悬停、主题、粒子、容量与数据切换各自触发失效；数据替换取消旧手势。已取得 WebGL context 后着色器失败，必须换新 canvas，再创建 Canvas2D，并通过 `onCanvasReplace` 交接宿主引用。
 - 深色主题的学习目标树与独立树状页路线、附加依赖线、视觉关系线和箭头统一为纯白；附加依赖保留虚线，删除预览保留红色，入退场仍沿用透明度过渡。
 
 ## 3. 源码地图
@@ -853,6 +853,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
 
 ## 11. 验证清单
+
+画布连线索引与图谱可见生命周期另运行 `node tests/canvas-spatial-index-regression.js`、`node tests/graph-visibility-regression.js` 和 `node tests/canvas-resource-performance-browser.js --regression`。浏览器沿用 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`，自己管理一次性数据根及服务，覆盖远距离连线中段命中、叠放顺序、WebGL/Canvas2D、DPR 1/2、深色及低动态、原生最小化通知期间零绘制和原引擎恢复，并复用原画布交互、导出、附件与七页切换回归。设置 `RELATUM_CANVAS_BASELINE_REF` 为旧提交后，索引脚本加 `--benchmark`、浏览器加 `--compare` 可对照旧源码；`RELATUM_CANVAS_RESOURCE_REPORT` 指定临时报告路径。继续运行共享图谱缓存、预布局、笔记图谱及资源生命周期回归。测量、边界与复现见 `docs/canvas-resource-performance-2026-10-12.md`。
 
 笔记可见生命周期使用 `node tests/note-visibility-browser.js`，配置已有 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`；覆盖完整、仅笔记且禁用内嵌画布、禁用图谱及 Canvas2D 回退。另设 `RELATUM_WEBVIEW_PYTHON` 为已有 pywebview 环境，运行 `node tests/note-visibility-browser.js --webview2` 验真实原生最小化/还原。400 节点合成库和浏览器配置均在一次性目录，检查零 GPU 残留、零新增绘制/读取、未完成布局与镜头恢复、重复通知、迟到响应、预读取消、大纲/浏览/阅读恢复、草稿保存和 Chromium 原生候选交接；不替代真实微软拼音候选窗人工验收。不重新构建或改写发布包。继续回归笔记图谱、大纲、视图状态及资源生命周期的默认/按需两种配置。
 

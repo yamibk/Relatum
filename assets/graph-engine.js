@@ -4,7 +4,7 @@
 //   · 斥力：Barnes-Hut 四叉树近似，O(n log n)（取代逐对 O(n²)）；
 //   · 相机：滚轮锚点缩放 / 平移 / 自动 fit，均带柔和补间；
 //   · 动效：进场逐个生长 + alpha 退火 + 拖拽惯性 + 邻域高亮 + 可选闲时微漂移；
-//   · 生命周期：active(是否当前前置页) × visible(是否在视口) 双开关，二者皆真且有事可做才跑 RAF。
+//   · 生命周期：当前前置页、视口可见、页面/桌面可见三者皆真且有事可做才跑 RAF。
 // 物理 / 动画的数值口径沿用旧 graph-view.js，以尽量保留原有手感。
 // 渲染像素由各「适配层」通过 drawNode / drawEdge 回调自己画（形状、配色、标签各图不同）；
 // 引擎只负责物理、相机、循环、命中检测与交互，并在调用回调前把坐标系/进场缩放/透明度铺好。
@@ -590,6 +590,14 @@
     const observeTarget = opts.observe || null;
     let active = !(opts.active === false);
     let visible = !observeTarget;   // 若交了 stage 给 IO 观察，则初始不可见、待 IO 唤醒
+    let pageSuspended = false;
+    function readPageVisible() {
+      return !pageSuspended && !global.document?.hidden
+        && global.document?.documentElement?.dataset?.desktopMinimized !== '1';
+    }
+    let pageVisible = readPageVisible();
+    let pageHiddenAt = pageVisible ? null : now();
+    function canRender() { return active && visible && pageVisible && !destroyed; }
     let pending = null;            // 待触发的进场参数（延到 active && visible 才执行）
     let deferredFit = null;        // 仅等待有效尺寸，由 ResizeObserver 接力，不轮询
     let io = null;
@@ -825,7 +833,7 @@
 
     // —— 渲染一帧 —— 引擎算相机 + 闲时漂移坐标，绘制委托给当前后端
     function render() {
-      if (destroyed) return;
+      if (destroyed || !pageVisible) return;
       hoverOnlyFrame = true;
       const size = backend.syncSize();
       const m = metrics();
@@ -962,13 +970,13 @@
       if (presolveJob) return;
       lastRenderT = 0;          // 打断闲时节流：让下一拍立即重画（悬停高亮 / 平移即时跟手）
       if (tryBeginPending()) return;
-      if (!active || !visible || destroyed) return;
+      if (!canRender()) return;
       if (!frameId && !renderFrameId) {
         renderFrameId = global.requestAnimationFrame(function () {
           renderFrameId = 0;
           const onlyHover = hoverOnlyFrame;
           hoverOnlyFrame = true;
-          if (active && visible && !destroyed && !presolveJob && !frameId) {
+          if (canRender() && !presolveJob && !frameId) {
             // Tooltip-only moves and empty-space hits do not redraw the scene.
             // Real camera/appearance work still renders, consuming the latest hit.
             if (!onlyHover || flushHover()) render();
@@ -980,7 +988,7 @@
     function tick(t) {
       // 当前回调也算在途帧；fit/onConverge 等重入请求由本帧及收尾统一接管。
       tickCount++;
-      if (destroyed) { frameId = 0; return; }
+      if (!canRender()) { frameId = 0; markBackgroundBusy(false); return; }
       if (!lastTickTime) lastTickTime = t - cfg.frameMs;
       // 闲时微动封顶到 idleFps：当唯一在动的只是漂移/呼吸/闪烁（无物理/进场/缩放/平移惯性/拖拽/标签淡变）时，
       // 高刷屏不必每一拍都重画整图——慢动作下 30fps 与 144fps 肉眼无差，却能把闲时 GPU 占用压到约 1/5。
@@ -1057,7 +1065,7 @@
       const labelBusy = _hasLabels && Math.abs(labelAlpha - labelTarget) > 0.006;
       const keepGoing = (alpha > cfg.alphaMin) || draggedNode || introActive
         || zoomTween.active || fitTween.active || idle || labelBusy || panGlide.active;
-      if (!destroyed && active && visible && keepGoing) {
+      if (canRender() && keepGoing) {
         frameId = global.requestAnimationFrame(tick);
       } else {
         lastTickTime = 0;
@@ -1070,7 +1078,7 @@
       if (presolveJob) return;
       if (pending && !canBegin()) return;
       if (tryBeginPending()) return;
-      if (!frameId && !destroyed && active && visible) {
+      if (!frameId && canRender()) {
         markBackgroundBusy(nodes.length > 0);
         cancelRenderFrame();   // 动画帧会绘制最新状态，不再另排一次同帧重绘
         frameId = global.requestAnimationFrame(tick);
@@ -1110,7 +1118,7 @@
     }
 
     // —— 进场：延到 active && visible 才真正开跑（隐藏时不白烧动画 / RAF）——
-    function canBegin() { return active && visible && !destroyed && nodes.length > 0
+    function canBegin() { return canRender() && nodes.length > 0
       && (!screenFit || canvas.clientWidth > 0 && canvas.clientHeight > 0); }
     function doBegin() {
       if (!pending) return;
@@ -1135,7 +1143,7 @@
         presolving = true;
         function slice() {
           if (presolveJob !== job || destroyed || nodes !== job.nodes) return;
-          if (!active || !visible) { cancelPresolve(true); return; }
+          if (!canRender()) { cancelPresolve(true); return; }
           const started = now();
           do { runPhysics(1); job.step++; }
           while (job.step < cfg.presolveSteps && alpha > cfg.alphaMin && now() - started < 4);
@@ -1328,7 +1336,7 @@
     }
 
     function handlePointerDown(event) {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || !canRender()) return;
       if (onEdgeHover) clearHover(event);
       hoverPending = false;
       canvas.setPointerCapture(event.pointerId);
@@ -1350,6 +1358,7 @@
       }
     }
     function handlePointerMove(event) {
+      if (!canRender()) return;
       if (pressInfo && !pressInfo.moved) {
         const dx = event.clientX - pressInfo.x;
         const dy = event.clientY - pressInfo.y;
@@ -1386,7 +1395,6 @@
         requestFrame();
       } else {
         if (opts.coalesceHover) {
-          if (!active || !visible || destroyed) return;
           // One reusable coordinate record, consumed by the existing display frame.
           // Pointerdown still hits immediately; drag/inertia samples stay per event.
           hoverPoint.clientX = event.clientX; hoverPoint.clientY = event.clientY;
@@ -1438,11 +1446,13 @@
       }
     }
     function handleDoubleClick(event) {
+      if (!canRender()) return;
       if (nodeAtClient(event.clientX, event.clientY) >= 0) return;
       userAdjustedView = false;
       fitView(true);
     }
     function handleWheel(event) {
+      if (!canRender()) return;
       if (typeof opts.shouldHandleWheel === 'function' && !opts.shouldHandleWheel(event)) return;
       event.preventDefault();
       userAdjustedView = true;
@@ -1481,6 +1491,39 @@
     canvas.addEventListener('wheel', handleWheel, { passive: false });
 
     // —— 生命周期 ——
+    function syncPageVisibility() {
+      if (destroyed) return;
+      const next = readPageVisible();
+      if (next === pageVisible) return;
+      pageVisible = next;
+      if (!next) {
+        pageHiddenAt = now();
+        stopLoop();
+        if (draggedNode) draggedNode.vx = draggedNode.vy = 0;
+        const pointerId = pressInfo && pressInfo.pointerId;
+        pressInfo = draggedNode = panOrigin = panLast = null;
+        dragVel.x = dragVel.y = panVelScreen.x = panVelScreen.y = 0;
+        cancelPanGlide();
+        if (pointerId != null && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+        clearHover();
+      } else {
+        // 冻结已开始的生长时钟；还原只接续原布局和镜头，不重播或跨过整段入场。
+        if (introActive && pageHiddenAt !== null) {
+          const elapsed = Math.max(0, now() - pageHiddenAt);
+          nodes.forEach(function (node) { node._born += elapsed; });
+        }
+        pageHiddenAt = null;
+        lastRenderT = 0;
+        if (active) { refreshObservedVisibility(); ensureLoop(); }
+      }
+    }
+    function onPageHide() { pageSuspended = true; syncPageVisibility(); }
+    function onPageShow() { pageSuspended = false; syncPageVisibility(); }
+    global.document?.addEventListener?.('visibilitychange', syncPageVisibility);
+    global.addEventListener?.('canvasdesktop:visibility', syncPageVisibility);
+    global.addEventListener?.('pagehide', onPageHide);
+    global.addEventListener?.('pageshow', onPageShow);
+
     function setActive(v) {
       v = !!v;
       if (active === v) return;
@@ -1528,7 +1571,7 @@
         ro = new global.ResizeObserver(function () {
           refreshObservedVisibility();
           if (tryBeginPending()) return;
-          if (active && visible && deferredFit !== null) fitView(deferredFit);
+          if (canRender() && deferredFit !== null) fitView(deferredFit);
           else requestFrame();
         });
         ro.observe(canvas);
@@ -1539,6 +1582,10 @@
       if (destroyed) return;
       destroyed = true;
       stopLoop();
+      global.document?.removeEventListener?.('visibilitychange', syncPageVisibility);
+      global.removeEventListener?.('canvasdesktop:visibility', syncPageVisibility);
+      global.removeEventListener?.('pagehide', onPageHide);
+      global.removeEventListener?.('pageshow', onPageShow);
       if (pressInfo && canvas.hasPointerCapture(pressInfo.pointerId)) canvas.releasePointerCapture(pressInfo.pointerId);
       pressInfo = draggedNode = panOrigin = null;
       // canvas 通常会被外壳复用；destroy 必须同时解绑交互监听，
