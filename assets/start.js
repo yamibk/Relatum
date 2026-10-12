@@ -1139,7 +1139,7 @@
         ['需要保留什么', '', [
           ['<code>canvases</code>', '主画布和附件。'],
           ['<code>notes</code>', 'Markdown 笔记、图片和内嵌画布。'],
-          ['<code>data</code>', '研究、学习、复习、日记、统计和设置。'],
+          ['<code>data</code>', '研究、学习、复习、日记、统计和设置，以及可重建的笔记索引。'],
           ['本机设置', '桌面版还在 <code>data/desktop-sessions</code> 保存界面偏好。浏览器版的偏好存在浏览器中。'],
         ]],
         ['想腾出空间', '', [
@@ -1147,7 +1147,7 @@
           ['回收站', '确认不再需要后，在应用内清空。'],
           ['上传的背景', '先换成内置背景，再清理 <code>data/backgrounds</code>。'],
         ]],
-        ['删除前', '先备份，再清理。笔记移动、画布改名和删除请优先在应用内操作。缺失文件重新出现时，通常是一份空文件，旧内容不会自动恢复。'],
+        ['删除前', '先备份，再清理。笔记移动、画布改名和删除请优先在应用内操作。只有笔记索引能从现有文件重建；缺失的正文、附件和历史记录不会自动恢复。'],
       ],
     },
     {
@@ -1161,17 +1161,23 @@
         ]],
         ['笔记 · <code>notes</code>', '', [
           ['<code>*.md</code>', '笔记正文。可用普通文本编辑器打开。'],
+          ['<code>CustomNotebook</code>', '自定义笔记本及其内容。备份时与默认笔记一起保留。'],
           ['<code>&lt;笔记名&gt;.assets/images</code>', '笔记图片。应用内移动或改名时会一起处理。'],
           ['<code>canvases/*.canvas</code>', '笔记内嵌画布。多个引用可以共用一个文件；删除引用不会删除画布。'],
-          ['笔记图谱与大纲', '从笔记链接和标题生成，不另存一份正文。图谱视角只在当前会话保留。'],
+          ['搜索、标签与双链', '从 Markdown 生成本地索引；全文搜索在“浏览”中打开，也可按 Ctrl/Cmd+Shift+F。'],
+          ['笔记图谱与大纲', '图谱关系来自笔记链接，大纲来自当前正文的标题。图谱视角和大纲折叠只在当前会话保留。'],
         ]],
         ['查看文件', '在笔记文件树右键选择“在系统资源管理器中显示”。备份内嵌画布时，复制整个 <code>notes</code> 文件夹。'],
       ],
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: '功能数据',
-      subtitle: '以下路径位于 <code>data</code> 中。删除对应文件会丢失记录或设置。',
+      subtitle: '以下路径位于 <code>data</code> 中。除可重建的笔记索引外，删除对应文件会丢失记录或设置。',
       sections: [
+        ['可重建的笔记索引', '', [
+          ['<code>note-index.sqlite3</code>', '笔记目录、派生搜索文字、标签、双链和图谱关系的本地缓存。Markdown 与附件仍是原始数据。'],
+          ['清理与重建', '退出所有窗口后，可删除这份索引及同名的 <code>-wal / -shm</code> 文件。下次进入笔记会后台重建；完成前搜索和关系可能不完整。'],
+        ]],
         ['内容与记录', '', [
           ['<code>research-workspace</code>', '研究页面、组件、连线、子电路和备份。'],
           ['<code>study.json / tree-page.json</code>', '学习任务与目标树 / 独立树状页。'],
@@ -1194,7 +1200,7 @@
           ['<code>ai.json</code>', 'AI 服务地址、模型和 API Key。分享备份前移除密钥。'],
           ['<code>*.backup.* / *.corrupt-*</code>', '恢复副本或损坏后保留的文件。确认主文件正常后再清理。'],
         ]],
-        ['数据库文件', '不要单独删除 <code>review.db</code> 或 <code>usage-v2.sqlite3</code> 旁的 <code>-wal / -shm</code> 文件。退出所有窗口后，再备份整个 <code>data</code>。'],
+        ['数据库文件', '退出所有窗口后，再备份整个 <code>data</code>。不要在运行中删除数据库或单独清理旁边的 <code>-wal / -shm</code> 文件；<code>review.db</code> 和 <code>usage-v2.sqlite3</code> 保存真实历史，无法靠笔记索引重建。'],
       ],
     },
     {
@@ -1203,12 +1209,13 @@
       sections: [
         ['保存的内容', '', [
           ['界面', '语言、主题、工作区、滚动和工具默认值。'],
-          ['笔记', '标签页、字号、阅读位置、光标和图谱间距。'],
+          ['笔记', '标签页、字号、阅读位置、光标、图谱间距和预加载开关。图谱坐标与镜头不写入偏好文件。'],
           ['视图', '画布镜头、树的折叠、复习模式和记账显示方式。'],
           ['未结束的专注钟', '计时恢复状态。已完成的记录保存在 <code>data/focus.json</code>。'],
         ]],
         ['存在哪里', '', [
-          ['桌面版', '<code>data/desktop-sessions/&lt;模式&gt;/preferences.json</code> 保存偏好；同目录的 <code>window-state.json</code> 保存窗口位置。WebView2 也有本机运行数据。'],
+          ['桌面版', '<code>data/desktop-sessions/&lt;模式&gt;/preferences.json</code> 保存偏好。完整模式窗口位置在 <code>data/window-state.json</code>，精简模式在对应模式目录的 <code>window-state.json</code>。WebView2 也有本机运行数据。'],
+          ['启动器', '<code>data/launcher-profile.json</code> 保存功能选择，<code>data/launcher-settings.json</code> 保存是否跳过选择窗口。'],
           ['浏览器版', '浏览器的站点存储。更换浏览器或清除站点数据后，偏好会重置。'],
         ]],
         ['清除后的结果', '界面、位置和未结束的计时可能重置。笔记与画布文件仍保留。AI Key 位于 <code>data/ai.json</code>，不在浏览器存储中。'],
@@ -1224,7 +1231,7 @@
         ['What to keep', '', [
           ['<code>canvases</code>', 'Main canvases and attachments.'],
           ['<code>notes</code>', 'Markdown notes, images and embedded canvases.'],
-          ['<code>data</code>', 'Research, study, reviews, journals, statistics and settings.'],
+          ['<code>data</code>', 'Research, study, reviews, journals, statistics, settings and the rebuildable note index.'],
           ['Local settings', 'Desktop preferences also live in <code>data/desktop-sessions</code>. Browser preferences live in the browser.'],
         ]],
         ['Free up space', '', [
@@ -1232,7 +1239,7 @@
           ['Trash', 'Empty it in the app once you no longer need its contents.'],
           ['Uploaded backgrounds', 'Switch to a built-in background before cleaning <code>data/backgrounds</code>.'],
         ]],
-        ['Before deleting', 'Back up first. Use the app to move notes, rename canvases and delete content. A recreated file is usually empty; it does not restore the old content.'],
+        ['Before deleting', 'Back up first. Use the app to move notes, rename canvases and delete content. The note index can be rebuilt from existing files; missing text, attachments and history cannot be restored automatically.'],
       ],
     },
     {
@@ -1246,17 +1253,23 @@
         ]],
         ['Notes · <code>notes</code>', '', [
           ['<code>*.md</code>', 'Note text. Opens in any text editor.'],
+          ['<code>CustomNotebook</code>', 'Custom notebooks and their contents. Keep these with the default notes in your backup.'],
           ['<code>&lt;note name&gt;.assets/images</code>', 'Note images. Relatum moves or renames these with the note.'],
           ['<code>canvases/*.canvas</code>', 'Embedded canvases. Multiple references can share one file; deleting a reference keeps the file.'],
-          ['Note graph and outline', 'Generated from links and headings. No extra copy of note text is stored. Graph views last for the current session.'],
+          ['Search, tags and backlinks', 'A local index is generated from Markdown. Open full-text search in Browse or press Ctrl/Cmd+Shift+F.'],
+          ['Note graph and outline', 'Graph relations come from note links; the outline comes from headings in the current text. Graph views and collapsed outline sections last for the current session.'],
         ]],
         ['Find your files', 'Right-click in the note tree and choose “Show in File Explorer”. Copy the entire <code>notes</code> folder to include embedded canvases.'],
       ],
     },
     {
       id: 'data', eyebrow: '03 · DATA', title: 'Feature data',
-      subtitle: 'These paths are inside <code>data</code>. Deleting a file removes its records or settings.',
+      subtitle: 'These paths are inside <code>data</code>. Apart from the rebuildable note index, deleting a file removes its records or settings.',
       sections: [
+        ['Rebuildable note index', '', [
+          ['<code>note-index.sqlite3</code>', 'A local cache of the note catalog, derived search text, tags, backlinks and graph relations. Markdown and attachments remain the source data.'],
+          ['Cleanup and rebuilding', 'Close every window before deleting this index together with its <code>-wal / -shm</code> files. Opening Notes rebuilds it in the background; search and relations may be incomplete until it finishes.'],
+        ]],
         ['Content and records', '', [
           ['<code>research-workspace</code>', 'Research pages, components, edges, subcircuits and backups.'],
           ['<code>study.json / tree-page.json</code>', 'Study tasks and goal trees / the independent Tree page.'],
@@ -1279,7 +1292,7 @@
           ['<code>ai.json</code>', 'AI endpoint, model and API key. Remove the key before sharing a backup.'],
           ['<code>*.backup.* / *.corrupt-*</code>', 'Recovery copies or quarantined files. Check the main file before deleting these.'],
         ]],
-        ['Database files', 'Keep any <code>-wal / -shm</code> files beside <code>review.db</code> and <code>usage-v2.sqlite3</code>. Close every window before backing up the entire <code>data</code> folder.'],
+        ['Database files', 'Close every window before backing up the entire <code>data</code> folder. Do not delete databases or clean their <code>-wal / -shm</code> files while running. <code>review.db</code> and <code>usage-v2.sqlite3</code> hold actual history that rebuilding the note index cannot restore.'],
       ],
     },
     {
@@ -1288,12 +1301,13 @@
       sections: [
         ['What is saved', '', [
           ['Interface', 'Language, theme, workspace, scrolling and tool defaults.'],
-          ['Notes', 'Tabs, text size, reading position, cursor and graph spacing.'],
+          ['Notes', 'Tabs, text size, reading position, cursor, graph spacing and the preload switch. Graph coordinates and cameras are not saved in preferences.'],
           ['Views', 'Canvas cameras, collapsed trees, review mode and ledger display.'],
           ['Unfinished focus timer', 'Timer recovery state. Completed sessions live in <code>data/focus.json</code>.'],
         ]],
         ['Where it lives', '', [
-          ['Desktop', '<code>data/desktop-sessions/&lt;mode&gt;/preferences.json</code> holds preferences; <code>window-state.json</code> holds window position. WebView2 also keeps local runtime data.'],
+          ['Desktop', '<code>data/desktop-sessions/&lt;mode&gt;/preferences.json</code> holds preferences. Full mode keeps window position in <code>data/window-state.json</code>; reduced modes use <code>window-state.json</code> in their mode folder. WebView2 also keeps local runtime data.'],
+          ['Launcher', '<code>data/launcher-profile.json</code> holds feature choices; <code>data/launcher-settings.json</code> holds whether to skip the selection window.'],
           ['Browser', 'Browser site storage. Switching browsers or clearing site data resets these preferences.'],
         ]],
         ['After clearing', 'The interface, positions and unfinished timer may reset. Note and canvas files remain. The AI key lives in <code>data/ai.json</code>, outside browser storage.'],
