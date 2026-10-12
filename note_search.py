@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from bisect import bisect_left, bisect_right
+from operator import itemgetter
 
 from note_metadata import frontmatter
+
+_segment_end = itemgetter(1)
 
 
 def normalize(value: str) -> str:
@@ -174,7 +178,11 @@ def source_range(mapping, start, end):
     if isinstance(mapping, dict):
         mapping = mapping['source']
     left = right = None
-    for a, b, c, d in mapping:
+    # Projection segments are ordered by their non-overlapping text offsets.
+    # Keep the original boundary rules while skipping segments before the hit.
+    first = bisect_left(mapping, min(start + 1, end), key=_segment_end)
+    for index in range(first, len(mapping)):
+        a, b, c, d = mapping[index]
         if left is None and a <= start < b:
             left = c + start - a if b - a == d - c else c
         if a < end <= b:
@@ -205,9 +213,10 @@ def hit(body: str, words: list[str], mapping, offset=0) -> dict:
         nonlocal display_offset
         parts.append(value); spans.append([a, b, display_offset, display_offset + len(value)])
         display_offset += len(value)
-    for a, b, original in mapping.get('display', []) if isinstance(mapping, dict) else []:
-        if b <= cursor:
-            continue
+    display = mapping.get('display', []) if isinstance(mapping, dict) else []
+    first_display = bisect_right(display, cursor, key=_segment_end)
+    for index in range(first_display, len(display)):
+        a, b, original = display[index]
         if a >= end + offset:
             break
         left, right = max(a, cursor), min(b, end + offset)

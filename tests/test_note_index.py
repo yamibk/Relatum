@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from note_search import projection, hit, normalize, terms
+from note_search import projection, hit, normalize, terms, source_range
 from notes_index import NoteIndex
 from notes_library import NotesStore, NotesError, _image_text_comment
 
@@ -78,6 +78,40 @@ class NoteIndexTests(unittest.TestCase):
             self.assertIn('Heading', result['excerpt'])
             ranges = [result['excerpt'].encode('utf-16-le')[a * 2:b * 2].decode('utf-16-le') for a, b in result['highlights']]
             self.assertIn(expected, ranges)
+
+    def test_source_range_segment_boundaries_and_gaps(self):
+        mapping = [[0, 2, 3, 5], [2, 4, 9, 10], [6, 8, 14, 16]]
+        for start, end, expected in [(0, 1, [3, 4]), (1, 3, [4, 10]),
+                (2, 4, [9, 10]), (4, 7, [0, 15]), (6, 7, [14, 15]),
+                (8, 9, [0, 0]), (2, 2, [0, 5]), (6, 5, [14, 14])]:
+            with self.subTest(start=start, end=end):
+                self.assertEqual(source_range(mapping, start, end), expected)
+                self.assertEqual(source_range({'source': mapping}, start, end), expected)
+
+    def test_tail_search_hit_does_not_walk_the_whole_mapping(self):
+        class CountedSegments:
+            def __init__(self, values):
+                self.values, self.reads = values, 0
+
+            def __len__(self):
+                return len(self.values)
+
+            def __getitem__(self, index):
+                self.reads += 1
+                return self.values[index]
+
+        source = '**Heading** cafe\u0301 Straße English 😀\n' * 6000 + '最后 needle 匹配\n'
+        body, mapping = projection(source)
+        counted = {key: CountedSegments(value) for key, value in mapping.items()}
+        offset = body.index('needle') - 70
+        result = hit(body[offset:offset + 240], terms('needle'), counted, offset)
+        start, end = result['sourceRange']
+        self.assertEqual(source.encode('utf-16-le')[start * 2:end * 2].decode('utf-16-le'), 'needle')
+        self.assertIn('cafe\u0301 Straße English 😀', result['excerpt'])
+        ranges = [result['excerpt'].encode('utf-16-le')[a * 2:b * 2].decode('utf-16-le') for a, b in result['highlights']]
+        self.assertEqual(ranges, ['needle'])
+        self.assertLess(counted['source'].reads, 100)
+        self.assertLess(counted['display'].reads, 100)
 
     def test_scope_dates_tags_and_cursor_generation(self):
         for i in range(68):
