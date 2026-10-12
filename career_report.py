@@ -90,34 +90,45 @@ def scan_canvases(root):
     return sorted(paths, key=lambda path: path.name.casefold()), skipped
 
 
-def note_inventory(root, usage):
+def note_inventory(root, usage, notes_store=None):
     from note_graph import graph_edges, references as graph_references
-    files, skipped = scan_notes(root)
     records, documents, refs = [], {}, {}
     books = {}
-    for path, relative, metadata in files:
+    skipped = 0
+    if Path(root).exists():
+        from notes_library import NotesStore, NotesError
+        owned = notes_store is None
+        store = notes_store or NotesStore(root)
         try:
-            if metadata.st_size > MAX_NOTE_BYTES:
-                raise ValueError('Oversized note')
-            raw = path.read_bytes()
-            after = path.stat(follow_symlinks=False)
-            if (metadata.st_size, metadata.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                raise ValueError('Source changed during generation')
-            text = raw.decode('utf-8-sig')
-            parts = relative.split('/')
-            book = '/'.join(parts[:2]) if len(parts) > 2 and parts[0].casefold() == 'customnotebook' else ''
-            words = note_word_count(text)
-            records.append({'locator': relative, 'name': path.name, 'words': words,
-                            'characters': len(note_visible_text(text)), 'book': book})
-            documents[relative] = {'graphReferences': graph_references(text)}
-            books.setdefault(book, {'name': parts[1] if book else 'notes', 'count': 0, 'words': 0})
-            books[book]['count'] += 1
-            books[book]['words'] += words
-            targets = {canvas_target(relative, ref['target']) for ref in canvas_references(text)}
-            for target in targets - {None}:
-                refs.setdefault(target.casefold(), set()).add(relative)
-        except (OSError, UnicodeError, ValueError, KeyError):
-            skipped += 1
+            store._prepare_index()
+            if store.sync.background:
+                try:
+                    store.sync.complete(timeout=120)
+                except NotesError:
+                    skipped += 1
+            for notebook in store.index.status()['notebooks']:
+                try:
+                    store.sync.complete(notebook['root'], graph=True, timeout=120)
+                except NotesError:
+                    skipped += 1
+            snapshot = store.index.documents()
+            skipped += store.index.status()['errors'] + int(store.sync.status()['incomplete'])
+            for relative, metadata in snapshot.items():
+                parts = relative.split('/')
+                book = '/'.join(parts[:2]) if len(parts) > 2 and parts[0].casefold() == 'customnotebook' else ''
+                words = metadata.get('words', 0)
+                records.append({'locator': relative, 'name': Path(relative).name, 'words': words,
+                    'characters': metadata.get('characters', 0), 'book': book})
+                documents[relative] = {'graphReferences': metadata.get('graphReferences', [])}
+                books.setdefault(book, {'name': parts[1] if book else 'notes', 'count': 0, 'words': 0})
+                books[book]['count'] += 1; books[book]['words'] += words
+                for target in metadata.get('canvasTargets', []):
+                    refs.setdefault(target.casefold(), set()).add(relative)
+        except (OSError, NotesError, sqlite3.Error, RuntimeError):
+            skipped = max(1, skipped)
+        finally:
+            if owned:
+                store.close()
     identities = usage.identities([('notes', row['locator'], row['name']) for row in records])
     edges = []
     for book in books:
@@ -261,10 +272,11 @@ def learning_inventory(data):
 
 
 class CareerReports:
-    def __init__(self, path, usage, *, notes, data, canvas_candidates, atomic_json):
+    def __init__(self, path, usage, *, notes, data, canvas_candidates, atomic_json, notes_store=None):
         self.path, self.usage = Path(path), usage
         self.notes, self.data = Path(notes), Path(data)
         self.candidates, self.atomic_json = canvas_candidates, atomic_json
+        self.notes_store = notes_store
         self._lock = threading.Lock()
         self._jobs = {}
         self._running = None
@@ -314,7 +326,7 @@ class CareerReports:
         cutoff = self.usage.clock()
         history = self.usage.snapshot(cutoff)
         progress(10, 'notes')
-        notes, refs = note_inventory(self.notes, self.usage)
+        notes, refs = note_inventory(self.notes, self.usage, self.notes_store)
         progress(45, 'canvas')
         candidates = self.candidates()
         paths = candidates['paths'] if isinstance(candidates, dict) else candidates

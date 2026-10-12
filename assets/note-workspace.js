@@ -285,9 +285,16 @@
         script.onload = resolve; script.onerror = () => reject(new Error(tr('readFailed'))); document.head.appendChild(script);
       });
       noteBrowser = window.RelatumNoteBrowser.create({ root, navigation: browserNavigation, results: browserResults, back: browserBack,
-        request, query: (query) => post('/api/note-query', query), language, icon: noteIcon,
+        request, query: (query, options) => post('/api/note-query', query, options), language, icon: noteIcon,
         getEntries: () => flattenEntries(state.entries, []), getRecent: () => Object.fromEntries(recentFiles),
-        beforeBrowse, showResults: showBrowserResults, openNote: (path) => openNote(path, { browserAction: true }),
+        pruneRecent: (paths) => {
+          const missing = new Set(paths.map(path => path.normalize('NFC').toLocaleLowerCase()));
+          let changed = false;
+          for (const path of recentFiles.keys()) if (missing.has(path.normalize('NFC').toLocaleLowerCase())) { recentFiles.delete(path); changed = true; }
+          if (changed) persistRecent();
+        },
+        getNotebooks: () => notebookRoots().map(entry => ({ path: entry.path, name: entry.name })), getIndexState: () => state.indexState,
+        beforeBrowse, showResults: showBrowserResults, openNote: openSearchNote,
         canvasEnabled, revealCanvas: (path) => post('/api/notes-canvas/reveal', { path }), showError: (message) => showToast(message, 'error'),
       });
       return noteBrowser;
@@ -1279,7 +1286,7 @@
     if (!pathPart) return jumpToHeading(fragment);
     const resolved = resolveRelativeNotePath(state.current.path, pathPart);
     const entry = findEntry(resolved);
-    if (/\.md$/i.test(resolved) && entry && entry.kind === 'note') {
+    if (/\.md$/i.test(resolved) && (!entry || entry.kind === 'note')) {
       if (await openNote(resolved)) scheduleHeadingJump(fragment);
       return true;
     }
@@ -1713,6 +1720,7 @@
       state.treeSort = mode;
       try { localStorage.setItem(TREE_SORT_KEY, mode); } catch (error) {}
       renderTree();
+      refreshTree(false, { reset: true, reconcile: false, silentErrors: true });
     }
     renderLibraryPreferences();
   }
@@ -1731,7 +1739,7 @@
     state.treeSort = 'modified-desc';
     state.newName = { mode: 'timestamp', baseName: '' };
     toggleLibraryReset(false, true);
-    if (orderChanged) renderTree();
+    if (orderChanged) { renderTree(); refreshTree(false, { reset: true, reconcile: false, silentErrors: true }); }
     renderLibraryPreferences();
   }
   function setLibraryPanel(kind, options) {
@@ -1889,13 +1897,101 @@
   async function request(url, options) {
     let response;
     try { response = await fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})); }
-    catch (cause) { const error = new Error(language() === 'en' ? 'Local service is unavailable' : '无法连接本地服务'); error.cause = cause; error.code = cause && cause.name === 'AbortError' ? 'aborted' : 'network_error'; throw error; }
-    let data = null; try { data = await response.json(); } catch (error) {}
+    catch (cause) { if (cause.name === 'AbortError') throw cause; const error = new Error(language() === 'en' ? 'Local service is unavailable' : '无法连接本地服务'); error.cause = cause; error.code = 'network_error'; throw error; }
+    let data = null; try { data = await response.json(); } catch (error) { if (error.name === 'AbortError') throw error; }
     if (!response.ok) { const error = new Error((data && data.error) || (language() === 'en' ? 'Request failed' : '请求失败')); error.status = response.status; error.code = data && data.code; throw error; }
     return data || {};
   }
   function isMissingError(error) { return !!error && (error.status === 404 || error.code === 'not_found'); }
-  function post(url, payload) { return request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) }); }
+  function treeView() {
+    let saved = ''; try { saved = localStorage.getItem(ACTIVE_PATH_KEY) || ''; } catch (error) {}
+    return { expanded: Array.from(new Set([state.notebookRoot || '', ...state.expanded, ...state.notebookExpanded])).slice(0, 4096),
+      pins: Array.from(new Set([...state.tabs, saved, state.current?.path || ''].filter(path => path && !isSpecialTab(path)))).slice(0, 256), sort: state.treeSort };
+  }
+  function post(url, payload, options) {
+    if (['/api/note-create', '/api/note-move', '/api/note-trash', '/api/note-import-commit'].includes(url)) payload = Object.assign({}, payload, { _tree: treeView() });
+    return request(url, Object.assign({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) }, options));
+  }
+  let indexHeartbeat = 0;
+  function indexActivity(visible, keepalive) {
+    clearTimeout(indexHeartbeat); indexHeartbeat = 0;
+    request('/api/note-index-activity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible }), keepalive: !!keepalive }).catch(() => {});
+    if (visible) indexHeartbeat = setTimeout(() => indexActivity(noteWorkspaceVisible()), 15000);
+    for (const tree of [treeEl, notebookTreeEl]) {
+      if (visible) { tree.__noteWindow?.resume(); tree.querySelectorAll('[data-note-more]').forEach(row => tree.__noteMoreObserver?.observe(row)); }
+      else { tree.__noteWindow?.suspend(); tree.__noteMoreObserver?.disconnect(); }
+    }
+  }
+  function mergeTreeItem(item) {
+    const existing = state.entryIndex.get(item.path);
+    if (existing) {
+      const children = existing.children; Object.assign(existing, item);
+      if (children) existing.children = children;
+      return;
+    }
+    if (item.contentChanged) return;
+    const parent = parentPath(item.path);
+    let host = parent ? state.entryIndex.get(parent)?.children : state.entries;
+    if (!host) return;
+    const next = Object.assign({}, item); if (next.kind === 'folder') next.children = [];
+    host.push(next); state.entryIndex.set(next.path, next);
+  }
+  const directoryLoads = new Map();
+  async function loadDirectory(parent, reset) {
+    if (directoryLoads.has(parent) || !noteWorkspaceVisible()) return;
+    const epoch = noteVisibilityEpoch, paging = state.treePagination?.[parent];
+    const offset = reset ? 0 : paging?.offset || 0;
+    const sort = state.treeSort;
+    const task = request('/api/note-children?parent=' + encodeURIComponent(parent) + '&offset=' + offset + '&sort=' + sort
+      + (offset && paging?.generation !== undefined ? '&generation=' + paging.generation : ''));
+    directoryLoads.set(parent, task);
+    try {
+      const result = await task;
+      if (!noteWorkspaceVisible() || epoch !== noteVisibilityEpoch || sort !== state.treeSort) return;
+      (result.items || []).forEach(mergeTreeItem);
+      state.treePagination ||= {}; state.treePagination[parent] = { offset: offset + result.items.length, hasMore: result.hasMore, total: result.total, generation: result.generation };
+      renderTree();
+    } catch (error) { if (error.code === 'query_changed') refreshTree(false, { reset: true, reconcile: false, silentErrors: true }); else if (noteWorkspaceVisible()) showToast(error.message, 'error'); }
+    finally { if (directoryLoads.get(parent) === task) directoryLoads.delete(parent); }
+  }
+  async function openSearchNote(path, result) {
+    if (!(await openNote(path, { browserAction: true, force: !!result?.searchQuery }))) return false;
+    if (result?.searchQuery) recordRecent(path);
+    const target = state.current, sequence = state.openSeq, visibility = noteVisibilityEpoch;
+    if (!result?.sourceRange) return true;
+    if (editorInputPending()) await whenEditorInputSettled();
+    if (!(await flushCanvases()) || state.current !== target || sequence !== state.openSeq || visibility !== noteVisibilityEpoch) return false;
+    let range = result.sourceRange;
+    if (target.revision !== result.revision) {
+      if (!result.searchQuery) return true;
+      let refreshed;
+      try { refreshed = await post('/api/note-query', Object.assign({ mode: 'search', paths: [path], expectedRevision: target.revision }, result.searchQuery)); }
+      catch (error) { return true; }
+      if (state.current !== target || sequence !== state.openSeq || visibility !== noteVisibilityEpoch) return false;
+      result = refreshed.items?.find(item => item.path === path);
+      range = result?.revision === target.revision ? result.sourceRange : null;
+      if (!range) return true;
+    }
+    if (state.viewMode !== 'reading') {
+      if (liveEditor) liveEditor.revealPosition(range[0], { align: 'start', end: range[1], unfold: true });
+      else { fallbackEditor.focus(); fallbackEditor.setSelectionRange(...range); }
+    } else {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      if (state.current !== target || sequence !== state.openSeq || visibility !== noteVisibilityEpoch) return false;
+      const highlight = result.highlights?.[0];
+      const needle = (highlight ? result.excerpt.slice(...highlight) : target.content.slice(range[0], range[1]).replace(/[*~`]/g, '')).normalize('NFC').toLocaleLowerCase();
+      const elements = readingHost.querySelectorAll('p,pre,li,td,th,h1,h2,h3,h4,h5,h6,.note-image-text-box');
+      for (const element of elements) {
+        if (!needle || element.closest('.note-frontmatter') || !element.textContent.normalize('NFC').toLocaleLowerCase().includes(needle)) continue;
+        for (let parent = element; parent && parent !== readingHost; parent = parent.parentElement) {
+          if (parent.classList.contains('md-callout-body') && parent.hidden) parent.closest('.md-callout')?.querySelector('.note-callout-fold')?.click();
+        }
+        readingHost.scrollTop += element.getBoundingClientRect().top - readingHost.getBoundingClientRect().top - 12;
+        break;
+      }
+    }
+    return true;
+  }
   function showToast(message, tone) { if (!toastEl || !message) return; toastEl.textContent = message; toastEl.dataset.tone = tone || ''; toastEl.classList.add('show'); clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toastEl.classList.remove('show'), 2600); }
   function showSaveError(message) { if (errorBar) { errorBar.textContent = message || tr('saveFailed'); errorBar.hidden = false; } }
   function clearSaveError() { if (errorBar) { errorBar.textContent = ''; errorBar.hidden = true; } }
@@ -1946,13 +2042,36 @@
     expandAllButton.setAttribute('aria-label', label);
     expandAllButton.setAttribute('aria-pressed', anyExpanded ? 'true' : 'false');
   }
-  function toggleAllFolders() {
+  let expandAllSequence = 0;
+  async function toggleAllFolders() {
+    const sequence = ++expandAllSequence, notebook = state.notebookRoot, visibility = noteVisibilityEpoch;
     const paths = folderPaths();
-    if (!paths.length) return false;
     const collapse = paths.some((path) => state.expanded.has(path));
     if (collapse) paths.forEach((path) => state.expanded.delete(path));
     else paths.forEach((path) => state.expanded.add(path));
     persistExpanded(); renderTree();
+    if (!collapse && notebook !== null) {
+      const queue = [notebook], valid = () => sequence === expandAllSequence && notebook === state.notebookRoot && visibility === noteVisibilityEpoch && noteWorkspaceVisible();
+      try {
+        while (queue.length && valid()) {
+          const parent = queue.shift(); let offset = 0, generation;
+          do {
+            const page = await request('/api/note-children?folders=1&parent=' + encodeURIComponent(parent) + '&offset=' + offset
+              + (generation !== undefined ? '&generation=' + generation : ''));
+            if (!valid()) return false;
+            generation = page.generation;
+            for (const item of page.items) {
+              if (!notebook && /^CustomNotebook(?:\/|$)/i.test(item.path)) continue;
+              mergeTreeItem(item); state.expanded.add(item.path); queue.push(item.path);
+            }
+            offset += page.items.length;
+            if (!page.hasMore) break;
+          } while (valid());
+          if (!state.treePagination?.[parent]) await loadDirectory(parent);
+        }
+        if (valid()) { persistExpanded(); renderTree(); }
+      } catch (error) { if (valid()) showToast(error.message, 'error'); }
+    }
     return true;
   }
   function rebuildEntryIndex(flat) { state.entryIndex = new Map((flat || flattenEntries(state.entries, [])).map((entry) => [entry.path, entry])); }
@@ -1968,6 +2087,8 @@
   }
   function naturalSort(entries) { entries.sort((a, b) => a.kind !== b.kind ? (a.kind === 'folder' ? -1 : 1) : a.name.localeCompare(b.name, language(), { numeric: true, sensitivity: 'base' })); }
   function makeDocument(data) {
+    (data.ancestors || []).forEach(mergeTreeItem);
+    if (data.entry && !findEntry(data.path)) { mergeTreeItem(data.entry); rebuildEntryIndex(); }
     const generation = ++state.documentGeneration;
     const entry = findEntry(data.path);
     const content = data.content || '';
@@ -2352,6 +2473,9 @@
     return !state.renamePath;
   }
   function renderTree(options) {
+    if (state.renamePath && findEntry(state.renamePath) && treeEl.contains(document.activeElement) && document.activeElement.classList.contains('note-tree-rename')) {
+      state.pendingTreeReorder = true; updateTreeSelection(); return;
+    }
     if (!options?.entryIndexReady) rebuildEntryIndex();
     renderTreeInto(treeEl, visibleTreeEntries(), state.expanded, false);
     state.treeRendered = true;
@@ -2359,6 +2483,8 @@
     state.pendingTreeReorder = false;
     updateNotebookRootLabel();
     if (!options?.keepNotebookTree) { state.notebookTreeDirty = true; renderNotebookTree(); }
+    const parent = state.notebookRoot;
+    if (parent !== null && !state.treePagination?.[parent]) loadDirectory(parent);
   }
   function renderNotebookTree() {
     if (!notebookTreeEl || !root.classList.contains('links-overlay-open') || effectiveSideMode() !== 'notebooks') return;
@@ -2369,6 +2495,8 @@
     updateNotebookSelection(); updateNotebookExpandButton();
   }
   function renderTreeInto(treeEl, treeEntries, expandedPaths, notebookTree) {
+    treeEl.__noteMoreObserver?.disconnect();
+    treeEl.__noteWindow?.dispose(); treeEl.__noteWindow = null;
     clearTreeRowIndex(treeEl);
     const rowIndex = treeRowIndexes.get(treeEl);
     const fragment = document.createDocumentFragment();
@@ -2410,6 +2538,8 @@
       const row = directChild(wrapper, 'note-tree-row');
       if (!row) return;
       if (expanded) expandedPaths.add(path); else expandedPaths.delete(path);
+      if (expanded && !state.treePagination?.[path]) loadDirectory(path);
+      if (treeEl.__noteWindow) { if (notebookTree) queueNotebookSettings({ ui: notebookUi() }); else persistExpanded(); renderTree(); return; }
       if (notebookTree) { queueNotebookSettings({ ui: notebookUi() }); updateNotebookExpandButton(); } else { persistExpanded(); updateExpandAllButton(); }
       row.setAttribute('aria-expanded', expanded ? 'true' : 'false'); row.setAttribute('aria-label', folderLabel(entry, expanded));
       row.classList.toggle('is-expanding', expanded); window.setTimeout(() => row.classList.remove('is-expanding'), TREE_MOTION_MS + 40);
@@ -2433,7 +2563,8 @@
       updateTreeSelection();
     }
 
-    function renderLevel(entries, depth, host) { (notebookTree && depth === 0 ? entries : sortedTreeEntries(entries)).forEach((entry) => {
+    function renderLevel(entries, depth, host, flat) { (notebookTree && depth === 0 ? entries : sortedTreeEntries(entries)).forEach((entry) => {
+      if (entry.kind === 'more') { host.appendChild(moreRow(entry.moreParent, depth)); return; }
       const wrapper = document.createElement('div'); wrapper.className = 'note-tree-entry'; wrapper.dataset.path = entry.path; wrapper.style.setProperty('--note-depth', depth);
       if (entry.notebook) wrapper.classList.add('note-notebook-root');
       const row = document.createElement('button'); row.type = 'button'; row.className = 'note-tree-row'; row.style.setProperty('--note-depth', depth); row.draggable = !notebookTree && state.renamePath !== entry.path; row.dataset.notePath = entry.path;
@@ -2493,12 +2624,51 @@
       row.addEventListener('drop', (event) => { if (notebookTree) return; event.preventDefault(); event.stopPropagation(); row.classList.remove('note-drop-target'); const destination = entry.kind === 'folder' ? entry.path : parentPath(entry.path); if (state.draggedPath) moveEntry(state.draggedPath, destination); else importDataTransfer(event.dataTransfer, destination); });
       wrapper.appendChild(row);
       if (entry.path && state.renamePath === entry.path && state.renameError) { const error = document.createElement('small'); error.className = 'note-tree-inline-error'; error.textContent = state.renameError; wrapper.appendChild(error); }
-      if (entry.kind === 'folder' && expandedPaths.has(entry.path)) createChildrenShell(entry, depth, wrapper, false);
+      if (!flat && entry.kind === 'folder' && expandedPaths.has(entry.path)) createChildrenShell(entry, depth, wrapper, false);
       host.appendChild(wrapper);
     }); }
-    renderLevel(treeEntries, 0, fragment);
-    if (!fragment.childNodes.length && (notebookTree || state.notebookRoot !== null)) { const message = document.createElement('p'); message.className = 'note-tree-empty'; message.textContent = tr('emptyTree'); fragment.appendChild(message); }
-    treeEl.replaceChildren(fragment); updateTreeSelection(); if (!notebookTree) updateExpandAllButton();
+    if (!treeEntries.length && (notebookTree || state.notebookRoot !== null)) { const message = document.createElement('p'); message.className = 'note-tree-empty'; message.textContent = state.indexState?.incomplete ? tr('readFailed') : tr('emptyTree'); fragment.appendChild(message); }
+    function moreRow(parent, depth) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-tree-more';
+      button.textContent = language() === 'en' ? 'Load more' : '加载更多'; button.dataset.noteMore = parent; button.style.setProperty('--note-depth', depth);
+      button.addEventListener('click', () => loadDirectory(parent));
+      if (!treeEl.__noteMoreObserver && typeof IntersectionObserver === 'function') treeEl.__noteMoreObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) if (entry.isIntersecting && entry.target.isConnected) loadDirectory(entry.target.dataset.noteMore);
+      }, { root: notebookTree ? treeEl : sidebarScroll, rootMargin: '150px' });
+      treeEl.__noteMoreObserver?.observe(button); return button;
+    }
+    const flatRows = [];
+    function flattenVisible(entries, depth, parent) {
+      (notebookTree && depth === 0 ? entries : sortedTreeEntries(entries)).forEach(entry => {
+        flatRows.push({ entry, depth });
+        if (entry.kind === 'folder' && expandedPaths.has(entry.path)) flattenVisible(entry.children || [], depth + 1, entry.path);
+      });
+      if (state.treePagination?.[parent]?.hasMore) flatRows.push({ entry: { kind: 'more', path: 'relatum:more:' + parent, moreParent: parent }, depth });
+    }
+    flattenVisible(treeEntries, 0, notebookTree ? null : state.notebookRoot || '');
+    if (flatRows.length > 200 && window.RelatumWindowedList) {
+      treeEl.replaceChildren(); clearTreeRowIndex(treeEl);
+      treeEl.__noteWindow = window.RelatumWindowedList.create({ host: treeEl, scroller: notebookTree ? treeEl : sidebarScroll,
+        estimate: 31, key: item => item.entry.path, render: item => {
+          const host = document.createDocumentFragment(); renderLevel([item.entry], item.depth, host, true); return host.firstChild;
+        }, onMount() {
+          for (const [path, row] of rowIndex.rows) if (!row.isConnected) rowIndex.rows.delete(path);
+          rowIndex.selectionKey = null; updateTreeSelection();
+        } });
+      treeEl.__noteWindow.setItems(flatRows);
+    } else {
+      renderLevel(treeEntries, 0, fragment);
+      treeEl.replaceChildren(fragment);
+      for (const parent of Object.keys(state.treePagination || {})) {
+        if (!state.treePagination[parent].hasMore || notebookTree && !expandedPaths.has(parent)) continue;
+        if (!notebookTree && parent === (state.notebookRoot || '')) treeEl.appendChild(moreRow(parent, 0));
+        else if (expandedPaths.has(parent)) {
+          const wrapper = liveWrapper(parent), shell = wrapper && directChild(wrapper, 'note-tree-children-shell');
+          const children = shell && directChild(shell, 'note-tree-children'); if (children) children.appendChild(moreRow(parent, Number(wrapper.style.getPropertyValue('--note-depth')) + 1));
+        }
+      }
+    }
+    updateTreeSelection(); if (!notebookTree) updateExpandAllButton();
   }
   function samePathList(left, right) {
     return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -2562,10 +2732,41 @@
     const current = () => seq === state.refreshSeq && !noteMovePromise
       && (options?.externalSeq === undefined || options.externalSeq === state.externalSeq && noteWorkspaceVisible());
     try {
-      const result = await request('/api/notes-tree' + (state.notebookSettingsLoaded ? '' : '?notebookSettings=1')); if (!current()) return false;
+      indexActivity(noteWorkspaceVisible());
+      let result;
+      let indexChanged = false;
+      let graphRetired = false;
+      const reconcile = state.initialized && !options?.background && options?.reconcile !== false && noteWorkspaceVisible();
+      if (state.indexGeneration !== undefined && !options?.reset && !reconcile) {
+        const delta = await request('/api/note-changes?since=' + state.indexGeneration); if (!current()) return false;
+        indexChanged = delta.changes?.length > 0 || state.indexState?.phase !== delta.index?.phase;
+        state.indexState = delta.index;
+        if (!delta.reset && !delta.hasMore) {
+          if (!delta.changes.length && !announce) { if (indexChanged) noteBrowser?.invalidate(); state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1); return true; }
+          for (const change of delta.changes) {
+            if (change.removed) {
+              if (change.path === '' || isNotebookRoot(change.path)) { updateNoteGraphSession(change.path); graphRetired = true; }
+              if (change.path === '') state.entries = []; else removeTreeEntry(state.entries, change.path);
+              for (const path of state.entryIndex.keys()) if (path === change.path || path.startsWith(change.path + '/')) state.entryIndex.delete(path);
+              let changed = false;
+              for (const path of recentFiles.keys()) if (path === change.path || path.startsWith(change.path + '/')) { recentFiles.delete(path); changed = true; }
+              if (changed) persistRecent();
+            } else mergeTreeItem(change.item);
+          }
+          result = { entries: state.entries, generation: delta.cursor, index: delta.index, pagination: state.treePagination };
+        }
+      }
+      if (!result) {
+        result = await request('/api/notes-tree?view=' + encodeURIComponent(JSON.stringify(treeView())) + (state.notebookSettingsLoaded ? '' : '&notebookSettings=1') + '&visible=' + (noteWorkspaceVisible() ? '1' : '0') + (reconcile ? '&reconcile=1' : ''));
+        if (!current()) return false;
+        if (!state.treeRendered && !result.entries?.length && (result.index?.phase === 'scanning' || result.index?.total > 0) && noteWorkspaceVisible()) {
+          await new Promise(resolve => setTimeout(resolve, 60)); return refreshTree(announce, options);
+        }
+      }
+      state.indexGeneration = result.generation; state.indexState = result.index; state.treePagination = result.pagination || state.treePagination || {};
       const entries = Array.isArray(result.entries) ? result.entries : [];
       const flat = flattenEntries(entries, []);
-      const signature = JSON.stringify(flat.map((entry) => [entry.path, entry.modifiedNs, entry.size]));
+      const signature = JSON.stringify(flat.map((entry) => [entry.path, entry.modifiedNs, entry.size, entry.revision]));
       const browserChanged = signature !== state.treeMetadataSignature;
       if (signature !== state.treeMetadataSignature) { state.externalSyncUnchanged = 0; state.treeMetadataSignature = signature; }
       else if (options && options.background) state.externalSyncUnchanged = Math.min(EXTERNAL_SYNC_DELAYS.length - 1, state.externalSyncUnchanged + 1);
@@ -2583,10 +2784,7 @@
       const notebookMissing = reconcileNotebooks();
       const liveRoots = new Set(notebookRoots().map(entry => entry.path));
       previousNotebookRoots.forEach(path => { if (path && !liveRoots.has(path)) updateNoteGraphSession(path); });
-      let prunedRecent = false;
-      recentFiles.forEach((time, path) => { if (!state.entryIndex.has(path)) { recentFiles.delete(path); prunedRecent = true; } });
-      if (prunedRecent) persistRecent();
-      if (browserChanged) { noteBrowser?.invalidate(); noteGraph?.invalidate(); }
+      if (browserChanged || indexChanged) { noteBrowser?.invalidate(); noteGraph?.checkExternalChanges(); }
       state.documentCache.forEach((documentState, path) => { const entry = findEntry(path); if (!entry) { if (state.current !== documentState) state.documentCache.delete(path); return; } if (state.current !== documentState && documentState.treeModifiedNs && (documentState.treeModifiedNs !== entry.modifiedNs || documentState.treeSize !== entry.size)) state.documentCache.delete(path); });
       const folders = new Set(flat.filter((entry) => entry.kind === 'folder').map((entry) => entry.path));
       state.expanded.forEach((path) => { if (!folders.has(path)) state.expanded.delete(path); });
@@ -2598,6 +2796,7 @@
       }
       await reconcileExternalTree(previousTabs);
       if (notebookMissing) selectNotebook('', { rootTarget: true });
+      if (graphRetired && graphContentActive()) await resumeNoteGraph();
       if (structureChanged) scheduleDocumentPrefetch();
       if (announce) showToast(tr('refreshed'));
       return true;
@@ -2631,7 +2830,8 @@
       const result = await request('/api/note-links?path=' + encodeURIComponent(path));
       if (seq !== state.linksSeq || !noteWorkspaceVisible() || state.current !== documentState || documentState.path !== path) return false;
       documentState.outgoing = result.outgoing || []; documentState.backlinks = result.backlinks || [];
-      if (documentState.revision === revision) documentState.linksRefreshNeeded = false;
+      if (documentState.revision === revision && result.revision === revision) documentState.linksRefreshNeeded = false;
+      else scheduleLinksRefresh(documentState);
       renderLinks(); return true;
     } catch (error) { return false; }
   }
@@ -2760,7 +2960,7 @@
       try {
         const result = await post('/api/note-save', { path, content, revision: target.revision });
         target.revision = result.revision || target.revision;
-        recordRecent(path); if (noteBrowser) noteBrowser.invalidate(); noteGraph?.invalidate();
+        recordRecent(path); if (noteBrowser) noteBrowser.invalidate(); noteGraph?.invalidate(notebookRootForPath(path));
         target.persistedGeneration = Math.max(target.persistedGeneration, generation);
         if (target.editGeneration <= generation) target.content = content;
         cacheDocument(target);
@@ -3002,7 +3202,8 @@
     // changing the editor's asset base; a later read failure must not undo the UI path.
     window.RelatumNoteCanvas?.remapViews(source, destination, true);
     updateNoteGraphSession(source, destination);
-    noteGraph?.invalidate();
+    noteGraph?.invalidate(notebookRootForPath(source));
+    if (notebookRootForPath(source) !== notebookRootForPath(destination)) noteGraph?.invalidate(notebookRootForPath(destination));
     backgroundTargetChanged();
     try { await syncMovedDocument(); }
     catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
@@ -3064,7 +3265,7 @@
     try {
       if (!(await flushPromise)) { rollback(); return; }
       const result = await post('/api/note-trash', { path: entry.path });
-      updateNoteGraphSession(entry.path); noteGraph?.invalidate();
+      updateNoteGraphSession(entry.path); noteGraph?.invalidate(notebookRootForPath(entry.path));
       const serverEntries = result.tree && Array.isArray(result.tree.entries) ? result.tree.entries : state.entries;
       const treeChanged = !sameTreeStructure(state.entries, serverEntries);
       state.entries = serverEntries;
@@ -3684,7 +3885,7 @@
     if (!current() || state.imageTextBusy || !path || !state.current || state.current.path !== path || state.editGeneration !== generation) return true;
     const entry = findEntry(path);
     if (!entry) return true;
-    const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size;
+    const metadataChanged = previousModifiedNs !== entry.modifiedNs || previousSize !== entry.size || entry.revision && entry.revision !== revision;
     if (settings.metadataOnly && !metadataChanged) return true;
     if (state.saveRunning || hasPendingEdits() || window.RelatumNoteCanvas?.dirty) return true;
     try {
@@ -3791,6 +3992,7 @@
     state.linksRefreshSuspended = false;
     const wasInitialized = state.initialized;
     state.active = true;
+    indexActivity(noteWorkspaceVisible());
     if (noteBrowser && noteWorkspaceVisible()) noteBrowser.resume();
     state.externalSyncUnchanged = 0;
     if (state.current && state.viewMode === 'reading' && !readingHost.firstChild) renderReadingDocument();
@@ -3824,6 +4026,7 @@
     setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
     state.active = false;
+    indexActivity(false);
     cancelSideClose();
     if (!sidePane || root.hidden || getComputedStyle(sidePane).visibility === 'hidden') clearClosedNotebookTree();
     syncOutline();
@@ -3834,6 +4037,10 @@
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
     syncOutline();
+    indexActivity(noteWorkspaceVisible());
+    if (!root.hidden && state.active && noteWorkspaceVisible()) {
+      resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch();
+    }
     if (root.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
     else if (state.active && graphPresentation) resumeNoteGraph();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
@@ -4119,7 +4326,10 @@
       return;
     }
     const mod = event.ctrlKey || event.metaKey; const key = event.key.toLowerCase();
-    if (mod && key === 'n') { event.preventDefault(); if (noteActionAvailable('new-note')) createEntry('note'); }
+    if (mod && event.shiftKey && key === 'f' && !event.altKey && !event.repeat) {
+      event.preventDefault(); (async () => { await setBrowserMode(true); (await loadNoteBrowser()).search(); })();
+    }
+    else if (mod && key === 'n') { event.preventDefault(); if (noteActionAvailable('new-note')) createEntry('note'); }
     else if (mod && key === 't') { event.preventDefault(); openBlankTab(); }
     else if (mod && key === 'w' && state.activeTab) { event.preventDefault(); closeTab(state.activeTab); }
     else if (event.ctrlKey && event.key === 'Tab') { event.preventDefault(); switchTab(event.shiftKey ? -1 : 1); }
@@ -4148,6 +4358,7 @@
     const visible = notePageVisible();
     if (visible === notePageWasVisible) return;
     notePageWasVisible = visible;
+    indexActivity(visible && state.active);
     if (!visible) {
       // Native WebView2 minimization need not change document.hidden or focus.
       // Invalidate reads, but let the existing save/IME handoff finish normally.
@@ -4166,6 +4377,7 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
+  window.addEventListener('pagehide', () => indexActivity(false, true));
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });

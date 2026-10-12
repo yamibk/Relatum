@@ -27,7 +27,7 @@ class NoteBrowserTests(unittest.TestCase):
             (self.store.root / (name + '.md')).write_text('#标签', encoding='utf-8')
         with mock.patch('notes_library.note_metadata', wraps=note_metadata) as metadata:
             self.store.links('A.md')
-            self.assertEqual(metadata.call_count, 0)
+            self.assertEqual(metadata.call_count, 2, 'the shared index parses each new note once')
             self.store.tags()
             self.assertEqual(metadata.call_count, 2)
             self.store.tags()
@@ -54,10 +54,10 @@ class NoteBrowserTests(unittest.TestCase):
         note = self.store.load('A.md')
         self.store.save('A.md', '#其他', note['revision'])
         self.assertEqual(self.store.query({'tag': '学习'})['total'], 1)
-        self.assertTrue(all('text' not in doc and 'raw' not in doc for doc in self.store._document_cache.values()))
+        self.assertTrue(all('text' not in doc and 'raw' not in doc for doc in self.store.index.documents().values()))
 
     def test_query_validation(self):
-        for query in ({}, {'paths': [], 'tag': 'tag'}, {'paths': ['../bad.md']}, {'paths': ['a.md'] * 51}, {'tag': '123'}, {'tag': 'tag', 'offset': True}, {'tag': 'tag', 'limit': 51}):
+        for query in ({'mode': 'unknown'}, {'paths': [], 'tag': 'tag'}, {'paths': ['../bad.md']}, {'paths': ['a.md'] * 51}, {'tag': '123'}, {'tag': 'tag', 'offset': True}, {'tag': 'tag', 'limit': 51}):
             with self.subTest(query=query), self.assertRaises(NotesError):
                 self.store.query(query)
 

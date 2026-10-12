@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import stat
 import subprocess
@@ -41,15 +42,24 @@ class NotesLibraryTests(unittest.TestCase):
         self.store.ensure_root()
 
     def tearDown(self):
+        self.store.close()
         self.temp.cleanup()
+
+    def drop_index_field(self, path, field):
+        document = self.store.index.document(path)
+        document.pop(field)
+        with self.store.index.write() as conn:
+            conn.execute('UPDATE entries SET metadata=? WHERE path=?',
+                         (json.dumps({key: value for key, value in document.items() if key not in ('path', 'revision', 'signature')}), path))
 
     def test_link_index_does_not_retain_note_bodies(self):
         self.store.create('', 'Target', 'note', content='target')
         for index in range(16):
             self.store.create('', f'Large-{index}', 'note', content='plain text\n' * 24000 + '[[Target]]')
         self.assertEqual(len(self.store.links('Target.md')['backlinks']), 16)
-        self.assertEqual(len(self.store._document_cache), 17)
-        self.assertTrue(all('text' not in item and 'raw' not in item for item in self.store._document_cache.values()))
+        self.assertEqual(len(self.store.index.documents()), 17)
+        self.assertFalse(hasattr(self.store, '_document_cache'))
+        self.assertTrue(all('text' not in item and 'raw' not in item for item in self.store.index.documents().values()))
         with mock.patch.object(self.store, '_read_note_bytes', wraps=self.store._read_note_bytes) as reads:
             self.store.links('Target.md')
             self.assertEqual(reads.call_count, 1, 'unchanged link index must not reread every body')
@@ -83,7 +93,7 @@ class NotesLibraryTests(unittest.TestCase):
         (self.root / 'Folder-2/Note-10.md').unlink()
         (self.root / 'Root.md').write_text('[[Changed]] #new', encoding='utf-8')
         refreshed = self.store._documents(metadata=True)
-        self.assertNotIn('Folder-2/Note-10.md', self.store._document_cache)
+        self.assertNotIn('Folder-2/Note-10.md', self.store.index.documents())
         self.assertEqual(refreshed['Root.md']['mentions'][0]['base'], 'Changed')
         self.assertEqual(refreshed['Root.md']['tags'], [{'key': 'new', 'label': 'new'}])
 
@@ -137,7 +147,7 @@ class NotesLibraryTests(unittest.TestCase):
         self.store.create('', 'Target', 'note', content='target')
         content = '#study\n[[Target]]\nbody\n'
         self.store.create('', 'Cached', 'note', content=content)
-        cached = self.store._document_cache['Cached.md']
+        cached = self.store.index.document('Cached.md')
         with mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions, \
                 mock.patch('notes_library.note_metadata', wraps=notes_library.note_metadata) as metadata, \
                 mock.patch.object(self.store, '_decode_note', wraps=self.store._decode_note) as decode, \
@@ -153,12 +163,12 @@ class NotesLibraryTests(unittest.TestCase):
             self.assertEqual(revision.call_count, 4, 'each operation hashes the actual bytes once')
             writes.assert_not_called()
         for field in ('mentions', 'tags', 'excerpt'):
-            self.assertIs(self.store._document_cache['Cached.md'][field], cached[field])
+            self.assertEqual(self.store.index.document('Cached.md')[field], cached[field])
 
     def test_revision_reuse_refreshes_signatures_and_missing_metadata(self):
         self.store.create('', 'Cached', 'note', content='#study\n[[Target]]')
         self.store.tags()
-        cached = self.store._document_cache['Cached.md']
+        cached = self.store.index.document('Cached.md')
         target = self.root / 'Cached.md'
         before = target.stat()
         os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns + 10_000_000))
@@ -169,13 +179,13 @@ class NotesLibraryTests(unittest.TestCase):
             self.assertEqual(mentions.call_count, 0)
             self.assertEqual(metadata.call_count, 0)
             self.assertEqual(decode.call_count, 0)
-            self.assertEqual(self.store._document_cache['Cached.md']['signature'][0], target.stat().st_mtime_ns)
-            self.store._document_cache['Cached.md'].pop('excerpt')
+            self.assertEqual(self.store.index.document('Cached.md')['signature'][0], target.stat().st_mtime_ns)
+            self.drop_index_field('Cached.md', 'excerpt')
             loaded = self.store.load('Cached.md')
             self.assertEqual(metadata.call_count, 1)
             self.assertEqual(mentions.call_count, 0)
             self.assertEqual(loaded['revision'], cached['revision'])
-            self.store._document_cache['Cached.md'].pop('mentions')
+            self.drop_index_field('Cached.md', 'mentions')
             self.store.links('Cached.md')
             self.assertEqual(mentions.call_count, 1)
             self.assertEqual(metadata.call_count, 1, 'missing links do not invalidate existing metadata')
@@ -184,7 +194,7 @@ class NotesLibraryTests(unittest.TestCase):
         self.store.create('', 'Cached', 'note', content='#old\n[[Old]]')
         target = self.root / 'Cached.md'
         before = target.stat()
-        old_revision = self.store._document_cache['Cached.md']['revision']
+        old_revision = self.store.index.document('Cached.md')['revision']
         target.write_bytes(b'#new\n[[New]]')
         os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
         with mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions, \
@@ -193,13 +203,13 @@ class NotesLibraryTests(unittest.TestCase):
             self.assertNotEqual(loaded['revision'], old_revision)
             self.assertEqual(mentions.call_count, 1)
             self.assertEqual(metadata.call_count, 1)
-        indexed = self.store._document_cache['Cached.md']
+        indexed = self.store.index.document('Cached.md')
         self.assertEqual(indexed['tags'], [{'key': 'new', 'label': 'new'}])
         self.assertEqual(indexed['mentions'][0]['base'], 'New')
 
     def test_link_fallback_only_parses_when_index_entry_is_missing(self):
         self.store.create('', 'Cached', 'note', content='[[Missing]]')
-        with mock.patch.object(self.store, '_documents', return_value={}), \
+        with mock.patch.object(self.store.index, 'document', return_value=None), \
                 mock.patch('notes_library._wiki_mentions', wraps=notes_library._wiki_mentions) as mentions:
             self.assertEqual(self.store.links('Cached.md')['outgoing'][0]['state'], 'missing')
             self.assertEqual(mentions.call_count, 1)
@@ -209,12 +219,13 @@ class NotesLibraryTests(unittest.TestCase):
     def test_move_rejects_body_changed_after_indexing_before_writing(self):
         self.store.create('', 'Target', 'note', content='target')
         self.store.create('', 'Source', 'note', content='[[Target]] original')
-        original = self.store._documents
-        def indexed_then_changed():
-            documents = original()
-            (self.root / 'Source.md').write_text('external [[Target]] new', encoding='utf-8')
-            return documents
-        with mock.patch.object(self.store, '_documents', side_effect=indexed_then_changed):
+        original = self.store.index.document
+        def indexed_then_changed(path):
+            document = original(path)
+            if path == 'Source.md':
+                (self.root / 'Source.md').write_text('external [[Target]] new', encoding='utf-8')
+            return document
+        with mock.patch.object(self.store.index, 'document', side_effect=indexed_then_changed):
             with self.assertRaises(NotesError) as caught:
                 self.store.move('Target.md', 'Renamed.md')
         self.assertEqual(caught.exception.code, 'conflict')
@@ -415,7 +426,14 @@ class NotesLibraryTests(unittest.TestCase):
              "children": [note(folder + "/Nested.md")]}
             for folder in ("课程2", "课程10")
         ] + [note("笔记2.MD"), note("笔记10.md")]}
-        self.assertEqual(self.store.tree(), expected)
+        actual = self.store.tree()
+        self.assertEqual(actual['version'], 2)
+        def original_fields(entries):
+            for item in entries:
+                item.pop('revision', None)
+                if item['kind'] == 'folder': original_fields(item['children'])
+        original_fields(actual['entries'])
+        self.assertEqual(actual['entries'], expected['entries'])
 
     def test_tree_reads_one_nonfollowing_stat_per_visible_entry(self):
         for index in range(20):

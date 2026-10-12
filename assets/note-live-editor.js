@@ -2973,6 +2973,7 @@
     let canvasHistoryPresent = /\.canvas/i.test(options.value || '');
     let suppressChanges = false;
     let documentSetSeq = 0;
+    let scrollRestoreSeq = 0;
     let destroyed = false;
     let pendingSourceMode = null;
     let pendingShortcutBindings = null;
@@ -3854,6 +3855,7 @@
       }
       pendingDocumentState = null;
       const seq = ++documentSetSeq;
+      const scrollSeq = ++scrollRestoreSeq;
       if (tableController) tableController.close();
       coordinator.epoch += 1;
       coordinator.folds.clear(); coordinator.foldPositions.clear(); coordinator.records = [];
@@ -3879,7 +3881,7 @@
       if (view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
       requestAnimationFrame(() => {
         if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
-        view.scrollDOM.scrollTop = Math.max(0, Number(documentState && documentState.scrollTop) || 0);
+        if (scrollSeq === scrollRestoreSeq) view.scrollDOM.scrollTop = Math.max(0, Number(documentState && documentState.scrollTop) || 0);
         view.requestMeasure();
         requestAnimationFrame(() => {
           if (destroyed || seq !== documentSetSeq || !view.dom.isConnected) return;
@@ -4104,11 +4106,17 @@
     }
 
     function revealPosition(position, options) {
+      scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
-      view.dispatch({ selection: EditorSelection.cursor(target),
-        ...(options && options.align === 'start'
-          ? { effects: EditorView.scrollIntoView(target, { y: 'start', yMargin: 12 }) }
-          : { scrollIntoView: true }) });
+      const effects = [];
+      if (options?.unfold) for (const spec of coordinator.records) {
+        if (spec.kind === 'callout' && spec.from <= target && spec.to >= target) {
+          coordinator.foldPositions.set(spec.from, false); effects.push(calloutFoldEffect.of({ id: spec.id, collapsed: false }));
+        }
+      }
+      if (options?.align === 'start') effects.push(EditorView.scrollIntoView(target, { y: 'start', yMargin: 12 }));
+      view.dispatch({ selection: options?.end != null ? EditorSelection.range(target, clamp(options.end, target, view.state.doc.length)) : EditorSelection.cursor(target), effects,
+        scrollIntoView: options?.align !== 'start' });
       view.focus();
     }
 

@@ -14,6 +14,7 @@ import re
 import shutil
 import stat
 import time
+import threading
 import unicodedata
 import urllib.parse
 import uuid
@@ -22,6 +23,9 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 from note_metadata import note_metadata, valid_tag
 from note_canvas_reference import CANVAS_DIRECTORY, canvas_target, references as canvas_references, rewrite as rewrite_canvas_references
+from notes_index import NoteIndex, book_root
+from notes_sync import NoteSync
+from note_search import projection
 
 
 # Keep graph parsing out of ordinary note sessions; names remain patchable in tests.
@@ -421,14 +425,19 @@ class NotesStore:
         *,
         atomic_text: Callable[[Path, str], None] | None = None,
         atomic_bytes: Callable[[Path, bytes], None] | None = None,
+        index_path: Path | None = None,
+        background_index: bool = False,
     ) -> None:
         self.root = Path(root)
         self.atomic_text = atomic_text or _default_atomic_text
         self.atomic_bytes = atomic_bytes or _default_atomic_bytes
-        self._document_cache: dict[str, dict] = {}
+        self.index = NoteIndex(index_path or self.root.parent / 'data' / 'note-index.sqlite3', self.root,
+                               persistent=background_index)
+        self.sync = NoteSync(self, background=background_index)
+        self.graph_index_enabled = True
         self._graph_cache: dict[str, tuple[tuple, dict, int]] = {}
         self._graph_cache_bytes = 0
-        self._metadata_enabled = False
+        self._graph_lock = threading.RLock()
         self._notebook_settings: dict | None = None
         self._notebook_settings_needs_write = False
 
@@ -714,97 +723,108 @@ class NotesStore:
     def _note_paths(self, *, strict: bool = False) -> list[Path]:
         return [target for target, _, _ in self._note_files(strict=strict)]
 
-    def tree(self) -> dict:
-        self.ensure_root()
-
-        def visit(folder: Path, prefix: str = "") -> list[dict]:
-            result: list[dict] = []
+    def tree(self, view=None) -> dict:
+        if self.sync.background:
+            self._prepare_index()
+        else:
             try:
-                entries = []
-                with os.scandir(folder) as scan:
-                    for entry in scan:
-                        low = entry.name.casefold()
-                        if folder == self.root and low == CANVAS_DIRECTORY:
-                            continue
-                        if low.endswith(".assets") or low.startswith(".relatum-") or low == ".trash":
-                            continue
-                        try:
-                            metadata = entry.stat(follow_symlinks=False)
-                        except OSError:
-                            # An external editor may remove or lock one entry
-                            # while the rest of the directory remains readable.
-                            continue
-                        attrs = int(getattr(metadata, "st_file_attributes", 0) or 0)
-                        if stat.S_ISLNK(metadata.st_mode) or attrs & 0x400:
-                            continue
-                        entries.append((entry, metadata))
-            except OSError as err:
-                raise NotesError(f"读取笔记目录失败：{err}", status=500, code="read_failed") from err
-            entries.sort(key=lambda item: (not stat.S_ISDIR(item[1].st_mode), _natural_key(item[0].name)))
-            for entry, metadata in entries:
-                target = folder / entry.name
-                relative = prefix + entry.name
-                if stat.S_ISDIR(metadata.st_mode):
-                    # DirEntry metadata is a snapshot. Recheck each directory
-                    # immediately before descending in case it became a link.
-                    if _is_reparse(target):
-                        continue
-                    result.append({
-                        "kind": "folder",
-                        "name": entry.name,
-                        "path": relative,
-                        "children": visit(target, relative + "/"),
-                    })
-                elif stat.S_ISREG(metadata.st_mode) and target.suffix.casefold() == NOTE_SUFFIX:
-                    result.append({
-                        "kind": "note",
-                        "name": target.stem,
-                        "fileName": entry.name,
-                        "path": relative,
-                        "modifiedNs": metadata.st_mtime_ns,
-                        "createdNs": getattr(metadata, "st_birthtime_ns", metadata.st_ctime_ns),
-                        "size": metadata.st_size,
-                    })
-            return result
+                self.sync.scan()
+                if self.sync._directory_failed:
+                    raise NotesError('笔记目录读取未完成', status=500, code='read_failed')
+            except NotesError as error:
+                raise NotesError(str(error), status=500, code='read_failed') from error
+        if self.sync.background or view is not None:
+            return self._tree_page(view or {})
+        rows = self.index.rows(folders=True)
+        items = {row['path']: self.index.entry(row) for row in rows}
+        entries = []
+        for path, item in items.items():
+            parent = str(PurePosixPath(path).parent)
+            (items[parent]['children'] if parent in items else entries).append(item)
+        def sort(items):
+            items.sort(key=lambda item: (item['kind'] != 'folder', _natural_key(item['name'])))
+            for item in items:
+                if item['kind'] == 'folder':
+                    sort(item['children'])
+        sort(entries)
+        return {"version": 2, "entries": entries, "generation": self.index.status()['generation'],
+                "index": self.sync.status()}
 
-        entries = visit(self.root)
-        return {"version": 1, "entries": entries}
+    def _tree_page(self, view):
+        """Notebook roots, requested directory pages and pinned ancestors."""
+        if not isinstance(view, dict):
+            raise NotesError('目录视图无效')
+        expanded, pins = view.get('expanded', []), view.get('pins', [])
+        if not isinstance(expanded, list) or len(expanded) > 4096 or not isinstance(pins, list) or len(pins) > 256:
+            raise NotesError('目录视图超出范围')
+        parents = set(self.normalize_path(p, allow_root=True) for p in expanded)
+        parents.add('')
+        pins = [self.normalize_path(p) for p in pins if isinstance(p, str) and not p.startswith('relatum:')]
+        if not self.sync._scanned:
+            selected = self.notebook_settings().get('ui', {}).get('selectedRoot', '')
+            for path in pins + ([selected] if selected else []):
+                try:
+                    self._publish_path(path)
+                    self.sync.enqueue(path, priority=True)
+                except (OSError, NotesError):
+                    pass
+        items, pagination = {}, {}
+        with self.index.read() as conn:
+            generation = int(conn.execute("SELECT value FROM settings WHERE key='generation'").fetchone()[0])
+            columns = 'e.path,e.kind,e.name,e.modified,e.created,e.size,e.revision'
+            for row in conn.execute('SELECT ' + columns + " FROM entries e JOIN books b ON b.id=e.book WHERE b.deleted=0 AND e.kind='folder' AND (e.key=b.key OR e.key='customnotebook')"):
+                items[row['path']] = self.index.entry(row)
+            wanted = set(pins) | parents
+            for path in tuple(wanted):
+                wanted.update(str(p) for p in PurePosixPath(path).parents if str(p) != '.')
+            if wanted:
+                for row in conn.execute('SELECT ' + columns + ' FROM entries e JOIN books b ON b.id=e.book WHERE b.deleted=0 AND e.key IN ('
+                        + ','.join('?' for _ in wanted) + ')', [unicodedata.normalize('NFC', p).casefold() for p in wanted]):
+                    items[row['path']] = self.index.entry(row)
+            for parent in parents:
+                page = self.index.children(parent, sort=view.get('sort', 'name-asc'), connection=conn)
+                pagination[parent] = {'offset': len(page['items']), 'total': page['total'], 'hasMore': page['hasMore'], 'generation': page['generation']}
+                for item in page['items']:
+                    if item['path'] not in items:
+                        items[item['path']] = item
+        entries = []
+        for path, item in items.items():
+            parent = str(PurePosixPath(path).parent)
+            (items[parent]['children'] if parent in items else entries).append(item)
+        def sort(items):
+            items.sort(key=lambda item: (item['kind'] != 'folder', _natural_key(item['name'])))
+            for item in items:
+                if item['kind'] == 'folder':
+                    sort(item['children'])
+        sort(entries)
+        return {'version': 2, 'entries': entries, 'pagination': pagination,
+                'generation': generation, 'index': self.sync.status()}
 
     def _documents(self, *, metadata: bool = False, strict: bool = False,
                    scope: str | None = None, graph: bool = False) -> dict[str, dict]:
-        # Once explicitly requested, refresh metadata with the existing index
-        # read so link scans cannot force a second body read for changed files.
-        self._metadata_enabled = metadata = metadata or self._metadata_enabled
-        documents: dict[str, dict] = {}
-        live_paths: set[str] = set()
-        for target, relative, signature in self._note_files(strict=strict, scope=scope):
-            live_paths.add(relative)
-            try:
-                cached = self._document_cache.get(relative)
-                if cached and cached.get("signature") == signature and 'mentions' in cached \
-                        and 'canvasTargets' in cached \
-                        and (not graph or 'graphReferences' in cached) \
-                        and (not metadata or ('tags' in cached and 'excerpt' in cached)):
-                    documents[relative] = cached
-                    continue
-                raw = self._read_note_bytes(target)
-                documents[relative] = self._index_document(relative, raw, signature, metadata=metadata, graph=graph)
-            except (NotesError, OSError) as error:
-                if strict:
-                    raise NotesError("统计未完成：有笔记无法读取，请重试", status=409,
-                                     code="statistics_incomplete") from error
-                # 一个被外部复制进来的损坏/超大文件不应拖垮其它笔记的链接面板。
-                continue
-        for stale in set(self._document_cache) - live_paths:
-            if scope is None or scope_contains(stale, scope):
-                self._document_cache.pop(stale, None)
-        return documents
+        self._prepare_index(scope, strict=strict, graph=graph)
+        return self.index.documents(scope)
+
+    def _prepare_index(self, scope=None, *, strict=False, graph=False):
+        if self.sync.background:
+            self.sync.start()
+            if graph:
+                self.sync.complete(scope, graph=True)
+            elif strict and self.sync.status()['phase'] != 'ready':
+                raise NotesError('正在整理笔记，请稍后重试', status=409, code='statistics_incomplete')
+        else:
+            if graph:
+                self.sync.graph(scope or '')
+            self.sync.scan(scope, strict=strict, drain=True)
+            if graph:
+                self.sync.complete(scope, graph=True)
 
     def _index_document(self, relative: str, content: bytes, signature: tuple,
                         *, metadata: bool, text: str | None = None,
-                        revision: str | None = None, graph: bool = False) -> dict:
+                        revision: str | None = None, graph: bool = False,
+                        expected_book: str | None = None, valid=None) -> dict:
         revision = revision if revision is not None else _revision(content)
-        cached = self._document_cache.get(relative)
+        cached = self.index.document(relative)
         # File timestamps can change without changing the bytes. Keep parsed
         # fields only when the actual content revision matches, never by size.
         document = dict(cached) if cached and cached.get("revision") == revision else {
@@ -812,14 +832,20 @@ class NotesStore:
         }
         document["signature"] = signature
         needs_mentions = "mentions" not in document
-        needs_metadata = metadata and ("tags" not in document or "excerpt" not in document)
+        needs_metadata = "tags" not in document or "excerpt" not in document
         needs_canvas = "canvasTargets" not in document
+        graph = graph or bool(cached and 'graphReferences' in cached)
         needs_graph = graph and "graphReferences" not in document
+        if not (needs_mentions or needs_metadata or needs_canvas or needs_graph):
+            self.index.verified(relative, signature, expected_book, valid)
+            return document
         if needs_mentions or needs_metadata or needs_canvas or needs_graph:
             text = text if text is not None else self._decode_note(content)
             if needs_mentions:
+                self.sync.cooperate()
                 document["mentions"] = _wiki_mentions(text)
             if needs_metadata:
+                self.sync.cooperate()
                 document.update(note_metadata(text))
             if needs_canvas:
                 targets = {canvas_target(relative, ref["target"]) for ref in canvas_references(text)} \
@@ -827,8 +853,23 @@ class NotesStore:
                 document["canvasTargets"] = sorted(target for target in targets if target)
                 document["hasCanvasReferences"] = bool(document["canvasTargets"])
             if needs_graph:
+                self.sync.cooperate()
                 document["graphReferences"] = graph_references(text)
-        self._document_cache[relative] = document
+        if not cached or cached['revision'] != revision:
+            self.sync.cooperate()
+            text = text if text is not None else self._decode_note(content)
+            document['words'] = note_word_count(text)
+            document['characters'] = len(note_visible_text(text))
+            search_text, source_map = projection(text, self.sync.cooperate)
+        else:
+            with self.index.read() as conn:
+                row = conn.execute('SELECT body,source_map FROM entries e JOIN books b ON b.id=e.book WHERE e.key=? AND b.deleted=0',
+                                   (unicodedata.normalize('NFC', relative).casefold(),)).fetchone()
+                import zlib
+                search_text = row['body'] if row else ''
+                source_map = json.loads(zlib.decompress(row['source_map'])) if row and row['source_map'] else []
+        fields = {key: value for key, value in document.items() if key not in ('path', 'revision', 'signature')}
+        self.index.record(relative, revision, fields, search_text, source_map, signature, expected_book, valid)
         return document
 
     def _cache_document(self, relative: str, content: bytes, *,
@@ -838,67 +879,109 @@ class NotesStore:
             stat = target.stat()
             signature = (stat.st_mtime_ns, stat.st_size)
         except OSError:
-            self._document_cache.pop(relative, None)
+            self.sync.retire(relative)
             return
-        self._index_document(relative, content, signature, metadata=True, text=text, revision=revision)
+        if self.sync.background:
+            self.sync.enqueue(relative, priority=True, content=content, signature=signature)
+        else:
+            self._publish_path(relative)
+            self._index_document(relative, content, signature, metadata=True, text=text, revision=revision)
+
+    def _publish_path(self, relative):
+        paths = list(reversed(PurePosixPath(relative).parents)) + [PurePosixPath(relative)]
+        records = []
+        for path in paths:
+            if str(path) == '.':
+                continue
+            target = self._absolute(str(path))
+            data = target.stat(follow_symlinks=False)
+            kind = 'folder' if stat.S_ISDIR(data.st_mode) else 'note'
+            records.append((str(path), kind, data.st_mtime_ns,
+                            getattr(data, 'st_birthtime_ns', data.st_ctime_ns), data.st_size if kind == 'note' else 0))
+        self.index.register(records)
 
     def tags(self) -> dict:
-        catalog = {}
-        for relative, document in self._documents(metadata=True).items():
-            seen = set()
-            for tag in document['tags']:
-                parts, labels = tag['key'].split('/'), tag['label'].split('/')
-                for depth in range(1, len(parts) + 1):
-                    key = '/'.join(parts[:depth])
-                    item = catalog.setdefault(key, {'key': key, 'label': '/'.join(labels[:depth]), 'count': 0})
-                    if key not in seen:
-                        item['count'] += 1
-                        seen.add(key)
-        return {'items': sorted(catalog.values(), key=lambda item: item['key'])}
+        self._prepare_index()
+        return self.index.tags()
 
     def query(self, body: object) -> dict:
-        if not isinstance(body, dict) or ('paths' in body) == ('tag' in body):
-            raise NotesError('请指定路径列表或标签')
-        def item(relative, document):
-            return {'path': relative, 'title': PurePosixPath(relative).stem,
-                    'modifiedNs': document['signature'][0], 'revision': document['revision'],
-                    'tags': document['tags'], 'excerpt': document['excerpt']}
+        if not isinstance(body, dict) or ('paths' in body and 'tag' in body):
+            raise NotesError('查询格式无效')
+        body = dict(body)
         if 'paths' in body:
-            paths = body['paths']
-            if not isinstance(paths, list) or len(paths) > 50:
+            if not isinstance(body['paths'], list) or len(body['paths']) > 50:
                 raise NotesError('每次最多查询 50 篇笔记')
-            normalized = list(dict.fromkeys(self.normalize_path(path) for path in paths))
-            items = []
-            for relative in normalized:
-                target = self._absolute(relative)
-                try:
-                    file_stat = target.stat()
-                    signature = (file_stat.st_mtime_ns, file_stat.st_size)
-                    document = self._document_cache.get(relative)
-                    if not document or document['signature'] != signature or 'tags' not in document:
-                        self._cache_document(relative, self._read_note_bytes(target))
-                        document = self._document_cache[relative]
-                    items.append(item(relative, document))
-                except (FileNotFoundError, NotesError) as error:
-                    if isinstance(error, NotesError) and error.status != 404:
-                        raise
-            return {'items': items, 'total': len(items), 'hasMore': False}
-        tag = valid_tag(body['tag']) if isinstance(body['tag'], str) else None
-        offset, limit = body.get('offset', 0), body.get('limit', 50)
-        if not tag or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
-            raise NotesError('标签或分页参数无效')
-        key = tag.casefold()
-        matching = [(path, doc) for path, doc in self._documents(metadata=True).items()
-                    if any(entry['key'] == key or entry['key'].startswith(key + '/') for entry in doc['tags'])]
-        matching.sort(key=lambda pair: (-pair[1]['signature'][0], pair[0]))
-        return {'items': [item(path, doc) for path, doc in matching[offset:offset+limit]],
-                'total': len(matching), 'hasMore': offset + limit < len(matching)}
+            body['paths'] = list(dict.fromkeys(self.normalize_path(path) for path in body['paths']))
+        if 'tag' in body and (not isinstance(body['tag'], str) or not valid_tag(body['tag'])):
+            raise NotesError('标签无效')
+        scope = body.get('scope')
+        if isinstance(scope, dict) and scope.get('kind') != 'all':
+            scope = dict(scope)
+            scope['path'] = self.normalize_path(scope.get('path', ''), allow_root=True)
+            if scope.get('kind') == 'notebook':
+                scope['path'] = self._notebook_setting_path(scope['path'], root_only=bool(scope['path']))
+            body['scope'] = scope
+        expected = body.pop('expectedRevision', None)
+        if expected is not None:
+            if not isinstance(expected, str) or len(body.get('paths', [])) != 1:
+                raise NotesError('定位需要单篇笔记及其修订号')
+            path = body['paths'][0]
+            cached = self.index.document(path)
+            if not cached or cached['revision'] != expected:
+                target = self._absolute(path)
+                before = target.stat()
+                raw = self._read_note_bytes(target)
+                after = target.stat()
+                if _revision(raw) != expected or (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+                    raise NotesError('正文已变化，请重新打开搜索结果', status=409, code='revision_changed')
+                self._publish_path(path)
+                self._index_document(path, raw, (after.st_mtime_ns, after.st_size), metadata=True, revision=expected)
+        self._prepare_index()
+        if self.sync.background and scope and scope.get('kind') != 'all':
+            self.sync.prioritize(scope['path'])
+        try:
+            result = self.index.query(body)
+        except ValueError as error:
+            raise NotesError(str(error), status=409 if '已更新' in str(error) else 400,
+                             code='query_changed' if '已更新' in str(error) else 'invalid') from error
+        result['index'] = self.sync.status()
+        if not self.sync._scanned:
+            result.pop('missingRecent', None)
+        return result
 
     def invalidate(self) -> None:
-        """在文件被系统回收站或外部批量操作移动后清空增量缓存。"""
-        self._document_cache.clear()
-        self._graph_cache.clear()
-        self._graph_cache_bytes = 0
+        """Reconcile changed paths without discarding the persistent index."""
+        self.sync.request_scan()
+        # Per-book identity/topology versions invalidate only affected scenes.
+
+    def removed(self, relative):
+        self.sync.retire(relative, notebook=bool(relative and book_root(relative) == relative))
+
+    def _drop_graph_cache(self, relative):
+        with self._graph_lock:
+            removed = self._graph_cache.pop(relative, None)
+            if removed:
+                self._graph_cache_bytes -= removed[2]
+
+    def close(self):
+        self.sync.close()
+
+    def index_status(self):
+        return self.sync.status()
+
+    def index_changes(self, since):
+        result = self.index.changes(since)
+        result['index'] = self.sync.status()
+        return result
+
+    def children(self, parent='', offset=0, limit=50, sort='name-asc', generation=None, folders_only=False):
+        parent = self.normalize_path(parent, allow_root=True)
+        self._prepare_index()
+        try:
+            result = self.index.children(parent, offset=offset, limit=limit, sort=sort, generation=generation, folders_only=folders_only)
+            return result
+        except ValueError as error:
+            raise NotesError(str(error), status=409 if '已更新' in str(error) else 400, code='query_changed' if '已更新' in str(error) else 'invalid') from error
 
     def graph(self, root: object = "", known_signature: str = "") -> dict:
         """A content-free graph for one notebook, with lazy incremental parsing."""
@@ -915,9 +998,12 @@ class NotesStore:
         except OSError as error:
             raise NotesError("统计未完成：笔记本无法读取，请重试", status=409,
                              code="statistics_incomplete") from error
-        documents = self._documents(scope=scope, graph=True, strict=True)
-        input_signature = tuple((path, document["signature"], document["revision"])
-                                for path, document in documents.items())
+        self._prepare_index(scope=scope, graph=True, strict=True)
+        documents, input_signature = self.index.documents(scope, snapshot=True)
+        with self._graph_lock:
+            return self._graph_response(scope, documents, input_signature, known_signature)
+
+    def _graph_response(self, scope, documents, input_signature, known_signature):
         cached = self._graph_cache.get(scope)
         if cached and cached[0] == input_signature:
             result = cached[1]
@@ -993,53 +1079,30 @@ class NotesStore:
             "path": normalized,
             "content": content,
             "revision": revision,
+            "ancestors": [{'kind': 'folder', 'path': str(parent), 'name': parent.name, 'children': []}
+                          for parent in reversed(PurePosixPath(normalized).parents) if str(parent) != '.'],
+            "entry": {'kind': 'note', 'path': normalized, 'name': PurePosixPath(normalized).stem,
+                      'fileName': PurePosixPath(normalized).name, 'modifiedNs': target.stat().st_mtime_ns, 'size': len(raw), 'revision': revision},
         }
 
     def links(self, relative: object) -> dict:
         normalized = self.normalize_path(relative)
+        if self.sync.background:
+            self._prepare_index()
+            result = self.index.links(normalized)
+            if result is None:
+                self.sync.enqueue(normalized, priority=True)
+                return {'path': normalized, 'revision': '', 'outgoing': [], 'backlinks': [], 'index': self.sync.status()}
+            result['index'] = self.sync.status()
+            return result
         target = self._absolute(normalized)
         raw = self._read_note_bytes(target)
-        documents = self._documents()
-        exact, stems = self._resolver(list(documents))
-        outgoing: list[dict] = []
-        backlinks: list[dict] = []
-        seen_outgoing: set[tuple[str, str]] = set()
-        current = documents.get(normalized)
-        if current is None:
-            current = {"mentions": _wiki_mentions(self._decode_note(raw))}
-        for mention in current["mentions"]:
-            resolved, state = self._resolve_wiki(mention["base"], exact, stems)
-            key = (resolved or mention["base"].casefold(), state)
-            if key in seen_outgoing:
-                continue
-            seen_outgoing.add(key)
-            outgoing.append({
-                "label": mention["alias"] or PurePosixPath(mention["base"]).name,
-                "rawTarget": mention["base"],
-                "path": resolved or "",
-                "state": state,
-                "line": mention["line"],
-                "excerpt": mention["excerpt"],
-            })
-        for source_path, document in documents.items():
-            if source_path == normalized:
-                continue
-            for mention in document["mentions"]:
-                resolved, state = self._resolve_wiki(mention["base"], exact, stems)
-                if state == "resolved" and resolved == normalized:
-                    backlinks.append({
-                        "path": source_path,
-                        "label": PurePosixPath(source_path).stem,
-                        "line": mention["line"],
-                        "excerpt": mention["excerpt"],
-                    })
-        backlinks.sort(key=lambda item: (_natural_key(item["path"]), item["line"]))
-        return {
-            "path": normalized,
-            "revision": _revision(raw),
-            "outgoing": outgoing,
-            "backlinks": backlinks,
-        }
+        revision = _revision(raw)
+        self._prepare_index()
+        self._cache_document(normalized, raw, revision=revision)
+        result = self.index.links(normalized) or {'path': normalized, 'outgoing': [], 'backlinks': []}
+        result['revision'] = revision
+        return result
 
     def report_statistics(self) -> dict:
         """Return content-free aggregates for the frozen Career report.
@@ -1190,6 +1253,7 @@ class NotesStore:
             raise NotesError(f"已有同名项目：{collision.name}", status=409, code="exists")
         if requested_kind == "folder":
             target.mkdir()
+            self._publish_path(normalized)
         else:
             if target.suffix.casefold() != NOTE_SUFFIX:
                 raise NotesError("笔记文件必须使用 .md 后缀")
@@ -1197,6 +1261,8 @@ class NotesStore:
             if len(text.encode("utf-8")) > MAX_NOTE_BYTES:
                 raise NotesError("笔记过大（单文件上限 4MB）", status=413, code="too_large")
             self.atomic_text(target, text)
+            if self.sync.background:
+                self._publish_path(normalized)
             self._cache_document(normalized, text.encode("utf-8"))
         return {"path": normalized, "kind": requested_kind}
 
@@ -1238,6 +1304,7 @@ class NotesStore:
         return self.create(parent_relative, name, "folder")
 
     def save(self, relative: object, content: object, expected_revision: object) -> dict:
+        self.sync.foreground()
         normalized = self.normalize_path(relative)
         target = self._absolute(normalized)
         if target.suffix.casefold() != NOTE_SUFFIX:
@@ -1278,7 +1345,7 @@ class NotesStore:
         return mapping
 
     def _rewrite_for_move(self, documents: dict[str, dict], mapping: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-        old_exact, old_stems = self._resolver(list(documents))
+        old_exact, old_stems = self._resolver(list(mapping))
         post_paths = list(mapping.values())
         new_exact, new_stems = self._resolver(post_paths)
         moved_targets = {old: new for old, new in mapping.items() if old != new}
@@ -1348,6 +1415,7 @@ class NotesStore:
             raise NotesError("要移动的项目不存在", status=404, code="not_found")
         if _is_reparse(source_path):
             raise NotesError("不能移动链接或重解析点", status=403, code="unsafe_path")
+        source_rel = source_path.resolve(strict=True).relative_to(self.root.resolve()).as_posix()
         source_is_folder = source_path.is_dir()
         if source_path.is_file() and source_path.suffix.casefold() != NOTE_SUFFIX:
             raise NotesError("只能移动笔记或普通文件夹")
@@ -1366,8 +1434,28 @@ class NotesStore:
         if collision:
             raise NotesError(f"目标位置已有同名项目：{collision.name}", status=409, code="exists")
 
-        documents = self._documents()
-        mapping = self._post_move_paths(list(documents), source_rel, destination_rel, source_is_folder)
+        self._prepare_index(strict=True)
+        with self.index.read() as conn:
+            paths = [row[0] for row in conn.execute("SELECT e.path FROM entries e JOIN books b ON b.id=e.book WHERE b.deleted=0 AND e.kind='note'")]
+            key = unicodedata.normalize('NFC', source_rel).casefold()
+            candidates = conn.execute("SELECT e.id,e.stem_key,e.path_stem_key FROM entries e JOIN books b ON b.id=e.book WHERE b.deleted=0 AND (e.key=? OR e.key>=? AND e.key<?)",
+                                     (key, key + '/', key + '/\U0010ffff')).fetchall()
+            ids = [row[0] for row in candidates]
+            sources = set()
+            for begin in range(0, len(ids), 128):
+                group = ids[begin:begin + 128]
+                if group:
+                    placeholders = ','.join('?' for _ in group)
+                    sql = "SELECT DISTINCT e.path FROM entries e JOIN books b ON b.id=e.book WHERE b.deleted=0 AND e.kind='note' AND (e.id IN (" + placeholders + ") OR e.id IN (SELECT entry FROM refs WHERE consumer='wiki' AND resolved IN (" + placeholders + ")))"
+                    for row in conn.execute(sql, group + group):
+                        sources.add(row[0])
+            lookups = list({value for row in candidates for value in (row['stem_key'], row['path_stem_key'])})
+            for begin in range(0, len(lookups), 128):
+                group = lookups[begin:begin + 128]
+                sql = "SELECT DISTINCT e.path FROM refs r JOIN entries e ON e.id=r.entry JOIN books b ON b.id=e.book WHERE b.deleted=0 AND consumer='wiki' AND lookup IN (" + ','.join('?' for _ in group) + ')'
+                sources.update(row[0] for row in conn.execute(sql, group))
+        documents = {path: self.index.document(path) for path in sources}
+        mapping = self._post_move_paths(paths, source_rel, destination_rel, source_is_folder)
         updates, warnings = self._rewrite_for_move(documents, mapping)
         reverse_mapping = {new: old for old, new in mapping.items()}
         stage = self.root / f".relatum-txn-{uuid.uuid4().hex}"
@@ -1425,7 +1513,12 @@ class NotesStore:
                 companion_moved = True
             for post_relative, text in updates.items():
                 self.atomic_text(self._absolute(post_relative), text)
-            self._document_cache.clear()
+            moved_paths = self.index.remap(source_rel, destination_rel)
+            for path in moved_paths:
+                self.sync.enqueue(destination_rel + path[len(source_rel):], priority=True)
+            for path in updates:
+                self.sync.enqueue(path, priority=True)
+            self.invalidate()
         except Exception:
             for backup, pre_relative, post_relative in reversed(backups):
                 current_relative = post_relative if moved else pre_relative
@@ -1942,7 +2035,7 @@ class NotesStore:
         finally:
             if moved:
                 shutil.rmtree(stage, ignore_errors=True)
-        self._document_cache.clear()
+        self.invalidate()
         note_paths: list[str] = []
         for root_path in result:
             target = self._absolute(root_path, allow_assets=True)

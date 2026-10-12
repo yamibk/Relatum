@@ -62,6 +62,14 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 ## 3. 源码地图
 
+笔记使用单个可重建的 `data/note-index.sqlite3`：`notes_library.py` 管文件/素材事务及路径授权，`notes_index.py` 管 SQLite 存储、参数化查询、读取快照及空间回收，`notes_sync.py` 管后台任务与 Windows 通知，`note_search.py` 管文字投影、短字符倒排和 UTF-16 位置映射。Markdown 是原始数据，SQLite 只保存派生文本及元数据，不迁移旧索引，不改真实正文、附件或配置。WAL 读连接不持有文件写锁或跨进程全局写锁。
+
+后台先登记目录，再分批解析正文；队列最多 8192 路径，未完成工作以 `needs_sync` 保存在数据库，保存内容的优先缓冲总计 8 MiB。保存后 250ms 安静期及解析阶段之间协作，让文件落盘优先；普通查询不扫描 Markdown 目录或重读正文。生产索引按 `notes.graph` 开关在同次正文读取中生成图谱引用，仍使用各自解析边界；界面图谱脚本、标签、Worker 和 GPU 继续按需加载。生涯报告及画布引用复用共享索引。
+
+Windows 使用目录变化通知，启动、重新进入、还原、主动刷新、通知失败或溢出补偿核对；事件即使文件状态未变也核验字节。隐藏、离场、最小化暂停后台解析与维护，待处理工作保留，退出释放线程、连接和句柄。目录不可读保留旧数据并标记不完整，不能据此删除。笔记本 UUID 结合实际目录身份；回收成功后立即标记删除并取消任务，再以每批 128 行清理旧身份的派生数据。相同路径的新本、旧任务和旧清理隔离；原引用保留，目标缺失后重新解析。空闲时有限合并 FTS、回收 64 页并做被动检查点，不在删除交互中整库压缩，生涯历史不清理。
+
+笔记浏览增加全文搜索及 `Ctrl/Cmd+Shift+F`，默认所有笔记本，支持连续字符、空格 AND、双引号短语、范围/文件夹/标签/修改时间筛选；包含代码与有效图片可见文字，排除隐藏注释及内部编码。输入合并 150ms，候选确认后查询，新请求取消旧请求。返回结果保留关键词、筛选、已加载页、选中项和滚动；打开遵守保存/输入交接及修订复核，保留编辑/阅读模式并展开命中折叠内容。目录按页加载、日常读取增量日志，目录与结果超过 200 项窗口化，重命名期间延后重排。目录版本独立于正文版本，快照条目及版本必须来自同一读取事务。协议和维护细节见 `docs/notes-sqlite-search.md`。
+
 笔记工作区的可见生命周期同时检查 `document.hidden` 与桌面壳已有的 `desktopMinimized`，`visibilitychange` 和 `canvasdesktop:visibility` 共用幂等交接。原生最小化即使保留浏览器焦点和可见状态，也立即释放图谱标签、监听及 GPU/context，暂停目录/图谱检查、正文预读、双链刷新、大纲和字数计算；已开始的保存及候选输入交接继续完成。请求返回核对可见状态及操作身份，最小化前的目录、正文、链接、浏览和图谱响应不能在还原后改投或重建资源。还原恢复当前正文/浏览、大纲及按本缓存的图谱坐标和镜头，不重播生长；重复通知不重复初始化，离开的工作区不被还原事件重新激活。沿用原 API、缓存预算和持久化格式。
 
 笔记图谱入口保持普通图标外观，图谱标签激活时不显示额外的灰底选中提示；保留原有悬停反馈与无障碍展开状态。
@@ -72,13 +80,13 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 `assets/start-workspace-runtime.js` 明确等待 `markdown.js` 就绪后才加载笔记编辑器，不能依赖首页晚到的静态脚本提供解析器；恢复图谱或空白标签后打开正文同样受此依赖保护。
 
-笔记左上角“浏览”之后提供“图谱”，范围取左树当前选中的笔记本；未选择时禁用。默认 `notes` 排除整个 `CustomNotebook`，自定义本只包含自身子树。`GET /api/note-graph?root=…` 返回路径身份、文件名标题、已有 Markdown 节点、去重无向关系与拓扑签名；可带 `signature`，无变化返回 `unchanged`。`note_graph.py` 识别双链和行内/引用式 Markdown 链接，排除代码、前言、注释、公式、图片及转义示例，保留列表/引用/表格中的真实链接。双链按同本完整路径、本根相对路径及唯一文件名解析，Markdown 按源目录精确解析 `.md`；跨本、歧义、缺失、外部及自引用不产生关系。旧双链面板与移动重写语法不变。`notes_library.py` 按本扫描/清理现有增量索引，首次图谱才解析引用、不保存正文；响应缓存最多 24 本及估算 16MiB，总预算不包含既有文档索引，超大单项不驻留。正文改动不影响节点/关系时签名保持不变，读取不完整返回 `statistics_incomplete`，不能伪装成空图。
+笔记左上角“浏览”之后提供“图谱”，范围取当前笔记本；未选择时禁用。默认 `notes` 排除 `CustomNotebook`，自定义本只含自身。`GET /api/note-graph?root=…` 返回路径身份、文件名标题、节点、去重无向关系与拓扑签名；可带 `signature`，无变化返回 `unchanged`。`note_graph.py` 的双链及 Markdown 链接边界不变：排除代码、前言、注释、公式、图片、转义例子，保留列表/引用/表格中的链接；跨本、歧义、缺失、外部、自引用不产生关系。生产后台同次正文读取缓存图谱引用，图谱读取共享 SQL 快照及按本版本，不另遍历目录或重读已解析正文。响应缓存仍最多 24 本/估算 16MiB，超大单项不驻留。正文不改变拓扑时签名、布局和镜头不变；读取不完整返回 `statistics_incomplete`，不能伪装空图。
 
 `assets/note-workspace.js` 用固定身份 `relatum:graph-tab:v1` 在现有标签列表内维护唯一关系图谱页，沿用排序、关闭、快捷键与标签恢复，所有文件路径操作显式跳过特殊身份。重复点击入口只激活，不重建或复位；内容随左树当前笔记本切换。图谱占满标签栏下可用区域，透明背景显示工作区底色，只保留角落的生长动画、舒展、复位、笔记本面板入口和节点/关系数量，窄窗提供目录入口。图谱、正文和浏览结果互斥；进入前沿用重命名、候选、表格及内嵌画布交接并保存当前本草稿，失败留在原编辑现场。进入图谱临时收起右栏，只允许按需查看笔记本，回到正文恢复原右栏开关与页签，临时状态不写入笔记本偏好。点击节点激活已有 Markdown 标签或新开，成功后保留图谱标签，失败继续显示图谱。
 
 图谱右栏始终覆盖显示：宽窗的图谱网格列宽固定，侧栏只用 230ms transform 滑入滑出，不因开合改变 Canvas 的 CSS/后备尺寸、屏幕比例、镜头或标题层；正文保留原网格动画。宽窗的图谱工具区同步平移到侧栏左侧，使用工作区底色避免长标题干扰；窄窗使用侧栏自身关闭入口，低动态立即完成。进入时先提交最终布局再恢复图谱，退出先释放引擎再恢复正文布局。右栏清树共用单一可取消任务和操作序号，隐藏后的 transitionend 完成、270ms 兜底；反转、图谱进退、隐藏和离场作废旧任务，不能在新关闭动画仍可见时清空树。`note-graph-browser.js` 覆盖这些交接、断点和专注模式，设置 `RELATUM_GRAPH_RELEASE` 可用已有 EXE/WebView2 加载当前工作区脚本和 CSS 验收，不改写发布包，数据与浏览器配置均隔离。`note-graph-performance-browser.js --sidebar-only` 使用 398 节点/79 边及 150/1500/3000 节点、DPR 1/2、每项三轮开合测量；`RELATUM_GRAPH_BASELINE_DIR` 在此模式需包含旧 CSS 和图谱脚本，所有计数探针仅在测试注入。
 
-笔记图谱由 `notes.graph` 独立子功能控制，父项 `notes`、默认启用，旧版本 1 清单选择缺少此项仍可用；不依赖 `notes.canvas`、主画布或 `graph-window.js`。禁用时服务裁剪入口、图谱容器、间距和预加载设置，工作区恢复时剔除特殊标签并回到可用正文或空白；保留间距和预加载本机偏好。`note-graph.js` 专属此子功能，`graph-gl.js` 与 `graph-engine.js` 按 `notes.graph` / `editor.graph` / `canvas.activity` 的 OR 规则共享，画布图谱和活跃星图不受影响。图谱 GET 在扫描前显式检查此子功能并返回原 `403 / feature-disabled`，不能只靠父项 `/api/note-` 宽泛前缀；`notes_library.py` 首次图谱请求才导入 `note_graph.py`，普通笔记和双链面板不导入它。
+笔记图谱由 `notes.graph` 独立控制，父项 `notes`、默认启用；不依赖 `notes.canvas`、主画布或 `graph-window.js`。禁用时裁剪入口、容器、间距和预加载设置，恢复剔除特殊标签，保留本机间距/预加载偏好。`note-graph.js` 专属子功能，共用 GL/引擎仍按三个图谱宿主的 OR 规则加载。图谱 GET 在扫描前检查子功能并返回 `403/feature-disabled`。启用时生产索引后台使用轻量 Python 解析器；普通文字仍不触发前端图谱、MathJax 或 Mermaid 运行时。
 
 默认真正查看笔记图谱才依次加载 GL、引擎与适配器，失败可重试；只恢复隐藏标签身份不创建引擎。`graph-window.js` 仅用于原画布浮窗。笔记标题使用完整文件名和固定字号 DOM；实际 CSS 屏幕比例 `unit ≤ 0.25` 隐藏、`unit ≥ 0.65` 完整显示，中间用 smoothstep 连续淡出。透明度通过父层变量共享更新，不新增动画循环或局部碰撞筛选；悬停只恢复当前节点标题，继续显示完整路径和突出相邻关系。按缓存测量边界裁剪屏外标题，离屏 DOM 回收池最多 256 项，淡出保留锚点与测量，纯平移主要更新父容器变换、不逐帧测量。可见时复用已有外部检查周期，签名不变不换标签/布局/视角，关系改变保留存活位置及相机再收敛。
 
@@ -120,7 +128,7 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 
 画布文件存放于 `notes/canvases/`，首次“插入 → 画布”才创建目录；该根目录从笔记树、普通目录操作和文档索引排除。新文件为 `Untitled-YYYY-MM-DD[-N].canvas`，子目录笔记使用相对路径；复制引用共享文件，删除笔记/引用保留画布。`note_canvases.py` 是独立数据层，`/api/notes-canvas/create`、`save`、`rename`、`reveal` 与 GET `read?note=…&src=…` 归专用开关控制；写入复用笔记及跨进程锁、路径沙箱和原子写入，保存/重命名核对预期 UTF-8 字节修订。保留 V2 基础结构和一种纯文字节点，支持 12 种形状及直线、贝塞尔、平滑、折线、圆角折线；样式采用可选节点/连线字段，标注文字位于连线的 `labelStyle`。缺失字段沿用原外观，读取不补写；形状/样式枚举、颜色、布尔及数值同步校验，已有元数据完整保留。复杂节点、非空手写、尺规、计时器等仍拒绝读取编辑，避免丢失内容。`note_canvas_reference.py` 与 `MarkdownMini.canvasReferences/rewriteCanvasReferences` 识别有效独立引用，排除代码、前言和 HTML 注释；移动笔记修正相对路径，画布改名改写全库有效引用，保留尺寸、自定义说明与示例，失败恢复文件和正文。画布改名使用 CodeMirror 公共 undo/redo 接口遍历并重放各历史状态，投影新引用后保留正文历史边界及重做分支，文件改名自身不进入正文撤销。
 
-“浏览笔记”的左侧另有“画布 / Canvas”入口，归 `notes.canvas` 控制，与右侧画布属性页签独立。`assets/note-browser.js` 的画布提供者列出全库 `notes/canvases/` 文件及有效引用指向的缺失文件，按名称自然排序、50 项分页，提供全部/未引用/文件缺失筛选。引用数按不同 Markdown 笔记去重，仅统计现有解析器认可的独立内嵌引用，代码、前言、注释及普通/行内链接不计入；大小写和编码沿用现有解析与文件匹配规则。点击画布原位展开引用笔记，可打开正文并返回保留筛选、展开、已加载画布页数和滚动；已有文件复用 reveal 定位，缺失时禁用。列表不读取画布 JSON、不加载绘制引擎、不创建资源目录。`notes_library.py` 的增量文档索引保留去重 `canvasTargets` 和兼容 `hasCanvasReferences`，不保留正文；`note_canvases.py` 用文件信息及引用索引生成目录和结果签名。无法读取笔记时返回 `statistics_incomplete`，界面显示统计未完成和重试，不宣称零引用。仅当前画布结果可见时接入宿主既有外部检查周期，无变化不重建 DOM；打开正文、离场、隐藏和挂起后停止检查，迟到查询按会话/操作序号丢弃。验证使用 `python -m unittest tests.test_note_canvas_browser` 和 `node tests/note-canvas-browser-discovery.js`，后者沿用宿主 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，只用一次性数据根，覆盖完整/仅笔记/禁用模式、分页返回、筛选、错误恢复、保存失败、外部变化、迟到响应及深色英文窄窗；继续回归笔记浏览、笔记本与内嵌画布。
+“浏览笔记”的“画布 / Canvas”归 `notes.canvas`，列出 `notes/canvases/` 文件及有效引用指向的缺失文件，名称自然排序、50 项分页，筛选全部/未引用/缺失。引用数由共享 SQLite `refs` 按笔记去重，保留实际目标大小写和已有独立内嵌语法，不读取画布 JSON、不加载引擎、不创建资源目录。点击展开引用笔记，打开/返回保留筛选、展开、页数和滚动；缺失文件禁用 reveal。无法读取笔记返回 `statistics_incomplete`，不能宣称零引用；可见结果接入原外部检查周期，无变化不重建 DOM，离场/隐藏丢弃迟到结果。验证用 `tests.test_note_canvas_browser` 和 `tests/note-canvas-browser-discovery.js`，覆盖三种外壳、分页返回、筛选、错误恢复、保存失败、外部变化、迟到响应、深色英文窄窗。
 
 实时预览中，内嵌画布整体的右键菜单提供“重命名”和“在系统资源管理器中打开”，后者通过 POST `/api/notes-canvas/reveal` 的 `{path}` 定位并选中对应文件；仅允许画布资源目录内的已有 `.canvas` 文件，复用路径沙箱和重解析点检查，失败显示提示。画布尚未取得文件会话时定位入口禁用。画布菜单打开后，在画布、菜单或周围区域再次右键只关闭菜单并吞掉该次右键事件，下一次右键正常打开；左键外部点击及 Esc 沿用原关闭行为。
 
@@ -175,9 +183,10 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | 路径 | 责任 |
 | --- | --- |
 | `app.py` | 本地 HTTP 服务、路由、持久化、导入导出、AI 代理、托管笔记库接口、独立复习卡片数据库、学习/日历/速记/专注数据。 |
-| `notes_library.py` | `ROOT/notes/` 托管 Markdown 笔记库的无 HTTP 数据层；负责安全相对路径、增量文档/双链索引、无感修订保存、移动改写与回滚、伴生图片、回收站目标校验、外部拖入暂存，以及生涯统计所需的图片文字元数据解码。 |
+| `notes_library.py` | 托管 Markdown 文件/素材事务、路径安全、原子保存、引用改写与回滚、回收站校验、外部导入，以及共享索引的薄入口；不维护全库常驻内存文档索引。 |
+| `notes_index.py`、`notes_sync.py`、`note_search.py` | 独立 SQLite 索引与查询、后台同步/删除清理、全文投影及高亮定位；均为 Python 标准库。 |
 | `note_canvases.py`、`note_canvas_reference.py`、`assets/note-canvas/` | 笔记内嵌画布的可选文件事务、轻量引用语法与独立实例运行时；文件、几何、相机/编辑及 CodeMirror/阅读容器适配各自维护，不导入主画布实例。 |
-| `note_metadata.py` | 无依赖的只读标签/YAML 识别与纯文本摘要；与前端共用 `tests/note-tag-cases.json` 语法样例，元数据并入笔记库增量索引，不保留正文或另建标签数据库。 |
+| `note_metadata.py` | 无依赖的标签/YAML 识别与摘要；与前端共用标签样例，结果进入共享 SQLite 索引，没有独立标签数据库。 |
 | `assets/note-browser.js` | 笔记浏览的按需模块；`activate / resume / suspend / dispose / setLanguage` 管理工作区生命周期，`setNavigationOpen` 独立控制导航可见性，`browseTag` 接受正文标签跳转。`registerProvider({id,label,loadPage,loadNavigation?})` 注册项目内提供者；导航项为 `{key,label,count?,depth?}`，结果页为 `{items,total,hasMore,consumed?}`。导航与原文件树在公共左栏滚动区域中同时保留；展开导航只加载模块，不自动请求结果。左侧新建、排序、全部展开及新建快捷键始终沿用笔记本选择条件，正文源码切换、笔记本入口、更多及 F2 仅在结果页禁用。宿主负责候选输入、保存与打开笔记，提供者不接管正文或编辑器。切换提供者时保留已提交列表，最新请求就绪后替换并回到顶部，同列表刷新保留分页及滚动，失败显示重试；导航收起仅作废目录请求，结果及外部统计继续工作，隐藏/离场作废全部请求。冷启动只恢复导航展开偏好及正常正文。`assets/styles.css` 统一公共左栏、右栏和结果区的主题滚动条，标签栏及图片文字等既有隐藏滚动条继续隐藏。 |
 | `ai_plan.py` | AI 助手 V2 的纯标准库计划层；集中维护紧凑提示词、JSON 提取、动作协议、安全校验和结构修复提示，不写用户数据。 |
 | `desktop.py` | pywebview 桌面壳、WebView2 检测、无边框窗口、窗口状态、未保存关闭确认和动态背景生命周期协调；最大化/还原状态会同步到前端标题栏，最大化时由前端拖拽标记与 Win32 位移拦截共同禁止窗口拖移。 |
@@ -266,7 +275,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | 画布 | `canvases/*.canvas` |
 | 回收站 | `canvases/回收站/` |
 | 画布附件 | 与画布同名的 `<stem>.assets/` |
-| Markdown 笔记库 | `notes/`；普通文件夹和 `.md` 是正文，粘贴图片位于同目录 `<笔记名>.assets/images/`。独占行图片的文字框数据以同一行 `<!--relatum:image-text:v1:<base64url-json>-->` 注释保存在 `.md`，不新增侧车文件。伴生目录默认不显示在文件树，但与笔记一起移动、重命名和移入 Windows 系统回收站。没有正文数据库或发布索引。 |
+| Markdown 笔记库 | `notes/` 是原始正文；图片仍在同目录 `<笔记名>.assets/images/`，可见文字仍用同一行的 `<!--relatum:image-text:v1:<base64url-json>-->`，不另建侧车。伴生目录隐藏但与正文一起移动、改名、回收。 |
+| 笔记索引 | `data/note-index.sqlite3` 及 SQLite WAL/SHM；可重建的私有缓存，保存本/目录/文件状态、修订、标签、摘要、字数、引用、派生全文和位置映射。重建或版本变化不迁移旧索引、不改原始文件。损坏缓存隔离后重建，锁定/权限错误不按损坏处理。 |
 | 笔记本配置 | `data/note-notebooks.json`；仅保存路径到颜色的映射，以及共用右栏的开关、视图、所选笔记本和右树展开状态；不登记笔记本、不保存正文。`ui.selectedRoot` 用 `null` 表示未选择、空字符串表示默认 `notes`、其余字符串表示自定义根路径。缺失或损坏时默认选择 `notes`，合法未选择状态可重启恢复，手动编辑重启后生效。 |
 | 笔记图谱本机偏好 | `canvas:noteGraphSpacing:v1` 保留 80%–200% 间距、默认 125%；`canvas:noteGraphPreload:v1` 为启动预加载布尔值 `1/0`、默认关闭。沿用 localStorage 与桌面 `preferences.json` 快照，不写笔记本字段；禁用 `notes.graph` 保留两项，恢复笔记默认值才重置。 |
 | 最近、分组、收藏 | `data/recent.json`（v3）；上一次有效快照为 `data/recent.backup.json`，损坏原件隔离成 `data/recent.corrupt-<时间>.json` |
@@ -397,9 +407,9 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 ### GET
 
 - 运行时与首页：`/api/runtime`、`/api/recent`
-- 笔记浏览：`GET /api/note-tags` 返回含隐式父级的标签目录与去重数量；`/api/note-asset?note=&src=&syntax=wiki` 可选 wiki 查找，缺省仍为标准相对 Markdown。
+- 笔记浏览：`GET /api/note-tags` 从共享索引返回隐式父级和去重数量；`/api/note-asset?note=&src=&syntax=wiki` 保留原授权素材查找。
 - 笔记画布引用管理：`GET /api/notes-canvas/list?filter=all|unused|missing&offset=0&limit=50` 返回 `items / total / hasMore / signature`，条目为 `path / name / exists / referenceCount`；`GET /api/notes-canvas/references?path=canvases/名称.canvas&offset=0&limit=50` 返回同一分页结构，条目为引用笔记 `path / title`。上限 50，沿用笔记锁、路径沙箱、重解析点检查及 `notes.canvas` API 前缀开关；两者均只读。
-- Markdown 笔记库：`/api/notes-tree` 返回隐藏伴生目录的嵌套树；`/api/note?path=` 只返回正文与强修订号；`/api/note-links?path=` 按需返回出链/反链；`/api/note-asset?note=&src=` 只流式返回库内授权栅格图片。
+- Markdown 笔记库：`/api/notes-tree?view=JSON` 返回根、所需目录页及打开文档祖先；`/api/note-children` 按父目录分页；`/api/note-changes` 返回有界增量日志；`/api/note-index-state` 返回进度/版本；主动刷新可用树接口的 `reconcile=1`。`/api/note?path=` 返回正文、强修订与条目/祖先；`/api/note-links?path=` 从共享索引读出链/反链；素材仍只返回授权库内图片。
 - AI 配置安全视图：`/api/ai-config`
 - 学习/活跃：`/api/study`、`/api/study-activity`；`/api/study` 只返回 v6 学习任务、回收站、`goalTrees[]` 与 `activeTreeId`，不再返回单树 `goalTree` 别名或读取目标树归档；活跃接口保留完成/专注数据，并返回 `canvasDays`、`canvasEntries`、`canvasStats`、`canvasGraph`、`canvasOverviewGraph` 与三页汇总 `startPageStats`，年份是画布、三页计时、完成归档和专注记录的并集。
 - 独立树状页：`/api/tree-page`；缺失文件或旧实验 v1 返回稳定 ID 的未落盘空白 v2，损坏或其他非 v2 文件返回明确错误且不覆盖原件。
@@ -413,7 +423,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ### POST
 
-- 笔记浏览只读查询：`/api/note-query` 接收最多 50 个有序 `paths`，或单个 `tag` 与 `offset / limit`（上限 50）；返回 `items / total / hasMore`，条目含 `path / title / modifiedNs / revision / tags / excerpt`。仍沿用笔记锁与路径沙箱，不写用户数据。
+- 笔记浏览查询：`POST /api/note-query` 统一 `search/recent/tags/paths`，请求含关键词、范围、标签、修改时间、排序及游标；返回 `items/total/hasMore/cursor/generation/index`，全文追加 UTF-16 高亮与源码范围。每页最多 50；游标绑定查询/版本，变化返回 `409/query_changed`。只读查询保留路径沙箱，退出文件/全局写锁；`POST /api/note-index-activity` 交接可见状态。完整协议见 `docs/notes-sqlite-search.md`。
 
 - 生涯报告：`POST /api/career/generate` 返回后台任务，重复请求复用正在运行的任务。生成前冲刷采集队列，库存读取不占业务保存锁；成功原子替换，失败保留旧 v2。每个来源独立标明未读取数量，不能显示成零。
 - Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中。
@@ -858,7 +868,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 笔记可见生命周期使用 `node tests/note-visibility-browser.js`，配置已有 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`；覆盖完整、仅笔记且禁用内嵌画布、禁用图谱及 Canvas2D 回退。另设 `RELATUM_WEBVIEW_PYTHON` 为已有 pywebview 环境，运行 `node tests/note-visibility-browser.js --webview2` 验真实原生最小化/还原。400 节点合成库和浏览器配置均在一次性目录，检查零 GPU 残留、零新增绘制/读取、未完成布局与镜头恢复、重复通知、迟到响应、预读取消、大纲/浏览/阅读恢复、草稿保存和 Chromium 原生候选交接；不替代真实微软拼音候选窗人工验收。不重新构建或改写发布包。继续回归笔记图谱、大纲、视图状态及资源生命周期的默认/按需两种配置。
 
-笔记图谱验证入口为 `python -m unittest tests.test_note_graph tests.test_notes_library tests.test_note_notebooks tests.test_note_canvas_browser tests.test_note_canvases`、`node tests/note-graph-browser.js`、`node tests/note-graph-performance-browser.js`、`node tests/graph-instance-cache-regression.js` 与 `node tests/graph-instance-cache-browser.js`。浏览器沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，仅创建一次性库或合成数据，`RELATUM_ARTIFACT_DIR` 保存截图；性能脚本可追加临时 JSON 报告路径，`--regression-only` 验场景和预加载缓存、预算与迟到响应。`node tests/note-graph-preload-browser.js --regression-only` 覆盖正常可操作启动、总/子开关、恢复默认、禁用标签恢复、交互/繁重任务暂停、切本跟随、Worker 释放、准备布局直接打开、脚本/API 失败、独立请求超时和取消；`--benchmark-only` 每种规模和开关各三轮测首帧等待/启动/闲置 JS 堆。`RELATUM_GRAPH_RELEASE` 指向隔离新包验真实启动器与准备期间窗口关闭。继续覆盖标签去重、快捷键、关闭和重启恢复、隐藏恢复不创建引擎、各本视角、右栏偏好、长标题、保存失败与原生预编辑、脚本/扫描/节点读取失败重试、外部变化、改名/删除、快速切本、离场与页面隐藏，以及 WebGL/Canvas2D/着色器失败。150/1500/3000 节点按 DPR 1/2 对比原浮窗面积和实际标签页布局，记录帧间隔、样式、长任务及 GPU 上传，断言相机零实例上传、稳定零 RAF、切页释放及缓存上限。继续回归原 `graph-presolve-regression.js`、`resource-lifecycle-browser.js`、功能裁剪、笔记本和工作区。以上是后续验证方式；本次空闲预加载修改按用户要求未运行任何测试或构建。真实微软拼音仍需隔离人工验收；同机几何或面积对照不能宣称整宿主帧率提升。
+笔记图谱验证入口为 `tests.test_note_graph`、`tests/note-graph-browser.js`、`tests/note-graph-performance-browser.js` 和共享实例回归。`tests/note-graph-preload-browser.js --regression-only` 覆盖启动、功能裁剪、交互/繁重任务暂停、切本、Worker 释放、稳定打开、失败/超时/pagehide 恢复；`--benchmark-only` 每种规模和开关各三轮测启动/首帧/闲置堆。浏览器沿用宿主三变量和隔离数据根；`RELATUM_GRAPH_RELEASE` 可验原生包，`RELATUM_NOTE_RELEASE` 验新搜索包。保留标签、快捷键、布局/视角、侧栏、预编辑、外部改动、改名/删除、快速切本与可见生命周期回归。几何面积对照不能宣称整宿主帧率提升，微软拼音需人工验证。
 
 笔记大纲另运行 `node tests/note-outline-regression.js`、`node tests/note-outline-browser.js` 和 `python -m unittest tests.test_note_notebooks`，再回归笔记本、编辑器、侧栏及位置记忆。浏览器测试只能使用隔离 `RELATUM_DATA_ROOT`；测试宿主变量为 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，截图与长文报告写入临时目录或 `RELATUM_ARTIFACT_DIR`。Chromium 原生预编辑不替代 Windows WebView2 与真实微软拼音候选窗的人工验收。
 
@@ -1022,6 +1032,8 @@ python -m unittest .\tests\test_markdown_notebook_export.py
 ```
 
 改动起步页顶层工作区、托管笔记库、双链或笔记图片时，还要运行：
+
+SQLite 索引/查询另用 `python -m unittest tests.test_note_index` 验证读取快照、规范化定位、暂停/重启、同状态事件、损坏缓存、删除重建及标签归属；`node tests/note-search-browser.js` 覆盖三个外壳的真实搜索交接、原生 Chromium 候选和窗口列表。`tests/run-note-checks.ps1` 汇集相关检查；真实 EXE 用 `RELATUM_NOTE_RELEASE`。性能用 `python tests/note-index-performance.py --counts 2000 10000 50000 --layouts mixed flat --output report.json` 生成一次性真实文件库，记录查询 p95、保存干扰、首次/重启、空间、内存及删除清理。浏览器、FTS 与中文输入的实际验收口径见 `docs/notes-sqlite-search.md` 及性能报告。
 
 ```powershell
 python -m unittest .\tests\test_notes_library.py

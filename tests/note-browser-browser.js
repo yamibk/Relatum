@@ -51,6 +51,11 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     });
     await page.goto(url);
     await page.locator('button[data-start-workspace="notes"]').click();
+    for (let i = 0; i < 6 && !(await page.locator('.note-tree-row[data-note-path="N000.md"]').count()); i++) {
+      await page.locator('[data-role="note-sidebar-scroll"]').evaluate(node => node.scrollTop = node.scrollHeight);
+      await sleep(200);
+      if (await page.locator('.note-tree-more').count()) await page.locator('.note-tree-more').first().click();
+    }
     await page.locator('.note-tree-row[data-note-path="N000.md"]').click();
     await page.waitForFunction(() => CanvasNoteWorkspace.currentPath === 'N000.md');
     assert.equal(requests.some(request => request.includes('/api/note-tags')), false, 'ordinary startup must not scan tag catalog');

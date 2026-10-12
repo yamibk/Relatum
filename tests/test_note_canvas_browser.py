@@ -62,7 +62,7 @@ class NoteCanvasBrowserTests(unittest.TestCase):
             self.note('B.md', '![x](canvases/x.canvas)\nchanged')
             self.assertEqual(self.store.list()['items'][0]['referenceCount'], 2)
             self.assertEqual(reads.call_count, 1)
-        self.assertTrue(all('text' not in doc and 'raw' not in doc for doc in self.notes._document_cache.values()))
+        self.assertTrue(all('text' not in doc and 'raw' not in doc for doc in self.notes.index.documents().values()))
 
     def test_save_move_delete_and_rename(self):
         self.note('A.md', 'body')

@@ -153,6 +153,7 @@
       .then(() => loadScript('markdown.js', () => !!window.MarkdownMini?.quoteLine))
       .then(() => loadScript('note-table-editor.js', () => !!window.RelatumNoteTableEditor))
       .then(() => loadScript('note-shortcuts.js', () => !!window.RelatumNoteShortcuts))
+      .then(() => loadScript('windowed-list.js', () => !!window.RelatumWindowedList))
       .then(() => loadScript('note-media-frame.js', () => !!window.RelatumNoteMediaFrame))
       .then(() => loadScript('note-live-editor.js', () => !!window.RelatumNoteLiveEditor))
       .then(() => features.enabled('notes.canvas') ? loadScript('note-canvas-style.js', () => !!window.RelatumNoteCanvasStyle) : true)

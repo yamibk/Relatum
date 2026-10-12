@@ -171,7 +171,7 @@ async function run(browser, mode) {
     // Reject a held external tree before it can invalidate browser/graph state.
     await page.evaluate(() => P.state.externalSyncChain);
     await page.evaluate(() => { P.stopExternalSync(); P.stopDocumentPrefetch(); });
-    const tree = await hold('/api/notes-tree', text => { const data = JSON.parse(text); data.entries.push({ path: 'Late.md', name: 'Late.md', kind: 'note', size: 10, modifiedNs: 1 }); return JSON.stringify(data); });
+    const tree = await hold('/api/note-changes', text => { const data = JSON.parse(text); data.changes.push({ path: 'Late.md', removed: false, item: { path: 'Late.md', name: 'Late.md', kind: 'note', size: 10, modifiedNs: 1 } }); return JSON.stringify(data); });
     await page.evaluate(() => { window.oldTree = P.triggerExternalSync({ background: true }); }); await tree.requested();
     await minimize(); await page.evaluate(() => { window.treeIdentity = P.state.entries; });
     await tree.release(); await page.evaluate(() => window.oldTree);

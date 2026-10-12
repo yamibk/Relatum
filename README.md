@@ -171,7 +171,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 ## 构建 Windows 桌面版
 
-桌面构建支持 Python 3.9–3.12。构建脚本会在临时目录创建环境，并安装固定版本的 PyWebView、PyInstaller、pystray 和 Pillow：
+桌面构建支持 Python 3.9–3.12，笔记索引要求运行时 SQLite ≥3.43 且支持 FTS5。构建脚本先检查 trigram 和短字符检索能力，再在临时环境中使用 PyWebView、PyInstaller、pystray 和 Pillow：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
@@ -197,7 +197,10 @@ powershell -ExecutionPolicy Bypass -File .\build-msix.ps1
 ```text
 Relatum/
 ├─ app.py                    本地 HTTP 服务与数据 API
-├─ notes_library.py          Markdown 笔记库、双链索引与路径安全层
+├─ notes_library.py          Markdown 文件操作、素材与路径安全层
+├─ notes_index.py            独立 SQLite 笔记索引、查询与清理
+├─ notes_sync.py             后台增量同步与目录变化通知
+├─ note_search.py            连续字符检索与源码位置映射
 ├─ desktop.py                Windows 桌面外壳
 ├─ launcher.py               原生 WinForms 资源选择窗口
 ├─ feature_profile.py        功能依赖、会话配置与加载/访问边界
