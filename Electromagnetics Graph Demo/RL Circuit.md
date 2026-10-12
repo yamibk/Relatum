@@ -1,0 +1,4 @@
+# RL Circuit
+
+[[Resistor]]
+[[Inductor]]

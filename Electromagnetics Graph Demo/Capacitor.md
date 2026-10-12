@@ -1,0 +1,4 @@
+# Capacitor
+
+[[Capacitance]]
+[[RC Circuit]]

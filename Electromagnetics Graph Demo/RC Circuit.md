@@ -1,0 +1,4 @@
+# RC Circuit
+
+[[Resistor]]
+[[Capacitor]]

@@ -1,0 +1,4 @@
+# Electric Potential
+
+[[Voltage]]
+[[Capacitance]]

@@ -1,0 +1,4 @@
+# Resistor
+
+[[Resistance]]
+[[Ohm Law]]
