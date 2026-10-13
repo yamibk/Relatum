@@ -66,7 +66,7 @@ async function run(browser, enabled, prewarm = false) {
       assert.equal(await page.locator('[data-note-action="side-canvas"], [data-role="note-canvas-settings"]').count(), 0);
       assert.equal(await page.evaluate(() => T.state.sideMode), 'notebooks', 'disabled restored tab falls back');
       await page.locator('[data-note-action="side-guide"]').click(); await settle();
-      assert.equal(await page.locator('.note-guide-example').count(), 52, 'Guide remains available without canvas');
+      assert.equal(await page.locator('.note-guide-example').count(), 66, 'Guide remains available without canvas');
       assert.equal(requests.filter(r => /mathjax|tex-chtml/i.test(r)).length, 0, 'Guide formulas are source only');
       await page.evaluate(() => RelatumI18n.setLanguage('en')); await settle();
       assert.equal(await page.locator('[data-note-action="side-guide"]').innerText(), 'Guide');

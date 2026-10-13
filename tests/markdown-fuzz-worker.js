@@ -22,6 +22,17 @@ if (emptyMarkerStress.error || emptyMarkerStress.html.length > 1_000_000) {
   throw new Error('empty marker stress input did not remain bounded');
 }
 
+for (const source of [
+  '> [!', '> [!blue', '> [!blue]+', '> [!blue]-', '> [!blue]--',
+  '> [!answer]-\n>', '> [!theorem]+\n> > [!proof]-\n> >',
+  '> [!cream]-\n> $$\n> unfinished', '> [!brown]+\n> ```\n> unfinished',
+]) {
+  const result = global.MarkdownMini.renderResult(source, {noteBlocks:true});
+  if (result.error || typeof result.html !== 'string' || result.html.length > 10000) {
+    throw new Error('note block boundary input did not degrade safely: ' + JSON.stringify(source));
+  }
+}
+
 let seed = 0x5eed1234;
 function random() {
   seed = (seed * 1664525 + 1013904223) >>> 0;

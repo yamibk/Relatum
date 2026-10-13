@@ -3879,8 +3879,11 @@
         const content = document.createElement('div'); content.className = 'node-text';
         content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true }).html;
         content.querySelectorAll('.note-callout-fold').forEach(button => button.addEventListener('click', () => {
-          const body = button.closest('.md-callout').querySelector('.md-callout-body');
-          if (body) { body.hidden = !body.hidden; button.setAttribute('aria-expanded', String(!body.hidden)); }
+          const body = button.closest('.md-callout').querySelector(':scope > .md-callout-body');
+          const collapsed = button.getAttribute('aria-expanded') === 'true';
+          if (body) body.hidden = collapsed;
+          button.setAttribute('aria-expanded', String(!collapsed));
+          button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout');
         }));
         item.appendChild(content);
       }
@@ -3913,10 +3916,11 @@
       item.appendChild(button); guideContent.appendChild(item);
     };
     const body = english ? 'Callout content.' : 'Callout 正文。';
+    const studyLabels = { definition: ['定义', 'Definition'], theorem: ['定理', 'Theorem'], proof: ['证明', 'Proof'], answer: ['答案', 'Answer'] };
     heading('Callout 与别名', 'Callouts and aliases');
     catalog.types.forEach(type => {
       const source = '> [!' + type.name + ']\n> ' + body;
-      example(source, source, type.aliases.length ? (english ? 'Aliases: ' : '别名：') + type.aliases.join(', ') : '');
+      example(source, source, type.aliases.length ? (english ? 'Aliases: ' : '别名：') + type.aliases.join(', ') : studyLabels[type.name]?.[english ? 1 : 0] || '');
     });
     heading('标题与折叠', 'Titles and folding');
     const custom = '> [!note] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + body;
@@ -3925,21 +3929,36 @@
       const source = '> [!' + (suffix === '+' ? 'tip' : 'warning') + ']' + suffix + ' ' + (english ? suffix === '+' ? 'Expanded by default' : 'Collapsed by default' : suffix === '+' ? '默认展开' : '默认折叠') + '\n> ' + body;
       example(source, source);
     });
+    heading('学习组合', 'Study combinations');
+    const answer = english ? '> [!question] Question\n> Write the question here.\n>\n> > [!answer]- Answer\n> > Write the answer here.'
+      : '> [!question] 题干\n> 在这里填写题目。\n>\n> > [!answer]- 答案\n> > 在这里填写答案。';
+    example(answer, answer);
+    const proof = english ? '> [!theorem] Theorem\n> Write the theorem here.\n>\n> > [!proof]- Proof\n> > Write the proof here.'
+      : '> [!theorem] 定理\n> 在这里填写定理。\n>\n> > [!proof]- 证明\n> > 在这里填写证明。';
+    example(proof, proof, english ? 'Each nested level adds another > prefix.' : '每嵌套一层，多写一个 > 前缀。');
     heading('块公式', 'Display math');
     example('> [!info]\n> $$a^2+b^2$$\n> ' + body, null);
     example('> [!info]\n> $$\n> a^2+b^2\n> $$\n> ' + body, null);
     example('> [!info]\n> \\[\n> E=mc^2\n> \\]\n> ' + body, null);
     heading('纯色块', 'Color blocks');
+    const colorBody = english ? 'Color block content.' : '纯色块正文。';
+    const titled = '> [!Lavender] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + colorBody;
+    example(titled, titled, english ? 'Color names are case-insensitive. Without + or -, blocks do not fold.' : '颜色名不区分大小写；没有 + 或 - 时不可折叠。');
+    ['+', '-'].forEach(suffix => {
+      const title = english ? suffix === '+' ? 'Expanded by default' : 'Collapsed by default' : suffix === '+' ? '默认展开' : '默认折叠';
+      const source = '> [!blue]' + suffix + ' ' + title + '\n> ' + colorBody;
+      example(source, source);
+      const untitled = '> [!blue]' + suffix + '\n> ' + colorBody;
+      example(untitled, untitled, english ? 'Foldable blocks without a title use the color name. Plain [!blue] remains titleless.' : '可折叠色块未写标题时显示颜色名；普通 [!blue] 仍然没有标题。');
+    });
     const groups = { cool: ['冷色', 'Cool'], green: ['绿色', 'Green'], warm: ['暖色', 'Warm'], pink: ['粉紫', 'Pink and purple'], neutral: ['中性', 'Neutral'] };
     Object.entries(groups).forEach(([group, names]) => {
       heading(...names);
       catalog.colors.filter(color => color.group === group).forEach(color => {
-        const source = '> [!' + color.name + ']\n> ' + (english ? 'Color block content.' : '纯色块正文。');
+        const source = '> [!' + color.name + ']\n> ' + colorBody;
         example(source, source);
       });
     });
-    const titled = '> [!Lavender] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + (english ? 'Color block content.' : '纯色块正文。');
-    example(titled, titled, english ? 'Color names are case-insensitive.' : '颜色名不区分大小写。');
     guideContent.scrollTop = scroll;
   }
 

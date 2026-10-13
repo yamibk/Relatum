@@ -91,6 +91,68 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     assert((await page.locator('.cm-content').innerText()).includes('[!LaVeNdEr]'),'entering a titleless marker line exposes native source');
     await page.evaluate(()=>editor.view.contentDOM.blur()); await settle();
 
+    for (const suffix of ['+', '-']) for (const title of ['', '**Color title**']) {
+      const source = '> [!BlUe]' + suffix + (title ? ' ' + title : '') + '\n> $$x^2$$\n> color folding body\n\nend';
+      await page.evaluate(source=>{
+        editor.setDocument({value:source,notePath:'color-fold.md'});
+        editor.view.contentDOM.blur();
+      },source); await settle();
+      const fold = page.locator('#editor .note-callout-fold');
+      assert.equal(await fold.count(),1,'a foldable color always retains its arrow');
+      assert.equal(await fold.getAttribute('aria-expanded'),String(suffix === '+'));
+      assert.equal(await page.locator('#editor .md-callout-icon').count(),0,'colors keep their iconless appearance');
+      assert.equal(await page.locator('#editor .note-callout-title-text').textContent(),title ? 'Color title' : 'Blue');
+      if (suffix === '-') await fold.click();
+      await page.waitForFunction(()=>document.querySelector('#editor .note-block-math mjx-container'));
+      assert.equal(await page.locator('#editor .note-block-math.note-live-callout-first').count(),0,'generated titles keep top corners on the header');
+      await fold.focus(); await page.keyboard.press('Space'); await settle();
+      assert.equal(await fold.getAttribute('aria-expanded'),'false');
+      await page.keyboard.press('Enter'); await settle();
+      assert.equal(await fold.getAttribute('aria-expanded'),'true');
+      await page.evaluate(()=>editor.setSourceMode(true)); await settle();
+      assert.equal(await fold.getAttribute('aria-expanded'),'true','colors share folding state with source mode');
+      assert((await page.locator('#editor .cm-content').innerText()).includes('color folding body'));
+      await page.evaluate(()=>editor.setSourceMode(false)); await settle();
+      await page.evaluate(()=>{
+        const reading=document.getElementById('reading'); reading.hidden=false;
+        RelatumNoteLiveEditor.renderMarkdown(reading,editor.snapshot().value,'color-fold.md',{calloutSession:editor.calloutSession});
+        document.getElementById('editor').hidden=true;
+      }); await settle();
+      const readFold=page.locator('#reading .note-block[data-callout="blue"] > .md-callout-title > .note-callout-fold');
+      assert.equal(await readFold.getAttribute('aria-expanded'),'true');
+      await readFold.click(); await settle();
+      await page.evaluate(()=>{
+        document.getElementById('reading').hidden=true;
+        document.getElementById('editor').hidden=false;
+      }); await settle();
+      assert.equal(await fold.getAttribute('aria-expanded'),'false','colors share reading session changes');
+      await fold.click(); await settle();
+      await page.evaluate(()=>{
+        editor.view.dispatch({selection:{anchor:editor.snapshot().value.indexOf('color folding body')+2}});
+        editor.focus();
+      }); await settle();
+      await fold.click(); await settle();
+      assert((await page.evaluate(()=>editor.view.state.doc.lineAt(editor.snapshot().head).text)).includes('[!BlUe]'), 'color collapse moves the body caret to its visible header');
+      assert.equal(await page.evaluate(()=>editor.snapshot().value),source,'color folding never changes Markdown');
+      await page.evaluate(source=>{
+        editor.setDocument({value:source,notePath:'color-fold.md'});
+        editor.view.contentDOM.blur();
+      },source); await settle();
+      assert.equal(await fold.getAttribute('aria-expanded'),String(suffix === '+'),'reopening colors restores the suffix default');
+    }
+    await page.evaluate(()=>{
+      editor.setDocument({value:'> [!brown]-\n\nend',notePath:'empty-color.md'});
+      editor.view.contentDOM.blur();
+    }); await settle();
+    const emptyFold=page.locator('#editor .note-callout-fold');
+    assert.equal(await emptyFold.getAttribute('aria-expanded'),'false');
+    await emptyFold.click(); await settle();
+    assert.equal(await emptyFold.getAttribute('aria-expanded'),'true','empty color bodies still allow state changes');
+    await page.evaluate(fixture=>{
+      editor.setDocument({value:fixture,notePath:'callouts.md'});
+      editor.view.contentDOM.blur();
+    },fixture); await settle();
+
     const catalog = await page.evaluate(() => {
       const catalog = MarkdownMini.noteBlockCatalog;
       const container = document.createElement('div'); container.className='node-text'; document.body.appendChild(container);
@@ -101,7 +163,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
       const metrics=blocks.map(block=>({type:block.dataset.callout,title:block.querySelector('.note-callout-title-text')?.textContent||'',icon:!!block.querySelector('svg'),radius:getComputedStyle(block).borderRadius,border:getComputedStyle(block).borderLeftWidth,bg:getComputedStyle(block).backgroundColor}));
       container.remove(); return {types,colors,metrics};
     });
-    assert.equal(catalog.colors.length,32);
+    assert.equal(catalog.colors.length,36);
     catalog.metrics.slice(0,catalog.types.length).forEach((block,index)=>{
       const name=catalog.types[index]; assert.equal(block.title,name[0].toUpperCase()+name.slice(1)); assert(block.icon); assert.equal(block.radius,'4px'); assert.equal(block.border,'0px');
     });
@@ -139,7 +201,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
 
     // Same content and font scale as the reference; compare flat background
     // pixels and native title/body coordinates rather than whole-window chrome.
-    await page.setViewportSize({width:1000,height:2200});
+    await page.setViewportSize({width:1000,height:3000});
     const reference=await page.evaluate(()=>MarkdownMini.noteBlockCatalog.types.map(type=>'> [!'+type.name+']\n> 这是 '+type.name[0].toUpperCase()+type.name.slice(1)+' 测试。').join('\n\n'));
     await page.evaluate(reference=>{document.body.dataset.startTheme='light';document.documentElement.style.setProperty('--note-font-scale','1');editor.setDocument({value:reference,notePath:'reference.md'});editor.view.contentDOM.blur();},reference); await settle();
     const positions=await page.evaluate(()=>Array.from(document.querySelectorAll('.note-live-callout-first')).map(line=>{
@@ -149,8 +211,8 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     }));
     const png=await page.screenshot({path:path.join(output,'reference-light.png')});
     const raw=await sharp(png).removeAlpha().raw().toBuffer({resolveWithObject:true});
-    const targets={note:'E6F0FB',info:'E6F0FB',todo:'E6F0FB',abstract:'E5F8F8',tip:'E5F8F8',success:'E6F8ED',question:'FDF1E5',warning:'FDF1E5',failure:'FCEAEC',danger:'FCEAEC',bug:'FCEAEC',example:'F1EDFD',quote:'F5F5F5'};
-    assert.equal(positions.length,13);
+    const targets={note:'E6F0FB',info:'E6F0FB',todo:'E6F0FB',abstract:'E5F8F8',tip:'E5F8F8',success:'E6F8ED',question:'FDF1E5',warning:'FDF1E5',failure:'FCEAEC',danger:'FCEAEC',bug:'FCEAEC',example:'F1EDFD',quote:'F5F5F5',definition:'E6F0FB',theorem:'E5F8F8',proof:'F1EDFD',answer:'E6F8ED'};
+    assert.equal(positions.length,17);
     const pixels=positions.map(item=>{
       const offset=(Math.floor(item.y+8)*raw.info.width+Math.floor(item.x+8))*raw.info.channels;
       const rgb=Array.from(raw.data.subarray(offset,offset+3));
@@ -167,7 +229,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     await page.evaluate(()=>document.body.dataset.startTheme='dark'); await settle();
     await page.screenshot({path:path.join(output,'reading-dark.png')});
     const darkTitles=await page.evaluate(()=>Array.from(document.querySelectorAll('#reading .note-block')).map(block=>({type:block.dataset.callout,color:getComputedStyle(block.querySelector('.md-callout-title')).color})));
-    const darkAccent={note:[2,122,255],info:[2,122,255],todo:[2,122,255],abstract:[83,223,221],tip:[83,223,221],success:[68,207,110],question:[233,151,63],warning:[233,151,63],failure:[251,70,76],danger:[251,70,76],bug:[251,70,76],example:[168,130,255],quote:[158,158,158]};
+    const darkAccent={note:[2,122,255],info:[2,122,255],todo:[2,122,255],abstract:[83,223,221],tip:[83,223,221],success:[68,207,110],question:[233,151,63],warning:[233,151,63],failure:[251,70,76],danger:[251,70,76],bug:[251,70,76],example:[168,130,255],quote:[158,158,158],definition:[2,122,255],theorem:[83,223,221],proof:[168,130,255],answer:[68,207,110]};
     darkTitles.forEach(item=>assert.deepEqual(item.color.match(/\d+/g).map(Number),darkAccent[item.type]));
     await page.emulateMedia({reducedMotion:'reduce'});
     await page.evaluate(fixture=>RelatumNoteLiveEditor.renderMarkdown(document.getElementById('reading'),fixture,'fold.md'),fixture);await settle();

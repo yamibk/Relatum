@@ -588,7 +588,11 @@
     return raw.map((spec) => {
       if (spec.kind === 'math') {
         const parent = raw.filter(item => item.kind === 'callout' && item.from < spec.from && item.to >= spec.to).sort((a, b) => b.from - a.from)[0];
-        if (parent) { spec.calloutType = parent.type; spec.calloutLast = parent.to === spec.to; spec.colorFirst = !parent.title && window.MarkdownMini.noteBlock(parent.type).color && doc.lineAt(parent.from).to + 1 === spec.from; }
+        if (parent) {
+          const descriptor = window.MarkdownMini.noteBlock(parent.type, parent.title, parent.suffix);
+          spec.calloutType = parent.type; spec.calloutLast = parent.to === spec.to;
+          spec.colorFirst = descriptor.color && !descriptor.title && doc.lineAt(parent.from).to + 1 === spec.from;
+        }
       }
       const index = pool.findIndex((old) => old.kind === spec.kind && old.from <= spec.to && old.to >= spec.from);
       const prior = index >= 0 ? pool.splice(index, 1)[0] : null;

@@ -987,6 +987,8 @@
     orange: ['#EC7500', '#E9973F'], red: ['#E93147', '#FB464C'], purple: ['#7852EE', '#A882FF'], gray: ['#9E9E9E', '#9E9E9E'],
   });
   const NOTE_TYPE_GROUP = { note: 'blue', info: 'blue', todo: 'blue', abstract: 'cyan', tip: 'cyan', success: 'green', question: 'orange', warning: 'orange', failure: 'red', danger: 'red', bug: 'red', example: 'purple', quote: 'gray' };
+  // Note-only learning types keep their own names while reusing local visuals.
+  const NOTE_STUDY_TYPES = Object.freeze({ definition: 'note', theorem: 'abstract', proof: 'example', answer: 'success' });
   function mixedColor(base, surface, amount, round) {
     const rounding = round || Math.round;
     return '#' + [1, 3, 5].map((index) => rounding((parseInt(base.slice(index, index + 2), 16) * (amount * 100) + parseInt(surface.slice(index, index + 2), 16) * (100 - amount * 100)) / 100).toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -995,19 +997,23 @@
     ['blue','668BB3','cool'],['sky','78ABC5','cool'],['steel','7C94A6','cool'],['denim','637D9D','cool'],['indigo','777AA6','cool'],['cyan','64A5B0','cool'],['aqua','7EB6B2','cool'],['turquoise','65AAA3','cool'],
     ['teal','5C938D','green'],['mint','96BEAB','green'],['forest','5E8775','green'],['sage','9CA88D','green'],['olive','9C9D70','green'],['green','789A75','green'],
     ['yellow','C3AF6F','warm'],['lemon','C7BF80','warm'],['amber','C5A16A','warm'],['orange','C29B79','warm'],['apricot','D2B393','warm'],['peach','D4B0A0','warm'],['coral','C68F83','warm'],['terracotta','B68B79','warm'],
+    ['cream','E1D5AE','warm'],['beige','C7B89E','warm'],['brown','947665','warm'],
     ['red','B98282','pink'],['rose','BD96A3','pink'],['pink','CEAAB9','pink'],['mauve','AB97AF','pink'],['lavender','ABA4CC','pink'],['purple','9584B0','pink'],
-    ['gray','969B9F','neutral'],['silver','AFB7BA','neutral'],['stone','A6A095','neutral'],['sand','BFB299','neutral'],
+    ['gray','969B9F','neutral'],['silver','AFB7BA','neutral'],['stone','A6A095','neutral'],['sand','BFB299','neutral'],['charcoal','626B6B','neutral'],
   ].map(([name, hex, group]) => Object.freeze({ name, group, base: '#' + hex, light: mixedColor('#' + hex, '#FFFFFF', .16), dark: mixedColor('#' + hex, '#181A19', .22), example: '> [!' + name + ']\n> ' + name })));
-  const NOTE_TYPES = Object.freeze(Object.keys(NOTE_ICONS).map((name) => Object.freeze({ name, aliases: Object.freeze(Object.keys(CALLOUT_ALIAS).filter((alias) => CALLOUT_ALIAS[alias] === name)), example: '> [!' + name + ']\n> ' + name.charAt(0).toUpperCase() + name.slice(1) })));
+  const NOTE_TYPES = Object.freeze(Object.keys(NOTE_ICONS).concat(Object.keys(NOTE_STUDY_TYPES)).map((name) => Object.freeze({ name, aliases: Object.freeze(Object.keys(CALLOUT_ALIAS).filter((alias) => CALLOUT_ALIAS[alias] === name)), example: '> [!' + name + ']\n> ' + name.charAt(0).toUpperCase() + name.slice(1) })));
   function noteBlock(type, title, suffix) {
     const input = String(type || 'note').toLowerCase();
     const color = NOTE_COLORS.find((item) => item.name === input);
-    const canonical = CALLOUT_ALIAS[input] || (NOTE_ICONS[input] ? input : 'note');
-    const colors = NOTE_GROUPS[NOTE_TYPE_GROUP[canonical]];
-    return { type: color ? input : canonical, input, color: !!color, title: String(title || '') || (color ? '' : input.charAt(0).toUpperCase() + input.slice(1)), foldable: !color && /^[+-]$/.test(suffix || ''), collapsed: !color && suffix === '-',
+    const canonical = typeof CALLOUT_ALIAS[input] === 'string' ? CALLOUT_ALIAS[input]
+      : typeof NOTE_ICONS[input] === 'string' || typeof NOTE_STUDY_TYPES[input] === 'string' ? input : 'note';
+    const visualType = NOTE_STUDY_TYPES[canonical] || canonical;
+    const colors = NOTE_GROUPS[NOTE_TYPE_GROUP[visualType]];
+    const foldable = /^[+-]$/.test(suffix || '');
+    return { type: color ? input : canonical, input, color: !!color, title: String(title || '') || (color && !foldable ? '' : input.charAt(0).toUpperCase() + input.slice(1)), foldable, collapsed: suffix === '-',
       style: color ? '--note-block-bg-light:' + color.light + ';--note-block-bg-dark:' + color.dark + ';'
         : '--note-block-accent-light:' + colors[0] + ';--note-block-accent-dark:' + colors[1] + ';--note-block-bg-light:' + mixedColor(colors[0], '#FFFFFF', .1, Math.floor) + ';--note-block-bg-dark:' + mixedColor(colors[1], '#181A19', .1, Math.floor) + ';',
-      icon: color ? '' : '<svg class="md-callout-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + NOTE_ICONS[canonical] + '</svg>',
+      icon: color ? '' : '<svg class="md-callout-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + NOTE_ICONS[visualType] + '</svg>',
     };
   }
   function foldButton(collapsed) {

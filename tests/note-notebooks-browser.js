@@ -412,8 +412,16 @@ async function freePort() {
     page.on('request', request => { if (/mathjax|tex-chtml/i.test(request.url())) guideMathRequests++; });
     await page.locator('[data-note-action="side-guide"]').click();
     await settleSide();
-    assert.equal(await page.locator('.note-guide-example').count(), 52);
-    assert.equal(await page.locator('.note-guide .note-color-block').count(), 33);
+    assert.equal(await page.locator('.note-guide-example').count(), 66);
+    assert.equal(await page.locator('.note-guide .note-color-block').count(), 41);
+    const guideFold = page.locator('.note-guide .note-block[data-callout="blue"][data-fold="-"] > .md-callout-title > .note-callout-fold').last();
+    assert.equal(await guideFold.getAttribute('aria-expanded'), 'false');
+    await guideFold.click();
+    assert.equal(await guideFold.getAttribute('aria-expanded'), 'true');
+    assert.equal(await guideFold.getAttribute('aria-label'), 'Collapse callout');
+    const guideAnswer = page.locator('.note-guide .note-block[data-callout="answer"][data-fold="-"] > .md-callout-title > .note-callout-fold');
+    await guideAnswer.click();
+    assert.equal(await guideAnswer.getAttribute('aria-expanded'), 'true', 'nested answer previews can unfold independently');
     assert.equal(await page.locator('.note-guide mjx-container').count(), 0);
     assert.equal(guideMathRequests, 0, 'formula examples must not load MathJax');
     await checkSideTools('guide');
@@ -425,6 +433,9 @@ async function freePort() {
     await page.locator('.note-guide-copy').first().click();
     assert((await page.evaluate(() => window.__guideCopied)).startsWith('> [!note]'));
     assert.deepEqual(await page.evaluate(() => [__notebooksTest.editor.snapshot().anchor, __notebooksTest.editor.snapshot().head]), [1, 3], 'copy retains body selection');
+    await guideFold.locator('xpath=ancestor::div[contains(@class,"note-guide-example")]').locator('.note-guide-copy').click();
+    assert.equal(await page.evaluate(() => window.__guideCopied), '> [!blue]-\n> 纯色块正文。', 'copy preserves the suffix instead of the preview fold state');
+    assert.deepEqual(await page.evaluate(() => [__notebooksTest.editor.snapshot().anchor, __notebooksTest.editor.snapshot().head]), [1, 3]);
     await flush();
     assert.equal(settings().ui.mode, 'guide');
     await page.reload();

@@ -21,7 +21,8 @@ assert(Markdown && Markdown.structure && typeof Markdown.renderResult === 'funct
 
 const noteCatalog = Markdown.noteBlockCatalog;
 assert(Object.isFrozen(noteCatalog) && Object.isFrozen(noteCatalog.colors));
-assert.equal(noteCatalog.colors.length, 32);
+assert.equal(noteCatalog.colors.length, 36);
+assert.equal(noteCatalog.types.length, 17);
 for (const type of noteCatalog.types) {
   for (const name of [type.name, ...type.aliases]) {
     const rendered = Markdown.renderResult('> [!' + name.toUpperCase() + ']\n> content', {noteBlocks:true});
@@ -33,7 +34,39 @@ for (const color of noteCatalog.colors) {
   const html = Markdown.renderResult('> [!' + color.name.toUpperCase() + ']\n> content', {noteBlocks:true}).html;
   assert(html.includes('note-color-block') && !html.includes('md-callout-title') && !html.includes('<svg'), html);
   assert(html.includes(color.light) && html.includes(color.dark));
+  for (const suffix of ['+', '-']) {
+    for (const title of ['', '**Custom title**']) {
+      const folded = Markdown.renderResult('> [!' + color.name.toUpperCase() + ']' + suffix + (title ? ' ' + title : '') + '\n> content', {noteBlocks:true}).html;
+      assert(folded.includes('data-callout="' + color.name + '"') && folded.includes('data-fold="' + suffix + '"'), folded);
+      assert(folded.includes('class="note-callout-fold"') && !folded.includes('class="md-callout-icon"'), folded);
+      assert(folded.includes(title ? '<strong>Custom title</strong>' : '>' + color.name[0].toUpperCase() + color.name.slice(1) + '</span>'), folded);
+      assert.equal(folded.includes('<div class="md-callout-body" hidden>'), suffix === '-', folded);
+      assert(folded.includes('aria-expanded="' + (suffix === '+') + '"'), folded);
+    }
+  }
 }
+for (const [name, visual] of Object.entries({definition:'note',theorem:'abstract',proof:'example',answer:'success'})) {
+  assert.equal(Markdown.noteBlock(name).type, name, 'learning types retain their own identity');
+  assert.equal(Markdown.noteBlock(name).icon, Markdown.noteBlock(visual).icon);
+  assert.equal(Markdown.noteBlock(name).style, Markdown.noteBlock(visual).style);
+  assert(Markdown.render('> [!' + name + ']\n> content').includes('data-callout="note"'), 'learning types are note-only');
+  for (const suffix of ['+', '-']) {
+    const html = Markdown.renderResult('> [!' + name + ']' + suffix + '\n> content', {noteBlocks:true}).html;
+    assert(html.includes('data-fold="' + suffix + '"') && html.includes('class="note-callout-fold"'), html);
+    assert.equal(html.includes('<div class="md-callout-body" hidden>'), suffix === '-');
+  }
+}
+for (const source of ['> [!blue]+', '> [!blue]-', '> [!answer]-', '> [!charcoal]- Empty']) {
+  const html = Markdown.renderResult(source, {noteBlocks:true}).html;
+  assert(html.includes('class="note-callout-fold"') && !html.includes('class="md-callout-body"'), html);
+}
+const nestedColor = Markdown.renderResult('> [!blue]+ Outer\n> > [!answer]- Inner\n> > content', {noteBlocks:true}).html;
+assert(nestedColor.includes('data-callout="blue"') && nestedColor.includes('data-callout="answer"'), nestedColor);
+assert.equal((nestedColor.match(/class="note-callout-fold"/g) || []).length, 2);
+assert.equal((nestedColor.match(/class="md-callout-body" hidden/g) || []).length, 1);
+const literalColor = Markdown.renderResult('```md\n> [!blue]-\n> literal\n```', {noteBlocks:true}).html;
+assert(!literalColor.includes('note-color-block') && !literalColor.includes('note-callout-fold'), literalColor);
+assert.equal(Markdown.noteBlock('constructor').type, 'note', 'inherited object keys must remain unknown types');
 assert(!Markdown.renderResult('> [!blue]\n> content').html.includes('note-color-block'), 'note-only extension must not change canvas Markdown');
 for (const delimiter of [['$$','$$'], ['\\[','\\]']]) {
   const html = Markdown.renderResult('> [!info]\n> before\n> ' + delimiter[0] + '\n> x > y\n> > z\n> ' + delimiter[1] + '\n> after', {noteBlocks:true}).html;

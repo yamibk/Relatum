@@ -78,7 +78,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
       const {EditorState,EditorSelection,markdown,markdownLanguage} = RelatumCodeMirror;
       const {createBlockField,scanBlockSpecs,focusEffect,calloutFoldEffect} = __calloutResourceTest;
       const report = [];
-      const selectionSource = 'before\n\n> [!note]+ Title\n> body\n> $$x^2$$\n\n> [!blue]\n> color body\n> $$y^2$$\n\n> [!blue] Named\n> > [!tip]- Inner\n> > $$z^2$$\n\nend';
+      const selectionSource = 'before\n\n> [!note]+ Title\n> body\n> $$x^2$$\n\n> [!blue]\n> color body\n> $$y^2$$\n\n> [!blue] Named\n> > [!tip]- Inner\n> > $$z^2$$\n\n> [!cream]+\n> $$a^2$$\n> expanded color\n\n> [!charcoal]- Folded color\n> $$b^2$$\n> folded color\n\nend';
       const selectionCoordinator = {folds:new Map(),records:[]};
       const selectionField = createBlockField(()=> 'selection.md',{},selectionCoordinator,{pending:()=>false});
       const extensions = field => [EditorState.allowMultipleSelections.of(true),markdown({base:markdownLanguage}),field];
@@ -93,7 +93,9 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
       };
       const positions = [0,selectionSource.indexOf('Title'),selectionSource.indexOf('body'),
         selectionSource.indexOf('[!blue]'),selectionSource.indexOf('color body'),selectionSource.indexOf('y^2'),
-        selectionSource.indexOf('Named'),selectionSource.indexOf('Inner'),selectionSource.length];
+        selectionSource.indexOf('Named'),selectionSource.indexOf('Inner'),
+        selectionSource.indexOf('[!cream]'),selectionSource.indexOf('expanded color'),
+        selectionSource.indexOf('Folded color'),selectionSource.indexOf('folded color'),selectionSource.length];
       let transitions=0;
       const checkSelection = (selection,focused) => {
         selectionState=selectionState.update({selection,effects:focusEffect.of(focused)}).state;
@@ -108,13 +110,13 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
       }
       checkSelection(EditorSelection.create(positions.slice(3,5).map(position=>EditorSelection.cursor(position))),true);
       report.push({selectionTransitions:transitions});
-      const nested='> [!note]+ Outer\n> $$x^2$$\n>\n> > [!tip]- Inner\n> > $$y^2$$\n>\n> $$z^2$$\n\n> [!blue]\n> $$w^2$$\n\nend';
+      const nested='> [!blue]+\n> $$x^2$$\n>\n> > [!answer]- Inner\n> > $$y^2$$\n> >\n> > > [!charcoal]+\n> > > $$v^2$$\n>\n> $$z^2$$\n\n> [!blue]\n> $$w^2$$\n\nend';
       const nestedCoordinator={folds:new Map(),records:[]};
       const nestedField=createBlockField(()=> 'nested.md',{},nestedCoordinator,{pending:()=>false});
       let nestedState=EditorState.create({doc:nested,selection:{anchor:nested.length},extensions:[markdown({base:markdownLanguage}),nestedField]});
       const callouts=nestedState.field(nestedField).specs.filter(spec=>spec.kind==='callout' && MarkdownMini.noteBlock(spec.type,spec.title,spec.suffix).foldable);
-      if (callouts.length!==2) throw new Error('nested fixture must contain two foldable native Callouts');
-      for (let mask=0;mask<4;mask++) {
+      if (callouts.length!==3) throw new Error('nested fixture must contain three foldable color/learning blocks');
+      for (let mask=0;mask<(1<<callouts.length);mask++) {
         nestedState=nestedState.update({effects:callouts.map((spec,i)=>calloutFoldEffect.of({id:spec.id,collapsed:!!(mask & (1<<i))}))}).state;
         const value=nestedState.field(nestedField),actual=[];
         const expected=value.specs.filter(spec=>spec.kind!=='callout' && !value.specs.some(parent=>parent.kind==='callout' && parent.from<spec.from && parent.to>=spec.to && nestedCoordinator.folds.get(parent.id))).map(spec=>spec.id).sort();

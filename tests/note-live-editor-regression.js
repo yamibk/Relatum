@@ -386,6 +386,31 @@ assert(!calloutTitleProbe.records.some((item) => item.spec.widget && item.spec.w
 assert.strictEqual(calloutTitleProbe.state.doc.toString(), calloutSource,
   'callout projections must never rewrite source text');
 
+for (const suffix of ['', '+', '-']) {
+  const source = '> [!blue]' + suffix + '\n> $$x^2$$\n> body\n\nend';
+  const colorCoordinator = { field: null, spec() { return null; } };
+  const colorOptions = { coordinator: colorCoordinator };
+  const colorField = liveProbe.__relatumLiveTest.createBlockField(() => 'color.md', colorOptions, colorCoordinator);
+  const state = liveProbe.RelatumCodeMirror.EditorState.create({
+    doc: source, selection: {anchor:source.length},
+    extensions: [liveProbe.RelatumCodeMirror.markdown({base:liveProbe.RelatumCodeMirror.markdownLanguage}), colorField],
+  });
+  const value = state.field(colorField);
+  const math = value.specs.find(spec => spec.kind === 'math');
+  assert(math, 'color fixture must contain first-row display math');
+  assert.strictEqual(math.colorFirst, !suffix, 'only a color block with a hidden title gives math top corners');
+  const projections = decorationRecords(value.decorations, state.doc.length);
+  assert.strictEqual(projections.some(item => item.spec.colorHeader), !suffix, 'foldable color headers must remain visible');
+  assert.strictEqual(projections.some(item => item.spec.widget && item.spec.widget.constructor.name === 'RichBlockWidget'), suffix !== '-',
+    'collapsed colors must hide their formula projection');
+  const lines = decorationRecords(liveProbe.__relatumLiveTest.createInlineDecorations({
+    state, visibleRanges:[{from:0,to:state.doc.length}], hasFocus:false, composing:false,
+  }, colorField, () => 'color.md', colorOptions), state.doc.length);
+  assert.strictEqual(lines.some(item => item.spec.widget && item.spec.widget.constructor.name === 'CalloutTitleWidget'), !!suffix,
+    'titleless foldable colors must show their generated title and arrow');
+  assert.strictEqual(state.doc.toString(), source, 'color folding projections never rewrite the source');
+}
+
 const longCodeSource = '```c\n' + 'int value = 42;\n'.repeat(6000) + '```';
 const longCodeState = liveProbe.RelatumCodeMirror.EditorState.create({
   doc: longCodeSource,
