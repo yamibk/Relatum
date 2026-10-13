@@ -45,10 +45,26 @@ for (const color of noteCatalog.colors) {
     }
   }
 }
-for (const [name, visual] of Object.entries({definition:'note',theorem:'abstract',proof:'example',answer:'success'})) {
-  assert.equal(Markdown.noteBlock(name).type, name, 'learning types retain their own identity');
-  assert.equal(Markdown.noteBlock(name).icon, Markdown.noteBlock(visual).icon);
-  assert.equal(Markdown.noteBlock(name).style, Markdown.noteBlock(visual).style);
+const learningStyles = {
+  definition: {light:'#64705A',dark:'#B3C0A4',lightBackground:'#F2F3F1',darkBackground:'#2A2D29',iconFragment:'M12 5v16'},
+  theorem: {light:'#526C87',dark:'#A5BCD5',lightBackground:'#F1F3F5',darkBackground:'#282D2F',iconFragment:'M18 7V5'},
+  proof: {light:'#706D83',dark:'#B9B4D0',lightBackground:'#F7F7F8',darkBackground:'#242627',iconFragment:'cx="6" cy="19" r="3"'},
+  answer: {light:'#86684E',dark:'#CFB18F',lightBackground:'#F8F7F6',darkBackground:'#262622',iconFragment:'M2.992 16.342'},
+};
+for (const [name, expected] of Object.entries(learningStyles)) {
+  const block = Markdown.noteBlock(name);
+  assert.equal(block.type, name, 'learning types retain their own identity');
+  assert(block.icon.includes(expected.iconFragment) && block.icon.includes('stroke-width="1.75"'), name);
+  assert(block.style.includes('--note-block-accent-light:' + expected.light + ';'), name);
+  assert(block.style.includes('--note-block-accent-dark:' + expected.dark + ';'), name);
+  assert(block.style.includes('--note-block-bg-light:' + expected.lightBackground + ';'), name);
+  assert(block.style.includes('--note-block-bg-dark:' + expected.darkBackground + ';'), name);
+  for (const other of noteCatalog.types.filter(type => type.name !== name)) {
+    const otherBlock = Markdown.noteBlock(other.name);
+    assert.notEqual(block.icon, otherBlock.icon, name + ' must have its own icon');
+    assert(!otherBlock.style.includes('--note-block-accent-light:' + expected.light + ';'), name + ' must have its own light accent');
+    assert(!otherBlock.style.includes('--note-block-accent-dark:' + expected.dark + ';'), name + ' must have its own dark accent');
+  }
   assert(Markdown.render('> [!' + name + ']\n> content').includes('data-callout="note"'), 'learning types are note-only');
   for (const suffix of ['+', '-']) {
     const html = Markdown.renderResult('> [!' + name + ']' + suffix + '\n> content', {noteBlocks:true}).html;

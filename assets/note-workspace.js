@@ -3930,8 +3930,8 @@
       example(source, source);
     });
     heading('学习组合', 'Study combinations');
-    const answer = english ? '> [!question] Question\n> Write the question here.\n>\n> > [!answer]- Answer\n> > Write the answer here.'
-      : '> [!question] 题干\n> 在这里填写题目。\n>\n> > [!answer]- 答案\n> > 在这里填写答案。';
+    const answer = english ? '> [!stone] Question\n> Write the question here.\n>\n> > [!answer]- Answer\n> > Write the answer here.'
+      : '> [!stone] 题干\n> 在这里填写题目。\n>\n> > [!answer]- 答案\n> > 在这里填写答案。';
     example(answer, answer);
     const proof = english ? '> [!theorem] Theorem\n> Write the theorem here.\n>\n> > [!proof]- Proof\n> > Write the proof here.'
       : '> [!theorem] 定理\n> 在这里填写定理。\n>\n> > [!proof]- 证明\n> > 在这里填写证明。';

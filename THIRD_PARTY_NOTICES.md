@@ -7,6 +7,7 @@ Relatum bundles the following components for offline use. Their licenses are ind
 - Project: <https://github.com/lucide-icons/lucide>
 - Source: selected SVG files from `icons/`, retrieved 2026-10-08.
 - Local use: static `note-icon-*` symbols in `assets/index.html`, plus the note Callout SVG subset in `assets/markdown.js` (retrieved 2026-10-10). No Lucide package or runtime is bundled. The Callout subset license is also saved in `assets/vendor/lucide/LICENSE.txt`.
+- Learning Callout icons added 2026-10-13: `book-open-text`, `sigma`, `route`, and `message-circle-check`, retrieved from the project's `icons/` SVG sources. Their static shapes use Relatum's existing 18px size and 1.75px stroke; no additional package or runtime is bundled.
 - Lucide license: ISC. Selected Feather-derived icons also carry the MIT license below.
 - Relatum's filled notebook, notebook outline, type-plus, and four-corner focus arrow variants are locally drawn or adapted for this interface.
 

@@ -211,7 +211,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     }));
     const png=await page.screenshot({path:path.join(output,'reference-light.png')});
     const raw=await sharp(png).removeAlpha().raw().toBuffer({resolveWithObject:true});
-    const targets={note:'E6F0FB',info:'E6F0FB',todo:'E6F0FB',abstract:'E5F8F8',tip:'E5F8F8',success:'E6F8ED',question:'FDF1E5',warning:'FDF1E5',failure:'FCEAEC',danger:'FCEAEC',bug:'FCEAEC',example:'F1EDFD',quote:'F5F5F5',definition:'E6F0FB',theorem:'E5F8F8',proof:'F1EDFD',answer:'E6F8ED'};
+    const targets={note:'E6F0FB',info:'E6F0FB',todo:'E6F0FB',abstract:'E5F8F8',tip:'E5F8F8',success:'E6F8ED',question:'FDF1E5',warning:'FDF1E5',failure:'FCEAEC',danger:'FCEAEC',bug:'FCEAEC',example:'F1EDFD',quote:'F5F5F5',definition:'F2F3F1',theorem:'F1F3F5',proof:'F7F7F8',answer:'F8F7F6'};
     assert.equal(positions.length,17);
     const pixels=positions.map(item=>{
       const offset=(Math.floor(item.y+8)*raw.info.width+Math.floor(item.x+8))*raw.info.channels;
@@ -229,7 +229,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><base href="/asse
     await page.evaluate(()=>document.body.dataset.startTheme='dark'); await settle();
     await page.screenshot({path:path.join(output,'reading-dark.png')});
     const darkTitles=await page.evaluate(()=>Array.from(document.querySelectorAll('#reading .note-block')).map(block=>({type:block.dataset.callout,color:getComputedStyle(block.querySelector('.md-callout-title')).color})));
-    const darkAccent={note:[2,122,255],info:[2,122,255],todo:[2,122,255],abstract:[83,223,221],tip:[83,223,221],success:[68,207,110],question:[233,151,63],warning:[233,151,63],failure:[251,70,76],danger:[251,70,76],bug:[251,70,76],example:[168,130,255],quote:[158,158,158],definition:[2,122,255],theorem:[83,223,221],proof:[168,130,255],answer:[68,207,110]};
+    const darkAccent={note:[2,122,255],info:[2,122,255],todo:[2,122,255],abstract:[83,223,221],tip:[83,223,221],success:[68,207,110],question:[233,151,63],warning:[233,151,63],failure:[251,70,76],danger:[251,70,76],bug:[251,70,76],example:[168,130,255],quote:[158,158,158],definition:[179,192,164],theorem:[165,188,213],proof:[185,180,208],answer:[207,177,143]};
     darkTitles.forEach(item=>assert.deepEqual(item.color.match(/\d+/g).map(Number),darkAccent[item.type]));
     await page.emulateMedia({reducedMotion:'reduce'});
     await page.evaluate(fixture=>RelatumNoteLiveEditor.renderMarkdown(document.getElementById('reading'),fixture,'fold.md'),fixture);await settle();

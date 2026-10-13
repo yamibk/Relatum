@@ -413,13 +413,14 @@ async function freePort() {
     await page.locator('[data-note-action="side-guide"]').click();
     await settleSide();
     assert.equal(await page.locator('.note-guide-example').count(), 66);
-    assert.equal(await page.locator('.note-guide .note-color-block').count(), 41);
+    assert.equal(await page.locator('.note-guide .note-color-block').count(), 42);
     const guideFold = page.locator('.note-guide .note-block[data-callout="blue"][data-fold="-"] > .md-callout-title > .note-callout-fold').last();
     assert.equal(await guideFold.getAttribute('aria-expanded'), 'false');
     await guideFold.click();
     assert.equal(await guideFold.getAttribute('aria-expanded'), 'true');
     assert.equal(await guideFold.getAttribute('aria-label'), 'Collapse callout');
     const guideAnswer = page.locator('.note-guide .note-block[data-callout="answer"][data-fold="-"] > .md-callout-title > .note-callout-fold');
+    assert.equal(await guideAnswer.evaluate(button => button.closest('.md-callout').parentElement.closest('.md-callout').dataset.callout), 'stone', 'question/answer examples use a neutral color parent');
     await guideAnswer.click();
     assert.equal(await guideAnswer.getAttribute('aria-expanded'), 'true', 'nested answer previews can unfold independently');
     assert.equal(await page.locator('.note-guide mjx-container').count(), 0);
@@ -435,6 +436,9 @@ async function freePort() {
     assert.deepEqual(await page.evaluate(() => [__notebooksTest.editor.snapshot().anchor, __notebooksTest.editor.snapshot().head]), [1, 3], 'copy retains body selection');
     await guideFold.locator('xpath=ancestor::div[contains(@class,"note-guide-example")]').locator('.note-guide-copy').click();
     assert.equal(await page.evaluate(() => window.__guideCopied), '> [!blue]-\n> 纯色块正文。', 'copy preserves the suffix instead of the preview fold state');
+    assert.deepEqual(await page.evaluate(() => [__notebooksTest.editor.snapshot().anchor, __notebooksTest.editor.snapshot().head]), [1, 3]);
+    await guideAnswer.locator('xpath=ancestor::div[contains(@class,"note-guide-example")]').locator('.note-guide-copy').click();
+    assert.equal(await page.evaluate(() => window.__guideCopied), '> [!stone] 题干\n> 在这里填写题目。\n>\n> > [!answer]- 答案\n> > 在这里填写答案。', 'copy matches the neutral question/answer preview');
     assert.deepEqual(await page.evaluate(() => [__notebooksTest.editor.snapshot().anchor, __notebooksTest.editor.snapshot().head]), [1, 3]);
     await flush();
     assert.equal(settings().ui.mode, 'guide');
