@@ -1643,12 +1643,14 @@
     <section class="note-document-pane">
       <nav class="note-tab-bar" aria-label="打开的笔记">
         <div class="note-tab-list" data-role="note-tabs" role="tablist"></div>
-        <button type="button" class="note-tab-new" data-note-action="new-tab"
-          aria-label="新建标签页" data-ui-tooltip="新建标签页"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-plus"/></svg></button>
-        <button type="button" class="note-tab-close-all" data-note-action="close-all-tabs"
-          aria-label="关闭所有笔记标签" data-ui-tooltip="关闭所有笔记标签" disabled>
-          <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-copy-x"/></svg>
-        </button>
+        <div class="note-tab-actions">
+          <button type="button" class="note-tab-new" data-note-action="new-tab"
+            aria-label="新建标签页" data-ui-tooltip="新建标签页"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-plus"/></svg></button>
+          <button type="button" class="note-tab-close-all" data-note-action="close-all-tabs"
+            aria-label="关闭所有笔记标签" data-ui-tooltip="关闭所有笔记标签" disabled>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-copy-x"/></svg>
+          </button>
+        </div>
       </nav>
       <section class="note-graph-panel" id="note-graph-panel" data-role="note-graph-panel" data-feature="notes.graph"
         role="tabpanel" tabindex="0" hidden inert>

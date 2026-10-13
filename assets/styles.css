@@ -1236,6 +1236,8 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   scrollbar-width: none;
 }
 .note-tab-list::-webkit-scrollbar { display: none; }
+.note-tab-list.is-close-motion { flex-basis: var(--note-tab-motion-width); margin-right: calc(var(--note-tab-motion-final-width) - var(--note-tab-motion-width)); }
+.note-tab-actions { display: flex; align-items: stretch; gap: 2px; flex: none; }
 .note-tab {
   min-width: 92px;
   max-width: 210px;
