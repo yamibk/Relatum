@@ -1704,60 +1704,64 @@
     <aside class="note-links-pane" id="note-shared-side-panel" aria-label="笔记侧栏" inert>
       <header class="note-pane-head note-links-head">
         <h2 class="note-visually-hidden" data-role="note-side-title">笔记本</h2>
-        <nav class="note-side-modes" aria-label="侧栏视图">
-          <button type="button" data-note-action="side-notebooks">笔记本</button>
-          <button type="button" data-note-action="side-links">链接</button>
-          <button type="button" data-note-action="side-canvas" data-feature="notes.canvas">画布</button>
-          <button type="button" data-note-action="side-guide">引导</button>
-          <button type="button" data-note-action="side-outline">大纲</button>
-        </nav>
-        <button type="button" class="note-side-button" data-note-action="close-links"
-          aria-label="关闭侧栏"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-x"/></svg></button>
+        <div class="note-side-controls">
+          <nav class="note-side-modes" aria-label="侧栏视图">
+            <button type="button" data-note-action="side-notebooks">笔记本</button>
+            <button type="button" data-note-action="side-outline">大纲</button>
+            <button type="button" data-note-action="side-canvas" data-feature="notes.canvas">画布</button>
+            <button type="button" data-note-action="side-guide">引导</button>
+            <button type="button" data-note-action="side-links">链接</button>
+          </nav>
+          <button type="button" class="note-side-button" data-note-action="close-links"
+            aria-label="关闭侧栏"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-x"/></svg></button>
+        </div>
       </header>
-      <div class="note-notebook-actions note-side-toolbar" data-role="note-side-toolbar" role="toolbar" aria-label="笔记工具">
-        <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-plus"/></svg></button>
-        <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-notebooks" aria-label="全部展开">
-          <svg class="note-icon note-expand-icon note-expand-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-up-down"/></svg>
-          <svg class="note-icon note-expand-icon note-expand-icon-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-down-up"/></svg>
-        </button>
-        <button type="button" class="note-side-button note-image-text-toggle" data-note-action="toggle-image-text"
-          data-role="note-image-text-toggle" aria-label="图片文字" aria-pressed="false" disabled>
-          <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-image-plus"/></svg>
-        </button>
-        <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
-          aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
-          <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-sliders-horizontal"/></svg>
-        </button>
-      </div>
-      <section class="note-notebooks-content" data-role="note-notebooks-content">
-        <div class="note-notebook-tree" data-role="note-notebook-tree" tabindex="0"></div>
-      </section>
-      <div class="note-links-content" data-role="note-links-content" hidden>
-        <section class="note-link-section">
-          <h3>链接到的笔记 <span data-role="note-outgoing-count">0</span></h3>
-          <div class="note-link-list" data-role="note-outgoing"></div>
+      <div class="note-links-body">
+        <div class="note-notebook-actions note-side-toolbar" data-role="note-side-toolbar" role="toolbar" aria-label="笔记工具">
+          <button type="button" class="note-icon-button" data-note-action="new-notebook" aria-label="新建笔记本" title="新建笔记本"><svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-plus"/></svg></button>
+          <button type="button" class="note-icon-button note-expand-all" data-note-action="toggle-all-notebooks" aria-label="全部展开">
+            <svg class="note-icon note-expand-icon note-expand-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-up-down"/></svg>
+            <svg class="note-icon note-expand-icon note-expand-icon-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-chevrons-down-up"/></svg>
+          </button>
+          <button type="button" class="note-side-button note-image-text-toggle" data-note-action="toggle-image-text"
+            data-role="note-image-text-toggle" aria-label="图片文字" aria-pressed="false" disabled>
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-image-plus"/></svg>
+          </button>
+          <button type="button" class="note-side-button note-settings-trigger" data-note-action="toggle-settings"
+            aria-label="笔记设置" aria-expanded="false" aria-controls="note-settings-pop">
+            <svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#note-icon-sliders-horizontal"/></svg>
+          </button>
+        </div>
+        <section class="note-notebooks-content" data-role="note-notebooks-content">
+          <div class="note-notebook-tree" data-role="note-notebook-tree" tabindex="0"></div>
         </section>
-        <section class="note-link-section note-backlink-section">
-          <h3>反向链接 <span data-role="note-backlink-count">0</span></h3>
-          <div class="note-link-list" data-role="note-backlinks"></div>
+        <div class="note-links-content" data-role="note-links-content" hidden>
+          <section class="note-link-section">
+            <h3>链接到的笔记 <span data-role="note-outgoing-count">0</span></h3>
+            <div class="note-link-list" data-role="note-outgoing"></div>
+          </section>
+          <section class="note-link-section note-backlink-section">
+            <h3>反向链接 <span data-role="note-backlink-count">0</span></h3>
+            <div class="note-link-list" data-role="note-backlinks"></div>
+          </section>
+        </div>
+        <section class="note-guide" data-role="note-guide" hidden></section>
+        <section class="note-outline" data-role="note-outline" aria-label="大纲" hidden></section>
+        <section class="note-canvas-settings" data-role="note-canvas-settings" data-feature="notes.canvas" aria-labelledby="note-canvas-settings-title" hidden>
+          <header class="note-canvas-settings-head">
+            <h3 id="note-canvas-settings-title">画布设置</h3>
+            <button type="button" class="note-settings-reset" data-note-action="reset-canvas-settings">恢复默认</button>
+          </header>
+          <label class="note-settings-font" data-role="note-canvas-default-scale">
+            <span><strong>新建画布节点尺寸</strong><output data-role="note-canvas-node-scale-value">100%</output></span>
+            <span class="note-settings-range" style="--default-pos:20%;">
+              <input type="range" min="50" max="300" step="5" value="100" data-role="note-canvas-node-scale" aria-label="新建画布节点尺寸">
+            </span>
+            <small aria-hidden="true"><i>50%</i><i>100% = 160 × 48</i><i>300%</i></small>
+          </label>
+          <div data-role="note-canvas-style-groups"></div>
         </section>
       </div>
-      <section class="note-guide" data-role="note-guide" hidden></section>
-      <section class="note-outline" data-role="note-outline" aria-label="大纲" hidden></section>
-      <section class="note-canvas-settings" data-role="note-canvas-settings" data-feature="notes.canvas" aria-labelledby="note-canvas-settings-title" hidden>
-        <header class="note-canvas-settings-head">
-          <h3 id="note-canvas-settings-title">画布设置</h3>
-          <button type="button" class="note-settings-reset" data-note-action="reset-canvas-settings">恢复默认</button>
-        </header>
-        <label class="note-settings-font" data-role="note-canvas-default-scale">
-          <span><strong>新建画布节点尺寸</strong><output data-role="note-canvas-node-scale-value">100%</output></span>
-          <span class="note-settings-range" style="--default-pos:20%;">
-            <input type="range" min="50" max="300" step="5" value="100" data-role="note-canvas-node-scale" aria-label="新建画布节点尺寸">
-          </span>
-          <small aria-hidden="true"><i>50%</i><i>100% = 160 × 48</i><i>300%</i></small>
-        </label>
-        <div data-role="note-canvas-style-groups"></div>
-      </section>
     </aside>
     <section class="note-image-text-tools note-side-popover" data-role="note-image-text-tools" role="toolbar"
       aria-label="图片文字工具" hidden inert>

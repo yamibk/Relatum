@@ -2102,7 +2102,7 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 .note-workspace.links-overlay-open .note-links-pane { transform: none; }
 .note-links-content { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 /* 笔记本和链接共用整高右栏；窄窗保留覆盖方式。 */
-.note-workspace { position: relative; --note-chrome-line: rgba(24, 24, 22, .065); --note-side-width: 320px; --note-side-motion: 230ms cubic-bezier(.22, 1, .36, 1); }
+.note-workspace { position: relative; --note-chrome-line: rgba(24, 24, 22, .065); --note-side-width: 320px; --note-focus-controls-space: calc(3 * 46px + 8px); --note-side-motion: 230ms cubic-bezier(.22, 1, .36, 1); }
 .note-tab-bar { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; border-bottom-color: var(--note-chrome-line); }
 .note-tree-pane > .note-pane-head { box-sizing: border-box; height: 40px; min-height: 40px; flex: 0 0 40px; padding-block: 5px; border-bottom: 1px solid var(--note-chrome-line); }
 .note-document-head { box-sizing: border-box; height: 48px; min-height: 48px; flex: 0 0 48px; }
@@ -2135,6 +2135,8 @@ body.start-page[data-start-theme="dark"] .note-browser-result.is-selected { back
 body.start-page[data-start-theme="dark"] .note-workspace { --note-control-hover: rgba(235,240,235,.075); --note-control-active: rgba(235,240,235,.12); --note-control-focus: rgba(204,220,197,.7); --note-notebook-cutout: #181a19; }
 .note-links-pane { width: min(var(--note-side-width), calc(100vw - 24px)); visibility: hidden; transition: transform 230ms cubic-bezier(.22, 1, .36, 1), visibility 230ms; }
 .note-workspace.links-overlay-open .note-links-pane { visibility: visible; }
+.note-links-body { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.note-side-controls { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; transform: translateX(0); transition: transform var(--note-side-motion); }
 .note-side-modes { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
 .note-side-modes button { padding: 5px 0; border: 0; background: transparent; color: var(--text-tertiary); font-family: inherit; font-size: 12px; font-weight: 550; line-height: 1.4; cursor: pointer; }
 .note-side-modes button[aria-pressed="true"] { color: var(--text); }
@@ -2236,7 +2238,7 @@ body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:no
   .note-workspace.links-overlay-open { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) var(--note-side-width); }
   .note-workspace .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: var(--note-side-width); transform: none; transition: visibility 230ms; }
 }
-body.start-page .note-links-pane { border-left-color: var(--note-chrome-line); box-shadow: none; }
+body.start-page .note-links-pane { border-left-width: 0; box-shadow: none; }
 body.start-page .note-links-pane > .note-links-head { border-bottom-color: var(--note-chrome-line); }
 body.start-page[data-start-theme="dark"] .note-workspace { --note-chrome-line: rgba(235,240,235,.075); }
 body.start-page[data-start-theme="dark"] .note-notebook-root > .note-tree-row.selected-notebook { background: rgba(235,240,235,.095); }
@@ -8835,12 +8837,28 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
 }
 .desktop-note-focus-controls .desktop-window-btn { height: 42px; min-height: 42px; }
 .desktop-note-focus-controls .desktop-window-btn:first-child { border-radius: 0 0 0 7px; }
-/* 专注模式的三枚窗口按钮覆盖首行，侧栏入口为它们预留空间。 */
-body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-links-pane > .note-links-head {
-  padding-right: calc(3 * 46px + 8px);
-  gap: 6px;
+/* 宽窗向标签栏空白借位，只平移侧栏首行；正文继续在原宽度内裁剪。 */
+@media (min-width: 1121px) {
+  .note-workspace .note-links-pane { overflow: visible; }
+  .note-tab-bar { transition: padding-right var(--note-side-motion); }
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-workspace.links-overlay-open .note-side-controls {
+    transform: translateX(calc(-1 * var(--note-focus-controls-space)));
+  }
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-tab-bar {
+    padding-right: calc(12px + var(--note-focus-controls-space));
+  }
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-workspace.note-graph-active.links-overlay-open .note-tab-bar {
+    padding-right: calc(12px + var(--note-side-width) + var(--note-focus-controls-space));
+  }
 }
-body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-links-head .note-side-modes { gap: 8px; }
+/* 窄窗继续在侧栏首行内滚动入口，关闭按钮固定在窗口按钮左侧。 */
+@media (max-width: 1120px) {
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-links-pane > .note-links-head {
+    padding-right: var(--note-focus-controls-space);
+  }
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-side-controls { gap: 6px; }
+  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-side-modes { gap: 8px; }
+}
 body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .desktop-note-focus-controls {
   opacity: 1;
   visibility: visible;
@@ -8853,9 +8871,11 @@ body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-
   pointer-events: none;
 }
 body.desktop-host.start-page.note-focus-restoring .desktop-note-focus-controls { transition: none; }
+body.start-page.note-focus-restoring :is(.note-side-controls, .note-tab-bar) { transition: none; }
 .desktop-note-focus-controls .desktop-window-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
 @media (prefers-reduced-motion: reduce) {
   .desktop-note-focus-controls, .desktop-note-focus-controls .desktop-window-btn { transition: none !important; }
+  .note-side-controls, .note-tab-bar { transition: none; }
   body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode.note-focus-transitioning .desktop-note-focus-controls { pointer-events: auto; }
 }
 
@@ -45499,7 +45519,7 @@ body.start-page[data-start-theme="dark"] .note-live-callout-title-widget.note-co
 .note-side-modes { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .note-side-modes::-webkit-scrollbar { display: none; }
 .note-side-modes button { flex: 0 0 auto; white-space: nowrap; }
-.note-links-head > [data-note-action="close-links"] { flex: 0 0 auto; }
+.note-side-controls > [data-note-action="close-links"] { flex: 0 0 auto; }
 .note-guide { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
 .note-guide[hidden] { display: none; }
 .note-guide h3 { margin: 18px 0 10px; font-size: 13px; font-weight: 600; }
