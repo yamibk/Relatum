@@ -35,6 +35,7 @@
   let describedElement = null;
   let previousDescribedBy = '';
   let lastPointerDown = 0;
+  const blockers = new Set();
 
   function ensureTooltip() {
     if (tooltip) return tooltip;
@@ -126,7 +127,7 @@
 
   function show(element) {
     const text = tooltipText(element);
-    if (!text || !element.isConnected) return;
+    if (!text || !element.isConnected || blockers.size) return;
     const layer = ensureTooltip();
     activeElement = element;
     layer.querySelector('.ui-tooltip-copy').textContent = text;
@@ -139,7 +140,7 @@
   }
 
   function scheduleShow(element, delay) {
-    if (!tooltipText(element)) return;
+    if (!tooltipText(element) || blockers.size) return;
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = null;
     if (activeElement === element && tooltip && tooltip.classList.contains('is-visible')) {
@@ -252,6 +253,14 @@
     });
     document.addEventListener('canvas:tooltip-hide-delay', (event) => {
       hideDelay = Number.isFinite(event.detail) ? Math.max(0, Math.min(5000, event.detail)) : HIDE_DEFAULT;
+    });
+    // A color chooser needs unobstructed swatches, including when a tooltip
+    // was pending on the row underneath it. Owners release on close/pagehide.
+    document.addEventListener('canvas:tooltip-block', (event) => {
+      const owner = event.detail?.owner;
+      if (!(owner instanceof Element)) return;
+      if (event.detail.blocked) blockers.add(owner); else blockers.delete(owner);
+      if (blockers.size) hide(true);
     });
   }
 

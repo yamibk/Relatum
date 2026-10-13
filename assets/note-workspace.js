@@ -74,6 +74,15 @@
   const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
+  let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
+  function browserFolders() {
+    const index = state.entryIndex;
+    if (browserFolderIndex !== index || browserFolderSize !== index.size) {
+      browserFolderIndex = index; browserFolderSize = index.size;
+      browserFolderPaths = Array.from(index.values()).filter(entry => entry.kind === 'folder' && entry.path !== NOTEBOOK_CONTAINER).map(entry => entry.path);
+    }
+    return browserFolderPaths;
+  }
   let noteGraph = null, noteGraphLoader = null, noteGraphIntentSequence = 0;
   let noteGraphForeground = false;
   function backgroundTargetChanged(cancel = false) {
@@ -265,7 +274,7 @@
     if (editorInputPending()) await whenEditorInputSettled();
     if (!(await flushSave())) return false;
     rememberEditorState(state.current);
-    closeContextMenu(); setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
+    closeWorkspacePopovers();
     if (liveEditor) liveEditor.setImageTextMode(false);
     return true;
   }
@@ -287,6 +296,7 @@
       noteBrowser = window.RelatumNoteBrowser.create({ root, navigation: browserNavigation, results: browserResults, back: browserBack,
         request, query: (query, options) => post('/api/note-query', query, options), language, icon: noteIcon,
         getEntries: () => flattenEntries(state.entries, []), getRecent: () => Object.fromEntries(recentFiles),
+        getFolderPaths: browserFolders,
         pruneRecent: (paths) => {
           const missing = new Set(paths.map(path => path.normalize('NFC').toLocaleLowerCase()));
           let changed = false;
@@ -295,6 +305,7 @@
         },
         getNotebooks: () => notebookRoots().map(entry => ({ path: entry.path, name: entry.name })), getIndexState: () => state.indexState,
         beforeBrowse, showResults: showBrowserResults, openNote: openSearchNote,
+        onPopoverOpen: () => closeWorkspacePopovers(),
         canvasEnabled, revealCanvas: (path) => post('/api/notes-canvas/reveal', { path }), showError: (message) => showToast(message, 'error'),
       });
       return noteBrowser;
@@ -361,6 +372,10 @@
     }
   }
   let bodyMenuContext = null, bodyMenuSubmenu = null, bodyMenuParent = null;
+  let contextOpen = false, contextFrame = 0, contextTimer = 0, contextSequence = 0, contextReturnFocus = null;
+  let contextTooltipBlocked = false;
+  let submenuFrame = 0, submenuTimer = 0, closingSubmenu = null;
+  let settingsMotionSequence = 0, libraryMotionSequence = 0;
   let statisticsTimer = 0, statisticsFrame = 0, statisticsJob = null;
   let prefetchEpoch = 0, prefetchRunning = false, hoverPrefetchTimer = 0, hoverPrefetchPath = '';
 
@@ -816,7 +831,8 @@
     if (!settingsPop || !settingsTrigger) return;
     const next = !!open;
     const restoreFocus = !options || options.restoreFocus !== false;
-    if (!next && settingsPop.classList.contains('is-closing')) return;
+    if (next) prepareWorkspacePopover('settings');
+    const sequence = ++settingsMotionSequence;
     clearTimeout(state.settingsCloseTimer); state.settingsCloseTimer = 0;
     state.settingsOpen = next;
     settingsTrigger.setAttribute('aria-expanded', next ? 'true' : 'false');
@@ -835,7 +851,7 @@
     if (settingsResetButton) settingsResetButton.setAttribute('aria-expanded', 'false');
     settingsPop.setAttribute('inert', '');
     if (settingsPop.hidden) return;
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (options?.instant || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       settingsPop.hidden = true;
       settingsPop.classList.remove('is-closing');
       if (restoreFocus && document.contains(settingsTrigger)) settingsTrigger.focus();
@@ -844,7 +860,7 @@
     settingsPop.classList.add('is-closing');
     state.settingsCloseTimer = window.setTimeout(() => {
       state.settingsCloseTimer = 0;
-      if (state.settingsOpen) return;
+      if (state.settingsOpen || sequence !== settingsMotionSequence) return;
       settingsPop.hidden = true;
       settingsPop.classList.remove('is-closing');
       if (restoreFocus && document.contains(settingsTrigger)) settingsTrigger.focus();
@@ -1743,11 +1759,13 @@
     renderLibraryPreferences();
   }
   function setLibraryPanel(kind, options) {
+    if (kind) prepareWorkspacePopover('library');
+    const sequence = ++libraryMotionSequence;
     const panels = { sort: [sortMenu, sortTrigger], settings: [librarySettings, libraryTrigger] };
     const restoreFocus = !options || options.restoreFocus !== false;
     Object.entries(panels).forEach(([name, [panel, trigger]]) => {
       if (!panel || !trigger) return;
-      clearTimeout(state.libraryPanelTimers[name]);
+      clearTimeout(state.libraryPanelTimers[name]); state.libraryPanelTimers[name] = 0;
       const open = name === kind;
       trigger.setAttribute('aria-expanded', String(open));
       if (name === 'settings' && !open) toggleLibraryReset(false);
@@ -1755,18 +1773,18 @@
         panel.hidden = false; panel.inert = false; panel.classList.remove('is-closing');
       } else if (!panel.hidden) {
         panel.inert = true;
-        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) panel.hidden = true;
+        if (options?.instant || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { panel.hidden = true; panel.classList.remove('is-closing'); }
         else {
           panel.classList.add('is-closing');
           state.libraryPanelTimers[name] = window.setTimeout(() => {
-            if (state.libraryPanel !== name) { panel.hidden = true; panel.classList.remove('is-closing'); }
-          }, 160);
+            if (sequence === libraryMotionSequence && state.libraryPanel !== name) { panel.hidden = true; panel.classList.remove('is-closing'); state.libraryPanelTimers[name] = 0; }
+          }, 170);
         }
         if (restoreFocus && !kind && state.libraryPanel === name) trigger.focus();
       }
     });
     state.libraryPanel = kind;
-    if (kind) { setNoteSettingsOpen(false, { restoreFocus: false }); closeContextMenu(); renderLibraryPreferences(); }
+    if (kind) renderLibraryPreferences();
   }
   function parentPath(path) { const parts = String(path || '').split('/'); parts.pop(); return parts.join('/'); }
   function baseName(path) { return String(path || '').split('/').pop() || ''; }
@@ -1925,6 +1943,7 @@
   function mergeTreeItem(item) {
     const existing = state.entryIndex.get(item.path);
     if (existing) {
+      if (existing.kind !== item.kind) browserFolderIndex = null;
       const sortKey = state.treeSort.startsWith('created-') ? 'createdNs' : 'modifiedNs';
       const changed = existing.name !== item.name || existing.kind !== item.kind
         || existing.kind === 'note' && !state.treeSort.startsWith('name-') && existing[sortKey] !== item[sortKey];
@@ -2007,11 +2026,42 @@
     }
     document.documentElement.classList.remove('note-boot-pending');
   }
-  function closeContextMenu() {
-    bodyMenuContext = null; bodyMenuParent = null;
-    if (bodyMenuSubmenu) bodyMenuSubmenu.remove();
-    bodyMenuSubmenu = null;
-    if (contextMenu) { contextMenu.hidden = true; contextMenu.dataset.source = ''; contextMenu.replaceChildren(); }
+  function closeWorkspacePopovers() {
+    closeContextMenu({ instant: true });
+    setNoteSettingsOpen(false, { restoreFocus: false, instant: true });
+    setLibraryPanel('', { restoreFocus: false, instant: true });
+  }
+  function prepareWorkspacePopover(kind) {
+    noteBrowser?.closePopovers({ instant: true });
+    if (kind !== 'context') closeContextMenu({ instant: true });
+    if (kind !== 'settings') setNoteSettingsOpen(false, { restoreFocus: false, instant: true });
+    if (kind !== 'library') setLibraryPanel('', { restoreFocus: false, instant: true });
+  }
+  function cancelContextMotion() {
+    contextSequence++; cancelAnimationFrame(contextFrame); clearTimeout(contextTimer); contextFrame = contextTimer = 0;
+  }
+  function blockContextTooltip(blocked) {
+    if (contextTooltipBlocked === blocked) return;
+    contextTooltipBlocked = blocked;
+    document.dispatchEvent(new CustomEvent('canvas:tooltip-block', { detail: { owner: contextMenu, blocked } }));
+  }
+  function finishContextClose() {
+    clearTimeout(contextTimer); contextTimer = 0;
+    if (contextOpen || !contextMenu) return;
+    contextMenu.hidden = true; contextMenu.classList.remove('is-closing'); contextMenu.dataset.source = ''; contextMenu.replaceChildren(); contextReturnFocus = null;
+    blockContextTooltip(false);
+  }
+  function closeContextMenu(options = {}) {
+    cancelContextMotion(); contextOpen = false; bodyMenuContext = null; closeBodySubmenu({ instant: true });
+    if (!contextMenu) return;
+    contextMenu.inert = true; contextMenu.removeAttribute('aria-busy'); contextMenu.classList.remove('is-open');
+    currentMenuButton?.setAttribute('aria-expanded', 'false');
+    if (contextMenu.hidden || options.instant || options instanceof Event || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      finishContextClose(); return;
+    }
+    contextMenu.classList.add('is-closing');
+    const sequence = contextSequence;
+    contextTimer = setTimeout(() => { if (sequence === contextSequence) finishContextClose(); }, 170);
   }
   function persistExpanded() { try { localStorage.setItem(EXPANDED_KEY, JSON.stringify(Array.from(state.expanded))); } catch (error) {} }
   function expandTreePath(path, includeSelf) {
@@ -2079,7 +2129,10 @@
     }
     return true;
   }
-  function rebuildEntryIndex(flat) { state.entryIndex = new Map((flat || flattenEntries(state.entries, [])).map((entry) => [entry.path, entry])); }
+  function rebuildEntryIndex(flat) {
+    state.entryIndex = new Map((flat || flattenEntries(state.entries, [])).map((entry) => [entry.path, entry]));
+    browserFolderIndex = null; browserFolderSize = -1; browserFolderPaths = [];
+  }
   function findEntry(path) { return state.entryIndex.get(path) || null; }
   function folderTarget() {
     if (state.notebookRoot === null) return null;
@@ -3482,7 +3535,21 @@
     return button;
   }
   function separator() { const line = document.createElement('span'); line.className = 'note-context-separator'; return line; }
-  function showContext(items, x, y, source) { contextMenu.replaceChildren(...items); contextMenu.dataset.source = source || ''; contextMenu.hidden = false; contextMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 250)) + 'px'; contextMenu.style.top = Math.max(8, Math.min(y, window.innerHeight - contextMenu.offsetHeight - 8)) + 'px'; }
+  function showContext(items, x, y, source) {
+    if (!contextMenu || !noteWorkspaceVisible()) return;
+    prepareWorkspacePopover('context'); cancelContextMotion();
+    if (source !== 'body') { bodyMenuContext = null; closeBodySubmenu({ instant: true }); }
+    contextReturnFocus = document.activeElement;
+    contextMenu.replaceChildren(...items); contextMenu.dataset.source = source || '';
+    blockContextTooltip(!!contextMenu.querySelector('.note-notebook-colors'));
+    contextOpen = true; contextMenu.inert = false; contextMenu.hidden = false; contextMenu.removeAttribute('aria-busy');
+    contextMenu.classList.remove('is-closing');
+    currentMenuButton?.setAttribute('aria-expanded', String(source === 'current-menu'));
+    fitBodyMenu(contextMenu, x, y);
+    const sequence = contextSequence;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) contextMenu.classList.add('is-open');
+    else contextFrame = requestAnimationFrame(() => { contextFrame = 0; if (sequence === contextSequence && contextOpen) contextMenu.classList.add('is-open'); });
+  }
   const BODY_COMMAND_LABELS = {
     bullet: ['无序列表', 'Bulleted list'], ordered: ['有序列表', 'Numbered list'], task: ['任务列表', 'Task list'],
     body: ['正文', 'Normal text'], quote: ['引用', 'Quote'], table: ['表格', 'Table'], callout: ['标注', 'Callout'],
@@ -3498,7 +3565,9 @@
   }
   function openCanvasContextMenu(payload) {
     if (!canvasEnabled() || !state.active || !state.current || state.viewMode !== 'live') return;
-    closeContextMenu();
+    // Events originating in an embedded canvas do not bubble to this document.
+    if (contextOpen) { closeContextMenu(); return; }
+    closeContextMenu({ instant: true });
     const explorer = contextButton(tr('canvasExplorer'), () => revealCanvas(payload.adapter));
     explorer.disabled = !payload.adapter?.session;
     showContext([contextButton(tr('rename'), () => renameCanvas(payload.adapter)), explorer], payload.x, payload.y, 'canvas');
@@ -3565,10 +3634,19 @@
     menu.style.top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8)) + 'px';
   }
   function menuButtons(menu) { return Array.from(menu.children).filter((item) => item.tagName === 'BUTTON' && !item.disabled); }
-  function closeBodySubmenu() {
+  function closeBodySubmenu(options = {}) {
+    cancelAnimationFrame(submenuFrame); clearTimeout(submenuTimer); submenuFrame = submenuTimer = 0;
+    closingSubmenu?.remove(); closingSubmenu = null;
     if (bodyMenuParent) { bodyMenuParent.setAttribute('aria-expanded', 'false'); bodyMenuParent.classList.remove('is-open'); }
-    if (bodyMenuSubmenu) bodyMenuSubmenu.remove();
+    const submenu = bodyMenuSubmenu;
     bodyMenuSubmenu = null; bodyMenuParent = null;
+    if (!submenu) return;
+    submenu.inert = true; submenu.classList.remove('is-open');
+    if (options.instant || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) submenu.remove();
+    else {
+      closingSubmenu = submenu; submenu.classList.add('is-closing');
+      submenuTimer = setTimeout(() => { submenu.remove(); if (closingSubmenu === submenu) closingSubmenu = null; submenuTimer = 0; }, 170);
+    }
   }
   async function runBodyCommand(name) {
     const context = bodyMenuContext;
@@ -3621,7 +3699,7 @@
       if (bodyMenuContext === context) closeContextMenu();
     } catch (error) {
       showToast(name === 'insert:canvas' ? error.message : language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
-    } finally { contextMenu.removeAttribute('aria-busy'); }
+    } finally { if (bodyMenuContext === context) contextMenu.removeAttribute('aria-busy'); }
   }
   function bodyCommandButton(name) {
     const button = document.createElement('button');
@@ -3635,7 +3713,7 @@
   }
   function openBodySubmenu(parent, focusFirst) {
     if (bodyMenuParent === parent) { if (focusFirst) menuButtons(bodyMenuSubmenu)[0]?.focus(); return; }
-    closeBodySubmenu();
+    closeBodySubmenu({ instant: true });
     const paragraph = parent.dataset.noteSubmenu === 'paragraph';
     const commands = paragraph ? ['bullet', 'ordered', 'task', 'heading-1', 'heading-2', 'heading-3', 'heading-4', 'heading-5', 'heading-6', 'body', 'quote']
       : ['table', 'callout', 'rule', 'code-block', 'math'];
@@ -3651,11 +3729,14 @@
     const rect = parent.getBoundingClientRect(), rootRect = contextMenu.getBoundingClientRect();
     const x = rootRect.right + submenu.offsetWidth <= window.innerWidth - 8 ? rootRect.right - 2 : rootRect.left - submenu.offsetWidth + 2;
     fitBodyMenu(submenu, x, rect.top - 6);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) submenu.classList.add('is-open');
+    else submenuFrame = requestAnimationFrame(() => { submenuFrame = 0; if (bodyMenuSubmenu === submenu && contextOpen) submenu.classList.add('is-open'); });
     if (focusFirst) menuButtons(submenu)[0]?.focus();
   }
   function openBodyContextMenu(payload) {
     if (!state.active || !state.current || state.viewMode === 'reading' || state.imageTextBusy || state.assetCleanupBusy) return;
-    closeContextMenu(); bodyMenuContext = payload.context;
+    if (contextOpen) { closeContextMenu(); return; }
+    closeContextMenu({ instant: true }); bodyMenuContext = payload.context;
     const items = ['paragraph', 'insert'].map((kind) => {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = bodyCommandLabel(kind);
       button.dataset.noteSubmenu = kind; button.setAttribute('role', 'menuitem');
@@ -3669,14 +3750,18 @@
     if (payload.keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
   }
   if (contextMenu) {
+    contextMenu.addEventListener('transitionend', event => {
+      if (!contextOpen && event.target === contextMenu && event.propertyName === 'opacity' && Number(getComputedStyle(contextMenu).opacity) < .001) finishContextClose();
+    });
     contextMenu.addEventListener('pointerdown', (event) => { if (bodyMenuContext) event.preventDefault(); });
     contextMenu.addEventListener('pointerover', (event) => {
       if (bodyMenuContext && event.target.closest('[data-note-command]')?.parentElement === contextMenu) closeBodySubmenu();
     });
     contextMenu.addEventListener('keydown', (event) => {
-      if (!bodyMenuContext) return;
+      if (!contextOpen) return;
       const current = document.activeElement, menu = current && current.parentElement;
-      const buttons = menuButtons(menu === bodyMenuSubmenu ? bodyMenuSubmenu : contextMenu);
+      const colors = current?.closest('.note-notebook-colors');
+      const buttons = menuButtons(menu === bodyMenuSubmenu ? bodyMenuSubmenu : colors || contextMenu);
       const index = buttons.indexOf(current);
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault(); event.stopPropagation();
@@ -3690,11 +3775,15 @@
       } else if (event.key === 'ArrowLeft' && bodyMenuSubmenu) {
         event.preventDefault(); const parent = bodyMenuParent; closeBodySubmenu(); parent.focus();
       } else if (event.key === 'Escape' || event.key === 'Tab') {
-        event.preventDefault(); event.stopPropagation(); closeContextMenu(); liveEditor.focus();
+        event.preventDefault(); event.stopPropagation();
+        const body = !!bodyMenuContext, returnFocus = contextReturnFocus;
+        closeContextMenu();
+        if (body) liveEditor.focus(); else if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       }
     });
   }
   function openContextMenu(entry, x, y, options) {
+    closeContextMenu({ instant: true });
     if (!entry) { showContext([contextButton(tr('newNote'), () => createEntry('note', { parent: state.notebookRoot })), contextButton(tr('newFolder'), () => createEntry('folder', { parent: state.notebookRoot })), separator(), contextButton(tr('refresh'), () => triggerExternalSync({ announce: true })), contextButton(tr('openLibrary'), () => reveal(state.notebookRoot, false))], x, y); return; }
     state.selectedPath = entry.path;
     const items = [];
@@ -3723,7 +3812,7 @@
   }
 
   function openNotebookContext(entry, x, y) {
-    closeContextMenu();
+    closeContextMenu({ instant: true });
     if (!entry.path) return;
     const colors = document.createElement('div'); colors.className = 'note-notebook-colors';
     colors.setAttribute('role', 'group'); colors.setAttribute('aria-label', language() === 'en' ? 'Notebook color' : '笔记本颜色');
@@ -4268,7 +4357,7 @@
     else if (name === 'toggle-source' && state.current) await setViewMode(state.viewMode === 'source' ? 'live' : 'source');
     else if (name === 'toggle-settings') { if (!state.settingsOpen) setLibraryPanel('', { restoreFocus: false }); setNoteSettingsOpen(!state.settingsOpen); }
     else if (name === 'current-menu' && state.current) {
-      if (contextMenu && !contextMenu.hidden && contextMenu.dataset.source === 'current-menu') {
+      if (contextOpen && contextMenu.dataset.source === 'current-menu') {
         closeContextMenu();
         return;
       }
@@ -4397,7 +4486,8 @@
     if (event.target.closest('.note-tree-row, .note-tree-inline-error')) return;
     event.preventDefault(); event.stopPropagation();
     const sequence = ++notebookSelectionSequence;
-    if (!(await finishNotebookInteraction()) || sequence !== notebookSelectionSequence) return;
+    const menuSequence = ++contextSequence;
+    if (!(await finishNotebookInteraction()) || sequence !== notebookSelectionSequence || menuSequence !== contextSequence || !noteWorkspaceVisible()) return;
     showContext([contextButton(notebookCopy('create'), createNotebook), contextButton(tr('explorer'), () => reveal('', false))], event.clientX, event.clientY);
   });
   treeEl.addEventListener('click', async (event) => {
@@ -4410,8 +4500,10 @@
   treeEl.addEventListener('contextmenu', async (event) => {
     if (event.target.closest('.note-tree-row')) return;
     event.preventDefault();
+    const menuSequence = ++contextSequence;
     if (!(await finishInlineTitle())) return;
     if (state.renamePath && !(await finishInlineRename())) return;
+    if (menuSequence !== contextSequence || !noteWorkspaceVisible()) return;
     selectTreeRoot();
     if (state.notebookRoot === null) return;
     openContextMenu(null, event.clientX, event.clientY);
@@ -4420,8 +4512,7 @@
   treeEl.addEventListener('dragleave', (event) => { if (!treeEl.contains(event.relatedTarget)) treeEl.classList.remove('note-drop-root'); });
   treeEl.addEventListener('drop', (event) => { if (event.target.closest('.note-tree-row')) return; event.preventDefault(); treeEl.classList.remove('note-drop-root'); if (state.notebookRoot === null) return; if (state.draggedPath) moveEntry(state.draggedPath, state.notebookRoot); else importDataTransfer(event.dataTransfer, state.notebookRoot); });
   document.addEventListener('pointerdown', (event) => {
-    const dismissCanvasByRightClick = event.button === 2 && contextMenu?.dataset.source === 'canvas';
-    if (contextMenu && !contextMenu.hidden && !dismissCanvasByRightClick && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
+    if (contextOpen && event.button !== 2 && !contextMenu.contains(event.target) && !event.target.closest('[data-note-action="current-menu"]')) closeContextMenu();
     if (state.libraryPanel && !event.target.closest('.note-library-popover') && !event.target.closest('[data-note-action="toggle-sort"]') && !event.target.closest('[data-note-action="toggle-library-settings"]')) {
       setLibraryPanel('', { restoreFocus: false });
     }
@@ -4430,7 +4521,7 @@
     }
   });
   document.addEventListener('contextmenu', (event) => {
-    if (!contextMenu || contextMenu.hidden || contextMenu.dataset.source !== 'canvas') return;
+    if (!contextOpen || !state.active || (!root.contains(event.target) && !contextMenu.contains(event.target))) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     closeContextMenu();
@@ -4496,7 +4587,7 @@
     const settings = flushNotebookSettings(keepalive);
     return Promise.all([save, settings]).then(([saved]) => saved);
   }
-  window.addEventListener('blur', () => { closeContextMenu(); flushWorkspaceState(); });
+  window.addEventListener('blur', () => { closeWorkspacePopovers(); noteBrowser?.closePopovers({ instant: true }); flushWorkspaceState(); });
   window.addEventListener('relatum:note-canvas-dirty', () => desktopDirty(hasPendingEdits()));
   window.addEventListener('relatum:note-canvas-error', event => { showSaveError(event.detail); desktopDirty(true); });
   window.addEventListener('resize', closeContextMenu);
@@ -4513,7 +4604,8 @@
       noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++;
       noteGraphIntentSequence++; noteGraph?.deactivate();
       cancelSideClose(); clearClosedNotebookTree(); cancelLinksRefresh();
-      noteBrowser?.suspend({ keepView: true }); closeContextMenu();
+      noteBrowser?.suspend({ keepView: true }); closeWorkspacePopovers();
+      cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0;
       stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); syncOutline();
       flushWorkspaceState();
     } else if (noteWorkspaceVisible()) {
@@ -4527,7 +4619,7 @@
   document.addEventListener('visibilitychange', syncNotePageVisibility);
   window.addEventListener('pagehide', () => indexActivity(false, true));
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeContextMenu(); stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
+  window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });
   window.addEventListener('beforeunload', () => { cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });

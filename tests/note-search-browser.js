@@ -68,6 +68,10 @@ async function run(browser, mode) {
       await page.waitForFunction(() => document.querySelector('.note-browser-results')?.getAttribute('aria-busy') === 'false');
     };
     const count = async n => page.waitForFunction(n => document.querySelector('.note-browser-results-head')?.textContent.includes(String(n)), n);
+    const chooseScope = async value => {
+      const control = page.locator('[data-note-search="scope"]'); await control.click();
+      await page.locator('#' + await control.getAttribute('aria-controls')).locator('[data-value="' + value + '"]').click();
+    };
     await search('学习'); await count(324);
     assert.equal(await page.locator('.note-browser-result').count(), 50);
     assert.equal(await page.locator('.note-search-filters').isVisible(), false);
@@ -85,16 +89,17 @@ async function run(browser, mode) {
     await page.waitForFunction(() => document.querySelectorAll('.note-browser-result').length < 90 && document.querySelector('.note-browser-result[aria-setsize="250"]'));
     await page.locator('.note-browser-results').evaluate(el => el.scrollTop = 0);
     await page.screenshot({ path: path.join(root, 'search-light.png') });
-    await page.locator('[data-note-search="scope"]').selectOption('b:CustomNotebook/One'); await count(1);
+    await chooseScope('b:CustomNotebook/One'); await count(1);
     assert.equal(await page.locator('.note-browser-result').first().getAttribute('data-note-browser-path'), 'CustomNotebook/One/A.md');
-    await page.locator('[data-note-search="scope"]').selectOption('b:'); await count(322);
+    await chooseScope('b:'); await count(322);
     await page.locator('.note-search-filter-button').click();
     await page.locator('[data-note-search="tags"]').fill('学/统计'); await count(320);
     await page.locator('[data-note-search="after"]').fill('2050-01-01'); await page.locator('[data-note-search="after"]').dispatchEvent('change'); await count(0);
     await page.locator('[data-note-search="clear"]').click(); await count(322);
     await page.locator('[data-note-search="folder"]').fill('Nested'); await count(1);
+    await page.locator('[data-note-search="folder"]').press('Escape');
     await page.locator('[data-note-search="clear"]').click();
-    await page.locator('[data-note-search="scope"]').selectOption('all'); await count(324);
+    await chooseScope('all'); await count(324);
     await search('"Alpha beta"'); await count(323);
     assert((await page.locator('.note-browser-result mark').first().textContent()).includes('Alpha beta'), 'case is preserved in excerpt');
     await search('calculate'); await count(320);
