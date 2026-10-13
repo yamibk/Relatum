@@ -27,6 +27,7 @@
   const tabMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
   const tabCloseAnimations = new Map();
   let tabCloseMotionPending = false, tabCloseClipActive = false, tabScrollFrame = 0, tabCloseMotionScrollLeft = 0;
+  let tabCloseMotionUntil = 0, tabCloseScrollPending = null;
   const editorHost = $('[data-role="note-editor"]');
   const fallbackEditor = $('[data-role="note-editor-fallback"]');
   const readingHost = $('[data-role="note-reading-view"]');
@@ -138,7 +139,7 @@
   function effectiveSideMode() { return graphPresentation ? 'notebooks' : state.sideMode; }
   function setGraphPresentation(show) {
     if (graphPresentation === show) return;
-    if (root.classList.contains('links-overlay-open') || (!show && graphSidebar?.open)) cancelTabCloseMotion();
+    const tabMotion = tabCloseAnimations.size ? captureTabCloseMotion(true) : null;
     cancelSideClose();
     graphPresentation = show;
     if (show) {
@@ -153,6 +154,7 @@
     if (graphHost) { graphHost.hidden = !show; graphHost.inert = !show; }
     updateSidePanel(); updateGraphToggle();
     scheduleSideClose();
+    playTabCloseMotion(tabMotion);
     document.dispatchEvent(new Event('relatum:usage-target'));
   }
   function graphLoadStatus(error) {
@@ -2253,9 +2255,26 @@
   function cancelTabScroll() {
     if (tabScrollFrame) cancelAnimationFrame(tabScrollFrame);
     tabScrollFrame = 0;
+    tabCloseScrollPending = null;
+  }
+  function requestTabScroll(active, path) {
+    cancelTabScroll();
+    tabScrollFrame = requestAnimationFrame(() => {
+      tabScrollFrame = 0;
+      if (!active.isConnected || state.renderedActiveTab !== path || !noteWorkspaceVisible()) return;
+      // Animated bounds describe the old slot, not the final active-tab position.
+      if (tabCloseAnimations.size) { tabCloseScrollPending = { active, path }; return; }
+      active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+  }
+  function resumeTabCloseScroll() {
+    const pending = tabCloseScrollPending;
+    tabCloseScrollPending = null;
+    if (pending) requestTabScroll(pending.active, pending.path);
   }
   function cancelTabCloseMotion() {
     tabCloseMotionPending = false;
+    tabCloseMotionUntil = 0; tabCloseScrollPending = null;
     for (const animation of tabCloseAnimations.values()) {
       animation.onfinish = null; animation.oncancel = null;
       animation.cancel();
@@ -2263,8 +2282,9 @@
     tabCloseAnimations.clear();
     releaseTabCloseClip();
   }
-  function captureTabCloseMotion() {
-    if (!tabCloseMotionPending) return null;
+  function captureTabCloseMotion(continuing) {
+    if (!tabCloseMotionPending && !(continuing && tabCloseAnimations.size)) return null;
+    const deadline = continuing ? tabCloseMotionUntil : 0, deferredScroll = tabCloseScrollPending;
     tabCloseMotionPending = false;
     if (!noteWorkspaceVisible() || state.draggedTabPath || tabMotionPreference.matches
         || !tabBar || typeof tabsEl?.animate !== 'function') {
@@ -2283,7 +2303,8 @@
       positions.set(tabActions, { x: rect.left - bar.left, visible: true });
     }
     cancelTabCloseMotion();
-    return { positions, width: strip.width };
+    tabCloseScrollPending = deferredScroll;
+    return { positions, width: strip.width, deadline };
   }
   function playTabCloseMotion(snapshot) {
     if (!snapshot || !noteWorkspaceVisible() || state.draggedTabPath || tabMotionPreference.matches) return;
@@ -2296,6 +2317,9 @@
       if ((previous.visible || visible) && Number.isFinite(delta) && Math.abs(delta) > .5) moves.push({ element, delta });
     }
     tabCloseMotionScrollLeft = tabsEl.scrollLeft;
+    const now = performance.now(), until = snapshot.deadline || now + 230, duration = until - now;
+    if (!moves.length || duration <= 0) { resumeTabCloseScroll(); return; }
+    tabCloseMotionUntil = until;
     if (moves.length && snapshot.width - strip.width > .5) {
       // Keep trailing tabs inside the old clip without moving the final action slot.
       tabsEl.style.setProperty('--note-tab-motion-width', snapshot.width + 'px');
@@ -2306,30 +2330,48 @@
       let animation;
       try {
         animation = element.animate([{ transform: 'translateX(' + delta + 'px)' }, { transform: 'translateX(0)' }],
-          { duration: 230, easing: 'cubic-bezier(.22, 1, .36, 1)' });
-      } catch (error) { cancelTabCloseMotion(); return; }
+          { duration, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+      } catch (error) {
+        const deferredScroll = tabCloseScrollPending;
+        cancelTabCloseMotion(); tabCloseScrollPending = deferredScroll; resumeTabCloseScroll(); return;
+      }
       tabCloseAnimations.set(element, animation);
       const finish = () => {
-        if (tabCloseAnimations.get(element) === animation) tabCloseAnimations.delete(element);
+        if (tabCloseAnimations.get(element) !== animation) return;
+        tabCloseAnimations.delete(element);
         animation.onfinish = null; animation.oncancel = null;
-        if (!tabCloseAnimations.size) releaseTabCloseClip();
+        if (!tabCloseAnimations.size) { tabCloseMotionUntil = 0; releaseTabCloseClip(); resumeTabCloseScroll(); }
       };
       animation.onfinish = finish; animation.oncancel = finish;
     }
   }
+  function handleTabCloseScroll() {
+    if (!tabCloseAnimations.size || tabsEl.scrollLeft === tabCloseMotionScrollLeft) return;
+    const maximum = Math.max(0, tabsEl.scrollWidth - tabsEl.clientWidth);
+    // Removing tabs or changing graph layout can clamp the native scroll range.
+    if (tabCloseMotionScrollLeft > maximum && Math.abs(tabsEl.scrollLeft - maximum) <= .5) {
+      tabCloseMotionScrollLeft = tabsEl.scrollLeft; return;
+    }
+    cancelTabCloseMotion(); cancelTabScroll();
+  }
+  function noteTabTitle(path) {
+    return isGraphTab(path) ? (language() === 'en' ? 'Graph' : '关系图谱')
+      + ' · ' + (state.notebookRoot ? state.notebookRoot.split('/').pop() : 'notes') : isBlankTab(path) ? tr('newTab') : noteTitle(path);
+  }
   function renderTabs() {
     if (!tabsEl) return;
-    const motionPositions = captureTabCloseMotion();
+    let motionPositions = captureTabCloseMotion();
     const activeTab = state.activeTab || state.openingPath || (state.current && state.current.path) || '';
     const existing = new Map(Array.from(tabsEl.children).map((tab) => [tab.dataset.noteTabPath || '', tab]));
-    if (!motionPositions && tabCloseAnimations.size && (existing.size !== state.tabs.length
-        || state.tabs.some((path, index) => tabsEl.children[index]?.dataset.noteTabPath !== path))) cancelTabCloseMotion();
+    if (!motionPositions && tabCloseAnimations.size) {
+      if (existing.size !== state.tabs.length
+          || state.tabs.some((path, index) => tabsEl.children[index]?.dataset.noteTabPath !== path)) cancelTabCloseMotion();
+      else if (state.tabs.some(path => existing.get(path)?.title !== noteTabTitle(path))) motionPositions = captureTabCloseMotion(true);
+    }
     state.tabs.forEach((tabPath, index) => {
       const blank = isBlankTab(tabPath), graph = isGraphTab(tabPath);
-      const title = graph ? (language() === 'en' ? 'Graph' : '关系图谱')
-        + ' · ' + (state.notebookRoot ? state.notebookRoot.split('/').pop() : 'notes') : blank ? tr('newTab') : noteTitle(tabPath);
+      const title = noteTabTitle(tabPath);
       let tab = existing.get(tabPath);
-      if (!motionPositions && tabCloseAnimations.size && tab?.title !== title) cancelTabCloseMotion();
       if (!tab) {
         tab = document.createElement('div');
         const label = document.createElement('span');
@@ -2370,18 +2412,7 @@
       closeAllTabsButton.setAttribute('aria-label', label);
     }
     const active = tabsEl.querySelector('.note-tab.active');
-    if (active && state.renderedActiveTab !== activeTab) {
-      cancelTabScroll();
-      tabScrollFrame = requestAnimationFrame(() => {
-        tabScrollFrame = 0;
-        if (!active.isConnected || state.renderedActiveTab !== activeTab || !noteWorkspaceVisible()) return;
-        if (tabCloseAnimations.size) {
-          const rect = active.getBoundingClientRect(), strip = tabsEl.getBoundingClientRect();
-          if (rect.left < strip.left || rect.right > strip.right) cancelTabCloseMotion();
-        }
-        active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      });
-    }
+    if (active && state.renderedActiveTab !== activeTab) requestTabScroll(active, activeTab);
     state.renderedActiveTab = activeTab;
     playTabCloseMotion(motionPositions);
   }
@@ -4575,9 +4606,7 @@
     });
   }
   if (tabsEl) {
-    tabsEl.addEventListener('scroll', () => {
-      if (tabCloseAnimations.size && tabsEl.scrollLeft !== tabCloseMotionScrollLeft) cancelTabCloseMotion();
-    }, { passive: true });
+    tabsEl.addEventListener('scroll', handleTabCloseScroll, { passive: true });
     tabsEl.addEventListener('click', async (event) => {
       const close = event.target.closest('[data-note-tab-close]');
       if (close) { event.preventDefault(); event.stopPropagation(); if (await finishInlineTitle()) closeTab(close.dataset.noteTabClose); return; }
