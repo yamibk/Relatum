@@ -6,11 +6,65 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-tree-perf-'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function compareSorting(page, browser) {
+  const baseline = process.env.RELATUM_NOTE_TREE_BASELINE_REF || '60f9941f7cc90309ca922462d4b5defba60fc291';
+  const oldSource = execFileSync('git', ['show', baseline + ':assets/note-workspace.js'], { cwd: repo, encoding: 'utf8', windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+  const names = ['isNotebookContainer', 'nameCompare', 'sortedTreeEntries', 'naturalSort', 'notebookRoots'];
+  const declarations = names.map(name => {
+    const match = oldSource.match(new RegExp('  function ' + name + '\\([^\\n]*\\) \\{(?:[^\\n]*\\}|[\\s\\S]*?\\n  \\})'));
+    assert(match, 'missing baseline function: ' + name); return match[0];
+  }).join('\n');
+  const samples = await page.evaluate(declarations => {
+    const test = __treePerf, savedSort = test.state.treeSort, savedEntries = test.state.entries, savedLanguage = RelatumI18n.language;
+    const old = new Function('state', 'language', 'const NOTEBOOK_CONTAINER = "CustomNotebook";\n' + declarations + '\nreturn {sortedTreeEntries,naturalSort,notebookRoots};')
+      (test.state, () => RelatumI18n.language === 'en' ? 'en' : 'zh-CN');
+    const samples = [], labels = ['笔记', 'Note', 'École', 'école', 'e\u0301cole', '文件', '目录', '😀', 'A', 'a', '甲'];
+    const paths = entries => JSON.stringify(entries.map(entry => entry.path));
+    try {
+      for (const locale of ['zh-CN', 'en', 'zh-CN']) {
+        RelatumI18n.setLanguage(locale);
+        for (const count of [1000, 3000, 10000]) {
+          let seed = 1234567;
+          const entries = Array.from({ length: count }, (_, i) => ({ kind: i % 17 ? 'note' : 'folder', name: labels[i % labels.length] + (i % 137),
+            path: 'Fixture/' + i + '.md', modifiedNs: i % 13, createdNs: i % 7, children: [] }));
+          for (let i = entries.length - 1; i > 0; i--) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; const j = seed % (i + 1); [entries[i], entries[j]] = [entries[j], entries[i]]; }
+          for (const mode of ['name-asc', 'name-desc', 'modified-desc', 'modified-asc', 'created-desc', 'created-asc']) {
+            test.state.treeSort = mode;
+            if (paths(test.sortedTreeEntries(entries)) !== paths(old.sortedTreeEntries(entries))) throw new Error('Sort order changed: ' + locale + '/' + mode + '/' + count);
+          }
+          const currentNatural = entries.slice(), oldNatural = entries.slice(); test.naturalSort(currentNatural); old.naturalSort(oldNatural);
+          if (paths(currentNatural) !== paths(oldNatural)) throw new Error('Merge order changed');
+          test.state.entries = [{ kind: 'folder', path: 'CustomNotebook', children: entries.map(entry => ({ ...entry, kind: 'folder' })) }];
+          if (paths(test.notebookRoots()) !== paths(old.notebookRoots())) throw new Error('Notebook order changed');
+          test.state.entries = savedEntries; test.state.treeSort = 'name-asc';
+          const rounds = [], constructors = window.__treeSortCollators;
+          for (let round = 0; round < 3; round++) {
+            const result = {};
+            for (const version of round % 2 ? ['current', 'baseline'] : ['baseline', 'current']) {
+              const start = performance.now(); (version === 'current' ? test : old).sortedTreeEntries(entries); result[version + 'Ms'] = performance.now() - start;
+            }
+            rounds.push(result);
+          }
+          if (window.__treeSortCollators !== constructors) throw new Error('Repeated sorting recreated the collator');
+          samples.push({ locale, count, rounds, repeatedCollatorBuilds: window.__treeSortCollators - constructors });
+        }
+        test.state.treeSort = savedSort;
+      }
+      return samples;
+    } finally { test.state.entries = savedEntries; test.state.treeSort = savedSort; RelatumI18n.setLanguage(savedLanguage); }
+  }, declarations);
+  const median = (rounds, key) => rounds.map(round => round[key]).sort((a, b) => a - b)[1];
+  const report = { baseline, browser: browser.version(), status: 'note sorting compatibility and performance: ok', samples,
+    summary: samples.map(sample => ({ locale: sample.locale, count: sample.count, baselineMs: median(sample.rounds, 'baselineMs'), currentMs: median(sample.rounds, 'currentMs'), repeatedCollatorBuilds: sample.repeatedCollatorBuilds })) };
+  if (process.env.RELATUM_NOTE_TREE_REPORT) fs.writeFileSync(process.env.RELATUM_NOTE_TREE_REPORT, JSON.stringify(report, null, 2) + '\n');
+  console.log(JSON.stringify({ ...report, samples: undefined }));
+}
 
 (async () => {
   const socket = net.createServer();
@@ -50,12 +104,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       source = source.replace(declaration, '$1 window.' + counter + ' = (window.' + counter + ' || 0) + 1;');
     }
     source = source.replace('  window.CanvasNoteWorkspace = {',
-      '  window.__treePerf = {state,treeRowIndexes,updateTreeSelection,refreshTree,stopExternalSync,stopDocumentPrefetch,makeDocument,cacheDocument,openNote,flattenEntries,treeOrderSignature};\n  window.CanvasNoteWorkspace = {');
+      '  window.__treePerf = {state,treeRowIndexes,updateTreeSelection,refreshTree,stopExternalSync,stopDocumentPrefetch,makeDocument,cacheDocument,openNote,flattenEntries,treeOrderSignature,sortedTreeEntries,naturalSort,notebookRoots};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
+    if (process.argv.includes('--sorting-only')) await page.addInitScript(() => {
+      window.__treeSortCollators = 0;
+      Intl.Collator = new Proxy(Intl.Collator, { construct(target, args) { window.__treeSortCollators++; return Reflect.construct(target, args); } });
+    });
     await page.goto(url);
     await page.locator('button[data-start-workspace="notes"]').click();
     await page.waitForFunction(() => window.__treePerf?.state.initialized && __treePerf.state.active);
     await page.evaluate(() => { __treePerf.stopExternalSync(); __treePerf.stopDocumentPrefetch(); });
+    if (process.argv.includes('--sorting-only')) { await compareSorting(page, browser); assert.deepEqual(errors, []); return; }
     const report = await page.evaluate(async () => {
       const test = __treePerf, host = document.querySelector('.note-workspace');
       let scans = 0;

@@ -1,0 +1,243 @@
+{
+  "baseline": "60f9941f7cc90309ca922462d4b5defba60fc291",
+  "browser": "155.0.4283.45",
+  "status": "note sorting compatibility and performance: ok",
+  "samples": [
+    {
+      "locale": "zh-CN",
+      "count": 1000,
+      "rounds": [
+        {
+          "baselineMs": 40.89999997615814,
+          "currentMs": 1.5
+        },
+        {
+          "currentMs": 1.399999976158142,
+          "baselineMs": 33.90000003576279
+        },
+        {
+          "baselineMs": 33.80000001192093,
+          "currentMs": 1.399999976158142
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 3000,
+      "rounds": [
+        {
+          "baselineMs": 129.5,
+          "currentMs": 5.200000047683716
+        },
+        {
+          "currentMs": 5.199999988079071,
+          "baselineMs": 121.89999997615814
+        },
+        {
+          "baselineMs": 133.60000002384186,
+          "currentMs": 5.300000011920929
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 10000,
+      "rounds": [
+        {
+          "baselineMs": 489.7000000476837,
+          "currentMs": 22.299999952316284
+        },
+        {
+          "currentMs": 21.700000047683716,
+          "baselineMs": 502.7999999523163
+        },
+        {
+          "baselineMs": 473,
+          "currentMs": 21.30000001192093
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "en",
+      "count": 1000,
+      "rounds": [
+        {
+          "baselineMs": 24.099999964237213,
+          "currentMs": 1.4000000357627869
+        },
+        {
+          "currentMs": 1.2999999523162842,
+          "baselineMs": 23.200000047683716
+        },
+        {
+          "baselineMs": 23.099999964237213,
+          "currentMs": 1.199999988079071
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "en",
+      "count": 3000,
+      "rounds": [
+        {
+          "baselineMs": 82,
+          "currentMs": 4.399999976158142
+        },
+        {
+          "currentMs": 4.5,
+          "baselineMs": 84.19999998807907
+        },
+        {
+          "baselineMs": 85.30000001192093,
+          "currentMs": 5.100000023841858
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "en",
+      "count": 10000,
+      "rounds": [
+        {
+          "baselineMs": 307,
+          "currentMs": 18.69999998807907
+        },
+        {
+          "currentMs": 18.899999976158142,
+          "baselineMs": 327.60000002384186
+        },
+        {
+          "baselineMs": 318.39999997615814,
+          "currentMs": 18.600000023841858
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 1000,
+      "rounds": [
+        {
+          "baselineMs": 31.5,
+          "currentMs": 1.5999999642372131
+        },
+        {
+          "currentMs": 1.4000000357627869,
+          "baselineMs": 39.5
+        },
+        {
+          "baselineMs": 31.5,
+          "currentMs": 1.5
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 3000,
+      "rounds": [
+        {
+          "baselineMs": 121.5,
+          "currentMs": 5.200000047683716
+        },
+        {
+          "currentMs": 5.099999964237213,
+          "baselineMs": 115.80000001192093
+        },
+        {
+          "baselineMs": 114.39999997615814,
+          "currentMs": 5.400000035762787
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 10000,
+      "rounds": [
+        {
+          "baselineMs": 537.6000000238419,
+          "currentMs": 27.5
+        },
+        {
+          "currentMs": 25.5,
+          "baselineMs": 517.0999999642372
+        },
+        {
+          "baselineMs": 525.8000000119209,
+          "currentMs": 21.5
+        }
+      ],
+      "repeatedCollatorBuilds": 0
+    }
+  ],
+  "summary": [
+    {
+      "locale": "zh-CN",
+      "count": 1000,
+      "baselineMs": 33.90000003576279,
+      "currentMs": 1.399999976158142,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 3000,
+      "baselineMs": 129.5,
+      "currentMs": 5.200000047683716,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 10000,
+      "baselineMs": 489.7000000476837,
+      "currentMs": 21.700000047683716,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "en",
+      "count": 1000,
+      "baselineMs": 23.200000047683716,
+      "currentMs": 1.2999999523162842,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "en",
+      "count": 3000,
+      "baselineMs": 84.19999998807907,
+      "currentMs": 4.5,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "en",
+      "count": 10000,
+      "baselineMs": 318.39999997615814,
+      "currentMs": 18.69999998807907,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 1000,
+      "baselineMs": 31.5,
+      "currentMs": 1.5,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 3000,
+      "baselineMs": 115.80000001192093,
+      "currentMs": 5.200000047683716,
+      "repeatedCollatorBuilds": 0
+    },
+    {
+      "locale": "zh-CN",
+      "count": 10000,
+      "baselineMs": 525.8000000119209,
+      "currentMs": 25.5,
+      "repeatedCollatorBuilds": 0
+    }
+  ]
+}

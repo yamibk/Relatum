@@ -75,6 +75,7 @@
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
+  let treeNameLocale = '', treeNameComparator = null;
   function browserFolders() {
     const index = state.entryIndex;
     if (browserFolderIndex !== index || browserFolderSize !== index.size) {
@@ -553,7 +554,7 @@
   function notebookRoots() {
     const container = state.entries.find((entry) => entry.kind === 'folder' && isNotebookContainer(entry.path));
     return [{ kind: 'folder', name: 'notes', path: '', notebook: true, children: state.entries.filter((entry) => !isNotebookContainer(entry.path)) },
-      ...(container?.children || []).filter((entry) => entry.kind === 'folder').slice().sort((a, b) => a.name.localeCompare(b.name, language(), { numeric: true, sensitivity: 'base' }))
+      ...(container?.children || []).filter((entry) => entry.kind === 'folder').slice().sort((a, b) => compareTreeNames(a.name, b.name))
         .map((entry) => ({ ...entry, notebook: true }))];
   }
   function notebookUi() {
@@ -1640,8 +1641,16 @@
     'modified-desc': 'sortModifiedDesc', 'modified-asc': 'sortModifiedAsc',
     'created-desc': 'sortCreatedDesc', 'created-asc': 'sortCreatedAsc',
   };
+  function compareTreeNames(left, right) {
+    const locale = language();
+    if (treeNameLocale !== locale) {
+      treeNameLocale = locale;
+      treeNameComparator = new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }).compare;
+    }
+    return treeNameComparator(left, right);
+  }
   function nameCompare(left, right) {
-    return left.name.localeCompare(right.name, language(), { numeric: true, sensitivity: 'base' }) || left.path.localeCompare(right.path);
+    return compareTreeNames(left.name, right.name) || left.path.localeCompare(right.path);
   }
   function sortedTreeEntries(entries) {
     const mode = state.treeSort;
@@ -2143,7 +2152,7 @@
   function treeIcon(kind) {
     return noteIcon(kind === 'folder' ? 'folder' : 'file-text', 'note-tree-icon ' + (kind === 'folder' ? 'is-folder' : 'is-note'));
   }
-  function naturalSort(entries) { entries.sort((a, b) => a.kind !== b.kind ? (a.kind === 'folder' ? -1 : 1) : a.name.localeCompare(b.name, language(), { numeric: true, sensitivity: 'base' })); }
+  function naturalSort(entries) { entries.sort((a, b) => a.kind !== b.kind ? (a.kind === 'folder' ? -1 : 1) : compareTreeNames(a.name, b.name)); }
   function makeDocument(data) {
     (data.ancestors || []).forEach(mergeTreeItem);
     if (data.entry && !findEntry(data.path)) { mergeTreeItem(data.entry); rebuildEntryIndex(); }
