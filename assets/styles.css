@@ -1763,6 +1763,17 @@ body.start-page[data-start-theme="dark"] .note-workspace {
 .note-search-filters[hidden] { display: none; }
 .note-search-filters label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-secondary); }
 .note-search-filters input { min-width: 0; width: 100%; box-sizing: border-box; height: 30px; padding: 4px 8px; border: 1px solid rgba(128,128,128,.25); border-radius: 5px; background: transparent; color: var(--text); font: inherit; }
+.note-search-folder-field { position: relative; }
+.note-search-folder-field input { padding-right: 28px; }
+.note-search-folder-toggle { position: absolute; right: 1px; bottom: 1px; width: 26px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.note-search-folder-toggle::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+.note-search-folder-toggle:hover { background: rgba(128,128,128,.08); }
+.note-search-folder-menu { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0; box-sizing: border-box; max-height: 240px; padding: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid rgba(128,128,128,.22); border-radius: 7px; background: var(--bg, #fafafa); color: var(--text); box-shadow: 0 8px 22px rgba(0,0,0,.12); }
+.note-search-folder-menu[hidden] { display: none; }
+.note-search-folder-menu.opens-up { top: auto; bottom: 34px; }
+.note-search-folder-option { box-sizing: border-box; min-height: 32px; padding: 7px 9px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 18px; cursor: pointer; }
+.note-search-folder-option[aria-selected="true"] { background: rgba(128,128,128,.14); }
+body.start-page[data-start-theme="dark"] .note-search-folder-menu { background: #202321; }
 .note-search-clear { justify-self: start; }
 .note-search-progress { margin: 16px 12px; font-size: 12px; opacity: .6; font-variant-numeric: tabular-nums; }
 .note-browser-result mark { color: inherit; background: rgba(128,128,128,.14); border-radius: 2px; font-weight: 650; }

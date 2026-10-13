@@ -33,6 +33,126 @@
     return ctx.query({ mode: 'search', limit: 50, offset, cursor, q, scope, tags, modified, sort }, { signal });
   } });
 
+  function createFolderPicker(input, getLabel, isActive) {
+    const host = input.parentElement;
+    host.classList.add('note-search-folder-field');
+    input.autocomplete = 'off'; input.spellcheck = false;
+    input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', 'note-search-folder-list'); input.setAttribute('aria-expanded', 'false');
+    const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'note-search-folder-toggle'; toggle.tabIndex = -1;
+    toggle.setAttribute('aria-expanded', 'false');
+    const menu = document.createElement('div'); menu.className = 'note-search-folder-menu'; menu.hidden = true;
+    const rows = document.createElement('div'); rows.id = 'note-search-folder-list'; rows.setAttribute('role', 'listbox');
+    menu.appendChild(rows); host.append(toggle, menu);
+    let availablePaths = [], paths = [], activeIndex = -1, activeRow = null, list = null, optionId = 0;
+    let wheelTarget = null, wheelDirection = 0;
+    let anchorTop = 0, anchorLeft = 0;
+    const indexes = new Map(), mounted = new Map();
+    function stopWheel() {
+      menu.scrollTo({ top: menu.scrollTop, behavior: 'instant' }); wheelTarget = null; wheelDirection = 0;
+    }
+    function close() {
+      if (menu.hidden) return;
+      stopWheel(); menu.hidden = true; list?.dispose(); list = null;
+      rows.replaceChildren(); paths = []; indexes.clear(); mounted.clear(); activeRow = null; activeIndex = -1;
+      input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); toggle.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside);
+      window.removeEventListener('resize', close); window.removeEventListener('scroll', ancestorScroll, true);
+    }
+    function outside(event) { if (!host.contains(event.target)) close(); }
+    function ancestorScroll(event) {
+      if (!event.target.contains?.(host)) return;
+      const anchor = input.getBoundingClientRect();
+      if (Math.abs(anchor.top - anchorTop) > .5 || Math.abs(anchor.left - anchorLeft) > .5) close();
+    }
+    function syncActive() {
+      const next = activeIndex < 0 ? null : (list?.row(paths[activeIndex]) || mounted.get(paths[activeIndex]));
+      if (next === activeRow) return;
+      if (activeRow) activeRow.setAttribute('aria-selected', 'false');
+      activeRow = next;
+      if (next) { next.setAttribute('aria-selected', 'true'); input.setAttribute('aria-activedescendant', next.id); }
+      else input.removeAttribute('aria-activedescendant');
+    }
+    function option(path) {
+      const row = document.createElement('div'); row.className = 'note-search-folder-option'; row.id = 'note-search-folder-option-' + (++optionId);
+      row.dataset.folderPath = path; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false'); row.textContent = path;
+      if (!list) mounted.set(path, row);
+      return row;
+    }
+    function open() {
+      if (!isActive() || !host.isConnected || document.hidden || document.documentElement.dataset.desktopMinimized === '1') { close(); return; }
+      const value = input.value.trim().toLocaleLowerCase();
+      const next = availablePaths.filter(path => !value || path.toLocaleLowerCase().includes(value));
+      if (!next.length) { close(); return; }
+      if (!menu.hidden && paths.length === next.length && paths.every((path, i) => path === next[i])) return;
+      stopWheel(); paths = next; indexes.clear(); paths.forEach((path, i) => indexes.set(path, i));
+      if (activeRow) activeRow.setAttribute('aria-selected', 'false');
+      activeIndex = paths.indexOf(input.value); activeRow = null; input.removeAttribute('aria-activedescendant');
+      menu.hidden = false;
+      const anchor = input.getBoundingClientRect(), viewport = input.closest('.note-browser-results').getBoundingClientRect();
+      anchorTop = anchor.top; anchorLeft = anchor.left;
+      const below = viewport.bottom - anchor.bottom - 8, above = anchor.top - viewport.top - 8;
+      const upwards = below < 160 && above > below;
+      menu.classList.toggle('opens-up', upwards);
+      menu.style.maxHeight = Math.max(32, Math.min(240, upwards ? above : below)) + 'px';
+      if (paths.length > 200 && window.RelatumWindowedList) {
+        if (!list) { mounted.clear(); rows.replaceChildren(); list = window.RelatumWindowedList.create({ host: rows, scroller: menu,
+          estimate: 32, reuseRows: true, key: path => path, render: option, onMount: syncActive }); }
+        list.setItems(paths);
+      } else {
+        list?.dispose(); list = null; mounted.clear(); rows.replaceChildren(...paths.map(option));
+      }
+      syncActive(); input.setAttribute('aria-expanded', 'true'); toggle.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', outside); document.addEventListener('focusin', outside);
+      window.addEventListener('resize', close); window.addEventListener('scroll', ancestorScroll, true);
+    }
+    function activate(index, reveal) {
+      stopWheel(); activeIndex = Math.max(0, Math.min(paths.length - 1, index));
+      if (reveal) {
+        if (list) list.scrollToKey(paths[activeIndex]);
+        else {
+          const row = mounted.get(paths[activeIndex]);
+          if (row.offsetTop < menu.scrollTop) menu.scrollTop = row.offsetTop;
+          else if (row.offsetTop + row.offsetHeight > menu.scrollTop + menu.clientHeight) menu.scrollTop = row.offsetTop + row.offsetHeight - menu.clientHeight;
+        }
+      }
+      syncActive();
+    }
+    function choose(path) { input.value = path; close(); input.dispatchEvent(new Event('change', { bubbles: true })); }
+    toggle.addEventListener('click', event => { event.preventDefault(); if (menu.hidden) { input.focus(); open(); } else close(); });
+    input.addEventListener('click', open);
+    input.addEventListener('input', event => { if (!event.isComposing) open(); });
+    input.addEventListener('compositionstart', close); input.addEventListener('compositionend', open);
+    input.addEventListener('keydown', event => {
+      if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); return; }
+      if (event.key === 'Tab') { close(); return; }
+      if (event.key === 'Enter' && !menu.hidden && activeIndex >= 0) { event.preventDefault(); choose(paths[activeIndex]); return; }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault(); open();
+      if (!menu.hidden) activate(activeIndex < 0 ? event.key === 'ArrowDown' ? 0 : paths.length - 1 : activeIndex + (event.key === 'ArrowDown' ? 1 : -1), true);
+    });
+    menu.addEventListener('pointerdown', event => { if (event.target.closest('[data-folder-path]')) event.preventDefault(); else stopWheel(); });
+    menu.addEventListener('click', event => { const row = event.target.closest('[data-folder-path]'); if (row) { event.preventDefault(); choose(row.dataset.folderPath); } });
+    menu.addEventListener('pointermove', event => { const row = event.target.closest('[data-folder-path]'); const index = row && indexes.get(row.dataset.folderPath); if (index !== undefined && row) { activeIndex = index; syncActive(); } });
+    menu.addEventListener('wheel', event => {
+      if (event.ctrlKey || event.metaKey || !event.deltaY) return;
+      // Fine touchpad samples retain native scrolling; wheel detents accumulate
+      // one target and use the browser's finite smooth-scroll animation.
+      if (!event.deltaMode && Math.abs(event.deltaY) < 40) { stopWheel(); return; }
+      event.preventDefault();
+      const direction = Math.sign(event.deltaY), amount = event.deltaY * (event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? menu.clientHeight : 1);
+      if (wheelTarget === null || direction !== wheelDirection) wheelTarget = menu.scrollTop;
+      wheelDirection = direction; wheelTarget = Math.max(0, Math.min(menu.scrollHeight - menu.clientHeight, wheelTarget + amount));
+      menu.scrollTo({ top: wheelTarget, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    }, { passive: false });
+    menu.addEventListener('scrollend', () => { if (wheelTarget !== null && Math.abs(menu.scrollTop - wheelTarget) < 1) { wheelTarget = null; wheelDirection = 0; } });
+    return { close, setPaths(next) {
+      if (availablePaths.length === next.length && availablePaths.every((path, i) => path === next[i])) return;
+      availablePaths = next; if (!menu.hidden) open();
+    }, setLanguage() { toggle.setAttribute('aria-label', getLabel()); rows.setAttribute('aria-label', getLabel()); } };
+  }
+
   function create(ctx) {
     const root = ctx.root, nav = ctx.navigation, results = ctx.results, back = ctx.back;
     let active = false, navigationOpen = false, disposed = false;
@@ -51,6 +171,7 @@
     let controls = null, searchInput = null, scopeInput = null, filterPanel = null, sortInput = null;
     let folderInput = null, tagsInput = null, afterInput = null, beforeInput = null, filtersButton = null;
     let searchComposing = false;
+    let folderPicker = null;
     const canvasReferences = new Map();
     const copy = (key) => (words[ctx.language()] || words['zh-CN'])[key] || key;
     function button(label, handler, className) {
@@ -65,6 +186,7 @@
       if (wasHidden) results.scrollTop = resultScroll;
     }
     function showDocument(options) {
+      folderPicker?.close();
       if (!options?.keepAction) actionSequence++;
       cancelReferenceRequests();
       if (loading) { pageSequence++; dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); }
@@ -278,6 +400,7 @@
         sortInput = document.createElement('select'); sortInput.dataset.noteSearch = 'sort';
         filtersButton = button('', () => {
           filterPanel.hidden = !filterPanel.hidden;
+          if (filterPanel.hidden) folderPicker?.close();
           filtersButton.setAttribute('aria-expanded', String(!filterPanel.hidden));
           if (!filterPanel.hidden) tagsInput.focus();
         }, 'note-search-filter-button'); filtersButton.setAttribute('aria-expanded', 'false');
@@ -288,9 +411,10 @@
           field.type = type; field.dataset.noteSearch = name; label.append(span, field); filterPanel.appendChild(label); return field;
         };
         folderInput = input('folder'); tagsInput = input('tags'); afterInput = input('after', 'date'); beforeInput = input('before', 'date');
-        const folders = document.createElement('datalist'); folders.id = 'note-search-folders'; controls.appendChild(folders);
-        folderInput.setAttribute('list', folders.id);
+        folderPicker = createFolderPicker(folderInput, () => copy('folder'),
+          () => active && !disposed && !results.hidden && !filterPanel.hidden);
         const clear = button('', () => {
+          folderPicker.close();
           for (const input of [folderInput, tagsInput, afterInput, beforeInput]) input.value = '';
           syncSearchFilters(); runSearch(0);
         }, 'note-search-clear'); clear.dataset.noteSearch = 'clear'; filterPanel.appendChild(clear);
@@ -302,10 +426,10 @@
           if (event.isComposing || searchComposing) return;
           if (event.key === 'Enter') { event.preventDefault(); runSearch(0); }
           else if (event.key === 'ArrowDown') { event.preventDefault(); results.querySelector('.note-browser-result')?.focus(); }
-          else if (event.key === 'Escape') { event.preventDefault(); if (!filterPanel.hidden) { filterPanel.hidden = true; filtersButton.setAttribute('aria-expanded', 'false'); } else { searchInput.value = ''; searchState.q = ''; runSearch(0); } }
+          else if (event.key === 'Escape') { event.preventDefault(); if (!filterPanel.hidden) { folderPicker.close(); filterPanel.hidden = true; filtersButton.setAttribute('aria-expanded', 'false'); } else { searchInput.value = ''; searchState.q = ''; runSearch(0); } }
         });
         for (const input of [scopeInput, sortInput, folderInput, tagsInput, afterInput, beforeInput]) {
-          input.addEventListener('change', () => { if (input === scopeInput) folderInput.value = ''; syncSearchFilters(); if (!searchComposing) runSearch(0); });
+          input.addEventListener('change', () => { if (input === scopeInput) { folderPicker.close(); folderInput.value = ''; } syncSearchFilters(); if (!searchComposing) runSearch(0); });
           if (input.type === 'text') {
             input.addEventListener('input', () => { syncSearchFilters(); if (!searchComposing) runSearch(150); });
             input.addEventListener('compositionstart', () => { searchComposing = true; clearTimeout(searchTimer); searchAbort?.abort(); });
@@ -321,9 +445,8 @@
       (ctx.getNotebooks?.() || []).forEach(book => add('b:' + book.path, book.name));
       scopeInput.value = Array.from(scopeInput.options).some(option => option.value === selected) ? selected : 'all';
       scopeInput.setAttribute('aria-label', copy('allBooks'));
-      controls.querySelector('datalist').replaceChildren(...(ctx.getEntries?.() || [])
-        .filter(item => item.kind === 'folder' && item.path !== 'CustomNotebook')
-        .map(item => { const option = document.createElement('option'); option.value = item.path; return option; }));
+      folderPicker.setLanguage();
+      folderPicker.setPaths((ctx.getEntries?.() || []).filter(item => item.kind === 'folder' && item.path !== 'CustomNotebook').map(item => item.path));
       sortInput.replaceChildren(...['relevance', 'modified'].map(key => { const option = document.createElement('option'); option.value = key === 'modified' ? 'modified-desc' : key; option.textContent = copy(key); return option; }));
       sortInput.value = searchState.sort; sortInput.setAttribute('aria-label', copy('relevance'));
       filtersButton.textContent = copy('filters');
@@ -470,6 +593,7 @@
       resultScroll = scroll; results.scrollTop = scroll;
     }
     async function select(id, next) {
+      folderPicker?.close();
       if (!active || disposed) return;
       if (providers.get(id)?.enabled && !providers.get(id).enabled(ctx)) return;
       const sequence = ++actionSequence;
@@ -510,7 +634,7 @@
       async browseTag(tag) { expanded.add('tags'); if (navigationOpen) { renderNavigation(); loadNavigation(); } await select('tags', { key: tag, label: tag }); },
       async search() { await select('search', Object.assign({}, searchState)); searchInput?.focus(); },
       setNavigationOpen,
-      suspend(options) { active = false; clearTimeout(searchTimer); searchAbort?.abort(); resultList?.suspend(); cancelReferenceRequests(); pageSequence++; cancelNavigation(); actionSequence++; if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
+      suspend(options) { folderPicker?.close(); active = false; clearTimeout(searchTimer); searchAbort?.abort(); resultList?.suspend(); cancelReferenceRequests(); pageSequence++; cancelNavigation(); actionSequence++; if (loading) dirty = true; loading = false; resetting = false; results.setAttribute('aria-busy', 'false'); if (!(options && options.keepView)) { showDocument(); back.hidden = true; } },
       resume() { active = true; resultList?.resume(); if (navigationOpen) renderNavigation(); if (!results.hidden && dirty) refreshResults(); loadNavigation(); },
       dispose() { this.suspend(); resultList?.dispose(); disposed = true; back.removeEventListener('click', onBack); nav.replaceChildren(); results.replaceChildren(); },
       setLanguage() { renderNavigation(); if (hasResult) renderResults(); updateBackLabel(); },
