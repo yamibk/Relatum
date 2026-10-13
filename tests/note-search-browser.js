@@ -75,6 +75,8 @@ async function run(browser, mode) {
       await page.locator('.note-browser-more').click();
       if (i < 3) await page.waitForFunction(n => document.querySelectorAll('.note-browser-result').length === n, (i + 2) * 50);
       else await page.waitForFunction(() => document.querySelector('.note-browser-result[aria-setsize="250"]'));
+      // The new DOM can arrive before loadPage's finally clears its busy flag.
+      await page.waitForFunction(() => document.querySelector('.note-browser-results')?.getAttribute('aria-busy') === 'false');
     }
     assert(await page.locator('.note-browser-result').count() < 90, '250 loaded rows use viewport-sized DOM');
     const loaded = await page.evaluate(() => document.querySelector('.note-browser-result').getAttribute('aria-setsize'));

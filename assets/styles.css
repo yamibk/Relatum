@@ -328,11 +328,6 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-tree-row[aria-expanded="true"] .note-tree-toggle::before { transform: translateY(-1px) rotate(45deg); }
 .note-tree-row[aria-expanded]:hover .note-tree-toggle { color: var(--text-secondary); background: rgba(31, 31, 28, .055); }
 .note-tree-row[aria-expanded]:active .note-tree-toggle { transform: scale(.86); }
-.note-tree-row.is-expanding .note-tree-toggle::before { animation: noteTreeToggleOpen 220ms cubic-bezier(.22, 1, .36, 1) both; }
-@keyframes noteTreeToggleOpen {
-  from { transform: translateX(-1px) rotate(-45deg); }
-  to { transform: translateY(-1px) rotate(45deg); }
-}
 .note-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-tree-icon {
   display: block;
@@ -1246,6 +1241,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   font-size: 11.5px;
   cursor: default;
   user-select: none;
+  transition: color 120ms ease, background-color 120ms ease;
 }
 .note-tab:hover { color: var(--text); background: rgba(25, 25, 23, .035); }
 .note-tab.active {
@@ -1306,14 +1302,6 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
   transform: none;
   pointer-events: auto;
 }
-.note-tree-children-shell.is-expanding > .note-tree-children > .note-tree-entry {
-  animation: noteTreeChildReveal 190ms cubic-bezier(.22, 1, .36, 1) both;
-  animation-delay: calc(var(--note-child-index, 0) * 12ms);
-}
-@keyframes noteTreeChildReveal {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
-}
 .note-tree-row { min-height: 31px; padding-left: 7px; border-radius: 5px; }
 .note-tree-row:hover { background: rgba(25, 25, 23, .035); }
 .note-tree-row.active { color: #1e1e1c; background: rgba(25, 25, 23, .09); font-weight: 650; }
@@ -1321,7 +1309,7 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
 .note-tree-row.opening { background: rgba(25, 25, 23, .09); }
 .note-tree-row,
 .note-tree-row.active,
-.note-tree-row.opening { transition: none; }
+.note-tree-row.opening { transition: background-color 110ms ease, color 110ms ease; }
 .note-tree-row:focus-visible { outline: 1px solid rgba(70, 88, 65, .42); outline-offset: -1px; }
 .note-tree-foot { padding: 8px 11px; border-top-color: rgba(24, 24, 22, .045); }
 .note-tree-rename {
@@ -2422,11 +2410,13 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
   .top-actions,
   .note-links-pane,
   .note-tree-pane,
+  .note-tree-row,
   .note-tree-toggle,
   .note-tree-toggle::before,
   .note-tree-children-shell,
   .note-browser-disclosure,
   .note-tree-children-shell .note-tree-entry,
+  .note-tab,
   .note-tab-close,
   .note-tab-new,
   .note-tab-close-all,

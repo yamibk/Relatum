@@ -74,7 +74,9 @@
         let row = mounted.get(key);
         if (!row) { row = options.render(item, index); row.__windowedKey = key; row.style.marginBottom = gap + 'px'; if (observer) observer.observe(row); }
         if (options.update) options.update(row, item, index);
-        row.setAttribute('aria-posinset', String(index + 1)); row.setAttribute('aria-setsize', String(items.length));
+        const position = String(index + 1), count = String(items.length);
+        if (row.getAttribute('aria-posinset') !== position) row.setAttribute('aria-posinset', position);
+        if (row.getAttribute('aria-setsize') !== count) row.setAttribute('aria-setsize', count);
         next.set(key, row); children.push(row); cursor = index + 1;
       });
       if (cursor < items.length) children.push(spacer(prefix[items.length] - prefix[cursor]));
@@ -114,12 +116,18 @@
     }
     function setItems(nextItems, renderer) {
       if (renderer) options.render = renderer;
-      const oldKeys = new Set(nextItems.map(options.key));
+      const nextByKey = new Map(nextItems.map(function (item) { return [options.key(item), item]; }));
       mounted.forEach(function (row, key) {
-        if (!oldKeys.has(key) || !row.contains(document.activeElement)) { if (observer) observer.unobserve(row); row.remove(); mounted.delete(key); }
+        // Reuse is opt-in: owners must update row content and reject reuse when
+        // its kind/editor changes. Other list consumers keep their old behavior.
+        const reusable = options.reuseRows && !renderer && nextByKey.has(key)
+          && (typeof options.reuseRows !== 'function' || options.reuseRows(row, nextByKey.get(key)));
+        if (!nextByKey.has(key) || (options.reuseRows ? !reusable : !row.contains(document.activeElement))) {
+          if (observer) observer.unobserve(row); row.remove(); mounted.delete(key);
+        }
       });
       items = nextItems; keyIndex = new Map(items.map(function (item, i) { return [options.key(item), i]; }));
-      heights.forEach(function (_, key) { if (!oldKeys.has(key)) heights.delete(key); });
+      heights.forEach(function (_, key) { if (!nextByKey.has(key)) heights.delete(key); });
       rebuildOffsets(); render();
     }
     function scrollToKey(key) {
