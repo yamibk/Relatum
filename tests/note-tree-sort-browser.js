@@ -172,7 +172,7 @@ async function chooseSort(page, mode) {
     fs.utimesSync(path.join(notes, 'M.md'), now + 200, now + 200);
     await page.evaluate(() => CanvasNoteWorkspace.refresh(false));
     await expectPaths(['M', 'Z', 'A']);
-    assert(await row.evaluate(node => node.isConnected) === false, 'order change should update tree DOM');
+    assert(await row.evaluate(node => node.isConnected), 'order changes move existing rows and preserve their focus/transition');
 
     await page.locator('[data-note-action="toggle-library-settings"]').click();
     await page.locator('[data-note-name-mode="custom"]').click();

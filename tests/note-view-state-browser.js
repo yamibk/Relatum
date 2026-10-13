@@ -300,7 +300,7 @@ async function freePort() {
       sawTrashRequest();
       await trashRelease;
       fs.unlinkSync(path.join(root, 'notes', 'trash-ui.md'));
-      const tree = await (await fetch(url + '/api/notes-tree')).json();
+      const tree = await (await fetch(url + '/api/notes-tree?reconcile=1')).json();
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, path: 'trash-ui.md', tree }) });
     });
     await page.evaluate(() => { window.__trashPromise = __noteViewTest.recycleEntry({ kind: 'note', path: 'trash-ui.md' }); });
@@ -351,7 +351,7 @@ async function freePort() {
     assert(await metadataRow.evaluate(node => node.isConnected), 'mtime-only refresh retains rows');
     fs.writeFileSync(path.join(root, 'notes', '000-added.md'), 'New external note');
     await page.evaluate(() => __noteViewTest.checkExternalChanges(false));
-    assert.equal(await metadataRow.evaluate(node => node.isConnected), false, 'structural changes rebuild rows');
+    assert.equal(await metadataRow.evaluate(node => node.isConnected), true, 'structural changes preserve unaffected rows');
     assert.equal(await page.locator('.note-tree-row[data-note-path="000-added.md"]').count(), 1);
     fs.unlinkSync(path.join(root, 'notes', '000-added.md'));
     await page.evaluate(() => __noteViewTest.checkExternalChanges(false));

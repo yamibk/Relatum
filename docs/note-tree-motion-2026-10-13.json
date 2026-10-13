@@ -1,0 +1,646 @@
+{
+  "baseline": "247cd48438faef963a199ee36311f5fbdddc8260",
+  "browser": "155.0.4283.45",
+  "togglesPerRound": 8,
+  "rounds": 3,
+  "viewport": {
+    "width": 1300,
+    "height": 850
+  },
+  "summary": [
+    {
+      "version": "baseline",
+      "count": 80,
+      "dpr": 1,
+      "scriptMs": 11.185,
+      "layoutMs": 99.741,
+      "styleMs": 72.98700000000001,
+      "taskMs": 1153.4619999999998,
+      "elements": 328,
+      "indexBuilds": 0,
+      "orderSignatures": 0,
+      "sorts": 4,
+      "duplicateRenders": 4,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 81
+    },
+    {
+      "version": "current",
+      "count": 80,
+      "dpr": 1,
+      "scriptMs": 10.299,
+      "layoutMs": 95.051,
+      "styleMs": 45.535000000000004,
+      "taskMs": 1030.2530000000004,
+      "elements": 328,
+      "indexBuilds": 0,
+      "orderSignatures": 0,
+      "sorts": 0,
+      "duplicateRenders": 0,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 81
+    },
+    {
+      "version": "baseline",
+      "count": 80,
+      "dpr": 2,
+      "scriptMs": 13.065,
+      "layoutMs": 107.84299999999999,
+      "styleMs": 83.667,
+      "taskMs": 1164.836,
+      "elements": 328,
+      "indexBuilds": 0,
+      "orderSignatures": 0,
+      "sorts": 4,
+      "duplicateRenders": 4,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 81
+    },
+    {
+      "version": "current",
+      "count": 80,
+      "dpr": 2,
+      "scriptMs": 11.272,
+      "layoutMs": 101.447,
+      "styleMs": 46.851,
+      "taskMs": 1075.8079999999998,
+      "elements": 328,
+      "indexBuilds": 0,
+      "orderSignatures": 0,
+      "sorts": 0,
+      "duplicateRenders": 0,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 81
+    },
+    {
+      "version": "baseline",
+      "count": 3000,
+      "dpr": 1,
+      "scriptMs": 21.933,
+      "layoutMs": 9.498000000000003,
+      "styleMs": 18.855,
+      "taskMs": 533.5909999999999,
+      "elements": 1456,
+      "indexBuilds": 8,
+      "orderSignatures": 8,
+      "sorts": 388,
+      "duplicateRenders": 4,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 45
+    },
+    {
+      "version": "current",
+      "count": 3000,
+      "dpr": 1,
+      "scriptMs": 14.425,
+      "layoutMs": 5.721,
+      "styleMs": 22.397,
+      "taskMs": 405.322,
+      "elements": 648,
+      "indexBuilds": 0,
+      "orderSignatures": 0,
+      "sorts": 12,
+      "duplicateRenders": 0,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 45
+    },
+    {
+      "version": "baseline",
+      "count": 3000,
+      "dpr": 2,
+      "scriptMs": 20.514000000000003,
+      "layoutMs": 9.406,
+      "styleMs": 18.879,
+      "taskMs": 556.7030000000001,
+      "elements": 1456,
+      "indexBuilds": 8,
+      "orderSignatures": 8,
+      "sorts": 388,
+      "duplicateRenders": 4,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 45
+    },
+    {
+      "version": "current",
+      "count": 3000,
+      "dpr": 2,
+      "scriptMs": 17.404000000000003,
+      "layoutMs": 7.311,
+      "styleMs": 24.277,
+      "taskMs": 432.87600000000003,
+      "elements": 648,
+      "indexBuilds": 0,
+      "orderSignatures": 0,
+      "sorts": 12,
+      "duplicateRenders": 0,
+      "rafRequests": 0,
+      "animations": 0,
+      "mountedRows": 45
+    }
+  ],
+  "samples": [
+    {
+      "version": "baseline",
+      "count": 80,
+      "dpr": 1,
+      "rounds": [
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 4,
+          "elements": 328,
+          "raf": 8,
+          "scriptMs": 11.185,
+          "layoutMs": 105.301,
+          "styleMs": 71.832,
+          "taskMs": 1169.639,
+          "layouts": 440,
+          "styleRecalculations": 497
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 4,
+          "elements": 328,
+          "raf": 8,
+          "scriptMs": 8.983999999999998,
+          "layoutMs": 99.741,
+          "styleMs": 72.98700000000001,
+          "taskMs": 1153.4619999999998,
+          "layouts": 440,
+          "styleRecalculations": 497
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 4,
+          "elements": 328,
+          "raf": 8,
+          "scriptMs": 13.145999999999997,
+          "layoutMs": 99.12100000000001,
+          "styleMs": 81.092,
+          "taskMs": 1143.4989999999998,
+          "layouts": 441,
+          "styleRecalculations": 498
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 4,
+        "rebuildEntryIndex": 4,
+        "treeOrderSignature": 4,
+        "sortedTreeEntries": 16,
+        "elements": 1296,
+        "raf": 0
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 81
+      }
+    },
+    {
+      "version": "current",
+      "count": 80,
+      "dpr": 1,
+      "rounds": [
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 0,
+          "elements": 328,
+          "raf": 4,
+          "scriptMs": 10.785,
+          "layoutMs": 103.07,
+          "styleMs": 47.833,
+          "taskMs": 1052.662,
+          "layouts": 426,
+          "styleRecalculations": 434
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 0,
+          "elements": 328,
+          "raf": 4,
+          "scriptMs": 10.222000000000001,
+          "layoutMs": 95.051,
+          "styleMs": 45.535000000000004,
+          "taskMs": 1030.2530000000004,
+          "layouts": 431,
+          "styleRecalculations": 439
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 0,
+          "elements": 328,
+          "raf": 4,
+          "scriptMs": 10.299,
+          "layoutMs": 89.60800000000002,
+          "styleMs": 42.887999999999984,
+          "taskMs": 970.278,
+          "layouts": 431,
+          "styleRecalculations": 439
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 0,
+        "rebuildEntryIndex": 0,
+        "treeOrderSignature": 0,
+        "sortedTreeEntries": 0,
+        "elements": 0,
+        "raf": 0
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 81
+      }
+    },
+    {
+      "version": "baseline",
+      "count": 80,
+      "dpr": 2,
+      "rounds": [
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 4,
+          "elements": 328,
+          "raf": 8,
+          "scriptMs": 13.065,
+          "layoutMs": 107.84299999999999,
+          "styleMs": 84.12899999999999,
+          "taskMs": 1164.836,
+          "layouts": 441,
+          "styleRecalculations": 497
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 4,
+          "elements": 328,
+          "raf": 8,
+          "scriptMs": 15.577999999999998,
+          "layoutMs": 109.55400000000002,
+          "styleMs": 83.667,
+          "taskMs": 1214.6929999999998,
+          "layouts": 437,
+          "styleRecalculations": 493
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 4,
+          "elements": 328,
+          "raf": 8,
+          "scriptMs": 8.429000000000002,
+          "layoutMs": 100.234,
+          "styleMs": 70.64899999999999,
+          "taskMs": 1063.682,
+          "layouts": 439,
+          "styleRecalculations": 475
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 4,
+        "rebuildEntryIndex": 4,
+        "treeOrderSignature": 4,
+        "sortedTreeEntries": 16,
+        "elements": 1296,
+        "raf": 0
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 81
+      }
+    },
+    {
+      "version": "current",
+      "count": 80,
+      "dpr": 2,
+      "rounds": [
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 0,
+          "elements": 328,
+          "raf": 4,
+          "scriptMs": 11.272,
+          "layoutMs": 105.384,
+          "styleMs": 46.851,
+          "taskMs": 1075.8079999999998,
+          "layouts": 432,
+          "styleRecalculations": 440
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 0,
+          "elements": 328,
+          "raf": 4,
+          "scriptMs": 9.825999999999999,
+          "layoutMs": 92.861,
+          "styleMs": 40.06100000000001,
+          "taskMs": 954.4809999999999,
+          "layouts": 430,
+          "styleRecalculations": 438
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 0,
+          "elements": 328,
+          "raf": 4,
+          "scriptMs": 11.866000000000001,
+          "layoutMs": 101.447,
+          "styleMs": 49.386,
+          "taskMs": 1111.4249999999997,
+          "layouts": 431,
+          "styleRecalculations": 439
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 0,
+        "rebuildEntryIndex": 0,
+        "treeOrderSignature": 0,
+        "sortedTreeEntries": 0,
+        "elements": 0,
+        "raf": 0
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 81
+      }
+    },
+    {
+      "version": "baseline",
+      "count": 3000,
+      "dpr": 1,
+      "rounds": [
+        {
+          "renderTreeInto": 8,
+          "rebuildEntryIndex": 8,
+          "treeOrderSignature": 8,
+          "sortedTreeEntries": 388,
+          "elements": 1456,
+          "raf": 8,
+          "scriptMs": 20.256,
+          "layoutMs": 10.556,
+          "styleMs": 18.543,
+          "taskMs": 511.834,
+          "layouts": 24,
+          "styleRecalculations": 24
+        },
+        {
+          "renderTreeInto": 8,
+          "rebuildEntryIndex": 8,
+          "treeOrderSignature": 8,
+          "sortedTreeEntries": 388,
+          "elements": 1456,
+          "raf": 8,
+          "scriptMs": 21.988999999999997,
+          "layoutMs": 8.983999999999998,
+          "styleMs": 18.855,
+          "taskMs": 534.1239999999999,
+          "layouts": 24,
+          "styleRecalculations": 24
+        },
+        {
+          "renderTreeInto": 8,
+          "rebuildEntryIndex": 8,
+          "treeOrderSignature": 8,
+          "sortedTreeEntries": 388,
+          "elements": 1456,
+          "raf": 8,
+          "scriptMs": 21.933,
+          "layoutMs": 9.498000000000003,
+          "styleMs": 20.574999999999996,
+          "taskMs": 533.5909999999999,
+          "layouts": 24,
+          "styleRecalculations": 24
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 4,
+        "rebuildEntryIndex": 4,
+        "treeOrderSignature": 4,
+        "sortedTreeEntries": 192,
+        "elements": 727,
+        "raf": 3
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 45
+      }
+    },
+    {
+      "version": "current",
+      "count": 3000,
+      "dpr": 1,
+      "rounds": [
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 12,
+          "elements": 648,
+          "raf": 0,
+          "scriptMs": 14.425,
+          "layoutMs": 5.721,
+          "styleMs": 23.302,
+          "taskMs": 405.322,
+          "layouts": 16,
+          "styleRecalculations": 105
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 12,
+          "elements": 648,
+          "raf": 0,
+          "scriptMs": 16.326,
+          "layoutMs": 5.863999999999999,
+          "styleMs": 22.397,
+          "taskMs": 418.15599999999995,
+          "layouts": 16,
+          "styleRecalculations": 101
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 12,
+          "elements": 648,
+          "raf": 0,
+          "scriptMs": 12.262000000000002,
+          "layoutMs": 5.696999999999999,
+          "styleMs": 19.579000000000008,
+          "taskMs": 381.84399999999994,
+          "layouts": 16,
+          "styleRecalculations": 104
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 0,
+        "rebuildEntryIndex": 0,
+        "treeOrderSignature": 0,
+        "sortedTreeEntries": 0,
+        "elements": 0,
+        "raf": 0
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 45
+      }
+    },
+    {
+      "version": "baseline",
+      "count": 3000,
+      "dpr": 2,
+      "rounds": [
+        {
+          "renderTreeInto": 8,
+          "rebuildEntryIndex": 8,
+          "treeOrderSignature": 8,
+          "sortedTreeEntries": 388,
+          "elements": 1456,
+          "raf": 8,
+          "scriptMs": 23.813000000000002,
+          "layoutMs": 10.962,
+          "styleMs": 21.586000000000002,
+          "taskMs": 556.7030000000001,
+          "layouts": 24,
+          "styleRecalculations": 24
+        },
+        {
+          "renderTreeInto": 8,
+          "rebuildEntryIndex": 8,
+          "treeOrderSignature": 8,
+          "sortedTreeEntries": 388,
+          "elements": 1456,
+          "raf": 8,
+          "scriptMs": 18.787,
+          "layoutMs": 9.406,
+          "styleMs": 18.879,
+          "taskMs": 566.7769999999999,
+          "layouts": 24,
+          "styleRecalculations": 24
+        },
+        {
+          "renderTreeInto": 8,
+          "rebuildEntryIndex": 8,
+          "treeOrderSignature": 8,
+          "sortedTreeEntries": 388,
+          "elements": 1456,
+          "raf": 8,
+          "scriptMs": 20.514000000000003,
+          "layoutMs": 8.553999999999998,
+          "styleMs": 17.799999999999997,
+          "taskMs": 548.3990000000001,
+          "layouts": 24,
+          "styleRecalculations": 24
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 4,
+        "rebuildEntryIndex": 4,
+        "treeOrderSignature": 4,
+        "sortedTreeEntries": 192,
+        "elements": 727,
+        "raf": 3
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 45
+      }
+    },
+    {
+      "version": "current",
+      "count": 3000,
+      "dpr": 2,
+      "rounds": [
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 12,
+          "elements": 648,
+          "raf": 0,
+          "scriptMs": 18.096,
+          "layoutMs": 6.762,
+          "styleMs": 23.827,
+          "taskMs": 443.697,
+          "layouts": 16,
+          "styleRecalculations": 105
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 12,
+          "elements": 648,
+          "raf": 0,
+          "scriptMs": 16.390999999999995,
+          "layoutMs": 7.713,
+          "styleMs": 25.926,
+          "taskMs": 413.06000000000006,
+          "layouts": 16,
+          "styleRecalculations": 105
+        },
+        {
+          "renderTreeInto": 0,
+          "rebuildEntryIndex": 0,
+          "treeOrderSignature": 0,
+          "sortedTreeEntries": 12,
+          "elements": 648,
+          "raf": 0,
+          "scriptMs": 17.404000000000003,
+          "layoutMs": 7.311,
+          "styleMs": 24.277,
+          "taskMs": 432.87600000000003,
+          "layouts": 16,
+          "styleRecalculations": 101
+        }
+      ],
+      "duplicate": {
+        "renderTreeInto": 0,
+        "rebuildEntryIndex": 0,
+        "treeOrderSignature": 0,
+        "sortedTreeEntries": 0,
+        "elements": 0,
+        "raf": 0
+      },
+      "idle": {
+        "rafRequests": 0,
+        "animations": 0,
+        "mountedRows": 45
+      }
+    }
+  ]
+}
