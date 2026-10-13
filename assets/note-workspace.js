@@ -3729,7 +3729,7 @@
     colors.setAttribute('role', 'group'); colors.setAttribute('aria-label', language() === 'en' ? 'Notebook color' : '笔记本颜色');
     NOTEBOOK_COLORS.forEach((color) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'note-notebook-icon'; button.dataset.color = color;
-      button.title = notebookCopy(color); button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-label', notebookCopy(color));
       button.setAttribute('aria-pressed', String((state.notebookColors[entry.path] || 'gray') === color));
       button.addEventListener('click', () => {
         closeContextMenu(); state.notebookColors[entry.path] = color;
