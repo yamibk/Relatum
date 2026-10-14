@@ -156,24 +156,27 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 }
 
 @keyframes startWorkspaceEnterForward {
-  from { opacity: 0; transform: translate3d(38px, 0, 0) scale(.992); }
+  from { opacity: 0; transform: translate3d(38px, 0, 0) scale(var(--workspace-enter-scale, .992)); }
   to { opacity: 1; transform: none; }
 }
 @keyframes startWorkspaceLeaveForward {
   from { opacity: 1; transform: translate3d(0, var(--workspace-layout-shift-y, 0px), 0); }
-  to { opacity: 0; transform: translate3d(-24px, var(--workspace-layout-shift-y, 0px), 0) scale(.996); }
+  to { opacity: 0; transform: translate3d(-24px, var(--workspace-layout-shift-y, 0px), 0) scale(var(--workspace-leave-scale, .996)); }
 }
 @keyframes startWorkspaceEnterBack {
-  from { opacity: 0; transform: translate3d(-38px, 0, 0) scale(.992); }
+  from { opacity: 0; transform: translate3d(-38px, 0, 0) scale(var(--workspace-enter-scale, .992)); }
   to { opacity: 1; transform: none; }
 }
 @keyframes startWorkspaceLeaveBack {
   from { opacity: 1; transform: translate3d(0, var(--workspace-layout-shift-y, 0px), 0); }
-  to { opacity: 0; transform: translate3d(24px, var(--workspace-layout-shift-y, 0px), 0) scale(.996); }
+  to { opacity: 0; transform: translate3d(24px, var(--workspace-layout-shift-y, 0px), 0) scale(var(--workspace-leave-scale, .996)); }
 }
 
 /* ─── Markdown 笔记库 ─────────────────────────────────────── */
 .note-workspace {
+  /* Block heights must stay in the editor's CSS pixel scale during the slide. */
+  --workspace-enter-scale: 1;
+  --workspace-leave-scale: 1;
   flex: 1;
   min-height: 0;
   display: grid;
