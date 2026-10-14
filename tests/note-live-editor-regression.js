@@ -103,7 +103,7 @@ function loadLiveDecorationProbe() {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8'), context);
   const instrumented = editorSource.replace(
     'window.RelatumNoteLiveEditor = { create, renderMarkdown };',
-    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, wrapSelection, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension };',
+    'window.RelatumNoteLiveEditor = { create, renderMarkdown }; window.__relatumLiveTest = { createBlockField, createInlineDecorations, scanBlockSpecs, exitEmptyQuoteMarkup, toggleInlineFormat, inlineFormatEdit, wrapCodeBlock, CodeLanguageWidget, InlineImageWidget, plainParagraphExtension };',
   );
   assert.notStrictEqual(instrumented, editorSource, 'the test-only decoration probe must attach to the Live Preview export');
   vm.runInNewContext(instrumented, context);
@@ -232,6 +232,7 @@ function runEditCommand(command, source, anchor, head) {
   let state = liveProbe.RelatumCodeMirror.EditorState.create({
     doc: source,
     selection: { anchor, head: head == null ? anchor : head },
+    extensions: [liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage })],
   });
   const view = {
     get state() { return state; },
@@ -242,7 +243,7 @@ function runEditCommand(command, source, anchor, head) {
 }
 
 const boldState = runEditCommand(
-  (view) => liveProbe.__relatumLiveTest.wrapSelection(view, '**', '**', '粗体'),
+  (view) => liveProbe.__relatumLiveTest.toggleInlineFormat(view, 'bold'),
   'alpha', 0, 5,
 );
 assert.strictEqual(boldState.doc.toString(), '**alpha**', 'Ctrl+B must wrap selected text in strong markers');
@@ -262,19 +263,19 @@ assert.strictEqual(emptyCodeState.doc.toString(), '```\n\n```', 'Ctrl+Shift+K mu
 assert.strictEqual(emptyCodeState.selection.main.head, 4, 'an empty fenced block must place the caret inside');
 
 const strikeState = runEditCommand(
-  (view) => liveProbe.__relatumLiveTest.wrapSelection(view, '~~', '~~', '删除线'),
+  (view) => liveProbe.__relatumLiveTest.toggleInlineFormat(view, 'strike'),
   'obsolete', 0, 8,
 );
 assert.strictEqual(strikeState.doc.toString(), '~~obsolete~~', 'strikethrough must use Obsidian/Typora Markdown markers');
 assert.strictEqual(strikeState.doc.sliceString(strikeState.selection.main.from, strikeState.selection.main.to), 'obsolete');
 const emptyHighlightState = runEditCommand(
-  (view) => liveProbe.__relatumLiveTest.wrapSelection(view, '==', '==', '高光'),
+  (view) => liveProbe.__relatumLiveTest.toggleInlineFormat(view, 'highlight'),
   '', 0,
 );
-assert.strictEqual(emptyHighlightState.doc.toString(), '==高光==', 'highlight must insert and select its placeholder');
+assert.strictEqual(emptyHighlightState.doc.toString(), '====', 'highlight must insert empty markers without placeholder text');
 assert.strictEqual(
   emptyHighlightState.doc.sliceString(emptyHighlightState.selection.main.from, emptyHighlightState.selection.main.to),
-  '高光',
+  '',
 );
 
 let multiState = liveProbe.RelatumCodeMirror.EditorState.create({
@@ -283,19 +284,31 @@ let multiState = liveProbe.RelatumCodeMirror.EditorState.create({
     liveProbe.RelatumCodeMirror.EditorSelection.range(0, 5),
     liveProbe.RelatumCodeMirror.EditorSelection.range(6, 10),
   ]),
-  extensions: [liveProbe.RelatumCodeMirror.EditorState.allowMultipleSelections.of(true)],
+  extensions: [liveProbe.RelatumCodeMirror.EditorState.allowMultipleSelections.of(true), liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage })],
 });
 const multiView = {
   get state() { return multiState; },
   dispatch(spec) { multiState = multiState.update(spec).state; },
 };
-assert.strictEqual(liveProbe.__relatumLiveTest.wrapSelection(multiView, '~~', '~~', '删除线'), true);
+assert.strictEqual(liveProbe.__relatumLiveTest.toggleInlineFormat(multiView, 'strike'), true);
 assert.strictEqual(multiState.doc.toString(), '~~alpha~~ ~~beta~~', 'format shortcuts must wrap every selected range');
 assert.deepStrictEqual(
   JSON.parse(JSON.stringify(multiState.selection.ranges.map((range) => multiState.doc.sliceString(range.from, range.to)))),
   ['alpha', 'beta'],
   'every wrapped range must remain selected',
 );
+
+multiState = liveProbe.RelatumCodeMirror.EditorState.create({
+  doc: '**alpha and beta**',
+  selection: liveProbe.RelatumCodeMirror.EditorSelection.create([
+    liveProbe.RelatumCodeMirror.EditorSelection.range(2, 7),
+    liveProbe.RelatumCodeMirror.EditorSelection.range(12, 16),
+  ]),
+  extensions: [liveProbe.RelatumCodeMirror.EditorState.allowMultipleSelections.of(true), liveProbe.RelatumCodeMirror.markdown({ base: liveProbe.RelatumCodeMirror.markdownLanguage })],
+});
+assert.strictEqual(liveProbe.__relatumLiveTest.toggleInlineFormat(multiView, 'bold'), true);
+assert.strictEqual(multiState.doc.toString(), 'alpha **and** beta', 'multiple selections in the same format must compose one non-overlapping transaction');
+assert.deepStrictEqual(Array.from(multiState.selection.ranges, range => multiState.doc.sliceString(range.from, range.to)), ['alpha', 'beta']);
 
 const segmentedSource = [
   '当自增运算符出现在表达式中，前缀和后缀的执行时机不同。',
@@ -611,13 +624,13 @@ assert(editorSource.includes('note-live-source-mark'), 'source marker roles must
 assert(editorSource.includes("bold: ['Mod-b']") && editorSource.includes("'code-block': ['Mod-Shift-k']")
   && editorSource.includes('shortcutCompartment.of(keymap.of(customKeyBindings()))'),
   'bold and fenced-code shortcuts must be registered in the reconfigurable shortcut compartment');
-assert(editorSource.includes("strike(view) { return wrapSelection(view, '~~', '~~', '删除线'); }")
-  && editorSource.includes("highlight(view) { return wrapSelection(view, '==', '==', '高光'); }"),
-  'strikethrough and highlight must reuse the selection-aware formatting command');
+assert(editorSource.includes("strike(view) { return toggleInlineFormat(view, 'strike'); }")
+  && editorSource.includes("highlight(view) { return toggleInlineFormat(view, 'highlight'); }"),
+  'strikethrough and highlight must reuse the selection-aware format toggle');
 assert(editorSource.includes('inactiveDefaultShortcutBindings().forEach((key) => {')
   && editorSource.includes('lower-priority defaults (notably Shift-Mod-k -> delete.line)'),
   'cancelled factory shortcuts must install no-op bindings ahead of CodeMirror defaults');
-assert(editorSource.includes("Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }]))"),
+assert(editorSource.includes("{ key: 'Enter', run: view => exitEmptyListMarkup(view) || exitEmptyQuoteMarkup(view) }"),
   'empty quote exit must outrank the Markdown continuation keymap');
 assert(editorSource.includes('headingMarkerProjectionEnd'), 'inactive heading markers must include their separator whitespace');
 assert(editorSource.includes("frame.className = 'note-live-image-frame '")

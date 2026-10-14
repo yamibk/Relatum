@@ -479,6 +479,38 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await workspaceCdp.send('Input.insertText', { text: '重排后' }); await workspace.evaluate(() => __noteTableTest.flushSave());
     assert(fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8').endsWith('重排后123正文中文'));
     fs.writeFileSync(path.join(output, 'grip-save.json'), JSON.stringify({ reorderSaved, afterReorderFocus }, null, 2));
+
+    // Real workspace save/reopen for body Tab -> grid paste -> cell format.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(workspace.url()).origin });
+    await workspace.evaluate(() => {
+      const value = 'apple\n\n| A | B |\n| --- | --- |\n| one | two |\n\n正文';
+      __noteTableTest.editor.setDocument({ value, notePath: 'Table.md', anchor: 5, head: 5, scrollTop: 0 });
+      __noteTableTest.editor.focus();
+    });
+    await workspace.keyboard.press('Tab'); await workspaceCdp.send('Input.insertText', { text: '苹果' });
+    await workspace.evaluate(() => {
+      const view = __noteTableTest.editor.view;
+      view.dispatch({ selection: RelatumCodeMirror.EditorSelection.range(0, view.state.doc.line(1).to) });
+    });
+    await workspace.keyboard.press('Control+c');
+    assert.equal(await workspace.evaluate(() => navigator.clipboard.readText()), 'apple\t苹果');
+    const formattedCell = workspace.locator('td[data-table-row="1"][data-table-col="0"]');
+    await formattedCell.click(); await workspace.keyboard.press('Control+v');
+    await formattedCell.click();
+    const formattedInput = workspace.locator('textarea.note-table-cell-editor');
+    await formattedInput.evaluate(node => node.setSelectionRange(0, node.value.length));
+    await workspace.keyboard.press('Control+b');
+    assert.equal(await formattedInput.inputValue(), '**apple**');
+    await workspace.keyboard.press('Control+z');
+    assert.equal(await formattedCell.locator('.note-table-cell-content').innerText(), 'apple');
+    await workspace.keyboard.press('Control+y');
+    await workspace.evaluate(() => __noteTableTest.flushSave());
+    const inputSaved = fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8');
+    assert(inputSaved.startsWith('apple\t苹果\n\n')); assert(inputSaved.includes('| **apple** | 苹果 |'));
+    assert.equal(inputSaved, await workspace.evaluate(() => __noteTableTest.editor.snapshot().value));
+    await workspace.evaluate(() => __noteTableTest.openNote('Other.md')); await workspace.evaluate(() => __noteTableTest.openNote('Table.md'));
+    assert.equal(inputSaved, await workspace.evaluate(() => __noteTableTest.editor.snapshot().value));
+    assert.equal(fs.readFileSync(path.join(dataRoot, 'notes', 'Other.md'), 'utf8'), '其他笔记原文');
     await workspace.screenshot({ path: path.join(output, 'table-workspace.png') });
     assert.deepEqual(errors, [], 'table fixture and workspace must not produce browser errors');
     console.log(JSON.stringify({ output, ime: true, undo: true, dataRows: true, selection: true, paste: true, isolatedSave: true }));

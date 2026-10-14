@@ -45,10 +45,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     source = source.replace('  async function beforeBrowse() {',
       '  async function beforeBrowse() { if (window.holdBrowse) await new Promise(resolve => { window.releaseBrowse = resolve; });');
     source = source.replace('  window.CanvasNoteWorkspace = {',
-      '  window.T = {state, runDocumentPrefetch, stopDocumentPrefetch, stopExternalSync, get prefetching(){return prefetchRunning;}, get editor(){return liveEditor;}, get browser(){return noteBrowser;}};\n  window.CanvasNoteWorkspace = {');
+      '  window.T = {state, refreshTree, runDocumentPrefetch, stopDocumentPrefetch, stopExternalSync, get prefetching(){return prefetchRunning;}, get editor(){return liveEditor;}, get browser(){return noteBrowser;}};\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
     await page.goto(url);
     await page.waitForFunction(() => window.T?.state.initialized && T.state.current?.path === 'A.md' && T.editor);
+    // The restored pinned note can open before the first directory scan registers folders.
+    let indexed = false;
+    for (let i = 0; i < 200; i++) { indexed = (await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready'; if (indexed) break; await pause(50); }
+    assert(indexed, 'fixture index is ready');
+    await page.evaluate(() => T.refreshTree(false));
     const toggle = page.locator('[data-note-action="toggle-browser"]');
     const scroller = page.locator('[data-role="note-sidebar-scroll"]');
     const disclosure = page.locator('[data-role="note-browser-disclosure"]');

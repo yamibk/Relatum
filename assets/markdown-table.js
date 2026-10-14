@@ -215,19 +215,22 @@
     return '---';
   }
 
+  function serializeRow(cells, width) {
+    const values = [];
+    const requested = Number(width);
+    const count = Number.isFinite(requested) && requested > 0 ? Math.max(1, Math.floor(requested)) : Math.max(1, cells.length);
+    for (let i = 0; i < count; i++) values.push(escapeCell(cells[i] || ''));
+    return '| ' + values.join(' | ') + ' |';
+  }
+
   function serialize(model) {
     const clean = normalizeModel(model, { ensureBodyRow: false });
     const width = clean.header.length;
-    function line(cells) {
-      const values = [];
-      for (let i = 0; i < width; i++) values.push(escapeCell(cells[i] || ''));
-      return '| ' + values.join(' | ') + ' |';
-    }
     const output = [
-      line(clean.header),
+      serializeRow(clean.header, width),
       '| ' + clean.align.map(separatorFor).join(' | ') + ' |',
     ];
-    clean.rows.forEach(function (row) { output.push(line(row)); });
+    clean.rows.forEach(function (row) { output.push(serializeRow(row, width)); });
     return output.join('\n');
   }
 
@@ -321,6 +324,7 @@
     parseLines: parseLines,
     parse: parse,
     serialize: serialize,
+    serializeRow: serializeRow,
     createDefault: createDefault,
     parseDelimited: parseDelimited,
     findTables: findTables,

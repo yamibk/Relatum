@@ -30,6 +30,31 @@
       };
     },
   }] };
+
+  // Only the live grid uses this leaf override. Its cell content has its own
+  // renderer/parser, so an additional inline tree for every hidden cell is
+  // wasted work. The source editor and notebook heading parser keep full GFM.
+  const projectedTableExtension = { parseBlock: [{ name: 'RelatumProjectedTable', before: 'Table',
+    leaf(cx, leaf) {
+      const table = window.MarkdownTable;
+      if (!table || cx.parentType().name !== 'Document' || leaf.content.length > MAX_RICH_LINE || !table.rowHasDelimiter(leaf.content)) return null;
+      return {
+        nextLine(context, line, block) {
+          const separator = line.text.slice(line.pos);
+          if (!table.isSeparatorLine(separator) || !table.parseLines([block.content, separator], 0, { ensureBodyRow: false }).ok) return false;
+          let end = context.lineStart + line.text.length;
+          let next = context.nextLine();
+          while (next && line.text.trim() && table.rowHasDelimiter(line.text)) {
+            end = context.lineStart + line.text.length;
+            next = context.nextLine();
+          }
+          context.addLeafElement(block, context.elt('Table', block.start, end));
+          return true;
+        },
+        finish() { return false; },
+      };
+    },
+  }] };
   const MERMAID_LANGS = new Set([
     'mermaid', 'flowchart', 'graph', 'flow', 'sequence', 'sequencediagram',
     'timeline', 'gantt', 'class', 'classdiagram', 'state', 'statediagram',
@@ -54,6 +79,7 @@
   const viewportScanEffect = StateEffect.define();
   const viewportParseRequestEffect = StateEffect.define();
   let nextBlockSpecId = 1;
+  let nextTableCellVersion = 1;
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, Number(value) || 0));
@@ -393,7 +419,10 @@
     return Object.assign({}, spec, {
       id: prior && prior.id || 'note-block-' + nextBlockSpecId++,
       source,
-      fingerprint: sourceFingerprint(source),
+      fingerprint: spec.kind === 'table' && prior?.source === source ? prior.fingerprint : sourceFingerprint(source),
+      ...(spec.kind === 'table' && window.MarkdownTable ? { tableModel: spec.tableModel
+        || (prior?.source === source ? prior.tableModel : null)
+        || window.MarkdownTable.parse(source, { ensureBodyRow: false }).model } : {}),
     });
   }
 
@@ -679,6 +708,51 @@
     const actualTo = rescanned.reduce((value, spec) => Math.max(value, spec.to), expanded.to);
     const kept = mapped.filter((spec) => spec.to < expanded.from || spec.from > actualTo);
     return kept.concat(rescanned).sort((a, b) => a.from - b.from || a.to - b.to);
+  }
+
+  function localTableCellUpdate(previous, transaction, coordinator) {
+    const type = window.RelatumNoteTableEditor?.cellUpdateEffect;
+    const effects = type ? transaction.effects.filter(effect => effect.is(type)) : [];
+    if (!transaction.docChanged || effects.length !== 1) return null;
+    const edit = effects[0].value;
+    if (!edit || typeof edit !== 'object') return null;
+    const old = previous.find(spec => spec.id === edit.id && spec.kind === 'table');
+    if (!old?.tableModel || edit.epoch !== coordinator.epoch || old.tableModel !== edit.baseModel
+        || old.from !== edit.from || old.to !== edit.to || old.source !== edit.source) return null;
+    const width = old.tableModel.header.length;
+    if (!Number.isInteger(edit.row) || edit.row < 0 || edit.row > old.tableModel.rows.length
+        || !Number.isInteger(edit.col) || edit.col < 0 || edit.col >= width || !Array.isArray(edit.cells) || edit.cells.length !== width) return null;
+    const baseCells = edit.row ? old.tableModel.rows[edit.row - 1] : old.tableModel.header;
+    if (edit.cells.some((value, col) => typeof value !== 'string' || col !== edit.col && value !== baseCells[col])
+        || transaction.startState.doc.sliceString(old.from, old.to) !== old.source) return null;
+    if (!transaction.newSelection.eq(transaction.startState.selection.map(transaction.changes))) return null;
+    const first = transaction.startState.doc.lineAt(old.from);
+    const line = transaction.startState.doc.line(first.number + (edit.row ? edit.row + 1 : 0));
+    if (line.from !== edit.lineFrom || line.to !== edit.lineTo || line.to > old.to
+        || window.MarkdownTable.serializeRow(edit.cells, width) !== edit.insert) return null;
+    let count = 0, valid = true;
+    transaction.changes.iterChanges((from, to, fromB, toB, inserted) => {
+      count++; if (from !== line.from || to !== line.to || inserted.sliceString(0) !== edit.insert) valid = false;
+    });
+    if (!valid || count !== 1) return null;
+    const from = transaction.changes.mapPos(old.from, -1), to = transaction.changes.mapPos(old.to, 1);
+    if (to - from > RICH_BLOCK_LIMIT || edit.insert.length > MAX_RICH_LINE) return null;
+    const rows = old.tableModel.rows.slice(), cells = window.MarkdownTable.splitRow(edit.insert, width);
+    if (edit.row) rows[edit.row - 1] = cells;
+    const tableModel = { header: edit.row ? old.tableModel.header : cells, rows, align: old.tableModel.align };
+    const source = transaction.state.doc.sliceString(from, to);
+    // Table equality also compares source/model identity. A local version avoids
+    // hashing the entire known table for every character and survives rescans.
+    const next = Object.assign({}, old, { from, to, source, tableModel, fingerprint: 'table-cell:' + nextTableCellVersion++,
+      cellDelta: { previous: old.tableModel, row: edit.row, col: edit.col } });
+    return { edit, specs: previous.map(spec => spec === old ? next : Object.assign({}, spec, {
+      from: transaction.changes.mapPos(spec.from, -1), to: transaction.changes.mapPos(spec.to, 1) })) };
+  }
+
+  function validatedLocalCellViewUpdate(update, field) {
+    const type = window.RelatumNoteTableEditor?.cellUpdateEffect;
+    return !!type && update.docChanged && update.transactions.every(transaction => !transaction.docChanged || transaction.effects.some(effect =>
+      effect.is(type) && transaction.state.field(field, false)?.localCellEdit === effect.value));
   }
 
   function refreshVisibleBlockSpecs(previous, state, ranges) {
@@ -2038,7 +2112,7 @@
 
   function blockWidget(spec, path, options, coordinator, selected) {
     if (spec.kind === 'canvas') return new CanvasBlockWidget(spec, path, options, coordinator, selected);
-    return spec.kind === 'table' && options.tableController && window.MarkdownTable.parse(spec.source).ok
+    return spec.kind === 'table' && options.tableController && spec.tableModel
       ? options.tableController.widget(spec, path, coordinator)
       : new RichBlockWidget(spec, path, options, coordinator, selected);
   }
@@ -2158,7 +2232,8 @@
             atomic: transaction.docChanged ? value.atomic.map(transaction.changes) : value.atomic,
           });
         }
-        let specs = updateBlockSpecs(value.specs, transaction);
+        const localCell = localTableCellUpdate(value.specs, transaction, coordinator);
+        let specs = localCell ? localCell.specs : updateBlockSpecs(value.specs, transaction);
         let viewportRefreshed = false;
         let inputReconcileRanges;
         transaction.effects.forEach((effect) => {
@@ -2194,7 +2269,8 @@
         if (byId !== value.byId) {
           value.byId.forEach((old, id) => {
             const current = byId.get(id);
-            if (!current || old.from !== current.from || old.to !== current.to || old.fingerprint !== current.fingerprint) refresh.add(id);
+            if (!current || old.from !== current.from || old.to !== current.to || old.fingerprint !== current.fingerprint
+                || current.kind === 'table' && old.tableModel !== current.tableModel) refresh.add(id);
           });
           byId.forEach((current, id) => { if (!value.byId.has(id)) refresh.add(id); });
         }
@@ -2238,7 +2314,7 @@
             add: projected.map(spec => blockAtomicRange(spec, transaction.state)).concat(hidden.filter(range => !range.value.spec.colorHeader)), sort: true,
           });
         }
-        return { specs, byId, activeIds, selectedImageIds, focused, decorations, atomic };
+        return { specs, byId, activeIds, selectedImageIds, focused, decorations, atomic, localCellEdit: localCell?.edit };
       },
       provide: (field) => [
         EditorView.decorations.from(field, (value) => value.decorations),
@@ -2728,6 +2804,13 @@
           return;
         }
         const lifecycleChanged = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(inputReconcileEffect) || effect.is(focusEffect) || effect.is(notePathEffect) || effect.is(viewportScanEffect) || effect.is(viewportParseRequestEffect) || effect.is(calloutFoldEffect)));
+        if (validatedLocalCellViewUpdate(update, blockField) && !this.compositionPending && !update.viewportMoved && !update.focusChanged && !lifecycleChanged) {
+          // The validated cell update keeps the table's shape and source block
+          // boundaries. Inline decorations outside it only need position maps.
+          this.decorations = this.decorations.map(update.changes);
+          this.atomic = this.atomic.map(update.changes);
+          return;
+        }
         const syntaxChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
         if (this.compositionPending || update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || lifecycleChanged || syntaxChanged) {
           this.compositionPending = false;
@@ -2745,7 +2828,7 @@
     return plugin;
   }
 
-  function createViewportParsePlugin() {
+  function createViewportParsePlugin(blockField) {
     return ViewPlugin.fromClass(class {
       constructor(view) {
         this.view = view;
@@ -2764,7 +2847,8 @@
       }
       update(update) {
         const explicitlyRequested = update.transactions.some((transaction) => transaction.effects.some((effect) => effect.is(viewportParseRequestEffect)));
-        if (update.docChanged || update.viewportChanged || explicitlyRequested) this.schedule();
+        const localEdit = blockField && validatedLocalCellViewUpdate(update, blockField);
+        if (update.docChanged && !localEdit || (localEdit ? update.viewportMoved : update.viewportChanged) || explicitlyRequested) this.schedule();
       }
       schedule() {
         if (this.stopped) return;
@@ -2822,16 +2906,266 @@
     });
   }
 
-  function wrapSelection(view, before, after, placeholderText) {
-    const transaction = view.state.changeByRange((range) => {
-      const selected = view.state.doc.sliceString(range.from, range.to);
-      const body = selected || placeholderText || '';
-      return {
-        changes: { from: range.from, to: range.to, insert: before + body + after },
-        range: EditorSelection.range(range.from + before.length, range.from + before.length + body.length),
-      };
+  const INLINE_FORMATS = Object.freeze({
+    bold: { node: 'StrongEmphasis', mark: '**' },
+    italic: { node: 'Emphasis', mark: '*' },
+    strike: { node: 'Strikethrough', mark: '~~' },
+    highlight: { node: '', mark: '==' },
+    'inline-code': { node: 'InlineCode', mark: '`' },
+  });
+  const formatInputOwners = new WeakMap();
+
+  function inlineFormatSpans(state, from, to) {
+    const spans = [];
+    syntaxTree(state).iterate({ from: Math.max(0, from - 1), to: Math.min(state.doc.length, to + 1), enter(ref) {
+      const kind = Object.keys(INLINE_FORMATS).find(key => INLINE_FORMATS[key].node === ref.name);
+      const node = ref.node, first = node.firstChild, last = node.lastChild;
+      if (ref.name === 'Link') {
+        const marks = node.getChildren('LinkMark');
+        if (marks.length >= 2) spans.push({ kind: 'link', from: node.from, to: node.to, bodyFrom: marks[0].to, bodyTo: marks[1].from,
+          prefix: state.doc.sliceString(node.from, marks[0].to), suffix: state.doc.sliceString(marks[1].from, node.to) });
+      }
+      if (!kind) return;
+      if (!first || !last || first === last) return;
+      const rawBody = state.doc.sliceString(first.to, last.from);
+      const codePad = kind === 'inline-code' && /^ .* $/s.test(rawBody) && rawBody.trim() ? 1 : 0;
+      spans.push({ kind, from: node.from, to: node.to, bodyFrom: first.to + codePad, bodyTo: last.from - codePad,
+        mark: state.doc.sliceString(first.from, first.to) });
+      if (kind === 'inline-code') return false;
+    } });
+    const first = state.doc.lineAt(from), last = state.doc.lineAt(to);
+    for (let number = first.number; number <= last.number; number++) {
+      const line = state.doc.line(number), pattern = /==([^=\n]+)==/g; let match;
+      while ((match = pattern.exec(line.text))) {
+        const start = line.from + match.index, end = start + match[0].length;
+        if (escapedAt(line.text, match.index) || insideRange(lineProtectedRanges(state, start, end), start, end)) continue;
+        spans.push({ kind: 'highlight', from: start, to: end, bodyFrom: start + 2, bodyTo: end - 2, mark: '==' });
+      }
+    }
+    return spans.sort((a, b) => a.from - b.from || b.to - a.to);
+  }
+
+  function formatFragment(state, from, to, spans, omit) {
+    if (to <= from) return '';
+    let result = '', position = from;
+    for (let index = 0; index < spans.length; index++) {
+      const span = spans[index];
+      if (span.to <= position || span.from >= to) continue;
+      result += state.doc.sliceString(position, Math.min(to, Math.max(position, span.from)));
+      const children = [];
+      while (index + 1 < spans.length && spans[index + 1].from >= span.from && spans[index + 1].to <= span.to) children.push(spans[++index]);
+      const body = formatFragment(state, Math.max(from, span.bodyFrom), Math.min(to, span.bodyTo), children, omit);
+      result += !body || span.kind === omit ? body : span.kind === 'link' ? span.prefix + body + span.suffix
+        : wrapFormatFragment(body, span.kind === 'inline-code' ? span.mark : INLINE_FORMATS[span.kind].mark, span.kind === 'inline-code');
+      position = Math.min(to, span.to);
+    }
+    return result + state.doc.sliceString(position, to);
+  }
+
+  function wrapFormatFragment(value, mark, code) {
+    if (!value) return '';
+    if (code) {
+      const runs = value.match(/`+/g) || [];
+      mark = '`'.repeat(Math.max(mark.length, ...runs.map(run => run.length + 1)));
+      const pad = /^`|`$/.test(value) || /^ .* $/.test(value) && value.trim() ? ' ' : '';
+      return mark + pad + value + pad + mark;
+    }
+    const parts = /^(\s*)([\s\S]*?)(\s*)$/.exec(value);
+    return parts[1] + (parts[2] ? mark + parts[2] + mark : '') + parts[3];
+  }
+
+  function insertedFormatSelection(value, kind) {
+    if (kind === 'highlight') return [value.indexOf('==') + 2, value.lastIndexOf('==')];
+    let result;
+    markdownLanguage.parser.parse(value).iterate({ enter(ref) {
+      if (result || ref.name !== INLINE_FORMATS[kind].node) return;
+      const node = ref.node;
+      const body = value.slice(node.firstChild.to, node.lastChild.from);
+      const pad = kind === 'inline-code' && /^ .* $/s.test(body) && body.trim() ? 1 : 0;
+      result = [node.firstChild.to + pad, node.lastChild.from - pad];
+      return false;
+    } });
+    // Unfinished Markdown and multi-paragraph selections still retain source
+    // editing; only a successfully parsed wrapper can redefine the selection.
+    if (result) return result;
+    const mark = INLINE_FORMATS[kind].mark, from = value.indexOf(mark) + mark.length;
+    return [from, Math.max(from, value.lastIndexOf(mark))];
+  }
+
+  // Shared by CodeMirror and the native table textarea. All positions are source
+  // positions; formatting only changes the selected text's requested layer.
+  function inlineFormatEdit(state, range, kind, ownedEmpty = false) {
+    const format = INLINE_FORMATS[kind];
+    if (!format || !ownedEmpty && !inlineFormatAllowed(state, range, kind)) return null;
+    const from = range.from, to = range.to, mark = format.mark;
+    const spans = inlineFormatSpans(state, from, to);
+    const container = spans.filter(span => span.kind === kind && (span.bodyFrom <= from && span.bodyTo >= to
+      || span.from === from && span.to === to)).sort((a, b) => a.to - a.from - (b.to - b.from))[0];
+    if (range.empty) {
+      if (state.doc.sliceString(Math.max(0, from - mark.length), from) === mark && state.doc.sliceString(from, from + mark.length) === mark) {
+        return { changes: { from: from - mark.length, to: from + mark.length, insert: '' }, anchor: from - mark.length, head: from - mark.length };
+      }
+      if (container) return { changes: [], anchor: container.to, head: container.to };
+      return { changes: { from, insert: mark + mark }, anchor: from + mark.length, head: from + mark.length };
+    }
+    let start = from, end = to;
+    const affected = spans.filter(span => span.kind === kind && span.from < to && span.to > from);
+    affected.forEach(span => { start = Math.min(start, span.from); end = Math.max(end, span.to); });
+    const scoped = spans.filter(span => span.from >= start && span.to <= end);
+    const selectedFrom = container ? Math.max(from, container.bodyFrom) : from;
+    const selectedTo = container ? Math.min(to, container.bodyTo) : to;
+    const left = formatFragment(state, start, selectedFrom, scoped);
+    const body = formatFragment(state, selectedFrom, selectedTo, scoped, kind);
+    const right = formatFragment(state, selectedTo, end, scoped);
+    const middle = container ? body : wrapFormatFragment(body, mark, kind === 'inline-code');
+    const offsets = container ? [0, body.length] : insertedFormatSelection(middle, kind);
+    const a = start + left.length + offsets[0], b = start + left.length + offsets[1];
+    return { changes: { from: start, to: end, insert: left + middle + right }, anchor: range.anchor <= range.head ? a : b, head: range.anchor <= range.head ? b : a };
+  }
+
+  function inlineFormatAllowed(state, range, kind) {
+    const metadata = documentFrontmatter(state.doc);
+    if (metadata && range.from < metadata.to && range.to >= metadata.from) return false;
+    let allowed = true;
+    syntaxTree(state).iterate({ from: range.from, to: range.to, enter(node) {
+      if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|CommentBlock|Table)$/.test(node.name)
+          || node.name === 'InlineCode' && kind !== 'inline-code' && !(range.from <= node.from && range.to >= node.to)
+          || node.name === 'URL' && node.node.parent?.name === 'Link' && node.from <= range.from && node.to >= range.to) { allowed = false; return false; }
+    } });
+    return allowed;
+  }
+
+  function multipleInlineFormatEdits(state, kind) {
+    const plans = state.selection.ranges.map((range, index) => ({ range, index, edit: inlineFormatEdit(state, range, kind) }));
+    if (plans.some(plan => !plan.edit)) return null;
+    const groups = [], selections = new Array(plans.length), changes = [];
+    for (const plan of plans.filter(plan => !Array.isArray(plan.edit.changes)).sort((a, b) => a.edit.changes.from - b.edit.changes.from)) {
+      const change = plan.edit.changes, end = change.to ?? change.from, previous = groups.at(-1);
+      if (previous && change.from < previous.to) { previous.to = Math.max(previous.to, end); previous.plans.push(plan); }
+      else groups.push({ from: change.from, to: end, plans: [plan] });
+    }
+    let offset = 0;
+    for (const group of groups) {
+      let insert;
+      if (group.plans.length === 1) {
+        const plan = group.plans[0]; insert = plan.edit.changes.insert;
+        selections[plan.index] = EditorSelection.range(plan.edit.anchor + offset, plan.edit.head + offset);
+      } else {
+        if (group.plans.some(plan => plan.range.empty)) return null;
+        const spans = inlineFormatSpans(state, group.from, group.to).filter(span => span.from >= group.from && span.to <= group.to);
+        insert = ''; let position = group.from;
+        for (const plan of group.plans.sort((a, b) => a.range.from - b.range.from)) {
+          const range = plan.range, container = spans.find(span => span.kind === kind && span.bodyFrom <= range.from && span.bodyTo >= range.to);
+          const from = container ? Math.max(range.from, container.bodyFrom) : range.from;
+          const to = container ? Math.min(range.to, container.bodyTo) : range.to;
+          insert += formatFragment(state, position, from, spans);
+          const body = formatFragment(state, from, to, spans, kind);
+          const middle = container ? body : wrapFormatFragment(body, INLINE_FORMATS[kind].mark, kind === 'inline-code');
+          const offsets = container ? [0, body.length] : insertedFormatSelection(middle, kind);
+          const a = group.from + offset + insert.length + offsets[0], b = group.from + offset + insert.length + offsets[1];
+          selections[plan.index] = EditorSelection.range(range.anchor <= range.head ? a : b, range.anchor <= range.head ? b : a);
+          insert += middle; position = to;
+        }
+        insert += formatFragment(state, position, group.to, spans);
+      }
+      changes.push({ from: group.from, to: group.to, insert }); offset += insert.length - (group.to - group.from);
+    }
+    const set = state.changes(changes);
+    plans.forEach(plan => { if (!selections[plan.index]) selections[plan.index] = EditorSelection.range(set.mapPos(plan.edit.anchor), set.mapPos(plan.edit.head)); });
+    return { changes: set, selection: EditorSelection.create(selections, state.selection.mainIndex) };
+  }
+
+  function toggleInlineFormat(view, kind) {
+    if (compositionActive(view) || view.state.readOnly) return true;
+    const owner = formatInputOwners.get(view), main = view.state.selection.main;
+    const ownedEmpty = owner?.doc === view.state.doc && owner.kind === kind && main.empty && main.head === owner.position;
+    if (!ownedEmpty && view.state.selection.ranges.some(range => !inlineFormatAllowed(view.state, range, kind))) return true;
+    if (view.state.selection.ranges.length > 1) {
+      const transaction = multipleInlineFormatEdits(view.state, kind);
+      if (transaction) view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-format', scrollIntoView: true }));
+      return true;
+    }
+    const transaction = view.state.changeByRange(range => {
+      const edit = inlineFormatEdit(view.state, range, kind, ownedEmpty);
+      return { changes: edit.changes, range: EditorSelection.range(edit.anchor, edit.head) };
     });
-    view.dispatch(Object.assign({}, transaction, { userEvent: 'input' }));
+    view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-format', scrollIntoView: true }));
+    if (main.empty && !ownedEmpty && !transaction.changes.empty && view.state.doc.sliceString(main.head, main.head + INLINE_FORMATS[kind].mark.length * 2) === INLINE_FORMATS[kind].mark.repeat(2)) {
+      formatInputOwners.set(view, { doc: view.state.doc, kind, position: view.state.selection.main.head });
+    }
+    return true;
+  }
+
+  function quotePrefix(line) { return /^(?:[ \t]{0,3}>[ \t]?)+/.exec(line)?.[0] || ''; }
+  function whitespaceColumns(text) { let column = 0; for (const char of text) column += char === '\t' ? 4 - column % 4 : 1; return column; }
+  function listItemAt(state, position) {
+    let node = syntaxTree(state).resolveInner(position, -1);
+    while (node && node.name !== 'ListItem') node = node.parent;
+    return node;
+  }
+  function listMarkColumn(state, item, content) {
+    const mark = item?.getChild('ListMark'); if (!mark) return 0;
+    const line = state.doc.lineAt(mark.from), prefix = quotePrefix(line.text);
+    const gap = content ? /^[ \t]+/.exec(state.doc.sliceString(mark.to, line.to))?.[0] || ' ' : '';
+    return whitespaceColumns(state.doc.sliceString(line.from + prefix.length, content ? mark.to : mark.from) + gap);
+  }
+  function shiftListLines(view, item, delta) {
+    const doc = view.state.doc, changes = [];
+    const first = doc.lineAt(item.from).number, last = doc.lineAt(Math.max(item.from, item.to - 1)).number;
+    for (let number = first; number <= last; number++) {
+      const line = doc.line(number), prefix = quotePrefix(line.text), indent = /^[ \t]*/.exec(line.text.slice(prefix.length))[0];
+      if (!line.text.slice(prefix.length).trim()) continue;
+      changes.push({ from: line.from + prefix.length, to: line.from + prefix.length + indent.length,
+        insert: ' '.repeat(Math.max(0, whitespaceColumns(indent) + delta)) });
+    }
+    const set = view.state.changes(changes);
+    view.dispatch({ changes: set, selection: view.state.selection.map(set), userEvent: 'input.note-list', scrollIntoView: true });
+    return true;
+  }
+  function structuralInputAt(state, position) {
+    let node = syntaxTree(state).resolveInner(position, -1);
+    while (node) { if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|Table)$/.test(node.name)) return true; node = node.parent; }
+    const metadata = documentFrontmatter(state.doc);
+    if (metadata && position >= metadata.from && position <= metadata.to) return true;
+    const line = state.doc.lineAt(position);
+    return scanBlockSpecs(state, line.from, line.to, []).some(spec => spec.from <= position && spec.to >= position && /^(?:math|mermaid|derive|canvas|image|table)$/.test(spec.kind));
+  }
+  function noteTab(view, backward) {
+    if (compositionActive(view) || view.state.readOnly) return true;
+    if (view.state.selection.ranges.some(range => !range.empty)) return (backward ? indentWithTab.shift : indentWithTab.run)(view);
+    const range = view.state.selection.main;
+    if (view.state.selection.ranges.length === 1) {
+      if (structuralInputAt(view.state, range.head)) return (backward ? indentWithTab.shift : indentWithTab.run)(view);
+      const item = listItemAt(view.state, range.head);
+      if (item) {
+        if (backward) {
+          const parent = item.parent?.parent;
+          return parent?.name === 'ListItem' ? shiftListLines(view, item, listMarkColumn(view.state, parent, false) - listMarkColumn(view.state, item, false)) : true;
+        }
+        let previous = item.prevSibling; while (previous && previous.name !== 'ListItem') previous = previous.prevSibling;
+        return previous ? shiftListLines(view, item, listMarkColumn(view.state, previous, true) - listMarkColumn(view.state, item, false)) : true;
+      }
+    }
+    if (backward && view.state.selection.ranges.some(range => view.state.doc.sliceString(Math.max(0, range.head - 1), range.head) !== '\t')) return indentWithTab.shift(view);
+    const transaction = view.state.changeByRange(range => ({ changes: { from: range.head - (backward ? 1 : 0), to: range.head, insert: backward ? '' : '\t' },
+      range: EditorSelection.cursor(range.head + (backward ? -1 : 1)) }));
+    view.dispatch(Object.assign({}, transaction, { userEvent: 'input.note-tab', scrollIntoView: true }));
+    return true;
+  }
+
+  function exitEmptyListMarkup(view) {
+    if (compositionActive(view) || view.state.selection.ranges.length !== 1) return false;
+    const range = view.state.selection.main; if (!range.empty) return false;
+    const doc = view.state.doc, line = doc.lineAt(range.head), prefix = quotePrefix(line.text);
+    if (!/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?$/.test(line.text.slice(prefix.length)) || structuralInputAt(view.state, range.head)) return false;
+    const item = listItemAt(view.state, range.head), parent = item?.parent?.parent;
+    const listMark = item?.getChild('ListMark');
+    if (!listMark || doc.lineAt(listMark.from).number !== line.number) return false;
+    if (parent?.name === 'ListItem') return shiftListLines(view, item, listMarkColumn(view.state, parent, false) - listMarkColumn(view.state, item, false));
+    const previous = line.number > 1 ? doc.line(line.number - 1).text : '';
+    const needsGap = previous.slice(quotePrefix(previous).length).trim();
+    const insert = needsGap ? prefix + '\n' + prefix : prefix;
+    view.dispatch({ changes: { from: line.from, to: line.to, insert }, selection: EditorSelection.cursor(line.from + insert.length), userEvent: 'input.note-list', scrollIntoView: true });
     return true;
   }
 
@@ -3428,8 +3762,9 @@
         if (update.docChanged || update.viewportChanged || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(calloutFoldEffect) || effect.is(inputReconcileEffect)))) this.decorations = this.build(update.view);
       }
     }, { decorations: value => value.decorations });
-    const viewportParsePlugin = createViewportParsePlugin();
+    const viewportParsePlugin = createViewportParsePlugin(blockField);
     const livePreviewCompartment = new Compartment();
+    const markdownCompartment = new Compartment();
     const editorLabelCompartment = new Compartment();
     const shortcutCompartment = new Compartment();
     const shortcutRegistry = window.RelatumNoteShortcuts || null;
@@ -3552,11 +3887,11 @@
 
     const shortcutRuns = {
       save() { safeOptions.onSaveRequest(); return true; },
-      bold(view) { return wrapSelection(view, '**', '**', '粗体'); },
-      italic(view) { return wrapSelection(view, '*', '*', '斜体'); },
-      strike(view) { return wrapSelection(view, '~~', '~~', '删除线'); },
-      highlight(view) { return wrapSelection(view, '==', '==', '高光'); },
-      'inline-code'(view) { return wrapSelection(view, '`', '`', '代码'); },
+      bold(view) { return toggleInlineFormat(view, 'bold'); },
+      italic(view) { return toggleInlineFormat(view, 'italic'); },
+      strike(view) { return toggleInlineFormat(view, 'strike'); },
+      highlight(view) { return toggleInlineFormat(view, 'highlight'); },
+      'inline-code'(view) { return toggleInlineFormat(view, 'inline-code'); },
       'code-block': wrapCodeBlock,
       link(view) {
         const range = view.state.selection.main;
@@ -3601,6 +3936,18 @@
       return keys;
     }
 
+    safeOptions.onTableShortcut = (event, surface) => {
+      const binding = shortcutRegistry ? shortcutRegistry.bindingFromEvent(event) :
+        [(event.ctrlKey || event.metaKey) && 'Mod', event.altKey && 'Alt', event.shiftKey && 'Shift', event.key.length === 1 ? event.key.toLowerCase() : event.key].filter(Boolean).join('-');
+      const kind = Object.keys(INLINE_FORMATS).find(name => (currentShortcutBindings[name] || []).includes(binding));
+      if (!kind) return inactiveDefaultShortcutBindings().includes(binding);
+      surface.format(kind, (value, anchor, head, ownedEmpty) => {
+        const state = EditorState.create({ doc: value, extensions: [markdown({ base: markdownLanguage })] });
+        return inlineFormatEdit(state, EditorSelection.range(anchor, head), kind, ownedEmpty);
+      });
+      return true;
+    };
+
     function notifyDocChanged(view, includeValue) {
       const main = view.state.selection.main;
       const meta = {
@@ -3618,7 +3965,7 @@
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
-        markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [], extensions: [plainParagraphExtension] }),
+        markdownCompartment.of(markdownExtensions()),
         relatumCodeHighlighting || [],
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(imageTextInputHandlers),
@@ -3644,7 +3991,10 @@
           { key: 'Shift-ArrowUp', run: () => imageTextKeyCommand('move', { dx: 0, dy: -10 }) },
           { key: 'Shift-ArrowDown', run: () => imageTextKeyCommand('move', { dx: 0, dy: 10 }) },
         ])),
-        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyQuoteMarkup }])),
+        Prec.highest(keymap.of([
+          { key: 'Tab', run: view => noteTab(view, false), shift: view => noteTab(view, true) },
+          { key: 'Enter', run: view => exitEmptyListMarkup(view) || exitEmptyQuoteMarkup(view) },
+        ])),
         shortcutCompartment.of(keymap.of(customKeyBindings())),
         keymap.of((Array.isArray(closeBracketsKeymap) ? closeBracketsKeymap : []).concat(
           markdownKeymap, defaultKeymap, historyKeymap, searchKeymap, [indentWithTab])),
@@ -3655,6 +4005,7 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged || update.selectionSet && update.state.selection.main.head !== formatInputOwners.get(update.view)?.position) formatInputOwners.delete(update.view);
           if (update.docChanged && coordinator.foldPositions.size) coordinator.foldPositions = new Map(Array.from(coordinator.foldPositions, ([position, collapsed]) => [update.changes.mapPos(position, 1), collapsed]));
           const blocks = update.state.field(blockField, false);
           if (blocks) coordinator.records = blocks.specs.filter(spec => spec.kind === 'callout');
@@ -3827,6 +4178,11 @@
       });
     }
 
+    function markdownExtensions() {
+      return markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [],
+        extensions: sourceMode || !tableController ? [plainParagraphExtension] : [plainParagraphExtension, projectedTableExtension] });
+    }
+
     function languagePlaceholder() {
       return document.documentElement.lang === 'en' ? 'Start writing Markdown…' : '开始书写 Markdown…';
     }
@@ -3844,6 +4200,7 @@
     syncImageSelectionClass(view);
 
     function setDocument(documentState) {
+      formatInputOwners.delete(view);
       if (inputPending()) {
         pendingDocumentState = Object.assign({}, documentState || {});
         if (!pendingDocumentWait) {
@@ -4018,6 +4375,7 @@
         selection: imageRange ? EditorSelection.range(imageRange.from, imageRange.to) : undefined,
         effects: [
         livePreviewCompartment.reconfigure(livePreviewExtensions()),
+        markdownCompartment.reconfigure(markdownExtensions()),
         editorLabelCompartment.reconfigure(editorLabelExtension()),
         ],
       });
@@ -4057,6 +4415,13 @@
     }
     function queryCommand(name, context) {
       if (!validCommandContext(context)) return { enabled: false, checked: false };
+      if (INLINE_FORMATS[name]) {
+        const owner = formatInputOwners.get(view), main = view.state.selection.main;
+        return { enabled: owner?.doc === view.state.doc && owner.kind === name && main.empty && main.head === owner.position
+          || view.state.selection.ranges.every(range => inlineFormatAllowed(view.state, range, name)), checked: view.state.selection.ranges.every(range =>
+          inlineFormatSpans(view.state, range.from, range.to).some(span => span.kind === name && (span.bodyFrom <= range.from && span.bodyTo >= range.to
+            || span.from === range.from && span.to === range.to))) };
+      }
       if (name === 'copy' || name === 'cut') return { enabled: view.state.selection.ranges.some((range) => !range.empty), checked: false };
       if (name === 'insert:canvas' && !canvasEnabled()) return { enabled: false, checked: false };
       if (name === 'insert:table' || name === 'insert:rule' || name === 'insert:canvas') {

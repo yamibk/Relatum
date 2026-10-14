@@ -83,6 +83,8 @@ assert.strictEqual(doc.slice(found[0].startOffset, found[0].endOffset), found[0]
 const tsv = table.parseDelimited('姓名\t分数\n甲\t95\n乙\t88');
 assert.deepStrictEqual(Array.from(tsv.header), ['姓名', '分数']);
 assert.deepStrictEqual(Array.from(tsv.rows[1]), ['乙', '88']);
+assert.strictEqual(table.serializeRow([' a|b ', 'line\r\ntext'], 3), '| a\\|b | line text |  |', 'row writes preserve the shared pipe/newline/empty-column rules');
+assert.strictEqual(table.serializeRow(['x'], Infinity), '| x |', 'invalid row widths cannot create an unbounded loop');
 
 const markdownWindow = {};
 const markdownSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'markdown.js'), 'utf8');

@@ -5,6 +5,7 @@
   const CM = window.RelatumCodeMirror;
   const syntax = window.MarkdownTable;
   if (!CM || !syntax) return;
+  const cellUpdateEffect = CM.StateEffect.define();
   const text = (zh, en) => document.documentElement.lang === 'en' ? en : zh;
   const matrix = (model) => [model.header, ...model.rows].map((row) => row.slice());
   const modelOf = (rows, align) => syntax.normalizeModel({ header: rows[0] || [''], rows: rows.slice(1), align }, { ensureBodyRow: false });
@@ -154,7 +155,7 @@
       this.controller = controller; this.epoch = coordinator.epoch;
     }
     eq(other) {
-      return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
+      return other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint && other.spec.source === this.spec.source
         && other.notePath === this.notePath && other.epoch === this.epoch;
     }
     toDOM(view) { return new TableSurface(this, view).wrap; }
@@ -172,7 +173,7 @@
   class TableSurface {
     constructor(widget, view) {
       this.widget = widget; this.view = view; this.controller = widget.controller;
-      this.model = syntax.parse(widget.spec.source, { ensureBodyRow: false }).model;
+      this.model = widget.spec.tableModel || syntax.parse(widget.spec.source, { ensureBodyRow: false }).model;
       this.selection = null; this.edit = null; this.phase = 'idle';
       this.paintedSelection = null;
       this.frame = 0; this.sequence = 0; this.waiters = []; this.disposed = false;
@@ -220,8 +221,25 @@
       return this.widget.coordinator.spec(this.view, this.widget.spec.id);
     }
     sync(widget) {
+      const oldSource = this.widget.spec.source;
       this.widget = widget;
-      const parsed = syntax.parse(widget.spec.source, { ensureBodyRow: false });
+      if (oldSource === widget.spec.source) return;
+      const delta = widget.spec.cellDelta;
+      if (delta && delta.previous === this.model && widget.spec.tableModel) {
+        this.model = widget.spec.tableModel;
+        if (this.edit?.row === delta.row && this.edit.col === delta.col && this.committing) {
+          if (!this.edit.contentDirty) {
+            const content = this.edit.cell.firstElementChild;
+            this.clearMath(content);
+            if (content.firstElementChild) content.firstElementChild.dataset.source = '';
+          }
+          this.edit.contentDirty = true;
+        } else this.renderCell(this.cell(delta.row, delta.col), delta.row, delta.col);
+        this.geometryCache = null; this.controller.measure();
+        return;
+      }
+      const parsed = widget.spec.tableModel ? { ok: true, model: widget.spec.tableModel }
+        : syntax.parse(widget.spec.source, { ensureBodyRow: false });
       if (!parsed.ok) return;
       this.model = parsed.model;
       this.render();
@@ -250,9 +268,15 @@
       }
       this.body.querySelectorAll('td[data-table-row]').forEach((cell) => {
         const r = Number(cell.dataset.tableRow), c = Number(cell.dataset.tableCol);
-        const value = rows[r][c] || '';
+        this.renderCell(cell, r, c);
+      });
+      this.geometryCache = null; this.paintSelection(); this.sizeEditor(); this.controller.measure();
+    }
+    renderCell(cell, r, c) {
+        if (!cell) return;
+        const value = (r ? this.model.rows[r - 1] : this.model.header)[c] || '';
         const content = cell.firstElementChild;
-        if (content.dataset.source !== value) {
+        if (content.dataset.source !== value || content.firstElementChild?.dataset.source !== value) {
           this.clearMath(content);
           content.dataset.source = value;
           const result = this.controller.options.renderTableCell(value);
@@ -267,13 +291,13 @@
           content.replaceChildren(renderedContent);
           this.controller.options.prepareTableCell(this, renderedContent, result || {}, value);
         }
-        cell.style.textAlign = this.model.align[c] || 'left';
+        const align = this.model.align[c] || 'left';
+        if (cell.style.textAlign !== align) cell.style.textAlign = align;
         if (this.edit && this.edit.row === r && this.edit.col === c && !this.pending()
             && !this.committing && this.edit.input.value !== value) this.edit.input.value = value;
-      });
-      this.geometryCache = null; this.paintSelection(); this.sizeEditor(); this.controller.measure();
+        if (this.edit?.row === r && this.edit.col === c) this.edit.contentDirty = false;
     }
-    cell(row, col) { return this.body.querySelector('td[data-table-row="' + row + '"][data-table-col="' + col + '"]'); }
+    cell(row, col) { return this.body.children[row]?.children[col] || null; }
     bounds() {
       const s = this.selection;
       return s ? { r0: Math.min(s.r0, s.r1), r1: Math.max(s.r0, s.r1), c0: Math.min(s.c0, s.c1), c1: Math.max(s.c0, s.c1) } : null;
@@ -651,12 +675,12 @@
       const input = document.createElement('textarea');
       input.className = 'note-table-cell-editor'; input.rows = 1; input.spellcheck = false;
       input.setAttribute('aria-label', text('第 ' + (row + 1) + ' 行，第 ' + (col + 1) + ' 列', 'Row ' + (row + 1) + ', column ' + (col + 1)));
-      input.value = matrix(this.model)[row][col];
+      input.value = (row ? this.model.rows[row - 1] : this.model.header)[col];
       const measurer = document.createElement('div'); measurer.setAttribute('aria-hidden', 'true');
       measurer.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere';
       document.body.appendChild(measurer);
       this.edit = { row, col, input, cell, measurer }; cell.classList.add('is-table-editing'); cell.appendChild(input);
-      input.addEventListener('input', () => { this.sizeEditor(); if (!this.pending()) this.commit(); });
+      input.addEventListener('input', () => { this.edit.emptyFormat = null; if (!this.pending()) this.commit(); this.sizeEditor(); });
       input.addEventListener('beforeinput', (event) => {
         if (event.inputType !== 'historyUndo' && event.inputType !== 'historyRedo' || this.pending()) return;
         event.preventDefault(); this.history(event.inputType === 'historyRedo');
@@ -674,14 +698,19 @@
     sizeEditor() {
       if (!this.edit) return;
       const { input, cell, measurer } = this.edit, style = getComputedStyle(input);
-      for (const key of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textAlign', 'tabSize', 'padding']) measurer.style[key] = style[key];
-      measurer.style.width = input.getBoundingClientRect().width + 'px';
-      measurer.textContent = input.value + '\u200b';
+      const previous = this.edit.measureStyles || (this.edit.measureStyles = {});
+      for (const key of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textAlign', 'tabSize', 'padding']) {
+        if (previous[key] !== style[key]) { previous[key] = style[key]; measurer.style[key] = style[key]; }
+      }
+      const width = input.getBoundingClientRect().width + 'px';
+      if (measurer.style.width !== width) measurer.style.width = width;
+      const content = input.value + '\u200b';
+      if (measurer.textContent !== content) measurer.textContent = content;
       // Never collapse the browser's native input, even briefly. WebView2 can
       // cache the previous host's IME caret bounds during that zero-height box.
       const height = Math.max(parseFloat(style.minHeight) || 38, Math.ceil(measurer.getBoundingClientRect().height)) + 'px';
       if (input.style.height !== height) input.style.height = height;
-      cell.style.minHeight = height;
+      if (cell.style.minHeight !== height) cell.style.minHeight = height;
       this.geometryCache = null;
     }
     cancelFrame() { this.sequence++; if (this.frame) cancelAnimationFrame(this.frame); this.frame = 0; }
@@ -696,18 +725,46 @@
         });
       });
     }
-    commit(composed) {
+    commit(composed, userEvent) {
       if (!this.edit || this.pending()) return;
       const current = this.current(); if (!current) return;
-      const rows = matrix(this.model), { row, col, input } = this.edit;
-      if (!rows[row]) return;
+      const { row, col, input } = this.edit;
+      const cells = row ? this.model.rows[row - 1] : this.model.header;
+      if (!cells) return;
       // A Markdown table row cannot contain a physical newline.
       const value = input.value.replace(/\r?\n/g, ' ');
-      if (rows[row][col] === value) return;
-      rows[row][col] = value;
+      if (cells[col] === value) return;
+      const next = cells.slice(); next[col] = value;
+      const first = this.view.state.doc.lineAt(current.from);
+      const line = this.view.state.doc.line(first.number + (row ? row + 1 : 0));
+      const insert = syntax.serializeRow(next, this.model.header.length);
+      if (line.text === insert) return;
+      const changes = this.view.state.changes({ from: line.from, to: line.to, insert });
+      const update = { id: current.id, epoch: this.widget.epoch, from: current.from, to: current.to, source: current.source,
+        baseModel: this.model, row, col, cells: next, lineFrom: line.from, lineTo: line.to, insert };
       this.committing = true;
-      try { this.write(modelOf(rows, this.model.align), composed ? 'input.table-compose' : 'input.table-cell'); }
+      try {
+        this.controller.mapBodyPosition(changes);
+        this.view.dispatch({ changes, selection: this.view.state.selection.map(changes), effects: cellUpdateEffect.of(update),
+          userEvent: userEvent || (composed ? 'input.table-compose' : 'input.table-cell') });
+      }
       finally { this.committing = false; }
+    }
+    format(kind, transform) {
+      if (!this.edit || this.pending() || !this.current()) return false;
+      const { input } = this.edit;
+      const anchor = input.selectionDirection === 'backward' ? input.selectionEnd : input.selectionStart;
+      const head = input.selectionDirection === 'backward' ? input.selectionStart : input.selectionEnd;
+      const owner = this.edit.emptyFormat;
+      const ownedEmpty = owner?.value === input.value && owner.kind === kind && anchor === head && head === owner.position;
+      const edit = transform(input.value, anchor, head, ownedEmpty); if (!edit) return true;
+      const change = edit.changes;
+      if (Array.isArray(change)) { input.setSelectionRange(edit.anchor, edit.head); return true; }
+      input.value = input.value.slice(0, change.from) + change.insert + input.value.slice(change.to == null ? change.from : change.to);
+      input.setSelectionRange(Math.min(edit.anchor, edit.head), Math.max(edit.anchor, edit.head), edit.anchor > edit.head ? 'backward' : 'forward');
+      this.edit.emptyFormat = anchor === head && !ownedEmpty ? { value: input.value, kind, position: edit.head } : null;
+      this.commit(false, 'input.table-format'); this.sizeEditor();
+      return true;
     }
     write(model, userEvent) {
       const current = this.current(); if (!current) return false;
@@ -723,6 +780,7 @@
       const edit = this.edit; this.edit = null;
       edit.cell.classList.remove('is-table-editing'); edit.cell.style.minHeight = '';
       edit.input.remove(); edit.measurer.remove(); this.view.requestMeasure();
+      if (edit.contentDirty && this.current() && this.shape === (this.model.rows.length + 1) + ':' + this.model.header.length) this.renderCell(edit.cell, edit.row, edit.col);
     }
     close() { if (this.pending()) return; this.commit(); this.removeEditor(); }
     insert(kind, index) {
@@ -755,6 +813,7 @@
       }
       if (event.isComposing || event.keyCode === 229 || this.pending()) return;
       const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      if (this.edit && event.target === this.edit.input && this.controller.options.onTableShortcut?.(event, this)) { event.preventDefault(); return; }
       if (mod && key === 's') { event.preventDefault(); this.controller.options.onSaveRequest(); return; }
       if (mod && (key === 'z' || key === 'y')) {
         event.preventDefault(); this.history(key === 'y' || event.shiftKey); return;
@@ -844,5 +903,5 @@
       if (math && typeof math.typesetClear === 'function') math.typesetClear([content]);
     }
   }
-  window.RelatumNoteTableEditor = { createController };
+  window.RelatumNoteTableEditor = { createController, cellUpdateEffect };
 })();

@@ -249,6 +249,13 @@ async function freePort() {
     await page.locator('#note-sort-menu [data-note-sort-mode="name-asc"]').click();
     async function settle() { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); await sleep(120); }
     async function open(name) { await page.evaluate(name => __noteViewTest.openNote(name, { reuseActiveTab: false }), name); await settle(); }
+    async function indexedForMove() {
+      assert(await page.evaluate(() => __noteViewTest.flushSave()));
+      assert((await fetch(url + '/api/notes-tree?reconcile=1')).ok);
+      let indexed = false;
+      for (let i = 0; i < 200; i++) { indexed = (await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready'; if (indexed) break; await sleep(50); }
+      assert(indexed, 'reference index is ready before moving files');
+    }
     async function position(anchor, head = anchor, scrollTop) {
       await page.evaluate(({anchor, head, scrollTop}) => {
         const view = __noteViewTest.editor.view;
@@ -413,14 +420,19 @@ async function freePort() {
     page = await prepare(context); await settle();
     await expectPosition(scrolled, 'fresh browser context with persisted state');
 
+    await indexedForMove();
     assert(await page.evaluate(() => __noteViewTest.movePath('A.md', 'Renamed.md', true)));
     await settle(); await page.reload();
     await page.waitForFunction(() => window.__noteViewTest?.state.current?.path === 'Renamed.md');
     await settle(); await expectPosition(scrolled, 'rename survives reload');
+    await indexedForMove();
     assert.equal(await page.evaluate(() => __noteViewTest.movePath('Renamed.md', 'B.md', true)), false);
+    assert.equal(await page.evaluate(() => __noteViewTest.state.lastMoveCode), 'exists', 'the prepared move tests a name collision');
     await settle(); await expectPosition(scrolled, 'failed rename');
     await open('folder/C.md'); await position(800); const folderView = await snapshot();
-    assert(await page.evaluate(() => __noteViewTest.movePath('folder', 'moved', true)));
+    await indexedForMove();
+    const folderMoved = await page.evaluate(() => __noteViewTest.movePath('folder', 'moved', true));
+    assert(folderMoved, await page.evaluate(() => JSON.stringify({ code: __noteViewTest.state.lastMoveCode, error: __noteViewTest.state.lastMoveError })));
     await open('B.md'); await open('moved/C.md');
     await expectPosition(folderView, 'folder move');
 

@@ -123,6 +123,7 @@
       el.style.overflowWrap=style.wrap?'anywhere':'normal';
       el.style.justifyContent={top:'flex-start',center:'safe center',bottom:'safe flex-end'}[style.verticalAlign];
     }
+    function svgAttribute(el, name, value) { if (el.getAttribute(name) !== value) el.setAttribute(name, value); }
     function layoutNode(el, node, measureText, preserveSize) {
       const style=S.values('node',node),content=el.querySelector('.note-canvas-content'),text=el.querySelector('.note-canvas-text');
       const existing=preserveSize&&rects.get(node.id);
@@ -155,15 +156,15 @@
       content.style.left=safe.x+style.paddingX+'px';content.style.top=safe.y+style.paddingY+'px';
       content.style.width=Math.max(1,safe.w-2*style.paddingX)+'px';content.style.height=Math.max(1,safe.h-2*style.paddingY)+'px';
       const svg=el.querySelector('.note-canvas-shape'),path=svg.querySelector('.note-canvas-fill');
-      svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
-      const d=S.outline(style.shape,w,h,style.radius);path.setAttribute('d',d);
+      svgAttribute(svg,'viewBox',`0 0 ${w} ${h}`);
+      const d=S.outline(style.shape,w,h,style.radius);svgAttribute(path,'d',d);
       path.style.fill=style.hideBackground?'none':style.bgColor||'var(--nc-fill)';path.style.fillOpacity=style.bgOpacity;
       path.style.stroke=style.borderColor||'var(--nc-border)';path.style.strokeWidth=style.borderWidth;
-      svg.querySelector('.note-canvas-selection-outline').setAttribute('d',d);
+      svgAttribute(svg.querySelector('.note-canvas-selection-outline'),'d',d);
       let cap=svg.querySelector('.note-canvas-cylinder-cap');
       if(style.shape==='cylinder') {
         if(!cap) {cap=document.createElementNS(SVG,'path');cap.classList.add('note-canvas-cylinder-cap');svg.appendChild(cap);}
-        const r=Math.min(h*.16,w*.18);cap.setAttribute('d',`M 0 ${r} A ${w/2} ${r} 0 0 0 ${w} ${r}`);
+        const r=Math.min(h*.16,w*.18);svgAttribute(cap,'d',`M 0 ${r} A ${w/2} ${r} 0 0 0 ${w} ${r}`);
         cap.style.stroke=style.borderColor||'var(--nc-border)';cap.style.strokeWidth=style.borderWidth;
       } else cap?.remove();
       return style;

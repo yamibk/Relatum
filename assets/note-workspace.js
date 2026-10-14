@@ -51,6 +51,7 @@
   const contextMenu = $('[data-role="note-context-menu"]', document);
   const toastEl = $('[data-role="note-toast"]', document);
   const modalHost = $('[data-role="note-modal-host"]', document);
+  let activeNoteModal = null;
   const errorBar = $('[data-role="note-error"]');
   const sideTitle = $('[data-role="note-side-title"]');
   const linksContent = $('[data-role="note-links-content"]');
@@ -3228,6 +3229,7 @@
   }
 
   function applyDocument(data, options) {
+    closeNoteModal();
     cancelLinksRefresh();
     closeContextMenu(); resetExternalSyncActivity(); cancelStatistics();
     state.imageTextCleanupPath = '';
@@ -3261,7 +3263,7 @@
     if (root.classList.contains('links-overlay-open') && state.sideMode === 'links') ensureLinks();
     scheduleStatistics(documentState); scheduleDocumentPrefetch();
   }
-  function clearCurrent(options) { cancelLinksRefresh(); clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; if (oldPath) window.RelatumNoteCanvas?.releaseNote(oldPath); state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
+  function clearCurrent(options) { closeNoteModal(); cancelLinksRefresh(); clearTimeout(state.saveTimer); const oldPath = state.current && state.current.path; if (oldPath) window.RelatumNoteCanvas?.releaseNote(oldPath); state.openSeq += 1; state.editGeneration += 1; state.openingPath = ''; setDocumentSwitchPending(false); state.current = null; if (oldPath && !(options && options.keepCache)) state.documentCache.delete(oldPath); if (oldPath && !(options && options.keepTabs)) state.tabs = state.tabs.filter((path) => path !== oldPath); if (!(options && options.keepActiveTab)) state.activeTab = ''; persistTabs(); setEditorDocument(null); renderCurrentPath(''); renderInlineTitle('', true); clearSaveError(); desktopDirty(false); try { localStorage.removeItem(ACTIVE_PATH_KEY); } catch (error) {} updateTreeSelection(); renderTabs(); renderLinks(); updateEditorVisibility(); }
   function hasPendingEdits(documentState) { const target = documentState || state.current; return !!target && target.persistedGeneration < target.editGeneration; }
   function scheduleSave(delay) { clearTimeout(state.saveTimer); state.saveTimer = setTimeout(() => flushSave(undefined, false, true), typeof delay === 'number' ? delay : SAVE_DELAY); }
   function markChanged(meta) {
@@ -3720,19 +3722,68 @@
     try { await post('/api/notes-canvas/reveal', { path: session.path }); }
     catch (error) { showToast(error.message || tr('revealFailed'), 'error'); }
   }
-  function canvasNameInput(name) {
+  function closeNoteModal() { activeNoteModal?.cancel(false); }
+  function promptNoteModal(title, cancelValue, content) {
+    if (!modalHost || !noteWorkspaceVisible()) return Promise.resolve(cancelValue);
+    closeNoteModal();
+    const previousFocus = document.activeElement, previousDocument = state.current, previousTab = state.activeTab;
     return new Promise(resolve => {
       const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay';
       const dialog = document.createElement('section'); dialog.className = 'note-modal-card';
       dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
-      const heading = document.createElement('h2'); heading.textContent = tr('rename');
+      const heading = document.createElement('h2'); heading.id = 'relatum-note-modal-title'; heading.textContent = title;
+      dialog.setAttribute('aria-labelledby', heading.id); dialog.append(heading);
+      let finished = false, frame = 0, initialFocus;
+      const valid = () => noteWorkspaceVisible() && state.current === previousDocument && state.activeTab === previousTab;
+      const finish = (value, restoreFocus = true) => {
+        if (finished) return;
+        finished = true; cancelAnimationFrame(frame);
+        document.removeEventListener('keydown', keydown, true);
+        document.removeEventListener('focusin', focusin, true);
+        if (activeNoteModal === session) activeNoteModal = null;
+        overlay.remove();
+        const current = valid();
+        if (restoreFocus && current && previousFocus?.isConnected && previousFocus.getClientRects().length) previousFocus.focus({ preventScroll: true });
+        resolve(current ? value : cancelValue);
+      };
+      const session = { cancel: restoreFocus => finish(cancelValue, restoreFocus) };
+      const focusin = event => {
+        if (activeNoteModal === session && noteWorkspaceVisible() && !dialog.contains(event.target)) initialFocus.focus({ preventScroll: true });
+      };
+      const keydown = event => {
+        if (activeNoteModal !== session) return;
+        if (!dialog.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); initialFocus.focus({ preventScroll: true }); return; }
+        if (event.isComposing || event.keyCode === 229) return;
+        if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); finish(cancelValue); }
+        else if (event.key === 'Tab') {
+          event.preventDefault(); event.stopImmediatePropagation();
+          if (event.ctrlKey || event.metaKey || event.altKey) return;
+          const fields = Array.from(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex="0"]')).filter(node => node.getClientRects().length);
+          const index = fields.indexOf(document.activeElement);
+          fields[(index + (event.shiftKey ? -1 : 1) + fields.length) % fields.length]?.focus();
+        } else if (event.key === 'F2' || (event.ctrlKey || event.metaKey) && !event.altKey
+            && (/^[ntws1-9]$/i.test(event.key) || event.shiftKey && event.key.toLowerCase() === 'f')) {
+          event.preventDefault(); event.stopImmediatePropagation();
+        }
+      };
+      initialFocus = content(dialog, finish);
+      overlay.append(dialog); modalHost.replaceChildren(overlay); activeNoteModal = session;
+      // Focus immediately: waiting for the entrance frame lets typing reach the note.
+      document.addEventListener('keydown', keydown, true);
+      document.addEventListener('focusin', focusin, true);
+      overlay.addEventListener('keydown', event => event.stopPropagation());
+      initialFocus.focus({ preventScroll: true });
+      if (initialFocus.tagName === 'INPUT') initialFocus.select();
+      frame = requestAnimationFrame(() => { if (activeNoteModal === session) overlay.classList.add('visible'); });
+    });
+  }
+  function canvasNameInput(name) {
+    return promptNoteModal(tr('rename'), null, (dialog, finish) => {
       const input = document.createElement('input'); input.className = 'note-tree-rename'; input.value = name.replace(/\.canvas$/i, ''); input.setAttribute('aria-label', tr('rename'));
       const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
-      const finish = value => { overlay.remove(); resolve(value); };
       actions.append(contextButton(tr('cancel'), () => finish(null)), contextButton(tr('rename'), () => { if (input.value.trim()) finish(input.value.trim()); }));
-      input.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') finish(null); else if (event.key === 'Enter' && !event.isComposing && input.value.trim()) finish(input.value.trim()); });
-      dialog.append(heading, input, actions); overlay.append(dialog); modalHost.replaceChildren(overlay);
-      requestAnimationFrame(() => { overlay.classList.add('visible'); input.focus(); input.select(); });
+      input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229 && !event.ctrlKey && !event.metaKey && !event.altKey && input.value.trim()) { event.preventDefault(); finish(input.value.trim()); } });
+      dialog.append(input, actions); return input;
     });
   }
   async function renameCanvas(adapter) {
@@ -3994,7 +4045,15 @@
     } catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
     finally { notebookCreateRunning = false; }
   }
-  function modalConfirm(title, copy) { if (!modalHost) return Promise.resolve(false); return new Promise((resolve) => { const overlay = document.createElement('div'); overlay.className = 'note-modal-overlay'; const dialog = document.createElement('section'); dialog.className = 'note-modal-card'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); const heading = document.createElement('h2'); heading.textContent = title; const paragraph = document.createElement('p'); paragraph.textContent = copy; const actions = document.createElement('footer'); actions.className = 'note-modal-actions'; const finish = (value) => { overlay.remove(); resolve(value); }; actions.append(contextButton(tr('cancel'), () => finish(false)), contextButton(tr('create'), () => finish(true))); dialog.append(heading, paragraph, actions); overlay.appendChild(dialog); modalHost.replaceChildren(overlay); requestAnimationFrame(() => overlay.classList.add('visible')); }); }
+  function modalConfirm(title, copy) {
+    return promptNoteModal(title, false, (dialog, finish) => {
+      const paragraph = document.createElement('p'); paragraph.textContent = copy;
+      const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
+      const cancel = contextButton(tr('cancel'), () => finish(false));
+      actions.append(cancel, contextButton(tr('create'), () => finish(true)));
+      dialog.append(paragraph, actions); return cancel;
+    });
+  }
   async function confirmCreateWiki(rawTarget) { const target = normalizedWikiTarget(rawTarget); if (!target || !(await modalConfirm(tr('unresolvedTitle'), tr('unresolvedCopy', { target })))) return; const parts = target.replace(/\\/g, '/').split('/').filter(Boolean); const name = parts.pop(); const hasPath = parts.length > 0; await createEntry('note', { parent: hasPath ? parts.join('/') : state.current ? parentPath(state.current.path) : '', name, createParents: hasPath }); }
 
   function renderGuide() {
@@ -4425,6 +4484,7 @@
     stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates();
     setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
+    closeNoteModal();
     state.active = false;
     indexActivity(false);
     cancelSideClose();
@@ -4441,7 +4501,7 @@
     if (!root.hidden && state.active && noteWorkspaceVisible()) {
       resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch();
     }
-    if (root.hidden) { noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
+    if (root.hidden) { closeNoteModal(); noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
     else if (state.active && graphPresentation) resumeNoteGraph();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
@@ -4785,7 +4845,7 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => indexActivity(false, true));
+  window.addEventListener('pagehide', () => { closeNoteModal(); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });

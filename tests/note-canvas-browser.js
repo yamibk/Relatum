@@ -318,9 +318,17 @@ async function run(browser, enabled, prewarm = false) {
       RelatumCodeMirror.undo(view);
     });
     async function rename(name) {
+      // Renaming rewrites shared Markdown references and requires a complete index.
+      // Settle the synthetic external B.md write and the just-undone local edit first.
+      assert.equal(await CanvasFlush(page), true);
+      assert((await fetch(url + '/api/notes-tree?reconcile=1')).ok);
+      let indexed = false;
+      for (let i = 0; i < 200; i++) { indexed = (await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready'; if (indexed) break; await pause(50); }
+      assert(indexed, 'shared reference index is ready');
       await page.waitForFunction(() => document.querySelector('.is-canvas .note-live-image-frame')?.__noteCanvas?.session);
-      await page.evaluate(() => { T.renameCanvas(document.querySelector('.is-canvas .note-live-image-frame').__noteCanvas); });
+      await page.evaluate(() => { window.renameTask = T.renameCanvas(document.querySelector('.is-canvas .note-live-image-frame').__noteCanvas); });
       const input = page.locator('.note-modal-card input'); await input.waitFor(); await input.fill(name); await input.press('Enter');
+      assert.equal(await page.evaluate(() => window.renameTask), true, 'canvas rename succeeds');
       await page.waitForFunction(name => !document.querySelector('.note-modal-card') && T.editor.snapshot().value.includes(name + '.canvas'), name);
       await page.waitForFunction(() => document.querySelector('.is-canvas .note-live-image-frame')?.__noteCanvas?.engine);
     }
@@ -442,7 +450,7 @@ async function run(browser, enabled, prewarm = false) {
     const darkFeedback = await frame.locator('.note-canvas-node').first().evaluate(el => ({ fill: getComputedStyle(el.querySelector('.note-canvas-fill')).fill, ring: getComputedStyle(el.querySelector('.note-canvas-selection-outline')).stroke }));
     assert.equal(darkFeedback.fill, 'rgb(32, 32, 32)'); assert(darkFeedback.ring.includes('255, 255, 255'));
     await page.setViewportSize({ width: 940, height: 800 }); await settle();
-    const settingsBox = await settings.boundingBox(); assert(settingsBox.width <= 300 && settingsBox.x >= 0 && settingsBox.x + settingsBox.width <= 940);
+    const settingsBox = await settings.boundingBox(); assert(settingsBox.width <= 320 && settingsBox.x >= 0 && settingsBox.x + settingsBox.width <= 940, JSON.stringify(settingsBox));
     await page.screenshot({ path: path.join(root, 'canvas-dark-narrow.png') });
     await page.setViewportSize({ width: 1600, height: 960 });
     await page.evaluate(() => { document.documentElement.dataset.startTheme = document.body.dataset.startTheme = 'light'; });

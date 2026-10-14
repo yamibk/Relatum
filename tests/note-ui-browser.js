@@ -26,7 +26,7 @@ async function run(browser, mode) {
     page.setDefaultTimeout(12000); page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => { if (request.url().includes('/api/note-query')) queries.push(request.postDataJSON()); });
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {',
-      '  window.T = {state, openNote, setViewMode, get browser(){return noteBrowser;}, get folders(){return browserFolders();}, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {')
+      '  window.T = {state, openNote, setViewMode, refreshTree, stopExternalSync, stopDocumentPrefetch, get browser(){return noteBrowser;}, get folders(){return browserFolders();}, get editor(){return liveEditor;}};\n  window.CanvasNoteWorkspace = {')
       .replace('getNotebooks: () => notebookRoots().map', 'getNotebooks: () => window.__fakeBooks || notebookRoots().map');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
     await page.addInitScript(() => {
@@ -36,7 +36,12 @@ async function run(browser, mode) {
       window.requestAnimationFrame = callback => { window.__frames++; return original(callback); };
     });
     await page.goto(url); await page.waitForFunction(() => window.T?.state.initialized && T.state.active && !T.state.openingPath);
-    for (let i = 0; i < 200; i++) { if ((await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready') break; await sleep(50); }
+    let indexed = false;
+    for (let i = 0; i < 200; i++) { indexed = (await (await fetch(url + '/api/note-index-state')).json()).phase === 'ready'; if (indexed) break; await sleep(50); }
+    assert(indexed, 'fixture index is ready');
+    // Commit the final directory snapshot before measuring explicit search requests.
+    // External polling has separate coverage; it may legitimately invalidate a query.
+    await page.evaluate(async () => { await T.refreshTree(false); T.stopExternalSync(); T.stopDocumentPrefetch(); });
     const query = page.locator('[data-note-search="query"]'), scope = page.locator('[data-note-search="scope"]'), sort = page.locator('[data-note-search="sort"]');
     const menu = page.locator('[data-role="note-context-menu"]'), after = page.locator('[data-note-search="after"]'), before = page.locator('[data-note-search="before"]');
     const calendarButton = page.locator('.note-search-date-toggle').first();

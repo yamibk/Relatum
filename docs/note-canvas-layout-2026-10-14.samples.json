@@ -1,0 +1,117 @@
+{
+  "baseline": "fafc085",
+  "browser": "155.0.4283.45",
+  "geometry": "12 shapes and updates identical",
+  "rows": [
+    {
+      "variant": "baseline",
+      "round": 0,
+      "count": 500,
+      "createMs": 1055.199999988079,
+      "sets": 4500,
+      "unchanged": 3000
+    },
+    {
+      "variant": "current",
+      "round": 0,
+      "count": 500,
+      "createMs": 251.39999997615814,
+      "sets": 1500,
+      "unchanged": 0
+    },
+    {
+      "variant": "current",
+      "round": 1,
+      "count": 500,
+      "createMs": 270.60000002384186,
+      "sets": 1500,
+      "unchanged": 0
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "count": 500,
+      "createMs": 1027.8999999761581,
+      "sets": 4500,
+      "unchanged": 3000
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "count": 500,
+      "createMs": 1161.699999988079,
+      "sets": 4500,
+      "unchanged": 3000
+    },
+    {
+      "variant": "current",
+      "round": 2,
+      "count": 500,
+      "createMs": 304.80000001192093,
+      "sets": 1500,
+      "unchanged": 0
+    },
+    {
+      "variant": "baseline",
+      "round": 0,
+      "count": 1500,
+      "createMs": 8215.400000035763,
+      "sets": 13500,
+      "unchanged": 9000
+    },
+    {
+      "variant": "current",
+      "round": 0,
+      "count": 1500,
+      "createMs": 578.5,
+      "sets": 4500,
+      "unchanged": 0
+    },
+    {
+      "variant": "current",
+      "round": 1,
+      "count": 1500,
+      "createMs": 639.4000000357628,
+      "sets": 4500,
+      "unchanged": 0
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "count": 1500,
+      "createMs": 7902.899999976158,
+      "sets": 13500,
+      "unchanged": 9000
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "count": 1500,
+      "createMs": 8308.800000011921,
+      "sets": 13500,
+      "unchanged": 9000
+    },
+    {
+      "variant": "current",
+      "round": 2,
+      "count": 1500,
+      "createMs": 653.1999999880791,
+      "sets": 4500,
+      "unchanged": 0
+    }
+  ],
+  "comparison": [
+    {
+      "count": 500,
+      "before": 1055.199999988079,
+      "after": 270.60000002384186,
+      "improvement": 0.7435557240078668
+    },
+    {
+      "count": 1500,
+      "before": 8215.400000035763,
+      "after": 639.4000000357628,
+      "improvement": 0.9221705577290236
+    }
+  ]
+}
