@@ -41,7 +41,7 @@ async function main(){
     await page.addInitScript(installGraphProbe,fallback);
     await page.goto(base+(native?'/?desktop=1':''),{waitUntil:'networkidle'});await page.waitForTimeout(1500);
     assert.equal(await page.locator('.career-chart-mount canvas').count(),0,'warmup must not draw');
-    await page.locator('[data-start-workspace="research"]').click();
+    await page.locator('button[data-start-workspace="research"]').click();
     await page.waitForFunction(()=>document.querySelector('.research-workspace iframe')?.contentWindow?.RelatumResearchUsageTarget?.id);
     const research=page.frames().find(f=>f.url().includes('research.html'));assert(research);
     await research.locator('[data-research-viewport]').click();await page.waitForTimeout(5500);
@@ -54,7 +54,7 @@ async function main(){
       await page.waitForTimeout(1200);await page.evaluate(()=>window.RelatumUsage.flush());assert.equal(usage.length,before,'minimized time is excluded');
       await page.evaluate(()=>window.pywebview.api.toggle_maximize());await page.waitForTimeout(200);await page.evaluate(()=>window.pywebview.api.toggle_maximize());await page.waitForTimeout(500);
     }
-    await page.locator('[data-start-workspace="career"]').click();
+    await page.locator('button[data-start-workspace="career"]').click();
     await page.waitForSelector('.career-report-shell',{state:'visible'});await page.waitForTimeout(1800);
     const assertHeroNumbers=async()=>assert(await page.evaluate(()=>[...document.querySelectorAll('.career-hero [data-career-number]')].every(node=>(node._numberText?.data??node.textContent)===node._format(Number(node.dataset.careerNumber)))),'hero numbers settle and do not replay');
     await assertHeroNumbers();
@@ -62,9 +62,11 @@ async function main(){
     assert(await page.locator('.career-hero').innerText().then(t=>t.includes('笔记')));
     const initialRequests=requests.length;
     const jump=async id=>{await page.evaluate(id=>{const scroll=document.querySelector('.career-scroll'),node=document.querySelector('#career-'+id);scroll.scrollTop=node.offsetTop;},id);await page.waitForTimeout(650);};
-    await jump('overview');await page.screenshot({path:path.join(dataRoot,'overview.png')});
+    await page.evaluate(()=>{window.__careerDailyPresentation=[];window.__careerDailyObserver=new MutationObserver(records=>{for(const record of records)__careerDailyPresentation.push({previous:record.oldValue,current:record.target.dataset.presentation});});__careerDailyObserver.observe(document.querySelector('[data-chart-key="daily"]'),{subtree:true,attributes:true,attributeFilter:['data-presentation'],attributeOldValue:true});});
+    await jump('overview');
     assert(await page.locator('[data-chart-key="daily"] canvas').count());
-    assert.equal(await page.locator('[data-chart-key="daily"] .career-plot').getAttribute('data-presentation'),'first','entry plays when the real chart enters the viewport');
+    assert(await page.evaluate(()=>__careerDailyPresentation.some(value=>value.current==='first'||value.previous==='first')),'first entry is triggered by the real viewport');
+    await page.evaluate(()=>__careerDailyObserver.disconnect());await page.screenshot({path:path.join(dataRoot,'overview.png')});
     await jump('notes');await page.screenshot({path:path.join(dataRoot,'notes.png')});
     await jump('overview');assert.equal(await page.locator('[data-chart-key="daily"] .career-plot').getAttribute('data-presentation'),'shown','return keeps data and skips full unfolding');
     const dailyBox=await page.locator('[data-chart-key="daily"] canvas').boundingBox(),dailyPoint={x:dailyBox.x+80,y:dailyBox.y+100};
@@ -108,9 +110,13 @@ async function main(){
     await page.keyboard.press('ArrowRight');assert(Math.abs(await page.evaluate(()=>[...__careerGraphs.live][0].engine.view.x)-(camera.x-30))<.001,'keyboard graph pan');
     await page.keyboard.press('=');assert(await page.evaluate(()=>[...__careerGraphs.live][0].engine.view.scale)>camera.scale,'keyboard graph zoom');
     await page.keyboard.press('0');await page.waitForTimeout(650);
+    async function workspaceClick(name){
+      await page.evaluate(name=>{window.__careerSwitchSettled=false;const listener=event=>{if(event.detail.workspace===name){document.removeEventListener('relatum:start-workspacechange',listener);window.__careerSwitchSettled=true;}};document.addEventListener('relatum:start-workspacechange',listener);},name);
+      await page.locator(`button[data-start-workspace="${name}"]`).click();
+    }
     for(let i=0;i<5;i++){
-      await page.locator('[data-start-workspace="notes"]').click();await page.waitForTimeout(500);assert.equal(await page.locator('.career-chart-mount canvas').count(),0,'leaving releases chart resources');assert.equal(await page.locator('.career-chart-tip').count(),0,'leaving releases the portal');assert.equal(await page.evaluate(()=>__careerGraphs.live.size),0,'no retained graph engines');
-      await page.locator('[data-start-workspace="career"]').click();await page.waitForTimeout(650);
+      await workspaceClick('notes');await page.waitForFunction(()=>document.querySelector('.career-workspace').hidden);assert.equal(await page.locator('.career-chart-mount canvas').count(),0,'hidden boundary releases chart resources');assert.equal(await page.locator('.career-chart-tip').count(),0,'hidden boundary releases the portal');assert.equal(await page.evaluate(()=>__careerGraphs.live.size),0,'no retained graph engines');
+      await page.waitForFunction(()=>__careerSwitchSettled);await workspaceClick('career');await page.waitForFunction(()=>__careerSwitchSettled);await page.waitForTimeout(650);
     }
     await page.evaluate(()=>{document.body.dataset.startTheme='dark';});await page.waitForTimeout(300);await jump('overview');await page.screenshot({path:path.join(dataRoot,'dark.png')});
     await page.evaluate(()=>{window.RelatumI18n?.setLanguage?.('en');document.dispatchEvent(new CustomEvent('relatum:languagechange'));});await page.waitForTimeout(200);

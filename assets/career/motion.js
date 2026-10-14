@@ -32,7 +32,7 @@ export function chartPresentation(target) {
       const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
       target.inert=false;
       target.dataset.presentation=first&&!reduced?'first':'shown';
-      if(first&&!reduced) {cover?.remove();cover=null;target.classList.add('is-presenting');finish=setTimeout(()=>{target.classList.remove('is-presenting');target.dataset.presentation='shown';finish=0;},1100);}
+      if(first&&!reduced) {cover?.remove();cover=null;target.classList.add('is-presenting');finish=setTimeout(()=>{target.classList.remove('is-presenting');target.dataset.presentation='shown';finish=0;},940);}
       else if(!reduced&&target.animate) {
         coverStage();
         const current=cover.animate([{opacity:1},{opacity:0}],{duration:240,easing:'ease-out'});animation=current;
@@ -40,6 +40,7 @@ export function chartPresentation(target) {
       }else{cover?.remove();cover=null;}
     },
     leave() { cancel();target.dataset.presentation='waiting';target.inert=true;coverStage(); },
+    pause() { cancel();cover?.remove();cover=null;target.dataset.presentation='shown';target.inert=true; },
     destroy() { cancel();cover?.remove();cover=null; }
   };
 }

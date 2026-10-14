@@ -1,0 +1,712 @@
+{
+  "date": "2026-10-14",
+  "baseline": "82c150e",
+  "fixture": {
+    "notes": 5000,
+    "canvases": 500,
+    "research": 200,
+    "inputs": 100000
+  },
+  "timed": {
+    "method": "12 second wall-clock traversal; 3 rounds per condition; RAF callback intervals",
+    "before": [
+      {
+        "stress": false,
+        "round": 0,
+        "p95": 4.300000000001091,
+        "max": 45.899999999999636,
+        "over35": 3,
+        "frames": 2780,
+        "height": 13582,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          21.19999998807907,
+          14.399999976158142,
+          10.200000047683716,
+          8,
+          6.799999952316284,
+          5.900000035762787
+        ],
+        "stockReplaced": 6,
+        "shellReplaced": 6
+      },
+      {
+        "stress": false,
+        "round": 1,
+        "p95": 4.300000000001091,
+        "max": 24.899999999999636,
+        "over35": 0,
+        "frames": 2808,
+        "height": 13582,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          17.69999998807907,
+          14.100000023841858,
+          10.900000035762787,
+          7.699999988079071,
+          7.300000011920929,
+          5.599999964237213
+        ],
+        "stockReplaced": 6,
+        "shellReplaced": 6
+      },
+      {
+        "stress": false,
+        "round": 2,
+        "p95": 4.300000000001091,
+        "max": 49.899999999999636,
+        "over35": 2,
+        "frames": 2788,
+        "height": 13582,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          16.19999998807907,
+          13.099999964237213,
+          12.200000047683716,
+          7.399999976158142,
+          8.399999976158142,
+          19.30000001192093
+        ],
+        "stockReplaced": 6,
+        "shellReplaced": 6
+      },
+      {
+        "stress": true,
+        "round": 0,
+        "p95": 12.599999999999454,
+        "max": 54.19999999999982,
+        "over35": 3,
+        "frames": 1970,
+        "height": 13582,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          26.19999998807907,
+          27.599999964237213,
+          26.200000047683716,
+          21.899999976158142,
+          24.600000023841858,
+          26.299999952316284
+        ],
+        "stockReplaced": 6,
+        "shellReplaced": 6
+      },
+      {
+        "stress": true,
+        "round": 1,
+        "p95": 12.600000000000364,
+        "max": 91.60000000000036,
+        "over35": 7,
+        "frames": 1963,
+        "height": 13582,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          31.19999998807907,
+          28.80000001192093,
+          26.900000035762787,
+          30.5,
+          32.799999952316284,
+          29.900000035762787
+        ],
+        "stockReplaced": 6,
+        "shellReplaced": 6
+      },
+      {
+        "stress": true,
+        "round": 2,
+        "p95": 12.600000000000364,
+        "max": 54.30000000000018,
+        "over35": 3,
+        "frames": 2015,
+        "height": 13582,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          27.69999998807907,
+          31.100000023841858,
+          24,
+          21.5,
+          27.899999976158142,
+          26.80000001192093
+        ],
+        "stockReplaced": 6,
+        "shellReplaced": 6
+      }
+    ],
+    "after": [
+      {
+        "stress": false,
+        "round": 0,
+        "p95": 4.300000000001091,
+        "max": 66.70000000000073,
+        "over35": 2,
+        "frames": 2787,
+        "height": 13794,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          16.400000035762787,
+          11.099999964237213,
+          0.6000000238418579,
+          0.2999999523162842,
+          4.700000047683716,
+          4
+        ],
+        "stockReplaced": 0,
+        "shellReplaced": 0
+      },
+      {
+        "stress": false,
+        "round": 1,
+        "p95": 4.300000000001091,
+        "max": 25.200000000000728,
+        "over35": 0,
+        "frames": 2832,
+        "height": 13794,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          15.600000023841858,
+          11.399999976158142,
+          1.4000000357627869,
+          0.5,
+          13.599999964237213,
+          12.100000023841858
+        ],
+        "stockReplaced": 0,
+        "shellReplaced": 0
+      },
+      {
+        "stress": false,
+        "round": 2,
+        "p95": 4.300000000001091,
+        "max": 16.699999999999818,
+        "over35": 0,
+        "frames": 2839,
+        "height": 13794,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          13.899999976158142,
+          13.100000023841858,
+          0.699999988079071,
+          0.2999999523162842,
+          10.400000035762787,
+          3.899999976158142
+        ],
+        "stockReplaced": 0,
+        "shellReplaced": 0
+      },
+      {
+        "stress": true,
+        "round": 0,
+        "p95": 12.5,
+        "max": 54.19999999999982,
+        "over35": 3,
+        "frames": 2115,
+        "height": 13794,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          21.5,
+          20.100000023841858,
+          2.5,
+          1.699999988079071,
+          30.600000023841858,
+          36.80000001192093
+        ],
+        "stockReplaced": 0,
+        "shellReplaced": 0
+      },
+      {
+        "stress": true,
+        "round": 1,
+        "p95": 12.399999999999636,
+        "max": 58.19999999999982,
+        "over35": 2,
+        "frames": 2193,
+        "height": 13794,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          23.399999976158142,
+          22.80000001192093,
+          1.600000023841858,
+          0.699999988079071,
+          19.5,
+          18.30000001192093
+        ],
+        "stockReplaced": 0,
+        "shellReplaced": 0
+      },
+      {
+        "stress": true,
+        "round": 2,
+        "p95": 12.399999999999636,
+        "max": 54.19999999999982,
+        "over35": 1,
+        "frames": 2202,
+        "height": 13794,
+        "fillCalls": 396,
+        "graphsCreated": 2,
+        "filterMs": [
+          22.899999976158142,
+          20.899999976158142,
+          3,
+          0.699999988079071,
+          24.400000035762787,
+          21.69999998807907
+        ],
+        "stockReplaced": 0,
+        "shellReplaced": 0
+      }
+    ],
+    "filterSummary": [
+      {
+        "stress": false,
+        "beforeMedian": 10.550000041723251,
+        "afterMedian": 7.550000041723251
+      },
+      {
+        "stress": true,
+        "beforeMedian": 27.25,
+        "afterMedian": 20.5
+      }
+    ]
+  },
+  "coverageQueryCalls": {
+    "before": {
+      "filters": 70,
+      "sorts": 70
+    },
+    "after": {
+      "filters": 0,
+      "sorts": 0
+    }
+  },
+  "shell": {
+    "method": "180 frame traversal and real node drag; same warm isolated fixture",
+    "before": {
+      "baseline": true,
+      "perf": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 8.299999999999272,
+          "max": 33.400000000001455
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 4.400000000001455,
+          "max": 16.80000000000291
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 4.30000000000291,
+          "max": 16.799999999999272
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 16.80000000000291,
+          "max": 37.5
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 16.69999999999709,
+          "max": 29.19999999999709
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.799999999995634,
+          "max": 33.30000000000291
+        }
+      ],
+      "interaction": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 4.30000000000291,
+          "max": 8.400000000001455
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 4.299999999999272,
+          "max": 4.400000000001455
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 4.30000000000291,
+          "max": 4.900000000001455
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 8.400000000001455,
+          "max": 12.5
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 8.5,
+          "max": 16.5
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 8.5,
+          "max": 12.69999999999709
+        }
+      ],
+      "errors": [],
+      "browserVersion": "155.0.4283.45"
+    },
+    "after": {
+      "baseline": false,
+      "perf": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 8.30000000000291,
+          "max": 33.20000000000073
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 4.30000000000291,
+          "max": 16.700000000000728
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 4.30000000000291,
+          "max": 8.399999999997817
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 20.700000000004366,
+          "max": 33.5
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 16.80000000000291,
+          "max": 33.30000000000291
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 16.700000000004366,
+          "max": 33.200000000004366
+        }
+      ],
+      "interaction": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 4.30000000000291,
+          "max": 4.700000000000728
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 4.30000000000291,
+          "max": 5
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 4.400000000001455,
+          "max": 8.5
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 12.400000000001455,
+          "max": 20.799999999995634
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 8.5,
+          "max": 12.799999999995634
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 8.5,
+          "max": 12.599999999998545
+        }
+      ],
+      "errors": [],
+      "browserVersion": "155.0.4283.45"
+    }
+  },
+  "largeFinal": {
+    "browserVersion": "155.0.4283.45",
+    "perf": [
+      {
+        "stress": false,
+        "round": 0,
+        "p95": 8.400000000001455,
+        "max": 16.5,
+        "fps": 211.6840113528859
+      },
+      {
+        "stress": false,
+        "round": 1,
+        "p95": 8.299999999995634,
+        "max": 12.69999999999709,
+        "fps": 226.18145059388385
+      },
+      {
+        "stress": false,
+        "round": 2,
+        "p95": 8.200000000004366,
+        "max": 20.80000000000291,
+        "fps": 223.83393772664832
+      },
+      {
+        "stress": true,
+        "round": 0,
+        "p95": 29.200000000004366,
+        "max": 66.59999999999854,
+        "fps": 82.46947707901406
+      },
+      {
+        "stress": true,
+        "round": 1,
+        "p95": 25.200000000004366,
+        "max": 41.599999999998545,
+        "fps": 97.22448536201192
+      },
+      {
+        "stress": true,
+        "round": 2,
+        "p95": 25,
+        "max": 50,
+        "fps": 100.59005338578253
+      }
+    ],
+    "interaction": [
+      {
+        "stress": false,
+        "round": 0,
+        "p95": 4.30000000000291,
+        "max": 8.19999999999709,
+        "fps": 238.6698846875852
+      },
+      {
+        "stress": false,
+        "round": 1,
+        "p95": 4.30000000000291,
+        "max": 8.5,
+        "fps": 238.76592890677398
+      },
+      {
+        "stress": false,
+        "round": 2,
+        "p95": 4.30000000000291,
+        "max": 8.400000000001455,
+        "fps": 236.01166799257354
+      },
+      {
+        "stress": true,
+        "round": 0,
+        "p95": 16.69999999999709,
+        "max": 20.90000000000873,
+        "fps": 123.84331733110669
+      },
+      {
+        "stress": true,
+        "round": 1,
+        "p95": 16.5,
+        "max": 17.39999999999418,
+        "fps": 145.8060288335514
+      },
+      {
+        "stress": true,
+        "round": 2,
+        "p95": 16.59999999999127,
+        "max": 20.80000000000291,
+        "fps": 144.8331977217267
+      }
+    ],
+    "performanceFailures": [],
+    "idle": 0,
+    "graphIdle": 0,
+    "errors": [],
+    "checks": 32
+  },
+  "nativeFinal": {
+    "browserVersion": "155.0.4283.45",
+    "perf": [],
+    "interaction": [],
+    "performanceFailures": [],
+    "idle": 0,
+    "graphIdle": 0,
+    "errors": [],
+    "checks": 32
+  },
+  "fallbackFinal": {
+    "browserVersion": "155.0.4283.45",
+    "perf": [],
+    "interaction": [],
+    "performanceFailures": [],
+    "idle": 0,
+    "graphIdle": 0,
+    "errors": [],
+    "checks": 32
+  },
+  "discardedPrototype": {
+    "note": "Before removing per-SVG resize measurement and column flex layout; superseded by largeFinal",
+    "result": {
+      "browserVersion": "155.0.4283.45",
+      "perf": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 8.400000000001455,
+          "max": 20.89999999999418,
+          "fps": 210.71218363743378
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 4.899999999994179,
+          "max": 16.69999999999709,
+          "fps": 226.16601849254724
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 4.30000000000291,
+          "max": 12.5,
+          "fps": 232.31667748215443
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 33.299999999995634,
+          "max": 54.299999999995634,
+          "fps": 83.27905461989415
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 41.80000000000291,
+          "max": 87.5,
+          "fps": 67.45807424156774
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 162.8000000000029,
+          "max": 287.3000000000029,
+          "fps": 18.44771638913675
+        }
+      ],
+      "interaction": [
+        {
+          "stress": false,
+          "round": 0,
+          "p95": 4.30000000000291,
+          "max": 8.5,
+          "fps": 238.6698846875852
+        },
+        {
+          "stress": false,
+          "round": 1,
+          "p95": 4.30000000000291,
+          "max": 4.400000000001455,
+          "fps": 240.053944706678
+        },
+        {
+          "stress": false,
+          "round": 2,
+          "p95": 4.30000000000291,
+          "max": 8.5,
+          "fps": 237.36498199759922
+        },
+        {
+          "stress": true,
+          "round": 0,
+          "p95": 71.09999999999127,
+          "max": 120.80000000000291,
+          "fps": 39.343972415012495
+        },
+        {
+          "stress": true,
+          "round": 1,
+          "p95": 58.39999999999418,
+          "max": 112.40000000000873,
+          "fps": 38.5949696444059
+        },
+        {
+          "stress": true,
+          "round": 2,
+          "p95": 104.19999999999709,
+          "max": 191.5,
+          "fps": 30.024964577289012
+        }
+      ],
+      "performanceFailures": [
+        {
+          "kind": "scroll",
+          "stress": true,
+          "round": 1,
+          "p95": 41.80000000000291,
+          "max": 87.5,
+          "fps": 67.45807424156774
+        },
+        {
+          "kind": "scroll",
+          "stress": true,
+          "round": 2,
+          "p95": 162.8000000000029,
+          "max": 287.3000000000029,
+          "fps": 18.44771638913675
+        },
+        {
+          "kind": "interaction",
+          "stress": true,
+          "round": 0,
+          "p95": 71.09999999999127,
+          "max": 120.80000000000291,
+          "fps": 39.343972415012495
+        },
+        {
+          "kind": "interaction",
+          "stress": true,
+          "round": 1,
+          "p95": 58.39999999999418,
+          "max": 112.40000000000873,
+          "fps": 38.5949696444059
+        },
+        {
+          "kind": "interaction",
+          "stress": true,
+          "round": 2,
+          "p95": 104.19999999999709,
+          "max": 191.5,
+          "fps": 30.024964577289012
+        }
+      ],
+      "idle": 0,
+      "graphIdle": 0,
+      "errors": [],
+      "checks": 32
+    }
+  }
+}
