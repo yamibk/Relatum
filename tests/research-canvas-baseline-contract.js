@@ -110,7 +110,9 @@ assert(styles.includes('.research-node') && styles.includes('.research-active-ed
 
 [
   'function scheduleCompute(pageId = renderedPageId)', 'page.runtime.topologyDirty = true',
-  'page.runtime.dirtyNodeIds.add(String(id))', 'simulation.setVisible(!document.hidden)',
+  'page.runtime.dirtyNodeIds.add(String(id))', 'simulation.setVisible(next)',
+  'function researchPageVisible()', 'function syncPageVisibility(eventOrForce)',
+  "window.parent.addEventListener('canvasdesktop:visibility', syncPageVisibility, { signal })",
   'simulation.activate()', 'simulation.suspend()', 'simulation.dispose()',
   'session.toDocument((record) =>', 'flushSave({ force: true, keepalive: true })',
 ].forEach((needle) => assert(editor.includes(needle), 'missing V2 editor lifecycle: ' + needle));

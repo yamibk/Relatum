@@ -78,6 +78,7 @@ export class ResearchModel {
     this.edgeById = new Map();
     this.edgesByNodeId = new Map();
     this.decorationById = new Map();
+    this.decorationOffsets = new Map();
     this.state = { nodes: [], edges: [] };
     this.restore(initialState, false);
     this.history = [this.snapshot()];
@@ -114,7 +115,11 @@ export class ResearchModel {
 
   reindex() {
     this.decorationById.clear();
-    this.state.decorations.forEach((d) => this.decorationById.set(d.id, d));
+    this.decorationOffsets.clear();
+    this.state.decorations.forEach((d, offset) => {
+      this.decorationById.set(d.id, d);
+      this.decorationOffsets.set(d.id, offset);
+    });
     this.nodeById.clear();
     this.edgeById.clear();
     this.edgesByNodeId.clear();
@@ -160,8 +165,15 @@ export class ResearchModel {
       replacements.set(objectId, next);
     }
     const apply = (state) => { state.decorations = state.decorations.map((d) => replacements.get(d.id) || d); };
-    const change = { kind: 'decoration-update', decorationsOnly: true, live: !!options.live };
-    if (options.live) { apply(this.state); this.reindex(); this.emit(change); return true; }
+    const change = { kind: 'decoration-update', decorationsOnly: true, live: !!options.live,
+      decorationIds: Array.from(replacements.keys()) };
+    if (options.live) {
+      replacements.forEach((next, objectId) => {
+        this.state.decorations[this.decorationOffsets.get(objectId)] = next;
+        this.decorationById.set(objectId, next);
+      });
+      this.emit(change); return true;
+    }
     return this.mutate(apply, change);
   }
 

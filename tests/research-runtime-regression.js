@@ -89,6 +89,9 @@ async function main() {
   controller.setVisible(false);
   assert.strictEqual(pending.size, 0, 'hidden pages must cancel every scheduling handle');
   assert.strictEqual(controller.stats().resumeIntent, true, 'visibility suspension must preserve run intent');
+  controller.suspend(); controller.activate();
+  assert.strictEqual(pending.size, 0, 'activating an invisible host must not schedule simulation or wall timers');
+  assert.strictEqual(controller.stats().running, false);
   now += 10000;
   controller.setVisible(true);
   assert.strictEqual(controller.stats().running, true, 'visible page must restore its previous run intent');

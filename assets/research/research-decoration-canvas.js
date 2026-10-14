@@ -27,7 +27,8 @@ export function createDecorationCanvas(options) {
   let enabled = false, selected = new Set(), gesture = null, snap = null, lastPointer = null;
   let presses = [], tools = { ...DEFAULTS };
   const labels = createResearchLabelLayer(viewport, { scheduleDraw, onMetricsChange: (ids) => {
-    index.rebuild(model.decorations()); options.onMetricsChange?.(ids); scheduleDraw();
+    index.update(ids.map((id) => model.decoration(id)).filter(Boolean));
+    options.onMetricsChange?.(ids); scheduleDraw();
   } });
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
@@ -68,8 +69,10 @@ export function createDecorationCanvas(options) {
   function clear() { selected.clear(); notify(); }
   function modelChanged(change) {
     if (!change.decorationsOnly && !change.topology) return;
-    index.rebuild(model.decorations());
-    labels.retain(model.decorations());
+    const updates = !change.topology && Array.isArray(change.decorationIds)
+      ? change.decorationIds.map((id) => model.decoration(id)).filter(Boolean) : null;
+    if (!updates || !index.update(updates)) index.rebuild(model.decorations());
+    if (!change.live) labels.retain(model.decorations());
     selected = new Set([...selected].filter((id) => model.decoration(id)));
     if (enabled && !change.live) notify();
     scheduleDraw();
@@ -304,6 +307,13 @@ export function createDecorationCanvas(options) {
     }
   }
   function draw() {
+    if (!index.objects.length && !gesture?.preview?.units && gesture?.type !== 'box' && !snap) {
+      // Most default-mode pages have no decorations. Keep two transparent
+      // pixels rather than two viewport-sized Canvas2D backing stores.
+      if (canvas.width !== 1 || canvas.height !== 1) canvas.width = canvas.height = lines.width = lines.height = 1;
+      labels.sync([], getCamera());
+      return;
+    }
     const rect = viewport.getBoundingClientRect(), ratio = Math.max(1, window.devicePixelRatio || 1);
     const w = Math.round(rect.width * ratio), h = Math.round(rect.height * ratio);
     if (canvas.width !== w || canvas.height !== h) { canvas.width = lines.width = w; canvas.height = lines.height = h; }
