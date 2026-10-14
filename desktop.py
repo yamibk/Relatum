@@ -448,8 +448,8 @@ class DesktopBridge:
         self._close_after_flush = False
         self._quit_after_flush = False
 
-    def update_window_preferences(self, delta: dict) -> dict:
-        return self._preferences.update(delta) if self._preferences is not None else {"ok": True}
+    def update_window_preferences(self, delta: dict, launcher_language=None) -> dict:
+        return self._preferences.update(delta, launcher_language) if self._preferences is not None else {"ok": True}
 
     def flush_window_preferences(self) -> dict:
         return self._preferences.flush() if self._preferences is not None else {"ok": True}

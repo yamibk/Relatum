@@ -8,6 +8,58 @@ from pathlib import Path
 
 from feature_profile import CATALOG, FEATURES, HANDOFF_ARGUMENT, PROFILE_FILENAME, RESOURCE_ROOT, LaunchProfile, ProfileError, read_preferences, save_preferences, read_launcher_settings, saved_canvas
 from desktop_instance import workspace_conflicts, conflict_message
+from desktop_preferences import read_launcher_language
+
+
+FEATURE_TEXT_EN = {
+    "canvas": ("Canvas workspace", "Canvas file management, the editor and seven special pages."),
+    "canvas.library": ("Canvas library", "Recent canvases, groups, favorites, imports and trash. Can be selected separately from the editor."),
+    "canvas.editor": (".canvas editor", "Open and edit canvases. Select an existing file when enabling only the editor."),
+    "editor.ai": ("AI assistant", "AI chat and reviewed canvas plans. Disabling this also disables AI loading and preloading."),
+    "editor.graph": ("Canvas graph", "The editor's graph overlay. Disabling this also disables graph loading and preloading."),
+    "canvas.review": ("Review", "A separate card library and review sessions."),
+    "canvas.calendar": ("Calendar", "Calendar, journals, ledger and countdowns."),
+    "calendar.wallpaper": ("Live desktop background", "Allow countdowns to launch a separate desktop background process. No background host is created when disabled."),
+    "canvas.activity": ("Activity", "Activity heatmap and constellation."),
+    "canvas.quicknotes": ("Quick Notes", "A wall of quick sticky notes."),
+    "canvas.tree": ("Tree", "The independent Tree page."),
+    "canvas.study": ("Study", "Study tasks, goal trees and routes."),
+    "canvas.focus": ("Focus", "Focus timer, daily tasks and sounds."),
+    "notes": ("Notes workspace", "Markdown file tree, editing and reading in multiple tabs."),
+    "notes.graph": ("Note graph", "Notebook relationship graph. Disabling this skips graph scripts, data and the rendering engine."),
+    "notes.canvas": ("Embedded note canvases", "Canvas blocks inside notes. When disabled, references remain visible without loading the engine or canvas files."),
+    "research": ("Research workspace", "Research canvases, subcircuits and simulation."),
+    "career": ("Career workspace", "Local saved usage reports. Reports are not preloaded when disabled."),
+    "runtime.preload": ("Background preloading", "Prepare unopened pages, the note editor and display fonts in advance. Disable to load them on first use and reduce startup memory. All selected features remain available."),
+}
+
+TEXT_EN = {
+    "选择本次需要的功能": "Choose features for this session",
+    "点击或聚焦选项查看说明。\n\n可重复启动，分别打开不同工作区。同一工作区只能在一个窗口中运行。\n\n关闭父项会暂时禁用子项，子项原有勾选会保留。": "Click or focus an option to view its description.\n\nLaunch again to open different workspaces. Each workspace can run in only one window.\n\nDisabling a parent temporarily disables its children while keeping their selections.",
+    "未指定画布 · 默认进入已启用工作区": "No canvas selected · Open enabled workspaces",
+    "选择 .canvas…": "Choose .canvas…",
+    "选择要打开的画布": "Choose a canvas to open",
+    "全部启用": "Enable all",
+    "取消": "Cancel",
+    "启动 Relatum": "Start Relatum",
+    "仅启用画布编辑器时，请先选择一个 .canvas 文件": "Select a .canvas file when enabling only the canvas editor.",
+    "请选择有效的 .canvas 文件，并启用画布编辑器": "Select a valid .canvas file and enable the canvas editor.",
+    "同目录中未找到 Relatum.exe，请保留完整发布文件夹": "Relatum.exe was not found beside the launcher. Keep the complete release folder together.",
+    "请至少选择一个工作区、页面或画布编辑器": "Select at least one workspace, page or canvas editor.",
+    "上次启动器配置无法读取，已显示默认选择。确认启动后会保存新选择。": "Could not read the last launcher configuration. Default choices are shown; starting will save your new choices.",
+}
+
+
+def launcher_text(source: str, language: str) -> str:
+    if language != "en":
+        return source
+    prefix = "以下工作区已在运行："
+    suffix = "。\n请取消这些工作区的勾选，或先退出占用它们的窗口。当前选择已保留。"
+    if source.startswith(prefix) and source.endswith(suffix):
+        labels = {item["label"]: FEATURE_TEXT_EN[key][0] for key, item in FEATURES.items()}
+        names = ", ".join(labels.get(name, name) for name in source[len(prefix):-len(suffix)].split("、"))
+        return f"These workspaces are already running: {names}.\nDeselect them or close their windows first. Your choices have been kept."
+    return TEXT_EN.get(source, source)
 
 
 def launcher_root() -> Path:
@@ -51,6 +103,8 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
     from System.Windows.Forms import Button, CheckBox, DialogResult, DockStyle, FlowDirection, FlowLayoutPanel, Form, FormStartPosition, Label, MessageBox, MessageBoxButtons, MessageBoxIcon, OpenFileDialog, Padding, Panel, AutoScaleMode, Screen
 
     saved, warning = read_preferences(root)
+    language = read_launcher_language(root)
+    text = lambda source: launcher_text(source, language)
     if initial_profile is not None:
         saved = initial_profile
     form = Form()
@@ -69,7 +123,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
     header.Dock = DockStyle.Top
     header.Height = 68
     heading = Label()
-    heading.Text = "选择本次需要的功能"
+    heading.Text = text("选择本次需要的功能")
     heading.Font = Font(form.Font.FontFamily, 17, FontStyle.Bold)
     heading.AutoSize = True
     heading.Location = Point(24, 20)
@@ -89,7 +143,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
     detail = Label()
     detail.Dock = DockStyle.Fill
     detail.Padding = Padding(18, 18, 8, 8)
-    detail.Text = notice or warning or "点击或聚焦选项查看说明。\n\n可重复启动，分别打开不同工作区。同一工作区只能在一个窗口中运行。\n\n关闭父项会暂时禁用子项，子项原有勾选会保留。"
+    detail.Text = text(notice or warning or "点击或聚焦选项查看说明。\n\n可重复启动，分别打开不同工作区。同一工作区只能在一个窗口中运行。\n\n关闭父项会暂时禁用子项，子项原有勾选会保留。")
     body.Controls.Add(detail)
     body.Controls.Add(choices_panel)
     buttons = {}
@@ -109,7 +163,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
         pick.Enabled = profile.enabled("canvas.editor")
         if not pick.Enabled:
             selected_file[0] = ""
-            file_label.Text = "未指定画布 · 默认进入已启用工作区"
+            file_label.Text = text("未指定画布 · 默认进入已启用工作区")
 
     for item in CATALOG["features"]:
         key = item["id"]
@@ -118,14 +172,15 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
             depth += 1
             parent = FEATURES[parent].get("parent")
         button = CheckBox()
-        button.Text = item["label"]
+        label, explanation = FEATURE_TEXT_EN[key] if language == "en" else (item["label"], item["description"])
+        button.Text = label
         button.Checked = saved.choices[key]
         button.Width = 265 - depth * 20
         button.Height = 28
         button.Margin = Padding(depth * 20, 2, 0, 2)
         if depth == 0:
             button.Font = Font(form.Font, FontStyle.Bold)
-        description = item["label"] + "\n\n" + item["description"]
+        description = label + "\n\n" + explanation
         def show_detail(_sender, _event, text=description):
             detail.Text = text
         button.Enter += show_detail
@@ -135,11 +190,11 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
         choices_panel.Controls.Add(button)
 
     pick = Button()
-    pick.Text = "选择 .canvas…"
+    pick.Text = text("选择 .canvas…")
     pick.Location = Point(24, 10)
     pick.Size = Size(140, 32)
     file_label = Label()
-    file_label.Text = initial_file or "未指定画布 · 默认进入已启用工作区"
+    file_label.Text = initial_file or text("未指定画布 · 默认进入已启用工作区")
     file_label.AutoEllipsis = True
     file_label.Location = Point(175, 17)
     file_label.Size = Size(450, 26)
@@ -147,7 +202,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
         dialog = OpenFileDialog()
         dialog.Filter = "Relatum Canvas (*.canvas)|*.canvas"
         dialog.CheckFileExists = True
-        dialog.Title = "选择要打开的画布"
+        dialog.Title = text("选择要打开的画布")
         try:
             if dialog.ShowDialog(form) == DialogResult.OK:
                 selected_file[0] = str(dialog.FileName)
@@ -156,7 +211,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
             dialog.Dispose()
     pick.Click += choose_file
     reset = Button()
-    reset.Text = "全部启用"
+    reset.Text = text("全部启用")
     reset.Location = Point(24, 73)
     reset.Size = Size(100, 36)
     def select_all(*_):
@@ -167,12 +222,12 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
         sync()
     reset.Click += select_all
     cancel = Button()
-    cancel.Text = "取消"
+    cancel.Text = text("取消")
     cancel.Location = Point(424, 73)
     cancel.Size = Size(100, 36)
     cancel.Click += lambda *_: form.Close()
     start = Button()
-    start.Text = "启动 Relatum"
+    start.Text = text("启动 Relatum")
     start.Location = Point(534, 73)
     start.Size = Size(122, 36)
     start.BackColor = Color.FromArgb(35, 40, 36)
@@ -183,7 +238,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
             profile.validate()
             conflicts = workspace_conflicts(root, profile.workspaces)
             if conflicts:
-                MessageBox.Show(form, conflict_message(conflicts), "Relatum Launcher", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                MessageBox.Show(form, text(conflict_message(conflicts)), "Relatum Launcher", MessageBoxButtons.OK, MessageBoxIcon.Information)
                 return
             if not profile.has_home and not selected_file[0]:
                 choose_file()
@@ -193,7 +248,7 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
             subprocess.Popen(command, cwd=str(root), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             form.Close()
         except (OSError, ProfileError) as err:
-            MessageBox.Show(form, str(err), "Relatum Launcher", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            MessageBox.Show(form, text(str(err)), "Relatum Launcher", MessageBoxButtons.OK, MessageBoxIcon.Warning)
     start.Click += start_application
     for control in (pick, file_label, reset, cancel, start):
         footer.Controls.Add(control)

@@ -1216,6 +1216,7 @@
         ['存在哪里', '', [
           ['桌面版', '<code>data/desktop-sessions/&lt;模式&gt;/preferences.json</code> 保存偏好。完整模式窗口位置在 <code>data/window-state.json</code>，精简模式在对应模式目录的 <code>window-state.json</code>。WebView2 也有本机运行数据。'],
           ['启动器', '<code>data/launcher-profile.json</code> 保存功能选择，<code>data/launcher-settings.json</code> 保存是否跳过选择窗口。'],
+          ['启动器语言', '<code>data/launcher-language.json</code> 保存启动器语言，跟随桌面版中最近一次主动切换的语言；其他窗口恢复旧设置不会覆盖。删除此文件后，启动器默认使用中文。'],
           ['浏览器版', '浏览器的站点存储。更换浏览器或清除站点数据后，偏好会重置。'],
         ]],
         ['清除后的结果', '界面、位置和未结束的计时可能重置。笔记与画布文件仍保留。AI Key 位于 <code>data/ai.json</code>，不在浏览器存储中。'],
@@ -1308,6 +1309,7 @@
         ['Where it lives', '', [
           ['Desktop', '<code>data/desktop-sessions/&lt;mode&gt;/preferences.json</code> holds preferences. Full mode keeps window position in <code>data/window-state.json</code>; reduced modes use <code>window-state.json</code> in their mode folder. WebView2 also keeps local runtime data.'],
           ['Launcher', '<code>data/launcher-profile.json</code> holds feature choices; <code>data/launcher-settings.json</code> holds whether to skip the selection window.'],
+          ['Launcher language', '<code>data/launcher-language.json</code> remembers the most recent deliberate language change in the desktop app. Restoring another window’s saved settings does not override it. Deleting this file makes the launcher default to Chinese.'],
           ['Browser', 'Browser site storage. Switching browsers or clearing site data resets these preferences.'],
         ]],
         ['After clearing', 'The interface, positions and unfinished timer may reset. Note and canvas files remain. The AI key lives in <code>data/ai.json</code>, outside browser storage.'],

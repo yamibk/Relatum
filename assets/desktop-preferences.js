@@ -19,26 +19,31 @@
       }
       set.call(storage, marker, identity);
     }
-    let pending = {}, chain = Promise.resolve(), failed = false, sending = false;
+    let pending = {}, pendingLanguage = null, chain = Promise.resolve(), failed = false, sending = false;
     const ready = () => window.pywebview && window.pywebview.api && typeof window.pywebview.api.update_window_preferences === 'function';
     function drain() {
-      if (sending || !ready() || !Object.keys(pending).length) return chain;
-      const delta = pending; pending = {};
+      if (sending || !ready() || (!Object.keys(pending).length && pendingLanguage === null)) return chain;
+      const delta = pending, language = pendingLanguage; pending = {}; pendingLanguage = null;
       sending = true;
-      chain = Promise.resolve().then(() => window.pywebview.api.update_window_preferences(delta)).then(() => { failed = false; }, () => {
+      chain = Promise.resolve().then(() => window.pywebview.api.update_window_preferences(delta, language)).then(() => { failed = false; }, () => {
         pending = Object.assign({}, delta, pending); failed = true;
+        if (pendingLanguage === null) pendingLanguage = language;
       }).then(() => { sending = false; if (!failed) drain(); });
       return chain;
     }
     owner = {
-      update(delta) { Object.assign(pending, delta); drain(); },
+      update(delta, language = null) {
+        Object.assign(pending, delta);
+        if (language === 'en' || language === 'zh-CN') pendingLanguage = language;
+        drain();
+      },
       async flush() {
-        while (sending || Object.keys(pending).length) {
+        while (sending || Object.keys(pending).length || pendingLanguage !== null) {
           if (!ready()) return false;
           await drain();
           if (failed) return false;
         }
-        if (failed || Object.keys(pending).length) return false;
+        if (failed || Object.keys(pending).length || pendingLanguage !== null) return false;
         if (ready()) { try { await window.pywebview.api.flush_window_preferences(); } catch (_) { return false; } }
         return true;
       }
@@ -53,7 +58,11 @@
   window.RelatumDesktopPreferences = owner;
   proto.setItem = function (key, value) {
     set.call(this, key, value);
-    if (this === storage && managed(String(key))) owner.update({ [String(key)]: String(value) });
+    if (this === storage && managed(String(key))) {
+      // Bootstrap uses the original setter; only deliberate persisted changes
+      // (including the editor and same-origin iframe) reach this hook.
+      owner.update({ [String(key)]: String(value) }, String(key) === 'canvas:toolbarLanguage' ? String(value) : null);
+    }
   };
   proto.removeItem = function (key) {
     remove.call(this, key);

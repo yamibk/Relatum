@@ -2,13 +2,21 @@
 
 ## 功能边界
 
-功能清单位于 `assets/feature-catalog.json`，当前有 17 项。`launcher.py` 使用现有桌面包的 pythonnet/WinForms 显示原生选择窗口；`feature_profile.py` 负责依赖解析、版本校验、选择保存和资源/API 归属。`Relatum.exe` 与 `RelatumLauncher.exe` 共享归档、图标与 `_internal`；启动器在导入主服务和 WebView2 前分派。默认开启的“后台预加载”可以单独取消，保留全部已选功能而减少未使用运行时和数据的启动分配；2026-10-09 的三轮实际包对比见 [资源释放与内存记录](resource-lifecycle-performance-2026-10-09.md)。
+功能清单位于 `assets/feature-catalog.json`，当前有 19 项。`launcher.py` 使用现有桌面包的 pythonnet/WinForms 显示原生选择窗口；`feature_profile.py` 负责依赖解析、版本校验、选择保存和资源/API 归属。`Relatum.exe` 与 `RelatumLauncher.exe` 共享归档、图标与 `_internal`；启动器在导入主服务和 WebView2 前分派。默认开启的“后台预加载”可以单独取消，保留全部已选功能而减少未使用运行时和数据的启动分配；2026-10-09 的三轮实际包对比见 [资源释放与内存记录](resource-lifecycle-performance-2026-10-09.md)。
 
 选择保存在实际数据根的 `data/launcher-profile.json`，与 EXE 旁的 `.exe.config` 不同。启动器通过命令行交接，主进程取得工作区占用并建立服务后才原子保存手动选择；拒绝启动不覆盖。普通 EXE 使用完整模式，不读取启动器选择；已有精简窗口时要求先退出。
 
 客户端设置新增“启动 RelatumLauncher 时不再弹窗”，由原生桥接原子保存到 `data/launcher-settings.json`，可随时取消恢复选择窗口。启用后直接启动上次组合；选择缺失/损坏或仅编辑器的上次画布已失效时恢复选择窗口。启动器标题下方原两行说明已删除。导航滑块按实际启用工作区排列，避免精简模式白字落在白底。
 
 免弹窗有效配置在启动器当前进程进入桌面程序，严格解码受限会话；不重叠时不创建选择窗或第二个 EXE，重叠时恢复选择窗并保留配置。手动模式交接给 `Relatum.exe`。两者使用相同工作区协调与保存链。服务/背景子进程标志先于 EXE 名分派；免弹窗主窗口和背景子进程名均可为 `RelatumLauncher.exe`。
+
+## 启动器语言（2026-10-14）
+
+桌面版主动切换语言时，现有偏好桥接额外携带可选的 `launcher_language`，立即原子写入实际数据根的 `data/launcher-language.json`（`version:1`，`language:en/zh-CN`）。启动器只读该文件，缺失、损坏或不支持的值默认中文。恢复快照、导入旧偏好、其他设置保存及研究 iframe 的非持久化语言同步均不覆盖它；各窗口的原有语言偏好仍按模式独立保存。发送失败保留待提交语言，重试优先使用同一窗口较新的选择，关闭沿用已有冲刷。
+
+首页“？”的“本机设置”页同步提供中英文文件用途和删除后回退中文的说明。`tests.test_desktop_preferences`、`tests/desktop-preferences-regression.js` 覆盖恢复隔离、连续切换、桥接未就绪、写入失败及重试；`tests.test_launcher_native` 检查全部功能的翻译、中英文正常/最小窗口布局与冲突提示。`tests/launcher-settings-package.js` 使用一次性数据根及真实 WebView2，检查中英文宽/窄帮助面板、完整/笔记模式恢复，以及通过 UI Automation 读取实际 EXE 的英文和中文选择窗口。可选 `RELATUM_LAUNCHER_PREVIEW_DIR` 保存布局截图。
+
+本次验证通过 59 项相关 Python 测试、桌面偏好 JS 回归、本地数据说明契约、14 种源码功能组合、8 种实际 EXE 入口和配置回退，以及实际包中英文语言链路。便携包资源脚本完成完整、关闭后台预加载、仅画布库、仅笔记各三轮，并验证普通单实例激活、笔记即时输入后关闭保存及启动器不创建 WebView2；全部使用隔离数据和缓存。新包输出到独立目录，未覆盖旧包或用户内容。
 
 ## 不同工作区多开
 

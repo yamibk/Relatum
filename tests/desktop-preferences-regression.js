@@ -48,5 +48,48 @@ function context(seed, values = {}, api = null, parent = null) {
   retry.localStorage.setItem('canvas:startTheme', 'dark');
   assert(await retry.window.RelatumDesktopPreferences.flush());
   assert.equal(persisted['canvas:startTheme'], 'dark');
+  // Restored snapshots never count as deliberate language choices.
+  const languageCalls = [];
+  let languageFail = false, releaseFailure;
+  const languageApi = {
+    async update_window_preferences(delta, language) {
+      if (languageFail) {
+        await new Promise(resolve => { releaseFailure = resolve; });
+        throw Error('disk unavailable');
+      }
+      languageCalls.push({ delta, language });
+    },
+    async flush_window_preferences() {}
+  };
+  const languages = context({ ...seed, values: { 'canvas:toolbarLanguage': 'en' } }, {}, languageApi);
+  assert(await languages.window.RelatumDesktopPreferences.flush());
+  assert(languageCalls.every(call => call.language === null));
+  languages.localStorage.setItem('canvas:toolbarLanguage', 'en');
+  assert(await languages.window.RelatumDesktopPreferences.flush());
+  assert.equal(languageCalls.at(-1).language, 'en', 'same stored value still represents a deliberate choice');
+  const iframe = context(seed, {}, null, languages.window);
+  iframe.localStorage.setItem('canvas:toolbarLanguage', 'zh-CN');
+  assert(await iframe.window.RelatumDesktopPreferences.flush());
+  assert.equal(languageCalls.at(-1).language, 'zh-CN');
+  languageFail = true;
+  languages.localStorage.setItem('canvas:toolbarLanguage', 'en');
+  await Promise.resolve(); await Promise.resolve();
+  assert(releaseFailure);
+  languages.localStorage.setItem('canvas:toolbarLanguage', 'zh-CN');
+  const failedFlush = languages.window.RelatumDesktopPreferences.flush();
+  releaseFailure();
+  assert.equal(await failedFlush, false);
+  languageFail = false;
+  assert(await languages.window.RelatumDesktopPreferences.flush());
+  assert.equal(languageCalls.at(-1).language, 'zh-CN', 'retry retains the newer choice');
+  languages.localStorage.removeItem('canvas:toolbarLanguage');
+  assert(await languages.window.RelatumDesktopPreferences.flush());
+  assert.equal(languageCalls.at(-1).language, null, 'deleting a preference is not a language selection');
+  const delayed = context(seed);
+  delayed.localStorage.setItem('canvas:toolbarLanguage', 'en');
+  delayed.window.pywebview = { api: languageApi };
+  delayed.listeners.pywebviewready();
+  assert(await delayed.window.RelatumDesktopPreferences.flush());
+  assert.equal(languageCalls.at(-1).language, 'en', 'a choice before bridge readiness is retained');
   console.log('desktop preferences regression: ok');
 })().catch(error => { console.error(error); process.exitCode = 1; });

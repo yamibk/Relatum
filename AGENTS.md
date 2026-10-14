@@ -868,6 +868,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ## 10. 桌面壳和打包
 
+- 启动器读取实际数据根的 `data/launcher-language.json`（`version:1`，`language:en/zh-CN`），缺失、损坏或无效时默认中文。`assets/desktop-preferences.js` 只在主动持久化写入 `canvas:toolbarLanguage` 时，通过 `update_window_preferences(delta, launcher_language=None)` 额外传递语言；初始化快照、旧偏好导入及研究 iframe 的非持久化语言同步不传。`desktop_preferences.py` 校验后沿用原子写入立即保存，最近一次收到的主动切换生效；各模式的窗口偏好仍独立。队列、失败重试和关闭冲刷保留语言身份，其他窗口的旧快照不会覆盖。`launcher.py` 的原生文案表覆盖中英文选项、说明和常见提示，不启动 HTTP/WebView2。首页“？”的本机设置页同步说明此文件及删除后回退中文；验证用桌面偏好 Python/JS、原生启动器测试和 `node tests/start-data-guide-contract.js`，数据均隔离。
 - 启动器提供默认勾选的“后台预加载” `runtime.preload`，沿用版本 1 会话选择，不新增文档字段、本机偏好键或 HTTP 接口；取消后仍保留所有已选功能，只有未打开页面的数据、笔记/生涯运行时、编辑器 AI/图谱、展示字体与编辑器背景的后台准备延至真实使用。本文默认预热行为仅在此选项开启时执行；真实内容需要的字体与公式继续按需加载。该选项不是工作区/首页入口，不影响工作区占用锁和 WebView2 偏好目录组合；直接 `Relatum.exe` 完整模式仍开启预加载。
 - 便携版提供 `RelatumLauncher.exe`：原生 WinForms，默认恢复选择并等待确认；手动确认保持启动独立 `Relatum.exe`。免弹窗且保存组合有效时，在当前进程进入桌面主程序，不创建选择窗口、不再次启动 EXE，任务管理器主进程名为 `RelatumLauncher.exe`。`quick_launch()` 只返回经过入口/文件校验的会话参数，桌面入口仍严格解码为受限会话并持有同一实例锁。选择缺失/损坏或仅编辑器的文件失效时恢复选择窗口。选择窗口自身不启动 HTTP 服务或 WebView2。`desktop.py` 在导入主服务前根据 EXE 名称分派，但动态背景子进程与服务标志必须优先，避免同进程主窗启动的子进程误入选择窗口。两个 EXE 共享归档和 `_internal`。源码可运行 `launcher.py` 或 `desktop.py --launcher`。MSIX 不含启动器，客户端隐藏免弹窗设置。
 - 精简模式的导航列数和滑块位移按实际启用工作区计算，首绘即生效；中英文切换及窄窗口必须保持滑块与当前按钮对齐。`assets/desktop-shell.js` 共用免弹窗控件逻辑，画布首页与轻量外壳一致。

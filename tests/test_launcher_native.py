@@ -9,10 +9,86 @@ from pathlib import Path
 import launcher
 from feature_profile import PROFILE_FILENAME, LaunchProfile, read_preferences, save_preferences, save_launcher_settings, FEATURES
 from desktop_instance import DesktopInstanceCoordinator, desktop_instance_running
+from desktop_preferences import DesktopPreferences
+
+
+class LauncherTextTests(unittest.TestCase):
+    def test_feature_and_message_translations(self):
+        from desktop_instance import conflict_message
+        self.assertEqual(set(launcher.FEATURE_TEXT_EN), set(FEATURES))
+        for label, description in launcher.FEATURE_TEXT_EN.values():
+            self.assertTrue(label and description)
+            self.assertFalse(any('\u4e00' <= char <= '\u9fff' for char in label + description))
+        message = conflict_message(('notes', 'research'))
+        self.assertEqual(launcher.launcher_text(message, 'zh-CN'), message)
+        translated = launcher.launcher_text(message, 'en')
+        self.assertIn('Notes workspace, Research workspace', translated)
+        self.assertNotIn('已在运行', translated)
+        self.assertEqual(launcher.launcher_text('user-file.canvas', 'en'), 'user-file.canvas')
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows native launcher")
 class NativeLauncherTests(unittest.TestCase):
+    def test_native_form_language_and_layout(self):
+        import clr
+        clr.AddReference('System.Windows.Forms')
+        clr.AddReference('System.Drawing')
+        from System.Threading import Thread, ThreadStart, ApartmentState
+        from System.Drawing import Bitmap, Rectangle
+        from System.Drawing.Imaging import ImageFormat
+        from System.Windows.Forms import Application, TextRenderer
+        errors = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def check():
+                try:
+                    Application.EnableVisualStyles()
+                    for language in ('en', 'zh-CN'):
+                        preferences = DesktopPreferences(root, 'notes')
+                        preferences.update({'canvas:toolbarLanguage': language}, language)
+                        preferences.flush()
+                        form = launcher.create_form(root)
+                        try:
+                            buttons, pick, detail, start, _ = form._relatum_controls
+                            expected = launcher.FEATURE_TEXT_EN['notes.graph'][0] if language == 'en' else '笔记图谱'
+                            self.assertEqual(buttons['notes.graph'].Text, expected)
+                            self.assertEqual(start.Text, 'Start Relatum' if language == 'en' else '启动 Relatum')
+                            self.assertEqual(pick.Text, 'Choose .canvas…' if language == 'en' else '选择 .canvas…')
+                            form.Opacity = 0
+                            form.Show()
+                            Application.DoEvents()
+                            buttons['notes.graph'].Focus()
+                            self.assertIn('relationship graph' if language == 'en' else '笔记本关系图谱', detail.Text)
+                            original = form.Size
+                            for size_name, size in (('normal', original), ('minimum', form.MinimumSize)):
+                                form.Size = size
+                                Application.DoEvents()
+                                for button in buttons.values():
+                                    self.assertLessEqual(TextRenderer.MeasureText(button.Text, button.Font).Width + 18, button.Width, button.Text)
+                                for button in (pick, start):
+                                    self.assertLessEqual(TextRenderer.MeasureText(button.Text, button.Font).Width, button.Width - 8, button.Text)
+                                self.assertLessEqual(start.Right, start.Parent.ClientSize.Width)
+                                output = os.environ.get('RELATUM_LAUNCHER_PREVIEW_DIR')
+                                if output:
+                                    Path(output).mkdir(parents=True, exist_ok=True)
+                                    bitmap = Bitmap(form.Width, form.Height)
+                                    try:
+                                        form.DrawToBitmap(bitmap, Rectangle(0, 0, form.Width, form.Height))
+                                        bitmap.Save(str(Path(output) / f'launcher-{language}-{size_name}.png'), ImageFormat.Png)
+                                    finally:
+                                        bitmap.Dispose()
+                        finally:
+                            form.Close()
+                            form.Dispose()
+                except Exception as err:
+                    errors.append(err)
+            thread = Thread(ThreadStart(check))
+            thread.SetApartmentState(ApartmentState.STA)
+            thread.Start()
+            thread.Join()
+        if errors:
+            raise errors[0]
+
     def test_direct_full_with_canvas_rejects_restricted_owner(self):
         import desktop
         with tempfile.TemporaryDirectory() as directory:

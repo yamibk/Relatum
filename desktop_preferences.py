@@ -8,12 +8,23 @@ from pathlib import Path
 from feature_profile import _save_json
 
 
+def read_launcher_language(root: Path) -> str:
+    try:
+        payload = json.loads((Path(root) / "data" / "launcher-language.json").read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and type(payload.get("version")) is int and payload["version"] == 1 and payload.get("language") == "en":
+            return "en"
+    except (OSError, ValueError):
+        pass
+    return "zh-CN"
+
+
 def managed_key(key) -> bool:
     return isinstance(key, str) and key.startswith(("canvas:", "research:")) and len(key) <= 256
 
 
 class DesktopPreferences:
     def __init__(self, root: Path, session_key: str):
+        self.root = Path(root)
         self.path = Path(root) / "data" / "desktop-sessions" / session_key / "preferences.json"
         self.session_key = session_key
         self.launch_id = uuid.uuid4().hex
@@ -49,8 +60,10 @@ class DesktopPreferences:
         raw = json.dumps(context, ensure_ascii=True).replace("<", "\\u003c")
         return '<script>window.RelatumDesktopPreferencesSeed=' + raw + ';</script><script src="/desktop-preferences.js"></script>'
 
-    def update(self, delta):
+    def update(self, delta, launcher_language=None):
         delta = self._validate(delta)
+        if launcher_language is not None and launcher_language not in ("en", "zh-CN"):
+            raise ValueError("启动器语言无效")
         with self._lock:
             updated = dict(self.values)
             for key, value in delta.items():
@@ -59,6 +72,10 @@ class DesktopPreferences:
                 else:
                     updated[key] = value
             self._validate(updated)
+            # Only explicit language writes carry this argument. Restoring a
+            # session or importing its snapshot must not override another window.
+            if launcher_language is not None:
+                _save_json(self.root / "data" / "launcher-language.json", {"version": 1, "language": launcher_language})
             if self.initialized and updated == self.values:
                 return {"ok": True}
             self.values = updated

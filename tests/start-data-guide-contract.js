@@ -63,6 +63,12 @@ assert(i18n.includes("'查看本地数据与空间管理说明': 'View the local
 assert(i18n.includes("'canvases 文件夹': 'canvases folder'"));
 assert(i18n.includes("'本机偏好': 'On-device preferences'"));
 const helpCopy = start.slice(start.indexOf('const START_HELP_PAGES_ZH'), start.indexOf('function startHelpPages()'));
+assert.equal((helpCopy.match(/data\/launcher-language\.json/g) || []).length, 2,
+  'both guide languages must document the launcher language file');
+assert(helpCopy.includes('最近一次主动切换的语言'));
+assert(helpCopy.includes('删除此文件后，启动器默认使用中文'));
+assert(helpCopy.includes('Restoring another window’s saved settings does not override it'));
+assert(helpCopy.includes('Deleting this file makes the launcher default to Chinese'));
 assert(!/[A-Za-z]:[\\/]/.test(helpCopy), 'help copy must not contain a machine-specific drive path');
 assert(!helpCopy.includes('%LOCALAPPDATA%'), 'help copy must not expose an installation-specific storage path');
 assert(!helpCopy.includes('/Users/'), 'help copy must not contain a machine-specific user path');
