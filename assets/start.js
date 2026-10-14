@@ -44,7 +44,7 @@
   const startNotice = document.querySelector('[data-role="start-notice"]');
   const startHelp = document.querySelector('[data-role="start-help"]');
   const startHelpTrigger = document.querySelector('[data-action="start-help-open"]');
-  const startThemeToggle = document.querySelector('[data-action="start-theme-toggle"]');
+  const startThemeToggles = Array.from(document.querySelectorAll('[data-action="start-theme-toggle"]'));
   const startSpeedControl = document.querySelector('.start-speed-control');
   const startSpeedTrigger = document.querySelector('[data-action="start-speed-toggle"]');
   const startSpeedPop = document.querySelector('[data-role="start-speed-pop"]');
@@ -229,11 +229,11 @@
     startTheme = theme === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.startTheme = startTheme;
     document.body.dataset.startTheme = startTheme;
-    if (startThemeToggle) {
-      const dark = startTheme === 'dark';
-      startThemeToggle.setAttribute('aria-pressed', dark ? 'true' : 'false');
-      startThemeToggle.setAttribute('aria-label', dark ? '切换为浅色起始页' : '切换为深色起始页');
-    }
+    const dark = startTheme === 'dark';
+    startThemeToggles.forEach((button) => {
+      button.setAttribute('aria-pressed', dark ? 'true' : 'false');
+      button.setAttribute('aria-label', dark ? '切换为浅色起始页' : '切换为深色起始页');
+    });
     syncDarkCardPresentationControls();
   }
 
@@ -253,11 +253,11 @@
 
   function transitionStartTheme(next) {
     const nextTheme = next === 'dark' ? 'dark' : 'light';
-    if (startThemeToggle) {
-      startThemeToggle.classList.add('is-switching');
+    if (startThemeToggles.length) {
+      startThemeToggles.forEach((button) => button.classList.add('is-switching'));
       clearTimeout(startThemeButtonTimer);
       startThemeButtonTimer = window.setTimeout(() => {
-        startThemeToggle.classList.remove('is-switching');
+        startThemeToggles.forEach((button) => button.classList.remove('is-switching'));
         startThemeButtonTimer = 0;
       }, 360);
     }
@@ -1121,13 +1121,13 @@
     startPanelReset.addEventListener('click', () => resetStartPanelDefaults());
   }
 
-  if (startThemeToggle) {
-    startThemeToggle.addEventListener('click', () => {
+  startThemeToggles.forEach((button) => {
+    button.addEventListener('click', () => {
       const next = startTheme === 'dark' ? 'light' : 'dark';
       transitionStartTheme(next);
       try { localStorage.setItem(START_THEME_KEY, next); } catch (e) {}
     });
-  }
+  });
 
 
   // 起步页「?」只承担本地数据说明；旧的功能教程留给编辑器内的新手引导。
@@ -1812,7 +1812,7 @@
   // 路径都把“缺失键”当作出厂默认值，因此删除这些键就是真正的恢复出厂（不写回默认值）。
   // 随后把每个控件的勾选/滑条、CSS 变量与运行状态用各自的 apply / 同步函数即时刷回
   // 默认（persist:false，只同步不写盘），并派发既有事件让已加载的页面运行时跟随。
-  // 绝不 localStorage.clear()：主题、语言、当前分组等不属于本面板的键不受影响。
+  // 绝不 localStorage.clear()：主题、语言、当前分组等独立偏好不受影响。
   function resetStartPanelDefaults() {
     [
       START_BACKGROUND_KEY,               // 主页背景（简洁）

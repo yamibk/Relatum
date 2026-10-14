@@ -250,15 +250,18 @@
   const careerReset = document.querySelector('[data-action="career-scroll-feel-reset"]');
   if (careerReset) careerReset.addEventListener('click', () => applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, true));
 
+  const themeButtons = Array.from(document.querySelectorAll('[data-action="start-theme-toggle"]'));
   function theme(value, persist) {
     const next = value === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.startTheme = document.body.dataset.startTheme = next;
-    const button = document.querySelector('[data-action="start-theme-toggle"]');
-    if (button) button.setAttribute('aria-pressed', String(next === 'dark'));
-    if (persist) localStorage.setItem('canvas:startTheme', next);
+    themeButtons.forEach(button => {
+      button.setAttribute('aria-pressed', String(next === 'dark'));
+      button.setAttribute('aria-label', next === 'dark' ? '切换为浅色起始页' : '切换为深色起始页');
+    });
+    if (persist) try { localStorage.setItem('canvas:startTheme', next); } catch (e) {}
   }
-  const themeButton = document.querySelector('[data-action="start-theme-toggle"]');
-  if (themeButton) themeButton.addEventListener('click', () => theme(document.body.dataset.startTheme === 'dark' ? 'light' : 'dark', true));
+  theme(read('canvas:startTheme', 'light'), false);
+  themeButtons.forEach(button => button.addEventListener('click', () => theme(document.body.dataset.startTheme === 'dark' ? 'light' : 'dark', true)));
   function background(value, persist) {
     const next = value === 'scenic' ? 'scenic' : 'simple';
     document.documentElement.dataset.startBackground = document.body.dataset.startBackground = next;
@@ -278,8 +281,8 @@
   }
   const reset = document.querySelector('[data-action="start-panel-reset"]');
   if (reset) reset.addEventListener('click', () => {
-    ['canvas:startTheme','canvas:startBackgroundStyle',START_SPEED_KEY,SPINE_SPEED_KEY,CAREER_SCROLL_FEEL_KEY,CAREER_SCROLL_IDLE_KEY].forEach(key => localStorage.removeItem(key));
-    theme('light', false); background('simple', false); applyStartSpeed(260, false); applySpineSpeed(414, false); applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, false);
+    ['canvas:startBackgroundStyle',START_SPEED_KEY,SPINE_SPEED_KEY,CAREER_SCROLL_FEEL_KEY,CAREER_SCROLL_IDLE_KEY].forEach(key => localStorage.removeItem(key));
+    background('simple', false); applyStartSpeed(260, false); applySpineSpeed(414, false); applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, false);
     window.RelatumUsage?.resetSettings();
   });
   const settings = query('desktop-settings');
