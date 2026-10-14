@@ -9510,13 +9510,9 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
 .start-panel-theme {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
   min-height: 32px;
   margin-bottom: 8px;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 650;
 }
 
 .start-speed-pop .start-priority-settings .start-panel-theme .start-theme-toggle {

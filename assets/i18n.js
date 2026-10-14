@@ -69,7 +69,6 @@
     '先退出 Relatum，再在资源管理器中整理文件 · 按': 'Quit Relatum before managing files in File Explorer · Press',
     '或': 'or', '上一页': 'Previous page', '下一页': 'Next page',
     '切换为浅色起始页': 'Switch to light theme', '切换为深色起始页': 'Switch to dark theme',
-    '深色模式': 'Dark mode',
     '调整翻页速度': 'Adjust page motion', '分组导航': 'Page navigation',
     '主页背景风格': 'Home background style', '速记便签墙': 'Notes', '页面便签': 'Page sticky note', '活跃热力图': 'Activity',
     '学习页': 'Study page', '树状页': 'Tree page', '活跃热力图页': 'Activity page', '速记便签墙页': 'Notes page',
