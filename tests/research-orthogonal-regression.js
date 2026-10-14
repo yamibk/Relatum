@@ -35,6 +35,31 @@ async function main() {
   const huge = new DecorationIndex([{ ...line('long'), units: 100000 }]);
   assert.equal(huge.large.size, 1);
   assert.deepEqual(huge.nearestEndpoint({ x: 3999999, y: 1 }, 12), { x: 4000000, y: 0 });
+  // Updating existing objects must preserve stacking/snap results and release
+  // their former cells, including transitions into/out of the long-line bucket.
+  const indexedObjects = [line('first'), line('second'), { ...line('diagonal'), direction: 1 },
+    { id: 'labelled', kind: 'symbol', type: 'rectangle', x: 100, y: 100, width: 32, height: 14,
+      rotation: 0, label: 'old' }, { ...line('far'), units: 100000 }];
+  const changing = new DecorationIndex(indexedObjects);
+  for (const patch of [
+    { ...line('first', 2048, -2048), direction: 5 },
+    { ...line('far', -512, -512), units: 1 },
+    { ...line('second'), direction: 1, units: 100000 },
+    { ...indexedObjects[3], x: -800, label: 'a much longer label', labelFontSize: 40, rotationDegrees: 37 },
+    line('second', 0, 0, 1), line('first', 0, 0, 1),
+  ]) {
+    assert(changing.update([patch]));
+    indexedObjects[indexedObjects.findIndex((d) => d.id === patch.id)] = patch;
+    const rebuilt = new DecorationIndex(indexedObjects);
+    for (const b of [{ left: -1024, top: -1024, right: 1024, bottom: 1024 },
+      { left: 1800, top: -2500, right: 2600, bottom: -1800 },
+      { left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 }])
+      assert.deepEqual(changing.query(b), rebuilt.query(b));
+    assert.deepEqual(changing.nearestEndpoint({ x: 1, y: 1 }, 12), rebuilt.nearestEndpoint({ x: 1, y: 1 }, 12));
+    assert.equal(changing.grid.size, rebuilt.grid.size, 'old spatial cells must be removed');
+    assert.equal(changing.large.size, rebuilt.large.size);
+  }
+  assert.equal(changing.update([line('unknown')]), false, 'new memberships require a rebuild');
   const span = { ...line('new', 40, 0, 2), color: 'red', lineStyle: 'dashed' };
   const tails = subtractLineSpan({ ...line('a'), arrowhead: 'end' }, span);
   assert.deepEqual(tails.map((d) => [d.x, d.units, d.arrowhead]), [[0, 1, 'none'], [120, 2, 'end']]);
@@ -105,7 +130,12 @@ async function main() {
   assert(changes.at(-1).decorationsOnly, 'decoration undo must not invalidate computation');
   assert(model.redo());
   const committedPosition = model.decorations()[0].x;
+  const nodeIndex = model.nodeById, edgeIndex = model.edgeById;
+  const unaffected = model.decorations()[1];
   model.updateDecorations({ [model.decorations()[0].id]: { x: committedPosition + 15 } }, { live: true });
+  assert.deepEqual(changes.at(-1).decorationIds, [model.decorations()[0].id]);
+  assert.strictEqual(model.decoration(unaffected.id), unaffected, 'unaffected decoration identity must survive a preview');
+  assert.strictEqual(model.nodeById, nodeIndex); assert.strictEqual(model.edgeById, edgeIndex);
   assert.equal(model.persistenceSnapshot().decorations[0].x, committedPosition, 'saving during a live drag must use committed geometry');
   model.restore(model.history[model.historyIndex], true);
   const copies = model.duplicateDecorations(model.decorations().map((d) => d.id), 100, 200);

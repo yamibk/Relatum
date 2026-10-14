@@ -92,19 +92,39 @@ export function hitDecoration(d, p, tolerance) {
 export class DecorationIndex {
   constructor(objects = []) { this.rebuild(objects); }
   rebuild(objects) {
-    this.objects = objects;
+    this.objects = objects.slice();
     this.grid = new Map(); this.large = new Set(); this.bounds = new Map(); this.order = new Map();
-    objects.forEach((d, order) => {
-      const b = decorationBounds(d); this.bounds.set(d.id, b); this.order.set(d.id, order);
-      const x0 = Math.floor(b.left / 512), x1 = Math.floor(b.right / 512);
-      const y0 = Math.floor(b.top / 512), y1 = Math.floor(b.bottom / 512);
-      if ((x1 - x0 + 1) * (y1 - y0 + 1) > 256) { this.large.add(d); return; }
-      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
-        const key = x + ':' + y;
-        if (!this.grid.has(key)) this.grid.set(key, new Set());
-        this.grid.get(key).add(d);
+    objects.forEach((d, order) => this.indexObject(d, order));
+  }
+  indexObject(d, order) {
+    const b = decorationBounds(d); this.bounds.set(d.id, b); this.order.set(d.id, order);
+    const x0 = Math.floor(b.left / 512), x1 = Math.floor(b.right / 512);
+    const y0 = Math.floor(b.top / 512), y1 = Math.floor(b.bottom / 512);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 256) { this.large.add(d); return; }
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const key = x + ':' + y;
+      if (!this.grid.has(key)) this.grid.set(key, new Set());
+      this.grid.get(key).add(d);
+    }
+  }
+  // Membership/order changes still rebuild once. Position, style and measured
+  // label changes replace only the existing objects' bounded grid entries.
+  update(objects) {
+    if (objects.some((d) => !this.order.has(d.id))) return false;
+    objects.forEach((d) => {
+      const order = this.order.get(d.id), previous = this.objects[order], b = this.bounds.get(d.id);
+      if (!this.large.delete(previous)) {
+        const x0 = Math.floor(b.left / 512), x1 = Math.floor(b.right / 512);
+        const y0 = Math.floor(b.top / 512), y1 = Math.floor(b.bottom / 512);
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+          const key = x + ':' + y, cell = this.grid.get(key);
+          if (cell) { cell.delete(previous); if (!cell.size) this.grid.delete(key); }
+        }
       }
+      this.objects[order] = d;
+      this.indexObject(d, order);
     });
+    return true;
   }
   query(b) {
     const found = new Set(this.large);

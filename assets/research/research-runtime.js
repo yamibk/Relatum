@@ -154,8 +154,8 @@ export function createResearchSimulationController(options = {}) {
 
   function activate() {
     if (disposed) return false;
-    active = true; visible = true;
-    const current = state(); current.running = current.resumeIntent;
+    active = true;
+    const current = state(); current.running = operational() && current.resumeIntent;
     lastWall = readNow(); schedule(); return true;
   }
 

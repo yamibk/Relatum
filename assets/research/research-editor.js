@@ -146,6 +146,7 @@ export async function createResearchEditor(stage) {
   syncUsageTarget();
   let disposed = false;
   let active = false;
+  let pageVisible = false;
   let activeController = null;
   let modelUnsubscribe = null;
   let computeFrame = 0;
@@ -269,7 +270,7 @@ export async function createResearchEditor(stage) {
     if (!page || !result) return;
     page.runtime.lastRun = result;
     page.runtime.computeProjection = visibleProjection(result.projection);
-    if (page.id === renderedPageId) {
+    if (page.id === renderedPageId && active && researchPageVisible()) {
       canvas.setComputeProjection(page.runtime.computeProjection, {
         deferred: !!meta.simulation && !meta.step && !meta.reset,
       });
@@ -288,12 +289,12 @@ export async function createResearchEditor(stage) {
   }
 
   function scheduleCompute(pageId = renderedPageId) {
-    if (editorMode === 'orthogonal') return;
+    if (!active || !researchPageVisible() || editorMode === 'orthogonal') return;
     if (computeFrame) cancelAnimationFrame(computeFrame);
     const revision = ++computeRevision;
     computeFrame = requestAnimationFrame(() => {
       computeFrame = 0;
-      if (disposed || revision !== computeRevision) return;
+      if (disposed || !active || !researchPageVisible() || revision !== computeRevision) return;
       const page = session.page(pageId);
       if (!page || page.id !== renderedPageId) return;
       let runtime = page.runtime.computeCache;
@@ -1273,6 +1274,7 @@ export async function createResearchEditor(stage) {
   }
 
   function renderDecorationSelection(selection) {
+    if (!active || !researchPageVisible()) return;
     const ids = selection.decorationIds || [];
     if (!ids.length) { renderedDecorationId = ''; showLibrary(); return; }
     subcircuitCreate.hidden = true;
@@ -1511,6 +1513,7 @@ export async function createResearchEditor(stage) {
     window.addEventListener('resize', () => { cancelDockResize(); closeModeMenu(); closePresetContextMenu(); }, { signal });
     matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => { if (prefersReducedMotion()) cancelDockResize(); }, { signal });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (!researchPageVisible()) return;
       if (editorMode === 'orthogonal' && !nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
       if (presetDialog) {
         // Rebuild the preview using the unchanged draft when the theme switches.
@@ -1670,15 +1673,16 @@ export async function createResearchEditor(stage) {
       if (settingsPanel.hidden || settingsPanel.contains(event.target) || settingsOpen.contains(event.target)) return;
       closeSettingsPanel({ focus: false });
     }, { capture: true, signal });
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) cancelDockResize();
-      if (document.hidden && editorMode === 'orthogonal') {
-        if (symbolPreview?.control?.tagName === 'TEXTAREA') symbolLabelEditor?.commit(); else cancelSymbolPreview();
-        canvas.cancelDecorationGesture(); closeModeMenu(); closePresetContextMenu();
-      }
-      simulation.setVisible(!document.hidden);
-      if (document.hidden) scheduleSave(0);
-    }, { signal });
+    document.addEventListener('visibilitychange', syncPageVisibility, { signal });
+    window.addEventListener('canvasdesktop:visibility', syncPageVisibility, { signal });
+    // The desktop shell notifies the top-level window. Its same-origin iframe
+    // can remain focused and document.hidden can remain false when minimized.
+    if (window.parent !== window) {
+      try {
+        window.parent.addEventListener('canvasdesktop:visibility', syncPageVisibility, { signal });
+        window.parent.document.addEventListener('visibilitychange', syncPageVisibility, { signal });
+      } catch (_) {}
+    }
     window.addEventListener('keydown', (event) => {
       if (presetDialog) return;
       if (event.isComposing || event.keyCode === 229 || (symbolLabelEditor?.isComposing() && event.target.tagName === 'TEXTAREA')) return;
@@ -1752,10 +1756,46 @@ export async function createResearchEditor(stage) {
   setDockCollapsed(dockCollapsed, false);
   syncDecorationSettings(); setEditorMode(editorMode, false);
 
+  function researchPageVisible() {
+    if (document.hidden || document.documentElement.dataset.desktopMinimized === '1') return false;
+    try {
+      return window.parent === window || (!window.parent.document.hidden
+        && window.parent.document.documentElement.dataset.desktopMinimized !== '1');
+    } catch (_) { return true; }
+  }
+
+  function syncPageVisibility(eventOrForce) {
+    if (!active || disposed) return;
+    const next = researchPageVisible();
+    if (eventOrForce !== true && next === pageVisible) return;
+    pageVisible = next;
+    simulation.setVisible(next);
+    if (next) {
+      canvas.activate();
+      const page = session.page(renderedPageId);
+      if (page) canvas.setComputeProjection(page.runtime.computeProjection);
+      if (editorMode === 'orthogonal' && !symbolLabelEditor?.isComposing()) {
+        if (!nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
+        else renderDecorationSelection(canvas.getDecorationSelection());
+      }
+      scheduleCompute();
+      return;
+    }
+    cancelCompute(); cancelDockResize();
+    canvas.suspend();
+    settlePageSwitchMotion(); resetRailWheel(); clearRailTransients();
+    if (railHideTimer) clearTimeout(railHideTimer); railHideTimer = 0; rail.classList.remove('is-revealed');
+    if (panelHitGuardTimer) clearTimeout(panelHitGuardTimer); panelHitGuardTimer = 0; sidePanel.classList.remove('is-hit-guarded');
+    if (symbolPreview?.control?.tagName === 'TEXTAREA') symbolLabelEditor?.commit(); else cancelSymbolPreview();
+    suspendSymbolPreviews(stage); closeModeMenu(); closePresetContextMenu(); closePresetDialog();
+    scheduleSave(0);
+  }
+
   function activate() {
     if (disposed || active) return !disposed;
-    if (editorMode === 'orthogonal' && !nodeLibrary.hidden) renderDecorationPalette(paletteSearch.value);
-    active = true; installListeners(); canvas.activate(); simulation.activate(); scheduleCompute(); return true;
+    active = true; installListeners();
+    simulation.setVisible(researchPageVisible()); simulation.activate();
+    syncPageVisibility(true); return true;
   }
 
   function suspend() {
@@ -1782,7 +1822,7 @@ export async function createResearchEditor(stage) {
     if (activeController) activeController.abort(); activeController = null;
     session.setPageView(renderedPageId, canvas.getViewState());
     scheduleSave(0);
-    active = false; return canvas.suspend();
+    active = false; pageVisible = false; return canvas.suspend();
   }
 
   function dispose() {

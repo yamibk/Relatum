@@ -138,6 +138,7 @@ export function createResearchCanvas(options) {
   const minimapNodeElements = new Map();
   const edgePathCache = new Map();
   const edgeSpatialGrid = new Map();
+  const largeEdgeIds = new Set();
   const removalGhosts = new Set();
   const selectedNodeIds = new Set();
   const selectedEdgeIds = new Set();
@@ -587,7 +588,6 @@ export function createResearchCanvas(options) {
     surface.appendChild(element);
     nodeElements.set(node.id, element);
     if (nodeResizeObserver) nodeResizeObserver.observe(element);
-    renderNode(node);
     return element;
   }
 
@@ -652,35 +652,50 @@ export function createResearchCanvas(options) {
         });
       }
     }
-    const projection = computeProjection[node.id] || null;
-    const result = element.querySelector('[data-compute-result]');
-    const output = projection && projection.output;
-    const trace = projection && Array.isArray(projection.trace) ? projection.trace : [];
-    result.hidden = !projection || (node.type !== 'probe' && !output && !projection.error && !projection.lastPulse);
-    element.classList.toggle('is-compute-error', !!(projection && projection.error));
-    element.classList.toggle('has-compute-output', !!output);
-    if (!result.hidden) {
-      if (projection.error) result.textContent = '错误 · ' + projection.error.message;
-      else if (node.type === 'probe') {
-        const latest = trace[trace.length - 1];
-        if (!latest) result.textContent = '轨迹 · 0/' + (projection.traceLimit || node.config.historyLimit || 64);
-        else if (latest.kind === 'event') result.textContent = `Pulse #${latest.sequence} · t=${latest.simulationTime}ms`;
-        else result.textContent = `= ${formatResearchValue(latest.value)} · t=${latest.simulationTime}ms`;
-      }
-      else if (!output && projection.lastPulse) result.textContent = 'Pulse · #' + projection.lastPulse.sequence;
-      else if (node.type === 'timer' && output.type === 'number') result.textContent = '= ' + formatDuration(output.value);
-      else result.textContent = '= ' + formatResearchValue(output);
-      if (node.type === 'timer' && projection.outputs && projection.outputs.running) {
-        result.textContent += projection.outputs.running.value ? ' · 运行中' : ' · 已暂停';
-      }
-    }
     const action = element.querySelector('[data-node-action]');
     if (action) {
       action.hidden = !definition.interactive;
       action.textContent = node.type === 'button' ? '触发' : '切换';
       action.setAttribute('aria-label', node.type === 'button' ? '触发按钮' : '切换开关');
     }
-    element.classList.toggle('is-lamp-on', node.type === 'lamp' && output
+    syncComputeProjection(element, node);
+  }
+
+  function setNodeClass(element, name, enabled) {
+    enabled = !!enabled;
+    if (element.classList.contains(name) !== enabled) element.classList.toggle(name, enabled);
+  }
+
+  // Simulation changes only the displayed result. Ports, badges and actions
+  // are structural DOM and are refreshed by renderNode after model edits.
+  function syncComputeProjection(element, node) {
+    if (node.type === 'note') return;
+    const projection = computeProjection[node.id] || null;
+    const result = element.querySelector('[data-compute-result]');
+    const output = projection && projection.output;
+    const trace = projection && Array.isArray(projection.trace) ? projection.trace : [];
+    const hidden = !projection || (node.type !== 'probe' && !output && !projection.error && !projection.lastPulse);
+    if (result.hidden !== hidden) result.hidden = hidden;
+    setNodeClass(element, 'is-compute-error', projection && projection.error);
+    setNodeClass(element, 'has-compute-output', output);
+    if (!result.hidden) {
+      let text;
+      if (projection.error) text = T('错误 · ' + projection.error.message);
+      else if (node.type === 'probe') {
+        const latest = trace[trace.length - 1];
+        if (!latest) text = T('轨迹 · 0/' + (projection.traceLimit || node.config.historyLimit || 64));
+        else if (latest.kind === 'event') text = `Pulse #${latest.sequence} · t=${latest.simulationTime}ms`;
+        else text = `= ${formatResearchValue(latest.value)} · t=${latest.simulationTime}ms`;
+      }
+      else if (!output && projection.lastPulse) text = 'Pulse · #' + projection.lastPulse.sequence;
+      else if (node.type === 'timer' && output.type === 'number') text = '= ' + formatDuration(output.value);
+      else text = '= ' + formatResearchValue(output);
+      if (node.type === 'timer' && projection.outputs && projection.outputs.running) {
+        text += projection.outputs.running.value ? ' · 运行中' : ' · 已暂停';
+      }
+      if (result.textContent !== text) result.textContent = text;
+    }
+    setNodeClass(element, 'is-lamp-on', node.type === 'lamp' && output
       && (output.type === 'boolean' ? output.value : output.type === 'bits' && output.value !== '0x0'));
   }
 
@@ -698,11 +713,11 @@ export function createResearchCanvas(options) {
     text.toggleAttribute('data-user-content', !usesDefaultLabel);
     if (!editing || editing.nodeId !== node.id) text.textContent = node.label;
     syncComputeDecorations(element, node);
-    if (!nodeLayoutCache.has(node.id)) measureNodeLayout(node.id);
   }
 
   function syncNodeElements() {
     const nodes = model.nodes();
+    surface.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
     const liveIds = new Set(nodes.map((node) => node.id));
     nodeElements.forEach((element, nodeId) => {
       if (liveIds.has(nodeId)) return;
@@ -713,6 +728,8 @@ export function createResearchCanvas(options) {
       selectedNodeIds.delete(nodeId);
     });
     nodes.forEach(renderNode);
+    // Mount/update the whole batch before reading any node or port geometry.
+    nodes.forEach((node) => measureNodeLayout(node.id));
     selectedEdgeIds.forEach((edgeId) => {
       if (!model.edge(edgeId)) selectedEdgeIds.delete(edgeId);
     });
@@ -753,6 +770,10 @@ export function createResearchCanvas(options) {
     const minY = Math.floor(geometry.bounds.top / EDGE_GRID_SIZE);
     const maxY = Math.floor(geometry.bounds.bottom / EDGE_GRID_SIZE);
     geometry.gridKeys = [];
+    if ((maxX - minX + 1) * (maxY - minY + 1) > 256) {
+      largeEdgeIds.add(geometry.id);
+      return;
+    }
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         const key = gridKey(x, y);
@@ -764,6 +785,7 @@ export function createResearchCanvas(options) {
   }
 
   function removeEdgeFromGrid(geometry) {
+    if (geometry) largeEdgeIds.delete(geometry.id);
     (geometry && geometry.gridKeys || []).forEach((key) => {
       const bucket = edgeSpatialGrid.get(key);
       if (!bucket) return;
@@ -780,6 +802,7 @@ export function createResearchCanvas(options) {
       const edge = model.edge(edgeId);
       const geometry = edge && edgeGeometry(edge);
       if (!geometry) return;
+      geometry.order = previous ? previous.order : 0;
       edgePathCache.set(edgeId, geometry);
       addEdgeToGrid(geometry);
     });
@@ -788,9 +811,11 @@ export function createResearchCanvas(options) {
   function rebuildEdgeCache() {
     edgePathCache.clear();
     edgeSpatialGrid.clear();
-    model.edges().forEach((edge) => {
+    largeEdgeIds.clear();
+    model.edges().forEach((edge, order) => {
       const geometry = edgeGeometry(edge);
       if (!geometry) return;
+      geometry.order = order;
       edgePathCache.set(edge.id, geometry);
       addEdgeToGrid(geometry);
     });
@@ -798,10 +823,20 @@ export function createResearchCanvas(options) {
 
   function edgeIdsInBounds(bounds) {
     const ids = new Set();
+    const intersects = (geometry) => geometry && geometry.bounds.left <= bounds.right
+      && geometry.bounds.right >= bounds.left && geometry.bounds.top <= bounds.bottom
+      && geometry.bounds.bottom >= bounds.top;
+    largeEdgeIds.forEach((edgeId) => { if (intersects(edgePathCache.get(edgeId))) ids.add(edgeId); });
     const minX = Math.floor(bounds.left / EDGE_GRID_SIZE);
     const maxX = Math.floor(bounds.right / EDGE_GRID_SIZE);
     const minY = Math.floor(bounds.top / EDGE_GRID_SIZE);
     const maxY = Math.floor(bounds.bottom / EDGE_GRID_SIZE);
+    // A distant node/edge or a wide overview must not allocate/enumerate an
+    // unbounded number of empty world cells. Cached bounds cover both paths.
+    if ((maxX - minX + 1) * (maxY - minY + 1) > Math.min(4096, edgeSpatialGrid.size)) {
+      edgePathCache.forEach((geometry, edgeId) => { if (intersects(geometry)) ids.add(edgeId); });
+      return ids;
+    }
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         const bucket = edgeSpatialGrid.get(gridKey(x, y));
@@ -840,7 +875,9 @@ export function createResearchCanvas(options) {
     const selectedStroke = rootStyle.getPropertyValue('--research-selection').trim() || '#11120f';
     const regularStroke = rootStyle.getPropertyValue('--research-line').trim() || 'rgba(37,39,36,.62)';
     const dataStroke = rootStyle.getPropertyValue('--research-data-line').trim() || '#456553';
-    candidates.forEach((edgeId) => {
+    const paintIds = largeEdgeIds.size
+      ? Array.from(candidates).sort((a, b) => edgePathCache.get(a).order - edgePathCache.get(b).order) : candidates;
+    paintIds.forEach((edgeId) => {
       if (movingEdges && movingEdges.has(edgeId)) return;
       const geometry = edgePathCache.get(edgeId);
       if (!geometry) return;
@@ -1090,13 +1127,16 @@ export function createResearchCanvas(options) {
     });
     let closest = null;
     let distance = Infinity;
+    let closestOrder = Infinity;
     ids.forEach((edgeId) => {
       const geometry = edgePathCache.get(edgeId);
       if (!geometry) return;
       const nextDistance = distanceToSegment(world, geometry.start, geometry.end);
-      if (nextDistance <= tolerance && nextDistance < distance) {
+      if (nextDistance <= tolerance && (nextDistance < distance
+        || (nextDistance === distance && geometry.order < closestOrder))) {
         closest = edgeId;
         distance = nextDistance;
+        closestOrder = geometry.order;
       }
     });
     return closest;
@@ -2098,7 +2138,7 @@ export function createResearchCanvas(options) {
   function updateMinimapNodes(nodeIds) {
     if (!minimapNodeMapping) return;
     nodeIds.forEach((nodeId) => {
-      const node = model.node(nodeId);
+      const node = model.node(nodeId) || model.decoration(nodeId);
       const dot = minimapNodeElements.get(nodeId);
       if (node && dot) positionMinimapNode(dot, node, minimapNodeMapping);
     });
@@ -2188,11 +2228,15 @@ export function createResearchCanvas(options) {
   function onModelChange(change) {
     decorations.modelChanged(change);
     if (change.decorationsOnly) {
+      if (change.live && Array.isArray(change.decorationIds)) {
+        contentBoundsCache = null;
+        updateMinimapNodes(change.decorationIds);
+        scheduleDraw(); return;
+      }
       redrawMinimap(); scheduleDraw(); return;
     }
     if (change.topology) {
       syncNodeElements();
-      model.nodes().forEach((node) => measureNodeLayout(node.id));
       rebuildEdgeCache();
       redrawMinimap();
       renderSelection();
@@ -2201,7 +2245,11 @@ export function createResearchCanvas(options) {
     const nodeIds = Array.isArray(change.nodeIds) ? change.nodeIds : [];
     nodeIds.forEach((nodeId) => {
       const node = model.node(nodeId);
-      if (node) renderNode(node);
+      if (!node) return;
+      if (change.kind === 'node-move') {
+        const element = nodeElements.get(nodeId);
+        if (element) element.style.transform = `translate(${node.x}px, ${node.y}px)`;
+      } else renderNode(node);
     });
     if (change.live && gesture && gesture.type === 'node-drag') {
       updateMinimapNodes(nodeIds);
@@ -2246,7 +2294,7 @@ export function createResearchCanvas(options) {
   function renderProjectionNode(nodeId) {
     const node = model.node(nodeId);
     const element = nodeElements.get(nodeId);
-    if (node && element) syncComputeDecorations(element, node);
+    if (node && element) syncComputeProjection(element, node);
   }
 
   function renderProjectionSlice() {
@@ -2305,6 +2353,7 @@ export function createResearchCanvas(options) {
     clearRemovalGhosts();
     edgePathCache.clear();
     edgeSpatialGrid.clear();
+    largeEdgeIds.clear();
     clearActiveEdges();
     selectionFrame.hidden = true;
     minimapNodes.replaceChildren();
@@ -2421,6 +2470,7 @@ export function createResearchCanvas(options) {
     minimapNodeElements.clear();
     edgePathCache.clear();
     edgeSpatialGrid.clear();
+    largeEdgeIds.clear();
     clearRemovalGhosts();
     surface.replaceChildren();
     clearActiveEdges();
