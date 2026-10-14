@@ -9510,7 +9510,7 @@ body.start-page.desktop-host[data-start-workspace="research"] .desktop-settings-
 .start-panel-theme {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-height: 32px;
   margin-bottom: 8px;
 }
