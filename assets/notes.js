@@ -105,6 +105,7 @@
   let pageSwitchResolve = null;
   let pageSwitchFrame = 0;
   let pageSwitching = false;
+  let pageChangePromise = null;
   let editSession = null;
   const pageStates = new Map();
   const pageRequests = new Map();
@@ -2406,7 +2407,8 @@
   function readPage(page) {
     const cached = pageStates.get(page);
     if (cached && cached.loaded) return Promise.resolve(cached);
-    if (pageRequests.has(page)) return pageRequests.get(page).promise;
+    const pending = pageRequests.get(page);
+    if (pending && !pending.controller.signal.aborted) return pending.promise;
     const controller = new AbortController();
     const metadataEpoch = pageMetadataEpoch;
     let timedOut = false;
@@ -2458,24 +2460,40 @@
     return loading;
   }
 
-  function cancelPageMotion() {
+  function cancelPageWait() {
     window.clearTimeout(pageSwitchTimer); pageSwitchTimer = 0;
     if (pageSwitchResolve) { pageSwitchResolve(false); pageSwitchResolve = null; }
     if (pageSwitchFrame) cancelAnimationFrame(pageSwitchFrame);
     pageSwitchFrame = 0;
+  }
+  function cancelPageMotion() {
+    cancelPageWait();
+    pageChangePromise = null;
     pageSwitching = false;
     surface.inert = false;
     surface.classList.remove('notes-page-switching');
   }
-  async function changePage(value) {
+  function changePage(value) {
     const next = Number(value);
-    if (!Number.isInteger(next) || next < 1 || next > NOTES_PAGE_MAX || archiving || !pageUsable()) return false;
+    if (!Number.isInteger(next) || next < 1 || next > NOTES_PAGE_MAX || archiving || !pageUsable()) return Promise.resolve(false);
+    if (next === requestedPage && pageChangePromise) return pageChangePromise;
+    pageChangePromise = null;
     requestedPage = next;
     const sequence = ++pageSequence;
     pagePalette?.close(false, true);
-    cancelPageMotion();
+    // Match Study: the rail follows input now, independently of data/IME handoff.
+    // Retarget the existing fade without briefly revealing the departing page.
+    cancelPageWait();
+    renderPageRail();
     pageRequests.forEach((request, page) => { if (page !== next && page !== currentPage) request.controller.abort(); });
-    if (next === currentPage) { renderPageRail(); return true; }
+    if (next === currentPage) { cancelPageMotion(); return Promise.resolve(true); }
+    const promise = performPageChange(next, sequence).finally(() => {
+      if (pageChangePromise === promise) pageChangePromise = null;
+    });
+    pageChangePromise = promise;
+    return promise;
+  }
+  async function performPageChange(next, sequence) {
     try {
       await finishNoteEdit(true);
       if (sequence !== pageSequence || !pageUsable()) return false;
@@ -2485,19 +2503,19 @@
       cancelNoteInertia(true);
       cancelViewPanInertia(); cancelZoom(true); clearViewArrowKeys();
       cancelCollapse(); cancelExpand(); closeNoteSearch();
-      const state = await readPage(next);
+      if (!surface.classList.contains('notes-page-switching')) surface.classList.add('notes-page-switching');
+      // A single fade stays in place throughout a burst. Only its commit deadline
+      // is renewed, while the final target loads in parallel.
+      const faded = prefersReduced ? Promise.resolve(true) : new Promise((resolve) => {
+        pageSwitchResolve = resolve;
+        pageSwitchTimer = window.setTimeout(() => { pageSwitchTimer = 0; pageSwitchResolve = null; resolve(true); }, 150);
+      });
+      const [state, ready] = await Promise.all([readPage(next), faded]);
+      if (!ready) return false;
       if (sequence !== pageSequence || !pageUsable()) return false;
       flushSave().catch(() => undefined);
       flushViewSave();
       rememberPage();
-      surface.classList.add('notes-page-switching');
-      if (!prefersReduced) {
-        const ready = await new Promise((resolve) => {
-          pageSwitchResolve = resolve;
-          pageSwitchTimer = window.setTimeout(() => { pageSwitchTimer = 0; pageSwitchResolve = null; resolve(true); }, 150);
-        });
-        if (!ready || sequence !== pageSequence || !pageUsable()) return false;
-      }
       stopEdgeRefresh();
       if (editRefreshFrame) cancelAnimationFrame(editRefreshFrame);
       editRefreshFrame = 0;
@@ -2573,10 +2591,10 @@
   }
   function positionPageOrb(fromScroll) {
     if (!pageRail || !pageUsable() || (fromScroll && performance.now() < orbSettleUntil)) return;
-    const active = pageButtons.get(currentPage);
+    const active = pageButtons.get(requestedPage);
     if (!active) return;
     const railRect = pageRail.getBoundingClientRect(), rect = active.getBoundingClientRect();
-    const color = pageColors[currentPage] || '';
+    const color = pageColors[requestedPage] || '';
     if (color) { pageOrb.dataset.taskPageColor = color; pageOrb.style.setProperty('--task-page-color', color); }
     else { delete pageOrb.dataset.taskPageColor; pageOrb.style.removeProperty('--task-page-color'); }
     pageOrb.style.opacity = rect.bottom > railRect.top && rect.top < railRect.bottom ? '1' : '0';
@@ -2585,7 +2603,7 @@
   function renderPageRail() {
     if (!pageRail || !pageUsable()) return;
     const capacity = pageScrollers.reduce((sum, scroller) => sum + Math.max(1, Math.floor((scroller.clientHeight + 6) / 40)), 0);
-    let highest = Math.max(highestPage, currentPage);
+    let highest = Math.max(highestPage, requestedPage);
     Object.keys(pageColors).forEach((page) => { highest = Math.max(highest, Number(page)); });
     pageStates.forEach((state, page) => {
       if (state.notes?.length || state.arrows?.length) highest = Math.max(highest, page);
@@ -2603,7 +2621,7 @@
       }
       const host = pageLists[page <= topCount ? 0 : 1];
       if (button.parentElement !== host) host.appendChild(button);
-      const active = page === currentPage;
+      const active = page === requestedPage;
       button.classList.toggle('is-active', active);
       if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
       const label = T('速记第 ' + page + ' 页');
@@ -2613,7 +2631,7 @@
       else { delete button.dataset.taskPageColor; button.style.removeProperty('--task-page-color'); }
     }
     pageButtons.forEach((button, page) => { if (page > total) { button.remove(); pageButtons.delete(page); } });
-    const active = pageButtons.get(currentPage), scroller = active?.closest('.study-task-page-scroll');
+    const active = pageButtons.get(requestedPage), scroller = active?.closest('.study-task-page-scroll');
     if (scroller) {
       if (active.offsetTop < scroller.scrollTop) scroller.scrollTop = active.offsetTop;
       else if (active.offsetTop + active.offsetHeight > scroller.scrollTop + scroller.clientHeight) {
@@ -2765,6 +2783,7 @@
     if (archivePromise) return archivePromise;
     archiving = true;
     ++pageSequence; requestedPage = currentPage; cancelPageMotion();
+    renderPageRail();
     pageRequests.forEach((request, page) => { if (page !== currentPage) request.controller.abort(); });
     archivePromise = (async () => {
       await finishNoteEdit(true);
