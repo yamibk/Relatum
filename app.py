@@ -4594,7 +4594,44 @@ def _start_page_activity_stats(data: dict, year: int) -> dict:
     }
 
 
-def study_activity_records() -> tuple[dict[str, int], list[dict]]:
+def _activity_archive_files(root: Path, names: tuple[str, ...]) -> list[dict[str, Path]]:
+    """One request's marker inventory; retain normal file/link and platform case rules."""
+    if not root.exists():
+        return []
+    wanted = {name.casefold(): name for name in names}
+    result = []
+    with os.scandir(root) as folders:
+        for folder in folders:
+            if not folder.is_dir():
+                continue
+            directory = Path(folder.path)
+            try:
+                with os.scandir(directory) as entries:
+                    markers = {}
+                    for entry in entries:
+                        name = wanted.get(entry.name.casefold())
+                        if name is not None and entry.is_file() and (
+                            entry.name == name or (directory / name).is_file()
+                        ):
+                            markers[name] = directory / name
+            except OSError:
+                # Known files may still be readable without directory-list permission.
+                # Also preserve the former behavior if a folder disappears mid-read.
+                markers = {name: directory / name for name in names if (directory / name).is_file()}
+            result.append(markers)
+    return result
+
+
+def _activity_archive_inventory() -> tuple[list[dict[str, Path]], list[dict[str, Path]]]:
+    return (
+        _activity_archive_files(STUDY_ARCHIVE_DIR, ("tasks.json", "taskbook.json", "notes.json")),
+        _activity_archive_files(CANVAS_ARCHIVE_DIR, ("canvas.json",)),
+    )
+
+
+def study_activity_records(
+    *, archive_files: tuple[list[dict[str, Path]], list[dict[str, Path]]] | None = None,
+) -> tuple[dict[str, int], list[dict]]:
     """按归档日期汇总学习任务、速记、画布节点和任务簿完成记录。
 
     任务簿每个 ``taskbook.json`` marker 只形成一条足迹；它携带叶子数和实际
@@ -4645,15 +4682,13 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
                 "snapshotRootNodeId": str(task.get("snapshotRootNodeId") or ""),
             })
 
-    study_archive_folders = (
-        list(STUDY_ARCHIVE_DIR.iterdir()) if STUDY_ARCHIVE_DIR.exists() else []
+    study_archive_files, canvas_archive_files = (
+        archive_files if archive_files is not None else _activity_archive_inventory()
     )
-    if study_archive_folders:
-        for folder in study_archive_folders:
-            if not folder.is_dir():
-                continue
-            archive_file = folder / "tasks.json"
-            if archive_file.is_file():
+    if study_archive_files:
+        for markers in study_archive_files:
+            archive_file = markers.get("tasks.json")
+            if archive_file is not None:
                 try:
                     payload = json.loads(archive_file.read_text(encoding="utf-8"))
                 except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -4662,8 +4697,8 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
                     for task in payload.get("tasks", []):
                         if isinstance(task, dict):
                             tally({**task, "kind": "study"})
-            taskbook_file = folder / "taskbook.json"
-            if not taskbook_file.is_file():
+            taskbook_file = markers.get("taskbook.json")
+            if taskbook_file is None:
                 continue
             try:
                 taskbook_payload = json.loads(taskbook_file.read_text(encoding="utf-8"))
@@ -4683,10 +4718,10 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
     # 画布归档（编辑器顶栏「归档」）也并入同一片足迹：每张归档画布＝做成的一件事，
     # 按 archivedAt 落点、按画布名命名，与任务完成一视同仁、不做区分（用户已拍板）。
     # 画布已进回收站、原路径失效，故 linkedCanvas 留空＝不显示「打开画布」入口。
-    if CANVAS_ARCHIVE_DIR.exists():
-        for folder in CANVAS_ARCHIVE_DIR.iterdir():
-            archive_file = folder / "canvas.json"
-            if not (folder.is_dir() and archive_file.is_file()):
+    if canvas_archive_files:
+        for markers in canvas_archive_files:
+            archive_file = markers.get("canvas.json")
+            if archive_file is None:
                 continue
             try:
                 payload = json.loads(archive_file.read_text(encoding="utf-8"))
@@ -4712,10 +4747,10 @@ def study_activity_records() -> tuple[dict[str, int], list[dict]]:
 
     # 速记便签墙归档（长按速记图标）：也并入同一片足迹。只有「有名字」的便签才被写进归档夹，
     # 故每条都按 archivedAt 落点、以便签文字命名，与任务/画布完成一视同仁。便签不关联画布。
-    if study_archive_folders:
-        for folder in study_archive_folders:
-            archive_file = folder / "notes.json"
-            if not (folder.is_dir() and archive_file.is_file()):
+    if study_archive_files:
+        for markers in study_archive_files:
+            archive_file = markers.get("notes.json")
+            if archive_file is None:
                 continue
             try:
                 payload = json.loads(archive_file.read_text(encoding="utf-8"))
@@ -5538,7 +5573,8 @@ def _study_longest_streak(days: dict[str, int]) -> int:
 
 
 def study_activity_payload(selected_year: str | int | None = None) -> dict:
-    days, records = study_activity_records()
+    archive_files = _activity_archive_inventory()
+    days, records = study_activity_records(archive_files=archive_files)
     focus_days_all = load_focus()["days"]
     canvas_activity = canvas_activity_snapshot()
     start_page_activity = start_page_activity_snapshot()
@@ -5630,7 +5666,7 @@ def study_activity_payload(selected_year: str | int | None = None) -> dict:
         "years": years,
         "days": year_days,
         "total": sum(days.values()),
-        "archiveFolders": _archive_folder_count(),
+        "archiveFolders": _archive_folder_count(archive_files=archive_files),
         "pageTotal": sum(year_days.values()),
         "stats": {
             "monthTotal": month_total,
@@ -7848,24 +7884,13 @@ def mark_review_card(card_id: object, rating: object) -> dict:
         conn.close()
 
 
-def _archive_folder_count() -> int:
+def _archive_folder_count(
+    *, archive_files: tuple[list[dict[str, Path]], list[dict[str, Path]]] | None = None,
+) -> int:
     """活跃页「累计归档」口径：归档 marker 的个数，不是任务件数。
     学习任务、速记和任务簿共用学习归档目录，以不同 JSON marker 区分。"""
-    total = 0
-    if STUDY_ARCHIVE_DIR.exists():
-        # 学习任务与速记共用同一父目录，一次枚举同时检查两个 marker。
-        for folder in STUDY_ARCHIVE_DIR.iterdir():
-            if not folder.is_dir():
-                continue
-            total += int((folder / "tasks.json").is_file())
-            total += int((folder / "notes.json").is_file())
-            total += int((folder / "taskbook.json").is_file())
-    if CANVAS_ARCHIVE_DIR.exists():
-        total += sum(
-            1 for folder in CANVAS_ARCHIVE_DIR.iterdir()
-            if folder.is_dir() and (folder / "canvas.json").is_file()
-        )
-    return total
+    study_files, canvas_files = archive_files if archive_files is not None else _activity_archive_inventory()
+    return sum(len(markers) for markers in study_files) + sum(len(markers) for markers in canvas_files)
 
 
 # ─── 「生涯」冻结使用报告 ─────────────────────────────────

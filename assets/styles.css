@@ -10259,14 +10259,19 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
               border-radius 210ms cubic-bezier(0.22, 1, 0.36, 1),
               clip-path 230ms cubic-bezier(0.22, 1, 0.36, 1),
               background 180ms ease,
-              border-width 180ms ease,
               border-color 180ms ease,
               box-shadow 190ms ease,
               opacity 140ms ease;
 }
 
+.left-spine.spine-marker-no-transition .spine-active-orb,
 .left-spine.spine-marker-no-transition .spine-hover-rail,
 .left-spine.spine-marker-no-transition .spine-hover-orb { transition: none; }
+
+.left-spine.spine-motion-suspended :is(.spine-active-orb, .spine-hover-rail, .spine-hover-orb) {
+  transition: none !important;
+  animation: none !important;
+}
 
 /* 静止时彩色游标仍停在当前页：细条保持方向感，色块只留克制轮廓。 */
 .left-spine.spine-marker-visible .spine-hover-rail { opacity: 0.72; }

@@ -359,8 +359,8 @@
   }
 
   // 画布工作区隐藏时，书脊目标的 DOMRect 会退化为零尺寸；此时留下的游标形状
-  // 不能复用于再次进入画布。等待共享网格完成两帧布局后，重新同步黑色游标与
-  // 彩色跟随层；动画收尾处还会再校准一次，避免过渡结束后出现一帧跳位。
+  // 不能复用于再次进入画布。宿主统一在下一显示帧读取布局并无过渡地校准两层；
+  // 动画收尾处还会再校准一次，避免过渡结束后出现一帧跳位。
   function syncCanvasWorkspaceSpineAfterReveal() { config.onCanvasReveal(); }
 
   async function performStartWorkspace(next, options = {}) {
