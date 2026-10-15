@@ -30,6 +30,9 @@
   const STACK_HOVER_DELAY_MAX = 1200;
   const CREATE_BROWSE_SHORTCUTS_DISABLED_KEY = 'canvas:notesCreateBrowseShortcutsDisabled:v1';
   const NOTES_VIEW_KEY = 'canvas:notesView';
+  const NOTES_PAGE_KEY = 'canvas:notesPage:v1';
+  const NOTES_PAGE_COLORS_KEY = 'canvas:notesPageColors:v1';
+  const NOTES_PAGE_MAX = 99;
   const NOTES_VIEW_MIN = 0.45;
   const NOTES_VIEW_MAX = 2.35;
   const NOTES_ZOOM_EASE = 0.32;    // 滚轮缩放缓动，贴近主画布滚轮手感
@@ -39,11 +42,11 @@
   const NOTE_TYPOGRAPHY_MEDIUM_MAX = 48;
   const NOTE_TYPOGRAPHY_NEWLINE_WEIGHT = 4;
   const stickyPalette = window.RelatumStickyPalette;
-  const prefersReduced = (function () {
+  let prefersReduced = (function () {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
   })();
 
-  let notes = [];              // [{id,x,y,color,text,rotate,stack?}]，数组顺序 = 全局叠放层级（后＝上）
+  let notes = [];              // 当前页 [{id,x,y,color,text,rotate,stack?,notePage?}]，数组顺序 = 页内叠放层级（后＝上）
   let edges = [];              // [{id,from,to}]，便签之间的连线（无向，端点引用便签 id）
   let arrows = [];             // [{id,fromNote?,toNote?,x1?,y1?,x2?,y2?}]，右键拖出的箭头
   let loaded = false;
@@ -90,6 +93,45 @@
   let searchMatchIds = new Set();
   let keyboardBrowseActive = false;
   let createBrowseShortcutsDisabled = true;
+  const notesView = surface.closest('[data-role="notes-view"]');
+  let currentPage = 1;
+  try { currentPage = normalizePage(localStorage.getItem(NOTES_PAGE_KEY)); } catch (e) {}
+  let requestedPage = currentPage;
+  let highestPage = 1;
+  let pageMetadataEpoch = 0;
+  let notesRuntimeActive = false;
+  let pageSequence = 0;
+  let pageSwitchTimer = 0;
+  let pageSwitchResolve = null;
+  let pageSwitchFrame = 0;
+  let pageSwitching = false;
+  let editSession = null;
+  const pageStates = new Map();
+  const pageRequests = new Map();
+  const rectScales = new WeakMap();
+
+  function normalizePage(value) {
+    const page = Number(value);
+    return Number.isInteger(page) && page >= 1 && page <= NOTES_PAGE_MAX ? page : 1;
+  }
+  function T(value) { return window.RelatumI18n ? window.RelatumI18n.t(value) : value; }
+  function reportError(error) {
+    document.dispatchEvent(new CustomEvent('canvas:notes-error', { detail: { message: error.message || T('速记操作失败') } }));
+  }
+  function pageUsable() {
+    return notesPageActive() && document.body.dataset.startWorkspace === 'canvas'
+      && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1';
+  }
+  function rememberPage() {
+    let state = pageStates.get(currentPage);
+    if (!state) {
+      state = { page: currentPage, revision: 0, dirty: false, loaded: false };
+      pageStates.set(currentPage, state);
+    }
+    Object.assign(state, { notes, edges, arrows, history, redoStack, loaded });
+    return state;
+  }
+  function pageViewKey() { return currentPage === 1 ? NOTES_VIEW_KEY : NOTES_VIEW_KEY + ':' + currentPage; }
 
   // ── 小工具 ──
   function genId() {
@@ -187,8 +229,11 @@
     return Math.max(NOTES_VIEW_MIN, Math.min(NOTES_VIEW_MAX, n));
   }
   function restoreView() {
+    viewX = targetViewX = 0;
+    viewY = targetViewY = 0;
+    viewScale = targetViewScale = 1;
     try {
-      const raw = JSON.parse(localStorage.getItem(NOTES_VIEW_KEY) || 'null');
+      const raw = JSON.parse(localStorage.getItem(pageViewKey()) || 'null');
       if (!raw || typeof raw !== 'object') return;
       const x = Number(raw.x);
       const y = Number(raw.y);
@@ -223,7 +268,7 @@
     clearTimeout(viewSaveTimer);
     viewSaveTimer = null;
     try {
-      localStorage.setItem(NOTES_VIEW_KEY, JSON.stringify({
+      localStorage.setItem(pageViewKey(), JSON.stringify({
         x: Math.round(viewX * 10) / 10,
         y: Math.round(viewY * 10) / 10,
         scale: Math.round(viewScale * 1000) / 1000,
@@ -243,7 +288,18 @@
   }
   function clientToWorldPoint(clientX, clientY, rect) {
     const r = rect || surface.getBoundingClientRect();
-    return surfaceToWorldPoint(clientX - r.left, clientY - r.top);
+    const point = surfaceLocalPoint(clientX, clientY, r);
+    return surfaceToWorldPoint(point.x, point.y);
+  }
+  function surfaceLocalPoint(clientX, clientY, rect) {
+    let scale = rectScales.get(rect);
+    if (!scale) {
+      const style = getComputedStyle(surface);
+      scale = { x: rect.width / (parseFloat(style.width) || rect.width) || 1,
+        y: rect.height / (parseFloat(style.height) || rect.height) || 1 };
+      rectScales.set(rect, scale);
+    }
+    return { x: (clientX - rect.left) / scale.x, y: (clientY - rect.top) / scale.y };
   }
   function worldToSurfacePoint(x, y) {
     return {
@@ -490,6 +546,7 @@
     return v;
   }
   const noteElements = new Map();
+  let keyboardCurrentEl = null;
   function elById(id) {
     let el = noteElements.get(id);
     if (el && el.isConnected) return el;
@@ -498,10 +555,11 @@
     return el;
   }
   function refreshKeyboardCurrent() {
-    surface.querySelectorAll('.sticky-note.keyboard-current').forEach((el) => el.classList.remove('keyboard-current'));
-    if (!keyboardBrowseActive || searchInput || !activeNoteId) return;
-    const el = elById(activeNoteId);
-    if (el) el.classList.add('keyboard-current');
+    const next = keyboardBrowseActive && !searchInput && activeNoteId ? elById(activeNoteId) : null;
+    if (keyboardCurrentEl === next) return;
+    if (keyboardCurrentEl) keyboardCurrentEl.classList.remove('keyboard-current');
+    keyboardCurrentEl = next;
+    if (next) next.classList.add('keyboard-current');
   }
   function setActiveNote(data) {
     activeNoteId = data ? data.id : null;
@@ -542,33 +600,59 @@
     notes.forEach((n) => { if (n.stack && counts[n.stack] < 2) delete n.stack; });
   }
 
-  // ── 存盘（防抖整墙覆盖）──
+  // ── 存盘（防抖覆盖当前页，保留其他页）──
   let saveTimer = null;
   let saveChain = Promise.resolve();
   let archiving = false;
   let archivePromise = null;
+  let archiveMotionTimer = 0;
   function scheduleSave() {
     touched = true;
+    const state = rememberPage();
+    state.revision++;
+    state.dirty = true;
     if (archiving) return;
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(flushSave, 500);
+    saveTimer = setTimeout(() => flushSave().catch(() => undefined), 500);
   }
   function flushSave() {
     clearTimeout(saveTimer);
     saveTimer = null;
-    const body = JSON.stringify({ notes: notes, edges: edges, arrows: arrows });
-    const operation = saveChain.catch(() => undefined).then(() => fetch('/api/notes-save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    }));
-    saveChain = operation;
-    return operation.catch(() => undefined);
+    if (!loaded) return Promise.resolve();
+    const state = rememberPage();
+    if (!state.dirty) return saveChain;
+    return savePage(state);
+  }
+  function savePage(state) {
+    const revision = state.revision;
+    if (state.pendingRevision === revision && state.pendingSave) return state.pendingSave;
+    const body = JSON.stringify({ notePage: state.page, notes: state.notes, edges: state.edges, arrows: state.arrows });
+    const operation = saveChain.then(() => postNotes('/api/notes-save', body)).then((json) => {
+      if (state.revision === revision) state.dirty = false;
+      pageMetadataEpoch++;
+      if (Number.isInteger(json.highestPage)) highestPage = normalizePage(json.highestPage);
+      return json;
+    }).catch((error) => { state.dirty = true; reportError(error); throw error; }).finally(() => {
+      if (state.pendingSave === operation) { state.pendingSave = null; state.pendingRevision = null; }
+    });
+    state.pendingRevision = revision; state.pendingSave = operation;
+    // A failed page remains dirty, while saves on other pages can still run.
+    saveChain = operation.catch(() => undefined);
+    return operation;
+  }
+  async function postNotes(url, body) {
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    const json = await response.json();
+    if (!response.ok || !json || !json.ok) throw new Error((json && json.error) || T('保存速记失败，请重试'));
+    return json;
+  }
+  function flushDirtyPages() {
+    if (loaded) rememberPage();
+    clearTimeout(saveTimer); saveTimer = null;
+    pageStates.forEach((state) => { if (state.loaded && state.dirty) savePage(state).catch(() => undefined); });
   }
   window.addEventListener('pagehide', () => {
     deactivate();
-    if (saveTimer) flushSave();
-    if (viewSaveTimer) flushViewSave();
   });
 
   // ── 撤销 / 重做（线性栈，快照便签数组深克隆）──
@@ -664,13 +748,12 @@
       const box = entry.borderBoxSize && entry.borderBoxSize[0];
       if (box) { const size = measuredNoteSize(entry.target); size.w = box.inlineSize; size.h = box.blockSize; }
     });
-    if (edgeRefreshFrame || document.hidden || !notesPageActive()
-        || document.body.dataset.startWorkspace !== 'canvas') return;
+    if (edgeRefreshFrame || !pageUsable()) return;
     edgeRefreshFrame = requestAnimationFrame(refreshEdgeGeometry);
   }
   function refreshEdgeGeometry() {
     edgeRefreshFrame = 0;
-    if (document.hidden || !notesPageActive() || document.body.dataset.startWorkspace !== 'canvas') return;
+    if (!pageUsable()) return;
     movingEdgeNotes.forEach((motions, el) => {
       if (!el.isConnected || !measuredNotes.has(el)) movingEdgeNotes.delete(el);
     });
@@ -681,7 +764,7 @@
       const center = noteCenters.get(el.dataset.id);
       if (!center || !el.isConnected) return;
       const bounds = el.getBoundingClientRect();
-      const point = surfaceToWorldPoint(bounds.left - rect.left + bounds.width / 2, bounds.top - rect.top + bounds.height / 2);
+      const point = clientToWorldPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, rect);
       center.point.x = point.x; center.point.y = point.y;
       center.x = center.note.x; center.y = center.note.y;
       const links = noteConnections.get(el.dataset.id);
@@ -752,7 +835,7 @@
     const el = elById(id);
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.left - srect.left + r.width / 2, y: r.top - srect.top + r.height / 2 };
+    return surfaceLocalPoint(r.left + r.width / 2, r.top + r.height / 2, srect);
   }
   function renderEdges() {
     ensureEdgeSvg();
@@ -767,8 +850,7 @@
         const el = elById(id);
         if (el) {
           const rect = el.getBoundingClientRect();
-          centers.set(id, surfaceToWorldPoint(rect.left - srect.left + rect.width / 2,
-            rect.top - srect.top + rect.height / 2));
+          centers.set(id, clientToWorldPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, srect));
           const note = noteModels.get(id);
           if (note) noteCenters.set(id, { point: centers.get(id), x: note.x, y: note.y, note: note });
           nextMeasuredNotes.add(el);
@@ -795,7 +877,7 @@
     nextMeasuredNotes.forEach((el) => {
       if (measuredNotes.has(el)) return;
       measuredNotes.add(el);
-      if (edgeResizeObserver && notesPageActive() && !document.hidden) edgeResizeObserver.observe(el);
+      if (edgeResizeObserver && pageUsable()) edgeResizeObserver.observe(el);
     });
     syncEdgeElements(edgeGeometry, edgeElements, edgeStaticG, 'line', 'notes-edge');
     syncEdgeElements(arrowGeometry, arrowElements, arrowStaticG, 'path', 'notes-arrow');
@@ -1027,18 +1109,32 @@
 
   // 按摞关系重排每张卡的位置偏移（--note-shift）与层级（z-index）；left/top 始终=数据 x/y。
   function relayout(refreshGeometry = true, onlyNotes = null) {
+    const groups = new Map(), positions = new Map();
+    notes.forEach((data, index) => {
+      let group = data.stack && groups.get(data.stack);
+      if (!group) {
+        group = [];
+        if (data.stack) groups.set(data.stack, group);
+      }
+      positions.set(data, { z: index + 1, index: group.length, group });
+      group.push(data);
+    });
     (onlyNotes || notes).forEach((data) => {
       const el = elById(data.id);
       if (!el) return;
-      el.style.left = data.x + 'px';
-      el.style.top = data.y + 'px';
-      const group = groupMembers(data);
+      if (el.style.left !== data.x + 'px') el.style.left = data.x + 'px';
+      if (el.style.top !== data.y + 'px') el.style.top = data.y + 'px';
+      const position = positions.get(data);
+      const group = position.group;
       const n = group.length;
-      const idx = group.indexOf(data);
-      const globalZ = notes.indexOf(data) + 1;
+      const idx = position.index;
+      const globalZ = position.z;
+      const setShift = (shift, z) => {
+        if (el.style.getPropertyValue('--note-shift') !== shift) el.style.setProperty('--note-shift', shift);
+        if (el.style.zIndex !== String(z)) el.style.zIndex = String(z);
+      };
       if (n <= 1) {
-        el.style.setProperty('--note-shift', 'translate(0px,0px)');
-        el.style.zIndex = String(globalZ);
+        setShift('translate(0px,0px)', globalZ);
         return;
       }
       if (expandedStack === data.stack) {
@@ -1047,12 +1143,10 @@
         const sx = Math.round(off * FAN_STEP);
         const sy = Math.round(Math.abs(off) * FAN_RISE);
         const rot = (off * FAN_ROT).toFixed(2);
-        el.style.setProperty('--note-shift', 'translate(' + sx + 'px,' + sy + 'px) rotate(' + rot + 'deg)');
-        el.style.zIndex = String(1000 + idx);
+        setShift('translate(' + sx + 'px,' + sy + 'px) rotate(' + rot + 'deg)', 1000 + idx);
       } else {
         const depth = (n - 1) - idx;     // 顶层=0，下层依次向右下露出
-        el.style.setProperty('--note-shift', 'translate(' + (depth * PILE_DX) + 'px,' + (depth * PILE_DY) + 'px)');
-        el.style.zIndex = String(globalZ);
+        setShift('translate(' + (depth * PILE_DX) + 'px,' + (depth * PILE_DY) + 'px)', globalZ);
       }
     });
     if (refreshGeometry) renderEdges();
@@ -1304,7 +1398,10 @@
     commit(pre);
     relayout();
     scheduleSave();
-    if (opts.edit) requestAnimationFrame(() => enterEdit(el, data));
+    if (opts.edit) {
+      const page = currentPage;
+      requestAnimationFrame(() => { if (currentPage === page && el.isConnected && !pageSwitching) enterEdit(el, data); });
+    }
     return data;
   }
 
@@ -1360,10 +1457,25 @@
 
   // ── 编辑 ──
   let editingEl = null;
+  let editRefreshFrame = 0;
+  function finishNoteEdit(waitForComposition) {
+    const session = editSession;
+    if (!session) return Promise.resolve();
+    if (session.composing && waitForComposition) {
+      session.finishRequested = true;
+      return session.finished;
+    }
+    session.composing = false;
+    session.body.blur();
+    session.finish();
+    return session.finished;
+  }
   function enterEdit(el, data) {
-    if (editingEl && editingEl !== el) editingEl.querySelector('.sticky-note-body').blur();
+    if (pageSwitching || archiving || interacting || !pageUsable()) return;
+    if (editSession) finishNoteEdit(false);
     const body = el.querySelector('.sticky-note-body');
     if (!body) return;
+    const page = currentPage;
     const pre = snapshot();
     el.classList.add('editing');
     editingEl = el;
@@ -1376,22 +1488,47 @@
     sel.removeAllRanges();
     sel.addRange(range);
 
+    let resolveFinished;
+    const session = { body, composing: false, finishRequested: false,
+      finished: new Promise((resolve) => { resolveFinished = resolve; }) };
+    editSession = session;
+    const onKey = (e) => {
+      e.stopPropagation();                         // Ctrl+Z 交给浏览器做字符撤销
+      if (e.isComposing || e.keyCode === 229 || session.composing) return;
+      if (e.key === 'Escape') { e.preventDefault(); body.blur(); }
+    };
+    const onCompositionStart = () => { session.composing = true; };
+    const onCompositionEnd = () => {
+      session.composing = false;
+      if (session.finishRequested) { body.blur(); finish(); }
+    };
     const finish = () => {
+      if (session.composing) { session.finishRequested = true; return; }
       body.removeEventListener('blur', finish);
+      body.removeEventListener('keydown', onKey);
+      body.removeEventListener('compositionstart', onCompositionStart);
+      body.removeEventListener('compositionend', onCompositionEnd);
       body.removeAttribute('contenteditable');
       el.classList.remove('editing');
       if (editingEl === el) editingEl = null;
+      if (editSession !== session) return;
+      editSession = null;
       const next = body.textContent || '';
       applyNoteTypography(el, next);
-      if (next !== data.text) { commit(pre); data.text = next; scheduleSave(); }
+      if (currentPage === page && next !== data.text) { commit(pre); data.text = next; scheduleSave(); }
       // 字号档位或正文换行可能改变卡片高度；等待布局落定后再校准连线中心。
-      requestAnimationFrame(renderEdges);
+      if (editRefreshFrame) cancelAnimationFrame(editRefreshFrame);
+      editRefreshFrame = requestAnimationFrame(() => {
+        editRefreshFrame = 0;
+        if (currentPage === page && pageUsable() && el.isConnected) renderEdges();
+      });
+      resolveFinished();
     };
+    session.finish = finish;
     body.addEventListener('blur', finish);
-    body.addEventListener('keydown', (e) => {
-      e.stopPropagation();                         // Ctrl+Z 交给浏览器做字符撤销
-      if (e.key === 'Escape') { e.preventDefault(); body.blur(); }
-    });
+    body.addEventListener('keydown', onKey);
+    body.addEventListener('compositionstart', onCompositionStart);
+    body.addEventListener('compositionend', onCompositionEnd);
   }
 
   // 把展开态某张卡从摞里拉成自由便签，落到它当前视觉位置
@@ -1633,6 +1770,7 @@
 
     // 拖动：收拢摞/散便签整体移动；展开态拖单张则拉出
     el.addEventListener('pointerdown', (e) => {
+      if (pageSwitching || archiving || !pageUsable()) return;
       if (e.button !== 0) return;
       if (el.classList.contains('editing')) return;
       e.stopPropagation();                         // 起手在便签上 = 拖动，绝不触发台面「划一刀」
@@ -1655,13 +1793,16 @@
       let members = null;
       let origs = null;
       const dragState = { velX: null, velY: null, lastMoveX: startX, lastMoveY: startY, lastMoveT: null };
+      let dragFrame = 0;
+      let latest = { clientX: startX, clientY: startY, pointerId: e.pointerId };
       interacting = true;
       cancelCollapse();
       cancelExpand();
 
-      const onMove = (ev) => {
-        const dx = (ev.clientX - startX) / dragScale;
-        const dy = (ev.clientY - startY) / dragScale;
+      const paintDrag = () => {
+        dragFrame = 0;
+        const dx = (latest.clientX - startX) / dragScale;
+        const dy = (latest.clientY - startY) / dragScale;
         if (!dragging) {
           if (Math.hypot(dx, dy) < 4) return;
           dragging = true;
@@ -1674,13 +1815,13 @@
           members = groupMembers(data);
           origs = members.map((m) => ({ m: m, x: m.x, y: m.y }));
           el.classList.add('dragging');
-          try { el.setPointerCapture(ev.pointerId); } catch (err) {}
+          try { el.setPointerCapture(latest.pointerId); } catch (err) {}
           relayout(wasExpandedMember, wasExpandedMember ? null : members);
           if (!wasExpandedMember) {
             const center = noteCenters.get(data.id);
             if (center) {
               const bounds = el.getBoundingClientRect();
-              const point = surfaceToWorldPoint(bounds.left - rect.left + bounds.width / 2, bounds.top - rect.top + bounds.height / 2);
+              const point = clientToWorldPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, rect);
               center.point.x = point.x; center.point.y = point.y;
             }
           }
@@ -1699,8 +1840,16 @@
           o.m.x = o.x + rdx;
           o.m.y = o.y + rdy;
           const me = elById(o.m.id);
-          if (me) { me.style.left = o.m.x + 'px'; me.style.top = o.m.y + 'px'; }
+          if (me) {
+            if (me.style.left !== o.m.x + 'px') me.style.left = o.m.x + 'px';
+            if (me.style.top !== o.m.y + 'px') me.style.top = o.m.y + 'px';
+          }
         });
+        latestMovingNotes = members;
+        flushMovingEdges();
+      };
+      const onMove = (ev) => {
+        latest = { clientX: ev.clientX, clientY: ev.clientY, pointerId: ev.pointerId };
         const now = performance.now();
         if (dragState.lastMoveT != null) {
           const dt = now - dragState.lastMoveT;
@@ -1714,10 +1863,12 @@
         dragState.lastMoveX = ev.clientX;
         dragState.lastMoveY = ev.clientY;
         dragState.lastMoveT = now;
-        queueMovingEdges(members);
+        if (!dragFrame) dragFrame = requestAnimationFrame(paintDrag);
       };
       const cleanup = () => {
         cancelPointerGesture = null;
+        if (dragFrame) cancelAnimationFrame(dragFrame);
+        dragFrame = 0;
         el.removeEventListener('pointermove', onMove);
         el.removeEventListener('pointerup', onUp);
         el.removeEventListener('pointercancel', onCancel);
@@ -1737,7 +1888,8 @@
         }
       };
       const onUp = (ev) => {
-        if (ev.type === 'pointerup' && dragging && (ev.clientX !== dragState.lastMoveX || ev.clientY !== dragState.lastMoveY)) onMove(ev);
+        if (ev.clientX !== latest.clientX || ev.clientY !== latest.clientY) onMove(ev);
+        if (dragFrame) { cancelAnimationFrame(dragFrame); paintDrag(); }
         flushMovingEdges();
         cleanup();
         if (dragging) {
@@ -1755,6 +1907,7 @@
         }
       };
       cancelPointerGesture = onCancel;
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
       el.addEventListener('pointermove', onMove);
       el.addEventListener('pointerup', onUp);
       el.addEventListener('pointercancel', onCancel);
@@ -1764,7 +1917,7 @@
 
   // ── 台面：双击空白生成 ──
   surface.addEventListener('dblclick', (e) => {
-    if (!loaded) return;
+    if (!loaded || pageSwitching || archiving || !pageUsable()) return;
     e.preventDefault();
     e.stopPropagation();
     clearPageSelection();
@@ -1876,7 +2029,7 @@
   }
 
   surface.addEventListener('pointerdown', (e) => {
-    if (!loaded) return;
+    if (!loaded || pageSwitching || archiving || !pageUsable()) return;
     cancelActiveGesture();
     if (e.button === 0 || e.button === 2) {
       cancelNoteInertia(true);
@@ -1971,19 +2124,27 @@
     }
     const st = {
       points: [{ x: e.clientX - rect.left, y: e.clientY - rect.top }],
-      rect: rect, started: false, svg: null, line: null,
+      rect: rect, started: false, svg: null, line: null, length: 0,
     };
+    let slashFrame = 0;
+    const paintSlash = () => { slashFrame = 0; updateSlashLine(st); };
     try { surface.setPointerCapture(e.pointerId); } catch (err) {}
     const onMove = (ev) => {
-      st.points.push({ x: ev.clientX - st.rect.left, y: ev.clientY - st.rect.top });
+      const point = { x: ev.clientX - st.rect.left, y: ev.clientY - st.rect.top };
+      const previous = st.points[st.points.length - 1];
+      st.length += Math.hypot(point.x - previous.x, point.y - previous.y);
+      st.points.push(point);
       if (!st.started) {
-        if (pathLen(st.points) < 8) return;
+        if (st.length < 8) return;
         st.started = true;
         ensureSlashSvg(st);
       }
-      updateSlashLine(st);
+      if (!slashFrame) slashFrame = requestAnimationFrame(paintSlash);
     };
     const onUp = (ev) => {
+      const last = st.points[st.points.length - 1];
+      if (ev.clientX - rect.left !== last.x || ev.clientY - rect.top !== last.y) onMove(ev);
+      if (slashFrame) { cancelAnimationFrame(slashFrame); paintSlash(); }
       cancelPointerGesture = null;
       surface.removeEventListener('pointermove', onMove);
       surface.removeEventListener('pointerup', onUp);
@@ -1992,6 +2153,8 @@
       finishSlash(st);
     };
     const onCancel = () => {
+      if (slashFrame) cancelAnimationFrame(slashFrame);
+      slashFrame = 0;
       cancelPointerGesture = null;
       surface.removeEventListener('pointermove', onMove);
       surface.removeEventListener('pointerup', onUp);
@@ -2070,7 +2233,7 @@
   }
 
   surface.addEventListener('wheel', (e) => {
-    if (!loaded || !notesPageActive()) return;
+    if (!loaded || !pageUsable() || pageSwitching || archiving) return;
     const delta = wheelPixels(e);
     e.preventDefault();
     e.stopPropagation();
@@ -2084,7 +2247,7 @@
 
   // ── 键盘：无 UI 创建 / 续写 / 定位，以及原有编辑快捷键 ──
   document.addEventListener('keydown', (e) => {
-    if (document.body.dataset.startWorkspace !== 'canvas' || !loaded || !notesPageActive()) return;
+    if (!loaded || !pageUsable() || pageSwitching || archiving) return;
     if (e.key === 'Escape' && cancelPointerGesture) { e.preventDefault(); cancelActiveGesture(); return; }
     if (searchInput) return;                          // 搜索输入自身接管文字、回车与退出
     if (editingEl) return;                            // 写字时让浏览器做字符级撤销
@@ -2236,29 +2399,338 @@
     surface.classList.remove('space-ready');
     clearViewArrowKeys();
     cancelNoteInertia(true);
+    cancelViewPanInertia(); cancelZoom(true);
   });
 
   // ── 数据加载 ──
-  function load() {
+  function readPage(page) {
+    const cached = pageStates.get(page);
+    if (cached && cached.loaded) return Promise.resolve(cached);
+    if (pageRequests.has(page)) return pageRequests.get(page).promise;
+    const controller = new AbortController();
+    const metadataEpoch = pageMetadataEpoch;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 10000);
+    const request = { controller, promise: null };
+    request.promise = fetch('/api/notes' + (page === 1 ? '' : '?notePage=' + page), { signal: controller.signal })
+      .then(async (response) => {
+        const json = await response.json();
+        if (!response.ok || !json || !Array.isArray(json.notes) || !Array.isArray(json.edges) || !Array.isArray(json.arrows)) {
+          throw new Error((json && json.error) || T('读取速记失败，请重试'));
+        }
+        if (controller.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+        const state = { page, notes: json.notes, edges: json.edges, arrows: json.arrows,
+          history: [], redoStack: [], revision: 0, dirty: false, loaded: true };
+        pageStates.set(page, state);
+        if (metadataEpoch === pageMetadataEpoch) highestPage = normalizePage(json.highestPage || page);
+        return state;
+      }).catch((error) => {
+        if (timedOut) throw new Error(T('读取速记失败，请重试'));
+        throw error;
+      }).finally(() => {
+        window.clearTimeout(timeout);
+        if (pageRequests.get(page) === request) pageRequests.delete(page);
+      });
+    pageRequests.set(page, request);
+    return request.promise;
+  }
+  function load(preload = false) {
     if (loaded) return Promise.resolve(true);
     if (loading) return loading;
-    loading = fetch('/api/notes')
-      .then((r) => r.json())
-      .then((json) => {
+    const page = currentPage;
+    loading = readPage(page)
+      .then((state) => {
+        if (currentPage !== page) return false;
         loaded = true;
         if (touched) return true;
-        notes = (json && Array.isArray(json.notes)) ? json.notes : [];
-        edges = (json && Array.isArray(json.edges)) ? json.edges : [];
-        arrows = (json && Array.isArray(json.arrows)) ? json.arrows : [];
+        notes = state.notes;
+        edges = state.edges;
+        arrows = state.arrows;
+        history = state.history;
+        redoStack = state.redoStack;
         cancelNoteInertia(false);
-        renderAll();
+        if (pageUsable() || (preload && !document.hidden && document.body.dataset.startWorkspace === 'canvas')) renderAll();
         if (searchInput) refreshSearchVisuals();
         return true;
       })
-      .catch(() => false)
+      .catch((error) => { if (pageUsable()) reportError(error); return false; })
       .finally(() => { loading = null; });
     return loading;
   }
+
+  function cancelPageMotion() {
+    window.clearTimeout(pageSwitchTimer); pageSwitchTimer = 0;
+    if (pageSwitchResolve) { pageSwitchResolve(false); pageSwitchResolve = null; }
+    if (pageSwitchFrame) cancelAnimationFrame(pageSwitchFrame);
+    pageSwitchFrame = 0;
+    pageSwitching = false;
+    surface.inert = false;
+    surface.classList.remove('notes-page-switching');
+  }
+  async function changePage(value) {
+    const next = Number(value);
+    if (!Number.isInteger(next) || next < 1 || next > NOTES_PAGE_MAX || archiving || !pageUsable()) return false;
+    requestedPage = next;
+    const sequence = ++pageSequence;
+    pagePalette?.close(false, true);
+    cancelPageMotion();
+    pageRequests.forEach((request, page) => { if (page !== next && page !== currentPage) request.controller.abort(); });
+    if (next === currentPage) { renderPageRail(); return true; }
+    try {
+      await finishNoteEdit(true);
+      if (sequence !== pageSequence || !pageUsable()) return false;
+      pageSwitching = true;
+      surface.inert = true;
+      cancelActiveGesture();
+      cancelNoteInertia(true);
+      cancelViewPanInertia(); cancelZoom(true); clearViewArrowKeys();
+      cancelCollapse(); cancelExpand(); closeNoteSearch();
+      const state = await readPage(next);
+      if (sequence !== pageSequence || !pageUsable()) return false;
+      flushSave().catch(() => undefined);
+      flushViewSave();
+      rememberPage();
+      surface.classList.add('notes-page-switching');
+      if (!prefersReduced) {
+        const ready = await new Promise((resolve) => {
+          pageSwitchResolve = resolve;
+          pageSwitchTimer = window.setTimeout(() => { pageSwitchTimer = 0; pageSwitchResolve = null; resolve(true); }, 150);
+        });
+        if (!ready || sequence !== pageSequence || !pageUsable()) return false;
+      }
+      stopEdgeRefresh();
+      if (editRefreshFrame) cancelAnimationFrame(editRefreshFrame);
+      editRefreshFrame = 0;
+      currentPage = next;
+      notes = state.notes; edges = state.edges; arrows = state.arrows;
+      history = state.history; redoStack = state.redoStack;
+      loaded = true; touched = false;
+      expandedStack = null; activeNoteId = null; keyboardBrowseActive = false;
+      lastPointer = null;
+      restoreView(); syncWorldTransform();
+      renderAll();
+      try { localStorage.setItem(NOTES_PAGE_KEY, String(next)); } catch (e) {}
+      renderPageRail();
+      const reveal = () => {
+        pageSwitchFrame = 0;
+        if (sequence !== pageSequence) return;
+        pageSwitching = false;
+        surface.inert = false;
+        surface.classList.remove('notes-page-switching');
+      };
+      if (prefersReduced) reveal();
+      else pageSwitchFrame = requestAnimationFrame(reveal);
+      if (state.dirty) flushSave().catch(() => undefined);
+      return true;
+    } catch (error) {
+      if (sequence === pageSequence) {
+        cancelPageMotion(); requestedPage = currentPage;
+        renderPageRail();
+        if (error.name !== 'AbortError' && pageUsable()) reportError(error);
+      }
+      return false;
+    }
+  }
+
+  // The same rail surfaces/timing as Study, with an independent controller and
+  // a central gap reserved for Quick Notes controls.
+  const pageRail = notesView.querySelector('[data-role="notes-page-rail"]');
+  const pageOrb = notesView.querySelector('[data-role="notes-page-orb"]');
+  const pageScrollers = ['top', 'bottom'].map((name) => notesView.querySelector('[data-role="notes-page-' + name + '"]'));
+  const pageLists = ['top', 'bottom'].map((name) => notesView.querySelector('[data-role="notes-page-' + name + '-list"]'));
+  const notesConsole = notesView.querySelector('[data-role="notes-console"]');
+  const pageButtons = new Map();
+  const allowedPageColors = new Set((window.RelatumStudyPalette?.COLORS || []).map((item) => item.value));
+  let pageColors = {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(NOTES_PAGE_COLORS_KEY) || 'null');
+    if (raw && raw.version === 1 && raw.colors && typeof raw.colors === 'object') {
+      Object.keys(raw.colors).forEach((key) => {
+        if (/^[1-9]\d?$/.test(key) && allowedPageColors.has(raw.colors[key]) && raw.colors[key]) pageColors[key] = raw.colors[key];
+      });
+    }
+  } catch (e) {}
+  let railOver = false;
+  let railNear = false;
+  let railFrame = 0;
+  let orbFrame = 0;
+  let orbTimer = 0;
+  let orbSettleUntil = 0;
+  let pageWheelAccum = 0;
+  let pageWheelTimer = 0;
+  let activateFrame = 0;
+  const pagePalette = window.RelatumStudyPalette?.createPopoverController({
+    reducedMotion: prefersReduced, translate: T,
+    onClose() { revealPageRail(railOver || railNear); },
+  });
+  function consoleOpen() { return !!(notesConsole && notesConsole.classList.contains('is-open')); }
+  function revealPageRail(visible) {
+    if (!pageRail) return;
+    const enabled = pageUsable() && !consoleOpen() && !interacting && !archiving;
+    const focused = pageRail.contains(document.activeElement);
+    pageRail.inert = !enabled;
+    pageRail.classList.toggle('revealed', enabled && (!!visible || focused || !!pagePalette?.isOpen()));
+  }
+  function positionPageOrb(fromScroll) {
+    if (!pageRail || !pageUsable() || (fromScroll && performance.now() < orbSettleUntil)) return;
+    const active = pageButtons.get(currentPage);
+    if (!active) return;
+    const railRect = pageRail.getBoundingClientRect(), rect = active.getBoundingClientRect();
+    const color = pageColors[currentPage] || '';
+    if (color) { pageOrb.dataset.taskPageColor = color; pageOrb.style.setProperty('--task-page-color', color); }
+    else { delete pageOrb.dataset.taskPageColor; pageOrb.style.removeProperty('--task-page-color'); }
+    pageOrb.style.opacity = rect.bottom > railRect.top && rect.top < railRect.bottom ? '1' : '0';
+    pageOrb.style.transform = 'translate3d(0,' + (rect.top - railRect.top) + 'px,0)';
+  }
+  function renderPageRail() {
+    if (!pageRail || !pageUsable()) return;
+    const capacity = pageScrollers.reduce((sum, scroller) => sum + Math.max(1, Math.floor((scroller.clientHeight + 6) / 40)), 0);
+    let highest = Math.max(highestPage, currentPage);
+    Object.keys(pageColors).forEach((page) => { highest = Math.max(highest, Number(page)); });
+    pageStates.forEach((state, page) => {
+      if (state.notes?.length || state.arrows?.length) highest = Math.max(highest, page);
+    });
+    const total = Math.min(NOTES_PAGE_MAX, Math.max(capacity, highest));
+    const topCount = Math.ceil(total / 2);
+    const focusedPage = pageRail.contains(document.activeElement) ? Number(document.activeElement.dataset.notePage) : 0;
+    for (let page = 1; page <= total; page++) {
+      let button = pageButtons.get(page);
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button'; button.className = 'study-task-page-button';
+        button.dataset.notePage = String(page); button.textContent = String(page);
+        pageButtons.set(page, button);
+      }
+      const host = pageLists[page <= topCount ? 0 : 1];
+      if (button.parentElement !== host) host.appendChild(button);
+      const active = page === currentPage;
+      button.classList.toggle('is-active', active);
+      if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+      const label = T('速记第 ' + page + ' 页');
+      if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label);
+      const color = pageColors[page] || '';
+      if (color) { button.dataset.taskPageColor = color; button.style.setProperty('--task-page-color', color); }
+      else { delete button.dataset.taskPageColor; button.style.removeProperty('--task-page-color'); }
+    }
+    pageButtons.forEach((button, page) => { if (page > total) { button.remove(); pageButtons.delete(page); } });
+    const active = pageButtons.get(currentPage), scroller = active?.closest('.study-task-page-scroll');
+    if (scroller) {
+      if (active.offsetTop < scroller.scrollTop) scroller.scrollTop = active.offsetTop;
+      else if (active.offsetTop + active.offsetHeight > scroller.scrollTop + scroller.clientHeight) {
+        scroller.scrollTop = active.offsetTop + active.offsetHeight - scroller.clientHeight;
+      }
+    }
+    if (focusedPage) (pageButtons.get(focusedPage) || active)?.focus({ preventScroll: true });
+    if (orbFrame) cancelAnimationFrame(orbFrame);
+    window.clearTimeout(orbTimer);
+    orbFrame = requestAnimationFrame(() => {
+      orbFrame = 0;
+      if (!pageUsable()) return;
+      const duration = prefersReduced ? 0 : (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--start-orb-ms')) || 239);
+      orbSettleUntil = performance.now() + duration + 10;
+      positionPageOrb(false);
+      orbTimer = window.setTimeout(() => { orbTimer = 0; positionPageOrb(false); }, duration + 20);
+    });
+    revealPageRail(railNear || railOver);
+  }
+  function schedulePageRail() {
+    if (!pageUsable() || railFrame) return;
+    railFrame = requestAnimationFrame(() => { railFrame = 0; renderPageRail(); });
+  }
+  const railObserver = pageRail && typeof ResizeObserver === 'function' ? new ResizeObserver(schedulePageRail) : null;
+  function stopPageRail() {
+    if (railFrame) cancelAnimationFrame(railFrame);
+    if (orbFrame) cancelAnimationFrame(orbFrame);
+    if (activateFrame) cancelAnimationFrame(activateFrame);
+    activateFrame = 0;
+    railFrame = orbFrame = 0;
+    window.clearTimeout(orbTimer); window.clearTimeout(pageWheelTimer);
+    orbTimer = pageWheelTimer = 0; pageWheelAccum = 0;
+    railOver = railNear = false;
+    if (railObserver) railObserver.disconnect();
+    pagePalette?.close(false, true);
+    if (pageRail) { pageRail.classList.remove('revealed'); pageRail.inert = true; }
+  }
+  if (pageRail) {
+    pageRail.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-note-page]');
+      if (button) { event.preventDefault(); changePage(Number(button.dataset.notePage)); }
+    });
+    pageRail.addEventListener('contextmenu', (event) => {
+      const button = event.target.closest('[data-note-page]');
+      if (!button || !pagePalette) return;
+      event.preventDefault(); event.stopPropagation();
+      if (pagePalette.getTrigger() === button) { pagePalette.close(true); return; }
+      const page = Number(button.dataset.notePage), rect = button.getBoundingClientRect();
+      pagePalette.open(button, event.clientX || rect.right, event.clientY || rect.bottom, {
+        currentColor: pageColors[page] || '', label: T('选择颜色'),
+        pick(value) {
+          if (value && allowedPageColors.has(value)) pageColors[page] = value; else delete pageColors[page];
+          try { localStorage.setItem(NOTES_PAGE_COLORS_KEY, JSON.stringify({ version: 1, colors: pageColors })); } catch (e) {}
+          renderPageRail();
+        },
+      });
+      revealPageRail(true);
+    });
+    pageRail.addEventListener('wheel', (event) => {
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
+      const direction = event.deltaY > 0 ? 1 : -1;
+      const scroller = event.target.closest('.study-task-page-scroll');
+      if (scroller) {
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        if (direction > 0 ? scroller.scrollTop < max - 1 : scroller.scrollTop > 1) {
+          event.stopPropagation(); return;
+        }
+      }
+      event.preventDefault(); event.stopPropagation();
+      pageWheelAccum += event.deltaY;
+      window.clearTimeout(pageWheelTimer);
+      pageWheelTimer = window.setTimeout(() => { pageWheelTimer = 0; pageWheelAccum = 0; }, 200);
+      if (Math.abs(pageWheelAccum) < 24) return;
+      const next = requestedPage + (pageWheelAccum > 0 ? 1 : -1);
+      pageWheelAccum = 0;
+      changePage(next);
+    }, { passive: false });
+    pageRail.addEventListener('pointerenter', () => { railOver = true; revealPageRail(true); });
+    pageRail.addEventListener('pointerleave', () => { railOver = false; revealPageRail(railNear); });
+    pageRail.addEventListener('focusin', () => revealPageRail(true));
+    pageRail.addEventListener('focusout', (event) => { if (!pageRail.contains(event.relatedTarget)) revealPageRail(railOver || railNear); });
+    pageRail.addEventListener('keydown', (event) => {
+      const button = event.target.closest('[data-note-page]');
+      if (!button || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const page = Number(button.dataset.notePage);
+      const next = event.key === 'Home' ? 1 : event.key === 'End' ? pageButtons.size : page + (event.key === 'ArrowDown' ? 1 : -1);
+      pageButtons.get(next)?.focus({ preventScroll: false });
+    });
+    pageScrollers.forEach((scroller) => scroller.addEventListener('scroll', () => {
+      if (orbFrame || !pageUsable()) return;
+      orbFrame = requestAnimationFrame(() => { orbFrame = 0; positionPageOrb(true); });
+    }, { passive: true }));
+    notesView.addEventListener('pointermove', (event) => {
+      if (!pageUsable() || (event.pointerType && !['mouse', 'pen'].includes(event.pointerType))) return;
+      railNear = false;
+      if (event.clientX >= window.innerWidth - 84) {
+        const rect = notesView.getBoundingClientRect();
+        railNear = event.clientX <= rect.right && event.clientX >= rect.right - 84
+          && Math.abs(event.clientY - rect.top - rect.height / 2) > 71;
+      }
+      revealPageRail(railNear || railOver);
+    }, { passive: true });
+    notesView.addEventListener('pointerleave', () => { railNear = false; revealPageRail(railOver); });
+  }
+  document.addEventListener('pointerdown', (event) => {
+    if (pagePalette?.isOpen() && !pagePalette.getElement().contains(event.target) && !pageRail?.contains(event.target)) pagePalette.close(false);
+  }, true);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && pagePalette?.isOpen()) { event.preventDefault(); event.stopPropagation(); pagePalette.close(true); }
+  }, true);
+  document.addEventListener('canvas:notes-consolechange', (event) => {
+    if (event.detail?.open) pagePalette?.close(false, true);
+    revealPageRail(railNear || railOver);
+  });
+  document.addEventListener('relatum:languagechange', schedulePageRail);
+  window.addEventListener('resize', schedulePageRail, { passive: true });
 
   function cancelPreload() {
     if (!preloadHandle) return;
@@ -2278,7 +2750,7 @@
     const warm = () => {
       preloadHandle = 0;
       preloadUsesIdle = false;
-      load().catch(() => undefined);
+      load(true).catch(() => undefined);
     };
     preloadUsesIdle = typeof window.requestIdleCallback === 'function';
     preloadHandle = preloadUsesIdle
@@ -2286,61 +2758,73 @@
       : window.setTimeout(warm, 600);
   }
 
-  // ── 整墙归档（长按速记图标触发）──
-  // 有名字的便签搬进「学习归档」，无名的丢弃；之后整墙清空。归档是「定局」动作，
-  // 不进撤销栈（后端已建好归档夹并清空 notes.json，本地再撤销会造成两边不一致）。
+  // ── 当前页归档（长按速记图标触发）──
+  // 有名字的便签搬进「学习归档」，无名的丢弃；只清空当前页。
+  // 后端已完成归档，因此只清除此页历史，不能再撤销回填。
   function archive() {
-    if (!loaded) return load().then((ok) => {
-      if (!ok) throw new Error('速记墙载入失败');
-      return archive();
-    });
     if (archivePromise) return archivePromise;
-    if (!notes.length && !arrows.length) return Promise.resolve({ ok: true, empty: true, count: 0 });
-    const payload = notes.map((n) => Object.assign({}, n));
-    clearTimeout(saveTimer);
-    saveTimer = null;
     archiving = true;
-    touched = true;
-    archivePromise = saveChain.catch(() => undefined).then(() => fetch('/api/notes-archive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: payload }),
-      }))
-      .then((r) => r.json()).then((json) => {
-      if (!json || !json.ok) throw new Error((json && json.error) || '归档失败');
+    ++pageSequence; requestedPage = currentPage; cancelPageMotion();
+    pageRequests.forEach((request, page) => { if (page !== currentPage) request.controller.abort(); });
+    archivePromise = (async () => {
+      await finishNoteEdit(true);
+      if (!loaded && !(await load())) throw new Error(T('读取速记失败，请重试'));
+      cancelActiveGesture();
+      cancelNoteInertia(true); cancelViewPanInertia(); cancelZoom(true); clearViewArrowKeys();
+      cancelCollapse(); cancelExpand(); closeNoteSearch();
+      if (!notes.length && !arrows.length) return { ok: true, empty: true, count: 0 };
+      await flushSave();
+      const page = currentPage;
+      const json = await postNotes('/api/notes-archive', JSON.stringify({ notePage: page, notes: notes.map((n) => Object.assign({}, n)) }));
       cancelNoteInertia(false);
       notes = [];
       edges = [];
       arrows = [];
       history = []; redoStack = [];                // 归档不可撤销
       expandedStack = null;
+      activeNoteId = null; keyboardBrowseActive = false;
+      const state = rememberPage();
+      state.dirty = false; state.revision++;
+      highestPage = normalizePage(json.highestPage);
+      pageMetadataEpoch++;
       renderEdges();
       const els = Array.from(surface.querySelectorAll('.sticky-note'));
-      if (prefersReduced || !els.length) {
+      noteElements.clear();
+      if (prefersReduced || !els.length || !pageUsable()) {
         els.forEach((el) => el.remove());
       } else {
         els.forEach((el, i) => {
-          el.style.animationDelay = (i * 26) + 'ms';
+          el.style.animationDelay = Math.min(i * 26, 360) + 'ms';
           el.classList.add('note-leaving');
-          setTimeout(() => el.remove(), 300 + i * 26);
         });
+        archiveMotionTimer = window.setTimeout(() => { archiveMotionTimer = 0; els.forEach((el) => el.remove()); }, 660);
       }
+      renderPageRail();
       document.dispatchEvent(new CustomEvent('canvas:data-changed', {
         detail: { source: 'notes', path: '/api/notes-archive' },
       }));
       return json;
-    }).catch((error) => {
-      archiving = false;
-      scheduleSave();
-      throw error;
-    }).finally(() => {
+    })().finally(() => {
       archiving = false;
       archivePromise = null;
+      revealPageRail(railNear || railOver);
     });
     return archivePromise;
   }
 
   function deactivate() {
+    notesRuntimeActive = false;
+    ++pageSequence; requestedPage = currentPage;
+    const frozen = pageSwitching ? getComputedStyle(surface) : null;
+    const frozenOpacity = frozen?.opacity, frozenTransform = frozen?.transform;
+    cancelPageMotion();
+    if (frozen) {
+      surface.style.transition = 'none'; surface.style.opacity = frozenOpacity; surface.style.transform = frozenTransform;
+    }
+    pageRequests.forEach((request, page) => { if (page !== currentPage) request.controller.abort(); });
+    finishNoteEdit(false);
+    if (editRefreshFrame) cancelAnimationFrame(editRefreshFrame);
+    editRefreshFrame = 0;
     cancelActiveGesture();
     cancelNoteInertia(true);
     cancelViewPanInertia();
@@ -2353,6 +2837,11 @@
     spaceHeld = false;
     surface.classList.remove('space-ready', 'panning');
     stopEdgeRefresh();
+    stopPageRail();
+    window.clearTimeout(archiveMotionTimer); archiveMotionTimer = 0;
+    surface.querySelectorAll('.note-leaving').forEach((el) => el.remove());
+    flushDirtyPages();
+    if (viewSaveTimer) flushViewSave();
   }
 
   window.CanvasNotes = {
@@ -2361,12 +2850,21 @@
       const ready = loaded ? Promise.resolve(true) : load();
       return ready.then((ok) => {
         if (!ok) return false;
-        if (!notesPageActive() || document.body.dataset.startWorkspace !== 'canvas') return true;
+        if (!pageUsable()) return true;
+        if (notesRuntimeActive) return true;
+        notesRuntimeActive = true;
+        surface.style.transition = ''; surface.style.opacity = ''; surface.style.transform = '';
         // 隐藏预渲染时 content-visibility 会跳过尺寸计算；页面显现后重算一次端点。
         stopEdgeRefresh();
-        relayout();
-        window.requestAnimationFrame(() => {
-          if (notesPageActive()) renderEdges();
+        if (noteElements.size !== notes.length) renderAll();
+        else relayout();
+        if (railObserver) railObserver.observe(pageRail);
+        renderPageRail();
+        const sequence = pageSequence;
+        if (activateFrame) cancelAnimationFrame(activateFrame);
+        activateFrame = window.requestAnimationFrame(() => {
+          activateFrame = 0;
+          if (pageUsable() && sequence === pageSequence) renderEdges();
         });
         return true;
       });
@@ -2374,6 +2872,8 @@
     deactivate,
     archive,
     count() { return notes.length; },
+    getPage() { return currentPage; },
+    changePage,
     setInertia(value) { return setNoteInertia(value, true); },
     getInertia() { return noteInertia; },
     setStackHoverDelay(value) {
@@ -2402,11 +2902,26 @@
   });
   document.addEventListener('relatum:start-workspacechange', (event) => {
     if (!event.detail || event.detail.workspace !== 'canvas') deactivate();
-    else if (notesPageActive()) scheduleEdgeRefresh();
+    else if (pageUsable()) window.CanvasNotes.activate();
   });
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) deactivate();
-    else if (notesPageActive()) scheduleEdgeRefresh();
-  });
+  function syncVisibility() {
+    if (!pageUsable()) deactivate();
+    else window.CanvasNotes.activate();
+  }
+  document.addEventListener('visibilitychange', syncVisibility);
+  window.addEventListener('canvasdesktop:visibility', syncVisibility);
+  window.addEventListener('pageshow', syncVisibility);
+  try {
+    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', (event) => {
+      prefersReduced = event.matches;
+      if (!prefersReduced) return;
+      cancelNoteInertia(true); cancelViewPanInertia(); cancelZoom(true); clearViewArrowKeys();
+      pagePalette?.close(false, true);
+      if (pageSwitchResolve) {
+        window.clearTimeout(pageSwitchTimer); pageSwitchTimer = 0;
+        const resolve = pageSwitchResolve; pageSwitchResolve = null; resolve(true);
+      }
+    });
+  } catch (e) {}
   schedulePreload();
 })();

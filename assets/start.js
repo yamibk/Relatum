@@ -831,6 +831,7 @@
       open = !!next;
       if (!open) setHelpOpen(false, false);
       notesConsole.classList.toggle('is-open', open);
+      document.dispatchEvent(new CustomEvent('canvas:notes-consolechange', { detail: { open } }));
       notesConsoleTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
       notesConsolePanel.inert = !open;
       if (open) {
@@ -980,7 +981,12 @@
     }
 
     notesView.addEventListener('pointermove', (event) => {
-      if (open || notesConsole.contains(event.target)) return;
+      if (open) return;
+      if (notesConsole.contains(event.target)) {
+        nearTrigger = true;
+        setRevealed(true);
+        return;
+      }
       const rect = notesView.getBoundingClientRect();
       const centerY = rect.top + rect.height / 2;
       nearTrigger = event.clientX >= rect.right - NOTES_CONSOLE_HOTSPOT_WIDTH
@@ -4812,20 +4818,23 @@
       }
     });
   });
-  // 速记归档：把整墙便签里「有名字」的搬进 data/学习归档/<日期>+<N>条速记/，
+  // 速记归档：把当前页便签里「有名字」的搬进 data/学习归档/<日期>+<N>条速记/，
   // 无名便签随之清空但不归档；归档后刷新活跃页统计。由长按速记图标触发。
   function archiveNotes() {
     if (!window.CanvasNotes || !window.CanvasNotes.archive) return;
     window.CanvasNotes.archive().then((res) => {
-      if (!res || res.empty) { showToast('速记墙还是空的'); return; }
+      if (!res || res.empty) { showToast(englishUI() ? 'This Quick Notes page is empty' : '当前速记页还是空的'); return; }
       if (window.StudyActivity && window.StudyActivity.reload) window.StudyActivity.reload();
-      if (res.count > 0) showToast('已归档 ' + res.count + ' 条速记 · data/学习归档/' + res.folder);
-      else showToast('便签都没写字，已清空（未归档）');
+      if (res.count > 0) showToast((englishUI() ? 'Archived ' + res.count + ' quick notes from this page' : '已归档当前页 ' + res.count + ' 条速记') + ' · data/学习归档/' + res.folder);
+      else showToast(englishUI() ? 'Cleared this page; empty notes were not archived' : '当前页便签都没写字，已清空（未归档）');
     }).catch((err) => showToast((err && err.message) || '归档失败'));
   }
+  document.addEventListener('canvas:notes-error', (event) => {
+    if (event.detail && event.detail.message) showToast(event.detail.message);
+  });
 
   document.querySelectorAll('[data-action="notes-view"]').forEach((btn) => {
-    // 普通点击 = 进入速记页；长按（蓄力环填满）= 归档整墙。两者靠 holdFired 区分，
+    // 普通点击 = 进入速记页；长按（蓄力环填满）= 归档当前页。两者靠 holdFired 区分，
     // 长按完成后吞掉随之而来的 click，避免归档同时又跳进速记页。
     const HOLD_MS = 700;
     let holdTimer = null;
@@ -4991,6 +5000,7 @@
   if (spineEl && bookView) {
     bookView.addEventListener('wheel', (e) => {
       if (main.dataset.state !== 'recent' && main.dataset.state !== 'study') return;
+      if (notesActive && e.target.closest && e.target.closest('.notes-page-rail, .notes-console')) return;
       // 缩放和明显的横向手势属于当前页面内容，不参与书脊翻页。
       if (e.ctrlKey || e.metaKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
       const spineRect = spineEl.getBoundingClientRect();

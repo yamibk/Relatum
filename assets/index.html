@@ -810,6 +810,16 @@
       <!-- 速记 · 便签墙独立前置页（位于活跃与树状之间；便签由 notes.js 创建/渲染/存盘）。 -->
       <section class="notes-embedded" data-role="notes-view" aria-label="速记便签墙页">
         <div class="notes-surface" data-role="notes-surface"></div>
+        <nav class="study-task-page-rail notes-page-rail auto-hide" data-role="notes-page-rail" aria-label="速记页切换">
+          <span class="study-task-page-orb" data-role="notes-page-orb" aria-hidden="true"></span>
+          <div class="study-task-page-scroll" data-role="notes-page-top">
+            <div class="study-task-page-list" data-role="notes-page-top-list"></div>
+          </div>
+          <span class="study-task-page-gap" aria-hidden="true"></span>
+          <div class="study-task-page-scroll" data-role="notes-page-bottom">
+            <div class="study-task-page-list" data-role="notes-page-bottom-list"></div>
+          </div>
+        </nav>
         <div class="notes-console" data-role="notes-console">
           <button type="button" class="notes-console-trigger" data-role="notes-console-trigger"
             title="速记控制台" aria-label="打开速记控制台" aria-expanded="false"

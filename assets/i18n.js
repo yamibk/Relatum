@@ -115,6 +115,8 @@
     '拖拽惯性': 'Drag inertia', '稳': 'Steady', '滑': 'Fluid',
     '叠放展开延迟': 'Stack expansion delay', '瞬发': 'Instant', '长按': 'Long press',
     '速记控制台': 'Quick Notes controls', '打开速记控制台': 'Open Quick Notes controls',
+    '速记页切换': 'Quick Notes pages', '读取速记失败，请重试': 'Could not load Quick Notes. Please retry.',
+    '保存速记失败，请重试': 'Could not save Quick Notes. Please retry.', '速记操作失败': 'Quick Notes operation failed',
     '生成颜色': 'Generated colors', '新建与随机换色从选中色中抽取': 'New notes and random recoloring use the selected colors.',
     '新建与随机换色从选中色中抽取；未选中任何颜色时，仍使用全部颜色。': 'New notes and random recoloring use the selected colors; when none are selected, all colors remain available.',
     '参与随机生成的便签颜色': 'Sticky note colors used for random generation',
@@ -1516,6 +1518,8 @@
     if (match) return 'Collapse group · ' + match[1];
     match = source.match(/^学习任务第\s*(\d+)\s*页$/);
     if (match) return 'Study task page ' + match[1];
+    match = source.match(/^速记第\s*(\d+)\s*页$/);
+    if (match) return 'Quick Notes page ' + match[1];
 
     if (typeof window.RelatumResearchTranslateDynamic === 'function') {
       const translated = window.RelatumResearchTranslateDynamic(source);

@@ -17549,9 +17549,14 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
   inset: 0;
   overflow: hidden;
   cursor: default;
-  transition: none;
+  transition: opacity 150ms var(--easing-soft), transform 180ms var(--easing-soft);
   -webkit-user-select: none;
   user-select: none;
+}
+.notes-surface.notes-page-switching { opacity: 0; transform: translate3d(0,4px,0); pointer-events: none; }
+.notes-page-rail .study-task-page-orb { will-change: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .notes-surface { transition: none; }
 }
 
 /* 速记右缘控制台：常态只露一条细签，靠近右缘或键盘聚焦时展开入口。 */

@@ -223,6 +223,15 @@ async function regression(page, context, dataRoot) {
   await page.locator('button[data-start-workspace="canvas"]').click();
   await page.waitForTimeout(500);
   await geometry('return from top-level workspaces');
+  await page.evaluate(async () => {
+    document.querySelector('.notes-surface').style.width = 'calc(100% - .5px)';
+    CanvasNotes.deactivate(); await CanvasNotes.activate();
+  });
+  await geometry('fractional surface width');
+  await page.evaluate(async () => {
+    document.querySelector('.notes-surface').style.width = '';
+    CanvasNotes.deactivate(); await CanvasNotes.activate();
+  });
   checks.push({ name: 'notes/career workspace cleanup' });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(new URL('/?view=study', page.url()).href);

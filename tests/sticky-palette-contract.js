@@ -141,7 +141,8 @@ assert(notes.includes('const NOTE_TYPOGRAPHY_SHORT_MAX = 18;')
   'Quick Notes must classify transient short, medium, and long typography without persisting style fields');
 assert(notes.includes('applyNoteTypography(el, data.text);')
   && notes.includes('applyNoteTypography(el, next);')
-  && notes.includes('requestAnimationFrame(renderEdges);'),
+  && notes.includes('editRefreshFrame = requestAnimationFrame(')
+  && notes.includes('currentPage === page && pageUsable() && el.isConnected) renderEdges();'),
   'Quick Notes must apply typography on render/edit and realign connected edges after text layout changes');
 [
   ['short', '20px', '650', '1.46'],

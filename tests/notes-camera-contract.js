@@ -33,7 +33,8 @@ assert(!wheelHandler[0].includes("closest('.sticky-note')") && !wheelHandler[0].
 assert(notes.includes('const NOTES_VIEW_MIN = 0.45;') && notes.includes('const NOTES_VIEW_MAX = 2.35;'),
   'Quick Notes must retain its established zoom bounds');
 assert(notes.includes("const NOTES_VIEW_KEY = 'canvas:notesView';")
-  && notes.includes('localStorage.setItem(NOTES_VIEW_KEY'),
+  && notes.includes('currentPage === 1 ? NOTES_VIEW_KEY')
+  && notes.includes('localStorage.setItem(pageViewKey(),'),
   'Quick Notes must retain its existing camera persistence key and format');
 assert(notes.includes('if (spaceHeld)') && notes.includes('startViewPanInertia(panState);'),
   'Space-drag panning and its inertia must remain available');

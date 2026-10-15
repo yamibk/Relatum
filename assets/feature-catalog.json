@@ -358,7 +358,8 @@
     "study-palette.js": [
       "canvas.tree",
       "canvas.study",
-      "canvas.calendar"
+      "canvas.calendar",
+      "canvas.quicknotes"
     ],
     "study-goal-tree.js": [
       "canvas.tree",

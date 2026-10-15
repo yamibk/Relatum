@@ -2742,6 +2742,7 @@ NOTE_TEXT_MAX = 2000
 NOTES_MAX = 400   # 上限保护，避免数据无限膨胀
 NOTE_EDGES_MAX = 800   # 连线上限保护
 NOTE_ARROWS_MAX = 800   # 右键拖出的箭头上限保护
+NOTE_PAGE_MAX = 99
 START_STICKY_SCOPES = {"recent", "study", "cadence", "calendar", "review", "focus"}
 START_STICKY_NOTES_MAX = 240
 START_STICKY_NOTES_PER_SCOPE_MAX = 60
@@ -2868,30 +2869,81 @@ def _sanitize_arrows(items: object, valid_ids: set[str]) -> list[dict]:
     return arrows
 
 
+def _note_page(value: object = 1, *, strict: bool = False) -> int:
+    if not isinstance(value, bool):
+        try:
+            page = int(value)
+            if str(page) == str(value) and 1 <= page <= NOTE_PAGE_MAX:
+                return page
+        except (ValueError, TypeError, OverflowError):
+            pass
+    if strict:
+        raise ValueError("速记页码必须为 1–99 的整数")
+    return 1
+
+
 def _build_notes_payload(items: object, edge_items: object, arrow_items: object) -> dict:
-    notes: list[dict] = []
+    # Keep the historical flat arrays for inventory/statistics readers. Limits
+    # and endpoint validation belong to each page, never to the combined wall.
+    pages: dict[int, list[dict]] = {}
+    ids: dict[int, set[str]] = {}
     for item in items if isinstance(items, list) else []:
+        page = _note_page(item.get("notePage")) if isinstance(item, dict) else 1
+        page_notes = pages.setdefault(page, [])
+        valid_ids = ids.setdefault(page, set())
+        if len(page_notes) >= NOTES_MAX:
+            continue
         note = _sanitize_note(item)
-        if note is not None:
-            notes.append(note)
-    notes = notes[:NOTES_MAX]
-    valid_ids = {n["id"] for n in notes}
-    edges = _sanitize_edges(edge_items, valid_ids)
-    arrows = _sanitize_arrows(arrow_items, valid_ids)
-    return {"version": 1, "notes": notes, "edges": edges, "arrows": arrows}
+        if note is not None and note["id"] not in valid_ids:
+            note["notePage"] = page
+            page_notes.append(note)
+            valid_ids.add(note["id"])
+    edges_by_page: dict[int, list] = {}
+    arrows_by_page: dict[int, list] = {}
+    for source, target in ((edge_items, edges_by_page), (arrow_items, arrows_by_page)):
+        for item in source if isinstance(source, list) else []:
+            if isinstance(item, dict):
+                target.setdefault(_note_page(item.get("notePage")), []).append(item)
+    notes = [note for group in pages.values() for note in group]
+    edges, arrows = [], []
+    for page, group in edges_by_page.items():
+        edges.extend({**edge, "notePage": page} for edge in _sanitize_edges(group, ids.get(page, set())))
+    for page, group in arrows_by_page.items():
+        valid_ids = ids.get(page, set())
+        group = [item for item in group if all(not item.get(key) or (isinstance(item[key], str) and item[key] in valid_ids)
+                                             for key in ("fromNote", "toNote"))]
+        arrows.extend({**arrow, "notePage": page} for arrow in _sanitize_arrows(group, valid_ids))
+    return {"version": 2, "notes": notes, "edges": edges, "arrows": arrows}
 
 
 def load_notes() -> dict:
     try:
         raw = json.loads(NOTES_FILE.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"version": 1, "notes": [], "edges": [], "arrows": []}
+    except FileNotFoundError:
+        raw = {}
     if not isinstance(raw, dict):
-        return {"version": 1, "notes": [], "edges": [], "arrows": []}
+        raise ValueError("速记数据格式无效")
     return _build_notes_payload(raw.get("notes", []), raw.get("edges", []), raw.get("arrows", []))
 
 
-def save_notes(data: dict) -> dict:
+def notes_page_payload(data: dict, page: int) -> dict:
+    return {
+        "version": 2, "notePage": page,
+        "highestPage": max((item["notePage"] for key in ("notes", "edges", "arrows")
+                            for item in data[key]), default=1),
+        **{key: [item for item in data[key] if item["notePage"] == page]
+           for key in ("notes", "edges", "arrows")},
+    }
+
+
+def save_notes(data: dict, *, note_page: int | None = None) -> dict:
+    if note_page is not None:
+        note_page = _note_page(note_page, strict=True)
+        previous = load_notes()
+        data = {key: [item for item in previous[key] if item["notePage"] != note_page]
+                + [{**item, "notePage": note_page} for item in (data.get(key, []) if isinstance(data.get(key, []), list) else [])
+                   if isinstance(item, dict)]
+                for key in ("notes", "edges", "arrows")}
     payload = _build_notes_payload(
         data.get("notes", []) if isinstance(data, dict) else [],
         data.get("edges", []) if isinstance(data, dict) else [],
@@ -9876,7 +9928,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except sqlite3.DatabaseError as err:
                 return self._send_json(500, {"error": f"读取复习数据库失败：{err}"})
         if parsed.path == "/api/notes":
-            return self._send_json(200, load_notes())
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                page = _note_page(q.get("notePage", [1])[0], strict=True)
+            except ValueError as err:
+                return self._send_json(400, {"error": str(err)})
+            try:
+                return self._send_json(200, notes_page_payload(load_notes(), page))
+            except (OSError, UnicodeDecodeError, ValueError) as err:
+                return self._send_json(500, {"error": f"读取速记失败：{err}"})
         if parsed.path == "/api/start-sticky-notes":
             return self._send_json(200, load_start_sticky_notes())
         if parsed.path == "/api/focus":
@@ -11485,15 +11545,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(200, result)
 
     def _api_notes_save(self, body: dict):
-        """整墙覆盖保存便签：前端持有完整列表，整体写回（已在 save_notes 里清洗）。"""
+        """只替换请求页，保留其他页；旧客户端未指定页码时归入第一页。"""
         if not isinstance(body, dict) or not isinstance(body.get("notes"), list):
             return self._send_json(400, {"error": "缺少 notes 数组"})
         try:
-            result = save_notes(body)
+            page = _note_page(body.get("notePage", 1), strict=True)
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        try:
+            result = notes_page_payload(save_notes(body, note_page=page), page)
+        except (UnicodeDecodeError, ValueError) as err:
+            return self._send_json(500, {"error": f"读取速记失败：{err}"})
         except OSError as err:
             return self._send_json(500, {"error": f"保存失败：{err}"})
         self._send_json(200, {
             "ok": True,
+            "notePage": page,
+            "highestPage": result["highestPage"],
             "count": len(result["notes"]),
             "edgeCount": len(result["edges"]),
             "arrowCount": len(result["arrows"]),
@@ -11534,13 +11602,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(200, {"ok": True, "count": len(result["templates"])})
 
     def _api_notes_archive(self, body: dict):
-        """长按速记图标归档整墙：前端传当前整墙便签，后端把**有名字**的便签写进
-        data/学习归档/<日期>+<N>条速记/notes.json（计入活跃统计），无名便签丢弃不归档；
-        随后整墙清空（notes.json 写空）。有名便签为 0 时不建文件夹，仅清空墙面。"""
+        """归档已保存的当前页；只清除此页，保留其他页的原始内容。"""
         if not isinstance(body, dict) or not isinstance(body.get("notes"), list):
             return self._send_json(400, {"error": "缺少 notes 数组"})
+        try:
+            page = _note_page(body.get("notePage", 1), strict=True)
+        except ValueError as err:
+            return self._send_json(400, {"error": str(err)})
+        try:
+            current = notes_page_payload(load_notes(), page)
+        except (OSError, UnicodeDecodeError, ValueError) as err:
+            return self._send_json(500, {"error": f"读取速记失败：{err}"})
         named = []
-        for item in body["notes"]:
+        for item in current["notes"]:
             if not isinstance(item, dict):
                 continue
             text = str(item.get("text") or "").strip()
@@ -11558,15 +11632,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 _atomic_write_json(folder / "notes.json", {
                     "version": 1,
                     "archivedAt": _study_now(),
+                    "notePage": page,
                     "count": len(named),
                     "notes": named,
                 })
                 folder_name = folder.name
-            save_notes({"notes": [], "edges": [], "arrows": []})         # 整墙清空（有名已归档、无名直接丢弃）
-        except OSError as err:
+            result = save_notes({"notes": [], "edges": [], "arrows": []}, note_page=page)
+        except (OSError, UnicodeDecodeError, ValueError) as err:
             return self._send_json(500, {"error": f"归档失败：{err}"})
         self._send_json(200, {
             "ok": True,
+            "notePage": page,
+            "highestPage": notes_page_payload(result, page)["highestPage"],
             "count": len(named),
             "folder": folder_name,
         })
