@@ -16,6 +16,96 @@ async function activate(page, name) {
   });
 }
 
+async function glyphChecks(browser, url, nativePage) {
+  const { PNG } = require(require.resolve('pngjs', { paths: [path.dirname(require.resolve(process.env.RELATUM_PLAYWRIGHT || 'playwright'))] }));
+  const config = { theme: process.env.RELATUM_GLYPH_THEME || 'light', motionMs: process.env.RELATUM_GLYPH_SPEED || '457' };
+  const context = nativePage ? nativePage.context() : await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 });
+  await context.addInitScript(config => {
+    localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
+    localStorage.setItem('canvas:startTheme', config.theme);
+    localStorage.setItem('canvas:spineMotionMs:v1', config.motionMs);
+    localStorage.setItem('canvas:toolbarLanguage', 'zh-CN');
+    localStorage.setItem('canvas:hideSpecialPages', '0');
+  }, config);
+  const page = nativePage || await context.newPage();
+  try {
+    const baselineRef = process.env.RELATUM_GLYPH_BASELINE_REF;
+    const css = baselineRef ? execFileSync('git', ['show', `${baselineRef}:assets/styles.css`],
+      { cwd: repo, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }) : fs.readFileSync(path.join(repo, 'assets/styles.css'), 'utf8');
+    await context.route('**/styles.css*', route => route.fulfill({ contentType: 'text/css', body: css }));
+    await page.goto(url + '/index.html?view=calendar');
+    await page.waitForSelector('[data-diary-body]'); await page.waitForTimeout(2400);
+    const cdp = await context.newCDPSession(page);
+    const cases = [['calendar', 'cadence'], ['calendar', 'review'], ['calendar', 'notes'],
+      ['calendar', 'tree-page'], ['calendar', 'study'], ['calendar', 'focus'], ['review', 'cadence']];
+    for (const [from, to] of process.argv.includes('--glyph-smoke') ? cases.slice(0, 2) : cases) {
+      await activate(page, from); await page.waitForTimeout(2000);
+      const selector = from === 'calendar' ? '.calendar-spine-glyph' : '.review-spine-glyph';
+      const rect = await page.locator(selector).boundingBox();
+      const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }));
+      const frames = [];
+      const capture = event => {
+        frames.push({ data: Buffer.from(event.data, 'base64'), time: event.metadata.timestamp });
+        cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId }).catch(() => {});
+      };
+      cdp.on('Page.screencastFrame', capture);
+      await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
+      await page.waitForTimeout(80);
+      const styles = await page.evaluate(async ({ selector, to }) => {
+        const glyph = document.querySelector(selector), frames = [], mutations = [];
+        const observer = new MutationObserver(records => mutations.push(...records.map(r => ({ type: r.type, attribute: r.attributeName, html: glyph.outerHTML }))));
+        observer.observe(glyph, { attributes: true, childList: true, characterData: true, subtree: true });
+        const expectedColor = getComputedStyle(document.querySelector('.study-spine-tab:not(.active)')).color;
+        const originalColor = getComputedStyle(glyph).color;
+        const started = performance.now();
+        function sample() {
+          const s = getComputedStyle(glyph), b = glyph.getBoundingClientRect();
+          frames.push({ ms: performance.now() - started, color: s.color, opacity: s.opacity,
+            transform: s.transform, translate: s.translate, x: b.x, y: b.y, text: glyph.textContent });
+          if (performance.now() - started < 750) requestAnimationFrame(sample);
+        }
+        requestAnimationFrame(sample);
+        document.querySelector(`.left-spine [data-action="${to}-view"]`).click();
+        const immediateColor = getComputedStyle(glyph).color;
+        const navLayer = Number(getComputedStyle(document.querySelector('.left-spine')).zIndex);
+        const pageLayers = [...document.querySelectorAll('.book-view > .view-entering,.book-view > .view-leaving')]
+          .map(el => Number(getComputedStyle(el).zIndex) || 0);
+        await new Promise(resolve => setTimeout(resolve, 850)); observer.disconnect();
+        return { frames, mutations, expectedColor, originalColor, immediateColor, navLayer, pageLayers };
+      }, { selector, to });
+      await cdp.send('Page.stopScreencast'); cdp.off('Page.screencastFrame', capture);
+      assert(frames.length >= 2, 'glyph check captures both the original and updated page');
+      const series = frames.map((frame, index) => {
+        const png = PNG.sync.read(frame.data), values = [], sx = png.width / viewport.width, sy = png.height / viewport.height;
+        for (let y = Math.ceil(rect.y * sy); y < Math.floor((rect.y + rect.height) * sy); y++) {
+          for (let x = Math.ceil(rect.x * sx); x < Math.floor((rect.x + rect.width) * sx); x++) {
+            const i = (y * png.width + x) * 4; values.push((png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3);
+          }
+        }
+        if (process.argv.includes('--glyph-frames') || index === 0 || index === frames.length - 1) {
+          fs.writeFileSync(path.join(root, `glyph-${from}-${to}-${index}.png`), frame.data);
+        }
+        return { index, time: (frame.time - frames[0].time) * 1000, min: Math.min(...values), max: Math.max(...values),
+          mean: values.reduce((a, b) => a + b, 0) / values.length };
+      });
+      fs.writeFileSync(path.join(root, `glyph-${from}-${to}.json`), JSON.stringify({ rect, viewport, series, styles }, null, 2));
+      if (baselineRef) assert.notEqual(styles.immediateColor, styles.expectedColor, 'baseline reproduces stale outgoing foreground');
+      else {
+        if (config.theme === 'light') assert.equal(styles.immediateColor, styles.expectedColor, 'outgoing glyph restores its readable color in the switching task');
+        else assert.equal(styles.immediateColor, styles.originalColor, 'dark theme retains its existing foreground transition');
+        assert(styles.pageLayers.every(layer => layer < styles.navLayer), 'animated page controls stay below navigation');
+        if (config.theme === 'light') assert(series.every(f => f.max - f.min >= 70), 'capture must not contain a washed-out glyph frame');
+      }
+      assert.deepEqual(styles.mutations, [], 'navigation does not replace or animate the glyph DOM');
+      const result = { baselineRef, config, from, to, rect, viewport, frameCount: series.length,
+        minRange: Math.min(...series.map(f => f.max - f.min)), immediateColor: styles.immediateColor, expectedColor: styles.expectedColor };
+      (report.glyphChecks ||= []).push(result);
+      console.log(JSON.stringify(result));
+    }
+    console.log('glyph capture: ' + root);
+  } finally { if (!nativePage) await context.close(); }
+}
+
 async function behaviorChecks(browser, url, config) {
   const context = await browser.newContext({ viewport: { width: config.width || 1600, height: 1000 },
     deviceScaleFactor: config.dpr, reducedMotion: config.reduced ? 'reduce' : 'no-preference' });
@@ -165,23 +255,43 @@ async function sample(page, cdp, from, to, label, run) {
 (async () => {
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
-  const url = `http://127.0.0.1:${port}`;
-  const server = spawn(process.env.RELATUM_PYTHON || 'python', ['-B', 'app.py', '--no-browser', '--port', String(port)],
-    { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
-  let browser;
+  let url = `http://127.0.0.1:${port}`;
+  const release = process.env.RELATUM_SPINE_RELEASE;
+  assert(!release || process.argv.includes('--glyphs'), 'native host is supported by --glyphs only');
+  const debugSocket = net.createServer(); await new Promise(resolve => debugSocket.listen(0, '127.0.0.1', resolve));
+  const debugPort = debugSocket.address().port; await new Promise(resolve => debugSocket.close(resolve));
+  const server = spawn(release ? path.join(release, 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python',
+    release ? [] : ['-B', 'app.py', '--no-browser', '--port', String(port)],
+    { cwd: release || repo, env: { ...process.env, RELATUM_DATA_ROOT: root,
+      ...(release ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } : {}) }, windowsHide: true, stdio: 'ignore' });
+  let browser, nativePage;
   try {
-    let ready = false;
-    for (let i = 0; i < 100; i++) { try { ready = (await fetch(url + '/api/runtime')).ok; } catch {} if (ready) break; await pause(100); }
-    assert(ready, 'isolated service starts');
-    browser = await chromium.launch({ headless: !process.argv.includes('--headed'), ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
+    if (!release) {
+      let ready = false;
+      for (let i = 0; i < 100; i++) { try { ready = (await fetch(url + '/api/runtime')).ok; } catch {} if (ready) break; await pause(100); }
+      assert(ready, 'isolated service starts');
+    }
+    if (release) {
+      let ready = false;
+      for (let i = 0; i < 200; i++) { try { ready = (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok; } catch {} if (ready) break; await pause(100); }
+      assert(ready, 'isolated WebView2 debugging endpoint');
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+      for (let i = 0; i < 100; i++) {
+        nativePage = browser.contexts()[0].pages().find(p => p.url().startsWith('http://127.0.0.1:'));
+        if (nativePage) break; await pause(100);
+      }
+      assert(nativePage, 'isolated native page'); url = new URL(nativePage.url()).origin;
+      await nativePage.setViewportSize({ width: 1280, height: 900 });
+    } else browser = await chromium.launch({ headless: !process.argv.includes('--headed'), ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
     report.browser = browser.version();
     report.baseline = process.argv.includes('--compare')
       ? execFileSync('git', ['rev-parse', process.env.RELATUM_SPINE_BASELINE_REF || 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim() : null;
+    if (process.argv.includes('--glyphs')) await glyphChecks(browser, url, nativePage);
     if (process.argv.includes('--behavior')) {
       for (const config of [{ theme: 'light', dpr: 1 }, { theme: 'dark', dpr: 2, language: 'en' },
         { theme: 'light', dpr: 2, reduced: true, width: 680 }]) await behaviorChecks(browser, url, config);
     }
-    const labels = process.argv.includes('--behavior') ? [] : process.argv.includes('--compare') ? ['baseline', 'current'] : ['current'];
+    const labels = process.argv.includes('--behavior') || process.argv.includes('--glyphs') ? [] : process.argv.includes('--compare') ? ['baseline', 'current'] : ['current'];
     for (const label of labels) {
       const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
       await context.addInitScript(() => {
@@ -244,5 +354,9 @@ async function sample(page, cdp, from, to, label, run) {
     }
     fs.writeFileSync(path.join(root, 'report.json'), JSON.stringify(report, null, 2));
     console.log('page transition report: ' + path.join(root, 'report.json'));
-  } finally { if (browser) await browser.close(); server.kill(); }
+  } finally {
+    if (nativePage) await Promise.race([nativePage.evaluate(() => { window.pywebview.api.close_window(); }).catch(() => {}), pause(3000)]);
+    if (browser) await Promise.race([browser.close().catch(() => {}), pause(3000)]);
+    if (server.exitCode === null) server.kill();
+  }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

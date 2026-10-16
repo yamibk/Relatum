@@ -10139,7 +10139,8 @@ body.start-page:is([data-start-state="recent"], [data-start-state="study"]) .sta
   overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  z-index: 20;
+  /* Page entrance/exit layers use 23/24; their moving controls must not cover navigation. */
+  z-index: 30;
 }
 .left-spine::-webkit-scrollbar { display: none; }
 .left-spine > :not(.spine-active-orb):not(.spine-hover-rail):not(.spine-hover-orb) {
@@ -10312,6 +10313,11 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
      A stacking context on the button would hide intermediate icons in transit. */
   transition: color var(--duration) var(--easing-soft);
   z-index: auto;
+}
+/* Once the dark slider leaves, fading white text disappears on a pale button.
+   Restore the light-theme foreground immediately; arrival keeps its fade. */
+body.start-page[data-start-theme="light"] .study-spine-tab:not(.active) {
+  transition: none;
 }
 .study-spine-tab > span:not(.dot-bubble) {
   transition: translate var(--duration) var(--easing-soft), scale var(--duration) var(--easing-soft);
