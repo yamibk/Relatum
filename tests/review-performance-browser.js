@@ -91,7 +91,7 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
     assert.equal(await prompt.textContent(), first); assert.equal(await page.locator('[data-role="review-draft"]').inputValue(), 'keep this draft');
     assert.equal(await page.locator('[data-role="review-seen"]').textContent(), '0');
     fail = false;
-    await remember.click(); for (let i = 0; !release && i < 50; i++) await pause(20);
+    await page.locator('[data-action="review-mark-retry"]').click(); for (let i = 0; !release && i < 50; i++) await pause(20);
     assert(release); release(); release = null;
     await page.waitForFunction(value => document.querySelector('[data-role="review-prompt"]').textContent !== value, first);
     await page.waitForFunction(() => document.querySelector('.review-actions').getAttribute('aria-busy') === 'false');

@@ -140,7 +140,7 @@ class ReviewImportTests(unittest.TestCase):
         conn.commit()
         conn.close()
         self.assertEqual(app.review_cards_payload()["cards"][0], before)
-        self.assertEqual(self.query("PRAGMA user_version")[0]["user_version"], 4)
+        self.assertEqual(self.query("PRAGMA user_version")[0]["user_version"], 5)
         self.assertEqual(self.query("SELECT COUNT(*) AS n FROM review_events")[0]["n"], 1)
 
     def test_ten_thousand_rows_use_one_transaction_and_no_single_create_calls(self):

@@ -7074,11 +7074,11 @@ def _notes_archive_folder(note_count: int) -> Path:
 
 
 # 独立复习卡片使用 SQLite 保存。卡片内容、调度和复习事件都不再依附画布节点。
-# 间隔重复（Leitner 盒子）：level=盒子序号；「记得」升一盒、间隔按下表拉长，「不会」清零今天再练，
-# 「模糊」原地但至少隔天。熟练度标签由 level 推导（生→疑→熟），不落库重复保存。
+# 普通「记得」升一盒；模糊/不会进入当日补练，连续记得两次后次日巩固。
+# 当日补练不重复升级/降级。熟练度由 level 推导（生→疑→熟）。
 REVIEW_LEVEL_DAYS = [0, 1, 3, 7, 16, 35]
 REVIEW_MAX_LEVEL = len(REVIEW_LEVEL_DAYS) - 1
-REVIEW_SCHEMA_VERSION = 4
+REVIEW_SCHEMA_VERSION = 5
 REVIEW_CARD_STATUSES = {"active", "suspended", "archived"}
 REVIEW_RATINGS = {"remembered", "vague", "forgot"}
 REVIEW_SCOPE_MODES = {"all", "unfiled", "deck"}
@@ -7117,6 +7117,8 @@ def _review_connect() -> sqlite3.Connection:
     if version > REVIEW_SCHEMA_VERSION:
         conn.close()
         raise sqlite3.DatabaseError("复习数据库来自更高版本的 Relatum")
+    if version == REVIEW_SCHEMA_VERSION:
+        return conn
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS review_decks (
@@ -7220,9 +7222,52 @@ def _review_connect() -> sqlite3.Connection:
            VALUES (1, 'all', NULL, 20, 'due', 0, ?)""",
         (_study_now(),),
     )
-    if version < REVIEW_SCHEMA_VERSION:
-        conn.execute(f"PRAGMA user_version = {REVIEW_SCHEMA_VERSION}")
     conn.commit()
+    try:
+        # Serialize migration with ratings/imports; another connection may have
+        # completed it while this one prepared the legacy schema.
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if int(conn.execute("PRAGMA user_version").fetchone()[0]) < 5:
+                conn.execute("""CREATE TABLE IF NOT EXISTS review_daily_progress (
+                    card_id TEXT NOT NULL,
+                    review_day TEXT NOT NULL,
+                    initial_level INTEGER NOT NULL,
+                    needs_relearning INTEGER NOT NULL DEFAULT 0 CHECK (needs_relearning IN (0, 1)),
+                    remembered_streak INTEGER NOT NULL DEFAULT 0 CHECK (remembered_streak BETWEEN 0 AND 2),
+                    had_forgot INTEGER NOT NULL DEFAULT 0 CHECK (had_forgot IN (0, 1)),
+                    completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (card_id, review_day)
+                )""")
+                # Stable card identities intentionally outlive deleted cards.
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_review_daily_completed "
+                             "ON review_daily_progress(review_day, completed)")
+                conn.execute("""CREATE TABLE IF NOT EXISTS review_mark_requests (
+                    id TEXT PRIMARY KEY,
+                    payload_hash TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )""")
+                now = _study_now()
+                today = date.fromisoformat(now[:10])
+                conn.execute("""INSERT OR IGNORE INTO review_daily_progress
+                    (card_id, review_day, initial_level, needs_relearning,
+                     remembered_streak, had_forgot, completed, updated_at)
+                    SELECT c.id, ?, c.level,
+                           CASE WHEN c.due_on > ? THEN 0 ELSE 1 END, 0,
+                           MAX(CASE WHEN e.rating = 'forgot' THEN 1 ELSE 0 END),
+                           CASE WHEN c.due_on > ? THEN 1 ELSE 0 END, ?
+                    FROM review_events e JOIN review_cards c ON c.id = e.card_id
+                    WHERE e.reviewed_at >= ? AND e.reviewed_at < ?
+                    GROUP BY c.id""",
+                    (today.isoformat(), today.isoformat(), today.isoformat(), now,
+                     today.isoformat() + "T00:00:00",
+                     (today + timedelta(days=1)).isoformat() + "T00:00:00"))
+                conn.execute("PRAGMA user_version = 5")
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
@@ -7234,6 +7279,33 @@ def _review_event_count_for_day(conn: sqlite3.Connection, target_day: date) -> i
         REVIEW_EVENTS_DAY_COUNT_SQL,
         (day_start, next_day_start),
     ).fetchone()[0])
+
+
+def _review_daily_rows(conn: sqlite3.Connection, card_ids: list[str], day: str) -> dict:
+    """Latest state per card, including unfinished work from an earlier day."""
+    result = {}
+    for offset in range(0, len(card_ids), 400):
+        chunk = card_ids[offset:offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(f"""SELECT p.* FROM review_cards c
+            JOIN review_daily_progress p ON p.card_id = c.id AND p.review_day = (
+                SELECT q.review_day FROM review_daily_progress q
+                WHERE q.card_id = c.id AND q.review_day <= ?
+                ORDER BY q.review_day DESC LIMIT 1)
+            WHERE c.id IN ({placeholders})""", [day, *chunk]).fetchall()
+        result.update((str(row["card_id"]), row) for row in rows)
+    return result
+
+
+def _review_daily_payload(row: sqlite3.Row | None, day: str) -> dict:
+    same_day = row is not None and row["review_day"] == day
+    return {
+        "day": day,
+        "needsRelearning": bool(row is not None and row["needs_relearning"] and not row["completed"]),
+        "streak": int(row["remembered_streak"]) if same_day else 0,
+        "target": 2,
+        "completed": bool(same_day and row["completed"]),
+    }
 
 
 def _review_text(value: object, *, label: str, limit: int, required: bool = False) -> str:
@@ -7385,7 +7457,7 @@ def _review_replace_tags(conn: sqlite3.Connection, card_id: str, names: list[str
     )
 
 
-def _review_card_payload(row: sqlite3.Row, tags: list[str] | None = None) -> dict:
+def _review_card_payload(row: sqlite3.Row, tags: list[str] | None = None, daily: dict | None = None) -> dict:
     level = max(0, min(int(row["level"] or 0), REVIEW_MAX_LEVEL))
     return {
         "id": str(row["id"]),
@@ -7404,6 +7476,7 @@ def _review_card_payload(row: sqlite3.Row, tags: list[str] | None = None) -> dic
         "deckId": str(row["deck_id"] or ""),
         "deckName": str(row["deck_name"] or ""),
         "tags": list(tags or []),
+        **({"dailyReview": daily} if daily is not None else {}),
     }
 
 
@@ -7555,53 +7628,62 @@ def _review_scope_options(conn: sqlite3.Connection, today: str) -> list[dict]:
     return options
 
 
+def _review_statistics(conn: sqlite3.Connection, day: date, settings: dict | None = None) -> dict:
+    settings = settings or _review_settings_payload(conn)
+    today = day.isoformat()
+    scope_sql, scope_params = _review_scope_sql(settings)
+    counts = conn.execute(f"""SELECT COUNT(*) AS active_count,
+        SUM(CASE WHEN c.due_on = '' OR c.due_on <= ? THEN 1 ELSE 0 END) AS due_count
+        FROM review_cards c WHERE c.status = 'active'{scope_sql}""", [today, *scope_params]).fetchone()
+    return {
+        "count": int(counts["active_count"] or 0),
+        "dueCount": int(counts["due_count"] or 0),
+        "reviewedToday": _review_event_count_for_day(conn, day),
+        "completedToday": int(conn.execute(
+            "SELECT COUNT(*) FROM review_daily_progress WHERE review_day = ? AND completed = 1", (today,)
+        ).fetchone()[0]),
+        "scopes": _review_scope_options(conn, today),
+        "scopeKey": settings["scopeMode"] + ":" + settings["scopeDeckId"],
+    }
+
+
 def review_pool_payload() -> dict:
-    """Return active standalone cards without opening any .canvas file."""
-    today_date = date.today()
+    """One read snapshot of the due batch and its authoritative counters."""
+    generated_at = _study_now()
+    today_date = date.fromisoformat(generated_at[:10])
     today = today_date.isoformat()
     conn = _review_connect()
     try:
+        conn.execute("BEGIN")
         settings = _review_settings_payload(conn)
         scope_sql, scope_params = _review_scope_sql(settings)
         if settings["orderMode"] == "random":
-            order_sql = "CASE WHEN c.due_on = '' OR c.due_on <= ? THEN 0 ELSE 1 END, RANDOM()"
+            order_sql = "RANDOM()"
         elif settings["orderMode"] == "weak":
-            order_sql = ("CASE WHEN c.due_on = '' OR c.due_on <= ? THEN 0 ELSE 1 END, "
-                         "c.level ASC, c.due_on ASC, c.created_at ASC")
+            order_sql = "c.level ASC, c.due_on ASC, c.created_at ASC"
         else:
-            order_sql = ("CASE WHEN c.due_on = '' OR c.due_on <= ? THEN 0 ELSE 1 END, "
-                         "c.due_on ASC, c.created_at ASC")
+            order_sql = "c.due_on ASC, c.created_at ASC"
         rows = conn.execute(
             f"""
             SELECT c.*, d.name AS deck_name
             FROM review_cards c
             LEFT JOIN review_decks d ON d.id = c.deck_id
-            WHERE c.status = 'active'{scope_sql}
+            WHERE c.status = 'active' AND (c.due_on = '' OR c.due_on <= ?){scope_sql}
             ORDER BY {order_sql}
             LIMIT ?
             """,
-            [*scope_params, today, settings["sessionLimit"]],
+            [today, *scope_params, settings["sessionLimit"]],
         ).fetchall()
-        active_count = int(conn.execute(
-            f"SELECT COUNT(*) FROM review_cards c WHERE c.status = 'active'{scope_sql}",
-            scope_params,
-        ).fetchone()[0])
-        due_count = int(conn.execute(
-            f"""SELECT COUNT(*) FROM review_cards c
-                 WHERE c.status = 'active' AND (c.due_on = '' OR c.due_on <= ?){scope_sql}""",
-            [today, *scope_params],
-        ).fetchone()[0])
-        reviewed_today = _review_event_count_for_day(conn, today_date)
-        tags_by_card = _review_tags_by_card(conn, [str(row["id"]) for row in rows])
+        ids = [str(row["id"]) for row in rows]
+        tags_by_card = _review_tags_by_card(conn, ids)
+        daily_rows = _review_daily_rows(conn, ids, today)
         return {
             "version": 3,
-            "generatedAt": _study_now(),
-            "count": active_count,
-            "dueCount": due_count,
-            "reviewedToday": reviewed_today,
+            "generatedAt": generated_at,
+            **_review_statistics(conn, today_date, settings),
             "settings": settings,
-            "scopes": _review_scope_options(conn, today),
-            "cards": [_review_card_payload(row, tags_by_card.get(str(row["id"]), []))
+            "cards": [_review_card_payload(row, tags_by_card.get(str(row["id"]), []),
+                                           _review_daily_payload(daily_rows.get(str(row["id"])), today))
                       for row in rows],
         }
     finally:
@@ -7609,8 +7691,10 @@ def review_pool_payload() -> dict:
 
 
 def review_cards_payload() -> dict:
+    day = _study_now()[:10]
     conn = _review_connect()
     try:
+        conn.execute("BEGIN")
         rows = conn.execute(
             """
             SELECT c.*, d.name AS deck_name
@@ -7621,11 +7705,13 @@ def review_cards_payload() -> dict:
             """
         ).fetchall()
         tags_by_card = _review_tags_by_card(conn, [str(row["id"]) for row in rows])
+        daily_rows = _review_daily_rows(conn, [str(row["id"]) for row in rows], day)
         meta = _review_decks_and_tags_payload(conn)
         return {
             "version": 3,
             "count": len(rows),
-            "cards": [_review_card_payload(row, tags_by_card.get(str(row["id"]), []))
+            "cards": [_review_card_payload(row, tags_by_card.get(str(row["id"]), []),
+                                           _review_daily_payload(daily_rows.get(str(row["id"])), day))
                       for row in rows],
             **meta,
         }
@@ -7762,7 +7848,7 @@ def import_review_cards(raw: dict) -> dict:
                 raise ReviewImportError("包含错误行，请修正或明确选择仅导入有效行", "invalid-rows")
             cards = [item["card"] for item in rows if item["status"] == "new"]
             now = _study_now()
-            today = date.today().isoformat()
+            today = now[:10]
             decks = {row["name_key"]: row["id"] for row in conn.execute("SELECT id, name_key FROM review_decks")}
             tags = {row["name_key"]: row["id"] for row in conn.execute("SELECT id, name_key FROM review_tags")}
             order = int(conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM review_decks").fetchone()[0])
@@ -7822,11 +7908,11 @@ def create_review_card(raw: dict) -> dict:
                      created_at, updated_at, deck_id)
                 VALUES (?, 'basic', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (card_id, prompt, answer, notes, status, date.today().isoformat(), now, now, deck_id),
+                (card_id, prompt, answer, notes, status, now[:10], now, now, deck_id),
             )
             _review_replace_tags(conn, card_id, tags)
         row = _review_card_row(conn, card_id)
-        return _review_card_payload(row, tags)
+        return _review_card_payload(row, tags, _review_daily_payload(None, now[:10]))
     finally:
         conn.close()
 
@@ -7871,7 +7957,9 @@ def update_review_card(raw: dict) -> dict:
                 raise LookupError("卡片不存在")
             _review_replace_tags(conn, card_id, tags)
         row = _review_card_row(conn, card_id)
-        return _review_card_payload(row, tags)
+        day = _study_now()[:10]
+        daily = _review_daily_rows(conn, [card_id], day).get(card_id)
+        return _review_card_payload(row, tags, _review_daily_payload(daily, day))
     finally:
         conn.close()
 
@@ -8059,33 +8147,88 @@ def batch_delete_review_cards(raw: dict) -> int:
         conn.close()
 
 
-def mark_review_card(card_id: object, rating: object) -> dict:
-    value = str(card_id or "").strip()
-    normalized_rating = str(rating or "").strip()
+class ReviewMarkConflict(ValueError):
+    def __init__(self, message: str, code: str):
+        super().__init__(message)
+        self.code = code
+
+
+def review_mark_payload(raw: dict) -> dict:
+    value = str(raw.get("cardId") or raw.get("id") or "").strip()
+    normalized_rating = str(raw.get("rating") or "").strip()
     if not value:
         raise ValueError("缺少卡片 id")
     if normalized_rating not in REVIEW_RATINGS:
         raise ValueError("复习评分无效")
+    request_id = raw.get("requestId")
+    if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 160):
+        raise ValueError("评分请求标识无效")
+    request_id = request_id or uuid.uuid4().hex
+    expected = raw.get("expectedReviewCount")
+    if expected is not None and (type(expected) is not int or expected < 0):
+        raise ValueError("卡片评分版本无效")
+    review_day = raw.get("reviewDay")
+    if review_day is not None:
+        try:
+            if not isinstance(review_day, str) or date.fromisoformat(review_day).isoformat() != review_day:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValueError("复习日期无效")
+    digest = hashlib.sha256(json.dumps([value, normalized_rating, expected, review_day],
+                                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     conn = _review_connect()
     try:
         with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            receipt = conn.execute("SELECT payload_hash, result_json FROM review_mark_requests WHERE id = ?",
+                                   (request_id,)).fetchone()
+            if receipt is not None:
+                if receipt["payload_hash"] != digest:
+                    raise ReviewMarkConflict("不能用同一请求标识提交不同评分", "request-conflict")
+                return {**json.loads(receipt["result_json"]), "idempotent": True}
+            reviewed_at = _study_now()
+            today_date = date.fromisoformat(reviewed_at[:10])
+            today = today_date.isoformat()
+            if review_day is not None and review_day != today:
+                raise ReviewMarkConflict("日期已变化，请刷新复习卡片", "day-changed")
             row = conn.execute("SELECT * FROM review_cards WHERE id = ?", (value,)).fetchone()
             if row is None:
                 raise LookupError("卡片不存在")
             if row["status"] != "active":
-                raise ValueError("这张卡片当前未启用")
+                raise ReviewMarkConflict("这张卡片当前未启用", "card-inactive")
+            if expected is not None and int(row["review_count"]) != expected:
+                raise ReviewMarkConflict("卡片已在其他页面评分，请刷新后继续", "stale-card")
+            if row["due_on"] and row["due_on"] > today:
+                raise ReviewMarkConflict("这张卡片尚未到期", "card-not-due")
+            latest = _review_daily_rows(conn, [value], today).get(value)
+            daily = _review_daily_payload(latest, today)
+            if daily["completed"]:
+                raise ReviewMarkConflict("这张卡片今天已经完成", "already-completed")
             previous_level = max(0, min(int(row["level"] or 0), REVIEW_MAX_LEVEL))
+            same_day = latest is not None and latest["review_day"] == today
+            initial_level = int(latest["initial_level"]) if same_day else previous_level
+            had_forgot = bool(same_day and latest["had_forgot"])
+            relearning = daily["needsRelearning"]
+            streak = daily["streak"]
+            completed = False
             next_level = previous_level
             if normalized_rating == "remembered":
-                next_level = min(previous_level + 1, REVIEW_MAX_LEVEL)
-                days = REVIEW_LEVEL_DAYS[next_level]
-            elif normalized_rating == "vague":
-                days = max(1, REVIEW_LEVEL_DAYS[previous_level])
+                if relearning:
+                    streak = min(2, streak + 1)
+                    completed = streak == 2
+                    days = 1 if completed else 0
+                else:
+                    next_level = min(previous_level + 1, REVIEW_MAX_LEVEL)
+                    streak = 1
+                    completed = True
+                    days = REVIEW_LEVEL_DAYS[next_level]
             else:
-                next_level = 0
+                relearning = True
+                streak = 0
+                had_forgot = had_forgot or normalized_rating == "forgot"
+                next_level = 0 if had_forgot else max(0, initial_level - 1)
                 days = 0
-            reviewed_at = _study_now()
-            next_due = (date.today() + timedelta(days=days)).isoformat()
+            next_due = (today_date + timedelta(days=days)).isoformat()
             conn.execute(
                 """
                 UPDATE review_cards
@@ -8103,11 +8246,37 @@ def mark_review_card(card_id: object, rating: object) -> dict:
                 (value, str(row["prompt"] or ""), normalized_rating, reviewed_at,
                  previous_level, next_level, next_due),
             )
-        updated = _review_card_row(conn, value)
-        tags = _review_tags_by_card(conn, [value]).get(value, [])
-        return _review_card_payload(updated, tags)
+            conn.execute("""INSERT INTO review_daily_progress
+                (card_id, review_day, initial_level, needs_relearning,
+                 remembered_streak, had_forgot, completed, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(card_id, review_day) DO UPDATE SET
+                    needs_relearning = excluded.needs_relearning,
+                    remembered_streak = excluded.remembered_streak,
+                    had_forgot = excluded.had_forgot, completed = excluded.completed,
+                    updated_at = excluded.updated_at""",
+                (value, today, initial_level, int(relearning and not completed),
+                 streak, int(had_forgot), int(completed), reviewed_at))
+            updated = _review_card_row(conn, value)
+            tags = _review_tags_by_card(conn, [value]).get(value, [])
+            progress = _review_daily_rows(conn, [value], today).get(value)
+            result = {
+                "ok": True,
+                "requestId": request_id,
+                "generatedAt": reviewed_at,
+                "card": _review_card_payload(updated, tags, _review_daily_payload(progress, today)),
+                **_review_statistics(conn, today_date),
+            }
+            conn.execute("INSERT INTO review_mark_requests (id, payload_hash, result_json, created_at) VALUES (?, ?, ?, ?)",
+                         (request_id, digest, json.dumps(result, ensure_ascii=False), reviewed_at))
+        return result
     finally:
         conn.close()
+
+
+def mark_review_card(card_id: object, rating: object) -> dict:
+    """Keep the existing Python card-only helper for local callers."""
+    return review_mark_payload({"cardId": card_id, "rating": rating})["card"]
 
 
 def _archive_folder_count(
@@ -11676,16 +11845,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _api_review_mark(self, body: dict):
         try:
-            card = mark_review_card(body.get("cardId") or body.get("id"), body.get("rating"))
+            result = review_mark_payload(body)
+        except ReviewMarkConflict as err:
+            return self._send_json(409, {"error": str(err), "code": err.code})
         except LookupError as err:
             return self._send_json(404, {"error": str(err)})
         except ValueError as err:
             return self._send_json(400, {"error": str(err)})
         except sqlite3.DatabaseError as err:
             return self._send_json(500, {"error": f"记录复习结果失败：{err}"})
-        _usage_event("review", str(card["id"]), "review", "reviewed",
-                     event_id="review:" + str(body.get("requestId") or (str(card["id"]) + ":" + str(card.get("lastReviewedAt")))))
-        self._send_json(200, {"ok": True, "card": card})
+        _usage_event("review", str(result["card"]["id"]), "review", "reviewed",
+                     event_id="review:" + result["requestId"])
+        self._send_json(200, result)
 
     def _api_focus_log(self, body: dict):
         """落一条专注记录：前端每完成一段专注时调用，追加写入 data/focus.json。"""

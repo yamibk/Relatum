@@ -33,7 +33,7 @@
 
 `POST /api/review-import` 接收相同行数据，另加 `batchId`（16–80 字符的 ASCII 字母/数字/下划线/连字符）及布尔 `skipInvalid`。服务端重新校验，`BEGIN IMMEDIATE` 下重新去重，缓存卡组/标签身份并批量插入；内容、组织关系与收据同次提交，异常整体回滚。返回 `{ok,created,duplicates,invalid,blank,total}`。重试返回原结果并带 `idempotent:true`；同批次不同内容返回 `409/batch-conflict`。
 
-SQLite `data/review.db` 升至 schema v4，只新增 `review_imports(id,payload_hash,result_json,created_at)`；不迁移或重写卡片、组织、设置及历史。收据保存请求摘要与计数，不另存原表格。预检结果不是写入授权，正式提交始终重新校验。
+导入收据始于 SQLite schema v4：`review_imports(id,payload_hash,result_json,created_at)` 保存请求摘要与计数，不另存原表格。当前 schema v5 另增每日补练进度和评分收据，迁移边界见 [计划复习规则](review-scheduling-2026-10-16.md)；导入事务与协议不变，不重写已有卡片或进度。预检结果不是写入授权，正式提交始终重新校验。
 
 ## 便签键盘行为
 

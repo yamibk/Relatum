@@ -16401,7 +16401,8 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
 .review-help-dialog .study-dialog-card { width: min(460px, calc(100vw - 36px)); }
 .review-library-help-dialog .study-dialog-card {
   width: min(700px, calc(100vw - 36px));
-  height: min(760px, calc(100vh - 36px));
+  height: auto;
+  max-height: min(760px, calc(100vh - 116px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
@@ -16633,9 +16634,69 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
   font-size: 10px;
   text-align: center;
 }
+html:lang(en) .review-guide-ratings p { grid-template-columns: 86px minmax(0, 1fr); }
 .review-guide-tip {
   color: var(--text-tertiary);
   font-size: 10.5px;
+}
+.review-guide-core, .review-guide-more { grid-column: 1 / -1; }
+body.start-page[data-start-theme="dark"] .review-help-dialog .study-dialog-card { background: #242b26; }
+.review-guide-section p { margin: 0; }
+.review-guide-section p + p { margin-top: 7px; }
+.review-guide-more > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 0 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+.review-guide-more > summary::-webkit-details-marker { display: none; }
+.review-guide-more > summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border: solid currentColor;
+  border-width: 0 1.3px 1.3px 0;
+  transform: rotate(45deg);
+  transition: transform 160ms var(--easing-soft);
+}
+.review-guide-more[open] > summary::after { transform: rotate(225deg); }
+.review-guide-more > summary:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; border-radius: 6px; }
+.review-guide-extra { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; padding-top: 5px; }
+.review-guide-more[open] .review-guide-extra { animation: reviewQEnter 160ms var(--easing-soft); }
+.review-save-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.review-save-retry[hidden] { display: none; }
+.review-card-meta .review-relearning { background: #faf1dd; color: #8b681d; }
+[data-start-theme="dark"] .review-relearning { background: #423a26; color: #e4cc8c; }
+@media (max-width: 720px) {
+  .review-guide-extra { grid-template-columns: 1fr; }
+  .review-library-help-dialog .study-dialog-card {
+    left: calc(50% + 32px);
+    width: calc(100vw - 100px);
+    padding: 18px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-guide-more > summary::after { transition: none; }
+  .review-guide-more[open] .review-guide-extra { animation: none; }
 }
 .review-card-dialog .study-dialog-head,
 .review-card-dialog .study-field,

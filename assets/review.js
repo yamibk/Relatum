@@ -27,6 +27,9 @@
   const seenLabelEl = root.querySelector('[data-role="review-seen-label"]');
   const maturityEl = root.querySelector('[data-role="review-maturity"]');
   const countEl = root.querySelector('[data-role="review-count"]');
+  const relearnEl = root.querySelector('[data-role="review-relearning"]');
+  const retryEl = root.querySelector('[data-role="review-save-retry"]');
+  const retryButton = root.querySelector('[data-action="review-mark-retry"]');
   const promptEl = root.querySelector('[data-role="review-prompt"]');
   const notesEl = root.querySelector('[data-role="review-notes"]');
   const draftEl = root.querySelector('[data-role="review-draft"]');
@@ -99,13 +102,18 @@
   let current = null;
   let dueCount = 0;
   let activeCount = 0;
-  let reviewedToday = 0;
+  let completedToday = 0;
   let sessionInitialCount = 0;
   let sessionReviewedCount = 0;
   let answerRevealed = false;
   let loaded = false;
   let loadedDay = '';
   let loading = false;
+  let poolPromise = null;
+  let poolLoadSequence = 0;
+  let sessionGeneration = 0;
+  let statsSequence = 0;
+  let pendingRating = null;
   let preloadHandle = 0;
   let preloadUsesIdle = false;
   let preloadPromise = null;
@@ -205,7 +213,12 @@
       body: JSON.stringify(payload || {}),
     });
     const json = await resp.json();
-    if (!resp.ok) throw new Error((json && json.error) || '请求失败');
+    if (!resp.ok) {
+      const error = new Error((json && json.error) || '请求失败');
+      error.status = resp.status;
+      error.code = json && json.code;
+      throw error;
+    }
     return json;
   }
 
@@ -415,9 +428,9 @@
   function updateStats() {
     const free = reviewMode === 'free' && viewMode === 'session';
     setText(totalEl, String(free ? freeEligibleCards().length : Math.max(0, dueCount)));
-    setText(seenEl, String(free ? freeSeenCount : Math.max(0, reviewedToday)));
+    setText(seenEl, String(free ? freeSeenCount : Math.max(0, completedToday)));
     setText(totalLabelEl, tr(free ? '范围卡片' : '待复习'));
-    setText(seenLabelEl, tr(free ? '自由浏览' : '今日复习'));
+    setText(seenLabelEl, tr(free ? '自由浏览' : '今日完成'));
   }
 
   function updateSessionProgress() {
@@ -427,23 +440,24 @@
       return;
     }
     if (!sessionInitialCount) {
-      setText(sessionProgressEl, tr('本轮 0 / 0'));
+      setText(sessionProgressEl, tr('本轮完成') + ' 0 / 0');
       return;
     }
-    const position = current
-      ? Math.min(sessionInitialCount, sessionReviewedCount + 1)
-      : Math.min(sessionInitialCount, sessionReviewedCount);
-    setText(sessionProgressEl, tr('本轮') + ' ' + position + ' / ' + sessionInitialCount);
+    const position = Math.min(sessionInitialCount, sessionReviewedCount);
+    setText(sessionProgressEl, tr('本轮完成') + ' ' + position + ' / ' + sessionInitialCount);
   }
 
   function updateRatingGate() {
+    const locked = marking || (reviewMode === 'scheduled' && (loading || !!pendingRating));
     const update = (button, unavailable) => {
       if (button.disabled !== unavailable) button.disabled = unavailable;
-      setAttribute(button, 'aria-disabled', String(unavailable || marking));
+      setAttribute(button, 'aria-disabled', String(unavailable || locked));
     };
     ratingButtons.forEach(button => update(button, !current || reviewMode === 'free'));
     nextButtons.forEach(button => update(button, !current));
     setAttribute(actionsEl, 'aria-busy', String(marking));
+    if (retryEl) retryEl.hidden = !(pendingRating?.uncertain && reviewMode === 'scheduled' && viewMode === 'session');
+    setAttribute(retryButton, 'aria-disabled', String(marking));
   }
 
   function syncScopeSelect() {
@@ -524,14 +538,14 @@
         + '<span>' + remaining + '</span>'
         + '<button type="button" class="review-empty-cta" data-action="review-session-again">'
         + tr('再来一轮') + '</button>';
-    } else if (reviewedToday > 0 && activeCount > 0) {
+    } else if (completedToday > 0 && activeCount > 0) {
       const spark = celebratePulse
         ? '<div class="review-spark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>'
         : '';
       emptyEl.classList.add('celebrate');
       emptyEl.innerHTML = spark
-        + '<strong>今天的复习做完了</strong>'
-        + '<span>今天复习了 ' + reviewedToday + ' 张 ✦ 想继续练习，可以切到自由复习。</span>'
+        + '<strong>' + tr('今天的复习做完了') + '</strong>'
+        + '<span>' + tr('今天完成了 {count} 张卡片。想继续练习，可以切到自由复习。').replace('{count}', String(completedToday)) + '</span>'
         + freeButton;
       if (celebratePulse) replay(emptyEl, 'celebrate-in');
     } else if (activeCount > 0) {
@@ -571,6 +585,11 @@
     if (countEl) {
       const count = Number(current.reviewCount || 0);
       setText(countEl, count > 0 ? ('已复习 ' + count + ' 次') : '尚未复习');
+    }
+    if (relearnEl) {
+      const daily = current.dailyReview;
+      relearnEl.hidden = reviewMode !== 'scheduled' || !daily?.needsRelearning;
+      setText(relearnEl, tr('补练 · 连续记得 {count}/2').replace('{count}', String(daily?.streak || 0)));
     }
     if (cardDeckEl) {
       cardDeckEl.hidden = !current.deckName;
@@ -666,59 +685,92 @@
     }
   }
 
-  function skipCard() {
+  async function skipCard() {
     if (marking || !current) return;
     if (reviewMode === 'free') {
       nextFreeCard();
       if (current) toast('下一张 √');
       return;
     }
+    if (pendingRating || loading) return;
+    if (!loaded || loadedDay !== todayStr()) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
     if (pool.length < 2) return;
     const index = pool.findIndex((card) => card.id === current.id);
     if (index >= 0) pool.push(pool.splice(index, 1)[0]);
     nextCard();
   }
 
+  function scopeKey() {
+    return reviewSettings.scopeMode + ':' + (reviewSettings.scopeDeckId || '');
+  }
+
+  function scheduledVisible() {
+    return viewMode === 'session' && reviewMode === 'scheduled' && root.getAttribute('aria-hidden') !== 'true';
+  }
+
+  function applyStatistics(json) {
+    if (json.scopeKey && json.scopeKey !== scopeKey()) return false;
+    if (String(json.generatedAt || '').slice(0, 10) !== todayStr()) return false;
+    if (Number.isFinite(json.dueCount)) dueCount = json.dueCount;
+    if (Number.isFinite(json.count)) activeCount = json.count;
+    if (Number.isFinite(json.completedToday)) completedToday = json.completedToday;
+    if (Array.isArray(json.scopes)) reviewScopes = json.scopes;
+    statsSequence++;
+    syncScopeSelect(); updateStats();
+    return true;
+  }
+
+  async function refreshRatingStatistics() {
+    const identity = sessionGeneration, sequence = statsSequence;
+    try {
+      const json = await readJson('/api/review-pool');
+      if (identity === sessionGeneration && sequence === statsSequence) applyStatistics(json);
+    } catch (_) { loaded = false; }
+  }
+
   async function loadPool(force) {
     const currentDay = todayStr();
     if (loaded && !force && loadedDay === currentDay) return true;
-    if (loading) return false;
+    if (loading && !force) { await poolPromise; return loadPool(false); }
+    const sequence = ++poolLoadSequence, identity = ++sessionGeneration, requestedScope = scopeKey();
     const concealInitialState = !loaded;
     if (concealInitialState) root.classList.add('is-pool-loading');
     loading = true;
-    try {
-      const pendingPreload = !force ? takePreload() : null;
-      const json = await (pendingPreload || readJson('/api/review-pool'));
-      pool = Array.isArray(json.cards) ? json.cards : [];
-      reviewSettings = Object.assign({}, reviewSettings, json.settings || {});
-      reviewSettings.requireReveal = false;
-      reviewScopes = Array.isArray(json.scopes) ? json.scopes : [];
-      dueCount = Number.isFinite(json.dueCount) ? json.dueCount : dueCards().length;
-      activeCount = Number.isFinite(json.count) ? json.count : pool.length;
-      reviewedToday = Number.isFinite(json.reviewedToday) ? json.reviewedToday : 0;
-      sessionReviewedCount = 0;
-      sessionInitialCount = dueCards().length;
-      syncScopeSelect();
-      loaded = true;
-      loadedDay = String(json.generatedAt || '').slice(0, 10) || todayStr();
-      if (viewMode !== 'session') {
-        updateStats();
-        updateSessionProgress();
-      } else if (reviewMode === 'free') {
-        updateStats();
-        updateSessionProgress();
-      } else {
-        nextCard();
+    updateRatingGate();
+    poolPromise = (async () => {
+      try {
+        const pendingPreload = !force ? takePreload() : null;
+        const json = await (pendingPreload || readJson('/api/review-pool'));
+        if (sequence !== poolLoadSequence || identity !== sessionGeneration || requestedScope !== scopeKey()) return false;
+        if (String(json.generatedAt || '').slice(0, 10) !== todayStr()) { loaded = false; return false; }
+        pool = Array.isArray(json.cards) ? json.cards : [];
+        reviewSettings = Object.assign({}, reviewSettings, json.settings || {});
+        reviewSettings.requireReveal = false;
+        applyStatistics(json);
+        sessionReviewedCount = 0;
+        sessionInitialCount = dueCards().length;
+        loaded = true;
+        loadedDay = String(json.generatedAt).slice(0, 10);
+        if (viewMode !== 'session' || reviewMode === 'free') {
+          updateSessionProgress();
+        } else nextCard();
+        return true;
+      } catch (error) {
+        if (sequence === poolLoadSequence && identity === sessionGeneration) {
+          loaded = false;
+          toast((error && error.message) || '加载复习卡片失败');
+          if (scheduledVisible()) renderCard(null);
+        }
+        return false;
+      } finally {
+        if (sequence === poolLoadSequence) {
+          loading = false;
+          root.classList.remove('is-pool-loading');
+          updateRatingGate();
+        }
       }
-      return true;
-    } catch (error) {
-      toast((error && error.message) || '加载复习卡片失败');
-      renderCard(null);
-      return false;
-    } finally {
-      loading = false;
-      if (concealInitialState) root.classList.remove('is-pool-loading');
-    }
+    })();
+    return poolPromise;
   }
 
   function cancelPreload() {
@@ -756,27 +808,62 @@
   }
 
   async function mark(rating) {
-    if (!current || marking || reviewMode === 'free') return;
-    const marked = current;
+    if (!current || marking || pendingRating || loading || reviewMode === 'free') return;
+    if (!loaded || loadedDay !== todayStr()) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
+    pendingRating = {
+      session: sessionGeneration, uncertain: false,
+      payload: { cardId: current.id, rating, requestId: window.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2),
+        expectedReviewCount: Number(current.reviewCount || 0), reviewDay: loadedDay },
+    };
+    await submitRating(pendingRating);
+  }
+
+  async function submitRating(submission) {
+    if (marking || pendingRating !== submission) return;
     marking = true;
+    statsSequence++;
     updateRatingGate();
     try {
-      const json = await post('/api/review-mark', { cardId: marked.id, rating: rating, requestId: window.crypto?.randomUUID?.() || Date.now().toString(36) });
-      const updated = json.card || marked;
-      reviewedToday += 1;
-      sessionReviewedCount += 1;
-      if (isDue(marked)) dueCount = Math.max(0, dueCount - 1);
-      pool = pool.filter((card) => card.id !== marked.id);
-      libraryCards = libraryCards.map((card) => card.id === marked.id ? updated : card);
-      bumpSeen();
-      floatPlusOne();
-      praise(rating);
-      celebratePulse = true;
-      nextCard();
-      celebratePulse = false;
-      if (libraryLoaded && viewMode === 'library') renderLibrary(false);
+      const json = await post('/api/review-mark', submission.payload);
+      const updated = json.card;
+      if (!updated?.dailyReview) throw new Error(tr('评分结果尚未确认，请重试保存'));
+      pendingRating = null;
+      libraryCards = libraryCards.map(card => card.id === updated.id && Number(card.reviewCount || 0) <= updated.reviewCount ? updated : card);
+      const sameSession = submission.session === sessionGeneration && scheduledVisible()
+        && submission.payload.reviewDay === todayStr() && json.scopeKey === scopeKey();
+      if (sameSession) {
+        const previousCompleted = completedToday;
+        applyStatistics(json);
+        pool = pool.filter(card => card.id !== updated.id);
+        if (updated.dailyReview.completed) sessionReviewedCount++;
+        else if (updated.status === 'active' && isDue(updated)) pool.splice(Math.min(3, pool.length), 0, updated);
+        if (completedToday > previousCompleted) { bumpSeen(); floatPlusOne(); }
+        praise(submission.payload.rating);
+        celebratePulse = updated.dailyReview.completed;
+        nextCard(); celebratePulse = false;
+        if (json.idempotent) await refreshRatingStatistics();
+      } else {
+        loaded = false;
+        if (scheduledVisible()) await loadPool(true);
+        else if (viewMode === 'library' && root.getAttribute('aria-hidden') !== 'true') await refreshRatingStatistics();
+      }
+      if (viewMode === 'library') { updateStats(); if (libraryLoaded) renderLibrary(false); }
     } catch (error) {
-      toast((error && error.message) || '标记失败');
+      if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
+        pendingRating = null;
+        if (error.status === 409 || error.status === 404) {
+          loaded = false;
+          if (scheduledVisible()) {
+            const previousId = current?.id, draft = draftEl?.value;
+            await loadPool(true);
+            if (current?.id === previousId && draftEl && scheduledVisible()) draftEl.value = draft || '';
+          }
+        }
+        toast(error.message || '标记失败');
+      } else {
+        submission.uncertain = true;
+        toast('评分结果尚未确认，请重试保存');
+      }
     } finally {
       marking = false;
       updateRatingGate();
@@ -1127,11 +1214,15 @@
     const nextViewMode = nextPrimaryMode === 'library' ? 'library' : 'session';
     const previousViewMode = viewMode;
     const previousReviewMode = reviewMode;
+    if (nextViewMode !== previousViewMode || (nextPrimaryMode !== 'library' && nextPrimaryMode !== previousReviewMode)) {
+      sessionGeneration++; statsSequence++;
+    }
     transitionModePanels(nextViewMode);
     viewMode = nextViewMode;
     if (nextPrimaryMode === 'library') {
       syncPrimaryModeControls();
       updateStats();
+      updateRatingGate();
       loadLibrary(false);
       return;
     }
@@ -1155,6 +1246,7 @@
   }
 
   async function persistReviewSettings(change, message) {
+    sessionGeneration++; statsSequence++; loaded = false;
     const payload = Object.assign({}, reviewSettings, change || {});
     const json = await post('/api/review-settings', payload);
     reviewSettings = Object.assign({}, reviewSettings, json.settings || payload);
@@ -1234,6 +1326,8 @@
   function openLibraryHelpDialog() {
     if (!libraryHelpDialogEl) return;
     clearTimeout(libraryHelpDialogCloseTimer);
+    const more = libraryHelpDialogEl.querySelector('details');
+    if (more) more.open = false;
     libraryHelpDialogEl.hidden = false;
     requestAnimationFrame(() => libraryHelpDialogEl.classList.add('show'));
   }
@@ -1548,6 +1642,7 @@
     const button = event.target.closest('button');
     const action = button && button.dataset.action;
     if (!action) return;
+    if (action === 'review-mark-retry') { if (pendingRating) submitRating(pendingRating); return; }
     if (action === 'review-show-scheduled') { showMode('scheduled'); return; }
     if (action === 'review-show-free') { showMode('free'); return; }
     if (action === 'review-show-library') { showMode('library'); return; }
@@ -1735,6 +1830,7 @@
 
   document.addEventListener('start:viewchange', (event) => {
     if (!event.detail || event.detail.current !== 'review') {
+      sessionGeneration++; statsSequence++;
       importOpenSequence++;
       importController?.close();
       controls.close();
@@ -1744,6 +1840,7 @@
     }
   });
   window.addEventListener('pagehide', () => {
+    sessionGeneration++; statsSequence++;
     importOpenSequence++;
     importController?.close();
     controls.close();

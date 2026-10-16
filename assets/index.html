@@ -966,7 +966,7 @@
               </div>
               <div class="review-stats" aria-label="复习统计">
                 <div><strong data-role="review-total">0</strong><span data-role="review-total-label">待复习</span></div>
-                <div><strong data-role="review-seen">0</strong><span data-role="review-seen-label">今日复习</span></div>
+                <div><strong data-role="review-seen">0</strong><span data-role="review-seen-label">今日完成</span></div>
               </div>
             </div>
           </header>
@@ -979,11 +979,15 @@
                   <option value="all">全部卡组</option>
                 </select>
               </label>
-              <span class="review-session-progress" data-role="review-session-progress">本轮 0 / 0</span>
+              <span class="review-session-progress" data-role="review-session-progress">本轮完成 0 / 0</span>
               <div class="review-session-tools">
                 <button type="button" data-action="review-settings-open">设置</button>
                 <button type="button" class="review-help-button" data-action="review-help-open" aria-label="复习说明">?</button>
               </div>
+            </div>
+            <div class="review-save-retry" data-role="review-save-retry" role="status" hidden>
+              <span>评分结果尚未确认，重试不会重复计分。</span>
+              <button type="button" class="review-action ghost" data-action="review-mark-retry">重试保存</button>
             </div>
             <div class="review-card-empty" data-role="review-empty">
               <strong>还没有复习卡片</strong>
@@ -998,6 +1002,7 @@
                 <span data-role="review-card-tags" hidden></span>
                 <span data-role="review-count">尚未复习</span>
                 <span data-role="review-maturity">生</span>
+                <span class="review-relearning" data-role="review-relearning" hidden></span>
                 <button type="button" class="review-answer-pill" data-action="review-show-answer" data-role="review-answer-pill" hidden>查看答案</button>
               </div>
               <h2 data-role="review-prompt" data-user-content>未命名问题</h2>
@@ -1205,9 +1210,10 @@
               <ol>
                 <li>先选择要复习的卡组。</li>
                 <li>在心里作答，需要时写一点临时草稿。</li>
-                <li>直接选择记忆程度；需要核对时再查看答案。</li>
+                <li>选择“记得、模糊、不会”；需要时查看答案。</li>
               </ol>
-              <p>草稿不会保存；评分只会调整下次复习时间。</p>
+              <p>首次没记住的卡片会自动再出现，连续两次“记得”才算今天完成；中途没记住重新计数。</p>
+              <p>通常隔 3 张其他卡片再练，补练完成后明天巩固。草稿不会保存。</p>
               <div class="review-shortcuts" aria-label="复习快捷键">
                 <span><kbd>Space</kbd> 查看答案</span>
                 <span><kbd>1</kbd> 记得</span>
@@ -1243,54 +1249,42 @@
             <header class="study-dialog-head">
               <div>
                 <p class="study-eyebrow">LIBRARY GUIDE</p>
-                <h2>卡片库与推送规则</h2>
+                <h2>复习规则</h2>
               </div>
               <button type="button" class="study-icon-button" data-action="review-library-help-close" aria-label="关闭">×</button>
             </header>
             <div class="review-library-guide">
-              <p class="review-guide-lead"><strong>一句话：</strong>只有处于“复习中”、位于当前复习范围，并且已经到期的卡片，才会进入《计划复习》。</p>
-
-              <section class="review-guide-section">
-                <h3><span>1</span>卡片怎样进入《计划复习》</h3>
-                <ul>
-                  <li>新建卡片会在创建当天进入待复习。</li>
-                  <li>范围可以是全部卡组、未分类或一个卡组；每轮最多取设置中的 10 / 20 / 50 张。</li>
-                  <li>没有到期的卡片不会因为切换出题顺序而提前出现。</li>
-                </ul>
-              </section>
-
-              <section class="review-guide-section">
-                <h3><span>2</span>评分怎样改变下次日期</h3>
+              <p class="review-guide-lead">当前范围内，处于“复习中”且已经到期的卡片，会进入计划复习。新卡当天到期。</p>
+              <section class="review-guide-section review-guide-core">
+                <h3>怎样评分</h3>
                 <div class="review-guide-ratings">
-                  <p><b>记得</b><span>升一级，依次在 1、3、7、16、35 天后再见。</span></p>
-                  <p><b>模糊</b><span>不升级，沿用当前级别的间隔；新卡至少隔天再见。</span></p>
-                  <p><b>不会</b><span>回到初始级并继续算作今天到期；本轮先移出，再开一轮可再次出现。</span></p>
+                  <p><b>记得</b><span>首次记得即可完成；补练时累计连续次数。</span></p>
+                  <p><b>模糊</b><span>降一级，今天继续练。</span></p>
+                  <p><b>不会</b><span>回到初始级，今天继续练。</span></p>
                 </div>
               </section>
-
-              <section class="review-guide-section">
-                <h3><span>3</span>顺序与熟练度</h3>
-                <ul>
-                  <li><b>到期优先</b>：到期日最早的先出现。</li>
-                  <li><b>随机</b>：把已经到期的卡片随机排列。</li>
-                  <li><b>薄弱优先</b>：在到期卡片中，从较低熟练度开始。</li>
-                  <li>“生”是初始级，“疑”是第 1–2 级，“熟”是第 3–5 级。</li>
-                </ul>
+              <section class="review-guide-section review-guide-core">
+                <h3>何时完成</h3>
+                <p>首次没记住的卡片会自动再出现，连续两次“记得”才算今天完成；中途没记住重新计数。</p>
+                <p>通常隔 3 张其他卡片再练，补练完成后明天巩固。“今日完成”按不同卡片计数。</p>
               </section>
-
-              <section class="review-guide-section">
-                <h3><span>4</span>暂停、归档与删除</h3>
-                <ul>
-                  <li><b>复习中</b>：到期后正常进入《计划复习》。</li>
-                  <li><b>已暂停</b>：临时停止推送，内容、进度和下次日期都保留。</li>
-                  <li><b>已归档</b>：长期收起、不再推送，也可重新恢复为复习中。</li>
-                  <li>暂停和归档在推送上都等于“不出现”，区别只是管理用途。</li>
-                </ul>
-              </section>
-
-              <p class="review-guide-tip">卡组只决定筛选与复习范围，标签只用于搜索，都不会改变复习日期。删除卡组时卡片会回到“未分类”；删除卡片后内容无法恢复，但已有的复习统计仍会保留。“再来一张”只会跳过当前卡，自由复习不会改变进度或间隔。</p>
-              <p class="review-guide-tip">批量导入支持从表格复制粘贴，或选择 XLSX、CSV、TSV 文件。一行一张卡片，可组合问题、答案和补充说明；确认前会检查重复与错误，不会覆盖已有卡片或复习进度。</p>
-              <p class="review-guide-tip">“设置与预览”右侧的“分组（可选）”默认未分组，可选择已有卡组或输入新名称；新卡组只在确认导入时创建。面板与下拉列表支持滚轮滚动，Escape 优先收起下拉。</p>
+              <details class="review-guide-more">
+                <summary>更多说明</summary>
+                <div class="review-guide-extra">
+                  <section class="review-guide-section">
+                    <h3>间隔与顺序</h3>
+                    <p>首次记得会升一级，间隔为 1、3、7、16、35 天；补练不会在当天重复升级。</p>
+                    <p>每轮 10 / 20 / 50 张不同卡片，补练不占额外名额。顺序可选到期优先、随机或薄弱优先，未到期的卡片不会提前出现。</p>
+                    <p>“生”为初始级，“疑”为第 1–2 级，“熟”为第 3–5 级。“再来一张”只跳过，自由复习不改进度。</p>
+                  </section>
+                  <section class="review-guide-section">
+                    <h3>卡片管理</h3>
+                    <p>暂停和归档都会停止推送，恢复后保留进度。删除卡片不可恢复，但已有的作答和完成记录保留。</p>
+                    <p>卡组用于筛选范围，标签用于搜索。删除卡组后，卡片回到未分类。</p>
+                    <p>批量导入支持粘贴表格或 XLSX / CSV / TSV，一行一张卡片；分组默认未分组，确认前检查重复和错误，不覆盖已有进度。</p>
+                  </section>
+                </div>
+              </details>
             </div>
             <div class="study-dialog-actions">
               <span class="study-action-spacer"></span>
