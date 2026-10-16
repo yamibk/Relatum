@@ -5,9 +5,9 @@
   if (!root) return;
 
   const PRAISE = {
-    remembered: ['记得 ✦ 间隔又拉长一点', '记得 ✦ 这一下接得更牢', '记得 ✦ 稳了'],
-    vague: ['模糊也没关系，过两天再见', '模糊 ✦ 留个印象就好', '模糊 ✦ 下次会更近一点'],
-    forgot: ['不会很正常，下次再接一次', '没接上？再来一遍就好', '忘了也是一次复习，别急'],
+    remembered: '记得 √',
+    vague: '模糊 ~',
+    forgot: '不会 ×',
   };
   const STATUS_LABELS = {
     active: '复习中',
@@ -135,6 +135,9 @@
   let settingsDialogCloseTimer = 0;
   let helpDialogCloseTimer = 0;
   let libraryHelpDialogCloseTimer = 0;
+  let importLoader = null;
+  let importController = null;
+  let importOpenSequence = 0;
   let mathQueue = Promise.resolve();
   const pendingMathElements = new Set();
   let mathReadyTimer = 0;
@@ -350,11 +353,8 @@
     setTimeout(() => chip.remove(), 950);
   }
 
-  function praise(rating, wrote) {
-    const lines = PRAISE[rating] || ['已记录'];
-    let message = lines[Math.floor(Math.random() * lines.length)];
-    if (wrote) message = '写下来了 ✦ ' + message;
-    toast(message);
+  function praise(rating) {
+    toast(PRAISE[rating] || '已记录');
   }
 
   function isDue(card) {
@@ -719,7 +719,6 @@
   async function mark(rating) {
     if (!current || marking || reviewMode === 'free') return;
     const marked = current;
-    const wrote = !!(draftEl && draftEl.value.trim());
     marking = true;
     updateRatingGate();
     try {
@@ -732,7 +731,7 @@
       libraryCards = libraryCards.map((card) => card.id === marked.id ? updated : card);
       if (seenEl) replay(seenEl, 'bump');
       floatPlusOne();
-      praise(rating, wrote);
+      praise(rating);
       celebratePulse = true;
       nextCard();
       celebratePulse = false;
@@ -1311,6 +1310,58 @@
     return formEl && formEl.elements ? formEl.elements.namedItem(name) : null;
   }
 
+  function loadImportResource(src, style) {
+    return new Promise((resolve, reject) => {
+      const element = document.createElement(style ? 'link' : 'script');
+      if (style) { element.rel = 'stylesheet'; element.href = src; }
+      else element.src = src;
+      element.onload = () => resolve();
+      element.onerror = () => { element.remove(); reject(new Error(tr('导入组件加载失败，请重试'))); };
+      document.head.appendChild(element);
+    });
+  }
+
+  async function openImportDialog(trigger) {
+    const sequence = ++importOpenSequence;
+    if (trigger) trigger.disabled = true;
+    try {
+      if (!importLoader) {
+        importLoader = Promise.all([loadImportResource('review-import.css', true), loadImportResource('review-import-model.js', false)])
+          .then(() => loadImportResource('review-import.js', false))
+          .catch(error => { importLoader = null; throw error; });
+      }
+      await importLoader;
+      if (sequence !== importOpenSequence || root.getAttribute('aria-hidden') === 'true') return;
+      if (!libraryLoaded && !await loadLibrary(false)) return;
+      if (sequence !== importOpenSequence || root.getAttribute('aria-hidden') === 'true') return;
+      if (!importController) importController = window.RelatumReviewImport.create({
+        root,
+        defaultDeck: () => reviewDecks.find(deck => deck.id === activeDeckFilter)?.name || '',
+        decks: () => reviewDecks,
+        renderRich,
+        afterImport: async () => {
+          const previous = new Set(libraryCards.map(card => card.id));
+          while (loading || libraryLoading) await new Promise(resolve => setTimeout(resolve, 80));
+          const results = await Promise.all([loadPool(true), loadLibrary(true, false)]);
+          if (!results.every(Boolean)) {
+            libraryLoaded = false; loaded = false;
+            throw new Error('refresh-failed');
+          }
+          const visible = new Set(filteredLibraryCards().map(card => card.id));
+          return libraryCards.some(card => !previous.has(card.id) && !visible.has(card.id));
+        },
+        clearFilters: () => {
+          activeDeckFilter = 'all'; activeStatusFilter = 'all';
+          if (searchEl) searchEl.value = '';
+          syncLibraryOrganizers(); renderLibrary(false);
+        },
+      });
+      closeDialog(); closeDeckDialog(); closeSettingsDialog(); closeHelpDialog(); closeLibraryHelpDialog();
+      importController.open(trigger);
+    } catch (error) { toast(error.message || '导入组件加载失败，请重试'); }
+    finally { if (trigger) trigger.disabled = false; }
+  }
+
   function openDialog(cardId) {
     if (!dialogEl || !formEl) return;
     if (!libraryLoaded) {
@@ -1550,6 +1601,7 @@
     if (action === 'review-show-scheduled') { showMode('scheduled'); return; }
     if (action === 'review-show-free') { showMode('free'); return; }
     if (action === 'review-show-library') { showMode('library'); return; }
+    if (action === 'review-import-open') { openImportDialog(button); return; }
     if (action === 'review-card-new') { openDialog(''); return; }
     if (action === 'review-card-edit') { openDialog(button.dataset.cardId); return; }
     if (action === 'review-card-delete') { deleteCurrentCard(); return; }
@@ -1704,6 +1756,7 @@
     });
   }
   document.addEventListener('keydown', (event) => {
+    if (importController?.isOpen) return;
     if (event.key === 'Escape') {
       if (cardDeckOptionsEl && !cardDeckOptionsEl.hidden) { closeDeckPicker(); return; }
       if (dialogEl && dialogEl.classList.contains('show')) { closeDialog(); return; }
@@ -1767,12 +1820,16 @@
 
   document.addEventListener('start:viewchange', (event) => {
     if (!event.detail || event.detail.current !== 'review') {
+      importOpenSequence++;
+      importController?.close();
       clearTransientMotion();
       cancelMathReadyWait();
       cancelMathLoadSchedule();
     }
   });
   window.addEventListener('pagehide', () => {
+    importOpenSequence++;
+    importController?.close();
     clearTransientMotion();
     cancelMathReadyWait();
     cancelMathLoadSchedule();

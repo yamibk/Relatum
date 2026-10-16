@@ -129,7 +129,12 @@
       "home": true,
       "role": "review-view",
       "scripts": [
-        "review.js"
+        "review.js",
+        "review-import.js",
+        "review-import-model.js",
+        "review-import-worker.js",
+        "review-import.css",
+        "vendor/sheetjs/"
       ],
       "writePrefixes": [
         "/api/review-"

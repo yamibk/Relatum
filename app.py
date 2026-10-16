@@ -7078,7 +7078,7 @@ def _notes_archive_folder(note_count: int) -> Path:
 # 「模糊」原地但至少隔天。熟练度标签由 level 推导（生→疑→熟），不落库重复保存。
 REVIEW_LEVEL_DAYS = [0, 1, 3, 7, 16, 35]
 REVIEW_MAX_LEVEL = len(REVIEW_LEVEL_DAYS) - 1
-REVIEW_SCHEMA_VERSION = 3
+REVIEW_SCHEMA_VERSION = 4
 REVIEW_CARD_STATUSES = {"active", "suspended", "archived"}
 REVIEW_RATINGS = {"remembered", "vague", "forgot"}
 REVIEW_SCOPE_MODES = {"all", "unfiled", "deck"}
@@ -7091,6 +7091,8 @@ REVIEW_DECK_NAME_MAX = 80
 REVIEW_TAG_NAME_MAX = 32
 REVIEW_TAGS_PER_CARD_MAX = 12
 REVIEW_BATCH_MAX = 500
+REVIEW_IMPORT_MAX = 10000
+REVIEW_IMPORT_BODY_MAX = 32 * 1024 * 1024
 REVIEW_EVENTS_DAY_COUNT_SQL = (
     "SELECT COUNT(*) FROM review_events "
     "WHERE reviewed_at >= ? AND reviewed_at < ?"
@@ -7204,6 +7206,12 @@ def _review_connect() -> sqlite3.Connection:
             ON review_events(card_id, reviewed_at);
         CREATE INDEX IF NOT EXISTS idx_review_card_tags_tag
             ON review_card_tags(tag_id, card_id);
+        CREATE TABLE IF NOT EXISTS review_imports (
+            id TEXT PRIMARY KEY,
+            payload_hash TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
         """
     )
     conn.execute(
@@ -7621,6 +7629,172 @@ def review_cards_payload() -> dict:
                       for row in rows],
             **meta,
         }
+    finally:
+        conn.close()
+
+
+class ReviewImportError(ValueError):
+    def __init__(self, message: str, code: str = "invalid-import"):
+        super().__init__(message)
+        self.code = code
+
+
+def _review_import_rows(raw: dict) -> tuple[list[dict], str]:
+    rows = raw.get("rows")
+    if not isinstance(rows, list) or not rows or len(rows) > REVIEW_IMPORT_MAX:
+        raise ReviewImportError("每次请导入 1–10000 行数据", "row-limit")
+    mode = raw.get("duplicateMode", "skip")
+    if mode not in ("skip", "keep"):
+        raise ReviewImportError("重复处理方式无效")
+    if len(json.dumps(raw, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > REVIEW_IMPORT_BODY_MAX:
+        raise ReviewImportError("转换后的数据超过 32 MiB，请分批导入", "body-limit")
+    normalized = []
+    for index, source in enumerate(rows):
+        item = {"sourceRow": index + 1}
+        try:
+            if not isinstance(source, dict):
+                raise ValueError("数据行必须是对象")
+            row_number = source.get("sourceRow", index + 1)
+            if type(row_number) is not int or not 1 <= row_number <= 10_000_000:
+                raise ValueError("源行号无效")
+            item["sourceRow"] = row_number
+            if source.get("sourceError"):
+                raise ValueError("公式缺少缓存结果，请先在表格软件中重新计算并保存" if source["sourceError"] == "formula-cache"
+                                 else "单元格包含表格错误，请先修正")
+            card = {}
+            for field, label, limit in (("prompt", "问题", REVIEW_PROMPT_MAX),
+                                        ("answer", "答案", REVIEW_ANSWER_MAX),
+                                        ("notes", "补充说明", REVIEW_NOTES_MAX)):
+                value = source.get(field, "")
+                if not isinstance(value, str):
+                    raise ValueError(f"{label}必须是文字")
+                card[field] = _review_text(value, label=label, limit=limit)
+            deck = source.get("deckName", "")
+            if not isinstance(deck, str):
+                raise ValueError("卡组必须是文字")
+            card["deckName"] = _review_deck_name(deck) if deck.strip() else ""
+            tags = source.get("tags", [])
+            if not isinstance(tags, (str, list)) or (isinstance(tags, list) and
+                    any(not isinstance(tag, str) for tag in tags)):
+                raise ValueError("标签必须是文字或文字数组")
+            tag_values = tags if isinstance(tags, list) else re.split(r"[,，\n]", tags)
+            tag_keys = {re.sub(r"\s+", " ", tag.strip().lstrip("#")).strip().casefold()
+                        for tag in tag_values}
+            tag_keys.discard("")
+            if len(tag_keys) > REVIEW_TAGS_PER_CARD_MAX:
+                raise ValueError("每张卡片最多 12 个标签")
+            card["tags"] = _review_tag_names(tag_values)
+            if source.get("blank") is True and not any(card[field] for field in ("prompt", "answer", "notes")):
+                item["status"] = "blank"
+            elif not card["prompt"]:
+                raise ValueError("问题不能为空")
+            else:
+                item.update(status="new", card=card)
+        except (ValueError, TypeError) as error:
+            item.update(status="invalid", error=str(error))
+        normalized.append(item)
+    return normalized, mode
+
+
+def _review_import_key(card: dict) -> bytes:
+    content = [card["deckName"].casefold(), card["prompt"], card["answer"], card["notes"],
+               sorted({tag.casefold() for tag in card["tags"]})]
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).digest()
+
+
+def _review_import_check(conn: sqlite3.Connection, rows: list[dict], mode: str) -> dict:
+    existing = set()
+    if mode == "skip":
+        tags_by_card: dict[str, list[str]] = {}
+        for row in conn.execute("SELECT ct.card_id, t.name FROM review_card_tags ct JOIN review_tags t ON t.id = ct.tag_id"):
+            tags_by_card.setdefault(row["card_id"], []).append(row["name"])
+        for row in conn.execute("""SELECT c.id, c.prompt, c.answer, c.notes, COALESCE(d.name, '') AS deckName
+                                   FROM review_cards c LEFT JOIN review_decks d ON d.id = c.deck_id"""):
+            card = dict(row)
+            card["tags"] = tags_by_card.get(row["id"], [])
+            existing.add(_review_import_key(card))
+    counts = {"new": 0, "duplicate": 0, "invalid": 0, "blank": 0, "total": len(rows)}
+    for item in rows:
+        if item["status"] == "new" and mode == "skip":
+            key = _review_import_key(item["card"])
+            if key in existing:
+                item["status"] = "duplicate"
+            else:
+                existing.add(key)
+        counts[item["status"]] += 1
+    return counts
+
+
+def preview_review_import(raw: dict) -> dict:
+    rows, mode = _review_import_rows(raw)
+    conn = _review_connect()
+    try:
+        conn.execute("BEGIN")
+        counts = _review_import_check(conn, rows, mode)
+        return {"ok": True, "counts": counts,
+                "rows": [{key: value for key, value in item.items() if key != "card"} for item in rows]}
+    finally:
+        conn.close()
+
+
+def import_review_cards(raw: dict) -> dict:
+    rows, mode = _review_import_rows(raw)
+    batch_id = raw.get("batchId", "")
+    if not isinstance(batch_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", batch_id):
+        raise ReviewImportError("导入批次身份无效")
+    skip_invalid = raw.get("skipInvalid", False)
+    if type(skip_invalid) is not bool:
+        raise ReviewImportError("请明确选择是否跳过错误行")
+    digest = hashlib.sha256(json.dumps({"rows": raw["rows"], "duplicateMode": mode,
+                                        "skipInvalid": skip_invalid}, ensure_ascii=False,
+                                       sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    conn = _review_connect()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            receipt = conn.execute("SELECT payload_hash, result_json FROM review_imports WHERE id = ?", (batch_id,)).fetchone()
+            if receipt is not None:
+                if receipt["payload_hash"] != digest:
+                    raise ReviewImportError("本次导入内容已改变，请重新预览", "batch-conflict")
+                return {**json.loads(receipt["result_json"]), "idempotent": True}
+            counts = _review_import_check(conn, rows, mode)
+            if counts["invalid"] and not skip_invalid:
+                raise ReviewImportError("包含错误行，请修正或明确选择仅导入有效行", "invalid-rows")
+            cards = [item["card"] for item in rows if item["status"] == "new"]
+            now = _study_now()
+            today = date.today().isoformat()
+            decks = {row["name_key"]: row["id"] for row in conn.execute("SELECT id, name_key FROM review_decks")}
+            tags = {row["name_key"]: row["id"] for row in conn.execute("SELECT id, name_key FROM review_tags")}
+            order = int(conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM review_decks").fetchone()[0])
+            deck_inserts, tag_inserts, card_inserts, tag_links = [], [], [], []
+            for card in cards:
+                deck_id = None
+                if card["deckName"]:
+                    key = card["deckName"].casefold()
+                    if key not in decks:
+                        decks[key] = "rd_" + uuid.uuid4().hex
+                        deck_inserts.append((decks[key], card["deckName"], key, order, now, now))
+                        order += 1
+                    deck_id = decks[key]
+                card_id = "rc_" + uuid.uuid4().hex
+                card_inserts.append((card_id, card["prompt"], card["answer"], card["notes"], today, now, now, deck_id))
+                for name in card["tags"]:
+                    key = name.casefold()
+                    if key not in tags:
+                        tags[key] = "rt_" + uuid.uuid4().hex
+                        tag_inserts.append((tags[key], name, key, now))
+                    tag_links.append((card_id, tags[key]))
+            conn.executemany("INSERT INTO review_decks (id, name, name_key, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", deck_inserts)
+            conn.executemany("INSERT INTO review_tags (id, name, name_key, created_at) VALUES (?, ?, ?, ?)", tag_inserts)
+            conn.executemany("""INSERT INTO review_cards
+                                (id, card_type, prompt, answer, notes, status, due_on, created_at, updated_at, deck_id)
+                                VALUES (?, 'basic', ?, ?, ?, 'active', ?, ?, ?, ?)""", card_inserts)
+            conn.executemany("INSERT INTO review_card_tags (card_id, tag_id) VALUES (?, ?)", tag_links)
+            result = {"ok": True, "created": counts["new"], "duplicates": counts["duplicate"],
+                      "invalid": counts["invalid"], "blank": counts["blank"], "total": counts["total"]}
+            conn.execute("INSERT INTO review_imports (id, payload_hash, result_json, created_at) VALUES (?, ?, ?, ?)",
+                         (batch_id, digest, json.dumps(result, ensure_ascii=False), now))
+        return result
     finally:
         conn.close()
 
@@ -9430,6 +9604,8 @@ class RequestBodyError(ValueError):
 # appropriate lock only after the dialog returns, so an open dialog never stalls
 # autosave in another request thread.
 POST_WITHOUT_DATA_LOCK = {
+    "/api/review-import-preview",
+    "/api/review-import",
     "/api/usage/batch",
     "/api/career/generate",
     "/api/file-stats",
@@ -10025,6 +10201,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.close_connection = True
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         raw_length = str(self.headers.get("Content-Length") or "").strip()
+        if path in ("/api/review-import-preview", "/api/review-import") and raw_length.isdigit() and int(raw_length) > REVIEW_IMPORT_BODY_MAX:
+            self.close_connection = True
+            return self._send_json(413, {"error": "转换后的数据超过 32 MiB，请分批导入", "code": "body-limit"})
         large_body = raw_length.isdigit() and int(raw_length) > LARGE_JSON_BODY_BYTES
         self._large_request_body = large_body
         if large_body:
@@ -10212,6 +10391,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._api_taskbook_archive(body)
         if path == "/api/study-reorder":
             return self._api_study_reorder(body)
+        if path in ("/api/review-import-preview", "/api/review-import"):
+            return self._api_review_import(body, preview=path.endswith("-preview"))
         if path == "/api/review-card-create":
             return self._api_review_card_create(body)
         if path == "/api/review-card-update":
@@ -11383,6 +11564,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         data["tasks"] = new_list
         save_study(data)
         self._send_json(200, {"ok": True})
+
+    def _api_review_import(self, body: dict, *, preview: bool):
+        try:
+            result = preview_review_import(body) if preview else import_review_cards(body)
+        except ReviewImportError as err:
+            return self._send_json(409 if err.code == "batch-conflict" else 400,
+                                   {"error": str(err), "code": err.code})
+        except (sqlite3.Error, OSError):
+            return self._send_json(503, {"error": "导入暂未完成，请重试", "code": "import-unavailable"})
+        return self._send_json(200, result)
 
     def _api_review_card_create(self, body: dict):
         try:

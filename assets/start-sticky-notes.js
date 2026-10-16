@@ -1,4 +1,4 @@
-// 起步页跨页便签：安全空白处双击创建，单击选中，双击编辑，拖动摆放，Backspace 删除。
+// 起步页跨页便签：安全空白处双击创建，单击选中，双击编辑，拖动摆放，Delete / Backspace 删除。
 // 它只服务当前起步页页面，不进入「速记」页，也不承接连线、叠摞、惯性或缩放。
 (function () {
   'use strict';
@@ -458,8 +458,8 @@
       enterEdit(el, data);
     });
     el.addEventListener('keydown', (event) => {
-      if (editingEl === el) return;
-      if (event.key === 'Backspace' && selectedId === data.id) {
+      if (editingEl === el || event.isComposing || event.keyCode === 229) return;
+      if ((event.key === 'Backspace' || event.key === 'Delete') && selectedId === data.id) {
         event.preventDefault();
         event.stopPropagation();
         removeNote(data, el);

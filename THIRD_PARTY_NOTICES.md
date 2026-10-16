@@ -64,6 +64,16 @@ SOFTWARE.
 - Local license: `assets/vendor/mathjax/LICENSE`
 - Copyright: The MathJax Consortium
 
+## SheetJS Community Edition
+
+- Version: 0.20.3
+- Project: <https://sheetjs.com/>
+- Source: <https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js>, retrieved 2026-10-16, unmodified.
+- Local script: `assets/vendor/sheetjs/xlsx.full.min.js`; loaded only by the review importer worker for XLSX files.
+- SHA-256: `cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41`
+- License: Apache License 2.0. Full license: `assets/vendor/sheetjs/LICENSE`.
+- SheetJS Community Edition -- <https://sheetjs.com/>. Copyright (C) 2012-present SheetJS LLC. Licensed under the Apache License, Version 2.0.
+
 ## PDF.js
 
 - Version: 3.11.174

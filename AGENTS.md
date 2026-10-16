@@ -268,11 +268,12 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | `assets/study-graph.js` | 活跃页/学习页星图，可视化学习活动和任务结构。 |
 | `assets/sticky-palette.js` | 速记墙、起步页跨页便签与画布便签共用的20色色库和随机候选偏好；负责按色系均衡抽色，不写用户内容。 |
 | `assets/notes.js` | 起步页速记墙，独立便签数据、拖拽、连线、箭头、归档与按纯文本视觉长度分档的正文排版。控制台“？”旁的圆形勾选按钮只禁用“创建与连接”和“浏览与搜索”两组键盘快捷键，偏好保存在 `canvas:notesCreateBrowseShortcutsDisabled:v1`，缺失时默认禁用；禁用状态下画布上的 `Tab` / `Shift+Tab` 会被完整吞掉，不触发创建，也不执行浏览器默认焦点跳转。起步页启动后会在空闲时间读取并隐藏预渲染速记墙，首次进入时只校准受 `content-visibility` 影响的连线几何；若用户先进入则复用同一加载任务。 |
-| `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转/删除。 |
+| `assets/start-sticky-notes.js` | 起步页跨页便签：安全空白创建、纯文本编辑、轻量拖动、键盘换色/旋转；选中且未编辑时支持 Delete / Backspace 删除，候选输入不触发。 |
 | `assets/calendar.js` | 日历页“日历 / 记账”双视图协调层，以及日历、日记、右侧三栏（画布活动 / 每日打卡 / 学习任务）、倒数日、倒数日进度条和临时日期间隔计算浮窗。启动空闲时只预取首次打开所需的当天 JSON，进入时复用同一请求并开始渲染与入场；已在日历页时重复点击书脊切换内部视图，两个视图使用固定叠层并同步 `hidden` / `inert` / `aria-hidden`。日历内部错峰入场未完成时离页会冻结 CSS / WAAPI 当前帧，外层退场隐藏后再清理。 |
 | `assets/ledger.js`、`assets/ledger-model.js` | 日历页第二视图的极简人民币流水：无 DOM 模型层用 BigInt 定点运算统一金额解析、四位十进制倍率、半入舍入、筛选与汇总；页壳、日期组和账目卡使用常驻 Map 索引、渲染指纹与按 ID 增量同步。右缘页栏提供 1–99 虚拟数字页，月份在页间共享；账本一次全量加载后由本地按页/月派生，切页即时完成并保留未保存草稿。整版错峰入场未完成时切换到日历视图或离开日历页，会先冻结当前动画帧，等交接退场结束后再清理。每页可在当前页设置中独立记忆新建账目的默认“支出/收入”，未设置时默认支出；点击 `＋` 只按该偏好创建当前页本地草稿。保存有效金额时编辑框立即关闭并把带稳定客户端 ID 的乐观账目放入列表，后端在后台落盘，失败时只撤回该乐观条目并恢复为可重试草稿。切月或离页丢弃尚未提交的草稿。写接口只回 revision 与目标增量；同账目请求串行，不同账目只合并各自响应，失败只回滚目标并在修订跳号或结果不确定时合并重载。账目卡使用并列的主编辑按钮和选项按钮，不嵌套交互控件。仍不包含预算、趋势、分类、搜索、筛选、批量、多账户、多币种或周期账单。 |
 | `assets/countdown.html`、`assets/countdown.js` | 独立倒数日页面；事件管理、轻量翻页时钟、空状态、返回日历过渡与桌面背景只读模式。 |
 | `assets/review.js` | 独立复习卡片页面，负责计划复习、无限随机自由复习、卡片库、卡组/标签、批量管理和评分。启动空闲时只预取卡池 JSON，首次进入复用该请求后再生成卡片并按需加载公式运行时。 |
+| `assets/review-import.js` / `review-import-model.js` / `review-import-worker.js` | 复习卡片三步批量导入；界面和纯解析/列组合模型按需加载，文件解析与完整词表组合在可取消 Worker 中完成，主线程每页只预览 50 行。专属样式为 `review-import.css`，XLSX 使用本地 SheetJS CE 0.20.3。 |
 | `assets/focus.js` | 专注钟、正计时/番茄钟、每日任务绑定、音效/噪音、记录编辑。每日任务新增控制条展开与收起均播放过渡，低动态偏好下即时切换；每日任务视图错峰入场中离页时冻结当前帧，外层退场后再清理；计时器视图保持原有退场行为。 |
 | `assets/trash.js` | 回收站页面，按目标分组恢复、键盘恢复、一键清空确认。 |
 | `assets/desktop-shell.js` | 前端到 pywebview 的桥接、窗口按钮、dirty 标记；桌面关闭按钮支持注册异步保存前置钩子。笔记专注模式收起顶栏后，桌面壳在右上角提供浮动最小化、最大化／还原和关闭按钮，复用原顶栏的窗口操作；关闭仍经过笔记保存前置钩子，连续点击只执行一次在途关闭。专注桌面模式下右栏首行用 CSS 为三枚 46px 宽窗口按钮及 8px 间隔预留右侧空间，侧栏关闭仍在首行独立可点击；普通浏览器和非专注模式保持原间距。 |
@@ -322,7 +323,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | 旧日历任务便签 | `data/calendar-pins.json`；仅保留旧文件，不再读取、写入或展示 |
 | 倒数日 | `data/countdown.json`，v2 为 `events[] + selectedId`，并镜像当前 `event/date`；允许零事件，零事件时文件不存在；旧版单事件自动兼容迁移。每个事件可选保存 `lengthDays`（1–9999 整数），是日历页倒数日进度条的窗口长度（天），缺省即未设置，非法值在净化时丢弃 |
 | 模板库 | `data/templates.json` |
-| 复习卡片 | `data/review.db`，SQLite；`review_cards` 保存内容、卡组关联与调度，`review_decks` / `review_tags` / `review_card_tags` 管理组织关系，`review_events` 保存每次评分，`review_settings` 保存复习范围与会话偏好。“今日已复习”必须使用 `reviewed_at` 的半开时间范围查询，保持命中时间索引，不得对整列使用 `substr` 等函数 |
+| 复习卡片 | `data/review.db`，SQLite schema v4；`review_cards` 保存内容、卡组关联与调度，`review_decks` / `review_tags` / `review_card_tags` 管理组织关系，`review_events` 保存每次评分，`review_settings` 保存复习范围与会话偏好，`review_imports` 保存批次身份、请求摘要和结果计数用于安全重试。“今日已复习”必须使用 `reviewed_at` 的半开时间范围查询，保持命中时间索引，不得对整列使用 `substr` 等函数 |
 | 生涯使用报告 | `data/career-report-v2.json`，手动生成时冻结新历史与当前库存；后台单任务、复用正在运行的任务，成功原子替换、失败保留上一份 v2。库存标注生成时规模，快照只含身份、名称、数值和关系，没有正文/绝对路径；专注钟和日记排除。研究统计不调用普通恢复加载。 |
 | AI 配置 | `data/ai.json`，含 Key、模型、baseUrl |
 | 桌面窗口状态 | `data/window-state.json` |
@@ -462,7 +463,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 学习任务：`/api/study-task-create`、`/api/study-task-update`、`/api/study-task-progress`、`/api/study-temporary-update`、`/api/study-task-trash`、`/api/study-task-restore`、`/api/study-task-delete`、`/api/study-trash-empty`、`/api/study-archive-done`、`/api/study-reorder`；临时任务接口接收 `{id,included}` 并只允许加入现存未完成任务；目标树发出的 update/progress 可携带 `goalTreeId`，后端据此拒绝未解锁任务的完成和进度写入，普通学习清单不携带该字段。`/api/study-goal-tree-command` 的节点命令统一接收 `primaryLink`，并提供 `add-requirement` / `remove-requirement` / `clear-primary-requirement` 管理解锁条件。
 - 独立树状页：`/api/tree-page-command`；命令语义对齐 `/api/study-goal-tree-command` 的建树/切树/删树、阶段与任务创建更新、进度/完成/任务点、折叠和结构/依赖移动，另有永久 `delete-task`、根/阶段/任务外观及幂等 `set-visual-link`。明确拒绝 `attach-task` / `detach-task`，每个任务必须唯一归属；删除任务、阶段或树级联清理任务记录、依赖和视觉线。后端继续执行目标树的 ID、链接、循环、任务点、层数和数量校验。
 - 跨功能：`/api/archive-canvas`、`/api/taskbook-archive`
-- 复习：`/api/review-card-create`、`/api/review-card-update`、`/api/review-card-delete`、`/api/review-cards-batch`、`/api/review-cards-batch-delete`、`/api/review-deck-create`、`/api/review-deck-update`、`/api/review-deck-delete`、`/api/review-settings`、`/api/review-mark`
+- 复习：`/api/review-card-create`、`/api/review-card-update`、`/api/review-card-delete`、`/api/review-cards-batch`、`/api/review-cards-batch-delete`、`/api/review-deck-create`、`/api/review-deck-update`、`/api/review-deck-delete`、`/api/review-settings`、`/api/review-mark`；`/api/review-import-preview` 只读预检批量行，`/api/review-import` 以单 SQLite 事务批量创建及记录幂等收据，均归 `canvas.review`。
 - 速记、跨页便签和模板：`/api/notes-save`、`/api/notes-archive`、`/api/start-sticky-notes-save`、`/api/templates-save`
 - 专注：`/api/focus-log`、`/api/focus-session-update`、`/api/focus-session-delete`
 - 使用统计：`POST /api/usage/batch` 提交时段和分类开关变更；授权校验、最长 45 秒时段、收据幂等、跨当地午夜拆分、重叠合并。事务失败不部分提交；迟到开关仍按生效时间裁剪已有时段。
@@ -785,7 +786,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 ### 起步页跨页便签 `start-sticky-notes.js`
 
 - 《速记》以外的起步页支持在非控件区域双击创建便签并立即编辑，普通说明文字也可作为落点；最近/收藏/自定义分组共用 `recent` 页面归属，空状态创建的便签也归入 `recent`。起步页默认禁止浏览器原生文字选区，只有 `input`、`textarea` 和真实 `contenteditable` 编辑区保留文字选择。
-- 单击便签选中，双击重新编辑；未编辑时拖动超过 6px 才开始移动，拖动期间只合成当前便签，松手后才保存最终坐标。编辑态不拖动；选中且未编辑时，`C` 随机换色，`R` 随机调整小角度，`Shift+R` 回正，主键区 `Backspace` 删除。
+- 单击便签选中，双击重新编辑；未编辑时拖动超过 6px 才开始移动，拖动期间只合成当前便签，松手后才保存最终坐标。编辑态不拖动；选中且未编辑时，`C` 随机换色，`R` 随机调整小角度，`Shift+R` 回正，`Delete` / `Backspace` 删除。编辑文字及输入法候选期间不删除整张便签。
 - 便签随所属页面滚动，只渲染当前页面；切页会结束编辑、清除选中并把同一轻量 DOM 层移到新页面。已准备的宿主不重复读取 computed position，空便签页不测量滚动高度/边界；双击创建或实际有便签时仍按实时布局测量。每页最多 60 张、总计最多 240 张、单张纯文本最多 2000 字。
 - 数据独立存 `data/start-sticky-notes.json`，不进入 `data/notes.json`、速记归档、画布或学习任务；不支持连线、叠摞、惯性、缩放、跨页拖动和边缘自动滚屏。
 
@@ -818,12 +819,16 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ### 复习 `review.js`
 
+- 卡片库搜索框旁提供“批量导入”：粘贴表格或选择/拖入 XLSX、CSV、TSV，按“放入数据 → 设置与预览 → 确认导入”完成。支持中英文表头、起始行、单工作表切换、问题/答案/说明多列排序及分隔/列名设置、统一或逐行卡组及标签。默认跳过同卡组中正文及标签完全相同的卡片，包含表内重复；正文区分大小写，标签忽略顺序并沿用原大小写规范化。错误逐行列出且只在明确确认后跳过；空行计数、结构破损阻止解析、不静默截断。最多 10000 行、256 列、20MiB 输入及 32MiB 转换后 JSON。
+- `POST /api/review-import-preview` 只校验与查询，不创建卡组/标签/卡片；`POST /api/review-import` 重新校验，以单个 SQLite 即时事务批量插入卡片及组织关系和 `review_imports` 收据，同批重试返回原结果，改变内容拒绝复用身份，失败整体回滚。两个接口由 SQLite 自身协调，不持有通用文件写锁。只生成初始 active 基础卡片，不写评分记录或覆盖已有进度；成功刷新原卡片库和卡池并保留搜索/筛选，必要时提供清除筛选入口。schema v3 升级只新增收据表。
+- 导入脚本/样式和 Worker 归 `canvas.review` 裁剪；SheetJS 仅在 Worker 读取 XLSX 时加载，无 npm/CDN 运行时或 Python 新依赖。文本按引号状态解析，保留前导零及单元格换行，文件支持 UTF-8、GB18030、UTF-16；XLSX 读取显示值与公式缓存，已用公式无缓存或错误单元格逐行报错。关闭/离页/pagehide 释放 Worker 和输入、拒绝迟到结果；隐藏/原生最小化停止解析与预检，已开始提交继续完成。对话框隔离快捷键、循环焦点并保护输入法候选，关闭恢复入口焦点，样式无背景模糊或常驻动画。验证与协议见 `docs/review-import-2026-10-16.md`。
+
 - 复习卡片是独立一等数据，保存在 `data/review.db`；后端绝不扫描或改写 `.canvas`。数据库使用 `PRAGMA user_version` 管理 schema 版本，连接按请求短开短关并启用外键；schema 和 API 都不保存画布路径、节点 id 或来源占位字段。
 - 筛选结果超过 200 张时使用 `windowed-list.js`，挂载量由视口和实际行高决定；焦点行保留，内容刷新不替换聚焦控件。搜索、排序、全选筛选结果和批量操作始终覆盖完整模型，不把挂载 DOM 当作全部数据。
 - `review_cards` 保存 `prompt/answer/notes/status/deck_id`、时间戳和 Leitner 调度字段；`review_decks` 保存有序卡组，`review_tags` 与 `review_card_tags` 保存去重标签及多对多关系。`review_settings` 是单例设置行，保存全部/未分类/单卡组复习范围、每轮 10/20/50 张与到期/随机/薄弱顺序；旧的 `require_reveal` 字段只保留为数据库兼容位，当前界面始终允许直接评分。删除卡组不会删卡，关联卡片回到“未分类”；若它正是复习范围则自动回到全部卡组。无卡片引用的标签会自动清理。`review_events` 为每次评分留事件记录和问题快照，删卡时只把事件的 `card_id` 置空，历史统计继续保留。今日复习数从事件表计算，不使用 `localStorage`。编辑器节点模型中不存在 `review` 字段，模板也不需要对复习数据做特判。
 - 页头把“自由复习 / 计划复习 / 卡片库”作为三个同级入口，复习卡片与卡片库叠放在固定高度的共享舞台内切换，页头不随内容高度重新居中。计划复习顶部提供复习范围、当前轮次、设置和“？”快速说明，无需查看答案即可评分；支持 `Space` 查看答案、`1/2/3` 评分、`N` 换卡，达到每轮数量后停在“本轮完成”，由用户决定是否再开一轮。自由复习复用同一范围内全部 active 卡片，以无重复洗牌队列无限随机浏览；只保留范围、答案、临时草稿，支持 `Space` / `1` 查看答案和 `N` / `D` 下一张，不读取每轮数量/出题顺序、不写评分事件、不改熟练度或到期日。卡片库默认只显示搜索、四个状态、卡组筛选、新建卡组和编辑，并提供独立“？”说明完整的到期推送、评分间隔、排序、熟练度、暂停/归档/删除及卡组标签语义；复选框与批量移动/改状态/删除只有进入“批量整理”后才出现。卡片编辑器默认只展开问题和答案，标题旁的可输入卡组框支持选择已有卡组、留空保持未分类，或在保存卡片的同一数据库事务中创建新卡组；补充说明、标签和状态仍收在“更多选项”。
 - 复习页翻入时根层保持静止，标题、页签、统计、纸面和纸面内容短距离错峰渐入；自由/计划/卡片库切换、批量栏、筛选结果、列表项和卡片/卡组弹窗使用有限过渡并服从 `prefers-reduced-motion`。自由复习的“下一张”、计划复习的换卡和评分后换卡都原位直接更新卡片内容，不播放卡片内部入场动画；换卡按钮不维护专用关键帧或脚本反馈，直接复用“查看答案”按钮同款的悬浮上移与按下回落缩放。列表项的临时入场类仍在动画完成或离页时立即清理，只更新卡组元数据时不重播卡片列表。复习页自身、纸面与卡片列表保留滚轮/触控板滚动，但不绘制原生滑条，避免换卡或翻页位移的中间帧短暂触发滑块闪现。复习纸面和弹窗不使用 `backdrop-filter`，避免翻页时持续模糊合成；勾选卡片只原位更新选择态，不得为一次勾选重建整张列表，搜索输入按短延迟合并重绘。
-- 计划复习池在同一自然日重复进入时复用已经渲染的状态，不为页面激活重新写 DOM；跨本地日期后自动重新读取，首次读取完成前不展示静态空状态。评分请求进行中会锁定评分与换卡入口，避免双击或键盘重复触发让同一张卡连续升级。
+- 计划复习池在同一自然日重复进入时复用已经渲染的状态，不为页面激活重新写 DOM；跨本地日期后自动重新读取，首次读取完成前不展示静态空状态。评分请求进行中会锁定评分与换卡入口，避免双击或键盘重复触发让同一张卡连续升级。评分成功的顶部提示固定为“记得 √ / 模糊 ~ / 不会 ×”（英文对应 Remembered / Vague / Forgot），不再随机切换文案或追加草稿前缀。
 - 间隔天数：`[0, 1, 3, 7, 16, 35]`。新卡当天到期；“记得”升级盒子，“模糊”原盒且至少隔天，“不会”回到 level 0。
 - `/api/review-pool` 只查询设置范围内的 active 卡，按设置顺序返回本轮 10/20/50 张，并同时返回完整待复习数、设置和各卡组待复习数。`/api/review-cards` 返回卡片库、卡组、标签及未分类数量；批量读取卡片标签时按 400 个 card id 分块查询，不能拼出可能超过 SQLite 绑定变量上限的单条 `IN (...)`。
 - 问题按纯文本展示；答案和补充说明支持 Markdown、MathJax 与 Mermaid。自测草稿明确为临时输入，不落库。
@@ -906,6 +911,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - `build-desktop.ps1` 用构建环境的 Python 执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询；不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不依赖启动目录。不要改回含嵌套引号的 `python -c`，Windows PowerShell 5.1 会丢掉参数内引号；维护 BAT 默认仍调用该版本。验证可直接运行检查脚本，再运行维护 BAT 完整构建；输出应包含 `Note SQLite/FTS5 preflight` 和“构建完成”。
 
 ## 11. 验证清单
+
+复习批量导入运行 `python -B -m unittest discover -s tests -p 'test_review*.py' -v`、`node tests/review-import-model.js` 和 `node tests/review-import-browser.js`。覆盖 SQLite v3 升级、原子失败回滚、并发及重试、HTTP 功能/体积边界、文本与 XLSX、千/万行分页、列组合、编码重试、焦点/候选、深浅/窄窗/低动态、最小化与 pagehide；浏览器还验证复习/日历/足迹便签的 Delete / Backspace 与持久化。新 Python 测试在导入 app 前自动设置临时运行根，浏览器自行管理隔离数据和服务；真实 Windows 拼音候选窗及发布包仍需对应人工/桌面验收。详细协议见 `docs/review-import-2026-10-16.md`。
 
 画布连线索引与图谱可见生命周期另运行 `node tests/canvas-spatial-index-regression.js`、`node tests/graph-visibility-regression.js` 和 `node tests/canvas-resource-performance-browser.js --regression`。浏览器沿用 `RELATUM_PYTHON / RELATUM_PLAYWRIGHT / RELATUM_EDGE_PATH`，自己管理一次性数据根及服务，覆盖远距离连线中段命中、叠放顺序、WebGL/Canvas2D、DPR 1/2、深色及低动态、原生最小化通知期间零绘制和原引擎恢复，并复用原画布交互、导出、附件与七页切换回归。设置 `RELATUM_CANVAS_BASELINE_REF` 为旧提交后，索引脚本加 `--benchmark`、浏览器加 `--compare` 可对照旧源码；`RELATUM_CANVAS_RESOURCE_REPORT` 指定临时报告路径。继续运行共享图谱缓存、预布局、笔记图谱及资源生命周期回归。测量、边界与复现见 `docs/canvas-resource-performance-2026-10-12.md`。
 
