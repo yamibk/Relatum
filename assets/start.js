@@ -2479,13 +2479,9 @@
   let cadenceEnterFrame = 0;
   let cadenceEntranceSeq = 0;
   let cadenceEntranceExitFrozen = false;
-  let cadenceEntranceExitAnimations = [];
 
   function releaseCadenceEntranceExitAnimations() {
-    cadenceEntranceExitAnimations.forEach((animation) => {
-      try { animation.cancel(); } catch (error) {}
-    });
-    cadenceEntranceExitAnimations = [];
+    document.querySelector('[data-role="study-cadence"]')?.classList.remove('cadence-exit-frozen');
     cadenceEntranceExitFrozen = false;
   }
 
@@ -2495,17 +2491,9 @@
     const cadence = document.querySelector('[data-role="study-cadence"]');
     if (!cadence) return;
     cadenceEntranceExitFrozen = true;
-    if (typeof cadence.getAnimations !== 'function') return;
-    try {
-      cadenceEntranceExitAnimations = cadence.getAnimations({ subtree: true }).filter((animation) => {
-        return animation.playState === 'running' || animation.playState === 'pending';
-      });
-      cadenceEntranceExitAnimations.forEach((animation) => {
-        try { animation.pause(); } catch (error) {}
-      });
-    } catch (error) {
-      cadenceEntranceExitAnimations = [];
-    }
+    // CSS pauses the entrance as one state change; enumerating every SVG cell
+    // here would synchronously resolve the incoming page's styles as well.
+    cadence.classList.add('cadence-exit-frozen');
   }
 
   function finalizeCadenceEntranceExit(force) {

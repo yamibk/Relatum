@@ -121,9 +121,10 @@
     }
     if (layer.parentElement !== host) {
       if (host) {
-        host.classList.add('start-sticky-host');
-        if (window.getComputedStyle(host).position === 'static') {
-          host.classList.add('start-sticky-host-static');
+        if (!host.classList.contains('start-sticky-host')) {
+          const isStatic = window.getComputedStyle(host).position === 'static';
+          host.classList.add('start-sticky-host');
+          if (isStatic) host.classList.add('start-sticky-host-static');
         }
         host.appendChild(layer);
       } else {
@@ -508,7 +509,12 @@
     const targetLayer = ensureLayer(activeHost);
     clearSelected();
     targetLayer.replaceChildren();
-    syncLayerSize();
+    // An empty page needs no bounds or scroll-height measurement during its
+    // transition. Creation still measures on the actual double click.
+    if (!notes.some(data => data.scope === activeScope)) {
+      targetLayer.style.height = '100%';
+      return;
+    }
     const bounds = pageBounds();
     notes.forEach((data) => {
       if (data.scope === activeScope) targetLayer.appendChild(buildNote(data, false, bounds));
@@ -568,7 +574,6 @@
       return;
     }
     ensureLayer(activeHost);
-    syncLayerSize();
     if (loaded) render();
     else {
       const scope = activeScope;

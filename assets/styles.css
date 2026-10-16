@@ -4168,14 +4168,19 @@ body.desktop-host.desktop-maximized {
   stroke-width: 1.05px;
   filter: drop-shadow(0 3px 5px var(--cadence-glow));
 }
-.study-cadence.cadence-entering .cadence-cell {
-  animation: cadenceCellIn 1280ms calc(260ms + var(--cadence-delay, 0ms)) var(--easing-page) both;
+.study-cadence.cadence-entering .cadence-reveal-band {
+  /* Seven bands share the reveal instead of starting 365 SVG animations. */
+  animation: cadenceBandIn 1000ms calc(260ms + var(--cadence-delay, 0ms)) var(--easing-page) both;
 }
-.study-cadence.cadence-entering .cadence-cell.has-activity {
-  animation-name: cadenceCellActiveIn;
-}
-.study-cadence.cadence-entering .cadence-cell.is-future {
-  animation-name: cadenceCellFutureIn;
+.study-cadence.cadence-exit-frozen,
+.study-cadence.cadence-exit-frozen *,
+.study-cadence.cadence-exit-frozen *::before,
+.study-cadence.cadence-exit-frozen *::after,
+.calendar-exit-frozen,
+.calendar-exit-frozen *,
+.calendar-exit-frozen *::before,
+.calendar-exit-frozen *::after {
+  animation-play-state: paused !important;
 }
 .cadence-cell:hover {
   stroke: var(--cadence-ink);
@@ -4214,20 +4219,9 @@ body.desktop-host.desktop-maximized {
   64%  { opacity: 1; transform: translate3d(0, -1.5px, 0) scale(1.002); }
   100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
-@keyframes cadenceCellIn {
-  0%   { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.7); }
-  68%  { opacity: 0.9; transform: translate3d(0, -1.2px, 0) scale(1.022); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes cadenceCellFutureIn {
-  0%   { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.72); }
-  68%  { opacity: 0.58; transform: translate3d(0, -0.8px, 0) scale(1.012); }
-  100% { opacity: 0.72; transform: translateY(0) scale(1); }
-}
-@keyframes cadenceCellActiveIn {
-  0%   { opacity: 0; transform: translate3d(0, 13px, 0) scale(0.66); }
-  66%  { opacity: 1; transform: translate3d(0, -1.4px, 0) scale(1.038); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes cadenceBandIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* 8 档陶土色阶：同一色相逐步沉积，15+ 才到最深。 */
@@ -4954,6 +4948,7 @@ body.desktop-host.desktop-maximized {
   .cadence-stats div,
   .cadence-footprint-head { animation: none; }
   .cadence-cell { opacity: 1; animation: none; filter: none; transition: fill 150ms linear; }
+  .study-cadence.cadence-entering .cadence-reveal-band { animation: none; }
   .cadence-cell:hover { transform: none; }
   .cadence-month { transition: none; }
   .cadence-day { transition: none; }
@@ -10313,10 +10308,19 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   box-shadow: 0 3px 12px rgba(26, 26, 26, 0.045);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  /* 升到实体滑块上方时立即清空按钮表面，避免旧底色在过渡中覆盖滑块。 */
-  transition: color var(--duration) var(--easing-soft),
-              transform var(--duration) var(--easing-soft);
-  z-index: 1;
+  /* Surfaces stay below the slider; glyphs share the spine's upper layer.
+     A stacking context on the button would hide intermediate icons in transit. */
+  transition: color var(--duration) var(--easing-soft);
+  z-index: auto;
+}
+.study-spine-tab > span:not(.dot-bubble) {
+  transition: translate var(--duration) var(--easing-soft), scale var(--duration) var(--easing-soft);
+}
+.study-spine-tab:hover > span:not(.dot-bubble) {
+  translate: 0 -1px;
+}
+.study-spine-tab.active:hover > span:not(.dot-bubble) {
+  translate: none;
 }
 
 .study-spine-glyph,
@@ -10350,7 +10354,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   background: rgba(255, 255, 255, 0.72);
   color: var(--text);
   box-shadow: 0 8px 20px rgba(26, 26, 26, 0.08);
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .study-spine-tab.active {
@@ -10358,9 +10362,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   background: transparent;
   color: #fff;
   box-shadow: none;
-  /* 非激活按钮在实体滑块(z-index:2)下方；激活按钮升层时表面立即透明，
-     只让文字与图标显示在实体上方，快速改道也不会残留半透明底色。 */
-  z-index: 3;
+  z-index: auto;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -10380,7 +10382,14 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 }
 
 .study-spine-tab:active {
-  transform: translateY(0) scale(var(--press-scale));
+  transform: none;
+}
+.study-spine-tab:active > span:not(.dot-bubble) {
+  translate: none;
+  scale: var(--press-scale);
+}
+@media (prefers-reduced-motion: reduce) {
+  .study-spine-tab > span:not(.dot-bubble) { transition: none; translate: none; scale: none; }
 }
 
 .spine-dots {

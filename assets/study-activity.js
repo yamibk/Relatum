@@ -381,7 +381,7 @@
     const end = new Date(year, 11, 31);
     end.setDate(end.getDate() + (6 - ((end.getDay() + 6) % 7)));
     const weeks = Math.floor((end - start) / (7 * 86400000)) + 1;
-    const rects = [];
+    const revealBands = Array.from({ length: 7 }, () => []);
     const monthLabels = [];
     let prevMonth = -1;
     let lastLabelW = -99;
@@ -431,13 +431,13 @@
           : csec ? ' · 画布 ' + fmtCanvasDuration(csec)
             : canvasHistorical ? ' · 有历史画布记录，时长无法还原' : ' · 未使用画布');
         const activeTip = cadenceLens === 'canvas' ? ctip : (cadenceLens === 'focus' ? ftip : tip);
-        rects.push('<rect x="' + (C.leftPad + w * step) + '" y="' + (C.topPad + d * step)
+        // Contiguous weeks keep the original chronological DOM/Tab order.
+        revealBands[Math.floor(w * 7 / weeks)].push('<rect x="' + (C.leftPad + w * step) + '" y="' + (C.topPad + d * step)
           + '" width="' + C.cell + '" height="' + C.cell + '" rx="3" class="cadence-cell cadence-l'
           + lv + ' cadence-fl' + flv + ' cadence-cl' + clv + (count ? ' has-activity' : '')
           + (canvasHistorical ? ' has-canvas-history' : '') + (future ? ' is-future' : '')
           + (isToday ? ' is-today' : '')
-          + '" style="--cadence-delay:' + Math.round(Math.min(760, d * 92 + w * 5))
-          + 'ms" data-wave-x="' + (C.leftPad + w * step + C.cell / 2) + '" data-wave-y="'
+          + '" data-wave-x="' + (C.leftPad + w * step + C.cell / 2) + '" data-wave-y="'
           + (C.topPad + d * step + C.cell / 2) + '" data-wave-w="' + w + '" data-wave-d="' + d
           + '" data-month="' + cell.getMonth() + '" data-day-key="' + key + '" data-count="' + count
           + '" data-focus-min="' + fmin + '" data-focus-count="' + fcount
@@ -495,7 +495,9 @@
         + '" height="' + svgH + '" xmlns="http://www.w3.org/2000/svg" role="img"'
         + ' aria-label="' + year + (cadenceLens === 'canvas' ? ' 年逐日画布使用时长热力图'
           : cadenceLens === 'focus' ? ' 年逐日专注时长热力图' : ' 年逐日已完成任务热力图') + '">'
-        + monthLabels.join('') + dayLabels.join('') + rects.join('')
+        + monthLabels.join('') + dayLabels.join('')
+        + revealBands.map((cells, band) => '<g class="cadence-reveal-band" style="--cadence-delay:'
+          + (band * 92) + 'ms">' + cells.join('') + '</g>').join('')
         + '</svg>'
         + '</div>'
         + '<div class="cadence-chart-caption"><span><i class="is-today-mark"></i>今天</span>'
@@ -1021,7 +1023,9 @@
         if (starInstance && starInstance.setActive) starInstance.setActive(false);
         // 外层翻页保留最后一帧，交接完成才释放；快速返回会取消释放任务。
         if (starInstance) {
-          const turnMs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--start-turn-ms')) || 260;
+          // Both homepage shells submit this variable inline. Reading computed
+          // styles here would flush the whole incoming page during the click.
+          const turnMs = parseFloat(document.documentElement.style.getPropertyValue('--start-turn-ms')) || 260;
           starReleaseTimer = window.setTimeout(() => {
             if (!cadenceShown) releaseStarGraph();
           }, prefersReduced ? 0 : Math.max(800, turnMs + 560));

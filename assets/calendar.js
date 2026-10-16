@@ -69,7 +69,7 @@
     expandedDays: new Set(),  // 当天任务超过 10 条时，记录哪些天被展开过；换天自动收起
   };
   let entranceExitFrozen = false;
-  let entranceExitAnimations = [];
+  const dayColumnAnimations = new Set();
   let calendarPageActive = false;
   let viewMode = readViewMode();
   let modeTransitionTimer = 0;
@@ -1869,33 +1869,28 @@
   function freezeEntranceMotionForExit() {
     if (entranceExitFrozen) return;
     entranceExitFrozen = true;
-    if (typeof root.getAnimations !== 'function') return;
-    try {
-      entranceExitAnimations = root.getAnimations({ subtree: true }).filter((animation) => {
-        return animation.playState === 'running' || animation.playState === 'pending';
-      });
-      entranceExitAnimations.forEach((animation) => {
-        try { animation.pause(); } catch (error) {}
-      });
-    } catch (error) {
-      entranceExitAnimations = [];
-    }
+    root.classList.add('calendar-exit-frozen');
+    dayColumnAnimations.forEach(animation => animation.pause());
   }
 
   function finalizeEntranceExit(force) {
     if (!entranceExitFrozen || (!force && state.active)) return;
     clearEntranceMotion();
-    entranceExitAnimations.forEach((animation) => {
-      try { animation.cancel(); } catch (error) {}
-    });
-    entranceExitAnimations = [];
+    clearDayColumnAnimations();
+    root.classList.remove('calendar-exit-frozen');
     entranceExitFrozen = false;
   }
 
   // 每次翻进日历页都完整重播错峰入场：页头（含倒数日进度条）、月历卡片、右侧整列
   // （日记 + 三栏：卡片错峰与条目上滑是 WAAPI 动画，由 animateDayColumn/revealDayColumnEnter 重播）。
-  function replayEntranceMotion() {
+  function replayEntranceMotion(interrupted) {
     if (prefersReduced || !state.loaded) return;
+    // A completed exit already removed the entrance classes. Arm them while
+    // still hidden, so showing the page needs no synchronous layout or flash.
+    if (!interrupted && pageRoot?.getAttribute('aria-hidden') === 'true') {
+      enterAfterRefresh();
+      return;
+    }
     clearEntranceMotion();
     // 强制结算一次 class 移除，下一帧重新添加即可重播；不重建 DOM、不重新读取数据。
     void root.offsetWidth;
@@ -2117,27 +2112,33 @@
     return () => { exitDone.then(writeIn); };
   }
 
+  function clearDayColumnAnimations() {
+    dayColumnAnimations.forEach(animation => animation.cancel());
+    dayColumnAnimations.clear();
+  }
+
   function animateDayColumn(column, motion) {
     const isEnter = !!(motion && motion.kind === 'enter');
     if (prefersReduced || !motion
         || (motion.kind !== 'day' && motion.kind !== 'month' && !isEnter)) return;
-    const animated = [column].concat(Array.from(column.querySelectorAll('*')));
-    animated.forEach((element) => {
-      if (!element.getAnimations) return;
-      element.getAnimations().forEach((animation) => animation.cancel());
-    });
+    clearDayColumnAnimations();
     const now = performance.now();
     const rapid = now - state.lastDayMotionAt < 180;
     state.lastDayMotionAt = now;
     if (rapid) return;  // 连续快翻时跳过（首开 lastDayMotionAt=0，永不算 rapid，照常揭示）
     const play = (element, frames, duration, delay, easing) => {
       if (!element) return;
-      element.animate(frames, {
+      const animation = element.animate(frames, {
         duration,
         delay: delay || 0,
         easing: easing || 'cubic-bezier(0.22, 1, 0.36, 1)',
         fill: 'both',
       });
+      dayColumnAnimations.add(animation);
+      animation.onfinish = () => {
+        dayColumnAnimations.delete(animation);
+        animation.cancel(); // All final frames match the underlying styles.
+      };
     };
     if (isEnter) { revealDayColumnEnter(column, play, motion); return; }
     const offset = motion.direction < 0 ? -10 : 10;
@@ -2914,6 +2915,7 @@
   }
 
   function activateCalendarPanel() {
+    const interrupted = entranceExitFrozen;
     finalizeEntranceExit(true);
     state.active = true;
     if (!state.loaded || state.stale) {
@@ -2930,7 +2932,7 @@
         })
         .catch(() => {});
     } else {
-      replayEntranceMotion();
+      replayEntranceMotion(interrupted);
     }
     scheduleCountdownProgressBreath(900);
     const ledger = ledgerApi();
@@ -2938,8 +2940,9 @@
   }
 
   function deactivateCalendarPanel() {
+    const wasActive = state.active;
     state.active = false;
-    freezeEntranceMotionForExit();
+    if (wasActive) freezeEntranceMotionForExit();
     state.resumeAfterPageShow = false;
     cancelCalendarNetworkWork();
     closeCountdownClock();
