@@ -184,7 +184,7 @@
     }
     function sourceView(current) {
       const textarea = node('textarea', { class: 'review-import-paste', value: current.text, spellcheck: false,
-        'aria-label': ui('粘贴表格内容', 'Paste table data'), placeholder: ui('在 Excel、WPS 等表格中选中需要的区域，复制后粘贴到这里。\n\n单词\t释义\nserendipity\t意外发现美好事物的机缘', 'Select and copy cells from a spreadsheet, then paste them here.\n\nword\tmeaning\nserendipity\tan unexpected happy discovery'),
+        'aria-label': ui('粘贴表格内容', 'Paste table data'),
         oninput: event => { current.text = event.target.value; current.file = null; if (current.sourceLabel) current.sourceLabel.textContent = ''; } });
       const input = node('input', { type: 'file', accept: '.xlsx,.csv,.tsv', hidden: true,
         onchange: event => { const file = event.target.files[0]; event.target.value = ''; if (file) parse(current, file); } });
