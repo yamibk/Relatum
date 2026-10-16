@@ -1,0 +1,109 @@
+.review-select-native { display: none !important; }
+.review-choice { display: inline-flex; min-width: 0; max-width: 100%; vertical-align: middle; }
+.review-choice-trigger,
+.review-embedded .review-choice-trigger {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  font: 500 12px/1.5 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 160ms var(--easing-soft);
+}
+.review-choice-value { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-choice-chevron { flex: none; width: 6px; height: 6px; margin: -3px 2px 0 0; border: solid currentColor; border-width: 0 1.3px 1.3px 0; transform: rotate(45deg); opacity: .55; transition: transform 160ms var(--easing-soft); }
+.review-choice-trigger[aria-expanded="true"] .review-choice-chevron { transform: translateY(3px) rotate(225deg); }
+.review-choice-trigger:active:not(:disabled) { transform: scale(.985); }
+.review-choice-trigger:hover:not(:disabled) { border-color: var(--border-strong); background: color-mix(in srgb, var(--text) 3%, var(--surface)); }
+.review-choice-trigger:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
+.review-choice-trigger:disabled { opacity: .5; cursor: default; }
+.review-choice-trigger[aria-expanded="true"] { border-color: var(--border-strong); }
+.review-choice-popup {
+  position: fixed;
+  z-index: 1100;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text, #242522);
+  box-shadow: 0 12px 38px rgba(25, 28, 22, .12);
+  font: 12px/1.5 var(--font-ui);
+  animation: reviewChoiceEnter 120ms ease-out both;
+}
+.review-choice-popup .review-choice-search {
+  box-sizing: border-box;
+  appearance: none;
+  flex: none;
+  width: calc(100% - 8px);
+  min-width: 0;
+  height: 38px;
+  min-height: 38px;
+  margin: 4px 4px 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 20px;
+}
+.review-choice-search:focus { outline: 1px solid var(--border-strong); outline-offset: 1px; }
+.review-choice-search::-webkit-search-cancel-button { appearance: none; }
+.review-choice-list { position: relative; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.review-choice-option { box-sizing: border-box; display: flex; gap: 10px; align-items: center; min-height: 36px; padding: 8px 10px; border-radius: 7px; cursor: pointer; transition: background 110ms ease; }
+.review-choice-option > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-choice-option small { flex: none; color: var(--text-tertiary); font-size: 10px; }
+.review-choice-option.is-selected::after { content: '✓'; flex: none; font-size: 11px; }
+.review-choice-option.is-highlighted { background: color-mix(in srgb, currentColor 7%, transparent); }
+.review-choice-empty { padding: 14px 10px; margin: 0; color: var(--text-tertiary); }
+.review-choice-popup[data-start-theme="dark"] {
+  --text: #edece6; --text-secondary: #c0c5bd; --text-tertiary: #929d94;
+  --border: rgba(223, 235, 222, .15); --border-strong: rgba(223, 235, 222, .3);
+  background: #242b26;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, .26);
+}
+.review-embedded .study-field > .review-choice { width: 100%; }
+.review-scope-picker { min-width: 0; }
+.review-scope-picker > .review-choice { min-width: 170px; max-width: 360px; }
+.review-library-simplebar > .review-choice { flex: 0 1 190px; }
+.review-batch-bar > .review-choice { max-width: 220px; }
+.review-library-head > div { min-width: 0; }
+.review-library-tools { min-width: 0; flex: 0 1 510px; }
+.review-library-tools input[type="search"] { box-sizing: border-box; min-width: 160px; flex: 1 1 230px; width: auto; max-width: 100%; height: 40px; line-height: 20px; }
+.review-library-tools :is(.review-import-trigger,.review-help-button) { flex: none; }
+.review-library-tools .review-import-trigger { transition: background 160ms var(--easing-soft), border-color 160ms var(--easing-soft), transform 180ms var(--easing-soft); }
+.review-library-tools .review-import-trigger:hover { transform: translateY(-1px); }
+.review-library-tools .review-import-trigger:active { transform: translateY(0) scale(.97); }
+.review-card-dialog-head { min-width: 0; }
+.review-card-deck-picker input { box-sizing: border-box; min-height: 38px; height: 38px; line-height: 20px; }
+.review-embedded *, .review-import-card *, .review-choice-list { scrollbar-width: none; }
+.review-embedded .study-dialog-card { scrollbar-width: none; }
+.review-embedded *::-webkit-scrollbar, .review-import-card *::-webkit-scrollbar, .review-choice-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
+@keyframes reviewChoiceEnter { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 720px) {
+  .review-library-tools { flex: none; flex-direction: row; flex-wrap: wrap; width: 100%; }
+  .review-library-tools input[type="search"] { flex-basis: calc(100% - 150px); }
+  .review-scope-picker > .review-choice { min-width: 0; flex: 1; }
+  .review-library-simplebar > .review-choice { flex: 1 1 140px; }
+  .review-batch-bar > .review-choice { flex: 1 1 140px; max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-choice-popup { animation: none; }
+  .review-choice-trigger, .review-choice-chevron, .review-choice-option, .review-library-tools .review-import-trigger { transition: none; }
+  .review-choice-trigger:active:not(:disabled), .review-library-tools .review-import-trigger:hover, .review-library-tools .review-import-trigger:active { transform: none; }
+}

@@ -3,6 +3,7 @@
   const model = window.RelatumReviewImportModel;
   const ui = (zh, en) => window.RelatumI18n?.language === 'en' ? en : zh;
   const PAGE = 50;
+  const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
   function node(tag, attributes, ...children) {
     const element = document.createElement(tag);
     for (const [key, value] of Object.entries(attributes || {})) {
@@ -58,8 +59,37 @@
     return message;
   }
   function create(options) {
-    let state = null, session = 0;
+    let state = null, closing = null, session = 0;
     function live(current) { return state === current && current?.shell.isConnected; }
+    function motionAllowed() { return !motionPreference.matches && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'; }
+    function settleMotion(current) { Array.from(current.motions.values()).forEach(task => task.finish()); }
+    function animate(current, target, frames, duration, after) {
+      current.motions.get(target)?.finish();
+      if (!motionAllowed() || typeof target.animate !== 'function') { after?.(); return; }
+      const animation = target.animate(frames, { duration, easing: current.easing || 'cubic-bezier(.16,1,.3,1)', fill: 'both' });
+      const task = { finish() {
+        if (current.motions.get(target) !== task) return;
+        current.motions.delete(target);
+        animation.onfinish = animation.oncancel = null; animation.cancel(); after?.();
+      } };
+      current.motions.set(target, task); animation.onfinish = animation.oncancel = task.finish;
+    }
+    function finishClose() {
+      const current = closing;
+      if (!current) return;
+      closing = null; clearTimeout(current.closeTimer); settleMotion(current); current.shell.remove();
+    }
+    function expand(current, body, expanded) {
+      const height = body.hidden ? 0 : body.getBoundingClientRect().height;
+      const opacity = body.hidden ? 0 : getComputedStyle(body).opacity;
+      current.motions.get(body)?.finish();
+      body.hidden = false; body.inert = !expanded;
+      const fullHeight = body.getBoundingClientRect().height;
+      body.classList.add('is-folding');
+      animate(current, body, [{ height: height + 'px', opacity }, { height: (expanded ? fullHeight : 0) + 'px', opacity: expanded ? 1 : 0 }], 180, () => {
+        body.hidden = !expanded; body.classList.remove('is-folding');
+      });
+    }
     function stopParser(current) {
       current.parseId++;
       current.worker?.terminate(); current.worker = null; current.parsing = false;
@@ -68,14 +98,25 @@
     }
     function close(force) {
       const current = state;
-      if (!current || (current.committing && !force)) return;
+      if (!current) { if (force) finishClose(); return; }
+      if (current.committing && !force) return;
+      const opacity = getComputedStyle(current.shell).opacity, transform = getComputedStyle(current.card).transform;
       state = null; session++;
       stopParser(current); current.request?.abort();
       clearTimeout(current.previewTimer);
       window.removeEventListener('keydown', current.keydown, true);
       document.removeEventListener('focusin', current.focusin, true);
       current.unsubscribe?.();
-      current.shell.inert = true; current.shell.remove();
+      current.controls.dispose();
+      settleMotion(current);
+      current.shell.inert = true; current.shell.classList.add('is-closing');
+      if (force || !motionAllowed() || typeof current.shell.animate !== 'function') current.shell.remove();
+      else {
+        finishClose(); closing = current;
+        animate(current, current.card, [{ transform }, { transform: 'translate(-50%, calc(-50% + 5px))' }], 140);
+        animate(current, current.shell, [{ opacity }, { opacity: 0 }], 140, () => { if (closing === current) finishClose(); });
+        current.closeTimer = setTimeout(() => { if (closing === current) finishClose(); }, 190);
+      }
       if (!force && current.returnFocus?.isConnected) current.returnFocus.focus({ preventScroll: true });
     }
     function setError(current, message) {
@@ -83,7 +124,8 @@
       current.error.textContent = message || ''; current.error.hidden = !message;
     }
     function focusFirst(current) {
-      const target = current.body.querySelector('textarea,input,select,button') || current.card;
+      if (current.body.inert) { current.card.focus({ preventScroll: true }); return; }
+      const target = Array.from(current.body.querySelectorAll('textarea,input,button')).find(element => !element.disabled && element.getClientRects().length) || current.card;
       target.focus({ preventScroll: true });
     }
     function clearCheck(current) {
@@ -131,7 +173,7 @@
           stopParser(current);
           current.file = file; current.table = event.data.table;
           current.config = config;
-          current.config.deckName = options.defaultDeck();
+          current.config.deckName = current.deckName;
           clearCheck(current); current.status.textContent = ''; go(current, 2);
         };
         worker.postMessage({ id, text: current.text, bytes, name: file?.name || '', sheet: chosenSheet || '', encoding: current.encoding, separator: current.separator }, bytes ? [bytes] : []);
@@ -147,8 +189,9 @@
       const input = node('input', { type: 'file', accept: '.xlsx,.csv,.tsv', hidden: true,
         onchange: event => { const file = event.target.files[0]; event.target.value = ''; if (file) parse(current, file); } });
       current.sourceLabel = node('p', { class: 'review-import-hint', 'data-user-content': '', text: current.file ? ui('已选择：', 'Selected: ') + current.file.name : '' });
-      const drop = node('div', { class: 'review-import-drop', ondragover: event => { event.preventDefault(); event.stopPropagation(); },
-        ondrop: event => { event.preventDefault(); event.stopPropagation(); const files = event.dataTransfer.files;
+      const drop = node('div', { class: 'review-import-drop', ondragover: event => { event.preventDefault(); event.stopPropagation(); if (Array.from(event.dataTransfer.types).includes('Files')) drop.classList.add('is-dragging'); },
+        ondragleave: event => { if (!drop.contains(event.relatedTarget)) drop.classList.remove('is-dragging'); },
+        ondrop: event => { event.preventDefault(); event.stopPropagation(); drop.classList.remove('is-dragging'); const files = event.dataTransfer.files;
           if (files.length > 1) setError(current, ui('请每次导入一个文件。', 'Import one file at a time.'));
           else if (files[0]) parse(current, files[0]); } }, textarea);
       current.body.append(node('p', { class: 'review-import-intro', text: ui('一行一张卡片。两列词表可以直接导入，多列内容可在下一步自由组合。', 'One row becomes one card. Import a two-column list directly, or combine more columns in the next step.') }), drop, current.sourceLabel,
@@ -181,6 +224,7 @@
     function renderMappings(current) {
       current.mappings.replaceChildren(mappingField(current, 'prompt', ui('问题（必填）', 'Question (required)')),
         mappingField(current, 'answer', ui('答案', 'Answer')), mappingField(current, 'notes', ui('补充说明', 'Notes')));
+      current.controls.enhanceAll();
     }
     function mapInWorker(current) {
       stopParser(current);
@@ -212,30 +256,45 @@
         select(current.table.sheets.map(sheet => [sheet.name, sheet.name + (sheet.hidden ? ui('（隐藏）', ' (hidden)') : '')]), current.table.sheet, value => parse(current, current.file, value), ui('工作表', 'Worksheet'))));
       current.mappings = node('div', { class: 'review-import-mappings' });
       const names = model.headings(current.table, config), columnOptions = [[-1, ui('不使用表格列', 'No column')], ...names.map((name, index) => [index, model.columnName(index) + ' · ' + name])];
-      const organize = node('details', { class: 'review-import-organize' }, node('summary', { text: ui('卡组、标签与重复内容', 'Decks, tags, and duplicates') }));
+      const organize = node('section', { class: 'review-import-organize' });
       const commonChange = (key, value) => { config[key] = value; clearCheck(current); updateTable(current); };
-      const deckInput = node('input', { type: 'text', value: config.deckName, maxLength: 80, list: 'review-import-decks', 'aria-label': ui('统一卡组', 'Default deck'),
-        placeholder: ui('未分类 / 输入新卡组', 'Unfiled / enter a new deck'), oninput: event => { config.deckName = event.target.value; clearCheck(current); }, onchange: () => updateTable(current) });
-      organize.append(node('div', { class: 'review-import-format-grid' },
-        field(ui('统一卡组', 'Default deck'), deckInput), field(ui('卡组列', 'Deck column'), select(columnOptions, config.deckColumn, value => commonChange('deckColumn', Number(value)), ui('卡组列', 'Deck column'))),
+      const deckOptions = [['', ui('未分组（默认）', 'Ungrouped (default)')], ...options.decks().map(deck => [deck.name, deck.name])];
+      if (config.deckName && !deckOptions.some(([name]) => name === config.deckName)) deckOptions.push([config.deckName, config.deckName]);
+      const deckSelect = select(deckOptions, config.deckName, value => { current.deckName = value; commonChange('deckName', value); }, ui('分组（可选）', 'Group (optional)'));
+      const group = current.controls.enhance(deckSelect, { searchable: true, allowCreate: true, createHint: ui('导入时创建', 'Created on import') }).element;
+      group.classList.add('review-import-group');
+      const settings = node('div', { class: 'review-import-organize-body', id: 'review-import-organize-body', hidden: !current.organizeOpen });
+      const toggle = button(ui('卡组、标签与重复内容', 'Decks, tags, and duplicates'), () => {
+        current.organizeOpen = !current.organizeOpen; expand(current, settings, current.organizeOpen);
+        toggle.setAttribute('aria-expanded', String(current.organizeOpen));
+      });
+      toggle.className = 'review-import-disclosure'; toggle.setAttribute('aria-expanded', String(!!current.organizeOpen));
+      toggle.setAttribute('aria-controls', settings.id);
+      organize.append(node('div', { class: 'review-import-organize-head' }, toggle,
+        node('div', { class: 'review-import-group-field' }, node('span', { text: ui('分组（可选）', 'Group (optional)') }), group)), settings);
+      settings.append(node('div', { class: 'review-import-format-grid' },
+        field(ui('卡组列', 'Deck column'), select(columnOptions, config.deckColumn, value => commonChange('deckColumn', Number(value)), ui('卡组列', 'Deck column'))),
         field(ui('公共标签（逗号分隔）', 'Common tags (comma-separated)'), node('input', { type: 'text', value: config.tags, 'aria-label': ui('公共标签', 'Common tags'),
           oninput: event => { config.tags = event.target.value; clearCheck(current); }, onchange: () => updateTable(current) })),
         field(ui('标签列', 'Tags column'), select(columnOptions, config.tagColumn, value => commonChange('tagColumn', Number(value)), ui('标签列', 'Tags column')))),
         field(ui('重复内容', 'Duplicate content'), select([['skip', ui('跳过完全相同内容（默认）', 'Skip identical content (default)')], ['keep', ui('允许重复，全部新建', 'Allow duplicates; create all')]], config.duplicateMode,
           value => commonChange('duplicateMode', value), ui('重复内容', 'Duplicate content'))),
-        node('p', { class: 'review-import-hint', text: ui('非空卡组列优先，空值使用统一卡组；表格标签与公共标签合并。只有同卡组的问题、答案、说明与标签都相同才跳过，不同释义会保留。', 'Nonempty deck cells override the default. Row tags and common tags are combined. Only identical questions, answers, notes, and tags within the same deck are skipped; different meanings are kept.') }),
-        node('datalist', { id: 'review-import-decks' }, options.decks().map(deck => node('option', { value: deck.name }))));
+        node('p', { class: 'review-import-hint', text: ui('非空卡组列优先，空值使用右侧所选分组；表格标签与公共标签合并。完全相同的卡片默认跳过，不同释义会保留。', 'Nonempty deck cells override the selected group. Row tags and common tags are combined. Identical cards are skipped by default; different meanings are kept.') }));
       current.body.append(top, current.mappings, organize); renderMappings(current); previewView(current); updateTable(current);
     }
     function previewView(current) {
+      current.sampleSignature = null; current.previewPage = current.page;
       current.tableHost = node('div', { class: 'review-import-table-wrap', tabIndex: 0, 'aria-label': ui('数据预览', 'Data preview') });
       current.pager = node('div', { class: 'review-import-pager' });
-      current.sample = node('article', { class: 'review-import-sample', 'data-user-content': '', 'aria-label': ui('最终卡片预览', 'Final card preview') });
+      current.sample = node('article', { class: 'review-import-sample', tabIndex: 0, 'data-user-content': '', 'aria-label': ui('最终卡片预览', 'Final card preview') });
       current.body.append(node('div', { class: 'review-import-preview-head' }, node('h3', { text: ui('数据预览', 'Data preview') }), current.pager),
         node('div', { class: 'review-import-previews' }, current.tableHost, current.sample));
     }
     function sample(current, row, index) {
       current.selected = index;
+      const signature = JSON.stringify([row.sourceRow, row.prompt, row.answer, row.notes, row.deckName, row.tags]);
+      const changed = current.sampleSignature != null && current.sampleSignature !== signature;
+      current.sampleSignature = signature;
       current.sample.replaceChildren(node('small', { text: ui('最终卡片 · 源行 ', 'Final card · source row ') + row.sourceRow }), node('h4', { text: row.prompt || ui('问题为空', 'Question is empty') }));
       for (const [key, title] of [['answer', ui('答案', 'Answer')], ['notes', ui('补充说明', 'Notes')]]) {
         const content = node('div', { class: 'review-import-rich' });
@@ -243,7 +302,12 @@
         else content.textContent = '—';
         current.sample.append(node('h5', { text: title }), content);
       }
-      current.sample.append(node('p', { class: 'review-import-hint', text: [row.deckName || ui('未分类', 'Unfiled'), row.tags.join(', ')].filter(Boolean).join(' · ') }));
+      current.sample.append(node('p', { class: 'review-import-hint', text: [row.deckName || ui('未分组', 'Ungrouped'), row.tags.join(', ')].filter(Boolean).join(' · ') }));
+      current.tableHost?.querySelectorAll('tbody tr').forEach(tr => {
+        const selected = Number(tr.dataset.sourceRow) === row.sourceRow;
+        tr.classList.toggle('is-selected', selected); tr.querySelector('button')?.setAttribute('aria-pressed', String(selected));
+      });
+      if (changed) animate(current, current.sample, [{ opacity: .55, transform: 'translateY(2px)' }, { opacity: 1, transform: 'translateY(0)' }], 130);
     }
     function updateTable(current) {
       if (!live(current) || !current.tableHost) return;
@@ -269,14 +333,16 @@
       rows.forEach((row, offset) => {
         const index = current.page * PAGE + offset, checked = current.checked?.rows[index];
         const error = checked?.error ? rowIssue(checked.error) : row.sourceError ? ui('表格公式或单元格错误', 'Formula or cell error') : '';
-        const tr = node('tr', { class: checked?.status === 'invalid' ? 'is-invalid' : '' });
-        tr.append(node('td', {}, node('button', { type: 'button', text: String(row.sourceRow), 'aria-label': ui('预览源行 ', 'Preview source row ') + row.sourceRow, onclick: () => sample(current, row, index) })));
+        const tr = node('tr', { class: checked?.status === 'invalid' ? 'is-invalid' : '', 'data-source-row': row.sourceRow, onclick: () => sample(current, row, index) });
+        tr.append(node('td', {}, node('button', { type: 'button', text: String(row.sourceRow), 'aria-label': ui('预览源行 ', 'Preview source row ') + row.sourceRow })));
         for (const key of ['prompt', 'answer', 'notes']) tr.append(node('td', {}, node('span', { text: row[key].length > 200 ? row[key].slice(0, 200) + '…' : row[key], title: row[key].length > 500 ? row[key].slice(0, 500) + '…' : row[key] })));
         tr.append(node('td', { text: error || (checked ? statusNames[checked.status] : row.blank ? statusNames.blank : '—') })); body.append(tr);
       });
       table.append(body); current.tableHost.replaceChildren(table);
       const selected = current.selected >= current.page * PAGE && current.selected < (current.page + 1) * PAGE ? current.selected : current.page * PAGE;
       if (rows[selected - current.page * PAGE]) sample(current, rows[selected - current.page * PAGE], selected);
+      if (current.previewPage !== current.page) animate(current, current.tableHost, [{ opacity: .6 }, { opacity: 1 }], 130);
+      current.previewPage = current.page;
     }
     async function request(current, path, payload, committing) {
       const controller = new AbortController();
@@ -366,6 +432,9 @@
     }
     function render(current) {
       if (!live(current)) return;
+      settleMotion(current);
+      const previousStep = current.renderedStep; current.renderedStep = current.step;
+      current.controls.close();
       current.title.textContent = ui('批量导入复习卡片', 'Import review cards');
       current.steps.replaceChildren(...[ui('放入数据', 'Add data'), ui('设置与预览', 'Map and preview'), ui('确认导入', 'Confirm import')].map((text, index) =>
         node('span', { class: (current.step === index + 1 || (current.step === 4 && index === 2)) ? 'is-current' : '', text: (index + 1) + '  ' + text })));
@@ -374,14 +443,22 @@
       else if (current.step === 2) mappingView(current);
       else if (current.step === 3) confirmView(current);
       else completeView(current);
+      current.controls.enhanceAll();
+      current.body.scrollTop = 0;
       renderFooter(current);
+      if (previousStep != null && previousStep !== current.step) {
+        const offset = current.step < previousStep ? -6 : 6;
+        animate(current, current.body, [{ opacity: .3, transform: 'translateX(' + offset + 'px)' }, { opacity: 1, transform: 'translateX(0)' }], 170);
+      }
     }
     function open(returnFocus) {
       if (state) { state.card.focus(); return; }
+      finishClose();
       const current = { step: 1, page: 0, selected: 0, text: '', file: null, table: null, checked: null, rows: null,
-        parseId: 0, worker: null, separator: 'auto', encoding: 'auto', returnFocus: returnFocus || document.activeElement, token: ++session };
+        parseId: 0, worker: null, separator: 'auto', encoding: 'auto', deckName: '', motions: new Map(), returnFocus: returnFocus || document.activeElement, token: ++session };
       current.shell = node('div', { class: 'study-dialog review-import-dialog show', 'data-i18n-managed': '' });
       current.card = node('section', { class: 'study-dialog-card review-import-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'review-import-title', tabIndex: -1 });
+      current.controls = window.RelatumReviewControls.createManager(current.card, current.shell);
       current.title = node('h2', { id: 'review-import-title' });
       current.closeButton = node('button', { class: 'study-icon-button', type: 'button', text: '×', 'aria-label': ui('关闭', 'Close'), onclick: () => close() });
       current.steps = node('div', { class: 'review-import-steps', 'aria-label': ui('导入步骤', 'Import steps') });
@@ -393,8 +470,10 @@
         current.steps, current.body, current.error, current.status, current.footer);
       current.shell.append(node('div', { class: 'study-dialog-backdrop', onclick: () => close() }), current.card);
       state = current; document.body.append(current.shell);
+      current.easing = getComputedStyle(current.card).getPropertyValue('--easing-page').trim();
       current.keydown = event => {
         if (!live(current)) return;
+        if (current.controls.handleKey(event)) { event.stopImmediatePropagation(); return; }
         event.stopImmediatePropagation();
         if (event.isComposing || event.keyCode === 229) return;
         if (event.key === 'Escape') { event.preventDefault(); close(); return; }
@@ -406,24 +485,29 @@
           else if (!event.shiftKey && (document.activeElement === last || document.activeElement === current.card)) { event.preventDefault(); first.focus(); }
         }
       };
-      current.focusin = event => { if (live(current) && !current.card.contains(event.target)) current.card.focus({ preventScroll: true }); };
+      current.focusin = event => { if (live(current) && !current.card.contains(event.target) && !current.controls.contains(event.target)) current.card.focus({ preventScroll: true }); };
       window.addEventListener('keydown', current.keydown, true);
       document.addEventListener('focusin', current.focusin, true);
       current.unsubscribe = window.RelatumI18n?.onChange(() => { if (live(current)) render(current); });
       render(current); focusFirst(current);
+      animate(current, current.shell, [{ opacity: 0 }, { opacity: 1 }], 180);
+      animate(current, current.card, [{ transform: 'translate(-50%, calc(-50% + 7px))' }, { transform: 'translate(-50%, -50%)' }], 220);
     }
     const leave = () => { if (state) close(true); };
     document.addEventListener('start:viewchange', event => { if (event.detail?.current !== 'review') leave(); });
     window.addEventListener('pagehide', leave);
     const visibility = () => {
+      if (document.hidden || document.documentElement.dataset.desktopMinimized === '1') finishClose();
       if (state && (document.hidden || document.documentElement.dataset.desktopMinimized === '1')) {
         const current = state;
+        settleMotion(current); current.body.querySelector('.is-dragging')?.classList.remove('is-dragging');
         if (current.parsing || current.worker) { stopParser(current); current.status.textContent = ''; setError(current, ui('读取已暂停，请重试。', 'Reading was paused. Please retry.')); renderFooter(current); }
         if (current.checking) current.request?.abort();
       }
     };
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('canvasdesktop:visibility', visibility);
+    motionPreference.addEventListener('change', () => { if (motionPreference.matches) { finishClose(); if (state) settleMotion(state); } });
     return { open, close: () => close(true), get isOpen() { return !!state; } };
   }
   window.RelatumReviewImport = { create };

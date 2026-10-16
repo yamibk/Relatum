@@ -106,6 +106,7 @@
     })();
   </script>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="review-controls.css">
 </head>
 <body class="start-page">
   <script>
@@ -1087,8 +1088,6 @@
                     aria-controls="review-card-deck-options">
                   <small data-role="review-card-deck-state" hidden></small>
                 </label>
-                <div class="review-card-deck-options" id="review-card-deck-options"
-                  data-role="review-card-deck-options" role="listbox" hidden></div>
               </div>
               <button type="button" class="study-icon-button" data-action="review-dialog-close" aria-label="关闭">×</button>
             </header>
@@ -1291,6 +1290,7 @@
 
               <p class="review-guide-tip">卡组只决定筛选与复习范围，标签只用于搜索，都不会改变复习日期。删除卡组时卡片会回到“未分类”；删除卡片后内容无法恢复，但已有的复习统计仍会保留。“再来一张”只会跳过当前卡，自由复习不会改变进度或间隔。</p>
               <p class="review-guide-tip">批量导入支持从表格复制粘贴，或选择 XLSX、CSV、TSV 文件。一行一张卡片，可组合问题、答案和补充说明；确认前会检查重复与错误，不会覆盖已有卡片或复习进度。</p>
+              <p class="review-guide-tip">“设置与预览”右侧的“分组（可选）”默认未分组，可选择已有卡组或输入新名称；新卡组只在确认导入时创建。面板与下拉列表支持滚轮滚动，Escape 优先收起下拉。</p>
             </div>
             <div class="study-dialog-actions">
               <span class="study-action-spacer"></span>
@@ -2084,6 +2084,7 @@
   <script src="calendar.js" defer></script>
   <script src="ledger-model.js" defer></script>
   <script src="ledger.js" defer></script>
+  <script src="review-controls.js" defer></script>
   <script src="review.js" defer></script>
   <script src="focus.js" defer></script>
   <script src="tooltip.js" defer></script>

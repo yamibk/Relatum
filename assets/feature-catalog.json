@@ -129,6 +129,8 @@
       "home": true,
       "role": "review-view",
       "scripts": [
+        "review-controls.js",
+        "review-controls.css",
         "review.js",
         "review-import.js",
         "review-import-model.js",

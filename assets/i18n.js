@@ -331,6 +331,7 @@
     '批量整理': 'Organize', '完成整理': 'Done', '修改状态…': 'Change status…',
     '批量导入': 'Import', '导入组件加载失败，请重试': 'Unable to load the importer. Please retry.',
     '批量导入支持从表格复制粘贴，或选择 XLSX、CSV、TSV 文件。一行一张卡片，可组合问题、答案和补充说明；确认前会检查重复与错误，不会覆盖已有卡片或复习进度。': 'Import copied cells or an XLSX, CSV, or TSV file. Each row becomes one card; combine columns into questions, answers, and notes. Duplicates and errors are checked before saving. Existing cards and review progress are preserved.',
+    '“设置与预览”右侧的“分组（可选）”默认未分组，可选择已有卡组或输入新名称；新卡组只在确认导入时创建。面板与下拉列表支持滚轮滚动，Escape 优先收起下拉。': 'Group (optional) in Map and preview starts ungrouped. Choose an existing deck or enter a new name; new decks are created only on import. Panels and menus support wheel scrolling. Escape closes an open menu first.',
     '批量修改状态': 'Change selected status', '恢复复习': 'Resume review',
     '按卡组筛选': 'Filter by deck', '新建卡组': 'New deck', '编辑卡组': 'Edit deck', '管理卡组': 'Manage deck',
     '全选当前结果': 'Select current results', '张已选': 'selected', '移动到卡组…': 'Move to deck…',

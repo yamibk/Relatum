@@ -1,4 +1,5 @@
 .review-import-dialog { z-index: 1000; }
+.review-import-dialog.is-closing { pointer-events: none; }
 .review-import-dialog .study-dialog-backdrop {
   background: color-mix(in srgb, var(--text) 18%, transparent);
   backdrop-filter: none;
@@ -6,8 +7,9 @@
 }
 .review-import-dialog .review-import-card {
   box-sizing: border-box;
-  width: min(1040px, calc(100vw - 36px));
-  max-height: calc(100dvh - 36px);
+  width: min(1120px, calc(100vw - 40px));
+  height: min(880px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
   display: flex;
   flex-direction: column;
   padding: 25px;
@@ -21,28 +23,53 @@
 }
 .review-import-card > .study-dialog-head { flex: none; margin-bottom: 18px; }
 .review-import-card .study-dialog-head h2 { margin: 5px 0 0; font-size: 22px; color: var(--text); }
-.review-import-card .study-icon-button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; color: var(--text-secondary); background: transparent; cursor: pointer; }
-.review-import-card .study-action { appearance: none; min-height: 38px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); background: var(--surface); font: 600 12px/1.3 var(--font-ui); cursor: pointer; transition: background 140ms ease; }
-.review-import-card .study-action:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.review-import-card .study-icon-button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; color: var(--text-secondary); background: transparent; cursor: pointer; transition: background 140ms ease, transform 160ms var(--easing-soft); }
+.review-import-card .study-icon-button:hover { background: color-mix(in srgb, var(--text) 5%, transparent); transform: rotate(5deg); }
+.review-import-card .study-icon-button:active { transform: scale(.94); }
+.review-import-card .study-action { appearance: none; min-height: 38px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); background: var(--surface); font: 600 12px/1.3 var(--font-ui); cursor: pointer; transition: background 140ms ease, border-color 140ms ease, transform 180ms var(--easing-soft), box-shadow 180ms var(--easing-soft); }
+.review-import-card .study-action:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, var(--surface)); border-color: var(--border-strong); transform: translateY(-1px); box-shadow: 0 5px 14px rgba(25, 28, 22, .05); }
+.review-import-card .study-action:active:not(:disabled) { transform: translateY(0) scale(.97); box-shadow: none; }
 .review-import-card .study-action.primary { color: var(--surface); background: var(--text); border-color: var(--text); }
 .review-import-card .study-action.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 88%, var(--surface)); }
 .review-import-card .study-action:disabled { opacity: .45; cursor: default; }
 .review-import-card > .study-dialog-actions { flex: none; margin-top: 14px; }
 .review-import-steps { display: flex; gap: 24px; flex-wrap: wrap; padding: 0 0 17px; border-bottom: 1px solid var(--border); color: var(--text-tertiary); font-size: 12px; }
 .review-import-steps .is-current { color: var(--text); font-weight: 650; }
-.review-import-body { overflow: auto; min-height: 0; padding: 18px 2px 2px; overscroll-behavior: contain; scrollbar-width: thin; }
+.review-import-body { flex: 1 1 0; overflow: auto; min-height: 0; padding: 18px 4px 4px; overscroll-behavior: contain; scrollbar-width: none; }
 .review-import-intro { margin: 0 0 15px; font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
-.review-import-paste { display: block; box-sizing: border-box; width: 100%; min-height: 245px; resize: vertical; padding: 18px; line-height: 1.8; tab-size: 15; }
-.review-import-card :is(input:not([type="checkbox"]),textarea,select) { min-width: 0; min-height: 36px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font: 12px/1.6 var(--font-ui); padding: 7px 10px; box-sizing: border-box; }
+.review-import-paste { display: block; box-sizing: border-box; width: 100%; height: clamp(220px, 38dvh, 390px); resize: none; padding: 18px; line-height: 1.8; tab-size: 15; }
+.review-import-card :is(input:not([type="checkbox"]),textarea,select) { min-width: 0; min-height: 36px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font: 12px/1.6 var(--font-ui); padding: 7px 10px; box-sizing: border-box; transition: border-color 150ms ease, background 150ms ease; }
+.review-import-card :is(input:not([type="checkbox"]),textarea):hover { border-color: var(--border-strong); }
+.review-import-drop.is-dragging textarea { border-color: var(--text-secondary); border-style: dashed; background: color-mix(in srgb, var(--text) 4%, var(--surface)); }
 .review-import-card textarea { font-family: var(--font-mono); }
+.review-import-card input:not([type="checkbox"]) { width: 100%; height: 38px; line-height: 20px; }
+.review-import-card input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.review-import-card input[type="number"]::-webkit-inner-spin-button,
+.review-import-card input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.review-import-card .review-choice-trigger { min-height: 38px; }
+.review-import-card .review-choice { max-width: 100%; }
 .review-import-card :is(input,textarea,select,button):focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
 .review-import-source-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
 .review-import-source-actions small { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
 .review-import-hint { font-size: 11px; color: var(--text-tertiary); line-height: 1.8; }
 .review-import-formats, .review-import-organize { margin-top: 18px; font-size: 12px; }
+.review-import-organize { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.review-import-organize-head { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+.review-import-disclosure { display: inline-flex; align-items: center; gap: 8px; min-width: 0; border: 0; padding: 8px 0; background: transparent; color: var(--text-secondary); font: 500 12px/1.5 var(--font-ui); text-align: left; cursor: pointer; transition: color 140ms ease; }
+.review-import-disclosure:hover { color: var(--text); }
+.review-import-disclosure::before { content: ''; flex: none; width: 5px; height: 5px; border: solid currentColor; border-width: 0 1px 1px 0; transform: rotate(-45deg); opacity: .65; transition: transform 160ms var(--easing-soft); }
+.review-import-disclosure[aria-expanded="true"]::before { transform: rotate(45deg); }
+.review-import-group-field { display: flex; gap: 10px; align-items: center; min-width: 0; font-size: 11px; color: var(--text-secondary); }
+.review-import-group-field > span:first-child { flex: none; }
+.review-import-group { width: 200px; min-width: 100px; }
+.review-import-organize-body { display: flow-root; box-sizing: border-box; }
+.review-import-organize-body > .review-import-format-grid { padding-top: 10px; }
+.review-import-organize-body.is-folding { overflow: hidden; }
+.review-import-organize-body[hidden] { display: none; }
 .review-import-card summary { cursor: pointer; color: var(--text-secondary); padding: 8px 0; }
 .review-import-format-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
-.review-import-field { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; font-size: 11px; color: var(--text-secondary); }
+.review-import-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; margin: 8px 0; font-size: 11px; color: var(--text-secondary); }
+.review-import-field > .review-choice { width: 100%; }
 .review-import-field small { color: var(--text-tertiary); }
 .review-import-mappings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .review-import-mapping { margin: 0; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
@@ -53,23 +80,29 @@
 .review-import-column > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-import-column button { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; padding: 3px 5px; flex: none; border-radius: 4px; }
 .review-import-column button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.review-import-column button { transition: background 130ms ease, transform 130ms ease; }
+.review-import-column button:active { transform: scale(.92); }
 .review-import-inline { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 .review-import-check { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); }
+.review-import-check input { accent-color: var(--text-secondary); cursor: pointer; }
 .review-import-preview-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 24px; }
 .review-import-preview-head h3 { font-size: 13px; }
 .review-import-pager { display: flex; gap: 10px; align-items: center; color: var(--text-tertiary); font-size: 11px; }
 .review-import-pager .study-action { min-width: 30px; padding: 5px 8px; }
 .review-import-previews { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); gap: 15px; align-items: start; }
-.review-import-table-wrap { max-height: 330px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; overscroll-behavior: contain; scrollbar-width: thin; }
+.review-import-table-wrap { max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; overscroll-behavior: contain; scrollbar-width: none; }
 .review-import-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
 .review-import-table th { position: sticky; top: 0; background: var(--surface); z-index: 1; color: var(--text-tertiary); font-weight: 500; }
 .review-import-table :is(th,td) { padding: 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .review-import-table :is(th,td):first-child { width: 55px; }
 .review-import-table td > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
 .review-import-table td > button { border: 0; background: none; padding: 0; color: var(--text); text-decoration: underline; cursor: pointer; font: inherit; }
+.review-import-table tbody tr { cursor: pointer; transition: background 140ms ease; }
+.review-import-table tbody tr:hover:not(.is-invalid) { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.review-import-table tbody tr.is-selected:not(.is-invalid) { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .review-import-table .is-invalid { background: color-mix(in srgb, #b44737 7%, transparent); }
 .review-import-table .is-invalid td:last-child { color: #b44737; }
-.review-import-sample { border: 1px solid var(--border); border-radius: 14px; padding: 16px; overflow-wrap: anywhere; max-height: 330px; overflow: auto; scrollbar-width: thin; }
+.review-import-sample { box-sizing: border-box; border: 1px solid var(--border); border-radius: 14px; padding: 18px; overflow-wrap: anywhere; max-height: 340px; overflow: auto; scrollbar-width: none; }
 .review-import-sample small { color: var(--text-tertiary); font-size: 10px; }
 .review-import-sample h4 { margin: 14px 0 18px; font-size: 18px; white-space: pre-wrap; }
 .review-import-sample h5 { margin: 16px 0 6px; font-size: 10px; color: var(--text-tertiary); font-weight: 500; }
@@ -85,7 +118,7 @@
 .review-import-error[hidden] { display: none; }
 .review-import-status { min-height: 0; margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); flex: none; }
 .review-import-status:empty { display: none; }
-.review-import-complete { text-align: center; padding: 35px 15px; }
+.review-import-complete { display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; height: 100%; text-align: center; padding: 35px 15px; }
 .review-import-complete h3 { font-size: 24px; margin: 15px 0; }
 .review-import-complete p { color: var(--text-secondary); font-size: 12px; line-height: 1.8; }
 .review-import-complete-mark { display: inline-grid; place-items: center; width: 48px; height: 48px; background: color-mix(in srgb, #547766 13%, transparent); border-radius: 50%; font-size: 24px; }
@@ -103,7 +136,7 @@ body.start-page[data-start-theme="dark"] .review-import-dialog .review-import-ca
 }
 body.start-page[data-start-theme="dark"] .review-import-dialog .study-dialog-backdrop { background: rgba(0, 0, 0, .45); }
 @media (max-width: 720px) {
-  .review-import-dialog .review-import-card { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); padding: 17px; }
+  .review-import-dialog .review-import-card { width: calc(100vw - 24px); height: min(880px, calc(100dvh - 24px)); max-height: calc(100dvh - 24px); padding: 17px; }
   .review-import-mappings, .review-import-previews, .review-import-format-grid { grid-template-columns: 1fr; }
   .review-import-steps { gap: 12px; font-size: 11px; }
   .review-import-paste { min-height: 200px; }
@@ -111,7 +144,13 @@ body.start-page[data-start-theme="dark"] .review-import-dialog .study-dialog-bac
   .review-import-preview-head { flex-wrap: wrap; }
   .review-import-source-actions small { margin-left: 0; }
   .review-import-card > .study-dialog-actions { flex-wrap: wrap; }
+  .review-import-organize-head { align-items: stretch; flex-direction: column; gap: 6px; }
+  .review-import-group-field { justify-content: space-between; }
+  .review-import-group { width: 65%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .review-import-dialog, .review-import-dialog .study-action { transition: none; animation: none; }
+  .review-import-dialog, .review-import-dialog *, .review-import-dialog *::before { transition: none !important; animation: none !important; }
+  .review-import-card :is(.study-action,.study-icon-button):hover,
+  .review-import-card :is(.study-action,.study-icon-button):active,
+  .review-import-column button:active { transform: none; }
 }

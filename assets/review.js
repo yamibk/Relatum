@@ -3,6 +3,8 @@
 
   const root = document.querySelector('[data-role="review-view"]');
   if (!root) return;
+  const controls = window.RelatumReviewControls.createManager(root);
+  let cardDeckControl = null;
 
   const PRAISE = {
     remembered: '记得 √',
@@ -61,7 +63,6 @@
   const cardMoreEl = root.querySelector('[data-role="review-card-more"]');
   const cardDeckPickerEl = root.querySelector('[data-role="review-card-deck-picker"]');
   const cardDeckInputEl = root.querySelector('input[name="deckName"]');
-  const cardDeckOptionsEl = root.querySelector('[data-role="review-card-deck-options"]');
   const cardDeckStateEl = root.querySelector('[data-role="review-card-deck-state"]');
   const deckDialogEl = root.querySelector('[data-role="review-deck-dialog"]');
   const deckFormEl = root.querySelector('[data-role="review-deck-form"]');
@@ -117,9 +118,6 @@
   let freeInitialized = false;
   let viewMode = 'session';
   let dialogCloseTimer = 0;
-  let deckPickerCloseTimer = 0;
-  let deckPickerItems = [];
-  let deckPickerIndex = -1;
   let deleteArmTimer = 0;
   let deleteArmed = false;
   let deckDialogCloseTimer = 0;
@@ -420,6 +418,7 @@
       : reviewSettings.scopeMode;
     scopeSelectEl.value = Array.from(scopeSelectEl.options).some((option) => option.value === currentValue)
       ? currentValue : 'all';
+    controls.sync();
   }
 
   function resetAnswerReveal(card) {
@@ -778,95 +777,8 @@
     cardDeckStateEl.textContent = name ? tr(existing ? '已有' : '新建') : '';
   }
 
-  function syncDeckPickerActiveOption() {
-    if (!cardDeckInputEl || !cardDeckOptionsEl) return;
-    const options = Array.from(cardDeckOptionsEl.querySelectorAll('[role="option"]'));
-    options.forEach((option, index) => {
-      const active = index === deckPickerIndex;
-      option.classList.toggle('is-active', active);
-      option.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
-    const active = options[deckPickerIndex];
-    if (active) cardDeckInputEl.setAttribute('aria-activedescendant', active.id);
-    else cardDeckInputEl.removeAttribute('aria-activedescendant');
-  }
-
-  function renderDeckPickerOptions() {
-    if (!cardDeckInputEl || !cardDeckOptionsEl) return;
-    const query = String(cardDeckInputEl.value || '').trim();
-    const key = deckNameKey(query);
-    const matches = reviewDecks
-      .filter((deck) => !key || deckNameKey(deck.name).includes(key))
-      .sort((left, right) => {
-        const leftKey = deckNameKey(left.name);
-        const rightKey = deckNameKey(right.name);
-        const leftRank = leftKey === key ? 0 : (leftKey.startsWith(key) ? 1 : 2);
-        const rightRank = rightKey === key ? 0 : (rightKey.startsWith(key) ? 1 : 2);
-        return leftRank - rightRank;
-      })
-      .slice(0, 7);
-    const exact = deckByName(query);
-    deckPickerItems = [];
-    if (!query) deckPickerItems.push({ kind: 'unfiled', name: '' });
-    matches.forEach((deck) => deckPickerItems.push({ kind: 'deck', name: deck.name }));
-    if (query && !exact) deckPickerItems.push({ kind: 'create', name: query });
-    if (query) deckPickerItems.push({ kind: 'unfiled', name: '' });
-
-    cardDeckOptionsEl.innerHTML = '';
-    deckPickerItems.forEach((item, index) => {
-      const option = document.createElement('button');
-      option.type = 'button';
-      option.id = 'review-card-deck-option-' + index;
-      option.className = 'review-card-deck-option';
-      option.setAttribute('role', 'option');
-      option.dataset.deckPickerIndex = String(index);
-
-      const label = document.createElement('span');
-      const note = document.createElement('small');
-      if (item.kind === 'deck') {
-        label.textContent = item.name;
-        note.textContent = tr('已有卡组');
-      } else if (item.kind === 'create') {
-        label.textContent = tr('新建卡组') + ' “' + item.name + '”';
-        note.textContent = tr('保存卡片时创建');
-      } else {
-        label.textContent = tr('未分类');
-        note.textContent = tr('留空保存');
-      }
-      option.append(label, note);
-      cardDeckOptionsEl.appendChild(option);
-    });
-    deckPickerIndex = deckPickerItems.length ? 0 : -1;
-    syncDeckPickerActiveOption();
-  }
-
-  function openDeckPicker() {
-    if (!cardDeckInputEl || !cardDeckOptionsEl) return;
-    clearTimeout(deckPickerCloseTimer);
-    renderDeckPickerOptions();
-    cardDeckOptionsEl.hidden = false;
-    cardDeckInputEl.setAttribute('aria-expanded', 'true');
-    requestAnimationFrame(() => cardDeckOptionsEl.classList.add('show'));
-  }
-
   function closeDeckPicker() {
-    if (!cardDeckInputEl || !cardDeckOptionsEl) return;
-    clearTimeout(deckPickerCloseTimer);
-    cardDeckOptionsEl.classList.remove('show');
-    cardDeckInputEl.setAttribute('aria-expanded', 'false');
-    cardDeckInputEl.removeAttribute('aria-activedescendant');
-    deckPickerCloseTimer = window.setTimeout(() => {
-      if (!cardDeckOptionsEl.classList.contains('show')) cardDeckOptionsEl.hidden = true;
-    }, 150);
-  }
-
-  function chooseDeckPickerItem(index) {
-    const item = deckPickerItems[index];
-    if (!item || !cardDeckInputEl) return;
-    cardDeckInputEl.value = item.kind === 'unfiled' ? '' : item.name;
-    syncDeckPickerState();
-    closeDeckPicker();
-    cardDeckInputEl.focus();
+    cardDeckControl?.close();
   }
 
   function addDeckOption(select, value, label) {
@@ -911,6 +823,7 @@
       batchDeckEl.value = '__keep__';
     }
     if (batchStatusEl) batchStatusEl.value = '__keep__';
+    controls.sync();
   }
 
   function filteredLibraryCards() {
@@ -1177,6 +1090,7 @@
   }
 
   function showMode(next) {
+    controls.close();
     const nextPrimaryMode = next === 'library' ? 'library' : (next === 'free' ? 'free' : 'scheduled');
     const nextViewMode = nextPrimaryMode === 'library' ? 'library' : 'session';
     const previousViewMode = viewMode;
@@ -1231,11 +1145,13 @@
     settingsFormControl('sessionLimit').value = String(reviewSettings.sessionLimit || 20);
     settingsFormControl('orderMode').value = reviewSettings.orderMode || 'due';
     settingsDialogEl.hidden = false;
+    controls.sync();
     requestAnimationFrame(() => settingsDialogEl.classList.add('show'));
   }
 
   function closeSettingsDialog() {
     if (!settingsDialogEl) return;
+    controls.close();
     settingsDialogEl.classList.remove('show');
     clearTimeout(settingsDialogCloseTimer);
     settingsDialogCloseTimer = window.setTimeout(() => {
@@ -1336,7 +1252,6 @@
       if (sequence !== importOpenSequence || root.getAttribute('aria-hidden') === 'true') return;
       if (!importController) importController = window.RelatumReviewImport.create({
         root,
-        defaultDeck: () => reviewDecks.find(deck => deck.id === activeDeckFilter)?.name || '',
         decks: () => reviewDecks,
         renderRich,
         afterImport: async () => {
@@ -1381,6 +1296,7 @@
     closeDeckPicker();
     formControl('tags').value = card && Array.isArray(card.tags) ? card.tags.join(', ') : '';
     formControl('status').value = card ? card.status : 'active';
+    controls.sync();
     if (cardMoreEl) cardMoreEl.open = false;
     if (dialogTitleEl) dialogTitleEl.textContent = tr(card ? '编辑卡片' : '新建卡片');
     clearTimeout(deleteArmTimer);
@@ -1393,12 +1309,13 @@
     requestAnimationFrame(() => dialogEl.classList.add('show'));
     setTimeout(() => {
       const prompt = formControl('prompt');
-      if (prompt) prompt.focus();
+      if (prompt && dialogEl.classList.contains('show') && !dialogEl.contains(document.activeElement) && !controls.contains(document.activeElement)) prompt.focus({ preventScroll: true });
     }, 80);
   }
 
   function closeDialog() {
     if (!dialogEl) return;
+    controls.close();
     clearTimeout(deleteArmTimer);
     deleteArmed = false;
     closeDeckPicker();
@@ -1560,6 +1477,7 @@
       selectedCardIds.clear();
       if (batchDeckEl) batchDeckEl.value = '__keep__';
       if (batchStatusEl) batchStatusEl.value = '__keep__';
+      controls.sync();
       await Promise.all([loadPool(true), loadLibrary(true)]);
       toast(message);
     } catch (error) {
@@ -1638,53 +1556,12 @@
     saveCard();
   });
   if (cardDeckInputEl) {
-    cardDeckInputEl.addEventListener('focus', openDeckPicker);
-    cardDeckInputEl.addEventListener('input', () => {
-      syncDeckPickerState();
-      openDeckPicker();
-    });
-    cardDeckInputEl.addEventListener('blur', () => {
-      clearTimeout(deckPickerCloseTimer);
-      deckPickerCloseTimer = window.setTimeout(closeDeckPicker, 100);
-    });
-    cardDeckInputEl.addEventListener('keydown', (event) => {
-      if (event.isComposing) return;
-      const isOpen = cardDeckOptionsEl && !cardDeckOptionsEl.hidden;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        if (!isOpen) {
-          openDeckPicker();
-          return;
-        }
-        const direction = event.key === 'ArrowDown' ? 1 : -1;
-        const length = deckPickerItems.length;
-        if (length) {
-          deckPickerIndex = (deckPickerIndex + direction + length) % length;
-          syncDeckPickerActiveOption();
-        }
-        return;
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        event.stopPropagation();
-        if (isOpen && deckPickerIndex >= 0) chooseDeckPickerItem(deckPickerIndex);
-        else openDeckPicker();
-        return;
-      }
-      if (event.key === 'Escape' && isOpen) {
-        event.preventDefault();
-        event.stopPropagation();
-        closeDeckPicker();
-      }
-      if (event.key === 'Tab') closeDeckPicker();
-    });
-  }
-  if (cardDeckOptionsEl) {
-    cardDeckOptionsEl.addEventListener('pointerdown', (event) => event.preventDefault());
-    cardDeckOptionsEl.addEventListener('click', (event) => {
-      const option = event.target.closest('[data-deck-picker-index]');
-      if (!option) return;
-      chooseDeckPickerItem(Number(option.dataset.deckPickerIndex));
+    cardDeckControl = controls.bindInput(cardDeckInputEl, {
+      label: () => tr('卡组（可选）'), allowCreate: true,
+      createHint: () => tr('保存卡片时创建'), value: () => cardDeckInputEl.value,
+      choices: () => [{ value: '', label: tr('未分类') }, ...reviewDecks.map(deck => ({ value: deck.name, label: deck.name }))],
+      choose(value) { cardDeckInputEl.value = value; syncDeckPickerState(); },
+      onInput: syncDeckPickerState,
     });
   }
   if (deckFormEl) deckFormEl.addEventListener('submit', (event) => {
@@ -1729,6 +1606,7 @@
       ? { scopeMode: 'deck', scopeDeckId: value.slice(5) }
       : { scopeMode: value, scopeDeckId: '' };
     scopeSelectEl.disabled = true;
+    controls.sync();
     try {
       await persistReviewSettings(change, '复习范围已切换');
     } catch (error) {
@@ -1736,6 +1614,7 @@
       toast((error && error.message) || '切换复习范围失败');
     } finally {
       scopeSelectEl.disabled = false;
+      controls.sync();
     }
   });
   if (window.RelatumI18n && typeof window.RelatumI18n.onChange === 'function') {
@@ -1746,7 +1625,8 @@
       }
       syncPrimaryModeControls();
       syncDeckPickerState();
-      if (cardDeckOptionsEl && !cardDeckOptionsEl.hidden) renderDeckPickerOptions();
+      controls.close();
+      controls.sync();
       if (viewMode === 'session') {
         if (current) renderCard(current);
         else renderEmpty();
@@ -1757,8 +1637,8 @@
   }
   document.addEventListener('keydown', (event) => {
     if (importController?.isOpen) return;
+    if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || controls.contains(event.target)) return;
     if (event.key === 'Escape') {
-      if (cardDeckOptionsEl && !cardDeckOptionsEl.hidden) { closeDeckPicker(); return; }
       if (dialogEl && dialogEl.classList.contains('show')) { closeDialog(); return; }
       if (deckDialogEl && deckDialogEl.classList.contains('show')) { closeDeckDialog(); return; }
       if (settingsDialogEl && settingsDialogEl.classList.contains('show')) { closeSettingsDialog(); return; }
@@ -1772,7 +1652,7 @@
         || (helpDialogEl && helpDialogEl.classList.contains('show'))
         || (libraryHelpDialogEl && libraryHelpDialogEl.classList.contains('show'))) return;
     const target = event.target;
-    if (target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (target && target.closest && target.closest('input, textarea, select, [role="combobox"], [contenteditable="true"]')) return;
     if (event.key === '?') {
       event.preventDefault();
       if (viewMode === 'library') openLibraryHelpDialog();
@@ -1810,6 +1690,7 @@
     return results;
   }
 
+  controls.enhanceAll();
   root.dataset.reviewMode = reviewMode;
   syncPrimaryModeControls();
   updateRatingGate();
@@ -1822,6 +1703,7 @@
     if (!event.detail || event.detail.current !== 'review') {
       importOpenSequence++;
       importController?.close();
+      controls.close();
       clearTransientMotion();
       cancelMathReadyWait();
       cancelMathLoadSchedule();
@@ -1830,6 +1712,7 @@
   window.addEventListener('pagehide', () => {
     importOpenSequence++;
     importController?.close();
+    controls.close();
     clearTransientMotion();
     cancelMathReadyWait();
     cancelMathLoadSchedule();

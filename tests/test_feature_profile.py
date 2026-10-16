@@ -172,6 +172,17 @@ class FeatureProfileTests(unittest.TestCase):
         self.assertFalse(profile.write_allowed("/api/study-task-update"))
         self.assertFalse(profile.write_allowed("/api/note-save"))
 
+    def test_review_controls_follow_review_feature(self):
+        source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
+        review = self.only('canvas', 'canvas.review')
+        other = self.only('canvas', 'canvas.library')
+        html = features.render_html(source, review, 'index.html')
+        self.assertLess(html.index('src="review-controls.js"'), html.index('src="review.js"'))
+        for resource in ('review-controls.js', 'review-controls.css'):
+            self.assertTrue(review.resource_allowed(resource))
+            self.assertFalse(other.resource_allowed(resource))
+            self.assertNotIn(resource, features.render_html(source, other, 'index.html'))
+
     def test_notes_only_uses_shared_shell(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
         html = features.render_html(source, self.only("notes"), "index.html")
