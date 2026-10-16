@@ -16983,6 +16983,38 @@ body.start-page[data-start-theme="dark"] .review-help-dialog .study-dialog-card 
   align-items: center;
   gap: 6px;
 }
+.review-continue-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-left: auto;
+  min-width: 0;
+}
+.review-continue-hint { color: var(--text-tertiary); font-size: 11px; line-height: 1.5; }
+.review-continue-hint[hidden] { display: none; }
+body.start-page .review-actions.is-checking .review-rating-group .review-action {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  color: var(--text-tertiary);
+  box-shadow: none;
+  transform: none;
+  cursor: default;
+}
+.review-actions.is-checking .review-rating-group .review-action kbd {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-tertiary);
+}
+body.start-page .review-embedded[data-review-phase="feedback"] .review-continue-actions .review-action {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--surface);
+}
+body.start-page .review-embedded[data-review-phase="feedback"] .review-continue-actions .review-action kbd {
+  background: color-mix(in srgb, var(--surface) 16%, transparent);
+  color: color-mix(in srgb, var(--surface) 72%, transparent);
+}
 .review-action {
   appearance: none;
   min-height: 40px;

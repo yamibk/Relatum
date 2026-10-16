@@ -83,7 +83,10 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
     assert.deepEqual(report.ratingPending, { disabled: false, opacity: '1', ariaDisabled: 'true', focused: true, sameButtons: true, sameRoot: true });
     await page.evaluate(() => {
       for (const action of ['review-remembered', 'review-vague', 'review-forgot', 'review-next']) document.querySelector('[data-action="' + action + '"]').click();
-      for (const key of ['1', '2', '3', 'n']) document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      for (const key of ['1', '2', '3', 'n']) {
+        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+        document.activeElement.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+      }
     });
     assert.equal(requestCount, 1); assert.equal(await prompt.textContent(), first, 'save pending does not advance');
     release(); release = null;
@@ -93,6 +96,10 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
     fail = false;
     await page.locator('[data-action="review-mark-retry"]').click(); for (let i = 0; !release && i < 50; i++) await pause(20);
     assert(release); release(); release = null;
+    await page.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewPhase === 'feedback');
+    assert.equal(await prompt.textContent(), first);
+    assert(await page.locator('[data-role="review-answer-reveal"]').isVisible());
+    await page.locator('[data-action="review-next"]').click();
     await page.waitForFunction(value => document.querySelector('[data-role="review-prompt"]').textContent !== value, first);
     await page.waitForFunction(() => document.querySelector('.review-actions').getAttribute('aria-busy') === 'false');
     assert.equal(await page.locator('[data-role="review-seen"]').textContent(), '1');
@@ -100,6 +107,7 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
     await remember.evaluate(button => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
       for (const key of ['1', '2', '3']) button.dispatchEvent(new KeyboardEvent('keydown', { key, repeat: true, bubbles: true }));
+      for (const key of ['1', '2', '3']) button.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
       button.dispatchEvent(new KeyboardEvent('keydown', { key: '1', isComposing: true, keyCode: 229, bubbles: true }));
     });
     await pause(80); assert.equal(requestCount, 2); assert.equal(await prompt.textContent(), second);
@@ -108,11 +116,14 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
     await page.unroute('**/api/review-mark');
     await page.keyboard.press('Space'); assert(await page.locator('[data-role="review-answer-reveal"]').isVisible());
     await page.keyboard.press('Space'); assert(await page.locator('[data-role="review-answer-reveal"]').isHidden());
-    await page.keyboard.press('n'); assert.notEqual(await prompt.textContent(), second);
+    await page.keyboard.press('n'); assert.equal(await prompt.textContent(), second);
+    await page.keyboard.press('Enter'); assert.notEqual(await prompt.textContent(), second);
     for (let i = 0; i < 9; i++) {
       const before = Number(await page.locator('[data-role="review-seen"]').textContent());
       await page.keyboard.press('1');
       await page.waitForFunction(value => Number(document.querySelector('[data-role="review-seen"]').textContent) === value, before + 1);
+      await page.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewPhase === 'feedback');
+      await page.keyboard.press('Enter');
     }
     assert((await page.locator('[data-role="review-empty"]').textContent()).includes('这一轮完成了'));
     assert(await remember.isDisabled(), 'no remaining card is truly disabled');
@@ -123,6 +134,8 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
       for (let i = 0; i < count; i++) {
         const before = Number(await page.locator('[data-role="review-seen"]').textContent()); await remember.click();
         await page.waitForFunction(value => Number(document.querySelector('[data-role="review-seen"]').textContent) === value, before + 1);
+        await page.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewPhase === 'feedback');
+        await page.keyboard.press('Enter');
       }
       if (round === 0) { await page.locator('[data-action="review-session-again"]').click(); await page.waitForFunction(() => !document.querySelector('[data-action="review-remembered"]').disabled); }
     }
@@ -132,6 +145,7 @@ const old = name => execFileSync('git', ['show', baseline + ':assets/' + name], 
     await page.waitForFunction(() => document.querySelector('[data-role="review-content"]').hidden === false);
     const freePrompt = await prompt.textContent(); await page.keyboard.press('1');
     assert(await page.locator('[data-role="review-answer-reveal"]').isVisible());
+    await page.keyboard.press('d'); assert.equal(await prompt.textContent(), freePrompt);
     await page.keyboard.press('d'); assert.notEqual(await prompt.textContent(), freePrompt);
     assert.equal((await api('/api/review-pool')).reviewedToday, beforeFree, 'free mode writes no rating');
     await page.emulateMedia({ reducedMotion: 'reduce' }); await page.keyboard.press('d');

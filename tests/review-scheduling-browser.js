@@ -35,7 +35,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   async function open() {
     const context = await browser.newContext({ viewport: { width: 1360, height: 960 }, timezoneId: 'Asia/Shanghai' });
     await context.addInitScript(stamp => {
-      window.reviewTestNow = stamp + '+08:00';
+      window.reviewTestNow = sessionStorage.getItem('review-test-clock') || stamp + '+08:00';
       const NativeDate = Date;
       window.Date = class extends NativeDate {
         constructor(...args) { super(...(args.length ? args : [window.reviewTestNow])); }
@@ -57,11 +57,18 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const prompt = page => page.locator('[data-role="review-prompt"]');
   const seen = async page => Number(await page.locator('[data-role="review-seen"]').textContent());
   const remaining = async page => Number(await page.locator('[data-role="review-total"]').textContent());
-  async function grade(page, rating = 'remembered') {
+  async function grade(page, rating = 'remembered', advance = true) {
+    const before = await prompt(page).textContent();
     const response = page.waitForResponse(response => response.url().endsWith('/api/review-mark'));
     await page.locator('[data-action="review-' + rating + '"]').click();
     const result = await (await response).json();
     await page.waitForFunction(() => document.querySelector('.review-actions').getAttribute('aria-busy') === 'false');
+    if (result.ok) {
+      assert.equal(await prompt(page).textContent(), before, 'saved rating stays on its original card');
+      assert(await page.locator('[data-role="review-answer-reveal"]').isVisible());
+      assert.equal(await page.locator('[data-role="review-next-label"]').textContent(), '继续');
+      if (advance) await page.locator('[data-action="review-next"]').click();
+    }
     return result;
   }
   try {
@@ -77,7 +84,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await prompt(page).textContent(), original[1]);
     assert.deepEqual([await remaining(page), await seen(page)], [6, 0]);
     assert.equal(await page.locator('[data-role="review-session-progress"]').textContent(), '本轮完成 0 / 6');
-    await page.locator('[data-action="review-next"]').click(); assert.equal(await prompt(page).textContent(), original[2]);
+    await page.locator('[data-action="review-next"]').click();
+    assert.equal(await prompt(page).textContent(), original[1], 'skip first reveals the original answer');
+    await page.keyboard.press('Enter'); assert.equal(await prompt(page).textContent(), original[2]);
     assert.equal((await api('/api/review-pool')).reviewedToday, 1, 'skip does not score');
     await grade(page); await grade(page);
     assert.equal(await prompt(page).textContent(), original[0], 'missed card returns after three other cards');
@@ -121,7 +130,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const carryDeck = await deck('Carry', 1); await scope(carryDeck);
     const carry = await open(); await grade(carry, 'forgot'); await grade(carry);
     fs.writeFileSync(clock, '2026-10-17T00:00:00');
-    await carry.evaluate(() => { window.reviewTestNow = '2026-10-17T00:00:00+08:00'; });
+    await carry.evaluate(() => { window.reviewTestNow = '2026-10-17T00:00:00+08:00'; sessionStorage.setItem('review-test-clock', window.reviewTestNow); });
     let carryPosts = 0; carry.on('request', request => { if (request.url().endsWith('/api/review-mark')) carryPosts++; });
     await carry.locator('[data-action="review-remembered"]').click();
     await carry.waitForFunction(() => document.querySelector('[data-role="review-relearning"]').textContent.includes('0/2'));
@@ -147,11 +156,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await retry.locator('[data-action="review-remembered"]').evaluate(button => button.click());
     await retry.locator('[data-action="review-next"]').evaluate(button => button.click());
     assert.equal(requests.length, 1, 'uncertain save blocks new grades and skips');
-    await retry.locator('[data-action="review-mark-retry"]').click();
+    await retry.locator('[data-action="review-mark-retry"]').focus(); await retry.keyboard.press('Enter');
     await retry.waitForFunction(() => document.querySelector('.review-actions').getAttribute('aria-busy') === 'false');
     assert.deepEqual(requests[1], requests[0], 'retry uses identical ID, rating, date and version');
     assert.equal((await allCards()).find(card => card.deckId === retryDeck).reviewCount, 2, 'response loss cannot supply a second Remembered');
     assert.equal(await retry.locator('[data-role="review-relearning"]').textContent(), '补练 · 连续记得 1/2');
+    await retry.locator('[data-action="review-next"]').click();
     await retry.unroute('**/api/review-mark'); await grade(retry);
     await retry.context().close(); report.checks.push('lost committed response, explicit retry, pending lock and exactly-once scoring');
 
@@ -234,6 +244,129 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await race.screenshot({ path: path.join(root, 'help-dark-english-narrow.png') });
     await race.keyboard.press('Escape');
     await race.context().close(); report.checks.push('compact help, collapsed details, keyboard toggle, English, light/dark, narrow window and reduced motion');
+
+    const checkDeck = await deck('Check', 8); await scope(checkDeck);
+    const check = await open(), checkPrompt = () => prompt(check).textContent();
+    const phase = () => check.locator('.review-embedded').getAttribute('data-review-phase');
+    const next = check.locator('[data-action="review-next"]'), answer = check.locator('[data-role="review-answer-reveal"]');
+    const firstCheck = await checkPrompt();
+    await check.keyboard.press('Space');
+    await answer.evaluate(element => { window.checkedAnswerChild = element.firstChild; });
+    await check.locator('[data-role="review-draft"]').fill('keep while checking');
+    await grade(check, 'remembered', false);
+    assert.equal(await checkPrompt(), firstCheck);
+    assert.equal(await check.locator('[data-role="review-draft"]').inputValue(), 'keep while checking');
+    assert(await answer.evaluate(element => element.firstChild === window.checkedAnswerChild), 'already revealed answer is reused');
+    assert.equal(await check.locator('[data-action="review-remembered"]').getAttribute('aria-disabled'), 'true');
+    const scored = (await api('/api/review-pool')).reviewedToday;
+    await check.locator('[data-action="review-remembered"]').evaluate(button => button.click());
+    assert.equal((await api('/api/review-pool')).reviewedToday, scored);
+    await check.keyboard.press('1');
+    assert.notEqual(await checkPrompt(), firstCheck);
+    assert.equal(await phase(), 'question');
+    assert.equal(await check.locator('[data-role="review-draft"]').inputValue(), '');
+    assert(await answer.isHidden());
+    assert.equal((await api('/api/review-pool')).reviewedToday, scored, 'continuation never rates the following card');
+
+    for (const key of ['2', '3', 'n', 'D', 'Space', 'Enter']) {
+      const before = await checkPrompt(); await next.click();
+      assert.equal(await phase(), 'feedback'); assert.equal(await checkPrompt(), before);
+      await check.keyboard.press(key); assert.equal(await phase(), 'question');
+      assert.notEqual(await checkPrompt(), before);
+    }
+    assert.equal((await api('/api/review-pool')).reviewedToday, scored, 'all seven continuation keys preserve ratings');
+
+    let before = await checkPrompt();
+    await check.keyboard.down('n');
+    await check.keyboard.down('n'); assert.equal(await checkPrompt(), before, 'held trigger cannot continue');
+    await check.keyboard.up('n');
+    await check.keyboard.down('n');
+    const afterContinue = await checkPrompt(); assert.notEqual(afterContinue, before);
+    await check.keyboard.down('n'); assert.equal(await phase(), 'question', 'held continue cannot act on the next card');
+    await check.keyboard.up('n');
+    await next.dblclick(); assert.equal(await phase(), 'feedback', 'double-click only reveals once');
+    assert.equal(await checkPrompt(), afterContinue);
+    await check.locator('[data-role="review-draft"]').focus(); await check.keyboard.press('Enter');
+    assert.equal(await phase(), 'feedback', 'editing a draft cannot continue');
+    await check.locator('[data-role="review-prompt"]').click();
+    await next.focus(); await check.keyboard.press('Control+Enter'); assert.equal(await phase(), 'feedback');
+    await check.evaluate(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', isComposing: true, keyCode: 229, bubbles: true }));
+    });
+    assert.equal(await phase(), 'feedback');
+    await check.locator('[data-action="review-help-open"]').click();
+    await check.keyboard.press('Enter'); assert.equal(await phase(), 'feedback', 'help isolates continuation');
+    await check.keyboard.press('Escape');
+    await check.locator('[data-action="review-help-open"]').focus(); await check.keyboard.press('Enter');
+    assert(await check.locator('[data-role="review-help-dialog"]').isVisible(), 'Enter activates a focused help button instead of continuing');
+    assert.equal(await phase(), 'feedback'); await check.keyboard.press('Escape');
+    await check.getByRole('combobox', { name: '选择复习范围', exact: true }).click();
+    await check.keyboard.press('Escape'); assert.equal(await phase(), 'feedback', 'dropdown Escape only closes the dropdown');
+    await check.evaluate(() => {
+      document.documentElement.dataset.desktopMinimized = '1'; window.dispatchEvent(new Event('canvasdesktop:visibility'));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+    });
+    assert.equal(await phase(), 'feedback');
+    await check.evaluate(() => { delete document.documentElement.dataset.desktopMinimized; window.dispatchEvent(new Event('canvasdesktop:visibility')); });
+    await check.evaluate(() => {
+      document.querySelector('.review-embedded').setAttribute('aria-hidden', 'true');
+      document.dispatchEvent(new CustomEvent('start:viewchange', { detail: { previous: 'review', current: 'recent' } }));
+      document.querySelector('.review-embedded').setAttribute('aria-hidden', 'false');
+    });
+    await check.evaluate(() => CanvasReview.activate());
+    assert.equal(await phase(), 'feedback', 'temporary page leave preserves the checked card');
+    await check.evaluate(() => RelatumI18n.setLanguage('en'));
+    assert.equal(await check.locator('[data-role="review-next-label"]').textContent(), 'Continue');
+    assert.equal(await check.locator('[data-role="review-continue-hint"]').textContent(), 'Press a key to continue');
+    assert(await answer.isVisible());
+    await check.evaluate(() => document.body.dataset.startTheme = 'dark');
+    await check.setViewportSize({ width: 640, height: 880 }); await check.emulateMedia({ reducedMotion: 'reduce' });
+    assert(await check.locator('.review-rating-group').evaluate(group => {
+      const colors = Array.from(group.querySelectorAll('button'), button => getComputedStyle(button).backgroundColor);
+      return new Set(colors).size === 1;
+    }), 'all ratings share the subdued background in dark mode');
+    await next.scrollIntoViewIfNeeded();
+    await check.screenshot({ path: path.join(root, 'checking-dark-en.png') });
+    await next.click(); assert.equal(await phase(), 'question');
+    await check.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
+    await check.locator('[data-action="review-show-free"]').first().click();
+    await check.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewMode === 'free' && !document.querySelector('[data-role="review-content"]').hidden);
+    const freeBefore = await checkPrompt(), freeSeen = await seen(check);
+    await check.keyboard.press('d');
+    assert.equal(await phase(), 'feedback'); assert.equal(await checkPrompt(), freeBefore);
+    assert.equal(await seen(check), freeSeen, 'revealing the answer does not count as browsing another card');
+    await next.click();
+    assert.equal(await seen(check), freeSeen + 1); assert.notEqual(await checkPrompt(), freeBefore);
+    assert.equal((await api('/api/review-pool')).reviewedToday, scored);
+    await next.click();
+    await check.locator('[data-action="review-show-scheduled"]').click();
+    await check.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewMode === 'scheduled' && document.querySelector('.review-embedded').dataset.reviewPhase === 'question');
+    await next.click();
+    await check.getByRole('combobox', { name: '选择复习范围', exact: true }).click();
+    await check.getByRole('option', { name: /^Target ·/ }).click();
+    await check.waitForFunction(id => document.querySelector('[data-role="review-scope-select"]').value === 'deck:' + id && document.querySelector('.review-embedded').dataset.reviewPhase === 'question' && document.querySelector('[data-role="review-prompt"]').textContent.startsWith('Target '), targetDeck);
+    await next.click();
+    const scoresBeforeDay = (await allCards()).reduce((sum, card) => sum + card.reviewCount, 0);
+    fs.writeFileSync(clock, '2026-10-18T00:00:00');
+    await check.evaluate(() => { window.reviewTestNow = '2026-10-18T00:00:00+08:00'; sessionStorage.setItem('review-test-clock', window.reviewTestNow); });
+    await check.keyboard.press('Enter');
+    await check.waitForFunction(() => document.querySelector('.review-embedded').dataset.reviewPhase === 'question' && document.querySelector('[data-action="review-remembered"]').getAttribute('aria-disabled') === 'false');
+    assert.equal((await allCards()).reduce((sum, card) => sum + card.reviewCount, 0), scoresBeforeDay, 'midnight continuation refreshes without rating');
+    await next.click(); await check.reload();
+    await check.waitForFunction(() => document.querySelector('[data-action="review-remembered"]').getAttribute('aria-disabled') === 'false');
+    assert.equal(await phase(), 'question', 'answer checking is not persisted across a full reload');
+    await check.context().close();
+
+    const emptyDeck = await deck('Empty', 1);
+    const emptyCard = (await allCards()).find(card => card.deckId === emptyDeck);
+    await api('/api/review-card-update', { ...emptyCard, answer: '' }); await scope(emptyDeck);
+    const empty = await open();
+    await grade(empty, 'remembered', false);
+    assert.equal(await empty.locator('[data-role="review-answer-reveal"]').textContent(), '未填写答案');
+    assert(await empty.locator('[data-role="review-empty"]').isHidden(), 'last card stays available for checking');
+    await empty.keyboard.press('Enter'); assert(await empty.locator('[data-role="review-empty"]').isVisible());
+    await empty.context().close();
+    report.checks.push('answer reuse, retained draft, seven continuation keys, held keys/double-click guards, input/IME/modal/dropdown isolation, temporary leave, minimized state, translations, free review, scope/mode/day changes, reload, empty answer and last-card checking');
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(root, 'report.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2));
   } catch (error) {

@@ -38,6 +38,7 @@
   const questionHintEl = root.querySelector('[data-role="review-question-hint"]');
   const nextLabelEl = root.querySelector('[data-role="review-next-label"]');
   const nextShortcutEl = root.querySelector('[data-role="review-next-shortcut"]');
+  const continueHintEl = root.querySelector('[data-role="review-continue-hint"]');
   const ratingButtons = Array.from(root.querySelectorAll('[data-action="review-remembered"], [data-action="review-vague"], [data-action="review-forgot"]'));
   const nextButtons = Array.from(root.querySelectorAll('[data-action="review-next"]'));
   const actionsEl = root.querySelector('.review-actions');
@@ -114,6 +115,9 @@
   let sessionGeneration = 0;
   let statsSequence = 0;
   let pendingRating = null;
+  let feedback = null;
+  const heldReviewKeys = new Set();
+  const continueKeys = new Set(['1', '2', '3', 'n', 'd', ' ', 'enter']);
   let preloadHandle = 0;
   let preloadUsesIdle = false;
   let preloadPromise = null;
@@ -449,13 +453,24 @@
 
   function updateRatingGate() {
     const locked = marking || (reviewMode === 'scheduled' && (loading || !!pendingRating));
-    const update = (button, unavailable) => {
+    const update = (button, unavailable, actionLocked) => {
       if (button.disabled !== unavailable) button.disabled = unavailable;
-      setAttribute(button, 'aria-disabled', String(unavailable || locked));
+      setAttribute(button, 'aria-disabled', String(unavailable || actionLocked));
     };
-    ratingButtons.forEach(button => update(button, !current || reviewMode === 'free'));
-    nextButtons.forEach(button => update(button, !current));
+    ratingButtons.forEach(button => update(button, !current || reviewMode === 'free', locked || !!feedback));
+    nextButtons.forEach(button => update(button, !current, locked || (!!feedback && !feedback.ready)));
     setAttribute(actionsEl, 'aria-busy', String(marking));
+    if (actionsEl && actionsEl.classList.contains('is-checking') !== !!feedback) actionsEl.classList.toggle('is-checking', !!feedback);
+    setAttribute(root, 'data-review-phase', feedback ? (marking ? 'saving' : feedback.ready ? 'feedback' : 'retry') : 'question');
+    setText(nextLabelEl, tr(feedback ? '继续' : reviewMode === 'free' ? '下一张' : '再来一张'));
+    setText(nextShortcutEl, feedback ? 'Enter' : reviewMode === 'free' ? 'N / D' : 'N');
+    if (continueHintEl) {
+      continueHintEl.hidden = !feedback?.ready;
+      setText(continueHintEl, tr('按任意键继续'));
+      const keys = tr('可按 1、2、3、N、D、空格或 Enter 继续');
+      setAttribute(continueHintEl, 'title', keys);
+      setAttribute(continueHintEl, 'aria-label', keys);
+    }
     if (retryEl) retryEl.hidden = !(pendingRating?.uncertain && reviewMode === 'scheduled' && viewMode === 'session');
     setAttribute(retryButton, 'aria-disabled', String(marking));
   }
@@ -488,16 +503,22 @@
     updateRatingGate();
   }
 
-  function toggleAnswer() {
+  function revealAnswer(allowEmpty) {
     if (!current || !answerRevealEl || !answerPillEl) return;
     const answer = String(current.answer || '').trim();
-    if (!answer) return;
+    if ((!answer && !allowEmpty) || !answerRevealEl.hidden) return;
+    if (answer) renderRich(answerRevealEl, answer);
+    else setText(answerRevealEl, tr('未填写答案'));
+    answerRevealEl.hidden = false;
+    answerRevealed = true;
+    replay(answerRevealEl, 'reveal-in');
+    setText(answerPillEl, tr('收起答案'));
+  }
+
+  function toggleAnswer() {
+    if (!current || !answerRevealEl || !answerPillEl) return;
     if (answerRevealEl.hidden) {
-      renderRich(answerRevealEl, answer);
-      answerRevealEl.hidden = false;
-      answerRevealed = true;
-      replay(answerRevealEl, 'reveal-in');
-      setText(answerPillEl, tr('收起答案'));
+      revealAnswer(!!feedback);
     } else {
       answerRevealEl.hidden = true;
       answerRevealed = false;
@@ -564,6 +585,7 @@
   }
 
   function renderCard(card) {
+    feedback = null;
     current = card || null;
     updateStats();
     if (!current) {
@@ -578,6 +600,21 @@
       contentEl.hidden = false;
       contentEl.scrollTop = 0;
     }
+    updateCardMetadata();
+    setText(promptEl, current.prompt || '未命名问题');
+    if (questionHintEl) {
+      setText(questionHintEl, tr(reviewMode === 'free'
+        ? '点击“下一张”核对答案，再继续。'
+        : '想好后选择记忆程度，核对答案后再继续。'));
+    }
+    if (notesEl) notesEl.hidden = !renderRich(notesEl, current.notes);
+    if (draftEl) draftEl.value = '';
+    resetAnswerReveal(current);
+    updateSessionProgress();
+  }
+
+  function updateCardMetadata() {
+    if (!current) return;
     if (maturityEl) {
       setText(maturityEl, current.maturity || '生');
       setAttribute(maturityEl, 'data-maturity', current.maturity || '生');
@@ -600,18 +637,6 @@
       cardTagsEl.hidden = tags.length === 0;
       setText(cardTagsEl, tags.length ? tags.map((tag) => '#' + tag).join(' · ') : '');
     }
-    setText(promptEl, current.prompt || '未命名问题');
-    if (questionHintEl) {
-      setText(questionHintEl, tr(reviewMode === 'free'
-        ? '想好后查看答案核对，或直接换到下一张。'
-        : '想好后可以直接评分，也可以查看答案再核对。'));
-    }
-    setText(nextLabelEl, tr(reviewMode === 'free' ? '下一张' : '再来一张'));
-    setText(nextShortcutEl, reviewMode === 'free' ? 'N / D' : 'N');
-    if (notesEl) notesEl.hidden = !renderRich(notesEl, current.notes);
-    if (draftEl) draftEl.value = '';
-    resetAnswerReveal(current);
-    updateSessionProgress();
   }
 
   function nextCard() {
@@ -677,7 +702,10 @@
       const preserved = !reset && freeInitialized
         ? freeEligibleCards().find((card) => card.id === freeCurrentId)
         : null;
-      if (preserved) renderCard(preserved);
+      if (preserved && feedback && feedback.day === todayStr() && feedback.cardId === preserved.id) {
+        current = preserved;
+        updateCardMetadata(); updateStats(); updateRatingGate();
+      } else if (preserved) renderCard(preserved);
       else nextFreeCard();
       return true;
     } finally {
@@ -687,17 +715,40 @@
 
   async function skipCard() {
     if (marking || !current) return;
+    if (feedback) { await continueCard(); return; }
+    if (pendingRating || loading) return;
+    if (reviewMode === 'scheduled' && (!loaded || loadedDay !== todayStr())) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
+    beginFeedback('skip', true);
+  }
+
+  function beginFeedback(kind, ready) {
+    feedback = { kind, ready, cardId: current.id, mode: reviewMode, scope: scopeKey(), day: todayStr(), celebrate: false };
+    revealAnswer(true);
+    updateRatingGate();
+  }
+
+  async function continueCard() {
+    if (!feedback?.ready || marking || pendingRating || loading || !current) return;
+    const previous = feedback;
+    if (previous.day !== todayStr() || previous.mode !== reviewMode || previous.scope !== scopeKey() || previous.cardId !== current.id
+        || (reviewMode === 'scheduled' && (!loaded || loadedDay !== todayStr()))) {
+      feedback = null;
+      if (reviewMode === 'free') await ensureFreeReview(false);
+      else await loadPool(true);
+      return;
+    }
+    feedback = null;
     if (reviewMode === 'free') {
       nextFreeCard();
       if (current) toast('下一张 √');
-      return;
+    } else {
+      if (previous.kind === 'skip') {
+        const index = pool.findIndex(card => card.id === current.id);
+        if (index >= 0) pool.push(pool.splice(index, 1)[0]);
+      }
+      celebratePulse = previous.celebrate;
+      nextCard(); celebratePulse = false;
     }
-    if (pendingRating || loading) return;
-    if (!loaded || loadedDay !== todayStr()) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
-    if (pool.length < 2) return;
-    const index = pool.findIndex((card) => card.id === current.id);
-    if (index >= 0) pool.push(pool.splice(index, 1)[0]);
-    nextCard();
   }
 
   function scopeKey() {
@@ -808,13 +859,14 @@
   }
 
   async function mark(rating) {
-    if (!current || marking || pendingRating || loading || reviewMode === 'free') return;
+    if (!current || feedback || marking || pendingRating || loading || reviewMode === 'free') return;
     if (!loaded || loadedDay !== todayStr()) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
     pendingRating = {
       session: sessionGeneration, uncertain: false,
       payload: { cardId: current.id, rating, requestId: window.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2),
         expectedReviewCount: Number(current.reviewCount || 0), reviewDay: loadedDay },
     };
+    beginFeedback('rating', false);
     await submitRating(pendingRating);
   }
 
@@ -830,7 +882,8 @@
       pendingRating = null;
       libraryCards = libraryCards.map(card => card.id === updated.id && Number(card.reviewCount || 0) <= updated.reviewCount ? updated : card);
       const sameSession = submission.session === sessionGeneration && scheduledVisible()
-        && submission.payload.reviewDay === todayStr() && json.scopeKey === scopeKey();
+        && submission.payload.reviewDay === todayStr() && json.scopeKey === scopeKey()
+        && feedback?.kind === 'rating' && feedback.cardId === submission.payload.cardId;
       if (sameSession) {
         const previousCompleted = completedToday;
         applyStatistics(json);
@@ -839,10 +892,13 @@
         else if (updated.status === 'active' && isDue(updated)) pool.splice(Math.min(3, pool.length), 0, updated);
         if (completedToday > previousCompleted) { bumpSeen(); floatPlusOne(); }
         praise(submission.payload.rating);
-        celebratePulse = updated.dailyReview.completed;
-        nextCard(); celebratePulse = false;
+        current = updated;
+        updateCardMetadata(); updateSessionProgress();
+        feedback.ready = true;
+        feedback.celebrate = updated.dailyReview.completed;
         if (json.idempotent) await refreshRatingStatistics();
       } else {
+        if (feedback?.cardId === submission.payload.cardId && feedback.kind === 'rating') feedback = null;
         loaded = false;
         if (scheduledVisible()) await loadPool(true);
         else if (viewMode === 'library' && root.getAttribute('aria-hidden') !== 'true') await refreshRatingStatistics();
@@ -851,6 +907,7 @@
     } catch (error) {
       if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
         pendingRating = null;
+        if (feedback?.cardId === submission.payload.cardId && feedback.kind === 'rating') feedback = null;
         if (error.status === 409 || error.status === 404) {
           loaded = false;
           if (scheduledVisible()) {
@@ -1216,6 +1273,7 @@
     const previousReviewMode = reviewMode;
     if (nextViewMode !== previousViewMode || (nextPrimaryMode !== 'library' && nextPrimaryMode !== previousReviewMode)) {
       sessionGeneration++; statsSequence++;
+      feedback = null;
     }
     transitionModePanels(nextViewMode);
     viewMode = nextViewMode;
@@ -1246,6 +1304,8 @@
   }
 
   async function persistReviewSettings(change, message) {
+    feedback = null;
+    updateRatingGate();
     sessionGeneration++; statsSequence++; loaded = false;
     const payload = Object.assign({}, reviewSettings, change || {});
     const json = await post('/api/review-settings', payload);
@@ -1642,6 +1702,9 @@
     const button = event.target.closest('button');
     const action = button && button.dataset.action;
     if (!action) return;
+    if ((event.ctrlKey || event.metaKey || event.altKey) && (ratingButtons.includes(button) || nextButtons.includes(button))) {
+      event.preventDefault(); return;
+    }
     if (action === 'review-mark-retry') { if (pendingRating) submitRating(pendingRating); return; }
     if (action === 'review-show-scheduled') { showMode('scheduled'); return; }
     if (action === 'review-show-free') { showMode('free'); return; }
@@ -1672,7 +1735,7 @@
     if (action === 'review-deck-delete') { deleteCurrentDeck(); return; }
     if (action === 'review-batch-delete') { deleteSelectedCards(); return; }
     if (action === 'review-show-answer') { toggleAnswer(); return; }
-    if (event.detail > 1 && ratingButtons.includes(button)) return;
+    if (event.detail > 1 && (ratingButtons.includes(button) || nextButtons.includes(button))) return;
     if (action === 'review-next') skipCard();
     else if (action === 'review-remembered') mark('remembered');
     else if (action === 'review-vague') mark('vague');
@@ -1756,16 +1819,25 @@
       controls.close();
       controls.refresh();
       if (viewMode === 'session') {
-        if (current) renderCard(current);
+        if (current && feedback) {
+          updateCardMetadata(); updateStats(); updateSessionProgress(); updateRatingGate();
+          if (!String(current.answer || '').trim()) setText(answerRevealEl, tr('未填写答案'));
+        } else if (current) renderCard(current);
         else renderEmpty();
       } else {
         updateStats();
       }
     });
   }
+  function reviewKey(event) {
+    return event.code === 'Space' || event.key === ' ' ? ' ' : String(event.key || '').toLowerCase();
+  }
+  document.addEventListener('keyup', event => heldReviewKeys.delete(reviewKey(event)), true);
+  window.addEventListener('blur', () => heldReviewKeys.clear());
   document.addEventListener('keydown', (event) => {
     if (importController?.isOpen) return;
     if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || controls.contains(event.target)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey || document.hidden || document.documentElement.dataset.desktopMinimized === '1') return;
     if (event.key === 'Escape') {
       if (dialogEl && dialogEl.classList.contains('show')) { closeDialog(); return; }
       if (deckDialogEl && deckDialogEl.classList.contains('show')) { closeDeckDialog(); return; }
@@ -1789,9 +1861,19 @@
     }
     if (viewMode !== 'session') return;
     if (!current) return;
+    const key = reviewKey(event), continuedKey = continueKeys.has(key);
+    const held = heldReviewKeys.has(key);
+    if (continuedKey) heldReviewKeys.add(key);
+    if (continuedKey && (event.repeat || held)) { event.preventDefault(); return; }
+    const focusedButton = target && target.closest && target.closest('button');
+    if ((key === ' ' || key === 'enter') && focusedButton
+        && !ratingButtons.includes(focusedButton) && !nextButtons.includes(focusedButton)) return;
+    if (feedback) {
+      if (continuedKey) { event.preventDefault(); continueCard(); }
+      return;
+    }
     if (event.code === 'Space') { event.preventDefault(); toggleAnswer(); return; }
     if (reviewMode === 'free' && event.key === '1') { event.preventDefault(); toggleAnswer(); return; }
-    if (reviewMode === 'scheduled' && event.repeat && ['1', '2', '3'].includes(event.key)) { event.preventDefault(); return; }
     if (reviewMode === 'scheduled' && event.key === '1') { event.preventDefault(); mark('remembered'); return; }
     if (reviewMode === 'scheduled' && event.key === '2') { event.preventDefault(); mark('vague'); return; }
     if (reviewMode === 'scheduled' && event.key === '3') { event.preventDefault(); mark('forgot'); return; }
@@ -1848,7 +1930,9 @@
     cancelMathReadyWait();
     cancelMathLoadSchedule();
   });
-  const motionVisibility = () => { if (!statMotionVisible()) clearStatMotion(); };
+  const motionVisibility = () => {
+    if (!statMotionVisible()) { clearStatMotion(); heldReviewKeys.clear(); }
+  };
   document.addEventListener('visibilitychange', motionVisibility);
   window.addEventListener('canvasdesktop:visibility', motionVisibility);
   window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener('change', motionVisibility);

@@ -1007,7 +1007,7 @@
               </div>
               <h2 data-role="review-prompt" data-user-content>未命名问题</h2>
               <div class="review-body" data-role="review-notes" data-user-content hidden></div>
-              <p class="review-question" data-role="review-question-hint">想好后可以直接评分，也可以查看答案再核对。</p>
+              <p class="review-question" data-role="review-question-hint">想好后选择记忆程度，核对答案后再继续。</p>
               <div class="review-answer-reveal" data-role="review-answer-reveal" data-user-content hidden></div>
               <textarea class="review-answer" data-role="review-draft" placeholder="可选的临时自测草稿，不会保存。"></textarea>
               <div class="review-actions">
@@ -1016,7 +1016,10 @@
                   <button type="button" class="review-action" data-action="review-vague"><kbd aria-hidden="true">2</kbd><span>模糊</span></button>
                   <button type="button" class="review-action" data-action="review-forgot"><kbd aria-hidden="true">3</kbd><span>不会</span></button>
                 </div>
-                <button type="button" class="review-action ghost" data-action="review-next"><span data-role="review-next-label">再来一张</span><kbd data-role="review-next-shortcut" aria-hidden="true">N</kbd></button>
+                <div class="review-continue-actions">
+                  <span class="review-continue-hint" data-role="review-continue-hint" role="status" hidden>按任意键继续</span>
+                  <button type="button" class="review-action ghost" data-action="review-next"><span data-role="review-next-label">再来一张</span><kbd data-role="review-next-shortcut" aria-hidden="true">N</kbd></button>
+                </div>
               </div>
             </div>
           </section>
@@ -1210,7 +1213,7 @@
               <ol>
                 <li>先选择要复习的卡组。</li>
                 <li>在心里作答，需要时写一点临时草稿。</li>
-                <li>选择“记得、模糊、不会”；需要时查看答案。</li>
+                <li>选择“记得、模糊、不会”，自动展开答案；核对后点击“继续”。</li>
               </ol>
               <p>首次没记住的卡片会自动再出现，连续两次“记得”才算今天完成；中途没记住重新计数。</p>
               <p>通常隔 3 张其他卡片再练，补练完成后明天巩固。草稿不会保存。</p>
@@ -1221,12 +1224,13 @@
                 <span><kbd>3</kbd> 不会</span>
                 <span><kbd>N</kbd> 换一张</span>
               </div>
+              <p>核对答案时，可按 1、2、3、N、D、空格或 Enter 继续，不会再次评分。</p>
             </div>
             <div class="review-help-content" data-role="review-help-free" hidden>
               <ol>
                 <li>选择范围后，系统会把其中正在复习的卡片随机打乱。</li>
                 <li>每张卡只用于练习；不会改变熟练度、到期日或今日统计。</li>
-                <li>一轮看完会自动重新洗牌，可以一直复习下去。</li>
+                <li>点击“下一张”核对答案，再点击“继续”换卡；看完后会重新洗牌。</li>
               </ol>
               <p>自由复习没有每轮数量和出题顺序设置。</p>
               <div class="review-shortcuts" aria-label="自由复习快捷键">
@@ -1235,6 +1239,7 @@
                 <span><kbd>D</kbd> 下一张</span>
                 <span><kbd>N</kbd> 下一张</span>
               </div>
+              <p>核对答案时，可按 1、2、3、N、D、空格或 Enter 继续，不会再次评分。</p>
             </div>
             <div class="study-dialog-actions">
               <span class="study-action-spacer"></span>
@@ -1267,6 +1272,7 @@
                 <h3>何时完成</h3>
                 <p>首次没记住的卡片会自动再出现，连续两次“记得”才算今天完成；中途没记住重新计数。</p>
                 <p>通常隔 3 张其他卡片再练，补练完成后明天巩固。“今日完成”按不同卡片计数。</p>
+                <p>评分或换卡后会自动展示答案，核对后点击“继续”或按快捷键换卡。最后一张也可先核对。</p>
               </section>
               <details class="review-guide-more">
                 <summary>更多说明</summary>
