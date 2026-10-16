@@ -12,6 +12,7 @@
   const RICH_BLOCK_LIMIT = 256 * 1024;
   const MAX_RICH_LINE = 64 * 1024;
   const VIEWPORT_PARSE_SLICE = 12;
+  const imageContextResolvers = new WeakMap();
   // @lezer/markdown's public leaf-parser extension API. A long paragraph with
   // no inline syntax needs the same Paragraph node but no expensive inline pass.
   // Setext/table/reference parsers still get their normal precedence.
@@ -1063,6 +1064,7 @@
     frame.className = 'note-live-image-frame ' + (block ? 'is-block' : 'is-inline');
     frame.setAttribute('role', 'img');
     frame.setAttribute('aria-label', parsed.alt || parsed.target.split('/').pop() || '图片');
+    imageContextResolvers.set(frame, resolveRange);
     applyImageDimensions(frame, parsed);
     if (initial && imageSelectionMatches(view, initial.from, initial.to)) frame.classList.add('is-selected');
 
@@ -4053,14 +4055,21 @@
             event.preventDefault();
             if (inputPending()) return true;
             const keyboard = event.clientX === 0 && event.clientY === 0;
-            const position = keyboard ? view.state.selection.main.head : view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+            const frame = event.target.closest('.note-live-image-frame');
+            const selection = view.state.selection.main;
+            const image = !sourceMode && (keyboard ? currentImageRange(view, selection.from, selection.to)
+              : imageContextResolvers.get(frame)?.());
+            const position = image ? image.from : keyboard ? selection.head : view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
             if (position == null) return true;
-            if (!keyboard && !view.state.selection.ranges.some((range) => !range.empty && position >= range.from && position <= range.to)) {
+            if (image) {
+              view.dispatch({ selection: EditorSelection.range(image.from, image.to) });
+            } else if (!keyboard && !view.state.selection.ranges.some((range) => !range.empty && position >= range.from && position <= range.to)) {
               view.dispatch({ selection: EditorSelection.cursor(position) });
             }
             const rect = view.coordsAtPos(view.state.selection.main.head);
             safeOptions.onContextMenu({ x: keyboard && rect ? rect.left : event.clientX,
-              y: keyboard && rect ? rect.bottom : event.clientY, context: commandContext(), keyboard });
+              y: keyboard && rect ? rect.bottom : event.clientY, context: commandContext(), keyboard,
+              image: image && !isRemoteTarget(image.parsed.target) ? { target: image.parsed.target, syntax: image.parsed.syntax } : null });
             return true;
           },
           keydown(event, view) {
@@ -4078,7 +4087,10 @@
             event.preventDefault();
             if (inputPending()) return true;
             const rect = view.coordsAtPos(view.state.selection.main.head);
-            safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext(), keyboard: true });
+            const selection = view.state.selection.main;
+            const image = !sourceMode && currentImageRange(view, selection.from, selection.to);
+            safeOptions.onContextMenu({ x: rect ? rect.left : 8, y: rect ? rect.bottom : 8, context: commandContext(), keyboard: true,
+              image: image && !isRemoteTarget(image.parsed.target) ? { target: image.parsed.target, syntax: image.parsed.syntax } : null });
             return true;
           },
           keyup() { pastePlain = false; return false; },

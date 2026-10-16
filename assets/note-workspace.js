@@ -423,6 +423,7 @@
       saveFailed: '保存失败，请检查磁盘空间或目录权限', newNote: '新建笔记', newFolder: '新建文件夹', rename: '重命名',
       moveFailed: '移动失败', explorer: '在系统资源管理器中显示', openLibrary: '在资源管理器中打开笔记库',
       canvasExplorer: '在系统资源管理器中打开',
+      openExplorer: '在资源管理器中打开',
       assets: '打开伴生素材目录', recycle: '移到系统回收站', recycled: '已移到系统回收站', refresh: '刷新',
       refreshed: '笔记库已刷新', copyPath: '复制库内路径', copied: '路径已复制', open: '打开', createHere: '在此新建笔记',
       createFolderHere: '新建子文件夹', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
@@ -451,6 +452,7 @@
       saveFailed: 'Could not save. Check disk space and folder permissions.', newNote: 'New note', newFolder: 'New folder', rename: 'Rename',
       moveFailed: 'Move failed', explorer: 'Show in File Explorer', openLibrary: 'Open notes folder in File Explorer',
       canvasExplorer: 'Open in File Explorer',
+      openExplorer: 'Open in File Explorer',
       assets: 'Open companion assets', recycle: 'Move to Recycle Bin', recycled: 'Moved to Recycle Bin', refresh: 'Refresh',
       refreshed: 'Notes refreshed', copyPath: 'Copy vault path', copied: 'Path copied', open: 'Open', createHere: 'New note here',
       createFolderHere: 'New subfolder', noAssets: 'This note has no companion assets',
@@ -1598,6 +1600,15 @@
     fallbackEditor.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
     if (readingHost) {
       readingHost.addEventListener('scroll', scheduleInlineTitleScroll, { passive: true });
+      readingHost.addEventListener('contextmenu', (event) => {
+        const image = event.target.closest('.md-local-image')?.querySelector('[data-note-image]');
+        if (!image || !state.active || !state.current || state.viewMode !== 'reading') return;
+        event.preventDefault(); event.stopPropagation();
+        if (contextOpen) { closeContextMenu(); return; }
+        closeContextMenu({ instant: true });
+        showContext([imageRevealButton({ target: image.dataset.noteImage, syntax: image.dataset.noteImageSyntax })],
+          event.clientX, event.clientY, 'image');
+      });
       readingHost.addEventListener('click', (event) => {
         const tag = event.target.closest('[data-note-tag]');
         if (tag) { event.preventDefault(); setBrowserMode(true, tag.dataset.noteTag); return; }
@@ -3939,8 +3950,23 @@
       return button;
     });
     items.push(separator(), ...['cut', 'copy', 'paste', 'paste-plain', 'select-all'].map(bodyCommandButton));
+    if (payload.image) items.push(separator(), imageRevealButton(payload.image, payload.context));
     showContext(items, payload.x, payload.y, 'body'); fitBodyMenu(contextMenu, payload.x, payload.y);
     if (payload.keyboard) menuButtons(contextMenu)[0]?.focus({ preventScroll: true });
+  }
+  function imageRevealButton(image, context) {
+    const documentState = state.current, path = documentState.path;
+    const readingEpoch = readingHost?.dataset.noteReadingEpoch;
+    const button = contextButton(tr('openExplorer'), async () => {
+      if (!noteWorkspaceVisible() || state.current !== documentState || state.current.path !== path) return;
+      if (context ? state.viewMode === 'reading' || !liveEditor?.queryCommand('select-all', context).enabled
+        : state.viewMode !== 'reading' || readingHost?.dataset.noteReadingEpoch !== readingEpoch) return;
+      try { await post('/api/note-reveal', { kind: 'image', path, target: image.target, imageSyntax: image.syntax || 'markdown' }); }
+      catch (error) { showToast(error.message || tr('revealFailed'), 'error'); }
+    });
+    button.setAttribute('role', 'menuitem');
+    button.addEventListener('pointerenter', () => closeBodySubmenu());
+    return button;
   }
   if (contextMenu) {
     contextMenu.addEventListener('transitionend', event => {
@@ -4022,7 +4048,8 @@
       });
       colors.appendChild(button);
     });
-    showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path)), contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
+    showContext([colors, separator(), contextButton(tr('rename'), () => beginInlineRename(entry.path)),
+      contextButton(tr('openExplorer'), () => reveal(entry.path, false)), contextButton(tr('recycle'), () => recycleEntry(entry), true)], x, y);
   }
   let notebookCreateRunning = false;
   async function createNotebook() {

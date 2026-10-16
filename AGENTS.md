@@ -284,6 +284,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | `packaging/make_icon.py` | 用 Pillow 从源图生成 `assets/app-icon.ico`。 |
 | `packaging/make_font_subset.py` | 可选的 Noto Sans SC 字体子集再生成工具。 |
 
+实时预览和阅读模式的本地图片右键菜单提供“在资源管理器中打开 / Open in File Explorer”，打开所在目录并选中实际右键图片；实时预览保留正文菜单，图片文字输入框保留原右键确认收尾行为。`assets/note-live-editor.js` 用弱引用表在右键时读取图片最新范围和原引用，`assets/note-workspace.js` 提交前复核正文/选区或阅读渲染身份，避免旧菜单作用到新文档。右侧笔记本菜单在重命名之后提供同名入口，直接打开该本目录。均沿用共享菜单的再次右键收起、避让、隐藏释放和失败提示，不写入偏好或正文。
+
 ## 4. 运行时和数据位置
 
 ### 根目录选择
@@ -453,7 +455,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 笔记浏览查询：`POST /api/note-query` 统一 `search/recent/tags/paths`，请求含关键词、范围、标签、修改时间、排序及游标；返回 `items/total/hasMore/cursor/generation/index`，全文追加 UTF-16 高亮与源码范围。每页最多 50；游标绑定查询/版本，变化返回 `409/query_changed`。只读查询保留路径沙箱，退出文件/全局写锁；`POST /api/note-index-activity` 交接可见状态。完整协议见 `docs/notes-sqlite-search.md`。
 
 - 生涯报告：`POST /api/career/generate` 返回后台任务，重复请求复用正在运行的任务。生成前冲刷采集队列，库存读取不占业务保存锁；成功原子替换，失败保留旧 v2。每个来源独立标明未读取数量，不能显示成零。
-- Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中。
+- Markdown 笔记库：`/api/note-create`、`/api/note-save`、`/api/note-move`、`/api/note-trash`、`/api/note-upload-image`、`/api/note-import-begin|upload|commit|abort`、`/api/note-reveal`、`/api/note-reveal-assets`。`note-trash` 只校验库内精确目标并交给 Windows 系统回收站；`note-reveal` 接受空路径打开根目录，文件路径会在 Explorer 中被选中；图片定位使用 `{kind:"image",path:所属笔记路径,target:图片原引用,imageSyntax:"markdown"或"wiki"}`，语法缺省为 Markdown，复用 `resolve_image` 的库内路径、重解析点、格式、缺失及重名检查，未知 kind 返回 400。
 - 画布文件：`/api/new`、`/api/open`、`/api/pick`、`/api/save`、`/api/remove`、`/api/rename`、`/api/clean-assets`
 - 分组/收藏/排序与画布库维护：`/api/group-create`、`/api/group-rename`、`/api/group-delete`、`/api/file-set-group`、`/api/favorite-toggle`、`/api/groups-reorder`、`/api/reorder-files`、`/api/file-stats`、`/api/recent-sync`
 - 回收站：`/api/trash`、`/api/trash-list`、`/api/trash-empty`、`/api/restore`
@@ -1206,6 +1208,8 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 - 只在用户要求或任务确实需要时运行 `build-desktop.ps1`。
 - 改主实例、激活或 IPC 时运行 `python -m unittest tests.test_desktop_instance tests.test_desktop_preferences tests.test_launcher_native tests.test_windows_wallpaper tests.test_runtime_paths` 与 `node tests/desktop-preferences-regression.js`。同根完整模式重复启动只有一个主窗口；精简互不重叠最多四主窗，重叠整次拒绝。`node tests/workspace-multiopen-package.js <发布目录> <报告JSON> all` 验实际四窗、保存、换端口偏好、异常重启及三轮完整/两窗/四窗资源测量；`RELATUM_SOURCE=1` 与 `RELATUM_PYTHON` 可对源码目录运行 `qa`。WebView2 子进程不算主实例。构建可用 `-OutputDirectory <新目录>` 保留旧发布包和用户数据。
 - 验收 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、两份同级 `.exe.config`、`_internal/assets/feature-catalog.json` 与全部资产，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
+
+图片及笔记本资源管理器入口用 `python -m unittest tests.test_note_reveal` 和 `node tests/note-reveal-browser.js` 验证。后者使用上述三个测试环境变量、真实 Edge 页面及隔离笔记库，拦截 Explorer 请求；覆盖块/行内/Markdown/wiki 图片、中文和空格路径、多图准确目标、键盘菜单、阅读切换后的旧操作、图片文字右键收尾、笔记本目录、中英文、深浅主题、窄窗与低动态及失败提示。Python 验证真实 HTTP 路由及进程参数、旧接口兼容、缺失/重名/越界/格式/重解析点拒绝和启动失败，不实际打开资源管理器。
 
 ## 12. 常见坑
 

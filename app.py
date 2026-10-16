@@ -10779,7 +10779,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _api_note_reveal(self, body: dict):
         try:
-            target = NOTES_STORE.reveal_target(body.get("path", ""))
+            if body.get('kind') == 'image':
+                target, _ = NOTES_STORE.resolve_image(
+                    body.get('path'), body.get('target'), syntax=body.get('imageSyntax', 'markdown'))
+            elif body.get('kind') is None:
+                target = NOTES_STORE.reveal_target(body.get("path", ""))
+            else:
+                raise NotesError('显示目标类型无效')
             args = _explorer_select_args(target) if target.is_file() else ["explorer.exe", _norm(target)]
             subprocess.Popen(args, close_fds=True)
         except NotesError as err:
