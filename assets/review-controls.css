@@ -19,12 +19,12 @@
   font: 500 12px/1.5 var(--font-ui);
   text-align: left;
   cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease, transform 160ms var(--easing-soft);
+  transition: background 140ms ease, border-color 140ms ease;
 }
 .review-choice-value { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-choice-chevron { flex: none; width: 6px; height: 6px; margin: -3px 2px 0 0; border: solid currentColor; border-width: 0 1.3px 1.3px 0; transform: rotate(45deg); opacity: .55; transition: transform 160ms var(--easing-soft); }
 .review-choice-trigger[aria-expanded="true"] .review-choice-chevron { transform: translateY(3px) rotate(225deg); }
-.review-choice-trigger:active:not(:disabled) { transform: scale(.985); }
+.review-choice-trigger:active:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
 .review-choice-trigger:hover:not(:disabled) { border-color: var(--border-strong); background: color-mix(in srgb, var(--text) 3%, var(--surface)); }
 .review-choice-trigger:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
 .review-choice-trigger:disabled { opacity: .5; cursor: default; }

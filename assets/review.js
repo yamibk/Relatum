@@ -35,6 +35,9 @@
   const questionHintEl = root.querySelector('[data-role="review-question-hint"]');
   const nextLabelEl = root.querySelector('[data-role="review-next-label"]');
   const nextShortcutEl = root.querySelector('[data-role="review-next-shortcut"]');
+  const ratingButtons = Array.from(root.querySelectorAll('[data-action="review-remembered"], [data-action="review-vague"], [data-action="review-forgot"]'));
+  const nextButtons = Array.from(root.querySelectorAll('[data-action="review-next"]'));
+  const actionsEl = root.querySelector('.review-actions');
   const cardDeckEl = root.querySelector('[data-role="review-card-deck"]');
   const cardTagsEl = root.querySelector('[data-role="review-card-tags"]');
   const scopeSelectEl = root.querySelector('[data-role="review-scope-select"]');
@@ -142,6 +145,16 @@
   let mathReadyTries = 0;
   let mathLoadHandle = 0;
   let mathLoadUsesIdle = false;
+  let seenAnimation = null;
+  const plusOneTimers = new Map();
+
+  function setText(node, value) {
+    if (node && node.textContent !== value) node.textContent = value;
+  }
+
+  function setAttribute(node, name, value) {
+    if (node && node.getAttribute(name) !== value) node.setAttribute(name, value);
+  }
 
   function tr(source) {
     if (window.RelatumI18n && typeof window.RelatumI18n.t === 'function') {
@@ -326,6 +339,7 @@
   }
 
   function clearTransientMotion() {
+    clearStatMotion();
     clearTimeout(libraryItemEnterTimer);
     clearTimeout(libraryEmptyEnterTimer);
     libraryItemEnterTimer = 0;
@@ -342,13 +356,39 @@
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
+  function statMotionVisible() {
+    return !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+      && root.getAttribute('aria-hidden') !== 'true' && !reducedMotion();
+  }
+
+  function clearStatMotion() {
+    seenAnimation?.cancel();
+    seenAnimation = null;
+    plusOneTimers.forEach((timer, chip) => { clearTimeout(timer); chip.remove(); });
+    plusOneTimers.clear();
+  }
+
+  function bumpSeen() {
+    seenAnimation?.cancel();
+    seenAnimation = null;
+    if (!seenEl?.animate || !statMotionVisible()) return;
+    const animation = seenEl.animate([
+      { transform: 'none' },
+      { transform: 'translateY(-3px) scale(1.16)', offset: .32 },
+      { transform: 'none' },
+    ], { duration: 440, easing: 'cubic-bezier(.22,1,.36,1)' });
+    seenAnimation = animation;
+    const finish = () => { if (seenAnimation === animation) seenAnimation = null; animation.cancel(); };
+    animation.onfinish = finish;
+  }
+
   function floatPlusOne() {
-    if (!seenEl || !seenEl.parentElement) return;
+    if (!seenEl?.parentElement || !statMotionVisible()) return;
     const chip = document.createElement('span');
     chip.className = 'review-plus-one';
     chip.textContent = '+1';
     seenEl.parentElement.appendChild(chip);
-    setTimeout(() => chip.remove(), 950);
+    plusOneTimers.set(chip, setTimeout(() => { chip.remove(); plusOneTimers.delete(chip); }, 950));
   }
 
   function praise(rating) {
@@ -374,51 +414,50 @@
 
   function updateStats() {
     const free = reviewMode === 'free' && viewMode === 'session';
-    if (totalEl) totalEl.textContent = String(free ? freeEligibleCards().length : Math.max(0, dueCount));
-    if (seenEl) seenEl.textContent = String(free ? freeSeenCount : Math.max(0, reviewedToday));
-    if (totalLabelEl) totalLabelEl.textContent = tr(free ? '范围卡片' : '待复习');
-    if (seenLabelEl) seenLabelEl.textContent = tr(free ? '自由浏览' : '今日复习');
+    setText(totalEl, String(free ? freeEligibleCards().length : Math.max(0, dueCount)));
+    setText(seenEl, String(free ? freeSeenCount : Math.max(0, reviewedToday)));
+    setText(totalLabelEl, tr(free ? '范围卡片' : '待复习'));
+    setText(seenLabelEl, tr(free ? '自由浏览' : '今日复习'));
   }
 
   function updateSessionProgress() {
     if (!sessionProgressEl) return;
     if (reviewMode === 'free') {
-      sessionProgressEl.textContent = tr('随机 · 无限');
+      setText(sessionProgressEl, tr('随机 · 无限'));
       return;
     }
     if (!sessionInitialCount) {
-      sessionProgressEl.textContent = tr('本轮 0 / 0');
+      setText(sessionProgressEl, tr('本轮 0 / 0'));
       return;
     }
     const position = current
       ? Math.min(sessionInitialCount, sessionReviewedCount + 1)
       : Math.min(sessionInitialCount, sessionReviewedCount);
-    sessionProgressEl.textContent = tr('本轮') + ' ' + position + ' / ' + sessionInitialCount;
+    setText(sessionProgressEl, tr('本轮') + ' ' + position + ' / ' + sessionInitialCount);
   }
 
   function updateRatingGate() {
-    const ratingDisabled = marking || !current || reviewMode === 'free';
-    root.querySelectorAll('[data-action="review-remembered"], [data-action="review-vague"], [data-action="review-forgot"]')
-      .forEach((button) => { button.disabled = ratingDisabled; });
-    root.querySelectorAll('[data-action="review-next"]')
-      .forEach((button) => { button.disabled = marking || !current; });
+    const update = (button, unavailable) => {
+      if (button.disabled !== unavailable) button.disabled = unavailable;
+      setAttribute(button, 'aria-disabled', String(unavailable || marking));
+    };
+    ratingButtons.forEach(button => update(button, !current || reviewMode === 'free'));
+    nextButtons.forEach(button => update(button, !current));
+    setAttribute(actionsEl, 'aria-busy', String(marking));
   }
 
   function syncScopeSelect() {
     if (!scopeSelectEl) return;
-    scopeSelectEl.innerHTML = '';
-    reviewScopes.forEach((scope) => {
+    const options = reviewScopes.map((scope) => {
       const value = scope.mode === 'deck' ? ('deck:' + scope.deckId) : scope.mode;
       const name = scope.mode === 'deck' ? scope.name : tr(scope.name);
       const count = reviewMode === 'free' ? scope.activeCount : scope.dueCount;
-      addDeckOption(scopeSelectEl, value, name + ' · ' + Math.max(0, Number(count) || 0));
+      return { value, label: name + ' · ' + Math.max(0, Number(count) || 0) };
     });
     const currentValue = reviewSettings.scopeMode === 'deck'
       ? ('deck:' + reviewSettings.scopeDeckId)
       : reviewSettings.scopeMode;
-    scopeSelectEl.value = Array.from(scopeSelectEl.options).some((option) => option.value === currentValue)
-      ? currentValue : 'all';
-    controls.sync();
+    controls.setOptions(scopeSelectEl, options, currentValue);
   }
 
   function resetAnswerReveal(card) {
@@ -426,7 +465,7 @@
     const hasAnswer = !!(card && String(card.answer || '').trim());
     if (answerPillEl) {
       answerPillEl.hidden = !hasAnswer;
-      answerPillEl.textContent = tr('查看答案');
+      setText(answerPillEl, tr('查看答案'));
     }
     if (answerRevealEl) {
       answerRevealEl.hidden = true;
@@ -444,11 +483,11 @@
       answerRevealEl.hidden = false;
       answerRevealed = true;
       replay(answerRevealEl, 'reveal-in');
-      answerPillEl.textContent = tr('收起答案');
+      setText(answerPillEl, tr('收起答案'));
     } else {
       answerRevealEl.hidden = true;
       answerRevealed = false;
-      answerPillEl.textContent = tr('查看答案');
+      setText(answerPillEl, tr('查看答案'));
     }
     updateRatingGate();
   }
@@ -526,30 +565,30 @@
       contentEl.scrollTop = 0;
     }
     if (maturityEl) {
-      maturityEl.textContent = current.maturity || '生';
-      maturityEl.dataset.maturity = current.maturity || '生';
+      setText(maturityEl, current.maturity || '生');
+      setAttribute(maturityEl, 'data-maturity', current.maturity || '生');
     }
     if (countEl) {
       const count = Number(current.reviewCount || 0);
-      countEl.textContent = count > 0 ? ('已复习 ' + count + ' 次') : '尚未复习';
+      setText(countEl, count > 0 ? ('已复习 ' + count + ' 次') : '尚未复习');
     }
     if (cardDeckEl) {
       cardDeckEl.hidden = !current.deckName;
-      cardDeckEl.textContent = current.deckName ? (tr('卡组') + ' · ' + current.deckName) : '';
+      setText(cardDeckEl, current.deckName ? (tr('卡组') + ' · ' + current.deckName) : '');
     }
     if (cardTagsEl) {
       const tags = Array.isArray(current.tags) ? current.tags : [];
       cardTagsEl.hidden = tags.length === 0;
-      cardTagsEl.textContent = tags.length ? tags.map((tag) => '#' + tag).join(' · ') : '';
+      setText(cardTagsEl, tags.length ? tags.map((tag) => '#' + tag).join(' · ') : '');
     }
-    if (promptEl) promptEl.textContent = current.prompt || '未命名问题';
+    setText(promptEl, current.prompt || '未命名问题');
     if (questionHintEl) {
-      questionHintEl.textContent = tr(reviewMode === 'free'
+      setText(questionHintEl, tr(reviewMode === 'free'
         ? '想好后查看答案核对，或直接换到下一张。'
-        : '想好后可以直接评分，也可以查看答案再核对。');
+        : '想好后可以直接评分，也可以查看答案再核对。'));
     }
-    if (nextLabelEl) nextLabelEl.textContent = tr(reviewMode === 'free' ? '下一张' : '再来一张');
-    if (nextShortcutEl) nextShortcutEl.textContent = reviewMode === 'free' ? 'N / D' : 'N';
+    setText(nextLabelEl, tr(reviewMode === 'free' ? '下一张' : '再来一张'));
+    setText(nextShortcutEl, reviewMode === 'free' ? 'N / D' : 'N');
     if (notesEl) notesEl.hidden = !renderRich(notesEl, current.notes);
     if (draftEl) draftEl.value = '';
     resetAnswerReveal(current);
@@ -605,7 +644,7 @@
     freeSeenCount += 1;
     freeInitialized = true;
     renderCard(next);
-    if (seenEl && freeSeenCount > 1) replay(seenEl, 'bump');
+    if (freeSeenCount > 1) bumpSeen();
   }
 
   async function ensureFreeReview(reset) {
@@ -728,7 +767,7 @@
       if (isDue(marked)) dueCount = Math.max(0, dueCount - 1);
       pool = pool.filter((card) => card.id !== marked.id);
       libraryCards = libraryCards.map((card) => card.id === marked.id ? updated : card);
-      if (seenEl) replay(seenEl, 'bump');
+      bumpSeen();
       floatPlusOne();
       praise(rating);
       celebratePulse = true;
@@ -781,49 +820,41 @@
     cardDeckControl?.close();
   }
 
-  function addDeckOption(select, value, label) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    select.appendChild(option);
-  }
-
   function syncLibraryOrganizers() {
     if (activeDeckFilter !== 'all' && activeDeckFilter !== '__none__' && !deckById(activeDeckFilter)) {
       activeDeckFilter = 'all';
     }
     if (deckFilterSelectEl) {
-      deckFilterSelectEl.innerHTML = '';
-      addDeckOption(deckFilterSelectEl, 'all', tr('全部卡组'));
-      addDeckOption(deckFilterSelectEl, '__none__', tr('未分类') + ' · ' + uncategorizedCount);
-      reviewDecks.forEach((deck) => {
-        addDeckOption(deckFilterSelectEl, deck.id, deck.name + ' · ' + deck.count);
-      });
-      deckFilterSelectEl.value = activeDeckFilter;
+      controls.setOptions(deckFilterSelectEl, [
+        { value: 'all', label: tr('全部卡组') },
+        { value: '__none__', label: tr('未分类') + ' · ' + uncategorizedCount },
+        ...reviewDecks.map(deck => ({ value: deck.id, label: deck.name + ' · ' + deck.count })),
+      ], activeDeckFilter);
     }
     if (deckEditCurrentEl) deckEditCurrentEl.hidden = !deckById(activeDeckFilter);
     statusFilterButtons.forEach((button) => {
       const active = button.dataset.status === activeStatusFilter;
       button.classList.toggle('is-active', active);
-      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      setAttribute(button, 'aria-pressed', active ? 'true' : 'false');
     });
     if (libraryEl) libraryEl.classList.toggle('is-batch-mode', libraryBatchMode);
     if (selectVisibleEl) selectVisibleEl.hidden = !libraryBatchMode;
     if (batchModeEl) {
       batchModeEl.classList.toggle('is-active', libraryBatchMode);
-      batchModeEl.textContent = tr(libraryBatchMode ? '完成整理' : '批量整理');
-      batchModeEl.setAttribute('aria-pressed', libraryBatchMode ? 'true' : 'false');
+      setText(batchModeEl, tr(libraryBatchMode ? '完成整理' : '批量整理'));
+      setAttribute(batchModeEl, 'aria-pressed', libraryBatchMode ? 'true' : 'false');
     }
     syncDeckPickerState();
     if (batchDeckEl) {
-      batchDeckEl.innerHTML = '';
-      addDeckOption(batchDeckEl, '__keep__', tr('移动到卡组…'));
-      addDeckOption(batchDeckEl, '', tr('未分类'));
-      reviewDecks.forEach((deck) => addDeckOption(batchDeckEl, deck.id, deck.name));
-      batchDeckEl.value = '__keep__';
+      controls.setOptions(batchDeckEl, [
+        { value: '__keep__', label: tr('移动到卡组…') },
+        { value: '', label: tr('未分类') },
+        ...reviewDecks.map(deck => ({ value: deck.id, label: deck.name })),
+      ], '__keep__');
     }
     if (batchStatusEl) batchStatusEl.value = '__keep__';
-    controls.sync();
+    controls.sync(batchStatusEl);
+    cardDeckControl?.refresh();
   }
 
   function filteredLibraryCards() {
@@ -1145,7 +1176,7 @@
     settingsFormControl('sessionLimit').value = String(reviewSettings.sessionLimit || 20);
     settingsFormControl('orderMode').value = reviewSettings.orderMode || 'due';
     settingsDialogEl.hidden = false;
-    controls.sync();
+    controls.sync([settingsFormControl('sessionLimit'), settingsFormControl('orderMode')]);
     requestAnimationFrame(() => settingsDialogEl.classList.add('show'));
   }
 
@@ -1296,7 +1327,7 @@
     closeDeckPicker();
     formControl('tags').value = card && Array.isArray(card.tags) ? card.tags.join(', ') : '';
     formControl('status').value = card ? card.status : 'active';
-    controls.sync();
+    controls.sync(formControl('status'));
     if (cardMoreEl) cardMoreEl.open = false;
     if (dialogTitleEl) dialogTitleEl.textContent = tr(card ? '编辑卡片' : '新建卡片');
     clearTimeout(deleteArmTimer);
@@ -1477,7 +1508,7 @@
       selectedCardIds.clear();
       if (batchDeckEl) batchDeckEl.value = '__keep__';
       if (batchStatusEl) batchStatusEl.value = '__keep__';
-      controls.sync();
+      controls.sync([batchDeckEl, batchStatusEl]);
       await Promise.all([loadPool(true), loadLibrary(true)]);
       toast(message);
     } catch (error) {
@@ -1545,6 +1576,7 @@
     if (action === 'review-deck-delete') { deleteCurrentDeck(); return; }
     if (action === 'review-batch-delete') { deleteSelectedCards(); return; }
     if (action === 'review-show-answer') { toggleAnswer(); return; }
+    if (event.detail > 1 && ratingButtons.includes(button)) return;
     if (action === 'review-next') skipCard();
     else if (action === 'review-remembered') mark('remembered');
     else if (action === 'review-vague') mark('vague');
@@ -1606,7 +1638,7 @@
       ? { scopeMode: 'deck', scopeDeckId: value.slice(5) }
       : { scopeMode: value, scopeDeckId: '' };
     scopeSelectEl.disabled = true;
-    controls.sync();
+    controls.sync(scopeSelectEl);
     try {
       await persistReviewSettings(change, '复习范围已切换');
     } catch (error) {
@@ -1614,7 +1646,7 @@
       toast((error && error.message) || '切换复习范围失败');
     } finally {
       scopeSelectEl.disabled = false;
-      controls.sync();
+      controls.sync(scopeSelectEl);
     }
   });
   if (window.RelatumI18n && typeof window.RelatumI18n.onChange === 'function') {
@@ -1626,7 +1658,7 @@
       syncPrimaryModeControls();
       syncDeckPickerState();
       controls.close();
-      controls.sync();
+      controls.refresh();
       if (viewMode === 'session') {
         if (current) renderCard(current);
         else renderEmpty();
@@ -1663,6 +1695,7 @@
     if (!current) return;
     if (event.code === 'Space') { event.preventDefault(); toggleAnswer(); return; }
     if (reviewMode === 'free' && event.key === '1') { event.preventDefault(); toggleAnswer(); return; }
+    if (reviewMode === 'scheduled' && event.repeat && ['1', '2', '3'].includes(event.key)) { event.preventDefault(); return; }
     if (reviewMode === 'scheduled' && event.key === '1') { event.preventDefault(); mark('remembered'); return; }
     if (reviewMode === 'scheduled' && event.key === '2') { event.preventDefault(); mark('vague'); return; }
     if (reviewMode === 'scheduled' && event.key === '3') { event.preventDefault(); mark('forgot'); return; }
@@ -1717,5 +1750,9 @@
     cancelMathReadyWait();
     cancelMathLoadSchedule();
   });
+  const motionVisibility = () => { if (!statMotionVisible()) clearStatMotion(); };
+  document.addEventListener('visibilitychange', motionVisibility);
+  window.addEventListener('canvasdesktop:visibility', motionVisibility);
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener('change', motionVisibility);
   schedulePreload();
 })();

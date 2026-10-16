@@ -16988,18 +16988,8 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
 .review-question.q-enter {
   animation: reviewQEnter 0.26s var(--easing-soft, cubic-bezier(0.22, 1, 0.36, 1));
 }
-@keyframes reviewStatBump {
-  0%   { transform: none; }
-  32%  { transform: translateY(-3px) scale(1.16); }
-  100% { transform: none; }
-}
-.review-stats strong.bump {
-  display: inline-block;
-  animation: reviewStatBump 0.44s var(--easing-soft, cubic-bezier(0.22, 1, 0.36, 1));
-}
 @media (prefers-reduced-motion: reduce) {
-  .review-question.q-enter,
-  .review-stats strong.bump { animation: none; }
+  .review-question.q-enter { animation: none; }
 }
 
 /* 提交反馈：在「今日复习」数字旁「+1」上浮 */
