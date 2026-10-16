@@ -311,7 +311,7 @@
     '查看答案': 'Reveal answer', '收起答案': 'Hide answer', '记得': 'Remembered', '模糊': 'Vague', '不会': 'Forgot',
     '记得 √': 'Remembered √', '模糊 ~': 'Vague ~', '不会 ×': 'Forgot ×',
     '选择记忆程度': 'Choose recall level',
-    '再来一张': 'Next card', '下一张': 'Next card',
+    '再来一张': 'Next card', '下一张': 'Next card', '下一张 √': 'Next card √',
     '复习范围': 'Review scope', '选择复习范围': 'Choose review scope', '全部卡组': 'All decks',
     '本轮': 'Session', '本轮 0 / 0': 'Session 0 / 0', '复习说明': 'Review guide',
     '范围卡片': 'Cards in scope', '自由浏览': 'Viewed freely', '随机 · 无限': 'Random · unlimited',

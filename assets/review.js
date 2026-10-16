@@ -670,6 +670,7 @@
     if (marking || !current) return;
     if (reviewMode === 'free') {
       nextFreeCard();
+      if (current) toast('下一张 √');
       return;
     }
     if (pool.length < 2) return;
