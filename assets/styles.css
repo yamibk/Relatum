@@ -16503,6 +16503,7 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
 .review-setting-check span { display: grid; gap: 3px; }
 .review-setting-check strong { color: var(--text); font-size: 12px; }
 .review-setting-check small { color: var(--text-tertiary); font-size: 10.5px; line-height: 1.45; }
+.review-settings-dialog [data-review-scheduled-setting][hidden] { display: none; }
 .review-help-content { color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
 .review-help-content ol { margin: 0; padding: 0; list-style: none; counter-reset: review-help-step; }
 .review-help-content li {
@@ -16640,6 +16641,7 @@ html:lang(en) .review-guide-ratings p { grid-template-columns: 86px minmax(0, 1f
   font-size: 10.5px;
 }
 .review-guide-core, .review-guide-more { grid-column: 1 / -1; }
+body.start-page[data-start-theme="dark"] .review-settings-dialog .study-dialog-card,
 body.start-page[data-start-theme="dark"] .review-help-dialog .study-dialog-card { background: #242b26; }
 .review-guide-section p { margin: 0; }
 .review-guide-section p + p { margin-top: 7px; }
@@ -17175,7 +17177,6 @@ body.start-page .review-embedded[data-review-phase="feedback"] .review-continue-
   color: #8a6d24;
   font-size: 12px;
 }
-.review-embedded[data-review-mode="free"] [data-action="review-settings-open"],
 .review-embedded[data-review-mode="free"] .review-rating-group,
 .review-embedded[data-review-mode="free"] [data-role="review-count"],
 .review-embedded[data-review-mode="free"] [data-role="review-maturity"] { display: none; }

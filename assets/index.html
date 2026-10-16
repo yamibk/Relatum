@@ -1175,7 +1175,7 @@
               </div>
               <button type="button" class="study-icon-button" data-action="review-settings-close" aria-label="关闭">×</button>
             </header>
-            <label class="study-field">
+            <label class="study-field" data-review-scheduled-setting>
               <span>每轮卡片</span>
               <select name="sessionLimit">
                 <option value="10">10 张</option>
@@ -1183,13 +1183,21 @@
                 <option value="50">50 张</option>
               </select>
             </label>
-            <label class="study-field">
+            <label class="study-field" data-review-scheduled-setting>
               <span>出题顺序</span>
               <select name="orderMode">
                 <option value="due">到期优先</option>
                 <option value="random">随机</option>
                 <option value="weak">薄弱优先</option>
               </select>
+            </label>
+            <label class="review-setting-check">
+              <input type="checkbox" name="hideTextTips" checked>
+              <span><strong>关闭文字提示</strong><small>隐藏普通操作提示，错误和必要确认仍显示。</small></span>
+            </label>
+            <label class="review-setting-check">
+              <input type="checkbox" name="autoRevealAnswer" checked>
+              <span><strong>自动显示答案</strong><small>评分或换卡后先核对答案，再点击“继续”。</small></span>
             </label>
             <div class="study-dialog-actions">
               <span class="study-action-spacer"></span>
@@ -1213,7 +1221,7 @@
               <ol>
                 <li>先选择要复习的卡组。</li>
                 <li>在心里作答，需要时写一点临时草稿。</li>
-                <li>选择“记得、模糊、不会”，自动展开答案；核对后点击“继续”。</li>
+                <li>选择“记得、模糊、不会”，默认展开答案；核对后点击“继续”。</li>
               </ol>
               <p>首次没记住的卡片会自动再出现，连续两次“记得”才算今天完成；中途没记住重新计数。</p>
               <p>通常隔 3 张其他卡片再练，补练完成后明天巩固。草稿不会保存。</p>
@@ -1225,14 +1233,15 @@
                 <span><kbd>N</kbd> 换一张</span>
               </div>
               <p>核对答案时，可按 1、2、3、N、D、空格或 Enter 继续，不会再次评分。</p>
+              <p>设置中可关闭“自动显示答案”，评分保存后直接换卡。“关闭文字提示”默认勾选，错误和必要确认仍显示。</p>
             </div>
             <div class="review-help-content" data-role="review-help-free" hidden>
               <ol>
                 <li>选择范围后，系统会把其中正在复习的卡片随机打乱。</li>
                 <li>每张卡只用于练习；不会改变熟练度、到期日或今日统计。</li>
-                <li>点击“下一张”核对答案，再点击“继续”换卡；看完后会重新洗牌。</li>
+                <li>默认点击“下一张”核对答案，再点击“继续”换卡；看完后会重新洗牌。</li>
               </ol>
-              <p>自由复习没有每轮数量和出题顺序设置。</p>
+              <p>设置与计划复习共用两个开关；关闭“自动显示答案”后直接换卡。“关闭文字提示”默认勾选，错误和必要确认仍显示。</p>
               <div class="review-shortcuts" aria-label="自由复习快捷键">
                 <span><kbd>Space</kbd> 查看答案</span>
                 <span><kbd>1</kbd> 查看答案</span>
@@ -1272,7 +1281,7 @@
                 <h3>何时完成</h3>
                 <p>首次没记住的卡片会自动再出现，连续两次“记得”才算今天完成；中途没记住重新计数。</p>
                 <p>通常隔 3 张其他卡片再练，补练完成后明天巩固。“今日完成”按不同卡片计数。</p>
-                <p>评分或换卡后会自动展示答案，核对后点击“继续”或按快捷键换卡。最后一张也可先核对。</p>
+                <p>默认评分或换卡后先展示答案，核对后再继续；可在设置中关闭“自动显示答案”，直接换卡。最后一张也遵循此设置。</p>
               </section>
               <details class="review-guide-more">
                 <summary>更多说明</summary>
@@ -1285,6 +1294,7 @@
                   </section>
                   <section class="review-guide-section">
                     <h3>卡片管理</h3>
+                    <p>两种复习共用“关闭文字提示”和“自动显示答案”，均默认勾选。普通操作提示默认隐藏，错误、重试和必要确认仍显示；修改后需保存设置。</p>
                     <p>暂停和归档都会停止推送，恢复后保留进度。删除卡片不可恢复，但已有的作答和完成记录保留。</p>
                     <p>卡组用于筛选范围，标签用于搜索。删除卡组后，卡片回到未分类。</p>
                     <p>批量导入支持粘贴表格或 XLSX / CSV / TSV，一行一张卡片；分组默认未分组，确认前检查重复和错误，不覆盖已有进度。</p>

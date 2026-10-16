@@ -86,6 +86,9 @@
   const libraryHelpDialogEl = root.querySelector('[data-role="review-library-help-dialog"]');
 
   const REVIEW_MODE_KEY = 'canvas:reviewMode:v1';
+  const REVIEW_PREFERENCES_KEY = 'canvas:reviewPreferences:v1';
+  let reviewPreferences = readReviewPreferences();
+  let currentToast = null;
   let pool = [];
   let libraryCards = [];
   let reviewDecks = [];
@@ -148,6 +151,7 @@
   let settingsDialogCloseTimer = 0;
   let helpDialogCloseTimer = 0;
   let libraryHelpDialogCloseTimer = 0;
+  const dialogEnterFrames = new WeakMap();
   let importLoader = null;
   let importController = null;
   let importOpenSequence = 0;
@@ -194,13 +198,42 @@
     try { localStorage.setItem(REVIEW_MODE_KEY, reviewMode); } catch (error) {}
   }
 
-  function toast(message) {
+  function readReviewPreferences() {
+    let stored;
+    try { stored = JSON.parse(localStorage.getItem(REVIEW_PREFERENCES_KEY)); } catch (_) {}
+    return {
+      hideTextTips: typeof stored?.hideTextTips === 'boolean' ? stored.hideTextTips : true,
+      autoRevealAnswer: typeof stored?.autoRevealAnswer === 'boolean' ? stored.autoRevealAnswer : true,
+    };
+  }
+
+  function applyReviewPreferences(next) {
+    reviewPreferences = next;
+    try { localStorage.setItem(REVIEW_PREFERENCES_KEY, JSON.stringify(next)); } catch (_) {}
+    syncQuestionHint();
+    if (next.hideTextTips && currentToast?.kind === 'info') {
+      const notice = currentToast;
+      if (notice.el.firstChild === notice.text && notice.el.childNodes.length === 1) notice.el.classList.remove('show');
+      clearTimeout(toast._timer);
+      currentToast = null;
+    }
+  }
+
+  function toast(message, kind = 'info') {
+    if (kind === 'info' && reviewPreferences.hideTextTips) return;
     const el = document.querySelector('[data-role="study-toast"]') || document.querySelector('[data-role="toast"]');
     if (!el) return;
-    el.textContent = tr(message);
+    // A shared toast can be replaced by another workspace. Only dismiss our
+    // own text node, even when another caller happens to use the same wording.
+    const notice = { el, kind, text: document.createTextNode(tr(message)) };
+    el.replaceChildren(notice.text);
+    currentToast = notice;
     el.classList.add('show');
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => el.classList.remove('show'), 2200);
+    toast._timer = setTimeout(() => {
+      if (el.firstChild === notice.text && el.childNodes.length === 1) el.classList.remove('show');
+      if (currentToast === notice) currentToast = null;
+    }, 2200);
   }
 
   async function readJson(url) {
@@ -461,7 +494,7 @@
     nextButtons.forEach(button => update(button, !current, locked || (!!feedback && !feedback.ready)));
     setAttribute(actionsEl, 'aria-busy', String(marking));
     if (actionsEl && actionsEl.classList.contains('is-checking') !== !!feedback) actionsEl.classList.toggle('is-checking', !!feedback);
-    setAttribute(root, 'data-review-phase', feedback ? (marking ? 'saving' : feedback.ready ? 'feedback' : 'retry') : 'question');
+    setAttribute(root, 'data-review-phase', marking ? 'saving' : pendingRating?.uncertain ? 'retry' : feedback?.ready ? 'feedback' : 'question');
     setText(nextLabelEl, tr(feedback ? '继续' : reviewMode === 'free' ? '下一张' : '再来一张'));
     setText(nextShortcutEl, feedback ? 'Enter' : reviewMode === 'free' ? 'N / D' : 'N');
     if (continueHintEl) {
@@ -602,15 +635,19 @@
     }
     updateCardMetadata();
     setText(promptEl, current.prompt || '未命名问题');
-    if (questionHintEl) {
-      setText(questionHintEl, tr(reviewMode === 'free'
-        ? '点击“下一张”核对答案，再继续。'
-        : '想好后选择记忆程度，核对答案后再继续。'));
-    }
+    syncQuestionHint();
     if (notesEl) notesEl.hidden = !renderRich(notesEl, current.notes);
     if (draftEl) draftEl.value = '';
     resetAnswerReveal(current);
     updateSessionProgress();
+  }
+
+  function syncQuestionHint() {
+    if (!questionHintEl) return;
+    const reveal = feedback || (pendingRating ? pendingRating.autoRevealAnswer : reviewPreferences.autoRevealAnswer);
+    setText(questionHintEl, tr(reviewMode === 'free'
+      ? (reveal ? '点击“下一张”核对答案，再继续。' : '想好后查看答案核对，或直接换到下一张。')
+      : (reveal ? '想好后选择记忆程度，核对答案后再继续。' : '想好后可以直接评分，也可以查看答案再核对。')));
   }
 
   function updateCardMetadata() {
@@ -718,7 +755,8 @@
     if (feedback) { await continueCard(); return; }
     if (pendingRating || loading) return;
     if (reviewMode === 'scheduled' && (!loaded || loadedDay !== todayStr())) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
-    beginFeedback('skip', true);
+    if (reviewPreferences.autoRevealAnswer) beginFeedback('skip', true);
+    else advanceCard('skip', false);
   }
 
   function beginFeedback(kind, ready) {
@@ -737,16 +775,20 @@
       else await loadPool(true);
       return;
     }
+    advanceCard(previous.kind, previous.celebrate);
+  }
+
+  function advanceCard(kind, celebrate) {
     feedback = null;
     if (reviewMode === 'free') {
       nextFreeCard();
       if (current) toast('下一张 √');
     } else {
-      if (previous.kind === 'skip') {
+      if (kind === 'skip') {
         const index = pool.findIndex(card => card.id === current.id);
         if (index >= 0) pool.push(pool.splice(index, 1)[0]);
       }
-      celebratePulse = previous.celebrate;
+      celebratePulse = celebrate;
       nextCard(); celebratePulse = false;
     }
   }
@@ -809,7 +851,7 @@
       } catch (error) {
         if (sequence === poolLoadSequence && identity === sessionGeneration) {
           loaded = false;
-          toast((error && error.message) || '加载复习卡片失败');
+          toast((error && error.message) || '加载复习卡片失败', 'error');
           if (scheduledVisible()) renderCard(null);
         }
         return false;
@@ -863,10 +905,11 @@
     if (!loaded || loadedDay !== todayStr()) { await loadPool(true); toast('复习数据已刷新，请继续作答'); return; }
     pendingRating = {
       session: sessionGeneration, uncertain: false,
+      autoRevealAnswer: reviewPreferences.autoRevealAnswer,
       payload: { cardId: current.id, rating, requestId: window.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2),
         expectedReviewCount: Number(current.reviewCount || 0), reviewDay: loadedDay },
     };
-    beginFeedback('rating', false);
+    if (pendingRating.autoRevealAnswer) beginFeedback('rating', false);
     await submitRating(pendingRating);
   }
 
@@ -883,7 +926,8 @@
       libraryCards = libraryCards.map(card => card.id === updated.id && Number(card.reviewCount || 0) <= updated.reviewCount ? updated : card);
       const sameSession = submission.session === sessionGeneration && scheduledVisible()
         && submission.payload.reviewDay === todayStr() && json.scopeKey === scopeKey()
-        && feedback?.kind === 'rating' && feedback.cardId === submission.payload.cardId;
+        && current?.id === submission.payload.cardId
+        && (!submission.autoRevealAnswer || (feedback?.kind === 'rating' && feedback.cardId === submission.payload.cardId));
       if (sameSession) {
         const previousCompleted = completedToday;
         applyStatistics(json);
@@ -892,10 +936,12 @@
         else if (updated.status === 'active' && isDue(updated)) pool.splice(Math.min(3, pool.length), 0, updated);
         if (completedToday > previousCompleted) { bumpSeen(); floatPlusOne(); }
         praise(submission.payload.rating);
-        current = updated;
-        updateCardMetadata(); updateSessionProgress();
-        feedback.ready = true;
-        feedback.celebrate = updated.dailyReview.completed;
+        if (submission.autoRevealAnswer) {
+          current = updated;
+          updateCardMetadata(); updateSessionProgress();
+          feedback.ready = true;
+          feedback.celebrate = updated.dailyReview.completed;
+        } else advanceCard('rating', updated.dailyReview.completed);
         if (json.idempotent) await refreshRatingStatistics();
       } else {
         if (feedback?.cardId === submission.payload.cardId && feedback.kind === 'rating') feedback = null;
@@ -916,10 +962,10 @@
             if (current?.id === previousId && draftEl && scheduledVisible()) draftEl.value = draft || '';
           }
         }
-        toast(error.message || '标记失败');
+        toast(error.message || '标记失败', 'error');
       } else {
         submission.uncertain = true;
-        toast('评分结果尚未确认，请重试保存');
+        toast('评分结果尚未确认，请重试保存', 'error');
       }
     } finally {
       marking = false;
@@ -1215,7 +1261,7 @@
       if (viewMode === 'library') renderLibrary(animateItems !== false);
       return true;
     } catch (error) {
-      toast((error && error.message) || '加载卡片库失败');
+      toast((error && error.message) || '加载卡片库失败', 'error');
       return false;
     } finally {
       libraryLoading = false;
@@ -1304,11 +1350,11 @@
   }
 
   async function persistReviewSettings(change, message) {
+    const payload = Object.assign({}, reviewSettings, change || {});
+    const json = await post('/api/review-settings', payload);
     feedback = null;
     updateRatingGate();
     sessionGeneration++; statsSequence++; loaded = false;
-    const payload = Object.assign({}, reviewSettings, change || {});
-    const json = await post('/api/review-settings', payload);
     reviewSettings = Object.assign({}, reviewSettings, json.settings || payload);
     await loadPool(true);
     if (reviewMode === 'free' && viewMode === 'session') {
@@ -1323,18 +1369,40 @@
       ? settingsFormEl.elements.namedItem(name) : null;
   }
 
+  function cancelDialogEnter(element) {
+    const frame = dialogEnterFrames.get(element);
+    if (frame) cancelAnimationFrame(frame);
+    dialogEnterFrames.delete(element);
+  }
+
+  function enterDialog(element) {
+    cancelDialogEnter(element);
+    element.hidden = false;
+    dialogEnterFrames.set(element, requestAnimationFrame(() => {
+      dialogEnterFrames.delete(element);
+      element.classList.add('show');
+    }));
+  }
+
+  function dialogIsOpen(element) {
+    return element && (element.classList.contains('show') || dialogEnterFrames.has(element));
+  }
+
   function openSettingsDialog() {
     if (!settingsDialogEl || !settingsFormEl) return;
     clearTimeout(settingsDialogCloseTimer);
     settingsFormControl('sessionLimit').value = String(reviewSettings.sessionLimit || 20);
     settingsFormControl('orderMode').value = reviewSettings.orderMode || 'due';
-    settingsDialogEl.hidden = false;
+    settingsFormControl('hideTextTips').checked = reviewPreferences.hideTextTips;
+    settingsFormControl('autoRevealAnswer').checked = reviewPreferences.autoRevealAnswer;
+    settingsFormEl.querySelectorAll('[data-review-scheduled-setting]').forEach(field => { field.hidden = reviewMode === 'free'; });
     controls.sync([settingsFormControl('sessionLimit'), settingsFormControl('orderMode')]);
-    requestAnimationFrame(() => settingsDialogEl.classList.add('show'));
+    enterDialog(settingsDialogEl);
   }
 
   function closeSettingsDialog() {
     if (!settingsDialogEl) return;
+    cancelDialogEnter(settingsDialogEl);
     controls.close();
     settingsDialogEl.classList.remove('show');
     clearTimeout(settingsDialogCloseTimer);
@@ -1349,14 +1417,23 @@
     settingsSaveEl.disabled = true;
     settingsSaveEl.classList.add('is-saving');
     try {
-      await persistReviewSettings({
+      const preferences = {
+        hideTextTips: settingsFormControl('hideTextTips').checked,
+        autoRevealAnswer: settingsFormControl('autoRevealAnswer').checked,
+      };
+      const settings = {
         sessionLimit: Number(settingsFormControl('sessionLimit').value || 20),
         orderMode: settingsFormControl('orderMode').value,
         requireReveal: false,
-      }, '复习设置已保存');
+      };
+      if (reviewMode === 'scheduled' && (settings.sessionLimit !== reviewSettings.sessionLimit || settings.orderMode !== reviewSettings.orderMode)) {
+        await persistReviewSettings(settings);
+      }
+      applyReviewPreferences(preferences);
       closeSettingsDialog();
+      toast('复习设置已保存');
     } catch (error) {
-      toast((error && error.message) || '保存复习设置失败');
+      toast((error && error.message) || '保存复习设置失败', 'error');
     } finally {
       settingsSaveEl.disabled = false;
       settingsSaveEl.classList.remove('is-saving');
@@ -1370,12 +1447,12 @@
     if (helpTitleEl) helpTitleEl.textContent = tr(free ? '自由复习' : '怎么复习');
     if (scheduledHelpEl) scheduledHelpEl.hidden = free;
     if (freeHelpEl) freeHelpEl.hidden = !free;
-    helpDialogEl.hidden = false;
-    requestAnimationFrame(() => helpDialogEl.classList.add('show'));
+    enterDialog(helpDialogEl);
   }
 
   function closeHelpDialog() {
     if (!helpDialogEl) return;
+    cancelDialogEnter(helpDialogEl);
     helpDialogEl.classList.remove('show');
     clearTimeout(helpDialogCloseTimer);
     helpDialogCloseTimer = window.setTimeout(() => {
@@ -1388,12 +1465,12 @@
     clearTimeout(libraryHelpDialogCloseTimer);
     const more = libraryHelpDialogEl.querySelector('details');
     if (more) more.open = false;
-    libraryHelpDialogEl.hidden = false;
-    requestAnimationFrame(() => libraryHelpDialogEl.classList.add('show'));
+    enterDialog(libraryHelpDialogEl);
   }
 
   function closeLibraryHelpDialog() {
     if (!libraryHelpDialogEl) return;
+    cancelDialogEnter(libraryHelpDialogEl);
     libraryHelpDialogEl.classList.remove('show');
     clearTimeout(libraryHelpDialogCloseTimer);
     libraryHelpDialogCloseTimer = window.setTimeout(() => {
@@ -1459,7 +1536,7 @@
       });
       closeDialog(); closeDeckDialog(); closeSettingsDialog(); closeHelpDialog(); closeLibraryHelpDialog();
       importController.open(trigger);
-    } catch (error) { toast(error.message || '导入组件加载失败，请重试'); }
+    } catch (error) { toast(error.message || '导入组件加载失败，请重试', 'error'); }
     finally { if (trigger) trigger.disabled = false; }
   }
 
@@ -1491,8 +1568,7 @@
       deleteEl.hidden = !card;
       deleteEl.textContent = tr('删除卡片');
     }
-    dialogEl.hidden = false;
-    requestAnimationFrame(() => dialogEl.classList.add('show'));
+    enterDialog(dialogEl);
     setTimeout(() => {
       const prompt = formControl('prompt');
       if (prompt && dialogEl.classList.contains('show') && !dialogEl.contains(document.activeElement) && !controls.contains(document.activeElement)) prompt.focus({ preventScroll: true });
@@ -1501,6 +1577,7 @@
 
   function closeDialog() {
     if (!dialogEl) return;
+    cancelDialogEnter(dialogEl);
     controls.close();
     clearTimeout(deleteArmTimer);
     deleteArmed = false;
@@ -1535,7 +1612,7 @@
       if (reviewMode === 'free' && viewMode === 'session') await ensureFreeReview(false);
       toast(id ? '卡片已更新' : '卡片已创建');
     } catch (error) {
-      toast((error && error.message) || '保存卡片失败');
+      toast((error && error.message) || '保存卡片失败', 'error');
     } finally {
       saveEl.disabled = false;
       saveEl.classList.remove('is-saving');
@@ -1549,7 +1626,7 @@
     if (!deleteArmed) {
       deleteArmed = true;
       if (deleteEl) deleteEl.textContent = tr('再次点击确认删除');
-      toast('删除后无法恢复，再点击一次确认');
+      toast('删除后无法恢复，再点击一次确认', 'confirm');
       clearTimeout(deleteArmTimer);
       deleteArmTimer = setTimeout(() => {
         deleteArmed = false;
@@ -1563,7 +1640,7 @@
       await Promise.all([loadPool(true), loadLibrary(true)]);
       toast('卡片已删除');
     } catch (error) {
-      toast((error && error.message) || '删除卡片失败');
+      toast((error && error.message) || '删除卡片失败', 'error');
     }
   }
 
@@ -1589,13 +1666,13 @@
       deckDeleteEl.textContent = tr('删除卡组');
     }
     clearTimeout(deckDialogCloseTimer);
-    deckDialogEl.hidden = false;
-    requestAnimationFrame(() => deckDialogEl.classList.add('show'));
+    enterDialog(deckDialogEl);
     setTimeout(() => deckFormControl('name').focus(), 80);
   }
 
   function closeDeckDialog() {
     if (!deckDialogEl) return;
+    cancelDialogEnter(deckDialogEl);
     deckDeleteArmed = false;
     clearTimeout(deckDeleteArmTimer);
     deckDialogEl.classList.remove('show');
@@ -1621,7 +1698,7 @@
       await Promise.all([loadPool(true), loadLibrary(true, false)]);
       toast(id ? '卡组已更新' : '卡组已创建');
     } catch (error) {
-      toast((error && error.message) || '保存卡组失败');
+      toast((error && error.message) || '保存卡组失败', 'error');
     } finally {
       deckSaveEl.disabled = false;
       deckSaveEl.classList.remove('is-saving');
@@ -1635,7 +1712,7 @@
     if (!deckDeleteArmed) {
       deckDeleteArmed = true;
       if (deckDeleteEl) deckDeleteEl.textContent = tr('再次点击确认删除');
-      toast('删除卡组后，卡片会回到未分类');
+      toast('删除卡组后，卡片会回到未分类', 'confirm');
       clearTimeout(deckDeleteArmTimer);
       deckDeleteArmTimer = setTimeout(() => {
         deckDeleteArmed = false;
@@ -1650,7 +1727,7 @@
       await Promise.all([loadPool(true), loadLibrary(true, false)]);
       toast('卡组已删除，卡片已移到未分类');
     } catch (error) {
-      toast((error && error.message) || '删除卡组失败');
+      toast((error && error.message) || '删除卡组失败', 'error');
     }
   }
 
@@ -1667,7 +1744,7 @@
       await Promise.all([loadPool(true), loadLibrary(true)]);
       toast(message);
     } catch (error) {
-      toast((error && error.message) || '批量更新卡片失败');
+      toast((error && error.message) || '批量更新卡片失败', 'error');
     } finally {
       if (batchBarEl) batchBarEl.removeAttribute('aria-busy');
     }
@@ -1679,7 +1756,7 @@
     if (!batchDeleteArmed) {
       batchDeleteArmed = true;
       if (batchDeleteEl) batchDeleteEl.textContent = tr('再次点击确认删除');
-      toast('删除后无法恢复，再点击一次确认');
+      toast('删除后无法恢复，再点击一次确认', 'confirm');
       clearTimeout(batchDeleteArmTimer);
       batchDeleteArmTimer = setTimeout(() => {
         batchDeleteArmed = false;
@@ -1694,7 +1771,7 @@
       await Promise.all([loadPool(true), loadLibrary(true)]);
       toast('所选卡片已删除');
     } catch (error) {
-      toast((error && error.message) || '批量删除卡片失败');
+      toast((error && error.message) || '批量删除卡片失败', 'error');
     }
   }
 
@@ -1802,7 +1879,7 @@
       await persistReviewSettings(change, '复习范围已切换');
     } catch (error) {
       syncScopeSelect();
-      toast((error && error.message) || '切换复习范围失败');
+      toast((error && error.message) || '切换复习范围失败', 'error');
     } finally {
       scopeSelectEl.disabled = false;
       controls.sync(scopeSelectEl);
@@ -1820,7 +1897,7 @@
       controls.refresh();
       if (viewMode === 'session') {
         if (current && feedback) {
-          updateCardMetadata(); updateStats(); updateSessionProgress(); updateRatingGate();
+          updateCardMetadata(); updateStats(); updateSessionProgress(); updateRatingGate(); syncQuestionHint();
           if (!String(current.answer || '').trim()) setText(answerRevealEl, tr('未填写答案'));
         } else if (current) renderCard(current);
         else renderEmpty();
@@ -1839,18 +1916,14 @@
     if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || controls.contains(event.target)) return;
     if (event.ctrlKey || event.metaKey || event.altKey || document.hidden || document.documentElement.dataset.desktopMinimized === '1') return;
     if (event.key === 'Escape') {
-      if (dialogEl && dialogEl.classList.contains('show')) { closeDialog(); return; }
-      if (deckDialogEl && deckDialogEl.classList.contains('show')) { closeDeckDialog(); return; }
-      if (settingsDialogEl && settingsDialogEl.classList.contains('show')) { closeSettingsDialog(); return; }
-      if (helpDialogEl && helpDialogEl.classList.contains('show')) { closeHelpDialog(); return; }
-      if (libraryHelpDialogEl && libraryHelpDialogEl.classList.contains('show')) { closeLibraryHelpDialog(); return; }
+      if (dialogIsOpen(dialogEl)) { closeDialog(); return; }
+      if (dialogIsOpen(deckDialogEl)) { closeDeckDialog(); return; }
+      if (dialogIsOpen(settingsDialogEl)) { closeSettingsDialog(); return; }
+      if (dialogIsOpen(helpDialogEl)) { closeHelpDialog(); return; }
+      if (dialogIsOpen(libraryHelpDialogEl)) { closeLibraryHelpDialog(); return; }
     }
     if (root.getAttribute('aria-hidden') === 'true') return;
-    if ((dialogEl && dialogEl.classList.contains('show'))
-        || (deckDialogEl && deckDialogEl.classList.contains('show'))
-        || (settingsDialogEl && settingsDialogEl.classList.contains('show'))
-        || (helpDialogEl && helpDialogEl.classList.contains('show'))
-        || (libraryHelpDialogEl && libraryHelpDialogEl.classList.contains('show'))) return;
+    if ([dialogEl, deckDialogEl, settingsDialogEl, helpDialogEl, libraryHelpDialogEl].some(dialogIsOpen)) return;
     const target = event.target;
     if (target && target.closest && target.closest('input, textarea, select, [role="combobox"], [contenteditable="true"]')) return;
     if (event.key === '?') {

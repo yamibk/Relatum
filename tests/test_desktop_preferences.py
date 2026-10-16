@@ -102,6 +102,16 @@ class DesktopPreferencesTests(unittest.TestCase):
                 self.assertEqual(restored.values['canvas:noteGraphPreload:v1'], '1')
                 self.assertIn('canvas:noteGraphPreload:v1', restored.bootstrap())
 
+    def test_review_preferences_join_existing_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = json.dumps({'hideTextTips': False, 'autoRevealAnswer': True})
+            preferences = DesktopPreferences(Path(directory), 'full')
+            preferences.update({'canvas:reviewPreferences:v1': value})
+            preferences.flush()
+            restored = DesktopPreferences(Path(directory), 'full')
+            self.assertEqual(restored.values['canvas:reviewPreferences:v1'], value)
+            self.assertIn('canvas:reviewPreferences:v1', restored.bootstrap())
+
     def test_failed_write_retries_and_invalid_input_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             preferences = DesktopPreferences(Path(directory), 'notes')
