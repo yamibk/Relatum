@@ -440,14 +440,17 @@ async function latePreparationCheck(browser, url) {
   await context.addInitScript(() => {
     localStorage.setItem('canvas:startWorkspace:v1', 'canvas'); localStorage.setItem('canvas:hideSpecialPages', '0');
     let module;
-    window.__navigationGate = { defer: '', releases: [], commits: [] };
+    window.__navigationGate = { defer: '', releases: [], rejects: [], commits: [] };
     Object.defineProperty(window, 'RelatumStartNavigation', { configurable: true, get: () => module, set(value) {
       module = value; const original = value.create;
       value.create = settings => original(Object.assign({}, settings, {
         prepare(route, state) {
           const result = settings.prepare?.(route, state);
           if (route.view !== window.__navigationGate.defer) return result;
-          return new Promise(resolve => window.__navigationGate.releases.push(() => resolve(result)));
+          return new Promise((resolve, reject) => {
+            window.__navigationGate.releases.push(() => resolve(result));
+            window.__navigationGate.rejects.push(reject);
+          });
         },
         commit(route, previous, state) { window.__navigationGate.commits.push(route.view); return settings.commit?.(route, previous, state); },
       }));
@@ -465,6 +468,61 @@ async function latePreparationCheck(browser, url) {
     assert.equal(await page.locator('.book-view').getAttribute('data-view-name'), 'notes');
     assert.deepEqual(await page.evaluate(() => window.__navigationGate.commits), ['notes'], 'late readiness cannot commit its obsolete route');
     report.checks.push({ type: 'late-preparation', final: 'notes' });
+    await page.evaluate(() => {
+      window.__navigationGate.defer = '';
+      document.querySelector('.calendar-spine-tab').click();
+    });
+    await waitView(page, 'calendar'); await page.waitForTimeout(750);
+    const early = await page.evaluate(() => {
+      const root = document.querySelector('.calendar-embedded');
+      document.querySelector('.cadence-spine-tab').click();
+      const exit = root.getAnimations().find(animation => !animation.animationName
+        && Number(animation.effect.getKeyframes().at(-1).opacity) === 0);
+      if (!exit) throw new Error('The calendar must begin fading in the navigation input task');
+      exit.pause(); exit.currentTime = exit.effect.getTiming().duration * .4;
+      const before = Number(getComputedStyle(root).opacity), time = exit.currentTime;
+      document.querySelector('.study-spine-tab[data-action="study-view"]').click();
+      const retained = root.getAnimations().includes(exit), after = Number(getComputedStyle(root).opacity);
+      const view = document.querySelector('.book-view').dataset.viewName;
+      document.querySelector('.calendar-spine-tab').click();
+      return { duration: exit.effect.getTiming().duration, before, after, retained,
+        time, view, cancelled: exit.playState === 'idle', recovering: !root.classList.contains('view-exit-preview') };
+    });
+    assert.equal(early.view, 'calendar', 'immediate fade does not activate a skipped page');
+    assert(early.duration >= 80 && early.duration <= 160);
+    assert(early.before > 0 && early.before < 1, 'outgoing opacity has an intermediate frame');
+    assert(early.retained && early.before === early.after, 'retargeting retains the existing fade and its current frame');
+    assert(early.cancelled && early.recovering, 'returning to the current page restores its mounted content');
+    await page.waitForFunction(() => !document.querySelector('.calendar-embedded').classList.contains('view-entering')
+      && Number(getComputedStyle(document.querySelector('.calendar-embedded')).opacity) > .99);
+
+    await page.evaluate(() => {
+      Object.assign(window.__navigationGate, { defer: 'cadence', releases: [], rejects: [], commits: [] });
+      document.querySelector('.cadence-spine-tab').click();
+    });
+    await page.waitForFunction(() => window.__navigationGate.releases.length === 1
+      && Number(getComputedStyle(document.querySelector('.calendar-embedded')).opacity) < .01);
+    assert.equal(await page.locator('.book-view').getAttribute('data-view-name'), 'calendar', 'preparation does not initialize the next page');
+    await page.evaluate(() => window.__navigationGate.releases.shift()());
+    await waitView(page, 'cadence');
+    const retired = await page.locator('.calendar-embedded').evaluate(element => ({
+      hidden: element.getAttribute('aria-hidden'), leaving: element.classList.contains('view-leaving'),
+      preview: element.classList.contains('view-exit-preview'), visibility: getComputedStyle(element).visibility,
+    }));
+    assert.deepEqual(retired, { hidden: 'true', leaving: false, preview: false, visibility: 'hidden' },
+      'a finished outgoing calendar is hidden at commit instead of waiting for the shared cleanup timer');
+
+    await page.evaluate(() => {
+      Object.assign(window.__navigationGate, { defer: 'calendar', releases: [], rejects: [] });
+      document.querySelector('.calendar-spine-tab').click();
+    });
+    await page.waitForFunction(() => window.__navigationGate.rejects.length === 1);
+    await page.evaluate(() => window.__navigationGate.rejects.shift()(new Error('Expected preparation failure')));
+    await page.waitForFunction(() => document.querySelector('.book-view').dataset.viewName === 'cadence'
+      && document.querySelector('.cadence-spine-tab').classList.contains('is-target')
+      && !document.querySelector('.cadence-embedded').classList.contains('view-entering')
+      && Number(getComputedStyle(document.querySelector('.cadence-embedded')).opacity) > .99);
+    report.checks.push({ type: 'immediate-exit', early, retired, failureRecovery: 'cadence' });
     console.log('navigation late preparation passed');
   } finally { await context.close(); }
 }

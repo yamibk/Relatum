@@ -197,10 +197,11 @@ async function runChecks(browser, url) {
       const submitted = await f.page.evaluate(() => {
         const element = document.querySelector('.book-page'), stage = document.querySelector('[data-role="book-stage"]');
         return { view: document.querySelector('.book-view').dataset.viewName, leaving: stage.classList.contains('view-leaving'),
+          retired: stage.getAttribute('aria-hidden') === 'true' && getComputedStyle(stage).visibility === 'hidden',
           opacity: Number(getComputedStyle(element).opacity), transform: getComputedStyle(element).transform };
       });
       assert.equal(submitted.view, 'calendar');
-      assert.equal(submitted.leaving, true, 'the library stage performs its outer page exit');
+      assert(submitted.leaving || submitted.retired, 'the library stage is exiting or has completed its early fade');
       assert(Math.abs(continuity.before.opacity - submitted.opacity) < .001,
         'committing a special page retains the old library entrance opacity beneath the outer exit');
       assert.equal(continuity.before.transform, submitted.transform,

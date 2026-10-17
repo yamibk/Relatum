@@ -17432,6 +17432,7 @@ body.start-page .review-embedded[data-review-phase="feedback"] .review-continue-
 }
 
 /* 退场动画完成后彻底跳过隐藏页的布局后代、绘制与命中；进入页会先同步移除 aria-hidden。 */
+.book-view > .view-exit-preview { pointer-events: none; }
 .book-stage[aria-hidden="true"]:not(.view-leaving),
 .study-embedded[aria-hidden="true"]:not(.view-leaving),
 .cadence-embedded[aria-hidden="true"]:not(.view-leaving),

@@ -23,6 +23,8 @@
   const bookPage = document.querySelector('[data-role="book-page"]');
   let navigation = null;
   let spineView = null;
+  let navigationExitPreview = null;
+  let navigationComposing = false;
   let startPageHidden = false;
   let spineDotsOrder = '';
   const fileList = document.querySelector('[data-role="file-list"]');
@@ -2024,6 +2026,7 @@
       desiredSpineButton = button;
     }
     syncActiveSpineOrb();
+    syncNavigationExitPreview(route);
     if (libraryLoaded && route?.view === 'library') queueMicrotask(reconcileLibraryNavigation);
   }
 
@@ -2364,7 +2367,6 @@
     focus: () => window.CanvasFocus,
   };
   let libraryNavigationMotion = null;
-  let interruptedViewExitMotion = null;
 
   function cancelLibraryNavigationMotion() {
     const motion = libraryNavigationMotion;
@@ -2374,9 +2376,93 @@
 
   function cancelNavigationPageMotion(options) {
     if (!options?.preserveLibrary) cancelLibraryNavigationMotion();
-    const exitMotion = interruptedViewExitMotion;
-    interruptedViewExitMotion = null;
-    if (exitMotion) exitMotion.cancel();
+  }
+
+  function disposeNavigationExitPreview(preview, hide) {
+    if (!preview) return;
+    if (navigationExitPreview === preview) navigationExitPreview = null;
+    preview.animation.removeEventListener('finish', preview.finish);
+    preview.element.classList.remove('view-exit-preview');
+    if (hide && preview.element.getAttribute('aria-hidden') === 'true') {
+      // Remove the retiring root before cancelling its final transparent frame.
+      preview.element.classList.remove('view-leaving');
+      finalizeDeferredStartViewExitMotion();
+    }
+    preview.animation.cancel();
+  }
+
+  function restoreNavigationExitPreview(instant) {
+    const preview = navigationExitPreview;
+    if (!preview) return;
+    if (preview.committed || preview.element.getAttribute('aria-hidden') === 'true') {
+      disposeNavigationExitPreview(preview, true);
+      return;
+    }
+    if (preview.recovering && !instant) return;
+    const element = preview.element;
+    const style = getComputedStyle(element);
+    const snapshot = { opacity: style.opacity, transform: style.transform };
+    disposeNavigationExitPreview(preview, false);
+    if (instant || !navigationVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      element.classList.remove('view-entering');
+      return;
+    }
+    // Keep the original editor mounted; only recover its currently displayed root.
+    const animation = element.animate([
+      snapshot, { opacity: 1, transform: 'translate3d(0,0,0)' },
+    ], { duration: 120, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' });
+    const recovery = { element, animation, recovering: true, committed: false, finish: null };
+    recovery.finish = () => {
+      if (navigationExitPreview !== recovery) return;
+      element.classList.remove('view-entering');
+      disposeNavigationExitPreview(recovery, false);
+    };
+    navigationExitPreview = recovery;
+    animation.addEventListener('finish', recovery.finish, { once: true });
+  }
+
+  function syncNavigationExitPreview(route) {
+    if (!navigationVisible() || navigationComposing) {
+      restoreNavigationExitPreview(true);
+      return;
+    }
+    const state = navigation?.getState();
+    if (!state?.pending || !route || route.view === state.current.view) {
+      restoreNavigationExitPreview(false);
+      return;
+    }
+    if (!bookView?.dataset.viewName || bookView.hidden
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      restoreNavigationExitPreview(true);
+      return;
+    }
+    const element = getStartViewElement(state.current.view === 'library' ? 'recent' : state.current.view);
+    if (!element?.animate) return;
+    const previous = navigationExitPreview;
+    if (previous?.element === element && !previous.recovering && !previous.committed) return;
+    const style = getComputedStyle(element);
+    const snapshot = { opacity: style.opacity, transform: style.transform };
+    disposeNavigationExitPreview(previous, !!previous?.committed);
+    const animation = element.animate([
+      snapshot, { opacity: 0, transform: snapshot.transform },
+    ], { duration: Math.max(80, Math.min(160, Math.round(startTurnSpeed * .4))),
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' });
+    const preview = { element, animation, recovering: false, committed: false, done: false, finish: null };
+    preview.finish = () => {
+      if (navigationExitPreview !== preview) return;
+      preview.done = true;
+      if (preview.committed) disposeNavigationExitPreview(preview, true);
+    };
+    navigationExitPreview = preview;
+    element.classList.add('view-exit-preview');
+    animation.addEventListener('finish', preview.finish, { once: true });
+  }
+
+  function commitNavigationExitPreview() {
+    const preview = navigationExitPreview;
+    if (!preview || preview.recovering) return;
+    preview.committed = true;
+    if (preview.done || preview.animation.playState === 'finished') disposeNavigationExitPreview(preview, true);
   }
 
   function navigationAbortError() {
@@ -2507,56 +2593,6 @@
     ], startBookFlipDoneDelay());
   }
 
-  function captureInterruptedViewExit(route, ctx) {
-    const previous = navigation.getState().current;
-    if (!ctx.isCurrent() || previous.view === route.view || previous.view === 'review'
-      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const previousName = previous.view === 'library' ? 'recent' : previous.view;
-    const nextName = route.view === 'library' ? 'recent' : route.view;
-    const element = getStartViewElement(previousName);
-    if (!element?.classList.contains('view-entering') || !element.animate) return;
-    // Read the one interrupted root before showView changes any page classes or layout.
-    const style = getComputedStyle(element);
-    const towardReview = previous.view === 'calendar' && route.view === 'review';
-    const back = (START_VIEW_ORDER[nextName] ?? START_VIEW_ORDER.recent)
-      < (START_VIEW_ORDER[previousName] ?? START_VIEW_ORDER.recent);
-    const duration = towardReview ? Math.max(80, startTurnSpeed * 0.38) + 35
-      : Math.max(165, startTurnSpeed * 0.92) + (['calendar', 'cadence'].includes(previous.view) ? 80 : 0);
-    ctx.exitSnapshot = {
-      element, opacity: style.opacity, transform: style.transform,
-      target: towardReview ? 'translate3d(12px,0,0) scale(0.997)' : 'translate3d(' + (back ? 42 : -42) + 'px,0,0)',
-      duration,
-    };
-  }
-
-  function animateInterruptedViewExit(ctx) {
-    const snapshot = ctx.exitSnapshot;
-    if (!snapshot || !ctx.isCurrent() || !snapshot.element.classList.contains('view-leaving')) return;
-    const animation = snapshot.element.animate([
-      { opacity: snapshot.opacity, transform: snapshot.transform },
-      { opacity: 0, transform: snapshot.target },
-    ], { duration: snapshot.duration, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
-    const finish = () => {
-      ctx.signal.removeEventListener('abort', abort);
-      animation.removeEventListener('finish', finish);
-      animation.removeEventListener('cancel', finish);
-      if (interruptedViewExitMotion === motion) interruptedViewExitMotion = null;
-    };
-    const abort = () => motion.cancel();
-    const motion = {
-      cancel() {
-        finish();
-        animation.cancel();
-        // The outgoing root is already inert. Do not uncover a restarted CSS first frame.
-        if (snapshot.element.getAttribute('aria-hidden') === 'true') snapshot.element.classList.remove('view-leaving');
-      },
-    };
-    interruptedViewExitMotion = motion;
-    animation.addEventListener('finish', finish);
-    animation.addEventListener('cancel', finish);
-    ctx.signal.addEventListener('abort', abort, { once: true });
-  }
-
   function runNavigationAction(route, api, ctx) {
     if (ctx.options.action === 'toggle') api?.toggleMode?.();
     else if (ctx.options.action === 'reset') api?.resetView?.();
@@ -2571,9 +2607,7 @@
     visible: navigationVisible,
     feedback: route => updateNavigationFeedback(route),
     prepare(route, ctx) {
-      const readiness = route.view === 'library' ? waitForLibraryPageExit(route, ctx) : waitForNavigationModule(route, ctx);
-      if (readiness?.then) return readiness.then(() => captureInterruptedViewExit(route, ctx));
-      captureInterruptedViewExit(route, ctx);
+      return route.view === 'library' ? waitForLibraryPageExit(route, ctx) : waitForNavigationModule(route, ctx);
     },
     commit(route, previous, ctx) {
       const api = navigationModules[route.view]?.();
@@ -2600,7 +2634,7 @@
         selectedIndex = -1;
         if (!same) renderPanel({ staggerEnter: true });
         showView(listViewName());
-        animateInterruptedViewExit(ctx);
+        commitNavigationExitPreview();
         if (bookStage) bookStage.scrollTop = 0;
         animateLibraryPageEntrance(ctx);
       } else {
@@ -2608,7 +2642,7 @@
         if (route.view === 'calendar') api?.activate?.();
         if (route.view === 'focus') api?.prepareActivate?.(ctx.options);
         showView(route.view);
-        animateInterruptedViewExit(ctx);
+        commitNavigationExitPreview();
         if (route.view === 'cadence') armCadenceEntrance();
         else if (route.view !== 'calendar') api?.activate?.();
       }
@@ -4778,13 +4812,23 @@
   document.addEventListener('compositionstart', event => {
     if (workspaceRuntime.current !== 'canvas') return;
     composingTarget = event.target;
+    navigationComposing = true;
     navigation.setComposing(true);
+    restoreNavigationExitPreview(true);
   }, true);
   document.addEventListener('compositionend', event => {
     if (event.target !== composingTarget) return;
     composingTarget = null;
+    navigationComposing = false;
     navigation.setComposing(false);
+    syncNavigationExitPreview(navigation.getState().desired);
   }, true);
+  window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', event => {
+    if (!event.matches || !navigationExitPreview) return;
+    const preview = navigationExitPreview;
+    if (preview.recovering) restoreNavigationExitPreview(true);
+    else { preview.animation.finish(); preview.finish(); }
+  });
   spineEl?.addEventListener('pointerdown', event => {
     if (composingTarget && event.target.closest('button')) event.preventDefault();
   });
@@ -4795,7 +4839,9 @@
     } else {
       navigation.cancel();
       cancelNavigationPageMotion();
+      restoreNavigationExitPreview(true);
       composingTarget = null;
+      navigationComposing = false;
       navigation.setComposing(false);
       clearTimeout(wheelResetTimer);
       wheelResetTimer = null;
