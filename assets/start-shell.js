@@ -9,8 +9,8 @@
   const careerScrollFeelRanges = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-range"]'));
   const careerScrollFeelValues = Array.from(document.querySelectorAll('[data-role="career-scroll-feel-value"]'));
   const careerScrollRevealToggle = query('career-scroll-reveal-toggle');
-  const START_SPEED_KEY = 'canvas:startTurnMs', START_SPEED_MIN = 180, START_SPEED_MAX = 500, START_SPEED_DEFAULT = 260;
-  const SPINE_SPEED_KEY = 'canvas:spineMotionMs:v1', SPINE_SPEED_MIN = 100, SPINE_SPEED_MAX = 800, SPINE_SPEED_DEFAULT = 414;
+  const START_SPEED_KEY = 'canvas:startTurnMs', START_SPEED_MIN = 180, START_SPEED_MAX = 500, START_SPEED_DEFAULT = 210;
+  const SPINE_SPEED_KEY = 'canvas:spineMotionMs:v1', SPINE_SPEED_MIN = 100, SPINE_SPEED_MAX = 800, SPINE_SPEED_DEFAULT = 447;
   const CAREER_SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1', CAREER_SCROLL_IDLE_KEY = 'canvas:careerScrollIdleMs:v1';
   const CAREER_SCROLL_IDLE_MIN = 20, CAREER_SCROLL_IDLE_MAX = 160, CAREER_SCROLL_IDLE_DEFAULT = 50;
   const CAREER_SCROLL_FEEL_DEFAULTS = Object.freeze({ strength: 100, inertia: 45, acceleration: 60, maxSpeed: 2400, pauseReveal: false });
@@ -282,7 +282,7 @@
   const reset = document.querySelector('[data-action="start-panel-reset"]');
   if (reset) reset.addEventListener('click', () => {
     ['canvas:startBackgroundStyle',START_SPEED_KEY,SPINE_SPEED_KEY,CAREER_SCROLL_FEEL_KEY,CAREER_SCROLL_IDLE_KEY].forEach(key => localStorage.removeItem(key));
-    background('simple', false); applyStartSpeed(260, false); applySpineSpeed(414, false); applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, false);
+    background('simple', false); applyStartSpeed(START_SPEED_DEFAULT, false); applySpineSpeed(SPINE_SPEED_DEFAULT, false); applyCareerScrollFeel(CAREER_SCROLL_FEEL_DEFAULTS, false);
     window.RelatumUsage?.resetSettings();
   });
   const settings = query('desktop-settings');

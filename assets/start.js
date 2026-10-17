@@ -125,9 +125,9 @@
   const START_SPEED_KEY = 'canvas:startTurnMs';
   const START_SPEED_MIN = 180;
   const START_SPEED_MAX = 500;
-  const START_SPEED_DEFAULT = 260;
+  const START_SPEED_DEFAULT = 210;
   const SPINE_SPEED_KEY = 'canvas:spineMotionMs:v1';
-  const SPINE_SPEED_DEFAULT = 414; // 原 460ms 动画时长缩短 10%。
+  const SPINE_SPEED_DEFAULT = 447;
   const SPINE_SPEED_MIN = 100;
   const SPINE_SPEED_MAX = 800;
   const CAREER_SCROLL_FEEL_KEY = 'canvas:careerScrollFeel:v1';
@@ -1845,8 +1845,8 @@
       TREE_PAGE_ROOT_TITLE_SIZE_KEY,      // 根节点标题字号（25px）
       DARK_CARD_PRESENTATION_KEY,         // 树状页/学习页深色彩色卡片（底色 15%、强调 100%、白字）
       LIBRARY_SEARCH_ENABLED_KEY,         // 画布名称搜索（关）
-      START_SPEED_KEY,                    // 翻页速度（260ms）
-      SPINE_SPEED_KEY,                    // 书脊滑块动画时长（414ms）
+      START_SPEED_KEY,                    // 翻页速度（210ms）
+      SPINE_SPEED_KEY,                    // 书脊滑块动画时长（447ms）
       CAREER_SCROLL_FEEL_KEY,             // 生涯滚动手感
       CAREER_SCROLL_IDLE_KEY,             // 生涯揭示等待（50ms）
     ].forEach((key) => {

@@ -295,7 +295,7 @@ async function behavior(browser, config) {
 async function speedChecks(browser) {
   const page = await fixture(browser, { theme: 'dark', dpr: 1 });
   try {
-    for (const speed of [100, 414, 457, 800]) {
+    for (const speed of [100, 414, 447, 457, 800]) {
       await page.evaluate(speed => document.documentElement.style.setProperty('--spine-motion-ms', speed + 'ms'), speed);
       await page.evaluate(() => S.activate(0, { animate: false })); await frame(page);
       await page.evaluate(() => S.activate(6)); await frame(page);
@@ -321,7 +321,7 @@ async function shapeChecks(browser) {
   for (const config of [{ theme: 'light', dpr: 1 }, { theme: 'dark', dpr: 2 }]) {
     const page = await fixture(browser, config);
     try {
-      for (const speed of [414, 800]) {
+      for (const speed of [414, 447, 800]) {
         const result = await page.evaluate(async speed => {
           document.documentElement.style.setProperty('--spine-motion-ms', speed + 'ms');
           const frame = () => new Promise(resolve => requestAnimationFrame(resolve));

@@ -3773,16 +3773,16 @@ html[data-ui-language="en"] .editor-back {
   --easing-soft: cubic-bezier(0.22, 1, 0.36, 1);
   --easing-page: cubic-bezier(0.16, 1, 0.3, 1);
   --easing-start-view: cubic-bezier(0.42, 0, 0.58, 1);
-  --start-turn-ms: 260ms;
-  --start-turn-leave-ms: 239ms;
-  --start-turn-fade-ms: 156ms;
-  --start-turn-out-fade-ms: 99ms;
-  --start-rest-fade-ms: 354ms;
-  --start-stage-fade-ms: 333ms;
-  --start-orb-ms: 239ms;
-  --start-orb-shape-ms: 239ms;
-  --start-orb-clip-ms: 239ms;
-  --start-orb-fade-ms: 83ms;
+  --start-turn-ms: 210ms;
+  --start-turn-leave-ms: 193ms;
+  --start-turn-fade-ms: 126ms;
+  --start-turn-out-fade-ms: 80ms;
+  --start-rest-fade-ms: 286ms;
+  --start-stage-fade-ms: 269ms;
+  --start-orb-ms: 193ms;
+  --start-orb-shape-ms: 193ms;
+  --start-orb-clip-ms: 193ms;
+  --start-orb-fade-ms: 70ms;
   --duration: 180ms;
   --duration-lg: 320ms;
   --duration-page: 260ms;
@@ -10156,7 +10156,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 
 .spine-active-orb {
   /* A fixed carrier and the opposite glyph track share one transform clock. */
-  --start-orb-ms: var(--spine-motion-ms, 414ms);
+  --start-orb-ms: var(--spine-motion-ms, 447ms);
   --spine-shape-inset: 2px;
   --spine-shape-radius: 13px;
   --spine-glyph-clip: inset(2px round 13px);

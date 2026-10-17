@@ -273,7 +273,7 @@ async function wholePageExitChecks(page, config) {
       assert.equal(exit.duration, undefined, `${from}: reduced motion skips the fade`);
       assert.equal(exit.preview, false);
     } else {
-      assert.equal(exit.duration, from === 'calendar' ? 65 : 169,
+      assert.equal(exit.duration, from === 'calendar' ? 53 : 137,
         `${from}: only the outgoing calendar uses the shorter default fade`);
       assert.equal(exit.easing, 'cubic-bezier(0.4, 0, 0.2, 1)');
       assert(exit.preview && exit.opacity > .1 && exit.opacity < .9, `${from}: the root has a real fade intermediate`);
@@ -310,7 +310,7 @@ async function wholePageExitChecks(page, config) {
         outerPreview: document.querySelector('.book-stage').classList.contains('view-exit-preview') };
       animation.finish(); return result;
     });
-    assert.equal(local.duration, 104, 'ordinary library groups retain their faster local exit');
+    assert.equal(local.duration, 90, 'ordinary library groups retain their faster local exit');
     assert.equal(local.easing, 'cubic-bezier(0.22, 1, 0.36, 1)');
     assert.equal(local.outerPreview, false, 'group changes do not fade the shared outer container');
     report.checks.push({ type: 'library-local-exit', config, local });
@@ -541,8 +541,8 @@ async function behaviorChecks(browser, url, config) {
 }
 
 async function spinePageResizeChecks(browser, url) {
-  for (const speed of [null, 800]) {
-    const expectedMs = speed === null ? 414 : speed;
+  for (const speed of [null, 414, 800]) {
+    const expectedMs = speed === null ? 447 : speed;
     const { context, page, errors } = await prepareContext(browser, url,
       { theme: 'light', dpr: 1, speed }, false, { warm: false });
     try {
@@ -664,7 +664,7 @@ async function latePreparationCheck(browser, url) {
         time, view, cancelled: exit.playState === 'idle', recovering: !root.classList.contains('view-exit-preview') };
     });
     assert.equal(early.view, 'calendar', 'immediate fade does not activate a skipped page');
-    assert.equal(early.duration, 65, 'calendar alone uses the shorter whole-page fade duration');
+    assert.equal(early.duration, 53, 'calendar alone uses the shorter whole-page fade duration');
     assert(early.before > 0 && early.before < 1, 'outgoing opacity has an intermediate frame');
     assert(early.retained && early.before === early.after, 'retargeting retains the existing fade and its current frame');
     assert(early.cancelled && early.recovering, 'returning to the current page restores its mounted content');
@@ -717,7 +717,7 @@ async function latePreparationCheck(browser, url) {
       return { duration: timing.duration, easing: timing.easing, middle, retargeted, retained,
         cancelled: exit.playState === 'idle', graphRetained: graph.isConnected };
     });
-    assert.equal(cadenceFade.duration, 169, 'default cadence exit uses 65% of the page speed');
+    assert.equal(cadenceFade.duration, 137, 'default cadence exit uses 65% of the page speed');
     assert.equal(cadenceFade.easing, 'cubic-bezier(0.4, 0, 0.2, 1)');
     assert(cadenceFade.middle > .15 && cadenceFade.middle < .9, 'the cadence fade retains a perceptible intermediate frame');
     assert(cadenceFade.retained && cadenceFade.retargeted === cadenceFade.middle, 'retargeting does not restart cadence fading');

@@ -44,7 +44,7 @@ assert(!styles.slice(styles.indexOf('.spine-active-orb {'), styles.indexOf('.spi
 assert(!styles.slice(styles.indexOf('.spine-active-orb {'), styles.indexOf('.spine-active-orb.show')).includes('will-change'));
 
 assert(start.includes("const SPINE_SPEED_KEY = 'canvas:spineMotionMs:v1'"));
-assert(start.includes('const SPINE_SPEED_DEFAULT = 414'));
+assert(start.includes('const SPINE_SPEED_DEFAULT = 447'));
 assert(start.includes('const SPINE_SPEED_MIN = 100'));
 assert(start.includes('const SPINE_SPEED_MAX = 800'));
 assert(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.spine-hover-rail,[\s\S]*?\.spine-hover-orb \{ transition: none; \}/.test(styles));
