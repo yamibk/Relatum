@@ -91,8 +91,7 @@ async function glyphChecks(browser, url, nativePage) {
       fs.writeFileSync(path.join(root, `glyph-${from}-${to}.json`), JSON.stringify({ rect, viewport, series, styles }, null, 2));
       if (baselineRef) assert.notEqual(styles.immediateColor, styles.expectedColor, 'baseline reproduces stale outgoing foreground');
       else {
-        if (config.theme === 'light') assert.equal(styles.immediateColor, styles.expectedColor, 'outgoing glyph restores its readable color in the switching task');
-        else assert.equal(styles.immediateColor, styles.originalColor, 'dark theme retains its existing foreground transition');
+        assert.equal(styles.immediateColor, styles.originalColor, 'normal glyph ink remains stable; the carrier owns covered ink');
         assert(styles.pageLayers.every(layer => layer < styles.navLayer), 'animated page controls stay below navigation');
         if (config.theme === 'light') assert(series.every(f => f.max - f.min >= 70), 'capture must not contain a washed-out glyph frame');
       }
@@ -167,6 +166,7 @@ async function behaviorChecks(browser, url, config) {
     assert.equal(heatmap.bands, config.reduced ? 0 : 7);
     await page.evaluate(() => { transitionProbe.enumerations = 0; });
     await activate(page, 'focus');
+    await page.waitForFunction(() => document.querySelector('.book-view').dataset.viewName === 'focus');
     assert.equal(await page.evaluate(() => transitionProbe.enumerations), 0, 'cadence exit does not enumerate SVG animations');
     if (!config.reduced) {
       const frozen = await page.evaluate(async () => {

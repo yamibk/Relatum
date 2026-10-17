@@ -10155,63 +10155,89 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 }
 
 .spine-active-orb {
-  /* 独立滑块速度；默认比原 460ms 缩短 10%，不影响页面和其他游标。 */
+  /* A fixed carrier and the opposite glyph track share one transform clock. */
   --start-orb-ms: var(--spine-motion-ms, 414ms);
-  --start-orb-shape-ms: var(--spine-motion-ms, 414ms);
-  --start-orb-clip-ms: var(--spine-motion-ms, 414ms);
+  --spine-shape-inset: 2px;
+  --spine-shape-radius: 13px;
+  --spine-glyph-clip: inset(2px round 13px);
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 2;
+  width: 38px;
+  height: 38px;
+  z-index: 4;
   opacity: 0;
-  background: #000;
-  box-shadow: 0 8px 20px rgba(26, 26, 26, 0.14);
+  background: transparent;
   pointer-events: none;
-  will-change: transform;
-  transition: transform var(--start-orb-ms) var(--easing-soft),
-              width var(--start-orb-shape-ms) var(--easing-soft),
-              height var(--start-orb-shape-ms) var(--easing-soft),
-              border-radius var(--start-orb-shape-ms) var(--easing-soft),
-              clip-path var(--start-orb-clip-ms) var(--easing-soft),
-              box-shadow var(--start-orb-shape-ms) var(--easing-soft);
+  transition: transform var(--start-orb-ms) var(--easing-soft);
 }
 .spine-active-orb.show { opacity: 1; }
-.spine-active-orb[data-shape="tab"] { box-shadow: 0 8px 20px rgba(26, 26, 26, 0.14); }
-.spine-active-orb[data-shape="dot"] { box-shadow: 0 3px 9px rgba(26, 26, 26, 0.16); }
-.spine-active-orb[data-shape="star"] { box-shadow: 0 4px 12px rgba(26, 26, 26, 0.15); }
-
-/* 星形和圆点共用可插值的 polygon 轮廓，翻页时不会短暂露出矩形本体。 */
-.spine-active-orb[data-shape="dot"],
-.spine-active-orb[data-shape="star"] { border-radius: 0; }
-
-/* 呼吸只作用于外侧光晕，实体始终保持纯黑 / 纯白与完全不透明。 */
-.spine-active-orb.orb-breathing {
+.spine-active-orb[data-shape="dot"] {
+  --spine-shape-inset: 13px;
+  --spine-shape-radius: 50%;
+  --spine-glyph-clip: circle(6px at 50% 50%);
+}
+.spine-active-orb[data-shape="star"] {
+  --spine-shape-inset: 10px;
+  --spine-shape-radius: 0;
+  --spine-glyph-clip: polygon(50% 26.3158%, 55.5705% 42.3368%, 72.5237% 42.6829%,
+    59.0095% 52.9274%, 63.9216% 69.1605%, 50% 59.4737%, 36.0784% 69.1605%,
+    40.9905% 52.9274%, 27.4763% 42.6829%, 44.4295% 42.3368%);
+}
+.spine-orb-surface,
+.spine-active-orb::after {
+  position: absolute;
+  inset: var(--spine-shape-inset);
+  border-radius: var(--spine-shape-radius);
+}
+.spine-orb-surface {
+  background: #000;
+  box-shadow: 0 8px 20px rgba(26, 26, 26, .14);
+}
+.spine-active-orb[data-shape="dot"] .spine-orb-surface { box-shadow: 0 3px 9px rgba(26, 26, 26, .16); }
+.spine-active-orb[data-shape="star"] .spine-orb-surface {
+  clip-path: polygon(50% 0%, 61.76% 33.82%, 97.55% 34.55%, 69.02% 56.18%,
+    79.39% 90.45%, 50% 70%, 20.61% 90.45%, 30.98% 56.18%, 2.45% 34.55%, 38.24% 33.82%);
+}
+.spine-glyph-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  clip-path: var(--spine-glyph-clip);
+  color: #fff;
+}
+.spine-glyph-track {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transition: transform var(--start-orb-ms) var(--easing-soft);
+}
+.spine-glyph-slot {
+  position: absolute;
+  display: grid;
+  place-items: center;
+}
+.spine-glyph-slot[hidden] { display: none; }
+.spine-active-orb::after {
+  content: '';
+  opacity: 0;
+  box-shadow: 0 0 0 1px rgba(26, 26, 26, .06), 0 0 9px rgba(26, 26, 26, .12);
+}
+.spine-active-orb.orb-breathing::after {
   animation: spine-orb-breathe 3.8s var(--easing-soft) 1;
 }
-
 @keyframes spine-orb-breathe {
-  0%, 100% { filter: drop-shadow(0 0 0 rgba(26, 26, 26, 0)); }
-  50% { filter: drop-shadow(0 0 5px rgba(26, 26, 26, 0.11)); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
-
-/* 速记搜索进行中：只让当前页游标透出一圈微弱呼吸光，不增加任何搜索 UI。 */
-.left-spine.notes-search-active .spine-active-orb {
+/* Search and idle feedback animate only the prepainted glow's opacity. */
+.left-spine.notes-search-active .spine-active-orb::after {
+  box-shadow: 0 0 0 3px rgba(250, 202, 86, .62), 0 0 18px rgba(250, 202, 86, .72);
   animation: notes-search-orb-glow 2.4s var(--easing-soft) 3;
 }
-
 @keyframes notes-search-orb-glow {
-  0%, 100% {
-    box-shadow:
-      0 8px 20px rgba(26, 26, 26, 0.14),
-      0 0 0 2px rgba(246, 194, 76, 0.34),
-      0 0 9px rgba(246, 194, 76, 0.42);
-  }
-  50% {
-    box-shadow:
-      0 8px 20px rgba(26, 26, 26, 0.14),
-      0 0 0 3px rgba(250, 202, 86, 0.62),
-      0 0 18px rgba(250, 202, 86, 0.72);
-  }
+  0%, 100% { opacity: .45; }
+  50% { opacity: 1; }
 }
 
 /* 书脊彩色游标：细线负责方向感，柔光色块跟随入口并适配方块、圆点与五角星。 */
@@ -10222,7 +10248,6 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   top: 0;
   pointer-events: none;
   opacity: 0;
-  will-change: transform;
 }
 
 .spine-hover-rail {
@@ -10236,13 +10261,14 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
     var(--spine-hover-color, #c39a3e));
   box-shadow: 0 0 9px var(--spine-hover-glow, rgba(195, 154, 62, 0.3));
   transition: transform 330ms cubic-bezier(0.22, 1, 0.36, 1),
-              background 180ms ease,
-              box-shadow 190ms ease,
               opacity 140ms ease;
 }
 
 .spine-hover-orb {
   z-index: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--spine-hover-color, #c39a3e), white 42%);
   background: linear-gradient(145deg,
     color-mix(in srgb, var(--spine-hover-color, #c39a3e), white 76%),
@@ -10250,21 +10276,23 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   box-shadow: 0 7px 18px var(--spine-hover-glow, rgba(195, 154, 62, 0.3)),
               inset 0 1px 0 rgba(255, 255, 255, 0.78);
   transition: transform 330ms cubic-bezier(0.22, 1, 0.36, 1),
-              width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-              height 240ms cubic-bezier(0.22, 1, 0.36, 1),
-              border-radius 210ms cubic-bezier(0.22, 1, 0.36, 1),
-              clip-path 230ms cubic-bezier(0.22, 1, 0.36, 1),
-              background 180ms ease,
-              border-color 180ms ease,
-              box-shadow 190ms ease,
               opacity 140ms ease;
+}
+.spine-hover-orb[data-shape="dot"] { clip-path: circle(8px at 50% 50%); border-radius: 0; }
+.spine-hover-orb[data-shape="star"] {
+  clip-path: polygon(50% 22.3684%, 56.499% 41.0584%, 76.2776% 41.4618%,
+    60.5111% 53.4153%, 66.242% 72.354%, 50% 61.0526%, 33.758% 72.354%,
+    39.4889% 53.4153%, 23.7224% 41.4618%, 43.501% 41.0584%);
+  border-radius: 0;
 }
 
 .left-spine.spine-marker-no-transition .spine-active-orb,
+.left-spine.spine-marker-no-transition .spine-glyph-track,
 .left-spine.spine-marker-no-transition .spine-hover-rail,
 .left-spine.spine-marker-no-transition .spine-hover-orb { transition: none; }
 
-.left-spine.spine-motion-suspended :is(.spine-active-orb, .spine-hover-rail, .spine-hover-orb) {
+.left-spine.spine-motion-suspended :is(.spine-active-orb, .spine-glyph-track, .spine-hover-rail, .spine-hover-orb),
+.left-spine.spine-motion-suspended .spine-active-orb::after {
   transition: none !important;
   animation: none !important;
 }
@@ -10274,7 +10302,6 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .left-spine.spine-marker-visible .spine-hover-orb { opacity: 0.46; }
 .left-spine.spine-marker-previewing .spine-hover-rail { opacity: 0.92; }
 .left-spine.spine-marker-previewing .spine-hover-orb { opacity: 0.78; }
-.left-spine.spine-marker-returning .spine-hover-orb { opacity: 0.58; }
 
 /* 悬停当前页时，彩色层退成细边与微光，不再叠成第二块实体。 */
 .left-spine.spine-hover-current .spine-hover-orb {
@@ -10288,7 +10315,6 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .left-spine.spine-marker-previewing.spine-hover-current .spine-hover-orb { opacity: 0.9; }
 .left-spine.spine-marker-previewing.spine-hover-current .spine-hover-rail { opacity: 0.58; }
 
-.left-spine.spine-hovering .study-spine-tab:hover,
 .left-spine.spine-hovering .page-dot:hover {
   color: color-mix(in srgb, var(--spine-hover-color), #1a1a1a 24%);
 }
@@ -10309,38 +10335,36 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
   box-shadow: 0 3px 12px rgba(26, 26, 26, 0.045);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  /* Surfaces stay below the slider; glyphs share the spine's upper layer.
-     A stacking context on the button would hide intermediate icons in transit. */
-  transition: color var(--duration) var(--easing-soft);
+  /* The foreground never depends on route state or fades against the carrier. */
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
   z-index: auto;
 }
-/* Once the dark slider leaves, fading white text disappears on a pale button.
-   Restore the light-theme foreground immediately; arrival keeps its fade. */
-body.start-page[data-start-theme="light"] .study-spine-tab:not(.active) {
-  transition: none;
-}
 .study-spine-tab > span:not(.dot-bubble) {
-  transition: translate var(--duration) var(--easing-soft), scale var(--duration) var(--easing-soft);
-}
-.study-spine-tab:hover > span:not(.dot-bubble) {
-  translate: 0 -1px;
-}
-.study-spine-tab.active:hover > span:not(.dot-bubble) {
+  transition: none;
   translate: none;
+  scale: none;
 }
 
 .study-spine-glyph,
 .review-spine-glyph,
 .calendar-spine-glyph,
 .cadence-spine-glyph,
-.notes-spine-glyph {
+.notes-spine-glyph,
+.spine-copy-study,
+.spine-copy-review,
+.spine-copy-calendar,
+.spine-copy-cadence,
+.spine-copy-notes {
   position: relative;
   z-index: 3;
 }
 
 .study-spine-glyph,
 .review-spine-glyph,
-.calendar-spine-glyph {
+.calendar-spine-glyph,
+.spine-copy-study,
+.spine-copy-review,
+.spine-copy-calendar {
   font-size: 13px;
   font-weight: 720;
   letter-spacing: 0.06em;
@@ -10348,7 +10372,8 @@ body.start-page[data-start-theme="light"] .study-spine-tab:not(.active) {
 }
 
 /* 活跃热力图书脊图标：就是一个小矩形（描边，跟随 tab 文字色，激活时随之转白）*/
-.cadence-spine-glyph {
+.cadence-spine-glyph,
+.spine-copy-cadence {
   width: 15px;
   height: 11px;
   border: 1.7px solid currentColor;
@@ -10358,25 +10383,22 @@ body.start-page[data-start-theme="light"] .study-spine-tab:not(.active) {
 .study-spine-tab:hover {
   border-color: rgba(255, 255, 255, 0.92);
   background: rgba(255, 255, 255, 0.72);
-  color: var(--text);
   box-shadow: 0 8px 20px rgba(26, 26, 26, 0.08);
   transform: none;
 }
 
-.study-spine-tab.active {
+.study-spine-tab.is-target {
   border-color: transparent;
   background: transparent;
-  color: #fff;
   box-shadow: none;
   z-index: auto;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.study-spine-tab.active:hover {
+.study-spine-tab.is-target:hover {
   border-color: transparent;
   background: transparent;
-  color: #fff;
   box-shadow: none;
   /* 当前页已选中，hover 不再上抬 1px，避免字相对游标轻微错位 */
   transform: none;
@@ -10390,13 +10412,7 @@ body.start-page[data-start-theme="light"] .study-spine-tab:not(.active) {
 .study-spine-tab:active {
   transform: none;
 }
-.study-spine-tab:active > span:not(.dot-bubble) {
-  translate: none;
-  scale: var(--press-scale);
-}
-@media (prefers-reduced-motion: reduce) {
-  .study-spine-tab > span:not(.dot-bubble) { transition: none; translate: none; scale: none; }
-}
+.study-spine-tab:active { box-shadow: inset 0 0 0 2px var(--focus-ring); }
 
 .spine-dots {
   display: flex;
@@ -10452,7 +10468,7 @@ body.start-page[data-start-theme="light"] .study-spine-tab:not(.active) {
 
 .page-dot:hover::before { opacity: 0.75; transform: scale(1.25); }
 
-.page-dot.active::before {
+.page-dot.is-target::before {
   background: transparent;
   opacity: 1;
   transform: scale(1.55);
@@ -11668,22 +11684,6 @@ body.start-page[data-start-state] .book-view .calendar-embedded::-webkit-scrollb
   transition: transform var(--start-turn-ms) var(--easing-start-view),
               opacity var(--start-turn-fade-ms) var(--easing-start-view);
 }
-/* 分组翻页：与「最近↔学习」横滑同一手感（40px / ~500ms 滑入）。旧页先柔和淡出
-   （~190ms，赶在换内容之前就透明），换好内容后从另一侧 40px 滑入 + 淡入。
-   旧页在“透明”时才被瞬移到另一侧，所以看不到任何左右硬跳。 */
-.book-page.flip-out-l,
-.book-page.flip-out-r {
-  transition: transform var(--start-turn-ms) var(--easing-start-view),
-              opacity var(--start-turn-out-fade-ms) var(--easing-start-view);
-  opacity: 0;
-}
-.book-page.flip-out-l { transform: translate3d(-40px, 0, 0); }
-.book-page.flip-out-r { transform: translate3d(40px, 0, 0); }
-.book-page.flip-in-l,
-.book-page.flip-in-r { transition: none; opacity: 0; }
-.book-page.flip-in-l { transform: translate3d(-40px, 0, 0); }
-.book-page.flip-in-r { transform: translate3d(40px, 0, 0); }
-
 /* 学习页是首页内的前置页：共用背景与书脊，不触发整页刷新。
    它永远在「最近」左侧，所以切换方向固定：进学习＝最近向右滑出 + 学习从左滑入；
    退学习＝学习向左滑出 + 最近从右滑入。与分组翻页同为横滑，但叠加轻微景深缩放，
@@ -15476,7 +15476,8 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
 }
 
 /* 书脊「专注」小钟字形（跟随 tab 文字色，激活转白）*/
-.focus-spine-glyph {
+.focus-spine-glyph,
+.spine-copy-focus {
   position: relative;
   z-index: 3;
   width: 15px;
@@ -15485,7 +15486,9 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
   border-radius: 50%;
 }
 .focus-spine-glyph::before,
-.focus-spine-glyph::after {
+.focus-spine-glyph::after,
+.spine-copy-focus::before,
+.spine-copy-focus::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -15493,8 +15496,10 @@ body.start-page[data-start-theme="dark"] .focus-round-pip.is-done { background: 
   background: currentColor;
   border-radius: 1px;
 }
-.focus-spine-glyph::before { width: 1.6px; height: 4.4px; transform: translate(-50%, -100%); }
-.focus-spine-glyph::after { width: 3.6px; height: 1.6px; transform: translate(0, -50%); }
+.focus-spine-glyph::before,
+.spine-copy-focus::before { width: 1.6px; height: 4.4px; transform: translate(-50%, -100%); }
+.focus-spine-glyph::after,
+.spine-copy-focus::after { width: 3.6px; height: 1.6px; transform: translate(0, -50%); }
 
 .review-shell {
   --review-stage-height: clamp(480px, calc(100vh - 310px), 590px);
@@ -18128,25 +18133,29 @@ body.start-page .review-embedded[data-review-phase="feedback"] .review-continue-
 }
 
 /* 便签墙书脊图标：两张错位的小卡片 */
-.notes-spine-glyph {
+.notes-spine-glyph,
+.spine-copy-notes {
   position: relative;
   width: 16px;
   height: 14px;
 }
-.notes-spine-glyph i {
+.notes-spine-glyph i,
+.spine-copy-notes i {
   position: absolute;
   width: 10px;
   height: 12px;
   border: 1.7px solid currentColor;
   border-radius: 2.5px;
 }
-.notes-spine-glyph i:first-child {
+.notes-spine-glyph i:first-child,
+.spine-copy-notes i:first-child {
   left: 0;
   top: 1px;
   transform: rotate(-10deg);
   opacity: 0.5;
 }
-.notes-spine-glyph i:last-child {
+.notes-spine-glyph i:last-child,
+.spine-copy-notes i:last-child {
   right: 0;
   top: 0;
   transform: rotate(8deg);
@@ -18894,14 +18903,16 @@ body.start-page[data-start-theme="dark"] .recent-sync-button:hover {
   .calendar-embedded,
   .review-embedded,
   .focus-embedded,
-  .spine-active-orb { transition: none; }
-  .spine-active-orb.orb-breathing { animation: none; }
-  .left-spine.notes-search-active .spine-active-orb {
+  .spine-active-orb,
+  .spine-glyph-track,
+  .left-spine .dot-bubble,
+  .left-spine .study-spine-tab,
+  .left-spine .page-dot::before,
+  .left-spine .dot-add { transition: none; }
+  .spine-active-orb.orb-breathing::after { animation: none; }
+  .left-spine.notes-search-active .spine-active-orb::after {
     animation: none;
-    box-shadow:
-      0 8px 20px rgba(26, 26, 26, 0.14),
-      0 0 0 3px rgba(250, 202, 86, 0.58),
-      0 0 16px rgba(250, 202, 86, 0.66);
+    opacity: .8;
   }
   .spine-hover-rail,
   .spine-hover-orb { transition: none; }
@@ -38238,6 +38249,7 @@ body.start-page[data-start-theme="dark"] .start-help-trigger[aria-expanded="true
   color: var(--text);
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
+body.start-page[data-start-theme="dark"] .study-spine-tab:hover { color: var(--text-secondary); }
 /* 齿轮按钮暗色调：照搬编辑器 .settings-fab 的深色质感 */
 body.start-page[data-start-theme="dark"] .start-speed-trigger {
   color: rgba(239, 245, 242, 0.78);
@@ -38265,49 +38277,21 @@ body.start-page[data-start-theme="dark"] .start-help-trigger[disabled] {
   pointer-events: none;
 }
 
-body.start-page[data-start-theme="dark"] .spine-active-orb {
-  border-color: #fff;
+body.start-page[data-start-theme="dark"] .spine-orb-surface {
   background: #fff;
 }
-
-body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="tab"] {
+body.start-page[data-start-theme="dark"] .spine-glyph-clip { color: #161718; }
+body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="tab"] .spine-orb-surface {
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.34);
 }
-
-body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="dot"] {
+body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="dot"] .spine-orb-surface {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.38);
 }
-
-body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="star"] {
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.36);
+body.start-page[data-start-theme="dark"] .spine-active-orb::after {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 0 9px rgba(255, 255, 255, .13);
 }
-
-body.start-page[data-start-theme="dark"] .spine-active-orb.orb-breathing {
-  animation-name: spine-orb-breathe-dark;
-}
-
-body.start-page[data-start-theme="dark"] .left-spine.notes-search-active .spine-active-orb {
-  animation-name: notes-search-orb-glow-dark;
-}
-
-@keyframes notes-search-orb-glow-dark {
-  0%, 100% {
-    box-shadow:
-      0 10px 26px rgba(0, 0, 0, 0.34),
-      0 0 0 2px rgba(255, 205, 88, 0.48),
-      0 0 11px rgba(255, 205, 88, 0.58);
-  }
-  50% {
-    box-shadow:
-      0 10px 26px rgba(0, 0, 0, 0.34),
-      0 0 0 3px rgba(255, 211, 103, 0.78),
-      0 0 22px rgba(255, 211, 103, 0.84);
-  }
-}
-
-@keyframes spine-orb-breathe-dark {
-  0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
-  50% { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.13)); }
+body.start-page[data-start-theme="dark"] .left-spine.notes-search-active .spine-active-orb::after {
+  box-shadow: 0 0 0 3px rgba(255, 211, 103, .78), 0 0 22px rgba(255, 211, 103, .84);
 }
 
 body.start-page[data-start-theme="dark"] .left-spine.spine-hover-current .spine-hover-orb {
@@ -38317,11 +38301,11 @@ body.start-page[data-start-theme="dark"] .left-spine.spine-hover-current .spine-
               0 0 14px var(--spine-hover-glow);
 }
 
-body.start-page[data-start-theme="dark"] .study-spine-tab.active,
-body.start-page[data-start-theme="dark"] .study-spine-tab.active:hover {
+body.start-page[data-start-theme="dark"] .study-spine-tab.is-target,
+body.start-page[data-start-theme="dark"] .study-spine-tab.is-target:hover {
   border-color: transparent;
   background: transparent;
-  color: #161718;
+  color: var(--text-secondary);
   box-shadow: none;
 }
 
@@ -38342,11 +38326,6 @@ body.start-page[data-start-theme="dark"] .left-spine.spine-marker-visible:not(.s
   opacity: 0.4;
 }
 
-body.start-page[data-start-theme="dark"] .left-spine.spine-marker-returning .spine-hover-orb {
-  opacity: 0.52;
-}
-
-body.start-page[data-start-theme="dark"] .left-spine.spine-hovering .study-spine-tab:hover,
 body.start-page[data-start-theme="dark"] .left-spine.spine-hovering .page-dot:hover {
   color: color-mix(in srgb, var(--spine-hover-color), white 36%);
 }
@@ -48672,14 +48651,16 @@ body.start-page[data-start-theme="dark"] .study-task-page-note-input { color: #f
 body.start-page[data-start-theme="dark"] .study-temporary-card { border-color: rgba(255,255,255,.1); background: #242725; box-shadow: 0 8px 22px rgba(0,0,0,.19); }
 
 /* ── 独立树状页：目标树母版的全屏修饰层。 ── */
-.tree-page-spine-glyph {
+.tree-page-spine-glyph,
+.spine-copy-tree {
   position: relative;
   z-index: 3;
   display: block;
   width: 18px;
   height: 18px;
 }
-.tree-page-spine-glyph svg {
+.tree-page-spine-glyph svg,
+.spine-copy-tree svg {
   display: block;
   width: 100%;
   height: 100%;

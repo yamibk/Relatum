@@ -22,7 +22,7 @@ assert(start.includes("fetch('/api/import-canvas-folder'"));
 assert(!start.includes("fetch('/api/pick'"), 'the start page must no longer call the legacy picker');
 assert(start.includes('gotoEditor(json.path);'), 'a single imported copy must open immediately');
 assert(start.includes('const flashImportPaths = new Set()'));
-assert(start.includes("if (activeGroup === FAVORITES_PAGE)"));
+assert(start.includes("if (activeGroup === FAVORITES_PAGE && navigation.isCurrent(navigationVersion)) navigateTo('')"));
 assert(start.includes('json.missingAssetCount > 0'));
 assert(start.includes('同名 .assets 文件夹'));
 

@@ -1,0 +1,273 @@
+{
+  "browser": "155.0.4283.60",
+  "baselineRef": "95e6e523664de2e4dd6a475f9c11d8538f0a8b1a",
+  "display": {
+    "width": 1280,
+    "height": 900,
+    "dpr": 1.0000000298023224
+  },
+  "currentHashes": {
+    "index.html": "2ed3836e6e176dbbb58c798cdf82bea4f957faf8f8d6df9474c63e3c83e7ae0c",
+    "styles.css": "4087c36db880f28edf55727b92b2cf1ddd8fc8884bb79c28778d879f0d8ab342",
+    "start.js": "caf9b3c5199ce3edfee524da0adf65e8e19a04e0820c15b885688768ad03c283",
+    "start-navigation.js": "ab21064efba2614259b2a599c2a6b8449f57f10afce2c3ead1ad777fafc54ecf",
+    "start-spine.js": "9fdcb5c690d3d2853bb4c2a8ea53ec18168ff24cd57dd22fab46368ce8bb4597"
+  },
+  "hashMatches": {
+    "index.html": true,
+    "styles.css": true,
+    "start.js": true,
+    "start-navigation.js": true,
+    "start-spine.js": true
+  },
+  "rows": [
+    {
+      "scenario": "clicks",
+      "label": "baseline",
+      "scriptMs": 77.91000000000001,
+      "styleMs": 230.765,
+      "layoutMs": 39.05200000000001,
+      "taskMs": 781.274,
+      "paintMs": 77.11200000000035,
+      "layoutCount": 113,
+      "raf": [
+        {
+          "run": 0,
+          "p95": 12.699999999998909,
+          "p99": 20.900000000001455,
+          "max": 37.5,
+          "over25": 2,
+          "longTasks": 0
+        },
+        {
+          "run": 1,
+          "p95": 12.300000000001091,
+          "p99": 21,
+          "max": 29.299999999999272,
+          "over25": 3,
+          "longTasks": 0
+        },
+        {
+          "run": 2,
+          "p95": 12.5,
+          "p99": 16.700000000000728,
+          "max": 29.399999999999636,
+          "over25": 1,
+          "longTasks": 0
+        }
+      ],
+      "display": [
+        {
+          "run": 0,
+          "cadence": 4.167,
+          "p95": 12.508,
+          "p99": 20.909,
+          "max": 33.22,
+          "overTwo": 15
+        },
+        {
+          "run": 1,
+          "cadence": 4.166,
+          "p95": 12.46,
+          "p99": 16.667,
+          "max": 16.885,
+          "overTwo": 12
+        },
+        {
+          "run": 2,
+          "cadence": 4.164,
+          "p95": 12.505,
+          "p99": 16.678,
+          "max": 16.729,
+          "overTwo": 15
+        }
+      ]
+    },
+    {
+      "scenario": "clicks",
+      "label": "current",
+      "scriptMs": 20.025000000000002,
+      "styleMs": 100.95000000000002,
+      "layoutMs": 6.889,
+      "taskMs": 429.949,
+      "paintMs": 28.149000000000044,
+      "layoutCount": 40,
+      "raf": [
+        {
+          "run": 0,
+          "p95": 4.399999999999636,
+          "p99": 5.100000000000364,
+          "max": 8.399999999999636,
+          "over25": 0,
+          "longTasks": 0
+        },
+        {
+          "run": 1,
+          "p95": 4.300000000001091,
+          "p99": 8.199999999998909,
+          "max": 12.5,
+          "over25": 0,
+          "longTasks": 0
+        },
+        {
+          "run": 2,
+          "p95": 4.300000000001091,
+          "p99": 4.700000000000728,
+          "max": 8.399999999999636,
+          "over25": 0,
+          "longTasks": 0
+        }
+      ],
+      "display": [
+        {
+          "run": 0,
+          "cadence": 4.165,
+          "p95": 4.35,
+          "p99": 5.089,
+          "max": 16.707,
+          "overTwo": 1
+        },
+        {
+          "run": 1,
+          "cadence": 4.165,
+          "p95": 8.311,
+          "p99": 8.465,
+          "max": 16.734,
+          "overTwo": 1
+        },
+        {
+          "run": 2,
+          "cadence": 4.165,
+          "p95": 4.287,
+          "p99": 4.373,
+          "max": 5.092,
+          "overTwo": 0
+        }
+      ]
+    },
+    {
+      "scenario": "wheel",
+      "label": "baseline",
+      "scriptMs": 42.12500000000001,
+      "styleMs": 123.92900000000002,
+      "layoutMs": 42.623999999999995,
+      "taskMs": 581.7750000000001,
+      "paintMs": 46.48100000000016,
+      "layoutCount": 158,
+      "raf": [
+        {
+          "run": 0,
+          "p95": 8.299999999999272,
+          "p99": 20.900000000001455,
+          "max": 25.19999999999891,
+          "over25": 1,
+          "longTasks": 0
+        },
+        {
+          "run": 1,
+          "p95": 8.299999999999272,
+          "p99": 12.600000000000364,
+          "max": 29.200000000000728,
+          "over25": 2,
+          "longTasks": 0
+        },
+        {
+          "run": 2,
+          "p95": 8.300000000001091,
+          "p99": 20.799999999999272,
+          "max": 29.200000000000728,
+          "over25": 2,
+          "longTasks": 0
+        }
+      ],
+      "display": [
+        {
+          "run": 0,
+          "cadence": 4.164,
+          "p95": 8.391,
+          "p99": 12.582,
+          "max": 16.637,
+          "overTwo": 7
+        },
+        {
+          "run": 1,
+          "cadence": 4.166,
+          "p95": 8.442,
+          "p99": 12.522,
+          "max": 16.606,
+          "overTwo": 6
+        },
+        {
+          "run": 2,
+          "cadence": 4.167,
+          "p95": 8.414,
+          "p99": 12.502,
+          "max": 16.729,
+          "overTwo": 6
+        }
+      ]
+    },
+    {
+      "scenario": "wheel",
+      "label": "current",
+      "scriptMs": 17.393,
+      "styleMs": 50.324999999999996,
+      "layoutMs": 2.0030000000000006,
+      "taskMs": 389.91700000000003,
+      "paintMs": 24.261,
+      "layoutCount": 8,
+      "raf": [
+        {
+          "run": 0,
+          "p95": 4.300000000001091,
+          "p99": 4.899999999999636,
+          "max": 12.5,
+          "over25": 0,
+          "longTasks": 0
+        },
+        {
+          "run": 1,
+          "p95": 4.300000000001091,
+          "p99": 5.100000000000364,
+          "max": 9.099999999998545,
+          "over25": 0,
+          "longTasks": 0
+        },
+        {
+          "run": 2,
+          "p95": 4.300000000001091,
+          "p99": 4.800000000001091,
+          "max": 9.899999999999636,
+          "over25": 0,
+          "longTasks": 0
+        }
+      ],
+      "display": [
+        {
+          "run": 0,
+          "cadence": 4.165,
+          "p95": 4.278,
+          "p99": 8.446,
+          "max": 16.574,
+          "overTwo": 2
+        },
+        {
+          "run": 1,
+          "cadence": 4.166,
+          "p95": 4.611,
+          "p99": 8.364,
+          "max": 8.422,
+          "overTwo": 0
+        },
+        {
+          "run": 2,
+          "cadence": 4.167,
+          "p95": 4.325,
+          "p99": 8.282,
+          "max": 8.329,
+          "overTwo": 0
+        }
+      ]
+    }
+  ]
+}

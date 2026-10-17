@@ -21,26 +21,10 @@
   const spineEl = document.querySelector('.left-spine');
   const bookStage = document.querySelector('[data-role="book-stage"]');
   const bookPage = document.querySelector('[data-role="book-page"]');
-  const spineActiveOrb = document.querySelector('[data-role="spine-active-orb"]');
-  const spineHoverRail = document.querySelector('[data-role="spine-hover-rail"]');
-  const spineHoverOrb = document.querySelector('[data-role="spine-hover-orb"]');
-  let spineBreatheTimer = 0;
-  let spineMarkerSettleTimer = 0;
-  let spineMarkerTransitionFrame = 0;
-  let spinePreviewTarget = null;
-  let spineMarkerState = 'hidden';
-  let spineMarkerTargetKey = '';
-  let spineMarkerReady = false;
-  let spineRenderFrame = 0;
-  let spineRenderInstant = false;
-  let spineBubbleTarget = null;
-  let spineActiveTargetKey = '';
-  let spineBreatheKey = '';
-  let spineMarkerReturnVersion = 0;
-  let spinePageHidden = false;
+  let navigation = null;
+  let spineView = null;
+  let startPageHidden = false;
   let spineDotsOrder = '';
-  const spineMotionMedia = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  const spineStyleValues = new WeakMap();
   const fileList = document.querySelector('[data-role="file-list"]');
   const panelTitle = document.querySelector('[data-role="panel-title"]');
   const recentSyncButton = document.querySelector('[data-action="recent-sync"]');
@@ -92,8 +76,6 @@
   const darkCardInkSwitches = Array.from(document.querySelectorAll('[data-role="dark-card-ink-switch"]'));
   const librarySearchToggle = document.querySelector('[data-role="library-search-toggle"]');
   const initialView = new URLSearchParams(window.location.search).get('view') || '';
-  let initialStudy = initialView === 'study' && features.viewEnabled('study');
-  let initialCalendar = initialView === 'calendar' && features.viewEnabled('calendar');
 
   if (!main || !emptyView || !recentView || !dots || !fileList || !ctxMenu) return;
 
@@ -103,6 +85,7 @@
   let validGroupIds = new Set();
   let fileBuckets = new Map();
   let recentRefreshSeq = 0;
+  let libraryLoaded = false;
   let fileStatsRequestSeq = 0;
   const fileStatsCache = new Map();
   let fileStatsObserver = null;
@@ -121,15 +104,7 @@
   let selectedIndex = -1;    // 右栏键盘选中项下标（-1=未选）
   let pendingDeleteIndex = -1; // 右方向键：待确认删除（再按一次右键执行）
   const trashingPaths = new Set(); // 防止右键菜单与键盘对同一画布重复提交
-  let studyActive = false;
-  let cadenceActive = false;   // 活跃热力图前置页（位于日历与速记之间）是否展开
-  let treePageActive = false;  // 独立树状页（位于速记与学习之间；不读取目标树数据）
-  let notesActive = false;     // 速记便签墙前置页（位于活跃与树状之间）是否展开
-  let calendarActive = false;  // 日历与日记前置页（在复习与活跃之间）是否展开
-  let reviewActive = false;    // 复习卡片前置页（最左一格）是否展开
-  let focusActive = false;     // 专注钟前置页（学习更右一格、紧邻书页）是否展开
-  let pendingFocusActivation = null;
-  let pendingFocusReadyActions = [];
+  function isView(name) { return navigation?.getState().current.view === name; }
   let specialPagesHidden = false; // 「隐藏特殊页」开启：书脊只留普通书页，7 张前置页既不显示也不可翻入
   const FAVORITES_PAGE = '__favorites__';
   const INBOX_PAGE = '__inbox__';
@@ -191,6 +166,7 @@
   let notesInertia = NOTES_INERTIA_DEFAULT;
   let darkCardPresentation = null;
   let startViewTransitionTimer = 0;
+  let startViewMotionVersion = 0;
   const START_VIEW_ORDER = { review: 0, calendar: 1, cadence: 2, notes: 3, tree: 4, study: 5, focus: 6, recent: 7, empty: 7, loading: 7 };
   const START_VIEW_MOTION_CLASSES = ['view-entering', 'view-leaving', 'view-motion-forward', 'view-motion-back'];
   // No legacy heartbeat or JSON ledger collector.
@@ -320,8 +296,6 @@
     setStartMsVar('--start-rest-fade-ms', Math.max(240, ms * 1.36));
     setStartMsVar('--start-stage-fade-ms', Math.max(230, ms * 1.28));
     setStartMsVar('--start-orb-ms', Math.max(180, ms * 0.92));
-    setStartMsVar('--start-orb-shape-ms', Math.max(180, ms * 0.92));
-    setStartMsVar('--start-orb-clip-ms', Math.max(180, ms * 0.92));
     setStartMsVar('--start-orb-fade-ms', Math.max(70, ms * 0.32));
     if (startSpeedRange && startSpeedRange.value !== String(ms)) startSpeedRange.value = String(ms);
     if (startSpeedValue) startSpeedValue.textContent = ms + 'ms';
@@ -477,10 +451,10 @@
       try { localStorage.setItem(HIDE_SPECIAL_KEY, specialPagesHidden ? '1' : '0'); } catch (e) {}
     }
     // 若开启时正停在某张特殊页，立刻退回「最近」，避免卡在已被隐藏、又翻不动的页面上。
-    if (specialPagesHidden && (studyActive || cadenceActive || treePageActive || notesActive
-        || calendarActive || reviewActive || focusActive)) {
+    if (specialPagesHidden && navigation && navigation.getState().desired.view !== 'library') {
       navigateTo('');
     }
+    spineView?.invalidate({ animate: false });
   }
 
   function applyGoalTreeSimpleMode(simple, persist) {
@@ -2029,6 +2003,49 @@
     try { localStorage.setItem('canvas:activeGroup', activeGroup); } catch (e) {}
   }
 
+  let desiredSpineButton = null;
+  let committedSpineButton = null;
+  function getNavigationTarget(route) {
+    const target = route || navigation?.getState().desired;
+    if (!target || !spineEl) return null;
+    if (target.view === 'library') {
+      return Array.from(dots.querySelectorAll('.page-dot:not(.dot-add)'))
+        .find(button => button.dataset.groupId === target.groupId) || null;
+    }
+    const action = target.view === 'tree' ? 'tree-page' : target.view;
+    return spineEl.querySelector('[data-action="' + action + '-view"]');
+  }
+
+  function updateNavigationFeedback(route) {
+    const button = getNavigationTarget(route);
+    if (button !== desiredSpineButton) {
+      desiredSpineButton?.classList.remove('is-target');
+      button?.classList.add('is-target');
+      desiredSpineButton = button;
+    }
+    syncActiveSpineOrb();
+    if (libraryLoaded && route?.view === 'library') queueMicrotask(reconcileLibraryNavigation);
+  }
+
+  function reconcileLibraryNavigation() {
+    const state = navigation?.getState();
+    if (!navigationVisible() || !state || state.pending || !libraryLoaded || state.current.view !== 'library') return;
+    const id = state.current.groupId;
+    if (id && id !== FAVORITES_PAGE && id !== INBOX_PAGE && !validIds().has(id)) {
+      navigation.request({ view: 'library', groupId: activeGroup }, { immediate: true, action: 'refresh' });
+    }
+  }
+
+  function syncNavigationSemantics() {
+    const button = getNavigationTarget(navigation?.getState().current);
+    if (button === committedSpineButton) return;
+    committedSpineButton?.classList.remove('active');
+    committedSpineButton?.removeAttribute('aria-current');
+    button?.classList.add('active');
+    button?.setAttribute('aria-current', 'page');
+    committedSpineButton = button;
+  }
+
   function getStartViewElement(name) {
     if (name === 'review') return document.querySelector('.review-embedded');
     if (name === 'calendar') return document.querySelector('.calendar-embedded');
@@ -2100,9 +2117,15 @@
     const previousOrder = START_VIEW_ORDER[previous] ?? START_VIEW_ORDER.recent;
     const nextOrder = START_VIEW_ORDER[name] ?? START_VIEW_ORDER.recent;
     if (previousOrder === nextOrder) return;
+    const version = ++startViewMotionVersion;
     bookView.classList.remove('view-switching', 'view-forward', 'view-back');
     clearStartViewMotion();
     finalizeDeferredStartViewExitMotion();
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      clearTimeout(startViewTransitionTimer);
+      startViewTransitionTimer = 0;
+      return;
+    }
     const directionClass = nextOrder < previousOrder ? 'view-back' : 'view-forward';
     const motionClass = nextOrder < previousOrder ? 'view-motion-back' : 'view-motion-forward';
     const previousEl = getStartViewElement(previous);
@@ -2112,6 +2135,7 @@
     bookView.classList.add('view-switching', directionClass);
     clearTimeout(startViewTransitionTimer);
     startViewTransitionTimer = window.setTimeout(() => {
+      if (version !== startViewMotionVersion) return;
       bookView.classList.remove('view-switching', 'view-forward', 'view-back');
       clearStartViewMotion();
       finalizeDeferredStartViewExitMotion();
@@ -2124,12 +2148,7 @@
     // 'cadence'（活跃热力图页）与 'study' 共用同一套书页舞台布局壳，只用 cadence-active 切换浮层，
     // 这样 [data-start-state="study"] 那批布局 CSS 仍然生效，无需为 cadence 再写一套。
     const previous = bookView ? (bookView.dataset.viewName || '') : '';
-    if (name !== 'focus') {
-      pendingFocusActivation = null;
-      pendingFocusReadyActions = [];
-      const focusRoot = document.querySelector('.focus-embedded');
-      if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
-    }
+    const wasHidden = bookView?.hidden;
     const layout = (name === 'cadence' || name === 'tree' || name === 'notes' || name === 'calendar'
       || name === 'review' || name === 'focus') ? 'study' : name;
     main.dataset.state = layout;
@@ -2151,352 +2170,33 @@
       bookView.classList.toggle('review-active', name === 'review');
       bookView.classList.toggle('focus-active', name === 'focus');
     }
-    document.querySelectorAll('.study-spine-tab:not(.cadence-spine-tab):not(.tree-page-spine-tab):not(.notes-spine-tab):not(.calendar-spine-tab):not(.review-spine-tab):not(.focus-spine-tab)').forEach((button) => {
-      button.classList.toggle('active', name === 'study');
-    });
-    document.querySelectorAll('.focus-spine-tab').forEach((button) => {
-      button.classList.toggle('active', name === 'focus');
-    });
-    document.querySelectorAll('.cadence-spine-tab').forEach((button) => {
-      button.classList.toggle('active', name === 'cadence');
-    });
-    document.querySelectorAll('.tree-page-spine-tab').forEach((button) => {
-      button.classList.toggle('active', name === 'tree');
-    });
-    document.querySelectorAll('.notes-spine-tab').forEach((button) => {
-      button.classList.toggle('active', name === 'notes');
-    });
-    document.querySelectorAll('.calendar-spine-tab').forEach((button) => {
-      button.classList.toggle('active', name === 'calendar');
-    });
-    document.querySelectorAll('.review-spine-tab').forEach((button) => {
-      button.classList.toggle('active', name === 'review');
-    });
-    dots.querySelectorAll('.page-dot:not(.dot-add)').forEach((dot) => {
-      dot.classList.toggle('active', name !== 'study' && name !== 'cadence' && name !== 'tree' && name !== 'notes'
-        && name !== 'calendar' && name !== 'review'
-        && name !== 'focus' && dot.dataset.groupId === activeGroup);
-    });
-    syncActiveSpineOrb();
+    syncNavigationSemantics();
+    if (!previous || wasHidden) spineView?.invalidate({ animate: false });
     // 足迹星图只在活跃页是当前前置页时才跑动画循环；切到别的页就挂起，避免隐藏页 60fps 空转拖慢全局。
-    if (window.StudyActivity && window.StudyActivity.setActive) {
+    if ((previous === 'cadence' || name === 'cadence') && window.StudyActivity?.setActive) {
       window.StudyActivity.setActive(name === 'cadence');
     }
     if (name !== 'cadence') {
       cadenceEntranceSeq++;
       if (previous === 'cadence') freezeCadenceEntranceForExit();
     }
-    if (name !== 'calendar' && window.CanvasCalendar && window.CanvasCalendar.deactivate) {
+    if (previous === 'calendar' && name !== 'calendar' && window.CanvasCalendar?.deactivate) {
       window.CanvasCalendar.deactivate();
     }
-    if (name !== 'tree' && window.CanvasTreePage && window.CanvasTreePage.deactivate) {
+    if (previous === 'tree' && name !== 'tree' && window.CanvasTreePage?.deactivate) {
       window.CanvasTreePage.deactivate();
     }
     syncStartViewLifecycle(name, previous);
   }
 
-  // 书脊滑块的两种形状（都是 10 个顶点、角度一一对应，故能平滑形变）：
-  // 普通页 = 正十边形（小尺寸下就是个圆点）；收藏页 = 五角星。
-  const ORB_DOT_CLIP = 'polygon(50% 0%, 79.39% 9.55%, 97.55% 34.55%, 97.55% 65.45%, '
-    + '79.39% 90.45%, 50% 100%, 20.61% 90.45%, 2.45% 65.45%, 2.45% 34.55%, 20.61% 9.55%)';
-  const ORB_STAR_CLIP = 'polygon(50% 0%, 61.76% 33.82%, 97.55% 34.55%, 69.02% 56.18%, '
-    + '79.39% 90.45%, 50% 70%, 20.61% 90.45%, 30.98% 56.18%, 2.45% 34.55%, 38.24% 33.82%)';
-
-  const SPINE_HOVER_COLORS = {
-    review: ['#d8796d', 'rgba(216, 121, 109, 0.3)'],
-    calendar: ['#b6814d', 'rgba(182, 129, 77, 0.3)'],
-    notes: ['#c4a143', 'rgba(196, 161, 67, 0.3)'],
-    cadence: ['#6f987a', 'rgba(111, 152, 122, 0.3)'],
-    tree: ['#4f8b76', 'rgba(79, 139, 118, 0.3)'],
-    study: ['#8b74ad', 'rgba(139, 116, 173, 0.3)'],
-    focus: ['#87915b', 'rgba(135, 145, 91, 0.3)'],
-    recent: ['#847a71', 'rgba(132, 122, 113, 0.3)'],
-    favorite: ['#d28b55', 'rgba(210, 139, 85, 0.3)'],
-    inbox: ['#76858a', 'rgba(118, 133, 138, 0.3)']
-  };
-  const SPINE_GROUP_COLORS = [
-    ['#9f7188', 'rgba(159, 113, 136, 0.3)'],
-    ['#a36f5d', 'rgba(163, 111, 93, 0.3)'],
-    ['#7d8f68', 'rgba(125, 143, 104, 0.3)'],
-    ['#9a805d', 'rgba(154, 128, 93, 0.3)'],
-    ['#806f91', 'rgba(128, 111, 145, 0.3)']
-  ];
-
-  function spineHoverKind(target) {
-    if (target.classList.contains('review-spine-tab')) return 'review';
-    if (target.classList.contains('calendar-spine-tab')) return 'calendar';
-    if (target.classList.contains('notes-spine-tab')) return 'notes';
-    if (target.classList.contains('cadence-spine-tab')) return 'cadence';
-    if (target.classList.contains('tree-page-spine-tab')) return 'tree';
-    if (target.classList.contains('focus-spine-tab')) return 'focus';
-    if (target.classList.contains('study-spine-tab')) return 'study';
-    if (target.dataset.groupId === FAVORITES_PAGE) return 'favorite';
-    if (target.dataset.groupId === INBOX_PAGE) return 'inbox';
-    if (target.dataset.groupId === '') return 'recent';
-    return 'group';
+  function syncActiveSpineOrb(options) {
+    spineView?.sync(options);
   }
-
-  function spineHoverColor(target, kind) {
-    if (kind !== 'group') return SPINE_HOVER_COLORS[kind] || SPINE_HOVER_COLORS.recent;
-    const id = target.dataset.groupId || '';
-    const groupIndex = lastGroups.findIndex((group) => group.id === id);
-    if (groupIndex >= 0) return SPINE_GROUP_COLORS[groupIndex % SPINE_GROUP_COLORS.length];
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) hash = ((hash * 31) + id.charCodeAt(i)) >>> 0;
-    return SPINE_GROUP_COLORS[hash % SPINE_GROUP_COLORS.length];
-  }
-
-  function activeSpineTarget() {
-    return document.querySelector('.study-spine-tab.active')
-      || (!studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
-        && !reviewActive && !focusActive ? dots.querySelector('.page-dot.active') : null);
-  }
-
-  function spineTargetKey(target) {
-    if (!target) return '';
-    if (target.classList.contains('page-dot')) return 'page:' + (target.dataset.groupId || 'recent');
-    return 'tab:' + (target.dataset.action || spineHoverKind(target));
-  }
-
-  function clearSpineMarkerSettle() {
-    spineMarkerReturnVersion++;
-    if (spineMarkerSettleTimer) clearTimeout(spineMarkerSettleTimer);
-    spineMarkerSettleTimer = 0;
-  }
-
-  function setSpineClass(element, name, enabled) {
-    if (element && element.classList.contains(name) !== enabled) element.classList.toggle(name, enabled);
-  }
-
-  // Only remember submitted styles, never geometry across frames. CSS serializes transforms
-  // and polygons differently, so comparing style strings would repeat identical writes.
-  function setSpineStyle(element, name, value) {
-    let values = spineStyleValues.get(element);
-    if (!values) { values = new Map(); spineStyleValues.set(element, values); }
-    if (values.get(name) === value) return;
-    values.set(name, value);
-    element.style.setProperty(name, value);
-  }
-
-  function spineMotionVisible() {
-    return !!spineEl && !!bookView && !bookView.hidden && !spinePageHidden && !document.hidden
-      && document.documentElement.dataset.desktopMinimized !== '1'
-      && document.body.dataset.startWorkspace === 'canvas';
-  }
-
-  function stopSpineBreathe() {
-    if (spineBreatheTimer) clearTimeout(spineBreatheTimer);
-    spineBreatheTimer = 0;
-    spineBreatheKey = '';
-    setSpineClass(spineActiveOrb, 'orb-breathing', false);
-  }
-
-  function suspendSpineMotion() {
-    if (spineRenderFrame) cancelAnimationFrame(spineRenderFrame);
-    spineRenderFrame = 0;
-    if (spineMarkerTransitionFrame) cancelAnimationFrame(spineMarkerTransitionFrame);
-    spineMarkerTransitionFrame = 0;
-    clearSpineMarkerSettle();
-    stopSpineBreathe();
-    spinePreviewTarget = null;
-    spineBubbleTarget = null;
-    spineRenderInstant = true;
-    spineMarkerReady = false;
-    setSpineClass(spineEl, 'spine-motion-suspended', true);
-  }
-
-  function queueSpineRender(options) {
-    if (options && options.animate === false) spineRenderInstant = true;
-    if (!spineMotionVisible()) { suspendSpineMotion(); return; }
-    if (!spineRenderFrame) spineRenderFrame = requestAnimationFrame(renderSpineMotion);
-  }
-
-  function setSpineMarkerTransition(animate) {
-    if (spineMarkerTransitionFrame) cancelAnimationFrame(spineMarkerTransitionFrame);
-    spineMarkerTransitionFrame = 0;
-    const instant = !animate && !spineMotionMedia?.matches;
-    setSpineClass(spineEl, 'spine-marker-no-transition', instant);
-    setSpineClass(spineEl, 'spine-motion-suspended', false);
-    if (instant) {
-      // Restore transitions only after the instant position has been presented.
-      spineMarkerTransitionFrame = requestAnimationFrame(() => {
-        spineMarkerTransitionFrame = 0;
-        if (spineMotionVisible()) setSpineClass(spineEl, 'spine-marker-no-transition', false);
-      });
-    }
-  }
-
-  function setSpineMarkerState(spine, state, target) {
-    spineMarkerState = state;
-    setSpineClass(spine, 'spine-marker-visible', true);
-    setSpineClass(spine, 'spine-hovering', state === 'preview');
-    setSpineClass(spine, 'spine-marker-previewing', state === 'preview');
-    setSpineClass(spine, 'spine-marker-returning', state === 'returning');
-    setSpineClass(spine, 'spine-marker-resting', state === 'resting');
-    setSpineClass(spine, 'spine-hover-current', target.classList.contains('active') || state !== 'preview');
-  }
-
-  function hideSpineMarker() {
-    clearSpineMarkerSettle();
-    spineMarkerState = 'hidden';
-    spineMarkerTargetKey = '';
-    spineMarkerReady = false;
-    stopSpineBreathe();
-    for (const name of ['spine-marker-visible', 'spine-hovering', 'spine-marker-previewing',
-      'spine-marker-returning', 'spine-marker-resting', 'spine-hover-current']) setSpineClass(spineEl, name, false);
-  }
-
-  function placeSpineHover(target) {
-    if (!target) return;
-    spineBubbleTarget = target;
-    if (!target.classList.contains('dot-add')) spinePreviewTarget = target;
-    queueSpineRender();
-  }
-
-  function finishSpineMarkerReturn(expectedKey, version) {
-    if (version !== spineMarkerReturnVersion) return;
-    spineMarkerSettleTimer = 0;
-    if (!spineMotionVisible()) { suspendSpineMotion(); return; }
-    if (spinePreviewTarget || spineMarkerState !== 'returning'
-      || spineMarkerTargetKey !== expectedKey) return;
-    const active = activeSpineTarget();
-    if (!active || spineTargetKey(active) !== expectedKey) return;
-    setSpineMarkerState(spineEl, 'resting', active);
-    scheduleSpineBreathe();
-  }
-
-  function clearSpineHover(options) {
-    spinePreviewTarget = null;
-    spineBubbleTarget = null;
-    queueSpineRender(options);
-  }
-
-  function scheduleSpineBreathe() {
-    if (!spineActiveOrb || !spineMotionVisible() || spineMotionMedia?.matches
-      || spineBreatheKey === spineMarkerTargetKey) return;
-    stopSpineBreathe();
-    const key = spineBreatheKey = spineMarkerTargetKey;
-    spineBreatheTimer = window.setTimeout(() => {
-      spineBreatheTimer = 0;
-      if (!spineMotionVisible() || spineMotionMedia?.matches || spineMarkerState !== 'resting'
-        || spineBreatheKey !== key || spineMarkerTargetKey !== key) return;
-      setSpineClass(spineActiveOrb, 'orb-breathing', true);
-    }, 2800);
-  }
-  if (spineActiveOrb) spineActiveOrb.addEventListener('animationend', function (event) {
-    if (event.animationName === 'spine-orb-breathe' || event.animationName === 'spine-orb-breathe-dark') spineActiveOrb.classList.remove('orb-breathing');
-  });
 
   function bindSpineHoverTarget(target) {
-    if (!target || target.dataset.spineHoverBound === '1') return;
-    target.dataset.spineHoverBound = '1';
-    target.addEventListener('pointerenter', () => placeSpineHover(target));
-    target.addEventListener('focus', () => placeSpineHover(target));
+    spineView?.bindTarget(target);
   }
 
-  function bindStaticSpineHoverTargets() {
-    document.querySelectorAll('.left-spine .study-spine-tab').forEach(bindSpineHoverTarget);
-  }
-
-  function syncActiveSpineOrb(options) {
-    queueSpineRender(options);
-  }
-
-  function renderSpineMotion() {
-    spineRenderFrame = 0;
-    if (!spineMotionVisible()) { suspendSpineMotion(); return; }
-    const instant = spineRenderInstant || !spineMarkerReady || !!spineMotionMedia?.matches;
-    spineRenderInstant = false;
-    const active = activeSpineTarget();
-    if (!spineActiveOrb || !spineHoverOrb || !spineHoverRail || !active) {
-      setSpineClass(spineActiveOrb, 'show', false);
-      hideSpineMarker();
-      return;
-    }
-    if (!spinePreviewTarget?.isConnected || spinePreviewTarget.closest('.left-spine') !== spineEl) spinePreviewTarget = null;
-    if (!spineBubbleTarget?.isConnected || spineBubbleTarget.closest('.left-spine') !== spineEl) spineBubbleTarget = null;
-    const marker = spinePreviewTarget || active;
-    const bubble = spineBubbleTarget?.querySelector('.dot-bubble');
-    // Read every required box before changing any class or style. The snapshot lives for
-    // this frame only, and the active, preview and tooltip share matching target boxes.
-    const spineRect = spineEl.getBoundingClientRect(), scrollTop = spineEl.scrollTop;
-    const boxes = new Map();
-    const measure = target => {
-      if (!boxes.has(target)) boxes.set(target, target.getBoundingClientRect());
-      return boxes.get(target);
-    };
-    const activeRect = measure(active), markerRect = measure(marker);
-    const bubbleRect = bubble ? measure(spineBubbleTarget) : null;
-    if (!spineRect.width || !activeRect.width || !markerRect.width) return;
-    const key = spineTargetKey(marker), activeKey = spineTargetKey(active);
-    const resting = spineMarkerState === 'resting' && spineMarkerTargetKey === key;
-    const state = spinePreviewTarget ? 'preview' : (instant || resting ? 'resting' : 'returning');
-    if (key !== spineMarkerTargetKey || state !== spineMarkerState || activeKey !== spineActiveTargetKey) {
-      clearSpineMarkerSettle();
-      stopSpineBreathe();
-    }
-    setSpineMarkerTransition(!instant);
-    if (bubbleRect) {
-      setSpineStyle(bubble, 'left', Math.round(bubbleRect.right + 8) + 'px');
-      setSpineStyle(bubble, 'top', Math.round(bubbleRect.top + bubbleRect.height / 2) + 'px');
-    }
-    function place(orb, target, rect, hover) {
-      const tab = target.classList.contains('study-spine-tab');
-      const favorite = !tab && target.dataset.groupId === FAVORITES_PAGE;
-      const size = hover ? (tab ? 38 : favorite ? 21 : 16) : (tab ? 34 : favorite ? 18 : 12);
-      setSpineStyle(orb, 'width', size + 'px');
-      setSpineStyle(orb, 'height', size + 'px');
-      setSpineStyle(orb, 'border-radius', tab ? (hover ? '14px' : '13px') : '0');
-      // Keep matching polygon vertices for continuous dot/star morphing.
-      setSpineStyle(orb, 'clip-path', tab ? 'none' : (favorite ? ORB_STAR_CLIP : ORB_DOT_CLIP));
-      setSpineStyle(orb, 'transform', 'translate3d('
-        + (rect.left - spineRect.left + (rect.width - size) / 2) + 'px,'
-        + (rect.top - spineRect.top + scrollTop + (rect.height - size) / 2) + 'px,0)');
-      if (!hover) {
-        const shape = tab ? 'tab' : favorite ? 'star' : 'dot';
-        if (orb.dataset.shape !== shape) orb.dataset.shape = shape;
-      }
-    }
-    place(spineActiveOrb, active, activeRect, false);
-    place(spineHoverOrb, marker, markerRect, true);
-    const color = spineHoverColor(marker, spineHoverKind(marker));
-    setSpineStyle(spineEl, '--spine-hover-color', color[0]);
-    setSpineStyle(spineEl, '--spine-hover-glow', color[1]);
-    setSpineStyle(spineHoverRail, 'transform', 'translate3d(0,'
-      + (markerRect.top - spineRect.top + scrollTop + markerRect.height / 2 - 9) + 'px,0)');
-    setSpineClass(spineActiveOrb, 'show', true);
-    setSpineMarkerState(spineEl, state, marker);
-    spineMarkerTargetKey = key;
-    spineActiveTargetKey = activeKey;
-    spineMarkerReady = true;
-    if (state === 'resting') scheduleSpineBreathe();
-    else if (state === 'returning' && !spineMarkerSettleTimer) {
-      const version = spineMarkerReturnVersion;
-      spineMarkerSettleTimer = window.setTimeout(() => finishSpineMarkerReturn(key, version), 360);
-    }
-  }
-
-  function syncSpineVisibility() {
-    if (spineMotionVisible()) syncActiveSpineOrb({ animate: false });
-    else suspendSpineMotion();
-  }
-
-  window.addEventListener('resize', () => syncActiveSpineOrb({ animate: false }));
-  document.addEventListener('relatum:start-workspacechange', syncSpineVisibility);
-  document.addEventListener('visibilitychange', syncSpineVisibility);
-  window.addEventListener('canvasdesktop:visibility', syncSpineVisibility);
-  spineMotionMedia?.addEventListener('change', () => {
-    stopSpineBreathe();
-    syncSpineVisibility();
-  });
-  window.addEventListener('pagehide', () => {
-    spinePageHidden = true;
-    suspendSpineMotion();
-  });
-  window.addEventListener('pageshow', () => {
-    spinePageHidden = false;
-    syncSpineVisibility();
-  });
 
   function listViewName() {
     return lastFiles.length === 0 && lastGroups.length === 0 ? 'empty' : 'recent';
@@ -2525,7 +2225,7 @@
   }
 
   function finalizeCadenceEntranceExit(force) {
-    if (!cadenceEntranceExitFrozen || (!force && cadenceActive)) return;
+    if (!cadenceEntranceExitFrozen || (!force && isView('cadence'))) return;
     clearCadenceEntrance(true);
     releaseCadenceEntranceExitAnimations();
   }
@@ -2583,7 +2283,7 @@
       cadenceEnterFrame = requestAnimationFrame(() => {
         cadenceEnterFrame = requestAnimationFrame(() => {
           cadenceEnterFrame = 0;
-          if (!cadenceActive) return;
+          if (!isView('cadence')) return;
           if (!startCadenceEntrance()) clearCadenceEntrance(true);
         });
       });
@@ -2604,10 +2304,10 @@
     }
     if (window.StudyActivity && typeof window.StudyActivity.awaitReady === 'function') {
       window.StudyActivity.awaitReady().then(() => {
-        if (!cadenceActive || token !== cadenceEntranceSeq) return;
+        if (!isView('cadence') || token !== cadenceEntranceSeq) return;
         replayCadenceEntrance(0);
       }).catch(() => {
-        if (!cadenceActive || token !== cadenceEntranceSeq) return;
+        if (!isView('cadence') || token !== cadenceEntranceSeq) return;
         replayCadenceEntrance(fallbackDelay);
       });
       return;
@@ -2615,195 +2315,307 @@
     replayCadenceEntrance(fallbackDelay);
   }
 
-  function setStudyActive(active) {
-    if (active && !features.viewEnabled('study')) return;
-    studyActive = !!active;
-    if (studyActive) {
-      cadenceActive = false;
-      treePageActive = false;
-      notesActive = false;
-      calendarActive = false;
-      reviewActive = false;
-      focusActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      showView('study');
-      if (window.StudyView && typeof window.StudyView.activate === 'function') {
-        window.StudyView.activate();
-      }
-      return;
-    }
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
+  function setStudyActive(active, options) {
+    return requestSpecialView('study', active, options);
   }
 
-  function setCadenceActive(active) {
-    if (active && !features.viewEnabled('cadence')) return;
-    cadenceActive = !!active;
-    if (cadenceActive) {
-      studyActive = false;
-      treePageActive = false;
-      notesActive = false;
-      calendarActive = false;
-      reviewActive = false;
-      focusActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      stageCadenceEntrance();
-      showView('cadence');
-      armCadenceEntrance();
-      return;
-    }
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
+  function setCadenceActive(active, options) {
+    return requestSpecialView('cadence', active, options);
   }
 
-  function setTreePageActive(active) {
-    if (active && !features.viewEnabled('tree')) return;
-    treePageActive = !!active;
-    if (treePageActive) {
-      studyActive = false;
-      cadenceActive = false;
-      notesActive = false;
-      calendarActive = false;
-      reviewActive = false;
-      focusActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      showView('tree');
-      if (window.CanvasTreePage && typeof window.CanvasTreePage.activate === 'function') {
-        window.CanvasTreePage.activate();
-      }
-      return;
-    }
-    if (window.CanvasTreePage && typeof window.CanvasTreePage.deactivate === 'function') {
-      window.CanvasTreePage.deactivate();
-    }
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
+  function setTreePageActive(active, options) {
+    return requestSpecialView('tree', active, options);
   }
 
-  function setNotesActive(active) {
-    if (active && !features.viewEnabled('notes')) return;
-    notesActive = !!active;
-    if (notesActive) {
-      studyActive = false;
-      cadenceActive = false;
-      treePageActive = false;
-      calendarActive = false;
-      reviewActive = false;
-      focusActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      showView('notes');
-      // 通知便签墙模块：本页刚展开（首次进入时拉数据、重算坐标基准）
-      if (window.CanvasNotes && window.CanvasNotes.activate) window.CanvasNotes.activate();
-      return;
-    }
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
+  function setNotesActive(active, options) {
+    return requestSpecialView('notes', active, options);
   }
 
-  function setReviewActive(active) {
-    if (active && !features.viewEnabled('review')) return;
-    reviewActive = !!active;
-    if (reviewActive) {
-      studyActive = false;
-      cadenceActive = false;
-      treePageActive = false;
-      notesActive = false;
-      calendarActive = false;
-      focusActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      showView('review');
-      if (window.CanvasReview && window.CanvasReview.activate) window.CanvasReview.activate();
-      return;
-    }
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
+  function setReviewActive(active, options) {
+    return requestSpecialView('review', active, options);
   }
 
-  function setCalendarActive(active) {
-    if (active && !features.viewEnabled('calendar')) return;
-    calendarActive = !!active;
-    if (calendarActive) {
-      studyActive = false;
-      cadenceActive = false;
-      treePageActive = false;
-      notesActive = false;
-      reviewActive = false;
-      focusActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      if (window.CanvasCalendar && window.CanvasCalendar.activate) window.CanvasCalendar.activate();
-      // 首次进入先同步画出日历骨架，再把已有内容交给起始页翻页动画。
-      showView('calendar');
-      return;
-    }
-    if (window.CanvasCalendar && window.CanvasCalendar.deactivate) window.CanvasCalendar.deactivate();
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
+  function setCalendarActive(active, options) {
+    return requestSpecialView('calendar', active, options);
   }
 
   function setFocusActive(active, options) {
-    if (active && !features.viewEnabled('focus')) return;
-    focusActive = !!active;
-    if (focusActive) {
-      studyActive = false;
-      cadenceActive = false;
-      treePageActive = false;
-      notesActive = false;
-      calendarActive = false;
-      reviewActive = false;
-      cancelPendingDelete();
-      closeContextMenu();
-      if (window.CanvasFocus && typeof window.CanvasFocus.prepareActivate === 'function') {
-        pendingFocusActivation = null;
-        pendingFocusReadyActions = [];
-        window.CanvasFocus.prepareActivate(options || {});
-        const focusRoot = document.querySelector('.focus-embedded');
-        if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
-        showView('focus');
-        if (window.CanvasFocus.activate) window.CanvasFocus.activate();
+    return requestSpecialView('focus', active, options);
+  }
+
+  function requestSpecialView(view, active, options) {
+    // A repeat click is a command on the mounted page, not a transient page
+    // to skip. Preserve every such command outside composition handoff.
+    const opts = active && isView(view) && options?.action
+      ? Object.assign({}, options, { immediate: true }) : options;
+    return navigation.request(active ? { view } : { view: 'library', groupId: activeGroup }, opts);
+  }
+
+  function navigationVisible() {
+    return !startPageHidden && !document.hidden
+      && document.documentElement.dataset.desktopMinimized !== '1'
+      && workspaceRuntime.current === 'canvas';
+  }
+
+  const navigationModules = {
+    study: () => window.StudyView, cadence: () => window.StudyActivity,
+    tree: () => window.CanvasTreePage, notes: () => window.CanvasNotes,
+    review: () => window.CanvasReview, calendar: () => window.CanvasCalendar,
+    focus: () => window.CanvasFocus,
+  };
+  let libraryNavigationMotion = null;
+  let interruptedViewExitMotion = null;
+
+  function cancelLibraryNavigationMotion() {
+    const motion = libraryNavigationMotion;
+    libraryNavigationMotion = null;
+    if (motion) motion.cancel();
+  }
+
+  function cancelNavigationPageMotion(options) {
+    if (!options?.preserveLibrary) cancelLibraryNavigationMotion();
+    const exitMotion = interruptedViewExitMotion;
+    interruptedViewExitMotion = null;
+    if (exitMotion) exitMotion.cancel();
+  }
+
+  function navigationAbortError() {
+    return new DOMException('Navigation cancelled', 'AbortError');
+  }
+
+  function waitForNavigationModule(route, ctx) {
+    const getModule = navigationModules[route.view];
+    if (!getModule || getModule()) return undefined;
+    return new Promise((resolve, reject) => {
+      let timeout = 0, finished = false;
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        document.removeEventListener('DOMContentLoaded', check);
+        window.removeEventListener('load', check);
+        document.removeEventListener('canvasfocus:ready', check);
+        ctx.signal.removeEventListener('abort', abort);
+      };
+      const finish = error => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        if (error) reject(error); else resolve();
+      };
+      const abort = () => finish(navigationAbortError());
+      const check = () => {
+        if (ctx.signal.aborted || !ctx.isCurrent()) { abort(); return; }
+        if (getModule()) finish();
+        else if (document.readyState === 'complete' && route.view !== 'focus') {
+          finish(new Error(englishUI() ? 'This page could not be loaded.' : '页面未能完成加载，请重试。'));
+        }
+      };
+      document.addEventListener('DOMContentLoaded', check);
+      window.addEventListener('load', check);
+      if (route.view === 'focus') document.addEventListener('canvasfocus:ready', check);
+      ctx.signal.addEventListener('abort', abort, { once: true });
+      timeout = window.setTimeout(() => finish(new Error(englishUI()
+        ? 'This page is taking too long to prepare. Please try again.' : '页面准备超时，请重试。')), 10000);
+      check();
+    });
+  }
+
+  function waitForLibraryPageExit(route, ctx) {
+    const previous = navigation.getState().current;
+    if (!bookPage || ctx.options.action === 'refresh' || previous.view !== 'library' || previous.groupId === route.groupId
+      || !bookView?.dataset.viewName || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    const forward = typeof ctx.options.forward === 'boolean' ? ctx.options.forward
+      : pageIndexOf(route.groupId) >= pageIndexOf(previous.groupId);
+    ctx.libraryForward = forward;
+    // A committed entrance belongs to the page. New input leaves it running through
+    // the quiet period, then the next preparation continues from its actual frame.
+    const snapshot = libraryNavigationMotion ? readLibraryPageMotion() : { opacity: '1', transform: 'translate3d(0,0,0)' };
+    cancelLibraryNavigationMotion();
+    if (!bookPage.animate) return undefined;
+    const animation = bookPage.animate([
+      snapshot,
+      { transform: 'translate3d(' + (forward ? -40 : 40) + 'px,0,0)', opacity: 0 },
+    ], { duration: startBookSwapDelay(), easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' });
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        animation.removeEventListener('finish', finish);
+        animation.removeEventListener('cancel', cancelled);
+        ctx.signal.removeEventListener('abort', abort);
+      };
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        // Keep the completed, transparent exit until commit replaces its content.
+        resolve();
+      };
+      const cancelled = () => {
+        cleanup();
+        if (!settled) { settled = true; reject(navigationAbortError()); }
+        if (libraryNavigationMotion === motion) libraryNavigationMotion = null;
+      };
+      const motion = {
+        animation,
+        cancel() {
+          cleanup();
+          animation.cancel();
+          if (!settled) { settled = true; reject(navigationAbortError()); }
+        },
+      };
+      const abort = () => {
+        const restore = libraryNavigationMotion === motion && navigationVisible() ? readLibraryPageMotion() : null;
+        if (libraryNavigationMotion === motion) libraryNavigationMotion = null;
+        motion.cancel();
+        if (restore) playLibraryPageMotion([
+          restore, { opacity: 1, transform: 'translate3d(0,0,0)' },
+        ], 120);
+      };
+      libraryNavigationMotion = motion;
+      animation.addEventListener('finish', finish);
+      animation.addEventListener('cancel', cancelled);
+      ctx.signal.addEventListener('abort', abort, { once: true });
+      if (ctx.signal.aborted) abort();
+    });
+  }
+
+  function readLibraryPageMotion() {
+    const style = getComputedStyle(bookPage);
+    return { opacity: style.opacity, transform: style.transform };
+  }
+
+  function playLibraryPageMotion(frames, duration) {
+    if (!bookPage?.animate || !navigationVisible()
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const animation = bookPage.animate(frames, { duration, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    const finish = () => {
+      animation.removeEventListener('finish', finish);
+      animation.removeEventListener('cancel', finish);
+      if (libraryNavigationMotion === motion) libraryNavigationMotion = null;
+    };
+    const motion = { animation, cancel() { finish(); animation.cancel(); } };
+    libraryNavigationMotion = motion;
+    animation.addEventListener('finish', finish);
+    animation.addEventListener('cancel', finish);
+  }
+
+  function animateLibraryPageEntrance(ctx) {
+    if (typeof ctx.libraryForward !== 'boolean' || !bookPage?.animate
+      || !ctx.isCurrent() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const offset = ctx.libraryForward ? 40 : -40;
+    playLibraryPageMotion([
+      { transform: 'translate3d(' + offset + 'px,0,0)', opacity: 0 },
+      { transform: 'translate3d(0,0,0)', opacity: 1 },
+    ], startBookFlipDoneDelay());
+  }
+
+  function captureInterruptedViewExit(route, ctx) {
+    const previous = navigation.getState().current;
+    if (!ctx.isCurrent() || previous.view === route.view || previous.view === 'review'
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const previousName = previous.view === 'library' ? 'recent' : previous.view;
+    const nextName = route.view === 'library' ? 'recent' : route.view;
+    const element = getStartViewElement(previousName);
+    if (!element?.classList.contains('view-entering') || !element.animate) return;
+    // Read the one interrupted root before showView changes any page classes or layout.
+    const style = getComputedStyle(element);
+    const towardReview = previous.view === 'calendar' && route.view === 'review';
+    const back = (START_VIEW_ORDER[nextName] ?? START_VIEW_ORDER.recent)
+      < (START_VIEW_ORDER[previousName] ?? START_VIEW_ORDER.recent);
+    const duration = towardReview ? Math.max(80, startTurnSpeed * 0.38) + 35
+      : Math.max(165, startTurnSpeed * 0.92) + (['calendar', 'cadence'].includes(previous.view) ? 80 : 0);
+    ctx.exitSnapshot = {
+      element, opacity: style.opacity, transform: style.transform,
+      target: towardReview ? 'translate3d(12px,0,0) scale(0.997)' : 'translate3d(' + (back ? 42 : -42) + 'px,0,0)',
+      duration,
+    };
+  }
+
+  function animateInterruptedViewExit(ctx) {
+    const snapshot = ctx.exitSnapshot;
+    if (!snapshot || !ctx.isCurrent() || !snapshot.element.classList.contains('view-leaving')) return;
+    const animation = snapshot.element.animate([
+      { opacity: snapshot.opacity, transform: snapshot.transform },
+      { opacity: 0, transform: snapshot.target },
+    ], { duration: snapshot.duration, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    const finish = () => {
+      ctx.signal.removeEventListener('abort', abort);
+      animation.removeEventListener('finish', finish);
+      animation.removeEventListener('cancel', finish);
+      if (interruptedViewExitMotion === motion) interruptedViewExitMotion = null;
+    };
+    const abort = () => motion.cancel();
+    const motion = {
+      cancel() {
+        finish();
+        animation.cancel();
+        // The outgoing root is already inert. Do not uncover a restarted CSS first frame.
+        if (snapshot.element.getAttribute('aria-hidden') === 'true') snapshot.element.classList.remove('view-leaving');
+      },
+    };
+    interruptedViewExitMotion = motion;
+    animation.addEventListener('finish', finish);
+    animation.addEventListener('cancel', finish);
+    ctx.signal.addEventListener('abort', abort, { once: true });
+  }
+
+  function runNavigationAction(route, api, ctx) {
+    if (ctx.options.action === 'toggle') api?.toggleMode?.();
+    else if (ctx.options.action === 'reset') api?.resetView?.();
+    if (route.view === 'focus' && ctx.options.forceTimer) api?.showTimer?.({ persist: false, animate: false });
+    if (ctx.isCurrent() && typeof ctx.options.afterActivate === 'function') ctx.options.afterActivate(api);
+  }
+
+  navigation = window.RelatumStartNavigation.create({
+    initialRoute: { view: 'library', groupId: activeGroup },
+    enabled: route => route.view === 'library' ? features.enabled('canvas.library')
+      : !specialPagesHidden && features.viewEnabled(route.view),
+    visible: navigationVisible,
+    feedback: route => updateNavigationFeedback(route),
+    prepare(route, ctx) {
+      const readiness = route.view === 'library' ? waitForLibraryPageExit(route, ctx) : waitForNavigationModule(route, ctx);
+      if (readiness?.then) return readiness.then(() => captureInterruptedViewExit(route, ctx));
+      captureInterruptedViewExit(route, ctx);
+    },
+    commit(route, previous, ctx) {
+      const api = navigationModules[route.view]?.();
+      const same = route.view === previous.view && (route.view !== 'library' || route.groupId === previous.groupId);
+      if (same && ctx.options.action !== 'refresh' && bookView?.dataset.viewName) {
+        runNavigationAction(route, api, ctx);
         return;
       }
-      pendingFocusActivation = { options: Object.assign({}, options || {}) };
-      pendingFocusReadyActions = [];
-      const focusRoot = document.querySelector('.focus-embedded');
-      if (focusRoot) focusRoot.dataset.pendingForceTimer = options && options.forceTimer ? '1' : '0';
-      return;
-    }
-    showView(listViewName());
-    if (bookStage) bookStage.scrollTop = 0;
-  }
-
-  function runWhenCanvasFocusReady(action) {
-    if (typeof action !== 'function' || !focusActive) return;
-    if (window.CanvasFocus) {
-      action(window.CanvasFocus);
-      return;
-    }
-    pendingFocusReadyActions.push(action);
-  }
-
-  function finishPendingFocusActivation() {
-    if (!focusActive || !pendingFocusActivation || !window.CanvasFocus) return;
-    const pending = pendingFocusActivation;
-    const actions = pendingFocusReadyActions.slice();
-    pendingFocusActivation = null;
-    pendingFocusReadyActions = [];
-    const focusRoot = document.querySelector('.focus-embedded');
-    if (focusRoot) delete focusRoot.dataset.pendingForceTimer;
-    if (typeof window.CanvasFocus.prepareActivate === 'function') {
-      window.CanvasFocus.prepareActivate(pending.options || {});
-    }
-    showView('focus');
-    if (typeof window.CanvasFocus.activate === 'function') window.CanvasFocus.activate();
-    actions.forEach((action) => action(window.CanvasFocus));
-  }
-
-  document.addEventListener('canvasfocus:ready', finishPendingFocusActivation);
+      // The child entry/recovery can finish inside the retiring library host.
+      // Cancelling it here would reveal its final frame during the outer exit.
+      cancelNavigationPageMotion({
+        preserveLibrary: previous.view === 'library' && route.view !== 'library'
+      });
+      cancelPendingDelete();
+      closeContextMenu();
+      // Removing a focused input does not fire blur. Hand its rename to the
+      // existing save path before replacing a shared library host.
+      if (previous.view === 'library') bookStage?.querySelector('.recent-rename-input')?.blur();
+      if (route.view === 'library') {
+        if (librarySearchActive()) librarySearchRestoreScroll = 0;
+        const changedGroup = activeGroup !== route.groupId;
+        activeGroup = route.groupId;
+        if (changedGroup) saveActive();
+        selectedIndex = -1;
+        if (!same) renderPanel({ staggerEnter: true });
+        showView(listViewName());
+        animateInterruptedViewExit(ctx);
+        if (bookStage) bookStage.scrollTop = 0;
+        animateLibraryPageEntrance(ctx);
+      } else {
+        if (route.view === 'cadence') stageCadenceEntrance();
+        if (route.view === 'calendar') api?.activate?.();
+        if (route.view === 'focus') api?.prepareActivate?.(ctx.options);
+        showView(route.view);
+        animateInterruptedViewExit(ctx);
+        if (route.view === 'cadence') armCadenceEntrance();
+        else if (route.view !== 'calendar') api?.activate?.();
+      }
+      if (ctx.isCurrent() && typeof ctx.options.afterActivate === 'function') ctx.options.afterActivate(api);
+    },
+    error: error => { if (error?.name !== 'AbortError') showToast(error?.message || String(error)); },
+  });
 
   function gotoEditor(path, sourceItem, fresh) {
     if (!features.enabled('canvas.editor')) {
@@ -3172,6 +2984,13 @@
     if (activeGroup && activeGroup !== FAVORITES_PAGE && activeGroup !== INBOX_PAGE
       && !validIds().has(activeGroup)) {
       activeGroup = '';
+      saveActive();
+    }
+    const desired = navigation?.getState().desired;
+    if (desired?.view === 'library' && desired.groupId
+        && desired.groupId !== FAVORITES_PAGE && desired.groupId !== INBOX_PAGE
+        && !validIds().has(desired.groupId)) {
+      navigation.request({ view: 'library', groupId: '' }, { immediate: true, action: 'refresh' });
     }
     renderDots();
     renderPanel(options);
@@ -3188,8 +3007,6 @@
       const dot = document.createElement('button');
       dot.type = 'button';
       dot.className = 'page-dot';
-      if (!studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
-        && !reviewActive && !focusActive && g.id === activeGroup) dot.classList.add('active');
       dot.dataset.groupId = g.id;
       if (g.id !== '' && g.id !== FAVORITES_PAGE && g.id !== INBOX_PAGE) {
         dot.setAttribute('data-user-content', '');
@@ -3254,7 +3071,9 @@
     });
     dots.appendChild(add);
     bindSpineHoverTarget(add);
-    syncActiveSpineOrb({ animate: !layoutChanged });
+    updateNavigationFeedback(navigation?.getState().desired);
+    syncNavigationSemantics();
+    spineView?.invalidate({ animate: !layoutChanged });
   }
 
   // 浮动单行输入（新建分组 / 重命名分组），锚定到书脊上的圆点右侧
@@ -3281,6 +3100,7 @@
     };
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter') { e.preventDefault(); done(true); }
       else if (e.key === 'Escape') { e.preventDefault(); done(false); }
     });
@@ -4136,6 +3956,7 @@
     const cancel = () => { if (settled) return; settled = true; refresh(); };
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
@@ -4177,6 +3998,7 @@
   }
 
   async function importCanvasFiles(fileListLike, gid) {
+    const navigationVersion = navigation.getState().version;
     const list = [...(fileListLike || [])].filter((f) => /\.canvas$/i.test(f.name || ''));
     if (!list.length) { showToast('只能拖入 .canvas 画布文件'); return; }
     let lastPath = null, count = 0, assetsWarned = false;
@@ -4186,8 +4008,8 @@
     }
     if (!count) return;
     flashImportPaths.add(lastPath);
-    if (gid && gid !== activeGroup) { activeGroup = gid; saveActive(); }
     await refresh();
+    if (gid && navigation.isCurrent(navigationVersion)) navigateTo(gid);
     if (assetsWarned) {
       showToast(count > 1 ? ('已导入 ' + count + ' 个画布（附件/图片未一起带入）')
         : '已导入（图片/附件未一起带入）');
@@ -4234,7 +4056,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: group.id }),
       });
-      if (activeGroup === group.id) { activeGroup = INBOX_PAGE; saveActive(); }
+      if (navigation.getState().desired.view === 'library'
+          && navigation.getState().desired.groupId === group.id) navigateTo(INBOX_PAGE);
+      else if (activeGroup === group.id) { activeGroup = INBOX_PAGE; saveActive(); }
       await refresh();
     } catch (err) { console.warn('[画布] 删除分组失败', err); }
   }
@@ -4242,6 +4066,7 @@
   async function createGroup(name) {
     const n = (name || '').trim();
     if (!n) return;
+    const navigationVersion = navigation.getState().version;
     try {
       const resp = await fetch('/api/group-create', {
         method: 'POST',
@@ -4250,8 +4075,8 @@
       });
       const json = await resp.json();
       if (!resp.ok) { alert(json.error || '新建分组失败'); return; }
-      if (json.id) { activeGroup = json.id; saveActive(); }  // 建完跳到新组
       await refresh();
+      if (json.id && navigation.isCurrent(navigationVersion)) navigateTo(json.id);
     } catch (err) { alert('新建分组失败：' + err.message); }
   }
 
@@ -4692,6 +4517,7 @@
   document.querySelectorAll('[data-action="import-canvas-folder"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
+      const navigationVersion = navigation.getState().version;
       try {
         const resp = await fetch('/api/import-canvas-folder', {
           method: 'POST',
@@ -4707,11 +4533,8 @@
         (json.items || []).forEach((item) => {
           if (item && item.path) flashImportPaths.add(item.path);
         });
-        if (activeGroup === FAVORITES_PAGE) {
-          activeGroup = '';
-          saveActive();
-        }
         await refresh();
+        if (activeGroup === FAVORITES_PAGE && navigation.isCurrent(navigationVersion)) navigateTo('');
         const renamed = Number(json.renamedCount) || 0;
         const assets = Number(json.assetCount) || 0;
         showToast(englishUI()
@@ -4794,11 +4617,7 @@
     btn.addEventListener('click', (e) => {
       if (holdFired) { e.preventDefault(); e.stopPropagation(); holdFired = false; return; }
       // 已在学习页 → 再点一次「学」在看板/清单两种呈现间切换；否则照常进入学习页
-      if (studyActive && window.StudyView && typeof window.StudyView.toggleMode === 'function') {
-        window.StudyView.toggleMode();
-      } else {
-        setStudyActive(true);
-      }
+      setStudyActive(true, { action: isView('study') ? 'toggle' : undefined });
     });
   });
   document.querySelectorAll('[data-action="cadence-view"]').forEach((btn) => {
@@ -4806,10 +4625,7 @@
   });
   document.querySelectorAll('[data-action="tree-page-view"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      if (treePageActive && window.CanvasTreePage && typeof window.CanvasTreePage.resetView === 'function') {
-        window.CanvasTreePage.resetView();
-      }
-      setTreePageActive(true);
+      setTreePageActive(true, { action: isView('tree') ? 'reset' : undefined });
     });
   });
   document.querySelectorAll('[data-action="review-view"]').forEach((btn) => {
@@ -4817,21 +4633,12 @@
   });
   document.querySelectorAll('[data-action="calendar-view"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      if (calendarActive && window.CanvasCalendar
-          && typeof window.CanvasCalendar.toggleMode === 'function') {
-        window.CanvasCalendar.toggleMode();
-      } else {
-        setCalendarActive(true);
-      }
+      setCalendarActive(true, { action: isView('calendar') ? 'toggle' : undefined });
     });
   });
   document.querySelectorAll('[data-action="focus-view"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      if (focusActive && window.CanvasFocus && typeof window.CanvasFocus.toggleMode === 'function') {
-        window.CanvasFocus.toggleMode();
-      } else {
-        setFocusActive(true);
-      }
+      setFocusActive(true, { action: isView('focus') ? 'toggle' : undefined });
     });
   });
   // 速记归档：把当前页便签里「有名字」的搬进 data/学习归档/<日期>+<N>条速记/，
@@ -4886,10 +4693,7 @@
     btn.addEventListener('pointercancel', cancelHold);
     btn.addEventListener('click', (e) => {
       if (holdFired) { e.preventDefault(); e.stopPropagation(); holdFired = false; return; }
-      if (notesActive && window.CanvasNotes && typeof window.CanvasNotes.resetView === 'function') {
-        window.CanvasNotes.resetView();
-      }
-      setNotesActive(true);
+      setNotesActive(true, { action: isView('notes') ? 'reset' : undefined });
     });
   });
 
@@ -4897,16 +4701,15 @@
     const view = event.detail && event.detail.view;
     if (view === 'cadence') setCadenceActive(true);
     if (view === 'focus') {
-      setFocusActive(true, { forceTimer: true });
-      runWhenCanvasFocusReady((focus) => {
-        if (event.detail.day && focus.showDay) focus.showDay(event.detail.day, event.detail.sessionId);
-      });
+      const { day, sessionId } = event.detail;
+      setFocusActive(true, { forceTimer: true, afterActivate(focus) {
+        if (day && focus.showDay) focus.showDay(day, sessionId);
+      } });
     }
   });
 
   // ── 翻书式翻页 ────────────────────────────────
   // 「页」= [复习, 日历, 活跃, 速记, 树状, 学习, 专注, 最近, 收藏, ...自定义分组]。
-  let flipping = false;
   let wheelAccum = 0;
   let wheelResetTimer = null;
   const prefersReduced = (function () {
@@ -4926,45 +4729,7 @@
   // 翻到某页（带整页横滑 + 淡入淡出；方向由页序决定，循环翻页时由 forwardHint 指定）
   function navigateTo(gid, forwardHint) {
     if (!features.enabled('canvas.library')) return;
-    if (librarySearchActive()) librarySearchRestoreScroll = 0;
-    if (studyActive || cadenceActive || treePageActive || notesActive || calendarActive || reviewActive || focusActive) {
-      activeGroup = gid; saveActive(); selectedIndex = -1;
-      studyActive = false;
-      cadenceActive = false;
-      treePageActive = false;
-      notesActive = false;
-      calendarActive = false;
-      reviewActive = false;
-      focusActive = false;
-      render({ staggerEnter: true });
-      showView(listViewName());
-      if (bookStage) bookStage.scrollTop = 0;
-      return;
-    }
-    if (gid === activeGroup) return;
-    const forward = (typeof forwardHint === 'boolean')
-      ? forwardHint
-      : (pageIndexOf(gid) >= pageIndexOf(activeGroup));
-    if (prefersReduced || !bookPage) {
-      activeGroup = gid; saveActive(); selectedIndex = -1;
-      render({ staggerEnter: true });
-      if (bookStage) bookStage.scrollTop = 0;
-      return;
-    }
-    flipping = true;
-    bookPage.classList.remove('flip-in-l', 'flip-in-r');
-    bookPage.classList.add(forward ? 'flip-out-l' : 'flip-out-r');   // 旧页滑出
-    window.setTimeout(() => {
-      activeGroup = gid; saveActive(); selectedIndex = -1;
-      render({ staggerEnter: true });
-      if (bookStage) bookStage.scrollTop = 0;
-      // 新页从另一侧滑入
-      bookPage.classList.remove('flip-out-l', 'flip-out-r');
-      bookPage.classList.add(forward ? 'flip-in-r' : 'flip-in-l');
-      void bookPage.offsetHeight;                                    // 强制 reflow 让起始态生效
-      bookPage.classList.remove('flip-in-r', 'flip-in-l');           // → 过渡回静止态
-      window.setTimeout(() => { flipping = false; }, startBookFlipDoneDelay());
-    }, startBookSwapDelay());
+    return navigation?.request({ view: 'library', groupId: gid }, { forward: forwardHint });
   }
 
   // 相对当前页循环翻 ±1（到尾翻回头、到头翻到尾）。
@@ -4977,21 +4742,24 @@
   }
   let initialPageOpened = false;
   function openInitialPage() {
-    if (initialPageOpened) return;
+    if (initialPageOpened || !navigationVisible()) return;
     initialPageOpened = true;
     const requested = features.viewEnabled(initialView) && pageActivators[initialView] ? initialView : '';
-    const target = requested || (!features.enabled('canvas.library') ? availableSpecialPages()[0] : '');
+    const target = (!specialPagesHidden && requested) || (!features.enabled('canvas.library') ? availableSpecialPages()[0] : '');
     if (!target) return;
-    const activate = () => pageActivators[target](true);
-    if (document.readyState === 'complete') activate();
-    else window.addEventListener('load', activate, { once: true });
+    // Readiness belongs to the same versioned request as the initial route.
+    navigation.request({ view: target }, { immediate: true });
+    if (initialView) {
+      try { history.replaceState(null, '', 'index.html'); } catch (e) {}
+    }
   }
   function flipBy(delta) {
     const order = availableSpecialPages().map(view => ({ view }))
       .concat(pageOrder().map(group => ({ group })));
     if (!order.length) return;
-    const currentView = bookView && bookView.dataset.viewName;
-    let current = order.findIndex(item => item.view ? item.view === currentView : !pageActivators[currentView] && item.group === activeGroup);
+    const desired = navigation.getState().desired;
+    let current = order.findIndex(item => item.view ? item.view === desired.view
+      : desired.view === 'library' && item.group === desired.groupId);
     if (current < 0) current = 0;
     const next = order[(current + delta + order.length) % order.length];
     if (next.view) pageActivators[next.view](true);
@@ -5001,33 +4769,68 @@
   // 两套滚动系统：
   //  · 鼠标在「书页内容区」→ 浏览器原生滚动该组的画布文件（不翻页）
   //  · 鼠标在「左侧书脊附近」→ 滚轮循环翻页
-  bindStaticSpineHoverTargets();
-  if (spineEl) {
-    spineEl.addEventListener('pointerleave', clearSpineHover);
-    spineEl.addEventListener('scroll', () => {
-      clearSpineHover({ animate: false });
-    }, { passive: true });
-    spineEl.addEventListener('focusout', (event) => {
-      if (!spineEl.contains(event.relatedTarget)) clearSpineHover();
-    });
+  spineView = window.RelatumStartSpine.create({
+    spine: spineEl, bookView, dots, getTarget: getNavigationTarget,
+    getGroupIndex: id => lastGroups.findIndex(group => group.id === id),
+    visible: () => navigationVisible() && !bookView.hidden,
+  });
+  let composingTarget = null;
+  document.addEventListener('compositionstart', event => {
+    if (workspaceRuntime.current !== 'canvas') return;
+    composingTarget = event.target;
+    navigation.setComposing(true);
+  }, true);
+  document.addEventListener('compositionend', event => {
+    if (event.target !== composingTarget) return;
+    composingTarget = null;
+    navigation.setComposing(false);
+  }, true);
+  spineEl?.addEventListener('pointerdown', event => {
+    if (composingTarget && event.target.closest('button')) event.preventDefault();
+  });
+  function syncNavigationVisibility() {
+    if (navigationVisible()) {
+      navigation.resume();
+      openInitialPage();
+    } else {
+      navigation.cancel();
+      cancelNavigationPageMotion();
+      composingTarget = null;
+      navigation.setComposing(false);
+      clearTimeout(wheelResetTimer);
+      wheelResetTimer = null;
+      wheelAccum = 0;
+      clearTimeout(startViewTransitionTimer);
+      startViewTransitionTimer = 0;
+      startViewMotionVersion++;
+      bookView.classList.remove('view-switching', 'view-forward', 'view-back');
+      clearStartViewMotion();
+      finalizeDeferredStartViewExitMotion();
+    }
   }
+  document.addEventListener('relatum:start-workspacechange', syncNavigationVisibility);
+  document.addEventListener('visibilitychange', syncNavigationVisibility);
+  window.addEventListener('canvasdesktop:visibility', syncNavigationVisibility);
+  window.addEventListener('pagehide', () => { startPageHidden = true; syncNavigationVisibility(); });
+  window.addEventListener('pageshow', () => { startPageHidden = false; syncNavigationVisibility(); });
   const SPINE_WHEEL_REACH = 140;        // 普通页面：书脊右侧保留一段克制的无形翻页热区
   const NOTES_SPINE_WHEEL_REACH = 224;  // 速记墙会接管滚轮，左侧留出更宽的翻页手势区
   if (spineEl && bookView) {
     bookView.addEventListener('wheel', (e) => {
       if (main.dataset.state !== 'recent' && main.dataset.state !== 'study') return;
-      if (notesActive && e.target.closest && e.target.closest('.notes-page-rail, .notes-console')) return;
+      if (isView('notes') && e.target.closest && e.target.closest('.notes-page-rail, .notes-console')) return;
       // 缩放和明显的横向手势属于当前页面内容，不参与书脊翻页。
       if (e.ctrlKey || e.metaKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-      const spineRect = spineEl.getBoundingClientRect();
-      const reach = notesActive ? NOTES_SPINE_WHEEL_REACH : SPINE_WHEEL_REACH;
+      const spineRect = spineView.getBounds();
+      if (!spineRect) return;
+      const reach = isView('notes') ? NOTES_SPINE_WHEEL_REACH : SPINE_WHEEL_REACH;
       if (e.clientX > spineRect.right + reach) return;
       // 速记便签摞自身支持滚轮换张；即使靠近书脊，也优先保留这项局部交互。
-      if (notesActive && e.target.closest && e.target.closest('.sticky-note')) return;
+      if (isView('notes') && e.target.closest && e.target.closest('.sticky-note')) return;
       if (e.clientX >= spineRect.left && e.clientX <= spineRect.right
-        && spineEl.scrollHeight > spineEl.clientHeight) return;
+        && spineRect.scrollable) return;
       e.preventDefault();
-      if (flipping) return;
+      if (wheelAccum && Math.sign(wheelAccum) !== Math.sign(e.deltaY)) wheelAccum = 0;
       wheelAccum += e.deltaY;
       clearTimeout(wheelResetTimer);
       wheelResetTimer = setTimeout(() => { wheelAccum = 0; }, 200);
@@ -5054,50 +4857,17 @@
       if (requestId !== recentRefreshSeq) return false;
       lastFiles = (json && json.files) || [];
       lastGroups = (json && json.groups) || [];
+      libraryLoaded = true;
       recentLimit = Number.isFinite(Number(json && json.recentLimit))
         ? Math.max(1, Number(json.recentLimit)) : 30;
       fileStatsRequestSeq += 1;
       fileStatsCache.clear();
       render(preserveSearchResults ? { searchUpdate: true } : undefined);
-      const shouldShowStudy = (initialStudy || studyActive) && !specialPagesHidden;
-      const shouldShowCalendar = (initialCalendar || calendarActive) && !specialPagesHidden;
-      if (shouldShowCalendar) {
-        studyActive = false;
-        cadenceActive = false;
-        treePageActive = false;
-        notesActive = false;
-        reviewActive = false;
-        focusActive = false;
-        calendarActive = true;
-        const activateCalendar = () => {
-          if (calendarActive && window.CanvasCalendar && window.CanvasCalendar.activate) {
-            window.CanvasCalendar.activate();
-          }
-        };
-        if (window.CanvasCalendar) activateCalendar();
-        else window.addEventListener('load', activateCalendar, { once: true });
-      }
-      showView(reviewActive ? 'review'
-        : shouldShowCalendar ? 'calendar'
-        : notesActive ? 'notes'
-        : cadenceActive ? 'cadence'
-        : treePageActive ? 'tree'
-        : focusActive ? 'focus'
-        : shouldShowStudy ? 'study'
-        : listViewName());
-      studyActive = shouldShowStudy;
-      if (shouldShowStudy && window.StudyView && typeof window.StudyView.activate === 'function') {
-        window.StudyView.activate();
-      }
-      if (initialStudy || initialCalendar) {
-        try { history.replaceState(null, '', 'index.html'); } catch (e) {}
-        initialStudy = false;
-        initialCalendar = false;
-      }
+      if (isView('library')) showView(listViewName());
       openInitialPage();
       return true;
     } catch (err) {
-      if (requestId === recentRefreshSeq) showView('empty');
+      if (requestId === recentRefreshSeq && isView('library')) showView(listViewName());
       return false;
     }
   }
@@ -5107,8 +4877,7 @@
   // 内部组间/组内调序拖动用 text/plain，dtHasFiles 为假，完全不受影响。
   function startPageAcceptsCanvasDrop() {
     return features.enabled('canvas.library') && workspaceRuntime.current === 'canvas'
-      && !studyActive && !cadenceActive && !treePageActive && !notesActive && !calendarActive
-      && !reviewActive && !focusActive;   // 仅在「最近/分组」列表视图接收
+      && isView('library');   // 仅在「最近/分组」列表视图接收
   }
   function setCanvasDropHint(on) {
     if (bookPage) bookPage.classList.toggle('canvas-drop-over', !!on);
@@ -5135,5 +4904,6 @@
 
   verifyRuntimeCompatibility();
   setupStartPageActivityTracker();
+  openInitialPage();
   refresh();
 })();

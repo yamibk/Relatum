@@ -38,11 +38,10 @@ assert(start.includes('notes: setNotesActive, tree: setTreePageActive, study: se
   'wheel navigation must place Notes immediately before Tree');
 assert(start.includes("['tree', document.querySelector('.tree-page-embedded')]")
   && start.includes('element.inert = !active')
-  && start.includes('window.CanvasTreePage.activate()')
+  && start.includes('tree: () => window.CanvasTreePage')
   && start.includes('window.CanvasTreePage.deactivate()'),
   'Tree must participate in inert and lifecycle management');
-assert(start.includes("if (treePageActive && window.CanvasTreePage && typeof window.CanvasTreePage.resetView === 'function')")
-  && start.includes('window.CanvasTreePage.resetView();'),
+assert(start.includes("setTreePageActive(true, { action: isView('tree') ? 'reset' : undefined })"),
   'clicking the active Tree spine must fit the current tree without changing first-entry restoration');
 assert(start.includes("const TREE_PAGE_ROOT_TITLE_HIDDEN_KEY = 'canvas:treePageRootTitleHidden:v1'")
   && start.includes("localStorage.getItem(TREE_PAGE_ROOT_TITLE_HIDDEN_KEY) === '1'")

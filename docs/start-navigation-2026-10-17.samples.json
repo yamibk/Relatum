@@ -1,0 +1,1421 @@
+{
+  "baseline": "95e6e523",
+  "measurementDate": "2026-10-17",
+  "finalNativeRecord": "start-navigation-2026-10-17.native.json",
+  "recordNote": "These are earlier frozen samples. The final native rerun after motion handoff fixes is preserved separately with matching final asset hashes.",
+  "units": "ms except counts",
+  "limits": [
+    "Headless RAF intervals are scheduling proxies, not physical display FPS.",
+    "Continuous navigation coalesces page activation; work per identical input differs deliberately.",
+    "Single-transition samples were baseline-first then current, not alternating."
+  ],
+  "runs": {
+    "native": {
+      "browser": "155.0.4283.60",
+      "native": true,
+      "currentHashes": {
+        "index.html": "2ed3836e6e176dbbb58c798cdf82bea4f957faf8f8d6df9474c63e3c83e7ae0c",
+        "styles.css": "22de104d281841c1f21b50140d27f1d9b70cfdd0e24afd76d90cd0f6ca3dc610",
+        "start.js": "5f4dfeef90ea81f3854283dca0ea1521db1711a8e2df84fe24d2f4b4eb527e29",
+        "start-navigation.js": "ab21064efba2614259b2a599c2a6b8449f57f10afce2c3ead1ad777fafc54ecf",
+        "start-spine.js": "9fdcb5c690d3d2853bb4c2a8ea53ec18168ff24cd57dd22fab46368ce8bb4597"
+      },
+      "sourceReport": "relatum-navigation-YgEZrP/report.json",
+      "samples": [
+        {
+          "label": "baseline",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 80.55900000000001,
+          "styleMs": 225.493,
+          "layoutMs": 37.454,
+          "taskMs": 772.682,
+          "paintMs": 78.5670000000003,
+          "layoutCount": 111,
+          "frameIntervals": {
+            "count": 308,
+            "p95": 12.5,
+            "p99": 25.100000000000364,
+            "max": 33.399999999999636,
+            "over25": 4,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 44.005999999999986,
+          "styleMs": 120.08700000000003,
+          "layoutMs": 39.769,
+          "taskMs": 584.045,
+          "paintMs": 44.913000000000146,
+          "layoutCount": 157,
+          "frameIntervals": {
+            "count": 366,
+            "p95": 8.299999999999272,
+            "p99": 16.5,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 21.12,
+          "styleMs": 102.20899999999999,
+          "layoutMs": 7.199000000000001,
+          "taskMs": 419.20000000000005,
+          "paintMs": 25.700000000000117,
+          "layoutCount": 40,
+          "frameIntervals": {
+            "count": 379,
+            "p95": 4.399999999999636,
+            "p99": 8.300000000001091,
+            "max": 12.299999999999272,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 16.495,
+          "styleMs": 43.393,
+          "layoutMs": 1.9429999999999994,
+          "taskMs": 336.863,
+          "paintMs": 21.028,
+          "layoutCount": 8,
+          "frameIntervals": {
+            "count": 375,
+            "p95": 4.300000000001091,
+            "p99": 5.200000000000728,
+            "max": 20.799999999999272,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 19.549,
+          "styleMs": 99.119,
+          "layoutMs": 7.2059999999999995,
+          "taskMs": 392.59,
+          "paintMs": 25.364000000000043,
+          "layoutCount": 40,
+          "frameIntervals": {
+            "count": 377,
+            "p95": 4.399999999999636,
+            "p99": 8.300000000001091,
+            "max": 12.5,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 17.141999999999996,
+          "styleMs": 49.95699999999999,
+          "layoutMs": 2.107,
+          "taskMs": 357.78799999999995,
+          "paintMs": 24.06599999999999,
+          "layoutCount": 8,
+          "frameIntervals": {
+            "count": 381,
+            "p95": 4.399999999999636,
+            "p99": 5,
+            "max": 8.5,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 67.54,
+          "styleMs": 199.58200000000002,
+          "layoutMs": 30.523000000000003,
+          "taskMs": 664.184,
+          "paintMs": 63.37100000000004,
+          "layoutCount": 108,
+          "frameIntervals": {
+            "count": 298,
+            "p95": 12.599999999998545,
+            "p99": 20.899999999999636,
+            "max": 24.899999999999636,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 43.79900000000001,
+          "styleMs": 119.887,
+          "layoutMs": 40.489,
+          "taskMs": 595.9960000000001,
+          "paintMs": 50.25200000000022,
+          "layoutCount": 160,
+          "frameIntervals": {
+            "count": 356,
+            "p95": 8.299999999999272,
+            "p99": 20.799999999999272,
+            "max": 29.200000000000728,
+            "over25": 2,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 75.26200000000001,
+          "styleMs": 227.83499999999998,
+          "layoutMs": 37.051,
+          "taskMs": 761.9689999999999,
+          "paintMs": 85.99400000000031,
+          "layoutCount": 122,
+          "frameIntervals": {
+            "count": 314,
+            "p95": 12.300000000001091,
+            "p99": 20.80000000000109,
+            "max": 29.299999999999272,
+            "over25": 1,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 43.091,
+          "styleMs": 104.55,
+          "layoutMs": 39.004,
+          "taskMs": 608.0580000000001,
+          "paintMs": 46.024000000000136,
+          "layoutCount": 150,
+          "frameIntervals": {
+            "count": 349,
+            "p95": 8.399999999999636,
+            "p99": 16.80000000000109,
+            "max": 25.19999999999891,
+            "over25": 1,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 20.61,
+          "styleMs": 101.83600000000001,
+          "layoutMs": 7.438999999999999,
+          "taskMs": 469.36100000000005,
+          "paintMs": 26.817000000000068,
+          "layoutCount": 40,
+          "frameIntervals": {
+            "count": 378,
+            "p95": 4.300000000001091,
+            "p99": 8.200000000000728,
+            "max": 12.399999999999636,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 12.451999999999998,
+          "styleMs": 30.698000000000018,
+          "layoutMs": 1.4340000000000013,
+          "taskMs": 234.74399999999994,
+          "paintMs": 14.757999999999983,
+          "layoutCount": 8,
+          "frameIntervals": {
+            "count": 386,
+            "p95": 4.300000000001091,
+            "p99": 5,
+            "max": 5.100000000000364,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        }
+      ]
+    },
+    "continuous": {
+      "browser": "155.0.4283.45",
+      "currentHashes": {
+        "index.html": "2ed3836e6e176dbbb58c798cdf82bea4f957faf8f8d6df9474c63e3c83e7ae0c",
+        "styles.css": "42733823b535dca36073d5c83362337ef742de24d7b8d7e338dff8639fba8dc4",
+        "start.js": "811506ae910fe81a8e841404f0694041c81d7d4d84b621208440bf80ceb1a7b3",
+        "start-navigation.js": "ab21064efba2614259b2a599c2a6b8449f57f10afce2c3ead1ad777fafc54ecf",
+        "start-spine.js": "9fdcb5c690d3d2853bb4c2a8ea53ec18168ff24cd57dd22fab46368ce8bb4597"
+      },
+      "sourceReport": "relatum-navigation-kSNmuS/report.json",
+      "samples": [
+        {
+          "label": "baseline",
+          "run": 0,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 71.853,
+          "styleMs": 173.32199999999997,
+          "layoutMs": 30.688,
+          "taskMs": 577.613,
+          "paintMs": 61.87500000000019,
+          "layoutCount": 91,
+          "frameIntervals": {
+            "count": 304,
+            "p95": 11.599999999998545,
+            "p99": 21,
+            "max": 54.30000000000291,
+            "over25": 3,
+            "over50": 1
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 39.47400000000001,
+          "styleMs": 103.65599999999999,
+          "layoutMs": 38.141,
+          "taskMs": 531.6769999999999,
+          "paintMs": 45.46400000000012,
+          "layoutCount": 159,
+          "frameIntervals": {
+            "count": 359,
+            "p95": 4.400000000001455,
+            "p99": 16.799999999999272,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 19.365999999999996,
+          "styleMs": 99.396,
+          "layoutMs": 1.148,
+          "taskMs": 402.834,
+          "paintMs": 28.105000000000047,
+          "layoutCount": 12,
+          "frameIntervals": {
+            "count": 378,
+            "p95": 4.299999999999272,
+            "p99": 8.399999999997817,
+            "max": 20.700000000000728,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 14.532,
+          "styleMs": 44.086,
+          "layoutMs": 1.104,
+          "taskMs": 347.55099999999993,
+          "paintMs": 20.200000000000017,
+          "layoutCount": 6,
+          "frameIntervals": {
+            "count": 374,
+            "p95": 4.30000000000291,
+            "p99": 4.599999999998545,
+            "max": 29,
+            "over25": 1,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 18.852,
+          "styleMs": 106.87299999999999,
+          "layoutMs": 0.26699999999999996,
+          "taskMs": 419.397,
+          "paintMs": 29.394000000000087,
+          "layoutCount": 2,
+          "frameIntervals": {
+            "count": 381,
+            "p95": 4.299999999999272,
+            "p99": 4.700000000000728,
+            "max": 8.299999999999272,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 15.485000000000003,
+          "styleMs": 42.30199999999999,
+          "layoutMs": 1.3909999999999998,
+          "taskMs": 325.83400000000006,
+          "paintMs": 20.913999999999994,
+          "layoutCount": 6,
+          "frameIntervals": {
+            "count": 381,
+            "p95": 4.299999999999272,
+            "p99": 4.700000000000728,
+            "max": 8.400000000001455,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 68.31200000000001,
+          "styleMs": 196.649,
+          "layoutMs": 26.233999999999998,
+          "taskMs": 679.4300000000001,
+          "paintMs": 70.14800000000017,
+          "layoutCount": 89,
+          "frameIntervals": {
+            "count": 340,
+            "p95": 8.30000000000291,
+            "p99": 20.80000000000291,
+            "max": 29.19999999999709,
+            "over25": 2,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 39.27700000000001,
+          "styleMs": 100.47899999999998,
+          "layoutMs": 37.124,
+          "taskMs": 531.828,
+          "paintMs": 45.05100000000019,
+          "layoutCount": 161,
+          "frameIntervals": {
+            "count": 380,
+            "p95": 4.400000000001455,
+            "p99": 16.599999999998545,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 63.95300000000001,
+          "styleMs": 200.42399999999998,
+          "layoutMs": 27.206999999999997,
+          "taskMs": 663.771,
+          "paintMs": 60.50600000000024,
+          "layoutCount": 93,
+          "frameIntervals": {
+            "count": 339,
+            "p95": 8.30000000000291,
+            "p99": 20.69999999999709,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 37.66,
+          "styleMs": 98.575,
+          "layoutMs": 34.83899999999999,
+          "taskMs": 533.477,
+          "paintMs": 45.156000000000134,
+          "layoutCount": 163,
+          "frameIntervals": {
+            "count": 378,
+            "p95": 4.400000000001455,
+            "p99": 16.299999999995634,
+            "max": 20.900000000001455,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "clicks",
+          "scriptMs": 14.644,
+          "styleMs": 84.11800000000001,
+          "layoutMs": 0.309,
+          "taskMs": 335.52099999999996,
+          "paintMs": 24.09500000000004,
+          "layoutCount": 2,
+          "frameIntervals": {
+            "count": 386,
+            "p95": 4.30000000000291,
+            "p99": 5,
+            "max": 8,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "theme": "light",
+          "dpr": 1,
+          "scenario": "wheel",
+          "scriptMs": 15.347999999999999,
+          "styleMs": 41.87499999999999,
+          "layoutMs": 1.284,
+          "taskMs": 308.866,
+          "paintMs": 19.93600000000005,
+          "layoutCount": 6,
+          "frameIntervals": {
+            "count": 384,
+            "p95": 4.30000000000291,
+            "p99": 4.400000000001455,
+            "max": 4.5,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "clicks",
+          "scriptMs": 69.87700000000001,
+          "styleMs": 205.48999999999998,
+          "layoutMs": 31.314,
+          "taskMs": 694.8760000000001,
+          "paintMs": 72.11500000000039,
+          "layoutCount": 97,
+          "frameIntervals": {
+            "count": 339,
+            "p95": 8.399999999999636,
+            "p99": 16.700000000000728,
+            "max": 29.19999999999891,
+            "over25": 1,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "wheel",
+          "scriptMs": 39.888999999999996,
+          "styleMs": 110.84700000000002,
+          "layoutMs": 38.358999999999995,
+          "taskMs": 558.2510000000001,
+          "paintMs": 45.379000000000104,
+          "layoutCount": 164,
+          "frameIntervals": {
+            "count": 366,
+            "p95": 4.400000000001455,
+            "p99": 16.700000000000728,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "clicks",
+          "scriptMs": 19.412000000000003,
+          "styleMs": 106.014,
+          "layoutMs": 1.51,
+          "taskMs": 418.134,
+          "paintMs": 26.94700000000004,
+          "layoutCount": 12,
+          "frameIntervals": {
+            "count": 382,
+            "p95": 4.299999999999272,
+            "p99": 5.099999999998545,
+            "max": 8.399999999997817,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "wheel",
+          "scriptMs": 17.163999999999998,
+          "styleMs": 45.93900000000001,
+          "layoutMs": 1.6139999999999999,
+          "taskMs": 346.64400000000006,
+          "paintMs": 26.66400000000004,
+          "layoutCount": 6,
+          "frameIntervals": {
+            "count": 379,
+            "p95": 4.30000000000291,
+            "p99": 5,
+            "max": 5.100000000002183,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "clicks",
+          "scriptMs": 17.697,
+          "styleMs": 99.813,
+          "layoutMs": 0.27099999999999996,
+          "taskMs": 427.287,
+          "paintMs": 26.50600000000006,
+          "layoutCount": 2,
+          "frameIntervals": {
+            "count": 380,
+            "p95": 4.299999999999272,
+            "p99": 5,
+            "max": 9.700000000000728,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "wheel",
+          "scriptMs": 14.964999999999996,
+          "styleMs": 44.607000000000006,
+          "layoutMs": 1.5350000000000001,
+          "taskMs": 324.10999999999996,
+          "paintMs": 22.74399999999997,
+          "layoutCount": 6,
+          "frameIntervals": {
+            "count": 379,
+            "p95": 4.30000000000291,
+            "p99": 4.899999999997817,
+            "max": 9.5,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "clicks",
+          "scriptMs": 67.146,
+          "styleMs": 223.88699999999997,
+          "layoutMs": 39.629,
+          "taskMs": 697.425,
+          "paintMs": 73.28400000000023,
+          "layoutCount": 99,
+          "frameIntervals": {
+            "count": 335,
+            "p95": 8.400000000001455,
+            "p99": 16.69999999999709,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "wheel",
+          "scriptMs": 39.04500000000001,
+          "styleMs": 112.04399999999998,
+          "layoutMs": 39.416,
+          "taskMs": 548.143,
+          "paintMs": 47.09200000000013,
+          "layoutCount": 162,
+          "frameIntervals": {
+            "count": 368,
+            "p95": 4.69999999999709,
+            "p99": 16.5,
+            "max": 29.400000000001455,
+            "over25": 2,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "clicks",
+          "scriptMs": 62.135999999999996,
+          "styleMs": 209.733,
+          "layoutMs": 25.729000000000003,
+          "taskMs": 662.103,
+          "paintMs": 71.09800000000025,
+          "layoutCount": 92,
+          "frameIntervals": {
+            "count": 337,
+            "p95": 8.30000000000291,
+            "p99": 16.69999999999709,
+            "max": 25.900000000001455,
+            "over25": 1,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "wheel",
+          "scriptMs": 38.666999999999994,
+          "styleMs": 118.76599999999998,
+          "layoutMs": 40.28399999999999,
+          "taskMs": 569.9519999999999,
+          "paintMs": 53.98400000000016,
+          "layoutCount": 163,
+          "frameIntervals": {
+            "count": 363,
+            "p95": 5,
+            "p99": 12.60000000000582,
+            "max": 25,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "recent",
+            "active": "__favorites__"
+          }
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "clicks",
+          "scriptMs": 16.638,
+          "styleMs": 93.421,
+          "layoutMs": 0.26899999999999996,
+          "taskMs": 386.052,
+          "paintMs": 25.941000000000045,
+          "layoutCount": 2,
+          "frameIntervals": {
+            "count": 381,
+            "p95": 4.30000000000291,
+            "p99": 4.5,
+            "max": 8.5,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "theme": "dark",
+          "dpr": 2,
+          "scenario": "wheel",
+          "scriptMs": 16.25,
+          "styleMs": 50.65,
+          "layoutMs": 1.8100000000000003,
+          "taskMs": 388.43999999999994,
+          "paintMs": 28.149000000000026,
+          "layoutCount": 6,
+          "frameIntervals": {
+            "count": 379,
+            "p95": 4.30000000000291,
+            "p99": 4.80000000000291,
+            "max": 5.400000000001455,
+            "over25": 0,
+            "over50": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "maxMs": null
+          },
+          "final": {
+            "view": "review",
+            "active": "review-view"
+          }
+        }
+      ]
+    },
+    "single": {
+      "browser": "155.0.4283.45",
+      "sourceReport": "relatum-page-transition-RkjcuN/report.json",
+      "samples": [
+        {
+          "label": "baseline",
+          "run": 0,
+          "scenario": "review>calendar",
+          "scriptMs": 7.688,
+          "styleMs": 96.51000000000002,
+          "layoutMs": 1.172,
+          "taskMs": 257.64,
+          "paintMs": 7.404999999999995,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "scenario": "calendar>review",
+          "scriptMs": 8.617999999999999,
+          "styleMs": 46.874,
+          "layoutMs": 0.8900000000000001,
+          "taskMs": 159.97399999999996,
+          "paintMs": 11.507,
+          "layoutCount": 2
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "scenario": "calendar>cadence",
+          "scriptMs": 8.873,
+          "styleMs": 97.32599999999996,
+          "layoutMs": 0.8250000000000002,
+          "taskMs": 256.479,
+          "paintMs": 11.554999999999998,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "scenario": "cadence>review",
+          "scriptMs": 10.899,
+          "styleMs": 57.606999999999964,
+          "layoutMs": 0.9809999999999992,
+          "taskMs": 184.71900000000008,
+          "paintMs": 13.643999999999993,
+          "layoutCount": 2
+        },
+        {
+          "label": "baseline",
+          "run": 0,
+          "scenario": "cadence>calendar",
+          "scriptMs": 11.046999999999993,
+          "styleMs": 118.75500000000005,
+          "layoutMs": 1.0839999999999999,
+          "taskMs": 295.28899999999993,
+          "paintMs": 13.036000000000001,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "scenario": "review>calendar",
+          "scriptMs": 8.469000000000005,
+          "styleMs": 111.76000000000008,
+          "layoutMs": 1.804,
+          "taskMs": 282.90000000000015,
+          "paintMs": 12.037999999999988,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "scenario": "calendar>review",
+          "scriptMs": 7.556000000000007,
+          "styleMs": 44.28399999999988,
+          "layoutMs": 1.446000000000001,
+          "taskMs": 152.6320000000001,
+          "paintMs": 12.941,
+          "layoutCount": 2
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "scenario": "calendar>cadence",
+          "scriptMs": 9.206000000000007,
+          "styleMs": 104.65799999999992,
+          "layoutMs": 1.6649999999999998,
+          "taskMs": 256.32799999999986,
+          "paintMs": 18.196999999999992,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "scenario": "cadence>review",
+          "scriptMs": 10.210999999999999,
+          "styleMs": 69.191,
+          "layoutMs": 1.2080000000000006,
+          "taskMs": 204.4109999999999,
+          "paintMs": 13.102999999999989,
+          "layoutCount": 2
+        },
+        {
+          "label": "baseline",
+          "run": 1,
+          "scenario": "cadence>calendar",
+          "scriptMs": 9.607999999999992,
+          "styleMs": 116.49900000000014,
+          "layoutMs": 1.4680000000000006,
+          "taskMs": 277.6419999999997,
+          "paintMs": 13.66199999999999,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "scenario": "review>calendar",
+          "scriptMs": 10.562000000000001,
+          "styleMs": 113.31599999999997,
+          "layoutMs": 1.3330000000000009,
+          "taskMs": 293.3880000000002,
+          "paintMs": 14.905999999999993,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "scenario": "calendar>review",
+          "scriptMs": 9.132999999999974,
+          "styleMs": 51.20899999999984,
+          "layoutMs": 1.1960000000000026,
+          "taskMs": 175.7289999999996,
+          "paintMs": 11.989999999999997,
+          "layoutCount": 2
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "scenario": "calendar>cadence",
+          "scriptMs": 9.386000000000006,
+          "styleMs": 95.62300000000002,
+          "layoutMs": 1.4440000000000008,
+          "taskMs": 245.82499999999996,
+          "paintMs": 14.85000000000001,
+          "layoutCount": 4
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "scenario": "cadence>review",
+          "scriptMs": 7.779999999999982,
+          "styleMs": 50.19500000000021,
+          "layoutMs": 0.7820000000000049,
+          "taskMs": 147.23299999999995,
+          "paintMs": 11.471999999999989,
+          "layoutCount": 2
+        },
+        {
+          "label": "baseline",
+          "run": 2,
+          "scenario": "cadence>calendar",
+          "scriptMs": 9.38799999999998,
+          "styleMs": 85.5290000000002,
+          "layoutMs": 1.3120000000000007,
+          "taskMs": 222.14400000000012,
+          "paintMs": 14.772999999999996,
+          "layoutCount": 4
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "scenario": "review>calendar",
+          "scriptMs": 9.873,
+          "styleMs": 102.65599999999999,
+          "layoutMs": 1.385,
+          "taskMs": 287.84299999999996,
+          "paintMs": 7.961999999999989,
+          "layoutCount": 3
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "scenario": "calendar>review",
+          "scriptMs": 7.486999999999999,
+          "styleMs": 46.189000000000036,
+          "layoutMs": 1.0770000000000002,
+          "taskMs": 166.63099999999997,
+          "paintMs": 7.810999999999996,
+          "layoutCount": 2
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "scenario": "calendar>cadence",
+          "scriptMs": 8.598,
+          "styleMs": 90.949,
+          "layoutMs": 1.810000000000001,
+          "taskMs": 255.854,
+          "paintMs": 8.647,
+          "layoutCount": 4
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "scenario": "cadence>review",
+          "scriptMs": 10.166999999999996,
+          "styleMs": 51.630999999999986,
+          "layoutMs": 0.9040000000000002,
+          "taskMs": 184.5380000000001,
+          "paintMs": 6.279000000000001,
+          "layoutCount": 2
+        },
+        {
+          "label": "current",
+          "run": 0,
+          "scenario": "cadence>calendar",
+          "scriptMs": 9.841000000000003,
+          "styleMs": 97.32699999999994,
+          "layoutMs": 0.692,
+          "taskMs": 267.14600000000013,
+          "paintMs": 10.03899999999998,
+          "layoutCount": 3
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "scenario": "review>calendar",
+          "scriptMs": 10.354999999999997,
+          "styleMs": 98.44199999999992,
+          "layoutMs": 1.2390000000000005,
+          "taskMs": 255.0439999999998,
+          "paintMs": 8.85099999999998,
+          "layoutCount": 3
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "scenario": "calendar>review",
+          "scriptMs": 7.1480000000000015,
+          "styleMs": 38.609,
+          "layoutMs": 1.086,
+          "taskMs": 166.20200000000017,
+          "paintMs": 7.302999999999999,
+          "layoutCount": 2
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "scenario": "calendar>cadence",
+          "scriptMs": 7.675000000000002,
+          "styleMs": 77.58299999999996,
+          "layoutMs": 1.195999999999999,
+          "taskMs": 239.0880000000002,
+          "paintMs": 8.037999999999997,
+          "layoutCount": 4
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "scenario": "cadence>review",
+          "scriptMs": 6.125000000000005,
+          "styleMs": 36.29199999999999,
+          "layoutMs": 0.7209999999999994,
+          "taskMs": 128.56099999999992,
+          "paintMs": 6.900999999999995,
+          "layoutCount": 2
+        },
+        {
+          "label": "current",
+          "run": 1,
+          "scenario": "cadence>calendar",
+          "scriptMs": 9.37099999999999,
+          "styleMs": 85.27200000000002,
+          "layoutMs": 0.9690000000000011,
+          "taskMs": 242.1599999999997,
+          "paintMs": 10.079000000000011,
+          "layoutCount": 3
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "scenario": "review>calendar",
+          "scriptMs": 7.172999999999999,
+          "styleMs": 79.8430000000001,
+          "layoutMs": 1.483999999999999,
+          "taskMs": 226.24099999999993,
+          "paintMs": 10.81399999999999,
+          "layoutCount": 3
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "scenario": "calendar>review",
+          "scriptMs": 8.264000000000008,
+          "styleMs": 45.81799999999991,
+          "layoutMs": 1.346,
+          "taskMs": 158.12999999999988,
+          "paintMs": 8.086000000000002,
+          "layoutCount": 2
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "scenario": "calendar>cadence",
+          "scriptMs": 8.894999999999985,
+          "styleMs": 91.18699999999991,
+          "layoutMs": 1.350999999999998,
+          "taskMs": 255.54399999999956,
+          "paintMs": 8.020999999999995,
+          "layoutCount": 4
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "scenario": "cadence>review",
+          "scriptMs": 7.83399999999998,
+          "styleMs": 51.31400000000008,
+          "layoutMs": 1.135000000000004,
+          "taskMs": 169.53900000000033,
+          "paintMs": 7.675999999999996,
+          "layoutCount": 2
+        },
+        {
+          "label": "current",
+          "run": 2,
+          "scenario": "cadence>calendar",
+          "scriptMs": 10.723999999999984,
+          "styleMs": 95.06199999999998,
+          "layoutMs": 0.7590000000000028,
+          "taskMs": 246.49700000000064,
+          "paintMs": 8.296,
+          "layoutCount": 3
+        }
+      ]
+    }
+  }
+}

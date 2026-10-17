@@ -121,27 +121,15 @@ assert(html.includes('<link rel="preload" href="focus.js" as="script">')
   'showTimer(options) { return showTimerView(options); }',
 ].forEach((needle) => assert(focus.includes(needle), 'missing focus view-state contract: ' + needle));
 
-assert(start.includes("focusActive && window.CanvasFocus && typeof window.CanvasFocus.toggleMode === 'function'"),
-  'active Focus spine click must toggle the internal view');
-assert(start.includes('window.CanvasFocus.toggleMode();'),
-  'Focus spine must delegate view switching to CanvasFocus');
-assert(start.includes("typeof window.CanvasFocus.prepareActivate === 'function'"),
-  'Focus must prepare its internal view before the outer page becomes visible');
-assert(start.indexOf('window.CanvasFocus.prepareActivate(options || {});') < start.indexOf("showView('focus');"),
-  'Focus preparation must run before the outer page transition');
-assert(start.includes("setFocusActive(true, { forceTimer: true });"),
-  'external Focus entries must force the timer before the page transition');
+assert(start.includes('RelatumStartNavigation.create(')
+  && start.includes("setFocusActive(true, { action: isView('focus') ? 'toggle' : undefined })"),
+  'Focus spine intents must use the shared controller and preserve explicit repeat-click commands');
+assert(start.includes('setFocusActive(true, { forceTimer: true, afterActivate(focus)'),
+  'calendar Focus entries must keep the forced timer and attached date intent in one request');
 assert(start.includes("typeof window.CanvasFocus.deactivate === 'function'"),
   'leaving Focus must cancel transient view work');
-assert(start.includes("document.addEventListener('canvasfocus:ready', finishPendingFocusActivation);"),
-  'the start page must replay a first Focus activation once its deferred module is ready');
-assert(start.includes('pendingFocusActivation = { options: Object.assign({}, options || {}) };')
-  && start.includes('window.CanvasFocus.prepareActivate(pending.options || {});')
-  && start.includes('window.CanvasFocus.activate();'),
-  'a pre-ready Focus request must preserve its options and perform one complete activation');
-assert(start.includes("focusRoot.dataset.pendingForceTimer = options && options.forceTimer ? '1' : '0';")
-  && focus.includes("root.dataset.pendingForceTimer === '1' || sessionLocksView()"),
-  'pre-ready external entries must force the timer before the Focus module exposes its first frame');
+assert(!start.includes('pendingFocusActivation') && !start.includes('pendingFocusReadyActions'),
+  'Focus readiness must not retain a second unversioned navigation queue');
 assert(focus.includes("document.dispatchEvent(new CustomEvent('canvasfocus:ready'));"),
   'CanvasFocus must announce readiness after publishing its complete public interface');
 assert(focus.includes('function preloadFocusView()')
@@ -150,23 +138,9 @@ assert(focus.includes('function preloadFocusView()')
   && focus.includes('preloadEnabled === false ? Promise.resolve() : preloadFocusView()')
   && focus.indexOf('window.CanvasFocus = canvasFocusApi;') > focus.indexOf('initialWarmup.finally(() => {'),
   'CanvasFocus hydrates hidden data by default and supports explicit on-demand startup');
-const pendingFocusBranch = start.slice(
-  start.indexOf('pendingFocusActivation = { options: Object.assign({}, options || {}) };'),
-  start.indexOf('function runWhenCanvasFocusReady(action)'),
-);
-assert(!pendingFocusBranch.includes("showView('focus');"),
-  'a pre-ready first click must keep the previous page visible instead of showing an empty Focus shell');
-const pendingFocusFinish = start.slice(
-  start.indexOf('function finishPendingFocusActivation()'),
-  start.indexOf("document.addEventListener('canvasfocus:ready'"),
-);
-assert(pendingFocusFinish.indexOf('window.CanvasFocus.prepareActivate(pending.options || {});')
-    < pendingFocusFinish.indexOf("showView('focus');")
-  && pendingFocusFinish.indexOf("showView('focus');")
-    < pendingFocusFinish.indexOf('window.CanvasFocus.activate();'),
-  'the delayed first flip must prepare hydrated DOM, then turn the page, then play one entrance');
-assert(start.includes('runWhenCanvasFocusReady((focus) => {')
-  && start.includes('if (event.detail.day && focus.showDay)')
+// Actual prepare/show/activate order and cancellation are covered by the navigation
+// browser suite; this contract keeps the public module event and intent boundary.
+assert(start.includes('if (day && focus.showDay)')
   && !start.includes('if (focus.prepareTask) focus.prepareTask'),
   'calendar Focus intents must survive first-load readiness without a Study binding');
 assert(!focus.includes("event.key === 'Tab' && !event.ctrlKey"),

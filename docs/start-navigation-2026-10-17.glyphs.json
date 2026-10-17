@@ -1,0 +1,393 @@
+{
+  "baselineRef": "95e6e523664de2e4dd6a475f9c11d8538f0a8b1a",
+  "measuredAt": "2026-10-17T05:08:43.744Z",
+  "samples": [],
+  "checks": [
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "light",
+        "dpr": 1,
+        "speed": 100
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.3181818181818182,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "light",
+        "dpr": 1,
+        "speed": 100
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 1
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "light",
+        "dpr": 1,
+        "speed": 457
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.3181818181818182,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "light",
+        "dpr": 1,
+        "speed": 457
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 1
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "light",
+        "dpr": 1,
+        "speed": 800
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.3181818181818182,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "light",
+        "dpr": 1,
+        "speed": 800
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 1
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "light",
+        "dpr": 2,
+        "speed": 100
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.3181818181818182,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "light",
+        "dpr": 2,
+        "speed": 100
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 2
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "light",
+        "dpr": 2,
+        "speed": 457
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.3181818181818182,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "light",
+        "dpr": 2,
+        "speed": 457
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 2
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "light",
+        "dpr": 2,
+        "speed": 800
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.3181818181818182,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "light",
+        "dpr": 2,
+        "speed": 800
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 2
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "dark",
+        "dpr": 1,
+        "speed": 100
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.2727272727272727,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "dark",
+        "dpr": 1,
+        "speed": 100
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 1
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "dark",
+        "dpr": 1,
+        "speed": 457
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.2727272727272727,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "dark",
+        "dpr": 1,
+        "speed": 457
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 1
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "dark",
+        "dpr": 1,
+        "speed": 800
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.2727272727272727,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "dark",
+        "dpr": 1,
+        "speed": 800
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 1
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "dark",
+        "dpr": 2,
+        "speed": 100
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.2727272727272727,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "dark",
+        "dpr": 2,
+        "speed": 100
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 2
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "dark",
+        "dpr": 2,
+        "speed": 457
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.2727272727272727,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "dark",
+        "dpr": 2,
+        "speed": 457
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 2
+      },
+      "failures": []
+    },
+    {
+      "type": "glyph-oracle-calibration",
+      "config": {
+        "theme": "dark",
+        "dpr": 2,
+        "speed": 800
+      },
+      "shiftedScore": {
+        "medianContrast": 0,
+        "visibleFraction": 0.2727272727272727,
+        "assessedPoints": 66,
+        "boundaryPoints": 0,
+        "totalPoints": 66
+      }
+    },
+    {
+      "type": "glyph",
+      "config": {
+        "theme": "dark",
+        "dpr": 2,
+        "speed": 800
+      },
+      "native": false,
+      "baseline": false,
+      "viewport": {
+        "width": 1280,
+        "height": 900,
+        "dpr": 2
+      },
+      "failures": []
+    }
+  ],
+  "output": "relatum-navigation-XIDif2",
+  "measurementLimits": [
+    "RAF intervals in headless Chromium are not physical display FPS.",
+    "CDP Paint duration does not include complete raster/GPU costs.",
+    "Visual/DOM probes run separately from performance collection."
+  ],
+  "currentHashes": {
+    "index.html": "2ed3836e6e176dbbb58c798cdf82bea4f957faf8f8d6df9474c63e3c83e7ae0c",
+    "styles.css": "4087c36db880f28edf55727b92b2cf1ddd8fc8884bb79c28778d879f0d8ab342",
+    "start.js": "5f4dfeef90ea81f3854283dca0ea1521db1711a8e2df84fe24d2f4b4eb527e29",
+    "start-navigation.js": "ab21064efba2614259b2a599c2a6b8449f57f10afce2c3ead1ad777fafc54ecf",
+    "start-spine.js": "9fdcb5c690d3d2853bb4c2a8ea53ec18168ff24cd57dd22fab46368ce8bb4597"
+  },
+  "browser": "155.0.4283.45"
+}

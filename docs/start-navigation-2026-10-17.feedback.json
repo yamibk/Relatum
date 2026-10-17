@@ -1,0 +1,113 @@
+{
+  "method": "First EventDispatch click/wheel start to next deduplicated Display::FrameDisplayed. This is only a compositor scheduling proxy: the next frame may still show old pixels or another surface. Input sent→ack fields are CDP round trips and are not visible feedback latency.",
+  "rows": [
+    {
+      "label": "baseline",
+      "scenario": "clicks",
+      "run": 0,
+      "eventType": "click",
+      "firstInputHandlerMs": 2.369,
+      "firstInputToNextCompositorFrameMs": 19.398,
+      "handlerEndToNextFrameMs": 17.029
+    },
+    {
+      "label": "baseline",
+      "scenario": "wheel",
+      "run": 0,
+      "eventType": "wheel",
+      "firstInputHandlerMs": 5.712,
+      "firstInputToNextCompositorFrameMs": 49.017,
+      "handlerEndToNextFrameMs": 43.305
+    },
+    {
+      "label": "current",
+      "scenario": "clicks",
+      "run": 0,
+      "eventType": "click",
+      "firstInputHandlerMs": 0.4,
+      "firstInputToNextCompositorFrameMs": 5.787,
+      "handlerEndToNextFrameMs": 5.387
+    },
+    {
+      "label": "current",
+      "scenario": "wheel",
+      "run": 0,
+      "eventType": "wheel",
+      "firstInputHandlerMs": 0.286,
+      "firstInputToNextCompositorFrameMs": 7.31,
+      "handlerEndToNextFrameMs": 7.024
+    },
+    {
+      "label": "current",
+      "scenario": "clicks",
+      "run": 1,
+      "eventType": "click",
+      "firstInputHandlerMs": 0.287,
+      "firstInputToNextCompositorFrameMs": 6.626,
+      "handlerEndToNextFrameMs": 6.339
+    },
+    {
+      "label": "current",
+      "scenario": "wheel",
+      "run": 1,
+      "eventType": "wheel",
+      "firstInputHandlerMs": 0.459,
+      "firstInputToNextCompositorFrameMs": 11.747,
+      "handlerEndToNextFrameMs": 11.288
+    },
+    {
+      "label": "baseline",
+      "scenario": "clicks",
+      "run": 1,
+      "eventType": "click",
+      "firstInputHandlerMs": 2.395,
+      "firstInputToNextCompositorFrameMs": 6.443,
+      "handlerEndToNextFrameMs": 4.048
+    },
+    {
+      "label": "baseline",
+      "scenario": "wheel",
+      "run": 1,
+      "eventType": "wheel",
+      "firstInputHandlerMs": 3.478,
+      "firstInputToNextCompositorFrameMs": 32.737,
+      "handlerEndToNextFrameMs": 29.259
+    },
+    {
+      "label": "baseline",
+      "scenario": "clicks",
+      "run": 2,
+      "eventType": "click",
+      "firstInputHandlerMs": 2.917,
+      "firstInputToNextCompositorFrameMs": 5.276,
+      "handlerEndToNextFrameMs": 2.359
+    },
+    {
+      "label": "baseline",
+      "scenario": "wheel",
+      "run": 2,
+      "eventType": "wheel",
+      "firstInputHandlerMs": 5.64,
+      "firstInputToNextCompositorFrameMs": 40.882,
+      "handlerEndToNextFrameMs": 35.242
+    },
+    {
+      "label": "current",
+      "scenario": "clicks",
+      "run": 2,
+      "eventType": "click",
+      "firstInputHandlerMs": 0.281,
+      "firstInputToNextCompositorFrameMs": 9.221,
+      "handlerEndToNextFrameMs": 8.94
+    },
+    {
+      "label": "current",
+      "scenario": "wheel",
+      "run": 2,
+      "eventType": "wheel",
+      "firstInputHandlerMs": 0.306,
+      "firstInputToNextCompositorFrameMs": 7.754,
+      "handlerEndToNextFrameMs": 7.448
+    }
+  ]
+}

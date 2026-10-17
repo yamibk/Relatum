@@ -161,6 +161,10 @@ class FeatureProfileTests(unittest.TestCase):
         profile = self.only("canvas", "canvas.activity")
         html = features.render_html(source, profile, "index.html")
         self.assertIn('src="study-activity.js"', html)
+        for resource in ('start-navigation.js', 'start-spine.js'):
+            self.assertTrue(profile.resource_allowed(resource))
+            self.assertIn('src="' + resource + '"', html)
+            self.assertLess(html.index('src="' + resource + '"'), html.index('src="start.js"'))
         self.assertNotIn('src="study.js"', html)
         self.assertIn('data-role="cadence-view"', html)
         self.assertNotIn('data-role="study-view"', html)
@@ -188,6 +192,8 @@ class FeatureProfileTests(unittest.TestCase):
         html = features.render_html(source, self.only("notes"), "index.html")
         self.assertIn('src="start-shell.js"', html)
         self.assertNotIn('src="start.js"', html)
+        self.assertNotIn('src="start-navigation.js"', html)
+        self.assertNotIn('src="start-spine.js"', html)
         self.assertNotIn('data-start-workspace-panel="canvas"', html)
 
     def test_note_graph_child_and_independent_shared_runtime(self):

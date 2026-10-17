@@ -1372,10 +1372,11 @@
   function loadSessions(options) {
     const opts = options || {};
     return focusJsonSource(opts.source, '/api/focus').then((json) => {
+      if (opts.isCurrent && !opts.isCurrent()) return;
       sessions = json && Array.isArray(json.sessions) ? json.sessions : [];
       loadedSessions = true;
       renderFootprint();
-    }).catch(() => renderFootprint());
+    }).catch(() => { if (!opts.isCurrent || opts.isCurrent()) renderFootprint(); });
   }
 
   // ── 专注钟 / 每日任务双视图。页面进入前先稳定最终 DOM，进入后只刷新一次。 ──────────
@@ -4622,10 +4623,15 @@
     deactivate: deactivateFocusView,
     finalizeExitMotion() { finalizeDailyEntranceExit(false); },
     showDay(day, sessionId) {
+      const activationId = focusActivationSeq;
       showTimerView({ persist: false, animate: false });
       footprintDay = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? String(day) : todayStr();
       footprintSessionId = String(sessionId || '');
-      return loadSessions().then(() => {
+      const requestedDay = footprintDay, requestedSession = footprintSessionId;
+      const isCurrent = () => focusLifecycleActive && viewMode === 'timer' && activationId === focusActivationSeq
+        && requestedDay === footprintDay && requestedSession === footprintSessionId;
+      return loadSessions({ isCurrent }).then(() => {
+        if (!isCurrent()) return;
         renderFootprint();
         const footprint = root.querySelector('.focus-footprint');
         if (footprint) footprint.scrollIntoView({ block: 'center', behavior: prefersReduced ? 'auto' : 'smooth' });

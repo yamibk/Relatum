@@ -380,6 +380,14 @@
       "canvas.review",
       "canvas.focus"
     ],
+    "start-navigation.js": [
+      "canvas.library", "canvas.review", "canvas.calendar", "canvas.activity",
+      "canvas.quicknotes", "canvas.tree", "canvas.study", "canvas.focus"
+    ],
+    "start-spine.js": [
+      "canvas.library", "canvas.review", "canvas.calendar", "canvas.activity",
+      "canvas.quicknotes", "canvas.tree", "canvas.study", "canvas.focus"
+    ],
     "start.js": [
       "canvas.library",
       "canvas.review",
