@@ -2443,12 +2443,10 @@
     const style = getComputedStyle(element);
     const snapshot = { opacity: style.opacity, transform: style.transform };
     disposeNavigationExitPreview(previous, !!previous?.committed);
-    const cadenceExit = state.current.view === 'cadence';
     const animation = element.animate([
       snapshot, { opacity: 0, transform: snapshot.transform },
-    ], { duration: cadenceExit ? Math.max(120, Math.min(220, Math.round(startTurnSpeed * .65)))
-      : Math.max(80, Math.min(160, Math.round(startTurnSpeed * .4))),
-      easing: cadenceExit ? 'cubic-bezier(0.4, 0, 0.2, 1)' : 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' });
+    ], { duration: Math.max(120, Math.min(220, Math.round(startTurnSpeed * .65))),
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' });
     const preview = { element, animation, recovering: false, committed: false, done: false, finish: null };
     preview.finish = () => {
       if (navigationExitPreview !== preview) return;

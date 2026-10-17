@@ -235,6 +235,89 @@ async function waitView(page, name) {
   await page.waitForFunction(name => document.querySelector('.book-view').dataset.viewName === name, name);
 }
 
+async function wholePageExitChecks(page, config) {
+  const cases = [
+    ['review', '.review-embedded', '[data-action="review-view"]', '[data-action="calendar-view"]'],
+    ['calendar', '.calendar-embedded', '[data-action="calendar-view"]', '[data-action="cadence-view"]'],
+    ['cadence', '.cadence-embedded', '[data-action="cadence-view"]', '[data-action="notes-view"]'],
+    ['notes', '.notes-embedded', '[data-action="notes-view"]', '[data-action="tree-page-view"]'],
+    ['tree', '.tree-page-embedded', '[data-action="tree-page-view"]', '[data-action="study-view"]'],
+    ['study', '.study-embedded', '[data-action="study-view"]', '[data-action="focus-view"]'],
+    ['focus', '.focus-embedded', '[data-action="focus-view"]', '.page-dot[data-group-id=""]'],
+    ['recent', '.book-stage', '.page-dot[data-group-id=""]', '[data-action="review-view"]'],
+    ['favorites', '.book-stage', '.page-dot[data-group-id="__favorites__"]', '[data-action="calendar-view"]'],
+    ['group', '.book-stage', '.page-dot[data-group-id="g0"]', '[data-action="focus-view"]'],
+  ];
+  for (const [from, rootSelector, source, target] of cases) {
+    await page.locator('.left-spine ' + source).evaluate(el => { if (!el.classList.contains('active')) el.click(); });
+    await page.waitForFunction(source => document.querySelector('.left-spine ' + source)?.classList.contains('active'), source);
+    await page.waitForFunction(rootSelector => {
+      const root = document.querySelector(rootSelector);
+      return !root.classList.contains('view-entering') && !root.classList.contains('view-exit-preview')
+        && Number(getComputedStyle(root).opacity) > .99;
+    }, rootSelector);
+    const exit = await page.evaluate(({ rootSelector, target }) => {
+      const root = document.querySelector(rootSelector), book = document.querySelector('.book-view');
+      const originalView = book.dataset.viewName;
+      document.querySelector('.left-spine ' + target).click();
+      const animation = root.getAnimations().find(a => a.constructor.name === 'Animation'
+        && Number(a.effect.getKeyframes().at(-1).opacity) === 0);
+      window.__wholePageExit = { root, animation };
+      if (animation) { animation.pause(); animation.currentTime = Number(animation.effect.getTiming().duration) * .4; }
+      return { originalView, inputView: book.dataset.viewName,
+        duration: animation?.effect.getTiming().duration, easing: animation?.effect.getTiming().easing,
+        opacity: Number(getComputedStyle(root).opacity), preview: root.classList.contains('view-exit-preview') };
+    }, { rootSelector, target });
+    assert.equal(exit.inputView, exit.originalView, `${from}: input does not bypass the content quiet period`);
+    if (config.reduced) {
+      assert.equal(exit.duration, undefined, `${from}: reduced motion skips the fade`);
+      assert.equal(exit.preview, false);
+    } else {
+      assert.equal(exit.duration, 169, `${from}: every whole-page exit uses the same default duration`);
+      assert.equal(exit.easing, 'cubic-bezier(0.4, 0, 0.2, 1)');
+      assert(exit.preview && exit.opacity > .1 && exit.opacity < .9, `${from}: the root has a real fade intermediate`);
+    }
+    await page.waitForFunction(target => document.querySelector('.left-spine ' + target)?.classList.contains('active'), target);
+    const handoff = await page.evaluate(() => {
+      const { root, animation } = window.__wholePageExit;
+      const result = { hidden: root.getAttribute('aria-hidden'), inert: root.inert,
+        leaving: root.classList.contains('view-leaving'), retained: !!animation && root.getAnimations().includes(animation) };
+      animation?.finish();
+      return result;
+    });
+    assert.equal(handoff.hidden, 'true'); assert(handoff.inert);
+    if (!config.reduced) assert(handoff.leaving && handoff.retained, `${from}: commit does not restart or cut off the fade`);
+    await page.waitForFunction(() => {
+      const { root, animation } = window.__wholePageExit;
+      return getComputedStyle(root).visibility === 'hidden' && !root.classList.contains('view-leaving')
+        && !root.classList.contains('view-exit-preview') && (!animation || !root.getAnimations().includes(animation));
+    });
+    report.checks.push({ type: 'whole-page-exit', config, from, exit, handoff });
+  }
+
+  await page.locator('.page-dot[data-group-id=""]').evaluate(el => el.click());
+  await page.waitForFunction(() => document.querySelector('.page-dot.active')?.dataset.groupId === '');
+  await page.waitForFunction(() => !document.querySelector('.book-stage').classList.contains('view-entering'));
+  await page.locator('.page-dot[data-group-id="__favorites__"]').evaluate(el => el.click());
+  if (!config.reduced) {
+    await page.waitForFunction(() => document.querySelector('.book-page').getAnimations()
+      .some(a => a.constructor.name === 'Animation' && Number(a.effect.getKeyframes().at(-1).opacity) === 0));
+    const local = await page.evaluate(() => {
+      const animation = document.querySelector('.book-page').getAnimations()
+        .find(a => a.constructor.name === 'Animation' && Number(a.effect.getKeyframes().at(-1).opacity) === 0);
+      const result = { duration: animation.effect.getTiming().duration, easing: animation.effect.getTiming().easing,
+        outerPreview: document.querySelector('.book-stage').classList.contains('view-exit-preview') };
+      animation.finish(); return result;
+    });
+    assert.equal(local.duration, 104, 'ordinary library groups retain their faster local exit');
+    assert.equal(local.easing, 'cubic-bezier(0.22, 1, 0.36, 1)');
+    assert.equal(local.outerPreview, false, 'group changes do not fade the shared outer container');
+    report.checks.push({ type: 'library-local-exit', config, local });
+  }
+  await page.waitForFunction(() => document.querySelector('.page-dot.active')?.dataset.groupId === '__favorites__');
+  await page.evaluate(() => { delete window.__wholePageExit; });
+}
+
 async function wheelBoundaryChecks(browser, url) {
   for (const variant of ['full', 'hidden-special', 'cropped']) {
     const cropped = variant === 'cropped';
@@ -433,6 +516,9 @@ async function behaviorChecks(browser, url, config) {
       assert.equal(await page.locator('.book-view').getAttribute('data-view-name'), 'review', `${lifecycle} cannot revive a canceled request`);
     }
 
+    await wholePageExitChecks(page, config);
+    await page.locator('.review-spine-tab').evaluate(el => el.click()); await waitView(page, 'review');
+
     // A real navigation scroll retains its current page and calibrates the marker.
     await page.setViewportSize({ width: 680, height: 570 });
     const navBox = await page.locator('.left-spine').boundingBox();
@@ -577,7 +663,7 @@ async function latePreparationCheck(browser, url) {
         time, view, cancelled: exit.playState === 'idle', recovering: !root.classList.contains('view-exit-preview') };
     });
     assert.equal(early.view, 'calendar', 'immediate fade does not activate a skipped page');
-    assert(early.duration >= 80 && early.duration <= 160);
+    assert.equal(early.duration, 169, 'calendar shares the unified whole-page fade duration');
     assert(early.before > 0 && early.before < 1, 'outgoing opacity has an intermediate frame');
     assert(early.retained && early.before === early.after, 'retargeting retains the existing fade and its current frame');
     assert(early.cancelled && early.recovering, 'returning to the current page restores its mounted content');
