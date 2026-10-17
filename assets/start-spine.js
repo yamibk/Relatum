@@ -39,6 +39,12 @@
     const hover = spine.querySelector('[data-role="spine-hover-orb"]');
     const rail = spine.querySelector('[data-role="spine-hover-rail"]');
     if (!orb || !hover || !rail) return null;
+    const shadows = ['tab', 'dot'].map(name => {
+      const shadow = document.createElement('span');
+      shadow.className = 'spine-orb-shadow spine-orb-shadow-' + name;
+      shadow.setAttribute('aria-hidden', 'true');
+      return shadow;
+    });
     const surface = document.createElement('span');
     surface.className = 'spine-orb-surface';
     const clip = document.createElement('span');
@@ -47,7 +53,7 @@
     const track = document.createElement('span');
     track.className = 'spine-glyph-track';
     clip.append(track);
-    orb.replaceChildren(surface, clip);
+    orb.replaceChildren(...shadows, surface, clip);
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const listeners = [];
     const bindings = new Map();

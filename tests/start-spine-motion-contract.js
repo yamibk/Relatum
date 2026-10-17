@@ -18,10 +18,18 @@ assert(html.includes('data-role="spine-hover-orb"'));
 // contract only locks the shared DOM/CSS and existing user preference boundaries.
 assert(styles.includes('.left-spine.spine-marker-no-transition .spine-active-orb,'));
 assert(styles.includes('.left-spine.spine-marker-no-transition .spine-glyph-track,'));
+assert(styles.includes('.left-spine.spine-marker-no-transition .spine-orb-surface,'));
+assert(styles.includes('.left-spine.spine-marker-no-transition .spine-glyph-clip,'));
+assert(styles.includes('.left-spine.spine-marker-no-transition .spine-orb-shadow,'));
 assert(styles.includes('.left-spine.spine-marker-no-transition .spine-hover-rail'));
 assert(styles.includes('.left-spine.spine-marker-no-transition .spine-hover-orb { transition: none; }'));
 assert(!styles.slice(styles.indexOf('.spine-hover-orb {'), styles.indexOf('.left-spine.spine-marker-no-transition')).includes('border-width 180ms'));
 assert(styles.includes('.left-spine.spine-motion-suspended :is(.spine-active-orb, .spine-glyph-track, .spine-hover-rail, .spine-hover-orb)'));
+assert(styles.includes('.left-spine.spine-motion-suspended :is(.spine-orb-surface, .spine-glyph-clip, .spine-orb-shadow)'));
+assert(styles.includes('--spine-glyph-clip: inset(13px round 6px)'));
+assert(styles.includes('transition: clip-path var(--start-orb-ms) var(--easing-soft)'));
+assert(styles.includes('.spine-orb-shadow-tab'));
+assert(styles.includes('.spine-orb-shadow-dot'));
 
 assert(styles.includes('.left-spine.spine-marker-visible .spine-hover-rail { opacity: 0.72; }'));
 assert(styles.includes('.left-spine.spine-marker-visible .spine-hover-orb { opacity: 0.46; }'));

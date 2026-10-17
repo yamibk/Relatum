@@ -10175,7 +10175,7 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 .spine-active-orb[data-shape="dot"] {
   --spine-shape-inset: 13px;
   --spine-shape-radius: 50%;
-  --spine-glyph-clip: circle(6px at 50% 50%);
+  --spine-glyph-clip: inset(13px round 6px);
 }
 .spine-active-orb[data-shape="star"] {
   --spine-shape-inset: 10px;
@@ -10184,26 +10184,40 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
     59.0095% 52.9274%, 63.9216% 69.1605%, 50% 59.4737%, 36.0784% 69.1605%,
     40.9905% 52.9274%, 27.4763% 42.6829%, 44.4295% 42.3368%);
 }
-.spine-orb-surface,
 .spine-active-orb::after {
   position: absolute;
   inset: var(--spine-shape-inset);
   border-radius: var(--spine-shape-radius);
 }
-.spine-orb-surface {
-  background: #000;
+.spine-orb-shadow {
+  position: absolute;
+  opacity: 0;
+  transition: opacity var(--start-orb-ms) var(--easing-soft);
+}
+.spine-orb-shadow-tab {
+  inset: 2px;
+  border-radius: 13px;
   box-shadow: 0 8px 20px rgba(26, 26, 26, .14);
 }
-.spine-active-orb[data-shape="dot"] .spine-orb-surface { box-shadow: 0 3px 9px rgba(26, 26, 26, .16); }
-.spine-active-orb[data-shape="star"] .spine-orb-surface {
-  clip-path: polygon(50% 0%, 61.76% 33.82%, 97.55% 34.55%, 69.02% 56.18%,
-    79.39% 90.45%, 50% 70%, 20.61% 90.45%, 30.98% 56.18%, 2.45% 34.55%, 38.24% 33.82%);
+.spine-orb-shadow-dot {
+  inset: 13px;
+  border-radius: 50%;
+  box-shadow: 0 3px 9px rgba(26, 26, 26, .16);
 }
+.spine-active-orb[data-shape="tab"] .spine-orb-shadow-tab,
+.spine-active-orb[data-shape="dot"] .spine-orb-shadow-dot { opacity: 1; }
+/* Stars retain their immediate shape change and do not carry a fading square. */
+.spine-active-orb[data-shape="star"] .spine-orb-shadow { transition: none; }
+.spine-orb-surface,
 .spine-glyph-clip {
   position: absolute;
   inset: 0;
-  overflow: hidden;
   clip-path: var(--spine-glyph-clip);
+  transition: clip-path var(--start-orb-ms) var(--easing-soft);
+}
+.spine-orb-surface { background: #000; }
+.spine-glyph-clip {
+  overflow: hidden;
   color: #fff;
 }
 .spine-glyph-track {
@@ -10288,10 +10302,14 @@ body[data-hide-special="1"] .empty-actions [data-action="study-view"] {
 
 .left-spine.spine-marker-no-transition .spine-active-orb,
 .left-spine.spine-marker-no-transition .spine-glyph-track,
+.left-spine.spine-marker-no-transition .spine-orb-surface,
+.left-spine.spine-marker-no-transition .spine-glyph-clip,
+.left-spine.spine-marker-no-transition .spine-orb-shadow,
 .left-spine.spine-marker-no-transition .spine-hover-rail,
 .left-spine.spine-marker-no-transition .spine-hover-orb { transition: none; }
 
 .left-spine.spine-motion-suspended :is(.spine-active-orb, .spine-glyph-track, .spine-hover-rail, .spine-hover-orb),
+.left-spine.spine-motion-suspended :is(.spine-orb-surface, .spine-glyph-clip, .spine-orb-shadow),
 .left-spine.spine-motion-suspended .spine-active-orb::after {
   transition: none !important;
   animation: none !important;
@@ -18905,6 +18923,9 @@ body.start-page[data-start-theme="dark"] .recent-sync-button:hover {
   .focus-embedded,
   .spine-active-orb,
   .spine-glyph-track,
+  .spine-orb-surface,
+  .spine-glyph-clip,
+  .spine-orb-shadow,
   .left-spine .dot-bubble,
   .left-spine .study-spine-tab,
   .left-spine .page-dot::before,
@@ -38281,10 +38302,10 @@ body.start-page[data-start-theme="dark"] .spine-orb-surface {
   background: #fff;
 }
 body.start-page[data-start-theme="dark"] .spine-glyph-clip { color: #161718; }
-body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="tab"] .spine-orb-surface {
+body.start-page[data-start-theme="dark"] .spine-orb-shadow-tab {
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.34);
 }
-body.start-page[data-start-theme="dark"] .spine-active-orb[data-shape="dot"] .spine-orb-surface {
+body.start-page[data-start-theme="dark"] .spine-orb-shadow-dot {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.38);
 }
 body.start-page[data-start-theme="dark"] .spine-active-orb::after {

@@ -79,17 +79,21 @@ async function geometry(page, markerIndex) {
     const m = marker.getBoundingClientRect(), h = spine.querySelector('.spine-hover-orb').getBoundingClientRect();
     const rail = spine.querySelector('.spine-hover-rail').getBoundingClientRect();
     const surface = orb.querySelector('.spine-orb-surface'), s = surface.getBoundingClientRect();
+    const surfaceClip = getComputedStyle(surface).clipPath;
+    const inset = surfaceClip.match(/^inset\(([\d.]+)px/);
     return {
       activeError: Math.hypot(a.x + a.width / 2 - b.x - b.width / 2, a.y + a.height / 2 - b.y - b.height / 2),
       hoverError: Math.hypot(m.x + m.width / 2 - h.x - h.width / 2, m.y + m.height / 2 - h.y - h.height / 2),
       railError: Math.abs(m.y + m.height / 2 - rail.y - rail.height / 2),
       shape: orb.dataset.shape, carrierWidth: b.width, surfaceWidth: s.width,
+      paintedWidth: inset ? s.width - 2 * Number(inset[1]) : null, surfaceClip,
       background: getComputedStyle(surface).backgroundColor,
       clip: getComputedStyle(orb.querySelector('.spine-glyph-clip')).clipPath,
       activeProperties: getComputedStyle(orb).transitionProperty,
       trackProperties: getComputedStyle(orb.querySelector('.spine-glyph-track')).transitionProperty,
       running: spine.getAnimations({ subtree: true }).filter(animation =>
-        animation.transitionProperty === 'transform' && animation.playState === 'running').length
+        ['transform', 'clip-path', 'opacity'].includes(animation.transitionProperty)
+          && animation.playState === 'running').length
     };
   }, markerIndex);
 }
@@ -174,7 +178,10 @@ async function behavior(browser, config) {
       await page.waitForTimeout(config.reduced ? 50 : 470);
       const state = await geometry(page);
       assert.equal(state.shape, shape); assert.equal(state.carrierWidth, 38);
-      assert(Math.abs(state.surfaceWidth - size) < .1);
+      assert.equal(state.surfaceWidth, 38, 'the shape surface retains its fixed layout size');
+      if (shape === 'star') assert(state.surfaceClip.startsWith('polygon('));
+      else assert(Math.abs(state.paintedWidth - size) < .1);
+      assert.equal(state.surfaceClip, state.clip, 'paint and inverse ink share the same silhouette');
       assert(state.activeError < 1.1 && state.hoverError < 1.1 && state.railError < 1.1);
       assert.equal(state.background, config.theme === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(0, 0, 0)');
       if (!config.reduced) {
@@ -267,17 +274,86 @@ async function speedChecks(browser) {
       await page.evaluate(() => S.activate(0, { animate: false })); await frame(page);
       await page.evaluate(() => S.activate(6)); await frame(page);
       const timing = await page.evaluate(() => {
-        const a = getComputedStyle(document.querySelector('.spine-active-orb'));
-        const b = getComputedStyle(document.querySelector('.spine-glyph-track'));
-        return [a.transitionDuration, b.transitionDuration, a.transitionTimingFunction, b.transitionTimingFunction];
+        return ['.spine-active-orb', '.spine-glyph-track', '.spine-orb-surface',
+          '.spine-glyph-clip', '.spine-orb-shadow-tab', '.spine-orb-shadow-dot'].map(selector => {
+          const style = getComputedStyle(document.querySelector(selector));
+          return [style.transitionDuration, style.transitionTimingFunction];
+        });
       });
-      assert.equal(timing[0], speed / 1000 + 's');
-      assert.equal(timing[0], timing[1]); assert.equal(timing[2], timing[3]);
+      for (const [duration, easing] of timing) {
+        assert.equal(duration, speed / 1000 + 's');
+        assert.equal(easing, timing[0][1]);
+      }
       await page.waitForTimeout(speed + 70);
       assert((await geometry(page)).activeError < 1.1);
       report.checks.push({ speed, timing });
     }
   } finally { await page.context().close(); }
+}
+
+async function shapeChecks(browser) {
+  for (const config of [{ theme: 'light', dpr: 1 }, { theme: 'dark', dpr: 2 }]) {
+    const page = await fixture(browser, config);
+    try {
+      for (const speed of [414, 800]) {
+        const result = await page.evaluate(async speed => {
+          document.documentElement.style.setProperty('--spine-motion-ms', speed + 'ms');
+          const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+          const orb = document.querySelector('.spine-active-orb');
+          const surface = orb.querySelector('.spine-orb-surface'), clip = orb.querySelector('.spine-glyph-clip');
+          const read = () => ({ surface: getComputedStyle(surface).clipPath,
+            clip: getComputedStyle(clip).clipPath, width: surface.getBoundingClientRect().width });
+          const shapeAnimations = () => [surface, clip].map(element => element.getAnimations()
+            .find(animation => animation.transitionProperty === 'clip-path'));
+          S.activate(6, { animate: false }); await frame(); await frame();
+          const square = read();
+          S.activate(7); await frame(); await frame();
+          const animations = shapeAnimations();
+          if (animations.some(animation => !animation)) throw new Error('Both shape masks must animate');
+          for (const animation of animations) { animation.pause(); animation.currentTime = speed * .35; }
+          const middle = read();
+          S.activate(6);
+          const synchronousReverse = read();
+          await frame(); await frame();
+          const reverse = read(), reversed = shapeAnimations();
+          if (reversed.some(animation => !animation)) throw new Error('Reverse morph must continue from the visible shape');
+          await Promise.all(reversed.map(animation => animation.finished));
+          const final = read();
+          return { speed, square, middle, synchronousReverse, reverse, final };
+        }, speed);
+        const inset = state => Number(state.surface.match(/^inset\(([\d.]+)px/)?.[1]);
+        for (const state of [result.square, result.middle, result.synchronousReverse, result.reverse, result.final]) {
+          assert.equal(state.surface, state.clip, 'inverse ink follows the current shape throughout reversal');
+          assert.equal(state.width, 38, 'morphing does not resize its layout box');
+        }
+        assert.equal(inset(result.square), 2); assert.equal(inset(result.final), 2);
+        assert(inset(result.middle) > 2 && inset(result.middle) < 13, 'the forward morph has a real intermediate silhouette');
+        assert.equal(result.synchronousReverse.surface, result.middle.surface, 'input does not snap a running morph');
+        assert(inset(result.reverse) > 2 && inset(result.reverse) <= inset(result.middle), 'reverse moves toward the square from the visible silhouette');
+        report.checks.push({ shapeConfig: config, ...result });
+      }
+      // A genuine in-flight shape transition must also obey immediate calibration.
+      await page.evaluate(() => S.activate(7)); await frame(page);
+      await page.setViewportSize({ width: 1270, height: 890 }); await frame(page);
+      assert.equal((await geometry(page)).running, 0, 'viewport calibration finishes every morph layer');
+      await page.evaluate(() => S.activate(6)); await frame(page);
+      await page.evaluate(() => {
+        document.documentElement.dataset.desktopMinimized = '1';
+        window.dispatchEvent(new CustomEvent('canvasdesktop:visibility'));
+      });
+      assert.equal((await geometry(page)).running, 0, 'minimizing stops shape and shadow transitions');
+      await page.evaluate(() => {
+        document.documentElement.dataset.desktopMinimized = '0';
+        window.dispatchEvent(new CustomEvent('canvasdesktop:visibility'));
+      }); await frame(page);
+      await page.evaluate(() => S.activate(7)); await frame(page);
+      await page.emulateMedia({ reducedMotion: 'reduce' }); await frame(page);
+      const reduced = await geometry(page);
+      assert.equal(reduced.running, 0); assert.equal(reduced.paintedWidth, 12);
+      assert.equal(reduced.surfaceClip, reduced.clip);
+      assert.deepEqual(page.testErrors, []);
+    } finally { await page.context().close(); }
+  }
 }
 
 async function layoutChecks(browser) {
@@ -293,13 +369,13 @@ async function layoutChecks(browser) {
     };
     for (const [name, from, to] of [
       ['tab-to-tab', 0, 6], ['tab-to-dot', 0, 7],
-      ['dot-to-star', 7, 8], ['star-to-tab', 8, 0]
+      ['dot-to-tab', 7, 0], ['dot-to-star', 7, 8], ['star-to-tab', 8, 0]
     ]) {
       await page.evaluate(from => { S.clear({ animate: false }); S.activate(from, { animate: false }); }, from);
       await frame(page); await page.waitForTimeout(70);
       await page.evaluate(to => S.activate(to), to);
-      // The shape changes once at submission. Read after two presented frames so
-      // this check measures the running transform, including both clipped tracks.
+      // Read after two presented frames: layout must stay stable while both the
+      // carrier and its local silhouette are interpolating.
       await frame(page);
       const runningBefore = await page.locator('.spine-active-orb').evaluate(element =>
         element.getAnimations().some(animation => animation.transitionProperty === 'transform'
@@ -331,6 +407,7 @@ async function layoutChecks(browser) {
       await behavior(browser, config); console.log('behavior passed ' + JSON.stringify(config));
     }
     await speedChecks(browser);
+    await shapeChecks(browser);
     await layoutChecks(browser);
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log('start spine motion browser passed: ' + path.join(output, 'report.json'));
