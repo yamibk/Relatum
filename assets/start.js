@@ -2446,7 +2446,7 @@
     const calendarExit = state.current.view === 'calendar';
     const animation = element.animate([
       snapshot, { opacity: 0, transform: snapshot.transform },
-    ], { duration: calendarExit ? Math.max(80, Math.min(160, Math.round(startTurnSpeed * .4)))
+    ], { duration: calendarExit ? Math.max(60, Math.min(120, Math.round(startTurnSpeed * .3)))
       : Math.max(120, Math.min(220, Math.round(startTurnSpeed * .65))),
       easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' });
     const preview = { element, animation, recovering: false, committed: false, done: false, finish: null };
