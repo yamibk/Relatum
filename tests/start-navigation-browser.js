@@ -74,7 +74,8 @@ async function prepareContext(browser, url, config, baseline, options = {}) {
     localStorage.setItem('canvas:toolbarLanguage', 'zh-CN');
     localStorage.setItem('canvas:hideSpecialPages', '0');
     localStorage.setItem('canvas:noteGraphPreload:v1', '0');
-    localStorage.setItem('canvas:spineMotionMs:v1', String(config.speed || 457));
+    if (config.speed === null) localStorage.removeItem('canvas:spineMotionMs:v1');
+    else localStorage.setItem('canvas:spineMotionMs:v1', String(config.speed || 457));
   }, config);
   await routeAssets(context, baseline);
   const page = options.nativePage || await context.newPage(), errors = [];
@@ -362,6 +363,76 @@ async function behaviorChecks(browser, url, config) {
     report.checks.push({ type: 'behavior', config, immediate, changed, commands, composition, alignment });
     console.log('navigation behavior passed ' + JSON.stringify(config));
   } finally { await context.close(); }
+}
+
+async function spinePageResizeChecks(browser, url) {
+  for (const speed of [null, 800]) {
+    const expectedMs = speed === null ? 414 : speed;
+    const { context, page, errors } = await prepareContext(browser, url,
+      { theme: 'light', dpr: 1, speed }, false, { warm: false });
+    try {
+      await page.evaluate(async () => { await document.fonts.ready; });
+      await page.locator('.focus-spine-tab').evaluate(el => el.click());
+      await waitView(page, 'focus'); await page.waitForTimeout(1100);
+      for (const view of ['recent', 'focus']) {
+        const result = await page.evaluate(async ({ view, expectedMs }) => {
+          const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+          const book = document.querySelector('.book-view'), spine = document.querySelector('.left-spine');
+          const orb = spine.querySelector('.spine-active-orb'), track = spine.querySelector('.spine-glyph-track');
+          const initialHeight = book.clientHeight;
+          const target = view === 'focus' ? spine.querySelector('.focus-spine-tab')
+            : spine.querySelector('.page-dot[data-group-id=""]');
+          target.click();
+          const deadline = performance.now() + 3000;
+          while (book.dataset.viewName !== view) {
+            if (performance.now() > deadline) throw new Error('Page commit timed out');
+            await frame();
+          }
+          // Include the ResizeObserver delivery caused by the real page handoff.
+          await frame(); await frame();
+          const transition = element => element.getAnimations().find(animation =>
+            animation.transitionProperty === 'transform' && animation.playState === 'running');
+          const carrier = transition(orb), inverse = transition(track);
+          if (!carrier || !inverse) throw new Error('Page handoff truncated the slider transition');
+          const durations = [carrier.effect.getTiming().duration, inverse.effect.getTiming().duration];
+          const naturalHeightDelta = book.clientHeight - initialHeight;
+          carrier.pause(); inverse.pause();
+          carrier.currentTime = inverse.currentTime = expectedMs * .2;
+          const offsetError = () => {
+            const a = new DOMMatrix(getComputedStyle(orb).transform);
+            const b = new DOMMatrix(getComputedStyle(track).transform);
+            return Math.hypot(a.m41 + b.m41, a.m42 + b.m42);
+          };
+          const beforeError = offsetError(), originalHeight = book.style.height;
+          const beforeHeight = book.clientHeight;
+          try {
+            // Also exercise a deterministic 1px resize if font/platform metrics
+            // do not reproduce the natural header-height difference.
+            book.style.height = (beforeHeight - 1) + 'px';
+            await frame(); await frame();
+            const retained = orb.getAnimations().includes(carrier) && track.getAnimations().includes(inverse);
+            const afterError = offsetError(), heightDelta = book.clientHeight - beforeHeight;
+            const noTransition = spine.classList.contains('spine-marker-no-transition');
+            const times = [carrier.currentTime, inverse.currentTime];
+            if (!retained) throw new Error('A 1px host resize cancelled the original slider animations');
+            return { view, expectedMs, durations, naturalHeightDelta, heightDelta,
+              retained, noTransition, beforeError, afterError, times };
+          } finally {
+            book.style.height = originalHeight;
+            carrier.play(); inverse.play();
+            await Promise.all([carrier.finished, inverse.finished]);
+          }
+        }, { view, expectedMs });
+        assert.deepEqual(result.durations, [expectedMs, expectedMs], 'both tracks use the configured full duration');
+        assert.equal(result.heightDelta, -1, 'the real page host changed by exactly one pixel');
+        assert.equal(result.noTransition, false, 'local host resize does not disable motion');
+        assert(result.beforeError < .15 && result.afterError < .15, 'inverse glyphs stay aligned during resize');
+        assert(result.times.every(time => Math.abs(time - expectedMs * .2) < .1), 'resize retains the current animation frame');
+        report.checks.push({ type: 'spine-page-resize', ...result });
+      }
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
 }
 
 async function latePreparationCheck(browser, url) {
@@ -767,6 +838,7 @@ async function freePort() {
     if (args.has('--behavior')) {
       assert(!nativePage, '--behavior creates browser fixtures; use --glyphs or --compare in the native host');
       for (const config of [{ theme: 'light', dpr: 1 }, { theme: 'dark', dpr: 2 }, { theme: 'light', dpr: 2, reduced: true }]) await behaviorChecks(browser, url, config);
+      await spinePageResizeChecks(browser, url);
       await latePreparationCheck(browser, url);
       await focusAndLibraryRaceChecks(browser, url);
     }

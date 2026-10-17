@@ -280,7 +280,10 @@
     listen(window, 'pageshow', () => { pageHidden = false; visibility(); });
     listen(media, 'change', () => { stopBreathe(); visibility(); });
     if (document.fonts) listen(document.fonts, 'loadingdone', () => invalidate({ animate: false }));
-    const resize = new ResizeObserver(() => invalidate({ animate: false }));
+    // Page chrome can change the host height by 1px during navigation. Refresh
+    // the geometry without cancelling its in-flight carrier/glyph transitions.
+    // Explicit viewport, scroll and visibility handlers still snap calibration.
+    const resize = new ResizeObserver(() => invalidate());
     resize.observe(spine);
     resize.observe(bookView);
     const mutation = new MutationObserver(records => {
