@@ -273,7 +273,7 @@ async function wholePageExitChecks(page, config) {
       assert.equal(exit.duration, undefined, `${from}: reduced motion skips the fade`);
       assert.equal(exit.preview, false);
     } else {
-      assert.equal(exit.duration, from === 'calendar' ? 78 : 169,
+      assert.equal(exit.duration, from === 'calendar' ? 65 : 169,
         `${from}: only the outgoing calendar uses the shorter default fade`);
       assert.equal(exit.easing, 'cubic-bezier(0.4, 0, 0.2, 1)');
       assert(exit.preview && exit.opacity > .1 && exit.opacity < .9, `${from}: the root has a real fade intermediate`);
@@ -664,7 +664,7 @@ async function latePreparationCheck(browser, url) {
         time, view, cancelled: exit.playState === 'idle', recovering: !root.classList.contains('view-exit-preview') };
     });
     assert.equal(early.view, 'calendar', 'immediate fade does not activate a skipped page');
-    assert.equal(early.duration, 78, 'calendar alone uses the shorter whole-page fade duration');
+    assert.equal(early.duration, 65, 'calendar alone uses the shorter whole-page fade duration');
     assert(early.before > 0 && early.before < 1, 'outgoing opacity has an intermediate frame');
     assert(early.retained && early.before === early.after, 'retargeting retains the existing fade and its current frame');
     assert(early.cancelled && early.recovering, 'returning to the current page restores its mounted content');
