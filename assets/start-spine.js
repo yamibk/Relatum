@@ -293,13 +293,19 @@
     resize.observe(spine);
     resize.observe(bookView);
     const mutation = new MutationObserver(records => {
-      if (records.some(record => {
+      const relevant = records.filter(record => {
         const element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
-        return element && !element.closest('.spine-active-orb, .spine-hover-orb, .spine-hover-rail')
+        // Tooltip text is fixed outside the navigation flow. Updating a count
+        // or title must not snap an otherwise unchanged slider transition.
+        return element && !element.closest('.spine-active-orb, .spine-hover-orb, .spine-hover-rail, .dot-bubble')
           && (record.type !== 'attributes' || element === document.documentElement || element === document.body);
-      })) invalidate({ animate: false });
-      for (const [target, remove] of bindings) {
-        if (!spine.contains(target)) { remove(); bindings.delete(target); }
+      });
+      if (!relevant.length) return;
+      invalidate({ animate: false });
+      if (relevant.some(record => record.type === 'childList' && record.removedNodes.length)) {
+        for (const [target, remove] of bindings) {
+          if (!spine.contains(target)) { remove(); bindings.delete(target); }
+        }
       }
     });
     mutation.observe(spine, { subtree: true, childList: true, characterData: true });

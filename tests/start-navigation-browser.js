@@ -68,6 +68,26 @@ async function routeAssets(context, baseline) {
 async function prepareContext(browser, url, config, baseline, options = {}) {
   const context = options.nativePage ? options.nativePage.context() : await browser.newContext({ viewport: { width: config.width || 1600, height: config.height || 1000 }, deviceScaleFactor: config.dpr,
     reducedMotion: config.reduced ? 'reduce' : 'no-preference' });
+  if (options.probe) await context.addInitScript(({ views }) => {
+    if (views) {
+      let profile;
+      Object.defineProperty(window, 'RelatumFeatures', { configurable: true, get: () => profile, set(value) {
+        const features = { ...value.features, 'canvas.library': false };
+        for (const [view, key] of Object.entries(value.views)) features[key] = views.includes(view);
+        profile = Object.freeze({ ...value, restricted: true, features });
+      } });
+    }
+    let module;
+    Object.defineProperty(window, 'RelatumStartNavigation', { configurable: true, get: () => module, set(value) {
+      module = value; const create = value.create;
+      value.create = settings => {
+        const controller = create(settings), request = controller.request;
+        window.__navigationProbe = { controller, requests: 0 };
+        controller.request = function (...args) { window.__navigationProbe.requests++; return request.apply(this, args); };
+        return controller;
+      };
+    } });
+  }, { views: options.views || null });
   await context.addInitScript(config => {
     localStorage.setItem('canvas:startWorkspace:v1', 'canvas');
     localStorage.setItem('canvas:startTheme', config.theme);
@@ -213,6 +233,74 @@ async function performanceSample(page, cdp, config, label, run, scenario) {
 
 async function waitView(page, name) {
   await page.waitForFunction(name => document.querySelector('.book-view').dataset.viewName === name, name);
+}
+
+async function wheelBoundaryChecks(browser, url) {
+  for (const variant of ['full', 'hidden-special', 'cropped']) {
+    const cropped = variant === 'cropped';
+    const { context, page, errors } = await prepareContext(browser, url, { theme: 'light', dpr: 1 }, false,
+      { warm: false, probe: true, ...(cropped ? { views: ['calendar', 'focus'] } : {}) });
+    const cdp = await context.newCDPSession(page);
+    try {
+      if (variant === 'hidden-special') await page.locator('[data-role="hide-special-toggle"]').evaluate(el => {
+        el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      const ends = await page.evaluate(() => {
+        const special = [...document.querySelectorAll('.left-spine > .study-spine-tab')]
+          .filter(button => getComputedStyle(button).display !== 'none' && RelatumFeatureRuntime.viewEnabled(
+            button.dataset.action === 'tree-page-view' ? 'tree' : button.dataset.action.replace('-view', '')));
+        const library = RelatumFeatureRuntime.enabled('canvas.library')
+          ? [...document.querySelectorAll('.page-dot:not(.dot-add)')] : [];
+        return special.concat(library).map(button => button.dataset.action
+          ? `.left-spine [data-action="${button.dataset.action}"]` : `.page-dot[data-group-id="${button.dataset.groupId}"]`);
+      });
+      assert(ends.length >= 2, 'the boundary fixture has distinct neighboring pages');
+      for (const [index, delta] of [[0, -65], [ends.length - 1, 65]]) {
+        await page.locator(ends[index]).evaluate(el => el.click());
+        await page.waitForFunction(() => !window.__navigationProbe.controller.getState().pending);
+        await page.waitForTimeout(750);
+        const before = await page.evaluate(() => ({ ...window.__navigationProbe.controller.getState(),
+          requests: window.__navigationProbe.requests, focusMode: window.CanvasFocus?.getViewMode?.() }));
+        const { wheel } = await coordinates(page);
+        for (let i = 0; i < 3; i++) await cdp.send('Input.dispatchMouseEvent',
+          { type: 'mouseWheel', ...wheel, deltaX: 0, deltaY: delta });
+        await page.waitForTimeout(120);
+        const after = await page.evaluate(() => ({ ...window.__navigationProbe.controller.getState(),
+          requests: window.__navigationProbe.requests, focusMode: window.CanvasFocus?.getViewMode?.() }));
+        assert.deepEqual(after, before, `${variant} boundary wheel neither wraps nor issues a same-page command`);
+        assert.equal(await page.locator('.view-exit-preview').count(), 0, 'blocked wheel does not start an exit');
+
+        // Deliver a burst in one task so the second input sees the desired page,
+        // not a page that has already crossed the quiet-period commit boundary.
+        const neighbor = ends[index === 0 ? 1 : index - 1];
+        await page.locator(neighbor).evaluate(el => el.click());
+        await page.waitForFunction(() => !window.__navigationProbe.controller.getState().pending);
+        await page.waitForTimeout(750);
+        const burst = await page.evaluate(({ wheel, delta }) => {
+          const book = document.querySelector('.book-view'), probe = window.__navigationProbe;
+          const send = amount => book.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true,
+            clientX: wheel.x, clientY: wheel.y, deltaY: amount }));
+          const original = probe.controller.getState().current;
+          send(delta);
+          const requested = { ...probe.controller.getState(), requests: probe.requests };
+          const exiting = document.querySelector('.view-exit-preview');
+          const fade = exiting?.getAnimations().find(a => a.constructor.name === 'Animation');
+          send(delta); send(delta);
+          const blocked = { ...probe.controller.getState(), requests: probe.requests };
+          const sameFade = !fade || exiting.getAnimations().includes(fade);
+          send(-delta);
+          return { original, requested, blocked, sameFade, reversed: probe.controller.getState() };
+        }, { wheel, delta });
+        assert(burst.requested.pending, 'approaching an endpoint creates one pending target');
+        assert.deepEqual(burst.blocked, burst.requested, 'extra boundary inputs retain the pending request identity');
+        assert(burst.sameFade, 'blocked inputs do not restart an existing fade');
+        assert.deepEqual(burst.reversed.desired, burst.original, 'the opposite wheel immediately returns toward the neighbor');
+        assert.equal(burst.reversed.pending, false, 'reversing to the current page cancels the pending boundary target');
+      }
+      assert.deepEqual(errors, []);
+      report.checks.push({ type: 'wheel-boundaries', variant, first: ends[0], last: ends.at(-1) });
+    } finally { await cdp.detach(); await context.close(); }
+  }
 }
 
 async function behaviorChecks(browser, url, config) {
@@ -523,12 +611,97 @@ async function latePreparationCheck(browser, url) {
       && !document.querySelector('.cadence-embedded').classList.contains('view-entering')
       && Number(getComputedStyle(document.querySelector('.cadence-embedded')).opacity) > .99);
     report.checks.push({ type: 'immediate-exit', early, retired, failureRecovery: 'cadence' });
+
+    await page.locator('.cadence-embedded [data-role="study-starmap"] canvas').waitFor({ state: 'attached' });
+    const cadenceFade = await page.evaluate(() => {
+      window.__navigationGate.defer = '';
+      const root = document.querySelector('.cadence-embedded');
+      const graph = root.querySelector('[data-role="study-starmap"] canvas');
+      document.querySelector('.calendar-spine-tab').click();
+      const exit = root.getAnimations().find(a => a.constructor.name === 'Animation'
+        && Number(a.effect.getKeyframes().at(-1).opacity) === 0);
+      if (!exit) throw new Error('Cadence must start its fade in the input task');
+      const timing = exit.effect.getTiming();
+      exit.pause(); exit.currentTime = Number(timing.duration) * .35;
+      const middle = Number(getComputedStyle(root).opacity);
+      document.querySelector('.study-spine-tab[data-action="study-view"]').click();
+      const retained = root.getAnimations().includes(exit), retargeted = Number(getComputedStyle(root).opacity);
+      document.querySelector('.cadence-spine-tab').click();
+      return { duration: timing.duration, easing: timing.easing, middle, retargeted, retained,
+        cancelled: exit.playState === 'idle', graphRetained: graph.isConnected };
+    });
+    assert.equal(cadenceFade.duration, 169, 'default cadence exit uses 65% of the page speed');
+    assert.equal(cadenceFade.easing, 'cubic-bezier(0.4, 0, 0.2, 1)');
+    assert(cadenceFade.middle > .15 && cadenceFade.middle < .9, 'the cadence fade retains a perceptible intermediate frame');
+    assert(cadenceFade.retained && cadenceFade.retargeted === cadenceFade.middle, 'retargeting does not restart cadence fading');
+    assert(cadenceFade.cancelled && cadenceFade.graphRetained, 'canceling restores the original mounted cadence scene');
+    await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.cadence-embedded')).opacity) > .99
+      && !document.querySelector('.cadence-embedded').classList.contains('view-exit-preview'));
+
+    for (const [speed, expected] of [[180, 120], [500, 220]]) {
+      const duration = await page.evaluate(speed => {
+        const range = document.querySelector('[data-role="start-speed-range"]');
+        range.value = String(speed); range.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('.calendar-spine-tab').click();
+        const animation = document.querySelector('.cadence-embedded').getAnimations()
+          .find(a => a.constructor.name === 'Animation' && Number(a.effect.getKeyframes().at(-1).opacity) === 0);
+        const duration = animation.effect.getTiming().duration;
+        document.querySelector('.cadence-spine-tab').click();
+        return duration;
+      }, speed);
+      assert.equal(duration, expected, 'cadence fade respects its duration bounds');
+      await page.waitForFunction(() => !document.querySelector('.cadence-embedded').classList.contains('view-exit-preview'));
+    }
+    await page.evaluate(() => {
+      const range = document.querySelector('[data-role="start-speed-range"]');
+      range.value = '260'; range.dispatchEvent(new Event('input', { bubbles: true }));
+      const root = document.querySelector('.cadence-embedded');
+      window.__cadenceExitGraph = root.querySelector('[data-role="study-starmap"] canvas');
+      document.querySelector('.calendar-spine-tab').click();
+      window.__cadenceExit = root.getAnimations().find(a => a.constructor.name === 'Animation'
+        && Number(a.effect.getKeyframes().at(-1).opacity) === 0);
+      window.__cadenceExit.pause(); window.__cadenceExit.currentTime = 65;
+    });
+    await waitView(page, 'calendar');
+    const held = await page.evaluate(() => ({
+      retained: window.__cadenceExitGraph.isConnected,
+      leaving: document.querySelector('.cadence-embedded').classList.contains('view-leaving'),
+      opacity: Number(getComputedStyle(document.querySelector('.cadence-embedded')).opacity),
+    }));
+    assert(held.retained && held.leaving && held.opacity > 0 && held.opacity < 1,
+      'committing a new page retains cadence resources while its fade is visible');
+    await page.locator('.cadence-spine-tab').evaluate(el => el.click()); await waitView(page, 'cadence');
+    await page.waitForFunction(() => !!document.querySelector('.cadence-embedded [data-role="study-starmap"] canvas'));
+    await page.evaluate(() => {
+      window.__cadenceReturnGraph = document.querySelector('.cadence-embedded [data-role="study-starmap"] canvas');
+    });
+    await page.waitForTimeout(900);
+    assert(await page.evaluate(() => window.__cadenceExit.playState === 'idle' && window.__cadenceReturnGraph.isConnected
+      && document.querySelector('.cadence-embedded').getAttribute('aria-hidden') === 'false'),
+    'an old fade/release cannot remove the graph after a committed rapid return');
+
+    await page.evaluate(() => {
+      const root = document.querySelector('.cadence-embedded');
+      window.__cadenceExitGraph = root.querySelector('[data-role="study-starmap"] canvas');
+      document.querySelector('.focus-spine-tab').click();
+      window.__cadenceExit = root.getAnimations().find(a => a.constructor.name === 'Animation'
+        && Number(a.effect.getKeyframes().at(-1).opacity) === 0);
+      window.__cadenceExit.pause(); window.__cadenceExit.currentTime = 65;
+    });
+    await waitView(page, 'focus');
+    assert(await page.evaluate(() => window.__cadenceExitGraph.isConnected), 'graph survives until fade completion');
+    await page.evaluate(() => window.__cadenceExit.finish());
+    await page.waitForFunction(() => !document.querySelector('.cadence-embedded').classList.contains('view-leaving'));
+    assert(await page.evaluate(() => !window.__cadenceExitGraph.isConnected
+      && getComputedStyle(document.querySelector('.cadence-embedded')).visibility === 'hidden'),
+    'finishing the cadence fade hides the retired root and releases the graph');
+    report.checks.push({ type: 'cadence-exit', cadenceFade, held, reversal: 'preserved', release: 'after-fade' });
     console.log('navigation late preparation passed');
   } finally { await context.close(); }
 }
 
 async function focusAndLibraryRaceChecks(browser, url) {
-  const { context, page, errors } = await prepareContext(browser, url, { theme: 'light', dpr: 1 }, false);
+  const { context, page, errors } = await prepareContext(browser, url, { theme: 'light', dpr: 1 }, false, { probe: true });
   try {
     await page.locator('.focus-spine-tab').evaluate(el => el.click()); await waitView(page, 'focus');
     await page.evaluate(() => {
@@ -583,6 +756,80 @@ async function focusAndLibraryRaceChecks(browser, url) {
       await page.locator('[data-action="recent-sync"]').evaluate(el => el.click());
       await page.waitForFunction(() => !document.querySelector('[data-action="recent-sync"]').disabled);
     };
+    await page.locator('.page-dot[data-group-id="g0"]').focus(); await page.waitForTimeout(80);
+    await page.evaluate(async () => {
+      document.documentElement.style.setProperty('--spine-motion-ms', '800ms');
+      window.__metadataDots = [...document.querySelectorAll('[data-role="page-dots"] > .page-dot')];
+      window.__metadataFocus = document.activeElement;
+      document.querySelector('.page-dot[data-group-id="g1"]').click();
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      window.__metadataAnimations = ['.spine-active-orb', '.spine-glyph-track'].map(selector => {
+        const animation = document.querySelector(selector).getAnimations().find(a => a.transitionProperty === 'transform');
+        if (!animation) throw new Error('Metadata refresh must exercise a real slider transition');
+        animation.pause(); animation.currentTime = 200;
+        return animation;
+      });
+    });
+    recentPayload = { ...fixture, groups: fixture.groups.map(group => group.id === 'g0'
+      ? { ...group, name: '刷新后的分组名称' } : group),
+    files: fixture.files.map((file, i) => i === 0 ? { ...file, groupId: 'g1' } : file) };
+    await refresh();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const metadata = await page.evaluate(() => ({
+      reused: [...document.querySelectorAll('[data-role="page-dots"] > .page-dot')]
+        .every((dot, i) => dot === window.__metadataDots[i]),
+      focus: document.activeElement === window.__metadataFocus,
+      retained: window.__metadataAnimations.every(a => a.effect.target.getAnimations().includes(a) && a.currentTime === 200),
+      snapping: document.querySelector('.left-spine').classList.contains('spine-marker-no-transition'),
+      name: document.querySelector('.page-dot[data-group-id="g0"]').getAttribute('aria-label'),
+      bubble: document.querySelector('.page-dot[data-group-id="g0"] .dot-bubble').textContent,
+    }));
+    assert(metadata.reused && metadata.focus && metadata.retained && !metadata.snapping,
+      'metadata refresh preserves every dot/add button, keyboard focus and both slider tracks');
+    assert.equal(metadata.name, '刷新后的分组名称');
+    assert.equal(metadata.bubble, '刷新后的分组名称  17', 'reused controls show the latest name and count');
+    await page.evaluate(() => window.__metadataAnimations.forEach(a => a.play()));
+    await page.waitForFunction(() => window.__metadataAnimations.every(a => a.playState === 'finished'));
+    // One native button still produces one request after repeated refreshes.
+    await refresh(); await refresh();
+    const clickRequests = await page.evaluate(() => {
+      const before = window.__navigationProbe.requests;
+      document.querySelector('.page-dot[data-group-id="g0"]').click();
+      return window.__navigationProbe.requests - before;
+    });
+    assert.equal(clickRequests, 1, 'reusing dots never duplicates their click listeners');
+    await page.waitForFunction(() => !window.__navigationProbe.controller.getState().pending);
+    await page.waitForTimeout(850);
+    await page.evaluate(async () => {
+      document.querySelector('.page-dot[data-group-id="g1"]').click();
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      window.__metadataAnimations = ['.spine-active-orb', '.spine-glyph-track'].map(selector => {
+        const animation = document.querySelector(selector).getAnimations().find(a => a.transitionProperty === 'transform');
+        if (!animation) throw new Error('Structural refresh needs an in-flight slider');
+        animation.pause(); animation.currentTime = 160; return animation;
+      });
+    });
+    recentPayload = { ...recentPayload, groups: [recentPayload.groups[1], recentPayload.groups[0],
+      ...recentPayload.groups.slice(2, -1), { id: 'new-group', name: '新增分组' }] };
+    await refresh();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const structure = await page.evaluate(() => {
+      const dots = [...document.querySelectorAll('.page-dot:not(.dot-add)')];
+      const target = document.querySelector('.left-spine .is-target').getBoundingClientRect();
+      const orb = document.querySelector('.spine-active-orb').getBoundingClientRect();
+      return { first: dots.slice(0, 4).map(dot => dot.dataset.groupId), last: dots.slice(-2).map(dot => dot.dataset.groupId),
+        reused: window.__metadataDots.filter(dot => dot.dataset.groupId !== 'g35').every(dot => dot.isConnected),
+        removed: !window.__metadataDots.find(dot => dot.dataset.groupId === 'g35').isConnected,
+        cancelled: window.__metadataAnimations.every(a => !a.effect.target.getAnimations().includes(a)),
+        error: Math.hypot(target.x + target.width / 2 - orb.x - orb.width / 2,
+          target.y + target.height / 2 - orb.y - orb.height / 2) };
+    });
+    assert.deepEqual(structure.first, ['', '__favorites__', 'g1', 'g0']);
+    assert.deepEqual(structure.last, ['new-group', '__inbox__']);
+    assert(structure.reused && structure.removed && structure.cancelled && structure.error < 1.1,
+      'real add/remove/reorder preserves survivors but immediately recalibrates motion');
+    await page.evaluate(() => document.documentElement.style.setProperty('--spine-motion-ms', '457ms'));
+    report.checks.push({ type: 'dot-reuse', metadata, structure, clickRequests });
     const removeDuringPending = async () => {
       recentPayload = fixture; await refresh();
       await page.locator('.page-dot[data-group-id="g0"]').evaluate(el => el.click());
@@ -897,6 +1144,7 @@ async function freePort() {
       assert(!nativePage, '--behavior creates browser fixtures; use --glyphs or --compare in the native host');
       for (const config of [{ theme: 'light', dpr: 1 }, { theme: 'dark', dpr: 2 }, { theme: 'light', dpr: 2, reduced: true }]) await behaviorChecks(browser, url, config);
       await spinePageResizeChecks(browser, url);
+      await wheelBoundaryChecks(browser, url);
       await latePreparationCheck(browser, url);
       await focusAndLibraryRaceChecks(browser, url);
     }

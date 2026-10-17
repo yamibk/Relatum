@@ -2443,10 +2443,12 @@
     const style = getComputedStyle(element);
     const snapshot = { opacity: style.opacity, transform: style.transform };
     disposeNavigationExitPreview(previous, !!previous?.committed);
+    const cadenceExit = state.current.view === 'cadence';
     const animation = element.animate([
       snapshot, { opacity: 0, transform: snapshot.transform },
-    ], { duration: Math.max(80, Math.min(160, Math.round(startTurnSpeed * .4))),
-      easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' });
+    ], { duration: cadenceExit ? Math.max(120, Math.min(220, Math.round(startTurnSpeed * .65)))
+      : Math.max(80, Math.min(160, Math.round(startTurnSpeed * .4))),
+      easing: cadenceExit ? 'cubic-bezier(0.4, 0, 0.2, 1)' : 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' });
     const preview = { element, animation, recovering: false, committed: false, done: false, finish: null };
     preview.finish = () => {
       if (navigationExitPreview !== preview) return;
@@ -3031,83 +3033,101 @@
   }
 
   // 页圆点（最近 + 收藏 + 各自定义分组 + 未分组）+ 末尾「+」新建分组。
-  function renderDots() {
-    dots.innerHTML = '';
-    const order = pageOrder(), orderKey = JSON.stringify(order);
-    const layoutChanged = spineDotsOrder !== orderKey;
-    spineDotsOrder = orderKey;
-    const pages = order.map((id) => ({ id, name: nameOf(id) }));
-    pages.forEach((g) => {
-      const dot = document.createElement('button');
-      dot.type = 'button';
-      dot.className = 'page-dot';
-      dot.dataset.groupId = g.id;
-      if (g.id !== '' && g.id !== FAVORITES_PAGE && g.id !== INBOX_PAGE) {
-        dot.setAttribute('data-user-content', '');
-      }
-      dot.setAttribute('aria-label', g.name);
+  function createPageDot(id) {
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'page-dot';
+    dot.dataset.groupId = id;
+    if (id !== '' && id !== FAVORITES_PAGE && id !== INBOX_PAGE) {
+      dot.setAttribute('data-user-content', '');
+    }
 
-      const bubble = document.createElement('span');
-      bubble.className = 'dot-bubble';
-      bubble.textContent = g.name + '  ' + filesOf(g.id).length;
-      dot.appendChild(bubble);
+    const bubble = document.createElement('span');
+    bubble.className = 'dot-bubble';
+    dot.appendChild(bubble);
 
-      dot.addEventListener('click', () => navigateTo(g.id));
-      // 自定义组：右键 改名/删除
-      if (g.id !== '' && g.id !== FAVORITES_PAGE && g.id !== INBOX_PAGE) {
-        dot.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const grp = lastGroups.find((x) => x.id === g.id);
-          if (grp) openGroupMenu(e.clientX, e.clientY, grp, dot);
-        });
-      }
-      // 3c：拖拽归类——把文件拖到圆点 = 移到该组
-      dot.addEventListener('dragover', (e) => {
-        if (g.id === FAVORITES_PAGE || g.id === '') return;
-        const files = !draggingPath && dtHasFiles(e.dataTransfer);
-        if (!draggingPath && !files) return;
+    dot.addEventListener('click', () => navigateTo(id));
+    // 自定义组：右键 改名/删除
+    if (id !== '' && id !== FAVORITES_PAGE && id !== INBOX_PAGE) {
+      dot.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        e.dataTransfer.dropEffect = files ? 'copy' : 'move';
-        dot.classList.add('drag-over');
+        e.stopPropagation();
+        const grp = lastGroups.find((x) => x.id === id);
+        if (grp) openGroupMenu(e.clientX, e.clientY, grp, dot);
       });
-      dot.addEventListener('dragleave', () => dot.classList.remove('drag-over'));
-      dot.addEventListener('drop', (e) => {
-        if (g.id === FAVORITES_PAGE || g.id === '') return;
-        dot.classList.remove('drag-over');
-        if (!draggingPath && dtHasFiles(e.dataTransfer)) {   // 外部拖入 .canvas → 复制导入到该组
-          e.preventDefault();
-          e.stopPropagation();                               // 别让窗口级 drop 再导入一次到当前组
-          importCanvasFiles(e.dataTransfer.files, g.id);
-          return;
-        }
-        e.preventDefault();
-        const path = (e.dataTransfer && e.dataTransfer.getData('text/plain')) || draggingPath;
-        draggingPath = null;
-        if (path) moveFileToGroup(path, g.id === INBOX_PAGE ? '' : g.id);
-      });
-      dots.appendChild(dot);
-      bindSpineHoverTarget(dot);
+    }
+    // 3c：拖拽归类——把文件拖到圆点 = 移到该组
+    dot.addEventListener('dragover', (e) => {
+      if (id === FAVORITES_PAGE || id === '') return;
+      const files = !draggingPath && dtHasFiles(e.dataTransfer);
+      if (!draggingPath && !files) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = files ? 'copy' : 'move';
+      dot.classList.add('drag-over');
     });
+    dot.addEventListener('dragleave', () => dot.classList.remove('drag-over'));
+    dot.addEventListener('drop', (e) => {
+      if (id === FAVORITES_PAGE || id === '') return;
+      dot.classList.remove('drag-over');
+      if (!draggingPath && dtHasFiles(e.dataTransfer)) {   // 外部拖入 .canvas → 复制导入到该组
+        e.preventDefault();
+        e.stopPropagation();                               // 别让窗口级 drop 再导入一次到当前组
+        importCanvasFiles(e.dataTransfer.files, id);
+        return;
+      }
+      e.preventDefault();
+      const path = (e.dataTransfer && e.dataTransfer.getData('text/plain')) || draggingPath;
+      draggingPath = null;
+      if (path) moveFileToGroup(path, id === INBOX_PAGE ? '' : id);
+    });
+    bindSpineHoverTarget(dot);
+    return dot;
+  }
+
+  function renderDots() {
+    const order = pageOrder(), orderKey = JSON.stringify(order);
+    let layoutChanged = spineDotsOrder !== orderKey;
+    spineDotsOrder = orderKey;
+    const existing = new Map(Array.from(dots.querySelectorAll(':scope > .page-dot:not(.dot-add)'))
+      .map(dot => [dot.dataset.groupId, dot]));
+    let anchor = dots.firstElementChild;
+    for (const id of order) {
+      const dot = existing.get(id) || createPageDot(id);
+      existing.delete(id);
+      const name = nameOf(id), text = name + '  ' + filesOf(id).length;
+      if (dot.getAttribute('aria-label') !== name) dot.setAttribute('aria-label', name);
+      const bubble = dot.querySelector('.dot-bubble');
+      if (bubble.textContent !== text) bubble.textContent = text;
+      if (dot !== anchor) { dots.insertBefore(dot, anchor); layoutChanged = true; }
+      anchor = dot.nextElementSibling;
+    }
+    for (const dot of existing.values()) {
+      if (anchor === dot) anchor = dot.nextElementSibling;
+      dot.remove();
+      layoutChanged = true;
+    }
 
     // 「+」新建分组（加一页）
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'page-dot dot-add';
-    add.setAttribute('aria-label', '新建分组');
-    add.textContent = '+';
-    const addBubble = document.createElement('span');
-    addBubble.className = 'dot-bubble';
-    addBubble.textContent = '新建分组';
-    add.appendChild(addBubble);
-    add.addEventListener('click', () => {
-      floatingInput({ placeholder: '分组名称', anchor: add, onCommit: (name) => createGroup(name) });
-    });
-    dots.appendChild(add);
-    bindSpineHoverTarget(add);
+    let add = dots.querySelector(':scope > .dot-add');
+    if (!add) {
+      add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'page-dot dot-add';
+      add.setAttribute('aria-label', '新建分组');
+      add.textContent = '+';
+      const addBubble = document.createElement('span');
+      addBubble.className = 'dot-bubble';
+      addBubble.textContent = '新建分组';
+      add.appendChild(addBubble);
+      add.addEventListener('click', () => {
+        floatingInput({ placeholder: '分组名称', anchor: add, onCommit: (name) => createGroup(name) });
+      });
+      bindSpineHoverTarget(add);
+    }
+    if (add !== anchor) { dots.insertBefore(add, anchor); layoutChanged = true; }
     updateNavigationFeedback(navigation?.getState().desired);
     syncNavigationSemantics();
-    spineView?.invalidate({ animate: !layoutChanged });
+    if (layoutChanged) spineView?.invalidate({ animate: false });
   }
 
   // 浮动单行输入（新建分组 / 重命名分组），锚定到书脊上的圆点右侧
@@ -4760,13 +4780,13 @@
     return i < 0 ? 0 : i;
   }
 
-  // 翻到某页（带整页横滑 + 淡入淡出；方向由页序决定，循环翻页时由 forwardHint 指定）
+  // 翻到某页（带整页横滑 + 淡入淡出；方向由页序或 forwardHint 指定）
   function navigateTo(gid, forwardHint) {
     if (!features.enabled('canvas.library')) return;
     return navigation?.request({ view: 'library', groupId: gid }, { forward: forwardHint });
   }
 
-  // 相对当前页循环翻 ±1（到尾翻回头、到头翻到尾）。
+  // 相对待选页翻 ±1；首尾停留，不将越界滚轮转为同页命令。
   const pageActivators = {
     review: setReviewActive, calendar: setCalendarActive, cadence: setCadenceActive,
     notes: setNotesActive, tree: setTreePageActive, study: setStudyActive, focus: setFocusActive,
@@ -4789,20 +4809,21 @@
   }
   function flipBy(delta) {
     const order = availableSpecialPages().map(view => ({ view }))
-      .concat(pageOrder().map(group => ({ group })));
+      .concat(features.enabled('canvas.library') ? pageOrder().map(group => ({ group })) : []);
     if (!order.length) return;
     const desired = navigation.getState().desired;
     let current = order.findIndex(item => item.view ? item.view === desired.view
       : desired.view === 'library' && item.group === desired.groupId);
     if (current < 0) current = 0;
-    const next = order[(current + delta + order.length) % order.length];
+    const next = order[current + delta];
+    if (!next) return;
     if (next.view) pageActivators[next.view](true);
     else navigateTo(next.group, delta > 0);
   }
 
   // 两套滚动系统：
   //  · 鼠标在「书页内容区」→ 浏览器原生滚动该组的画布文件（不翻页）
-  //  · 鼠标在「左侧书脊附近」→ 滚轮循环翻页
+  //  · 鼠标在「左侧书脊附近」→ 滚轮翻页，到首尾停止
   spineView = window.RelatumStartSpine.create({
     spine: spineEl, bookView, dots, getTarget: getNavigationTarget,
     getGroupIndex: id => lastGroups.findIndex(group => group.id === id),

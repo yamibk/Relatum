@@ -136,6 +136,32 @@ async function behavior(browser, config) {
     await page.evaluate(() => S.reset()); await page.waitForTimeout(140);
     assert.equal(await page.evaluate(() => P.renders), 0, 'idle leaves no navigation RAF');
 
+    await page.evaluate(() => { S.clear({ animate: false }); S.activate(6, { animate: false }); }); await frame(page);
+    await page.evaluate(() => S.activate(7)); await frame(page);
+    const tooltipRefresh = await page.evaluate(async () => {
+      const tracks = ['.spine-active-orb', '.spine-glyph-track'].map(selector => document.querySelector(selector));
+      const animations = tracks.map(element => element.getAnimations().find(a => a.transitionProperty === 'transform'));
+      const times = animations.map(animation => {
+        if (!animation) return null;
+        animation.pause(); animation.currentTime = Number(animation.effect.getTiming().duration) * .35;
+        return animation.currentTime;
+      });
+      S.reset();
+      for (const target of S.targets) target.querySelector('.dot-bubble').textContent = '更新后的名称与数量  123';
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+      const result = { ...P, present: animations.filter(Boolean).length,
+        retained: animations.every((animation, i) => !animation
+          || tracks[i].getAnimations().includes(animation) && animation.currentTime === times[i]) };
+      for (const animation of animations) animation?.play();
+      return result;
+    });
+    assert.equal(tooltipRefresh.renders, 0, 'tooltip text alone does not schedule slider work');
+    assert.equal(tooltipRefresh.measures, 0, 'tooltip updates do not invalidate navigation geometry');
+    assert.equal(tooltipRefresh.reads, 0);
+    assert(tooltipRefresh.retained, 'tooltip refresh preserves the original in-flight tracks');
+    assert.equal(tooltipRefresh.present, config.reduced ? 0 : 2);
+    await page.waitForTimeout(450);
+
     await page.evaluate(() => S.hover(0)); await frame(page);
     await page.evaluate(() => S.clear()); await frame(page); await page.waitForTimeout(70);
     await page.evaluate(() => S.hover(6)); await frame(page); await page.waitForTimeout(370);
@@ -262,7 +288,7 @@ async function behavior(browser, config) {
     await page.setViewportSize({ width: 710, height: 580 }); await frame(page);
     assert.equal(await page.evaluate(() => P.renders), 0, 'destroy releases listeners');
     assert.equal(await page.locator('.spine-glyph-slot').count(), 0);
-    report.checks.push({ config, burst, activeBurst, writes, calibrated, replicas });
+    report.checks.push({ config, burst, activeBurst, writes, tooltipRefresh, calibrated, replicas });
   } finally { await page.context().close(); }
 }
 
