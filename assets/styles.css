@@ -497,6 +497,8 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   font-weight: 520 !important;
   text-decoration: none !important;
 }
+.note-live-source-mark.is-heading,
+.note-live-source-mark.is-heading * { color: var(--note-live-marker) !important; }
 .note-live-source-mark.is-link { color: color-mix(in srgb, var(--note-live-link) 68%, var(--note-live-marker)) !important; }
 .note-live-source-mark.is-escape { color: var(--note-live-marker) !important; }
 .note-live-source-mark.is-math { color: var(--note-live-math) !important; }
