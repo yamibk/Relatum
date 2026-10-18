@@ -8,15 +8,17 @@ const vm = require('vm');
 // Exercise the bundled selection renderer with measured line coordinates.
 // No browser, synthetic pointer events or alternative selection implementation.
 const source = fs.readFileSync(path.join(__dirname, '..', 'assets', 'vendor', 'codemirror', 'relatum-codemirror.min.js'), 'utf8');
-const exportPoint = 'return rg(jX);';
-assert.strictEqual(source.indexOf(exportPoint), source.lastIndexOf(exportPoint));
-assert(source.includes(exportPoint), 'the pinned bundle must expose the test probe at its export');
+const exportPoint = /return [\w$]+\([\w$]+\);(?=\}\)\(\);?\s*$)/.exec(source)?.[0];
+assert(exportPoint, 'the offline bundle must expose the test probe at its final export');
+const methodAt = source.indexOf('static forRange(');
+const selectionClass = [...source.slice(0, methodAt).matchAll(/(?:var |,)([\w$]+)=class\s+[\w$]*\{/g)].at(-1)?.[1];
+assert(selectionClass, 'the actual bundled selection rectangle class must be discoverable');
 const context = {};
 vm.runInNewContext(source.replace(exportPoint,
-  'globalThis.__selectionProbe = { forRange: pi.forRange, Text: ke.Text, LTR: ee.LTR };' + exportPoint), context);
+  'globalThis.__selectionForRange = ' + selectionClass + '.forRange;' + exportPoint), context);
 context.window = { getComputedStyle: (line) => line.style };
 const CM = context.RelatumCodeMirror;
-const probe = context.__selectionProbe;
+const probe = { forRange: context.__selectionForRange, Text: CM.BlockType.Text, LTR: CM.Direction.LTR };
 
 function measureSelection({ firstCallout = true, sourceMode = false, reverse = false, wrapping = true, baseline = false, calloutOnly = false, trailingLineBreak = false } = {}) {
   const doc = CM.EditorState.create({ doc: calloutOnly

@@ -7,7 +7,7 @@ dependency graph and registry integrity values used for this vendor snapshot.
 ## Snapshot
 
 - `relatum-codemirror.min.js`
-  - SHA-256: `0EE70A9DD4761516CDA8B7A0D94D26BF27243ED0269839B848A2C9F7E2B6D5BA`
+  - SHA-256: `0945F25336D610E78AC3F8572BB7656423EDA98466C124ED338414E43834BC8F`
   - Direct packages: `@codemirror/state@6.7.1`, `@codemirror/view@6.43.9`,
     `@codemirror/language@6.12.4`, `@codemirror/lang-markdown@6.5.2`,
     `@codemirror/lang-cpp@6.0.3`, `@codemirror/lang-python@6.2.1`,
@@ -33,6 +33,22 @@ content bounds. Source lines, caret coordinates, selection ranges and copying
 keep their existing behavior. Preserve this one selector change when rebuilding
 the offline artifact. `node tests/note-callout-selection-regression.js` exercises
 the actual bundled renderer with measured-coordinate fixtures without a browser.
+
+## Rebuilding the note language snapshot
+
+`relatum-entry.js` is the readable browser entry. `note-languages.js` contains
+Relatum's local Structured Text/SCL and SPICE lexers. Verilog/SystemVerilog and
+VHDL reuse the already pinned `@codemirror/legacy-modes@6.5.3` modes under the MIT
+license below. The shared note style and exact language lookup are exported for
+both editing and reading; reading uses Lezer's public `highlightTree` API.
+
+Run `node scripts/build-note-codemirror.js` from the repository to regenerate
+the asset. This maintenance tool verifies archive integrity from the existing
+lock and runs the pinned `esbuild@0.25.9` in a new system temporary directory.
+It does not install npm, run package hooks, or add a project `node_modules`.
+The selection patch above is reapplied with an exact source-match assertion.
+Update the SHA-256 here after a successful build. Runtime and desktop packaging
+continue to use only the checked-in offline browser asset.
 
 ## CodeMirror and Lezer
 

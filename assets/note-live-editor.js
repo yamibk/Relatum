@@ -803,11 +803,14 @@
     toDOM(view) {
       const box = document.createElement('input');
       box.type = 'checkbox'; box.checked = this.checked; box.className = 'note-live-task';
-      box.setAttribute('aria-label', this.checked ? '标记为未完成' : '标记为完成');
+      const english = document.documentElement.lang === 'en';
+      box.setAttribute('aria-label', english ? (this.checked ? 'Mark incomplete' : 'Mark complete') : (this.checked ? '标记为未完成' : '标记为完成'));
       box.addEventListener('mousedown', (event) => event.preventDefault());
       box.addEventListener('click', (event) => {
         event.preventDefault(); event.stopPropagation();
-        view.dispatch({ changes: { from: this.from + 1, to: this.from + 2, insert: this.checked ? ' ' : 'x' } });
+        if (compositionActive(view) || view.state.readOnly || !/^\[[ xX]\]$/.test(view.state.doc.sliceString(this.from, this.from + 3))) return;
+        view.dispatch({ changes: { from: this.from + 1, to: this.from + 2, insert: this.checked ? ' ' : 'x' },
+          userEvent: 'input.note-task', annotations: CM.isolateHistory ? CM.isolateHistory.of('full') : [] });
         view.focus();
       });
       return box;
@@ -1656,6 +1659,8 @@
 
   function releaseReadingDocument(host) {
     if (!host) return;
+    if (host.__relatumReadingCode) host.__relatumReadingCode.destroy();
+    delete host.__relatumReadingCode;
     host.querySelectorAll('[data-canvas-source]').forEach(frame => frame.__noteCanvas?.destroy());
     host.querySelectorAll('.note-live-image-frame').forEach(frame => frame.__canvasObserver?.disconnect());
     host.dataset.noteReadingEpoch = String((Number(host.dataset.noteReadingEpoch) || 0) + 1);
@@ -1754,6 +1759,7 @@
     host.replaceChildren(content);
     host.classList.toggle('is-failed', !!result.error);
     const current = () => host.dataset.noteReadingEpoch === epoch && content.isConnected;
+    host.__relatumReadingCode = prepareReadingCode(content, current);
     if (result.features && result.features.mermaid && window.MermaidRenderer) {
       window.MermaidRenderer.renderAll(content).catch(() => {
         if (current()) host.classList.add('is-failed');
@@ -2049,41 +2055,127 @@
 
   class CodeLanguageWidget extends WidgetType {
     constructor(label, doc, from, to) {
-      super(); this.label = String(label || ''); this.doc = doc; this.from = from; this.to = to; this.timer = 0;
+      super(); this.label = String(label || ''); this.doc = doc; this.from = from; this.to = to;
     }
     // Keep the immutable document reference. Scrolling/selection must not copy a
     // potentially huge fence just to compare or display its tiny language badge.
     get code() { return fencedCodeBody(this.doc.sliceString(this.from, this.to)); }
     eq(other) { return other.label === this.label && other.doc === this.doc && other.from === this.from && other.to === this.to; }
     toDOM() {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'note-live-code-language';
-      button.textContent = this.label;
-      const copyLabel = (document.documentElement.lang === 'en' ? 'Copy ' : '复制 ') + this.label + (document.documentElement.lang === 'en' ? ' code' : ' 代码');
-      button.title = copyLabel;
-      button.setAttribute('aria-label', copyLabel);
-      button.addEventListener('mousedown', (event) => { event.preventDefault(); event.stopPropagation(); });
-      button.addEventListener('click', async (event) => {
-        event.preventDefault(); event.stopPropagation();
-        const copied = await copyPlainText(this.code);
-        clearTimeout(this.timer);
-        button.classList.toggle('is-copied', copied);
-        button.classList.toggle('is-copy-failed', !copied);
-        button.dataset.copyState = copied
-          ? (document.documentElement.lang === 'en' ? 'Copied' : '已复制')
-          : (document.documentElement.lang === 'en' ? 'Copy failed' : '复制失败');
-        button.setAttribute('aria-label', button.dataset.copyState);
-        this.timer = setTimeout(() => {
-          button.classList.remove('is-copied', 'is-copy-failed');
-          delete button.dataset.copyState;
-          button.setAttribute('aria-label', copyLabel);
-        }, 1200);
-      });
-      return button;
+      this.copyControl = codeCopyControl(this.label, () => this.code);
+      return this.copyControl.button;
     }
-    destroy() { clearTimeout(this.timer); }
+    destroy() { if (this.copyControl) this.copyControl.destroy(); }
     ignoreEvent() { return true; }
+  }
+
+  function codeCopyControl(label, getCode, copyOnly = false) {
+    const english = document.documentElement.lang === 'en';
+    const button = document.createElement('button');
+    const normalText = copyOnly || !label ? (english ? 'Copy' : '复制') : label;
+    const copyLabel = english ? 'Copy' + (label ? ' ' + label : '') + ' code' : '复制' + (label ? ' ' + label : '') + '代码';
+    let timer = 0, disposed = false;
+    button.type = 'button'; button.className = 'note-live-code-language'; button.textContent = normalText;
+    button.title = copyLabel; button.setAttribute('aria-label', copyLabel);
+    button.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); });
+    button.addEventListener('click', async event => {
+      event.preventDefault(); event.stopPropagation();
+      const copied = await copyPlainText(getCode());
+      if (disposed || !button.isConnected) return;
+      clearTimeout(timer);
+      const feedback = copied ? (english ? 'Copied' : '已复制') : (english ? 'Copy failed' : '复制失败');
+      button.classList.toggle('is-copied', copied); button.classList.toggle('is-copy-failed', !copied);
+      // Feedback lives inside the button; an overflowing pseudo-tooltip was
+      // clipped by the badge's own ellipsis box.
+      button.textContent = feedback; button.dataset.copyState = feedback; button.setAttribute('aria-label', feedback);
+      timer = setTimeout(() => {
+        button.classList.remove('is-copied', 'is-copy-failed'); delete button.dataset.copyState;
+        button.textContent = normalText; button.setAttribute('aria-label', copyLabel); timer = 0;
+      }, 1200);
+    });
+    return { button, destroy() { disposed = true; clearTimeout(timer); timer = 0; } };
+  }
+
+  function prepareReadingCode(content, current) {
+    const jobs = new Set(), visible = new Set(), copies = [];
+    let handle = 0, idle = false, destroyed = false;
+    const foreground = () => !destroyed && current() && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1';
+    const cancel = () => {
+      if (handle) { if (idle) window.cancelIdleCallback(handle); else clearTimeout(handle); }
+      handle = 0;
+    };
+    const schedule = () => {
+      if (handle || !foreground() || !visible.size) return;
+      idle = typeof window.requestIdleCallback === 'function';
+      handle = idle ? window.requestIdleCallback(run) : setTimeout(run, 0);
+    };
+    const finish = job => {
+      visible.delete(job); jobs.delete(job); observer?.unobserve(job.pre); byElement.delete(job.pre);
+      job.parse = null; job.pre.dataset.noteCodeReady = '1';
+    };
+    const run = () => {
+      handle = 0;
+      if (!foreground()) return;
+      const until = performance.now() + 4;
+      for (const job of visible) {
+        try {
+          job.parse ||= job.parser.startParse(job.source);
+          let tree;
+          do { tree = job.parse.advance(); } while (!tree && performance.now() < until);
+          if (tree) {
+            const spans = [];
+            CM.highlightTree(tree, CM.relatumCodeStyle, (from, to, className) => { if (spans.length <= 4096) spans.push({ from, to, className }); });
+            if (spans.length <= 4096 && foreground()) {
+              const fragment = document.createDocumentFragment(); let offset = 0;
+              spans.forEach(span => {
+                if (span.from > offset) fragment.append(document.createTextNode(job.source.slice(offset, span.from)));
+                const token = document.createElement('span'); token.className = span.className;
+                token.textContent = job.source.slice(span.from, span.to); fragment.append(token); offset = span.to;
+              });
+              fragment.append(document.createTextNode(job.source.slice(offset))); job.code.replaceChildren(fragment);
+            }
+            finish(job);
+          }
+        } catch (error) { finish(job); } // Source remains safely readable on a lexer failure.
+        if (performance.now() >= until) break;
+      }
+      schedule();
+    };
+    const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const job = byElement.get(entry.target);
+        if (!job || !jobs.has(job)) continue;
+        if (entry.isIntersecting) visible.add(job); else visible.delete(job);
+      }
+      if (!visible.size) cancel(); else schedule();
+    }, { root: content.closest('.note-reading-view'), rootMargin: '100px' }) : null;
+    const byElement = new WeakMap();
+    content.querySelectorAll('pre.md-code').forEach(pre => {
+      const code = pre.querySelector('code'); if (!code) return;
+      const source = code.textContent, label = pre.dataset.lang || '';
+      const toolbar = document.createElement('span'); toolbar.className = 'note-code-toolbar'; toolbar.contentEditable = 'false';
+      const caption = document.createElement('span'); caption.className = 'note-code-label'; caption.textContent = label;
+      const control = codeCopyControl(label, () => source, true); copies.push(control);
+      toolbar.append(caption, control.button); pre.prepend(toolbar); pre.classList.add('has-note-code-toolbar');
+      const parser = CM.relatumCodeParser?.(label);
+      if (!parser || !CM.highlightTree || !CM.relatumCodeStyle) return;
+      // Replace the general renderer's approximate coloring, never its text.
+      code.textContent = source;
+      if (source.length > MAX_RICH_LINE) { pre.dataset.noteCodeReady = 'plain'; return; }
+      const job = { pre, code, source, parser, parse: null }; jobs.add(job); byElement.set(pre, job);
+      if (observer) observer.observe(pre); else visible.add(job);
+    });
+    if (!copies.length) { observer?.disconnect(); return { destroy() {} }; }
+    const visibility = () => { if (!foreground()) cancel(); else schedule(); };
+    const destroy = () => {
+      if (destroyed) return; destroyed = true; cancel(); observer?.disconnect();
+      jobs.clear(); visible.clear(); copies.forEach(copy => copy.destroy());
+      document.removeEventListener('visibilitychange', visibility);
+      window.removeEventListener('canvasdesktop:visibility', visibility); window.removeEventListener('pagehide', destroy);
+    };
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('canvasdesktop:visibility', visibility); window.addEventListener('pagehide', destroy);
+    schedule(); return { destroy };
   }
 
   function activeBlockIds(specs, state, focused, composing) {
@@ -2531,7 +2623,7 @@
             }
             const openingLine = view.state.doc.line(blockFirst);
             const opener = fenceStart(openingLine.text);
-            if (!constructActive(view, range.from, range.to) && opener && opener.label && openingLine.from >= first.from && openingLine.to <= last.to) {
+            if (!constructActive(view, range.from, range.to) && opener && openingLine.from >= first.from && openingLine.to <= last.to) {
               add(openingLine.to, openingLine.to, Decoration.widget({
                 widget: new CodeLanguageWidget(opener.label, view.state.doc, range.from, range.to),
                 side: 1,
@@ -2642,23 +2734,20 @@
             const line = view.state.doc.lineAt(nodeRef.from);
             lineClass(line.from, 'note-live-list-line');
             const unit = ancestorOf(node, /^ListItem$/) || node;
-            if (constructActive(view, unit.from, unit.to)) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-list');
-            else if (unit && unit.getChild('Task') && !/^\d/.test(view.state.doc.sliceString(nodeRef.from, nodeRef.to))) {
-              // An unordered task uses its checkbox as the list marker. Keep
-              // indentation, but do not display a second bullet beside it.
-              const gap = /^[\t ]*/.exec(view.state.doc.sliceString(nodeRef.to, line.to))[0];
-              replace(nodeRef.from, nodeRef.to + gap.length);
-            } else add(nodeRef.from, nodeRef.to, Decoration.replace({
+            const task = taskItemParts(view.state, unit);
+            if (task && !task.ordered) return undefined; // TaskMarker owns the complete unordered prefix.
+            if (!task && constructActive(view, unit.from, unit.to)) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-list');
+            else add(nodeRef.from, nodeRef.to, Decoration.replace({
               widget: new BulletWidget(/^\d/.test(view.state.doc.sliceString(nodeRef.from, nodeRef.to)), view.state.doc.sliceString(nodeRef.from, nodeRef.to)),
-              inclusive: false,
+              inclusive: false, relatumAtomic: !!task,
             }));
           } else if (nodeRef.name === 'TaskMarker') {
             const unit = ancestorOf(node, /^ListItem$/) || node;
-            if (constructActive(view, unit.from, unit.to)) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-list');
-            else {
+            const task = taskItemParts(view.state, unit);
+            if (task) {
               const marker = view.state.doc.sliceString(nodeRef.from, nodeRef.to);
-              add(nodeRef.from, nodeRef.to, Decoration.replace({
-                widget: new TaskWidget(/x/i.test(marker), nodeRef.from, options), inclusive: false,
+              add(task.ordered ? nodeRef.from : task.mark.from, task.contentFrom, Decoration.replace({
+                widget: new TaskWidget(/x/i.test(marker), nodeRef.from, options), inclusive: false, relatumAtomic: true,
               }));
             }
           } else if (nodeRef.name === 'QuoteMark') {
@@ -3101,9 +3190,47 @@
   function quotePrefix(line) { return /^(?:[ \t]{0,3}>[ \t]?)+/.exec(line)?.[0] || ''; }
   function whitespaceColumns(text) { let column = 0; for (const char of text) column += char === '\t' ? 4 - column % 4 : 1; return column; }
   function listItemAt(state, position) {
-    let node = syntaxTree(state).resolveInner(position, -1);
-    while (node && node.name !== 'ListItem') node = node.parent;
-    return node;
+    for (const side of [-1, 1]) {
+      let node = syntaxTree(state).resolveInner(position, side);
+      while (node && node.name !== 'ListItem') node = node.parent;
+      if (node) return node;
+    }
+    return null;
+  }
+  function taskItemParts(state, item) {
+    const mark = item?.getChild('ListMark'), marker = item?.getChild('Task')?.getChild('TaskMarker');
+    if (!mark || !marker) return null;
+    const line = state.doc.lineAt(marker.from);
+    if (state.doc.lineAt(mark.from).number !== line.number) return null;
+    const gap = /^[\t ]*/.exec(state.doc.sliceString(marker.to, line.to))[0];
+    return { mark, marker, contentFrom: marker.to + gap.length, ordered: /^\d/.test(state.doc.sliceString(mark.from, mark.to)) };
+  }
+  function taskAtCaret(state, position) {
+    const task = taskItemParts(state, listItemAt(state, position));
+    return task && state.doc.lineAt(task.mark.from).number === state.doc.lineAt(position).number ? task : null;
+  }
+  function moveBeforeTask(view) {
+    if (compositionActive(view) || view.state.selection.ranges.length !== 1 || !view.state.selection.main.empty) return false;
+    const head = view.state.selection.main.head, task = taskAtCaret(view.state, head);
+    if (!task || head !== task.contentFrom) return false;
+    const line = view.state.doc.lineAt(head);
+    if (line.number > 1) view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(line.number - 1).to), userEvent: 'select.keyboard', scrollIntoView: true });
+    return true;
+  }
+  function deleteListPrefix(view) {
+    if (compositionActive(view) || view.state.readOnly || view.state.selection.ranges.length !== 1) return false;
+    const range = view.state.selection.main; if (!range.empty) return false;
+    const item = listItemAt(view.state, range.head), mark = item?.getChild('ListMark'); if (!mark) return false;
+    const line = view.state.doc.lineAt(range.head);
+    if (view.state.doc.lineAt(mark.from).number !== line.number) return false;
+    const task = taskItemParts(view.state, item);
+    if (!task) return false; // Ordinary lists retain CodeMirror's existing deletion rules.
+    const contentFrom = task.contentFrom;
+    if (range.head !== contentFrom) return false;
+    const from = task.marker.from;
+    view.dispatch({ changes: { from, to: contentFrom, insert: '' }, selection: EditorSelection.cursor(from),
+      userEvent: 'delete.note-list', annotations: CM.isolateHistory ? CM.isolateHistory.of('full') : [], scrollIntoView: true });
+    return true;
   }
   function listMarkColumn(state, item, content) {
     const mark = item?.getChild('ListMark'); if (!mark) return 0;
@@ -3979,12 +4106,23 @@
           // Markdown range that merely represents the selected image object.
           return [];
         }),
+        EditorState.transactionFilter.of(transaction => {
+          if (transaction.docChanged || sourceMode || inputPending() || transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) return transaction;
+          if (!transaction.selection && !transaction.reconfigured && !transaction.effects.some(effect => effect.is(focusEffect))) return transaction;
+          const ranges = transaction.newSelection.ranges;
+          if (ranges.length !== 1 || !ranges[0].empty) return transaction;
+          const head = ranges[0].head, task = taskAtCaret(transaction.startState, head);
+          if (!task || head < task.mark.from || head >= task.contentFrom) return transaction;
+          // Home, vertical movement and pointer hit testing land on visible text,
+          // never in the source prefix. Nonempty selections retain exact source.
+          return [transaction, { selection: EditorSelection.cursor(task.contentFrom), sequential: true }];
+        }),
         Prec.highest(keymap.of([
-          { key: 'Backspace', run: (view) => deleteImageObject(view, true) },
+          { key: 'Backspace', run: (view) => deleteImageObject(view, true) || !sourceMode && deleteListPrefix(view) },
           { key: 'Delete', run: (view) => deleteImageObject(view, false) },
           { key: 'Enter', run: () => imageTextKeyCommand('edit') },
           { key: 'Escape', run: () => imageTextKeyCommand('clear-selection') },
-          { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) },
+          { key: 'ArrowLeft', run: (view) => imageTextKeyCommand('move', { dx: -1, dy: 0 }) || moveSelectedMediaCaret(view, true) || !sourceMode && moveBeforeTask(view) },
           { key: 'ArrowRight', run: (view) => imageTextKeyCommand('move', { dx: 1, dy: 0 }) || moveSelectedMediaCaret(view, false) },
           { key: 'ArrowUp', run: () => imageTextKeyCommand('move', { dx: 0, dy: -1 }) },
           { key: 'ArrowDown', run: () => imageTextKeyCommand('move', { dx: 0, dy: 1 }) },
@@ -4191,7 +4329,7 @@
     }
 
     function markdownExtensions() {
-      return markdown({ base: markdownLanguage, codeLanguages: Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : [],
+      return markdown({ base: markdownLanguage, codeLanguages: CM.relatumCodeLanguage || (Array.isArray(relatumCodeLanguages) ? relatumCodeLanguages : []),
         extensions: sourceMode || !tableController ? [plainParagraphExtension] : [plainParagraphExtension, projectedTableExtension] });
     }
 
