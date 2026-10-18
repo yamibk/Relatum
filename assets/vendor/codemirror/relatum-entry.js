@@ -87,6 +87,7 @@ export const relatumCodeStyle = HighlightStyle.define([
   { tag: [tags.keyword, tags.controlKeyword, tags.moduleKeyword, tags.definitionKeyword, tags.operatorKeyword], class: 'note-live-code-keyword' },
   { tag: [tags.typeName, tags.className, tags.bool, tags.null], class: 'note-live-code-type' },
   { tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character], class: 'note-live-code-string' },
+  { tag: tags.escape, class: 'note-live-code-escape' },
   { tag: [tags.number, tags.integer, tags.float], class: 'note-live-code-number' },
   { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.standard(tags.variableName)], class: 'note-live-code-function' },
   { tag: [tags.definition(tags.variableName), tags.definition(tags.propertyName)], class: 'note-live-code-definition' },

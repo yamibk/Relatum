@@ -7,7 +7,7 @@ dependency graph and registry integrity values used for this vendor snapshot.
 ## Snapshot
 
 - `relatum-codemirror.min.js`
-  - SHA-256: `0945F25336D610E78AC3F8572BB7656423EDA98466C124ED338414E43834BC8F`
+  - SHA-256: `BB10BD37DDB94075A57C688C538219BAA75882E98925FF7BF4CF63A71155670E`
   - Direct packages: `@codemirror/state@6.7.1`, `@codemirror/view@6.43.9`,
     `@codemirror/language@6.12.4`, `@codemirror/lang-markdown@6.5.2`,
     `@codemirror/lang-cpp@6.0.3`, `@codemirror/lang-python@6.2.1`,
@@ -41,6 +41,8 @@ Relatum's local Structured Text/SCL and SPICE lexers. Verilog/SystemVerilog and
 VHDL reuse the already pinned `@codemirror/legacy-modes@6.5.3` modes under the MIT
 license below. The shared note style and exact language lookup are exported for
 both editing and reading; reading uses Lezer's public `highlightTree` API.
+The shared style also maps the existing Lezer `escape` tag, so string escape
+sequences use the same explicit syntax class in live, source and reading views.
 
 Run `node scripts/build-note-codemirror.js` from the repository to regenerate
 the asset. This maintenance tool verifies archive integrity from the existing

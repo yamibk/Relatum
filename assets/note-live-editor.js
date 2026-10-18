@@ -801,6 +801,8 @@
     constructor(checked, from, options) { super(); this.checked = checked; this.from = from; this.options = options; }
     eq(other) { return other.checked === this.checked && other.from === this.from; }
     toDOM(view) {
+      const wrap = document.createElement('span');
+      wrap.className = 'note-live-task-widget';
       const box = document.createElement('input');
       box.type = 'checkbox'; box.checked = this.checked; box.className = 'note-live-task';
       const english = document.documentElement.lang === 'en';
@@ -813,7 +815,19 @@
           userEvent: 'input.note-task', annotations: CM.isolateHistory ? CM.isolateHistory.of('full') : [] });
         view.focus();
       });
-      return box;
+      const anchor = document.createElement('span');
+      anchor.className = 'note-live-task-anchor';
+      anchor.setAttribute('aria-hidden', 'true');
+      // A view-only glyph measures the normal text baseline after the checkbox
+      // margin, even when there is no editable text on the line yet.
+      anchor.textContent = '\u200b';
+      wrap.append(box, anchor);
+      return wrap;
+    }
+    coordsAt(dom, position) {
+      if (!position) return null;
+      const rect = dom.lastElementChild.getBoundingClientRect();
+      return { left: rect.left, right: rect.left, top: rect.top, bottom: rect.bottom };
     }
     ignoreEvent() { return false; }
   }

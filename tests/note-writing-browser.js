@@ -64,6 +64,25 @@ body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:colum
         RelatumNoteLiveEditor.renderMarkdown(reading,source,'writing.md');
       },source); await settle();
     }
+    async function taskCaret() {
+      await settle();
+      return page.evaluate(()=>{
+        const view=editor.view,head=view.state.selection.main.head,at=view.domAtPos(head);
+        const line=[...view.contentDOM.querySelectorAll('.cm-line')].find(el=>el.contains(at.node));
+        const box=line?.querySelector('.note-live-task'),cursor=view.dom.querySelector('.cm-cursor');
+        const rect=el=>{const r=el.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height};};
+        const coords=view.coordsAtPos(head);
+        return{head,focus:view.hasFocus,coords:{left:coords.left,top:coords.top,bottom:coords.bottom,height:coords.bottom-coords.top},box:box&&rect(box),cursor:cursor&&rect(cursor),value:editor.snapshot().value};
+      });
+    }
+    function checkTaskCaret(metrics) {
+      assert(metrics.focus&&metrics.box&&metrics.cursor,'empty task keeps an editor caret');
+      assert(metrics.coords.left-metrics.box.right>=4,'caret stays beyond the checkbox border and margin');
+      assert(metrics.coords.height>metrics.box.height,'caret uses text height rather than checkbox height');
+      assert(Math.abs(metrics.cursor.height-metrics.coords.height)<.1,'drawn cursor uses the measured text height');
+      assert(Math.abs(metrics.cursor.left-metrics.coords.left)<1,'drawn cursor is at the text origin');
+      assert(!metrics.value.includes('\u200b'),'view anchor must never enter the source');
+    }
     await page.evaluate(()=>{
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copied=text;}}});
     });
@@ -146,6 +165,63 @@ body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:colum
     await page.evaluate(()=>editor.view.dispatch({selection:RelatumCodeMirror.EditorSelection.range(0,editor.view.state.doc.length)}));
     await page.keyboard.type('replacement');assert.equal(await value(),'replacement');
 
+    // Empty task carets must match real text geometry, including actual clicks.
+    const emptyTaskLayouts=[];
+    for(const [theme,width,scale,motion] of [['light',1280,1,'no-preference'],['dark',620,1.35,'reduce'],['light',620,.8,'reduce']]){
+      await page.setViewportSize({width,height:980});await page.emulateMedia({reducedMotion:motion});
+      await page.evaluate(({theme,scale})=>{document.body.dataset.startTheme=theme;document.body.style.setProperty('--note-font-scale',scale);},{theme,scale});
+      for(const source of ['- [ ] ','- [x] ','1. [ ] ','- [ ] parent\n  - [ ] ','> - [ ] ','> [!note] Tasks\n> - [ ] ']){
+        await reset(source+'M',source.length);
+        const filled=await taskCaret();
+        const text=await page.evaluate(()=>{const view=editor.view,r=view.coordsAtPos(view.state.selection.main.head+1);return{top:r.top,height:r.bottom-r.top};});
+        await reset(source);
+        const empty=await taskCaret();checkTaskCaret(empty);
+        for(const key of ['left','top','height'])assert(Math.abs(empty.coords[key]-filled.coords[key])<.1,'empty and filled task '+key);
+        for(const key of ['top','height'])assert(Math.abs(empty.coords[key]-text[key])<.1,'empty caret matches the actual text glyph '+key);
+        await page.mouse.click(empty.coords.left+25,(empty.coords.top+empty.coords.bottom)/2);
+        assert.equal(await page.evaluate(()=>editor.view.state.selection.main.head),source.length,'empty-row click lands at the text origin');
+        checkTaskCaret(await taskCaret());
+        emptyTaskLayouts.push({theme,width,scale,source,empty,filled});
+      }
+      await reset('# 实验任务\n\n- [x] 核对电路参数\n- [ ] 记录采样结果\n- [ ] ');
+      await page.locator('.cm-cursorLayer').evaluate(el=>{el.style.animation='none';});
+      await page.screenshot({path:path.join(output,'empty-task-'+theme+'-'+Math.round(scale*100)+'.png')});
+      await page.locator('.cm-cursorLayer').evaluate(el=>{el.style.removeProperty('animation');});
+    }
+    await page.setViewportSize({width:1280,height:980});await page.emulateMedia({reducedMotion:'no-preference'});
+    await page.evaluate(()=>{document.body.dataset.startTheme='light';document.body.style.setProperty('--note-font-scale',1);});
+    await reset('- [ ] ');await page.keyboard.type('Q');assert.equal(await value(),'- [ ] Q');
+    await page.keyboard.press('Backspace');assert.equal(await value(),'- [ ] ');checkTaskCaret(await taskCaret());
+    await reset('- [ ] Q');await page.keyboard.press('Backspace');checkTaskCaret(await taskCaret());
+    await page.keyboard.press('Control+z');assert.equal(await value(),'- [ ] Q');
+    await page.keyboard.press('Control+y');assert.equal(await value(),'- [ ] ');checkTaskCaret(await taskCaret());
+    await page.locator('.note-live-task').click();assert.equal(await value(),'- [x] ');checkTaskCaret(await taskCaret());
+    await page.keyboard.press('Control+z');assert.equal(await value(),'- [ ] ');checkTaskCaret(await taskCaret());
+    await page.keyboard.press('Backspace');assert.equal(await value(),'- ');
+    await page.keyboard.press('Backspace');assert.equal(await value(),'');
+    await page.keyboard.press('Control+z');assert.equal(await value(),'- ');
+    await page.keyboard.press('Control+z');assert.equal(await value(),'- [ ] ');checkTaskCaret(await taskCaret());
+    await page.evaluate(()=>editor.setSourceMode(true));await settle();assert.equal(await value(),'- [ ] ');
+    await page.evaluate(()=>editor.setSourceMode(false));checkTaskCaret(await taskCaret());
+    await page.evaluate(()=>{
+      editor.view.dispatch({selection:RelatumCodeMirror.EditorSelection.range(0,editor.view.state.doc.length)});
+      const data=new DataTransfer();editor.view.contentDOM.dispatchEvent(new ClipboardEvent('copy',{bubbles:true,clipboardData:data}));window.__emptyTaskCopy=data.getData('text/plain');
+    });
+    assert.equal(await page.evaluate(()=>window.__emptyTaskCopy),'- [ ] ');
+    await reset('- [x] done');await page.keyboard.press('Enter');assert.equal(await value(),'- [x] done\n- [ ] ');checkTaskCaret(await taskCaret());
+    await page.keyboard.press('Enter');assert.equal(await value(),'- [x] done\n\n');
+    await reset('- [ ] ');
+    await cdp.send('Input.imeSetComposition',{text:'zhong',selectionStart:5,selectionEnd:5});
+    assert.equal(await value(),'- [ ] ');
+    assert.equal(await page.locator('.note-live-task').count(),1);
+    assert.equal(await page.locator('#editor').evaluate(el=>getComputedStyle(el.querySelector('.cm-cursorLayer')).visibility),'hidden','native IME owns the only visible caret');
+    await cdp.send('Input.insertText',{text:'中'});await settle();
+    await page.waitForFunction(()=>editor.snapshot().value==='- [ ] 中');
+    await reset('- [ ] ');
+    await cdp.send('Input.imeSetComposition',{text:'qu',selectionStart:2,selectionEnd:2});
+    await cdp.send('Input.imeSetComposition',{text:'',selectionStart:0,selectionEnd:0});await settle();
+    assert.equal(await value(),'- [ ] ');checkTaskCaret(await taskCaret());
+
     const headingSource=Array.from({length:6},(_,i)=>'#'.repeat(i+1)+' 标题层级 '+(i+1)).join('\n\n');
     const sizes=[1.9,1.5,1.25,1.1,1,.94], layouts=[];
     for(const [theme,width,scale,motion] of [['light',1280,1,'no-preference'],['dark',620,1.35,'reduce']]){
@@ -196,10 +272,43 @@ body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:colum
     assert(!readingCode[1].tokens.some(token=>token.text.includes('//')&&token.className.includes('comment')));
     assert.equal(readingCode[2].source,'plain text');assert.equal(readingCode[2].tokens.length,0);
     readingCode.forEach(code=>{assert.equal(code.background,'rgb(248, 249, 247)');assert(code.toolbar<=code.textTop,'copy controls leave the first code line clear');});
-    const luminance = rgb=>{const c=rgb.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return .2126*c[0]+.7152*c[1]+.0722*c[2];};
+    const luminance = color=>{const c=(color.startsWith('#')?color.slice(1).match(/../g).map(v=>parseInt(v,16)):color.match(/[\d.]+/g).slice(0,3).map(Number)).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return .2126*c[0]+.7152*c[1]+.0722*c[2];};
     readingCode.forEach(code=>code.tokens.forEach(token=>{assert((luminance(code.background)+.05)/(luminance(token.color)+.05)>=4.5,'syntax contrast: '+token.className);}));
     await page.locator('.note-code-toolbar button').nth(1).click();assert.equal(await page.evaluate(()=>window.__copied),'value = 7 // 2 # 中文');
     await page.screenshot({path:path.join(output,'reading-light.png')});
+
+    const paletteSource='```c\n#include <stdio.h>\n// 读取采样值并输出实验记录\nint sample(float gain) {\n    printf("gain=%f\\n", gain);\n    return 42;\n}\n```';
+    const palettes=[],kinds=['comment','keyword','type','string','number','function','definition','meta','escape','operator'];
+    for(const theme of ['light','dark']){
+      await page.evaluate(theme=>{document.body.dataset.startTheme=theme;},theme);
+      let expectedColors;
+      for(const mode of ['live','source','reading']){
+        await reset(paletteSource);
+        if(mode==='source'){await page.evaluate(()=>editor.setSourceMode(true));await settle();}
+        if(mode==='reading'){await read(paletteSource);await page.waitForFunction(()=>document.querySelector('[data-note-code-ready="1"]'));}
+        const palette=await page.evaluate(({mode,kinds})=>{
+          const host=document.querySelector(mode==='reading'?'.note-reading-content':'#editor'),style=getComputedStyle(host);
+          return{background:style.getPropertyValue('--note-code-bg').trim(),baseColors:['text','invalid'].map(kind=>style.getPropertyValue('--note-code-'+kind).trim()),colors:Object.fromEntries(kinds.map(kind=>{
+            const token=host.querySelector('.note-live-code-'+kind);return[kind,token&&getComputedStyle(token).color];
+          }))};
+        },{mode,kinds});
+        for(const color of palette.baseColors){
+          const foreground=luminance(color),background=luminance(palette.background);
+          assert((Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)>=4.5,theme+'/'+mode+' base/error contrast');
+        }
+        for(const [kind,color] of Object.entries(palette.colors)){
+          assert(color,theme+'/'+mode+' provides '+kind+' syntax');
+          const foreground=luminance(color),background=luminance(palette.background);
+          assert((Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)>=4.5,theme+'/'+mode+'/'+kind+' contrast');
+        }
+        if(expectedColors)assert.deepEqual(palette.colors,expectedColors,'all three modes share the '+theme+' palette');
+        else expectedColors=palette.colors;
+        palettes.push({theme,mode,...palette});
+      }
+      await page.locator('.note-code-toolbar button').click();assert.equal(await page.evaluate(()=>window.__copied),paletteSource.split('\n').slice(1,-1).join('\n'));
+      await page.screenshot({path:path.join(output,'syntax-'+theme+'.png')});
+    }
+    await page.evaluate(()=>{document.body.dataset.startTheme='light';});
 
     // Native minimization pauses preparation even when Chromium reports visible.
     await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='1';window.dispatchEvent(new Event('canvasdesktop:visibility'));});
@@ -231,7 +340,7 @@ body{margin:0}.note-document-pane{height:100vh;display:flex;flex-direction:colum
     await page.evaluate(()=>RelatumNoteLiveEditor.releaseReadingDocument(document.getElementById('reading')));await settle();
     assert.equal(await page.locator('.note-reading-content').count(),0);
     assert.deepEqual(errors,[]);assert.deepEqual(remote,[]);
-    const report={output,layouts,readingCode,tasks:true,ime:true,copy:true,lifecycle:true,errors};
+    const report={output,layouts,emptyTaskLayouts,palettes,readingCode,tasks:true,ime:true,copy:true,lifecycle:true,errors};
     fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));
     console.log(JSON.stringify({output,tasks:true,ime:true,headings:true,reading:true,copy:true,lifecycle:true}));
   }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}

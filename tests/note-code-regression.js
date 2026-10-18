@@ -14,8 +14,9 @@ function styleAt(tokens, source, text) {
   return tokens.find(token => token.from <= from && token.to >= from + text.length)?.className || '';
 }
 const cases = [
-  { aliases: ['c', 'h', 'cpp', 'c++', 'arduino', 'ino'], source: '#include <stdio.h>\nint main(void) { /* 中文 */ printf("hello"); return 0xFF; }', checks: [['#include', 'meta'], ['中文', 'comment'], ['"hello"', 'string'], ['0xFF', 'number']] },
-  { aliases: ['py', 'python', 'PYTHON', 'python3', 'py3'], source: 'def sample(x):\n    value = 7 // 2 # 中文注释\n    return "text"', checks: [['def', 'keyword'], ['//', 'operator'], ['中文注释', 'comment'], ['"text"', 'string']] },
+  { aliases: ['c', 'h', 'cpp', 'c++', 'arduino', 'ino'], source: '#include <stdio.h>\nint main(void) { /* 中文 */ printf("hello\\n"); return 0xFF; }', checks: [['#include', 'meta'], ['中文', 'comment'], ['hello', 'string'], ['\\n', 'escape'], ['printf', 'function'], ['0xFF', 'number']] },
+  { aliases: ['py', 'python', 'PYTHON', 'python3', 'py3'], source: 'def sample(x):\n    value = 7 // 2 # 中文注释\n    return "text\\n"', checks: [['def', 'keyword'], ['//', 'operator'], ['中文注释', 'comment'], ['text', 'string'], ['\\n', 'escape']] },
+  { aliases: ['js', 'javascript'], source: 'const message = "ready\\n"; console.log(message);', checks: [['const', 'keyword'], ['ready', 'string'], ['\\n', 'escape'], ['log', 'function']] },
   { aliases: ['matlab', 'octave'], source: "a = A.'; b = A'; c = (A+B)';\ns = 'hello'; t = \"world\"; % 中文\nx = fft(a);", checks: [[".'", 'operator'], ["'hello'", 'string'], ['"world"', 'string'], ['中文', 'comment'], ['fft', 'function']] },
   { aliases: ['verilog', 'v', 'sv', 'systemverilog'], source: 'module blink;\nlogic [7:0] count = 8\'hFF;\n// 中文\ninitial $display("hello");\nendmodule', checks: [['module', 'keyword'], ["8'hFF", 'number'], ['中文', 'comment'], ['"hello"', 'string']] },
   { aliases: ['vhdl', 'vhd'], source: "eNtItY demo Is\nend demo;\nif clk'event and clk = '1' then -- 中文\nend if;", checks: [['eNtItY', 'keyword'], ["'event", 'meta'], ["'1'", 'string'], ['中文', 'comment']] },
