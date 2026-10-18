@@ -116,7 +116,9 @@ def create_form(root: Path, *, initial_profile=None, initial_file="", notice="")
     form.AutoScaleMode = AutoScaleMode.Dpi
     form.BackColor = Color.FromArgb(251, 251, 250)
     form.Font = Font("Microsoft YaHei UI", 9)
-    icon = RESOURCE_ROOT / "assets" / "app-icon.ico"
+    icon = RESOURCE_ROOT / "assets" / "launcher-icon.ico"
+    if not icon.is_file():
+        icon = RESOURCE_ROOT / "assets" / "app-icon.ico"
     if icon.is_file():
         form.Icon = Icon(str(icon))
     header = Panel()

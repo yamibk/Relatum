@@ -284,6 +284,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | `assets/editor-onboarding.css` | 编辑器新手引导的纸页浮窗、十一组有限播放演示、按钮反馈、深色与低动态适配。 |
 | `assets/vendor/` | 离线 MathJax / PDF.js / Mermaid。一般不要人工改。 |
 | `packaging/make_icon.py` | 用 Pillow 从源图生成 `assets/app-icon.ico`。 |
+| `packaging/make_launcher.py` | 从本次主图标生成灰阶 ICO，并保留程序归档生成独立图标的启动器 EXE；只在临时构建目录写入。 |
 | `packaging/make_font_subset.py` | 可选的 Noto Sans SC 字体子集再生成工具。 |
 
 实时预览和阅读模式的本地图片右键菜单提供“在资源管理器中打开 / Open in File Explorer”，打开所在目录并选中实际右键图片；实时预览保留正文菜单，图片文字输入框保留原右键确认收尾行为。`assets/note-live-editor.js` 用弱引用表在右键时读取图片最新范围和原引用，`assets/note-workspace.js` 提交前复核正文/选区或阅读渲染身份，避免旧菜单作用到新文档。右侧笔记本菜单在重命名之后提供同名入口，直接打开该本目录。均沿用共享菜单的再次右键收起、避让、隐藏释放和失败提示，不写入偏好或正文。
@@ -922,6 +923,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - WebView2 用户数据默认在 `%LOCALAPPDATA%\Canvas\WebView2`；启动时给 HTTP 磁盘缓存和媒体缓存分别设置 64MiB / 32MiB 参数上限。这不是整个用户目录或 Code/GPU Cache 的硬总上限，不要为清缓存误删 Cookies、localStorage 等用户状态。
 - 窗口状态版本是 `2`，尺寸以逻辑像素原子保存；完整模式使用 `data/window-state.json`，精简模式使用上述组合路径。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则首次还原会使用样式切换前留下的错误 normal placement。
 - 构建脚本输出 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、各自同级 `.exe.config` 和共用 `_internal/`；MSIX 暂存包排除启动器及其配置。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
+- 主程序保留本次选用的彩色图标；`packaging/make_launcher.py` 在暂存资产中生成七档尺寸（16–256px）的透明灰阶 `launcher-icon.ico`，沿用节点连线图案。启动器 EXE 先分离原 PyInstaller 归档、替换 PE 图标，再原样附回归档并更新校验和，核验归档一致后才进入发布替换步骤，不重复打包。启动器选择窗口优先使用灰阶图标，缺失时回退 `app-icon.ico`；实际主窗口与托盘仍用主图标。简单检查可在临时目录生成 ICO、检查尺寸/灰阶/透明度，并用现有 EXE 的临时副本核对图标、PE 校验和和归档，不必完整构建或修改已有发布包。
 - 构建会整体替换 `Relatum-release/`；若目录内已有 `canvases/`、`notes/` 或 `data/`，默认拒绝覆盖，除非显式 `-ForceReplaceUserData`。
 - 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
 - `build-desktop.ps1` 用构建环境的 Python 执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询；不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不依赖启动目录。不要改回含嵌套引号的 `python -c`，Windows PowerShell 5.1 会丢掉参数内引号；维护 BAT 默认仍调用该版本。验证可直接运行检查脚本，再运行维护 BAT 完整构建；输出应包含 `Note SQLite/FTS5 preflight` 和“构建完成”。
@@ -965,7 +967,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 Python 改动：
 
 ```powershell
-python -m py_compile .\app.py .\ai_plan.py .\desktop.py .\desktop_instance.py .\windows_wallpaper.py .\packaging\make_icon.py .\packaging\make_font_subset.py
+python -m py_compile .\app.py .\ai_plan.py .\desktop.py .\desktop_instance.py .\windows_wallpaper.py .\packaging\make_icon.py .\packaging\make_launcher.py .\packaging\make_font_subset.py
 ```
 
 改动 AI 计划协议、提示词、结构修复或 OpenAI 兼容参数降级时，还要运行：

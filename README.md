@@ -127,7 +127,7 @@ Relatum 是一款开源的 Windows 本地软件，提供画布、笔记、研究
 
 1. [下载最新版 `Relatum-release.zip`](https://github.com/yamibk/Relatum/releases/latest/download/Relatum-release.zip)。
 2. 将 ZIP 完整解压到一个可写目录。
-3. 双击 `Relatum.exe` 进入完整模式，或双击同图标的 `RelatumLauncher.exe` 选择本次功能后启动。
+3. 双击彩色图标的 `Relatum.exe` 进入完整模式，或双击黑白灰图标的 `RelatumLauncher.exe` 选择本次功能后启动。
 
 支持 Windows 10/11。目标电脑需要 Microsoft Edge WebView2 Runtime，Windows 10/11 通常已经安装。
 
@@ -177,7 +177,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
-输出位于项目同级的 `Relatum-release/`，包含同图标的 `Relatum.exe`、`RelatumLauncher.exe`、各自的 `.exe.config` 和共用 `_internal/`。请分发整个目录。构建脚本不会把 `data/`、`canvases/` 或 `notes/` 打进发布包。
+输出位于项目同级的 `Relatum-release/`，包含彩色图标的 `Relatum.exe`、黑白灰图标的 `RelatumLauncher.exe`、各自的 `.exe.config` 和共用 `_internal/`。启动器保留相同节点连线图案，选择窗口也使用灰阶图标；主窗口与托盘仍使用主程序图标。请分发整个目录。构建脚本不会把 `data/`、`canvases/` 或 `notes/` 打进发布包。
 
 ### 构建 Microsoft Store 包
 
@@ -232,7 +232,7 @@ node tests/launcher-package-memory.js <发布目录> <报告JSON路径> 3
 项目不需要 npm，也没有前端构建步骤。提交修改前至少运行：
 
 ```powershell
-python -m py_compile app.py desktop.py windows_wallpaper.py packaging\make_icon.py packaging\make_font_subset.py
+python -m py_compile app.py desktop.py windows_wallpaper.py packaging\make_icon.py packaging\make_launcher.py packaging\make_font_subset.py
 
 Get-ChildItem assets -Recurse -Filter *.js |
   Where-Object { $_.FullName -notmatch '\\vendor\\' } |

@@ -143,6 +143,10 @@ $PackAssets = Join-Path $BuildRoot 'assets'
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'assets') -Destination $PackAssets -Recurse -Force
 # Keep the runtime window/tray icon identical to the icon embedded in Relatum.exe.
 Copy-Item -LiteralPath $Icon -Destination (Join-Path $PackAssets 'app-icon.ico') -Force
+$LauncherScript = Join-Path $ProjectRoot 'packaging\make_launcher.py'
+$LauncherIcon = Join-Path $PackAssets 'launcher-icon.ico'
+& $Python $LauncherScript icon $Icon $LauncherIcon
+Assert-NativeSuccess 'Generating launcher icon'
 $FontTtf = Join-Path $PackAssets 'fonts\kose-font.ttf'
 if (Test-Path -LiteralPath $FontTtf) { Remove-Item -LiteralPath $FontTtf -Force }  # CSS uses woff2
 $RuntimeConfig = Join-Path $ProjectRoot 'packaging\Relatum.exe.config'
@@ -167,6 +171,13 @@ Assert-NativeSuccess 'Building desktop client'
 
 $BuiltDir = Join-Path (Join-Path $BuildRoot 'dist') $ExeName
 if (-not (Test-Path -LiteralPath $BuiltDir)) { throw ('Build output missing: ' + $BuiltDir) }
+# Reuse the same program archive and dispatch by filename, with a distinct icon.
+# Complete and verify the launcher before replacing the release folder.
+& $Python $LauncherScript exe (Join-Path $BuiltDir ($ExeName + '.exe')) `
+    (Join-Path $BuiltDir 'RelatumLauncher.exe') $LauncherIcon
+Assert-NativeSuccess 'Building launcher executable'
+Copy-Item -LiteralPath $RuntimeConfig -Destination (Join-Path $BuiltDir ($ExeName + '.exe.config'))
+Copy-Item -LiteralPath $RuntimeConfig -Destination (Join-Path $BuiltDir 'RelatumLauncher.exe.config')
 
 # -- 5. Replace the release folder. Refuse to erase local user data by accident. --
 $ReleaseCanvases = Join-Path $Release 'canvases'
@@ -179,11 +190,6 @@ if (((Test-Path -LiteralPath $ReleaseCanvases) -or (Test-Path -LiteralPath $Rele
 }
 Remove-TreeInside $Release $ReleaseParent
 Move-Item -LiteralPath $BuiltDir -Destination $Release
-Copy-Item -LiteralPath $RuntimeConfig -Destination (Join-Path $Release ($ExeName + '.exe.config'))
-# The same bootloader dispatches by filename before importing app/webview.
-# Sharing its archive also keeps both executables and runtime dependencies in sync.
-Copy-Item -LiteralPath (Join-Path $Release ($ExeName + '.exe')) -Destination (Join-Path $Release 'RelatumLauncher.exe')
-Copy-Item -LiteralPath $RuntimeConfig -Destination (Join-Path $Release 'RelatumLauncher.exe.config')
 
 # -- 6. Validate the clean distributable and remove temporary PyInstaller files. --
 $ReleaseExe = Join-Path $Release ($ExeName + '.exe')
@@ -195,6 +201,7 @@ if (-not (Test-Path -LiteralPath $ReleaseExe)) { throw ('Release exe missing: ' 
 if (-not (Test-Path -LiteralPath $ReleaseConfig)) { throw ('Runtime config missing from release: ' + $ReleaseConfig) }
 if (-not (Test-Path -LiteralPath (Join-Path $Release 'RelatumLauncher.exe'))) { throw 'Launcher missing from release.' }
 if (-not (Test-Path -LiteralPath (Join-Path $Release 'RelatumLauncher.exe.config'))) { throw 'Launcher runtime config missing.' }
+if (-not (Test-Path -LiteralPath (Join-Path $ReleaseAssets 'launcher-icon.ico'))) { throw 'Launcher icon missing.' }
 if (-not (Test-Path -LiteralPath (Join-Path $ReleaseAssets 'feature-catalog.json'))) { throw 'Feature catalog missing.' }
 if (-not (Test-Path -LiteralPath $ReleaseAssets)) { throw ('Release assets missing: ' + $ReleaseAssets) }
 if (Test-Path -LiteralPath $ReleaseTtf) { throw ('Build-only TTF leaked into release: ' + $ReleaseTtf) }
