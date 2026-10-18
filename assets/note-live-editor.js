@@ -66,12 +66,19 @@
     EditorState, EditorSelection, StateEffect, StateField, Transaction, EditorView, Decoration, WidgetType, Prec, Compartment,
     ViewPlugin, keymap, drawSelection, dropCursor, highlightSpecialChars,
     rectangularSelection, crosshairCursor, placeholder, highlightActiveLine,
-    syntaxTree, forceParsing, indentOnInput,
+    syntaxTree, forceParsing, indentOnInput, HighlightStyle, syntaxHighlighting,
     bracketMatching, markdown, markdownLanguage, markdownKeymap, history,
     historyKeymap, defaultKeymap, indentWithTab, searchKeymap,
     highlightSelectionMatches, closeBrackets, closeBracketsKeymap,
-    relatumCodeLanguages, relatumCodeHighlighting,
+    relatumCodeLanguages, relatumCodeStyle,
   } = CM;
+  // The public language scope also recognizes configured Markdown parsers.
+  // Keep program syntax colors inside embedded code languages, not Markdown.
+  const markdownHighlightScope = HighlightStyle.define([], { scope: markdownLanguage }).scope;
+  const codeHighlighting = relatumCodeStyle ? syntaxHighlighting({
+    scope: (nodeType) => !markdownHighlightScope(nodeType),
+    style: relatumCodeStyle.style,
+  }) : [];
   const focusEffect = StateEffect.define();
   const calloutFoldEffect = StateEffect.define();
   const imageTextProjectionEffect = StateEffect.define();
@@ -837,7 +844,7 @@
     eq(other) { return other.ordered === this.ordered && other.label === this.label; }
     toDOM() {
       const span = document.createElement('span');
-      span.className = 'note-live-list-marker';
+      span.className = 'note-live-list-marker' + (this.ordered ? '' : ' is-unordered');
       span.textContent = this.ordered ? this.label : '•';
       span.setAttribute('aria-hidden', 'true');
       return span;
@@ -4109,7 +4116,7 @@
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
         markdownCompartment.of(markdownExtensions()),
-        relatumCodeHighlighting || [],
+        codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(imageTextInputHandlers),
         EditorState.transactionFilter.of((transaction) => {
