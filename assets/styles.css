@@ -529,7 +529,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 }
 .note-live-inline-code { padding: .1em .3em; border-radius: 4px; color: #52604f; background: rgba(57, 65, 55, .065); font-size: .92em; }
 .note-live-editor-host .cm-line.note-live-math-source:not(.note-live-callout-line) {
-  background: rgba(0, 0, 0, .045);
+  background: var(--note-code-bg);
 }
 .note-live-image-source { color: var(--note-live-code); }
 .note-live-dangerous-source { color: #a05d51; }
@@ -883,9 +883,6 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host {
   --note-live-link: #8cab88;
   --note-live-math: #aaa0b9;
   --note-live-code: #b49c88;
-}
-body.start-page[data-start-theme="dark"] .note-live-editor-host .cm-line.note-live-math-source:not(.note-live-callout-line) {
-  background: rgba(255, 255, 255, .065);
 }
 
 .note-editor-fallback[hidden] { display: none; }
