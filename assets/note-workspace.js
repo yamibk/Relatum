@@ -382,6 +382,7 @@
     }
   }
   let bodyMenuContext = null, bodyMenuSubmenu = null, bodyMenuParent = null;
+  let imageCopyController = null;
   let contextOpen = false, contextFrame = 0, contextTimer = 0, contextSequence = 0, contextReturnFocus = null;
   let contextTooltipBlocked = false;
   let submenuFrame = 0, submenuTimer = 0, closingSubmenu = null;
@@ -429,6 +430,7 @@
       createFolderHere: '新建子文件夹', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
       importFailed: '导入失败', imported: '已导入 {count} 篇笔记', unsupportedSkipped: '已跳过 {count} 个不支持的文件',
       uploadFailed: '图片保存失败', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
+      imageCopyFailed: '复制图片失败，请检查图片是否可读取及剪贴板权限。', imageCopyTooLarge: '图片尺寸过大，无法复制。',
       missing: '尚未创建', noOutgoing: '当前笔记没有出链', noBacklinks: '当前笔记没有反向链接',
       unresolvedTitle: '创建这篇笔记？', unresolvedCopy: '“[[{target}]]”尚不存在。', cancel: '取消', create: '创建',
       externalOpenFailed: '无法打开外部链接',
@@ -458,6 +460,7 @@
       createFolderHere: 'New subfolder', noAssets: 'This note has no companion assets',
       revealFailed: 'Could not show this item in File Explorer', importFailed: 'Import failed', imported: 'Imported {count} notes',
       unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image',
+      imageCopyFailed: 'Could not copy image. Check that the image is readable and clipboard access is allowed.', imageCopyTooLarge: 'This image is too large to copy.',
       linkWarnings: 'Moved; {count} ambiguous links were unchanged', ambiguous: 'Duplicate note name', missing: 'Not created',
       noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', unresolvedTitle: 'Create this note?',
       unresolvedCopy: '“[[{target}]]” does not exist yet.', cancel: 'Cancel', create: 'Create',
@@ -2082,6 +2085,7 @@
     blockContextTooltip(false);
   }
   function closeContextMenu(options = {}) {
+    imageCopyController?.abort(); imageCopyController = null;
     cancelContextMotion(); contextOpen = false; bodyMenuContext = null; closeBodySubmenu({ instant: true });
     if (!contextMenu) return;
     contextMenu.inert = true; contextMenu.removeAttribute('aria-busy'); contextMenu.classList.remove('is-open');
@@ -3852,6 +3856,64 @@
       submenuTimer = setTimeout(() => { submenu.remove(); if (closingSubmenu === submenu) closingSubmenu = null; submenuTimer = 0; }, 170);
     }
   }
+  async function noteImageClipboardPng(context, signal) {
+    const check = () => {
+      if (signal.aborted || bodyMenuContext !== context || !noteWorkspaceVisible() || state.viewMode !== 'live'
+          || state.current?.path !== context.path || !liveEditor?.queryCommand('copy', context).enabled) {
+        throw new DOMException('Image copy cancelled', 'AbortError');
+      }
+    };
+    check();
+    const query = new URLSearchParams({ note: context.path, src: context.image.target, syntax: context.image.syntax || 'markdown' });
+    const response = await fetch('/api/note-asset?' + query, { signal });
+    check();
+    if (!response.ok) throw new Error('Image unavailable');
+    const blob = await response.blob();
+    check();
+    // PNG already has the clipboard format: do not decode or re-encode it.
+    if (blob.type === 'image/png') return blob;
+    if (!/^image\/(?:jpeg|webp|bmp|gif)$/.test(blob.type)) throw new Error('Unsupported image type');
+    const image = await createImageBitmap(blob);
+    let canvas;
+    try {
+      check();
+      const { width, height } = image;
+      if (!width || !height || width > 16384 || height > 16384 || width * height > 64 * 1024 * 1024) {
+        throw new RangeError(tr('imageCopyTooLarge'));
+      }
+      canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+      const drawing = canvas.getContext('2d');
+      if (!drawing) throw new Error('Canvas unavailable');
+      drawing.drawImage(image, 0, 0);
+      const png = await new Promise((resolve, reject) => canvas.toBlob(blob => {
+        if (blob) resolve(blob); else reject(new Error('PNG conversion failed'));
+      }, 'image/png'));
+      check();
+      return png;
+    } finally {
+      image.close();
+      if (canvas) canvas.width = canvas.height = 0;
+    }
+  }
+  async function copyBodyImage(context) {
+    if (!navigator.clipboard?.write || typeof ClipboardItem !== 'function'
+        || typeof ClipboardItem.supports === 'function' && !ClipboardItem.supports('image/png')) {
+      throw new Error('Image clipboard unavailable');
+    }
+    const controller = imageCopyController = new AbortController();
+    try {
+      let preparationError;
+      const png = noteImageClipboardPng(context, controller.signal).catch(error => { preparationError = error; throw error; });
+      // A host may reject write() without consuming the promised data.
+      png.catch(() => {});
+      // Start write() in the click handler, before fetching/decoding loses activation.
+      try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]); }
+      catch (error) { throw preparationError || error; }
+    } finally {
+      controller.abort();
+      if (imageCopyController === controller) imageCopyController = null;
+    }
+  }
   async function runBodyCommand(name) {
     const context = bodyMenuContext;
     if (!context || !liveEditor || !liveEditor.queryCommand(name, context).enabled || contextMenu.getAttribute('aria-busy') === 'true') return;
@@ -3865,8 +3927,11 @@
         const source = result.source.split('/').map(part => encodeURIComponent(part)).join('/');
         liveEditor.executeCommand(name, context, '![' + label + '|640x360](' + source + ')');
       } else if (name === 'copy' || name === 'cut') {
-        const text = context.selection.ranges.map((range) => context.doc.sliceString(range.from, range.to)).join('\n');
-        await navigator.clipboard.writeText(text);
+        if (name === 'copy' && context.image) await copyBodyImage(context);
+        else {
+          const text = context.selection.ranges.map((range) => context.doc.sliceString(range.from, range.to)).join('\n');
+          await navigator.clipboard.writeText(text);
+        }
         if (bodyMenuContext !== context) return;
         if (name === 'cut') liveEditor.executeCommand(name, context, '');
         else liveEditor.focus();
@@ -3902,7 +3967,9 @@
       } else liveEditor.executeCommand(name, context);
       if (bodyMenuContext === context) closeContextMenu();
     } catch (error) {
-      showToast(name === 'insert:canvas' ? error.message : language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
+      if (name === 'copy' && context.image) {
+        if (bodyMenuContext === context && noteWorkspaceVisible()) showToast(error instanceof RangeError ? error.message : tr('imageCopyFailed'), 'error');
+      } else showToast(name === 'insert:canvas' ? error.message : language() === 'en' ? 'Clipboard unavailable. Use the keyboard shortcut.' : '无法访问剪贴板，请使用键盘快捷键。', 'error');
     } finally { if (bodyMenuContext === context) contextMenu.removeAttribute('aria-busy'); }
   }
   function bodyCommandButton(name) {
@@ -3940,7 +4007,7 @@
   function openBodyContextMenu(payload) {
     if (!state.active || !state.current || state.viewMode === 'reading' || state.imageTextBusy || state.assetCleanupBusy) return;
     if (contextOpen) { closeContextMenu(); return; }
-    closeContextMenu({ instant: true }); bodyMenuContext = payload.context;
+    closeContextMenu({ instant: true }); bodyMenuContext = Object.assign({}, payload.context, { image: payload.image || null });
     const items = ['paragraph', 'insert'].map((kind) => {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = bodyCommandLabel(kind);
       button.dataset.noteSubmenu = kind; button.setAttribute('role', 'menuitem');
