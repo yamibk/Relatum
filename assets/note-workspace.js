@@ -432,7 +432,7 @@
       uploadFailed: '图片保存失败', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
       imageCopyFailed: '复制图片失败，请检查图片是否可读取及剪贴板权限。', imageCopyTooLarge: '图片尺寸过大，无法复制。',
       missing: '尚未创建', noOutgoing: '当前笔记没有出链', noBacklinks: '当前笔记没有反向链接',
-      unresolvedTitle: '创建这篇笔记？', unresolvedCopy: '“[[{target}]]”尚不存在。', cancel: '取消', create: '创建',
+      cancel: '取消',
       externalOpenFailed: '无法打开外部链接',
       expandFolder: '展开文件夹', collapseFolder: '收起文件夹', duplicateTitle: '已经存在一个同名文件',
       expandAll: '全部展开', collapseAll: '全部收起',
@@ -462,8 +462,7 @@
       unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image',
       imageCopyFailed: 'Could not copy image. Check that the image is readable and clipboard access is allowed.', imageCopyTooLarge: 'This image is too large to copy.',
       linkWarnings: 'Moved; {count} ambiguous links were unchanged', ambiguous: 'Duplicate note name', missing: 'Not created',
-      noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', unresolvedTitle: 'Create this note?',
-      unresolvedCopy: '“[[{target}]]” does not exist yet.', cancel: 'Cancel', create: 'Create',
+      noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', cancel: 'Cancel',
       externalOpenFailed: 'Could not open external link',
       expandFolder: 'Expand folder', collapseFolder: 'Collapse folder', duplicateTitle: 'A file with the same name already exists',
       expandAll: 'Expand all', collapseAll: 'Collapse all',
@@ -1136,18 +1135,36 @@
     } catch (error) { return text; }
   }
 
+  let wikiOpenTask = null;
   async function openWikiFromEditor(rawTarget) {
-    await ensureLinks();
-    const outgoing = outgoingForWiki(rawTarget);
-    if (outgoing && outgoing.path) {
-      const writtenTarget = String(rawTarget || '').split('|', 1)[0];
-      const hashAt = writtenTarget.indexOf('#');
-      const fragment = hashAt >= 0 ? writtenTarget.slice(hashAt + 1) : '';
-      if (await openNote(outgoing.path)) scheduleHeadingJump(fragment);
-      return;
-    }
-    if (outgoing && outgoing.state === 'ambiguous') { showToast(tr('ambiguous'), 'warning'); return; }
-    confirmCreateWiki(rawTarget);
+    const documentState = state.current, target = normalizedWikiTarget(rawTarget);
+    if (!documentState || !target || !noteWorkspaceVisible()) return;
+    const path = documentState.path, tab = state.activeTab, sequence = state.openSeq, visibility = noteVisibilityEpoch;
+    if (wikiOpenTask?.document === documentState && wikiOpenTask.target === target
+        && wikiOpenTask.sequence === sequence && wikiOpenTask.visibility === visibility) return wikiOpenTask.promise;
+    const task = { document: documentState, target, sequence, visibility };
+    const valid = () => wikiOpenTask === task && noteWorkspaceVisible() && visibility === noteVisibilityEpoch
+      && state.current === documentState && documentState.path === path && state.activeTab === tab && state.openSeq === sequence;
+    wikiOpenTask = task;
+    task.promise = (async () => {
+      if (!(await flushSave(documentState)) || !valid()) return;
+      if (!(await ensureLinks()) || !valid()) return;
+      const outgoing = outgoingForWiki(rawTarget);
+      if (outgoing && outgoing.path) {
+        const writtenTarget = String(rawTarget || '').split('|', 1)[0];
+        const hashAt = writtenTarget.indexOf('#');
+        const fragment = hashAt >= 0 ? writtenTarget.slice(hashAt + 1) : '';
+        if (await openNote(outgoing.path)) scheduleHeadingJump(fragment);
+        return;
+      }
+      if (outgoing && outgoing.state === 'ambiguous') { showToast(tr('ambiguous'), 'warning'); return; }
+      const parts = target.replace(/\\/g, '/').split('/').filter(Boolean);
+      const name = parts.pop(), hasPath = parts.length > 0;
+      if (!name) return;
+      return createEntry('note', { parent: hasPath ? parts.join('/') : parentPath(path), name, createParents: hasPath, guard: valid });
+    })();
+    try { return await task.promise; }
+    finally { if (wikiOpenTask === task) wikiOpenTask = null; }
   }
 
   function normalizedLinkTarget(rawTarget) {
@@ -3174,7 +3191,7 @@
     outgoingCountEl.textContent = String(outgoing.length); backlinksCountEl.textContent = String(backlinks.length);
     function list(target, items, kind) {
       const fragment = document.createDocumentFragment();
-      items.forEach((item) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'note-link-card'; if (kind === 'outgoing') button.dataset.state = item.state || ''; const title = document.createElement('strong'); title.textContent = item.label || noteTitle(item.path || item.rawTarget); const meta = document.createElement('span'); meta.textContent = kind === 'backlink' ? item.path + (item.line ? ' · L' + item.line : '') : item.state === 'ambiguous' ? tr('ambiguous') : item.state !== 'resolved' ? tr('missing') : item.path; const excerpt = document.createElement('small'); excerpt.textContent = item.excerpt || ''; button.append(title, meta, excerpt); if (item.path) button.addEventListener('click', () => openNote(item.path)); else if (item.state === 'missing') button.addEventListener('click', () => confirmCreateWiki(item.rawTarget)); else button.disabled = true; fragment.appendChild(button); });
+      items.forEach((item) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'note-link-card'; if (kind === 'outgoing') button.dataset.state = item.state || ''; const title = document.createElement('strong'); title.textContent = item.label || noteTitle(item.path || item.rawTarget); const meta = document.createElement('span'); meta.textContent = kind === 'backlink' ? item.path + (item.line ? ' · L' + item.line : '') : item.state === 'ambiguous' ? tr('ambiguous') : item.state !== 'resolved' ? tr('missing') : item.path; const excerpt = document.createElement('small'); excerpt.textContent = item.excerpt || ''; button.append(title, meta, excerpt); if (item.path) button.addEventListener('click', () => openNote(item.path)); else if (item.state === 'missing') button.addEventListener('click', () => openWikiFromEditor(item.rawTarget)); else button.disabled = true; fragment.appendChild(button); });
       if (!items.length) { const message = document.createElement('p'); message.className = 'note-link-empty'; message.textContent = kind === 'outgoing' ? tr('noOutgoing') : tr('noBacklinks'); fragment.appendChild(message); }
       target.replaceChildren(fragment);
     }
@@ -3422,6 +3439,7 @@
   }
   async function createEntry(kind, options) {
     if (noteMovePromise) await waitForNoteMove();
+    if (options?.guard && !options.guard()) return;
     const parent = options && Object.prototype.hasOwnProperty.call(options, 'parent') ? options.parent : folderTarget();
     if (parent === null) return;
     if (state.current) flushSave(state.current);
@@ -3437,6 +3455,7 @@
         payload.language = language();
       }
       const result = await post('/api/note-create', payload);
+      if (options?.guard && !options.guard()) return result;
       if (kind === 'note' && noteBrowser) noteBrowser.showDocument();
       state.entries = result.tree && result.tree.entries || state.entries;
       rebuildEntryIndex();
@@ -4139,17 +4158,6 @@
     } catch (error) { showToast(error.message || tr('readFailed'), 'error'); }
     finally { notebookCreateRunning = false; }
   }
-  function modalConfirm(title, copy) {
-    return promptNoteModal(title, false, (dialog, finish) => {
-      const paragraph = document.createElement('p'); paragraph.textContent = copy;
-      const actions = document.createElement('footer'); actions.className = 'note-modal-actions';
-      const cancel = contextButton(tr('cancel'), () => finish(false));
-      actions.append(cancel, contextButton(tr('create'), () => finish(true)));
-      dialog.append(paragraph, actions); return cancel;
-    });
-  }
-  async function confirmCreateWiki(rawTarget) { const target = normalizedWikiTarget(rawTarget); if (!target || !(await modalConfirm(tr('unresolvedTitle'), tr('unresolvedCopy', { target })))) return; const parts = target.replace(/\\/g, '/').split('/').filter(Boolean); const name = parts.pop(); const hasPath = parts.length > 0; await createEntry('note', { parent: hasPath ? parts.join('/') : state.current ? parentPath(state.current.path) : '', name, createParents: hasPath }); }
-
   function renderGuide() {
     if (!guideContent || !window.MarkdownMini?.noteBlockCatalog) return;
     const lang = language();
@@ -4578,7 +4586,7 @@
     stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates();
     setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
-    closeNoteModal();
+    closeNoteModal(); wikiOpenTask = null;
     state.active = false;
     indexActivity(false);
     cancelSideClose();
@@ -4595,7 +4603,7 @@
     if (!root.hidden && state.active && noteWorkspaceVisible()) {
       resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch();
     }
-    if (root.hidden) { closeNoteModal(); noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
+    if (root.hidden) { closeNoteModal(); wikiOpenTask = null; noteGraphIntentSequence++; noteGraph?.deactivate(); cancelSideClose(); clearClosedNotebookTree(); }
     else if (state.active && graphPresentation) resumeNoteGraph();
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
