@@ -16,19 +16,21 @@ param(
     [string]$Version = '12.4.0.0',
     [switch]$SkipInstall,
     [switch]$SkipDesktopBuild,
-    [switch]$KeepBuildArtifacts
+    [switch]$KeepBuildArtifacts,
+    [string]$BuildHome = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $PSScriptRoot 'scripts\desktop-build-common.ps1')
+$BuildHomePath = Get-DesktopBuildHome $BuildHome
 $ReleaseParent = Split-Path $ProjectRoot -Parent
 $PortableRelease = Join-Path $ReleaseParent 'Relatum-release'
 $OutputRoot = Join-Path $ReleaseParent 'Relatum-store'
-$BuildParent = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
-$StageRoot = Join-Path $BuildParent 'relatum-msix-stage'
+$BuildParent = Join-Path $BuildHomePath 'work'
+$StageRoot = Join-Path $BuildParent ('msix-' + [guid]::NewGuid().ToString('N'))
 $ManifestTemplate = Join-Path $ProjectRoot 'packaging\AppxManifest.xml.in'
 $AssetScript = Join-Path $ProjectRoot 'packaging\make_msix_assets.py'
-$BuildPython = Join-Path (Join-Path $BuildParent 'canvas-desktop-build-venv') 'Scripts\python.exe'
 
 function Assert-NativeSuccess([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw ($Step + ' failed (exit ' + $LASTEXITCODE + ').') }
@@ -70,12 +72,18 @@ foreach ($part in $versionParts) {
 }
 
 if (-not $SkipDesktopBuild) {
-    $desktopArgs = @()
-    if ($SkipInstall) { $desktopArgs += '-SkipInstall' }
-    if ($KeepBuildArtifacts) { $desktopArgs += '-KeepBuildArtifacts' }
+    $desktopArgs = @{ BuildHome = $BuildHomePath }
+    if ($SkipInstall) { $desktopArgs.SkipInstall = $true }
+    if ($KeepBuildArtifacts) { $desktopArgs.KeepBuildArtifacts = $true }
     & (Join-Path $ProjectRoot 'build-desktop.ps1') @desktopArgs
 }
 
+$msixSession = $null
+try {
+$msixSession = Enter-DesktopBuild $BuildHomePath 'msix'
+$BuildPython = Get-PreparedDesktopPython $BuildHomePath
+& $BuildPython -I -B -u (Join-Path $ProjectRoot 'scripts\desktop_build.py') check --home $BuildHomePath
+Assert-NativeSuccess 'Checking prepared build environment'
 $ReleaseExe = Join-Path $PortableRelease 'Relatum.exe'
 if (-not (Test-Path -LiteralPath $ReleaseExe)) {
     throw ('Portable build output is missing: ' + $ReleaseExe)
@@ -92,7 +100,7 @@ if (-not (Test-Path -LiteralPath $AssetScript)) {
     throw ('MSIX asset generator is missing: ' + $AssetScript)
 }
 if (-not (Test-Path -LiteralPath $BuildPython)) {
-    throw ('Build Python is missing. Run without -SkipDesktopBuild first: ' + $BuildPython)
+    throw ('Build Python is missing. Run prepare-desktop.ps1 first: ' + $BuildPython)
 }
 
 $MakeAppx = Find-WindowsSdkTool 'MakeAppx.exe'
@@ -142,3 +150,7 @@ Write-Host ''
 Write-Host ('MSIX package complete: ' + $MsixPath)
 Write-Host ('Partner Center upload: ' + $UploadPath)
 Write-Host 'Upload the .msixupload file on the Package page.'
+} catch {
+    Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
+    exit 1
+} finally { Exit-DesktopBuild $msixSession }

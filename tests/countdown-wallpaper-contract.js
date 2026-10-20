@@ -41,7 +41,9 @@ assert(desktop.includes('window.hide()'));
 assert(wallpaper.includes('family="AF_PIPE"'));
 assert(wallpaper.includes('FindWindowExW(None, owner, "WorkerW", None)'));
 assert(!wallpaper.includes('Return SHELLDLL_DefView'));
-assert(build.includes("'pystray==0.19.5'"));
-assert(build.includes('--hidden-import pystray._win32'));
+const desktopLock = JSON.parse(fs.readFileSync(path.join(root, 'packaging/desktop-build-lock.json'), 'utf8'));
+const desktopBuilder = fs.readFileSync(path.join(root, 'scripts/desktop_build.py'), 'utf8');
+assert(desktopLock.packages.some(item => item.name === 'pystray' && item.version === '0.19.5'));
+assert(desktopBuilder.includes("'--hidden-import', 'pystray._win32'"));
 
 console.log('countdown wallpaper contract passed');

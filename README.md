@@ -171,13 +171,19 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 ## 构建 Windows 桌面版
 
-桌面构建支持 Python 3.9–3.12，笔记索引要求运行时 SQLite ≥3.43 且支持 FTS5。构建脚本先检查 trigram 和短字符检索能力，再在临时环境中使用 PyWebView、PyInstaller、pystray 和 Pillow：
+首次使用双击 `Relatum-维护工具/准备Relatum构建环境.bat`，需要联网。以后双击 `构建Relatum-release.bat`，日常打包不联网。简短操作说明见 [打包新手说明](Relatum-维护工具/打包新手说明.md)。
+
+构建使用 `%LOCALAPPDATA%/RelatumBuild` 下独立固定的 Windows x64 Python 3.12.15，不依赖系统 Python 或 Codex。运行时和全部桌面依赖的版本、下载地址及 SHA-256 固定在 `packaging/desktop-build-lock.json`；安装包保留在缓存中，`离线修复Relatum构建环境.bat` 可在缓存完整时离线修复。环境检查包含依赖导入、版本、`pip check` 和 SQLite ≥3.43 的 FTS5/短字符查询。
+
+命令行入口（普通使用不需要输入）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
 输出位于项目同级的 `Relatum-release/`，包含彩色图标的 `Relatum.exe`、黑白灰图标的 `RelatumLauncher.exe`、各自的 `.exe.config` 和共用 `_internal/`。启动器保留相同节点连线图案，选择窗口也使用灰阶图标；主窗口与托盘仍使用主程序图标。请分发整个目录。构建脚本不会把 `data/`、`canvases/` 或 `notes/` 打进发布包。
+
+环境缺失时打包立即停止，不自动安装；通过 `prepare-desktop.ps1` 显式准备，`-Offline` 只读缓存。`build-desktop.ps1 -CheckOnly` 只检查环境，旧 `-SkipInstall` 参数仍可使用。`-OutputDirectory` 指定独立产物目录，`-KeepBuildArtifacts` 保留本次暂存内容。日志保存在构建环境的 `logs/`，可双击维护工具中的日志入口打开。环境准备和打包互斥，新产物完整验证后才替换旧目录，替换失败回滚；默认拒绝覆盖含用户数据的旧目录。显式 `-ForceReplaceUserData` 也会保留含数据的旧目录备份，不直接删除。
 
 ### 构建 Microsoft Store 包
 

@@ -1,10 +1,11 @@
 """Convert the checked-in icon source PNG into a transparent Windows icon."""
 from pathlib import Path
+import sys
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = Path(__file__).resolve().parent / "icon-source.png"
-TARGET = ROOT / "assets" / "app-icon.ico"
+TARGET = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "assets" / "app-icon.ico"
 
 SIZE = 256
 

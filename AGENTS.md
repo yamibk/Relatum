@@ -223,7 +223,7 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 | `assets/feature-runtime.js`、`assets/start-workspace-runtime.js`、`assets/start-shell.js` | 服务端先注入有效功能选择，首绘恢复跳过禁用工作区；共用工作区生命周期负责笔记/研究/生涯加载、切换和预热。没有画布首页时只加载轻量共用外壳，保留主题、笔记字号、桌面尺寸与生涯设置。 |
 | `assets/study-activity.js` | 从学习运行时拆出的活跃页；独立加载年度历史、热力图和足迹星图并保持原有空闲预热。学习脚本只通过可选的 `StudyActivity.reload()` 通知失效。 |
 | `windows_wallpaper.py` | Windows 倒数日动态桌面背景宿主；由主进程管理托盘与生命周期，并从同一个 `Relatum.exe` 启动隔离的只读 WebView2 子进程，严格挂载到 Explorer 的专用全屏 `WorkerW`，同时负责主屏尺寸跟踪、单背景互斥、进程间通信和安全清理。 |
-| `build-desktop.ps1` | PyInstaller onedir 便携版打包，输出 `Relatum-release/Relatum.exe`；构建暂存时会把本次选定的 EXE 图标同步为运行时窗口/任务栏/托盘共用的 `assets/app-icon.ico`，避免 Windows 在不同路径显示两套图标。脚本保持 ASCII。 |
+| `build-desktop.ps1` | 离线 PyInstaller onedir 打包入口；`prepare-desktop.ps1` 独立准备环境，`scripts/desktop-build-common.ps1` 管固定运行时、锁和日志，`scripts/desktop_build.py` 管依赖校验、缓存安装、暂存及发布替换。`packaging/desktop-build-lock.json` 固定运行时和全部依赖版本/地址/SHA-256。输出 `Relatum-release/Relatum.exe`；本次图标同步到暂存 `assets/app-icon.ico`。PowerShell 和 BAT 保持 ASCII。 |
 | `build-msix.ps1` | Microsoft Store x64 MSIX 打包；复用便携版产物，生成匹配商店身份的清单与图标，输出 `Relatum-store/*.msixupload`。脚本保持 ASCII。 |
 | `start.ps1`、`打开画布.bat` | 源码模式启动器，查找 Python 并运行 `app.py`。 |
 | `index.html` | 起步页壳，书脊导航、最近画布、树状/学习/速记/日历/复习/专注入口。 |
@@ -926,9 +926,9 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 窗口状态版本是 `2`，尺寸以逻辑像素原子保存；完整模式使用 `data/window-state.json`，精简模式使用上述组合路径。桌面壳安装无边框样式后必须先在普通态落实保存的还原尺寸，再按记忆状态最大化；否则首次还原会使用样式切换前留下的错误 normal placement。
 - 构建脚本输出 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、各自同级 `.exe.config` 和共用 `_internal/`；MSIX 暂存包排除启动器及其配置。配置文件通过 .NET Framework `loadFromRemoteSources` 允许加载被 Windows 标记为来自 Web 的随包 pythonnet 程序集；分发时不能漏掉。不要再写旧的 `画布-release`。
 - 主程序保留本次选用的彩色图标；`packaging/make_launcher.py` 在暂存资产中生成七档尺寸（16–256px）的透明灰阶 `launcher-icon.ico`，沿用节点连线图案。启动器 EXE 先分离原 PyInstaller 归档、替换 PE 图标，再原样附回归档并更新校验和，核验归档一致后才进入发布替换步骤，不重复打包。启动器选择窗口优先使用灰阶图标，缺失时回退 `app-icon.ico`；实际主窗口与托盘仍用主图标。简单检查可在临时目录生成 ICO、检查尺寸/灰阶/透明度，并用现有 EXE 的临时副本核对图标、PE 校验和和归档，不必完整构建或修改已有发布包。
-- 构建会整体替换 `Relatum-release/`；若目录内已有 `canvases/`、`notes/` 或 `data/`，默认拒绝覆盖，除非显式 `-ForceReplaceUserData`。
-- 构建环境参考 `README.md`：Python 3.9-3.12，`pywebview==6.2.1`，`pyinstaller==6.20.0`，`pystray==0.19.5` 提供 Windows 托盘，Pillow 用于应用与托盘图标。
-- `build-desktop.ps1` 用构建环境的 Python 执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询；不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不依赖启动目录。不要改回含嵌套引号的 `python -c`，Windows PowerShell 5.1 会丢掉参数内引号；维护 BAT 默认仍调用该版本。验证可直接运行检查脚本，再运行维护 BAT 完整构建；输出应包含 `Note SQLite/FTS5 preflight` 和“构建完成”。
+- 新产物先在发布目录同级暂存并完整校验，再将旧目录改名备份、切入新目录，切入失败回滚；源码与用户数据不进入打包。递归发现 `canvases/`、`notes/`、`data/`、画布/素材或敏感文件时默认拒绝覆盖。显式 `-ForceReplaceUserData` 也保留含数据的旧目录备份，不删除用户数据；清理只作用于已验证边界内的本次暂存目录或干净旧包，拒绝重解析点。默认输出仍在项目同级，`-OutputDirectory` 必须在源码仓库外。
+- 构建环境位于 `%LOCALAPPDATA%/RelatumBuild`，固定 Windows x64 Python 3.12.15 便携发行包，不依赖 `%TEMP%`、系统 PATH 或 Codex Python；依赖包括 `pywebview==6.2.1`、`pyinstaller==6.20.0`、`pystray==0.19.5`、Pillow 及完整传递依赖，精确版本/下载地址/哈希以锁文件为准。环境准备显式运行 `prepare-desktop.ps1`，`-Offline` 只用校验通过的缓存；新环境以唯一最终路径创建，完整验证后才原子切换当前锁对应的记录，失败保留原环境。日常构建不安装、不解析新依赖、不联网；`-SkipInstall` 兼容保留，`-CheckOnly` 只检查。两入口共用文件锁、独立暂存和 `logs/` 日志；`-BuildHome` 或 `RELATUM_BUILD_HOME` 可用于隔离验收，MSIX 共用同一环境。
+- 构建先核对 Python/依赖版本、真实模块导入和 `pip check`，再执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询，不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不要改回 PowerShell 内嵌 `python -c`。维护 BAT 只调用 Windows PowerShell 5.1，不判断环境或解析源码；新手使用准备、离线修复、检查、打包及打开日志五个双击入口，步骤见 `Relatum-维护工具/打包新手说明.md`。成功输出包含 `Note SQLite/FTS5 preflight` 和 `Build complete`。
 
 ## 11. 验证清单
 
@@ -1224,6 +1224,7 @@ Invoke-WebRequest http://127.0.0.1:8799/api/runtime
 
 - 先读 `README.md` 的“构建 Windows 桌面版”章节。
 - 只在用户要求或任务确实需要时运行 `build-desktop.ps1`。
+- 构建系统改动运行 `python -B -m unittest tests.test_desktop_build` 和 `node tests/countdown-wallpaper-contract.js`，覆盖依赖缺失/损坏、下载校验/超时、并发、路径边界、真实文件占用、用户数据保护及发布回滚。用 Windows PowerShell 5.1 对独立 `-OutputDirectory` 连续离线构建两次，再设置 `RELATUM_PLAYWRIGHT` 运行 `node tests/desktop-build-package.js <独立成品目录>`；后者先复制整个产物，仅在一次性数据根测试主程序、启动器、笔记短字符搜索、双链直接创建和关闭，不运行原始成品。环境准备可用 `prepare-desktop.ps1 -Offline` 验证缓存复用；禁止为了验收清理整机 `%TEMP%`，只切换到本次专用空临时目录。
 - 改主实例、激活或 IPC 时运行 `python -m unittest tests.test_desktop_instance tests.test_desktop_preferences tests.test_launcher_native tests.test_windows_wallpaper tests.test_runtime_paths` 与 `node tests/desktop-preferences-regression.js`。同根完整模式重复启动只有一个主窗口；精简互不重叠最多四主窗，重叠整次拒绝。`node tests/workspace-multiopen-package.js <发布目录> <报告JSON> all` 验实际四窗、保存、换端口偏好、异常重启及三轮完整/两窗/四窗资源测量；`RELATUM_SOURCE=1` 与 `RELATUM_PYTHON` 可对源码目录运行 `qa`。WebView2 子进程不算主实例。构建可用 `-OutputDirectory <新目录>` 保留旧发布包和用户数据。
 - 验收 `Relatum-release/Relatum.exe`、`RelatumLauncher.exe`、两份同级 `.exe.config`、`_internal/assets/feature-catalog.json` 与全部资产，确认没有把 `AI笔记创作指南.md`、`canvases/` 或 `data/` 打进包里。
 
