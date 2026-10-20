@@ -485,6 +485,20 @@ body { margin: 0; }
       // interactions remain covered by note-canvas-browser.js.
       window.RelatumNoteCanvas = { mount() { return { update() {}, destroy() {} }; } };
     });
+    const equation6 = String.raw`\[
+\mathrm{CRR}_\pi
+=100\%\times\frac{C_{\mathrm{B0}}-C_\pi}{C_{\mathrm{arr}}}. \tag{6}
+\]`;
+    const equation10 = String.raw`\[
+q^{\mathrm{acc}}_{i,t}+q^{\mathrm{rej}}_{i,t}
++q^{\mathrm{del}}_{i,t}+q^{\mathrm{sw}}_{i,t}
+=q^{\mathrm{guide}}_{i,t}. \tag{10}
+\]`;
+    const precisionRecall = String.raw`\[
+\mathrm{Precision}=\frac{TP}{TP+FP},\qquad
+\mathrm{Recall}=\frac{TP}{TP+FN},
+\]`;
+    const mathVariants = [['light', 1280, 1], ['dark', 760, 1.35], ['light', 620, .8], ['dark', 620, 1.4]];
     const compactChecks = [];
     const fixtures = [
       ['math', '1\n$$a^2+b^2=c^2$$\n2', 1, 0],
@@ -501,6 +515,10 @@ body { margin: 0; }
       ['math-only', '$$x^2$$', 1, 0],
       ['multiline-only', '$$\n\\frac{1}{x}\n$$', 1, 0],
       ['wide-math', '1\n$$' + Array(100).fill('x^2').join('+') + '$$\n2', 1, 0],
+      ['tagged-fraction', '1\n' + equation6 + '\n2', 1, 0],
+      ['tagged-sum', '1\n' + equation10 + '\n2', 1, 0],
+      ['precision-recall', '1\n' + precisionRecall + '\n2', 1, 0],
+      ['wide-tagged-math', '1\n$$' + Array(100).fill('x^2').join('+') + String.raw`\tag{30}$$` + '\n2', 1, 0],
       ['rule', '1\n\n---\n2', 1, 1],
       ['rule-blank-lines', '1\n\n---\n\n2', 1, 2],
       ['rule-multiple-blanks', '1\n\n\n---\n\n\n2', 1, 4],
@@ -511,7 +529,7 @@ body { margin: 0; }
       ['rule-only', '---', 1, 0],
       ['rule-consecutive', '1\n\n---\n***\n___\n2', 3, 1],
     ];
-    for (const [theme, width, scale] of [['light', 1280, 1], ['dark', 760, 1.35]]) {
+    for (const [theme, width, scale] of mathVariants) {
       await page.setViewportSize({ width, height: 960 });
       await page.evaluate(({ theme, scale }) => {
         document.body.dataset.startTheme = theme;
@@ -531,8 +549,17 @@ body { margin: 0; }
           const content = editor.view.contentDOM;
           const math = [...content.querySelectorAll('.is-math')].map(block => {
             const container = block.querySelector('mjx-container'), style = getComputedStyle(container);
+            const rect = block.getBoundingClientRect(), mathRect = container.querySelector('mjx-math').getBoundingClientRect();
+            const assistive = container.querySelector('mjx-assistive-mml');
             return { height: block.getBoundingClientRect().height, margin: style.marginTop, overflowY: style.overflowY,
-              width: block.clientWidth, scrollWidth: block.scrollWidth, heightOverflow: block.scrollHeight - block.clientHeight };
+              width: block.clientWidth, scrollWidth: block.scrollWidth, heightOverflow: block.scrollHeight - block.clientHeight,
+              glyphsFit: mathRect.top >= rect.top - 1 && mathRect.bottom <= rect.bottom + 1,
+              assistiveHeight: assistive?.getBoundingClientRect().height, assistiveText: assistive?.textContent,
+              labels: [...container.querySelectorAll('mjx-labels mjx-mtd')].map(label => {
+                const bounds = label.getBoundingClientRect();
+                return { id: label.id, fits: bounds.top >= rect.top - 1 && bounds.bottom <= rect.bottom + 1
+                  && bounds.left >= rect.left - 1 && bounds.right <= rect.left + block.scrollWidth + 1 };
+              }) };
           });
           const rules = [...content.querySelectorAll('.is-rule')].map(block => {
             const rect = block.getBoundingClientRect(), style = getComputedStyle(block);
@@ -548,6 +575,11 @@ body { margin: 0; }
           assert.equal(math.margin, '0px');
           assert.equal(math.overflowY, 'visible', 'MathJax glyphs must not be clipped by their container');
           assert(math.heightOverflow <= 2, name + ' must fit vertically in its outer scroller');
+          assert(math.glyphsFit, name + ' must retain the full visible formula height');
+          assert.equal(math.assistiveHeight, 1, 'the accessibility copy must not enlarge scrollable bounds');
+          assert(math.assistiveText, 'the hidden MathML must remain available to assistive technology');
+          assert(math.labels.every(label => label.fits), name + ' must retain the full equation number');
+          if (name.startsWith('tagged-')) assert.equal(math.labels.length, 1, 'tagged formulas must keep their number');
         }
         for (const rule of layout.rules) {
           assert.equal(rule.marginTop, '0px');
@@ -557,9 +589,13 @@ body { margin: 0; }
           assert(rule.width > 100, 'rules must retain the text column width');
         }
         if (name === 'math') assert(layout.math[0].height < 45 * scale, 'simple math must use its measured height and modest padding');
-        if (name === 'wide-math') {
+        if (name === 'wide-math' || name === 'wide-tagged-math') {
           assert(layout.math[0].scrollWidth > layout.math[0].width + 100, 'wide formulas must scroll in the outer block');
           assert(layout.contentWidth <= width, 'wide formulas must not expand the editor beyond the viewport');
+          assert(await page.evaluate(() => {
+            const block = editor.view.contentDOM.querySelector('.is-math');
+            block.scrollLeft = block.scrollWidth; return block.scrollLeft > 100;
+          }), 'wide formulas must allow actual horizontal scrolling');
         }
         if (value.endsWith('\n2')) {
           const point = await page.evaluate(() => {
@@ -584,8 +620,86 @@ body { margin: 0; }
         }
         compactChecks.push({ name, theme, scale, ...layout });
         if (name === 'multiline') await page.screenshot({ path: path.join(output, 'compact-math-' + theme + '.png') });
+        if (name === 'tagged-fraction') await page.screenshot({ path: path.join(output, 'tagged-math-' + theme + '-' + scale + '.png') });
         if (name === 'rule') await page.screenshot({ path: path.join(output, 'compact-rule-' + theme + '.png') });
       }
+    }
+    // Opaque source-line backgrounds must not hide the native primary
+    // selection while CodeMirror's drawn selection remains underneath them.
+    const mathSelectionChecks = [];
+    const mathSelectionSource = '前文\n\n' + equation6 + '\n\n后文';
+    const selectionFrom = mathSelectionSource.indexOf('mathrm') + 2;
+    const selectionTo = mathSelectionSource.indexOf('tag') + 4;
+    const sourcePoint = position => page.evaluate(position => {
+      const point = editor.view.domAtPos(position), range = document.createRange();
+      range.setStart(point.node, point.offset); range.collapse(true);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + .5, y: (rect.top + rect.bottom) / 2 };
+    }, position);
+    const assertMathSelection = async gesture => {
+      const result = await page.evaluate(() => {
+        const view = editor.view, main = view.state.selection.main;
+        const data = new DataTransfer();
+        view.contentDOM.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, clipboardData: data }));
+        const lines = [...view.contentDOM.querySelectorAll('.cm-line.note-live-math-source')];
+        return { from: main.from, to: main.to, anchor: main.anchor, head: main.head,
+          selected: view.state.sliceDoc(main.from, main.to), native: String(window.getSelection()),
+          copied: data.getData('text/plain'), value: editor.snapshot().value,
+          colors: lines.flatMap(line => [line, ...line.querySelectorAll('*')])
+            .map(node => getComputedStyle(node, '::selection').backgroundColor) };
+      });
+      assert(result.selected.includes('\n'), gesture + ' must select across formula source lines: ' + JSON.stringify(result));
+      assert.equal(result.native, result.selected, gesture + ' must retain the native text selection');
+      assert.equal(result.copied, result.selected, gesture + ' must copy the exact formula source');
+      assert.equal(result.value, mathSelectionSource);
+      assert(result.colors.length > 0 && result.colors.every(color => color === 'rgba(116, 133, 104, 0.19)'),
+        gesture + ' must paint the native selection above the opaque background');
+      return result;
+    };
+    for (const [theme, width, scale] of mathVariants) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.evaluate(({ theme, scale, value }) => {
+        document.body.dataset.startTheme = theme;
+        document.body.style.setProperty('--note-font-scale', String(scale));
+        editor.setDocument({ value, notePath: 'math-selection.md', anchor: value.length, head: value.length });
+        editor.view.contentDOM.blur();
+      }, { theme, scale, value: mathSelectionSource });
+      await page.locator('.is-math').click(); await settle();
+      for (const reverse of [false, true]) {
+        // Starting inside the previous selection initiates native text drag
+        // and drop. Collapse it before testing a fresh selection gesture.
+        await page.evaluate(at => {
+          editor.view.dispatch({ selection: { anchor: at, head: at } }); editor.focus();
+        }, selectionFrom);
+        await settle();
+        const start = await sourcePoint(reverse ? selectionTo : selectionFrom);
+        await page.mouse.move(start.x, start.y); await page.mouse.down();
+        await settle();
+        const end = await sourcePoint(reverse ? selectionFrom : selectionTo);
+        await page.mouse.move(end.x, end.y, { steps: 8 }); await page.mouse.up(); await settle();
+        const result = await assertMathSelection(reverse ? 'reverse drag' : 'forward drag');
+        assert(result.selected.includes('CRR') && result.selected.includes('times'), 'drag must cover both formula source lines');
+        assert.equal(result.anchor > result.head, reverse, 'drag direction must retain its source anchor');
+      }
+      await page.evaluate(() => {
+        const at = editor.view.state.doc.toString().indexOf('\\[');
+        editor.view.dispatch({ selection: { anchor: at, head: at } }); editor.focus();
+      });
+      await page.keyboard.press('Shift+ArrowDown'); await page.keyboard.press('Shift+ArrowDown');
+      await page.keyboard.press('Shift+End'); await settle();
+      const keyboard = await assertMathSelection('keyboard selection');
+      assert.equal(keyboard.from, mathSelectionSource.indexOf('\\['), 'keyboard selection must include the opening delimiter');
+      await page.screenshot({ path: path.join(output, 'math-selection-' + theme + '-' + scale + '.png') });
+      await page.evaluate(() => editor.setSourceMode(true)); await settle();
+      assert.equal(await page.locator('.cm-line.note-live-math-source').count(), 0, 'source mode must keep its original line styles');
+      assert.deepEqual(await page.evaluate(() => {
+        const s = editor.snapshot(); return { value: s.value, anchor: s.anchor, head: s.head };
+      }), { value: mathSelectionSource, anchor: keyboard.anchor, head: keyboard.head });
+      await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); }); await settle();
+      assert.deepEqual(await page.evaluate(() => {
+        const s = editor.snapshot(); return { value: s.value, anchor: s.anchor, head: s.head };
+      }), { value: mathSelectionSource, anchor: keyboard.anchor, head: keyboard.head });
+      mathSelectionChecks.push({ theme, width, scale, gestures: ['forward', 'reverse', 'keyboard'], copied: true });
     }
     const ruleSource = '前文\n\n---\n\n后文';
     const ruleChecks = [], readingRuleChecks = [];
@@ -764,7 +878,7 @@ body { margin: 0; }
     await page.waitForFunction(() => document.documentElement.dataset.noteLivePerformance);
     const typingProbe = await page.evaluate(() => JSON.parse(document.documentElement.dataset.noteLivePerformance));
     assert.deepEqual(errors, []);
-    const report = {output,metrics,clickChecks,calloutChecks,compactChecks,ruleChecks,readingRuleChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
+    const report = {output,metrics,clickChecks,calloutChecks,compactChecks,mathSelectionChecks,ruleChecks,readingRuleChecks,boundaryIme:true,ime:true,copy:true,undo:true,mixedProbe,longProbe,typingProbe};
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report,null,2));
     console.log(JSON.stringify(report));
   } finally {

@@ -460,10 +460,12 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host .cm-selectionBackground,
 .note-live-editor-host.cm-focused .cm-selectionBackground,
 .note-live-editor-host .cm-focused .cm-selectionBackground { background: rgba(116, 133, 104, .19) !important; }
-/* Callout backgrounds cover the drawn selection layer. Restore the native
-   text selection above the card without changing its layout or coordinates. */
+/* Opaque Callout and formula-source backgrounds cover the drawn selection
+   layer. Restore native text selection without changing layout or coordinates. */
 .note-live-editor-host .cm-line.note-live-callout-line::selection,
-.note-live-editor-host .cm-line.note-live-callout-line ::selection { background-color: rgba(116, 133, 104, .19) !important; }
+.note-live-editor-host .cm-line.note-live-callout-line ::selection,
+.note-live-editor-host .cm-line.note-live-math-source::selection,
+.note-live-editor-host .cm-line.note-live-math-source ::selection { background-color: rgba(116, 133, 104, .19) !important; }
 .note-live-editor-host.has-image-selection .cm-selectionLayer,
 .note-live-editor-host.has-image-selection .cm-cursorLayer { visibility: hidden; }
 .note-live-editor-host .cm-activeLine { background: transparent; }
@@ -857,6 +859,9 @@ body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5;
   padding: .15em 0;
   overflow: visible;
 }
+/* The clipped accessibility copy can be taller than a tagged formula. Bound
+   its hidden box so it cannot create a vertical scrollbar in the outer block. */
+.note-live-rich-block.is-math mjx-assistive-mml { height: 1px; }
 .note-live-rich-block.is-rule {
   width: 100%;
   padding-block: .55em;
