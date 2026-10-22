@@ -1309,8 +1309,8 @@ body.start-page.note-focus-mode .note-library-focus-button .note-focus-icon-rest
     "Noto Sans SC", Helvetica, Arial, sans-serif;
   --note-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono",
     "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", monospace;
-  --note-content-left: max(30px, calc((100% - var(--note-content-width)) / 2));
-  --note-content-right: var(--note-content-left);
+  --note-content-left: clamp(42px, 6vw, 112px);
+  --note-content-right: clamp(22px, 3vw, 48px);
   --note-content-width: 800px;
   container: note-document / inline-size;
 }

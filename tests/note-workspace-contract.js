@@ -297,7 +297,8 @@ assert(css.includes('.note-expand-all[data-all-expanded="true"] .note-expand-ico
 assert(css.includes('.note-path-crumb.is-file'), 'the active note header needs a folder breadcrumb');
 assert(css.includes('body.start-page[data-start-workspace="notes"].note-focus-mode > .top-bar'), 'Notes focus mode needs an animated top-bar collapse');
 assert(css.includes('--note-content-width: 800px'), 'the Markdown body needs a readable measure shared by editing and reading');
-assert(css.includes('--note-content-left: max(30px, calc((100% - var(--note-content-width)) / 2))'), 'the Markdown body must be centered in its available pane');
+assert(css.includes('--note-content-left: clamp(42px, 6vw, 112px)')
+  && css.includes('--note-content-right: clamp(22px, 3vw, 48px)'), 'Markdown gutters must keep the title and body left edge fixed while the sidebar toggles');
 assert(css.includes('font-size: calc(16px * var(--note-font-scale, 1))') && css.includes('line-height: 1.6;'), 'Markdown typography must use the 16px/1.6 reading baseline');
 assert(css.includes('--note-font-text: "Relatum Open Sans", "Microsoft YaHei"'), 'Markdown must use the offline Open Sans / YaHei font stack');
 assert(css.includes('font-size: 2.25em; line-height: 1.2;'), 'H1 must use the reference 2.25em scale');
