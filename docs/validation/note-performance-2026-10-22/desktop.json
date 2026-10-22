@@ -1,0 +1,1931 @@
+{
+  "baselineRef": "c22006b",
+  "release": "D:\\Relatum-notes-performance-release-2026-10-22",
+  "rounds": 3,
+  "metric": "PID-deduplicated process-tree private commit, working set, single-core CPU; separate post-GC JS heap",
+  "samples": [
+    {
+      "mode": "full",
+      "variant": "baseline",
+      "round": 0,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-d0w41u",
+      "initial": {
+        "items": [
+          {
+            "id": 18736,
+            "name": "Relatum",
+            "private": 81772544,
+            "working": 121708544,
+            "cpu": 2.03125
+          },
+          {
+            "id": 29424,
+            "name": "msedgewebview2",
+            "private": 42168320,
+            "working": 127676416,
+            "cpu": 0.875
+          },
+          {
+            "id": 16204,
+            "name": "msedgewebview2",
+            "private": 2629632,
+            "working": 13754368,
+            "cpu": 0
+          },
+          {
+            "id": 19640,
+            "name": "msedgewebview2",
+            "private": 130924544,
+            "working": 150908928,
+            "cpu": 1.078125
+          },
+          {
+            "id": 24632,
+            "name": "msedgewebview2",
+            "private": 14278656,
+            "working": 45457408,
+            "cpu": 0.296875
+          },
+          {
+            "id": 23324,
+            "name": "msedgewebview2",
+            "private": 7737344,
+            "working": 23646208,
+            "cpu": 0.046875
+          },
+          {
+            "id": 22960,
+            "name": "msedgewebview2",
+            "private": 178954240,
+            "working": 235667456,
+            "cpu": 2.078125
+          }
+        ],
+        "privateMiB": 437.2265625,
+        "workingMiB": 685.51953125
+      },
+      "after": {
+        "items": [
+          {
+            "id": 18736,
+            "name": "Relatum",
+            "private": 82911232,
+            "working": 123019264,
+            "cpu": 2.25
+          },
+          {
+            "id": 29424,
+            "name": "msedgewebview2",
+            "private": 42156032,
+            "working": 128356352,
+            "cpu": 1.03125
+          },
+          {
+            "id": 16204,
+            "name": "msedgewebview2",
+            "private": 3522560,
+            "working": 22564864,
+            "cpu": 0
+          },
+          {
+            "id": 19640,
+            "name": "msedgewebview2",
+            "private": 115798016,
+            "working": 136175616,
+            "cpu": 1.859375
+          },
+          {
+            "id": 24632,
+            "name": "msedgewebview2",
+            "private": 14131200,
+            "working": 45355008,
+            "cpu": 0.34375
+          },
+          {
+            "id": 23324,
+            "name": "msedgewebview2",
+            "private": 7892992,
+            "working": 23875584,
+            "cpu": 0.046875
+          },
+          {
+            "id": 22960,
+            "name": "msedgewebview2",
+            "private": 212688896,
+            "working": 269275136,
+            "cpu": 15.421875
+          }
+        ],
+        "privateMiB": 456.90625,
+        "workingMiB": 713.94140625
+      },
+      "initialHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1433,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 13084068,
+        "JSHeapTotalSize": 13688832
+      },
+      "loops": [
+        {
+          "Documents": 2,
+          "JSEventListeners": 1433,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15051144,
+          "JSHeapTotalSize": 16834560
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1433,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15651416,
+          "JSHeapTotalSize": 17821696
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1433,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 16271036,
+          "JSHeapTotalSize": 18542592
+        }
+      ],
+      "finalHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1433,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 16281300,
+        "JSHeapTotalSize": 17231872
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 3.7435495761150017,
+      "cpuSampleSeconds": 5.426,
+      "interactionCpuSeconds": 14.34375
+    },
+    {
+      "mode": "full",
+      "variant": "current",
+      "round": 0,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-2QfR6Q",
+      "initial": {
+        "items": [
+          {
+            "id": 7856,
+            "name": "Relatum",
+            "private": 82587648,
+            "working": 123113472,
+            "cpu": 1.921875
+          },
+          {
+            "id": 28060,
+            "name": "msedgewebview2",
+            "private": 41594880,
+            "working": 128262144,
+            "cpu": 1.03125
+          },
+          {
+            "id": 4192,
+            "name": "msedgewebview2",
+            "private": 2646016,
+            "working": 13778944,
+            "cpu": 0
+          },
+          {
+            "id": 28676,
+            "name": "msedgewebview2",
+            "private": 128786432,
+            "working": 148668416,
+            "cpu": 1.09375
+          },
+          {
+            "id": 8692,
+            "name": "msedgewebview2",
+            "private": 14168064,
+            "working": 45359104,
+            "cpu": 0.34375
+          },
+          {
+            "id": 26432,
+            "name": "msedgewebview2",
+            "private": 7761920,
+            "working": 23699456,
+            "cpu": 0.0625
+          },
+          {
+            "id": 22496,
+            "name": "msedgewebview2",
+            "private": 175075328,
+            "working": 231636992,
+            "cpu": 1.578125
+          }
+        ],
+        "privateMiB": 431.65234375,
+        "workingMiB": 681.41796875
+      },
+      "after": {
+        "items": [
+          {
+            "id": 7856,
+            "name": "Relatum",
+            "private": 83795968,
+            "working": 124542976,
+            "cpu": 2.125
+          },
+          {
+            "id": 28060,
+            "name": "msedgewebview2",
+            "private": 41742336,
+            "working": 128897024,
+            "cpu": 1.109375
+          },
+          {
+            "id": 4192,
+            "name": "msedgewebview2",
+            "private": 2646016,
+            "working": 13778944,
+            "cpu": 0
+          },
+          {
+            "id": 28676,
+            "name": "msedgewebview2",
+            "private": 115277824,
+            "working": 135749632,
+            "cpu": 1.734375
+          },
+          {
+            "id": 8692,
+            "name": "msedgewebview2",
+            "private": 14192640,
+            "working": 45400064,
+            "cpu": 0.359375
+          },
+          {
+            "id": 26432,
+            "name": "msedgewebview2",
+            "private": 7905280,
+            "working": 23916544,
+            "cpu": 0.0625
+          },
+          {
+            "id": 22496,
+            "name": "msedgewebview2",
+            "private": 205627392,
+            "working": 262823936,
+            "cpu": 6.6875
+          }
+        ],
+        "privateMiB": 449.359375,
+        "workingMiB": 701.0546875
+      },
+      "initialHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 13154820,
+        "JSHeapTotalSize": 13950976
+      },
+      "loops": [
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15145308,
+          "JSHeapTotalSize": 17883136
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7324,
+          "JSHeapUsedSize": 15782400,
+          "JSHeapTotalSize": 19132416
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 16398028,
+          "JSHeapTotalSize": 18542592
+        }
+      ],
+      "finalHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 16398028,
+        "JSHeapTotalSize": 16969728
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 13.337353868992391,
+      "cpuSampleSeconds": 5.389,
+      "interactionCpuSeconds": 5.328125
+    },
+    {
+      "mode": "notes",
+      "variant": "baseline",
+      "round": 0,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-TbzDDS",
+      "initial": {
+        "items": [
+          {
+            "id": 4916,
+            "name": "RelatumLauncher",
+            "private": 80920576,
+            "working": 121737216,
+            "cpu": 1.109375
+          },
+          {
+            "id": 27016,
+            "name": "msedgewebview2",
+            "private": 41472000,
+            "working": 126930944,
+            "cpu": 0.84375
+          },
+          {
+            "id": 14928,
+            "name": "msedgewebview2",
+            "private": 2650112,
+            "working": 13783040,
+            "cpu": 0.015625
+          },
+          {
+            "id": 27132,
+            "name": "msedgewebview2",
+            "private": 137007104,
+            "working": 156983296,
+            "cpu": 0.984375
+          },
+          {
+            "id": 13004,
+            "name": "msedgewebview2",
+            "private": 13762560,
+            "working": 44802048,
+            "cpu": 0.203125
+          },
+          {
+            "id": 14940,
+            "name": "msedgewebview2",
+            "private": 7712768,
+            "working": 23597056,
+            "cpu": 0.0625
+          },
+          {
+            "id": 23772,
+            "name": "msedgewebview2",
+            "private": 102440960,
+            "working": 158871552,
+            "cpu": 1.328125
+          }
+        ],
+        "privateMiB": 368.0859375,
+        "workingMiB": 616.74609375
+      },
+      "after": {
+        "items": [
+          {
+            "id": 4916,
+            "name": "RelatumLauncher",
+            "private": 82784256,
+            "working": 123793408,
+            "cpu": 1.3125
+          },
+          {
+            "id": 27016,
+            "name": "msedgewebview2",
+            "private": 41619456,
+            "working": 127778816,
+            "cpu": 0.921875
+          },
+          {
+            "id": 14928,
+            "name": "msedgewebview2",
+            "private": 3559424,
+            "working": 22605824,
+            "cpu": 0.046875
+          },
+          {
+            "id": 27132,
+            "name": "msedgewebview2",
+            "private": 108748800,
+            "working": 129429504,
+            "cpu": 1.734375
+          },
+          {
+            "id": 13004,
+            "name": "msedgewebview2",
+            "private": 13701120,
+            "working": 44781568,
+            "cpu": 0.234375
+          },
+          {
+            "id": 14940,
+            "name": "msedgewebview2",
+            "private": 7872512,
+            "working": 23805952,
+            "cpu": 0.0625
+          },
+          {
+            "id": 23772,
+            "name": "msedgewebview2",
+            "private": 137424896,
+            "working": 194224128,
+            "cpu": 15.3125
+          }
+        ],
+        "privateMiB": 377.37890625,
+        "workingMiB": 635.546875
+      },
+      "initialHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 11725260,
+        "JSHeapTotalSize": 12378112
+      },
+      "loops": [
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 13718844,
+          "JSHeapTotalSize": 16834560
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3854,
+          "JSHeapUsedSize": 14314896,
+          "JSHeapTotalSize": 18083840
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14931856,
+          "JSHeapTotalSize": 17494016
+        }
+      ],
+      "finalHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 14936496,
+        "JSHeapTotalSize": 15921152
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 2.3122456529781723,
+      "cpuSampleSeconds": 5.406,
+      "interactionCpuSeconds": 14.953125
+    },
+    {
+      "mode": "notes",
+      "variant": "current",
+      "round": 0,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-oU3Lg6",
+      "initial": {
+        "items": [
+          {
+            "id": 25656,
+            "name": "RelatumLauncher",
+            "private": 80355328,
+            "working": 121090048,
+            "cpu": 1.328125
+          },
+          {
+            "id": 17648,
+            "name": "msedgewebview2",
+            "private": 40820736,
+            "working": 129302528,
+            "cpu": 0.796875
+          },
+          {
+            "id": 28324,
+            "name": "msedgewebview2",
+            "private": 2629632,
+            "working": 13778944,
+            "cpu": 0
+          },
+          {
+            "id": 28600,
+            "name": "msedgewebview2",
+            "private": 138465280,
+            "working": 158502912,
+            "cpu": 0.96875
+          },
+          {
+            "id": 18560,
+            "name": "msedgewebview2",
+            "private": 13893632,
+            "working": 44965888,
+            "cpu": 0.3125
+          },
+          {
+            "id": 4932,
+            "name": "msedgewebview2",
+            "private": 7737344,
+            "working": 23633920,
+            "cpu": 0.03125
+          },
+          {
+            "id": 10276,
+            "name": "msedgewebview2",
+            "private": 101371904,
+            "working": 157302784,
+            "cpu": 0.984375
+          }
+        ],
+        "privateMiB": 367.42578125,
+        "workingMiB": 618.53125
+      },
+      "after": {
+        "items": [
+          {
+            "id": 25656,
+            "name": "RelatumLauncher",
+            "private": 82317312,
+            "working": 123224064,
+            "cpu": 1.5625
+          },
+          {
+            "id": 17648,
+            "name": "msedgewebview2",
+            "private": 40992768,
+            "working": 129986560,
+            "cpu": 0.875
+          },
+          {
+            "id": 28324,
+            "name": "msedgewebview2",
+            "private": 2629632,
+            "working": 13778944,
+            "cpu": 0
+          },
+          {
+            "id": 28600,
+            "name": "msedgewebview2",
+            "private": 108679168,
+            "working": 129662976,
+            "cpu": 1.75
+          },
+          {
+            "id": 18560,
+            "name": "msedgewebview2",
+            "private": 13910016,
+            "working": 45027328,
+            "cpu": 0.3125
+          },
+          {
+            "id": 4932,
+            "name": "msedgewebview2",
+            "private": 7892992,
+            "working": 23851008,
+            "cpu": 0.0625
+          },
+          {
+            "id": 10276,
+            "name": "msedgewebview2",
+            "private": 136777728,
+            "working": 193605632,
+            "cpu": 6.15625
+          }
+        ],
+        "privateMiB": 374.984375,
+        "workingMiB": 628.6015625
+      },
+      "initialHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 11692052,
+        "JSHeapTotalSize": 12378112
+      },
+      "loops": [
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 13733144,
+          "JSHeapTotalSize": 16834560
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14368392,
+          "JSHeapTotalSize": 15724544
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14981932,
+          "JSHeapTotalSize": 16707584
+        }
+      ],
+      "finalHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 14981884,
+        "JSHeapTotalSize": 15921152
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 10.70800148175588,
+      "cpuSampleSeconds": 5.399,
+      "interactionCpuSeconds": 5.71875
+    },
+    {
+      "mode": "full",
+      "variant": "current",
+      "round": 1,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-NKd4so",
+      "initial": {
+        "items": [
+          {
+            "id": 5136,
+            "name": "Relatum",
+            "private": 82186240,
+            "working": 122941440,
+            "cpu": 1.703125
+          },
+          {
+            "id": 15432,
+            "name": "msedgewebview2",
+            "private": 42160128,
+            "working": 127758336,
+            "cpu": 0.953125
+          },
+          {
+            "id": 26820,
+            "name": "msedgewebview2",
+            "private": 2650112,
+            "working": 13783040,
+            "cpu": 0
+          },
+          {
+            "id": 19596,
+            "name": "msedgewebview2",
+            "private": 128684032,
+            "working": 148611072,
+            "cpu": 1
+          },
+          {
+            "id": 16092,
+            "name": "msedgewebview2",
+            "private": 13987840,
+            "working": 45264896,
+            "cpu": 0.375
+          },
+          {
+            "id": 22484,
+            "name": "msedgewebview2",
+            "private": 7749632,
+            "working": 23642112,
+            "cpu": 0.03125
+          },
+          {
+            "id": 30480,
+            "name": "msedgewebview2",
+            "private": 180379648,
+            "working": 236720128,
+            "cpu": 1.5625
+          }
+        ],
+        "privateMiB": 436.58984375,
+        "workingMiB": 685.42578125
+      },
+      "after": {
+        "items": [
+          {
+            "id": 5136,
+            "name": "Relatum",
+            "private": 83378176,
+            "working": 124239872,
+            "cpu": 1.90625
+          },
+          {
+            "id": 15432,
+            "name": "msedgewebview2",
+            "private": 42389504,
+            "working": 128483328,
+            "cpu": 0.96875
+          },
+          {
+            "id": 26820,
+            "name": "msedgewebview2",
+            "private": 2650112,
+            "working": 13783040,
+            "cpu": 0
+          },
+          {
+            "id": 19596,
+            "name": "msedgewebview2",
+            "private": 115240960,
+            "working": 135708672,
+            "cpu": 1.59375
+          },
+          {
+            "id": 16092,
+            "name": "msedgewebview2",
+            "private": 14004224,
+            "working": 45289472,
+            "cpu": 0.375
+          },
+          {
+            "id": 22484,
+            "name": "msedgewebview2",
+            "private": 7892992,
+            "working": 23855104,
+            "cpu": 0.03125
+          },
+          {
+            "id": 30480,
+            "name": "msedgewebview2",
+            "private": 212082688,
+            "working": 268128256,
+            "cpu": 7.328125
+          }
+        ],
+        "privateMiB": 455.51171875,
+        "workingMiB": 705.23046875
+      },
+      "initialHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 13155496,
+        "JSHeapTotalSize": 14213120
+      },
+      "loops": [
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15184800,
+          "JSHeapTotalSize": 17620992
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7314,
+          "JSHeapUsedSize": 15770912,
+          "JSHeapTotalSize": 18083840
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 16395708,
+          "JSHeapTotalSize": 19853312
+        }
+      ],
+      "finalHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 16395660,
+        "JSHeapTotalSize": 17231872
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 7.272854217091789,
+      "cpuSampleSeconds": 5.371,
+      "interactionCpuSeconds": 6.1875
+    },
+    {
+      "mode": "full",
+      "variant": "baseline",
+      "round": 1,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-LXUzkB",
+      "initial": {
+        "items": [
+          {
+            "id": 27816,
+            "name": "Relatum",
+            "private": 82366464,
+            "working": 123219968,
+            "cpu": 1.8125
+          },
+          {
+            "id": 21280,
+            "name": "msedgewebview2",
+            "private": 41705472,
+            "working": 128286720,
+            "cpu": 0.984375
+          },
+          {
+            "id": 12336,
+            "name": "msedgewebview2",
+            "private": 2650112,
+            "working": 13778944,
+            "cpu": 0.015625
+          },
+          {
+            "id": 13428,
+            "name": "msedgewebview2",
+            "private": 131424256,
+            "working": 151441408,
+            "cpu": 0.8125
+          },
+          {
+            "id": 1848,
+            "name": "msedgewebview2",
+            "private": 14000128,
+            "working": 45285376,
+            "cpu": 0.375
+          },
+          {
+            "id": 9116,
+            "name": "msedgewebview2",
+            "private": 7749632,
+            "working": 23642112,
+            "cpu": 0.046875
+          },
+          {
+            "id": 22252,
+            "name": "msedgewebview2",
+            "private": 175439872,
+            "working": 231583744,
+            "cpu": 1.734375
+          }
+        ],
+        "privateMiB": 434.2421875,
+        "workingMiB": 684.01171875
+      },
+      "after": {
+        "items": [
+          {
+            "id": 27816,
+            "name": "Relatum",
+            "private": 83177472,
+            "working": 124305408,
+            "cpu": 2.078125
+          },
+          {
+            "id": 21280,
+            "name": "msedgewebview2",
+            "private": 42917888,
+            "working": 129187840,
+            "cpu": 1
+          },
+          {
+            "id": 12336,
+            "name": "msedgewebview2",
+            "private": 3543040,
+            "working": 22593536,
+            "cpu": 0.03125
+          },
+          {
+            "id": 13428,
+            "name": "msedgewebview2",
+            "private": 115462144,
+            "working": 136122368,
+            "cpu": 1.78125
+          },
+          {
+            "id": 1848,
+            "name": "msedgewebview2",
+            "private": 13930496,
+            "working": 45264896,
+            "cpu": 0.40625
+          },
+          {
+            "id": 9116,
+            "name": "msedgewebview2",
+            "private": 7917568,
+            "working": 23863296,
+            "cpu": 0.046875
+          },
+          {
+            "id": 22252,
+            "name": "msedgewebview2",
+            "private": 208760832,
+            "working": 265654272,
+            "cpu": 15.671875
+          }
+        ],
+        "privateMiB": 453.671875,
+        "workingMiB": 712.38671875
+      },
+      "initialHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 13137648,
+        "JSHeapTotalSize": 13688832
+      },
+      "loops": [
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15126848,
+          "JSHeapTotalSize": 17358848
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15729196,
+          "JSHeapTotalSize": 17821696
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 16356740,
+          "JSHeapTotalSize": 18280448
+        }
+      ],
+      "finalHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 16364484,
+        "JSHeapTotalSize": 17231872
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 9.43158953722334,
+      "cpuSampleSeconds": 5.467,
+      "interactionCpuSeconds": 14.71875
+    },
+    {
+      "mode": "notes",
+      "variant": "current",
+      "round": 1,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-PNV7YI",
+      "initial": {
+        "items": [
+          {
+            "id": 29140,
+            "name": "RelatumLauncher",
+            "private": 80805888,
+            "working": 121495552,
+            "cpu": 1.71875
+          },
+          {
+            "id": 27116,
+            "name": "msedgewebview2",
+            "private": 41586688,
+            "working": 127090688,
+            "cpu": 0.8125
+          },
+          {
+            "id": 30492,
+            "name": "msedgewebview2",
+            "private": 2633728,
+            "working": 13783040,
+            "cpu": 0.015625
+          },
+          {
+            "id": 13544,
+            "name": "msedgewebview2",
+            "private": 138510336,
+            "working": 158597120,
+            "cpu": 1.03125
+          },
+          {
+            "id": 21200,
+            "name": "msedgewebview2",
+            "private": 13582336,
+            "working": 44830720,
+            "cpu": 0.28125
+          },
+          {
+            "id": 20680,
+            "name": "msedgewebview2",
+            "private": 7729152,
+            "working": 23609344,
+            "cpu": 0.046875
+          },
+          {
+            "id": 23100,
+            "name": "msedgewebview2",
+            "private": 102944768,
+            "working": 158384128,
+            "cpu": 1.1875
+          }
+        ],
+        "privateMiB": 369.828125,
+        "workingMiB": 617.78125
+      },
+      "after": {
+        "items": [
+          {
+            "id": 29140,
+            "name": "RelatumLauncher",
+            "private": 82530304,
+            "working": 123420672,
+            "cpu": 2.046875
+          },
+          {
+            "id": 27116,
+            "name": "msedgewebview2",
+            "private": 41762816,
+            "working": 127791104,
+            "cpu": 0.9375
+          },
+          {
+            "id": 30492,
+            "name": "msedgewebview2",
+            "private": 2633728,
+            "working": 13783040,
+            "cpu": 0.015625
+          },
+          {
+            "id": 13544,
+            "name": "msedgewebview2",
+            "private": 108552192,
+            "working": 129363968,
+            "cpu": 1.6875
+          },
+          {
+            "id": 21200,
+            "name": "msedgewebview2",
+            "private": 13594624,
+            "working": 44900352,
+            "cpu": 0.296875
+          },
+          {
+            "id": 20680,
+            "name": "msedgewebview2",
+            "private": 7888896,
+            "working": 23846912,
+            "cpu": 0.046875
+          },
+          {
+            "id": 23100,
+            "name": "msedgewebview2",
+            "private": 135237632,
+            "working": 192057344,
+            "cpu": 8.109375
+          }
+        ],
+        "privateMiB": 374.03125,
+        "workingMiB": 624.8125
+      },
+      "initialHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 11695044,
+        "JSHeapTotalSize": 12378112
+      },
+      "loops": [
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 13732184,
+          "JSHeapTotalSize": 15785984
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14357748,
+          "JSHeapTotalSize": 15724544
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14980612,
+          "JSHeapTotalSize": 16445440
+        }
+      ],
+      "finalHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 14980612,
+        "JSHeapTotalSize": 15659008
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 1.402855090680553,
+      "cpuSampleSeconds": 5.569,
+      "interactionCpuSeconds": 7.96875
+    },
+    {
+      "mode": "notes",
+      "variant": "baseline",
+      "round": 1,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-TOokKP",
+      "initial": {
+        "items": [
+          {
+            "id": 6672,
+            "name": "RelatumLauncher",
+            "private": 80822272,
+            "working": 121516032,
+            "cpu": 1.78125
+          },
+          {
+            "id": 27616,
+            "name": "msedgewebview2",
+            "private": 41074688,
+            "working": 127406080,
+            "cpu": 1.078125
+          },
+          {
+            "id": 10656,
+            "name": "msedgewebview2",
+            "private": 2637824,
+            "working": 13783040,
+            "cpu": 0
+          },
+          {
+            "id": 16416,
+            "name": "msedgewebview2",
+            "private": 128765952,
+            "working": 148742144,
+            "cpu": 0.859375
+          },
+          {
+            "id": 23276,
+            "name": "msedgewebview2",
+            "private": 13746176,
+            "working": 44843008,
+            "cpu": 0.265625
+          },
+          {
+            "id": 12392,
+            "name": "msedgewebview2",
+            "private": 7729152,
+            "working": 23646208,
+            "cpu": 0.0625
+          },
+          {
+            "id": 19740,
+            "name": "msedgewebview2",
+            "private": 103337984,
+            "working": 159416320,
+            "cpu": 1.21875
+          }
+        ],
+        "privateMiB": 360.59765625,
+        "workingMiB": 609.734375
+      },
+      "after": {
+        "items": [
+          {
+            "id": 6672,
+            "name": "RelatumLauncher",
+            "private": 82669568,
+            "working": 123506688,
+            "cpu": 2.0625
+          },
+          {
+            "id": 27616,
+            "name": "msedgewebview2",
+            "private": 39706624,
+            "working": 127029248,
+            "cpu": 1.21875
+          },
+          {
+            "id": 10656,
+            "name": "msedgewebview2",
+            "private": 3526656,
+            "working": 22593536,
+            "cpu": 0
+          },
+          {
+            "id": 16416,
+            "name": "msedgewebview2",
+            "private": 108802048,
+            "working": 129531904,
+            "cpu": 1.890625
+          },
+          {
+            "id": 23276,
+            "name": "msedgewebview2",
+            "private": 13680640,
+            "working": 44826624,
+            "cpu": 0.296875
+          },
+          {
+            "id": 12392,
+            "name": "msedgewebview2",
+            "private": 7888896,
+            "working": 23855104,
+            "cpu": 0.078125
+          },
+          {
+            "id": 19740,
+            "name": "msedgewebview2",
+            "private": 136478720,
+            "working": 193495040,
+            "cpu": 16.328125
+          }
+        ],
+        "privateMiB": 374.55859375,
+        "workingMiB": 634.0390625
+      },
+      "initialHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 11699464,
+        "JSHeapTotalSize": 12378112
+      },
+      "loops": [
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 13726092,
+          "JSHeapTotalSize": 14999552
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14324652,
+          "JSHeapTotalSize": 19132416
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14948024,
+          "JSHeapTotalSize": 16445440
+        }
+      ],
+      "finalHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 14948084,
+        "JSHeapTotalSize": 15659008
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 9.638062409288825,
+      "cpuSampleSeconds": 5.512,
+      "interactionCpuSeconds": 16.078125
+    },
+    {
+      "mode": "full",
+      "variant": "baseline",
+      "round": 2,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-MJiS1Y",
+      "initial": {
+        "items": [
+          {
+            "id": 29132,
+            "name": "Relatum",
+            "private": 82022400,
+            "working": 122982400,
+            "cpu": 2.296875
+          },
+          {
+            "id": 10392,
+            "name": "msedgewebview2",
+            "private": 44187648,
+            "working": 131514368,
+            "cpu": 1.328125
+          },
+          {
+            "id": 17416,
+            "name": "msedgewebview2",
+            "private": 2646016,
+            "working": 13778944,
+            "cpu": 0.015625
+          },
+          {
+            "id": 11868,
+            "name": "msedgewebview2",
+            "private": 130707456,
+            "working": 150794240,
+            "cpu": 1.140625
+          },
+          {
+            "id": 30504,
+            "name": "msedgewebview2",
+            "private": 14417920,
+            "working": 45506560,
+            "cpu": 0.390625
+          },
+          {
+            "id": 30576,
+            "name": "msedgewebview2",
+            "private": 7741440,
+            "working": 23642112,
+            "cpu": 0.046875
+          },
+          {
+            "id": 18124,
+            "name": "msedgewebview2",
+            "private": 180596736,
+            "working": 237244416,
+            "cpu": 2.046875
+          }
+        ],
+        "privateMiB": 440.90234375,
+        "workingMiB": 691.85546875
+      },
+      "after": {
+        "items": [
+          {
+            "id": 29132,
+            "name": "Relatum",
+            "private": 83283968,
+            "working": 124403712,
+            "cpu": 2.5625
+          },
+          {
+            "id": 10392,
+            "name": "msedgewebview2",
+            "private": 44220416,
+            "working": 132280320,
+            "cpu": 1.375
+          },
+          {
+            "id": 17416,
+            "name": "msedgewebview2",
+            "private": 3543040,
+            "working": 22589440,
+            "cpu": 0.015625
+          },
+          {
+            "id": 11868,
+            "name": "msedgewebview2",
+            "private": 115355648,
+            "working": 136007680,
+            "cpu": 2.03125
+          },
+          {
+            "id": 30504,
+            "name": "msedgewebview2",
+            "private": 14245888,
+            "working": 45379584,
+            "cpu": 0.40625
+          },
+          {
+            "id": 30576,
+            "name": "msedgewebview2",
+            "private": 7884800,
+            "working": 23838720,
+            "cpu": 0.078125
+          },
+          {
+            "id": 18124,
+            "name": "msedgewebview2",
+            "private": 214278144,
+            "working": 271441920,
+            "cpu": 17.484375
+          }
+        ],
+        "privateMiB": 460.4453125,
+        "workingMiB": 720.921875
+      },
+      "initialHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 13220472,
+        "JSHeapTotalSize": 13688832
+      },
+      "loops": [
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15204268,
+          "JSHeapTotalSize": 17358848
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15805760,
+          "JSHeapTotalSize": 18870272
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 16430380,
+          "JSHeapTotalSize": 18542592
+        }
+      ],
+      "finalHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 16430440,
+        "JSHeapTotalSize": 17231872
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 8.713347724410864,
+      "cpuSampleSeconds": 5.559,
+      "interactionCpuSeconds": 16.203125
+    },
+    {
+      "mode": "full",
+      "variant": "current",
+      "round": 2,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-fQwweC",
+      "initial": {
+        "items": [
+          {
+            "id": 24200,
+            "name": "Relatum",
+            "private": 82096128,
+            "working": 123043840,
+            "cpu": 2.1875
+          },
+          {
+            "id": 24152,
+            "name": "msedgewebview2",
+            "private": 43872256,
+            "working": 129290240,
+            "cpu": 1.078125
+          },
+          {
+            "id": 28464,
+            "name": "msedgewebview2",
+            "private": 2641920,
+            "working": 13783040,
+            "cpu": 0.015625
+          },
+          {
+            "id": 22212,
+            "name": "msedgewebview2",
+            "private": 128847872,
+            "working": 148893696,
+            "cpu": 1.046875
+          },
+          {
+            "id": 27728,
+            "name": "msedgewebview2",
+            "private": 14360576,
+            "working": 45551616,
+            "cpu": 0.359375
+          },
+          {
+            "id": 26800,
+            "name": "msedgewebview2",
+            "private": 7737344,
+            "working": 23662592,
+            "cpu": 0.03125
+          },
+          {
+            "id": 29940,
+            "name": "msedgewebview2",
+            "private": 176431104,
+            "working": 231579648,
+            "cpu": 1.890625
+          }
+        ],
+        "privateMiB": 434.86328125,
+        "workingMiB": 682.64453125
+      },
+      "after": {
+        "items": [
+          {
+            "id": 24200,
+            "name": "Relatum",
+            "private": 83496960,
+            "working": 124620800,
+            "cpu": 2.40625
+          },
+          {
+            "id": 24152,
+            "name": "msedgewebview2",
+            "private": 44003328,
+            "working": 129945600,
+            "cpu": 1.171875
+          },
+          {
+            "id": 28464,
+            "name": "msedgewebview2",
+            "private": 2641920,
+            "working": 13783040,
+            "cpu": 0.015625
+          },
+          {
+            "id": 22212,
+            "name": "msedgewebview2",
+            "private": 115466240,
+            "working": 136093696,
+            "cpu": 1.65625
+          },
+          {
+            "id": 27728,
+            "name": "msedgewebview2",
+            "private": 14381056,
+            "working": 45580288,
+            "cpu": 0.375
+          },
+          {
+            "id": 26800,
+            "name": "msedgewebview2",
+            "private": 7884800,
+            "working": 23867392,
+            "cpu": 0.046875
+          },
+          {
+            "id": 29940,
+            "name": "msedgewebview2",
+            "private": 206057472,
+            "working": 262520832,
+            "cpu": 7.671875
+          }
+        ],
+        "privateMiB": 451.9765625,
+        "workingMiB": 702.296875
+      },
+      "initialHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 13102880,
+        "JSHeapTotalSize": 13688832
+      },
+      "loops": [
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15129756,
+          "JSHeapTotalSize": 17620992
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 15766628,
+          "JSHeapTotalSize": 19132416
+        },
+        {
+          "Documents": 2,
+          "JSEventListeners": 1476,
+          "Nodes": 7313,
+          "JSHeapUsedSize": 16377296,
+          "JSHeapTotalSize": 19329024
+        }
+      ],
+      "finalHeap": {
+        "Documents": 2,
+        "JSEventListeners": 1476,
+        "Nodes": 7313,
+        "JSHeapUsedSize": 16377296,
+        "JSHeapTotalSize": 17231872
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 2.3041474654377883,
+      "cpuSampleSeconds": 5.425,
+      "interactionCpuSeconds": 6.609375
+    },
+    {
+      "mode": "notes",
+      "variant": "baseline",
+      "round": 2,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-otJ4AN",
+      "initial": {
+        "items": [
+          {
+            "id": 27936,
+            "name": "RelatumLauncher",
+            "private": 80388096,
+            "working": 120819712,
+            "cpu": 1.21875
+          },
+          {
+            "id": 16616,
+            "name": "msedgewebview2",
+            "private": 42172416,
+            "working": 127479808,
+            "cpu": 0.890625
+          },
+          {
+            "id": 27912,
+            "name": "msedgewebview2",
+            "private": 2650112,
+            "working": 13778944,
+            "cpu": 0
+          },
+          {
+            "id": 29484,
+            "name": "msedgewebview2",
+            "private": 120283136,
+            "working": 140201984,
+            "cpu": 1
+          },
+          {
+            "id": 7084,
+            "name": "msedgewebview2",
+            "private": 13701120,
+            "working": 44789760,
+            "cpu": 0.15625
+          },
+          {
+            "id": 28876,
+            "name": "msedgewebview2",
+            "private": 7712768,
+            "working": 23609344,
+            "cpu": 0.015625
+          },
+          {
+            "id": 23180,
+            "name": "msedgewebview2",
+            "private": 101822464,
+            "working": 158081024,
+            "cpu": 1.359375
+          }
+        ],
+        "privateMiB": 351.6484375,
+        "workingMiB": 599.6328125
+      },
+      "after": {
+        "items": [
+          {
+            "id": 27936,
+            "name": "RelatumLauncher",
+            "private": 82239488,
+            "working": 122810368,
+            "cpu": 1.5
+          },
+          {
+            "id": 16616,
+            "name": "msedgewebview2",
+            "private": 40763392,
+            "working": 127049728,
+            "cpu": 0.953125
+          },
+          {
+            "id": 27912,
+            "name": "msedgewebview2",
+            "private": 3543040,
+            "working": 22589440,
+            "cpu": 0
+          },
+          {
+            "id": 29484,
+            "name": "msedgewebview2",
+            "private": 109215744,
+            "working": 129835008,
+            "cpu": 1.921875
+          },
+          {
+            "id": 7084,
+            "name": "msedgewebview2",
+            "private": 13598720,
+            "working": 44748800,
+            "cpu": 0.1875
+          },
+          {
+            "id": 28876,
+            "name": "msedgewebview2",
+            "private": 7811072,
+            "working": 23814144,
+            "cpu": 0.0625
+          },
+          {
+            "id": 23180,
+            "name": "msedgewebview2",
+            "private": 136749056,
+            "working": 193581056,
+            "cpu": 15.140625
+          }
+        ],
+        "privateMiB": 375.671875,
+        "workingMiB": 633.6484375
+      },
+      "initialHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 11684916,
+        "JSHeapTotalSize": 12378112
+      },
+      "loops": [
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 13715912,
+          "JSHeapTotalSize": 15523840
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14315568,
+          "JSHeapTotalSize": 15724544
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14939076,
+          "JSHeapTotalSize": 16707584
+        }
+      ],
+      "finalHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 14939136,
+        "JSHeapTotalSize": 15659008
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 6.327075280692067,
+      "cpuSampleSeconds": 5.433,
+      "interactionCpuSeconds": 14.78125
+    },
+    {
+      "mode": "notes",
+      "variant": "current",
+      "round": 2,
+      "root": "C:\\Users\\31698\\AppData\\Local\\Temp\\relatum-note-resource-case-NxlCpk",
+      "initial": {
+        "items": [
+          {
+            "id": 25284,
+            "name": "RelatumLauncher",
+            "private": 80556032,
+            "working": 120745984,
+            "cpu": 1.3125
+          },
+          {
+            "id": 12672,
+            "name": "msedgewebview2",
+            "private": 42102784,
+            "working": 127496192,
+            "cpu": 0.90625
+          },
+          {
+            "id": 27728,
+            "name": "msedgewebview2",
+            "private": 2641920,
+            "working": 13778944,
+            "cpu": 0.03125
+          },
+          {
+            "id": 2440,
+            "name": "msedgewebview2",
+            "private": 147316736,
+            "working": 167251968,
+            "cpu": 0.71875
+          },
+          {
+            "id": 27212,
+            "name": "msedgewebview2",
+            "private": 13811712,
+            "working": 44867584,
+            "cpu": 0.296875
+          },
+          {
+            "id": 29684,
+            "name": "msedgewebview2",
+            "private": 7720960,
+            "working": 23650304,
+            "cpu": 0.03125
+          },
+          {
+            "id": 29180,
+            "name": "msedgewebview2",
+            "private": 101629952,
+            "working": 158031872,
+            "cpu": 0.9375
+          }
+        ],
+        "privateMiB": 377.4453125,
+        "workingMiB": 625.44140625
+      },
+      "after": {
+        "items": [
+          {
+            "id": 25284,
+            "name": "RelatumLauncher",
+            "private": 82317312,
+            "working": 122716160,
+            "cpu": 1.46875
+          },
+          {
+            "id": 12672,
+            "name": "msedgewebview2",
+            "private": 42344448,
+            "working": 128233472,
+            "cpu": 0.96875
+          },
+          {
+            "id": 27728,
+            "name": "msedgewebview2",
+            "private": 2641920,
+            "working": 13778944,
+            "cpu": 0.03125
+          },
+          {
+            "id": 2440,
+            "name": "msedgewebview2",
+            "private": 109228032,
+            "working": 129835008,
+            "cpu": 1.296875
+          },
+          {
+            "id": 27212,
+            "name": "msedgewebview2",
+            "private": 13819904,
+            "working": 44920832,
+            "cpu": 0.3125
+          },
+          {
+            "id": 29684,
+            "name": "msedgewebview2",
+            "private": 7884800,
+            "working": 23896064,
+            "cpu": 0.0625
+          },
+          {
+            "id": 29180,
+            "name": "msedgewebview2",
+            "private": 136122368,
+            "working": 193368064,
+            "cpu": 6.859375
+          }
+        ],
+        "privateMiB": 376.08984375,
+        "workingMiB": 626.32421875
+      },
+      "initialHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 11729004,
+        "JSHeapTotalSize": 12378112
+      },
+      "loops": [
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 13736388,
+          "JSHeapTotalSize": 16310272
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14364284,
+          "JSHeapTotalSize": 15200256
+        },
+        {
+          "Documents": 1,
+          "JSEventListeners": 984,
+          "Nodes": 3843,
+          "JSHeapUsedSize": 14999852,
+          "JSHeapTotalSize": 16707584
+        }
+      ],
+      "finalHeap": {
+        "Documents": 1,
+        "JSEventListeners": 984,
+        "Nodes": 3843,
+        "JSHeapUsedSize": 14989692,
+        "JSHeapTotalSize": 15659008
+      },
+      "idleFrames": 0,
+      "idleCpuOneCorePercent": 5.511975492016338,
+      "cpuSampleSeconds": 5.386,
+      "interactionCpuSeconds": 6.46875
+    }
+  ],
+  "summary": [
+    {
+      "mode": "full",
+      "variant": "baseline",
+      "privateMiB": 456.90625,
+      "workingMiB": 713.94140625,
+      "heapMiB": 15.606388092041016,
+      "cpuOneCorePercent": 8.713347724410864,
+      "interactionCpuSeconds": 14.71875
+    },
+    {
+      "mode": "full",
+      "variant": "current",
+      "privateMiB": 451.9765625,
+      "workingMiB": 702.296875,
+      "heapMiB": 15.636119842529297,
+      "cpuOneCorePercent": 7.272854217091789,
+      "interactionCpuSeconds": 6.1875
+    },
+    {
+      "mode": "notes",
+      "variant": "baseline",
+      "privateMiB": 375.671875,
+      "workingMiB": 634.0390625,
+      "heapMiB": 14.2470703125,
+      "cpuOneCorePercent": 6.327075280692067,
+      "interactionCpuSeconds": 14.953125
+    },
+    {
+      "mode": "notes",
+      "variant": "current",
+      "privateMiB": 374.984375,
+      "workingMiB": 626.32421875,
+      "heapMiB": 14.287837982177734,
+      "cpuOneCorePercent": 5.511975492016338,
+      "interactionCpuSeconds": 6.46875
+    }
+  ],
+  "cpuDerivation": "interactionCpuSeconds = sum(after cumulative CPU - initial cumulative CPU for matching PIDs) - idleCpuOneCorePercent * cpuSampleSeconds / 100; includes loop GC/wait time"
+}

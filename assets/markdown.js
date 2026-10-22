@@ -577,11 +577,26 @@
     return String(value).replace(/\\([\[\]\\])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase();
   }
 
-  function noteMask(source) {
+  function maskNoteRanges(source, ranges) {
+    if (!ranges.length) return source;
+    const pieces = []; let position = 0;
+    for (const range of ranges) {
+      if (range.to <= position) continue;
+      const from = Math.max(position, range.from);
+      pieces.push(source.slice(position, from), source.slice(from, range.to).replace(/[^\n]/g, ' '));
+      position = range.to;
+    }
+    pieces.push(source.slice(position));
+    return pieces.join('');
+  }
+
+  function noteMask(source, rawMath, index, fragment, prepared) {
     const parts = []; let fence = null, comment = '', math = false;
-    const header = frontmatter(source);
-    let from = 0;
+    const header = fragment ? null : frontmatter(source);
+    let from = 0, blockFrom = 0;
+    if (index && header) index.blocks.push({ from: 0, to: header.to });
     for (const line of source.split('\n')) {
+      const wasBlocked = !!(fence || comment || math);
       const quote = quoteLine(line), text = quote.text;
       const opening = !comment && !math ? parseFenceLine(text) : null;
       if (fence) { if (isFenceClose(text, fence)) fence = null; }
@@ -605,14 +620,31 @@
         }
         parts.push(result);
       } else parts.push(' '.repeat(line.length));
+      if (index) {
+        const blocked = !!(fence || comment || math);
+        if (!wasBlocked && blocked) blockFrom = from;
+        if (wasBlocked && !blocked) index.blocks.push({ from: blockFrom, to: from + line.length });
+      }
       from += line.length + 1;
     }
-    let masked = parts.join('\n');
-    const ranges = mathRanges(masked);
-    for (let index = ranges.length - 1; index >= 0; index--) {
-      const range = ranges[index]; masked = masked.slice(0, range.from) + masked.slice(range.from, range.to).replace(/[^\n]/g, ' ') + masked.slice(range.to);
+    if (index) {
+      index.open = !!(fence || comment || math);
+      if (index.open) index.blocks.push({ from: blockFrom, to: source.length });
     }
-    return masked;
+    const masked = parts.join('\n');
+    const ranges = mathRanges(masked);
+    if (index) for (const range of ranges) {
+      if (masked.slice(range.from, range.to).includes('\n')) index.blocks.push({ from: range.from, to: range.to });
+    }
+    const result = maskNoteRanges(masked, ranges);
+    if (prepared) prepared.masked = result;
+    // Inline tokens also protect formulas recognized before code/comment
+    // masking. Usually these are the same ranges; preserve both interpretations
+    // when a code/comment delimiter changes a formula's pairing.
+    if (rawMath && masked !== source) {
+      return maskNoteRanges(result, mathRanges(source));
+    }
+    return result;
   }
 
   function noteDestination(raw) {
@@ -623,8 +655,12 @@
     return { target, title: match[3] || '' };
   }
 
-  function scanNoteDocument(value) {
-    const source = String(value || ''), masked = noteMask(source);
+  function scanNoteDocument(value, options) {
+    // Only the live editor requests lexical boundaries and unresolved uses.
+    // Reading/isolated cell rendering keeps no additional document index.
+    const source = String(value || '');
+    const index = options && options.index ? { blocks: [], uses: [], open: false, crossMath: /\$\$|\\\[/.test(source) } : null;
+    const masked = noteMask(source, false, index, options && options.fragment);
     const definitions = [], headings = [], uses = [], tocs = [];
     const references = new Map(), footnotes = new Map();
     const lines = source.split('\n'), visible = masked.split('\n');
@@ -672,24 +708,25 @@
       while (definitionIndex < definitions.length && definitions[definitionIndex].to <= match.index) definitionIndex++;
       if (escapedAtSource(source, match.index) || definitions[definitionIndex] && definitions[definitionIndex].from <= match.index) continue;
       const key = referenceKey(match[1]);
+      if (index) index.uses.push({ kind: 'footnote-use', key, from: match.index, to: match.index + match[0].length });
       if (!footnotes.has(key)) continue;
       if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
       uses.push({ kind: 'footnote-use', key, from: match.index, to: match.index + match[0].length,
         number: numbers.get(key),
         targetFrom: footnotes.get(key).from });
     }
-    return { definitions, references, footnotes, headings, uses, tocs };
+    const result = { definitions, references, footnotes, headings, uses, tocs };
+    if (index) {
+      index.blocks.sort((a, b) => a.from - b.from || b.to - a.to);
+      result.index = index;
+    }
+    return result;
   }
 
-  function noteInlineTokens(value, context, offset) {
+  function noteInlineTokens(value, context, offset, preparedMask) {
     const source = String(value || ''), tokens = [], base = offset || 0;
     if (!/[\[<@]|https?:\/\/|www\./i.test(source)) return tokens;
-    let masked = noteMask(source);
-    const maths = mathRanges(source);
-    for (let index = maths.length - 1; index >= 0; index--) {
-      const range = maths[index];
-      masked = masked.slice(0, range.from) + masked.slice(range.from, range.to).replace(/[^\n]/g, ' ') + masked.slice(range.to);
-    }
+    const masked = preparedMask == null ? noteMask(source, true) : preparedMask;
     const occupied = [];
     const add = token => { tokens.push(token); occupied.push(token); };
     const free = (from, to) => {
@@ -808,7 +845,9 @@
     const values = [];
     const hold = html => { values.push(html); return '\x00NSYN' + (values.length - 1) + '\x00'; };
     const edits = [];
-    for (const token of noteInlineTokens(source, context)) {
+    const prepared = {};
+    const inlineMask = noteMask(source, true, null, false, prepared);
+    for (const token of noteInlineTokens(source, context, 0, inlineMask)) {
       if (token.kind === 'html') {
         edits.push({ from: token.from, to: token.contentFrom, value: hold('<' + token.name + '>') },
           { from: token.contentTo, to: token.to, value: hold('</' + token.name + '>') });
@@ -820,7 +859,7 @@
     }
     // Footnote offsets were computed before code/image placeholders changed
     // the source. Resolve their identities here without reusing shifted offsets.
-    const masked = noteMask(source);
+    const masked = prepared.masked;
     const occurrences = new Map();
     const groupedUses = noteUsesByKey(context);
     for (const match of masked.matchAll(/\[\^([^\]\n]+)\]/g)) {

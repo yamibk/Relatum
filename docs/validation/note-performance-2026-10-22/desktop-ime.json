@@ -1,0 +1,9 @@
+{
+  "source": "# 桌面体验验收\n\n普通正文 Typography 123。\n\n正文落点，用于真实微软拼音确认与取消。\n\n<u>下划线</u> x<sup>2</sup> H<sub>2</sub>O\n\n- [x] 蓝色任务框\n- [ ] 保存与撤销\n\n> 一级引用\n>\n> > 二级引用\n> >\n> > > 三级引用\n\nhttps://example.com/\n\n[TOC]\n\n## 脚注\n\n正文[^note]\n\n[^note]: 脚注说明",
+  "font": "\"Relatum Open Sans\", \"Microsoft YaHei\", \"Microsoft YaHei UI\", \"Segoe UI\", \"Noto Sans SC\", Helvetica, Arial, sans-serif",
+  "lineHeight": "25.6px",
+  "dpr": 1.5,
+  "disk": "# 桌面体验验收\n\n普通正文 Typography 123。\n\n正文落点，用于真实微软拼音确认与取消。\n\n<u>下划线</u> x<sup>2</sup> H<sub>2</sub>O\n\n- [x] 蓝色任务框\n- [ ] 保存与撤销\n\n> 一级引用\n>\n> > 二级引用\n> >\n> > > 三级引用\n\nhttps://example.com/\n\n[TOC]\n\n## 脚注\n\n正文[^note]\n\n[^note]: 脚注说明",
+  "errors": [],
+  "unchanged": true
+}

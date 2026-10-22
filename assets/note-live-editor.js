@@ -89,7 +89,7 @@
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
   const noteSyntaxContexts = new WeakMap();
-  const emptyNoteSyntax = { definitions: [], references: new Map(), footnotes: new Map(), headings: [], uses: [], tocs: [], semanticSignature: '[]' };
+  const emptyNoteSyntax = { definitions: [], references: new Map(), footnotes: new Map(), headings: [], uses: [], tocs: [], semanticSignature: '[[],[]]' };
 
   function noteSyntaxContext(state) {
     return noteSyntaxContexts.get(state.doc) || emptyNoteSyntax;
@@ -97,43 +97,123 @@
 
   function scanNoteSyntaxContext(state) {
     const source = state.doc.sliceString(0, state.doc.length);
-    if (!source.includes('[') || !/^ {0,3}(?:\[[^\]\n]+\]:|\[toc\][ \t]*$)/im.test(source)) {
+    if (!source.includes('[') || !/^ {0,3}(?:\[[^\]\n]+\]:|\[toc\])/im.test(source)) {
       noteSyntaxContexts.set(state.doc, emptyNoteSyntax); return emptyNoteSyntax;
     }
-    const context = window.MarkdownMini.noteSyntax.scan(source);
-    if (context.tocs.length) context.headings = noteHeadingsFromString(source);
+    const context = window.MarkdownMini.noteSyntax.scan(source, { index: true });
+    context.index.headingBlocks = [];
+    context.headings = context.tocs.length ? noteHeadingsFromString(source, { blocks: context.index.headingBlocks }) : [];
+    return rememberNoteSyntaxContext(state.doc, context);
+  }
+
+  function rememberNoteSyntaxContext(doc, context) {
+    context.references = new Map(); context.footnotes = new Map();
+    for (const item of context.definitions) {
+      const entries = item.kind === 'reference' ? context.references : context.footnotes;
+      if (!entries.has(item.key)) entries.set(item.key, item);
+    }
+    const numbers = new Map(); context.uses = [];
+    for (const use of context.index.uses) {
+      const definition = context.footnotes.get(use.key);
+      if (!definition) continue;
+      if (!numbers.has(use.key)) numbers.set(use.key, numbers.size + 1);
+      context.uses.push(Object.assign({}, use, { number: numbers.get(use.key), targetFrom: definition.from }));
+    }
     context.semanticSignature = JSON.stringify([Array.from(context.references, ([key, item]) => [key, item.target, item.title]),
       Array.from(new Map(context.uses.map(use => [use.key, use.number])))]);
-    noteSyntaxContexts.set(state.doc, context);
+    noteSyntaxContexts.set(doc, context);
     return context;
+  }
+
+  // Start/end at paragraph boundaries, then include any containing lexical
+  // block or multiline definition. No document string or per-line cache is
+  // retained. A changed open block grows the scan geometrically until it meets
+  // an unchanged neutral boundary (or EOF).
+  function noteSyntaxBounds(doc, from, to, blocks) {
+    let first = doc.lineAt(from).number, last = doc.lineAt(to).number;
+    first = Math.max(1, first - 1); last = Math.min(doc.lines, last + 1);
+    while (first > 1 && doc.line(first).text.trim()) first--;
+    while (last < doc.lines && doc.line(last).text.trim()) last++;
+    let start = doc.line(first).from, end = doc.line(last).to, changed = true;
+    while (changed) {
+      changed = false;
+      for (const block of blocks) {
+        if (block.from > end || block.to < start) continue;
+        const left = doc.lineAt(block.from).from, right = doc.lineAt(block.to).to;
+        if (left < start) { start = left; changed = true; }
+        if (right > end) { end = right; changed = true; }
+      }
+    }
+    // A footnote can continue across an empty line followed by indentation.
+    last = doc.lineAt(end).number;
+    while (last < doc.lines) {
+      const next = doc.line(last + 1).text;
+      if (/^(?: {4}|\t)/.test(next)) last++;
+      else if (!next.trim() && last + 2 <= doc.lines && /^(?: {4}|\t)/.test(doc.line(last + 2).text)) last += 2;
+      else break;
+    }
+    return { from: start, to: doc.line(last).to };
   }
 
   function updateNoteSyntaxContext(previous, transaction) {
     if (!transaction.docChanged) return previous;
-    let rescan = false;
+    let from = transaction.startState.doc.length, to = 0, crossMath = false, maskChanged = false, headerChanged = false;
     transaction.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
-      const first = transaction.state.doc.lineAt(fromB), last = transaction.state.doc.lineAt(toB);
-      const changed = transaction.state.doc.sliceString(first.from, last.to);
-      const removed = transaction.startState.doc.sliceString(fromA, toA);
-      if (/[`~<>$#\[\]]/.test(transaction.state.doc.sliceString(fromB, toB) + removed)
-          || /^\s*[-=]+\s*$/m.test(changed)
-          || previous.definitions.some(item => item.from <= toA && item.to >= fromA)
-          || previous.uses.some(item => item.from <= toA && item.to >= fromA)
-          || previous.tocs.length && previous.headings.some(item => item.from <= toA && item.to >= fromA)) rescan = true;
+      from = Math.min(from, fromA); to = Math.max(to, toA);
+      const before = transaction.startState.doc.sliceString(transaction.startState.doc.lineAt(fromA).from, transaction.startState.doc.lineAt(toA).to);
+      const after = transaction.state.doc.sliceString(transaction.state.doc.lineAt(fromB).from, transaction.state.doc.lineAt(toB).to);
+      // These paired formulas can start/end in another paragraph without a
+      // line-scanner state. Rebuild their boundaries when the pairing changes.
+      const paired = text => (text.match(/\$\$|\\[\[\]]/g) || []).join('|');
+      if (paired(before) !== paired(after)) crossMath = true;
+      const masks = text => (text.match(/`+|~{3,}|<!--|-->|%%|\n/g) || []).join('|');
+      if (masks(before) !== masks(after)) maskChanged = true;
+      if (fromA < 65536 && /^(?:\uFEFF?---|\.\.\.)[ \t]*$/m.test(before + '\n' + after)) headerChanged = true;
     });
-    if (rescan) return scanNoteSyntaxContext(transaction.state);
+    if (crossMath || maskChanged && previous.index?.crossMath || headerChanged && (/^\uFEFF?---\n/.test(transaction.startState.doc.sliceString(0, 5))
+        || /^\uFEFF?---\n/.test(transaction.state.doc.sliceString(0, 5)))) return scanNoteSyntaxContext(transaction.state);
+    if (!previous.index) {
+      const first = transaction.state.doc.lineAt(transaction.changes.mapPos(from, -1));
+      const last = transaction.state.doc.lineAt(transaction.changes.mapPos(to, 1));
+      const source = transaction.state.doc.sliceString(first.from, last.to);
+      if (/^ {0,3}(?:\[[^\]\n]+\]:|\[toc\])/im.test(source)) return scanNoteSyntaxContext(transaction.state);
+      noteSyntaxContexts.set(transaction.state.doc, previous); return previous;
+    }
     const map = item => Object.assign({}, item, { from: transaction.changes.mapPos(item.from, 1), to: transaction.changes.mapPos(item.to, -1) },
       item.contentFrom == null ? {} : { contentFrom: transaction.changes.mapPos(item.contentFrom, 1) },
       item.targetFrom == null ? {} : { targetFrom: transaction.changes.mapPos(item.targetFrom, 1) });
-    const definitions = previous.definitions.map(map);
-    const context = { definitions, uses: previous.uses.map(map), headings: previous.headings.map(map), tocs: previous.tocs.map(map),
-      references: new Map(), footnotes: new Map(), semanticSignature: previous.semanticSignature };
-    for (const item of definitions) {
-      const entries = item.kind === 'reference' ? context.references : context.footnotes;
-      if (!entries.has(item.key)) entries.set(item.key, item);
+    const blocks = [...previous.index.blocks, ...previous.index.headingBlocks, ...previous.definitions, ...previous.headings];
+    const oldBounds = noteSyntaxBounds(transaction.startState.doc, from, to, blocks);
+    const doc = transaction.state.doc, mappedBlocks = blocks.map(map);
+    let bounds = noteSyntaxBounds(doc, transaction.changes.mapPos(oldBounds.from, -1), transaction.changes.mapPos(oldBounds.to, 1), mappedBlocks);
+    let local, source;
+    for (;;) {
+      source = doc.sliceString(bounds.from, bounds.to);
+      local = window.MarkdownMini.noteSyntax.scan(source, { index: true, fragment: bounds.from > 0 });
+      if (!local.index.open || bounds.to === doc.length) break;
+      const end = Math.min(doc.length, bounds.to + Math.max(4096, bounds.to - bounds.from));
+      bounds = noteSyntaxBounds(doc, bounds.from, end, mappedBlocks);
     }
-    noteSyntaxContexts.set(transaction.state.doc, context);
-    return context;
+    // Expansion may have consumed unchanged blocks beyond the first region.
+    const oldFrom = Math.min(oldBounds.from, transaction.changes.invertedDesc.mapPos(bounds.from, -1));
+    const oldTo = Math.max(oldBounds.to, transaction.changes.invertedDesc.mapPos(bounds.to, 1));
+    const shift = item => Object.assign({}, item, { from: item.from + bounds.from, to: item.to + bounds.from },
+      item.contentFrom == null ? {} : { contentFrom: item.contentFrom + bounds.from });
+    const splice = (old, fresh) => old.filter(item => item.to < oldFrom || item.from > oldTo).map(map).concat(fresh.map(shift)).sort((a, b) => a.from - b.from || b.to - a.to);
+    const context = { definitions: splice(previous.definitions, local.definitions), tocs: splice(previous.tocs, local.tocs),
+      headings: [], index: { blocks: splice(previous.index.blocks, local.index.blocks), uses: splice(previous.index.uses, local.index.uses), headingBlocks: [],
+        open: bounds.to === doc.length ? local.index.open : previous.index.open, crossMath: previous.index.crossMath || local.index.crossMath } };
+    if (context.tocs.length) {
+      if (!previous.tocs.length) {
+        context.headings = noteHeadingsFromString(doc.sliceString(0, doc.length), { blocks: context.index.headingBlocks });
+      } else {
+        const headingBlocks = [];
+        const headings = noteHeadingsFromString(source, { fragment: bounds.from > 0, blocks: headingBlocks });
+        context.headings = splice(previous.headings, headings);
+        context.index.headingBlocks = splice(previous.index.headingBlocks, headingBlocks);
+      }
+    }
+    return rememberNoteSyntaxContext(doc, context);
   }
 
   function jumpNotePosition(view, position) {
@@ -377,7 +457,7 @@
   // The same source index serves the lazy outline and the reading surface.
   // Keep this generator DOM-free and yield between parser/scan steps so a long
   // note does not force full-document parsing into CodeMirror's input listener.
-  function* scanNoteHeadings(value) {
+  function* scanNoteHeadings(value, options) {
     const source = window.MarkdownMini.structure.normalizeSource(value);
     let tree = yield* parseHeadingTree(source);
     const protectedRanges = [], inlineCode = [], customRanges = [];
@@ -389,11 +469,13 @@
         do {
           if (cursor.name === 'InlineCode') inlineCode.push({ from: cursor.from, to: cursor.to });
           yield;
-        } while (cursor.next());
+        // A node cursor can leave its starting subtree. Stop before the next
+        // block, otherwise every paragraph visits the rest of the document.
+        } while (cursor.next() && cursor.from < node.to);
       }
       yield;
     }
-    const metadata = window.MarkdownMini.frontmatter(source);
+    const metadata = options?.fragment ? null : window.MarkdownMini.frontmatter(source);
     if (metadata) customRanges.push(metadata);
     const guards = [...protectedRanges, ...inlineCode, ...(metadata ? [metadata] : [])].sort((a, b) => a.from - b.from);
     let guardIndex = 0, offset = 0, comment = null, math = null;
@@ -445,6 +527,10 @@
     }
     if (comment) customRanges.push({ from: comment.from, to: source.length });
     if (math) customRanges.push({ from: math.from, to: source.length });
+    if (options?.blocks) {
+      for (const range of protectedRanges) options.blocks.push(range);
+      for (const range of customRanges) options.blocks.push(range);
+    }
     let visibleSource = source;
     if (customRanges.length) {
       const ranges = [...protectedRanges, ...customRanges].sort((a, b) => a.from - b.from), merged = [];
@@ -480,7 +566,7 @@
             || cursor.name === 'URL' && cursor.node.parent?.name !== 'Autolink') omitted.push({ from: cursor.from, to: cursor.to });
         if (cursor.name === 'InlineCode') labelCode.push({ from: cursor.from, to: cursor.to });
         yield;
-      } while (cursor.next());
+      } while (cursor.next() && cursor.from < node.to);
       const text = visibleSource.slice(textFrom, textTo).trim().replace(/\n/g, ' ');
       const rawText = visibleSource.slice(textFrom, textTo);
       const literals = labelCode.map(range => {
@@ -512,8 +598,8 @@
     return headings;
   }
 
-  function noteHeadingsFromString(source) {
-    const scan = scanNoteHeadings(source);
+  function noteHeadingsFromString(source, options) {
+    const scan = scanNoteHeadings(source, options);
     let step;
     do { step = scan.next(); } while (!step.done);
     return step.value;
@@ -1857,11 +1943,11 @@
       }
       return position - shift;
     };
-    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteSourcePosition });
+    const readingSyntax = window.MarkdownMini.noteSyntax.scan(renderedSource);
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteSourcePosition, noteContext: readingSyntax });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
-    const readingSyntax = window.MarkdownMini.noteSyntax.scan(original);
     const jumpReading = event => {
       const link = event.target.closest('[data-note-jump]'); if (!link) return;
       if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
@@ -1869,7 +1955,7 @@
       const position = Number(link.dataset.noteJump);
       let target = content.querySelector('[data-note-heading-from="' + position + '"], [data-note-definition-from="' + position + '"], [data-note-source-from="' + position + '"]');
       if (!target) {
-        const use = readingSyntax.uses.find(item => item.from === position);
+        const use = readingSyntax.uses.find(item => noteSourcePosition(item.from) === position);
         if (use) target = content.querySelector('[data-note-footnote-ref^="' + use.number + '-"]');
       }
       if (target) { target.scrollIntoView({ block: 'center' }); target.tabIndex = -1; target.focus({ preventScroll: true }); }

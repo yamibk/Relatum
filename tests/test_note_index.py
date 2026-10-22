@@ -407,6 +407,35 @@ class NoteIndexTests(unittest.TestCase):
         with self.store.index.read() as conn:
             self.assertEqual(conn.execute('SELECT DISTINCT book FROM tags').fetchone()[0], target)
 
+    def test_move_preserves_identity_when_watcher_registers_destination_first(self):
+        self.write('Old.md', 'racepayload #move')
+        self.write('Watcher.md', '[[New]]')
+        self.store.sync.complete()
+        with self.store.index.read() as conn:
+            original_id = conn.execute("SELECT id FROM entries WHERE path='Old.md'").fetchone()[0]
+        remap = self.store.index.remap
+
+        def watched_remap(source, destination):
+            # The filesystem rename is already committed when its notification
+            # reaches the directory index, before the mutation publishes remap.
+            stat = (self.root / destination).stat()
+            self.store.index.register([(destination, 'note', stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)])
+            with self.store.index.read() as conn:
+                incoming = conn.execute("SELECT resolved FROM refs WHERE consumer='wiki' AND lookup='new'").fetchone()[0]
+                self.assertNotEqual(incoming, original_id)
+            return remap(source, destination)
+
+        with mock.patch.object(self.store.index, 'remap', side_effect=watched_remap):
+            self.assertEqual(self.store.move('Old.md', 'New.md')['path'], 'New.md')
+        self.store.sync.complete()
+        with self.store.index.read() as conn:
+            self.assertEqual(conn.execute("SELECT id FROM entries WHERE path='New.md'").fetchone()[0], original_id)
+            self.assertEqual(conn.execute("SELECT resolved FROM refs WHERE consumer='wiki' AND lookup='new'").fetchone()[0], original_id)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM entries WHERE key IN ('old.md','new.md')").fetchone()[0], 1)
+        self.assertEqual(self.query('racepayload')['total'], 1)
+        self.assertEqual(self.store.index.tags()['items'][0]['count'], 1)
+        self.assertEqual((self.root / 'New.md').read_text(encoding='utf-8'), 'racepayload #move')
+
     def test_pause_defers_new_body_parsing_and_close_releases_threads(self):
         self.store.close()
         self.store = NotesStore(self.root, index_path=self.database, background_index=True)

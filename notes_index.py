@@ -556,6 +556,16 @@ class NoteIndex:
                 book = self._book(conn, book_root(path))
                 path_stem = normalize(path[:-3] if row['kind'] == 'note' else path)
                 keys.update((row['stem_key'], row['path_stem_key'], normalize(name), path_stem))
+                # A directory notification can register the new path between
+                # the filesystem rename and this transaction. Keep the original
+                # entry identity and its parsed data; discard only the duplicate
+                # derived row, redirecting any newly resolved incoming links.
+                duplicate = conn.execute('SELECT id,stem_key,path_stem_key FROM entries WHERE book=? AND key=? AND id<>?',
+                                         (book, normalize(path), row['id'])).fetchone()
+                if duplicate:
+                    keys.update((duplicate['stem_key'], duplicate['path_stem_key']))
+                    conn.execute('UPDATE refs SET resolved=? WHERE resolved=?', (row['id'], duplicate['id']))
+                    conn.execute('DELETE FROM entries WHERE id=?', (duplicate['id'],))
                 conn.execute("UPDATE entries SET path=?,key=?,parent=?,name=?,stem_key=?,path_stem_key=?,book=?,title=?,search_path=?,needs_sync=1 WHERE id=?",
                     (path, normalize(path), '' if parent == '.' else normalize(parent), name, normalize(name), path_stem,
                      book, normalize(name), normalize(path), row['id']))

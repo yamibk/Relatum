@@ -1,0 +1,42 @@
+{
+  "input": "Real Windows Microsoft Pinyin through computer-use SendInput; no CDP synthetic input",
+  "preeditDiskUnchanged": true,
+  "confirmed": "含",
+  "insertionPosition": 41,
+  "oneUndoRestored": true,
+  "escapeCancelled": true,
+  "finalDiskUnchanged": true,
+  "events": [
+    {
+      "type": "compositionupdate",
+      "data": "含",
+      "trusted": true
+    },
+    {
+      "type": "compositionend",
+      "data": "含",
+      "trusted": false
+    },
+    {
+      "type": "compositionstart",
+      "data": "",
+      "trusted": true
+    },
+    {
+      "type": "compositionupdate",
+      "data": "h",
+      "trusted": true
+    },
+    {
+      "type": "compositionupdate",
+      "data": "",
+      "trusted": true
+    },
+    {
+      "type": "compositionend",
+      "data": "",
+      "trusted": false
+    }
+  ],
+  "dpr": 1.5
+}

@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-22（本轮更新笔记正文体验、表格对齐与验证入口）。
+> 最后按源码校准：2026-10-22（更新笔记语法增量索引、标题遍历、移动并发与性能验证入口）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -61,6 +61,8 @@ Relatum 是一个离线优先的本地学习与知识组织工具：
 - 深色主题的学习目标树与独立树状页路线、附加依赖线、视觉关系线和箭头统一为纯白；附加依赖保留虚线，删除预览保留红色，入退场仍沿用透明度过渡。
 
 ## 3. 源码地图
+
+笔记文件系统移动后，通知可能先登记新路径。`NoteIndex.remap()` 在同一写事务中保留原 entry 身份，将重复目标派生行的入链转交后清理，再发布路径变化；不删除文件，不改变真实目标冲突检查。`test_move_preserves_identity_when_watcher_registers_destination_first` 确定性覆盖该时序、FTS、标签和入链；画布浏览器回归保留服务诊断，可通过 `RELATUM_SERVER_EXE` 复验实际发布包。
 
 笔记使用单个可重建的 `data/note-index.sqlite3`：`notes_library.py` 管文件/素材事务及路径授权，`notes_index.py` 管 SQLite 存储、参数化查询、读取快照及空间回收，`notes_sync.py` 管后台任务与 Windows 通知，`note_search.py` 管文字投影、短字符倒排和 UTF-16 位置映射。Markdown 是原始数据，SQLite 只保存派生文本及元数据，不迁移旧索引，不改真实正文、附件或配置。WAL 读连接不持有文件写锁或跨进程全局写锁。
 
@@ -123,6 +125,8 @@ Windows 使用目录变化通知，启动、重新进入、还原、主动刷新
 笔记右栏在“引导”之后提供“大纲 / Outline”。`assets/note-outline.js` 仅在前台可见大纲时加载，按当前正文及未保存修改生成主正文 H1–H6 和下划线式 H1/H2 的标题树；引用、Callout、列表内部标题及代码、公式、前言和注释不参与。树默认全部展开，折叠与滚动位置按笔记保留在最多 24 项的本次会话缓存；正文滚动高亮当前章节，折叠时高亮其可见祖先。点击编辑面标题滚动并移光标，阅读面仅滚动，等待现有原生输入及画布保存并核对文档和操作身份，同名标题按源码位置定位，过期操作不改投。大纲只在可见时合并编辑更新并分批解析，滚动按帧更新高亮，不重建未变化的标题行；关闭、离场、隐藏及 pagehide 取消任务、释放观察器。
 
 `assets/note-live-editor.js` 的 `RelatumNoteLiveSyntax.scanNoteHeadings` 使用离线 Lezer 解析器及笔记扩展保护范围，提供可分批运行的标题索引；阅读面共用该索引，`MarkdownMini.renderResult` 的可选 `noteHeadings` 只用于笔记，以 `data-note-heading-from` 记录真实源码位置，保留前言、代码、公式、注释和画布占位之前的偏移并补齐下划线标题。普通画布 Markdown 不启用此扩展。原 `note-notebooks.json` 的 `ui.mode` 新增 `outline`，沿用既有接口和原子写入，无新持久化文件或 localStorage key；重启恢复页签但重置折叠。验证入口为 `node tests/note-outline-regression.js`、`node tests/note-outline-browser.js` 和 `python -m unittest tests.test_note_notebooks`，浏览器沿用宿主 Playwright/Python/Edge 变量及一次性数据根，覆盖完整/仅笔记/禁用画布、三种模式、原生 Chromium 预编辑及迟到操作、同名/跳级/排除语法、未保存修改与撤销、DOM 复用、闲置/关闭零解析、约 4MiB 长文、中英文、深浅和窄窗。真实微软拼音与 WebView2 仍需隔离人工验收。
+
+笔记标题扫描的 Lezer 游标严格限定于当前子树，不能让 `node.cursor().next()` 越过节点后反复走到文末；行内代码位置每处只登记一次。Live 的定义、未解析脚注使用点、目录和标题按 CM 文档身份维护派生索引，局部编辑从段落及既有保护边界更新，未闭合围栏/注释向后成倍扩展至中性边界或文末；跨段公式配对、涉及它的掩码结构及前言分隔变化保守重建。未受影响项仅映射 UTF-16 位置，按原先首个定义和首次引用规则生成语义；无定义/目录的普通正文保留快速路径，光标移动不解析。公式掩码按有序区间一次构造，同次渲染复用掩码，阅读面复用同一语法上下文并映射画布占位前的位置；临时全文字符串不跨文档驻留，不扩大缓存预算。`tests/note-syntax-index-regression.js` 对照完整重建并核验线性遍历/位置对象、局部输入零全文扫描；`tests/note-syntax-performance-browser.js` 三轮交替对照 Git 基线；`tests/note-resource-performance-desktop.js <独立发布目录>` 使用真实 EXE/WebView2、一次性库和配置，分别记录完整/仅笔记的进程树私有提交、工作集、CPU 及 GC 后 JS 堆。原始数据、边界和复现见 `docs/note-performance-2026-10-22.md`。
 
 画布浏览筛选按钮的悬停反馈只作用于未选中按钮；选中按钮保持浅色主题黑底白字、深色主题浅底深字，避免悬停背景覆盖选中反色。
 

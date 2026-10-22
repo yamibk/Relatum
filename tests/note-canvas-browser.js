@@ -25,7 +25,10 @@ async function run(browser, enabled, prewarm = false) {
   }
   const choices = Object.fromEntries(catalog.features.map(f => [f.id, f.id === 'notes' || enabled && f.id === 'notes.canvas' || prewarm && ['canvas', 'canvas.library', 'runtime.preload'].includes(f.id)]));
   const number = await port(), url = `http://127.0.0.1:${number}`;
-  const server = spawn(process.env.RELATUM_PYTHON || 'python', ['app.py', '--no-browser', '--port', String(number), '--launch-profile', JSON.stringify({ version: 1, features: choices })], { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
+  const host = process.env.RELATUM_SERVER_EXE || process.env.RELATUM_PYTHON || 'python';
+  const server = spawn(host, [...(process.env.RELATUM_SERVER_EXE ? [] : ['app.py']), '--no-browser', '--port', String(number), '--launch-profile', JSON.stringify({ version: 1, features: choices })], { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  let serverErrors = '';
+  server.stderr.on('data', chunk => { serverErrors = (serverErrors + chunk.toString()).slice(-65536); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 960 }, reducedMotion: 'reduce' });
   let page;
   try {
@@ -472,6 +475,7 @@ async function run(browser, enabled, prewarm = false) {
     await page.screenshot({ path: path.join(root, 'canvas.png') });
     return { enabled, nodes: 2, geometryBuilds: before, proseProjectionChanges: 0, noOpMeasurements: 0, dragMeasurements: 0, dragIndexRebuilds: 0, dragStaticDraws, screenshot: path.join(root, 'canvas.png') };
   } catch (error) {
+    console.error('Isolated service log:', serverErrors);
     if (page) console.error('Diagnostics', JSON.stringify(await page.evaluate(() => ({ value: window.T?.editor?.snapshot().value,
       canvases: [...document.querySelectorAll('.is-canvas .note-live-image-frame')].map(el => ({
         stats: el.__noteCanvas?.engine?.stats(), nodes: el.__noteCanvas?.session?.data.nodes.length, edges: el.__noteCanvas?.session?.data.edges.length,
