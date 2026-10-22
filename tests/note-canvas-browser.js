@@ -359,8 +359,10 @@ async function run(browser, enabled, prewarm = false) {
     await page.evaluate(() => T.setViewMode('live'));
     await page.evaluate(() => T.openNote('Book/B.md'));
     await page.waitForFunction(() => document.querySelector('.is-canvas .note-live-image-frame')?.__noteCanvas?.engine);
+    await page.locator('.note-tree-row[data-note-path="Book/B.md"]').waitFor();
     assert.equal(await frame.locator('.note-canvas-node').count(), 2);
-    assert.equal(await page.evaluate(() => T.movePath('Book/B.md', 'B.md')), true);
+    const noteMoved = await page.evaluate(() => T.movePath('Book/B.md', 'B.md'));
+    assert.equal(noteMoved, true, await page.evaluate(() => T.state.lastMoveError || 'note move succeeds'));
     assert((await snap()).includes('](canvases/'));
     assert(!(await snap()).includes('../canvases/'));
     // Two visible references share file/history, but keep independent sizes.

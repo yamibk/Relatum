@@ -74,6 +74,7 @@ const sandbox = {
       ViewPlugin: {}, keymap: {}, drawSelection() {}, dropCursor() {}, highlightSpecialChars() {},
       rectangularSelection() {}, crosshairCursor() {}, placeholder() {}, highlightActiveLine() {},
       syntaxTree: fakeSyntaxTree, forceParsing() { return true; }, indentOnInput() {},
+      HighlightStyle: { define() { return { scope() { return true; } }; } }, syntaxHighlighting() { return []; },
       bracketMatching() {}, closeBrackets() {}, closeBracketsKeymap: [],
       markdown() {}, markdownLanguage: {}, markdownKeymap: [], history() {},
       historyKeymap: [], defaultKeymap: [], indentWithTab: {}, searchKeymap: [], highlightSelectionMatches() {},
@@ -591,8 +592,8 @@ assert.strictEqual(syntax.scanBlockSpecsFromString('x'.repeat(4 * 1024 * 1024)).
   'a 4 MiB long line must scan without becoming a rich component');
 
 assert(!editorSource.includes('defaultHighlightStyle'), 'CodeMirror default heading underline must not be loaded');
-assert(!editorSource.includes('syntaxHighlighting('), 'generic CodeMirror highlighting must not override Relatum projection colors');
-assert(editorSource.includes('relatumCodeLanguages') && editorSource.includes('relatumCodeHighlighting'), 'fenced code must use the scoped offline language pack');
+assert(editorSource.includes('scope: (nodeType) => !markdownHighlightScope(nodeType)'), 'syntax highlighting must exclude the Markdown projection');
+assert(editorSource.includes('relatumCodeLanguages') && editorSource.includes('relatumCodeStyle'), 'fenced code must use the scoped offline language pack');
 assert(editorSource.includes('forceParsing') && editorSource.includes('viewportScanEffect'), 'long documents must refresh the syntax tree and visible rich blocks');
 assert(editorSource.includes('viewportParseRequestEffect') && editorSource.includes("addEventListener('scroll', this.onScroll"),
   'restored and programmatic scrolling must explicitly refresh visible decorations');

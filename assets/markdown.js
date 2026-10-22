@@ -570,6 +570,279 @@
     return renderInline(escapeHtml(String(src == null ? '' : src)));
   }
 
+  // Opt-in note grammar. Every range uses UTF-16 offsets in the original
+  // Markdown; generated HTML never becomes an editing or persistence model.
+  const NOTE_HTML = new Set(['u', 'ins', 'del', 's', 'sup', 'sub', 'kbd', 'mark', 'strong', 'em', 'b', 'i']);
+  function referenceKey(value) {
+    return String(value).replace(/\\([\[\]\\])/g, '$1').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function noteMask(source) {
+    const parts = []; let fence = null, comment = '', math = false;
+    const header = frontmatter(source);
+    let from = 0;
+    for (const line of source.split('\n')) {
+      const quote = quoteLine(line), text = quote.text;
+      const opening = !comment && !math ? parseFenceLine(text) : null;
+      if (fence) { if (isFenceClose(text, fence)) fence = null; }
+      else if (opening) fence = opening;
+      else if (!comment && /^\s*\$\$\s*$/.test(text)) math = !math;
+      if (!fence && !opening && !math && !(header && from < header.to) && (comment || !/^(?: {4}|\t)/.test(text))) {
+        let safe = line.replace(/(`+)[^\n]*?\1/g, match => ' '.repeat(match.length));
+        let position = 0, result = '';
+        while (position < safe.length) {
+          if (comment) {
+            const close = safe.indexOf(comment, position);
+            if (close < 0) { result += ' '.repeat(safe.length - position); position = safe.length; }
+            else { const end = close + comment.length; result += ' '.repeat(end - position); position = end; comment = ''; }
+          } else {
+            const marker = /<!--|%%/g; marker.lastIndex = position;
+            const match = marker.exec(safe);
+            if (!match) { result += safe.slice(position); break; }
+            result += safe.slice(position, match.index) + ' '.repeat(match[0].length);
+            position = match.index + match[0].length; comment = match[0] === '<!--' ? '-->' : '%%';
+          }
+        }
+        parts.push(result);
+      } else parts.push(' '.repeat(line.length));
+      from += line.length + 1;
+    }
+    let masked = parts.join('\n');
+    const ranges = mathRanges(masked);
+    for (let index = ranges.length - 1; index >= 0; index--) {
+      const range = ranges[index]; masked = masked.slice(0, range.from) + masked.slice(range.from, range.to).replace(/[^\n]/g, ' ') + masked.slice(range.to);
+    }
+    return masked;
+  }
+
+  function noteDestination(raw) {
+    const match = /^(?:<([^<>\n]+)>|(\S+?))(?:\s+["']([^\n]*?)["'])?\s*$/.exec(raw.trim());
+    if (!match) return null;
+    const target = (match[1] || match[2]).replace(/\\([()<>\\])/g, '$1');
+    if (/^(?:javascript|vbscript|data|file):/i.test(target) || /[\x00-\x1f]/.test(target)) return null;
+    return { target, title: match[3] || '' };
+  }
+
+  function scanNoteDocument(value) {
+    const source = String(value || ''), masked = noteMask(source);
+    const definitions = [], headings = [], uses = [], tocs = [];
+    const references = new Map(), footnotes = new Map();
+    const lines = source.split('\n'), visible = masked.split('\n');
+    let from = 0;
+    for (let number = 0; number < lines.length; number++) {
+      const text = lines[number], safe = visible[number];
+      const match = /^ {0,3}\[(\^?[^\]\n]+)\]:[ \t]*(.*)$/.exec(safe);
+      if (match) {
+        const key = referenceKey(match[1].replace(/^\^/, ''));
+        const contentStart = text.indexOf(']:') + 2;
+        let to = from + text.length, body = text.slice(contentStart).trimStart();
+        const contentFrom = from + contentStart + (text.slice(contentStart).length - body.length);
+        if (match[1].startsWith('^')) {
+          let last = number;
+          while (last + 1 < lines.length) {
+            const next = lines[last + 1];
+            if (/^(?: {4}|\t)/.test(next)) { body += '\n' + next.replace(/^(?: {4}|\t)/, ''); last++; }
+            else if (!next.trim() && last + 2 < lines.length && /^(?: {4}|\t)/.test(lines[last + 2])) { body += '\n'; last++; }
+            else break;
+          }
+          for (let index = number + 1; index <= last; index++) to += lines[index].length + 1;
+          const entry = { kind: 'footnote', key, from, to, contentFrom, body };
+          definitions.push(entry); if (!footnotes.has(key)) footnotes.set(key, entry);
+        } else {
+          const destination = noteDestination(text.slice(contentStart));
+          if (destination) {
+            const entry = Object.assign({ kind: 'reference', key, from, to, contentFrom }, destination);
+            definitions.push(entry); if (!references.has(key)) references.set(key, entry);
+          }
+        }
+      }
+      if (/^ {0,3}\[toc\][ \t]*$/i.test(safe)) tocs.push({ from, to: from + text.length });
+      const heading = parseHeadingLine(safe);
+      if (heading) headings.push({ from, to: from + text.length, level: heading.level, text: heading.text, label: heading.text.replace(/[*_`]/g, '') });
+      else if (number && /^ {0,3}(?:=+|-+)[ \t]*$/.test(safe) && visible[number - 1].trim() && !/^ {0,3}>/.test(visible[number - 1])) {
+        const previous = lines[number - 1];
+        headings.push({ from: from - previous.length - 1, to: from + text.length, level: safe.trim()[0] === '=' ? 1 : 2, text: previous.trim(), label: previous.trim() });
+      }
+      from += text.length + 1;
+    }
+    const usePattern = /\[\^([^\]\n]+)\]/g;
+    const numbers = new Map(); let definitionIndex = 0;
+    let match;
+    while ((match = usePattern.exec(masked))) {
+      while (definitionIndex < definitions.length && definitions[definitionIndex].to <= match.index) definitionIndex++;
+      if (escapedAtSource(source, match.index) || definitions[definitionIndex] && definitions[definitionIndex].from <= match.index) continue;
+      const key = referenceKey(match[1]);
+      if (!footnotes.has(key)) continue;
+      if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
+      uses.push({ kind: 'footnote-use', key, from: match.index, to: match.index + match[0].length,
+        number: numbers.get(key),
+        targetFrom: footnotes.get(key).from });
+    }
+    return { definitions, references, footnotes, headings, uses, tocs };
+  }
+
+  function noteInlineTokens(value, context, offset) {
+    const source = String(value || ''), tokens = [], base = offset || 0;
+    if (!/[\[<@]|https?:\/\/|www\./i.test(source)) return tokens;
+    let masked = noteMask(source);
+    const maths = mathRanges(source);
+    for (let index = maths.length - 1; index >= 0; index--) {
+      const range = maths[index];
+      masked = masked.slice(0, range.from) + masked.slice(range.from, range.to).replace(/[^\n]/g, ' ') + masked.slice(range.to);
+    }
+    const occupied = [];
+    const add = token => { tokens.push(token); occupied.push(token); };
+    const free = (from, to) => {
+      let low = 0, high = occupied.length;
+      while (low < high) { const mid = (low + high) >>> 1; if (occupied[mid].to <= from) low = mid + 1; else high = mid; }
+      return !occupied[low] || occupied[low].from >= to;
+    };
+    // Paired, attribute-free semantic tags only. Incomplete or arbitrary HTML
+    // remains escaped source. Keep code inside a safe pair out of the pairing pass.
+    const stack = [], tags = /<\/?([a-z]+)\s*\/?>/gi;
+    let match;
+    while ((match = tags.exec(masked))) {
+      const name = match[1].toLowerCase(), from = match.index, to = from + match[0].length;
+      if (escapedAtSource(source, from)) continue;
+      if (name === 'br' && !match[0].startsWith('</')) { tokens.push({ kind: 'html-break', from, to }); continue; }
+      if (!NOTE_HTML.has(name) || /\/$/.test(match[0].slice(0, -1))) continue;
+      if (match[0].startsWith('</')) {
+        const open = stack[stack.length - 1];
+        if (open && open.name === name) { stack.pop(); tokens.push({ kind: 'html', name, from: open.from, to, contentFrom: open.to, contentTo: from }); }
+      } else stack.push({ name, from, to });
+    }
+    const parentheses = new Map(), opens = [];
+    if (source.includes('](')) for (let index = 0; index < source.length; index++) {
+      if (source[index] === '\\') { index++; continue; }
+      if (source[index] === '(') opens.push(index);
+      else if (source[index] === ')' && opens.length) parentheses.set(opens.pop(), index);
+    }
+    const links = /!?\[(?![\[^])([^\]\n]+)\]/g;
+    while ((match = links.exec(masked))) {
+      const from = match.index;
+      if (match[0][0] === '!' || escapedAtSource(source, from) || source[from - 1] === '[') {
+        const end = from + match[0].length;
+        if (source[end] === '[') { const close = source.indexOf(']', end + 1); if (close >= 0) links.lastIndex = close + 1; }
+        continue;
+      }
+      let end = from + match[0].length, destination = null;
+      if (source[end] === '(') {
+        const close = parentheses.get(end);
+        if (close != null) { destination = noteDestination(source.slice(end + 1, close)); end = close + 1; }
+      } else {
+        let key = match[1];
+        if (source[end] === '[') {
+          const close = source.indexOf(']', end + 1);
+          if (close < 0 || source.slice(end, close).includes('\n')) continue;
+          key = source.slice(end + 1, close) || key; end = close + 1;
+        }
+        destination = context && context.references.get(referenceKey(key));
+      }
+      if (destination && free(from, end)) {
+        add({ kind: 'link', from, to: end, contentFrom: from + 1, contentTo: from + match[0].length - 1,
+          text: match[1], target: destination.target, title: destination.title || '' });
+        links.lastIndex = end;
+      }
+    }
+    const urls = /<?(?:https?:\/\/[^\s<>\u3000-\u303f\uff00-\uffef]+|www\.[^\s<>\u3000-\u303f\uff00-\uffef]+|[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,})>?/gi;
+    while ((match = urls.exec(masked))) {
+      let text = match[0], from = match.index, to = from + text.length;
+      const angle = text.startsWith('<') && text.endsWith('>');
+      if (text.startsWith('<')) { from++; text = text.slice(1); }
+      if (text.endsWith('>')) { to--; text = text.slice(0, -1); }
+      text = text.replace(/[.,!?;:'"]+$/, '');
+      for (const [left, right] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+        while (text.endsWith(right) && text.split(right).length > text.split(left).length) text = text.slice(0, -1);
+      }
+      to = from + text.length;
+      if (!text || escapedAtSource(source, match.index) || !free(match.index, match.index + match[0].length)
+          || /[\w@]/.test(source[match.index - 1] || '')) continue;
+      const target = /^www\./i.test(text) ? 'https://' + text : /^https?:/i.test(text) ? text : 'mailto:' + text;
+      tokens.push({ kind: 'autolink', from: angle ? from - 1 : from, to: angle ? to + 1 : to, contentFrom: from, contentTo: to, text, target, title: '' });
+    }
+    occupied.push(...tokens.filter(token => token.kind === 'autolink'));
+    occupied.sort((a, b) => a.from - b.from);
+    const uses = context && context.uses || [];
+    let low = 0, high = uses.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (uses[mid].from < base) low = mid + 1; else high = mid; }
+    for (let index = low; index < uses.length && uses[index].from < base + source.length; index++) {
+      const use = uses[index];
+      const from = use.from - base, to = use.to - base;
+      if (from >= 0 && to <= source.length && free(from, to)) tokens.push(Object.assign({}, use, { from, to }));
+    }
+    return tokens.filter(token => token.kind !== 'html' && token.kind !== 'html-break'
+      || !occupied.some(link => link.from <= token.from && link.to >= token.to))
+      .sort((a, b) => a.from - b.from || b.to - a.to);
+  }
+
+  function noteUsesByKey(context) {
+    if (!context.usesByKey) {
+      const grouped = new Map();
+      for (const use of context.uses) { if (!grouped.has(use.key)) grouped.set(use.key, []); grouped.get(use.key).push(use); }
+      context.usesByKey = grouped;
+    }
+    return context.usesByKey;
+  }
+
+  function noteLabelHtml(value) {
+    const source = String(value), values = [], edits = [];
+    const hold = html => { values.push(html); return '\x00NHTML' + (values.length - 1) + '\x00'; };
+    for (const token of noteInlineTokens(source)) {
+      if (token.kind === 'html') edits.push({ from: token.from, to: token.contentFrom, value: hold('<' + token.name + '>') },
+        { from: token.contentTo, to: token.to, value: hold('</' + token.name + '>') });
+      else if (token.kind === 'html-break') edits.push({ from: token.from, to: token.to, value: hold('<br>') });
+    }
+    let guarded = source;
+    for (const edit of edits.sort((a, b) => b.from - a.from)) guarded = guarded.slice(0, edit.from) + edit.value + guarded.slice(edit.to);
+    return renderInlineSafe(guarded).replace(/\x00NHTML(\d+)\x00/g, (_, index) => values[+index]);
+  }
+
+  function noteTocHtml(headings) {
+    return '<nav class="note-toc" aria-label="Table of contents">' + headings.map(heading =>
+      '<a role="link" tabindex="0" data-note-jump="' + (heading.sourceFrom == null ? heading.from : heading.sourceFrom) + '" style="--note-toc-depth:' + (heading.level - 1) + '">'
+      + escapeHtml(heading.label || heading.text) + '</a>').join('') + '</nav>';
+  }
+
+  function protectNoteSyntax(source, context, headings, sourcePosition) {
+    const position = typeof sourcePosition === 'function' ? sourcePosition : value => value;
+    const values = [];
+    const hold = html => { values.push(html); return '\x00NSYN' + (values.length - 1) + '\x00'; };
+    const edits = [];
+    for (const token of noteInlineTokens(source, context)) {
+      if (token.kind === 'html') {
+        edits.push({ from: token.from, to: token.contentFrom, value: hold('<' + token.name + '>') },
+          { from: token.contentTo, to: token.to, value: hold('</' + token.name + '>') });
+      } else if (token.kind === 'html-break') edits.push({ from: token.from, to: token.to, value: hold('<br>') });
+      else if (token.kind !== 'footnote-use') edits.push({ from: token.from, to: token.to, value: hold(
+        '<a class="node-link" data-kind="' + (/^(?:https?:|mailto:)/i.test(token.target) ? 'url' : 'file')
+        + '" data-href="' + escapeHtml(token.target) + '" title="' + escapeHtml(token.title || token.target)
+        + '">' + (token.kind === 'autolink' ? escapeHtml(token.text) : noteLabelHtml(token.text)) + '</a>') });
+    }
+    // Footnote offsets were computed before code/image placeholders changed
+    // the source. Resolve their identities here without reusing shifted offsets.
+    const masked = noteMask(source);
+    const occurrences = new Map();
+    const groupedUses = noteUsesByKey(context);
+    for (const match of masked.matchAll(/\[\^([^\]\n]+)\]/g)) {
+      if (escapedAtSource(source, match.index)) continue;
+      const key = referenceKey(match[1]), ordinal = occurrences.get(key) || 0;
+      const use = (groupedUses.get(key) || [])[ordinal];
+      if (!use || edits.some(edit => edit.from <= match.index && edit.to > match.index)) continue;
+      const occurrence = values.length;
+      occurrences.set(key, ordinal + 1);
+      edits.push({ from: match.index, to: match.index + match[0].length, value: hold('<sup class="note-footnote-ref"><a data-note-jump="'
+        + position(use.targetFrom) + '" data-note-footnote-key="' + escapeHtml(use.key) + '" data-note-source-from="' + position(use.from) + '" role="link" tabindex="0" data-note-footnote-ref="' + use.number + '-' + occurrence + '">' + use.number + '</a></sup>') });
+    }
+    let end = source.length, result = '';
+    edits.sort((a, b) => b.from - a.from || b.to - a.to).forEach(edit => {
+      if (edit.to > end) return;
+      result = edit.value + source.slice(edit.to, end) + result; end = edit.from;
+    });
+    result = source.slice(0, end) + result;
+    result = result.replace(/^ {0,3}\[toc\][ \t]*$/gmi, () => hold(noteTocHtml(headings || context.headings)));
+    return { protected: result, values };
+  }
+
   // ── 围栏代码块 ``` ───────────────────────────────
   // 已知会着色的语言；text/plain/output/无语言 → 只等宽渲染，不着色（尊重用户的 ```text 图解块）。
   const CODE_LANGS = {};
@@ -1287,19 +1560,29 @@
     if (!source) return { html: '', features: { math: false, mermaid: false }, error: false };
     const options = arguments.length > 1 ? arguments[1] : null;
     const opts = options && typeof options === 'object' ? options : {};
+    const noteContext = opts.noteSyntax ? opts.noteContext || scanNoteDocument(source) : null;
     let headingSource = source;
+    if (noteContext && !opts.noteFootnoteBody) {
+      const pieces = []; let position = 0;
+      for (const entry of noteContext.definitions) {
+        if (entry.from < position) continue;
+        pieces.push(source.slice(position, entry.from), source.slice(entry.from, entry.to).replace(/[^\n]/g, ' '));
+        position = entry.to;
+      }
+      pieces.push(source.slice(position)); headingSource = pieces.join('');
+    }
     if (Array.isArray(opts.noteHeadings)) {
       const pieces = []; let position = 0;
       opts.noteHeadings.forEach(heading => {
         if (heading.from < position || heading.to > source.length || !/^[1-6]$/.test(String(heading.level))) return;
-        pieces.push(source.slice(position, heading.from));
+        pieces.push(headingSource.slice(position, heading.from));
         const sourceFrom = Number.isInteger(heading.sourceFrom) ? heading.sourceFrom : heading.from;
         pieces.push('\x00NHEAD' + heading.level + ':' + sourceFrom + '\x00' + heading.text);
         // Retain every source newline for other note blocks and callout folds.
         pieces.push('\n'.repeat(source.slice(heading.from, heading.to).split('\n').length - 1));
         position = heading.to;
       });
-      pieces.push(source.slice(position)); headingSource = pieces.join('');
+      pieces.push(headingSource.slice(position)); headingSource = pieces.join('');
     }
     const header = opts.noteTags ? frontmatter(headingSource) : null;
     const body = header ? headingSource.slice(header.to) : headingSource;
@@ -1309,7 +1592,8 @@
       const inlineCodeGuard = protectInlineCode(codeGuard.protected);
       const imageGuard = protectLocalImages(inlineCodeGuard.protected, opts.localImages === true);
       const wikiGuard = protectWikiLinks(imageGuard.protected);   // 先抠 [[双链]]（早于 [文字](url)）
-      const linkGuard = protectLinks(wikiGuard.protected);
+      const noteGuard = noteContext ? protectNoteSyntax(wikiGuard.protected, noteContext, opts.noteHeadings, opts.noteSourcePosition) : null;
+      const linkGuard = noteGuard ? { protected: noteGuard.protected, links: [] } : protectLinks(wikiGuard.protected);
       const mathSource = opts.noteBlocks ? linkGuard.protected.replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, (comment) => comment.split('\n').slice(1).map(line => '\n' + quoteLine(line).prefix).join('')) : linkGuard.protected;
       const mathGuard = protectMath(mathSource, undefined, opts.noteBlocks);
       if (opts.noteBlocks) features.math = mathGuard.maths.some(item => !item.raw) || /\\begin\{([^{}\s]+)\}[\s\S]+?\\end\{\1\}|\\(?:ref|eqref)\{[^{}\n]+\}/.test(mathGuard.protected);
@@ -1328,6 +1612,31 @@
       html = restoreEscapes(html, escapeGuard.chars);
       html = restoreInlineCode(html, inlineCodeGuard.codes);
       html = restoreCode(html, codeGuard.codes);
+      if (noteGuard) {
+        html = html.replace(/<p(?: data-ln="\d+")?>(\x00NSYN(\d+)\x00)<\/p>/g,
+          (whole, token, index) => noteGuard.values[+index].startsWith('<nav') ? token : whole);
+        html = html.replace(/\x00NSYN(\d+)\x00/g, (_, index) => noteGuard.values[+index]);
+      }
+      if (noteContext && !opts.noteFootnoteBody && noteContext.uses.length) {
+        const seen = new Set();
+        html += '<section class="note-footnotes" aria-label="Footnotes">';
+        for (const use of noteContext.uses) {
+          if (seen.has(use.key)) continue;
+          seen.add(use.key);
+          const entry = noteContext.footnotes.get(use.key);
+          const body = renderResult(entry.body, { noteSyntax: true, noteBlocks: true, localImages: opts.localImages,
+            noteContext, noteFootnoteBody: true, noteSourcePosition: opts.noteSourcePosition });
+          features.math = features.math || body.features.math;
+          features.mermaid = features.mermaid || body.features.mermaid;
+          const position = typeof opts.noteSourcePosition === 'function' ? opts.noteSourcePosition : value => value;
+          html += '<div class="note-footnote" data-note-definition-from="' + position(entry.from) + '"><span class="note-footnote-number">'
+            + use.number + '.</span><div>' + body.html + '<span class="note-footnote-returns">'
+            + noteUsesByKey(noteContext).get(use.key).map((item, index) => '<a data-note-jump="' + position(item.from)
+              + '" role="link" tabindex="0" aria-label="Back to reference ' + (index + 1) + '">↩' + (index ? index + 1 : '') + '</a>').join(' ')
+            + '</span></div></div>';
+        }
+        html += '</section>';
+      }
       if (header) html = '<pre class="note-frontmatter"><code>' + escapeHtml(source.slice(0, header.to)) + '</code></pre>' + html;
       return { html: html, features: features, error: false };
     } catch (error) {
@@ -1447,6 +1756,7 @@
     renderResult: renderResult,
     renderLabelResult: renderLabelResult,
     renderInline: renderInlineSafe,
+    noteSyntax: Object.freeze({ scan: scanNoteDocument, inline: noteInlineTokens, tocHtml: noteTocHtml, referenceKey }),
     escapeHtml: escapeHtml,
     highlightCode: highlightCode,
     markIntervals: markIntervals,

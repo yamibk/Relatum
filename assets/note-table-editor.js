@@ -44,6 +44,20 @@
         else run();
       },
       pending() { return Array.from(surfaces).some((surface) => surface.pending()); },
+      refreshNoteSyntax() {
+        // Definitions rarely change. Only dependent rendered fragments are
+        // invalidated; normal input, scrolling and selection never enter here.
+        for (const surface of surfaces) {
+          if (!surface.current() || surface.pending()) continue;
+          surface.body.querySelectorAll('td[data-table-row]').forEach(cell => {
+            const content = cell.firstElementChild;
+            if (!content || !/\[[^\]]+\]/.test(content.dataset.source || '')) return;
+            if (surface.edit?.cell === cell) { surface.edit.contentDirty = true; return; }
+            if (content.firstElementChild) content.firstElementChild.dataset.source = '';
+            surface.renderCell(cell, Number(cell.dataset.tableRow), Number(cell.dataset.tableCol));
+          });
+        }
+      },
       spec(id) { const surface = Array.from(surfaces).find((candidate) => candidate.widget.spec.id === id && candidate.current()); return surface && surface.current(); },
       boundary(view) {
         const main = view.state.selection.main; if (!main.empty) return null;

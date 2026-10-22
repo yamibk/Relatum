@@ -1,0 +1,50 @@
+{
+  "output": "D:\\Relatum项目\\docs\\validation\\note-typora-2026-10-22\\visual",
+  "baselineRef": "2a1b4c8",
+  "referenceAvailable": true,
+  "checks": [
+    "font, heading, compact gaps, three-level quote",
+    "ordinary click edits; Ctrl click opens balanced automatic URL",
+    "TOC uses Markdown heading positions",
+    "source/live round trip and native Chromium composition, one undo",
+    "reading shares semantic HTML, footnotes and TOC",
+    "reading jumps retain original source offsets after embedded canvas projection",
+    "nested quote code preserves source operators and indentation",
+    "table reference definitions refresh dependent fragments; UTF-16 footnote jump; unrelated cell reuse",
+    "light/dark, 100/125/150/200 percent, narrow viewport, unchanged source"
+  ],
+  "metrics": [
+    {
+      "font": "\"Relatum Open Sans\", \"Microsoft YaHei\", \"Microsoft YaHei UI\", \"Segoe UI\", \"Noto Sans SC\", Helvetica, Arial, sans-serif",
+      "size": "16px",
+      "lineHeight": "25.6px",
+      "h1": "36px",
+      "quoteDepths": [
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "2",
+        "2",
+        "3"
+      ],
+      "gapHeight": 12.796875,
+      "toc": true,
+      "fonts": [
+        {
+          "familyName": "Microsoft YaHei",
+          "postScriptName": "MicrosoftYaHei",
+          "isCustomFont": false,
+          "glyphCount": 23
+        },
+        {
+          "familyName": "Open Sans",
+          "postScriptName": "OpenSans-Regular",
+          "isCustomFont": true,
+          "glyphCount": 15
+        }
+      ]
+    }
+  ]
+}

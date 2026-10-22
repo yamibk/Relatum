@@ -416,7 +416,7 @@ async function freePort() {
     console.log('note image text workspace browser regression: ok');
   } finally {
     if (browser) await browser.close();
-    server.kill();
-    fs.rmSync(root, { recursive: true, force: true });
+    if (server.exitCode === null) await new Promise(resolve => { server.once('exit', resolve); server.kill(); });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

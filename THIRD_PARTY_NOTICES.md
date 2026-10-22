@@ -2,6 +2,13 @@
 
 Relatum bundles the following components for offline use. Their licenses are independent from the Relatum project license.
 
+## Open Sans
+
+- Unmodified v17 Latin/Latin Extended WOFF2 subsets: regular, bold, italic and bold italic.
+- Digitized data copyright © 2010–2011, Google Corporation. Designed by Steve Matteson.
+- License: Apache-2.0. Full text: `assets/fonts/open-sans-LICENSE.txt`; provenance: `assets/fonts/open-sans-NOTICE.md`.
+- These fonts are used only by the note document. No Typora application code or runtime is included.
+
 ## Lucide / Feather icon subset
 
 - Project: <https://github.com/lucide-icons/lucide>

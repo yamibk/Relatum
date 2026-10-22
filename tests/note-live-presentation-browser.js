@@ -652,7 +652,7 @@ q^{\mathrm{acc}}_{i,t}+q^{\mathrm{rej}}_{i,t}
       assert.equal(result.native, result.selected, gesture + ' must retain the native text selection');
       assert.equal(result.copied, result.selected, gesture + ' must copy the exact formula source');
       assert.equal(result.value, mathSelectionSource);
-      assert(result.colors.length > 0 && result.colors.every(color => color === 'rgba(116, 133, 104, 0.19)'),
+      assert(result.colors.length > 0 && result.colors.every(color => color === 'rgba(65, 131, 196, 0.22)'),
         gesture + ' must paint the native selection above the opaque background');
       return result;
     };

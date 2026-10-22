@@ -88,6 +88,107 @@
   const viewportParseRequestEffect = StateEffect.define();
   let nextBlockSpecId = 1;
   let nextTableCellVersion = 1;
+  const noteSyntaxContexts = new WeakMap();
+  const emptyNoteSyntax = { definitions: [], references: new Map(), footnotes: new Map(), headings: [], uses: [], tocs: [], semanticSignature: '[]' };
+
+  function noteSyntaxContext(state) {
+    return noteSyntaxContexts.get(state.doc) || emptyNoteSyntax;
+  }
+
+  function scanNoteSyntaxContext(state) {
+    const source = state.doc.sliceString(0, state.doc.length);
+    if (!source.includes('[') || !/^ {0,3}(?:\[[^\]\n]+\]:|\[toc\][ \t]*$)/im.test(source)) {
+      noteSyntaxContexts.set(state.doc, emptyNoteSyntax); return emptyNoteSyntax;
+    }
+    const context = window.MarkdownMini.noteSyntax.scan(source);
+    if (context.tocs.length) context.headings = noteHeadingsFromString(source);
+    context.semanticSignature = JSON.stringify([Array.from(context.references, ([key, item]) => [key, item.target, item.title]),
+      Array.from(new Map(context.uses.map(use => [use.key, use.number])))]);
+    noteSyntaxContexts.set(state.doc, context);
+    return context;
+  }
+
+  function updateNoteSyntaxContext(previous, transaction) {
+    if (!transaction.docChanged) return previous;
+    let rescan = false;
+    transaction.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+      const first = transaction.state.doc.lineAt(fromB), last = transaction.state.doc.lineAt(toB);
+      const changed = transaction.state.doc.sliceString(first.from, last.to);
+      const removed = transaction.startState.doc.sliceString(fromA, toA);
+      if (/[`~<>$#\[\]]/.test(transaction.state.doc.sliceString(fromB, toB) + removed)
+          || /^\s*[-=]+\s*$/m.test(changed)
+          || previous.definitions.some(item => item.from <= toA && item.to >= fromA)
+          || previous.uses.some(item => item.from <= toA && item.to >= fromA)
+          || previous.tocs.length && previous.headings.some(item => item.from <= toA && item.to >= fromA)) rescan = true;
+    });
+    if (rescan) return scanNoteSyntaxContext(transaction.state);
+    const map = item => Object.assign({}, item, { from: transaction.changes.mapPos(item.from, 1), to: transaction.changes.mapPos(item.to, -1) },
+      item.contentFrom == null ? {} : { contentFrom: transaction.changes.mapPos(item.contentFrom, 1) },
+      item.targetFrom == null ? {} : { targetFrom: transaction.changes.mapPos(item.targetFrom, 1) });
+    const definitions = previous.definitions.map(map);
+    const context = { definitions, uses: previous.uses.map(map), headings: previous.headings.map(map), tocs: previous.tocs.map(map),
+      references: new Map(), footnotes: new Map(), semanticSignature: previous.semanticSignature };
+    for (const item of definitions) {
+      const entries = item.kind === 'reference' ? context.references : context.footnotes;
+      if (!entries.has(item.key)) entries.set(item.key, item);
+    }
+    noteSyntaxContexts.set(transaction.state.doc, context);
+    return context;
+  }
+
+  function jumpNotePosition(view, position) {
+    if (compositionActive(view)) return;
+    const at = clamp(position, 0, view.state.doc.length);
+    view.dispatch({ selection: EditorSelection.cursor(at), effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+    view.focus();
+  }
+
+  class NoteFootnoteWidget extends WidgetType {
+    constructor(key, number, definition) { super(); this.key = key; this.number = number; this.definition = !!definition; }
+    eq(other) { return this.key === other.key && this.number === other.number && this.definition === other.definition; }
+    toDOM(view) {
+      const span = document.createElement(this.definition ? 'span' : 'sup');
+      span.className = this.definition ? 'note-live-footnote-number' : 'note-footnote-ref';
+      const link = document.createElement('button'); link.type = 'button'; link.textContent = this.number + (this.definition ? '.' : '');
+      link.setAttribute('aria-label', (this.definition ? 'Back to reference: ' : 'Footnote: ') + this.key);
+      link.addEventListener('mousedown', event => event.preventDefault());
+      link.addEventListener('click', event => {
+        event.preventDefault(); event.stopPropagation();
+        const context = noteSyntaxContext(view.state);
+        const target = this.definition ? context.uses.find(use => use.key === this.key) : context.footnotes.get(this.key);
+        if (target) jumpNotePosition(view, this.definition ? target.from : target.contentFrom);
+      });
+      span.appendChild(link); return span;
+    }
+    ignoreEvent() { return true; }
+  }
+
+  class NoteTocWidget extends WidgetType {
+    constructor(headings, from) { super(); this.headings = headings; this.from = from; }
+    eq(other) { return this.from === other.from && this.headings.length === other.headings.length && this.headings.every((item, index) => {
+      const next = other.headings[index]; return item.from === next.from && item.level === next.level && item.label === next.label;
+    }); }
+    toDOM(view) {
+      const wrap = document.createElement('div'); wrap.className = 'note-live-toc';
+      wrap.tabIndex = 0; wrap.setAttribute('aria-label', 'Table of contents; double click to edit Markdown');
+      wrap.innerHTML = window.MarkdownMini.noteSyntax.tocHtml(this.headings);
+      wrap.addEventListener('dblclick', event => { if (!event.target.closest('[data-note-jump]')) { event.preventDefault(); jumpNotePosition(view, this.from); } });
+      wrap.addEventListener('mousedown', event => { if (event.target.closest('[data-note-jump]')) event.preventDefault(); });
+      const activate = event => {
+        const link = event.target.closest('[data-note-jump]'); if (!link) return;
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault(); event.stopPropagation(); jumpNotePosition(view, Number(link.dataset.noteJump));
+      };
+      wrap.addEventListener('click', activate); wrap.addEventListener('keydown', activate); return wrap;
+    }
+    ignoreEvent() { return true; }
+  }
+
+  class NoteBreakWidget extends WidgetType {
+    eq() { return true; }
+    get lineBreaks() { return 1; }
+    toDOM() { return document.createElement('br'); }
+  }
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, Number(value) || 0));
@@ -1675,7 +1776,7 @@
     if (!markdownMini || typeof markdownMini.renderResult !== 'function') {
       return { html: '', features: { math: false, mermaid: false }, error: true };
     }
-    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true }, options));
+    return markdownMini.renderResult(source, Object.assign({ localImages: true, noteTags: true, noteBlocks: true, noteSyntax: true }, options));
   }
 
   function releaseReadingDocument(host) {
@@ -1720,10 +1821,35 @@
       }
       return Object.assign({}, heading, { from: heading.from + canvasShift, to: heading.to + canvasShift, sourceFrom: heading.from });
     });
-    const result = safeIsolatedResult(renderedSource, { noteHeadings });
+    const noteSourcePosition = position => {
+      let shift = 0;
+      for (let index = 0; index < canvasRefs.length; index++) {
+        const ref = canvasRefs[index], length = ('![](relatum-canvas-placeholder-' + index + ')').length;
+        const start = ref.from + shift;
+        if (position < start) break;
+        if (position < start + length) return ref.from;
+        shift += length - (ref.to - ref.from);
+      }
+      return position - shift;
+    };
+    const result = safeIsolatedResult(renderedSource, { noteHeadings, noteSourcePosition });
     const content = document.createElement('article');
     content.className = 'note-reading-content node-text';
     content.innerHTML = result.html;
+    const readingSyntax = window.MarkdownMini.noteSyntax.scan(original);
+    const jumpReading = event => {
+      const link = event.target.closest('[data-note-jump]'); if (!link) return;
+      if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault(); event.stopPropagation();
+      const position = Number(link.dataset.noteJump);
+      let target = content.querySelector('[data-note-heading-from="' + position + '"], [data-note-definition-from="' + position + '"], [data-note-source-from="' + position + '"]');
+      if (!target) {
+        const use = readingSyntax.uses.find(item => item.from === position);
+        if (use) target = content.querySelector('[data-note-footnote-ref^="' + use.number + '-"]');
+      }
+      if (target) { target.scrollIntoView({ block: 'center' }); target.tabIndex = -1; target.focus({ preventScroll: true }); }
+    };
+    content.addEventListener('click', jumpReading); content.addEventListener('keydown', jumpReading);
     const sourceLines = original.split('\n');
     let sourceOffset = 0;
     const sourceLineOffsets = sourceLines.map(line => { const from = sourceOffset; sourceOffset += line.length + 1; return from; });
@@ -1998,7 +2124,7 @@
       const rendered = document.createElement('span');
       // Render only the header. The body remains native CodeMirror text, and
       // must not be parsed again just to draw its title or while it is edited.
-      rendered.innerHTML = safeIsolatedResult(this.spec.source.split('\n', 1)[0]).html;
+      rendered.innerHTML = safeIsolatedResult(this.spec.source.split('\n', 1)[0], { noteContext: noteSyntaxContext(view.state), noteFootnoteBody: true }).html;
       const title = rendered.querySelector('.md-callout-title');
       if (title) {
         Array.from(title.childNodes).forEach((node) => wrap.appendChild(node.cloneNode(true)));
@@ -2541,6 +2667,7 @@
     const seen = new Set();
     const blockValue = view.state.field(blockField);
     const blockSpecs = blockValue.specs;
+    const noteContext = noteSyntaxContext(view.state);
     const add = (from, to, decoration) => {
       if (from < 0 || to < from || to > view.state.doc.length) return;
       const key = from + ':' + to + ':' + String(decoration.spec && (decoration.spec.class || decoration.spec.widget && decoration.spec.widget.constructor.name || 'replace'));
@@ -2561,7 +2688,8 @@
     view.visibleRanges.forEach((visible) => {
       const first = view.state.doc.lineAt(visible.from);
       const last = view.state.doc.lineAt(visible.to);
-      const protectedRanges = lineProtectedRanges(view.state, first.from, last.to);
+      const protectedRanges = lineProtectedRanges(view.state, first.from, last.to).filter(range =>
+        range.kind !== 'HTMLTag' || !/^<\/?(?:u|ins|del|s|sup|sub|kbd|mark|strong|em|b|i|br)\s*\/?>$/i.test(view.state.doc.sliceString(range.from, range.to)));
       const metadata = documentFrontmatter(view.state.doc);
       if (metadata) protectedRanges.push(Object.assign({ kind: 'Frontmatter' }, metadata));
       const visibleTags = [];
@@ -2585,6 +2713,7 @@
       });
       scanTags(tagCursor, last.to);
       const tree = syntaxTree(view.state);
+      const quotedCodeLines = new Set();
       const inactiveCalloutHeaders = [];
       blockSpecs.forEach((spec) => {
         if (spec.kind !== 'callout' || spec.to < first.from || spec.from > last.to) return;
@@ -2629,7 +2758,13 @@
             let className = 'note-live-code-line';
             if (number === blockFirst) className += ' note-live-code-first';
             if (number === blockLast) className += ' note-live-code-last';
-            lineClass(view.state.doc.line(number).from, className);
+            const codeLine = view.state.doc.line(number), quote = window.MarkdownMini.quoteLine(codeLine.text);
+            const callout = quote.depth && blockSpecs.some(spec => spec.kind === 'callout' && spec.from <= codeLine.from && spec.to >= codeLine.to);
+            if (quote.depth && !callout) {
+              className += ' note-live-quote-code'; quotedCodeLines.add(codeLine.from);
+              lineClass(codeLine.from, className, '--note-quote-depth:' + quote.depth);
+              sourceMark(codeLine.from, codeLine.from + quote.prefix.length, codeLine.from, codeLine.from + quote.prefix.length, 'quote');
+            } else lineClass(codeLine.from, className);
           }
           if (range.kind === 'FencedCode') {
             const codeNode = ancestorOf(tree.resolveInner(range.from, 1), /^FencedCode$/);
@@ -2667,6 +2802,11 @@
           if (/^(?:FencedCode|CodeBlock|IndentedCode|HTMLBlock|HTMLTag)$/.test(nodeRef.name)) return false;
           if (metadata && nodeRef.from < metadata.to && nodeRef.name !== 'Document') return false;
           const node = syntaxNodeForRef(tree, nodeRef);
+          if (/^(?:Link|Autolink)$/.test(nodeRef.name)) {
+            const line = view.state.doc.lineAt(nodeRef.from);
+            if (window.MarkdownMini.noteSyntax.inline(line.text, noteContext, line.from).some(token =>
+              (token.kind === 'link' || token.kind === 'autolink') && token.from + line.from === nodeRef.from)) return false;
+          }
           const key = nodeRef.name + ':' + nodeRef.from + ':' + nodeRef.to;
           // Rich block replacements split visibleRanges. An ancestor already seen
           // in an earlier segment can still contain unseen nodes in this segment.
@@ -2679,7 +2819,8 @@
           const heading = /^ATXHeading([1-6])$/.exec(nodeRef.name) || /^SetextHeading([12])$/.exec(nodeRef.name);
           if (heading) {
             const line = view.state.doc.lineAt(nodeRef.from);
-            lineClass(line.from, 'note-live-heading note-live-h' + heading[1]);
+            lineClass(line.from, 'note-live-heading note-live-h' + heading[1]
+              + (line.number > 1 && !view.state.doc.line(line.number - 1).text.trim() ? ' follows-gap' : ''));
             if (/^Setext/.test(nodeRef.name)) {
               const markerLine = view.state.doc.lineAt(Math.max(nodeRef.from, nodeRef.to - 1));
               lineClass(markerLine.from, constructActive(view, nodeRef.from, nodeRef.to) ? 'note-live-setext-marker-line' : 'note-live-setext-marker-line is-hidden');
@@ -2724,7 +2865,7 @@
           } else if (nodeRef.name === 'HeaderMark') {
             const unit = ancestorOf(node, /^(?:ATXHeading|SetextHeading)/);
             if (unit) {
-              if (constructActive(view, unit.from, unit.to)) {
+              if (constructActive(view, nodeRef.from, headingMarkerProjectionEnd(view.state.doc, nodeRef.from, nodeRef.to))) {
                 mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-heading');
               } else {
                 replace(nodeRef.from, headingMarkerProjectionEnd(view.state.doc, nodeRef.from, nodeRef.to));
@@ -2757,7 +2898,7 @@
             const unit = ancestorOf(node, /^ListItem$/) || node;
             const task = taskItemParts(view.state, unit);
             if (task && !task.ordered) return undefined; // TaskMarker owns the complete unordered prefix.
-            if (!task && constructActive(view, unit.from, unit.to)) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-list');
+            if (!task && constructActive(view, nodeRef.from, nodeRef.to)) mark(nodeRef.from, nodeRef.to, 'note-live-source-mark is-list');
             else add(nodeRef.from, nodeRef.to, Decoration.replace({
               widget: new BulletWidget(/^\d/.test(view.state.doc.sliceString(nodeRef.from, nodeRef.to)), view.state.doc.sliceString(nodeRef.from, nodeRef.to)),
               inclusive: false, relatumAtomic: !!task,
@@ -2772,12 +2913,15 @@
               }));
             }
           } else if (nodeRef.name === 'QuoteMark') {
-            const unit = ancestorOf(node, /^Blockquote$/) || node;
             const line = view.state.doc.lineAt(nodeRef.from);
+            if (quotedCodeLines.has(line.from)) return false;
             const spec = blockSpecs.find((item) => item.kind === 'callout' && item.from <= nodeRef.from && item.to >= nodeRef.to);
-            if (!spec) lineClass(line.from, 'note-live-quote-line');
+            if (!spec) {
+              const depth = window.MarkdownMini.quoteLine(line.text).depth;
+              lineClass(line.from, 'note-live-quote-line' + (!window.MarkdownMini.quoteLine(line.text).text.trim() ? ' note-live-quote-gap' : ''), '--note-quote-depth:' + depth);
+            }
             if (spec) sourceMark(nodeRef.from, nodeRef.to + (/^[ \t]/.test(view.state.doc.sliceString(nodeRef.to, line.to)) ? 1 : 0), line.from, line.to, 'callout');
-            else sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'quote');
+            else sourceMark(nodeRef.from, nodeRef.to, nodeRef.from, nodeRef.to, 'quote');
           } else if (nodeRef.name === 'TableDelimiter') {
             const unit = ancestorOf(node, /^Table$/) || node;
             sourceMark(nodeRef.from, nodeRef.to, unit.from, unit.to, 'table');
@@ -2805,13 +2949,48 @@
         const lineIsCode = protectedRanges.some((range) => /^(?:FencedCode|CodeBlock|IndentedCode)$/.test(range.kind) && range.from <= line.from && range.to >= line.to);
         const lineIsHtml = protectedRanges.some((range) => /^HTML/.test(range.kind) && range.from <= line.from && range.to >= line.to);
         if (lineIsCode) continue;
-        if (lineIsHtml || /^\s*<\/?[A-Za-z][^>]*>/.test(text)) {
+        const noteTokens = window.MarkdownMini.noteSyntax.inline(text, noteContext, line.from);
+        const semanticHtml = noteTokens.some(token => token.kind === 'html' || token.kind === 'html-break');
+        if ((lineIsHtml || /^\s*<\/?[A-Za-z][^>]*>/.test(text)) && !semanticHtml) {
           lineClass(line.from, 'note-live-raw-html-line');
           continue;
         }
 
         const localProtected = [];
         if (metadata && line.from < metadata.to) { lineClass(line.from, 'note-live-frontmatter'); continue; }
+        if (!text.trim()) lineClass(line.from, 'note-live-paragraph-gap' + (number > 1 && !view.state.doc.line(number - 1).text.trim() ? ' is-extra-gap' : ''));
+        const definition = noteContext.definitions.find(item => item.from <= line.from && item.to >= line.to);
+        if (definition) {
+          lineClass(line.from, 'note-live-' + definition.kind + '-definition');
+          if (definition.kind === 'footnote' && definition.from === line.from) {
+            const use = noteContext.uses.find(item => item.key === definition.key);
+            if (use && !constructActive(view, line.from, definition.contentFrom)) add(line.from, definition.contentFrom, Decoration.replace({
+              widget: new NoteFootnoteWidget(definition.key, use.number, true), inclusive: false,
+            }));
+          }
+        }
+        for (const token of noteTokens) {
+          const from = line.from + token.from, to = line.from + token.to;
+          if (protectedRanges.some(range => /^(?:InlineCode|CommentBlock|Frontmatter)$/.test(range.kind) && range.from < to && range.to > from)) continue;
+          if (definition && from < definition.contentFrom) continue;
+          if (token.kind === 'html') {
+            mark(line.from + token.contentFrom, line.from + token.contentTo, 'note-live-html-' + token.name);
+            sourceMark(from, line.from + token.contentFrom, from, line.from + token.contentFrom, 'html');
+            sourceMark(line.from + token.contentTo, to, line.from + token.contentTo, to, 'html');
+          } else if (token.kind === 'html-break') {
+            if (!constructActive(view, from, to)) add(from, to, Decoration.replace({ widget: new NoteBreakWidget(), inclusive: false }));
+          } else if (token.kind === 'footnote-use') {
+            if (!constructActive(view, from, to)) add(from, to, Decoration.replace({
+              widget: new NoteFootnoteWidget(token.key, token.number, false), inclusive: false,
+            }));
+            else mark(from, to, 'note-live-link');
+          } else if (token.kind === 'link' || token.kind === 'autolink') {
+            mark(from, to, 'note-live-link');
+            if (!constructActive(view, from, to)) {
+              replace(from, line.from + token.contentFrom); replace(line.from + token.contentTo, to);
+            }
+          }
+        }
         const protect = (from, to) => localProtected.push({ from, to });
         const isProtected = (from, to) => localProtected.some((item) => item.from < to && item.to > from)
           || insideRange(protectedRanges, from, to);
@@ -3444,6 +3623,9 @@
       const to = from + match[0].length;
       if (position >= from && position <= to) return { kind: 'wiki', target: match[1], from, to };
     }
+    const tokens = window.MarkdownMini.noteSyntax.inline(line.text, noteSyntaxContext(state), line.from);
+    const token = tokens.find(item => (item.kind === 'link' || item.kind === 'autolink') && line.from + item.from <= position && line.from + item.to >= position);
+    if (token) return { kind: 'url', target: token.target, from: line.from + token.from, to: line.from + token.to };
     let node = syntaxTree(state).resolveInner(position, 1);
     while (node && !/^(?:Link|Autolink)$/.test(node.name)) node = node.parent;
     if (node) {
@@ -3468,6 +3650,8 @@
     let pendingDocumentState = null;
     let pendingDocumentWait = false;
     let sourceMode = !!options.sourceMode;
+    let documentNoteSyntax = emptyNoteSyntax;
+    let noteSyntaxRevision = 0, tableSyntaxRevision = 0;
     let pastePlain = false;
     let serializedDoc = null, serializedValue = '';
     function serializedDocument(doc) {
@@ -3841,8 +4025,19 @@
     safeOptions.imageTextController = imageTextController;
     safeOptions.imageTextSizer = imageTextSizer;
     safeOptions.coordinator = coordinator;
-    safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }));
+    safeOptions.renderTableCell = (value) => safeIsolatedResult(window.MarkdownTable.serialize({ header: [value], rows: [], align: [''] }),
+      { noteContext: documentNoteSyntax, noteFootnoteBody: true });
     safeOptions.prepareTableCell = (surface, content, result, source) => {
+      const jump = event => {
+        const link = event.target.closest('[data-note-jump]'); if (!link) return;
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault(); event.stopPropagation();
+        if (event.type !== 'mousedown' && event.type !== 'pointerdown' && surface.current()) {
+          const definition = documentNoteSyntax.footnotes.get(link.dataset.noteFootnoteKey);
+          jumpNotePosition(surface.view, definition ? definition.contentFrom : Number(link.dataset.noteJump));
+        }
+      };
+      content.addEventListener('pointerdown', jump); content.addEventListener('mousedown', jump); content.addEventListener('click', jump); content.addEventListener('keydown', jump);
       content.querySelectorAll('[data-note-image]').forEach((image) => {
         image.src = safeOptions.imageUrl(currentPath, image.dataset.noteImage || '', image.dataset.noteImageSyntax);
       });
@@ -4110,12 +4305,42 @@
       safeOptions.onDocChanged(meta);
     }
 
+    const noteSyntaxField = StateField.define({
+      create(state) {
+        const context = scanNoteSyntaxContext(state);
+        documentNoteSyntax = context;
+        const decorations = sourceMode ? Decoration.none : Decoration.set(context.tocs.map(toc =>
+          Decoration.replace({ widget: new NoteTocWidget(context.headings, toc.from), block: true, inclusive: false }).range(toc.from, toc.to)), true);
+        return { context, focused: false, decorations };
+      },
+      update(value, transaction) {
+        const context = updateNoteSyntaxContext(value.context, transaction);
+        if (context.semanticSignature !== value.context.semanticSignature) noteSyntaxRevision++;
+        documentNoteSyntax = context;
+        let focused = value.focused;
+        for (const effect of transaction.effects) if (effect.is(focusEffect)) focused = !!effect.value;
+        if (!transaction.docChanged && !transaction.selection && !transaction.reconfigured && focused === value.focused
+            && !transaction.effects.some(effect => effect.is(inputReconcileEffect))) return value;
+        const decorations = [];
+        if (inputSession.pending()) return { context, focused, decorations: value.decorations.map(transaction.changes) };
+        if (!sourceMode) {
+          for (const toc of context.tocs) {
+            if (focused && selectionTouches(transaction.state.selection, toc.from, toc.to)) continue;
+            decorations.push(Decoration.replace({ widget: new NoteTocWidget(context.headings, toc.from), block: true, inclusive: false }).range(toc.from, toc.to));
+          }
+        }
+        return { context, focused, decorations: Decoration.set(decorations, true) };
+      },
+      provide: field => EditorView.decorations.from(field, value => value.decorations),
+    });
+
     function makeState(value, selection) {
       const extensions = [
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
         rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
         markdownCompartment.of(markdownExtensions()),
+        noteSyntaxField,
         codeHighlighting,
         livePreviewCompartment.of(livePreviewExtensions()),
         Prec.highest(imageTextInputHandlers),
@@ -4166,6 +4391,9 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (tableSyntaxRevision !== noteSyntaxRevision && !inputPending()) {
+            tableSyntaxRevision = noteSyntaxRevision; tableController?.refreshNoteSyntax();
+          }
           if (update.docChanged || update.selectionSet && update.state.selection.main.head !== formatInputOwners.get(update.view)?.position) formatInputOwners.delete(update.view);
           if (update.docChanged && coordinator.foldPositions.size) coordinator.foldPositions = new Map(Array.from(coordinator.foldPositions, ([position, collapsed]) => [update.changes.mapPos(position, 1), collapsed]));
           const blocks = update.state.field(blockField, false);

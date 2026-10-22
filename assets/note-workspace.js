@@ -1549,7 +1549,7 @@
       window.RelatumNoteLiveEditor.renderMarkdown(readingHost, documentState.value || '', documentState.notePath || '', { calloutSession: liveEditor?.calloutSession });
     } else {
       const result = window.MarkdownMini && window.MarkdownMini.renderResult
-        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true })
+        ? window.MarkdownMini.renderResult(documentState.value || '', { localImages: true, noteBlocks: true, noteSyntax: true })
         : { html: '' };
       readingHost.innerHTML = '<article class="note-reading-content node-text">' + (result.html || '') + '</article>';
     }
@@ -4171,7 +4171,7 @@
       const item = document.createElement('div'); item.className = 'note-guide-example';
       if (preview) {
         const content = document.createElement('div'); content.className = 'node-text';
-        content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true }).html;
+        content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true, noteSyntax: true }).html;
         content.querySelectorAll('.note-callout-fold').forEach(button => button.addEventListener('click', () => {
           const body = button.closest('.md-callout').querySelector(':scope > .md-callout-body');
           const collapsed = button.getAttribute('aria-expanded') === 'true';

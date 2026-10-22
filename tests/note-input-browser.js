@@ -14,6 +14,7 @@ const reportPath = process.env.RELATUM_NOTE_INPUT_REPORT || path.join(fs.mkdtemp
 const performanceOnly = process.argv.includes('--performance-only');
 const profileOnly = process.argv.includes('--profile');
 const benchmark = performanceOnly || profileOnly || process.argv.includes('--performance');
+const noRegression = process.argv.includes('--no-regression');
 const baselineRef = process.env.RELATUM_NOTE_INPUT_BASELINE || 'fafc085';
 const baseline = new Map();
 if (benchmark) for (const file of ['note-live-editor.js', 'note-table-editor.js', 'markdown-table.js']) {
@@ -212,8 +213,10 @@ const output = { keyboard: false, formatting: false, tableFormatting: false, per
         const values = variant => output.performance.filter(item => item.rows === rows && item.variant === variant);
         const median = values => values.sort((a, b) => a - b)[1];
         const before = values('baseline'), after = values('current');
-        assert(median(after.map(item => item.medianMs)) <= .7 * median(before.map(item => item.medianMs)), 'median cell input must improve by at least 30%');
-        assert(median(after.map(item => item.p95Ms)) <= median(before.map(item => item.p95Ms)), 'p95 must not regress');
+        const beforeMedian = median(before.map(item => item.medianMs)), beforeP95 = median(before.map(item => item.p95Ms));
+        assert(median(after.map(item => item.medianMs)) <= (noRegression ? Math.max(beforeMedian * 1.1, beforeMedian + 2) : .7 * beforeMedian),
+          noRegression ? 'median cell input must stay within the same-host tolerance' : 'median cell input must improve by at least 30%');
+        assert(median(after.map(item => item.p95Ms)) <= (noRegression ? Math.max(beforeP95 * 1.1, beforeP95 + 2) : beforeP95), 'p95 must not regress beyond the same-host tolerance');
       }
     }
     assert.deepEqual(await page.evaluate(() => errors), []);

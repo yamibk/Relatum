@@ -256,7 +256,7 @@ assert(notes.includes('function whenEditorInputSettled()')
   && notes.includes('if (target && target === state.current && editorInputPending()) await whenEditorInputSettled()')
   && notes.includes('if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled()'),
   'saving and document switches must wait for committed IME input');
-assert(!live.includes('defaultHighlightStyle') && !live.includes('syntaxHighlighting('), 'Relatum source roles must replace CodeMirror default heading/link decoration');
+assert(!live.includes('defaultHighlightStyle') && live.includes('scope: (nodeType) => !markdownHighlightScope(nodeType)'), 'Relatum source roles must replace CodeMirror default heading/link decoration');
 assert(live.includes("kind: 'callout'") && live.includes("kind === 'callout'"), 'Obsidian-style Callout blocks must have a stable projection');
 assert(live.includes('/api/note-asset?note='), 'Live Preview local images must use the authorized note asset endpoint');
 assert(notes.includes("kind: 'note-file'") && notes.includes('function openMarkdownTarget(rawTarget)'),
@@ -296,11 +296,11 @@ assert(css.includes('.note-expand-all[data-all-expanded="true"] .note-expand-ico
   'the expand-all control needs a distinct collapse state');
 assert(css.includes('.note-path-crumb.is-file'), 'the active note header needs a folder breadcrumb');
 assert(css.includes('body.start-page[data-start-workspace="notes"].note-focus-mode > .top-bar'), 'Notes focus mode needs an animated top-bar collapse');
-assert(css.includes('--note-content-width: 880px'), 'the Markdown body needs a readable measure shared by editing and reading');
-assert(css.includes('--note-content-left: clamp(42px, 6vw, 112px)'), 'the Markdown body must be shifted left on wide screens');
-assert(css.includes('font-size: calc(16px * var(--note-font-scale, 1))') && css.includes('line-height: 1.65'), 'Markdown typography must use the 16px/1.65 reading baseline');
-assert(css.includes('--note-font-text: -apple-system') && css.includes('"Segoe UI Variable Text"'), 'Markdown text must prefer the Obsidian-like system font stack');
-assert(css.includes('.note-live-h1 { padding-top: .28em !important; font-size: 1.75em; }'), 'H1 needs a distinct, compact scale below the inline filename title');
+assert(css.includes('--note-content-width: 800px'), 'the Markdown body needs a readable measure shared by editing and reading');
+assert(css.includes('--note-content-left: max(30px, calc((100% - var(--note-content-width)) / 2))'), 'the Markdown body must be centered in its available pane');
+assert(css.includes('font-size: calc(16px * var(--note-font-scale, 1))') && css.includes('line-height: 1.6;'), 'Markdown typography must use the 16px/1.6 reading baseline');
+assert(css.includes('--note-font-text: "Relatum Open Sans", "Microsoft YaHei"'), 'Markdown must use the offline Open Sans / YaHei font stack');
+assert(css.includes('font-size: 2.25em; line-height: 1.2;'), 'H1 must use the reference 2.25em scale');
 assert(css.includes("transform: translateY(calc(-1 * var(--note-title-scroll-offset, 0px)))"), 'the inline filename title must scroll away instead of staying fixed');
 assert(css.includes('padding: calc(var(--note-inline-title-space) + 10px) 0 120px'), 'the title reservation must live inside the editor scroller');
 assert(live.includes('replace(nodeRef.from, headingMarkerProjectionEnd'), 'inactive ATX markers must not leave a visible separator indent');
