@@ -2356,13 +2356,16 @@ body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:no
 .note-notebook-colors button[aria-pressed="true"] { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
 .note-notebook-colors button:hover, .note-notebook-colors button:focus-visible, .note-notebook-colors button:active { background: var(--notebook-color, #93978f); outline: 1px solid var(--text-secondary); outline-offset: 2px; }
 @media (min-width: 1121px) {
-  .note-workspace { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 0px; transition: grid-template-columns var(--note-side-motion); }
-  .note-document-head { transition: padding-right var(--note-side-motion); }
-  .note-empty-state { transition: right var(--note-side-motion); }
-  .note-workspace:not(.links-overlay-open) .note-document-head { padding-right: calc(clamp(18px, 3vw, 38px) + var(--note-side-width)); }
-  .note-workspace:not(.links-overlay-open) .note-empty-state { right: var(--note-side-width); }
-  .note-workspace.links-overlay-open { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) var(--note-side-width); }
-  .note-workspace .note-links-pane { position: relative; grid-column: 3; grid-row: 1; width: var(--note-side-width); transform: none; transition: visibility 230ms; }
+  /* Keep the document container and its readable-width breakpoints fixed. */
+  .note-workspace { --note-side-tab-space: 0px; grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 0px; }
+  .note-document-head { padding-right: calc(clamp(18px, 3vw, 38px) + var(--note-side-width)); }
+  .note-empty-state { right: var(--note-side-width); }
+  .note-workspace.links-overlay-open { --note-side-tab-space: var(--note-side-width); }
+  .note-tab-bar { padding-right: calc(12px + var(--note-side-tab-space)); transition: padding-right var(--note-side-motion); }
+  .note-workspace .note-links-pane { position: absolute; width: var(--note-side-width); transform: translateX(100%); transition: transform var(--note-side-motion), visibility 230ms; }
+  .note-workspace.links-overlay-open .note-links-pane { transform: none; }
+  .note-document-status { transform: translateX(0); transition: transform var(--note-side-motion); }
+  .links-overlay-open .note-document-status { transform: translateX(calc(-1 * var(--note-side-width))); }
 }
 body.start-page .note-links-pane { border-left-width: 0; box-shadow: none; }
 body.start-page .note-links-pane > .note-links-head { border-bottom-color: var(--note-chrome-line); }
@@ -2614,6 +2617,7 @@ body.start-page[data-start-theme="dark"][data-start-background="scenic"] .note-s
 @media (prefers-reduced-motion: reduce) {
   .note-workspace,
   .note-document-head,
+  .note-document-status,
   .note-empty-state,
   .start-workspace-slider,
   .top-actions,
@@ -8966,15 +8970,11 @@ body.canvas-scenes-presenting .canvas-surface [contenteditable="true"] {
 /* 宽窗向标签栏空白借位，只平移侧栏首行；正文继续在原宽度内裁剪。 */
 @media (min-width: 1121px) {
   .note-workspace .note-links-pane { overflow: visible; }
-  .note-tab-bar { transition: padding-right var(--note-side-motion); }
   body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-workspace.links-overlay-open .note-side-controls {
     transform: translateX(calc(-1 * var(--note-focus-controls-space)));
   }
   body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-tab-bar {
-    padding-right: calc(12px + var(--note-focus-controls-space));
-  }
-  body.desktop-host.start-page[data-start-workspace="notes"].note-focus-mode .note-workspace.note-graph-active.links-overlay-open .note-tab-bar {
-    padding-right: calc(12px + var(--note-side-width) + var(--note-focus-controls-space));
+    padding-right: calc(12px + var(--note-side-tab-space) + var(--note-focus-controls-space));
   }
 }
 /* 窄窗继续在侧栏首行内滚动入口，关闭按钮固定在窗口按钮左侧。 */
@@ -34195,11 +34195,8 @@ html.dark-semantic-ui {
 .note-graph-tools { position: absolute; z-index: 3; top: 8px; right: 10px; display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: var(--bg); }
 .note-graph-tools .graph-tool-btn { min-width: 30px; height: 30px; padding-inline: 8px; }
 .note-graph-tools .note-mobile-pane-button { display: none; }
-/* Keep the graph's CSS viewport and backing store fixed while its sidebar moves. */
+/* The shared sidebar overlays both Markdown and the graph; only tools move. */
 @media (min-width: 1121px) {
-  .note-workspace.note-graph-active { grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 0px; transition: none; }
-  .note-workspace.note-graph-active .note-links-pane { position: absolute; transform: translateX(100%); transition: transform var(--note-side-motion), visibility 230ms; }
-  .note-workspace.note-graph-active.links-overlay-open .note-links-pane { transform: none; }
   .note-graph-tools { transition: transform var(--note-side-motion); }
   .note-graph-active.links-overlay-open .note-graph-tools { transform: translateX(calc(-1 * var(--note-side-width))); }
 }

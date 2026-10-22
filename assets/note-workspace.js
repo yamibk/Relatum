@@ -4372,8 +4372,21 @@
     sidePane.addEventListener('transitionend', task.onEnd);
     task.timer = window.setTimeout(finish, 270);
   }
+  function scrollTabAfterSideOpen(changed) {
+    if (!window.matchMedia('(min-width: 1121px)').matches) return;
+    const sequence = sideMotionSequence;
+    const motions = (tabBar?.getAnimations?.() || []).filter(animation => animation.transitionProperty === 'padding-right');
+    if (!changed && !motions.length) return;
+    Promise.allSettled(motions.map(animation => animation.finished)).then(() => {
+      if (sequence !== sideMotionSequence || !noteWorkspaceVisible() || state.draggedTabPath
+          || !root.classList.contains('links-overlay-open')) return;
+      const active = tabsEl?.querySelector('.note-tab.active');
+      if (active) requestTabScroll(active, state.activeTab);
+    });
+  }
   function setSideOpen(open) {
-    if (!!open !== root.classList.contains('links-overlay-open')) cancelTabCloseMotion();
+    const changed = !!open !== root.classList.contains('links-overlay-open');
+    if (changed) { cancelTabCloseMotion(); cancelTabScroll(); }
     cancelSideClose();
     cancelLinksRefresh();
     sideMotionUntil = performance.now() + 270;
@@ -4392,6 +4405,7 @@
     updateImageTextTools();
     if (open) { if (effectiveSideMode() === 'links') ensureLinks(); scheduleSidePopoverPosition(); }
     if (!open) scheduleSideClose();
+    if (open) scrollTabAfterSideOpen(changed);
   }
   function setSideMode(mode) {
     if (graphPresentation) { if (mode === 'notebooks') setSideOpen(true); return; }

@@ -307,7 +307,7 @@ async function freePort() {
     await row(left, 'CustomNotebook/Physics/P.md').waitFor();
     assert.equal(await page.evaluate(() => CanvasNoteWorkspace.currentPath), 'Root.md');
     assert.equal(Math.round((await page.locator('.note-links-pane').boundingBox()).width), 320);
-    assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).position), 'relative');
+    assert.equal(await page.locator('.note-links-pane').evaluate(el => getComputedStyle(el).position), 'absolute');
     await rootRow('CustomNotebook/Physics').press('Enter');
     await rootRow('CustomNotebook/Physics').press('Space');
     assert.equal(await rootRow('CustomNotebook/Physics').getAttribute('aria-expanded'), 'false', 'keyboard activation only selects');
