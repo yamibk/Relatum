@@ -8,7 +8,7 @@ foreach ($check in @('note-live-editor-regression.js','note-typora-regression.js
     if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }
 }
 if ($Browser) {
-    foreach ($check in @('note-typora-browser.js','note-table-alignment-browser.js','note-search-browser.js','note-folder-picker-browser.js','note-ui-browser.js','note-context-menu-browser.js','note-reveal-browser.js','note-browser-browser.js','note-tree-sort-browser.js','note-tree-motion-browser.js','note-notebooks-browser.js','note-visibility-browser.js','note-view-state-browser.js','note-canvas-browser-discovery.js','note-outline-browser.js','note-graph-browser.js')) {
+    foreach ($check in @('note-typora-browser.js','note-caret-selection-browser.js','note-table-alignment-browser.js','note-search-browser.js','note-folder-picker-browser.js','note-ui-browser.js','note-context-menu-browser.js','note-reveal-browser.js','note-browser-browser.js','note-tree-sort-browser.js','note-tree-motion-browser.js','note-notebooks-browser.js','note-visibility-browser.js','note-view-state-browser.js','note-canvas-browser-discovery.js','note-outline-browser.js','note-graph-browser.js')) {
         & $Node (Join-Path $PSScriptRoot $check)
         if ($LASTEXITCODE -ne 0) { throw ('Failed: ' + $check) }
     }

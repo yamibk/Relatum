@@ -104,13 +104,13 @@ ${['markdown-table.js','markdown.js','vendor/codemirror/relatum-codemirror.min.j
     });
     assert.equal(metrics.source, source); delete metrics.source;
     assert.equal(metrics.size, '16px'); assert.equal(metrics.lineHeight, '25.6px'); assert.equal(metrics.h1, '36px');
-    assert(metrics.quoteDepths.includes('3')); assert(metrics.gapHeight > 0 && metrics.gapHeight < 20);
+    assert(metrics.quoteDepths.includes('3')); assert(Math.abs(metrics.gapHeight - parseFloat(metrics.lineHeight)) < .1);
     const cdp = await page.context().newCDPSession(page); await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
     const { root } = await cdp.send('DOM.getDocument');
     const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '[data-font-probe]' });
     metrics.fonts = (await cdp.send('CSS.getPlatformFontsForNode', { nodeId })).fonts;
     assert(metrics.fonts.some(font => font.familyName.includes('Open Sans')));
-    report.metrics.push(metrics); report.checks.push('font, heading, compact gaps, three-level quote');
+    report.metrics.push(metrics); report.checks.push('font, heading, full-height editable gaps, three-level quote');
     await page.evaluate(() => { const pos = sourcePosition('https://example.com/path'); function sourcePosition(s) { return editor.snapshot().value.indexOf(s); } editor.view.dispatch({ effects: RelatumCodeMirror.EditorView.scrollIntoView(pos, { y: 'center' }) }); });
     await settle();
     const urlPoint = await page.evaluate(() => {

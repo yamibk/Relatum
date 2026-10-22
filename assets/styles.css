@@ -418,7 +418,7 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host {
   --note-live-marker: #a8a7a2;
   --note-live-link: #4183c4;
-  --note-live-math: #756d83;
+  --note-live-math: #8951e8;
   --note-live-code: #806b5b;
   width: 100%;
   height: 100%;
@@ -462,14 +462,13 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host .cm-selectionBackground,
 .note-live-editor-host.cm-focused .cm-selectionBackground,
 .note-live-editor-host .cm-focused .cm-selectionBackground { background: rgba(65, 131, 196, .22) !important; }
-/* Opaque code, Callout and formula-source backgrounds cover the drawn selection
-   layer. Restore native text selection on lines and syntax-highlighted spans. */
+/* Only opaque code and Callout backgrounds cover the drawn selection layer.
+   Transparent formula source and ordinary text use CodeMirror's selection;
+   painting native selection there as well would darken the same text twice. */
 .note-live-editor-host .cm-line.note-live-code-line::selection,
 .note-live-editor-host .cm-line.note-live-code-line ::selection,
 .note-live-editor-host .cm-line.note-live-callout-line::selection,
-.note-live-editor-host .cm-line.note-live-callout-line ::selection,
-.note-live-editor-host .cm-line.note-live-math-source::selection,
-.note-live-editor-host .cm-line.note-live-math-source ::selection { background-color: rgba(65, 131, 196, .22) !important; }
+.note-live-editor-host .cm-line.note-live-callout-line ::selection { background-color: rgba(65, 131, 196, .22) !important; }
 .note-live-editor-host.has-image-selection .cm-selectionLayer,
 .note-live-editor-host.has-image-selection .cm-cursorLayer { visibility: hidden; }
 .note-live-editor-host .cm-activeLine { background: transparent; }
@@ -496,9 +495,8 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-h6 { padding-top: 1em !important; font-size: 1em; line-height: 1.4; color: var(--text-secondary); }
 .note-live-editor-host .cm-line.note-live-heading:first-child { padding-top: 0 !important; }
 .note-live-editor-host .cm-line.note-live-heading.follows-gap { padding-top: calc(3.2px * var(--note-font-scale, 1)) !important; }
-.note-live-editor-host .cm-line.note-live-paragraph-gap,
-.note-live-editor-host .cm-line.note-live-quote-gap { line-height: .8em; }
-.note-live-editor-host .cm-line.note-live-paragraph-gap.is-extra-gap { line-height: .3em; }
+/* Empty editable lines retain the surrounding line height. Compressing them
+   moves both the caret and the baseline when the first character is entered. */
 .note-live-editor-host .cm-line:is(.note-live-h1, .note-live-h2) {
   padding-bottom: 0;
   border-bottom: 1px solid var(--note-heading-rule);
@@ -625,6 +623,9 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 }
 .note-live-editor-host .cm-line.note-live-callout-line.note-live-callout-first.note-live-callout-last { border-radius: 4px; padding-bottom: 12px !important; }
 .note-live-editor-host .cm-line.note-live-callout-body-first { padding-top: 1em !important; }
+/* A blank Callout body ends inside its visible quote prefix. Keep that prefix
+   on the body's font metrics so its caret matches the first typed glyph. */
+.note-live-callout-body-line .note-live-source-mark.is-callout { font: inherit !important; }
 .note-live-callout-title-widget {
   display: inline-flex;
   align-items: center;
@@ -979,7 +980,7 @@ body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5;
 body.start-page[data-start-theme="dark"] .note-live-editor-host {
   --note-live-marker: #8f948d;
   --note-live-link: #80b8ef;
-  --note-live-math: #aaa0b9;
+  --note-live-math: #bc95ff;
   --note-live-code: #b49c88;
 }
 

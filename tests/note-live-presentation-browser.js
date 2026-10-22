@@ -624,8 +624,8 @@ q^{\mathrm{acc}}_{i,t}+q^{\mathrm{rej}}_{i,t}
         if (name === 'rule') await page.screenshot({ path: path.join(output, 'compact-rule-' + theme + '.png') });
       }
     }
-    // Opaque source-line backgrounds must not hide the native primary
-    // selection while CodeMirror's drawn selection remains underneath them.
+    // Formula source has no opaque background: only the drawn selection paints
+    // it, while the native range still owns exact source copying and dragging.
     const mathSelectionChecks = [];
     const mathSelectionSource = '前文\n\n' + equation6 + '\n\n后文';
     const selectionFrom = mathSelectionSource.indexOf('mathrm') + 2;
@@ -652,8 +652,8 @@ q^{\mathrm{acc}}_{i,t}+q^{\mathrm{rej}}_{i,t}
       assert.equal(result.native, result.selected, gesture + ' must retain the native text selection');
       assert.equal(result.copied, result.selected, gesture + ' must copy the exact formula source');
       assert.equal(result.value, mathSelectionSource);
-      assert(result.colors.length > 0 && result.colors.every(color => color === 'rgba(65, 131, 196, 0.22)'),
-        gesture + ' must paint the native selection above the opaque background');
+      assert(result.colors.length > 0 && result.colors.every(color => color === 'rgba(0, 0, 0, 0)'),
+        gesture + ' must not paint a second selection over transparent formula source');
       return result;
     };
     for (const [theme, width, scale] of mathVariants) {
