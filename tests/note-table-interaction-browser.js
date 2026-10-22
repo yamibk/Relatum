@@ -57,6 +57,46 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     async function dragPoints(a, b) {
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 10 }); await page.mouse.up(); await settle();
     }
+    // Read browser-laid-out glyphs, not the hit-testing helper under test. The
+    // existing sizing measurer exposes the native textarea's wrapped text.
+    async function textDragPoints(row, col, side) {
+      return cell(row, col).evaluate((td, side) => {
+        const edit = td.closest('.note-table').__noteTableSurface.edit;
+        const active = edit?.cell === td, root = active ? edit.measurer : td.querySelector('.note-table-cell-content');
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode() && !/\S/.test(walker.currentNode.textContent)) {}
+        const node = walker.currentNode, range = document.createRange();
+        const inputBox = active ? edit.input.getBoundingClientRect() : null, measureBox = root.getBoundingClientRect();
+        const dx = active ? inputBox.left - measureBox.left - edit.input.scrollLeft : 0;
+        const dy = active ? inputBox.top - measureBox.top - edit.input.scrollTop : 0;
+        const length = active ? edit.input.value.length : node.length, lines = [];
+        for (let from = 0; from < length;) {
+          const to = from + (node.textContent.codePointAt(from) > 0xffff ? 2 : 1);
+          range.setStart(node, from); range.setEnd(node, to);
+          const rect = range.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            const glyph = { from, to, left: rect.left + dx, right: rect.right + dx, top: rect.top + dy, bottom: rect.bottom + dy };
+            let line = lines.find(line => Math.abs(line[0].top - glyph.top) < 1);
+            if (!line) { line = []; lines.push(line); }
+            line.push(glyph);
+          }
+          from = to;
+        }
+        const line = lines[Math.min(1, lines.length - 1)], first = line[0], last = line[line.length - 1];
+        const middle = line[Math.min(2, line.length - 2)], later = line[Math.min(6, line.length - 1)];
+        const at = glyph => ({ x: glyph.left + (glyph.right - glyph.left) / 4, y: (glyph.top + glyph.bottom) / 2 });
+        let start, end, anchor;
+        if (side === 'left') { start = { x: first.left - 3, y: at(first).y }; end = at(later); anchor = first.from; }
+        else if (side === 'right') { start = { x: last.right + 3, y: at(last).y }; end = at(first); anchor = last.to; }
+        else {
+          start = { x: at(middle).x, y: side === 'above' ? middle.top - 3 : middle.bottom + 3 };
+          end = at(side === 'above' ? later : first); anchor = middle.from;
+        }
+        const bounds = td.getBoundingClientRect();
+        return { start, end, anchor, lineCount: lines.length, inside: start.x > bounds.left + 2 && start.x < bounds.right - 2
+          && start.y > bounds.top + 2 && start.y < bounds.bottom - 2 };
+      }, side);
+    }
     async function grip(kind, index) {
       const rect = await cell(kind === 'row' ? index : 0, kind === 'row' ? 0 : index).boundingBox();
       await page.mouse.move(kind === 'row' ? rect.x + 1 : rect.x + rect.width / 2, kind === 'row' ? rect.y + rect.height / 2 : rect.y + 1);
@@ -158,6 +198,102 @@ window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{va
     const area2 = await input.boundingBox(), other = await cellPoint(0, 1);
     await dragPoints({ x: area2.x + 15, y: area2.y + 16 }, other);
     assert.equal(await input.count(), 0, JSON.stringify(await table.evaluate(node => ({ edit: node.__noteTableSurface.edit && [node.__noteTableSurface.edit.row, node.__noteTableSurface.edit.col], selection: node.__noteTableSurface.selection, gesture: node.__noteTableSurface.gesture && node.__noteTableSurface.gesture.mode, active: document.activeElement.className })))); assert.equal(await table.locator('td.is-table-selected').count(), 2);
+
+    // Nearby presses select text in both rendered and editing cells. Alignments
+    // and wrapped lines use their real screen bounds, including fractional fonts.
+    for (const sample of [
+      { width: 1400, scale: 1, theme: 'light', text: '复变函数的文字选择' },
+      { width: 1400, scale: 1, theme: 'light', text: 'alphabetical selection' },
+      { width: 720, scale: 1.35, theme: 'dark', text: '复变函数EnglishText'.repeat(6), wrapped: true },
+    ]) {
+      await page.setViewportSize({ width: sample.width, height: 1000 });
+      await page.evaluate(sample => {
+        document.body.dataset.startTheme = sample.theme;
+        document.querySelector('.note-document-pane').style.setProperty('--note-font-scale', String(sample.scale));
+        editor.view.requestMeasure();
+      }, sample);
+      const row = '| ' + Array(3).fill(sample.text).join(' | ') + ' |';
+      const markdown = [row, '| :--- | :---: | ---: |', '| 尾部文字abcd | another cell | third cell |'].join('\n');
+      for (const col of [0, 1, 2]) for (const editing of [false, true]) for (const side of ['left', 'right', 'above', 'below']) {
+        await reset(markdown);
+        if (editing) { await cell(0, col).click(); await settle(); }
+        const host = editing ? await input.elementHandle() : null;
+        const points = await textDragPoints(0, col, side), label = JSON.stringify({ ...sample, col, editing, side });
+        assert(points.inside, 'fixture halo must remain inside the cell: ' + label);
+        if (sample.wrapped) assert(points.lineCount > 1, 'fixture must wrap: ' + label);
+        await page.mouse.move(points.start.x, points.start.y); await page.mouse.down();
+        assert.equal(await input.count(), 1, 'nearby press must open the text editor: ' + label);
+        assert.equal(await table.evaluate(node => node.__noteTableSurface.gesture.mode), 'text', 'halo uses assisted text selection: ' + label);
+        assert.equal(await input.evaluate(node => node.selectionStart), points.anchor, 'nearest character on the nearest line: ' + label);
+        await page.mouse.move(points.end.x, points.end.y, { steps: 10 }); await page.mouse.up(); await settle();
+        const selection = await input.evaluate(node => ({ from: node.selectionStart, to: node.selectionEnd,
+          text: node.value.slice(node.selectionStart, node.selectionEnd) }));
+        assert(selection.to > selection.from, 'halo drag must select characters: ' + label);
+        assert.equal(await table.locator('td.is-table-selected').count(), 0, 'same-cell halo drag cannot select the grid: ' + label);
+        if (host) { assert(await host.evaluate(node => node.isConnected), 'selection retains the original IME host'); await host.dispose(); }
+        assert.equal(await value(), markdown, 'selection cannot rewrite Markdown: ' + label);
+        if (side === 'below') {
+          await page.keyboard.press('Control+c');
+          assert.equal(await page.evaluate(() => navigator.clipboard.readText()), selection.text, 'native copying uses the selected characters');
+        }
+      }
+    }
+    await page.setViewportSize({ width: 1400, height: 1000 });
+    await page.evaluate(() => { document.body.dataset.startTheme = 'light'; document.querySelector('.note-document-pane').style.removeProperty('--note-font-scale'); editor.view.requestMeasure(); });
+
+    const haloGrid = '| 复变函数abcdef | second cell | third cell |\n| --- | --- | --- |\n| another cell | middle cell | last cell |\n| more text | other text | reverse text |';
+    // A halo start still becomes a multi-row/column rectangle across cells. Once
+    // promoted, returning to the original cell must not reopen text editing.
+    for (const reverse of [false, true]) {
+      await reset(haloGrid);
+      const points = await textDragPoints(reverse ? 2 : 0, reverse ? 2 : 0, 'below');
+      const end = await cellPoint(reverse ? 0 : 2, reverse ? 0 : 2);
+      await page.mouse.move(points.start.x, points.start.y); await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 10 });
+      assert.equal(await input.count(), 0); assert.equal(await table.locator('td.is-table-selected').count(), 9);
+      await page.mouse.move(points.start.x, points.start.y, { steps: 10 });
+      assert.equal(await table.evaluate(node => node.__noteTableSurface.gesture.mode), 'grid');
+      assert.equal(await input.count(), 0); assert.equal(await table.locator('td.is-table-selected').count(), 1);
+      await page.mouse.move(end.x, end.y, { steps: 10 }); await page.mouse.up(); await settle();
+      assert.equal(await table.locator('td.is-table-selected').count(), 9);
+      await page.keyboard.press('Control+c');
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), (await rows()).map(row => row.join('\t')).join('\n'));
+      assert.equal(await value(), haloGrid);
+    }
+    for (const editing of [false, true]) for (const region of ['blank', 'border', 'empty']) {
+      await reset('| alphabet | | third |\n| --- | --- | --- |\n| data | data | data |');
+      const col = region === 'empty' ? 1 : 0;
+      if (editing) { await cell(0, col).click(); await settle(); }
+      const rect = await cell(0, col).boundingBox();
+      const x = region === 'border' ? rect.x + 1 : region === 'empty' ? rect.x + 14 : rect.x + rect.width - 25;
+      await dragPoints({ x, y: rect.y + rect.height / 2 }, { x: x + (region === 'blank' ? -25 : 25), y: rect.y + rect.height / 2 });
+      assert.equal(await input.count(), 0, region + ' must remain a grid-selection start');
+      assert.equal(await table.locator('td.is-table-selected').count(), 1);
+    }
+    // Whitespace-only native content must not acquire a halo from its mirror.
+    await reset('| | second |\n| --- | --- |\n| third | fourth |'); await cell(0, 0).click(); await input.fill('   '); await settle();
+    const whitespacePoint = await input.evaluate(node => {
+      const width = document.createElement('canvas').getContext('2d'), style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      width.font = style.font;
+      return { x: rect.left + parseFloat(style.paddingLeft) + width.measureText(node.value).width + 3, y: rect.top + rect.height / 2 };
+    });
+    const whitespaceSource = await value();
+    await dragPoints(whitespacePoint, { x: whitespacePoint.x + 20, y: whitespacePoint.y });
+    assert.equal(await input.count(), 0); assert.equal(await table.locator('td.is-table-selected').count(), 1);
+    assert.equal(await value(), whitespaceSource);
+
+    // Assisted selection must keep the candidate in its existing native host,
+    // commit only to that cell and remain one undoable edit.
+    await reset(haloGrid); await cell(0, 0).click(); await settle();
+    const imeHost = await input.elementHandle(), assisted = await textDragPoints(0, 0, 'below');
+    await dragPoints(assisted.start, assisted.end);
+    const replaced = await input.evaluate(node => node.value.slice(0, node.selectionStart) + '汉' + node.value.slice(node.selectionEnd));
+    await cdp.send('Input.imeSetComposition', { text: 'han', selectionStart: 3, selectionEnd: 3 });
+    assert(await imeHost.evaluate(node => node.isConnected), 'assisted selection retains the native host during composition');
+    assert.equal(await value(), haloGrid, 'provisional input cannot rewrite Markdown');
+    await cdp.send('Input.insertText', { text: '汉' }); await settle();
+    assert.equal((await rows())[0][0], replaced); assert.equal((await rows())[0][1], 'second cell');
+    await page.keyboard.press('Control+z'); await settle(); assert.equal(await value(), haloGrid); await imeHost.dispose();
 
     // Text sizing must never collapse the native input host. Width and font
     // changes resize it using a mirror, keeping wrapped caret geometry valid.

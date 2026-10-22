@@ -17,6 +17,25 @@
     const gap = rects.findIndex(rect => position < (kind === 'row' ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2));
     return gap < 0 ? rects.length : gap;
   }
+  const textHitPadding = style => Math.min(8, Math.max(4, (parseFloat(style.fontSize) || 16) * .4));
+  // Rendered text and native-input mirrors share the same per-line tolerance.
+  // Only the added halo excludes cell edges; exact text hits keep their bounds.
+  function textPoint(rects, point, bounds, padding, expand) {
+    const x = point.clientX, y = point.clientY;
+    const inside = x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
+    const halo = expand && x >= bounds.left + 2 && x <= bounds.right - 2 && y >= bounds.top + 2 && y <= bounds.bottom - 2;
+    let closest = null, vertical = Infinity, horizontal = Infinity, exact = false, nearby = false;
+    for (const rect of rects) {
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const dy = Math.max(rect.top - y, 0, y - rect.bottom), dx = Math.max(rect.left - x, 0, x - rect.right);
+      if (dy < vertical || dy === vertical && dx < horizontal) { closest = rect; vertical = dy; horizontal = dx; }
+      if (inside && dx === 0 && dy === 0) exact = true;
+      if (halo && dx <= padding && dy <= padding) nearby = true;
+    }
+    return { exact, text: exact || nearby,
+      x: closest ? Math.max(closest.left, Math.min(x, closest.right)) : x,
+      y: closest ? (closest.top + closest.bottom) / 2 : y };
+  }
 
   function createController(options) {
     let active = null;
@@ -608,41 +627,39 @@
     // Textarea does not expose text nodes. This inert mirror gives real wrapped
     // character rectangles without replacing, moving or blurring its IME host.
     inputPoint(point) {
-      if (!this.edit) return { offset: 0, text: false };
+      if (!this.edit) return { offset: 0, text: false, exact: false };
       const input = this.edit.input, style = getComputedStyle(input), rect = input.getBoundingClientRect();
       const mirror = document.createElement('div'), span = document.createElement('span');
-      for (const key of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'textAlign', 'tabSize']) mirror.style[key] = style[key];
+      for (const key of ['font', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textAlign', 'tabSize']) mirror.style[key] = style[key];
       const px = parseFloat(style.paddingLeft) || 0, py = parseFloat(style.paddingTop) || 0;
-      Object.assign(mirror.style, { position: 'fixed', left: rect.left + px + 'px', top: rect.top + py - input.scrollTop + 'px',
-        width: Math.max(1, input.clientWidth - px - (parseFloat(style.paddingRight) || 0)) + 'px',
+      Object.assign(mirror.style, { position: 'fixed', left: rect.left + px - input.scrollLeft + 'px', top: rect.top + py - input.scrollTop + 'px',
+        width: Math.max(1, rect.width - px - (parseFloat(style.paddingRight) || 0)) + 'px',
         whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', pointerEvents: 'none', opacity: '0' });
       mirror.setAttribute('aria-hidden', 'true'); span.textContent = input.value || ' '; mirror.appendChild(span); document.body.appendChild(mirror);
       const node = span.firstChild, range = document.createRange(), length = input.value.length;
-      let low = 0, high = length, offset = length, textHit = false;
+      let low = 0, high = length, hit;
       try {
+        range.selectNodeContents(node);
+        hit = textPoint(length ? range.getClientRects() : [], point, this.edit.cell.getBoundingClientRect(), textHitPadding(style), /\S/.test(input.value));
+        // Project to the nearest visual line before finding the character. A
+        // press just below a line must not be mistaken for the end of the cell.
         while (low < high) {
           let mid = (low + high) >>> 1;
           if (mid && /[\uDC00-\uDFFF]/.test(node.textContent[mid])) mid--;
           range.setStart(node, mid); range.setEnd(node, Math.min(node.length, mid + (/[\uD800-\uDBFF]/.test(node.textContent[mid]) ? 2 : 1)));
           const box = range.getBoundingClientRect();
-          if (point.clientY > box.bottom || point.clientY >= box.top && point.clientX > (box.left + box.right) / 2) low = Math.max(low + 1, range.endOffset);
+          if (hit.y > box.bottom || hit.y >= box.top && hit.x > (box.left + box.right) / 2) low = Math.max(low + 1, range.endOffset);
           else high = mid;
         }
-        offset = Math.min(length, low);
-        for (const index of [offset, offset - 1]) {
-          if (index < 0 || index >= length) continue;
-          range.setStart(node, index); range.setEnd(node, index + 1); const box = range.getBoundingClientRect();
-          if (point.clientX >= box.left && point.clientX <= box.right && point.clientY >= box.top && point.clientY <= box.bottom) textHit = true;
-        }
       } finally { mirror.remove(); }
-      return { offset, text: textHit };
+      return { offset: Math.min(length, low), text: hit.text, exact: hit.exact };
     }
     renderedTextHit(cell, point) {
       const root = cell.querySelector('.note-table-cell-content'), walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      const range = document.createRange();
+      const range = document.createRange(), bounds = cell.getBoundingClientRect(), padding = textHitPadding(getComputedStyle(cell));
       while (walker.nextNode()) {
         range.selectNodeContents(walker.currentNode);
-        if (Array.from(range.getClientRects()).some(rect => point.clientX >= rect.left && point.clientX <= rect.right && point.clientY >= rect.top && point.clientY <= rect.bottom)) return true;
+        if (textPoint(range.getClientRects(), point, bounds, padding, /\S/.test(walker.currentNode.textContent)).text) return true;
       }
       return false;
     }
@@ -672,10 +689,13 @@
           && gesture.index <= (gesture.kind === 'row' ? s.r1 : s.c1) ? s : null;
         if (!blocked && !gesture.bounds) { this.select(gesture.kind, gesture.index, event.shiftKey); gesture.bounds = this.bounds(); }
       } else if (blocked || event.shiftKey) event.preventDefault();
-      else if (this.edit && event.target === this.edit.input && this.inputPoint(event).text) gesture.mode = 'native-text';
-      else if (event.target !== (this.edit && this.edit.input) && this.renderedTextHit(cell, event)) {
-        event.preventDefault(); this.open(start.row, start.col, event); gesture.mode = 'text'; gesture.textAnchor = this.edit ? this.edit.input.selectionStart : 0;
-      } else event.preventDefault();
+      else {
+        const inputHit = this.edit && event.target === this.edit.input ? this.inputPoint(event) : null;
+        if (inputHit && inputHit.exact) gesture.mode = 'native-text';
+        else if (inputHit ? inputHit.text : this.renderedTextHit(cell, event)) {
+          event.preventDefault(); this.open(start.row, start.col, event); gesture.mode = 'text'; gesture.textAnchor = this.edit ? this.edit.input.selectionStart : 0;
+        } else event.preventDefault();
+      }
       const move = e => { if (e.pointerId === gesture.id) this.pointerMove(e); };
       const up = e => { if (e.pointerId === gesture.id) this.pointerUp(e); };
       const cancel = () => this.cancelGesture();
