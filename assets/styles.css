@@ -462,8 +462,10 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-live-editor-host .cm-selectionBackground,
 .note-live-editor-host.cm-focused .cm-selectionBackground,
 .note-live-editor-host .cm-focused .cm-selectionBackground { background: rgba(65, 131, 196, .22) !important; }
-/* Opaque Callout and formula-source backgrounds cover the drawn selection
-   layer. Restore native text selection without changing layout or coordinates. */
+/* Opaque code, Callout and formula-source backgrounds cover the drawn selection
+   layer. Restore native text selection on lines and syntax-highlighted spans. */
+.note-live-editor-host .cm-line.note-live-code-line::selection,
+.note-live-editor-host .cm-line.note-live-code-line ::selection,
 .note-live-editor-host .cm-line.note-live-callout-line::selection,
 .note-live-editor-host .cm-line.note-live-callout-line ::selection,
 .note-live-editor-host .cm-line.note-live-math-source::selection,
