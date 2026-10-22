@@ -26,6 +26,7 @@
     let scrollLock = null;
     let measureFrame = 0;
     let measureWaiting = false, disposed = false;
+    let alignmentToolbar = null;
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => controller.measure()) : null;
     const controller = {
       options,
@@ -97,11 +98,19 @@
         return null;
       },
       whenSettled() { return Promise.all(Array.from(surfaces, (surface) => surface.whenSettled())); },
-      close() { operation++; this.bodyPosition = null; if (active) { active.cancelGesture(); active.cancelReorderIntent(); active.close(); } },
-      activate(surface) { if (active && active !== surface) active.close(); active = surface; },
+      close() { operation++; this.bodyPosition = null; alignmentToolbar?.hide(); if (active) { active.cancelGesture(); active.cancelReorderIntent(); active.close(); } },
+      activate(surface) {
+        if (active && active !== surface) active.close(); active = surface;
+        if (!alignmentToolbar) alignmentToolbar = new AlignmentToolbar(this);
+        alignmentToolbar.show(surface);
+      },
+      updateAlignment(surface) { if (alignmentToolbar?.surface === surface) alignmentToolbar.refresh(); },
+      focusAlignment(surface) { if (alignmentToolbar?.surface !== surface) return false; alignmentToolbar.focus(); return true; },
+      dismissAlignment() { operation++; alignmentToolbar?.hide(); },
       attach(surface) {
         surfaces.add(surface); if (observer) { observer.observe(surface.table); observer.observe(surface.wrap); }
         const scroller = surface.view.scrollDOM;
+        if (observer) observer.observe(scroller);
         if (!scrollers.has(scroller)) {
           const handler = () => surfaces.forEach(candidate => { candidate.geometryCache = null; if (!candidate.gesture) candidate.hideEdges(); if (!candidate.pending()) candidate.paintSelection(); candidate.refreshReorder(); });
           // Observe the surrounding paper too, so an outer-edge handle can be
@@ -117,7 +126,7 @@
           scroller.addEventListener('pointerleave', leave);
         }
       },
-      detach(surface) { surfaces.delete(surface); if (observer) { observer.unobserve(surface.table); observer.unobserve(surface.wrap); } if (active === surface) active = null; },
+      detach(surface) { surfaces.delete(surface); if (observer) { observer.unobserve(surface.table); observer.unobserve(surface.wrap); } if (active === surface) active = null; if (alignmentToolbar?.surface === surface) alignmentToolbar.hide(); },
       measure() {
         if (measureFrame || disposed) return;
         measureFrame = requestAnimationFrame(() => {
@@ -134,6 +143,7 @@
             const size = rect.width + ':' + rect.height + ':' + wrap.width + ':' + wrap.height;
             if (size !== surface.measuredSize) { surface.measuredSize = size; surface.view.requestMeasure(); }
           });
+          alignmentToolbar?.refresh();
         });
       },
       lockScroll(surface) {
@@ -157,10 +167,142 @@
           lock.scroller.scrollTop = lock.target.top; lock.scroller.scrollLeft = lock.target.left;
         }
       },
-      destroy() { disposed = true; operation++; if (observer) observer.disconnect(); if (measureFrame) cancelAnimationFrame(measureFrame); scrollers.forEach(({ handler, pointer, leave }, scroller) => { scroller.removeEventListener('scroll', handler); scroller.removeEventListener('pointermove', pointer); scroller.removeEventListener('pointerleave', leave); }); scrollers.clear(); surfaces.forEach((surface) => surface.destroy()); surfaces.clear(); active = null; },
+      destroy() { disposed = true; operation++; alignmentToolbar?.destroy(); if (observer) observer.disconnect(); if (measureFrame) cancelAnimationFrame(measureFrame); scrollers.forEach(({ handler, pointer, leave }, scroller) => { scroller.removeEventListener('scroll', handler); scroller.removeEventListener('pointermove', pointer); scroller.removeEventListener('pointerleave', leave); }); scrollers.clear(); surfaces.forEach((surface) => surface.destroy()); surfaces.clear(); active = null; },
       widget(spec, notePath, coordinator) { return new TableWidget(spec, notePath, coordinator, this); },
     };
     return controller;
+  }
+
+  // One portal per editor. Its temporary listeners exist only while a table is
+  // active; positioning uses the controller's existing coalesced measurement.
+  class AlignmentToolbar {
+    constructor(controller) {
+      this.controller = controller;
+      this.root = document.createElement('div'); this.root.className = 'note-table-alignment'; this.root.hidden = true;
+      this.root.setAttribute('role', 'toolbar');
+      this.toggle = document.createElement('button'); this.toggle.type = 'button'; this.toggle.className = 'note-table-alignment-toggle';
+      this.toggle.setAttribute('aria-haspopup', 'true'); this.toggle.setAttribute('aria-expanded', 'false');
+      this.group = document.createElement('div'); this.group.className = 'note-table-alignment-options';
+      this.buttons = ['left', 'center', 'right'].map((value, index) => {
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.tableAlign = value;
+        button.innerHTML = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 4h14M'
+          + [3, 6, 9][index] + ' 8h8M3 12h14M' + [3, 6, 9][index] + ' 16h8"/></svg>';
+        this.group.appendChild(button); return button;
+      });
+      this.root.append(this.toggle, this.group); document.body.appendChild(this.root);
+      this.root.addEventListener('pointerdown', event => { event.preventDefault(); event.stopPropagation(); });
+      this.root.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); });
+      this.root.addEventListener('click', event => {
+        event.stopPropagation();
+        if (event.target.closest('button') === this.toggle) { this.menu(!this.expanded); return; }
+        const button = event.target.closest('[data-table-align]'); if (!button || !this.surface) return;
+        const surface = this.surface, bounds = surface.alignmentBounds(); if (!bounds) return;
+        const keyboard = event.detail === 0;
+        surface.afterSettled(latest => {
+          if (this.surface !== latest) return;
+          latest.alignColumns(bounds.c0, bounds.c1, button.dataset.tableAlign);
+          this.refresh(); this.menu(false);
+          if (keyboard) this.focus();
+        });
+      });
+      this.root.addEventListener('keydown', event => {
+        if (event.isComposing || event.keyCode === 229) return;
+        if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) {
+          event.preventDefault(); event.stopPropagation();
+          this.surface?.afterSettled(surface => surface.history(event.key.toLowerCase() === 'y' || event.shiftKey)); return;
+        }
+        const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+        if (keys.includes(event.key)) {
+          event.preventDefault(); event.stopPropagation();
+          if (this.compact && !this.expanded) this.menu(true);
+          let index = this.buttons.indexOf(document.activeElement);
+          index = event.key === 'Home' ? 0 : event.key === 'End' ? 2
+            : index < 0 ? (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? 2 : 0)
+              : (index + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? 2 : 1)) % 3;
+          this.buttons.forEach((button, i) => button.tabIndex = i === index ? 0 : -1); this.buttons[index].focus();
+        } else if (event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation(); this.menu(false); this.surface?.wrap.focus({ preventScroll: true });
+        }
+      });
+      this.outside = event => {
+        if (!this.root.contains(event.target) && !this.surface?.wrap.contains(event.target)) this.controller.dismissAlignment();
+      };
+      this.visibility = () => { if (document.hidden || document.documentElement.dataset.desktopMinimized === '1') this.controller.dismissAlignment(); };
+      this.pagehide = () => this.controller.dismissAlignment();
+      this.position = () => this.controller.measure();
+      this.observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.target === this.surface?.wrap && !entry.isIntersecting)) this.controller.dismissAlignment();
+      }) : null;
+    }
+    show(surface) {
+      if (this.surface === surface) return;
+      this.hide(); this.surface = surface; this.root.hidden = false;
+      document.addEventListener('pointerdown', this.outside, true); document.addEventListener('focusin', this.outside, true);
+      document.addEventListener('scroll', this.position, true); document.addEventListener('visibilitychange', this.visibility);
+      window.addEventListener('resize', this.position); window.addEventListener('canvasdesktop:visibility', this.visibility);
+      window.addEventListener('pagehide', this.pagehide); this.observer?.observe(surface.wrap);
+      this.controller.measure();
+    }
+    menu(open) {
+      this.expanded = !!open; this.root.classList.toggle('is-expanded', this.expanded);
+      this.toggle.setAttribute('aria-expanded', String(this.expanded));
+      this.group.style.top = ''; this.group.style.right = '';
+      if (this.expanded && this.compact) {
+        const box = this.group.getBoundingClientRect();
+        if (box.bottom > window.innerHeight - 8) this.group.style.top = -box.height - 5 + 'px';
+        if (box.left < 8) this.group.style.right = this.root.getBoundingClientRect().right - box.width - 8 + 'px';
+      }
+    }
+    focus() {
+      if (this.compact) this.toggle.focus({ preventScroll: true });
+      else (this.buttons.find(button => button.getAttribute('aria-pressed') === 'true') || this.buttons[0]).focus({ preventScroll: true });
+    }
+    refresh() {
+      const surface = this.surface, bounds = surface?.alignmentBounds();
+      if (!surface) return;
+      if (!surface.current() || !surface.wrap.getClientRects().length || document.hidden || document.documentElement.dataset.desktopMinimized === '1') { this.hide(); return; }
+      if (!bounds) { this.hide(); return; }
+      const c0 = bounds.c0, c1 = bounds.c1;
+      const align = surface.model.align[c0] || 'left';
+      const same = surface.model.align.slice(c0, c1 + 1).every(value => (value || 'left') === align);
+      const scope = c0 === 0 && c1 === surface.model.header.length - 1
+        ? text('所有列', 'All columns') : c0 === c1 ? text('第 ' + (c0 + 1) + ' 列', 'Column ' + (c0 + 1))
+          : text('第 ' + (c0 + 1) + '–' + (c1 + 1) + ' 列', 'Columns ' + (c0 + 1) + '–' + (c1 + 1));
+      const label = scope + (same ? '' : text(' · 混合对齐', ' · Mixed alignment'));
+      const set = (node, key, value) => { if (node.getAttribute(key) !== value) node.setAttribute(key, value); };
+      set(this.root, 'aria-label', text('表格对齐：', 'Table alignment: ') + label);
+      const names = [text('左对齐', 'Align left'), text('居中', 'Align center'), text('右对齐', 'Align right')];
+      this.buttons.forEach((button, index) => {
+        set(button, 'aria-label', names[index] + ' · ' + scope); set(button, 'title', names[index] + ' · ' + label);
+        set(button, 'aria-pressed', String(same && align === button.dataset.tableAlign));
+        if (!this.root.contains(document.activeElement)) set(button, 'tabindex', (same ? align === button.dataset.tableAlign : index === 0) ? '0' : '-1');
+      });
+      const toggleLabel = text('对齐', 'Align'); if (this.toggle.textContent !== toggleLabel) this.toggle.textContent = toggleLabel;
+      set(this.toggle, 'aria-label', toggleLabel + ' · ' + label); set(this.toggle, 'title', toggleLabel + ' · ' + label);
+      const viewport = surface.view.scrollDOM.getBoundingClientRect(), rect = surface.table.getBoundingClientRect();
+      const compact = Math.min(viewport.width, rect.width) < 480;
+      if (this.compact !== compact) { this.compact = compact; this.root.classList.toggle('is-compact', compact); this.menu(false); }
+      const box = this.root.getBoundingClientRect();
+      const left = Math.max(8, viewport.left + 8), right = Math.min(window.innerWidth - 8, viewport.right - 8);
+      const top = Math.max(8, viewport.top + 8), bottom = Math.min(window.innerHeight - 8, viewport.bottom - 8);
+      const x = Math.max(left, Math.min(rect.right - box.width, right - box.width));
+      // Leave the 22px edge-grip/append strip fully approachable.
+      const gap = 30;
+      const y = rect.top - box.height - gap >= top ? rect.top - box.height - gap
+        : rect.bottom + box.height + gap <= bottom ? rect.bottom + gap : top;
+      for (const [key, value] of [['left', x], ['top', y]]) {
+        const px = Math.round(value) + 'px'; if (this.root.style[key] !== px) this.root.style[key] = px;
+      }
+      if (this.expanded) this.menu(true);
+    }
+    hide() {
+      this.surface = null; this.root.hidden = true; this.menu(false); this.observer?.disconnect();
+      document.removeEventListener('pointerdown', this.outside, true); document.removeEventListener('focusin', this.outside, true);
+      document.removeEventListener('scroll', this.position, true); document.removeEventListener('visibilitychange', this.visibility);
+      window.removeEventListener('resize', this.position); window.removeEventListener('canvasdesktop:visibility', this.visibility);
+      window.removeEventListener('pagehide', this.pagehide);
+    }
+    destroy() { this.hide(); this.root.remove(); }
   }
 
   class TableWidget extends CM.WidgetType {
@@ -238,6 +380,14 @@
       const oldSource = this.widget.spec.source;
       this.widget = widget;
       if (oldSource === widget.spec.source) return;
+      const alignment = widget.spec.alignmentDelta;
+      if (alignment && alignment.previous === this.model && widget.spec.tableModel) {
+        this.model = widget.spec.tableModel;
+        for (const col of alignment.columns) for (const row of this.body.rows) {
+          const cell = row.cells[col]; if (cell) cell.style.textAlign = this.model.align[col] || 'left';
+        }
+        this.controller.updateAlignment(this); this.controller.measure(); return;
+      }
       const delta = widget.spec.cellDelta;
       if (delta && delta.previous === this.model && widget.spec.tableModel) {
         this.model = widget.spec.tableModel;
@@ -387,6 +537,7 @@
         if (!!previous !== !!s) this.wrap.classList.toggle('has-table-selection', !!s);
       }
       this.positionSelectionOutline(s);
+      this.controller.updateAlignment(this);
     }
     paintSelectionDifference(bounds, other, selected) {
       if (!bounds) return;
@@ -425,6 +576,34 @@
         ? { kind, r0: previous ? previous.r0 : index, r1: index, c0: 0, c1: cols - 1 }
         : { kind, r0: 0, r1: rows - 1, c0: previous ? previous.c0 : index, c1: index };
       this.paintSelection(); this.wrap.focus({ preventScroll: true });
+    }
+    alignmentBounds() {
+      const col = this.edit?.col ?? this.activeColumn;
+      return this.bounds() || (Number.isInteger(col) && col >= 0 && col < this.model.header.length ? { c0: col, c1: col } : null);
+    }
+    alignColumns(c0, c1, align) {
+      if (this.pending() || !this.current() || !this.wrap.getClientRects().length
+          || document.hidden || document.documentElement.dataset.desktopMinimized === '1'
+          || !['left', 'center', 'right'].includes(align)) return;
+      // Flush an ordinary cell edit separately. Alignment itself never closes,
+      // replaces or reparents the browser-owned textarea.
+      this.commit();
+      const current = this.current(); if (!current) return;
+      const line = this.view.state.doc.line(this.view.state.doc.lineAt(current.from).number + 1);
+      let index = 0; const columns = [];
+      const insert = line.text.replace(/:?-+:?/g, token => {
+        const col = index++;
+        if (col < c0 || col > c1 || (this.model.align[col] || 'left') === align) return token;
+        columns.push(col); const dashes = token.replace(/:/g, '');
+        return (align !== 'right' ? ':' : '') + dashes + (align !== 'left' ? ':' : '');
+      });
+      if (!columns.length || index !== this.model.header.length) return;
+      const update = { kind: 'alignment', id: current.id, epoch: this.widget.epoch, from: current.from, to: current.to,
+        source: current.source, baseModel: this.model, columns, align, lineFrom: line.from, lineTo: line.to, insert };
+      const changes = this.view.state.changes({ from: line.from, to: line.to, insert });
+      this.controller.mapBodyPosition(changes);
+      this.view.dispatch({ changes, selection: this.view.state.selection.map(changes), effects: cellUpdateEffect.of(update),
+        userEvent: 'input.table-alignment', annotations: CM.isolateHistory ? CM.isolateHistory.of('full') : [] });
     }
     // Textarea does not expose text nodes. This inert mirror gives real wrapped
     // character rectangles without replacing, moving or blurring its IME host.
@@ -538,6 +717,7 @@
         }
         return;
       }
+      if (gesture.mode !== 'grid') this.controller.activate(this);
       gesture.mode = 'grid'; event.preventDefault(); this.close();
       const anchor = gesture.shift && gesture.anchor || { r0: gesture.start.row, c0: gesture.start.col };
       this.selection = { kind: 'cell', r0: anchor.r0, c0: anchor.c0, r1: hit.row, c1: hit.col };
@@ -681,6 +861,7 @@
     whenSettled() { return this.pending() ? new Promise((resolve) => this.waiters.push(resolve)) : Promise.resolve(true); }
     open(row, col, point) {
       if (!this.current()) return;
+      this.activeColumn = col;
       if (this.edit && this.edit.row === row && this.edit.col === col) {
         this.edit.input.focus(); if (point) { const offset = this.inputPoint(point).offset; this.edit.input.setSelectionRange(offset, offset); } return;
       }
@@ -827,6 +1008,7 @@
       }
       if (event.isComposing || event.keyCode === 229 || this.pending()) return;
       const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      if (event.key === 'Tab' && !event.shiftKey && !this.edit && this.controller.focusAlignment(this)) { event.preventDefault(); return; }
       if (this.edit && event.target === this.edit.input && this.controller.options.onTableShortcut?.(event, this)) { event.preventDefault(); return; }
       if (mod && key === 's') { event.preventDefault(); this.controller.options.onSaveRequest(); return; }
       if (mod && (key === 'z' || key === 'y')) {

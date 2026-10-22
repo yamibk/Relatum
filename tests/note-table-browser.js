@@ -408,6 +408,25 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await workspace.evaluate(() => __noteTableTest.openNote('Table.md'));
     const workspaceCell = workspace.locator('td[data-table-row="0"][data-table-col="0"]');
     const workspaceInput = workspace.locator('textarea.note-table-cell-editor');
+    // Alignment is stored in the Markdown separator and survives real backend
+    // saving, reading mode and reopening. This fixture has its own data root.
+    const beforeAlignment = await workspace.evaluate(() => __noteTableTest.editor.snapshot().value);
+    await workspaceCell.click();
+    await workspace.locator('.note-table-alignment:visible [data-table-align="right"]').click();
+    await workspace.evaluate(() => __noteTableTest.flushSave());
+    const alignedSaved = fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8');
+    assert.equal(alignedSaved.replace(/---:/, '---'), beforeAlignment);
+    await workspace.evaluate(() => __noteTableTest.setViewMode('reading'));
+    await workspace.waitForSelector('.note-reading-content .md-table');
+    assert.equal(await workspace.locator('.note-table-alignment:visible').count(), 0);
+    assert.equal(await workspace.locator('.note-reading-content .md-table tr').first().locator('td,th').first().evaluate(node => getComputedStyle(node).textAlign), 'right');
+    await workspace.evaluate(() => __noteTableTest.setViewMode('live'));
+    await workspace.evaluate(() => __noteTableTest.openNote('Other.md'));
+    await workspace.evaluate(() => __noteTableTest.openNote('Table.md'));
+    assert.equal(await workspace.evaluate(() => __noteTableTest.editor.snapshot().value), alignedSaved);
+    assert.equal(await workspaceCell.evaluate(node => getComputedStyle(node).textAlign), 'right');
+    await workspaceCell.click();
+    await workspace.locator('.note-table-alignment:visible [data-table-align="left"]').click();
     await workspaceCell.click();
     await workspaceInput.fill('自动保存');
     for (let attempt = 0; attempt < 50 && !fs.readFileSync(path.join(dataRoot, 'notes', 'Table.md'), 'utf8').includes('自动保存'); attempt++) await pause(100);

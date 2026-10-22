@@ -1,0 +1,15 @@
+{
+  "checks": "alignment, selection, source preservation, undo, IME, keyboard, themes, narrow, lifecycle, 8000 cells, idle",
+  "largeCheck": {
+    "count": 8000,
+    "stable": true,
+    "parseCount": 0,
+    "columns": [
+      "2"
+    ],
+    "local": [
+      2
+    ]
+  },
+  "errors": []
+}

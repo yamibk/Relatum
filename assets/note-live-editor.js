@@ -829,6 +829,31 @@
     if (!old?.tableModel || edit.epoch !== coordinator.epoch || old.tableModel !== edit.baseModel
         || old.from !== edit.from || old.to !== edit.to || old.source !== edit.source) return null;
     const width = old.tableModel.header.length;
+    if (edit.kind === 'alignment') {
+      const line = transaction.startState.doc.line(transaction.startState.doc.lineAt(old.from).number + 1);
+      if (line.from !== edit.lineFrom || line.to !== edit.lineTo || line.to > old.to
+          || !['left', 'center', 'right'].includes(edit.align) || !Array.isArray(edit.columns)
+          || !edit.columns.length || new Set(edit.columns).size !== edit.columns.length
+          || edit.columns.some(col => !Number.isInteger(col) || col < 0 || col >= width)
+          || typeof edit.insert !== 'string' || edit.insert.replace(/:/g, '') !== line.text.replace(/:/g, '')
+          || !window.MarkdownTable.isSeparatorLine(edit.insert)
+          || !transaction.newSelection.eq(transaction.startState.selection.map(transaction.changes))) return null;
+      const tokens = window.MarkdownTable.splitRow(edit.insert);
+      const align = tokens.map(token => token.startsWith(':') ? token.endsWith(':') ? 'center' : 'left' : token.endsWith(':') ? 'right' : '');
+      if (align.length !== width || align.some((value, col) => value !== (edit.columns.includes(col) ? edit.align : old.tableModel.align[col]))) return null;
+      let count = 0, valid = true;
+      transaction.changes.iterChanges((from, to, fromB, toB, inserted) => {
+        count++; if (from !== line.from || to !== line.to || inserted.sliceString(0) !== edit.insert) valid = false;
+      });
+      if (!valid || count !== 1) return null;
+      const from = transaction.changes.mapPos(old.from, -1), to = transaction.changes.mapPos(old.to, 1);
+      const tableModel = { header: old.tableModel.header, rows: old.tableModel.rows, align };
+      const next = Object.assign({}, old, { from, to, source: transaction.state.doc.sliceString(from, to), tableModel,
+        fingerprint: 'table-align:' + nextTableCellVersion++, cellDelta: null,
+        alignmentDelta: { previous: old.tableModel, columns: edit.columns } });
+      return { edit, specs: previous.map(spec => spec === old ? next : Object.assign({}, spec, {
+        from: transaction.changes.mapPos(spec.from, -1), to: transaction.changes.mapPos(spec.to, 1) })) };
+    }
     if (!Number.isInteger(edit.row) || edit.row < 0 || edit.row > old.tableModel.rows.length
         || !Number.isInteger(edit.col) || edit.col < 0 || edit.col >= width || !Array.isArray(edit.cells) || edit.cells.length !== width) return null;
     const baseCells = edit.row ? old.tableModel.rows[edit.row - 1] : old.tableModel.header;

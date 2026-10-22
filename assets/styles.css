@@ -888,7 +888,30 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
 .note-table textarea.note-table-cell-editor {
   display: block; width: 100%; min-height: 38px; padding: 7px 10px; margin: 0; border: 0; border-radius: 0;
   resize: none; overflow: hidden; box-sizing: border-box; background: transparent; color: inherit;
-  font: inherit; font-weight: 400; line-height: 1.55; outline: none; box-shadow: none;
+  font: inherit; font-weight: 400; line-height: 1.55; text-align: inherit; outline: none; box-shadow: none;
+}
+.note-table-alignment {
+  position: fixed; z-index: 1100; display: flex; padding: 3px; box-sizing: border-box;
+  border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text);
+  background: var(--note-paper, var(--bg)); box-shadow: 0 2px 8px rgba(0,0,0,.1);
+}
+.note-table-alignment[hidden] { display: none; }
+.note-table-alignment-options { display: flex; gap: 2px; }
+.note-table-alignment button {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit; cursor: pointer;
+}
+.note-table-alignment button:hover { background: rgba(65,131,196,.1); }
+.note-table-alignment button[aria-pressed="true"] { background: rgba(65,131,196,.17); color: #4183c4; }
+.note-table-alignment button:focus-visible { outline: 2px solid #4183c4; outline-offset: -2px; }
+.note-table-alignment svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.note-table-alignment button.note-table-alignment-toggle { display: none; width: auto; min-width: 40px; padding: 0 6px; font: 12px/1 var(--font-ui); }
+.note-table-alignment.is-compact button.note-table-alignment-toggle { display: inline-flex; }
+.note-table-alignment.is-compact .note-table-alignment-options { display: none; }
+.note-table-alignment.is-compact.is-expanded .note-table-alignment-options {
+  position: absolute; display: flex; right: -1px; top: calc(100% + 4px); padding: 3px;
+  border: 1px solid var(--border-strong); border-radius: 6px; background: var(--note-paper, var(--bg));
+  box-shadow: 0 2px 8px rgba(0,0,0,.1);
 }
 body.start-page[data-start-theme="dark"] .note-live-rich-block.note-table { --note-table-line: rgba(235,240,235,.18); }
 body.start-page[data-start-theme="dark"] .note-table-control:hover,
