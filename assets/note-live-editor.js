@@ -995,6 +995,7 @@
   }
 
   let mathLoadPromise = null;
+  let mathEditQueue = Promise.resolve();
   function ensureMathJax() {
     if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') return Promise.resolve(window.MathJax);
     if (mathLoadPromise) return mathLoadPromise;
@@ -1014,6 +1015,189 @@
       document.head.appendChild(script);
     });
     return mathLoadPromise;
+  }
+
+  function editableMathSource(spec) {
+    const source = (spec.renderSource || spec.source).trim();
+    return source.slice(2, -2).trim() ? source : '';
+  }
+
+  // This widget adds height after the closing delimiter without replacing any
+  // editable source or taking part in atomic cursor navigation.
+  class MathEditPreviewWidget extends WidgetType {
+    constructor(spec, coordinator) { super(); this.spec = spec; this.coordinator = coordinator; this.epoch = coordinator.epoch; }
+    eq(other) {
+      return other.epoch === this.epoch && other.spec.id === this.spec.id && other.spec.fingerprint === this.spec.fingerprint
+        && other.spec.calloutType === this.spec.calloutType && other.spec.calloutLast === this.spec.calloutLast;
+    }
+    toDOM(view) {
+      const dom = document.createElement('div');
+      dom.contentEditable = 'false';
+      dom.addEventListener('mousedown', event => { if (!event.button) event.preventDefault(); });
+      this.updateDOM(dom, view);
+      return dom;
+    }
+    updateDOM(dom, view) {
+      const owner = view.plugin(this.coordinator.mathPreviewPlugin);
+      if (!owner || dom.__relatumMathPreview && dom.__relatumMathPreview.epoch !== this.epoch) return false;
+      owner.attach(dom, this.spec);
+      return true;
+    }
+    destroy(dom) { dom.__relatumMathPreview?.owner.detach(dom); }
+    ignoreEvent() { return true; }
+  }
+
+  function createMathEditPreviewPlugin(coordinator) {
+    const plugin = ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.view = view; this.entries = new Map(); this.timer = 0; this.running = false; this.disposed = false;
+        this.workspaceActive = true; this.pageActive = true;
+        this.visibility = () => this.syncVisibility();
+        this.workspace = event => { this.workspaceActive = event.detail.workspace === 'notes'; this.syncVisibility(); };
+        this.pagehide = () => { this.pageActive = false; this.pause(); };
+        this.pageshow = () => { this.pageActive = true; this.syncVisibility(); };
+      }
+      foreground() {
+        return this.pageActive && this.workspaceActive && !document.hidden && document.documentElement.dataset.desktopMinimized !== '1'
+          && this.view.dom.isConnected && !this.view.dom.closest('[hidden]');
+      }
+      current(entry, version) {
+        if (this.disposed || this.entries.get(entry.dom) !== entry || entry.version !== version
+            || coordinator.epoch !== entry.epoch || !entry.dom.isConnected || !this.foreground() || compositionActive(this.view)) return false;
+        const value = this.view.state.field(coordinator.field, false), spec = value?.byId.get(entry.spec.id);
+        return !!spec && value.activeIds.has(spec.id) && spec.source === entry.spec.source;
+      }
+      watch() {
+        document.addEventListener('visibilitychange', this.visibility);
+        document.addEventListener('relatum:start-workspacechange', this.workspace);
+        window.addEventListener('canvasdesktop:visibility', this.visibility);
+        window.addEventListener('pagehide', this.pagehide);
+        window.addEventListener('pageshow', this.pageshow);
+        this.observer = new MutationObserver(this.visibility);
+        const host = this.view.dom.closest('.note-live-editor-host');
+        if (host) this.observer.observe(host, { attributes: true, attributeFilter: ['hidden'] });
+        const workspace = this.view.dom.closest('.note-workspace');
+        if (workspace) this.observer.observe(workspace, { attributes: true, attributeFilter: ['hidden'] });
+      }
+      unwatch() {
+        document.removeEventListener('visibilitychange', this.visibility);
+        document.removeEventListener('relatum:start-workspacechange', this.workspace);
+        window.removeEventListener('canvasdesktop:visibility', this.visibility);
+        window.removeEventListener('pagehide', this.pagehide);
+        window.removeEventListener('pageshow', this.pageshow);
+        this.observer?.disconnect(); this.observer = null;
+      }
+      clear(node) {
+        if (!node) return;
+        try { window.MathJax?.typesetClear?.([node]); } catch (error) {}
+        node.remove();
+      }
+      attach(dom, spec) {
+        let entry = this.entries.get(dom);
+        if (!entry) {
+          if (!this.entries.size) this.watch();
+          const status = document.createElement('div');
+          status.className = 'note-live-math-status'; status.hidden = true;
+          dom.appendChild(status);
+          entry = { owner: this, dom, status, spec, epoch: coordinator.epoch, version: 0, pending: true, due: performance.now() };
+          this.entries.set(dom, entry); dom.__relatumMathPreview = entry;
+        } else if (editableMathSource(entry.spec) !== editableMathSource(spec)) {
+          entry.version++; entry.pending = true; entry.due = performance.now() + 120;
+        }
+        entry.spec = spec;
+        dom.className = 'note-live-rich-block is-math md-math-block note-live-math-preview';
+        dom.setAttribute('aria-label', document.documentElement.lang === 'en' ? 'Formula preview' : '公式预览');
+        if (spec.calloutType) {
+          const descriptor = window.MarkdownMini.noteBlock(spec.calloutType);
+          dom.classList.add('note-block-math');
+          dom.classList.toggle('note-color-block', !!descriptor.color);
+          dom.classList.toggle('note-live-callout-last', !!spec.calloutLast);
+          dom.style.cssText = descriptor.style;
+        } else dom.removeAttribute('style');
+        this.schedule();
+      }
+      detach(dom) {
+        const entry = this.entries.get(dom);
+        if (!entry) return;
+        entry.version++; this.entries.delete(dom); delete dom.__relatumMathPreview;
+        this.clear(entry.content); this.clear(entry.stage);
+        if (!this.entries.size) { clearTimeout(this.timer); this.timer = 0; this.unwatch(); }
+      }
+      pause() {
+        clearTimeout(this.timer); this.timer = 0;
+        this.entries.forEach(entry => {
+          entry.version++; entry.pending = true; entry.due = performance.now();
+          this.clear(entry.content); this.clear(entry.stage);
+          entry.content = entry.stage = null; entry.status.hidden = true;
+        });
+      }
+      syncVisibility() { if (!this.foreground()) this.pause(); else this.schedule(); }
+      schedule() {
+        clearTimeout(this.timer); this.timer = 0;
+        if (this.disposed || this.running || !this.entries.size || !this.foreground() || compositionActive(this.view)) return;
+        let next = null;
+        this.entries.forEach(entry => { if (entry.pending && (!next || entry.due < next.due)) next = entry; });
+        if (next) this.timer = setTimeout(() => { this.timer = 0; this.render(next); }, Math.max(0, next.due - performance.now()));
+      }
+      incomplete(entry, unavailable) {
+        entry.status.textContent = document.documentElement.lang === 'en'
+          ? (unavailable ? 'Formula preview unavailable' : 'Formula is incomplete')
+          : (unavailable ? '公式预览暂不可用' : '公式尚未完成');
+        entry.status.hidden = false;
+        this.view.requestMeasure();
+      }
+      async render(entry) {
+        if (!this.current(entry, entry.version)) return;
+        this.running = true; entry.pending = false;
+        const version = entry.version;
+        const previous = mathEditQueue;
+        let release;
+        mathEditQueue = new Promise(resolve => { release = resolve; });
+        let stage = null, processed = false;
+        try {
+          // A replaced editor/plugin can still have a typeset in flight. Share
+          // the slot across those lifetimes and discard stale work before it runs.
+          await previous;
+          if (!this.current(entry, version)) return;
+          const math = await ensureMathJax();
+          await math.startup?.promise;
+          if (!this.current(entry, version)) return;
+          stage = document.createElement('div');
+          stage.className = 'note-live-math-stage'; stage.setAttribute('aria-hidden', 'true');
+          stage.textContent = editableMathSource(entry.spec);
+          entry.stage = stage; entry.dom.appendChild(stage);
+          await math.typesetPromise([stage]);
+          if (!this.current(entry, version)) return;
+          processed = true;
+          // The bundled noundefined extension emits a red literal command
+          // instead of merror while, for example, \frac is only half typed.
+          const undefinedControl = Array.from(stage.querySelectorAll('mjx-assistive-mml mtext[mathcolor="red"]')).some(node =>
+            /^\\[a-z]+$/i.test(node.textContent) && node.getAttribute('mathvariant') !== 'monospace'
+            && editableMathSource(entry.spec).includes(node.textContent));
+          if (!stage.querySelector('mjx-container') || stage.querySelector('mjx-merror, [data-mjx-error], merror') || undefinedControl) {
+            this.incomplete(entry, false);
+          } else {
+            this.clear(entry.content);
+            stage.className = 'note-live-math-preview-content'; stage.removeAttribute('aria-hidden');
+            entry.content = stage; entry.stage = null; stage = null;
+            entry.status.hidden = true;
+            this.view.requestMeasure();
+          }
+        } catch (error) {
+          if (this.current(entry, version)) { processed = true; this.incomplete(entry, true); }
+        } finally {
+          this.clear(stage);
+          if (entry.stage === stage) entry.stage = null;
+          if (!processed && this.entries.get(entry.dom) === entry && entry.version === version) entry.pending = true;
+          release();
+          this.running = false; this.schedule();
+        }
+      }
+      update() { if (this.entries.size) this.schedule(); }
+      destroy() { this.disposed = true; Array.from(this.entries.keys()).forEach(dom => this.detach(dom)); }
+    });
+    coordinator.mathPreviewPlugin = plugin;
+    return plugin;
   }
 
   class TaskWidget extends WidgetType {
@@ -2532,6 +2716,10 @@
       return { callouts, collapsed: new Set(collapsed.map(spec => spec.id)), hidden: descendants(specs, collapsed) };
     };
     const projectedSpecs = (specs, activeIds, projection) => specs.filter(spec => blockIsProjected(spec, activeIds) && !projection.hidden.has(spec.id));
+    const mathPreviews = (specs, activeIds, projection) => specs.filter(spec => spec.kind === 'math'
+      && activeIds.has(spec.id) && !projection.hidden.has(spec.id) && editableMathSource(spec)).map(spec => Decoration.widget({
+      widget: new MathEditPreviewWidget(spec, coordinator), block: true, side: 1, blockId: spec.id, mathPreview: true,
+    }).range(spec.to));
     const calloutProjections = (projection, state, focused) => {
       const ranges = [];
       projection.callouts.forEach(spec => {
@@ -2658,7 +2846,7 @@
               widget: blockWidget(spec, notePath(), options, coordinator,
                 selectedImageIds.has(spec.id)),
               block: true, inclusive: compactBlockProjection(spec, transaction.state, options), blockId: spec.id,
-            }).range(spec.from, spec.to)).concat(hidden),
+            }).range(spec.from, spec.to)).concat(hidden, mathPreviews(specs, activeIds, projection).filter(range => refresh.has(range.value.spec.blockId))),
             sort: true,
           });
           atomic = atomic.update({
@@ -2778,6 +2966,7 @@
     const seen = new Set();
     const blockValue = view.state.field(blockField);
     const blockSpecs = blockValue.specs;
+    const editableMath = blockSpecs.filter(spec => spec.kind === 'math' && blockValue.activeIds.has(spec.id));
     const noteContext = noteSyntaxContext(view.state);
     const add = (from, to, decoration) => {
       if (from < 0 || to < from || to > view.state.doc.length) return;
@@ -2926,6 +3115,10 @@
           if (nodeRef.name !== 'Document' && view.state.doc.lineAt(nodeRef.from).length > MAX_RICH_LINE) return false;
           if (inactiveBlockContains(nodeRef.from, nodeRef.to)) return false;
           if (inactiveCalloutHeaders.some((range) => range.from <= nodeRef.from && range.to >= nodeRef.to)) return false;
+          // TeX source is literal, including row-ending backslashes and text
+          // that resembles Markdown. Keep only structural quote handling.
+          if (!/^(?:Document|Blockquote|BulletList|OrderedList|ListItem|Paragraph|QuoteMark)$/.test(nodeRef.name)
+              && editableMath.some(spec => spec.from <= nodeRef.from && spec.to >= nodeRef.to)) return false;
 
           const heading = /^ATXHeading([1-6])$/.exec(nodeRef.name) || /^SetextHeading([12])$/.exec(nodeRef.name);
           if (heading) {
@@ -3051,9 +3244,19 @@
           continue;
         }
         if (inactiveBlockAt(line.from, Math.max(line.from + 1, line.to))) continue;
-        const lineIsBlockMath = blockSpecs.some((spec) => spec.kind === 'math' && spec.from <= line.to && spec.to >= line.from);
-        if (lineIsBlockMath) {
+        const blockMath = blockSpecs.find((spec) => spec.kind === 'math' && spec.from <= line.to && spec.to >= line.from);
+        if (blockMath) {
           lineClass(line.from, 'note-live-math-source');
+          const quote = window.MarkdownMini.quoteLine(line.text);
+          const text = quote.text.trim(), start = line.from + line.text.length - quote.text.length + quote.text.indexOf(text);
+          const open = (blockMath.renderSource || blockMath.source).trim().slice(0, 2);
+          const close = open === '\\[' ? '\\]' : '$$';
+          if (line.from === blockMath.from) mark(start, start + 2, 'note-live-math-delimiter');
+          if (line.to === blockMath.to) {
+            const end = start + text.length;
+            mark(end - close.length, end, 'note-live-math-delimiter');
+            if (editableMathSource(blockMath)) lineClass(line.from, 'note-live-math-with-preview');
+          }
           continue;
         }
         const text = line.text;
@@ -4196,6 +4399,7 @@
     };
     const notePath = () => currentPath;
     const blockField = createBlockField(notePath, safeOptions, coordinator, inputSession);
+    const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
     const sourceFoldPlugin = ViewPlugin.fromClass(class {
       constructor(view) { this.decorations = this.build(view); }
@@ -4338,7 +4542,7 @@
     });
 
     function livePreviewExtensions() {
-      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, inlinePlugin];
+      return sourceMode ? [sourceFoldPlugin] : [blockField, viewportParsePlugin, inlinePlugin, mathPreviewPlugin];
     }
 
     function editorLabelExtension() {
@@ -4900,6 +5104,10 @@
       });
       host.classList.toggle('is-source-mode', sourceMode);
       syncImageSelectionClass(view);
+      // Reconfiguring the live field does not produce a native focus event
+      // when the source editor already owns focus. Reveal the active formula
+      // in the newly created field as well.
+      if (!sourceMode && view.hasFocus) view.dispatch({ effects: focusEffect.of(true) });
       view.requestMeasure();
     }
 

@@ -541,8 +541,11 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   font-family: var(--note-font-mono, "Cascadia Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", monospace);
 }
 .note-live-inline-code { padding: .05em .25em; border: 1px solid rgba(0,0,0,.06); border-radius: 3px; color: #333; background: #f3f4f4; font-size: .9em; }
-.note-live-editor-host .cm-line.note-live-math-source:not(.note-live-callout-line) {
-  background: var(--note-code-bg);
+.note-live-math-delimiter { color: var(--note-live-math) !important; }
+.note-live-editor-host .cm-line.note-live-callout-last.note-live-math-with-preview {
+  padding-bottom: 0 !important;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .note-live-image-source { color: var(--note-live-code); }
 .note-live-dangerous-source { color: #a05d51; }
@@ -932,6 +935,10 @@ body.start-page[data-start-theme="dark"] .note-table-drop { background: #adcba5;
 /* The clipped accessibility copy can be taller than a tagged formula. Bound
    its hidden box so it cannot create a vertical scrollbar in the outer block. */
 .note-live-rich-block.is-math mjx-assistive-mml { height: 1px; }
+.note-live-math-preview { position: relative; }
+.note-live-math-stage { position: absolute; inset: 0 0 auto; visibility: hidden; pointer-events: none; }
+.note-live-math-status { padding: .25em 0; color: var(--text-secondary); font: .85em/1.5 var(--note-font-text, var(--font-ui)); }
+.note-live-math-status[hidden] { display: none; }
 .note-live-rich-block.is-rule {
   width: 100%;
   padding-block: .55em;
