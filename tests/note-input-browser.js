@@ -27,7 +27,7 @@ const html = prefix => `<!doctype html><html lang="zh-CN"><head><meta charset="u
 <script src="vendor/codemirror/relatum-codemirror.min.js"></script><script src="note-table-editor.js"></script><script src="note-live-editor.js"></script>
 <script>window.errors=[];addEventListener('error',e=>errors.push(String(e.error||e.message)));window.editor=RelatumNoteLiveEditor.create(document.getElementById('editor'),{value:'apple',notePath:'input.md'});</script></body></html>`;
 const grid = '| A | B |\n| --- | --- |\n| one | two |\n| three | four |';
-const output = { keyboard: false, formatting: false, tableFormatting: false, performance: [] };
+const output = { keyboard: false, formatting: false, tableFormatting: false, selectionMatchHighlight: false, performance: [] };
 
 (async () => {
   const server = http.createServer((req, res) => {
@@ -54,6 +54,74 @@ const output = { keyboard: false, formatting: false, tableFormatting: false, per
       await settle();
     }
     if (!performanceOnly && !profileOnly) {
+      await page.evaluate(() => {
+        window.matchHighlightPlugin = RelatumCodeMirror.highlightSelectionMatches().find(extension => extension instanceof RelatumCodeMirror.ViewPlugin);
+      });
+      const matchingActive = () => page.evaluate(() => !!editor.view.plugin(matchHighlightPlugin));
+      assert.equal(await matchingActive(), false, 'matching plugin is absent by default');
+      for (const mode of [false, true]) for (const [value, length] of [
+        ['a bc ca a aaaaa', 1], ['汉 汉字 汉', 1], ['文字 重复文字 文字', 2], ['match matching match', 5],
+      ]) {
+        await reset(value, 0, length, mode);
+        const before = await snapshot();
+        assert.equal(await page.locator('.cm-selectionMatch').count(), 0);
+        await page.evaluate(() => { window.matchView = editor.view; window.matchDoc = editor.view.state.doc; editor.setSelectionMatchHighlight(true); });
+        await settle();
+        assert.equal(await matchingActive(), true);
+        assert(await page.locator('.cm-selectionMatch').count() > 0, 'enabled matching marks nearby text');
+        await page.evaluate(() => { window.enabledState = editor.view.state; editor.setSelectionMatchHighlight(true); });
+        assert(await page.evaluate(() => editor.view.state === enabledState), 'repeating the current setting is a no-op');
+        await page.evaluate(() => editor.setSelectionMatchHighlight(false)); await settle();
+        assert.equal(await matchingActive(), false, 'disabling removes the matching plugin');
+        assert.equal(await page.locator('.cm-selectionMatch').count(), 0);
+        assert(await page.evaluate(() => editor.view === matchView && editor.view.state.doc === matchDoc));
+        assert.deepEqual(await snapshot(), before, 'toggles preserve source, selection and scroll');
+      }
+      await reset(Array.from({ length: 180 }, (_, i) => '重复文字 paragraph ' + i).join('\n'), 0, 2);
+      await page.evaluate(() => { editor.view.scrollDOM.scrollTop = 720; }); await settle();
+      const scrolled = await snapshot();
+      await page.evaluate(() => { editor.setSelectionMatchHighlight(true); editor.setSelectionMatchHighlight(false); }); await settle();
+      assert.deepEqual(await snapshot(), scrolled, 'scrolled documents retain their viewport');
+      await reset('same same');
+      await page.keyboard.insertText('!');
+      await page.evaluate(() => { editor.setSelectionMatchHighlight(true); editor.setSelectionMatchHighlight(false); RelatumCodeMirror.undo(editor.view); });
+      assert.equal((await snapshot()).value, 'same same', 'setting changes do not add undo steps');
+      await reset('文字 文字', 0, 2);
+      await page.evaluate(() => RelatumCodeMirror.openSearchPanel(editor.view)); await settle();
+      assert(await page.locator('.cm-searchMatch').count() > 0, 'explicit search still highlights matches while automatic matching is off');
+      assert.equal(await matchingActive(), false);
+      await page.evaluate(() => RelatumCodeMirror.closeSearchPanel(editor.view));
+
+      const matchCdp = await page.context().newCDPSession(page);
+      for (const enabled of [true, false]) {
+        await reset('汉 汉 汉', 0, 1);
+        await matchCdp.send('Input.imeSetComposition', { text: 'han', selectionStart: 3, selectionEnd: 3 });
+        assert(await page.evaluate(() => editor.inputPending));
+        const previouslyActive = await matchingActive();
+        await page.evaluate(enabled => {
+          editor.setSelectionMatchHighlight(!enabled);
+          editor.setSelectionMatchHighlight(enabled);
+        }, enabled);
+        assert.equal(await matchingActive(), previouslyActive, 'composition defers plugin changes');
+        await matchCdp.send('Input.insertText', { text: '汉' });
+        await page.waitForFunction(() => !editor.inputPending); await settle();
+        assert.equal(await matchingActive(), enabled, 'composition applies only the latest choice');
+        assert.equal((await snapshot()).value, '汉 汉 汉');
+      }
+      await matchCdp.detach();
+      await page.evaluate(() => {
+        const host = document.createElement('div'); document.body.append(host);
+        const temporary = RelatumNoteLiveEditor.create(host, { value: 'x x', selectionMatchHighlight: true });
+        window.createdWithMatching = !!temporary.view.plugin(matchHighlightPlugin);
+        temporary.view.contentDOM.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        temporary.setSelectionMatchHighlight(false);
+        temporary.destroy();
+        temporary.setSelectionMatchHighlight(true);
+        host.remove();
+      });
+      await settle();
+      assert.equal(await page.evaluate(() => createdWithMatching), true, 'creation accepts the enabled option');
+      output.selectionMatchHighlight = true;
       for (const mode of [false, true]) for (const [value, position] of [['apple', 5], ['apple', 2], ['# apple', 7], ['> apple', 7]]) {
         await reset(value, position, position, mode); await page.keyboard.press('Tab');
         assert.equal((await snapshot()).value, value.slice(0, position) + '\t' + value.slice(position));

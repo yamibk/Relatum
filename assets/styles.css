@@ -34177,8 +34177,11 @@ html.dark-semantic-ui {
 .note-graph-active .note-document-status { display: none; }
 .note-graph-panel { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; color: var(--text); background: transparent; outline: none; }
 .note-graph-panel[hidden] { display: none; }
+.note-settings-toggle,
 .note-graph-preload-setting { display: flex; align-items: center; gap: 9px; font-size: 12px; cursor: pointer; }
+.note-settings-toggle input,
 .note-graph-preload-setting input { width: 14px; height: 14px; margin: 0; accent-color: var(--text); }
+.note-settings-hint,
 .note-graph-preload-hint { margin: 8px 0 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }
 .note-graph-stage { position: absolute; inset: 0; }
 .note-tab-graph-icon { flex: none; width: 14px; height: 14px; }

@@ -8,13 +8,14 @@ async function run(browser, mode) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-ui-')), notes = path.join(root, 'notes');
   for (const dir of ['notes/Folder', 'notes/CustomNotebook/Study', 'data']) fs.mkdirSync(path.join(root, dir), { recursive: true });
   for (let i = 0; i < 260; i++) fs.writeFileSync(path.join(notes, 'N' + String(i).padStart(3, '0') + '.md'), '# Record ' + i + '\nsharedtoken result ' + i + '\n#tag\n');
-  fs.writeFileSync(path.join(notes, 'Main.md'), '# Main\nsharedtoken selected body\n');
+  fs.writeFileSync(path.join(notes, 'Main.md'), '# Main\nsharedtoken selected body\n文字 文字\n');
   fs.writeFileSync(path.join(notes, 'Folder/A.md'), 'sharedtoken folder');
   fs.writeFileSync(path.join(notes, 'CustomNotebook/Study/B.md'), 'sharedtoken book');
   fs.writeFileSync(path.join(root, 'data/note-notebooks.json'), JSON.stringify({ version: 1, colors: {}, ui: { open: true, mode: 'notebooks', selectedRoot: '', expanded: [] } }));
   const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
-  const profile = mode === 'full' ? [] : ['--launch-profile', JSON.stringify({ version: 1, features: Object.fromEntries(JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'))).features.map(f => [f.id, ['notes', 'notes.graph'].includes(f.id) || mode === 'notes-only' && f.id === 'notes.canvas'])) })];
+  const enabledFeatures = ['notes', ...(mode === 'notes-no-graph' ? [] : ['notes.graph']), ...(mode === 'notes-only' ? ['notes.canvas'] : [])];
+  const profile = mode === 'full' ? [] : ['--launch-profile', JSON.stringify({ version: 1, features: Object.fromEntries(JSON.parse(fs.readFileSync(path.join(repo, 'assets/feature-catalog.json'))).features.map(f => [f.id, enabledFeatures.includes(f.id)])) })];
   const service = spawn(process.env.RELATUM_PYTHON || 'python', ['app.py', '--no-browser', '--port', String(port), ...profile],
     { cwd: repo, env: { ...process.env, RELATUM_DATA_ROOT: root }, windowsHide: true, stdio: 'ignore' });
   const url = 'http://127.0.0.1:' + port;
@@ -202,12 +203,68 @@ async function run(browser, mode) {
     await notebook.hover(); await sleep(120); assert.equal(await page.locator('#relatum-ui-tooltip').getAttribute('aria-hidden'), 'false', 'normal row tooltips resume after palette closes');
     await page.locator('[data-note-action="toggle-settings"]').click(); assert.equal(await page.locator('[data-role="note-library-settings"]').isHidden(), true);
     await page.evaluate(() => window.dispatchEvent(new Event('blur'))); assert.equal(await page.locator('[data-role="note-settings-pop"]').isHidden(), true);
+
+    const highlightKey = 'canvas:noteSelectionMatchHighlight:v1';
+    const highlightToggle = page.locator('[data-role="note-selection-match-highlight"]');
+    const settingsButton = page.locator('[data-note-action="toggle-settings"]');
+    await page.evaluate(() => {
+      RelatumI18n.setLanguage('zh-CN');
+      const editor = T.editor, from = editor.snapshot().value.indexOf('文字');
+      editor.view.dispatch({ selection: RelatumCodeMirror.EditorSelection.range(from, from + 2) });
+      window.highlightView = editor.view; window.highlightDoc = editor.view.state.doc; window.highlightEdits = T.state.editGeneration;
+    });
+    const selected = await page.evaluate(() => T.editor.snapshot());
+    await settingsButton.click();
+    assert.equal(await page.locator('#note-settings-editing-title').textContent(), '编辑');
+    assert.equal(await highlightToggle.isChecked(), false, 'automatic matching defaults off in every shell');
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), highlightKey), null, 'startup does not write a default preference');
+    assert.equal(await page.locator('.cm-selectionMatch').count(), 0);
+    await highlightToggle.setChecked(true);
+    assert(await page.locator('.cm-selectionMatch').count() > 0);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), highlightKey), '1');
+    assert(await page.evaluate(() => T.editor.view === highlightView && T.editor.view.state.doc === highlightDoc && T.state.editGeneration === highlightEdits), 'settings preserve the editor and do not dirty Markdown');
+    assert.deepEqual(await page.evaluate(() => T.editor.snapshot()), selected);
+    await highlightToggle.setChecked(false);
+    assert.equal(await page.locator('.cm-selectionMatch').count(), 0);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), highlightKey), '0');
+    await highlightToggle.setChecked(true);
+    await page.evaluate(() => RelatumI18n.setLanguage('en'));
+    assert.equal(await highlightToggle.locator('..').locator('strong').textContent(), 'Highlight matching text');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.state.active && !T.state.openingPath);
+    await settingsButton.click();
+    assert.equal(await highlightToggle.isChecked(), true, 'reload restores an enabled preference');
+    assert(await page.evaluate(() => {
+      const plugin = RelatumCodeMirror.highlightSelectionMatches().find(extension => extension instanceof RelatumCodeMirror.ViewPlugin);
+      return !!T.editor.view.plugin(plugin);
+    }), 'restored settings install the matching plugin');
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
+      await highlightToggle.setChecked(false); await highlightToggle.setChecked(true);
+      if (process.env.RELATUM_ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'note-ui-' + mode + '-highlight-' + theme + '.png') });
+    }
+    await page.locator('[data-note-settings-action="reset-open"]').click();
+    assert((await page.locator('[data-role="note-settings-reset-confirm"]').textContent()).includes('matching text highlighting'));
+    await page.locator('[data-note-settings-action="reset-accept"]').click();
+    assert.equal(await highlightToggle.isChecked(), false);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), highlightKey), null, 'restore defaults removes the preference');
+    assert(await page.evaluate(() => {
+      const plugin = RelatumCodeMirror.highlightSelectionMatches().find(extension => extension instanceof RelatumCodeMirror.ViewPlugin);
+      return T.editor.view.plugin(plugin) === null;
+    }), 'restore defaults removes the matching plugin');
+    await settingsButton.click();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.state.active && !T.state.openingPath);
+    assert.equal(await highlightToggle.isChecked(), false, 'a reset stays disabled after reload');
+    await page.evaluate(() => { T.stopExternalSync(); T.stopDocumentPrefetch(); });
+    // Reload schedules a one-off word count before controls become idle.
+    await page.waitForFunction(() => T.state.current.countedGeneration === T.state.current.editGeneration);
     await sleep(350); const idle = await page.evaluate(() => window.__frames); await sleep(1000);
     assert.equal(await page.evaluate(() => window.__frames), idle, 'idle controls have no ongoing RAF');
     await rightAt(folder); await menu.waitFor();
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide'))); assert.equal(await menu.isHidden(), true, 'pagehide commits close immediately');
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ mode, status: 'note UI: ok', queries: queries.length, resultRowsReused: true, swatches: 8, idleFrames: 0 }));
+    console.log(JSON.stringify({ mode, status: 'note UI: ok', queries: queries.length, resultRowsReused: true, selectionMatchHighlight: true, swatches: 8, idleFrames: 0 }));
   } finally {
     if (context) await context.close(); service.kill();
     await new Promise(resolve => { if (service.exitCode !== null) resolve(); else service.once('exit', resolve); });

@@ -67,6 +67,7 @@
   const settingsResetButton = $('[data-note-settings-action="reset-open"]');
   const settingsResetConfirm = $('[data-role="note-settings-reset-confirm"]');
   const settingsResetStatus = $('[data-role="note-settings-reset-status"]');
+  const selectionMatchHighlightToggle = $('[data-role="note-selection-match-highlight"]');
   const sortTrigger = $('[data-note-action="toggle-sort"]');
   const sortMenu = $('[data-role="note-sort-menu"]');
   const libraryTrigger = $('[data-note-action="toggle-library-settings"]');
@@ -395,6 +396,7 @@
   const OPEN_TABS_KEY = 'canvas:noteOpenTabs:v1';
   const EXPANDED_KEY = 'canvas:noteExpandedFolders:v1';
   const NOTE_VIEW_KEY = 'canvas:noteView:v1';
+  const SELECTION_MATCH_HIGHLIGHT_KEY = 'canvas:noteSelectionMatchHighlight:v1';
   const VIEW_STATES_KEY = 'canvas:noteViewStates:v1';
   const IMAGE_TEXT_DEFAULTS_KEY = 'canvas:noteImageTextDefaults:v1';
   const NOTE_FOCUS_KEY = 'canvas:noteFocusMode:v1';
@@ -490,7 +492,7 @@
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0, titleScrollFrame: 0, titleResizeObserver: null,
-    viewMode: 'live', settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
+    viewMode: 'live', selectionMatchHighlight: false, settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
     treeSort: 'modified-desc', newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
     imageText: {
       available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false,
@@ -503,6 +505,7 @@
   if (!graphEnabled()) state.tabs = state.tabs.filter(path => !isGraphTab(path));
   try { const stored = localStorage.getItem(ACTIVE_TAB_KEY) || ''; if (state.tabs.includes(stored)) state.activeTab = stored; } catch (error) {}
   try { state.viewMode = normalizeViewMode(localStorage.getItem(NOTE_VIEW_KEY)); } catch (error) {}
+  try { state.selectionMatchHighlight = localStorage.getItem(SELECTION_MATCH_HIGHLIGHT_KEY) === '1'; } catch (error) {}
   try { const savedSort = localStorage.getItem(TREE_SORT_KEY); if (SORT_MODES.includes(savedSort)) state.treeSort = savedSort; } catch (error) {}
   try {
     const savedName = JSON.parse(localStorage.getItem(NEW_NAME_KEY) || '{}');
@@ -534,7 +537,7 @@
       restored: ['已恢复', 'Restored'],
       conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
       resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
-      resetCopy: ['重置正文字号、图片文字、图谱节点间距、图谱预加载和编辑器快捷键。', 'Reset text size, image text scale, graph node spacing, graph preloading and editor shortcuts.'],
+      resetCopy: ['重置正文字号、图片文字、相同文字高亮、图谱节点间距、图谱预加载和编辑器快捷键。', 'Reset text size, image text scale, matching text highlighting, graph node spacing, graph preloading and editor shortcuts.'],
       reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
@@ -823,6 +826,18 @@
     persistShortcutBindings();
   }
 
+  function applySelectionMatchHighlight(enabled, persist) {
+    state.selectionMatchHighlight = enabled === true;
+    if (selectionMatchHighlightToggle) selectionMatchHighlightToggle.checked = state.selectionMatchHighlight;
+    liveEditor?.setSelectionMatchHighlight(state.selectionMatchHighlight);
+    if (persist) {
+      const value = state.selectionMatchHighlight ? '1' : '0';
+      try {
+        if (localStorage.getItem(SELECTION_MATCH_HIGHLIGHT_KEY) !== value) localStorage.setItem(SELECTION_MATCH_HIGHLIGHT_KEY, value);
+      } catch (error) {}
+    }
+  }
+
   function syncNoteSettingsFontScale() {
     const preference = window.RelatumNotePreferences;
     const spacing = preference?.readGraphSpacing?.() ?? 125;
@@ -839,6 +854,7 @@
     const imageScale = preference ? preference.readImageTextScale() : 100;
     if (imageInput) imageInput.value = String(imageScale);
     if (imageOutput) imageOutput.textContent = imageScale + '%';
+    if (selectionMatchHighlightToggle) selectionMatchHighlightToggle.checked = state.selectionMatchHighlight;
   }
 
   function setNoteSettingsOpen(open, options) {
@@ -888,6 +904,8 @@
   }
 
   function resetNoteSettings() {
+    try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (error) {}
+    applySelectionMatchHighlight(false, false);
     const preference = window.RelatumNotePreferences;
     preference?.resetGraphSpacing?.();
     preference?.resetGraphPreload?.();
@@ -1596,6 +1614,7 @@
       try {
         liveEditor = window.RelatumNoteLiveEditor.create(editorHost, {
           value: '', notePath: '', sourceMode: state.viewMode === 'source', shortcutBindings: state.shortcutBindings,
+          selectionMatchHighlight: state.selectionMatchHighlight,
           onDocChanged: (meta) => markChanged(meta),
           onSaveRequest: () => flushSave(),
           onOpenWiki: (target) => openWikiFromEditor(target),
@@ -4726,6 +4745,7 @@
       else if (action.dataset.noteShortcutAction === 'remove') removeShortcutBinding(commandId, action.dataset.noteShortcutBinding || '');
     });
   }
+  selectionMatchHighlightToggle?.addEventListener('change', () => applySelectionMatchHighlight(selectionMatchHighlightToggle.checked, true));
   if (settingsPop) {
     settingsPop.addEventListener('scroll', () => settingsPop.classList.toggle('is-scrolled', settingsPop.scrollTop > 3), { passive: true });
     settingsPop.addEventListener('click', (event) => {

@@ -1837,7 +1837,7 @@
           </button>
           <div class="note-settings-reset-confirm" id="note-settings-reset-confirm"
             data-role="note-settings-reset-confirm" role="alertdialog" aria-label="恢复笔记设置默认值？" hidden>
-            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字、图谱节点间距、图谱预加载和编辑器快捷键。</span></div>
+            <div><strong>恢复笔记设置默认值？</strong><span>重置正文字号、图片文字、相同文字高亮、图谱节点间距、图谱预加载和编辑器快捷键。</span></div>
             <footer>
               <button type="button" data-note-settings-action="reset-cancel">取消</button>
               <button type="button" class="is-primary" data-note-settings-action="reset-accept">恢复默认</button>
@@ -1874,6 +1874,11 @@
           <small aria-hidden="true"><i>80%</i><i>125% 默认</i><i>200%</i></small>
           <small class="note-graph-spacing-hint">100% 为原间距，所有笔记本共用</small>
         </label>
+      </section>
+      <section class="note-settings-section" aria-labelledby="note-settings-editing-title">
+        <h3 id="note-settings-editing-title">编辑</h3>
+        <label class="note-settings-toggle"><input type="checkbox" data-role="note-selection-match-highlight" aria-describedby="note-selection-match-highlight-hint"><strong>高亮相同文字</strong></label>
+        <p class="note-settings-hint" id="note-selection-match-highlight-hint">选中文字时，高亮附近的相同内容。</p>
       </section>
       <section class="note-settings-section" data-feature="notes.graph" aria-labelledby="note-settings-startup-title">
         <h3 id="note-settings-startup-title">启动</h3>

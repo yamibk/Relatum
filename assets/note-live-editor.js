@@ -3758,9 +3758,12 @@
     let destroyed = false;
     let pendingSourceMode = null;
     let pendingShortcutBindings = null;
+    let pendingSelectionMatchHighlight = null;
+    let selectionMatchHighlightWait = false;
     let pendingDocumentState = null;
     let pendingDocumentWait = false;
     let sourceMode = !!options.sourceMode;
+    let selectionMatchHighlight = options.selectionMatchHighlight === true;
     let documentNoteSyntax = emptyNoteSyntax;
     let noteSyntaxRevision = 0, tableSyntaxRevision = 0;
     let pastePlain = false;
@@ -4223,6 +4226,7 @@
     const markdownCompartment = new Compartment();
     const editorLabelCompartment = new Compartment();
     const shortcutCompartment = new Compartment();
+    const selectionMatchHighlightCompartment = new Compartment();
     const shortcutRegistry = window.RelatumNoteShortcuts || null;
     const fallbackShortcutDefaults = Object.freeze({
       save: ['Mod-s'], bold: ['Mod-b'], italic: ['Mod-i'], strike: [], highlight: [], link: ['Mod-k'],
@@ -4449,7 +4453,8 @@
       const extensions = [
         highlightSpecialChars(), history(), drawSelection(), dropCursor(), EditorState.allowMultipleSelections.of(true),
         indentOnInput(), bracketMatching(), typeof closeBrackets === 'function' ? closeBrackets() : [],
-        rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
+        rectangularSelection(), crosshairCursor(), highlightActiveLine(),
+        selectionMatchHighlightCompartment.of(selectionMatchHighlight ? highlightSelectionMatches() : []),
         markdownCompartment.of(markdownExtensions()),
         noteSyntaxField,
         codeHighlighting,
@@ -4736,6 +4741,10 @@
         currentShortcutBindings = normalizedShortcutBindings(pendingShortcutBindings);
         pendingShortcutBindings = null;
       }
+      if (pendingSelectionMatchHighlight !== null) {
+        selectionMatchHighlight = pendingSelectionMatchHighlight;
+        pendingSelectionMatchHighlight = null;
+      }
       const value = documentState && typeof documentState.value === 'string' ? documentState.value : '';
       canvasHistoryPresent = /\.canvas/i.test(value);
       currentPath = String(documentState && documentState.notePath || '');
@@ -4910,6 +4919,28 @@
       }
       currentShortcutBindings = next;
       view.dispatch({ effects: shortcutCompartment.reconfigure(keymap.of(customKeyBindings())) });
+    }
+
+    function setSelectionMatchHighlight(enabled) {
+      if (destroyed) return;
+      const next = enabled === true;
+      pendingSelectionMatchHighlight = next;
+      if (inputPending()) {
+        if (!selectionMatchHighlightWait) {
+          selectionMatchHighlightWait = true;
+          whenInputSettled().then(() => {
+            selectionMatchHighlightWait = false;
+            if (!destroyed && pendingSelectionMatchHighlight !== null) {
+              setSelectionMatchHighlight(pendingSelectionMatchHighlight);
+            }
+          });
+        }
+        return;
+      }
+      pendingSelectionMatchHighlight = null;
+      if (next === selectionMatchHighlight) return;
+      selectionMatchHighlight = next;
+      view.dispatch({ effects: selectionMatchHighlightCompartment.reconfigure(next ? highlightSelectionMatches() : []) });
     }
 
     function snapshot() {
@@ -5094,7 +5125,7 @@
     }
 
     return {
-      setDocument, setNotePath, setSourceMode, setShortcutBindings, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
+      setDocument, setNotePath, setSourceMode, setShortcutBindings, setSelectionMatchHighlight, setImageTextMode, imageTextCommand, snapshot, replaceSelection, revealPosition,
       calloutSession: {
         get(position, fallback) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); return spec ? calloutCollapsed(spec, coordinator) : coordinator.foldPositions.has(position) ? coordinator.foldPositions.get(position) : fallback; },
         set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },
@@ -5106,6 +5137,7 @@
       focus() { view.focus(); },
       destroy() {
         destroyed = true;
+        pendingSelectionMatchHighlight = null;
         serializedDoc = null; serializedValue = '';
         if (imageTextController.adapter) imageTextController.adapter.cancelDraft(true);
         imageTextController.setActive(false);

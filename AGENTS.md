@@ -417,6 +417,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 
 ### 浏览器本地偏好
 
+- “笔记设置 → 编辑”的“高亮相同文字 / Highlight matching text”默认关闭，只有 `canvas:noteSelectionMatchHighlight:v1` 显式为 `'1'` 时开启；开关写入 `'1'/'0'`，恢复笔记默认设置删除此键并关闭，沿用桌面本机偏好快照。`assets/note-workspace.js` 统一管理完整及仅笔记外壳；`assets/note-live-editor.js` 的创建选项 `selectionMatchHighlight` 和实例方法 `setSelectionMatchHighlight(enabled)` 通过独立 `Compartment` 原位启停，关闭时不安装选区匹配插件。候选输入交接期间合并最后一次选择，完成后再应用，销毁后忽略迟到回调；普通选区、主动查找和 Markdown 高亮语法保持原行为，不改正文、撤销、选区或滚动位置。
+
 - 笔记浏览另用 `canvas:noteSidebarView:v1` 保存 `tree / browse`，用 `canvas:noteRecentFiles:v1` 保存最多 200 个 `[库内路径, 毫秒时间]`。主动打开和成功保存更新记录；预读、后台检查、启动恢复不更新。最近结果按主动时间与磁盘修改时间的较新者降序；库内移动同步改路径，失效路径从记录及结果移除。偏好沿用桌面快照，不写 `.md`。
 
 很多 UI 偏好存在 `localStorage` / `sessionStorage`，不进 `.canvas`：
@@ -938,6 +940,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 构建先核对 Python/依赖版本、真实模块导入和 `pip check`，再执行 `scripts/check-note-sqlite.py`，在内存数据库验证 SQLite ≥3.43、FTS5 trigram、contentless-delete 和短字符查询，不读写用户索引。检查脚本按自身路径导入 `note_search.py`，不要改回 PowerShell 内嵌 `python -c`。维护 BAT 只调用 Windows PowerShell 5.1，不判断环境或解析源码；新手使用准备、离线修复、检查、打包及打开日志五个双击入口，步骤见 `Relatum-维护工具/打包新手说明.md`。成功输出包含 `Note SQLite/FTS5 preflight` 和 `Build complete`。
 
 ## 11. 验证清单
+
+选区同文高亮使用 `node tests/note-input-browser.js` 验证默认插件缺席、中英文/单字/多字、实时预览与源码模式启停、选区/滚动/正文与撤销保留、主动查找、原生 Chromium 候选交接及销毁后的迟到切换。`node tests/note-ui-browser.js` 验证三个外壳的开关即时生效、刷新记忆、恢复默认及中英文/深浅呈现；另运行 `node tests/note-ui-browser.js notes-no-graph` 验证与图谱独立。沿用 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，服务、正文、浏览器偏好和截图只使用一次性隔离目录。
 
 复习“核对答案 → 继续”沿用 `node tests/review-scheduling-browser.js` 和 `node tests/review-performance-browser.js`：评分成功先断言原卡答案保留，再真实点击继续接续原队列回归。专门覆盖七种继续按键、按键释放与长按/双击、已有答案 DOM 复用、空答案/最后一张、草稿和评分次数不变、原请求重试、输入/候选/弹窗/下拉隔离、焦点位于重试/帮助按钮时的原生键盘激活、临时离页/最小化、模式/范围/跨天及刷新作废等待。`node tests/review-preferences-browser.js` 补充默认值及四种开关组合、取消/保存/刷新、两种模式设置共用、纯偏好不重开批次、已有核对保留、保存中改开关与丢失响应重试、服务端设置失败不部分生效、单卡直接补练/最后一张、提示分类和共享层归属、字段非法及存储不可用、中英文/主题/窄窗/复选框键盘。`tests.test_desktop_preferences` 验证本机快照包含新键。所有截图和数据只输出临时目录。提交中保持完整透明度，核对时只用颜色置灰；继续不发评分请求，不替换按钮或新增常驻循环。
 
