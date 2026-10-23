@@ -2679,6 +2679,30 @@
     return Decoration.replace({ block: true, inclusive: false, blockId: spec.id }).range(from, to);
   }
 
+  function mergeBlockAtomicRanges(ranges) {
+    let end = -1, overlapping = false;
+    for (const cursor = ranges.iter(); cursor.value; cursor.next()) {
+      if (cursor.from < end) { overlapping = true; break; }
+      end = cursor.to;
+    }
+    if (!overlapping) return ranges;
+    // Adjacent media cover the same newline. RangeSet.between() may visit
+    // incrementally updated ranges out of source order, so overlapping ranges
+    // can bounce CodeMirror's pointer cursor skipping between their endpoints.
+    // Keep per-block identities for updates, but expose their disjoint union.
+    const merged = [], atomic = Decoration.replace({ block: true, inclusive: false });
+    let from = -1, to = -1;
+    for (const cursor = ranges.iter(); cursor.value; cursor.next()) {
+      if (cursor.from < to) to = Math.max(to, cursor.to);
+      else {
+        if (from >= 0) merged.push(atomic.range(from, to));
+        from = cursor.from; to = cursor.to;
+      }
+    }
+    if (from >= 0) merged.push(atomic.range(from, to));
+    return Decoration.set(merged);
+  }
+
   function mapBlockProjections(decorations, changes) {
     const mapped = decorations.map(changes);
     const repairs = new Map();
@@ -2707,6 +2731,7 @@
 
   function createBlockField(notePath, options, coordinator, inputSession) {
     coordinator.folds = coordinator.folds || new Map(); coordinator.records = coordinator.records || [];
+    const atomicUnions = new WeakMap();
     // Specs and their parent subsets are source-ordered. Keep the furthest
     // containing endpoint instead of comparing every block with every parent.
     const descendants = (specs, parents) => {
@@ -2868,7 +2893,9 @@
         EditorView.decorations.from(field, (value) => value.decorations),
         EditorView.atomicRanges.of((view) => {
           const value = view.state.field(field, false);
-          return value ? value.atomic : Decoration.none;
+          if (!value) return Decoration.none;
+          if (!atomicUnions.has(value.atomic)) atomicUnions.set(value.atomic, mergeBlockAtomicRanges(value.atomic));
+          return atomicUnions.get(value.atomic);
         }),
       ],
     });

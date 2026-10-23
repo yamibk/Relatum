@@ -10,10 +10,12 @@ const net = require('node:net');
 const { spawn, execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.RELATUM_PLAYWRIGHT || 'playwright');
 const repo = path.resolve(__dirname, '..');
-const native = process.argv.includes('--native');
+const launcher = process.argv.includes('--launcher');
+const native = launcher || process.argv.includes('--native');
 const release = process.env.RELATUM_IMAGE_UPLOAD_RELEASE;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-image-upload-'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+let timeoutDiagnostic = null;
 fs.mkdirSync(path.join(root, 'notes'), { recursive: true });
 fs.writeFileSync(path.join(root, 'notes', 'Images.md'), '# 图片导入\n\n正文\n\n');
 fs.writeFileSync(path.join(root, 'notes', 'Other.md'), '# Other\n\nKeep this text.');
@@ -27,25 +29,68 @@ async function freePort() {
   return port;
 }
 
+function activateNativeWindow(pid) {
+  // Only activate top-level windows owned by this test's disposable processes.
+  // Page.bringToFront() alone does not activate the native WebView2 host.
+  const result = execFileSync(process.env.RELATUM_PYTHON || 'python', ['-c', [
+    'import ctypes as c, ctypes.wintypes as w, sys, json',
+    'u = c.windll.user32; k = c.windll.kernel32; pid = int(sys.argv[1]); found = []',
+    'u.GetForegroundWindow.restype = w.HWND',
+    'u.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]',
+    'u.SetForegroundWindow.argtypes = [w.HWND]; u.BringWindowToTop.argtypes = [w.HWND]',
+    'u.ShowWindow.argtypes = [w.HWND, c.c_int]; u.IsIconic.argtypes = [w.HWND]',
+    '@c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)',
+    'def visit(hwnd, param):',
+    ' p = w.DWORD(); u.GetWindowThreadProcessId(hwnd, c.byref(p))',
+    ' if p.value == pid and u.IsWindowVisible(hwnd): found.append(hwnd)',
+    ' return True',
+    'u.EnumWindows(visit, 0)',
+    'assert found, "Disposable native window must be visible"',
+    'hwnd = found[0]; foreground = u.GetForegroundWindow()',
+    'own = k.GetCurrentThreadId(); other = u.GetWindowThreadProcessId(foreground, None)',
+    'attached = own != other and bool(u.AttachThreadInput(own, other, True))',
+    'try:',
+    ' if u.IsIconic(hwnd): u.ShowWindow(hwnd, 9)',
+    ' u.BringWindowToTop(hwnd); u.SetForegroundWindow(hwnd)',
+    ' p = w.DWORD(); u.GetWindowThreadProcessId(u.GetForegroundWindow(), c.byref(p))',
+    ' print(json.dumps(dict(activated=p.value == pid)))',
+    'finally:',
+    ' if attached: u.AttachThreadInput(own, other, False)',
+  ].join('\n'), String(pid)], { encoding: 'utf8', windowsHide: true });
+  assert(JSON.parse(result).activated, 'the disposable app becomes the actual foreground window');
+}
+
 async function bounded(task, label, timeout = 15000) {
   let timer;
   try {
     return await Promise.race([task(), new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error('Operation did not finish: ' + label)), timeout);
     })]);
+  } catch (error) {
+    if (timeoutDiagnostic && error.message.startsWith('Operation did not finish:')) {
+      await Promise.race([timeoutDiagnostic().catch(() => {}), pause(3000)]);
+    }
+    throw error;
   } finally { clearTimeout(timer); }
 }
 
 (async () => {
   assert(!native || release && fs.existsSync(path.join(release, 'Relatum.exe')), 'native testing requires RELATUM_IMAGE_UPLOAD_RELEASE');
+  if (launcher) {
+    const catalog = JSON.parse(fs.readFileSync(path.join(repo, 'assets', 'feature-catalog.json'), 'utf8'));
+    fs.mkdirSync(path.join(root, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'data', 'launcher-profile.json'), JSON.stringify({ version: 1,
+      features: Object.fromEntries(catalog.features.map(item => [item.id, /^(?:canvas|notes)(?:\.|$)/.test(item.id) || item.id === 'runtime.preload'])) }));
+    fs.writeFileSync(path.join(root, 'data', 'launcher-settings.json'), JSON.stringify({ version: 1, skipSelection: true }));
+  }
   const port = await freePort(), debugPort = native ? await freePort() : 0;
   let url = `http://127.0.0.1:${port}`;
-  const server = spawn(native ? path.join(release, 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python',
+  const server = spawn(native ? path.join(release, launcher ? 'RelatumLauncher.exe' : 'Relatum.exe') : process.env.RELATUM_PYTHON || 'python',
     native ? [] : ['-B', 'app.py', '--no-browser', '--port', String(port)], {
     cwd: native ? release : repo, env: { ...process.env, RELATUM_DATA_ROOT: root,
-      ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } : {}) }, windowsHide: true, stdio: 'ignore',
+      ...(native ? { LOCALAPPDATA: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } : {}) }, windowsHide: !native, stdio: 'ignore',
   });
-  let browser, page;
+  let browser, page, clipboardBrowser, clipboardPage, clipboardProcess;
   const errors = [], results = [], failures = [];
   const check = (label, actual, expected) => {
     results.push({ label, actual, expected });
@@ -62,7 +107,7 @@ async function bounded(task, label, timeout = 15000) {
     }
     assert(ready, 'isolated server starts');
     if (native) {
-      browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { noDefaults: true });
       for (let i = 0; i < 100; i++) {
         page = browser.contexts()[0].pages().find(candidate => candidate.url().startsWith('http://127.0.0.1:'));
         if (page) break;
@@ -73,10 +118,32 @@ async function bounded(task, label, timeout = 15000) {
     } else {
       browser = await chromium.launch({ headless: true,
         ...(process.env.RELATUM_EDGE_PATH ? { executablePath: process.env.RELATUM_EDGE_PATH } : {}) });
-      page = await browser.newPage({ viewport: { width: 1440, height: 960 }, reducedMotion: 'reduce' });
+      const context = await browser.newContext({ viewport: { width: 1440, height: 960 },
+        deviceScaleFactor: process.argv.includes('--dpr2') ? 2 : 1,
+        reducedMotion: process.argv.includes('--reduced-motion') ? 'reduce' : 'no-preference' });
+      page = await context.newPage();
     }
     page.setDefaultTimeout(10000);
     page.on('pageerror', error => errors.push(error.message));
+    const debug = await page.context().newCDPSession(page);
+    timeoutDiagnostic = async () => {
+      timeoutDiagnostic = null;
+      await debug.send('Debugger.enable');
+      const paused = new Promise(resolve => debug.once('Debugger.paused', resolve));
+      await debug.send('Debugger.pause');
+      const event = await Promise.race([paused, pause(2000)]);
+      if (event) {
+        const frames = [];
+        for (const frame of event.callFrames.slice(0, 5)) {
+          const scope = frame.scopeChain.find(scope => scope.type === 'local');
+          const properties = scope ? (await debug.send('Runtime.getProperties', { objectId: scope.object.objectId, ownProperties: true })).result : [];
+          frames.push({ name: frame.functionName, location: frame.location,
+            locals: properties.map(item => ({ name: item.name, value: item.value?.value, description: item.value?.description })) });
+        }
+        console.log('renderer timeout stack: ' + JSON.stringify(frames));
+        await debug.send('Debugger.resume');
+      }
+    };
     const baseline = process.env.RELATUM_IMAGE_UPLOAD_BASELINE;
     for (const name of ['note-workspace.js', 'note-live-editor.js', 'note-media-frame.js', 'markdown.js', 'styles.css']) {
       let source = baseline ? execFileSync('git', ['show', `${baseline}:assets/${name}`], { cwd: repo, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 })
@@ -139,6 +206,105 @@ async function bounded(task, label, timeout = 15000) {
       await bounded(() => page.waitForFunction(() => uploadTest.editor.snapshot().value.includes('.assets/images/')), 'native clipboard completes');
       console.log('native clipboard ' + (i + 1) + ': ok');
     }
+    // A separate clipboard source changes focus before returning to the note.
+    // In desktop mode it is an independent Edge window with no user profile.
+    if (native) {
+      const clipboardPort = await freePort();
+      clipboardProcess = spawn(process.env.RELATUM_EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+        [`--remote-debugging-port=${clipboardPort}`, `--user-data-dir=${path.join(root, 'clipboard-browser')}`,
+          '--no-first-run', '--no-default-browser-check', '--window-size=800,600', 'about:blank'], { windowsHide: false, stdio: 'ignore' });
+      for (let attempt = 0; ; attempt++) {
+        try { if ((await fetch(`http://127.0.0.1:${clipboardPort}/json/version`)).ok) break; } catch (_) {}
+        assert(attempt < 150 && clipboardProcess.exitCode === null, 'isolated clipboard source opens'); await pause(100);
+      }
+      clipboardBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${clipboardPort}`, { noDefaults: true });
+    }
+    clipboardPage = clipboardBrowser ? clipboardBrowser.contexts()[0].pages()[0] : await page.context().newPage();
+    clipboardPage.setDefaultTimeout(10000);
+    await clipboardPage.goto(url + '/api/runtime');
+    await clipboardPage.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url });
+    // Native CDP connections use noDefaults: true. Playwright otherwise keeps
+    // every page logically focused, masking real cross-window blur/focus.
+    await page.evaluate(() => {
+      window.imageFocusProbe = { blur: 0, focus: 0 };
+      window.addEventListener('blur', () => imageFocusProbe.blur++);
+      window.addEventListener('focus', () => imageFocusProbe.focus++);
+    });
+    for (const stage of ['window', 'maximized', 'restored']) {
+      if (stage !== 'window') {
+        if (native) {
+          await page.waitForFunction(() => typeof window.pywebview?.api?.toggle_maximize === 'function');
+          const result = await page.evaluate(() => pywebview.api.toggle_maximize());
+          assert.equal(result.maximized, stage === 'maximized', 'native maximize/restore state');
+        } else await page.setViewportSize(stage === 'maximized' ? { width: 1920, height: 1080 } : { width: 1280, height: 800 });
+      }
+      // Resetting after each paste misses overlapping atomic image boundaries.
+      await reset('');
+      const bytes = await page.evaluate(async stage => {
+        if (stage === 'window') return [...imageUploadBytes];
+        const canvas = document.createElement('canvas'); canvas.width = 1200; canvas.height = 1800;
+        const drawing = canvas.getContext('2d'); drawing.fillStyle = '#dcd9ce'; drawing.fillRect(0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        canvas.width = canvas.height = 0;
+        return [...new Uint8Array(await blob.arrayBuffer())];
+      }, stage);
+      for (let i = 0; i < 3; i++) {
+        await clipboardPage.bringToFront();
+        if (native) {
+          activateNativeWindow(clipboardProcess.pid);
+          await clipboardPage.mouse.click(40, 80);
+          await page.waitForFunction(() => !document.hasFocus());
+          await clipboardPage.waitForFunction(() => document.hasFocus());
+        }
+        await clipboardPage.evaluate(async bytes => {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(bytes)], { type: 'image/png' }) })]);
+        }, bytes);
+        await page.bringToFront();
+        if (native) {
+          activateNativeWindow(server.pid);
+          await page.waitForFunction(() => document.hasFocus());
+        }
+        await page.evaluate(() => {
+          const view = uploadTest.editor.view;
+          view.dispatch({ selection: { anchor: view.state.doc.length }, scrollIntoView: true }); view.focus();
+        });
+        await bounded(() => page.keyboard.press('Control+V'), stage + ' consecutive clipboard paste');
+        await bounded(() => page.waitForFunction(count => (uploadTest.editor.snapshot().value.match(/!\[/g) || []).length === count, i + 1), 'consecutive paste completes');
+      }
+      await page.waitForFunction(() => document.querySelectorAll('.note-live-image-frame img').length === 3
+        && [...document.querySelectorAll('.note-live-image-frame img')].every(image => image.naturalWidth > 0));
+      const original = await page.evaluate(() => uploadTest.editor.snapshot().value);
+      for (let round = 0; round < 3; round++) {
+        for (const index of [0, 2, 1]) {
+          const frame = page.locator('.note-live-image-frame').nth(index);
+          await bounded(() => frame.click({ position: { x: 20, y: 20 } }), 'select adjacent image');
+          const point = await bounded(() => frame.evaluate(frame => {
+            const image = frame.getBoundingClientRect(), content = frame.closest('.cm-content').getBoundingClientRect();
+            return { x: Math.min(content.right - 5, image.right + 20), y: Math.min(innerHeight - 80, image.top + image.height / 2) };
+          }), 'image side coordinates');
+          await bounded(() => page.mouse.click(point.x, point.y), 'click blank space beside adjacent image');
+          await bounded(() => page.evaluate(() => uploadTest.editor.snapshot().value.length), 'heartbeat after adjacent image clicks');
+        }
+      }
+      await page.locator('.note-live-image-frame').nth(1).click({ position: { x: 20, y: 20 } });
+      await page.keyboard.press('Delete');
+      assert.equal(await page.locator('.note-live-image-frame').count(), 2, 'each image remains individually deletable');
+      await page.keyboard.press('Control+Z');
+      assert.equal(await page.evaluate(() => uploadTest.editor.snapshot().value), original, 'undo restores the exact image Markdown');
+      await page.locator('.note-live-image-frame').last().click({ position: { x: 20, y: 20 } });
+      await page.keyboard.press('ArrowRight'); await page.keyboard.type('Body after pictures');
+      assert.equal(await page.evaluate(() => uploadTest.editor.snapshot().value), original + 'Body after pictures', 'body input after image navigation remains usable');
+      await page.keyboard.press('Control+Z');
+      await page.evaluate(() => uploadTest.flushSave());
+      assert.equal(fs.readFileSync(path.join(root, 'notes', 'Images.md'), 'utf8'), original, 'clicking images preserves saved content');
+      results.push({ label: stage + ' consecutive pastes and 18 image/blank clicks', ...await page.evaluate(() => ({
+        width: innerWidth, height: innerHeight, dpr: devicePixelRatio, focus: imageFocusProbe,
+      })) });
+      if (native) assert((await page.evaluate(() => imageFocusProbe.focus)) >= 3, 'real focus events are observed');
+      console.log(stage + ' consecutive clipboard, focus and image clicks: ok');
+    }
+    await clipboardPage.close(); clipboardPage = null;
+    if (clipboardBrowser) { await clipboardBrowser.close(); clipboardBrowser = null; }
     for (const type of ['paste', 'drop']) {
       await reset('# Event\n\n');
       await bounded(() => page.evaluate(type => {
@@ -278,7 +444,10 @@ async function bounded(task, label, timeout = 15000) {
     assert.deepEqual(failures, []);
     console.log('note image upload browser regression: ok');
   } finally {
-    console.log(JSON.stringify({ native, results, failures, errors }));
+    console.log(JSON.stringify({ native, launcher, results, failures, errors }));
+    if (clipboardBrowser) await clipboardBrowser.close();
+    else if (clipboardPage) await clipboardPage.close();
+    if (clipboardProcess?.exitCode === null) clipboardProcess.kill();
     if (native) {
       await bounded(() => page?.evaluate(() => pywebview.api.close_window()).catch(() => {}), 'native close', 4000).catch(() => {});
       if (server.exitCode === null) await Promise.race([new Promise(resolve => server.once('exit', resolve)), pause(3000)]);

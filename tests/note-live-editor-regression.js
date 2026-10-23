@@ -119,6 +119,61 @@ function decorationRecords(set, length) {
 
 const liveProbe = loadLiveDecorationProbe();
 
+// Consecutive pasted images share hidden newline boundaries. Exercise the
+// actual atomic facet after incremental updates, including its traversal order.
+{
+  const CM = liveProbe.RelatumCodeMirror, coordinator = {};
+  let composing = false;
+  const field = liveProbe.__relatumLiveTest.createBlockField(() => 'adjacent.md', {}, coordinator, { pending: () => composing });
+  let state = CM.EditorState.create({ doc: '', extensions: [CM.markdown({ base: CM.markdownLanguage }), field] });
+  const image = index => '![[image-' + index + '.png]]\n';
+  const atoms = () => state.facet(CM.EditorView.atomicRanges).map(get => get({ state }));
+  const verify = (expected, label) => {
+    const sets = atoms();
+    assert.deepEqual(decorationRecords(sets[0], state.doc.length).map(({ from, to }) => [from, to]), expected, label);
+    assert.strictEqual(atoms()[0], sets[0], 'unchanged atomic ranges must reuse the cached union');
+    // CodeMirror's pointer resolver repeats between() with a fresh direction
+    // bias each pass. Bound this test copy so a regression cannot hang Node.
+    for (let start = 0; start <= state.doc.length; start++) {
+      let position = start, finished = false;
+      for (let pass = 0; pass < state.doc.lines * 2 + 2; pass++) {
+        let bias = 0;
+        for (const set of sets) set.between(position - 1, position + 1, (from, to) => {
+          if (position > from && position < to) {
+            bias = bias || (position - from < to - position ? -1 : 1);
+            position = bias < 0 ? from : to;
+          }
+        });
+        if (!bias) { finished = true; break; }
+      }
+      assert(finished, label + ': pointer skipping must terminate at ' + start);
+    }
+  };
+  for (let index = 0; index < 3; index++) {
+    const insert = image(index), from = state.doc.length;
+    state = state.update({ changes: { from, insert }, selection: { anchor: from + insert.length } }).state;
+  }
+  for (const index of [0, 2, 1, 0]) {
+    const line = state.doc.line(index + 1);
+    state = state.update({ selection: CM.EditorSelection.range(line.from, line.to) }).state;
+    assert.equal(state.field(field).atomic.size, 3, 'incremental updates retain each media identity');
+    verify([[0, state.doc.length]], 'adjacent media form one disjoint atomic range');
+  }
+  const split = state.doc.line(2).from;
+  state = state.update({ changes: { from: split, insert: 'Keep this paragraph\n' } }).state;
+  verify([[0, split], [split + 'Keep this paragraph'.length, state.doc.length]], 'real text between images stays outside the union');
+  state = state.update({ changes: { from: split, to: split + 'Keep this paragraph\n'.length, insert: '\n' } }).state;
+  verify([[0, split], [split, state.doc.length]], 'a real blank line retains its caret position');
+  state = state.update({ changes: { from: split, to: split + 1 } }).state;
+  composing = true;
+  state = state.update({ changes: { from: 0, insert: '前文\n' } }).state;
+  verify([['前文\n'.length, state.doc.length]], 'composition maps and merges the current raw ranges');
+  composing = false;
+  const remove = state.doc.line(3);
+  state = state.update({ changes: { from: remove.from, to: remove.to + 1 } }).state;
+  verify([['前文\n'.length, state.doc.length]], 'deleting media cannot leave stale union boundaries');
+}
+
 // Compact block boundaries must change layout without absorbing adjacent
 // composition text. Exercise the real StateField and ChangeSet mapping.
 for (const block of ['$$x^2$$', '$$\n\\frac{a}{b}\n$$', '![[fixture.png|240]]', '![diagram.canvas|240x180](canvases/diagram.canvas)', '---', '***', '___']) {
