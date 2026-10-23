@@ -631,7 +631,35 @@
     return false;
   }
 
-  function scanBlockSpecs(state, from, to, reusable, completeTree) {
+  function scanSourceComments(doc, start, end, protectedBlocks) {
+    const commentFrom = Math.max(0, start - BLOCK_MATH_LIMIT);
+    const commentTo = Math.min(doc.length, end + BLOCK_MATH_LIMIT);
+    const ranges = [];
+    let cursor = commentFrom, open = null;
+    const scan = (from, to) => {
+      while (from < to) {
+        let finish = Math.min(to, from + RICH_BLOCK_LIMIT);
+        if (finish < to && doc.lineAt(finish).from > from) finish = doc.lineAt(finish).from;
+        const source = doc.sliceString(from, finish), markers = /<!--|-->|%%/g;
+        let marker;
+        while ((marker = markers.exec(source))) {
+          if (open) {
+            if (marker[0] === open.close) { ranges.push({ from: open.from, to: from + marker.index + marker[0].length }); open = null; }
+          } else if (marker[0] !== '-->') open = { from: from + marker.index, close: marker[0] === '<!--' ? '-->' : '%%' };
+        }
+        from = finish;
+      }
+    };
+    protectedBlocks.slice().sort((a, b) => a.from - b.from).forEach(range => {
+      if (range.to <= cursor || range.from >= commentTo) return;
+      scan(cursor, Math.min(range.from, commentTo)); cursor = Math.max(cursor, range.to);
+    });
+    scan(cursor, commentTo);
+    if (open) ranges.push({ from: open.from, to: commentTo });
+    return ranges;
+  }
+
+  function scanBlockSpecs(state, from, to, reusable, completeTree, mathProtected) {
     const doc = state.doc;
     const specs = [];
     if (!doc.length) return specs;
@@ -706,31 +734,8 @@
 
     // Skip known code/HTML without reading it; comments are scanned only in
     // bounded gaps and can continue across a protected block.
-    const commentFrom = Math.max(0, start - BLOCK_MATH_LIMIT);
-    const commentTo = Math.min(doc.length, end + BLOCK_MATH_LIMIT);
-    const commentRanges = [];
-    let commentCursor = commentFrom, openComment = null;
-    const scanComments = (from, to) => {
-      while (from < to) {
-        let finish = Math.min(to, from + RICH_BLOCK_LIMIT);
-        if (finish < to && doc.lineAt(finish).from > from) finish = doc.lineAt(finish).from;
-        const source = doc.sliceString(from, finish), markers = /<!--|-->|%%/g;
-        let marker;
-        while ((marker = markers.exec(source))) {
-          if (openComment) {
-            if (marker[0] === openComment.close) { commentRanges.push({ from: openComment.from, to: from + marker.index + marker[0].length }); openComment = null; }
-          } else if (marker[0] !== '-->') openComment = { from: from + marker.index, close: marker[0] === '<!--' ? '-->' : '%%' };
-        }
-        from = finish;
-      }
-    };
-    protectedBlocks.slice().sort((a, b) => a.from - b.from).forEach(range => {
-      if (range.to <= commentCursor || range.from >= commentTo) return;
-      scanComments(commentCursor, Math.min(range.from, commentTo)); commentCursor = Math.max(commentCursor, range.to);
-    });
-    scanComments(commentCursor, commentTo);
-    if (openComment) commentRanges.push({ from: openComment.from, to: commentTo });
-    protectedBlocks.push(...commentRanges);
+    protectedBlocks.push(...scanSourceComments(doc, start, end, protectedBlocks));
+    if (mathProtected) mathProtected.push(...protectedBlocks);
 
     // $$ is a Relatum extension rather than a Lezer Markdown block. Its search is
     // deliberately bounded, so an edit can never walk an entire large document.
@@ -2964,7 +2969,92 @@
     return separator ? to + separator[0].length : to;
   }
 
-  function createInlineDecorations(view, blockField, notePath, options) {
+  // Lexical colors only: never evaluate TeX or change the editable source.
+  // Offsets stay relative to the original UTF-16 source, including quote prefixes.
+  function scanMathSourceTokens(source, block) {
+    const tokens = [], stack = [];
+    const add = (from, to, kind) => tokens.push({ from, to, className: 'note-live-math-' + kind });
+    const rawLines = source.split('\n');
+    const depth = block ? window.MarkdownMini.quoteLine(rawLines[0]).depth : 0;
+    let offset = 0;
+    const lines = rawLines.map(raw => {
+      const text = depth ? window.MarkdownMini.stripQuote(raw, depth) : raw;
+      const line = { text, from: offset + raw.length - text.length };
+      offset += raw.length + 1;
+      return line;
+    });
+    const first = lines[0], last = lines[lines.length - 1];
+    const firstText = first.text.trimStart(), open = /^(?:\$\$|\\\[|\\\(|\$)/.exec(firstText)?.[0];
+    if (!open) return tokens;
+    const close = open === '\\[' ? '\\]' : open === '\\(' ? '\\)' : open;
+    const start = first.from + first.text.length - firstText.length;
+    const end = last.from + last.text.trimEnd().length;
+    if (end - start < open.length + close.length) return tokens;
+    add(start, start + open.length, 'delimiter');
+    for (const line of lines) {
+      let index = Math.max(0, start + open.length - line.from);
+      const limit = Math.min(line.text.length, end - close.length - line.from);
+      while (index < limit) {
+        const begin = index, char = line.text[index++];
+        if (char === '%') { add(line.from + begin, line.from + limit, 'comment'); break; }
+        if (char === '\\') {
+          if (/[A-Za-z]/.test(line.text[index] || '')) {
+            while (index < limit && /[A-Za-z]/.test(line.text[index])) index++;
+          } else if (index < limit) index++;
+          add(line.from + begin, line.from + index, 'command');
+        } else if ('{[('.includes(char)) {
+          const level = stack.length % 3;
+          stack.push({ close: { '{': '}', '[': ']', '(': ')' }[char], level });
+          add(line.from + begin, line.from + index, 'bracket-' + level);
+        } else if ('}])'.includes(char)) {
+          const top = stack[stack.length - 1];
+          const level = top?.close === char ? stack.pop().level : stack.length % 3;
+          add(line.from + begin, line.from + index, 'bracket-' + level);
+        } else if (char === '^' || char === '_') add(line.from + begin, line.from + index, 'script');
+        else if (/[0-9]/.test(char) || char === '.' && /[0-9]/.test(line.text[index] || '')) {
+          while (index < limit && /[0-9]/.test(line.text[index])) index++;
+          if (char !== '.' && line.text[index] === '.' && index + 1 < limit && /[0-9]/.test(line.text[index + 1])) {
+            index++;
+            while (index < limit && /[0-9]/.test(line.text[index])) index++;
+          }
+          add(line.from + begin, line.from + index, 'number');
+        } else if (/[+\-=<>*/|&!:,;~]/.test(char)) add(line.from + begin, line.from + index, 'operator');
+      }
+    }
+    add(end - close.length, end, 'delimiter');
+    return tokens;
+  }
+
+  function createMathHighlightCache() {
+    const entries = new Map();
+    let size = 0;
+    return {
+      tokens(source, block) {
+        const key = (block ? 'b' : 'i') + source;
+        const prior = entries.get(key);
+        if (prior) { entries.delete(key); entries.set(key, prior); return prior; }
+        const tokens = scanMathSourceTokens(source, block);
+        entries.set(key, tokens); size += key.length;
+        // Bound retained source and token objects to a few block-sized inputs.
+        while (size > 4 * BLOCK_MATH_LIMIT || entries.size > 128) {
+          const oldest = entries.keys().next().value;
+          size -= oldest.length; entries.delete(oldest);
+        }
+        return tokens;
+      },
+      clear() { entries.clear(); size = 0; },
+    };
+  }
+
+  function markMathSource(mark, source, from, block, cache, visibleFrom, visibleTo, inlineMarkers = false) {
+    for (const token of cache.tokens(source, block)) {
+      const start = Math.max(visibleFrom, from + token.from), end = Math.min(visibleTo, from + token.to);
+      if (end > start) mark(start, end, token.className
+        + (inlineMarkers && token.className === 'note-live-math-delimiter' ? ' note-live-source-mark is-math' : ''));
+    }
+  }
+
+  function createInlineDecorations(view, blockField, notePath, options, mathCache = createMathHighlightCache()) {
     const ranges = [];
     const seen = new Set();
     const blockValue = view.state.field(blockField);
@@ -2991,10 +3081,30 @@
     view.visibleRanges.forEach((visible) => {
       const first = view.state.doc.lineAt(visible.from);
       const last = view.state.doc.lineAt(visible.to);
+      const coloredMath = new Set();
       const protectedRanges = lineProtectedRanges(view.state, first.from, last.to).filter(range =>
         range.kind !== 'HTMLTag' || !/^<\/?(?:u|ins|del|s|sup|sub|kbd|mark|strong|em|b|i|br)\s*\/?>$/i.test(view.state.doc.sliceString(range.from, range.to)));
       const metadata = documentFrontmatter(view.state.doc);
       if (metadata) protectedRanges.push(Object.assign({ kind: 'Frontmatter' }, metadata));
+      let mathComments = null;
+      const insideMathComment = (from, to) => {
+        if (!mathComments) {
+          const guards = lineProtectedRanges(view.state, Math.max(0, first.from - BLOCK_MATH_LIMIT), Math.min(view.state.doc.length, last.to + BLOCK_MATH_LIMIT));
+          if (metadata) guards.push(metadata);
+          mathComments = scanSourceComments(view.state.doc, first.from, last.to, guards);
+        }
+        return insideRange(mathComments, from, to);
+      };
+      const inlineMathByLine = new Map();
+      const inlineMathForLine = line => {
+        if (inlineMathByLine.has(line.from)) return inlineMathByLine.get(line.from);
+        const found = line.length <= MAX_RICH_LINE && /\$|\\\(/.test(line.text)
+          ? window.MarkdownMini.mathRanges(line.text).filter(math => !math.display && math.to - math.from <= INLINE_MATH_LIMIT
+            && !insideRange(protectedRanges, line.from + math.from, line.from + math.to)
+            && !insideMathComment(line.from + math.from, line.from + math.to)) : [];
+        inlineMathByLine.set(line.from, found);
+        return found;
+      };
       const visibleTags = [];
       const scanTags = (from, to) => {
         if (to <= from || to - from > RICH_BLOCK_LIMIT) return;
@@ -3121,7 +3231,11 @@
           // TeX source is literal, including row-ending backslashes and text
           // that resembles Markdown. Keep only structural quote handling.
           if (!/^(?:Document|Blockquote|BulletList|OrderedList|ListItem|Paragraph|QuoteMark)$/.test(nodeRef.name)
-              && editableMath.some(spec => spec.from <= nodeRef.from && spec.to >= nodeRef.to)) return false;
+              && (editableMath.some(spec => spec.from <= nodeRef.from && spec.to >= nodeRef.to)
+                || inlineMathForLine(view.state.doc.lineAt(nodeRef.from)).some(math => {
+                  const start = view.state.doc.lineAt(nodeRef.from).from;
+                  return start + math.from <= nodeRef.from && start + math.to >= nodeRef.to;
+                }))) return false;
 
           const heading = /^ATXHeading([1-6])$/.exec(nodeRef.name) || /^SetextHeading([12])$/.exec(nodeRef.name);
           if (heading) {
@@ -3250,14 +3364,13 @@
         const blockMath = blockSpecs.find((spec) => spec.kind === 'math' && spec.from <= line.to && spec.to >= line.from);
         if (blockMath) {
           lineClass(line.from, 'note-live-math-source');
-          const quote = window.MarkdownMini.quoteLine(line.text);
-          const text = quote.text.trim(), start = line.from + line.text.length - quote.text.length + quote.text.indexOf(text);
-          const open = (blockMath.renderSource || blockMath.source).trim().slice(0, 2);
-          const close = open === '\\[' ? '\\]' : '$$';
-          if (line.from === blockMath.from) mark(start, start + 2, 'note-live-math-delimiter');
+          // The cached tokens carry nesting from off-screen lines. Emit once
+          // per visible segment rather than walking all tokens for each line.
+          if (!coloredMath.has(blockMath.id)) {
+            coloredMath.add(blockMath.id);
+            markMathSource(mark, blockMath.source, blockMath.from, true, mathCache, first.from, last.to);
+          }
           if (line.to === blockMath.to) {
-            const end = start + text.length;
-            mark(end - close.length, end, 'note-live-math-delimiter');
             if (editableMathSource(blockMath)) lineClass(line.from, 'note-live-math-with-preview');
           }
           continue;
@@ -3345,17 +3458,16 @@
           }
         });
 
-        window.MarkdownMini.mathRanges(text).forEach((mathRange) => {
+        inlineMathForLine(line).forEach((mathRange) => {
           const from = line.from + mathRange.from, to = line.from + mathRange.to;
-          if (mathRange.display || isProtected(from, to) || to - from > INLINE_MATH_LIMIT) return;
+          if (isProtected(from, to)) return;
           protect(from, to);
           if (!constructActive(view, from, to)) add(from, to, Decoration.replace({
             widget: new InlineMathWidget(text.slice(mathRange.from, mathRange.to), from, to, options.coordinator), relatumAtomic: true,
           }));
           else {
             mark(from, to, 'note-live-math-source');
-            mark(from, from + mathRange.open.length, 'note-live-source-mark is-math');
-            mark(to - mathRange.close.length, to, 'note-live-source-mark is-math');
+            markMathSource(mark, text.slice(mathRange.from, mathRange.to), from, false, mathCache, from, to, true);
           }
         });
 
@@ -3400,7 +3512,8 @@
   function createInlinePlugin(blockField, notePath, options) {
     const plugin = ViewPlugin.fromClass(class {
       constructor(view) {
-        this.decorations = createInlineDecorations(view, blockField, notePath, options);
+        this.mathColors = createMathHighlightCache();
+        this.decorations = createInlineDecorations(view, blockField, notePath, options, this.mathColors);
         this.atomic = atomicDecorationSubset(this.decorations, view.state.doc.length);
         this.compositionPending = false;
       }
@@ -3422,10 +3535,11 @@
         const syntaxChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
         if (this.compositionPending || update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || lifecycleChanged || syntaxChanged) {
           this.compositionPending = false;
-          this.decorations = createInlineDecorations(update.view, blockField, notePath, options);
+          this.decorations = createInlineDecorations(update.view, blockField, notePath, options, this.mathColors);
           this.atomic = atomicDecorationSubset(this.decorations, update.state.doc.length);
         }
       }
+      destroy() { this.mathColors.clear(); }
     }, {
       decorations: (value) => value.decorations,
       provide: (extension) => EditorView.atomicRanges.of((view) => {
@@ -4409,12 +4523,20 @@
     const mathPreviewPlugin = createMathEditPreviewPlugin(coordinator);
     const inlinePlugin = createInlinePlugin(blockField, notePath, safeOptions);
     const sourceFoldPlugin = ViewPlugin.fromClass(class {
-      constructor(view) { this.decorations = this.build(view); }
+      constructor(view) {
+        this.mathColors = createMathHighlightCache();
+        this.compositionPending = false;
+        this.decorations = this.build(view);
+      }
       build(view) {
         const ranges = [];
         const seen = new Set();
+        const mark = (from, to, className) => ranges.push(Decoration.mark({ class: className }).range(from, to));
         view.visibleRanges.forEach(range => {
-          const specs = scanBlockSpecs(view.state, range.from, range.to, coordinator.records).filter(spec => spec.kind === 'callout');
+          const first = view.state.doc.lineAt(range.from), last = view.state.doc.lineAt(range.to);
+          const mathProtected = [];
+          const allSpecs = scanBlockSpecs(view.state, first.from, last.to, coordinator.records, null, mathProtected);
+          const specs = allSpecs.filter(spec => spec.kind === 'callout');
           coordinator.records = coordinator.records.filter(item => item.to < range.from || item.from > range.to || specs.some(spec => spec.id === item.id));
           specs.forEach(spec => {
             if (seen.has(spec.id)) return; seen.add(spec.id);
@@ -4422,15 +4544,36 @@
             if (prior >= 0) coordinator.records[prior] = spec; else coordinator.records.push(spec);
             if (window.MarkdownMini.noteBlock(spec.type, spec.title, spec.suffix).foldable) ranges.push(Decoration.widget({ widget: new CalloutFoldWidget(spec, coordinator), side: 1 }).range(view.state.doc.lineAt(spec.from).to));
           });
+          const blocks = allSpecs.filter(spec => spec.kind === 'math');
+          for (const spec of blocks) markMathSource(mark, spec.source, spec.from, true, this.mathColors, first.from, last.to);
+          const guards = mathProtected.concat(lineProtectedRanges(view.state, first.from, last.to));
+          for (let number = first.number; number <= last.number; number++) {
+            const line = view.state.doc.line(number);
+            if (line.length > MAX_RICH_LINE || blocks.some(spec => spec.from <= line.to && spec.to >= line.from)) continue;
+            for (const math of window.MarkdownMini.mathRanges(line.text)) {
+              const from = line.from + math.from, to = line.from + math.to;
+              if (math.display || to - from > INLINE_MATH_LIMIT || insideRange(guards, from, to)) continue;
+              markMathSource(mark, line.text.slice(math.from, math.to), from, false, this.mathColors, first.from, last.to);
+            }
+          }
         });
         return Decoration.set(ranges, true);
       }
       update(update) {
         if (update.docChanged) coordinator.records = coordinator.records.map(spec => Object.assign({}, spec, { from: update.changes.mapPos(spec.from, 1), to: update.changes.mapPos(spec.to, -1) }));
-        if (inputSession.pending()) { if (update.docChanged) this.decorations = this.decorations.map(update.changes); return; }
+        if (compositionActive(update.view)) {
+          this.decorations = this.decorations.map(update.changes);
+          this.compositionPending = true;
+          return;
+        }
         update.transactions.forEach(transaction => transaction.effects.forEach(effect => { if (effect.is(calloutFoldEffect)) coordinator.folds.set(effect.value.id, effect.value.collapsed); }));
-        if (update.docChanged || update.viewportChanged || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(calloutFoldEffect) || effect.is(inputReconcileEffect)))) this.decorations = this.build(update.view);
+        if (this.compositionPending || update.docChanged || update.viewportChanged || syntaxTree(update.startState) !== syntaxTree(update.state)
+            || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(calloutFoldEffect) || effect.is(inputReconcileEffect) || effect.is(viewportParseRequestEffect)))) {
+          this.compositionPending = false;
+          this.decorations = this.build(update.view);
+        }
       }
+      destroy() { this.mathColors.clear(); }
     }, { decorations: value => value.decorations });
     const viewportParsePlugin = createViewportParsePlugin(blockField);
     const livePreviewCompartment = new Compartment();

@@ -16,6 +16,17 @@ const equation = String.raw`$$
 +\mu_0\varepsilon_0\frac{\partial \mathbf{E}}{\partial t}
 \end{aligned}
 $$`;
+const syntaxEquation = String.raw`> [!note]
+> $$
+> \frac{a_1+[
+> (b+2)
+> ]}{\sqrt{c}} \{ x \} \% % ignored { [ ( \frac
+> +0
+> $$`;
+const tokenSelector = '.cm-content span:is(.note-live-math-delimiter,.note-live-math-command,.note-live-math-operator,.note-live-math-script,.note-live-math-number,.note-live-math-comment,.note-live-math-bracket-0,.note-live-math-bracket-1,.note-live-math-bracket-2)';
+const syntaxTokens = page => page.locator(tokenSelector).evaluateAll(nodes => nodes.map(node => ({
+  text: node.textContent, kind: [...node.classList].find(name => /^note-live-math-/.test(name)), color: getComputedStyle(node).color,
+})));
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="/assets/">
 <link rel="stylesheet" href="styles.css"><style>
 body{margin:0;background:var(--bg,#fbfbfa)}.note-workspace{display:block;position:static;width:100%;height:100vh;transform:none;animation:none}
@@ -111,7 +122,9 @@ async function checkWorkspace(browser) {
     const file = path.resolve(repo, '.' + pathname);
     if (!pathname.startsWith('/assets/') || !file.startsWith(path.join(repo, 'assets') + path.sep) || !fs.existsSync(file)) { res.writeHead(404).end(); return; }
     res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'application/octet-stream');
-    res.end(fs.readFileSync(file));
+    const body = fs.readFileSync(file);
+    res.end(file.endsWith('note-live-editor.js') ? body.toString().replace('function scanMathSourceTokens(source, block) {',
+      'function scanMathSourceTokens(source, block) { window.__mathLexRuns = (window.__mathLexRuns || 0) + 1;') : body);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, page;
@@ -139,6 +152,69 @@ async function checkWorkspace(browser) {
     await set('$$\nx^2', 5);
     assert.equal(await page.locator('.note-live-math-preview').count(), 0);
     assert.equal(await page.evaluate(() => !!window.MathJax), false);
+
+    // Syntax colors work before MathJax is loaded, and both editing modes
+    // share the same tokens rather than interpreting TeX as Markdown.
+    const inline = String.raw`inline $\frac{x_1}{2.5}+\alpha$ only`;
+    await page.evaluate(() => editor.setSourceMode(true));
+    await set(inline, inline.indexOf('x_1') + 1);
+    const inlineSource = await syntaxTokens(page);
+    assert(inlineSource.some(token => token.text === '\\frac' && token.kind === 'note-live-math-command'));
+    assert(inlineSource.some(token => token.text === '2.5' && token.kind === 'note-live-math-number'));
+    assert.equal(await page.evaluate(() => !!window.MathJax), false, 'source coloring never loads MathJax');
+    await set(String.raw`$$\frac{x_1}{2.5}$$`, 5);
+    assert.equal(await page.evaluate(() => !!window.MathJax), false, 'source-mode display math also stays cold');
+    await set(inline, inline.indexOf('x_1') + 1);
+    await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); }); await settle();
+    assert.deepEqual(await syntaxTokens(page), inlineSource, 'active inline math has identical syntax colors');
+    assert.equal(await page.evaluate(() => !!window.MathJax), false, 'editing inline source does not need MathJax');
+    const parenInline = String.raw`inline \(\frac{x_1}{2.5}+\alpha\) only`;
+    await set(parenInline, parenInline.indexOf('x_1') + 1);
+    const parenColors = await syntaxTokens(page);
+    assert.equal(await page.locator('.note-live-math-source .is-escape, .note-live-math-source .note-live-emphasis').count(), 0,
+      'inline TeX does not inherit Markdown escapes or emphasis');
+    await page.evaluate(() => editor.setSourceMode(true)); await settle();
+    assert.deepEqual(await syntaxTokens(page), parenColors, 'parenthesis-delimited inline math has identical colors');
+    await page.evaluate(() => editor.setSourceMode(true));
+    await set(syntaxEquation, syntaxEquation.indexOf('a_1') + 1);
+    const nested = await syntaxTokens(page);
+    assert.deepEqual(nested.filter(token => token.kind.includes('bracket')).map(token => token.kind),
+      [0, 1, 2, 2, 1, 0, 0, 1, 1, 0].map(level => 'note-live-math-bracket-' + level), 'nesting survives quote prefixes and line breaks');
+    assert(nested.some(token => token.text === '\\{' && token.kind === 'note-live-math-command'), 'escaped braces are commands, not group nesting');
+    assert(nested.some(token => token.text === '\\%' && token.kind === 'note-live-math-command'));
+    assert(nested.some(token => token.text === '% ignored { [ ( \\frac' && token.kind === 'note-live-math-comment'));
+    assert(new Set(nested.map(token => token.color)).size >= 7, 'syntax categories have distinct colors');
+    const scans = await page.evaluate(() => window.__mathLexRuns);
+    await page.evaluate(() => {
+      const at = editor.view.state.doc.toString().indexOf('a_1');
+      for (let i = 0; i < 12; i++) editor.view.dispatch({ selection: { anchor: at + i % 2 } });
+    }); await settle();
+    assert.equal(await page.evaluate(() => window.__mathLexRuns), scans, 'selection changes reuse lexical results');
+    await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); }); await settle();
+    assert.deepEqual(await syntaxTokens(page), nested, 'quoted block math uses the same colors in live mode');
+    const liveScans = await page.evaluate(() => __mathLexRuns);
+    await page.evaluate(() => {
+      const at = editor.view.state.doc.toString().indexOf('a_1');
+      for (let i = 0; i < 12; i++) editor.view.dispatch({ selection: { anchor: at + i % 2 } });
+    }); await settle();
+    assert.equal(await page.evaluate(() => __mathLexRuns), liveScans, 'live-mode selection also reuses lexical results');
+
+    // Only real formulas are colored: comments, code, frontmatter, escaped
+    // dollars and unclosed outer delimiters must not leak into following text.
+    const excluded = '---\nmath: "$x_1+2$"\n---\n\n```text\n$$\\frac{a}{2}$$\n```\n\n`$x_1+2$`\n\n%%\n$x_1+2$\n%%\n\n<!--\n$x_1+2$\n-->\n\n\\$x_1+2\\$\n\n$$\nx_1+2\n\nordinary';
+    for (const source of [true, false]) {
+      await page.evaluate(source => editor.setSourceMode(source), source);
+      await set(excluded, excluded.length);
+      assert.equal((await syntaxTokens(page)).length, 0, 'protected syntax is not math in mode ' + source);
+    }
+    for (const source of [true, false]) {
+      await page.evaluate(source => editor.setSourceMode(source), source);
+      const value = '---\ncomment: %%\n---\n\n$\\frac{x_1}{2}$';
+      await set(value, value.indexOf('x_1') + 1);
+      assert((await syntaxTokens(page)).some(token => token.text === '\\frac'), 'frontmatter comment examples do not hide later formulas');
+    }
+    // Return to ordinary text before the original preview cases.
+    await set('ordinary text', 4);
 
     await set(equation);
     await previewReady();
@@ -276,6 +352,14 @@ async function checkWorkspace(browser) {
       }
       await set(equation); await previewReady();
       await page.screenshot({ path: path.join(output, 'maxwell-' + theme + '.png') });
+      const visualEquation = syntaxEquation.replace(String.raw`\{ x \} \% % ignored { [ ( \frac`, '');
+      await set(visualEquation, visualEquation.indexOf('a_1') + 1); await previewReady();
+      const liveColors = await syntaxTokens(page);
+      await page.screenshot({ path: path.join(output, 'syntax-' + theme + '.png') });
+      await page.evaluate(() => editor.setSourceMode(true)); await settle();
+      assert.deepEqual(await syntaxTokens(page), liveColors, theme + ' source/live colors match');
+      await page.screenshot({ path: path.join(output, 'syntax-source-' + theme + '.png') });
+      await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); }); await settle();
       const wide = '$$' + Array.from({ length: 75 }, (_, i) => 'x_{' + i + '}').join('+') + '$$';
       await set(wide + '\n\nafter', 5); await previewReady();
       const sizing = await page.evaluate(() => {
@@ -300,13 +384,41 @@ async function checkWorkspace(browser) {
     await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
     await settle(); assert(!await page.evaluate(() => editor.snapshot().value.includes('zi')));
 
+    await page.evaluate(() => editor.setSourceMode(true));
+    await set('$$x^2$$', 3);
+    const sourceScans = await page.evaluate(() => __mathLexRuns);
+    const sourceCalls = await page.evaluate(() => __mathCalls);
+    for (const text of ['h', 'han']) await cdp.send('Input.imeSetComposition', { text, selectionStart: text.length, selectionEnd: text.length });
+    await page.waitForTimeout(180);
+    assert.equal(await page.evaluate(() => __mathLexRuns), sourceScans, 'source-mode candidates only map existing colors');
+    await cdp.send('Input.insertText', { text: '汉' }); await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '$$x汉^2$$');
+    assert((await page.evaluate(() => __mathLexRuns)) > sourceScans, 'committed source input refreshes lexical colors');
+    assert.equal(await page.evaluate(() => __mathCalls), sourceCalls, 'source IME does not render a preview');
+    await page.keyboard.press('Control+z'); await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '$$x^2$$', 'source IME is one undoable edit');
+    await page.keyboard.press('Control+y'); await settle();
+    assert.equal(await page.evaluate(() => editor.snapshot().value), '$$x汉^2$$');
+
+    const tall = '$$\n{[\n' + 'x+1\n'.repeat(250) + '(2)]}\n$$';
+    await set(tall, 4);
+    await page.evaluate(() => {
+      const at = editor.view.state.doc.toString().lastIndexOf('(2)');
+      editor.view.dispatch({ selection: { anchor: at }, scrollIntoView: true });
+    }); await settle();
+    const tailColors = (await syntaxTokens(page)).filter(token => token.kind.includes('bracket'));
+    assert.deepEqual(tailColors.slice(-4).map(token => token.kind), [2, 2, 1, 0].map(level => 'note-live-math-bracket-' + level),
+      'visible tail keeps the nesting opened outside the viewport');
+    await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); });
+
     // Source/read-only presentation, folding, and leaving the formula retain the old behavior.
     await set('> [!note]+ Title\n> $$x^2$$\n\nafter'); await previewReady();
     await page.locator('.note-callout-fold').click(); await settle();
     assert.equal(await page.locator('.note-live-math-preview').count(), 0);
     await set(equation); await previewReady();
     await page.evaluate(() => editor.setSourceMode(true)); await settle();
-    assert.equal(await page.locator('.note-live-math-preview, .note-live-math-delimiter').count(), 0);
+    assert.equal(await page.locator('.note-live-math-preview').count(), 0);
+    assert.equal(await page.locator('.note-live-math-delimiter').count(), 2, 'source mode keeps formula boundary colors');
     await page.evaluate(() => { editor.setSourceMode(false); editor.focus(); }); await previewReady();
     await page.evaluate(() => { editor.view.dispatch({ selection: { anchor: editor.view.state.doc.length, head: editor.view.state.doc.length } }); editor.view.contentDOM.blur(); });
     await settle(); assert.equal(await page.locator('.note-live-math-preview').count(), 0);

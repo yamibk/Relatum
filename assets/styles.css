@@ -419,6 +419,14 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   --note-live-marker: #a8a7a2;
   --note-live-link: #4183c4;
   --note-live-math: #8951e8;
+  --note-math-command: #256da6;
+  --note-math-operator: #247d80;
+  --note-math-script: #b35e21;
+  --note-math-number: #956323;
+  --note-math-comment: #777b75;
+  --note-math-bracket-0: #a26b17;
+  --note-math-bracket-1: #35816a;
+  --note-math-bracket-2: #aa5278;
   --note-live-code: #806b5b;
   width: 100%;
   height: 100%;
@@ -539,7 +547,16 @@ body.start-page:not([data-start-workspace="canvas"]) .top-actions {
   font-family: var(--note-font-mono, "Cascadia Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", monospace);
 }
 .note-live-inline-code { padding: .05em .25em; border: 1px solid rgba(0,0,0,.06); border-radius: 3px; color: #333; background: #f3f4f4; font-size: .9em; }
-.note-live-math-delimiter { color: var(--note-live-math) !important; }
+.note-live-math-delimiter,
+.note-live-math-delimiter * { color: var(--note-live-math) !important; }
+.note-live-math-command { color: var(--note-math-command); }
+.note-live-math-operator { color: var(--note-math-operator); }
+.note-live-math-script { color: var(--note-math-script); }
+.note-live-math-number { color: var(--note-math-number); }
+.note-live-math-comment { color: var(--note-math-comment); }
+.note-live-math-bracket-0 { color: var(--note-math-bracket-0); }
+.note-live-math-bracket-1 { color: var(--note-math-bracket-1); }
+.note-live-math-bracket-2 { color: var(--note-math-bracket-2); }
 .note-live-editor-host .cm-line.note-live-callout-last.note-live-math-with-preview {
   padding-bottom: 0 !important;
   border-bottom-left-radius: 0;
@@ -981,6 +998,14 @@ body.start-page[data-start-theme="dark"] .note-live-editor-host {
   --note-live-marker: #8f948d;
   --note-live-link: #80b8ef;
   --note-live-math: #bc95ff;
+  --note-math-command: #8dc5ef;
+  --note-math-operator: #75cec8;
+  --note-math-script: #f0ad77;
+  --note-math-number: #dfbd86;
+  --note-math-comment: #929b91;
+  --note-math-bracket-0: #dfbf79;
+  --note-math-bracket-1: #89cdb0;
+  --note-math-bracket-2: #e7a0bf;
   --note-live-code: #b49c88;
 }
 
