@@ -34,6 +34,59 @@ def _tree_scan_fixture(original, folder, overrides, observed):
 
 
 class NotesLibraryTests(unittest.TestCase):
+    def test_image_header_dimensions_without_pixel_decoding(self):
+        def png(width, height):
+            return b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + width.to_bytes(4, 'big') + height.to_bytes(4, 'big')
+
+        webp = lambda kind, data: b'RIFF' + (len(data) + 12).to_bytes(4, 'little') + b'WEBP' + kind + len(data).to_bytes(4, 'little') + data
+        fixtures = [
+            png(400, 200),
+            b'GIF89a' + (400).to_bytes(2, 'little') + (200).to_bytes(2, 'little'),
+            b'BM' + bytes(12) + (40).to_bytes(4, 'little') + (400).to_bytes(4, 'little', signed=True) + (-200).to_bytes(4, 'little', signed=True),
+            b'BM' + bytes(12) + (12).to_bytes(4, 'little') + (400).to_bytes(2, 'little') + (200).to_bytes(2, 'little') + bytes(4),
+            b'\xff\xd8\xff\xe1\x00\x05abc\xff\xff\xc2\x00\x0b\x08\x00\xc8\x01\x90\x01\x01\x11\x00',
+            webp(b'VP8X', bytes(4) + (399).to_bytes(3, 'little') + (199).to_bytes(3, 'little')),
+            webp(b'VP8L', b'\x2f' + (399 | (199 << 14)).to_bytes(4, 'little')),
+            webp(b'VP8 ', bytes(3) + b'\x9d\x01\x2a' + (400).to_bytes(2, 'little') + (200).to_bytes(2, 'little')),
+        ]
+        for content in fixtures:
+            with self.subTest(header=content[:24]):
+                self.assertEqual(notes_library._image_dimensions(content), (400, 200))
+                notes_library._check_image_dimensions(content)
+        for content in (b'', b'\xff\xd8\xff\xe1\x00\x00', b'RIFF\x00\x00\x00\x00WEBPVP8X\xff\xff\xff\xff', b'\x89PNG\r\n\x1a\n' + b'x' * 20):
+            self.assertIsNone(notes_library._image_dimensions(content))
+        with self.assertRaises(NotesError) as caught:
+            notes_library._check_image_dimensions(png(100000, 100000))
+        self.assertEqual((caught.exception.status, caught.exception.code), (413, 'too_large'))
+        # A JPEG metadata prefix cannot make header scanning walk the whole file.
+        self.assertIsNone(notes_library._image_dimensions(b'\xff\xd8' + b'\xff' * (notes_library._IMAGE_HEADER_BYTES + 16)))
+        notes_library._check_image_dimensions(png(8192, 8192))
+
+    def test_oversized_image_pixels_rejected_before_upload_import_or_serving(self):
+        self.store.create('', 'Pixels', 'note', content='Keep this note.')
+        for width, height in ((100000, 1), (10000, 10000)):
+            image = b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR' + width.to_bytes(4, 'big') + height.to_bytes(4, 'big')
+            with self.subTest(size=(width, height)), mock.patch.object(self.store, 'atomic_bytes', wraps=self.store.atomic_bytes) as writes:
+                with self.assertRaises(NotesError) as caught:
+                    self.store.upload_image('Pixels.md', 'large.png', image, 'image/png')
+                self.assertEqual(caught.exception.status, 413)
+                writes.assert_not_called()
+            token = self.store.begin_import('')['token']
+            try:
+                with self.assertRaises(NotesError) as caught:
+                    self.store.upload_import_file(token, 'large.png', image, 'image/png')
+                self.assertEqual(caught.exception.code, 'too_large')
+            finally:
+                self.store.abort_import(token)
+            target = self.root / 'large.png'
+            target.write_bytes(image)
+            with self.assertRaises(NotesError) as caught:
+                self.store.resolve_image('Pixels.md', 'large.png')
+            self.assertEqual(caught.exception.status, 413)
+            self.assertEqual(target.read_bytes(), image)
+        self.assertEqual(self.store.load('Pixels.md')['content'], 'Keep this note.')
+        self.assertFalse((self.root / 'Pixels.assets').exists())
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "notes"

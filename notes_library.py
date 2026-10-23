@@ -49,6 +49,9 @@ NOTEBOOK_CONTAINER = "CustomNotebook"
 NOTEBOOK_COLORS = frozenset(("gray", "blue", "cyan", "green", "yellow", "orange", "red", "purple"))
 MAX_NOTE_BYTES = 4 * 1024 * 1024
 MAX_NOTE_IMAGE_BYTES = 40 * 1024 * 1024
+MAX_NOTE_IMAGE_PIXELS = 64 * 1024 * 1024
+MAX_NOTE_IMAGE_DIMENSION = 32768
+_IMAGE_HEADER_BYTES = 1024 * 1024
 MAX_NOTE_IMPORT_BYTES = 512 * 1024 * 1024
 MAX_NOTE_IMPORT_FILES = 10_000
 # Cached topology JSON UTF-8 bytes + 128 wrapper/signature bytes, × 2, is an
@@ -78,6 +81,68 @@ def _sniff_image_media_type(content: bytes) -> str | None:
     if len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
         return "image/webp"
     return None
+
+
+def _image_dimensions(content: bytes) -> tuple[int, int] | None:
+    """Read raster dimensions without decoding pixels or trusting the suffix.
+
+    JPEG/WebP metadata scans have a byte budget. Unrecognized/truncated headers
+    retain the existing browser failure path; no image decoder is invoked here.
+    """
+    length = min(len(content), _IMAGE_HEADER_BYTES)
+    if content.startswith(b"\x89PNG\r\n\x1a\n") and length >= 24 and content[12:16] == b"IHDR":
+        return int.from_bytes(content[16:20], "big"), int.from_bytes(content[20:24], "big")
+    if content.startswith((b"GIF87a", b"GIF89a")) and length >= 10:
+        return int.from_bytes(content[6:8], "little"), int.from_bytes(content[8:10], "little")
+    if content.startswith(b"BM") and length >= 26:
+        header = int.from_bytes(content[14:18], "little")
+        if header == 12:
+            return int.from_bytes(content[18:20], "little"), int.from_bytes(content[20:22], "little")
+        if header >= 40:
+            return abs(int.from_bytes(content[18:22], "little", signed=True)), abs(int.from_bytes(content[22:26], "little", signed=True))
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        offset = 12
+        while offset + 8 <= length:
+            kind, size = content[offset:offset + 4], int.from_bytes(content[offset + 4:offset + 8], "little")
+            start = offset + 8
+            if kind == b"VP8X" and size >= 10 and start + 10 <= length:
+                return 1 + int.from_bytes(content[start + 4:start + 7], "little"), 1 + int.from_bytes(content[start + 7:start + 10], "little")
+            if kind == b"VP8L" and size >= 5 and start + 5 <= length and content[start] == 0x2f:
+                bits = int.from_bytes(content[start + 1:start + 5], "little")
+                return 1 + (bits & 0x3fff), 1 + ((bits >> 14) & 0x3fff)
+            if kind == b"VP8 " and size >= 10 and start + 10 <= length and content[start + 3:start + 6] == b"\x9d\x01\x2a":
+                return int.from_bytes(content[start + 6:start + 8], "little") & 0x3fff, int.from_bytes(content[start + 8:start + 10], "little") & 0x3fff
+            offset = start + size + (size & 1)
+    if content.startswith(b"\xff\xd8\xff"):
+        offset = 2
+        while offset < length and content[offset] == 0xff:
+            while offset < length and content[offset] == 0xff:
+                offset += 1
+            if offset >= length:
+                break
+            marker = content[offset]
+            offset += 1
+            if marker in (0x00, 0xd9, 0xda):
+                break
+            if marker == 0x01 or 0xd0 <= marker <= 0xd8:
+                continue
+            if offset + 2 > length:
+                break
+            size = int.from_bytes(content[offset:offset + 2], "big")
+            if size < 2 or offset + size > length:
+                break
+            if marker in (0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf) and size >= 8:
+                return int.from_bytes(content[offset + 5:offset + 7], "big"), int.from_bytes(content[offset + 3:offset + 5], "big")
+            offset += size
+    return None
+
+
+def _check_image_dimensions(content: bytes) -> None:
+    dimensions = _image_dimensions(content)
+    if dimensions:
+        width, height = dimensions
+        if width > MAX_NOTE_IMAGE_DIMENSION or height > MAX_NOTE_IMAGE_DIMENSION or width * height > MAX_NOTE_IMAGE_PIXELS:
+            raise NotesError("图片像素尺寸过大（单边上限 32768，最多约 6700 万像素），请缩小后插入", status=413, code="too_large")
 
 _WINDOWS_RESERVED = {
     "con", "prn", "aux", "nul",
@@ -1678,6 +1743,7 @@ class NotesStore:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
         if _sniff_image_media_type(content) != expected_type:
             raise NotesError("图片内容与扩展名不一致", status=400, code="invalid_image")
+        _check_image_dimensions(content)
         digest = hashlib.sha256(content).hexdigest()[:12]
         safe_stem = re.sub(r"[^\w\-.\u4e00-\u9fff]+", "-", Path(original_name).stem,
                            flags=re.UNICODE).strip("-.") or "image"
@@ -1755,6 +1821,11 @@ class NotesStore:
             raise NotesError("图片不能是链接或重解析点", status=403, code="unsafe_path")
         if target.stat().st_size > MAX_NOTE_IMAGE_BYTES:
             raise NotesError("图片过大（上限 40MB）", status=413, code="too_large")
+        with target.open("rb") as image:
+            header = image.read(32)
+            if _sniff_image_media_type(header) in ("image/jpeg", "image/webp") and _image_dimensions(header) is None:
+                header += image.read(_IMAGE_HEADER_BYTES - len(header))
+            _check_image_dimensions(header)
         return target, media_type
 
     def resolve_link_target(self, note: object, source: object) -> Path:
@@ -1964,6 +2035,7 @@ class NotesStore:
                 raise NotesError("图片类型与扩展名不一致")
             if _sniff_image_media_type(content) != expected:
                 raise NotesError("图片内容与扩展名不一致", code="invalid_image")
+            _check_image_dimensions(content)
         else:
             raise NotesError("只支持 Markdown 和栅格图片", status=403, code="unsupported_type")
         target = stage.joinpath(*PurePosixPath(normalized).parts)

@@ -1426,13 +1426,16 @@
     const update = (frame) => {
       if (!frame || !frame.isConnected) return;
       const width = frame.getBoundingClientRect().width;
-      if (width > 0) frame.style.setProperty('--note-image-text-unit', (width / 100) + 'px');
+      const unit = (width / 100) + 'px';
+      if (width > 0 && frame.style.getPropertyValue('--note-image-text-unit') !== unit) frame.style.setProperty('--note-image-text-unit', unit);
       frame.dispatchEvent(new Event('image-text-measure'));
-      frame.querySelectorAll('.note-image-text-box:not(.note-image-text-measurer)').forEach((label) => {
-        if (label.hidden) return;
+      const sizes = Array.from(frame.querySelectorAll('.note-image-text-box:not(.note-image-text-measurer)')).filter(label => !label.hidden).map(label => {
         const rect = label.getBoundingClientRect();
-        label.style.setProperty('--image-text-half-width', (rect.width / 2) + 'px');
-        label.style.setProperty('--image-text-half-height', (rect.height / 2) + 'px');
+        return { label, width: (rect.width / 2) + 'px', height: (rect.height / 2) + 'px' };
+      });
+      sizes.forEach(({ label, width, height }) => {
+        if (label.style.getPropertyValue('--image-text-half-width') !== width) label.style.setProperty('--image-text-half-width', width);
+        if (label.style.getPropertyValue('--image-text-half-height') !== height) label.style.setProperty('--image-text-half-height', height);
       });
     };
     const refresh = () => frames.forEach(update);
@@ -3957,6 +3960,7 @@
     let canvasHistoryPresent = /\.canvas/i.test(options.value || '');
     let suppressChanges = false;
     let documentSetSeq = 0;
+    const imageInsertions = new Set();
     let scrollRestoreSeq = 0;
     let destroyed = false;
     let pendingSourceMode = null;
@@ -4181,7 +4185,7 @@
         const selected = this.adapter && this.selectedId
           ? Array.from(this.adapter.frame.querySelectorAll('[data-image-text-id]'))
             .find((candidate) => candidate.dataset.imageTextId === this.selectedId) : null;
-        safeOptions.onImageSelectionChange({
+        const notification = {
           available: !!this.available,
           active: !!visibleActive,
           armed: !!this.armed,
@@ -4190,7 +4194,10 @@
           color: selected ? selected.dataset.imageTextColor : this.defaults.color,
           canDelete: !!selected,
           hasText: !!(this.adapter && this.adapter.frame.querySelector('[data-image-text-id]')),
-        });
+        };
+        if (this.lastNotification && Object.keys(notification).every(key => notification[key] === this.lastNotification[key])) return;
+        this.lastNotification = notification;
+        safeOptions.onImageSelectionChange(notification);
       },
       render() {
         const visibleActive = this.active && !this.uiSuppressed;
@@ -4711,6 +4718,16 @@
         }),
         editorLabelCompartment.of(editorLabelExtension()),
         EditorView.updateListener.of((update) => {
+          if (update.docChanged && imageInsertions.size) {
+            for (const target of imageInsertions) {
+              const empty = target.from === target.to;
+              update.changes.iterChangedRanges((from, to) => {
+                if (from < target.to && to > target.from) target.valid = false;
+              });
+              target.from = update.changes.mapPos(target.from, 1);
+              target.to = update.changes.mapPos(target.to, empty ? 1 : -1);
+            }
+          }
           if (tableSyntaxRevision !== noteSyntaxRevision && !inputPending()) {
             tableSyntaxRevision = noteSyntaxRevision; tableController?.refreshNoteSyntax();
           }
@@ -4868,7 +4885,11 @@
             const files = Array.from(event.clipboardData && event.clipboardData.items || [])
               .filter((item) => item.kind === 'file' && /^image\//i.test(item.type || ''))
               .map((item) => item.getAsFile()).filter(Boolean);
-            if (files.length) { event.preventDefault(); safeOptions.onImageFiles(files); return true; }
+            if (files.length) {
+              event.preventDefault();
+              if (!view.state.readOnly && !imageTextController.active) safeOptions.onImageFiles(files);
+              return true;
+            }
             if (plain || !event.clipboardData || view.state.readOnly || inputPending() || imageTextController.active) return false;
             const text = event.clipboardData.getData('text/plain');
             const markdown = safeOptions.clipboardText(text, event.clipboardData.getData('text/html'));
@@ -4882,11 +4903,13 @@
             if (!files.some((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''))) return false;
             event.preventDefault(); return true;
           },
-          drop(event) {
+          drop(event, view) {
             const files = Array.from(event.dataTransfer && event.dataTransfer.files || [])
               .filter((file) => /^image\//i.test(file.type || '') || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file.name || ''));
             if (!files.length) return false;
-            event.preventDefault(); safeOptions.onImageFiles(files); return true;
+            event.preventDefault();
+            if (!view.state.readOnly && !imageTextController.active) safeOptions.onImageFiles(files);
+            return true;
           },
         })),
       ];
@@ -4919,6 +4942,8 @@
     syncImageSelectionClass(view);
 
     function setDocument(documentState) {
+      for (const target of imageInsertions) target.valid = false;
+      imageInsertions.clear();
       formatInputOwners.delete(view);
       if (inputPending()) {
         pendingDocumentState = Object.assign({}, documentState || {});
@@ -5223,6 +5248,27 @@
       view.focus();
     }
 
+    function createImageInsertion() {
+      if (destroyed || inputPending() || imageTextController.active || view.state.readOnly) return null;
+      const range = view.state.selection.main;
+      const target = { from: range.from, to: range.to, valid: true, sequence: documentSetSeq, path: currentPath };
+      imageInsertions.add(target);
+      const valid = () => target.valid && !destroyed && target.sequence === documentSetSeq && target.path === currentPath;
+      return {
+        valid,
+        dispose() { target.valid = false; imageInsertions.delete(target); },
+        insert(text) {
+          if (!valid() || inputPending() || imageTextController.active || view.state.readOnly) return false;
+          const range = view.state.selection.main, insert = String(text || '');
+          const follow = range.from === target.from && range.to === target.to && view.hasFocus;
+          imageInsertions.delete(target); target.valid = false;
+          view.dispatch({ changes: { from: target.from, to: target.to, insert },
+            ...(follow ? { selection: EditorSelection.cursor(target.from + insert.length), scrollIntoView: true } : {}), userEvent: 'input.paste' });
+          return true;
+        },
+      };
+    }
+
     function revealPosition(position, options) {
       scrollRestoreSeq++;
       const target = clamp(position, 0, view.state.doc.length);
@@ -5339,12 +5385,13 @@
         set(position, collapsed) { const spec = coordinator.records.find(item => view.state.doc.lineAt(item.from).from === position); coordinator.foldPositions.set(spec ? spec.from : position, collapsed); if (spec) view.dispatch({ effects: calloutFoldEffect.of({ id: spec.id, collapsed }) }); },
       },
       rewriteCanvasHistory,
-      whenInputSettled, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
+      whenInputSettled, createImageInsertion, imageTextTarget, imageTextRenderedLines, exportImageTextPng,
       commandContext, queryCommand, executeCommand,
       get inputPending() { return inputPending(); },
       focus() { view.focus(); },
       destroy() {
         destroyed = true;
+        imageInsertions.clear();
         pendingSelectionMatchHighlight = null;
         serializedDoc = null; serializedValue = '';
         if (imageTextController.adapter) imageTextController.adapter.cancelDraft(true);

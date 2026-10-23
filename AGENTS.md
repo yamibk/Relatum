@@ -1,6 +1,6 @@
 # AGENTS.md - Relatum / 画布项目 AI 接手指南
 
-> 最后按源码校准：2026-10-22（更新笔记回车行高、公式选区、语法增量索引、移动并发与验证入口）。
+> 最后按源码校准：2026-10-23（更新笔记图片导入交接、批量投影、像素边界与验证入口）。
 > 这份文件是给后续 AI agent 的“接手地图”，不是历史任务流水账。若本文与源码冲突，以源码为准；改动功能后，要同步更新本文对应章节。
 
 ## 0. 先读这里
@@ -384,6 +384,8 @@ Callout 仍由 CodeMirror 原生行构成，完整连续底色覆盖活动行，
 - 合并左栏验证用 `node tests/note-sidebar-browser.js`（宿主 `RELATUM_PLAYWRIGHT / RELATUM_PYTHON / RELATUM_EDGE_PATH`，一次性数据根），覆盖延迟模块/标签响应、动画反转、公共滚动位置与树 DOM 身份、Chromium 原生候选和保存失败、分页返回、导航拖放隔离、树操作、Tab、冷启动、低动态、中英文、深浅主题和窄窗。继续回归 `tests/note-browser-browser.js`、`tests/note-canvas-browser-discovery.js`、`tests/note-notebooks-browser.js`、`tests/note-tree-sort-browser.js`、`tests/note-tree-performance-browser.js`、`tests/note-view-state-browser.js` 与内嵌画布；真实 Windows 输入法仍需在隔离库中人工验收。
 - 标签来自正文 `#标签` 或文首 YAML `tags` 的缩进列表/方括号列表；支持中文、大小写合并与 `#学习/概率`，父标签包含子标签且数量按笔记去重。代码、公式、链接、注释、转义、标题和纯数字不计标签。文首已闭合 YAML 在预览/阅读中按原文元数据区显示，其他属性不改；源码保持原文。正文标签轻量着色，预览 Ctrl/Cmd 点击、阅读直接点击进入结果。标签首次全库目录读取才枚举索引，未变化文件不重复读取；索引仅加标签和摘要，不常驻全文。
 - 新插入图片继续使用 `![说明](相对路径)` 及原有尺寸语法。wiki 图片先按当前笔记相对路径，再按库根路径，裸文件名最后按全库唯一名称查找；重名明确提示，不猜选。渲染、系统打开、图片文字和清理共用语法信息及同一后端解析，其他笔记的 wiki 引用和歧义候选保守保留；所有查找仍拒绝越界、链接/重解析点及非支持栅格格式。跨软件搬运须携带图片目录，图片文字层需外观通用时可用已有“合并为图片”。
+- 图片粘贴/拖入共用串行导入队列，读取前检查原有 40MiB 文件上限，FileReader 取消必须结清 Promise；单次本地上传 45 秒超时。每批成功图片只提交一次正文事务，名称转义并编码路径中的 Markdown 定界符。`note-live-editor.js` 的临时插入位置只保存 UTF-16 范围和文档身份，随正常编辑映射；原选区被编辑、文档替换、切页、切模式或最小化后拒绝迟到结果，不覆盖后来选中的正文。候选输入完成后才交接，只读和图片文字模式不接收整张图片粘贴。图片选中状态未变不重复通知工具栏；文字层先集中测量再写入，只写变化尺寸。
+- `notes_library.py` 在上传、导入及图片读取时，不解码像素而检查 PNG/JPEG/WebP/GIF/BMP 的已识别尺寸；单边最多 32768、总计最多 64Mi 像素，拒绝时保留原文件和正文。普通 PNG/GIF/BMP 读取仅需 32 字节，JPEG/WebP 元数据扫描最多 1MiB；未知或截断头仍沿用原失败路径，不把这层检查称为完整图片校验。沿用原接口、原子写入和沙箱，无新依赖或持久化格式。`tests/note-image-upload-browser.js` 已纳入 `run-note-checks.ps1 -Browser`，与图片文字回归共用隔离库；可设 `RELATUM_IMAGE_UPLOAD_BASELINE` 对照旧 Git 源码，或设 `RELATUM_IMAGE_UPLOAD_RELEASE` 后加 `--native` 在已有 EXE/WebView2 中替换前端响应验收，不修改发布包。调查证据及整页卡死尚未稳定复现的边界见 `docs/note-image-audit-2026-10-23.md`。
 
 - `notes_library.py` 的文件树用 `os.scandir` 枚举，每个可见条目复用一次不跟随链接的 `stat` 完成类型分类、自然排序和时间/大小元数据；符号链接和所有 Windows 重解析点都排除，进入子目录前再做目录级实时复查。目录枚举失败仍返回 `read_failed`，扫描时消失或不可读的单条目跳过；不缓存整棵树、不改变前台复检间隔。`tests/test_notes_library.py` 覆盖字段/顺序、枚举竞争和链接边界，真实外部同步用 `tests/note-view-state-browser.js` 验证。
 

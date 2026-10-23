@@ -431,7 +431,7 @@
       refreshed: '笔记库已刷新', copyPath: '复制库内路径', copied: '路径已复制', open: '打开', createHere: '在此新建笔记',
       createFolderHere: '新建子文件夹', noAssets: '当前笔记还没有伴生素材', revealFailed: '无法在资源管理器中显示',
       importFailed: '导入失败', imported: '已导入 {count} 篇笔记', unsupportedSkipped: '已跳过 {count} 个不支持的文件',
-      uploadFailed: '图片保存失败', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
+      uploadFailed: '图片保存失败', imageUploadTooLarge: '图片过大（上限 40MB）', linkWarnings: '已移动；{count} 个歧义双链保持原样', ambiguous: '同名笔记不唯一',
       imageCopyFailed: '复制图片失败，请检查图片是否可读取及剪贴板权限。', imageCopyTooLarge: '图片尺寸过大，无法复制。',
       missing: '尚未创建', noOutgoing: '当前笔记没有出链', noBacklinks: '当前笔记没有反向链接',
       cancel: '取消',
@@ -461,7 +461,7 @@
       refreshed: 'Notes refreshed', copyPath: 'Copy vault path', copied: 'Path copied', open: 'Open', createHere: 'New note here',
       createFolderHere: 'New subfolder', noAssets: 'This note has no companion assets',
       revealFailed: 'Could not show this item in File Explorer', importFailed: 'Import failed', imported: 'Imported {count} notes',
-      unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image',
+      unsupportedSkipped: 'Skipped {count} unsupported files', uploadFailed: 'Could not save image', imageUploadTooLarge: 'Image is too large (40MB limit)',
       imageCopyFailed: 'Could not copy image. Check that the image is readable and clipboard access is allowed.', imageCopyTooLarge: 'This image is too large to copy.',
       linkWarnings: 'Moved; {count} ambiguous links were unchanged', ambiguous: 'Duplicate note name', missing: 'Not created',
       noOutgoing: 'No outgoing links', noBacklinks: 'No backlinks', cancel: 'Cancel',
@@ -4434,23 +4434,65 @@
       return !element.isContentEditable && !element.closest(inputs + ', [inert], [role="menu"], [role^="menuitem"], [role="dialog"], [role="alertdialog"]');
     });
   }
-  function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || ''); reader.onerror = () => reject(reader.error || new Error('FileReader failed')); reader.readAsDataURL(file); }); }
+  function fileToBase64(file) {
+    if (file.size > 40 * 1024 * 1024) return Promise.reject(new Error(tr('imageUploadTooLarge')));
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || '');
+      reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+      reader.onabort = () => reject(new DOMException('File read cancelled', 'AbortError'));
+      reader.readAsDataURL(file);
+    });
+  }
+  async function uploadImageFile(path, file, data) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    try {
+      return await post('/api/note-upload-image', { path, name: file.name || 'image.png', mediaType: file.type || '', data }, { signal: controller.signal });
+    } finally { clearTimeout(timeout); }
+  }
+  let imageUploadChain = Promise.resolve();
   async function uploadImages(files, commandContext) {
-    if (!state.current || !files.length) return;
-    const path = state.current.path;
-    const insertions = [];
-    for (const file of files) {
+    if (!state.current || !files.length || !noteWorkspaceVisible() || state.viewMode === 'reading') return;
+    const documentState = state.current, path = documentState.path, sequence = state.openSeq;
+    const visibility = noteVisibilityEpoch, mode = state.viewMode;
+    const current = () => state.current === documentState && state.openSeq === sequence && state.viewMode === mode
+      && visibility === noteVisibilityEpoch && noteWorkspaceVisible()
+      && (!commandContext || bodyMenuContext === commandContext && liveEditor?.queryCommand('paste', commandContext).enabled);
+    if (editorInputPending()) await whenEditorInputSettled();
+    if (!current()) return;
+    const insertion = !commandContext && liveEditor ? liveEditor.createImageInsertion() : null;
+    if (!commandContext && liveEditor && !insertion) return;
+    const fallback = !liveEditor ? { value: fallbackEditor.value, from: fallbackEditor.selectionStart, to: fallbackEditor.selectionEnd } : null;
+    const valid = () => current() && (!insertion || insertion.valid()) && (!fallback || fallbackEditor.value === fallback.value);
+    const operation = imageUploadChain.catch(() => {}).then(async () => {
+      const insertions = [];
       try {
-        const result = await post('/api/note-upload-image', { path, name: file.name || 'image.png', mediaType: file.type || '', data: await fileToBase64(file) });
-        if (!state.current || state.current.path !== path) return;
-        const insertion = '![' + (result.name || file.name || 'image') + '](' + result.path + ')\n';
-        if (commandContext) {
-          if (bodyMenuContext !== commandContext || !liveEditor.queryCommand('paste', commandContext).enabled) return;
-          insertions.push(insertion);
-        } else replaceEditorSelection(insertion);
-      } catch (error) { showToast(error.message || tr('uploadFailed'), 'error'); }
-    }
-    if (insertions.length && bodyMenuContext === commandContext) liveEditor.executeCommand('paste', commandContext, insertions.join(''));
+        for (const file of files) {
+          if (!valid()) return;
+          try {
+            const data = await fileToBase64(file);
+            if (!valid()) return;
+            const result = await uploadImageFile(path, file, data);
+            if (!valid()) return;
+            const alt = String(result.name || file.name || 'image').replace(/[\\\[\]]/g, '\\$&');
+            const target = String(result.path).replace(/[()\s<>]/g, character => character === '(' ? '%28' : character === ')' ? '%29' : encodeURIComponent(character));
+            insertions.push('![' + alt + '](' + target + ')\n');
+          } catch (error) { if (valid()) showToast(error.message || tr('uploadFailed'), 'error'); }
+        }
+        if (!insertions.length || !valid()) return;
+        if (editorInputPending()) await whenEditorInputSettled();
+        if (!valid()) return;
+        const text = insertions.join('');
+        if (commandContext) liveEditor.executeCommand('paste', commandContext, text);
+        else if (insertion) insertion.insert(text);
+        else { fallbackEditor.setSelectionRange(fallback.from, fallback.to); replaceEditorSelection(text); }
+      } catch (error) {
+        if (current()) showToast(error.message || tr('uploadFailed'), 'error');
+      } finally { insertion?.dispose(); }
+    });
+    imageUploadChain = operation;
+    return operation;
   }
   function entryFiles(entry, prefix) { return new Promise((resolve) => { if (entry.isFile) { entry.file((file) => resolve([{ path: prefix + file.name, file }]), () => resolve([])); return; } if (!entry.isDirectory) { resolve([]); return; } const reader = entry.createReader(); const children = []; const read = () => reader.readEntries(async (batch) => { if (!batch.length) { resolve((await Promise.all(children.map((child) => entryFiles(child, prefix + entry.name + '/')))).flat()); return; } children.push(...batch); read(); }, () => resolve([])); read(); }); }
   async function filesFromTransfer(transfer) { const items = Array.from(transfer && transfer.items || []); const entries = items.map((item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean); if (entries.length) return (await Promise.all(entries.map((entry) => entryFiles(entry, '')))).flat(); return Array.from(transfer && transfer.files || []).map((file) => ({ path: file.name, file })); }
