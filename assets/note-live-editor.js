@@ -1094,6 +1094,22 @@
 
   let mathLoadPromise = null;
   let mathEditQueue = Promise.resolve();
+  // Share the preview slot with note AI without importing note-reading behavior.
+  async function typesetMath(host, isCurrent) {
+    const previous = mathEditQueue;
+    let release;
+    mathEditQueue = new Promise(resolve => { release = resolve; });
+    try {
+      await previous;
+      if (!isCurrent()) return false;
+      const math = await ensureMathJax();
+      await math.startup?.promise;
+      if (!isCurrent()) return false;
+      await math.typesetPromise([host]);
+      if (!isCurrent()) { math.typesetClear?.([host]); return false; }
+      return true;
+    } finally { release(); }
+  }
   function ensureMathJax() {
     if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') return Promise.resolve(window.MathJax);
     if (mathLoadPromise) return mathLoadPromise;
@@ -5784,6 +5800,6 @@
     headingMarkerProjectionEnd,
     richBlockEditPosition,
   };
-  window.RelatumNoteLiveEditor = { create, renderMarkdown };
+  window.RelatumNoteLiveEditor = { create, renderMarkdown, typesetMath };
   window.RelatumNoteLiveEditor.releaseReadingDocument = releaseReadingDocument;
 })();

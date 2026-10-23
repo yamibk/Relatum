@@ -9,6 +9,7 @@ fs.mkdirSync(artifacts, { recursive: true });
 async function until(predicate) { for (let index = 0; index < 300; index++) { if (await predicate()) return; await pause(50); } throw new Error('Timed out waiting for local persisted state'); }
 async function freePort() { const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port; }
 const calls = [];
+const controlled = new Map();
 const provider = http.createServer(async (request, response) => {
   let raw = ''; for await (const chunk of request) raw += chunk;
   const body = JSON.parse(raw); calls.push(body);
@@ -17,6 +18,15 @@ const provider = http.createServer(async (request, response) => {
   if (!body.stream) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } })); return; }
   response.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const event = value => 'data: ' + JSON.stringify(value) + '\r\n\r\n';
+  if (text.startsWith('ui:')) {
+    const stream = {
+      chunk: delta => response.write(event({ choices: [{ delta }] })),
+      finish: () => response.end(event({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 12, completion_tokens: 7 } }) + 'data: [DONE]\r\n\r\n'),
+    };
+    controlled.set(text, stream);
+    response.on('close', () => { if (controlled.get(text) === stream) controlled.delete(text); });
+    response.write(': ready\r\n\r\n'); return;
+  }
   response.write(': heartbeat\r\n\r\n');
   response.write(event({ choices: [{ delta: { reasoning_content: '简短思考' } }] }));
   const answer = text.startsWith('slow') ? 'Partial answer' : '## 回答\n\n**本机模拟**：' + text;
@@ -25,6 +35,156 @@ const provider = http.createServer(async (request, response) => {
   const timer = setTimeout(() => { response.end(event({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 12, completion_tokens: 7, total_tokens: 19 } }) + 'data: [DONE]\r\n\r\n'); }, text.startsWith('slow') ? 2500 : 25);
   response.on('close', () => clearTimeout(timer));
 });
+
+async function readingExperience(page, ai, input, send, mode, resources) {
+  const resourceStart = resources.length;
+  const timeline = ai.locator('[data-ai-timeline]'), newChat = ai.locator('[data-ai-new]');
+  const start = async name => {
+    await newChat.click(); const text = 'ui:' + mode + ':' + name;
+    await input.fill(text); await input.press('Enter'); await until(() => controlled.has(text)); return controlled.get(text);
+  };
+  const finished = async () => until(async () => await send.getAttribute('aria-label') === '发送');
+  assert.equal(await ai.locator('.note-ai-message > strong,.note-ai-composer small,details').count(), 0);
+  assert(await newChat.locator('svg').isVisible());
+  assert(await ai.locator('[data-ai-new],[data-ai-send]').evaluateAll(buttons => {
+    const [a,b] = buttons.map(button => button.getBoundingClientRect());
+    return a.width===b.width && a.height===b.height && Math.abs(a.top-b.top)<.1 && buttons.every(button=>{
+      const r=button.getBoundingClientRect(),s=button.querySelector('svg').getBoundingClientRect();
+      return Math.abs(s.x+s.width/2-r.x-r.width/2)<.1 && Math.abs(s.y+s.height/2-r.y-r.height/2)<.1;
+    });
+  }), 'both composer SVGs share the same center and size');
+  const initialHeight = await input.evaluate(el=>el.clientHeight);
+  await input.fill('line\n'.repeat(30));
+  assert(await input.evaluate((el,initial)=>el.clientHeight>initial&&el.scrollHeight>el.clientHeight&&getComputedStyle(el).resize==='none',initialHeight));
+  let stream = await start('code-only');
+  stream.chunk({content:'```tex\n\\(x\\) $y$\n```\n\n```mermaid\ngraph TD\nA-->B\n```\n\n![model image](https://invalid.example/never.png)'});
+  stream.finish(); await finished();
+  assert(!resources.some(url=>/vendor\/mathjax\//.test(url)), 'ordinary chat and code literals do not load MathJax');
+  assert(!resources.slice(resourceStart).some(url=>/mermaid|\/pele\//.test(url)), 'chat never loads a Mermaid runtime');
+  assert(!resources.some(url=>url.includes('invalid.example'))); assert.equal(await ai.locator('img').count(),0);
+
+  stream = await start('reading');
+  stream.chunk({reasoning_content:'**先明确概念**，再给出公式：\\(a^2+b^2=c^2\\)。\n\n说明定义和例子。'});
+  const assistant=ai.locator('[data-ai-role="assistant"]');
+  const toggle=assistant.locator('.note-ai-thinking-toggle'), reason=assistant.locator('.note-ai-reason');
+  await until(async()=>await toggle.getAttribute('aria-expanded')==='true'&&await reason.locator('mjx-container').count()>0);
+  assert((await toggle.textContent()).includes('正在思考'));
+  await toggle.focus(); await page.keyboard.press('Space');
+  stream.chunk({reasoning_content:'\n\n补充一段思考。'});
+  await until(async()=>(await reason.textContent()).includes('补充一段'));
+  assert.equal(await toggle.getAttribute('aria-expanded'),'false','streamed reasoning respects a manual collapse');
+  assert(await assistant.locator('.note-ai-thinking-fold').evaluate(el=>el.inert));
+  await toggle.press('Enter');
+  const prefix=String.raw`## 拉普拉斯算子
+
+普通金额 $5，仍保留 **排版**。
+
+**基本定义**：在 $n$ 维空间中，记作 \(\Delta=\nabla^2\)。
+
+\[
+\Delta f=\sum_{i=1}^{n}\frac{\partial^2 f}{\partial x_i^2}`;
+  stream.chunk({content:prefix});
+  await until(async()=>await ai.locator('.note-ai-answer h2').count()>0&&await ai.locator('.note-ai-answer mjx-container').count()>=2);
+  assert.equal(await send.getAttribute('aria-label'),'停止','Markdown and closed inline math render during streaming');
+  assert.equal(await toggle.getAttribute('aria-expanded'),'true','a manual expansion survives the answer phase');
+  assert((await toggle.textContent()).includes('已思考'));
+  assert((await ai.locator('.note-ai-answer').last().textContent()).includes('\\['),'unfinished display math remains readable');
+  await page.evaluate(()=>{window.stableAIHeading=document.querySelector('.note-ai-answer h2');window.stableAIMath=document.querySelector('.note-ai-answer mjx-container');});
+  const suffix=String.raw`
+\]
+
+### 示例
+
+- 一维：$\Delta f=f''(x)$。
+- 二维：$\Delta f=f_{xx}+f_{yy}$。
+
+$$\frac{1}{2}+\sqrt{x}=\int_0^1 t^2\,dt$$
+
+| 对象 | 定义 |
+| --- | --- |
+| 梯度 | 方向变化 |
+| 散度 | 通量变化 |
+
+> 公式与正文共用本地渲染。
+
+~~~tex
+\[literal\] $code$
+~~~
+
+\[\underbrace{x+x+x+x+x+x+x+x+x+x+x+x+x+x+x+x+x+x+x+x}_{\text{wide formula}}\]`;
+  stream.chunk({content:suffix}); stream.finish(); await finished();
+  await until(async()=>await ai.locator('.note-ai-answer mjx-container').count()>=7);
+  assert(await page.evaluate(()=>document.querySelector('.note-ai-answer h2')===stableAIHeading&&document.querySelector('.note-ai-answer mjx-container')===stableAIMath),'unchanged Markdown and typeset formulas keep their actual DOM');
+  assert.equal(await ai.locator('.note-ai-answer pre mjx-container').count(),0);
+  assert((await ai.locator('.note-ai-answer pre').textContent()).includes('\\[literal\\] $code$'));
+  await ai.locator('[data-ai-role="assistant"] [data-ai-copy]').click();
+  assert.equal((await page.evaluate(()=>navigator.clipboard.readText())).replace(/\r\n/g,'\n'),prefix+suffix, 'native Windows clipboard preserves Markdown source');
+  assert.equal(await ai.locator('[data-ai-role="assistant"] [data-ai-copy]').getAttribute('data-icon'),'check');
+  await assistant.locator('[data-ai-info]').focus(); assert(await assistant.locator('.note-ai-detail').isVisible());
+  assert((await assistant.locator('.note-ai-detail').textContent()).includes('12 / 7 tokens'));
+  await page.screenshot({path:path.join(artifacts,mode+'-reading-light.png')});
+  await page.evaluate(()=>document.body.dataset.startTheme='dark'); await page.setViewportSize({width:560,height:780});
+  await page.screenshot({path:path.join(artifacts,mode+'-reading-dark-narrow.png')});
+  assert(await timeline.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'wide formulas stay inside the timeline');
+  assert(await ai.locator('.md-math-block').last().evaluate(el=>el.scrollWidth>el.clientWidth),'wide display math can scroll horizontally');
+  await page.setViewportSize({width:1440,height:980}); await page.evaluate(()=>document.body.dataset.startTheme='light');
+
+  stream=await start('automatic-fold'); await page.emulateMedia({reducedMotion:'no-preference'});
+  stream.chunk({reasoning_content:'思考内容。\n\n'.repeat(12)});
+  await until(async()=>await toggle.getAttribute('aria-expanded')==='true');
+  await pause(210); stream.chunk({content:'**开始回答**。'});
+  await until(async()=>await toggle.getAttribute('aria-expanded')==='false');
+  await toggle.click(); await pause(30); await toggle.click(); await pause(30); await toggle.click();
+  assert.equal(await toggle.getAttribute('aria-expanded'),'true','a reversing disclosure keeps the latest manual choice');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  assert(await assistant.locator('.note-ai-thinking-fold').evaluate(el=>el.getAnimations().length===0),'reduced motion finishes the current fold');
+  stream.chunk({content:'\n\n继续回答。'});stream.finish();await finished();assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+
+  stream=await start('scroll');
+  stream.chunk({content:Array.from({length:80},(_,i)=>'段落 '+i+'：保持当前阅读位置。\n\n').join('')});
+  await until(async()=>await ai.locator('.note-ai-answer p').count()===80);
+  assert(await timeline.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight<3));
+  await timeline.hover();await page.mouse.wheel(0,-470);await until(async()=>await ai.locator('[data-ai-bottom]').isVisible());
+  const anchorTop=await page.evaluate(()=>{
+    const top=document.querySelector('[data-ai-timeline]').getBoundingClientRect().top;
+    window.readingAIParagraph=[...document.querySelectorAll('.note-ai-answer p')].find(el=>el.getBoundingClientRect().top>=top);
+    return readingAIParagraph.getBoundingClientRect().top;
+  });
+  stream.chunk({content:'\n\n追加内容：\\[\\frac{a}{b}\\]\n\n'+ '后续内容。\n\n'.repeat(60)});
+  await until(async()=>await ai.locator('.note-ai-answer mjx-container').count()>0);
+  assert(Math.abs(await page.evaluate(()=>readingAIParagraph.getBoundingClientRect().top)-anchorTop)<2,'streamed content and async math preserve the reading anchor');
+  await ai.locator('[data-ai-bottom]').click();
+  stream.chunk({content:'\n\n最新一段。'});await until(async()=>(await assistant.locator('.note-ai-answer').textContent()).includes('最新一段'));
+  assert(await timeline.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight<3),'jump to latest resumes following');
+  stream.finish();await finished();
+
+  // Defer the shared typesetter itself to test obsolete work, not fake formula DOM.
+  await page.evaluate(()=>{
+    window.savedAIType=RelatumNoteLiveEditor.typesetMath;window.aiMathGates=[];
+    RelatumNoteLiveEditor.typesetMath=(host,current)=>new Promise(resolve=>aiMathGates.push(()=>resolve(savedAIType(host,current))));
+  });
+  stream=await start('late-new');stream.chunk({content:'\\[x^2\\]'});
+  await until(async()=>await page.evaluate(()=>aiMathGates.length>0));
+  await newChat.click();await page.evaluate(()=>aiMathGates.splice(0).forEach(release=>release()));
+  await until(async()=>await ai.locator('.note-ai-math-stage').count()===0);assert.equal(await ai.locator('[data-ai-role]').count(),0);
+  stream=await start('late-minimize');stream.chunk({content:'\\[y^2\\]'});
+  await until(async()=>await page.evaluate(()=>aiMathGates.length>0));
+  await page.evaluate(()=>{document.documentElement.dataset.desktopMinimized='1';window.dispatchEvent(new CustomEvent('canvasdesktop:visibility'));});
+  assert.equal(await ai.locator('.note-ai-math-stage').count(),0);
+  await page.evaluate(()=>{delete document.documentElement.dataset.desktopMinimized;window.dispatchEvent(new CustomEvent('canvasdesktop:visibility'));});
+  await until(async()=>await page.evaluate(()=>aiMathGates.length>=2));
+  await page.evaluate(async()=>{aiMathGates.shift()();await new Promise(resolve=>setTimeout(resolve,0));});
+  const beforeFollowup=calls.length;
+  await input.fill('next after minimize');await input.press('Enter');
+  await until(()=>calls.slice(beforeFollowup).some(call=>call.messages.at(-1).content==='next after minimize'));await finished();
+  assert.equal(await page.evaluate(()=>aiMathGates.length),1,'obsolete completion cannot reset the replacement math job');
+  await page.evaluate(()=>{RelatumNoteLiveEditor.typesetMath=savedAIType;aiMathGates.splice(0).forEach(release=>release());});
+  await until(async()=>await ai.locator('.note-ai-answer mjx-container').count()===1&&await ai.locator('.note-ai-math-stage').count()===0);
+  assert((await assistant.locator('.note-ai-status').first().textContent()).includes('已停止'));
+  await newChat.click();
+  assert.equal(await page.evaluate(()=>Array.from(MathJax.startup.document.math).length),0,'discard clears all local MathJax records, including detached nodes');
+  assert(!resources.slice(resourceStart).some(url=>/mermaid|\/pele\//.test(url)));
+}
 
 async function run(browser, mode, providerURL) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'relatum-note-ai-data-'));
@@ -180,7 +340,7 @@ async function run(browser, mode, providerURL) {
     const ai = page.locator('[data-role="note-ai"]'), input = ai.locator('[data-ai-input]'), send = ai.locator('[data-ai-send]');
     await input.waitFor();await until(async()=>await input.isEnabled());
     assert.equal(await ai.locator('.note-ai-top,.note-ai-history,.note-ai-empty,select,button[aria-label="AI 设置"]').count(),0,'the sidebar has no top controls or empty-state copy');
-    assert.equal(await ai.locator('.note-ai-composer [data-ai-new]').textContent(),'+');
+    assert.equal(await ai.locator('.note-ai-composer [data-ai-new]').getAttribute('data-icon'),'plus');
     assert.equal(await dialog.locator('[data-ai-preset]').inputValue(),'none');
     await input.fill('hello'); const callCount = calls.length;
     await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true, keyCode: 229 }); await pause(70); assert.equal(calls.length, callCount);
@@ -236,6 +396,7 @@ async function run(browser, mode, providerURL) {
       await ai.locator('[data-ai-new]').click();
       await until(async () => (await request('messages?id=' + retried)).status === 404);
     }
+    await readingExperience(page,ai,input,send,mode,resources);
     await input.fill('keep within this run');await input.press('Enter');await answerReady('keep within this run');
     await page.evaluate(()=>T.setSideMode('outline'));await page.evaluate(()=>T.setSideMode('ai'));await input.waitFor();
     assert((await ai.textContent()).includes('keep within this run'),'sidebar changes keep the current temporary conversation');

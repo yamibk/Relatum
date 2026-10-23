@@ -9,7 +9,9 @@
     let config = null, configLoader = null, initialized = false, visible = false, sequence = 0;
     let session = null, presetId = 'none', messages = [], presets = null, choices = null, choicePortal = null;
     let pageHiding = false;
-    let running = null, paint = 0, settingsActive = false, settingsBuilt = false, settingsSequence = 0;
+    let running = null, paint = 0, paintTimer = 0, lastPaint = 0, paintInterval = 120, renderEpoch = 0;
+    let layoutFrame = 0, followBottom = true, readingAnchor = null;
+    let settingsActive = false, settingsBuilt = false, settingsSequence = 0;
     let pending = {}, saveTimer = 0, saveChain = Promise.resolve(), testRequest = null, configRevision = 0, keyRevealSequence = 0;
     let keyDraft = null, keyOriginal = null, keyDirty = false;
     let presetEditing = 'none', presetTimer = 0, clearKeyArmed = false;
@@ -46,6 +48,19 @@
       const element = document.createElement('button'); element.type = 'button'; element.textContent = glyph; element.setAttribute('aria-label', label); element.title = label;
       element.addEventListener('click', action); return element;
     }
+    const icons = {
+      plus: '<path d="M12 5v14M5 12h14"/>', send: '<path d="m6 11 6-6 6 6M12 5v14"/>',
+      stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>',
+      copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
+      check: '<path d="m5 12 4 4L19 6"/>', chevron: '<path d="m9 5 7 7-7 7"/>',
+      down: '<path d="m6 10 6 6 6-6M12 4v12"/>', retry: '<path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/>',
+      info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>',
+    };
+    function icon(element, name) {
+      if (element.dataset.icon === name) return;
+      element.dataset.icon = name;
+      element.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">' + icons[name] + '</svg>';
+    }
     function select(label) { const element = document.createElement('select'); element.setAttribute('aria-label', label); return element; }
     function setOptions(element, items, value) {
       const old = Array.from(element.options), next = items.map(item => {
@@ -59,7 +74,7 @@
     const plus = button('', () => {
       newConversation(presetId);
       input.focus({ preventScroll: true });
-    }, '+'); plus.dataset.aiNew = '';
+    }, ''); plus.dataset.aiNew = ''; icon(plus, 'plus');
     const timeline = document.createElement('div'); timeline.className = 'note-ai-timeline'; timeline.dataset.aiTimeline = ''; timeline.setAttribute('role', 'log'); timeline.setAttribute('aria-live', 'off');
     const body = document.createElement('div'); body.className = 'note-ai-messages';
     timeline.append(body);
@@ -67,8 +82,9 @@
     const composer = document.createElement('form'); composer.className = 'note-ai-composer';
     const input = document.createElement('textarea'); input.rows = 3; input.maxLength = 262144; input.dataset.aiInput = '';
     const send = document.createElement('button'); send.type = 'submit'; send.dataset.aiSend = '';
-    const hint = document.createElement('small');
-    composer.append(input, hint, plus, send); host.append(timeline, notice, composer);
+    const bottom = button('', () => { followBottom = true; restoreReadingPosition(); }, '');
+    bottom.className = 'note-ai-bottom'; bottom.dataset.aiBottom = ''; bottom.hidden = true; icon(bottom, 'down');
+    composer.append(input, plus, send); host.append(timeline, bottom, notice, composer);
     input.disabled = send.disabled = plus.disabled = true;
     host.addEventListener('click', event => {
       event.stopPropagation();
@@ -77,9 +93,179 @@
     });
     host.addEventListener('keydown', event => event.stopPropagation());
     let composing = false;
-    input.addEventListener('compositionstart', () => { composing = true; }); input.addEventListener('compositionend', () => { composing = false; });
+    input.addEventListener('input', resizeInput);
+    input.addEventListener('compositionstart', () => { composing = true; }); input.addEventListener('compositionend', () => { composing = false; resizeInput(); });
     input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !composing) { event.preventDefault(); if (!running) submit(); } });
     composer.addEventListener('submit', event => { event.preventDefault(); if (running) stop(); else if (!composing) submit(); });
+
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => queueLayout()) : null;
+    function captureReadingPosition() {
+      if (followBottom) return null;
+      const top = timeline.getBoundingClientRect().top;
+      const nodes = body.querySelectorAll('[data-ai-role="user"], .note-ai-rich > *');
+      for (const node of nodes) {
+        if (!node.getClientRects().length || node.closest('[inert]')) continue;
+        if (node.getBoundingClientRect().bottom > top + 1) {
+          const row = node.closest('.note-ai-message');
+          return { node, top: node.getBoundingClientRect().top, row, rowTop: row.getBoundingClientRect().top };
+        }
+      }
+      return null;
+    }
+    function restoreReadingPosition(anchor = readingAnchor, previous = null, next = null) {
+      if (!visible) return;
+      if (followBottom) timeline.scrollTop = timeline.scrollHeight;
+      else if (anchor) {
+        const node = anchor.node === previous ? next : anchor.node;
+        if (node?.isConnected && !node.closest('[inert]')) timeline.scrollTop += node.getBoundingClientRect().top - anchor.top;
+        else if (anchor.row?.isConnected) timeline.scrollTop += anchor.row.getBoundingClientRect().top - anchor.rowTop;
+      }
+      bottom.hidden = followBottom || timeline.scrollHeight - timeline.clientHeight < 70;
+      readingAnchor = captureReadingPosition();
+    }
+    function queueLayout() {
+      if (!visible || layoutFrame) return;
+      layoutFrame = requestAnimationFrame(() => { layoutFrame = 0; restoreReadingPosition(); });
+    }
+    timeline.addEventListener('scroll', () => {
+      if (!visible) return;
+      followBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 70;
+      bottom.hidden = followBottom; readingAnchor = captureReadingPosition();
+    }, { passive: true });
+    function resizeInput() {
+      if (!visible) return;
+      const anchor = captureReadingPosition();
+      input.style.height = '0px';
+      const max = Math.min(240, innerHeight * .28);
+      input.style.height = Math.max(52, Math.min(input.scrollHeight, max)) + 'px';
+      input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+      host.style.setProperty('--ai-composer-height', composer.offsetHeight + 'px');
+      restoreReadingPosition(anchor);
+    }
+    function clearMath(node) { try { window.MathJax?.typesetClear?.([node]); } catch (_) {} }
+    function releaseBlock(block) {
+      block.released = true; block.job = null; block.stage?.remove(); clearMath(block.node);
+    }
+    function releaseRich(surface) {
+      surface._blocks?.forEach(releaseBlock); surface._blocks = []; surface._source = null;
+    }
+    function pendingFormula(source) {
+      const grammar = window.MarkdownMini?.structure;
+      if (!grammar || (!source.includes('\\[') && !source.includes('\\(') && !source.includes('$$'))) return -1;
+      const mask = value => value.replace(/[^\n]/g, ' ');
+      let fence = null;
+      let prose = source.split('\n').map(line => {
+        const text = window.MarkdownMini.quoteLine(line).text;
+        if (fence) { if (grammar.isFenceClose(text, fence)) fence = null; return mask(line); }
+        const opener = grammar.parseFence(text);
+        if (opener) { fence = opener; return mask(line); }
+        return /^(?: {4}|\t)/.test(text) ? mask(line) : line;
+      }).join('\n').replace(/(`+)[^`]*?\1/g, mask).replace(/<!--[\s\S]*?(?:-->|$)|%%[\s\S]*?(?:%%|$)/g, mask);
+      const pieces = []; let cursor = 0;
+      window.MarkdownMini.mathRanges(prose).forEach(range => {
+        pieces.push(prose.slice(cursor, range.from), mask(prose.slice(range.from, range.to))); cursor = range.to;
+      });
+      pieces.push(prose.slice(cursor)); prose = pieces.join('');
+      // A bare dollar already stays literal until closed (including currency).
+      // Backslash delimiters need protection from Markdown escape handling.
+      for (const match of prose.matchAll(/\\\[|\\\(|\$\$/g)) {
+        let backslashes = 0;
+        for (let index = match.index - 1; index >= 0 && prose[index] === '\\'; index--) backslashes++;
+        if (!(backslashes % 2) && (match[0] !== '\\(' || !prose.includes('\n', match.index))) return match.index;
+      }
+      return -1;
+    }
+    function updateRich(surface, source, row) {
+      if (surface._source !== source) {
+        surface._source = source;
+        const unfinished = pendingFormula(source), prefix = unfinished < 0 ? source : source.slice(0, unfinished);
+        const result = window.MarkdownMini?.renderResult(prefix, { mermaid: false, localImages: true });
+        const template = document.createElement('template');
+        if (result) template.innerHTML = result.html; else template.content.append(document.createTextNode(prefix));
+        if (unfinished >= 0) {
+          const tail = document.createElement('span'); tail.className = 'note-ai-unfinished'; tail.textContent = source.slice(unfinished);
+          const paragraph = template.content.lastElementChild;
+          if (!prefix.endsWith('\n') && paragraph?.tagName === 'P') paragraph.append(tail); else template.content.append(tail);
+        }
+        // Never resolve model images, note paths, or embedded canvases.
+        template.content.querySelectorAll('img').forEach(image => image.replaceWith(document.createTextNode(image.alt || '')));
+        template.content.querySelectorAll('input').forEach(element => { element.disabled = true; });
+        const old = surface._blocks || [], blocks = [];
+        Array.from(template.content.childNodes).forEach((node, index) => {
+          const signature = node.nodeType === 1 ? node.outerHTML : node.textContent;
+          let block = old[index];
+          if (!block || block.signature !== signature) {
+            if (block) releaseBlock(block);
+            let math = false;
+            if (result?.features.math && node.nodeType === 1 && !node.matches('pre,code')) {
+              const prose = node.cloneNode(true); prose.querySelectorAll('pre,code').forEach(code => code.remove());
+              math = window.MarkdownMini.structure.scanFeatures(prose.textContent).math;
+            }
+            block = { signature, node, math, state: 'new', epoch: renderEpoch };
+          }
+          blocks.push(block);
+          if (surface.childNodes[index] !== block.node) {
+            const previous = surface.childNodes[index];
+            if (previous) previous.replaceWith(block.node); else surface.append(block.node);
+          }
+        });
+        old.slice(blocks.length).forEach(releaseBlock);
+        while (surface.childNodes.length > blocks.length) surface.lastChild.remove();
+        surface._blocks = blocks;
+      }
+      if (visible && !surface.closest('[inert]')) surface._blocks?.forEach(block => typesetBlock(block, surface, row));
+    }
+    function typesetBlock(block, surface, row) {
+      if (!block.math || ['done', 'queued', 'failed'].includes(block.state) || !window.RelatumNoteLiveEditor?.typesetMath) return;
+      block.state = 'queued'; block.epoch = renderEpoch;
+      const epoch = renderEpoch, job = {}; block.job = job;
+      const current = () => visible && renderEpoch === epoch && block.job === job && !block.released && row.isConnected
+        && surface._blocks?.includes(block) && !surface.closest('[inert]');
+      const stage = document.createElement('div'); stage.className = 'note-ai-rich node-text note-ai-math-stage';
+      stage.setAttribute('aria-hidden', 'true'); stage.inert = true;
+      const style = getComputedStyle(surface);
+      stage.style.width = Math.max(1, surface.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) + 'px';
+      stage.style.fontSize = style.fontSize; stage.style.lineHeight = style.lineHeight;
+      stage.append(block.node.cloneNode(true));
+      block.stage = stage; host.append(stage);
+      window.RelatumNoteLiveEditor.typesetMath(stage, current).then(ok => {
+        if (!ok || !current()) return;
+        const next = stage.firstChild;
+        if (!next?.querySelector?.('mjx-container') || next.querySelector('mjx-merror,[data-mjx-error],merror')) return;
+        const anchor = captureReadingPosition(), previous = block.node;
+        clearMath(previous); previous.replaceWith(next); block.node = next; block.state = 'done';
+        restoreReadingPosition(anchor, previous, next);
+      }).catch(() => {}).finally(() => {
+        clearMath(stage); stage.remove(); if (block.stage === stage) block.stage = null;
+        if (block.job === job) {
+          if (block.state !== 'done') block.state = current() ? 'failed' : 'new';
+          block.job = null;
+        }
+      });
+    }
+    function finishFold(row) {
+      row._foldAnimation?.cancel(); row._foldAnimation = null;
+      row._parts.fold.style.height = row._open ? 'auto' : '0px';
+    }
+    function setFold(row, open, manual = false, instant = false) {
+      if (manual) row._manualFold = true;
+      if (row._open === open && !instant) return;
+      const { toggle, fold, reason } = row._parts;
+      const anchor = captureReadingPosition(), from = fold.getBoundingClientRect().height;
+      finishFold(row); row._open = open;
+      toggle.setAttribute('aria-expanded', String(open)); fold.inert = !open; fold.setAttribute('aria-hidden', String(!open));
+      fold.style.height = open ? 'auto' : '0px';
+      if (open) updateRich(reason, row._message.reasoning || '', row);
+      const to = open ? fold.getBoundingClientRect().height : 0;
+      if (!instant && visible && !reducedMotion.matches && fold.animate && Math.abs(from - to) > 1) {
+        const animation = fold.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: 180, easing: 'cubic-bezier(.2,.7,.2,1)' });
+        row._foldAnimation = animation;
+        animation.finished.then(() => { if (row._foldAnimation === animation) { row._foldAnimation = null; queueLayout(); } }).catch(() => {});
+      }
+      restoreReadingPosition(anchor);
+    }
+    function settleMotion() { rows.forEach(finishFold); queueLayout(); }
 
     function loadConfig(refresh = false) {
       if (config && !refresh) return Promise.resolve(config);
@@ -104,24 +290,57 @@
       const previous = session, operation = running;
       stop(); sequence++;
       session = { id: uid(), saved: false }; presetId = config?.presets.some(item => item.id === id) ? id : 'none';
-      messages = []; notice.textContent = ''; input.value = '';
+      renderEpoch++; cancelPaint();
+      messages = []; notice.textContent = ''; input.value = ''; followBottom = true; readingAnchor = null;
+      resizeInput();
       updateSelectors(); renderMessages();
       discard(previous, operation);
     }
     function messageRow(message) {
       const row = document.createElement('article'); row.className = 'note-ai-message'; row.dataset.aiRole = message.role;
-      const label = document.createElement('strong'), thinking = document.createElement('details'), summary = document.createElement('summary'), reason = document.createElement('pre');
-      thinking.className = 'note-ai-thinking'; thinking.append(summary, reason);
-      const content = document.createElement('div'); content.className = 'note-ai-answer node-text';
+      const thinking = document.createElement('section'), summary = document.createElement('span');
+      const toggle = button('', () => setFold(row, !row._open, true), ''); toggle.className = 'note-ai-thinking-toggle';
+      toggle.removeAttribute('aria-label'); toggle.removeAttribute('title');
+      const arrow = document.createElement('span'); arrow.className = 'note-ai-chevron'; icon(arrow, 'chevron');
+      toggle.append(arrow, summary); toggle.setAttribute('aria-expanded', 'false');
+      const fold = document.createElement('div'), reason = document.createElement('div');
+      fold.className = 'note-ai-thinking-fold'; fold.id = 'ai-reason-' + uid(); toggle.setAttribute('aria-controls', fold.id);
+      fold.inert = true; fold.style.height = '0px'; fold.setAttribute('aria-hidden', 'true');
+      reason.className = 'note-ai-reason note-ai-rich node-text'; fold.append(reason);
+      thinking.className = 'note-ai-thinking'; thinking.append(toggle, fold);
+      const content = document.createElement('div'); content.className = 'note-ai-answer note-ai-rich node-text';
       const foot = document.createElement('div'); foot.className = 'note-ai-message-foot';
-      const copy = button('', () => navigator.clipboard.writeText(row._message.content || '').then(() => options.notify(tr('已复制', 'Copied'))).catch(() => options.notify(tr('复制失败', 'Copy failed'), 'error')), '⧉');
+      const copy = button('', () => {
+        const epoch = renderEpoch;
+        navigator.clipboard.writeText(row._message.content || '').then(() => {
+          if (!visible || renderEpoch !== epoch || !row.isConnected) return;
+          clearTimeout(row._copyTimer); icon(copy, 'check'); copy.dataset.copied = 'true';
+          copy.setAttribute('aria-label', tr('已复制', 'Copied')); copy.title = tr('已复制', 'Copied');
+          row._copyTimer = setTimeout(() => { row._copyTimer = 0; resetCopy(row); }, 1400);
+        }).catch(() => options.notify(tr('复制失败', 'Copy failed'), 'error'));
+      }, ''); icon(copy, 'copy');
       copy.dataset.aiCopy = '';
-      const retry = button('', () => submit(row._message), '↻'); retry.dataset.aiRetry = '';
-      const status = document.createElement('span'); foot.append(status, copy, retry); row.append(label, thinking, content, foot);
-      row._parts = { label, thinking, summary, reason, content, status, copy, retry }; return row;
+      const retry = button('', () => submit(row._message), ''); retry.dataset.aiRetry = ''; icon(retry, 'retry');
+      const status = document.createElement('span'); status.className = 'note-ai-status';
+      const metadata = document.createElement('span'); metadata.className = 'note-ai-metadata';
+      const info = button('', () => {}, ''); info.dataset.aiInfo = ''; icon(info, 'info');
+      const detail = document.createElement('span'); detail.className = 'note-ai-detail'; detail.id = 'ai-detail-' + uid(); detail.setAttribute('role', 'tooltip');
+      info.setAttribute('aria-describedby', detail.id); metadata.append(info, detail);
+      foot.append(status, copy, metadata, retry); row.append(thinking, content, foot);
+      row._open = false;
+      row._parts = { thinking, toggle, fold, summary, reason, content, status, copy, metadata, info, detail, retry }; return row;
+    }
+    function resetCopy(row) {
+      const copy = row._parts.copy; delete copy.dataset.copied; icon(copy, 'copy');
+      copy.setAttribute('aria-label', tr('复制原文', 'Copy original')); copy.title = tr('复制原文', 'Copy original');
+    }
+    function releaseRow(row) {
+      finishFold(row); clearTimeout(row._copyTimer); resetCopy(row);
+      releaseRich(row._parts.content); releaseRich(row._parts.reason); row.remove();
     }
     function renderMessages() {
-      const atBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 70;
+      cancelPaint();
+      const started = performance.now(), anchor = captureReadingPosition();
       const keys = new Set();
       messages.forEach((message, index) => {
         const key = message.request_id + ':' + message.role; keys.add(key);
@@ -129,49 +348,51 @@
         if (!row) { row = messageRow(message); rows.set(key, row); }
         if (body.children[index] !== row) body.insertBefore(row, body.children[index] || null);
         row._message = message; const part = row._parts;
-        const values = [message.content, message.reasoning, message.status, message.error, message.usage, message.elapsed, message.context_count, message.finish_reason, index === messages.length - 1, !!running, languageRevision];
-        if (row._values?.every((value, position) => value === values[position])) return;
-        row._values = values;
-        part.label.textContent = message.role === 'user' ? tr('你', 'You') : 'AI';
-        part.summary.textContent = tr('思考过程', 'Reasoning'); part.thinking.hidden = !message.reasoning;
-        if (part.reason.textContent !== (message.reasoning || '')) part.reason.textContent = message.reasoning || '';
-        const formatted = message.role === 'assistant' && message.status !== 'pending';
-        if (row._source !== message.content || row._formatted !== formatted) {
-          row._source = message.content; row._formatted = formatted;
-          if (formatted && window.MarkdownMini) {
-            const template = document.createElement('template');
-            template.innerHTML = window.MarkdownMini.render(message.content || '', { mermaid: false, localImages: true });
-            // Model output does not initiate resource requests or note operations.
-            template.content.querySelectorAll('img').forEach(image => image.replaceWith(document.createTextNode(image.alt || '')));
-            part.content.replaceChildren(template.content);
-          } else part.content.textContent = message.content || (message.status === 'pending' ? tr('正在生成…', 'Generating…') : '');
-          part.content.classList.toggle('is-streaming', !formatted);
+        const reasoning = !!message.reasoning, thinking = message.status === 'pending' && !message.content;
+        part.thinking.hidden = !reasoning;
+        part.summary.textContent = thinking ? tr('正在思考…', 'Thinking…') : tr('已思考', 'Thought')
+          + (message.thinkingElapsed != null ? tr('（用时约 ', ' (about ') + Math.max(1, Math.round(message.thinkingElapsed / 1000)) + tr(' 秒）', 's)') : '');
+        if (reasoning) {
+          updateRich(part.reason, message.reasoning, row);
+          if (!row._manualFold) setFold(row, !message.content);
         }
+        if (message.role === 'assistant') updateRich(part.content, message.content || (thinking && !reasoning ? tr('正在生成…', 'Generating…') : ''), row);
+        else if (part.content.textContent !== message.content) part.content.textContent = message.content;
+        part.content.classList.toggle('is-waiting', thinking && !reasoning);
         const bits = [];
-        if (message.status === 'failed' || message.status === 'interrupted') bits.push(textError(message.error || message.status));
-        if (message.finish_reason === 'length') bits.push(tr('已达到输出上限', 'Output limit reached'));
+        const status = [];
+        if (message.status === 'failed' || message.status === 'interrupted') status.push(textError(message.error || message.status));
+        if (message.finish_reason === 'length') status.push(tr('已达到输出上限', 'Output limit reached'));
         if (message.role === 'assistant') {
           if (message.context_count != null) bits.push(tr('上下文 ', 'Context: ') + message.context_count + tr(' 轮', ' turns'));
           if (message.usage) bits.push(`${message.usage.prompt_tokens ?? '—'} / ${message.usage.completion_tokens ?? '—'} tokens`);
           if (message.elapsed) bits.push(message.elapsed.toFixed(1) + 's');
         }
-        part.status.textContent = bits.join(' · ');
-        part.copy.setAttribute('aria-label', tr('复制原文', 'Copy original')); part.copy.title = tr('复制原文', 'Copy original');
+        part.status.textContent = status.join(' · ');
+        part.detail.textContent = bits.join(' · '); part.metadata.hidden = !bits.length;
+        part.info.setAttribute('aria-label', tr('回答详情', 'Response details'));
+        if (!row._copyTimer) resetCopy(row);
         part.copy.hidden = !message.content;
         part.retry.setAttribute('aria-label', tr('重试', 'Retry')); part.retry.title = tr('重试', 'Retry');
         part.retry.hidden = !(index === messages.length - 1 && message.role === 'assistant' && ['failed', 'interrupted'].includes(message.status) && !running);
       });
-      rows.forEach((row, key) => { if (!keys.has(key)) { row.remove(); rows.delete(key); } });
-      send.textContent = running ? '■' : '↑'; send.setAttribute('aria-label', running ? tr('停止', 'Stop') : tr('发送', 'Send'));
-      if (atBottom) timeline.scrollTop = timeline.scrollHeight;
+      rows.forEach((row, key) => { if (!keys.has(key)) { releaseRow(row); rows.delete(key); } });
+      icon(send, running ? 'stop' : 'send'); send.setAttribute('aria-label', running ? tr('停止', 'Stop') : tr('发送', 'Send'));
+      restoreReadingPosition(anchor);
+      lastPaint = performance.now(); paintInterval = Math.max(120, Math.min(600, (lastPaint - started) * 4));
     }
-    function schedulePaint() { if (visible && !paint) paint = requestAnimationFrame(() => { paint = 0; if (visible) renderMessages(); }); }
+    function cancelPaint() { clearTimeout(paintTimer); cancelAnimationFrame(paint); paintTimer = paint = 0; }
+    function schedulePaint() {
+      if (!visible || paint || paintTimer) return;
+      paintTimer = setTimeout(() => { paintTimer = 0; paint = requestAnimationFrame(() => { paint = 0; if (visible) renderMessages(); }); }, Math.max(0, paintInterval - (performance.now() - lastPaint)));
+    }
     function stop(keepalive = false) {
       const operation = running;
       if (!operation) return;
       operation.stopped = true; operation.controller.abort();
       api('cancel', { requestId: operation.id }, { keepalive }).catch(() => {});
       operation.answer.status = 'interrupted'; operation.answer.error = 'interrupted';
+      if (operation.reasoningStarted != null && operation.answer.thinkingElapsed == null) operation.answer.thinkingElapsed = performance.now() - operation.reasoningStarted;
       running = null; if (visible) renderMessages();
     }
     async function submit(retry = null) {
@@ -191,7 +412,7 @@
       let finished;
       const operation = { id, answer, controller: new AbortController(), stopped: false, meta: false, finished: new Promise(resolve => { finished = resolve; }) };
       session.started = true;
-      running = operation; notice.textContent = ''; input.value = ''; renderMessages(); timeline.scrollTop = timeline.scrollHeight;
+      running = operation; notice.textContent = ''; input.value = ''; followBottom = true; resizeInput(); renderMessages();
       const isCurrent = () => sequence === current && session?.id === sessionId && running === operation && visible && options.isVisible();
       try {
         const response = await fetch(ROOT + 'chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: operation.controller.signal,
@@ -208,8 +429,11 @@
             if (!data) continue;
             const event = JSON.parse(data);
             if (event.type === 'meta') { operation.meta = true; session = { ...event.session, saved: true, started: true }; answer.context_count = event.contextCount; answer.model = event.model; updateSelectors(); }
-            else if (event.type === 'delta') answer.content += event.text;
-            else if (event.type === 'reasoning') answer.reasoning += event.text;
+            else if (event.type === 'delta') {
+              if (event.text && operation.reasoningStarted != null && answer.thinkingElapsed == null) answer.thinkingElapsed = performance.now() - operation.reasoningStarted;
+              answer.content += event.text;
+            }
+            else if (event.type === 'reasoning') { if (operation.reasoningStarted == null) operation.reasoningStarted = performance.now(); answer.reasoning += event.text; }
             else if (event.type === 'usage') answer.usage = event.usage;
             else if (event.type === 'error') { answer.error = event.code; answer.status = event.code === 'interrupted' ? 'interrupted' : 'failed'; }
             else if (event.type === 'done') { doneEvent = true; answer.status = event.status; answer.elapsed = event.elapsed; answer.finish_reason = event.finishReason; answer.usage = event.usage || answer.usage; }
@@ -220,10 +444,11 @@
         if (isCurrent() && !doneEvent) { answer.status = 'failed'; answer.error = 'incomplete'; }
       } catch (error) {
         if (isCurrent()) {
-          if (!operation.meta && error.name !== 'AbortError') { messages = original; input.value = text; notice.textContent = error.message; }
+          if (!operation.meta && error.name !== 'AbortError') { messages = original; input.value = text; resizeInput(); notice.textContent = error.message; }
           else { answer.status = error.name === 'AbortError' ? 'interrupted' : 'failed'; answer.error = error.code || (error.name === 'AbortError' ? 'interrupted' : 'network'); }
         }
       } finally {
+        if (operation.reasoningStarted != null && answer.thinkingElapsed == null) answer.thinkingElapsed = performance.now() - operation.reasoningStarted;
         if (running === operation) { running = null; if (visible) renderMessages(); }
         finished();
       }
@@ -438,22 +663,38 @@
     async function show() {
       if (visible) return;
       visible = true; const current = ++sequence;
+      host.classList.remove('is-suspended');
+      observer?.observe(body); observer?.observe(timeline);
+      window.addEventListener('resize', resizeInput); reducedMotion.addEventListener('change', settleMotion);
       try {
         await loadConfig();
         if (!visible || current !== sequence) return;
         if (!session) newConversation(presetId);
-        initialized = true; renderMessages();
-      } catch (error) { if (visible && current === sequence) { notice.textContent = error.message; visible = false; } }
+        initialized = true; resizeInput(); renderMessages();
+      } catch (error) { if (visible && current === sequence) { notice.textContent = error.message; suspend(); } }
       finally { if (initialized) input.disabled = send.disabled = plus.disabled = false; }
     }
-    function suspend(keepalive = false) { visible = false; sequence++; stop(keepalive); cancelAnimationFrame(paint); paint = 0; }
+    function suspend(keepalive = false) {
+      visible = false; sequence++; renderEpoch++; stop(keepalive); cancelPaint();
+      cancelAnimationFrame(layoutFrame); layoutFrame = 0; observer?.disconnect();
+      window.removeEventListener('resize', resizeInput); reducedMotion.removeEventListener('change', settleMotion);
+      host.classList.add('is-suspended');
+      rows.forEach(row => {
+        finishFold(row); clearTimeout(row._copyTimer); row._copyTimer = 0; resetCopy(row);
+        [row._parts.reason, row._parts.content].forEach(surface => surface._blocks?.forEach(block => {
+          if (block.state === 'queued') { block.job = null; block.state = 'new'; }
+          if (block.stage) { clearMath(block.stage); block.stage.remove(); block.stage = null; }
+        }));
+      });
+    }
     function setLanguage() {
       languageRevision++;
       plus.setAttribute('aria-label', tr('新建对话', 'New conversation')); plus.title = tr('新建对话', 'New conversation');
-      input.placeholder = tr('输入消息…', 'Message…'); input.setAttribute('aria-label', tr('AI 消息', 'AI message')); hint.textContent = tr('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line');
+      bottom.setAttribute('aria-label', tr('回到底部', 'Jump to latest')); bottom.title = tr('回到底部', 'Jump to latest');
+      input.placeholder = tr('输入消息…', 'Message…'); input.setAttribute('aria-label', tr('AI 消息', 'AI message'));
       updateSelectors(); renderMessages(); if (settingsBuilt) buildSettings();
     }
-    window.addEventListener('pagehide', () => { pageHiding = true; const previous = session, operation = running; suspend(true); closeSettings(); discard(previous, operation, true); session = null; messages = []; presetId = 'none'; rows.clear(); body.replaceChildren(); });
+    window.addEventListener('pagehide', () => { pageHiding = true; const previous = session, operation = running; suspend(true); closeSettings(); discard(previous, operation, true); session = null; messages = []; presetId = 'none'; rows.forEach(releaseRow); rows.clear(); body.replaceChildren(); });
     window.addEventListener('pageshow', () => { pageHiding = false; });
     setLanguage();
     return { show, suspend, settings, closeSettings, setLanguage,
