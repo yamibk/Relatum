@@ -107,6 +107,7 @@
   let graphPresentation = false, graphSidebar = null;
   let sideCloseTask = null, sideMotionSequence = 0;
   let noteMovePromise = null, noteMovePaths = null;
+  let noteOpenAttempt = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
   if (canvasEnabled()) window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => window.RelatumNotePreferences?.resetCanvasNodeScale?.());
   async function flushCanvases(background) {
@@ -3385,20 +3386,43 @@
     });
     const ok = await state.saveChain; if (ok && hasPendingEdits(target)) return flushSave(target, duringMove, background); return ok;
   }
-  async function openNote(path, options) {
-    return withNoteBusy(() => openNoteNow(path, options));
+  function clearNoteOpenPending(attempt) {
+    if (noteOpenAttempt !== attempt || attempt.sequence !== state.openSeq
+        || !state.openingPath && !root.classList.contains('note-document-switch-pending')) return;
+    state.openingPath = '';
+    setDocumentSwitchPending(false);
+    renderCurrentPath(state.current?.path || '');
+    updateTreeSelection(); renderTabs(); resumeLinksRefresh();
   }
-  async function openNoteNow(path, options) {
+  async function openNote(path, options) {
+    const attempt = { sequence: state.openSeq };
+    noteOpenAttempt = attempt;
+    try {
+      return await withNoteBusy(() => openNoteNow(path, options, attempt));
+    } catch (error) {
+      if (noteOpenAttempt === attempt && attempt.sequence === state.openSeq) showToast(error.message || tr('readFailed'), 'error');
+      return false;
+    } finally {
+      if (noteOpenAttempt === attempt) {
+        // Tree clicks prime their feedback before saving. Every exit, including
+        // a rejected preparation, must release only this open's pending state.
+        clearNoteOpenPending(attempt);
+        noteOpenAttempt = null;
+      }
+    }
+  }
+  async function openNoteNow(path, options, attempt) {
     const fromGraph = graphPresentation, graphRoot = state.notebookRoot, graphIntent = noteGraphIntentSequence;
     const graphValid = () => (!options?.graphGuard || options.graphGuard()) && (!fromGraph ||
       (graphPresentation && state.notebookRoot === graphRoot && noteGraphIntentSequence === graphIntent));
+    const current = () => noteOpenAttempt === attempt && attempt.sequence === state.openSeq && graphValid();
     if (noteMovePromise) path = await waitForNoteMove(path);
-    if (!(await flushCanvases())) return false;
-    if (!graphValid()) return false;
+    if (!current() || !(await flushCanvases()) || !current()) return false;
     if (!fromGraph && noteBrowser) noteBrowser.showDocument({ keepAction: !!options?.browserAction });
     if (state.imageTextBusy && !(await imageTextOperationPromise)) return false;
-    if (!path) return false;
+    if (!current() || !path) return false;
     if (state.current && state.current.path !== path && editorInputPending()) await whenEditorInputSettled();
+    if (!current()) return false;
     const commitSelection = () => {
       selectNoteTab(path, !(options && options.reuseActiveTab === false));
       if (fromGraph) setGraphPresentation(false);
@@ -3410,7 +3434,7 @@
     if (state.current && state.current.path === path && !(options && options.force)) { state.openingPath = ''; setDocumentSwitchPending(false); updateTreeSelection(); renderTabs(); updateEditorVisibility(); if (!(options && (options.noRecent || options.force))) recordRecent(path); return true; }
     cancelLinksRefresh();
     const previous = state.current; rememberEditorState(previous);
-    const seq = ++state.openSeq; state.openingPath = path;
+    attempt.sequence = ++state.openSeq; state.openingPath = path;
     if (!fromGraph) { state.rootTargeted = false; state.selectedPath = path; state.selectedFolder = parentPath(path); }
     renderTabs();
     const treeExpanded = state.notebookRoot === notebookRootForPath(path) && expandTreePath(path, false);
@@ -3419,7 +3443,7 @@
     if (cached && !(options && options.force)) {
       if (!(options && options.skipSave) && previous) flushSave(previous);
       if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
-      if (seq !== state.openSeq || !graphValid()) return false;
+      if (!current()) return false;
       if (fromGraph) commitSelection();
       applyDocument(cached);
       if (!(options && (options.noRecent || options.force))) recordRecent(path);
@@ -3430,11 +3454,11 @@
     const loadPromise = fetchDocument(path);
     if (!(options && options.skipSave) && previous) flushSave(previous);
     try {
-      const data = await loadPromise; if (seq !== state.openSeq || !graphValid()) return false;
+      const data = await loadPromise; if (!current()) return false;
       const shown = state.current && state.current.path === path ? state.current : null;
       if (!shown || (!hasPendingEdits(shown) && shown.revision !== data.revision)) {
         if (previous) await window.RelatumNoteCanvas?.releaseNote(previous.path);
-        if (seq !== state.openSeq || !graphValid()) return false;
+        if (!current()) return false;
         if (fromGraph) commitSelection();
         applyDocument(data);
       }
@@ -3443,16 +3467,11 @@
       if (!(options && options.noFocus)) requestAnimationFrame(() => { if (state.current && state.current.path === path) focusEditor(); });
       return true;
     } catch (error) {
+      if (!current()) return false;
       const missing = isMissingError(error);
-      if (seq === state.openSeq) {
-        state.openingPath = '';
-        setDocumentSwitchPending(false);
-        updateTreeSelection();
-        renderTabs();
-        if (error.code !== 'aborted' && !missing) showToast(error.message || tr('readFailed'), 'error');
-      }
+      clearNoteOpenPending(attempt);
+      if (error.code !== 'aborted' && !missing) showToast(error.message || tr('readFailed'), 'error');
       if (error.code !== 'aborted') await refreshTree(false, { silentErrors: missing });
-      if (seq === state.openSeq) resumeLinksRefresh();
       return false;
     }
   }
@@ -4423,7 +4442,7 @@
     if (event.defaultPrevented || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey ||
         event.isComposing || event.keyCode === 229 || document.hidden || editorInputPending() ||
         state.settingsOpen || state.libraryPanel || state.imageTextBusy || state.assetCleanupBusy ||
-        state.openingPath || noteMovePromise || root.classList.contains('note-document-switch-pending') ||
+        noteOpenAttempt || state.openingPath || noteMovePromise || root.classList.contains('note-document-switch-pending') ||
         modalHost?.childElementCount || (contextMenu && !contextMenu.hidden) || (imageTextTools && !imageTextTools.hidden)) return false;
     const focused = document.activeElement;
     // A retained Markdown selection is not an input caret once the editor loses focus.
