@@ -7,8 +7,8 @@
     const { host, settingsHost } = options;
     host.dataset.i18nManaged = 'true';
     let config = null, configLoader = null, initialized = false, visible = false, sequence = 0;
-    let session = null, presetId = 'none', messages = [], history = [], historyMore = false, moreMessages = false, historyOffset = 0, historySequence = 0;
-    let selectionChain = Promise.resolve(), pageHiding = false, renameSequence = 0;
+    let session = null, presetId = 'none', messages = [], presets = null, choices = null, choicePortal = null;
+    let pageHiding = false;
     let running = null, paint = 0, settingsActive = false, settingsBuilt = false, settingsSequence = 0;
     let pending = {}, saveTimer = 0, saveChain = Promise.resolve(), testRequest = null, configRevision = 0, keyRevealSequence = 0;
     let keyDraft = null, keyOriginal = null, keyDirty = false;
@@ -54,60 +54,32 @@
       });
       if (old.length !== next.length || old.some((item, index) => item !== next[index])) element.replaceChildren(...next);
       element.value = value;
+      choices?.refresh(element);
     }
-    const top = document.createElement('div'); top.className = 'note-ai-top';
-    const presets = select('Preset'), chats = select('Conversation'); presets.dataset.aiPreset = ''; chats.dataset.aiHistory = '';
     const plus = button('', () => {
       newConversation(presetId);
-      input.focus({ preventScroll: true }); notice.textContent = tr('已开启新对话', 'New conversation started');
-    }); plus.dataset.aiNew = '';
-    const gear = button('', event => options.openSettings(event.currentTarget));
-    gear.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#note-icon-settings"/></svg>';
-    const historyLine = document.createElement('div'); historyLine.className = 'note-ai-history';
-    const rename = button('', () => { if (!session?.saved) return; renameBox.hidden = !renameBox.hidden; if (!renameBox.hidden) { renameInput.value = session.title; renameInput.focus(); renameInput.select(); } }, '✎');
-    const remove = button('', () => { if (session?.saved) { deleteBox.hidden = !deleteBox.hidden; } }, '×'); remove.dataset.aiDelete = '';
-    const historyNext = button('', async () => { try { await refreshHistory(true); } catch (error) { notice.textContent = error.message; } }, '…'); historyNext.hidden = true;
-    const renameBox = document.createElement('form'); renameBox.className = 'note-ai-inline'; renameBox.hidden = true;
-    const renameInput = document.createElement('input'); renameInput.maxLength = 120; renameInput.required = true; renameInput.dataset.aiRename = '';
-    const renameSave = document.createElement('button'); renameSave.type = 'submit';
-    renameBox.append(renameInput, renameSave);
-    renameBox.addEventListener('submit', async event => { event.preventDefault(); const id = session?.id, title = renameInput.value.trim(), current = ++renameSequence; if (!id || !title) return; try { await api('session', { action: 'rename', id, title }); if (session?.id === id && current === renameSequence) { session.title = title; renameBox.hidden = true; } await refreshHistory(); } catch (error) { if (session?.id === id && current === renameSequence) notice.textContent = error.message; } });
-    const deleteBox = document.createElement('div'); deleteBox.className = 'note-ai-inline'; deleteBox.hidden = true;
-    const deleteCopy = document.createElement('span'), deleteYes = button('', async () => {
-      const id = session?.id, current = sequence; if (!id) return;
-      deleteYes.disabled = true;
-      stop();
-      try { await api('session', { action: 'delete', id }); if (session?.id === id && sequence === current) newConversation(presetId); await refreshHistory(); } catch (error) { if (sequence === current) notice.textContent = error.message; }
-      finally { deleteYes.disabled = false; }
-    }), deleteNo = button('', () => { deleteBox.hidden = true; });
-    deleteYes.dataset.aiConfirmDelete = '';
-    deleteBox.append(deleteCopy, deleteNo, deleteYes);
-    top.append(presets, gear); historyLine.append(chats, plus, historyNext, rename, remove);
+      input.focus({ preventScroll: true });
+    }, '+'); plus.dataset.aiNew = '';
     const timeline = document.createElement('div'); timeline.className = 'note-ai-timeline'; timeline.dataset.aiTimeline = ''; timeline.setAttribute('role', 'log'); timeline.setAttribute('aria-live', 'off');
-    const older = button('', loadOlder); older.className = 'note-ai-older'; older.hidden = true;
     const body = document.createElement('div'); body.className = 'note-ai-messages';
-    const empty = document.createElement('div'); empty.className = 'note-ai-empty';
-    const emptyTitle = document.createElement('h3'), emptyText = document.createElement('p'), setup = button('', event => options.openSettings(event.currentTarget));
-    empty.append(emptyTitle, emptyText, setup); timeline.append(older, body, empty);
+    timeline.append(body);
     const notice = document.createElement('p'); notice.className = 'note-ai-notice'; notice.setAttribute('role', 'status');
     const composer = document.createElement('form'); composer.className = 'note-ai-composer';
     const input = document.createElement('textarea'); input.rows = 3; input.maxLength = 262144; input.dataset.aiInput = '';
     const send = document.createElement('button'); send.type = 'submit'; send.dataset.aiSend = '';
     const hint = document.createElement('small');
-    composer.append(input, send, hint); host.append(top, historyLine, renameBox, deleteBox, timeline, notice, composer);
-    input.disabled = send.disabled = presets.disabled = chats.disabled = plus.disabled = true;
+    composer.append(input, hint, plus, send); host.append(timeline, notice, composer);
+    input.disabled = send.disabled = plus.disabled = true;
     host.addEventListener('click', event => {
       event.stopPropagation();
       const link = event.target.closest('a');
       if (link) { const url = link.getAttribute('href') || ''; if (!/^(https?:|mailto:)/i.test(url)) event.preventDefault(); else { link.target = '_blank'; link.rel = 'noopener noreferrer'; } }
     });
-    host.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { renameBox.hidden = true; deleteBox.hidden = true; } });
+    host.addEventListener('keydown', event => event.stopPropagation());
     let composing = false;
     input.addEventListener('compositionstart', () => { composing = true; }); input.addEventListener('compositionend', () => { composing = false; });
     input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !composing) { event.preventDefault(); if (!running) submit(); } });
     composer.addEventListener('submit', event => { event.preventDefault(); if (running) stop(); else if (!composing) submit(); });
-    presets.addEventListener('change', () => newConversation(presets.value));
-    chats.addEventListener('change', () => { if (!chats.value) newConversation(presetId); else openSession(chats.value); });
 
     function loadConfig(refresh = false) {
       if (config && !refresh) return Promise.resolve(config);
@@ -115,55 +87,26 @@
       return configLoader;
     }
     function updateSelectors() {
-      if (!config) return;
+      if (!config || !presets?.isConnected) return;
       const items = config.presets.map(item => ({ value: item.id, name: presetName(item) }));
-      // A historical session keeps its prompt even if its original preset was removed.
+      // The current conversation keeps its prompt if its preset was removed.
       if (session?.saved && !items.some(item => item.value === presetId)) items.push({ value: presetId, name: session.preset_name });
+      if (!items.some(item => item.value === presetId)) presetId = 'none';
       setOptions(presets, items, presetId);
-      const chatItems = history.slice(); if (session?.saved && !chatItems.some(item => item.id === session.id)) chatItems.push(session);
-      setOptions(chats, [{ value: '', name: tr('新对话', 'New conversation') }, ...chatItems.map(item => ({ value: item.id, name: item.title }))], session?.saved ? session.id : '');
-      historyNext.hidden = !historyMore; rename.disabled = remove.disabled = !session?.saved;
-      setup.hidden = !!(config.hasKey && config.model);
     }
-    async function refreshHistory(append = false) {
-      const current = ++historySequence;
-      const result = await api('sessions?offset=' + (append ? historyOffset : 0));
-      if (current !== historySequence) return result;
-      if (append) { const seen = new Set(history.map(item => item.id)); history.push(...result.items.filter(item => !seen.has(item.id))); }
-      else history = result.items;
-      historyOffset = (append ? historyOffset : 0) + result.items.length;
-      historyMore = result.more; updateSelectors(); return result;
+    function discard(previous, operation, keepalive = false) {
+      if (!previous?.started) return;
+      const remove = () => api('session', { action: 'delete', id: previous.id }, { keepalive }).catch(() => {});
+      if (keepalive) remove();
+      else (operation?.finished || Promise.resolve()).then(remove);
     }
-    function selectSession(id) { selectionChain = selectionChain.catch(() => {}).then(() => api('session', { action: 'select', id })); return selectionChain; }
-    function newConversation(id = 'none', persist = true) {
+    function newConversation(id = 'none') {
+      const previous = session, operation = running;
       stop(); sequence++;
       session = { id: uid(), saved: false }; presetId = config?.presets.some(item => item.id === id) ? id : 'none';
-      messages = []; moreMessages = false; renameBox.hidden = deleteBox.hidden = true; notice.textContent = ''; input.value = '';
+      messages = []; notice.textContent = ''; input.value = '';
       updateSelectors(); renderMessages();
-      if (persist) selectSession(null).catch(error => { if (visible) notice.textContent = error.message; });
-    }
-    async function openSession(id, persist = true) {
-      stop(); const current = ++sequence;
-      try {
-        const result = await api('messages?id=' + encodeURIComponent(id));
-        if (current !== sequence || !visible) return;
-        session = { ...result.session, saved: true }; presetId = session.preset_id;
-        messages = result.messages; moreMessages = result.more;
-        renameBox.hidden = deleteBox.hidden = true; notice.textContent = ''; input.value = '';
-        updateSelectors(); renderMessages(); timeline.scrollTop = timeline.scrollHeight;
-        if (persist) await selectSession(id);
-      } catch (error) { if (current === sequence && visible) { notice.textContent = error.message; if (error.code === 'not-found') newConversation('none', false); } }
-    }
-    async function loadOlder() {
-      if (!session?.saved || !messages[0]?.id) return;
-      const id = session.id, current = sequence, height = timeline.scrollHeight, scroll = timeline.scrollTop;
-      older.disabled = true;
-      try {
-        const result = await api('messages?id=' + encodeURIComponent(id) + '&before=' + messages[0].id);
-        if (current !== sequence || !visible || session?.id !== id) return;
-        messages = [...result.messages, ...messages]; moreMessages = result.more; renderMessages(); timeline.scrollTop = scroll + timeline.scrollHeight - height;
-      } catch (error) { if (current === sequence && visible) notice.textContent = error.message; }
-      finally { older.disabled = false; }
+      discard(previous, operation);
     }
     function messageRow(message) {
       const row = document.createElement('article'); row.className = 'note-ai-message'; row.dataset.aiRole = message.role;
@@ -219,7 +162,6 @@
         part.retry.hidden = !(index === messages.length - 1 && message.role === 'assistant' && ['failed', 'interrupted'].includes(message.status) && !running);
       });
       rows.forEach((row, key) => { if (!keys.has(key)) { row.remove(); rows.delete(key); } });
-      empty.hidden = !!messages.length; older.hidden = !moreMessages;
       send.textContent = running ? '■' : '↑'; send.setAttribute('aria-label', running ? tr('停止', 'Stop') : tr('发送', 'Send'));
       if (atBottom) timeline.scrollTop = timeline.scrollHeight;
     }
@@ -230,23 +172,25 @@
       operation.stopped = true; operation.controller.abort();
       api('cancel', { requestId: operation.id }, { keepalive }).catch(() => {});
       operation.answer.status = 'interrupted'; operation.answer.error = 'interrupted';
-      running = null; if (visible) { renderMessages(); refreshHistory().catch(error => { if (visible) notice.textContent = error.message; }); }
+      running = null; if (visible) renderMessages();
     }
     async function submit(retry = null) {
       if (running || !visible || !options.isVisible()) return;
       const text = retry ? messages.find(item => item.request_id === retry.request_id && item.role === 'user')?.content : input.value.trim();
       if (!text) return;
       const intent = sequence;
-      try { await flushSettings(); await selectionChain; await loadConfig(); } catch (error) { notice.textContent = error.message; return; }
+      try { await flushSettings(); await loadConfig(); } catch (error) { if (intent === sequence && visible) notice.textContent = error.message; return; }
       if (running || intent !== sequence || !visible || !options.isVisible()) return;
       if (!config.hasKey || !config.model) { notice.textContent = textError('config-required'); return; }
-      if (!session) newConversation(presetId, false);
+      if (!session) newConversation(presetId);
       const original = messages.slice();
       if (retry) messages = messages.filter(item => item.request_id !== retry.request_id);
       const id = uid(), current = sequence, sessionId = session.id;
       const answer = { request_id: id, role: 'assistant', content: '', reasoning: '', status: 'pending', context_count: null };
       messages.push({ request_id: id, role: 'user', content: text, status: 'complete' }, answer);
-      const operation = { id, answer, controller: new AbortController(), stopped: false, meta: false };
+      let finished;
+      const operation = { id, answer, controller: new AbortController(), stopped: false, meta: false, finished: new Promise(resolve => { finished = resolve; }) };
+      session.started = true;
       running = operation; notice.textContent = ''; input.value = ''; renderMessages(); timeline.scrollTop = timeline.scrollHeight;
       const isCurrent = () => sequence === current && session?.id === sessionId && running === operation && visible && options.isVisible();
       try {
@@ -263,7 +207,7 @@
             const data = block.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
             if (!data) continue;
             const event = JSON.parse(data);
-            if (event.type === 'meta') { operation.meta = true; session = { ...event.session, saved: true }; answer.context_count = event.contextCount; answer.model = event.model; updateSelectors(); }
+            if (event.type === 'meta') { operation.meta = true; session = { ...event.session, saved: true, started: true }; answer.context_count = event.contextCount; answer.model = event.model; updateSelectors(); }
             else if (event.type === 'delta') answer.content += event.text;
             else if (event.type === 'reasoning') answer.reasoning += event.text;
             else if (event.type === 'usage') answer.usage = event.usage;
@@ -280,7 +224,8 @@
           else { answer.status = error.name === 'AbortError' ? 'interrupted' : 'failed'; answer.error = error.code || (error.name === 'AbortError' ? 'interrupted' : 'network'); }
         }
       } finally {
-        if (running === operation) { running = null; if (visible) { renderMessages(); refreshHistory().catch(error => { notice.textContent = error.message; }); } }
+        if (running === operation) { running = null; if (visible) renderMessages(); }
+        finished();
       }
     }
 
@@ -338,6 +283,7 @@
       const element = settingsHost.querySelector('[data-ai-thinking-hint]'), mode = settingsHost.querySelector('[data-ai-field="thinking"]')?.value;
       if (element) element.textContent = mode === 'enabled' ? tr('思考模式下温度不生效；Top P 的行为取决于模型。', 'Temperature has no effect in thinking mode; Top P depends on the model.') : tr('跟随模型时不发送思考参数；采样参数是否生效由模型决定。', 'Model default omits thinking parameters. Sampling support depends on the model.');
       const effort = settingsHost.querySelector('[data-ai-field="effort"]'); if (effort) effort.disabled = mode !== 'enabled';
+      choices?.sync(effort);
     }
     function presetEditor() {
       if (!config || !settingsBuilt) return;
@@ -347,7 +293,13 @@
       const item = config.presets.find(item => item.id === presetEditing);
       const name = settingsHost.querySelector('[data-ai-preset-name]'), prompt = settingsHost.querySelector('[data-ai-preset-prompt]');
       name.value = presetName(item); prompt.value = item.prompt; name.readOnly = prompt.readOnly = !!item.builtin;
+      name.closest('label').hidden = prompt.closest('label').hidden = item.id === 'none';
       settingsHost.querySelector('[data-ai-preset-delete]').disabled = !!item.builtin;
+      settingsHost.querySelector('[data-ai-preset-duplicate]').disabled = item.id === 'none';
+      settingsHost.querySelector('[data-ai-preset-hint]').textContent = item.id === 'none'
+        ? tr('无预设不发送系统提示词。可以新建预设，或选择内置预设查看。', 'No preset sends no system prompt. Create a preset, or choose a built-in one to inspect it.')
+        : item.builtin ? tr('内置预设只读，复制为自定义预设后即可修改。', 'Built-in presets are read-only. Duplicate one to customize it.')
+        : tr('修改即时保存。当前对话继续使用开始时的提示词，新对话使用修改后的内容。', 'Changes save automatically. The current conversation keeps its original prompt; new conversations use your changes.');
     }
     function savePreset() {
       clearTimeout(presetTimer);
@@ -355,16 +307,22 @@
       if (!item || item.builtin) return;
       const name = settingsHost.querySelector('[data-ai-preset-name]').value.trim(), prompt = settingsHost.querySelector('[data-ai-preset-prompt]').value;
       if (!name) { settingsStatus(tr('预设名称不能为空', 'A preset name is required')); return; }
+      if (item.name === name && item.prompt === prompt) return;
       item.name = name; item.prompt = prompt;
       queuePatch({ presets: config.presets.filter(item => !item.builtin).map(item => ({ ...item })) }); updateSelectors();
       const picker = settingsHost.querySelector('[data-ai-preset-editor]'); const option = Array.from(picker.options).find(option => option.value === item.id); if (option) option.textContent = item.name;
+      choices?.refresh(picker);
     }
     function buildSettings() {
       keyRevealSequence++;
+      choices?.dispose(); choices = null; choicePortal?.remove();
       settingsBuilt = true;
       const drafts = new Map(Array.from(settingsHost.querySelectorAll('[data-ai-field]')).map(element => [element.dataset.aiField, { value: element.value, checked: element.checked }]));
       const presetDraftName = settingsHost.querySelector('[data-ai-preset-name]')?.value, presetDraftPrompt = settingsHost.querySelector('[data-ai-preset-prompt]')?.value;
       settingsHost.replaceChildren();
+      choicePortal = document.createElement('div'); choicePortal.className = 'note-ai-settings-popovers';
+      settingsHost.closest('dialog').append(choicePortal);
+      choices = window.RelatumReviewControls.createManager(settingsHost, choicePortal);
       function group(zh, en) { const section = document.createElement('section'), title = document.createElement('h4'); section.className = 'note-ai-settings-group'; title.textContent = tr(zh, en); section.append(title); settingsHost.append(section); return section; }
       function addField(section, field, zh, en, type = 'text', choices = null, attributes = {}) {
         const label = document.createElement('label'); label.className = 'note-ai-field'; label.dataset.settingsKeywords = field;
@@ -398,6 +356,13 @@
         }
         return element;
       }
+      const conversation = group('当前对话预设', 'Conversation preset');
+      const presetLabel = document.createElement('label'); presetLabel.className = 'note-ai-field'; presetLabel.dataset.settingsKeywords = '当前对话预设 conversation preset';
+      const presetTitle = document.createElement('span'); presetTitle.textContent = tr('使用预设', 'Use preset');
+      presets = select(tr('当前对话预设', 'Conversation preset')); presets.dataset.aiPreset = '';
+      presets.addEventListener('change', () => newConversation(presets.value)); presetLabel.append(presetTitle, presets); conversation.append(presetLabel);
+      const conversationHint = document.createElement('p'); conversationHint.textContent = tr('切换预设会开启新对话。对话仅在本次运行中保留，退出后不恢复；连接信息与自定义预设仍会保存。', 'Switching presets starts a new conversation. Chats last only for this run; connection settings and custom presets are saved.'); conversation.append(conversationHint);
+      updateSelectors();
       const connection = group('连接', 'Connection');
       addField(connection, 'baseUrl', '接口基础地址', 'API base URL', 'url');
       addField(connection, 'model', '模型名称', 'Model name', 'text', null, { autocomplete: 'off', placeholder: tr('由你填写', 'Enter your model') });
@@ -415,8 +380,9 @@
         try { await flushSettings(); if (current !== settingsSequence || !settingsActive) return; testRequest = { id: uid(), controller: new AbortController() }; settingsStatus(tr('正在测试连接…', 'Testing connection…')); await api('test', { requestId: testRequest.id }, { signal: testRequest.controller.signal }); if (current === settingsSequence && settingsActive) settingsStatus(tr('连接成功', 'Connection successful')); }
         catch (error) { if (current === settingsSequence && settingsActive && error.name !== 'AbortError') settingsStatus(error.message); }
         finally { if (current === settingsSequence) { testRequest = null; test.disabled = false; } }
-      }); test.dataset.aiTest = ''; keyTools.append(clear, test); connection.append(keyTools);
+      }); test.dataset.aiTest = ''; test.className = 'is-primary'; keyTools.append(test, clear); connection.append(keyTools);
       const generation = group('生成参数', 'Generation');
+      generation.classList.add('note-ai-generation');
       addField(generation, 'stream', '流式输出', 'Stream replies', 'checkbox');
       addField(generation, 'thinking', '思考模式', 'Thinking mode', '', [['auto', '跟随模型默认', 'Model default'], ['disabled', '关闭', 'Off'], ['enabled', '开启', 'On']]);
       addField(generation, 'effort', '思考强度', 'Thinking effort', '', [['low', '低 · low', 'Low'], ['high', '高 · high', 'High'], ['max', '最高 · max', 'Maximum']]);
@@ -426,6 +392,7 @@
       addField(generation, 'timeout', '请求总超时（秒）', 'Total timeout (seconds)', 'number', null, { min: '1', max: '3600', step: '1' });
       const thinkingHint = document.createElement('p'); thinkingHint.dataset.aiThinkingHint = ''; generation.append(thinkingHint);
       const presetsGroup = group('系统提示词预设', 'System prompt presets');
+      presetsGroup.classList.add('note-ai-preset-settings');
       const pickerLabel = document.createElement('label'); pickerLabel.className = 'note-ai-field'; const pickerName = document.createElement('span'); pickerName.textContent = tr('编辑预设', 'Edit preset');
       const picker = select(pickerName.textContent); picker.dataset.aiPresetEditor = ''; pickerLabel.append(pickerName, picker); presetsGroup.append(pickerLabel);
       const nameLabel = document.createElement('label'); nameLabel.className = 'note-ai-field'; const nameTitle = document.createElement('span'); nameTitle.textContent = tr('名称', 'Name'); const name = document.createElement('input'); name.maxLength = 80; name.dataset.aiPresetName = ''; nameLabel.append(nameTitle, name);
@@ -447,11 +414,11 @@
         clearTimeout(presetTimer); config.presets = config.presets.filter(item => item.id !== presetEditing); presetEditing = 'none';
         queuePatch({ presets: config.presets.filter(item => !item.builtin).map(item => ({ ...item })) }); presetEditor(); updateSelectors();
       }); del.dataset.aiPresetDelete = ''; tools.append(add, duplicate, del); presetsGroup.append(tools);
-      const detail = document.createElement('p'); detail.textContent = tr('内置预设可复制后修改。切换预设开启新对话；历史会话保留当时的提示词。恢复默认保留模型、Key、自定义预设和聊天历史。', 'Duplicate a built-in preset to edit it. Switching presets starts a new conversation. History retains its original prompt. Reset keeps your model, key, custom presets and chats.'); presetsGroup.append(detail);
+      const detail = document.createElement('p'); detail.dataset.aiPresetHint = ''; presetsGroup.append(detail);
       const status = document.createElement('p'); status.setAttribute('role', 'status'); status.dataset.aiSettingsStatus = ''; settingsHost.append(status);
       presetEditor();
       if (presetDraftName !== undefined && !name.readOnly) { name.value = presetDraftName; prompt.value = presetDraftPrompt; }
-      updateKeyHint(); updateThinkingHint();
+      choices.enhanceAll(); updateKeyHint(); updateThinkingHint();
     }
     async function settings() {
       settingsActive = true;
@@ -461,6 +428,7 @@
     function closeSettings() {
       if (!settingsActive) return;
       settingsActive = false; settingsSequence++; keyRevealSequence++; clearKeyArmed = false;
+      choices?.close();
       if (testRequest) { testRequest.controller.abort(); api('cancel', { requestId: testRequest.id }).catch(() => {}); testRequest = null; }
       settingsHost.querySelector('[data-ai-test]')?.removeAttribute('disabled');
       const clear = settingsHost.querySelector('[data-ai-clear-key]'); if (clear) clear.textContent = tr('清除 Key', 'Clear key');
@@ -473,29 +441,19 @@
       try {
         await loadConfig();
         if (!visible || current !== sequence) return;
-        if (!initialized) {
-          const result = await refreshHistory(); if (!visible || current !== sequence) return;
-          initialized = true;
-          if (result.active) await openSession(result.active, false);
-          else newConversation('none', false);
-        } else renderMessages();
+        if (!session) newConversation(presetId);
+        initialized = true; renderMessages();
       } catch (error) { if (visible && current === sequence) { notice.textContent = error.message; visible = false; } }
-      finally { if (initialized) input.disabled = send.disabled = presets.disabled = chats.disabled = plus.disabled = false; }
+      finally { if (initialized) input.disabled = send.disabled = plus.disabled = false; }
     }
     function suspend(keepalive = false) { visible = false; sequence++; stop(keepalive); cancelAnimationFrame(paint); paint = 0; }
     function setLanguage() {
       languageRevision++;
-      presets.setAttribute('aria-label', tr('系统预设', 'System preset')); chats.setAttribute('aria-label', tr('会话', 'Conversation'));
-      [[plus, '新建对话', 'New conversation'], [gear, 'AI 设置', 'AI settings'], [rename, '重命名会话', 'Rename conversation'], [remove, '删除会话', 'Delete conversation'], [historyNext, '更多会话', 'More conversations']].forEach(([element, zh, en]) => { element.setAttribute('aria-label', tr(zh, en)); element.title = tr(zh, en); });
-      plus.textContent = tr('新建对话', 'New conversation');
-      renameInput.setAttribute('aria-label', tr('会话名称', 'Conversation name')); renameSave.textContent = tr('确定', 'Done');
-      deleteCopy.textContent = tr('删除此会话？', 'Delete this conversation?'); deleteYes.textContent = tr('删除', 'Delete'); deleteNo.textContent = tr('取消', 'Cancel');
-      emptyTitle.textContent = tr('从一个问题开始', 'Start with a question'); emptyText.textContent = tr('选择预设，或直接开始对话。', 'Choose a preset, or simply start chatting.'); setup.textContent = tr('填写连接信息', 'Set up connection');
+      plus.setAttribute('aria-label', tr('新建对话', 'New conversation')); plus.title = tr('新建对话', 'New conversation');
       input.placeholder = tr('输入消息…', 'Message…'); input.setAttribute('aria-label', tr('AI 消息', 'AI message')); hint.textContent = tr('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line');
-      older.textContent = tr('较早的消息', 'Earlier messages');
       updateSelectors(); renderMessages(); if (settingsBuilt) buildSettings();
     }
-    window.addEventListener('pagehide', () => { pageHiding = true; suspend(true); closeSettings(); });
+    window.addEventListener('pagehide', () => { pageHiding = true; const previous = session, operation = running; suspend(true); closeSettings(); discard(previous, operation, true); session = null; messages = []; presetId = 'none'; rows.clear(); body.replaceChildren(); });
     window.addEventListener('pageshow', () => { pageHiding = false; });
     setLanguage();
     return { show, suspend, settings, closeSettings, setLanguage,

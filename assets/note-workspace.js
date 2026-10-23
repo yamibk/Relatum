@@ -931,7 +931,7 @@
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
       { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
       { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
-      ...(aiEnabled() ? [{ id: 'ai', label: ['AI', 'AI'], icon: 'note-icon-code-xml', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI }] : []),
+      ...(aiEnabled() ? [{ id: 'ai', label: ['AI', 'AI'], icon: 'note-icon-sparkles', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI }] : []),
       ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing preload 间距 预加载 启动', reset: () => { pref?.resetGraphSpacing?.(); pref?.resetGraphPreload?.(); syncNoteSettingsFontScale(); } }] : []),
       ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-panel-right-frame', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
@@ -4253,13 +4253,18 @@
           openSettings: trigger => setNoteSettingsOpen(true, { category: 'ai', trigger }), notify: showToast });
         resolve(aiController);
       };
-      if (window.RelatumNoteAI) { create(); return; }
-      const script = document.createElement('script'); script.src = 'note-ai.js';
-      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'note-ai.css'; document.head.append(style);
-      const timer = setTimeout(() => { script.onload = script.onerror = null; script.remove(); style.remove(); reject(new Error(tr('readFailed'))); }, 10000);
-      script.onload = () => { clearTimeout(timer); script.onload = script.onerror = null; create(); };
-      script.onerror = () => { clearTimeout(timer); script.remove(); style.remove(); reject(new Error(tr('readFailed'))); };
-      document.head.append(script);
+      function load(name, css, ready) {
+        if (ready?.() || css && document.querySelector('link[href="' + name + '"]')?.sheet) return Promise.resolve();
+        return new Promise((done, failed) => {
+          const element = document.createElement(css ? 'link' : 'script');
+          if (css) { element.rel = 'stylesheet'; element.href = name; } else element.src = name;
+          const finish = error => { clearTimeout(timer); element.onload = element.onerror = null; if (error) { element.remove(); failed(new Error(tr('readFailed'))); } else done(); };
+          const timer = setTimeout(() => finish(true), 10000);
+          element.onload = () => finish(false); element.onerror = () => finish(true); document.head.append(element);
+        });
+      }
+      Promise.all([load('review-controls.js', false, () => !!window.RelatumReviewControls), load('review-controls.css', true),
+        load('note-ai.js', false, () => !!window.RelatumNoteAI), load('note-ai.css', true)]).then(create).catch(reject);
     }).catch(error => { aiLoader = null; throw error; });
     return aiLoader;
   }

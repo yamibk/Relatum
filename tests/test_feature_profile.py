@@ -187,6 +187,19 @@ class FeatureProfileTests(unittest.TestCase):
             self.assertFalse(other.resource_allowed(resource))
             self.assertNotIn(resource, features.render_html(source, other, 'index.html'))
 
+    def test_note_ai_can_load_shared_choices_without_review(self):
+        enabled = self.only('notes', 'notes.ai')
+        disabled = self.only('notes')
+        source = (features.RESOURCE_ROOT / 'assets' / 'index.html').read_text(encoding='utf8')
+        cold_html = features.render_html(source, enabled, 'index.html')
+        for name in ('review-controls.js', 'review-controls.css', 'note-ai.js', 'note-ai.css'):
+            self.assertTrue(enabled.resource_allowed(name))
+            self.assertFalse(disabled.resource_allowed(name))
+            self.assertNotIn(name, cold_html, 'shared control resources load only when AI is requested')
+        for name in ('review.js', 'review-import.js', 'review-import-worker.js'):
+            self.assertFalse(enabled.resource_allowed(name))
+        self.assertFalse(enabled.write_allowed('/api/review-import'))
+
     def test_notes_only_uses_shared_shell(self):
         source = (features.RESOURCE_ROOT / "assets" / "index.html").read_text(encoding="utf8")
         html = features.render_html(source, self.only("notes"), "index.html")

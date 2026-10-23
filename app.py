@@ -9576,13 +9576,20 @@ _NOTE_AI_STORE_LOCK = threading.Lock()
 
 
 def note_ai_store():
-    # No configuration or history is opened until an enabled note AI entry asks.
+    # No config or temporary chat store is opened until an enabled AI entry asks.
     from note_ai import NoteAIStore
     with _NOTE_AI_STORE_LOCK:
         key = str(DATA.resolve())
         if key not in _NOTE_AI_STORES:
             _NOTE_AI_STORES[key] = NoteAIStore(DATA, _atomic_write_json)
         return _NOTE_AI_STORES[key]
+
+
+def close_note_ai_stores():
+    with _NOTE_AI_STORE_LOCK:
+        stores = list(_NOTE_AI_STORES.values())
+    for store in stores:
+        store.close()
 
 
 AI_DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -13317,6 +13324,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n  已停止")
     finally:
+        close_note_ai_stores()
         NOTES_STORE.close()
     return 0
 

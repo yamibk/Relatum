@@ -80,7 +80,8 @@
       options.onCategoryChange?.(selected);
       if (target) {
         target.scrollIntoView({ block: 'center' });
-        const control = target.matches('input,button,select') ? target : target.querySelector('input,button,select');
+        const control = [target, ...target.querySelectorAll('input,button,select,textarea')].find(element =>
+          element.matches('input,button,select,textarea') && !element.disabled && !element.closest('[hidden],[inert]') && element.getClientRects().length);
         if (control) control.focus({ preventScroll: true });
         else { target.tabIndex = -1; target.focus({ preventScroll: true }); }
       }

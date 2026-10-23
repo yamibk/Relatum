@@ -39,6 +39,7 @@ class NoteAIStoreTest(unittest.TestCase):
         self.store = NoteAIStore(self.root, atomic)
 
     def tearDown(self):
+        self.store.close()
         self.temp.cleanup()
 
     def configured(self, **kwargs):
@@ -74,7 +75,8 @@ class NoteAIStoreTest(unittest.TestCase):
         self.assertEqual(result['presets'][-1]['prompt'], 'My prompt')
         self.assertEqual(len(self.store.sessions()['items']), 1)
         self.assertNotIn('secret-test-key', json.dumps(result))
-        self.assertNotIn('secret-test-key', self.store.db_path.read_bytes().decode('utf-8', 'ignore'))
+        with self.store.db() as conn:
+            self.assertNotIn('secret-test-key', '\n'.join(conn.iterdump()))
 
     def test_invalid_patch_does_not_overwrite_good_config(self):
         self.configured()
@@ -108,16 +110,63 @@ class NoteAIStoreTest(unittest.TestCase):
         self.assertNotIn('stream_options', request)
         self.assertEqual(request['max_tokens'], 123)
 
-    def test_stream_split_utf8_usage_and_reload(self):
+    def test_stream_split_utf8_usage_and_new_store_has_no_conversation(self):
         self.configured()
         events = self.run_chat()
         self.assertEqual([item['text'] for item in events if item['type'] == 'delta'], ['回答'])
         self.assertEqual(events[-1]['status'], 'complete')
         reopened = NoteAIStore(self.root, self.atomic)
-        history = reopened.messages('session')
+        self.addCleanup(reopened.close)
+        history = self.store.messages('session')
         self.assertEqual(history['messages'][1]['reasoning'], '思考')
         self.assertEqual(history['messages'][1]['usage']['prompt_tokens'], 12)
-        self.assertEqual(reopened.sessions()['active'], 'session')
+        self.assertEqual(reopened.sessions(), {'items': [], 'more': False, 'active': None})
+        self.assertEqual(reopened.config()['apiKey'], 'secret-test-key')
+        self.assertFalse((self.root / 'note-ai.sqlite3').exists())
+
+    def test_legacy_chat_files_are_neither_opened_nor_modified(self):
+        legacy = {name: b'old-chat-bytes-' + name.encode() for name in
+                  ('note-ai.sqlite3', 'note-ai.sqlite3-wal', 'note-ai.sqlite3-shm')}
+        for name, raw in legacy.items():
+            (self.root / name).write_bytes(raw)
+        self.configured(presets=[{'id': 'custom', 'name': 'Test', 'prompt': 'Prompt'}])
+        before = set(self.root.iterdir())
+        self.run_chat(presetId='custom')
+        self.store.session_action({'id': 'session', 'action': 'delete'})
+        self.assertEqual(self.store.sessions()['items'], [])
+        self.assertEqual(set(self.root.iterdir()), before)
+        for name, raw in legacy.items():
+            self.assertEqual((self.root / name).read_bytes(), raw)
+        self.store.close()
+        reopened = NoteAIStore(self.root, self.atomic)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.sessions()['items'], [])
+        self.assertEqual(reopened.public_config()['presets'][-1]['prompt'], 'Prompt')
+
+    def test_memory_chat_does_not_even_create_a_data_directory(self):
+        directory = self.root / 'unused'
+        store = NoteAIStore(directory, self.atomic)
+        self.addCleanup(store.close)
+        self.assertEqual(store.sessions()['items'], [])
+        with store.db() as conn:
+            self.assertEqual(conn.execute('PRAGMA temp_store').fetchone()[0], 2)
+            self.assertEqual(conn.execute('PRAGMA database_list').fetchone()[2], '')
+        self.assertFalse(directory.exists())
+
+    def test_close_is_idempotent_cancels_pending_and_never_reopens(self):
+        self.configured()
+        events = self.store.events({'sessionId': 's', 'requestId': 'r', 'text': 'hello', 'newSession': True})
+        self.assertEqual(next(events)['type'], 'meta')
+        request = self.store.active['r']
+        self.store.close()
+        self.store.close()
+        self.assertTrue(request.cancelled.is_set())
+        self.assertEqual(list(events)[-1]['status'], 'interrupted')
+        self.assertIsNone(self.store.connection)
+        self.assertEqual(self.store.active, {})
+        with self.assertRaises(NoteAIError):
+            self.store.sessions()
+        self.assertIsNone(self.store.connection)
 
     def test_no_system_and_bounded_complete_context(self):
         self.configured()

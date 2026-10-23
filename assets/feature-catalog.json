@@ -292,7 +292,7 @@
       "id": "notes.ai",
       "parent": "notes",
       "label": "笔记 AI",
-      "description": "独立聊天、系统预设和本机历史；关闭后不加载 AI 或访问其配置和服务。",
+      "description": "临时聊天和系统预设，对话退出后不保存；关闭后不加载 AI 或访问其配置和服务。",
       "scripts": ["note-ai.js", "note-ai.css"],
       "readPrefixes": ["/api/note-ai/"],
       "writePrefixes": ["/api/note-ai/"],
@@ -364,6 +364,8 @@
     }
   ],
   "sharedScripts": {
+    "review-controls.js": ["canvas.review", "notes.ai"],
+    "review-controls.css": ["canvas.review", "notes.ai"],
     "usage-tracker.js": ["notes", "research", "canvas.editor", "canvas.library", "canvas.study", "canvas.tree", "canvas.quicknotes", "canvas.review", "canvas.focus"],
     "markdown-table.js": [
       "canvas.editor",

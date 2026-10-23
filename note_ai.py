@@ -1,7 +1,7 @@
 """Local note chat storage and a cancellable, stdlib-only Chat Completions client.
 
-This store owns durable conversations; it is deliberately separate from the
-rebuildable note index and from the canvas AI's configuration/action protocol.
+Only connection settings and presets are durable. Conversations live in one
+locked in-memory database, separate from the note index and canvas AI protocol.
 """
 from __future__ import annotations
 
@@ -190,11 +190,11 @@ class NoteAIStore:
     def __init__(self, directory: Path, atomic_json):
         self.directory = Path(directory)
         self.config_path = self.directory / "note-ai.json"
-        self.db_path = self.directory / "note-ai.sqlite3"
         self.atomic_json = atomic_json
         self.config_lock = threading.RLock()
         self.db_lock = threading.RLock()
-        self.ready = False
+        self.connection = None
+        self.closed = False
         self.active_lock = threading.RLock()
         self.active = {}
         self.early_cancel = {}
@@ -260,14 +260,16 @@ class NoteAIStore:
     @contextmanager
     def db(self):
         with self.db_lock:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self.db_path, timeout=10)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys=ON")
+            if self.closed:
+                raise NoteAIError("聊天服务已关闭", "storage", 503)
+            conn = self.connection
             try:
-                if not self.ready:
+                if conn is None:
+                    conn = sqlite3.connect(":memory:", check_same_thread=False)
+                    conn.row_factory = sqlite3.Row
                     conn.executescript("""
-                        PRAGMA journal_mode=WAL;
+                        PRAGMA foreign_keys=ON;
+                        PRAGMA temp_store=MEMORY;
                         CREATE TABLE IF NOT EXISTS sessions(
                             id TEXT PRIMARY KEY, title TEXT NOT NULL, preset_id TEXT NOT NULL,
                             preset_name TEXT NOT NULL, prompt TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL);
@@ -280,17 +282,31 @@ class NoteAIStore:
                         CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id,id);
                         CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
                         CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
-                        UPDATE messages SET status='interrupted' WHERE status='pending';
                     """)
                     conn.commit()
-                    self.ready = True
+                    self.connection = conn
                 yield conn
                 conn.commit()
             except BaseException:
-                conn.rollback()
+                if conn is not None:
+                    conn.rollback()
+                    if self.connection is not conn:
+                        conn.close()
                 raise
-            finally:
-                conn.close()
+
+    def close(self):
+        with self.active_lock:
+            if self.closed:
+                return
+            self.closed = True
+            running = list(self.active.values())
+            self.early_cancel.clear()
+        for request in running:
+            request.cancel()
+        with self.db_lock:
+            if self.connection is not None:
+                self.connection.close()
+                self.connection = None
 
     def sessions(self, offset=0):
         with self.db() as conn:
@@ -342,6 +358,8 @@ class NoteAIStore:
     def cancel(self, request_id):
         identity(request_id)
         with self.active_lock:
+            if self.closed:
+                return {"ok": True}
             active = self.active.get(request_id)
             if not active:
                 now = time.monotonic()
@@ -361,6 +379,8 @@ class NoteAIStore:
         if not config["apiKey"] or not config["model"]:
             raise NoteAIError("请先填写模型名称和 API Key", "config-required")
         with self.active_lock:
+            if self.closed:
+                raise NoteAIError("聊天服务已关闭", "storage", 503)
             if request_id in self.active or any(item.session == session for item in self.active.values()):
                 raise NoteAIError("此会话已有进行中的请求", "busy", 409)
             if request_id in self.early_cancel:
@@ -521,8 +541,11 @@ class NoteAIStore:
         timer.start()
 
         def persist():
-            with self.db() as conn:
-                conn.execute("UPDATE messages SET content=?,reasoning=?,status=?,error=?,usage=?,elapsed=?,finish_reason=? WHERE session_id=? AND request_id=? AND role='assistant'", (content, reasoning, status, error, json.dumps(usage) if usage else None, time.monotonic() - started, finish, session["id"], request_id))
+            with self.db_lock:
+                if self.closed:
+                    return
+                with self.db() as conn:
+                    conn.execute("UPDATE messages SET content=?,reasoning=?,status=?,error=?,usage=?,elapsed=?,finish_reason=? WHERE session_id=? AND request_id=? AND role='assistant'", (content, reasoning, status, error, json.dumps(usage) if usage else None, time.monotonic() - started, finish, session["id"], request_id))
 
         try:
             yield {"type": "meta", "session": session, "requestId": request_id, "contextCount": count, "model": config["model"]}
@@ -621,6 +644,8 @@ class NoteAIStore:
         active = ActiveRequest("")
         request_id = identity((body or {}).get("requestId") or uuid.uuid4().hex)
         with self.active_lock:
+            if self.closed:
+                raise NoteAIError("聊天服务已关闭", "storage", 503)
             if request_id in self.active:
                 raise NoteAIError("请求正在进行", "busy", 409)
             if request_id in self.early_cancel:
