@@ -58,6 +58,14 @@
 .relatum-settings-page .note-library-name-field input { background: var(--settings-card); color: var(--settings-text); border: 0; padding: 11px 13px; border-radius: 9px; }
 .relatum-settings-guide-option { display: flex; align-items: center; gap: 14px; padding: 19px 20px; margin-bottom: 10px; border-radius: 14px; background: var(--settings-card); cursor: pointer; }
 .relatum-settings-guide-option:has(input:checked) { background: var(--settings-selected); }
+.note-sidebar-setting { display: flex; align-items: center; gap: 10px; padding: 15px 14px; margin: 0 0 8px; border-radius: 12px; background: var(--settings-card); }
+.note-sidebar-setting label { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; cursor: pointer; }
+.note-sidebar-setting strong { font-size: 13px; font-weight: 550; }
+.note-sidebar-setting button { border: 0; border-radius: 6px; background: transparent; color: var(--settings-muted); padding: 3px 7px; }
+.note-sidebar-setting button:hover { background: var(--settings-selected); color: var(--settings-text); }
+.note-sidebar-setting .note-sidebar-grip { cursor: grab; font-size: 20px; touch-action: none; user-select: none; }
+.note-sidebar-setting.is-dragging { opacity: .25; }
+.relatum-settings > .note-sidebar-ghost { position: fixed; top: 0; left: 0; z-index: 80; pointer-events: none; margin: 0; box-shadow: 0 10px 28px #0002; color: var(--settings-text); }
 .relatum-settings-guide-option strong, .relatum-settings-guide-option small { display: block; }
 .relatum-settings-guide-option small { color: var(--settings-muted); margin-top: 4px; }
 .relatum-settings-footer { min-height: 59px; padding: 12px 32px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--settings-muted); }

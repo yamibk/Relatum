@@ -27,6 +27,7 @@ FEATURE_TEXT_EN = {
     "canvas.focus": ("Focus", "Focus timer, daily tasks and sounds."),
     "notes": ("Notes workspace", "Markdown file tree, editing and reading in multiple tabs."),
     "notes.graph": ("Note graph", "Notebook relationship graph. Disabling this skips graph scripts, data and the rendering engine."),
+    "notes.ai": ("Note AI", "Independent chat, prompt presets and local conversation history. Disabling this skips AI resources, configuration and service access."),
     "notes.mermaid": ("Mermaid diagrams", "Mermaid diagrams in notes, using the offline Pele engine. When disabled, code remains visible without loading dedicated scripts, styles or the engine."),
     "notes.canvas": ("Embedded note canvases", "Canvas blocks inside notes. When disabled, references remain visible without loading the engine or canvas files."),
     "research": ("Research workspace", "Research canvases, subcircuits and simulation."),

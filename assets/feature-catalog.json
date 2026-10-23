@@ -268,6 +268,7 @@
         "note-workspace.js",
         "settings-dialog.js",
         "settings-dialog.css",
+        "note-sidebar-settings.js",
         "note-guide.js",
         "note-browser.js",
         "note-live-editor.js",
@@ -285,6 +286,16 @@
       "writePrefixes": [
         "/api/note-"
       ],
+      "default": true
+    },
+    {
+      "id": "notes.ai",
+      "parent": "notes",
+      "label": "笔记 AI",
+      "description": "独立聊天、系统预设和本机历史；关闭后不加载 AI 或访问其配置和服务。",
+      "scripts": ["note-ai.js", "note-ai.css"],
+      "readPrefixes": ["/api/note-ai/"],
+      "writePrefixes": ["/api/note-ai/"],
       "default": true
     },
     {

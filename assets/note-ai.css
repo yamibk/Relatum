@@ -1,0 +1,70 @@
+/* Opaque, quiet surfaces share the note theme. No blur or idle animation. */
+.note-ai { --ai-surface: #f1f1f0; --ai-text: #222322; --ai-muted: #777976; display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 12px; gap: 9px; color: var(--ai-text); }
+body[data-start-theme="dark"] .note-ai { --ai-surface: #242624; --ai-text: #ededeb; --ai-muted: #a0a39e; color-scheme: dark; }
+body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
+.note-ai[hidden], .note-ai [hidden], .note-ai-settings [hidden] { display: none !important; }
+.note-ai *, .note-ai-settings * { box-sizing: border-box; }
+.note-ai button, .note-ai select, .note-ai input, .note-ai textarea { font: inherit; color: inherit; }
+.note-ai button, .note-ai select { border: 0; border-radius: 8px; background: var(--ai-surface); font-size: 11px; cursor: pointer; min-height: 29px; }
+.note-ai button { padding: 5px 9px; transition: background-color 140ms, opacity 140ms, transform 140ms; }
+.note-ai button:hover { filter: brightness(.96); }
+.note-ai button:active { transform: scale(.96); }
+.note-ai button:disabled { opacity: .35; cursor: default; }
+.note-ai button:focus-visible, .note-ai select:focus-visible, .note-ai textarea:focus-visible, .note-ai input:focus-visible { outline: 2px solid var(--ai-muted); outline-offset: 2px; }
+.note-ai svg { width: 15px; height: 15px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.note-ai-top, .note-ai-history { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.note-ai-top select, .note-ai-history select { flex: 1; min-width: 0; padding: 6px 8px; text-overflow: ellipsis; }
+.note-ai-top button { flex: none; font-size: 17px; min-width: 29px; }
+.note-ai-history select { background: transparent; color: var(--ai-muted); }
+.note-ai-history button { background: transparent; color: var(--ai-muted); }
+.note-ai-timeline { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #8886 transparent; overflow-anchor: none; padding: 4px 1px 12px; }
+.note-ai-empty { padding: 40px 15px; text-align: center; color: var(--ai-muted); }
+.note-ai-empty h3 { font-size: 17px; font-weight: 550; color: var(--ai-text); margin: 0 0 10px; }
+.note-ai-empty p { font-size: 12px; line-height: 1.7; margin-bottom: 22px; }
+.note-ai-message { margin: 12px 0 22px; min-width: 0; }
+.note-ai-message > strong { display: block; margin: 0 3px 7px; color: var(--ai-muted); font-size: 10px; font-weight: 550; }
+.note-ai-answer { font: 12px/1.8 var(--font-ui, system-ui, sans-serif); overflow-wrap: anywhere; min-width: 0; color: var(--ai-text); }
+.note-ai-message[data-ai-role="user"] .note-ai-answer { padding: 10px 12px; border-radius: 13px; background: var(--ai-surface); white-space: pre-wrap; }
+.note-ai-answer.is-streaming { white-space: pre-wrap; }
+.note-ai-answer > :first-child { margin-top: 0; }
+.note-ai-answer > :last-child { margin-bottom: 0; }
+.note-ai-answer pre { overflow-x: auto; padding: 10px; border-radius: 8px; background: var(--ai-surface); font-size: 11px; }
+.note-ai-answer table { display: block; max-width: 100%; overflow-x: auto; font-size: 11px; }
+.note-ai-message-foot { display: flex; align-items: flex-start; gap: 4px; margin-top: 6px; font-size: 9px; color: var(--ai-muted); }
+.note-ai-message-foot span { flex: 1; padding-top: 5px; }
+.note-ai-message-foot button { flex: none; padding: 1px 5px; min-height: 23px; background: transparent; font-size: 14px; color: var(--ai-muted); }
+.note-ai-thinking { color: var(--ai-muted); margin-bottom: 12px; font-size: 11px; }
+.note-ai-thinking summary { cursor: pointer; padding: 4px 0; }
+.note-ai-thinking pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 7px 0; }
+.note-ai-notice { flex: none; margin: 0; font-size: 11px; line-height: 1.6; color: var(--ai-muted); }
+.note-ai-notice:empty { display: none; }
+.note-ai-composer { flex: none; display: grid; grid-template-columns: 1fr 30px; gap: 7px; padding: 12px; border-radius: 15px; background: var(--ai-surface); }
+.note-ai-composer:focus-within { box-shadow: 0 0 0 1px var(--ai-muted); }
+.note-ai .note-ai-composer textarea:focus-visible { outline: none; }
+.note-ai-composer textarea { grid-column: 1 / -1; resize: vertical; width: 100%; min-height: 52px; max-height: min(240px,28vh); border: 0; padding: 0; outline: none; background: transparent; font-size: 12px; line-height: 1.7; }
+.note-ai-composer button { grid-column: 2; grid-row: 2; padding: 0; height: 28px; min-height: 28px; font-size: 19px; background: var(--ai-text); color: var(--ai-surface); }
+.note-ai-composer small { grid-column: 1; grid-row: 2; align-self: center; font-size: 9px; color: var(--ai-muted); }
+.note-ai-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; }
+.note-ai-inline input { width: 100%; min-width: 0; padding: 8px; border: 0; border-radius: 8px; background: var(--ai-surface); font-size: 12px; }
+.note-ai-settings { --ai-card: var(--settings-card); }
+.note-ai-settings-group { margin: 0 0 26px; }
+.note-ai-settings-group h4 { font-size: 13px; font-weight: 600; margin: 0 0 12px; }
+.note-ai-settings .note-ai-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--settings-card); padding: 13px 15px; border-radius: 10px; margin-bottom: 6px; font-size: 12px; }
+.note-ai-field > span { flex: 0 0 135px; }
+.note-ai-settings input:not([type="checkbox"]), .note-ai-settings select, .note-ai-settings textarea { min-width: 0; width: 100%; border: 0; border-radius: 6px; background: var(--settings-bg); color: var(--settings-text); padding: 8px 10px; font: 12px/1.5 var(--font-ui, system-ui, sans-serif); }
+.note-ai-settings input[type="checkbox"] { margin-right: 3px; }
+.note-ai-settings input[aria-invalid="true"] { outline: 1px solid var(--settings-muted); }
+.note-ai-settings input[readonly], .note-ai-settings textarea[readonly] { color: var(--settings-muted); }
+.note-ai-settings p { color: var(--settings-muted); font-size: 11px; line-height: 1.8; margin: 12px 3px; }
+.note-ai-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.note-ai-settings-actions button { border: 0; padding: 8px 12px; border-radius: 8px; background: var(--settings-card); color: var(--settings-text); font-size: 11px; }
+.note-ai-settings-actions button:disabled { opacity: .4; cursor: default; }
+.note-ai-prompt-field { display: block; margin: 15px 0 10px; font-size: 12px; }
+.note-ai-prompt-field > span { display: block; margin-bottom: 10px; }
+.note-ai-settings .note-ai-prompt-field textarea { resize: vertical; min-height: 160px; background: var(--settings-card); line-height: 1.8; }
+@media (max-width: 680px) {
+  .note-ai-settings .note-ai-field { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .note-ai-field > span { flex: auto; }
+  .note-ai-settings .note-ai-field:has(input[type="checkbox"]) { flex-direction: row; align-items: center; }
+}
+@media (prefers-reduced-motion: reduce) { .note-ai button { transition: none; } }

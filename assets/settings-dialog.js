@@ -90,6 +90,8 @@
       if (search.isComposing) return;
       const query = search.value.trim().toLocaleLowerCase();
       if (!query) { show(selected); return; }
+      const preparation = options.onSearch?.(query);
+      preparation?.then(() => { if (dialog.open && search.value.trim().toLocaleLowerCase() === query && !search.isComposing) searchSettings(); }).catch(() => {});
       const entering = results.hidden;
       if (entering) positions.set(selected, scroll.scrollTop);
       stopMotion('page'); stopMotion('title');
@@ -101,7 +103,7 @@
         const matches = Array.from(targets).filter(element => {
           const described = element.querySelector('[aria-describedby]')?.getAttribute('aria-describedby')?.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ') || '';
           const hint = element.nextElementSibling?.matches('p') ? element.nextElementSibling.textContent : '';
-          const value = [label(category), category.keywords || '', element.textContent, described, hint, element.getAttribute('aria-label'), element.dataset.settingsKeywords].join(' ').toLocaleLowerCase();
+          const value = [label(category), element.textContent, described, hint, element.getAttribute('aria-label'), element.dataset.settingsKeywords].join(' ').toLocaleLowerCase();
           return query.split(/\s+/).every(part => value.includes(part));
         });
         if (!matches.length && [label(category), category.keywords || '', category.panel.textContent].join(' ').toLocaleLowerCase().includes(query)) matches.push(category.panel);
@@ -136,7 +138,7 @@
       resetTarget = all ? 'all' : selected;
       find('#relatum-settings-confirm-title').textContent = all ? text('恢复全部笔记设置？', 'Reset all note settings?') : text('恢复此分类的默认设置？', 'Reset this category?');
       confirm.querySelector('p').textContent = all
-        ? text('恢复外观、编辑、文件命名、引导、图谱、画布默认样式和快捷键。笔记内容保持原样。', 'Restore appearance, editing, naming, guide, graph, canvas defaults and shortcuts. Your notes stay unchanged.')
+        ? text('恢复笔记界面、侧栏顺序、AI 调用参数及其他笔记偏好。保留笔记、模型、API Key、自定义预设和聊天历史。', 'Restore note preferences, sidebar order and AI parameters. Keep notes, model, API key, custom presets and chat history.')
         : text('将“' + label(categories.find(item => item.id === selected)) + '”恢复为默认值。', 'Restore defaults for “' + label(categories.find(item => item.id === selected)) + '”.');
       confirm.hidden = false; confirm.inert = false; confirm.removeAttribute('aria-hidden'); confirm.classList.remove('is-closing');
       find('.relatum-settings-sidebar').inert = true; find('.relatum-settings-main').inert = true;

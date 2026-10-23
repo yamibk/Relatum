@@ -9571,6 +9571,20 @@ def import_markdown_folder(source: Path) -> tuple[Path, int, int]:
 # 不写进任何 .canvas，也不长期留在前端 localStorage。DeepSeek 兼容 OpenAI 接口。
 
 AI_CONFIG_FILE = DATA / "ai.json"
+_NOTE_AI_STORES = {}
+_NOTE_AI_STORE_LOCK = threading.Lock()
+
+
+def note_ai_store():
+    # No configuration or history is opened until an enabled note AI entry asks.
+    from note_ai import NoteAIStore
+    with _NOTE_AI_STORE_LOCK:
+        key = str(DATA.resolve())
+        if key not in _NOTE_AI_STORES:
+            _NOTE_AI_STORES[key] = NoteAIStore(DATA, _atomic_write_json)
+        return _NOTE_AI_STORES[key]
+
+
 AI_DEFAULT_BASE_URL = "https://api.deepseek.com"
 AI_DEFAULT_MODEL = "deepseek-chat"
 AI_REQUEST_TIMEOUT = 600          # 秒；v4-pro 会先思考再答，铺满几十张卡的丰富生成实测可达数分钟，给足免得中途断
@@ -10102,6 +10116,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ── 路由 ──
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/note-ai/"):
+            return self._api_note_ai(parsed.path, query=urllib.parse.parse_qs(parsed.query))
         if not self.launch_profile.api_allowed(parsed.path):
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         if parsed.path == "/api/runtime":
@@ -10366,6 +10382,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        if path.startswith("/api/note-ai/") and not self.launch_profile.enabled("notes.ai"):
+            self.close_connection = True
+            return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
         if not self.launch_profile.write_allowed(path):
             self.close_connection = True
             return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
@@ -10389,6 +10408,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except RequestBodyError as err:
             self.close_connection = True
             return self._send_json(err.status, {"error": str(err)})
+        if path.startswith("/api/note-ai/"):
+            # Streaming/network waits never hold the global data or note lock.
+            return self._api_note_ai(path, body=body)
         if path in POST_WITHOUT_DATA_LOCK:
             return self._dispatch_POST(path, body)
         with _cross_process_mutation_lock():
@@ -11153,6 +11175,63 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None, False, (502, {"error": f"AI 返回内容异常：{err}"})
         except Exception as err:  # noqa: BLE001
             return None, False, (500, {"error": f"AI 调用失败：{err}"})
+
+    def _api_note_ai(self, path, body=None, query=None):
+        if not self.launch_profile.enabled("notes.ai"):
+            return self._send_json(403, {"error": "本次启动未启用此功能", "code": "feature-disabled"})
+        from note_ai import NoteAIError
+        store = note_ai_store()
+        action = path.removeprefix("/api/note-ai/")
+        try:
+            if body is None:
+                query = query or {}
+                if action == "config":
+                    return self._send_json(200, store.public_config())
+                if action == "sessions":
+                    return self._send_json(200, store.sessions(int(query.get("offset", ["0"])[0])))
+                if action == "messages":
+                    return self._send_json(200, store.messages(query.get("id", [""])[0], int(query.get("before", ["0"])[0])))
+            elif action == "config":
+                with _cross_process_mutation_lock():
+                    with DATA_MUTATION_LOCK:
+                        result = store.save_config(body)
+                return self._send_json(200, result)
+            elif action == "session":
+                return self._send_json(200, store.session_action(body))
+            elif action == "cancel":
+                return self._send_json(200, store.cancel(body.get("requestId")))
+            elif action == "test":
+                return self._send_json(200, store.test_connection(body))
+            elif action == "chat":
+                events = store.events(body)
+                first = next(events)  # Validate before committing SSE response headers.
+                self.close_connection = True
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.wfile.write(("data: " + json.dumps(first, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    self.wfile.flush()
+                    for event in events:
+                        self.wfile.write(("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                        self.wfile.flush()
+                except (OSError, ConnectionError, sqlite3.Error):
+                    store.cancel(body.get("requestId"))
+                finally:
+                    try:
+                        events.close()
+                    except (OSError, sqlite3.Error):
+                        pass  # Disconnected streams cannot receive another HTTP response.
+                return
+            return self._send_json(404, {"error": "接口不存在", "code": "not-found"})
+        except NoteAIError as error:
+            return self._send_json(error.status, {"error": str(error), "code": error.code})
+        except (ValueError, TypeError, OverflowError):
+            return self._send_json(400, {"error": "参数无效", "code": "invalid"})
+        except (OSError, sqlite3.Error):
+            return self._send_json(503, {"error": "AI 本机数据暂不可用，请重试", "code": "storage"})
 
     def _api_ai_chat(self, body: dict):
         """把一段对话转发给已配置的模型，返回回复文本。纯对话，不改任何画布文件。"""

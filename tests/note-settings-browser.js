@@ -186,7 +186,8 @@ async function run(browser, mode) {
     await page.evaluate(() => { window.savedView = T.editor.view; window.savedDoc = T.editor.view.state.doc; window.savedGeneration = T.state.editGeneration; });
     await button.click(); await dialog.waitFor();
     assert(await dialog.evaluate(node => node.matches(':modal') && !node.closest('.start-workspace-stage')), 'dialog uses the top layer outside workspace transforms');
-    assert.equal(await dialog.locator('nav button').count(), enabled.includes('notes.graph') || mode === 'full' ? enabled.includes('notes.canvas') || mode === 'full' ? 7 : 6 : enabled.includes('notes.canvas') ? 6 : 5);
+    const oldCategories = enabled.includes('notes.graph') || mode === 'full' ? enabled.includes('notes.canvas') || mode === 'full' ? 7 : 6 : enabled.includes('notes.canvas') ? 6 : 5;
+    assert.equal(await dialog.locator('nav button').count(), oldCategories + 1 + (mode === 'full' ? 1 : 0));
     assert.equal(await button.locator('use').getAttribute('href'), '#note-icon-settings');
     if (process.argv.includes('--motion')) await checkMotion(page, mode);
     await page.keyboard.press('Control+t'); assert.equal(await page.evaluate(() => T.state.tabs.length), 1, 'modal blocks workspace shortcuts');

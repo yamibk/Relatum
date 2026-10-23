@@ -60,6 +60,8 @@
   const canvasSettingsContent = $('[data-role="note-canvas-settings"]');
   const guideContent = $('[data-role="note-guide"]');
   const outlineContent = $('[data-role="note-outline"]');
+  const aiContent = $('[data-role="note-ai"]');
+  let aiController = null, aiLoader = null, aiSequence = 0, aiSettingsHost = null, sidePreferences = null;
   let noteOutline = null, outlineLoader = null, outlineLoadSequence = 0;
   const settingsTrigger = $('[data-note-action="toggle-settings"]');
   const settingsPop = $('[data-role="note-settings-pop"]');
@@ -109,6 +111,9 @@
   let noteMovePromise = null, noteMovePaths = null;
   let noteOpenAttempt = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
+  const aiEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.ai');
+  const sideAvailable = id => (id !== 'canvas' || canvasEnabled()) && (id !== 'ai' || aiEnabled());
+  const sidePages = () => sidePreferences?.visible() || ['notebooks', 'outline', 'canvas', 'guide', 'links', 'ai'].filter(sideAvailable);
   async function flushCanvases(background) {
     if (!window.RelatumNoteCanvas) return true;
     const ok = await window.RelatumNoteCanvas.flushAll({ settle: !background });
@@ -541,7 +546,7 @@
 
   function notebookCopy(key) {
     const labels = {
-      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'], guide: ['引导', 'Guide'], outline: ['大纲', 'Outline'],
+      notebooks: ['笔记本', 'Notebooks'], links: ['链接', 'Links'], canvas: ['画布', 'Canvas'], guide: ['引导', 'Guide'], outline: ['大纲', 'Outline'], ai: ['AI', 'AI'],
       create: ['新建笔记本', 'New notebook'], close: ['关闭侧栏', 'Close sidebar'],
       expandSide: ['展开', 'Expand'], collapseSide: ['收起', 'Collapse'],
       expandSideLabel: ['展开右侧面板', 'Expand right sidebar'], collapseSideLabel: ['收起右侧面板', 'Collapse right sidebar'],
@@ -619,7 +624,7 @@
     state.notebookRoot = ui.selectedRoot === null ? null : typeof ui.selectedRoot === 'string' ? ui.selectedRoot : '';
     state.selectedFolder = state.notebookRoot; state.rootTargeted = true;
     state.notebookExpanded = new Set(Array.isArray(ui.expanded) ? ui.expanded : []);
-    state.sideMode = ['notebooks', 'links', 'guide', 'outline', ...(canvasEnabled() ? ['canvas'] : [])].includes(ui.mode) ? ui.mode : 'notebooks';
+    state.sideMode = sidePages().includes(ui.mode) ? ui.mode : sidePages()[0] || 'notebooks';
     root.classList.toggle('links-overlay-open', ui.open === true);
     state.notebookSettingsLoaded = true;
     updateSidePanel();
@@ -887,6 +892,17 @@
     if (graph) graph.prepend(appearance.querySelector('[data-role="note-graph-spacing"]')?.closest('label'));
     const guide = document.createElement('section'); guide.dataset.i18nManaged = 'true';
     const defaultsHost = document.createElement('section'); defaultsHost.className = 'note-canvas-settings'; defaultsHost.dataset.i18nManaged = 'true';
+    const sidebar = document.createElement('section'); sidebar.dataset.i18nManaged = 'true';
+    const sidebarHint = document.createElement('p'), sidebarRows = document.createElement('div');
+    sidebar.append(sidebarHint, sidebarRows);
+    sidePreferences = window.RelatumNoteSidebarSettings.create({ language, available: sideAvailable, onChange() {
+      updateSidePanel(); if (!graphPresentation) queueNotebookSettings({ ui: notebookUi() });
+    } });
+    sidePreferences.initPanel(sidebarRows);
+    aiSettingsHost = document.createElement('section'); aiSettingsHost.dataset.i18nManaged = 'true'; aiSettingsHost.className = 'note-ai-settings';
+    const translateSidebar = () => { sidebarHint.textContent = language() === 'en' ? 'Choose the sidebar pages you use. Drag the handles or use the arrows to reorder them.' : '勾选你需要的侧栏页，拖动手柄或使用箭头调整顺序。'; sidePreferences.refresh(); };
+    translateSidebar();
+    const resetAI = async () => { if (aiEnabled()) { const ai = await ensureAI(); await ai.resetSettings(); } };
     const labels = {
       callout: ['提示、折叠与学习组合', 'Callouts, folding and study combinations'],
       markdown: ['常用排版与笔记语法', 'Everyday formatting and note syntax'],
@@ -913,16 +929,19 @@
       { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-settings', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
       { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮', reset: () => { try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {} applySelectionMatchHighlight(false, false); } },
       { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
+      { id: 'sidebar', label: ['侧栏', 'Sidebar'], icon: 'note-icon-panel-right-frame', panel: sidebar, keywords: '页签 显示 隐藏 顺序 拖拽 tabs visibility reorder sidebar', reset: () => sidePreferences.reset() },
       { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
+      ...(aiEnabled() ? [{ id: 'ai', label: ['AI', 'AI'], icon: 'note-icon-code-xml', panel: aiSettingsHost, keywords: 'deepseek api key model preset prompt token temperature stream timeout effort base url 思考 强度 模型 预设 提示词 温度 连接 接口 地址 流式 输出 超时', reset: resetAI }] : []),
       ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing preload 间距 预加载 启动', reset: () => { pref?.resetGraphSpacing?.(); pref?.resetGraphPreload?.(); syncNoteSettingsFontScale(); } }] : []),
       ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-panel-right-frame', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
       { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
     ];
     settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
-      resetAll() { resetNoteSettings(); resetLibraryPreferences(); resetGuide(); if (canvasEnabled()) resetCanvas(); },
+      onSearch(query) { if (aiEnabled() && !aiSettingsHost.querySelector('[data-ai-field]') && /deepseek|api|模型|预设|提示词|思考|强度|温度|连接|接口|地址|流式|输出|超时|token|top.?p|model|preset|prompt|temperature|stream|timeout|effort|base.?url|\bkey\b|\bai\b/.test(query)) return ensureAI().then(ai => ai.prepareSettings()); },
+      async resetAll() { resetNoteSettings(); resetLibraryPreferences(); resetGuide(); sidePreferences.reset(); if (canvasEnabled()) resetCanvas(); await resetAI(); },
       onOpen() { state.settingsOpen = true; settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); },
-      onClose() { state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false'); stopShortcutRecording(true); canvasStylePanel?.suspend(); },
-      onCategoryChange() { stopShortcutRecording(true); canvasStylePanel?.suspend(); },
+      onClose() { state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false'); stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend(); aiController?.closeSettings(); },
+      onCategoryChange(category) { stopShortcutRecording(true); canvasStylePanel?.suspend(); sidePreferences.suspend(); if (category === 'ai') ensureAI().then(ai => { if (state.settingsOpen && !aiSettingsHost.hidden) ai.settings(); }).catch(error => showToast(error.message, 'error')); else aiController?.closeSettings(); },
       onKeyDown(event) {
         if (!state.recordingShortcutCommand) return false;
         event.preventDefault();
@@ -935,7 +954,7 @@
     settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
     if (canvasEnabled()) canvasStylePanel = window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => pref?.resetCanvasNodeScale?.(), { defaultsHost });
-    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); settingsDialog.setLanguage(); });
+    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); translateSidebar(); aiController?.setLanguage(); settingsDialog.setLanguage(); });
   }
 
   function resetNoteSettings() {
@@ -4223,7 +4242,37 @@
     }).catch(error => { if (sequence === guideSequence && noteWorkspaceVisible()) showToast(error.message, 'error'); });
   }
 
+  function ensureAI() {
+    if (!aiEnabled() || !aiContent) return Promise.reject(new Error(tr('readFailed')));
+    if (aiController) return Promise.resolve(aiController);
+    if (!aiLoader) aiLoader = new Promise((resolve, reject) => {
+      const create = () => {
+        if (!window.RelatumNoteAI) { reject(new Error(tr('readFailed'))); return; }
+        aiController = window.RelatumNoteAI.create({ host: aiContent, settingsHost: aiSettingsHost, language,
+          isVisible: () => noteWorkspaceVisible() && !aiContent.hidden && root.classList.contains('links-overlay-open'),
+          openSettings: trigger => setNoteSettingsOpen(true, { category: 'ai', trigger }), notify: showToast });
+        resolve(aiController);
+      };
+      if (window.RelatumNoteAI) { create(); return; }
+      const script = document.createElement('script'); script.src = 'note-ai.js';
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'note-ai.css'; document.head.append(style);
+      const timer = setTimeout(() => { script.onload = script.onerror = null; script.remove(); style.remove(); reject(new Error(tr('readFailed'))); }, 10000);
+      script.onload = () => { clearTimeout(timer); script.onload = script.onerror = null; create(); };
+      script.onerror = () => { clearTimeout(timer); script.remove(); style.remove(); reject(new Error(tr('readFailed'))); };
+      document.head.append(script);
+    }).catch(error => { aiLoader = null; throw error; });
+    return aiLoader;
+  }
+  function renderAI() {
+    const sequence = ++aiSequence;
+    if (!aiEnabled() || !aiContent || aiContent.hidden || !root.classList.contains('links-overlay-open') || !noteWorkspaceVisible()) { aiController?.suspend(); return; }
+    ensureAI().then(ai => { if (sequence === aiSequence && noteWorkspaceVisible() && !aiContent.hidden && root.classList.contains('links-overlay-open')) ai.show(); })
+      .catch(error => { if (sequence === aiSequence && noteWorkspaceVisible()) showToast(error.message, 'error'); });
+  }
   function updateSidePanel() {
+    const pages = sidePages();
+    if (!graphPresentation && !pages.includes(state.sideMode)) state.sideMode = pages[0] || 'notebooks';
+    if (!pages.length || graphPresentation && !pages.includes('notebooks')) root.classList.remove('links-overlay-open');
     const open = root.classList.contains('links-overlay-open');
     const selectedMode = effectiveSideMode();
     if (sidePane) { sidePane.inert = !open; sidePane.setAttribute('aria-label', language() === 'en' ? 'Note sidebar' : '笔记侧栏'); }
@@ -4233,10 +4282,17 @@
     if (linksContent) linksContent.hidden = selectedMode !== 'links';
     if (canvasSettingsContent) canvasSettingsContent.hidden = selectedMode !== 'canvas';
     if (guideContent) { guideContent.hidden = selectedMode !== 'guide'; renderGuide(); }
+    if (aiContent) { aiContent.hidden = selectedMode !== 'ai'; renderAI(); }
     if (outlineContent) { outlineContent.hidden = selectedMode !== 'outline'; outlineContent.setAttribute('aria-label', notebookCopy('outline')); }
-    ['notebooks', 'links', 'canvas', 'guide', 'outline'].forEach((mode) => {
+    ['notebooks', 'links', 'canvas', 'guide', 'outline', 'ai'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
-      if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(selectedMode === mode)); button.hidden = graphPresentation && mode !== 'notebooks' || mode === 'canvas' && !canvasEnabled(); }
+      if (button) { button.textContent = notebookCopy(mode); button.setAttribute('aria-pressed', String(selectedMode === mode)); button.hidden = graphPresentation && mode !== 'notebooks' || !pages.includes(mode); }
+    });
+    const nav = $('.note-side-modes');
+    const ordered = sidePreferences?.available() || pages;
+    ordered.forEach((mode, index) => {
+      const button = $('[data-note-action="side-' + mode + '"]');
+      if (button && nav.children[index] !== button) nav.insertBefore(button, nav.children[index] || null);
     });
     if (open) {
       const button = $('[data-note-action="side-' + selectedMode + '"]');
@@ -4247,7 +4303,8 @@
       }
     }
     const toggle = $('[data-note-action="toggle-notebooks"]');
-    if (toggle) { toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy(open ? 'collapseSideLabel' : 'expandSideLabel')); toggle.title = notebookCopy(open ? 'collapseSide' : 'expandSide'); }
+    if (toggle) { toggle.hidden = !pages.length || graphPresentation && !pages.includes('notebooks'); toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', notebookCopy(open ? 'collapseSideLabel' : 'expandSideLabel')); toggle.title = notebookCopy(open ? 'collapseSide' : 'expandSide'); }
+    const graphNotebooks = $('[data-note-action="graph-notebooks"]'); if (graphNotebooks) graphNotebooks.hidden = !pages.includes('notebooks');
     $('[data-note-action="graph-notebooks"]')?.setAttribute('aria-expanded', String(open));
     $('[data-role="note-side-toolbar"]')?.setAttribute('aria-label', language() === 'en' ? 'Note tools' : '笔记工具');
     ['new-notebook', 'toggle-all-notebooks'].forEach((action) => {
@@ -4333,6 +4390,7 @@
     });
   }
   function setSideOpen(open) {
+    if (!sidePages().length || graphPresentation && !sidePages().includes('notebooks')) open = false;
     const changed = !!open !== root.classList.contains('links-overlay-open');
     if (changed) { cancelTabCloseMotion(); cancelTabScroll(); }
     cancelSideClose();
@@ -4357,7 +4415,7 @@
   }
   function setSideMode(mode) {
     if (graphPresentation) { if (mode === 'notebooks') setSideOpen(true); return; }
-    state.sideMode = ['notebooks', 'links', 'guide', 'outline', ...(canvasEnabled() ? ['canvas'] : [])].includes(mode) ? mode : 'notebooks';
+    state.sideMode = sidePages().includes(mode) ? mode : sidePages()[0] || 'notebooks';
     setNoteSettingsOpen(false, { restoreFocus: false });
     setSideOpen(true);
   }
@@ -4613,6 +4671,7 @@
     closeNoteModal(); wikiOpenTask = null;
     state.active = false;
     renderGuide();
+    renderAI();
     indexActivity(false);
     cancelSideClose();
     if (!sidePane || root.hidden || getComputedStyle(sidePane).visibility === 'hidden') clearClosedNotebookTree();
@@ -4625,6 +4684,7 @@
   new MutationObserver(() => {
     syncOutline();
     renderGuide();
+    renderAI();
     indexActivity(noteWorkspaceVisible());
     if (!root.hidden && state.active && noteWorkspaceVisible()) {
       resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch();
@@ -4718,6 +4778,7 @@
     else if (name === 'side-canvas') setSideMode('canvas');
     else if (name === 'side-guide') setSideMode('guide');
     else if (name === 'side-outline') setSideMode('outline');
+    else if (name === 'side-ai') setSideMode('ai');
     else if (name === 'close-links') setSideOpen(false);
   }
   root.addEventListener('click', handleWorkspaceClick);
@@ -4931,6 +4992,7 @@
     const visible = notePageVisible();
     if (visible === notePageWasVisible) return;
     notePageWasVisible = visible;
+    if (!visible) { aiSequence++; aiController?.suspend(); sidePreferences?.suspend(); } else renderAI();
     indexActivity(visible && state.active);
     if (!visible) {
       // Native WebView2 minimization need not change document.hidden or focus.
@@ -4953,7 +5015,7 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { closeNoteModal(); guideSequence++; guideController?.suspend(); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { closeNoteModal(); guideSequence++; guideController?.suspend(); aiSequence++; aiController?.suspend(true); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });
