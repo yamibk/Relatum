@@ -286,7 +286,7 @@ const symbols = Array.from(noteShell.matchAll(/<symbol id="(note-icon-[^"]+)" vi
 assert(symbols.length > 20 && new Set(symbols).size === symbols.length, 'the workspace defines a compact unique local icon subset');
 for (const match of noteShell.matchAll(/<use href="#(note-icon-[^"]+)"/g)) assert(symbols.includes(match[1]), `missing icon symbol ${match[1]}`);
 assert(notes.includes("use.setAttribute('href', '#note-icon-' + name)") && notes.includes("noteIcon(kind === 'folder' ? 'folder' : 'file-text'"), 'dynamic trees share static symbol definitions');
-assert(noteShell.includes('#note-icon-folder-cog') && noteShell.includes('#note-icon-sliders-horizontal')
+assert(noteShell.includes('#note-icon-folder-cog') && noteShell.includes('#note-icon-settings')
   && noteShell.includes('#note-icon-focus-expand') && noteShell.includes('#note-icon-focus-contract'), 'settings and focus use distinct meaningful icons');
 assert(!notes.includes("close.textContent = '×'") && !notes.includes("separator.textContent = '›'"), 'navigation and close shapes do not depend on font glyphs');
 assert(css.includes('stroke-linecap: round; stroke-linejoin: round') && css.includes('--note-control-focus:')

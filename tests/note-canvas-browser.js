@@ -106,20 +106,25 @@ async function run(browser, enabled, prewarm = false) {
     await page.locator('[data-note-action="side-canvas"]').click();
     const settings = page.locator('[data-role="note-canvas-settings"]');
     assert.equal(await settings.isVisible(), true);
-    assert.equal(await page.locator('[data-role="note-settings-pop"] [data-role="note-canvas-node-scale"]').count(), 0);
+    assert.equal(await page.locator('[data-role="note-settings-dialog"] [data-role="note-canvas-node-scale"]').count(), 1);
     assert.equal(await settings.locator('details').count(), 0);
-    assert.equal(await settings.locator('[role="tab"]').count(), 4);
-    assert.equal(await settings.locator('[data-canvas-group]:visible').getAttribute('data-canvas-group'), 'defaults');
-    assert.equal(await settings.locator('[data-canvas-group="defaults"] [data-shape]').count(), 12);
+    assert.equal(await settings.locator('[role="tab"]').count(), 0);
+    const dialog = page.locator('[data-role="note-settings-dialog"]');
+    const defaults = dialog.locator('[data-settings-category="canvas"].relatum-settings-page');
+    await settings.locator('[data-note-action="canvas-default-settings"]').click();
+    assert.equal(await defaults.locator('[role="tab"]').count(), 4);
+    assert.equal(await defaults.locator('[data-canvas-group="defaults"] [data-shape]').count(), 12);
     assert.equal(await settings.locator('[data-canvas-group="node"] input:enabled').count(), 0, 'object controls require a selection');
     assert.equal((await settings.innerText()).includes('规划中'), false);
     await page.evaluate(() => { const slider = document.querySelector('[data-role="note-canvas-node-scale"]'); slider.value = '150'; slider.dispatchEvent(new Event('input', { bubbles: true })); T.resetNoteSettings(); });
-    assert.equal(await settings.locator('[data-role="note-canvas-node-scale"]').inputValue(), '150', 'note reset does not reset canvas defaults');
-    await settings.locator('[data-note-action="reset-canvas-settings"]').click();
-    assert.equal(await settings.locator('[data-role="note-canvas-node-scale"]').inputValue(), '100');
+    assert.equal(await defaults.locator('[data-role="note-canvas-node-scale"]').inputValue(), '150', 'unrelated preference reset preserves canvas defaults');
+    await dialog.locator('[data-settings-action="reset-category"]').click();
+    await dialog.locator('[data-settings-action="accept-reset"]').click();
+    assert.equal(await defaults.locator('[data-role="note-canvas-node-scale"]').inputValue(), '100');
     await page.evaluate(() => T.flushNotebookSettings());
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'data/note-notebooks.json'))).ui.mode, 'canvas');
     assert.equal(requests.filter(r => /note-canvas\/|notes-canvas\//.test(r)).length, 0, 'opening settings does not load canvas resources');
+    await dialog.locator('[data-settings-action="close"]').click();
     await page.locator('[data-note-action="close-links"]').click();
     // Use the actual Insert submenu, preserving selected prose.
     await page.evaluate(() => {
@@ -443,7 +448,7 @@ async function run(browser, enabled, prewarm = false) {
     if (!await page.evaluate(() => document.querySelector('.note-workspace').classList.contains('links-overlay-open'))) await page.locator('[data-note-action="toggle-notebooks"]').click();
     await page.locator('[data-note-action="side-canvas"]').click();
     await page.evaluate(() => RelatumI18n.setLanguage('en')); await settle();
-    assert.equal(await settings.locator('#note-canvas-settings-title').innerText(), 'Canvas settings');
+    assert.equal(await settings.locator('#note-canvas-settings-title').innerText(), 'Canvas properties');
     await frame.locator('.note-canvas-node').first().click();
     assert.equal(await settings.locator('[data-canvas-group="node"] button[aria-label="Diamond"]').count(), 1);
     await page.evaluate(() => RelatumI18n.setLanguage('zh')); await settle();

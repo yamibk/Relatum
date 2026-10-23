@@ -8,7 +8,9 @@
   }
   function noteWorkspaceVisible() { return state.active && !root.hidden && notePageVisible(); }
   let noteVisibilityEpoch = 0, notePageWasVisible = notePageVisible();
-  const $ = (selector, scope) => (scope || root).querySelector(selector);
+  // Settings keep their unique data-role after moving into the top-layer dialog.
+  const $ = (selector, scope) => (scope || root).querySelector(selector)
+    || (!scope ? document.querySelector('[data-role="note-settings-dialog"]')?.querySelector(selector) : null);
   const treeEl = $('[data-role="note-tree"]');
   const sidebarScroll = $('[data-role="note-sidebar-scroll"]');
   const notebookTreeEl = $('[data-role="note-notebook-tree"]');
@@ -63,10 +65,6 @@
   const settingsPop = $('[data-role="note-settings-pop"]');
   const settingsShortcutList = $('[data-role="note-shortcut-list"]');
   const settingsShortcutStatus = $('[data-role="note-shortcut-status"]');
-  const settingsResetArea = $('[data-role="note-settings-reset-area"]');
-  const settingsResetButton = $('[data-note-settings-action="reset-open"]');
-  const settingsResetConfirm = $('[data-role="note-settings-reset-confirm"]');
-  const settingsResetStatus = $('[data-role="note-settings-reset-status"]');
   const selectionMatchHighlightToggle = $('[data-role="note-selection-match-highlight"]');
   const sortTrigger = $('[data-note-action="toggle-sort"]');
   const sortMenu = $('[data-role="note-sort-menu"]');
@@ -78,8 +76,10 @@
   const libraryNameInput = $('[data-role="note-library-name-input"]');
   const libraryNamePreview = $('[data-role="note-library-name-preview"]');
   const libraryNameError = $('[data-role="note-library-name-error"]');
-  const libraryResetButton = $('[data-note-library-action="reset-open"]');
-  const libraryResetConfirm = $('[data-role="note-library-reset-confirm"]');
+  let settingsDialog = null, canvasStylePanel = null, guideController = null, guideLoader = null, guideSequence = 0;
+  const GUIDE_TOPIC_KEY = 'canvas:noteGuideTopic:v1';
+  let guideTopic = 'callout';
+  try { const saved = localStorage.getItem(GUIDE_TOPIC_KEY); if (['callout', 'markdown', 'mermaid'].includes(saved)) guideTopic = saved; } catch (_) {}
   let liveEditor = null;
   let noteBrowser = null, browserLoader = null, browserSequence = 0, browserIntent = false;
   let browserFolderIndex = null, browserFolderSize = -1, browserFolderPaths = [];
@@ -109,7 +109,6 @@
   let noteMovePromise = null, noteMovePaths = null;
   let noteOpenAttempt = null;
   const canvasEnabled = () => !window.RelatumFeatureRuntime || window.RelatumFeatureRuntime.enabled('notes.canvas');
-  if (canvasEnabled()) window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => window.RelatumNotePreferences?.resetCanvasNodeScale?.());
   async function flushCanvases(background) {
     if (!window.RelatumNoteCanvas) return true;
     const ok = await window.RelatumNoteCanvas.flushAll({ settle: !background });
@@ -493,7 +492,7 @@
     initializePromise: null, tabs: [], activeTab: '', renderedActiveTab: '', draggedTabPath: '', titleRenamePromise: null, lastMoveCode: '',
     externalSyncTimer: 0, externalSyncFailures: 0, externalSyncUnchanged: 0, treeMetadataSignature: '', externalSyncChain: Promise.resolve(true), recycleRunning: false,
     focusMode: document.body.classList.contains('note-focus-mode'), focusMotionTimer: 0, focusMotionSeq: 0, titleScrollFrame: 0, titleResizeObserver: null,
-    viewMode: 'live', selectionMatchHighlight: false, settingsOpen: false, recordingShortcutCommand: '', settingsCloseTimer: 0, settingsResetTimer: 0,
+    viewMode: 'live', selectionMatchHighlight: false, settingsOpen: false, recordingShortcutCommand: '',
     treeSort: 'modified-desc', newName: { mode: 'timestamp', baseName: '' }, libraryPanel: '', libraryPanelTimers: {}, pendingTreeReorder: false, renderedOrder: '',
     imageText: {
       available: false, active: false, armed: false, selectedId: '', size: 'md', color: 'white', canDelete: false,
@@ -535,11 +534,7 @@
       unassigned: ['未设置', 'Unassigned'],
       duplicate: ['该快捷键已在此命令中', 'This shortcut is already assigned here'],
       invalid: ['请使用 Ctrl/Cmd、Alt，或独立功能键', 'Use Ctrl/Cmd, Alt, or a function key'],
-      restored: ['已恢复', 'Restored'],
       conflict: ['与“{name}”冲突', 'Conflicts with “{name}”'],
-      resetTitle: ['恢复笔记设置默认值？', 'Restore default Note settings?'],
-      resetCopy: ['重置正文字号、图片文字、相同文字高亮、图谱节点间距、图谱预加载和编辑器快捷键。', 'Reset text size, image text scale, matching text highlighting, graph node spacing, graph preloading and editor shortcuts.'],
-      reset: ['恢复默认', 'Reset'], cancel: ['取消', 'Cancel'],
     };
     return (copy[key] || ['', ''])[english ? 1 : 0];
   }
@@ -859,49 +854,88 @@
   }
 
   function setNoteSettingsOpen(open, options) {
-    if (!settingsPop || !settingsTrigger) return;
-    const next = !!open;
-    const restoreFocus = !options || options.restoreFocus !== false;
-    if (next) prepareWorkspacePopover('settings');
-    const sequence = ++settingsMotionSequence;
-    clearTimeout(state.settingsCloseTimer); state.settingsCloseTimer = 0;
-    state.settingsOpen = next;
-    settingsTrigger.setAttribute('aria-expanded', next ? 'true' : 'false');
-    if (next) {
-      settingsPop.classList.remove('is-closing');
-      settingsPop.hidden = false;
-      settingsPop.removeAttribute('inert');
-      syncNoteSettingsFontScale();
-      renderNoteShortcutSettings();
-      positionSidePopover(settingsPop, settingsTrigger);
-      scheduleSidePopoverPosition();
-      return;
-    }
-    stopShortcutRecording(true);
-    if (settingsResetConfirm) settingsResetConfirm.hidden = true;
-    if (settingsResetButton) settingsResetButton.setAttribute('aria-expanded', 'false');
-    settingsPop.setAttribute('inert', '');
-    if (settingsPop.hidden) return;
-    if (options?.instant || !noteWorkspaceVisible() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      settingsPop.hidden = true;
-      settingsPop.classList.remove('is-closing');
-      if (restoreFocus && document.contains(settingsTrigger)) settingsTrigger.focus();
-      return;
-    }
-    settingsPop.classList.add('is-closing');
-    state.settingsCloseTimer = window.setTimeout(() => {
-      state.settingsCloseTimer = 0;
-      if (state.settingsOpen || sequence !== settingsMotionSequence) return;
-      settingsPop.hidden = true;
-      settingsPop.classList.remove('is-closing');
-      if (restoreFocus && document.contains(settingsTrigger)) settingsTrigger.focus();
-    }, 180);
+    if (!settingsDialog) return;
+    if (!open) { settingsMotionSequence++; settingsDialog.close(options); return; }
+    const sequence = ++settingsMotionSequence, epoch = noteVisibilityEpoch;
+    const current = state.current, tab = state.activeTab, openSequence = state.openSeq;
+    const commit = () => {
+      if (sequence !== settingsMotionSequence || epoch !== noteVisibilityEpoch || !noteWorkspaceVisible()
+          || current !== state.current || tab !== state.activeTab || openSequence !== state.openSeq || activeNoteModal) return;
+      prepareWorkspacePopover('settings');
+      syncNoteSettingsFontScale(); renderNoteShortcutSettings();
+      settingsDialog.open({ category: options?.category, trigger: options?.trigger || settingsTrigger });
+    };
+    if (editorInputPending()) whenEditorInputSettled().then(commit); else commit();
   }
 
-  function toggleNoteSettingsReset(open) {
-    if (!settingsResetConfirm || !settingsResetButton) return;
-    settingsResetConfirm.hidden = !open;
-    settingsResetButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  function applyGuideTopic(value, persist) {
+    const next = ['callout', 'markdown', 'mermaid'].includes(value) ? value : 'callout';
+    guideTopic = next;
+    if (persist) try { if (localStorage.getItem(GUIDE_TOPIC_KEY) !== next) localStorage.setItem(GUIDE_TOPIC_KEY, next); } catch (_) {}
+    settingsPop?.querySelectorAll('[name="note-guide-topic"]').forEach(input => { input.checked = input.value === next; });
+    renderGuide();
+  }
+
+  function initializeSettingsDialog() {
+    if (!settingsPop || !window.RelatumSettingsDialog) return;
+    const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = 'settings-dialog.css'; document.head.append(style);
+    const sections = Array.from(settingsPop.querySelectorAll(':scope > .note-settings-section'));
+    const appearance = sections.find(section => section.querySelector('[data-role="note-font-scale"]'));
+    const editing = sections.find(section => section.querySelector('[data-role="note-selection-match-highlight"]'));
+    const shortcuts = sections.find(section => section.querySelector('[data-role="note-shortcut-list"]'));
+    const graph = sections.find(section => section.querySelector('[data-role="note-graph-preload"]'));
+    if (graph) graph.prepend(appearance.querySelector('[data-role="note-graph-spacing"]')?.closest('label'));
+    const guide = document.createElement('section'); guide.dataset.i18nManaged = 'true';
+    const defaultsHost = document.createElement('section'); defaultsHost.className = 'note-canvas-settings'; defaultsHost.dataset.i18nManaged = 'true';
+    const labels = {
+      callout: ['提示、折叠与学习组合', 'Callouts, folding and study combinations'],
+      markdown: ['常用排版与笔记语法', 'Everyday formatting and note syntax'],
+      mermaid: ['用文字绘制常用图表', 'Create diagrams using text'],
+    };
+    function translateGuideOptions() {
+      const focusedTopic = guide.contains(document.activeElement) ? document.activeElement.value : '';
+      guide.replaceChildren();
+      Object.entries(labels).forEach(([id, names]) => {
+        const label = document.createElement('label'); label.className = 'relatum-settings-guide-option';
+        const input = document.createElement('input'); input.type = 'radio'; input.name = 'note-guide-topic'; input.value = id; input.checked = guideTopic === id;
+        const body = document.createElement('span'), title = document.createElement('strong'), description = document.createElement('small');
+        title.textContent = { callout: 'Callout', markdown: 'Markdown', mermaid: 'Mermaid' }[id]; description.textContent = names[language() === 'en' ? 1 : 0];
+        body.append(title, description); label.append(input, body); guide.append(label);
+      });
+      const hint = document.createElement('p'); hint.textContent = language() === 'en' ? 'Choose what the Guide sidebar displays. Changes apply immediately.' : '选择右侧“引导”面板展示的内容，更改立即生效。'; guide.append(hint);
+      if (focusedTopic) guide.querySelector('input[value="' + focusedTopic + '"]')?.focus({ preventScroll: true });
+    }
+    translateGuideOptions(); guide.addEventListener('change', event => { if (event.target.name === 'note-guide-topic') applyGuideTopic(event.target.value, true); });
+    const pref = window.RelatumNotePreferences;
+    const resetGuide = () => { try { localStorage.removeItem(GUIDE_TOPIC_KEY); } catch (_) {} applyGuideTopic('callout', false); };
+    const resetCanvas = () => { try { localStorage.removeItem('canvas:noteCanvasDefaults:v1'); } catch (_) {} pref?.resetCanvasNodeScale?.(); canvasStylePanel?.refresh(); };
+    const categories = [
+      { id: 'appearance', label: ['外观', 'Appearance'], icon: 'note-icon-settings', panel: appearance, keywords: '字体 font size image text scale', reset: () => { pref?.resetFontScale?.(); pref?.resetImageTextScale?.(); syncNoteSettingsFontScale(); } },
+      { id: 'editing', label: ['编辑', 'Editing'], icon: 'note-icon-square-pen', panel: editing, keywords: 'highlight selection 高亮', reset: () => { try { localStorage.removeItem(SELECTION_MATCH_HIGHLIGHT_KEY); } catch (_) {} applySelectionMatchHighlight(false, false); } },
+      { id: 'files', label: ['文件与笔记库', 'Files & library'], icon: 'note-icon-folder', panel: librarySettings, keywords: '排序 命名 sort name timestamp', reset: resetLibraryPreferences },
+      { id: 'guide', label: ['引导', 'Guide'], icon: 'note-icon-file-text', panel: guide, keywords: 'callout markdown mermaid 教程 语法 syntax tutorial', reset: resetGuide },
+      ...(graphEnabled() && graph ? [{ id: 'graph', label: ['图谱', 'Graph'], icon: 'note-icon-graph', panel: graph, keywords: 'spacing preload 间距 预加载 启动', reset: () => { pref?.resetGraphSpacing?.(); pref?.resetGraphPreload?.(); syncNoteSettingsFontScale(); } }] : []),
+      ...(canvasEnabled() ? [{ id: 'canvas', label: ['内嵌画布', 'Embedded canvas'], icon: 'note-icon-panel-right-frame', panel: defaultsHost, keywords: '默认 样式 节点 连线 default node edge styles', reset: resetCanvas }] : []),
+      { id: 'shortcuts', label: ['快捷键', 'Shortcuts'], icon: 'note-icon-code-xml', panel: shortcuts, keywords: '键盘 keyboard bindings', reset: () => { stopShortcutRecording(true); if (NOTE_SHORTCUTS) state.shortcutBindings = NOTE_SHORTCUTS.reset(); applyShortcutBindings(); renderNoteShortcutSettings(); } },
+    ];
+    settingsDialog = window.RelatumSettingsDialog.create({ content: settingsPop, categories, language,
+      resetAll() { resetNoteSettings(); resetLibraryPreferences(); resetGuide(); if (canvasEnabled()) resetCanvas(); },
+      onOpen() { state.settingsOpen = true; settingsTrigger.setAttribute('aria-expanded', 'true'); libraryTrigger.setAttribute('aria-expanded', 'true'); },
+      onClose() { state.settingsOpen = false; settingsTrigger.setAttribute('aria-expanded', 'false'); libraryTrigger.setAttribute('aria-expanded', 'false'); stopShortcutRecording(true); canvasStylePanel?.suspend(); },
+      onCategoryChange() { stopShortcutRecording(true); canvasStylePanel?.suspend(); },
+      onKeyDown(event) {
+        if (!state.recordingShortcutCommand) return false;
+        event.preventDefault();
+        if (event.key === 'Escape') stopShortcutRecording(true);
+        else { const binding = NOTE_SHORTCUTS?.bindingFromEvent(event); if (binding) acceptShortcutBinding(state.recordingShortcutCommand, binding); else setShortcutStatus(noteSettingsCopy('invalid')); }
+        return true;
+      },
+    });
+    settingsDialog.dialog.addEventListener('click', handleWorkspaceClick);
+    settingsTrigger.setAttribute('aria-controls', 'note-settings-dialog');
+    libraryTrigger.setAttribute('aria-controls', 'note-settings-dialog');
+    if (canvasEnabled()) canvasStylePanel = window.RelatumNoteCanvasStyle?.initPanel(canvasSettingsContent, () => pref?.resetCanvasNodeScale?.(), { defaultsHost });
+    document.addEventListener('relatum:languagechange', () => { translateGuideOptions(); settingsDialog.setLanguage(); });
   }
 
   function resetNoteSettings() {
@@ -920,16 +954,6 @@
     applyShortcutBindings();
     syncNoteSettingsFontScale();
     renderNoteShortcutSettings();
-    toggleNoteSettingsReset(false);
-    if (settingsResetArea && settingsResetStatus) {
-      clearTimeout(state.settingsResetTimer);
-      settingsResetStatus.textContent = noteSettingsCopy('restored');
-      settingsResetArea.classList.add('is-restored');
-      state.settingsResetTimer = window.setTimeout(() => {
-        settingsResetArea.classList.remove('is-restored');
-        settingsResetStatus.textContent = '';
-      }, 1300);
-    }
   }
 
   function replaceFallbackSelection(prefix, suffix, placeholder) {
@@ -1763,16 +1787,9 @@
     libraryTrigger.title = tr('librarySettings'); libraryTrigger.setAttribute('aria-label', tr('librarySettings'));
     sortMenu.setAttribute('aria-label', tr('librarySort'));
     librarySettings.setAttribute('aria-label', tr('librarySettings'));
-    $('[data-role="note-library-settings-title"]').textContent = tr('librarySettings');
     $('[data-role="note-library-sort-title"]').textContent = tr('librarySort');
     $('[data-role="note-library-name-title"]').textContent = tr('newNameSetting');
     $('[data-role="note-library-name-label"]').textContent = tr('customNameLabel');
-    $('[data-role="note-library-reset-label"]').textContent = tr('libraryReset');
-    $('[data-role="note-library-reset-title"]').textContent = tr('libraryResetTitle');
-    $('[data-role="note-library-reset-copy"]').textContent = tr('libraryResetCopy');
-    $('[data-role="note-library-reset-cancel"]').textContent = tr('cancel');
-    $('[data-role="note-library-reset-accept"]').textContent = tr('libraryReset');
-    libraryResetConfirm.setAttribute('aria-label', tr('libraryResetTitle'));
     const makeSortButton = (mode, inMenu) => {
       const button = document.createElement('button');
       button.type = 'button'; button.dataset.noteSortMode = mode;
@@ -1809,13 +1826,6 @@
     }
     renderLibraryPreferences();
   }
-  function toggleLibraryReset(open, restoreFocus) {
-    if (!libraryResetConfirm || !libraryResetButton) return;
-    libraryResetConfirm.hidden = !open;
-    libraryResetButton.setAttribute('aria-expanded', String(open));
-    if (open) $('[data-role="note-library-reset-cancel"]').focus();
-    else if (restoreFocus) libraryResetButton.focus();
-  }
   function resetLibraryPreferences() {
     const orderChanged = state.treeSort !== 'modified-desc';
     [TREE_SORT_KEY, NEW_NAME_KEY].forEach((key) => {
@@ -1823,21 +1833,19 @@
     });
     state.treeSort = 'modified-desc';
     state.newName = { mode: 'timestamp', baseName: '' };
-    toggleLibraryReset(false, true);
     if (orderChanged) { renderTree(); refreshTree(false, { reset: true, reconcile: false, silentErrors: true }); }
     renderLibraryPreferences();
   }
   function setLibraryPanel(kind, options) {
     if (kind) prepareWorkspacePopover('library');
     const sequence = ++libraryMotionSequence;
-    const panels = { sort: [sortMenu, sortTrigger], settings: [librarySettings, libraryTrigger] };
+    const panels = { sort: [sortMenu, sortTrigger] };
     const restoreFocus = !options || options.restoreFocus !== false;
     Object.entries(panels).forEach(([name, [panel, trigger]]) => {
       if (!panel || !trigger) return;
       clearTimeout(state.libraryPanelTimers[name]); state.libraryPanelTimers[name] = 0;
       const open = name === kind;
       trigger.setAttribute('aria-expanded', String(open));
-      if (name === 'settings' && !open) toggleLibraryReset(false);
       if (open) {
         panel.hidden = false; panel.inert = false; panel.classList.remove('is-closing');
       } else if (!panel.hidden) {
@@ -4197,101 +4205,22 @@
     finally { notebookCreateRunning = false; }
   }
   function renderGuide() {
-    if (!guideContent || !window.MarkdownMini?.noteBlockCatalog) return;
-    const lang = language();
-    if (guideContent.dataset.language === lang) return;
-    const english = lang === 'en';
-    const scroll = guideContent.scrollTop;
-    guideContent.replaceChildren(); guideContent.dataset.language = lang;
-    const catalog = window.MarkdownMini.noteBlockCatalog;
-    const heading = (zh, en) => { const item = document.createElement('h3'); item.textContent = english ? en : zh; guideContent.appendChild(item); };
-    const example = (source, preview, detail) => {
-      const item = document.createElement('div'); item.className = 'note-guide-example';
-      if (preview) {
-        const content = document.createElement('div'); content.className = 'node-text';
-        content.innerHTML = window.MarkdownMini.renderResult(preview, { noteBlocks: true, noteSyntax: true }).html;
-        content.querySelectorAll('.note-callout-fold').forEach(button => button.addEventListener('click', () => {
-          const body = button.closest('.md-callout').querySelector(':scope > .md-callout-body');
-          const collapsed = button.getAttribute('aria-expanded') === 'true';
-          if (body) body.hidden = collapsed;
-          button.setAttribute('aria-expanded', String(!collapsed));
-          button.setAttribute('aria-label', collapsed ? 'Expand callout' : 'Collapse callout');
-        }));
-        item.appendChild(content);
-      }
-      if (detail) { const text = document.createElement('small'); text.textContent = detail; item.appendChild(text); }
-      const code = document.createElement('pre'); code.textContent = source; item.appendChild(code);
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'note-guide-copy';
-      const label = english ? 'Copy syntax' : '复制语法'; button.setAttribute('data-ui-tooltip', label); button.setAttribute('aria-label', label);
-      button.innerHTML = '<svg class="note-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#note-icon-copy"/></svg>';
-      button.addEventListener('mousedown', event => event.preventDefault());
-      button.addEventListener('click', async () => {
-        let copied = false;
-        try { await navigator.clipboard.writeText(source); copied = true; } catch (error) {
-          await liveEditor?.whenInputSettled();
-          const active = document.activeElement;
-          const selection = window.getSelection();
-          const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange()) : [];
-          const inputSelection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
-          const area = document.createElement('textarea'); area.value = source; area.readOnly = true;
-          area.style.cssText = 'position:fixed;left:-9999px;opacity:0'; document.body.appendChild(area); area.select();
-          try { copied = !!document.execCommand('copy'); } catch (copyError) {}
-          area.remove();
-          active?.focus({ preventScroll: true });
-          if (selection) { selection.removeAllRanges(); ranges.forEach(range => selection.addRange(range)); }
-          if (inputSelection) active.setSelectionRange(...inputSelection);
-        }
-        const feedback = copied ? english ? 'Syntax copied' : '语法已复制' : english ? 'Could not copy syntax' : '语法复制失败';
-        if (button.isConnected) { button.setAttribute('data-ui-tooltip', feedback); button.setAttribute('aria-label', feedback); window.setTimeout(() => { if (button.isConnected) { button.setAttribute('data-ui-tooltip', label); button.setAttribute('aria-label', label); } }, 1800); }
-        showToast(feedback, copied ? undefined : 'error');
-      });
-      item.appendChild(button); guideContent.appendChild(item);
-    };
-    const body = english ? 'Callout content.' : 'Callout 正文。';
-    const studyLabels = { definition: ['定义', 'Definition'], theorem: ['定理', 'Theorem'], proof: ['证明', 'Proof'], answer: ['答案', 'Answer'] };
-    heading('Callout 与别名', 'Callouts and aliases');
-    catalog.types.forEach(type => {
-      const source = '> [!' + type.name + ']\n> ' + body;
-      example(source, source, type.aliases.length ? (english ? 'Aliases: ' : '别名：') + type.aliases.join(', ') : studyLabels[type.name]?.[english ? 1 : 0] || '');
-    });
-    heading('标题与折叠', 'Titles and folding');
-    const custom = '> [!note] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + body;
-    example(custom, custom);
-    ['+', '-'].forEach(suffix => {
-      const source = '> [!' + (suffix === '+' ? 'tip' : 'warning') + ']' + suffix + ' ' + (english ? suffix === '+' ? 'Expanded by default' : 'Collapsed by default' : suffix === '+' ? '默认展开' : '默认折叠') + '\n> ' + body;
-      example(source, source);
-    });
-    heading('学习组合', 'Study combinations');
-    const answer = english ? '> [!stone] Question\n> Write the question here.\n>\n> > [!answer]- Answer\n> > Write the answer here.'
-      : '> [!stone] 题干\n> 在这里填写题目。\n>\n> > [!answer]- 答案\n> > 在这里填写答案。';
-    example(answer, answer);
-    const proof = english ? '> [!theorem] Theorem\n> Write the theorem here.\n>\n> > [!proof]- Proof\n> > Write the proof here.'
-      : '> [!theorem] 定理\n> 在这里填写定理。\n>\n> > [!proof]- 证明\n> > 在这里填写证明。';
-    example(proof, proof, english ? 'Each nested level adds another > prefix.' : '每嵌套一层，多写一个 > 前缀。');
-    heading('块公式', 'Display math');
-    example('> [!info]\n> $$a^2+b^2$$\n> ' + body, null);
-    example('> [!info]\n> $$\n> a^2+b^2\n> $$\n> ' + body, null);
-    example('> [!info]\n> \\[\n> E=mc^2\n> \\]\n> ' + body, null);
-    heading('纯色块', 'Color blocks');
-    const colorBody = english ? 'Color block content.' : '纯色块正文。';
-    const titled = '> [!Lavender] ' + (english ? 'Custom title' : '自定义标题') + '\n> ' + colorBody;
-    example(titled, titled, english ? 'Color names are case-insensitive. Without + or -, blocks do not fold.' : '颜色名不区分大小写；没有 + 或 - 时不可折叠。');
-    ['+', '-'].forEach(suffix => {
-      const title = english ? suffix === '+' ? 'Expanded by default' : 'Collapsed by default' : suffix === '+' ? '默认展开' : '默认折叠';
-      const source = '> [!blue]' + suffix + ' ' + title + '\n> ' + colorBody;
-      example(source, source);
-      const untitled = '> [!blue]' + suffix + '\n> ' + colorBody;
-      example(untitled, untitled, english ? 'Foldable blocks without a title use the color name. Plain [!blue] remains titleless.' : '可折叠色块未写标题时显示颜色名；普通 [!blue] 仍然没有标题。');
-    });
-    const groups = { cool: ['冷色', 'Cool'], green: ['绿色', 'Green'], warm: ['暖色', 'Warm'], pink: ['粉紫', 'Pink and purple'], neutral: ['中性', 'Neutral'] };
-    Object.entries(groups).forEach(([group, names]) => {
-      heading(...names);
-      catalog.colors.filter(color => color.group === group).forEach(color => {
-        const source = '> [!' + color.name + ']\n> ' + colorBody;
-        example(source, source);
-      });
-    });
-    guideContent.scrollTop = scroll;
+    const visible = guideContent && !guideContent.hidden && root.classList.contains('links-overlay-open') && noteWorkspaceVisible();
+    if (!visible) { guideSequence++; guideController?.suspend(); return; }
+    if (guideController) { guideController.show(guideTopic); return; }
+    const sequence = ++guideSequence;
+    if (!guideLoader) guideLoader = new Promise((resolve, reject) => {
+      if (window.RelatumNoteGuide) { resolve(); return; }
+      const script = document.createElement('script'); script.src = 'note-guide.js';
+      const timer = setTimeout(() => finish(new Error(tr('readFailed'))), 10000);
+      function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error || !window.RelatumNoteGuide) { script.remove(); reject(error || new Error(tr('readFailed'))); } else resolve(); }
+      script.onload = () => finish(); script.onerror = () => finish(new Error(tr('readFailed'))); document.head.append(script);
+    }).catch(error => { guideLoader = null; throw error; });
+    guideLoader.then(() => {
+      if (sequence !== guideSequence || !noteWorkspaceVisible() || guideContent.hidden || !root.classList.contains('links-overlay-open')) return;
+      guideController ||= window.RelatumNoteGuide.create({ host: guideContent, language, isCurrent: () => noteWorkspaceVisible() && !guideContent.hidden && root.classList.contains('links-overlay-open'), whenSettled: whenEditorInputSettled, notify: showToast });
+      guideController.show(guideTopic);
+    }).catch(error => { if (sequence === guideSequence && noteWorkspaceVisible()) showToast(error.message, 'error'); });
   }
 
   function updateSidePanel() {
@@ -4303,7 +4232,7 @@
     if (notebooksContent) notebooksContent.hidden = selectedMode !== 'notebooks';
     if (linksContent) linksContent.hidden = selectedMode !== 'links';
     if (canvasSettingsContent) canvasSettingsContent.hidden = selectedMode !== 'canvas';
-    if (guideContent) { guideContent.hidden = selectedMode !== 'guide'; if (open && selectedMode === 'guide') renderGuide(); }
+    if (guideContent) { guideContent.hidden = selectedMode !== 'guide'; renderGuide(); }
     if (outlineContent) { outlineContent.hidden = selectedMode !== 'outline'; outlineContent.setAttribute('aria-label', notebookCopy('outline')); }
     ['notebooks', 'links', 'canvas', 'guide', 'outline'].forEach((mode) => {
       const button = $('[data-note-action="side-' + mode + '"]');
@@ -4340,7 +4269,7 @@
     const placeAbove = below < 120 && above > below;
     const available = placeAbove ? above : below;
     const setStyle = (name, value) => { if (popover.style[name] !== value) popover.style[name] = value; };
-    setStyle('maxHeight', Math.min(popover === settingsPop ? 690 : 780, available) + 'px');
+    setStyle('maxHeight', Math.min(780, available) + 'px');
     const left = Math.max(12, Math.min(anchor.right - surface.left - root.clientLeft - popover.offsetWidth, root.clientWidth - popover.offsetWidth - 12));
     const wantedTop = placeAbove ? anchor.top - surface.top - root.clientTop - popover.offsetHeight - 8 : anchor.bottom - surface.top - root.clientTop + 8;
     const top = Math.max(12, Math.min(wantedTop, root.clientHeight - popover.offsetHeight - 12));
@@ -4351,14 +4280,14 @@
     sidePopoverFrame = requestAnimationFrame(() => {
       sidePopoverFrame = 0;
       if (!state.active || !root.classList.contains('links-overlay-open')) return;
-      positionSidePopover(settingsPop, settingsTrigger); positionSidePopover(imageTextTools, imageTextToggle);
-      if (performance.now() < sideMotionUntil && ((!settingsPop?.hidden && state.settingsOpen) || !imageTextTools?.hidden)) scheduleSidePopoverPosition();
+      positionSidePopover(imageTextTools, imageTextToggle);
+      if (performance.now() < sideMotionUntil && !imageTextTools?.hidden) scheduleSidePopoverPosition();
     });
   }
   window.addEventListener('resize', () => { sideMotionUntil = performance.now() + 270; scheduleSidePopoverPosition(); });
   if (window.ResizeObserver) {
     const sidePopoverObserver = new ResizeObserver(scheduleSidePopoverPosition);
-    [root, settingsPop, imageTextTools].filter(Boolean).forEach((element) => sidePopoverObserver.observe(element));
+    [root, imageTextTools].filter(Boolean).forEach((element) => sidePopoverObserver.observe(element));
   }
   function clearClosedNotebookTree() {
     if (root.classList.contains('links-overlay-open') || !notebookTreeEl) return;
@@ -4410,8 +4339,8 @@
     cancelLinksRefresh();
     sideMotionUntil = performance.now() + 270;
     if (!open) {
-      const focusWasInside = sidePane?.contains(document.activeElement) || settingsPop?.contains(document.activeElement) || imageTextTools?.contains(document.activeElement);
-      setNoteSettingsOpen(false, { restoreFocus: false });
+      const focusWasInside = sidePane?.contains(document.activeElement) || settingsDialog?.dialog.contains(document.activeElement) || imageTextTools?.contains(document.activeElement);
+      setNoteSettingsOpen(false, { restoreFocus: false, instant: true });
       state.imageText.toggleSeq += 1; state.imageText.toggleIntent = null; state.imageTextCleanupPath = '';
       state.imageText.active = false;
       if (liveEditor) liveEditor.setImageTextMode(false);
@@ -4655,6 +4584,7 @@
     const initialized = await initializeWorkspace();
     revealColdBoot();
     syncOutline();
+    renderGuide();
     if (!initialized) return false;
     await resumeNoteGraph();
     if (browserDisclosure.hidden && localStorage.getItem('canvas:noteSidebarView:v1') === 'browse') await setBrowserMode(true);
@@ -4678,10 +4608,11 @@
     noteGraphIntentSequence++; noteGraph?.deactivate();
     await flushNotebookSettings(); browserSequence++; browserIntent = root.classList.contains('note-browser-mode'); updateBrowserToggle();
     stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); persistViewStates();
-    setNoteSettingsOpen(false, { restoreFocus: false }); setLibraryPanel('', { restoreFocus: false });
+    setNoteSettingsOpen(false, { restoreFocus: false, instant: true }); setLibraryPanel('', { restoreFocus: false });
     if (noteBrowser) noteBrowser.suspend({ keepView: true });
     closeNoteModal(); wikiOpenTask = null;
     state.active = false;
+    renderGuide();
     indexActivity(false);
     cancelSideClose();
     if (!sidePane || root.hidden || getComputedStyle(sidePane).visibility === 'hidden') clearClosedNotebookTree();
@@ -4693,6 +4624,7 @@
   // the reading DOM. Rapidly switching back must not clear the newly active page.
   new MutationObserver(() => {
     syncOutline();
+    renderGuide();
     indexActivity(noteWorkspaceVisible());
     if (!root.hidden && state.active && noteWorkspaceVisible()) {
       resumeLinksRefresh(); scheduleStatistics(state.current); scheduleDocumentPrefetch();
@@ -4702,25 +4634,23 @@
     if (root.hidden && !state.active && window.RelatumNoteLiveEditor) window.RelatumNoteLiveEditor.releaseReadingDocument(readingHost);
   }).observe(root, { attributes: true, attributeFilter: ['hidden'] });
 
-  root.addEventListener('click', async (event) => {
+  async function handleWorkspaceClick(event) {
     if (event.target.closest('[data-note-action="toggle-graph"]')) { toggleNoteGraph(); return; }
     if (event.target.closest('[data-note-action="retry-graph"]')) { resumeNoteGraph(); return; }
     if (event.target.closest('[data-note-action="graph-notebooks"]')) { setSideOpen(!root.classList.contains('links-overlay-open')); return; }
     if (event.target.closest('[data-note-action="toggle-browser"]')) { setBrowserMode(!browserIntent); return; }
     if (state.imageTextBusy) return;
-    const libraryAction = event.target.closest('[data-note-library-action]');
-    if (libraryAction && librarySettings.contains(libraryAction)) {
-      const command = libraryAction.dataset.noteLibraryAction;
-      if (command === 'reset-open') toggleLibraryReset(libraryResetConfirm.hidden, true);
-      else if (command === 'reset-cancel') toggleLibraryReset(false, true);
-      else if (command === 'reset-accept') {
-        if (state.renamePath && !(await finishInlineRename())) return;
-        resetLibraryPreferences();
-      }
+    // Capture settings identity before the common command path waits for IME.
+    const settingsAction = event.target.closest('[data-note-action]');
+    const settingsName = settingsAction?.dataset.noteAction;
+    if (['toggle-settings', 'toggle-library-settings', 'canvas-default-settings', 'guide-settings'].includes(settingsName)) {
+      if (settingsAction.disabled || !noteActionAvailable(settingsName)) return;
+      const category = { 'toggle-library-settings': 'files', 'canvas-default-settings': 'canvas', 'guide-settings': 'guide' }[settingsName];
+      setNoteSettingsOpen(settingsName === 'toggle-settings' ? !state.settingsOpen : true, { category, trigger: settingsAction });
       return;
     }
     const sortChoice = event.target.closest('[data-note-sort-mode]');
-    if (sortChoice && root.contains(sortChoice)) {
+    if (sortChoice && (root.contains(sortChoice) || settingsPop.contains(sortChoice))) {
       const fromMenu = sortMenu.contains(sortChoice);
       if (state.renamePath && !(await finishInlineRename())) return;
       setTreeSort(sortChoice.dataset.noteSortMode);
@@ -4767,14 +4697,12 @@
     else if (name === 'new-folder') createEntry('folder');
     else if (name === 'refresh') triggerExternalSync({ announce: true });
     else if (name === 'toggle-sort') setLibraryPanel(state.libraryPanel === 'sort' ? '' : 'sort', { restoreFocus: false });
-    else if (name === 'toggle-library-settings') setLibraryPanel(state.libraryPanel === 'settings' ? '' : 'settings', { restoreFocus: false });
     else if (name === 'toggle-all-folders') toggleAllFolders();
     else if (name === 'toggle-all-notebooks') toggleAllNotebooks();
     else if (name === 'new-notebook') createNotebook();
     else if (name === 'reveal-root' && state.notebookRoot !== null) reveal(state.notebookRoot, false);
     else if (name === 'toggle-focus') setFocusMode(!state.focusMode);
     else if (name === 'toggle-source' && state.current) await setViewMode(state.viewMode === 'source' ? 'live' : 'source');
-    else if (name === 'toggle-settings') { if (!state.settingsOpen) setLibraryPanel('', { restoreFocus: false }); setNoteSettingsOpen(!state.settingsOpen); }
     else if (name === 'current-menu' && state.current) {
       if (contextOpen && contextMenu.dataset.source === 'current-menu') {
         closeContextMenu();
@@ -4791,7 +4719,8 @@
     else if (name === 'side-guide') setSideMode('guide');
     else if (name === 'side-outline') setSideMode('outline');
     else if (name === 'close-links') setSideOpen(false);
-  });
+  }
+  root.addEventListener('click', handleWorkspaceClick);
 
   document.addEventListener('pointerdown', (event) => {
     const target = event.target instanceof Element ? event.target : null;
@@ -4821,16 +4750,6 @@
     });
   }
   selectionMatchHighlightToggle?.addEventListener('change', () => applySelectionMatchHighlight(selectionMatchHighlightToggle.checked, true));
-  if (settingsPop) {
-    settingsPop.addEventListener('scroll', () => settingsPop.classList.toggle('is-scrolled', settingsPop.scrollTop > 3), { passive: true });
-    settingsPop.addEventListener('click', (event) => {
-      const action = event.target.closest('[data-note-settings-action]');
-      if (!action) return;
-      if (action.dataset.noteSettingsAction === 'reset-open') toggleNoteSettingsReset(settingsResetConfirm && settingsResetConfirm.hidden);
-      else if (action.dataset.noteSettingsAction === 'reset-cancel') toggleNoteSettingsReset(false);
-      else if (action.dataset.noteSettingsAction === 'reset-accept') resetNoteSettings();
-    });
-  }
   if (libraryNameInput) {
     libraryNameInput.addEventListener('input', () => {
       const base = normalizeCustomBase(libraryNameInput.value);
@@ -4938,9 +4857,6 @@
     if (state.libraryPanel && !event.target.closest('.note-library-popover') && !event.target.closest('[data-note-action="toggle-sort"]') && !event.target.closest('[data-note-action="toggle-library-settings"]')) {
       setLibraryPanel('', { restoreFocus: false });
     }
-    if (state.settingsOpen && settingsPop && settingsTrigger && !settingsPop.contains(event.target) && !settingsTrigger.contains(event.target)) {
-      setNoteSettingsOpen(false, { restoreFocus: false });
-    }
   });
   document.addEventListener('contextmenu', (event) => {
     if (!contextOpen || !state.active || (!root.contains(event.target) && !contextMenu.contains(event.target))) return;
@@ -4968,17 +4884,10 @@
     }
     if (state.libraryPanel && event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
-      if (libraryResetConfirm && !libraryResetConfirm.hidden) toggleLibraryReset(false, true);
-      else setLibraryPanel('');
+      setLibraryPanel('');
       return;
     }
-    if (state.settingsOpen && event.key === 'Escape') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (settingsResetConfirm && !settingsResetConfirm.hidden) toggleNoteSettingsReset(false);
-      else setNoteSettingsOpen(false);
-      return;
-    }
+    if (state.settingsOpen) return;
     if ((state.imageText.active || state.imageTextCleanupPath) && event.key === 'Escape') {
       event.preventDefault();
       state.imageTextCleanupPath = '';
@@ -5009,7 +4918,7 @@
     const settings = flushNotebookSettings(keepalive);
     return Promise.all([save, settings]).then(([saved]) => saved);
   }
-  window.addEventListener('blur', () => { closeWorkspacePopovers(); noteBrowser?.closePopovers({ instant: true }); flushWorkspaceState(); });
+  window.addEventListener('blur', () => { closeContextMenu({ instant: true }); setLibraryPanel('', { restoreFocus: false, instant: true }); stopShortcutRecording(true); noteBrowser?.closePopovers({ instant: true }); flushWorkspaceState(); });
   window.addEventListener('relatum:note-canvas-dirty', () => desktopDirty(hasPendingEdits()));
   window.addEventListener('relatum:note-canvas-error', event => { showSaveError(event.detail); desktopDirty(true); });
   window.addEventListener('resize', closeContextMenu);
@@ -5030,10 +4939,12 @@
       noteGraphIntentSequence++; noteGraph?.deactivate();
       cancelSideClose(); clearClosedNotebookTree(); cancelLinksRefresh();
       noteBrowser?.suspend({ keepView: true }); closeWorkspacePopovers();
+      renderGuide();
       cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0;
       stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); syncOutline();
       flushWorkspaceState();
     } else if (noteWorkspaceVisible()) {
+      renderGuide();
       syncOutline(); resumeNoteGraph(); noteBrowser?.resume();
       if (browserIntent && browserDisclosure.hidden) setBrowserMode(true);
       state.externalSyncUnchanged = 0; resumeLinksRefresh();
@@ -5042,13 +4953,14 @@
     }
   }
   document.addEventListener('visibilitychange', syncNotePageVisibility);
-  window.addEventListener('pagehide', () => { closeNoteModal(); indexActivity(false, true); });
+  window.addEventListener('pagehide', () => { closeNoteModal(); guideSequence++; guideController?.suspend(); indexActivity(false, true); });
   window.addEventListener('canvasdesktop:visibility', syncNotePageVisibility);
   window.addEventListener('pagehide', () => { notePageWasVisible = false; noteVisibilityEpoch++; state.externalSeq++; state.linksSeq++; browserSequence++; noteGraphIntentSequence++; noteGraph?.deactivate({ clearCache: true }); cancelSideClose(); clearClosedNotebookTree(); noteOutline?.suspend(); outlineLoadSequence++; state.linksRefreshSuspended = true; cancelLinksRefresh(); if (noteBrowser) noteBrowser.suspend({ keepView: true }); closeWorkspacePopovers(); cancelAnimationFrame(sidePopoverFrame); sidePopoverFrame = 0; stopExternalSync(); stopDocumentPrefetch(); cancelStatistics(); flushWorkspaceState(true); });
   window.addEventListener('pageshow', () => { state.linksRefreshSuspended = false; syncNotePageVisibility(); });
   window.addEventListener('beforeunload', () => { cancelTabCloseMotion(); cancelTabScroll(); cancelLinksRefresh(); stopExternalSync(); flushWorkspaceState(true); });
   document.addEventListener('relatum:languagechange', () => { updateSidePanel(); updateBrowserToggle(); noteGraph?.setLanguage(); if (noteBrowser) noteBrowser.setLanguage(); renderTree(); renderTabs(); renderLinks(); renderLibraryPreferences(); renderCurrentPath(state.openingPath || (state.current && state.current.path) || ''); updateFocusToggle(); updateViewToggle(); updateImageTextTools(); if (state.settingsOpen) renderNoteShortcutSettings(); if (state.current) { rememberEditorState(state.current); updateDocumentStats(null, state.current.characterCount, state.current.wordCount); } });
   if (window.CanvasDesktop && typeof window.CanvasDesktop.setBeforeCloseHandler === 'function') window.CanvasDesktop.setBeforeCloseHandler(flushWorkspaceState);
+  initializeSettingsDialog();
   initializeEditor(); renderTabs(); updateEditorVisibility(); renderLinks(); renderLibraryPreferences(); updateSidePanel(); updateFocusToggle(); updateImageTextTools(); syncNoteSettingsFontScale(); renderNoteShortcutSettings();
   updateBrowserControls();
   window.CanvasNoteWorkspace = { activate, deactivate, preload, preloadGraph, flushSave, toggleCanvasPanel,

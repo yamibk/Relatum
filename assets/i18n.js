@@ -29,6 +29,7 @@
     '点击“＋”后按下新的快捷键；同一命令可以保留多个组合。': 'Click “+”, then press a shortcut. A command may keep multiple bindings.',
     '恢复笔记设置默认值？': 'Restore default Note settings?', '重置正文字号、图片文本框字号比例和编辑器快捷键。': 'Reset note text size, image text scale and editor shortcuts.',
     '图片文本框字号比例': 'Image text size scale',
+    '画布属性': 'Canvas properties',
     '高亮相同文字': 'Highlight matching text',
     '选中文字时，高亮附近的相同内容。': 'Highlight matching text nearby when text is selected.',
     '重置正文字号、图片文字、相同文字高亮、图谱节点间距、图谱预加载和编辑器快捷键。': 'Reset text size, image text scale, matching text highlighting, graph node spacing, graph preloading and editor shortcuts.',

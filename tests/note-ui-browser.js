@@ -52,7 +52,7 @@ async function run(browser, mode) {
       const response = page.waitForResponse(response => response.url().includes('/api/note-query') && response.request().postDataJSON()?.q === text);
       await query.fill(text); await query.press('Enter'); await response; await busy();
     };
-    const rightAt = async locator => { const box = await locator.boundingBox(); await page.mouse.click(box.x + 12, box.y + box.height / 2, { button: 'right' }); };
+    const rightAt = async locator => { await locator.scrollIntoViewIfNeeded(); const box = await locator.boundingBox(); await page.mouse.click(box.x + 12, box.y + box.height / 2, { button: 'right' }); };
     await page.keyboard.press('Control+Shift+F'); await search('sharedtoken');
     await page.locator('.note-browser-result').first().evaluate(node => { window.__firstRow = node; window.__firstTitle = node.firstElementChild; });
     await search('sharedtoken ');
@@ -119,6 +119,9 @@ async function run(browser, mode) {
     await sort.click(); assert.equal(await scopeMenu.isHidden(), true, 'only one popup is open');
     await sort.press('ArrowDown'); await sort.press('Enter'); await busy();
     assert.equal(await sort.getAttribute('aria-expanded'), 'false');
+    // Search filters can extend beneath the intentionally overlaying right sidebar.
+    await page.locator('[data-note-action="close-links"]').click();
+    await page.locator('.note-links-pane').evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))));
     await page.locator('.note-search-filter-button').click();
     if (process.env.RELATUM_ARTIFACT_DIR) {
       fs.mkdirSync(process.env.RELATUM_ARTIFACT_DIR, { recursive: true }); await sleep(200);
@@ -176,6 +179,7 @@ async function run(browser, mode) {
     const returned = page.waitForResponse(response => response.url().includes('/api/note-query') && response.request().postDataJSON()?.q === pendingText);
     await page.locator('.note-browser-back').click(); await returned; await busy();
     await page.evaluate(() => T.openNote('Main.md'));
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     const folder = page.locator('[data-role="note-tree"] .note-tree-row[data-note-path="Folder"]');
     await rightAt(folder); await menu.waitFor(); await rightAt(menu); assert(await menu.evaluate(node => node.inert)); await menu.waitFor({ state: 'hidden' });
     await rightAt(folder); await menu.waitFor();
@@ -183,6 +187,7 @@ async function run(browser, mode) {
     await menu.waitFor({ state: 'hidden' }); assert.equal(await page.locator('.note-notebook-colors').count(), 0, 'second right click dismisses rather than switching');
     await page.locator('.cm-content').press('Shift+F10'); await menu.waitFor(); await page.keyboard.press('ArrowRight');
     const submenu = page.locator('.note-context-submenu'); await submenu.waitFor(); await rightAt(submenu); await menu.waitFor({ state: 'hidden' });
+    await page.locator('[data-note-action="toggle-notebooks"]').click();
     const notebook = page.locator('[data-role="note-notebook-tree"] > .note-notebook-root > .note-tree-row[data-note-path="CustomNotebook/Study"]');
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => { document.body.dataset.startTheme = theme; }, theme);
@@ -200,9 +205,11 @@ async function run(browser, mode) {
       await rightAt(menu); await menu.waitFor({ state: 'hidden' });
     }
     await rightAt(notebook); await menu.waitFor(); await page.locator('[data-note-action="toggle-library-settings"]').click(); assert.equal(await menu.isHidden(), true);
+    await page.locator('[data-settings-action="close"]').click();
     await notebook.hover(); await sleep(120); assert.equal(await page.locator('#relatum-ui-tooltip').getAttribute('aria-hidden'), 'false', 'normal row tooltips resume after palette closes');
-    await page.locator('[data-note-action="toggle-settings"]').click(); assert.equal(await page.locator('[data-role="note-library-settings"]').isHidden(), true);
-    await page.evaluate(() => window.dispatchEvent(new Event('blur'))); assert.equal(await page.locator('[data-role="note-settings-pop"]').isHidden(), true);
+    await page.locator('[data-note-action="toggle-settings"]').click();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur'))); assert.equal(await page.locator('[data-role="note-settings-dialog"]').isVisible(), true);
+    await page.locator('[data-settings-action="close"]').click();
 
     const highlightKey = 'canvas:noteSelectionMatchHighlight:v1';
     const highlightToggle = page.locator('[data-role="note-selection-match-highlight"]');
@@ -215,6 +222,7 @@ async function run(browser, mode) {
     });
     const selected = await page.evaluate(() => T.editor.snapshot());
     await settingsButton.click();
+    await page.locator('nav [data-settings-category="editing"]').click();
     assert.equal(await page.locator('#note-settings-editing-title').textContent(), '编辑');
     assert.equal(await highlightToggle.isChecked(), false, 'automatic matching defaults off in every shell');
     assert.equal(await page.evaluate(key => localStorage.getItem(key), highlightKey), null, 'startup does not write a default preference');
@@ -233,6 +241,7 @@ async function run(browser, mode) {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.state.active && !T.state.openingPath);
     await settingsButton.click();
+    await page.locator('nav [data-settings-category="editing"]').click();
     assert.equal(await highlightToggle.isChecked(), true, 'reload restores an enabled preference');
     assert(await page.evaluate(() => {
       const plugin = RelatumCodeMirror.highlightSelectionMatches().find(extension => extension instanceof RelatumCodeMirror.ViewPlugin);
@@ -243,16 +252,17 @@ async function run(browser, mode) {
       await highlightToggle.setChecked(false); await highlightToggle.setChecked(true);
       if (process.env.RELATUM_ARTIFACT_DIR) await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR, 'note-ui-' + mode + '-highlight-' + theme + '.png') });
     }
-    await page.locator('[data-note-settings-action="reset-open"]').click();
-    assert((await page.locator('[data-role="note-settings-reset-confirm"]').textContent()).includes('matching text highlighting'));
-    await page.locator('[data-note-settings-action="reset-accept"]').click();
+    await page.locator('nav [data-settings-category="editing"]').click();
+    await page.locator('[data-settings-action="reset-category"]').click();
+    assert((await page.locator('.relatum-settings-confirm').textContent()).includes('Editing'));
+    await page.locator('[data-settings-action="accept-reset"]').click();
     assert.equal(await highlightToggle.isChecked(), false);
     assert.equal(await page.evaluate(key => localStorage.getItem(key), highlightKey), null, 'restore defaults removes the preference');
     assert(await page.evaluate(() => {
       const plugin = RelatumCodeMirror.highlightSelectionMatches().find(extension => extension instanceof RelatumCodeMirror.ViewPlugin);
       return T.editor.view.plugin(plugin) === null;
     }), 'restore defaults removes the matching plugin');
-    await settingsButton.click();
+    await page.locator('[data-settings-action="close"]').click();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.T?.state.current?.path === 'Main.md' && T.state.active && !T.state.openingPath);
     assert.equal(await highlightToggle.isChecked(), false, 'a reset stays disabled after reload');

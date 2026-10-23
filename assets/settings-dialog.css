@@ -1,0 +1,117 @@
+/* Settings uses opaque monochrome surfaces in every homepage background. */
+.relatum-settings {
+  --settings-bg: #fff; --settings-nav: #f5f5f7; --settings-card: #f6f6f7;
+  --settings-text: #202022; --settings-muted: #77777d; --settings-selected: #e5e5e8;
+  --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
+  --surface: var(--settings-bg); --accent: var(--settings-text);
+  --note-settings-card: var(--settings-card); --note-settings-line: transparent;
+  box-sizing: border-box; width: min(960px, calc(100vw - 48px)); height: min(680px, calc(100dvh - 48px));
+  max-width: none; max-height: none; margin: auto; padding: 0; border: 0; border-radius: 22px;
+  color: var(--settings-text); background: var(--settings-bg); overflow: hidden;
+  box-shadow: 0 32px 100px #0003, 0 4px 18px #0001;
+  font: 13px/1.5 var(--font-ui, system-ui, sans-serif);
+}
+.relatum-settings[open] { display: grid; grid-template-columns: 216px minmax(0, 1fr); animation: relatumSettingsIn 180ms ease both; }
+.relatum-settings[hidden] { display: none; }
+.relatum-settings::backdrop { background: rgba(0,0,0,.23); }
+.relatum-settings.is-closing { animation: relatumSettingsOut 140ms ease both; }
+.relatum-settings *, .relatum-settings *::before, .relatum-settings *::after { box-sizing: border-box; }
+.relatum-settings button, .relatum-settings input, .relatum-settings select { font: inherit; }
+.relatum-settings button { cursor: pointer; color: inherit; }
+.relatum-settings button:focus-visible, .relatum-settings input:focus-visible, .relatum-settings select:focus-visible { outline: 2px solid var(--settings-muted); outline-offset: 3px; }
+.relatum-settings svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.relatum-settings-sidebar { min-height: 0; display: flex; flex-direction: column; padding: 30px 16px 20px; background: var(--settings-nav); }
+.relatum-settings-sidebar h2 { font-size: 19px; font-weight: 650; letter-spacing: -.04em; margin: 0 12px 24px; }
+.relatum-settings-search { display: flex; align-items: center; gap: 7px; border-radius: 9px; background: var(--settings-bg); padding: 9px 10px; color: var(--settings-muted); }
+.relatum-settings-search svg { width: 15px; height: 15px; }
+.relatum-settings-search input { min-width: 0; width: 100%; border: 0; background: transparent; color: var(--settings-text); font-size: 12px; outline: none; }
+.relatum-settings-nav { display: flex; flex-direction: column; gap: 4px; margin-top: 22px; overflow-y: auto; }
+.relatum-settings-nav button { display: flex; align-items: center; gap: 11px; min-height: 39px; padding: 9px 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; white-space: nowrap; }
+.relatum-settings-nav button:hover { background: var(--settings-card); }
+.relatum-settings-nav button[aria-current="page"] { background: var(--settings-selected); font-weight: 620; }
+.relatum-settings-reset-all { margin-top: auto; padding: 22px 12px 0; border: 0; background: transparent; color: var(--settings-muted) !important; text-align: left; font-size: 11px !important; }
+.relatum-settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.relatum-settings-header { display: flex; flex: none; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 30px 32px 24px; }
+.relatum-settings-header p { margin: 0 0 5px; color: var(--settings-muted); font-size: 10px; letter-spacing: .1em; }
+.relatum-settings-header h3 { margin: 0; font-size: 25px; line-height: 1.2; font-weight: 620; letter-spacing: -.035em; }
+.relatum-settings-close { display: grid; place-items: center; width: 30px; height: 30px; padding: 6px; border: 0; border-radius: 50%; background: var(--settings-card); color: var(--settings-muted) !important; }
+.relatum-settings-close:hover { background: var(--settings-selected); }
+.relatum-settings-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 32px 24px; scrollbar-width: thin; scrollbar-color: #9996 transparent; }
+.relatum-settings-pages { display: block; color: inherit; }
+.relatum-settings-pages[hidden], .relatum-settings [hidden] { display: none !important; }
+.relatum-settings-page { padding: 0 !important; border: 0 !important; margin: 0 !important; background: transparent !important; box-shadow: none !important; width: auto !important; max-height: none !important; position: static !important; overflow: visible !important; animation: none !important; }
+.relatum-settings-page > h3, .relatum-settings-page > .note-settings-section-head { margin: 4px 0 14px; font-size: 14px; }
+.relatum-settings-page.note-settings-section > h3 { display: none; }
+.relatum-settings-page .note-settings-font { margin: 0 0 12px; padding: 18px 20px; border-radius: 14px; background: var(--settings-card); gap: 9px; }
+.relatum-settings-page .note-settings-font strong { color: var(--settings-text); font-size: 13px; font-weight: 580; }
+.relatum-settings-page .note-settings-font output { color: var(--settings-muted); font-size: 12px; }
+.relatum-settings input[type="range"] { accent-color: var(--settings-text); }
+.relatum-settings-page .note-settings-font small { color: var(--settings-muted); font-size: 10px; }
+.relatum-settings-page .note-settings-toggle, .relatum-settings-page .note-graph-preload-setting { display: flex; align-items: center; gap: 12px; padding: 18px 20px; margin: 0; border-radius: 14px; background: var(--settings-card); color: var(--settings-text); }
+.relatum-settings-page input[type="checkbox"], .relatum-settings-page input[type="radio"] { accent-color: var(--settings-text); width: 16px; height: 16px; flex: none; }
+.relatum-settings-page .note-settings-hint, .relatum-settings-page .note-graph-preload-hint, .relatum-settings-page > p { color: var(--settings-muted); font-size: 12px; line-height: 1.7; margin: 12px 3px 24px; }
+.relatum-settings-page .note-library-settings-head { display: none; }
+.relatum-settings-page .note-library-sort-options, .relatum-settings-page .note-library-name-options { display: grid; gap: 5px; margin-bottom: 24px; padding: 8px; border-radius: 14px; background: var(--settings-card); }
+.relatum-settings-page .note-sort-option, .relatum-settings-page .note-name-option { background: transparent; border: 0; border-radius: 8px; padding: 10px 12px; color: var(--settings-muted); text-align: left; }
+.relatum-settings-page .note-sort-option.is-selected, .relatum-settings-page .note-name-option.is-selected { background: var(--settings-selected); color: var(--settings-text); }
+.relatum-settings-page .note-library-name-field input { background: var(--settings-card); color: var(--settings-text); border: 0; padding: 11px 13px; border-radius: 9px; }
+.relatum-settings-guide-option { display: flex; align-items: center; gap: 14px; padding: 19px 20px; margin-bottom: 10px; border-radius: 14px; background: var(--settings-card); cursor: pointer; }
+.relatum-settings-guide-option:has(input:checked) { background: var(--settings-selected); }
+.relatum-settings-guide-option strong, .relatum-settings-guide-option small { display: block; }
+.relatum-settings-guide-option small { color: var(--settings-muted); margin-top: 4px; }
+.relatum-settings-footer { min-height: 59px; padding: 12px 32px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--settings-muted); }
+.relatum-settings-footer button { border: 0; background: transparent; padding: 4px 0; font-size: 11px; color: var(--settings-muted); }
+.relatum-settings-result { display: flex; flex-direction: column; width: 100%; border: 0; border-radius: 12px; padding: 16px 18px; margin-bottom: 8px; background: var(--settings-card); text-align: left; }
+.relatum-settings-result strong { font-weight: 580; }
+.relatum-settings-result span { color: var(--settings-muted); font-size: 11px; margin-top: 5px; }
+.relatum-settings-confirm { position: absolute; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: #0003; }
+.relatum-settings-confirm > div { width: min(390px, 100%); padding: 28px; border-radius: 18px; background: var(--settings-bg); box-shadow: 0 12px 50px #0003; }
+.relatum-settings-confirm h3 { font-size: 17px; margin: 0 0 12px; }
+.relatum-settings-confirm p { color: var(--settings-muted); line-height: 1.8; font-size: 12px; margin-bottom: 22px; }
+.relatum-settings-confirm footer { display: flex; justify-content: flex-end; gap: 10px; }
+.relatum-settings-confirm button { border: 0; border-radius: 9px; background: var(--settings-card); padding: 9px 15px; }
+.relatum-settings-confirm [data-settings-action="accept-reset"] { color: var(--settings-bg); background: var(--settings-text); }
+.relatum-settings .note-shortcut-row { border: 0; border-radius: 10px; padding: 12px; margin-bottom: 4px; background: var(--settings-card); }
+.relatum-settings .note-shortcut-row strong { font-size: 12px; }
+.relatum-settings .note-canvas-field { border: 0; margin-bottom: 4px; padding: 10px; border-radius: 8px; background: var(--settings-card); }
+.relatum-settings .note-canvas-panel-title { display: none; }
+.relatum-settings .note-canvas-default-tabs { margin: 0 0 18px; }
+.relatum-settings .note-canvas-default-tabs button { color: var(--settings-muted); }
+.relatum-settings .note-canvas-default-tabs button[aria-selected="true"] { color: var(--settings-text); background: var(--settings-selected); }
+.relatum-settings .note-canvas-color-popup { z-index: 60; background: var(--settings-bg); color: var(--settings-text); }
+.relatum-settings .note-canvas-field > input:not([type="checkbox"]):not([type="range"]), .relatum-settings .note-canvas-field > select { color: var(--settings-text); background: var(--settings-bg); }
+.note-canvas-default-entry { padding: 14px 10px; font-size: 12px; line-height: 1.7; color: var(--text-secondary); }
+.note-canvas-default-entry button { display: block; margin-top: 14px; padding: 9px 13px; border: 0; border-radius: 9px; background: rgba(128,128,128,.1); color: var(--text); cursor: pointer; }
+.note-guide .note-guide-topic-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
+.note-guide-topic-head h3 { margin: 0; }
+.note-guide-topic-head button { border: 0; border-radius: 7px; background: rgba(128,128,128,.08); color: var(--text-secondary); padding: 5px 8px; cursor: pointer; font: 11px var(--font-ui); }
+.note-guide .note-guide-example { border-bottom: 0; margin-bottom: 20px; padding: 0 0 16px; }
+.note-guide-example > pre { margin-top: 10px; padding: 11px 30px 11px 11px; background: rgba(128,128,128,.06); border-radius: 9px; }
+.note-guide-example > .node-text { overflow: hidden; }
+.note-guide-example > .node-text h1, .note-guide-example > .node-text h2 { font-size: 18px; }
+.note-guide-example .node-text table { font-size: 11px; }
+.note-guide-example .mermaid-diagram { margin: 0; }
+.note-guide .note-guide-copy { right: 4px; bottom: 25px; }
+body.start-page[data-start-theme="dark"] .relatum-settings {
+  --settings-bg: #1c1c1e; --settings-nav: #161617; --settings-card: #262628;
+  --settings-text: #f4f4f5; --settings-muted: #a0a0a6; --settings-selected: #353538;
+  --text: var(--settings-text); --text-secondary: var(--settings-muted); --text-tertiary: var(--settings-muted);
+  box-shadow: 0 32px 100px #0009;
+}
+@keyframes relatumSettingsIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes relatumSettingsOut { to { opacity: 0; transform: translateY(5px) scale(.99); } }
+@media (max-width: 720px) {
+  .relatum-settings { width: calc(100vw - 24px); height: calc(100dvh - 24px); border-radius: 18px; }
+  .relatum-settings[open] { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
+  .relatum-settings-sidebar { padding: 18px 18px 12px; gap: 10px; }
+  .relatum-settings-sidebar h2 { font-size: 17px; margin: 0; }
+  .relatum-settings-nav { flex-direction: row; overflow-x: auto; margin: 0; flex: none; gap: 2px; padding: 3px; }
+  .relatum-settings-nav button { min-height: 34px; padding: 7px 10px; font-size: 12px; }
+  .relatum-settings-nav svg { display: none; }
+  .relatum-settings-reset-all { margin: 0; padding: 0 3px; font-size: 10px !important; }
+  .relatum-settings-header { padding: 20px 22px; }
+  .relatum-settings-header h3 { font-size: 22px; }
+  .relatum-settings-scroll { padding-inline: 22px; }
+  .relatum-settings-footer { padding-inline: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { .relatum-settings[open], .relatum-settings.is-closing { animation: none; } }

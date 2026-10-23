@@ -102,7 +102,9 @@ async function freePort() {
       });
       assert.deepEqual(geometry.first, [40, 40, 40, 0, 0, 0]);
       assert.deepEqual(geometry.second, [48, 48, 0]);
-      assert.equal(geometry.border[0], geometry.border[1]);
+      const borderColors = geometry.border.map(color => color.match(/[\d.]+/g).map(Number));
+      assert.deepEqual(borderColors[0].slice(0, 3), borderColors[1].slice(0, 3));
+      assert(Math.abs(borderColors[0][3] - borderColors[1][3]) < .005, 'sidebar borders keep the same subtle tone across browser color rounding');
       assert.equal(geometry.shadow, 'none');
     }
     async function toggleAndCheckAnimation() {
@@ -122,12 +124,12 @@ async function freePort() {
     }
     async function checkSettingsPopover() {
       await page.locator('[data-note-action="toggle-settings"]').click();
-      const popover = page.locator('[data-role="note-settings-pop"]');
+      const popover = page.locator('[data-role="note-settings-dialog"]');
       await popover.waitFor();
-      assert.equal(await popover.evaluate(el => el.parentElement.classList.contains('note-workspace')), true);
-      const bounds = await popover.boundingBox(), surface = await page.locator('.note-workspace').boundingBox();
-      assert(bounds.x >= surface.x + 11 && bounds.x + bounds.width <= surface.x + surface.width - 11);
-      assert(bounds.y >= surface.y + 11 && bounds.y + bounds.height <= surface.y + surface.height - 11);
+      assert.equal(await popover.evaluate(el => el.matches(':modal') && el.parentElement === document.body), true);
+      const bounds = await popover.boundingBox(), viewport = page.viewportSize();
+      assert(bounds.x >= 11 && bounds.x + bounds.width <= viewport.width - 11);
+      assert(bounds.y >= 11 && bounds.y + bounds.height <= viewport.height - 11);
       await popover.locator('input').first().focus();
       await page.evaluate(() => document.querySelector('[data-note-action="close-links"]').click());
       assert.equal(await popover.evaluate(el => el.inert), true);
@@ -209,7 +211,7 @@ async function freePort() {
     assert.deepEqual(await page.locator('.note-workspace svg.note-icon use').evaluateAll(uses =>
       uses.filter(use => !document.getElementById(use.getAttribute('href').slice(1))).map(use => use.getAttribute('href'))), [], 'all local icon references resolve');
     for (const [action, icon] of Object.entries({ 'new-note': 'file-plus-corner', 'new-folder': 'folder-plus',
-      'toggle-library-settings': 'folder-cog', 'toggle-settings': 'sliders-horizontal', 'toggle-focus': 'focus-expand', 'current-menu': 'ellipsis' })) {
+      'toggle-library-settings': 'folder-cog', 'toggle-settings': 'settings', 'toggle-focus': 'focus-expand', 'current-menu': 'ellipsis' })) {
       assert.equal(await page.locator(`[data-note-action="${action}"] svg use`).first().getAttribute('href'), '#note-icon-' + icon);
     }
     assert.equal(await page.locator('[data-note-action="toggle-focus"] svg').evaluateAll(items => items.filter(el => getComputedStyle(el).display !== 'none').length), 1);
@@ -418,7 +420,7 @@ async function freePort() {
     assert.equal(await guideFold.getAttribute('aria-expanded'), 'false');
     await guideFold.click();
     assert.equal(await guideFold.getAttribute('aria-expanded'), 'true');
-    assert.equal(await guideFold.getAttribute('aria-label'), 'Collapse callout');
+    assert.equal(await guideFold.getAttribute('aria-label'), '折叠');
     const guideAnswer = page.locator('.note-guide .note-block[data-callout="answer"][data-fold="-"] > .md-callout-title > .note-callout-fold');
     assert.equal(await guideAnswer.evaluate(button => button.closest('.md-callout').parentElement.closest('.md-callout').dataset.callout), 'stone', 'question/answer examples use a neutral color parent');
     await guideAnswer.click();

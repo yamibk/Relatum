@@ -237,9 +237,10 @@ async function regression(browser) {
     } else {
       await page.evaluate(() => P.setSideOpen(true));
       await page.locator('[data-note-action="toggle-settings"]').click();
+      await page.locator('nav [data-settings-category="graph"]').click();
       const input = page.locator('[data-role="note-graph-preload"]'); assert.equal(await input.isChecked(), options.preload === true);
       assert.equal(await page.locator('[data-role="note-graph-preload-paused"]').isVisible(), options.total === false);
-      if (options.english) assert.equal(await page.locator('#note-settings-startup-title').textContent(), 'Startup');
+      if (options.english) assert.equal(await page.locator('nav [data-settings-category="graph"]').textContent(), 'Graph');
       if (process.env.RELATUM_ARTIFACT_DIR && (release || options.english || options.preload === false)) {
         fs.mkdirSync(process.env.RELATUM_ARTIFACT_DIR, { recursive: true });
         await page.screenshot({ path: path.join(process.env.RELATUM_ARTIFACT_DIR,
@@ -264,8 +265,9 @@ async function regression(browser) {
         await page.reload({ waitUntil: 'domcontentloaded' }); await ready(page);
         assert.equal(await page.evaluate(() => RelatumBoot.noteGraphPreloadRequested), options.total !== false);
         await page.evaluate(() => P.setNoteSettingsOpen(true));
-        await page.locator('[data-note-settings-action="reset-open"]').click();
-        await page.locator('[data-note-settings-action="reset-accept"]').click();
+        await page.locator('nav [data-settings-category="graph"]').click();
+        await page.locator('[data-settings-action="reset-category"]').click();
+        await page.locator('[data-settings-action="accept-reset"]').click();
         assert.equal(await input.isChecked(), false); assert.equal(await page.evaluate(key => localStorage.getItem(key), key), null);
       }
       if (release) {

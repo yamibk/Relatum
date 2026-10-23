@@ -132,7 +132,7 @@
     else if (shape==='rounded-rect') x=y=Math.min(radius,w/2,h/2)*.293;
     return { x, y, w: Math.max(1,w-2*x), h: Math.max(1,h-y-(bottom??y)) };
   }
-  function initPanel(host, resetScale) {
+  function initPanel(host, resetScale, options = {}) {
     if (!host || host.dataset.styleReady) return;
     host.dataset.styleReady='true';
     const groups = host.querySelector('[data-role="note-canvas-style-groups"]');
@@ -181,7 +181,7 @@
       hue.addEventListener('input',()=>{h=Number(hue.value);paint();emit(color(),false);});hue.addEventListener('change',finish);
       hex.addEventListener('change',()=>{if(/^#[\da-f]{6}$/i.test(hex.value)){emit(hex.value.toLowerCase(),true);closeColorPopup();}else hex.value=input.value;});
       ['#ffffff','#242424','#d85b56','#e7ae48','#78a76d','#5796bf','#9874ad'].forEach(value=>{const button=document.createElement('button');button.type='button';button.style.background=value;button.title=value;button.setAttribute('aria-label',value);button.addEventListener('click',()=>{emit(value,true);closeColorPopup();});palette.appendChild(button);});
-      element.append(plane,hue,palette,hex);host.appendChild(element);paint();
+      element.append(plane,hue,palette,hex);(input.closest('dialog') || host).appendChild(element);paint();
       if(typeof window.EyeDropper==='function') {
         const pick=document.createElement('button');pick.type='button';pick.className='note-canvas-color-eyedropper';pick.textContent=copy('屏幕取色','Pick screen color');
         pick.addEventListener('click',async()=>{
@@ -226,7 +226,7 @@
       const operation={engine,kind,patch,token,final}; pending=operation;
       engine.applySelectionStyle(kind,patch,{token,final}).then(()=>{ if(pending===operation) {pending=null;refresh(final===true&&!!token);} });
     }
-    function usable(row) { return row.isConnected && !row.closest('[hidden]') && row.closest('[data-canvas-group]')?.dataset.canvasGroup===mode; }
+    function usable(row) { return row.isConnected && !row.closest('[hidden]') && (row.closest('[data-canvas-group]')?.dataset.canvasGroup===mode || !!options.defaultsHost?.contains(row)); }
     function addFields(parent, kind, isDefault, list=fields[kind]) {
       list.forEach(f=>{
         const row=document.createElement(f.type==='shapes'?'div':'label'); row.className='note-canvas-field'; row.dataset.field=f.key;
@@ -336,6 +336,7 @@
       closeColorPopup();
       const scroll=host.scrollTop;
       controls.forEach(control=>control.cancelRange?.(true));
+      options.defaultsHost?.replaceChildren();
       groups.replaceChildren();controls.length=0;panels.clear();
       [['defaults','新建默认样式','New default styles'],['node','节点','Nodes'],['edge','连线','Edges'],['mixed','混合调色','Selection colors']].forEach(([key,zh,en])=>{
         const panel=document.createElement('section');panel.dataset.canvasGroup=key;panel.hidden=key!==mode;
@@ -375,6 +376,13 @@
       [['node','bgColor','节点填充','Node fill'],['node','borderColor','节点边框','Node border'],['nodeText','color','节点正文','Node text'],
         ['edge','color','连线','Edge stroke'],['edgeText','color','标注文字','Label text']].forEach(([kind,key,zh,en])=>
           addFields(mixed,kind,false,[{...fields[kind].find(f=>f.key===key),zh,en}]));
+      if(options.defaultsHost) {
+        options.defaultsHost.appendChild(creation); resetDefaults.hidden=true;
+        const entry=document.createElement('div');entry.className='note-canvas-default-entry';entry.dataset.canvasDefaultEntry='true';
+        const message=document.createElement('p');message.textContent=copy('选择画布中的节点或连线，可在这里调整属性。','Select a canvas node or edge to edit its properties here.');
+        const open=document.createElement('button');open.type='button';open.dataset.noteAction='canvas-default-settings';open.textContent=copy('新建默认样式','New default styles');
+        entry.append(message,open);groups.appendChild(entry);
+      }
       refresh(true);host.scrollTop=scroll;
     }
     function position() {
@@ -395,9 +403,10 @@
         closeColorPopup();
         const previous=mode;mode=next;lastEngine=engine;lastFocus=-1;
         controls.filter(c=>c.panel?.dataset.canvasGroup===previous).forEach(c=>{c.cancelRange?.(true);c.input.querySelectorAll?.('button').forEach(b=>{b.disabled=true;});c.input.disabled=true;if(c.automatic) c.automatic.disabled=true;});
-        panels.forEach((panel,key)=>{panel.hidden=key!==mode;});pendingPosition='top';
+        panels.forEach((panel,key)=>{panel.hidden=key==='defaults'&&options.defaultsHost?false:key!==mode;});pendingPosition='top';
       }
-      resetDefaults.hidden=mode!=='defaults';
+      resetDefaults.hidden=!!options.defaultsHost||mode!=='defaults';
+      const entry=groups.querySelector('[data-canvas-default-entry]');if(entry)entry.hidden=mode!=='defaults';
       if(colorPopup&&(host.hidden||!colorPopup.input.isConnected||colorPopup.engine!==engine||colorPopup.version!==selection?.version)) closeColorPopup();
       if(selection&&selection.focusVersion!==lastFocus) {
         lastFocus=selection.focusVersion;
@@ -449,6 +458,7 @@
       try { localStorage.removeItem(KEY); } catch (_) {} resetScale?.(); refresh();
     });
     build();
+    return { refresh: () => refresh(true), suspend() { closeColorPopup(); controls.forEach(control=>control.cancelRange?.(true)); } };
   }
   window.RelatumNoteCanvasStyle=Object.freeze({ defaults, fields, shapes, clean, values, readDefaults, outline, contains, inset, initPanel, clone });
 })();

@@ -285,10 +285,11 @@ async function run(browser, mode) {
       const settings = page.locator('[data-note-action="toggle-settings"]');
       assert(await settings.isVisible(), 'settings remain available in the graph sidebar');
       await settings.click();
+      await page.locator('nav [data-settings-category="graph"]').click();
       const range = page.locator('[data-role="note-graph-spacing"]');
       assert.equal(await range.inputValue(), '125');
-      assert.deepEqual(await range.evaluate(el => [el.min, el.max, el.step, el.closest('section').getAttribute('aria-labelledby')]),
-        ['80', '200', '5', 'note-settings-appearance-title']);
+      assert.deepEqual(await range.evaluate(el => [el.min, el.max, el.step, el.closest('[data-settings-category]').dataset.settingsCategory]),
+        ['80', '200', '5', 'graph']);
       await page.evaluate(() => {
         const r = __graphProbe.latest; r.track = true; r.frames = []; window.spacingLabel = document.querySelector('[data-note-graph-label]');
         const coordinates = r.nodes.map(n => [n.x, n.y]), radii = r.nodes.map(n => n.r);
@@ -312,14 +313,14 @@ async function run(browser, mode) {
       assert(await page.evaluate(() => __graphProbe.latest.nodes.every(n => n._appeared && n._appearOpacity === 1)), 'spacing cancels old blank/growth entry');
       await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending); await pause(100);
       assert.deepEqual(await camera(), await page.evaluate(() => spacingGrowthView));
-      await page.locator('[data-note-settings-action="reset-open"]').click();
-      assert((await page.locator('[data-role="note-settings-reset-confirm"]').textContent()).includes('图谱节点间距'));
-      await page.locator('[data-note-settings-action="reset-accept"]').click();
+      await page.locator('[data-settings-action="reset-category"]').click();
+      assert((await page.locator('.relatum-settings-confirm').textContent()).includes('图谱'));
+      await page.locator('[data-settings-action="accept-reset"]').click();
       await page.waitForFunction(() => !__graphProbe.latest.engine.layoutPending); await pause(100);
       assert.equal(await range.inputValue(), '125'); assert.equal(await page.evaluate(() => __graphProbe.latest.engine.layoutSpacing), 1.25);
       assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteGraphSpacing:v1')), null);
       await page.evaluate(() => { __graphProbe.latest.track = false; });
-      await settings.click(); await page.locator('[data-note-action="graph-notebooks"]').click(); await pause(350);
+      await page.locator('[data-settings-action="close"]').click(); await page.locator('[data-note-action="graph-notebooks"]').click(); await pause(350);
       await page.locator(`${panel} [data-action="graph-reset-view"]`).click(); await readableView();
     }
     async function nodePoint(path) {
@@ -583,7 +584,7 @@ async function run(browser, mode) {
     await page.locator('[data-note-action="toggle-settings"]').click();
     assert.equal(await page.locator('[data-role="note-graph-spacing"]').getAttribute('aria-label'), 'Graph node spacing');
     await page.locator('[data-role="note-graph-spacing"]').evaluate(el => { el.value = '165'; el.dispatchEvent(new Event('input', { bubbles: true })); });
-    await page.locator('[data-note-action="toggle-settings"]').click(); await page.locator('[data-note-action="close-links"]').click();
+    await page.locator('[data-settings-action="close"]').click(); await page.locator('[data-note-action="close-links"]').click();
     assert.equal(await page.locator(`${panel} [data-action="graph-grow"]`).getAttribute('data-ui-tooltip'), 'Play graph growth animation');
     await verifyPalette(true, await page.evaluate(() => __graphProbe.latest.nodes.find(node => node.degree > 0).id));
     await page.emulateMedia({ reducedMotion: 'reduce' });

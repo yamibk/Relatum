@@ -75,7 +75,7 @@ async function chooseSort(page, mode) {
     await page.locator('[data-note-action="toggle-library-settings"]').click();
     await sleep(240);
     await page.screenshot({ path: path.join(root, 'settings-light.png') });
-    const resetAppearance = async () => page.locator('[data-note-library-action="reset-open"]').evaluate(node => {
+    const resetAppearance = async () => page.locator('[data-settings-action="reset-category"]').evaluate(node => {
       const style = getComputedStyle(node);
       return { border: style.borderTopWidth, background: style.backgroundColor };
     });
@@ -84,32 +84,32 @@ async function chooseSort(page, mode) {
     await sleep(240);
     await page.screenshot({ path: path.join(root, 'settings-dark.png') });
     assert.deepEqual(await resetAppearance(), { border: '0px', background: 'rgba(0, 0, 0, 0)' });
-    await page.locator('[data-note-library-action="reset-open"]').click();
-    const confirmRect = await page.locator('[data-role="note-library-reset-confirm"]').boundingBox();
+    await page.locator('[data-settings-action="reset-category"]').click();
+    const confirmRect = await page.locator('.relatum-settings-confirm').boundingBox();
     assert(confirmRect && confirmRect.x >= 0 && confirmRect.y >= 0 && confirmRect.x + confirmRect.width <= 1440);
     await sleep(200);
     await page.screenshot({ path: path.join(root, 'settings-reset-dark.png') });
-    await page.locator('[data-note-library-action="reset-cancel"]').click();
+    await page.locator('[data-settings-action="cancel-reset"]').click();
     await page.setViewportSize({ width: 700, height: 900 });
     await page.evaluate(() => document.querySelector('.note-workspace').classList.add('tree-overlay-open'));
     await sleep(300);
     await page.screenshot({ path: path.join(root, 'settings-narrow.png') });
-    await page.locator('[data-note-library-action="reset-open"]').click();
-    const narrowConfirm = await page.locator('[data-role="note-library-reset-confirm"]').boundingBox();
+    await page.locator('[data-settings-action="reset-category"]').click();
+    const narrowConfirm = await page.locator('.relatum-settings-confirm').boundingBox();
     assert(narrowConfirm && narrowConfirm.x >= 0 && narrowConfirm.x + narrowConfirm.width <= 700);
     await sleep(200);
     await page.screenshot({ path: path.join(root, 'settings-reset-narrow.png') });
-    await page.locator('[data-note-library-action="reset-cancel"]').click();
+    await page.locator('[data-settings-action="cancel-reset"]').click();
     await page.evaluate(() => { document.body.dataset.startTheme = 'light'; document.querySelector('.note-workspace').classList.remove('tree-overlay-open'); });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => RelatumI18n.setLanguage('en'));
-    assert.equal(await page.locator('[data-role="note-library-settings-title"]').textContent(), 'Library settings');
-    assert.equal(await page.locator('[data-role="note-library-reset-label"]').textContent(), 'Reset');
-    await page.locator('[data-note-library-action="reset-open"]').click();
-    assert.equal(await page.locator('[data-role="note-library-reset-title"]').textContent(), 'Restore default Library settings?');
-    await page.locator('[data-note-library-action="reset-cancel"]').click();
+    assert.equal(await page.locator('[data-settings-title]').textContent(), 'Files & library');
+    assert.equal(await page.locator('[data-settings-action="reset-category"]').textContent(), 'Reset category');
+    await page.locator('[data-settings-action="reset-category"]').click();
+    assert.equal(await page.locator('#relatum-settings-confirm-title').textContent(), 'Reset this category?');
+    await page.locator('[data-settings-action="cancel-reset"]').click();
     await page.evaluate(() => RelatumI18n.setLanguage('zh-CN'));
-    await page.locator('[data-note-action="toggle-library-settings"]').click();
+    await page.locator('[data-settings-action="close"]').click();
     for (const [mode, expected] of [
       ['name-asc', ['A', 'M', 'Z']], ['name-desc', ['Z', 'M', 'A']],
       ['modified-desc', ['Z', 'A', 'M']], ['modified-asc', ['M', 'A', 'Z']],
@@ -144,10 +144,10 @@ async function chooseSort(page, mode) {
     await page.locator('[data-note-action="toggle-settings"]').click();
     assert.equal(await page.locator('[data-note-action="toggle-sort"]').getAttribute('aria-expanded'), 'false');
     assert.equal(await page.locator('[data-note-action="toggle-settings"]').getAttribute('aria-expanded'), 'true');
-    await page.locator('[data-note-action="toggle-library-settings"]').click();
-    assert.equal(await page.locator('[data-note-action="toggle-settings"]').getAttribute('aria-expanded'), 'false');
+    await page.locator('nav [data-settings-category="files"]').click();
+    assert.equal(await page.locator('[data-note-action="toggle-settings"]').getAttribute('aria-expanded'), 'true');
     assert.equal(await page.locator('[data-note-action="toggle-library-settings"]').getAttribute('aria-expanded'), 'true');
-    await page.locator('[data-note-action="toggle-library-settings"]').click();
+    await page.locator('[data-settings-action="close"]').click();
 
     await page.locator('[data-note-action="toggle-library-settings"]').click();
     await page.locator('#note-library-settings [data-note-sort-mode="modified-desc"]').click();
@@ -181,7 +181,7 @@ async function chooseSort(page, mode) {
     assert(await page.locator('[data-role="note-library-name-error"]').isVisible());
     await page.locator('[data-role="note-library-name-input"]').evaluate(node => node.blur());
     assert.equal(await page.locator('[data-role="note-library-name-input"]').inputValue(), 'Ideas');
-    await page.locator('[data-note-action="toggle-library-settings"]').click();
+    await page.locator('[data-settings-action="close"]').click();
     await page.locator('.note-head-actions [data-note-action="new-note"]').click();
     await page.locator('.note-tree-row[data-note-path="Ideas.md"]').waitFor();
     await page.locator('.note-head-actions [data-note-action="new-note"]').click();
@@ -201,17 +201,17 @@ async function chooseSort(page, mode) {
     await page.locator('[data-note-action="toggle-library-settings"]').click();
     await page.locator('#note-library-settings [data-note-sort-mode="name-desc"]').click();
     await page.evaluate(() => localStorage.setItem('canvas:noteFontScale:v1', '137'));
-    await page.locator('[data-note-library-action="reset-open"]').click();
-    assert(await page.locator('[data-role="note-library-reset-confirm"]').isVisible());
-    await page.locator('[data-note-library-action="reset-cancel"]').click();
+    await page.locator('[data-settings-action="reset-category"]').click();
+    assert(await page.locator('.relatum-settings-confirm').isVisible());
+    await page.locator('[data-settings-action="cancel-reset"]').click();
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTreeSort:v1')), 'name-desc');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('canvas:noteNewName:v1')).baseName), 'Ideas');
-    await page.locator('[data-note-library-action="reset-open"]').click();
+    await page.locator('[data-settings-action="reset-category"]').click();
     await page.keyboard.press('Escape');
     assert(await page.locator('#note-library-settings').isVisible(), 'Escape should dismiss confirmation before settings');
-    assert.equal(await page.locator('[data-role="note-library-reset-confirm"]').isVisible(), false);
-    await page.locator('[data-note-library-action="reset-open"]').click();
-    await page.locator('[data-note-library-action="reset-accept"]').click();
+    assert.equal(await page.locator('.relatum-settings-confirm').isVisible(), false);
+    await page.locator('[data-settings-action="reset-category"]').click();
+    await page.locator('[data-settings-action="accept-reset"]').click();
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteTreeSort:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteNewName:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('canvas:noteFontScale:v1')), '137');
@@ -219,7 +219,7 @@ async function chooseSort(page, mode) {
     assert.equal(await page.locator('[data-note-name-mode="timestamp"]').getAttribute('aria-pressed'), 'true');
     assert.match(await page.locator('[data-role="note-library-name-preview"]').textContent(), /\d{4}-\d{2}-\d{2}-\d{6}\.md/);
     assert.equal(fs.readFileSync(path.join(notes, 'Ideas.md'), 'utf8'), '');
-    await page.locator('[data-note-action="toggle-library-settings"]').click();
+    await page.locator('[data-settings-action="close"]').click();
     await page.reload();
     await page.locator('button[data-start-workspace="notes"]').click();
     await page.locator('.note-tree-row[data-note-path="Ideas.md"]').waitFor();
