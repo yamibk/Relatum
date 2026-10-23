@@ -10,7 +10,8 @@
     let session = null, presetId = 'none', messages = [], history = [], historyMore = false, moreMessages = false, historyOffset = 0, historySequence = 0;
     let selectionChain = Promise.resolve(), pageHiding = false, renameSequence = 0;
     let running = null, paint = 0, settingsActive = false, settingsBuilt = false, settingsSequence = 0;
-    let pending = {}, saveTimer = 0, saveChain = Promise.resolve(), testRequest = null, configRevision = 0;
+    let pending = {}, saveTimer = 0, saveChain = Promise.resolve(), testRequest = null, configRevision = 0, keyRevealSequence = 0;
+    let keyDraft = null, keyOriginal = null, keyDirty = false;
     let presetEditing = 'none', presetTimer = 0, clearKeyArmed = false;
     const rows = new Map(); let languageRevision = 0;
     const english = () => options.language() === 'en';
@@ -56,7 +57,10 @@
     }
     const top = document.createElement('div'); top.className = 'note-ai-top';
     const presets = select('Preset'), chats = select('Conversation'); presets.dataset.aiPreset = ''; chats.dataset.aiHistory = '';
-    const plus = button('', () => newConversation(presetId), '+'); plus.dataset.aiNew = '';
+    const plus = button('', () => {
+      newConversation(presetId);
+      input.focus({ preventScroll: true }); notice.textContent = tr('已开启新对话', 'New conversation started');
+    }); plus.dataset.aiNew = '';
     const gear = button('', event => options.openSettings(event.currentTarget));
     gear.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#note-icon-settings"/></svg>';
     const historyLine = document.createElement('div'); historyLine.className = 'note-ai-history';
@@ -78,7 +82,7 @@
     }), deleteNo = button('', () => { deleteBox.hidden = true; });
     deleteYes.dataset.aiConfirmDelete = '';
     deleteBox.append(deleteCopy, deleteNo, deleteYes);
-    top.append(presets, plus, gear); historyLine.append(chats, historyNext, rename, remove);
+    top.append(presets, gear); historyLine.append(chats, plus, historyNext, rename, remove);
     const timeline = document.createElement('div'); timeline.className = 'note-ai-timeline'; timeline.dataset.aiTimeline = ''; timeline.setAttribute('role', 'log'); timeline.setAttribute('aria-live', 'off');
     const older = button('', loadOlder); older.className = 'note-ai-older'; older.hidden = true;
     const body = document.createElement('div'); body.className = 'note-ai-messages';
@@ -290,7 +294,10 @@
           const saved = await api('config', patch);
           config = revision === configRevision ? saved : { ...saved, ...config, hasKey: saved.hasKey, keyHint: saved.keyHint }; updateSelectors();
           const key = settingsHost.querySelector('[data-ai-field="apiKey"]');
-          if (key && Object.hasOwn(patch, 'apiKey') && key.value.trim() === patch.apiKey) key.value = '';
+          if (Object.hasOwn(patch, 'apiKey') && !keyDirty && keyDraft?.trim() === patch.apiKey) {
+            keyDraft = null;
+            if (key) key.value = document.activeElement === key ? patch.apiKey : '';
+          }
           settingsStatus(tr('已保存到本机', 'Saved locally')); updateKeyHint();
         } catch (error) { pending = { ...patch, ...pending }; settingsStatus(error.message); throw error; }
       });
@@ -318,7 +325,13 @@
       return value.trim();
     }
     function acceptField(element) {
-      try { const value = fieldValue(element); element.removeAttribute('aria-invalid'); queuePatch({ [element.dataset.aiField]: value }); settingsStatus(tr('正在保存…', 'Saving…')); }
+      const field = element.dataset.aiField;
+      if (field === 'apiKey' && !keyDirty) return;
+      try {
+        const value = fieldValue(element); element.removeAttribute('aria-invalid');
+        if (field === 'apiKey') { keyDirty = false; if (value === keyOriginal) return; keyOriginal = value; }
+        queuePatch({ [field]: value }); settingsStatus(tr('正在保存…', 'Saving…'));
+      }
       catch (error) { element.setAttribute('aria-invalid', 'true'); settingsStatus(error.message); }
     }
     function updateThinkingHint() {
@@ -347,6 +360,7 @@
       const picker = settingsHost.querySelector('[data-ai-preset-editor]'); const option = Array.from(picker.options).find(option => option.value === item.id); if (option) option.textContent = item.name;
     }
     function buildSettings() {
+      keyRevealSequence++;
       settingsBuilt = true;
       const drafts = new Map(Array.from(settingsHost.querySelectorAll('[data-ai-field]')).map(element => [element.dataset.aiField, { value: element.value, checked: element.checked }]));
       const presetDraftName = settingsHost.querySelector('[data-ai-preset-name]')?.value, presetDraftPrompt = settingsHost.querySelector('[data-ai-preset-prompt]')?.value;
@@ -364,6 +378,24 @@
         const eventName = field === 'apiKey' || choices || type === 'checkbox' ? 'change' : 'input';
         element.addEventListener(eventName, event => { if (!event.isComposing) { acceptField(element); if (field === 'thinking') updateThinkingHint(); } });
         element.addEventListener('compositionend', () => { if (field !== 'apiKey') acceptField(element); });
+        if (field === 'apiKey') {
+          element.addEventListener('input', () => { keyRevealSequence++; keyDraft = element.value; keyDirty = true; });
+          element.addEventListener('focus', async () => {
+            element.type = 'text';
+            if (keyDraft !== null) { element.value = keyDraft; return; }
+            if (!config?.hasKey || element.value) return;
+            const current = ++keyRevealSequence;
+            try {
+              const result = await api('reveal-key', {});
+              if (current === keyRevealSequence && settingsActive && document.activeElement === element && !element.value) {
+                element.value = result.apiKey || ''; keyOriginal = element.value;
+              }
+            } catch (error) {
+              if (current === keyRevealSequence && settingsActive && document.activeElement === element) settingsStatus(error.message);
+            }
+          });
+          element.addEventListener('blur', () => { keyRevealSequence++; acceptField(element); element.type = 'password'; if (!keyDirty) element.value = ''; });
+        }
         return element;
       }
       const connection = group('连接', 'Connection');
@@ -371,14 +403,19 @@
       addField(connection, 'model', '模型名称', 'Model name', 'text', null, { autocomplete: 'off', placeholder: tr('由你填写', 'Enter your model') });
       addField(connection, 'apiKey', 'API Key', 'API key', 'password', null, { autocomplete: 'new-password' });
       const keyTools = document.createElement('div'); keyTools.className = 'note-ai-settings-actions';
-      const show = button(tr('显示 / 隐藏输入的 Key', 'Show / hide entered key'), () => { const element = connection.querySelector('[data-ai-field="apiKey"]'); element.type = element.type === 'password' ? 'text' : 'password'; }, tr('显示输入', 'Show entry'));
-      const clear = button(tr('清除 Key', 'Clear key'), async () => { if (!clearKeyArmed) { clearKeyArmed = true; clear.textContent = tr('确认清除 Key', 'Confirm clear key'); return; } clearKeyArmed = false; queuePatch({ apiKey: '' }); try { await flushSettings(); clear.textContent = tr('清除 Key', 'Clear key'); } catch (_) {} }); clear.dataset.aiClearKey = '';
+      const keyHint = document.createElement('p'); keyHint.textContent = tr('点击 API Key 输入框可查看或修改，离开输入框后自动遮蔽。', 'Focus the API key field to view or edit it. It is masked when you leave the field.'); connection.append(keyHint);
+      const clear = button(tr('清除 Key', 'Clear key'), async () => {
+        if (!clearKeyArmed) { clearKeyArmed = true; clear.textContent = tr('确认清除 Key', 'Confirm clear key'); return; }
+        clearKeyArmed = false; keyRevealSequence++; keyDraft = keyOriginal = ''; keyDirty = false;
+        const key = connection.querySelector('[data-ai-field="apiKey"]'); key.value = ''; key.type = 'password';
+        queuePatch({ apiKey: '' }); try { await flushSettings(); clear.textContent = tr('清除 Key', 'Clear key'); } catch (_) {}
+      }); clear.dataset.aiClearKey = '';
       const test = button(tr('测试连接', 'Test connection'), async () => {
         const current = ++settingsSequence; test.disabled = true;
         try { await flushSettings(); if (current !== settingsSequence || !settingsActive) return; testRequest = { id: uid(), controller: new AbortController() }; settingsStatus(tr('正在测试连接…', 'Testing connection…')); await api('test', { requestId: testRequest.id }, { signal: testRequest.controller.signal }); if (current === settingsSequence && settingsActive) settingsStatus(tr('连接成功', 'Connection successful')); }
         catch (error) { if (current === settingsSequence && settingsActive && error.name !== 'AbortError') settingsStatus(error.message); }
         finally { if (current === settingsSequence) { testRequest = null; test.disabled = false; } }
-      }); test.dataset.aiTest = ''; keyTools.append(show, clear, test); connection.append(keyTools);
+      }); test.dataset.aiTest = ''; keyTools.append(clear, test); connection.append(keyTools);
       const generation = group('生成参数', 'Generation');
       addField(generation, 'stream', '流式输出', 'Stream replies', 'checkbox');
       addField(generation, 'thinking', '思考模式', 'Thinking mode', '', [['auto', '跟随模型默认', 'Model default'], ['disabled', '关闭', 'Off'], ['enabled', '开启', 'On']]);
@@ -423,11 +460,11 @@
     }
     function closeSettings() {
       if (!settingsActive) return;
-      settingsActive = false; settingsSequence++; clearKeyArmed = false;
+      settingsActive = false; settingsSequence++; keyRevealSequence++; clearKeyArmed = false;
       if (testRequest) { testRequest.controller.abort(); api('cancel', { requestId: testRequest.id }).catch(() => {}); testRequest = null; }
       settingsHost.querySelector('[data-ai-test]')?.removeAttribute('disabled');
       const clear = settingsHost.querySelector('[data-ai-clear-key]'); if (clear) clear.textContent = tr('清除 Key', 'Clear key');
-      const key = settingsHost.querySelector('[data-ai-field="apiKey"]'); if (key) { if (key.value) acceptField(key); key.type = 'password'; }
+      const key = settingsHost.querySelector('[data-ai-field="apiKey"]'); if (key) { acceptField(key); key.type = 'password'; if (!keyDirty) key.value = ''; }
       savePreset(); flushSettings().catch(() => {});
     }
     async function show() {
@@ -450,6 +487,7 @@
       languageRevision++;
       presets.setAttribute('aria-label', tr('系统预设', 'System preset')); chats.setAttribute('aria-label', tr('会话', 'Conversation'));
       [[plus, '新建对话', 'New conversation'], [gear, 'AI 设置', 'AI settings'], [rename, '重命名会话', 'Rename conversation'], [remove, '删除会话', 'Delete conversation'], [historyNext, '更多会话', 'More conversations']].forEach(([element, zh, en]) => { element.setAttribute('aria-label', tr(zh, en)); element.title = tr(zh, en); });
+      plus.textContent = tr('新建对话', 'New conversation');
       renameInput.setAttribute('aria-label', tr('会话名称', 'Conversation name')); renameSave.textContent = tr('确定', 'Done');
       deleteCopy.textContent = tr('删除此会话？', 'Delete this conversation?'); deleteYes.textContent = tr('删除', 'Delete'); deleteNo.textContent = tr('取消', 'Cancel');
       emptyTitle.textContent = tr('从一个问题开始', 'Start with a question'); emptyText.textContent = tr('选择预设，或直接开始对话。', 'Choose a preset, or simply start chatting.'); setup.textContent = tr('填写连接信息', 'Set up connection');

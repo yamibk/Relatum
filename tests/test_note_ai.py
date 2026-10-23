@@ -1,6 +1,7 @@
 import io
 import http.server
 import json
+import ssl
 import tempfile
 import threading
 import unittest
@@ -252,6 +253,96 @@ class NoteAIStoreTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             worker.join(3)
+
+    def test_proxy_connect_restores_timeout_before_tls_and_reads_both_modes(self):
+        tunnels, handshakes = [], []
+
+        class Proxy(http.server.BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def do_CONNECT(self):
+                tunnels.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                payload = completion().getvalue() if body['stream'] else json.dumps({
+                    'choices': [{'message': {'content': '回答'}, 'finish_reason': 'stop'}]
+                }).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *_):
+                pass
+
+        # Keep real CONNECT/header/body I/O. Replace only cryptography so this
+        # regression needs no certificate, external provider or extra dependency.
+        def tls_boundary(context, sock, **kwargs):
+            self.assertEqual(sock.gettimeout(), 30)
+            self.assertTrue(sock.getblocking(), 'TLS handshake requires a blocking socket')
+            handshakes.append(kwargs['server_hostname'])
+            return sock
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        proxy = 'http://127.0.0.1:' + str(server.server_address[1])
+        try:
+            with mock.patch('urllib.request.getproxies', return_value={'https': proxy}), \
+                    mock.patch('urllib.request.proxy_bypass', return_value=False), \
+                    mock.patch.object(ssl.SSLContext, 'wrap_socket', tls_boundary):
+                for stream in (False, True):
+                    with self.subTest(stream=stream):
+                        self.configured(baseUrl='https://provider.test', timeout=60, stream=stream)
+                        result = list(self.store.events({'sessionId': str(stream), 'requestId': str(stream),
+                                                        'text': 'hello', 'newSession': True}))
+                        self.assertEqual(result[-1]['status'], 'complete', result)
+                        self.assertEqual(''.join(item['text'] for item in result if item['type'] == 'delta'), '回答')
+            self.assertEqual(tunnels, ['provider.test:443'] * 2)
+            self.assertEqual(handshakes, ['provider.test'] * 2)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_cancel_and_timeout_during_proxy_connect_headers(self):
+        entered, release = threading.Event(), threading.Event()
+
+        class Proxy(http.server.BaseHTTPRequestHandler):
+            def do_CONNECT(self):
+                entered.set()
+                release.wait(4)
+
+            def log_message(self, *_):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        proxy = 'http://127.0.0.1:' + str(server.server_address[1])
+        try:
+            with mock.patch('urllib.request.getproxies', return_value={'https': proxy}), \
+                    mock.patch('urllib.request.proxy_bypass', return_value=False):
+                for reason in ('interrupted', 'timeout'):
+                    with self.subTest(reason=reason):
+                        entered.clear()
+                        self.configured(baseUrl='https://provider.test', timeout=1 if reason == 'timeout' else 10)
+                        result = []
+                        worker = threading.Thread(target=lambda: result.extend(self.store.events({
+                            'sessionId': reason, 'requestId': reason, 'text': 'hello', 'newSession': True})))
+                        worker.start()
+                        self.assertTrue(entered.wait(2))
+                        if reason == 'interrupted':
+                            self.store.cancel(reason)
+                        worker.join(2)
+                        self.assertFalse(worker.is_alive(), 'pending proxy headers must be cancellable')
+                        self.assertIn({'type': 'error', 'code': reason}, result)
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == '__main__':

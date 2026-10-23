@@ -1,5 +1,5 @@
 /* Opaque, quiet surfaces share the note theme. No blur or idle animation. */
-.note-ai { --ai-surface: #f1f1f0; --ai-text: #222322; --ai-muted: #777976; display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 12px; gap: 9px; color: var(--ai-text); }
+.note-ai { --ai-surface: #fdfdfc; --ai-text: #222322; --ai-muted: #777976; display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 12px; gap: 9px; color: var(--ai-text); }
 body[data-start-theme="dark"] .note-ai { --ai-surface: #242624; --ai-text: #ededeb; --ai-muted: #a0a39e; color-scheme: dark; }
 body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
 .note-ai[hidden], .note-ai [hidden], .note-ai-settings [hidden] { display: none !important; }
@@ -17,6 +17,7 @@ body[data-start-theme="dark"] .note-ai-settings { color-scheme: dark; }
 .note-ai-top button { flex: none; font-size: 17px; min-width: 29px; }
 .note-ai-history select { background: transparent; color: var(--ai-muted); }
 .note-ai-history button { background: transparent; color: var(--ai-muted); }
+.note-ai-history [data-ai-new] { flex: none; white-space: nowrap; font-size: 11px; }
 .note-ai-timeline { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #8886 transparent; overflow-anchor: none; padding: 4px 1px 12px; }
 .note-ai-empty { padding: 40px 15px; text-align: center; color: var(--ai-muted); }
 .note-ai-empty h3 { font-size: 17px; font-weight: 550; color: var(--ai-text); margin: 0 0 10px; }

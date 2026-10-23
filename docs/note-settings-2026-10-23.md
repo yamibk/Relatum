@@ -4,7 +4,9 @@
 
 右侧工具行的设置入口使用齿轮，打开应用内居中的原生 `dialog`。
 左侧笔记库入口打开同一个弹窗的“文件与笔记库”。画布侧栏保留当前对象属性，
-未选择对象时显示通往“内嵌画布”的默认样式入口。
+未选择对象时直接提供节点、连线、节点正文、连线标注四个默认样式分页，另可进入设置。
+双击新建节点并开始首次输入时属性面板回顶；编辑已有正文或标注仍定位对应排版区域，
+同类对象切换及样式更新保留用户滚动。
 
 弹窗包含外观、编辑、文件与笔记库、引导、图谱、内嵌画布、快捷键。
 关闭的功能不显示分类或搜索结果。设置搜索在本地匹配分类、说明和关键词，
@@ -39,9 +41,10 @@
   分类注册包含稳定 id、双语 label、图标、panel、搜索 keywords 和 reset 回调。
 - `assets/note-workspace.js`：装配可用分类、接入原设置读写与输入交接，核对正文、标签、
   打开序号和可见生命周期；已有表单节点只移动一次，完整与轻量外壳共用。
-- `assets/note-canvas-style.js`：`initPanel(host,resetScale,{defaultsHost})` 将默认样式放到
-  弹窗，选区属性留在原 host。两处共享字段定义、默认值校验、颜色工具和撤销边界。
-  重建前释放旧默认 DOM；默认样式编辑始终与真实选区写入分离。
+- `assets/note-canvas-style.js`：`initPanel(host,resetScale,{defaultsHost})` 在原 host 和
+  弹窗分别创建默认样式四分页。两处独立 DOM、唯一 tab/tabpanel ID 和会话分页状态，
+  共享字段定义、默认值校验、颜色工具、新建尺寸和撤销边界。选区属性留在原 host，
+  重建前释放两处旧默认 DOM；默认样式编辑始终与真实选区写入分离。
 - `assets/note-guide.js`：首次查看引导时才加载，`create({host,language,isCurrent,whenSettled,notify})`
   返回 `show(topic)`、`suspend()`、`destroy()`。主题切换记住各自会话滚动位置。
 

@@ -579,7 +579,7 @@
       (edge?el:el.querySelector('.note-canvas-content')).appendChild(input);
       let resolve; const settled = new Promise(done => { resolve = done; });
       draft = { node: edge ? '' : key, edge: edge ? key : '', original: input.value, input, text, settled, resolve, composing: false, pending: null, isNew, frame: 0 };
-      focusKind=edge?'edgeText':'nodeText';focusVersion++;notifySelection();
+      focusKind=isNew?'top':edge?'edgeText':'nodeText';focusVersion++;notifySelection();
       const current = draft;
       if(edge&&edgeCache.has(key)) renderLabel(edgeCache.get(key));
       const fit = () => { input.style.height = '0px';

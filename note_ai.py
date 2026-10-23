@@ -462,6 +462,16 @@ class NoteAIStore:
         class CancellableConnection:
             response_class = HTTPResponse
 
+            def _tunnel(self):
+                # CONNECT also uses response_class. Its cancellable reader makes
+                # the socket nonblocking; TLS must start with the connect timeout
+                # restored after the proxy's headers have been consumed.
+                try:
+                    return super()._tunnel()
+                finally:
+                    if self.sock is not None:
+                        self.sock.settimeout(self.timeout)
+
             def connect(self):
                 if active.cancelled.is_set():
                     raise NoteAIError("请求已停止", active.reason)

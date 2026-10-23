@@ -90,8 +90,8 @@
 .relatum-settings .note-canvas-default-tabs button[aria-selected="true"] { color: var(--settings-text); background: var(--settings-selected); }
 .relatum-settings .note-canvas-color-popup { z-index: 60; background: var(--settings-bg); color: var(--settings-text); }
 .relatum-settings .note-canvas-field > input:not([type="checkbox"]):not([type="range"]), .relatum-settings .note-canvas-field > select { color: var(--settings-text); background: var(--settings-bg); }
-.note-canvas-default-entry { padding: 14px 10px; font-size: 12px; line-height: 1.7; color: var(--text-secondary); }
-.note-canvas-default-entry button { display: block; margin-top: 14px; padding: 9px 13px; border: 0; border-radius: 9px; background: rgba(128,128,128,.1); color: var(--text); cursor: pointer; }
+.note-canvas-default-entry { margin-bottom: 12px; font-size: 11px; line-height: 1.7; color: var(--text-secondary); }
+.note-canvas-default-entry button { padding: 5px 8px; border: 0; border-radius: 6px; background: rgba(128,128,128,.08); color: var(--text-secondary); font: inherit; cursor: pointer; }
 .note-guide .note-guide-topic-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
 .note-guide-topic-head h3 { margin: 0; }
 .note-guide-topic-head button { border: 0; border-radius: 7px; background: rgba(128,128,128,.08); color: var(--text-secondary); padding: 5px 8px; cursor: pointer; font: 11px var(--font-ui); }

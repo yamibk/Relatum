@@ -46,6 +46,8 @@ async function run(browser, mode, providerURL) {
     assert(ready, logs);
     page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], resources = []; page.on('pageerror', error => errors.push(error.message)); page.on('request', req => resources.push(req.url()));
+    let keyWrites=0;
+    page.on('request', req => { if(req.url()===url+'/api/note-ai/config'&&req.method()==='POST'&&Object.hasOwn(req.postDataJSON(),'apiKey')) keyWrites++; });
     const source = fs.readFileSync(path.join(repo, 'assets/note-workspace.js'), 'utf8').replace('  window.CanvasNoteWorkspace = {', '  window.T = { state, setSideMode, setSideOpen, setNoteSettingsOpen, get editor(){return liveEditor;} };\n  window.CanvasNoteWorkspace = {');
     await page.route('**/note-workspace.js*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
     await page.addInitScript(() => { localStorage.setItem('canvas:startWorkspace:v1', 'notes'); localStorage.setItem('canvas:noteFocusMode:v1', '0'); localStorage.setItem('canvas:noteActivePath:v1', 'Main.md'); localStorage.setItem('canvas:noteOpenTabs:v1', '["Main.md"]'); });
@@ -102,7 +104,33 @@ async function run(browser, mode, providerURL) {
     await field('baseUrl').fill(providerURL + '/v1'); await field('model').fill('test-model'); await field('apiKey').fill('private-test-key-1234'); await field('apiKey').blur();
     await until(async () => { const config = (await request('config')).body; return config.hasKey && config.model === 'test-model'; });
     assert(!JSON.stringify((await request('config')).body).includes('private-test-key-1234'));
+    const savedKeyWrites=keyWrites;
+    await field('apiKey').focus();await until(async()=>await field('apiKey').inputValue()==='private-test-key-1234');
+    assert.equal(await field('apiKey').getAttribute('type'),'text');
+    await field('apiKey').blur();assert.equal(await field('apiKey').getAttribute('type'),'password');assert.equal(await field('apiKey').inputValue(),'');
+    assert.equal(await dialog.getByRole('button',{name:'显示输入',exact:true}).count(),0);
     await dialog.locator('[data-ai-test]').click(); await page.waitForFunction(() => document.querySelector('[data-ai-settings-status]')?.textContent.includes('连接成功'));
+    assert.equal(keyWrites,savedKeyWrites,'viewing the saved key never rewrites configuration');
+    async function delayedReveal(action) {
+      let release,received,finished;
+      const ready=new Promise(resolve=>{received=resolve;}),gate=new Promise(resolve=>{release=resolve;}),done=new Promise(resolve=>{finished=resolve;});
+      const routeHandler=async route=>{const response=await route.fetch();received();await gate;await route.fulfill({response});finished();};
+      await page.route('**/api/note-ai/reveal-key',routeHandler);
+      try {await field('apiKey').focus();await ready;await action();}
+      finally {release();await done;await page.unroute('**/api/note-ai/reveal-key',routeHandler);}
+      await page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,0)));
+    }
+    await delayedReveal(async()=>{await field('apiKey').fill('replacement-test-key-5678');await field('apiKey').blur();});
+    await until(async()=>(await request('config')).body.keyHint==='••••5678');
+    await field('apiKey').focus();await until(async()=>await field('apiKey').inputValue()==='replacement-test-key-5678');await field('apiKey').blur();
+    await delayedReveal(async()=>{await dialog.locator('[data-ai-clear-key]').click();await dialog.locator('[data-ai-clear-key]').click();await until(async()=>!(await request('config')).body.hasKey);});
+    assert.equal(await field('apiKey').inputValue(),'','a late reveal cannot resurrect a cleared key');
+    await field('apiKey').fill('private-test-key-1234');await field('apiKey').blur();await until(async()=>(await request('config')).body.hasKey);
+    const beforeCloseWrites=keyWrites;
+    await delayedReveal(closeSettings);
+    assert.equal(await field('apiKey').inputValue(),'','a late reveal cannot refill closed settings');
+    assert.equal(keyWrites,beforeCloseWrites);
+    await gear.click();await category('ai').click();await field('model').waitFor();
     await field('thinking').selectOption('enabled'); await field('effort').selectOption('max'); await field('temperature').fill('-1');
     assert.equal(await field('temperature').getAttribute('aria-invalid'), 'true');
     await field('temperature').fill('0.3'); await field('maxTokens').fill('500');
@@ -145,7 +173,14 @@ async function run(browser, mode, providerURL) {
     if (mode === 'full') {
       await ai.locator('button[aria-label="重命名会话"]').click(); await ai.locator('[data-ai-rename]').fill('Renamed chat'); await ai.locator('[data-ai-rename]').press('Enter');
       await until(async () => (await request('messages?id=' + selectedId)).body.session.title === 'Renamed chat');
-      await ai.locator('[data-ai-new]').click(); await input.fill('slow stop'); await input.press('Enter');
+      const beforeNew=(await request('sessions')).body.items.length;
+      assert.equal(await ai.locator('.note-ai-history [data-ai-new]').textContent(),'新建对话');
+      await ai.locator('[data-ai-new]').click();
+      assert(await input.evaluate(el=>document.activeElement===el));assert.equal(await ai.locator('[data-ai-role]').count(),0);
+      assert((await ai.locator('.note-ai-notice').textContent()).includes('已开启新对话'));
+      assert.equal((await request('sessions')).body.items.length,beforeNew,'new chat preserves history without persisting an empty session');
+      await ai.locator('[data-ai-new]').click();assert.equal((await request('sessions')).body.items.length,beforeNew);
+      await input.fill('slow stop'); await input.press('Enter');
       await page.waitForFunction(() => document.querySelector('[data-ai-role="assistant"] .note-ai-answer')?.textContent === 'Partial answer');
       await send.click(); await page.waitForFunction(() => document.querySelector('[data-ai-role="assistant"] .note-ai-message-foot')?.textContent.includes('已停止'));
       await ai.locator('[data-ai-preset]').selectOption('deepseek'); await input.fill('slow switch'); await input.press('Enter');

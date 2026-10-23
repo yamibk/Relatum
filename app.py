@@ -11196,6 +11196,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     with DATA_MUTATION_LOCK:
                         result = store.save_config(body)
                 return self._send_json(200, result)
+            elif action == "reveal-key":
+                return self._send_json(200, {"apiKey": store.config()["apiKey"]})
             elif action == "session":
                 return self._send_json(200, store.session_action(body))
             elif action == "cancel":

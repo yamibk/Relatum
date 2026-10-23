@@ -46,8 +46,24 @@ async function run(browser, full, fallback=false) {
     const defaults=dialog.locator('[data-settings-category="canvas"].relatum-settings-page');
     const openDefaults=async()=>{await settings.locator('[data-note-action="canvas-default-settings"]').click();await dialog.waitFor();};
     const closeDefaults=async()=>{await dialog.locator('[data-settings-action="close"]').click();await dialog.waitFor({state:'hidden'});};
+    const sidebarDefaults=settings.locator('[data-canvas-group="defaults"]');
+    assert.equal(await sidebarDefaults.locator('[role="tab"]').count(),4,'the sidebar retains its four creation defaults tabs');
+    for(const kind of ['node','edge','nodeText','edgeText']) {
+      await sidebarDefaults.locator(`[data-default-target="${kind}"]`).click();
+      assert.equal(await sidebarDefaults.locator('[role="tab"][aria-selected="true"]').getAttribute('data-default-target'),kind);
+    }
+    await sidebarDefaults.locator('[data-default-target="node"]').click();
+    await sidebarDefaults.locator('[data-canvas-style="node.width"]').fill('196');
+    await sidebarDefaults.locator('[data-role="note-canvas-node-scale"]').evaluate(el=>{el.value='150';el.dispatchEvent(new Event('input',{bubbles:true}));});
     await openDefaults();
-    assert.equal(await settings.locator('[data-shape]').count(),12);
+    assert.equal(await defaults.locator('[data-canvas-style="node.width"]').inputValue(),'196','sidebar defaults reach the settings view');
+    assert.equal(await defaults.locator('[data-role="note-canvas-node-scale"]').inputValue(),'150');
+    await defaults.locator('[data-canvas-style="node.width"]').fill('160');
+    await defaults.locator('[data-role="note-canvas-node-scale"]').evaluate(el=>{el.value='100';el.dispatchEvent(new Event('input',{bubbles:true}));});
+    assert.equal(await sidebarDefaults.locator('[data-canvas-style="node.width"]').inputValue(),'160','settings defaults reach the sidebar view');
+    assert.equal(await sidebarDefaults.locator('[data-role="note-canvas-node-scale"]').inputValue(),'100');
+    assert(await page.locator('[id^="note-canvas-default-"]').evaluateAll(els=>new Set(els.map(el=>el.id)).size===els.length),'the two views have independent accessible identities');
+    assert.equal(await settings.locator('[data-canvas-group="node"] [data-shape]').count(),12);
     assert.equal(await settings.locator('details, select.note-canvas-target').count(),0);
     const defaultTabs=defaults.locator('[data-canvas-group="defaults"] [role="tab"]');assert.equal(await defaultTabs.count(),4);
     for(const kind of ['node','edge','nodeText','edgeText']) {
@@ -317,7 +333,11 @@ async function run(browser, full, fallback=false) {
     await page.evaluate(()=>{detachedRange.value='.05';detachedRange.dispatchEvent(new Event('input',{bubbles:true}));detachedRange.dispatchEvent(new Event('change',{bubbles:true}));});
     assert.equal(await page.evaluate(()=>RelatumNoteCanvasStyle.readDefaults().node.bgOpacity),1,'rebuilding a panel cancels uncommitted defaults and ignores detached controls');
     await closeDefaults();
-    await viewport.dblclick({position:{x:300,y:320}});await viewport.locator('textarea').fill('继承默认');await viewport.locator('textarea').press('Control+Enter');await settle();
+    await a.click();await settings.evaluate(el=>{el.scrollTop=250;});
+    await viewport.dblclick({position:{x:300,y:320}});await settle();
+    assert.equal(await settings.evaluate(el=>el.scrollTop),0,'creating and immediately editing a node starts at the panel top');
+    await viewport.locator('textarea').fill('继承默认');await viewport.locator('textarea').press('Control+Enter');await settle();
+    assert.equal(await settings.evaluate(el=>el.scrollTop),0,'finishing the initial edit does not jump to typography');
     assert.equal((await data()).nodes.at(-1).shape,'pill');assert.equal((await data()).nodes.at(-1).kind,'index');
     await viewport.click({position:{x:15,y:15}});await settle();
     await openDefaults();await dialog.locator('[data-settings-action="reset-category"]').click();await dialog.locator('[data-settings-action="accept-reset"]').click();await closeDefaults();assert.equal(await page.evaluate(()=>RelatumNoteCanvasStyle.readDefaults().node.shape),'rounded-rect');

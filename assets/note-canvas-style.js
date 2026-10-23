@@ -140,7 +140,9 @@
     const scale=host.querySelector('[data-role="note-canvas-default-scale"]');
     const resetDefaults=host.querySelector('[data-note-action="reset-canvas-settings"]');
     const panels=new Map();
-    let defaultKind='node', subscribed=null, unsubscribe=null, pending=null, mode='', lastEngine=null, lastFocus=-1;
+    let subscribed=null, unsubscribe=null, pending=null, mode='', lastEngine=null, lastFocus=-1;
+    const defaultViews=[{id:'sidebar',kind:'node',scale}];
+    if(options.defaultsHost) defaultViews.push({id:'settings',kind:'node',scale:scale.cloneNode(true)});
     let positionFrame=0, pendingPosition=null;
     const controls=[];
     let colorPopup=null;
@@ -319,18 +321,40 @@
       const el=document.createElement('section');el.className='note-canvas-property-section';el.dataset.canvasSection=key;
       const heading=document.createElement('h4');heading.textContent=copy(zh,en);el.appendChild(heading);panel.appendChild(el);return el;
     }
-    function populateDefaults() {
+    function populateDefaults(view) {
       closeColorPopup();
-      const panel=panels.get('defaults');
-      for(let i=controls.length-1;i>=0;i--) if(controls[i].isDefault) {controls[i].cancelRange?.(true);controls.splice(i,1);}
-      panel.appendChild(scale);scale.hidden=defaultKind!=='node';
+      const {panel,kind,scale}=view;
+      for(let i=controls.length-1;i>=0;i--) if(controls[i].isDefault&&controls[i].panel===panel) {controls[i].cancelRange?.(true);controls.splice(i,1);}
+      panel.appendChild(scale);scale.hidden=kind!=='node';
       panel.querySelector('[data-canvas-default-fields]')?.remove();
-      const content=document.createElement('div');content.dataset.canvasDefaultFields='true';content.id='note-canvas-default-fields';
-      content.setAttribute('role','tabpanel');content.setAttribute('aria-labelledby','note-canvas-default-tab-'+defaultKind);
-      panel.appendChild(content);if(defaultKind==='node') content.appendChild(scale);addFields(content,defaultKind,true);
+      const content=document.createElement('div');content.dataset.canvasDefaultFields='true';content.id='note-canvas-default-'+view.id+'-fields';
+      content.setAttribute('role','tabpanel');content.setAttribute('aria-labelledby','note-canvas-default-'+view.id+'-tab-'+kind);
+      panel.appendChild(content);if(kind==='node') content.appendChild(scale);addFields(content,kind,true);
       panel.querySelectorAll('[data-default-target]').forEach(button=>{
-        const selected=button.dataset.defaultTarget===defaultKind;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
+        const selected=button.dataset.defaultTarget===kind;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
       });
+    }
+    function buildDefaults(view) {
+      const {panel,scale}=view;
+      scale.querySelector('strong').textContent=copy('新建画布节点尺寸','New canvas node size');
+      scale.querySelector('input').setAttribute('aria-label',copy('新建画布节点尺寸','New canvas node size'));
+      const tabs=document.createElement('div');tabs.className='note-canvas-default-tabs';tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',copy('新建样式目标','New style target'));
+      ['node','edge','nodeText','edgeText'].forEach(kind=>{
+        const button=document.createElement('button');button.type='button';button.dataset.defaultTarget=kind;button.id='note-canvas-default-'+view.id+'-tab-'+kind;
+        button.setAttribute('role','tab');button.setAttribute('aria-controls','note-canvas-default-'+view.id+'-fields');button.textContent=copy(...kindNames[kind]);
+        button.addEventListener('click',()=>{
+          if(!usable(button)||view.kind===kind) return;
+          view.kind=kind;populateDefaults(view);refresh(true);
+          (panel.closest('dialog')?.querySelector('.relatum-settings-scroll')||host).scrollTop=0;
+        });tabs.appendChild(button);
+      });
+      tabs.addEventListener('keydown',event=>{
+        const buttons=[...tabs.children],index=buttons.indexOf(event.target);
+        if(index<0||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowLeft'?-1:1)+buttons.length)%buttons.length;
+        buttons[next].click();buttons[next].focus({preventScroll:true});
+      });
+      panel.appendChild(tabs);populateDefaults(view);
     }
     function build() {
       closeColorPopup();
@@ -343,22 +367,14 @@
         const title=document.createElement('h3');title.textContent=copy(zh,en);
         title.className='note-canvas-panel-title';panel.appendChild(title);panels.set(key,panel);groups.appendChild(panel);
       });
-      const creation=panels.get('defaults');
-      scale.querySelector('strong').textContent=copy('新建画布节点尺寸','New canvas node size');
-      scale.querySelector('input').setAttribute('aria-label',copy('新建画布节点尺寸','New canvas node size'));
-      const tabs=document.createElement('div');tabs.className='note-canvas-default-tabs';tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',copy('新建样式目标','New style target'));
-      ['node','edge','nodeText','edgeText'].forEach(kind=>{
-        const button=document.createElement('button');button.type='button';button.dataset.defaultTarget=kind;button.id='note-canvas-default-tab-'+kind;
-        button.setAttribute('role','tab');button.setAttribute('aria-controls','note-canvas-default-fields');button.textContent=copy(...kindNames[kind]);
-        button.addEventListener('click',()=>{if(!usable(button)||defaultKind===kind) return;defaultKind=kind;populateDefaults();refresh(true);host.scrollTop=0;});tabs.appendChild(button);
+      defaultViews.forEach(view=>{
+        view.panel=view.id==='sidebar'?panels.get('defaults'):document.createElement('section');
+        if(view.id==='settings') {
+          view.panel.dataset.canvasGroup='defaults';
+          options.defaultsHost.appendChild(view.panel);
+        }
+        buildDefaults(view);
       });
-      tabs.addEventListener('keydown',event=>{
-        const buttons=[...tabs.children],index=buttons.indexOf(event.target);
-        if(index<0||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-        event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowLeft'?-1:1)+buttons.length)%buttons.length;
-        buttons[next].click();buttons[next].focus({preventScroll:true});
-      });
-      creation.appendChild(tabs);populateDefaults();
       const node=panels.get('node'),edge=panels.get('edge'),mixed=panels.get('mixed');
       const subset=(kind,keys)=>keys.map(key=>fields[kind].find(f=>f.key===key));
       addFields(section(node,'appearance','形状与外观','Shape and appearance'),'node',false,
@@ -377,11 +393,9 @@
         ['edge','color','连线','Edge stroke'],['edgeText','color','标注文字','Label text']].forEach(([kind,key,zh,en])=>
           addFields(mixed,kind,false,[{...fields[kind].find(f=>f.key===key),zh,en}]));
       if(options.defaultsHost) {
-        options.defaultsHost.appendChild(creation); resetDefaults.hidden=true;
         const entry=document.createElement('div');entry.className='note-canvas-default-entry';entry.dataset.canvasDefaultEntry='true';
-        const message=document.createElement('p');message.textContent=copy('选择画布中的节点或连线，可在这里调整属性。','Select a canvas node or edge to edit its properties here.');
-        const open=document.createElement('button');open.type='button';open.dataset.noteAction='canvas-default-settings';open.textContent=copy('新建默认样式','New default styles');
-        entry.append(message,open);groups.appendChild(entry);
+        const open=document.createElement('button');open.type='button';open.dataset.noteAction='canvas-default-settings';open.textContent=copy('在设置中打开','Open in settings');
+        entry.append(open);const creation=panels.get('defaults');creation.insertBefore(entry,creation.querySelector('.note-canvas-default-tabs'));
       }
       refresh(true);host.scrollTop=scroll;
     }
@@ -403,14 +417,15 @@
         closeColorPopup();
         const previous=mode;mode=next;lastEngine=engine;lastFocus=-1;
         controls.filter(c=>c.panel?.dataset.canvasGroup===previous).forEach(c=>{c.cancelRange?.(true);c.input.querySelectorAll?.('button').forEach(b=>{b.disabled=true;});c.input.disabled=true;if(c.automatic) c.automatic.disabled=true;});
-        panels.forEach((panel,key)=>{panel.hidden=key==='defaults'&&options.defaultsHost?false:key!==mode;});pendingPosition='top';
+        panels.forEach((panel,key)=>{panel.hidden=key!==mode;});pendingPosition='top';
       }
-      resetDefaults.hidden=!!options.defaultsHost||mode!=='defaults';
+      resetDefaults.hidden=mode!=='defaults';
       const entry=groups.querySelector('[data-canvas-default-entry]');if(entry)entry.hidden=mode!=='defaults';
       if(colorPopup&&(host.hidden||!colorPopup.input.isConnected||colorPopup.engine!==engine||colorPopup.version!==selection?.version)) closeColorPopup();
       if(selection&&selection.focusVersion!==lastFocus) {
         lastFocus=selection.focusVersion;
-        if((mode==='node'&&selection.focusKind==='nodeText')||(mode==='edge'&&selection.focusKind==='edgeText')) pendingPosition=selection.focusKind;
+        if(selection.focusKind==='top') pendingPosition='top';
+        else if((mode==='node'&&selection.focusKind==='nodeText')||(mode==='edge'&&selection.focusKind==='edgeText')) pendingPosition=selection.focusKind;
       }
       position();
       controls.forEach(({row,input,output,f,kind,isDefault,automatic,mixedLabel,panel})=>{
@@ -444,7 +459,16 @@
       }
     });
     const scaleInput=scale.querySelector('input');
-    const updateScaleTrack=()=>scaleInput.style.setProperty('--canvas-range-progress',((Number(scaleInput.value)-Number(scaleInput.min))/(Number(scaleInput.max)-Number(scaleInput.min))*100)+'%');
+    const updateScaleTrack=()=>defaultViews.forEach(view=>{
+      const input=view.scale.querySelector('input');input.value=scaleInput.value;
+      const output=view.scale.querySelector('output'),text=scale.querySelector('output').textContent;
+      if(output.textContent!==text) output.textContent=text;
+      input.style.setProperty('--canvas-range-progress',((Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min))*100)+'%');
+    });
+    defaultViews.slice(1).forEach(view=>view.scale.querySelector('input').addEventListener('input',event=>{
+      if(!usable(view.scale)) return;
+      scaleInput.value=event.target.value;scaleInput.dispatchEvent(new Event('input',{bubbles:true}));
+    }));
     scaleInput.addEventListener('input',updateScaleTrack);
     new MutationObserver(updateScaleTrack).observe(scale.querySelector('output')||scale,{childList:true,subtree:true,characterData:true});
     updateScaleTrack();
