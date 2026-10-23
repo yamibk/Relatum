@@ -2360,7 +2360,13 @@ body:not([data-start-theme="dark"]) .note-canvas-settings input[type="range"]:no
   /* Keep the document container and its readable-width breakpoints fixed. */
   .note-workspace { --note-side-tab-space: 0px; grid-template-columns: clamp(220px, 18vw, 292px) minmax(0, 1fr) 0px; }
   .note-document-head { padding-right: calc(clamp(18px, 3vw, 38px) + var(--note-side-width)); }
-  .note-empty-state { right: var(--note-side-width); }
+  /* Keep native document scrollbars clear of the sidebar, even when closed. */
+  .note-workspace .note-document-body { min-width: 0; margin-right: calc(var(--note-side-width) + 8px); }
+  .note-workspace .note-editor-fallback {
+    box-sizing: border-box; width: 100%; margin-inline: 0;
+    padding-left: var(--note-content-left);
+    padding-right: max(var(--note-content-right), calc(100% - var(--note-content-left) - var(--note-content-width)));
+  }
   .note-workspace.links-overlay-open { --note-side-tab-space: var(--note-side-width); }
   .note-tab-bar { padding-right: calc(12px + var(--note-side-tab-space)); transition: padding-right var(--note-side-motion); }
   .note-workspace .note-links-pane { position: absolute; width: var(--note-side-width); transform: translateX(100%); transition: transform var(--note-side-motion), visibility 230ms; }
